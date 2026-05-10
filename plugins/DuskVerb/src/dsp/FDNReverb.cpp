@@ -258,7 +258,6 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         {
             const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
             lfos_[i].prepare (static_cast<float> (sampleRate), seed);
-            lfoPRNG_[i] = seed ^ 0x9E3779B9u;  // distinct PRNG for noise jitter
         }
     }
 
@@ -299,14 +298,14 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
-            // Random-walk LFO (replaces the previous sine + drift). Per-channel
-            // weight `modDepthScale_[ch]` still tapers individual delay lines
-            // by relative length so the longest channels modulate most.
+            // Band-limited random-walk LFO per channel. Per-channel weight
+            // `modDepthScale_[ch]` tapers individual delay lines by relative
+            // length so the longest channels modulate most. The smoothstep-
+            // interpolated wander breaks modal resonances without the
+            // broadband FM sidebands that per-sample white-noise jitter
+            // generated (see issue #87 / DattorroTank v0.5.3 fix).
             float mod    = frozen_ ? 0.0f : (lfos_[ch].next() * modDepthScale_[ch]);
-            // Per-sample random jitter: fast mode blurring complementing the
-            // slow random-walk. Each channel has its own xorshift32 stream.
-            float jitter = frozen_ ? 0.0f : (nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch]);
-            float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
+            float readDelay = std::max (delayLength_[ch] + mod, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
             int intIdx = static_cast<int> (std::floor (readPos));
@@ -1014,12 +1013,11 @@ void FDNReverb::setStereoCoupling (float amount)
     }
 }
 
-void FDNReverb::setNoiseModDepth (float samples)
-{
-    noiseModDepthParam_ = std::max (samples, 0.0f);
-    if (prepared_)
-        updateModDepth();
-}
+// setNoiseModDepth() removed in fix for issue #87: the per-sample white-
+// noise jitter it controlled has been removed. The main RandomWalkLFO on
+// each channel already provides band-limited delay-tap modulation without
+// the broadband FM sidebands that white noise on a delay-read produces.
+// Same diagnosis as DattorroTank's v0.5.3 fix.
 
 void FDNReverb::setModDepthFloor (float floor)
 {
@@ -1136,7 +1134,6 @@ void FDNReverb::clearBuffers()
         lfos_[i].prepare (static_cast<float> (sampleRate_), seed);
         lfos_[i].setRate  (modRateHz_);
         lfos_[i].setDepth (modDepthSamples_);
-        lfoPRNG_[i] = seed ^ 0x9E3779B9u;
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1277,16 +1274,14 @@ void FDNReverb::updateDecayCoefficients()
 void FDNReverb::updateModDepth()
 {
     // Scale by sample rate ratio so modulation depth (in time) is consistent
-    // across 44.1 k / 48 k / 96 k etc.
-    // Normalised across all four engines: depth × 16 samples peak at 44.1 k.
-    // (Was 4 — a quarter of the others — which made the FDN's modulation
-    // feel almost off when the user dialled the knob midway. The per-channel
-    // modDepthScale_[ch] still tapers individual channels by delay length so
-    // longer delays modulate more, shorter less — that proportional shape
-    // is preserved on top of the new base.)
+    // across 44.1 k / 48 k / 96 k etc. Depth × 4 samples peak at 44.1 k —
+    // the v0.3 value, restored in the fix for issue #87. The v0.5 increase
+    // to ×16 produced audible vibrato on long tails at high wet levels;
+    // ×4 keeps modal-mode-breaking effective without pitch-warping content.
+    // Per-channel modDepthScale_[ch] still tapers individual channels by
+    // delay length so the proportional shape is preserved.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = modDepth_ * 16.0f * rateRatio;
-    noiseModDepth_ = noiseModDepthParam_ * rateRatio;
+    modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
     // Push the new depth to every per-channel random-walk LFO. The
     // process loop multiplies by modDepthScale_[ch] so we set the LFOs
     // to the broadband depth and let the per-channel weighting happen
