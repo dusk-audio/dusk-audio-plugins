@@ -117,13 +117,14 @@ void DiffusionStage::prepare (double sampleRate, int /*maxBlockSize*/)
         float phaseR = phaseL + kPi;
         rightAP_[s].prepare (bufSize, delay, rateL, depthL, phaseR, sampleRate);
 
-        // Spin-and-wander jitter (1.5 % of delay) — lets us keep the long
-        // Dattorro-canonical delays {142, 107, 379, 277} for proper input
-        // smear width without the 8.6 ms ringing they produce as static APs.
-        const std::uint32_t lJitterSeed = 0xA5A5A5A5u + static_cast<std::uint32_t> (s * 31337);
-        const std::uint32_t rJitterSeed = 0x5A5A5A5Au + static_cast<std::uint32_t> (s * 27449);
-        leftAP_[s] .enableJitter (0.015f, lJitterSeed);
-        rightAP_[s].enableJitter (0.015f, rJitterSeed);
+        // Spin-and-wander jitter disabled — see issue #87 follow-up. The
+        // audio-band PM (5-200 Hz on each AP read tap, 1.5 % depth)
+        // contributed to the user-reported vibrato/bell artifact at high
+        // wet levels. The slow sine LFO above (0.3-0.8 Hz) still provides
+        // gentle wow on the input diffusers without audio-band sidebands.
+        // Some 8.6 ms ringing on the long Dattorro-canonical APs may
+        // return; acceptable trade per the user's listening evaluation.
+        (void) s;
     }
 }
 
