@@ -207,34 +207,13 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     if (softOnsetMs_ > 0.0f)
         setSoftOnsetMs (softOnsetMs_);
 
-    // Clear all stateful trackers (structural HF damping state, terminal
-    // decay RMS history). Without this, a host re-prepare would start with
-    // empty delay buffers but retain the previous run's tracker state.
+    // Clear stateful trackers (structural HF damping state). Without this,
+    // a host re-prepare would start with empty delay buffers but retain
+    // the previous run's tracker state.
     structHFStateL_ = 0.0f;
     structHFStateR_ = 0.0f;
-    leftTank_.currentRMS = 0.0f;
-    leftTank_.peakRMS = 0.0f;
-    leftTank_.terminalDecayActive = false;
-    leftTank_.savedAP1Mod = 0.0f;
-    rightTank_.currentRMS = 0.0f;
-    rightTank_.peakRMS = 0.0f;
-    rightTank_.terminalDecayActive = false;
+    leftTank_ .savedAP1Mod = 0.0f;
     rightTank_.savedAP1Mod = 0.0f;
-    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
-    limiterEnv_ = 0.0f;
-    // Sample-rate-invariant terminal decay smoothing coefficients
-    constexpr float kRmsTauMs = 45.0f;    // RMS window ~45ms/tracking
-    constexpr float kPeakTauMs = 2270.0f; // Peak decay ~2.27s hold decay
-    float sr = static_cast<float> (sampleRate_);
-    rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
-    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
-
-    // Recompute limiter release coefficient for new sample rate
-    if (limiterThreshold_ > 0.0f)
-    {
-        float releaseSamples = limiterReleaseMs_ * 0.001f * static_cast<float> (sampleRate_);
-        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -336,23 +315,6 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                                         ? +DspUtils::kDenormalPrevention
                                         : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
-
-            // Terminal decay: extra damping when tail is far below peak.
-            // Uses sample-rate-invariant smoothing (rmsAlpha_/peakDecayAlpha_
-            // computed in prepare()) and linear-domain ratio test.
-            // Terminal decay HARD-DISABLED — see VocalPlatePreset.cpp for rationale.
-            if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
-            {
-                float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = tank.currentRMS * rmsAlpha_ + sampleEnergy * (1.0f - rmsAlpha_);
-                if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= peakDecayAlpha_;
-                // Linear-domain ratio test: peak/current > threshold (avoids per-sample log10)
-                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
-                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
-                if (tank.terminalDecayActive)
-                    del2Out *= terminalDecayFactor_;
-            }
 
             // Cross-feed output: end of this tank feeds the other tank's input.
             // softClip on the cross-feed write delivers analog-style soft
@@ -522,13 +484,6 @@ void DattorroTank::setHighCrossoverFreq (float hz)
         updateDecayCoefficients();
 }
 
-void DattorroTank::setAirDampingScale (float scale)
-{
-    airDampingScale_ = std::max (scale, 0.01f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
 void DattorroTank::setModDepth (float depth)
 {
     // Cache the original requested value so prepare() can replay it at a new
@@ -690,12 +645,6 @@ void DattorroTank::setFreeze (bool frozen)
     {
         structHFStateL_ = 0.0f;
         structHFStateR_ = 0.0f;
-        leftTank_.currentRMS = 0.0f;
-        leftTank_.peakRMS = 0.0f;
-        leftTank_.terminalDecayActive = false;
-        rightTank_.currentRMS = 0.0f;
-        rightTank_.peakRMS = 0.0f;
-        rightTank_.terminalDecayActive = false;
     }
 }
 
@@ -742,13 +691,6 @@ void DattorroTank::setStructuralHFDamping (float hz)
     structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
-void DattorroTank::setTerminalDecay (float thresholdDB, float factor)
-{
-    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
-    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
-}
-
 void DattorroTank::clearBuffers()
 {
     auto clearTank = [this] (Tank& tank, uint32_t seed)
@@ -762,9 +704,6 @@ void DattorroTank::clearBuffers()
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
         tank.savedAP1Mod = 0.0f;  // keep from the code-review fix
-        tank.currentRMS = 0.0f;
-        tank.peakRMS = 0.0f;
-        tank.terminalDecayActive = false;
         tank.lfo.prepare (static_cast<float> (sampleRate_), seed);
         tank.lfo.setRate (modRateHz_);
         tank.lfo.setDepth (modDepthSamples_);
@@ -851,12 +790,10 @@ void DattorroTank::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-        // Per-band gains using true 3-band multipliers. The legacy
-        // airDampingScale_ is now folded into trebleMultiply for back-compat —
-        // call setMidMultiply explicitly for true mid-band control.
+        // Per-band gains using true 3-band multipliers.
         float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         float gMid = std::clamp (std::pow (gBase, 1.0f / midMultiply_), 0.001f, 0.9999f);
-        float gHi  = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
+        float gHi  = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHi, lowXoverCoeff, highXoverCoeff);
     };

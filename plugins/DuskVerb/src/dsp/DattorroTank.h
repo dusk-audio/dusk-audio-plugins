@@ -40,7 +40,6 @@ public:
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
     void setHighCrossoverFreq (float hz);
-    void setAirDampingScale (float scale);             // legacy — now a no-op when midMultiply is used
     void setSaturation (float amount);                 // NEW: 0..1 drive-style softClip
     void setModDepth (float depth);
     void setModRate (float hz);
@@ -74,7 +73,6 @@ public:
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
     void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
-    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -267,11 +265,6 @@ private:
 
         // Saved modulation offset: held constant when frozen to prevent read-head snap
         float savedAP1Mod = 0.0f;
-
-        // Per-tank terminal decay tracking (avoids L/R interleaving artifacts)
-        float currentRMS = 0.0f;
-        float peakRMS = 0.0f;
-        bool terminalDecayActive = false;
     };
 
     Tank leftTank_;
@@ -312,7 +305,6 @@ private:
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 20000.0f;  // Second crossover for 3-band damping (Hz)
-    float airDampingScale_ = 1.0f;        // Legacy — superseded by midMultiply_; kept for back-compat
     float saturationAmount_ = 0.0f;       // 0..1 drive — sets softClip threshold/ceiling
     float modDepthSamples_ = 8.0f;  // Peak excursion in samples
     float lastModDepthRaw_ = 0.5f;  // Raw 0-1 depth before sample rate scaling
@@ -333,10 +325,6 @@ private:
     float limiterReleaseCoeff_ = 0.999f;  // One-pole release coefficient (~50ms at 48kHz)
     float limiterReleaseMs_ = 50.0f;      // Cached for recompute on sample rate change
 
-    // Sample-rate-invariant terminal decay smoothing (matching FDNReverb)
-    float rmsAlpha_ = 0.9995f;
-    float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 0.01f;     // 10^(-40/20)
     float limiterEnv_ = 0.0f;             // Current peak envelope
 
     bool frozen_ = false;
@@ -347,8 +335,6 @@ private:
     float structHFCoeff_ = 0.0f;
     float structHFStateL_ = 0.0f;
     float structHFStateR_ = 0.0f;
-    float terminalDecayThresholdDB_ = -40.0f;
-    float terminalDecayFactor_ = 1.0f;
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
     float decayDiff2_ = 0.50f;   // Static allpass feedback

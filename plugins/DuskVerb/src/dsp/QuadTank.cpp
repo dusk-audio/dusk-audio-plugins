@@ -135,26 +135,11 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
     if (lastStructHFRawHz_ > 0.0f)
         setStructuralHFDamping (lastStructHFRawHz_);
 
-    // Terminal decay: sample-rate-invariant smoothing coefficients.
-    // At 44.1kHz these produce the same behavior as the original constants.
-    constexpr float kRmsTauMs  = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
-    constexpr float kPeakTauMs = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
-    float sr = static_cast<float> (sampleRate);
-    rmsAlpha_       = std::exp (-1000.0f / (kRmsTauMs * sr));
-    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
-
-    // Clear all per-tank stateful fields (RMS history, terminal-decay flags,
-    // structural HF damping state). Without this, a host re-prepare would
-    // start with empty delay buffers but retain the previous run's tracker
+    // Clear structural HF damping state. Without this, a host re-prepare
+    // would start with empty delay buffers but retain previous tracker
     // state, leaking session state across reconfigure.
     for (int t = 0; t < kNumTanks; ++t)
-    {
-        auto& tank = tanks_[t];
-        tank.currentRMS = 0.0f;
-        tank.peakRMS = 0.0f;
-        tank.terminalDecayActive = false;
         structHFState_[t] = 0.0f;
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -245,19 +230,6 @@ void QuadTank::process (const float* inputL, const float* inputR,
                                         ? +DspUtils::kDenormalPrevention
                                         : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
-
-            // Terminal decay HARD-DISABLED — see VocalPlatePreset.cpp for rationale.
-            if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
-            {
-                float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = rmsAlpha_ * tank.currentRMS + (1.0f - rmsAlpha_) * sampleEnergy;
-                if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= peakDecayAlpha_;
-                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
-                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
-                if (tank.terminalDecayActive)
-                    del2Out *= terminalDecayFactor_;
-            }
 
             // Cross-feed: feeds next tank. Soft-clip on the way out — analog
             // tape/transformer-style warmth that engages only when transients
@@ -412,12 +384,7 @@ void QuadTank::setFreeze (bool frozen)
     if (wasTransition)
     {
         for (int t = 0; t < kNumTanks; ++t)
-        {
             structHFState_[t] = 0.0f;
-            tanks_[t].currentRMS = 0.0f;
-            tanks_[t].peakRMS = 0.0f;
-            tanks_[t].terminalDecayActive = false;
-        }
     }
 }
 void QuadTank::setLateGainScale (float scale) { lateGainScale_ = std::max (scale, 0.0f); }
@@ -425,13 +392,6 @@ void QuadTank::setLateGainScale (float scale) { lateGainScale_ = std::max (scale
 void QuadTank::setHighCrossoverFreq (float hz)
 {
     highCrossoverFreq_ = std::max (hz, 100.0f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void QuadTank::setAirDampingScale (float scale)
-{
-    airDampingScale_ = std::max (scale, 0.1f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -474,19 +434,6 @@ void QuadTank::setStructuralHFDamping (float hz)
     structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
-void QuadTank::setTerminalDecay (float thresholdDB, float factor)
-{
-    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    // Accept the full [0.0, 1.0] range to match DattorroTank and the
-    // wrapper's pass-through behavior. PluginProcessor already gates the
-    // override path on factor>0.001, so an inadvertent factor=0 from the
-    // automation layer cannot reach here in normal use; but if the
-    // calibrator or a future API caller wants a value below 0.8, it
-    // should be honored exactly rather than silently rounded up.
-    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
-    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
-}
-
 void QuadTank::clearBuffers()
 {
     for (int t = 0; t < kNumTanks; ++t)
@@ -500,9 +447,6 @@ void QuadTank::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
-        tank.currentRMS = 0.0f;
-        tank.peakRMS = 0.0f;
-        tank.terminalDecayActive = false;
     }
     // Re-seed the random-walk LFOs so each clear gives the same predictable
     // starting state — important for A/B compare and bypass toggling in
@@ -603,7 +547,9 @@ void QuadTank::updateDecayCoefficients()
         float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         // True 3-band: mid band uses midMultiply_ (default 1.0 = natural rate).
         float gMid  = std::clamp (std::pow (gBase, 1.0f / midMultiply_), 0.001f, 0.9999f);
-        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
+        // Inlined airDampingScale = 0.70 (former tunable, never set externally).
+        // Pre-computed product trebleMultiply_ * 0.70f.
+        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * 0.70f)), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
     }
