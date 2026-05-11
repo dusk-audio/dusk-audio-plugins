@@ -42,6 +42,33 @@ public:
         decorr_R2_.clear();
     }
 
+    // Copy SIGNAL state from another EarlyReflections (assumed prepared at the
+    // same sample rate, so buffer sizes match). Tap geometry (delay/gain/
+    // lpCoeff) stays at this instance's values — only the multi-tap delay
+    // line, per-tap lowpass states, and decorrelating allpass buffers are
+    // overwritten. Used by the preset-swap path so the new engine's ER taps
+    // fire from real input history at sample 0 instead of from silence (the
+    // 8-80 ms tap delay range otherwise produces audible discrete step
+    // onsets that the equal-power crossfade can't fully mask).
+    void copySignalStateFrom (const EarlyReflections& other)
+    {
+        if (bufferL_.size() == other.bufferL_.size())
+        {
+            bufferL_ = other.bufferL_;
+            bufferR_ = other.bufferR_;
+            writePos_ = other.writePos_;
+        }
+        for (int i = 0; i < kNumTaps; ++i)
+        {
+            tapsL_[i].lpState = other.tapsL_[i].lpState;
+            tapsR_[i].lpState = other.tapsR_[i].lpState;
+        }
+        decorr_L1_.copyStateFrom (other.decorr_L1_);
+        decorr_L2_.copyStateFrom (other.decorr_L2_);
+        decorr_R1_.copyStateFrom (other.decorr_R1_);
+        decorr_R2_.copyStateFrom (other.decorr_R2_);
+    }
+
 private:
     static constexpr int kNumTaps = 24;
     static constexpr float kMinTimeMs = 8.0f;
@@ -96,6 +123,15 @@ private:
         {
             std::fill (buffer.begin(), buffer.end(), 0.0f);
             writePos = 0;
+        }
+
+        void copyStateFrom (const DecorrAllpass& other)
+        {
+            if (buffer.size() == other.buffer.size())
+            {
+                buffer = other.buffer;
+                writePos = other.writePos;
+            }
         }
     };
 
