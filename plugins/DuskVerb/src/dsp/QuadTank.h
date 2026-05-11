@@ -197,6 +197,8 @@ private:
         // benefit without the HF artifacts. Mirrors DattorroTank v0.5.3.
         DspUtils::RandomWalkLFO delay1Lfo;
         DspUtils::RandomWalkLFO delay2Lfo;
+        float savedDelay1Mod = 0.0f;  // held during freeze (mirrors savedAP1Mod)
+        float savedDelay2Mod = 0.0f;
     };
 
     Tank tanks_[kNumTanks];

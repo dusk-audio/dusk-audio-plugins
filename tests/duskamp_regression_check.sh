@@ -60,11 +60,21 @@ echo "Rendering to temp dir..."
 "$RENDERER" "$TEMP_DIR" > /dev/null
 
 # Hash by basename so the absolute path doesn't poison the comparison.
+# Use md5sum (Linux) when available, else md5 -q (macOS/BSD).
+if command -v md5sum >/dev/null 2>&1; then
+    _md5_of() { md5sum "$1" | awk '{ print $1 }'; }
+elif command -v md5 >/dev/null 2>&1; then
+    _md5_of() { md5 -q "$1"; }
+else
+    echo "ERROR: neither md5sum nor md5 available on this system" >&2
+    exit 1
+fi
+
 hash_dir() {
     local dir="$1"
     (cd "$dir" && for f in *.wav; do
         if [ -f "$f" ]; then
-            md5 -q "$f" | awk -v name="$f" '{ print $1 "  " name }'
+            printf '%s  %s\n' "$(_md5_of "$f")" "$f"
         fi
     done | sort)
 }

@@ -85,6 +85,14 @@ private:
     // the audio thread.
     std::vector<float> fadeBufL_, fadeBufR_;
 
+    // Dry-signal scratch. The engines output WET-ONLY; the dry/wet mix is
+    // applied here after any preset crossfade so the dry stays correlated
+    // (no +3 dB swell from equal-power blending the same dry through two
+    // engines) and the mix smoother is independent of which engine is
+    // active.
+    std::vector<float> dryBufL_, dryBufR_;
+    OnePoleSmoother mixSmoother_;
+
     // Cached SixAPTank brightness/density state. Per-preset values that
     // travel with the project (persisted in get/setStateInformation as
     // properties on the state ValueTree, not as APVTS parameters since

@@ -105,7 +105,6 @@ public:
 
     // Shell parameters (smoothed in process()).
     void setPreDelay  (float milliseconds);
-    void setMix       (float dryWet);
     void setLoCut     (float hz);
     void setHiCut     (float hz);
     void setWidth     (float width);
@@ -133,6 +132,15 @@ public:
     // the target values immediately instead of gliding from a stale state.
     // Call after force-pushing parameters to a freshly-cleared engine.
     void snapSmoothersToTargets();
+
+    // Pre-fill THIS engine's pre-tank state (pre-delay buffer + early
+    // reflections signal state) from `other`. Used at preset-swap time so
+    // the new engine has real input history at sample 0 — without this,
+    // ER taps fire from silence over their 8-80 ms delay range, producing
+    // audible discrete onsets that the equal-power crossfade can't mask.
+    // Late-tank state stays cleared (it's algorithm-specific; pre-filling
+    // would feed wrong-coefficient history into a different topology).
+    void copyInputHistoryFrom (const DuskVerbEngine& other);
 
 private:
     // Engines (all owned; only one runs at a time).
@@ -166,7 +174,8 @@ private:
     std::vector<float> erOutL_, erOutR_;
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
-    OnePoleSmoother mixSmoother_;
+    // mixSmoother lives on the processor (so the dry signal stays correlated
+    // across the preset crossfade); engine outputs wet-only.
     OnePoleSmoother widthSmoother_;
     OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother gainTrimSmoother_;

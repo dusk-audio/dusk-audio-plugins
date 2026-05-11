@@ -111,6 +111,8 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
         tanks_[t].lfo       .prepare (sr, kLFOSeeds[t]);
         tanks_[t].delay1Lfo .prepare (sr, kLFOSeeds[t] ^ 0xA5A5A5A5u);
         tanks_[t].delay2Lfo .prepare (sr, kLFOSeeds[t] ^ 0x5A5A5A5Au);
+        tanks_[t].savedDelay1Mod = 0.0f;
+        tanks_[t].savedDelay2Mod = 0.0f;
 
         // Per-density-AP jitter LFOs with distinct seeds per tank+stage.
         for (int i = 0; i < kNumDensityAPs; ++i)
@@ -194,7 +196,9 @@ void QuadTank::process (const float* inputL, const float* inputR,
             // smoothstep interpolation, so it wanders the read tap enough
             // to break modal resonances without producing audio-rate FM
             // sidebands.
-            float jitter1 = frozen_ ? 0.0f : tank.delay1Lfo.next();
+            float jitter1 = frozen_ ? tank.savedDelay1Mod : tank.delay1Lfo.next();
+            if (! frozen_)
+                tank.savedDelay1Mod = jitter1;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -223,7 +227,9 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 with band-limited random-walk modulation ---
-            float jitter2 = frozen_ ? 0.0f : tank.delay2Lfo.next();
+            float jitter2 = frozen_ ? tank.savedDelay2Mod : tank.delay2Lfo.next();
+            if (! frozen_)
+                tank.savedDelay2Mod = jitter2;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -330,16 +336,23 @@ void QuadTank::setCrossoverFreq (float hz)
 
 void QuadTank::setModDepth (float depth)
 {
+    // Cache the original requested value so prepare() can replay it at a new
+    // sample rate without losing precision from clamping.
     lastModDepthRaw_ = depth;
+
+    // Clamp depth so modDepthSamples_ cannot exceed the ±32-sample modulation
+    // headroom reserved in prepare()'s buffer allocation (maxModExcursion).
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = depth * 16.0f * rateRatio;
+    float maxDepth = 32.0f / (16.0f * std::max (rateRatio, 1.0f));
+    float clampedDepth = std::clamp (depth, 0.0f, maxDepth);
+    modDepthSamples_ = clampedDepth * 16.0f * rateRatio;
 
     // Delay-tap modulation depth. Half of the AP1 LFO depth so the long
     // delay reads don't pitch-warp on sustained content (mirrors
     // DattorroTank: a 100 ms delay wandering ±8 samples at <1 Hz is well
     // below detection threshold), while still moving the read tap enough
     // to disrupt modal resonances on long decays.
-    delayModDepthSamples_ = depth * 8.0f * rateRatio;
+    delayModDepthSamples_ = clampedDepth * 8.0f * rateRatio;
 
     for (int t = 0; t < kNumTanks; ++t)
     {
@@ -474,6 +487,8 @@ void QuadTank::clearBuffers()
         tanks_[t].delay1Lfo.setDepth (delayModDepthSamples_);
         tanks_[t].delay2Lfo.prepare (sr, kLFOSeeds[t] ^ 0x5A5A5A5Au);
         tanks_[t].delay2Lfo.setDepth (delayModDepthSamples_);
+        tanks_[t].savedDelay1Mod = 0.0f;
+        tanks_[t].savedDelay2Mod = 0.0f;
 
         // Mirror prepare()'s per-density-AP seeding scheme so each stage's
         // jitterLFO restarts from the same deterministic state.

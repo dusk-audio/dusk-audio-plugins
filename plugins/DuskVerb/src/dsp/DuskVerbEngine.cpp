@@ -46,7 +46,6 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     // Per-sample smoothers — short time constants, advance once per sample.
     constexpr float kPerSampleSmoothMs = 2.0f;
-    mixSmoother_     .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
     widthSmoother_   .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
     erLevelSmoother_ .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
     gainTrimSmoother_.setSmoothingTime (sampleRate, 5.0f);
@@ -60,7 +59,6 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     hiCutSmoother_    .setSmoothingTime (sampleRate, kPerBlockSmoothMs);
     monoBelowSmoother_.setSmoothingTime (sampleRate, kPerBlockSmoothMs);
 
-    mixSmoother_     .reset (1.0f);
     widthSmoother_   .reset (1.0f);
     erLevelSmoother_ .reset (1.0f);
     gainTrimSmoother_.reset (1.0f);
@@ -118,7 +116,6 @@ void DuskVerbEngine::snapSmoothersToTargets()
     // produces target-value output from the next sample onward — required when
     // an idle engine is being swapped in via crossfade and must not glide
     // through stale shell-parameter values.
-    mixSmoother_      .current = mixSmoother_      .target;
     widthSmoother_    .current = widthSmoother_    .target;
     erLevelSmoother_  .current = erLevelSmoother_  .target;
     gainTrimSmoother_ .current = gainTrimSmoother_ .target;
@@ -133,6 +130,17 @@ void DuskVerbEngine::snapSmoothersToTargets()
     lastAppliedLoCut_  = -1.0f;
     lastAppliedHiCut_  = -1.0f;
     lastAppliedMonoHz_ = -1.0f;
+}
+
+void DuskVerbEngine::copyInputHistoryFrom (const DuskVerbEngine& other)
+{
+    if (preDelayBufL_.size() == other.preDelayBufL_.size())
+    {
+        preDelayBufL_     = other.preDelayBufL_;
+        preDelayBufR_     = other.preDelayBufR_;
+        preDelayWritePos_ = other.preDelayWritePos_;
+    }
+    er_.copySignalStateFrom (other.er_);
 }
 
 void DuskVerbEngine::setAlgorithm (int index)
@@ -331,11 +339,6 @@ void DuskVerbEngine::setPreDelay (float milliseconds)
     preDelaySamples_ = std::min (samples, preDelayMask_);
 }
 
-void DuskVerbEngine::setMix (float dryWet)
-{
-    mixSmoother_.setTarget (std::clamp (dryWet, 0.0f, 1.0f));
-}
-
 void DuskVerbEngine::setLoCut (float hz)
 {
     // Target only — biquad coeffs recomputed once per block in process().
@@ -525,7 +528,6 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     }
 
     // ---- 5) Sum + Shell ----
-    constexpr float kHalfPi = 1.5707963267948966f;
     for (int i = 0; i < numSamples; ++i)
     {
         const float erL   = erOutL_[static_cast<size_t> (i)];
@@ -564,20 +566,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         wetL = mid + side * width;
         wetR = mid - side * width;
 
-        const float mix = mixSmoother_.next();
-        const float wetGain = std::sin (mix * kHalfPi);
-        const float dryGain = std::cos (mix * kHalfPi);
-
-        const float dryL = left[i];
-        const float dryR = right[i];
-
+        // gain_trim is a WET-PATH gain — baked into the engine's wet output so
+        // each preset's calibrated wet level is preserved through the
+        // processor-side dry/wet crossfade (the dry signal is applied AFTER
+        // the engine, so trim never touches it).
         const float trim = gainTrimSmoother_.next();
-        // gain_trim is a WET-PATH gain — applies only to the wet signal so
-        // the dry passthrough remains unity-gain. Otherwise a preset with
-        // +17 dB trim (needed to reach the calibrated wet level) would
-        // amplify the dry by +17 dB too, clipping the output even at
-        // Dry/Wet = 0 (full passthrough).
-        left[i]  = dryL * dryGain + wetL * wetGain * trim;
-        right[i] = dryR * dryGain + wetR * wetGain * trim;
+        left[i]  = wetL * trim;
+        right[i] = wetR * trim;
     }
 }
