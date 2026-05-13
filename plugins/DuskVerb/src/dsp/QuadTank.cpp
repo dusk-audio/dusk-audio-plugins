@@ -113,6 +113,7 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
         tanks_[t].lfo       .prepare (sr, kLFOSeeds[t]);
         tanks_[t].delay1Lfo .prepare (sr, kLFOSeeds[t] ^ 0xA5A5A5A5u);
         tanks_[t].delay2Lfo .prepare (sr, kLFOSeeds[t] ^ 0x5A5A5A5Au);
+        tanks_[t].savedAP1Mod    = 0.0f;
         tanks_[t].savedDelay1Mod = 0.0f;
         tanks_[t].savedDelay2Mod = 0.0f;
 

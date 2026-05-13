@@ -12,9 +12,12 @@ from perceptual_diff import (
     edt, box_ratio_db, k_weighted_lufs,
 )
 
-RENDER_BIN = '/home/marc/projects/plugins/build/tests/duskverb_render/duskverb_render'
-LEX_IMP = '/tmp/lex_compare/lex_v3_impulse.wav'
-LEX_NB  = '/tmp/lex_compare/lex_v3_noiseburst.wav'
+REPO_ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
+RENDER_BIN = os.environ.get(
+    'DUSKVERB_RENDER',
+    os.path.join(REPO_ROOT, 'build/tests/duskverb_render/duskverb_render'))
+LEX_IMP = os.environ.get('DUSKVERB_LEX_IMP', '/tmp/lex_compare/lex_v3_impulse.wav')
+LEX_NB  = os.environ.get('DUSKVERB_LEX_NB',  '/tmp/lex_compare/lex_v3_noiseburst.wav')
 
 BASE = {
     'Algorithm':       'Plate (Dattorro Vintage)',
@@ -62,9 +65,9 @@ def measure(imp_path, nb_path):
         'c80':   c80(ir, sr_i),
         'crest': spectral_crest_db(nb[int(0.1*sr_n):], sr_n),
         'box':   box_ratio_db(nb, sr_n),
-        'edt_500':  edt(ir, sr_i, 500),
-        'edt_1k':   edt(ir, sr_i, 1000),
-        'edt_2k':   edt(ir, sr_i, 2000),
+        'edt_500':  edt(ir_t, sr_i, 500),
+        'edt_1k':   edt(ir_t, sr_i, 1000),
+        'edt_2k':   edt(ir_t, sr_i, 2000),
     }
 
 
