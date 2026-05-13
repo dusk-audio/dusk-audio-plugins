@@ -149,3 +149,4 @@ calibration.db
 calibration.db-shm
 calibration.db-wal
 .claude/
+plugins/neural-amp/

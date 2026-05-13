@@ -184,9 +184,6 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
     }
-    peakRMS_ = 0.0f;
-    currentRMS_ = 0.0f;
-    terminalDecayActive_ = false;
 
     // Inline allpass diffusers: prime delays scaled by sample rate
     // (rateRatio already computed above for buffer sizing)
@@ -258,21 +255,12 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         {
             const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
             lfos_[i].prepare (static_cast<float> (sampleRate), seed);
-            lfoPRNG_[i] = seed ^ 0x9E3779B9u;  // distinct PRNG for noise jitter
         }
     }
 
     updateModDepth();
     updateLFORates();
     updateDecayCoefficients();
-
-    // Terminal decay: sample-rate-invariant smoothing coefficients.
-    // At 44.1kHz these produce the same behavior as the original constants.
-    constexpr float kRmsTauMs     = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
-    constexpr float kPeakTauMs    = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
-    float sr = static_cast<float> (sampleRate);
-    rmsAlpha_      = std::exp (-1000.0f / (kRmsTauMs * sr));
-    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
 
     prepared_ = true;
 }
@@ -299,48 +287,20 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
-            // Random-walk LFO (replaces the previous sine + drift). Per-channel
-            // weight `modDepthScale_[ch]` still tapers individual delay lines
-            // by relative length so the longest channels modulate most.
+            // Band-limited random-walk LFO per channel. Per-channel weight
+            // `modDepthScale_[ch]` tapers individual delay lines by relative
+            // length so the longest channels modulate most. The smoothstep-
+            // interpolated wander breaks modal resonances without the
+            // broadband FM sidebands that per-sample white-noise jitter
+            // generated (see issue #87 / DattorroTank v0.5.3 fix).
             float mod    = frozen_ ? 0.0f : (lfos_[ch].next() * modDepthScale_[ch]);
-            // Per-sample random jitter: fast mode blurring complementing the
-            // slow random-walk. Each channel has its own xorshift32 stream.
-            float jitter = frozen_ ? 0.0f : (nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch]);
-            float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
+            float readDelay = std::max (delayLength_[ch] + mod, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
             int intIdx = static_cast<int> (std::floor (readPos));
             float frac = readPos - static_cast<float> (intIdx);
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-        }
-
-        // --- 1.25) Terminal decay HARD-DISABLED ---
-        // Caused "thin baseline with transient bursts" — see VocalPlatePreset.cpp
-        // for rationale. State members kept for ABI compat.
-        if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
-        {
-            float sampleEnergy = 0.0f;
-            for (int ch = 0; ch < N; ++ch)
-                sampleEnergy += delayOut[ch] * delayOut[ch];
-            sampleEnergy *= (1.0f / static_cast<float> (N));
-
-            currentRMS_ = rmsAlpha_ * currentRMS_ + (1.0f - rmsAlpha_) * sampleEnergy;
-            if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= peakDecayAlpha_;
-
-            // Compare ratio in linear domain (avoids per-sample log10).
-            // terminalDecayThresholdDB_ is stored NEGATIVE (e.g. -40.0f);
-            // terminalLinearThreshold_ = 10^4 for -40dB → activates when
-            // peak/RMS ratio exceeds threshold (tail has faded).
-            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
-            terminalDecayActive_ = (ratio > terminalLinearThreshold_)
-                                 && (peakRMS_ > 1e-12f);
-            if (terminalDecayActive_)
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] *= terminalDecayFactor_;
-            }
         }
 
         // --- 1.5) Inline allpass diffusion (Dattorro "decay diffusion") ---
@@ -664,10 +624,6 @@ void FDNReverb::setFreeze (bool frozen)
     frozen_ = frozen;
     if (wasTransition)
     {
-        currentRMS_ = 0.0f;
-        peakRMS_ = 0.0f;
-        terminalDecayActive_ = false;
-
         // Clear bypassed DSP block state so releasing freeze won't pop
         for (int i = 0; i < N; ++i)
         {
@@ -1014,12 +970,11 @@ void FDNReverb::setStereoCoupling (float amount)
     }
 }
 
-void FDNReverb::setNoiseModDepth (float samples)
-{
-    noiseModDepthParam_ = std::max (samples, 0.0f);
-    if (prepared_)
-        updateModDepth();
-}
+// setNoiseModDepth() removed in fix for issue #87: the per-sample white-
+// noise jitter it controlled has been removed. The main RandomWalkLFO on
+// each channel already provides band-limited delay-tap modulation without
+// the broadband FM sidebands that white noise on a delay-read produces.
+// Same diagnosis as DattorroTank's v0.5.3 fix.
 
 void FDNReverb::setModDepthFloor (float floor)
 {
@@ -1101,14 +1056,6 @@ void FDNReverb::setDecayBoost (float boost)
         updateDecayCoefficients();
 }
 
-void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
-{
-    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
-    // Precompute linear threshold to avoid per-sample log10
-    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
-}
-
 void FDNReverb::clearBuffers()
 {
     for (int i = 0; i < N; ++i)
@@ -1136,12 +1083,7 @@ void FDNReverb::clearBuffers()
         lfos_[i].prepare (static_cast<float> (sampleRate_), seed);
         lfos_[i].setRate  (modRateHz_);
         lfos_[i].setDepth (modDepthSamples_);
-        lfoPRNG_[i] = seed ^ 0x9E3779B9u;
     }
-    // Reset terminal decay RMS tracking
-    peakRMS_ = 0.0f;
-    currentRMS_ = 0.0f;
-    terminalDecayActive_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1277,16 +1219,14 @@ void FDNReverb::updateDecayCoefficients()
 void FDNReverb::updateModDepth()
 {
     // Scale by sample rate ratio so modulation depth (in time) is consistent
-    // across 44.1 k / 48 k / 96 k etc.
-    // Normalised across all four engines: depth × 16 samples peak at 44.1 k.
-    // (Was 4 — a quarter of the others — which made the FDN's modulation
-    // feel almost off when the user dialled the knob midway. The per-channel
-    // modDepthScale_[ch] still tapers individual channels by delay length so
-    // longer delays modulate more, shorter less — that proportional shape
-    // is preserved on top of the new base.)
+    // across 44.1 k / 48 k / 96 k etc. Depth × 4 samples peak at 44.1 k —
+    // the v0.3 value, restored in the fix for issue #87. The v0.5 increase
+    // to ×16 produced audible vibrato on long tails at high wet levels;
+    // ×4 keeps modal-mode-breaking effective without pitch-warping content.
+    // Per-channel modDepthScale_[ch] still tapers individual channels by
+    // delay length so the proportional shape is preserved.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = modDepth_ * 16.0f * rateRatio;
-    noiseModDepth_ = noiseModDepthParam_ * rateRatio;
+    modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
     // Push the new depth to every per-channel random-walk LFO. The
     // process loop multiplies by modDepthScale_[ch] so we set the LFOs
     // to the broadband depth and let the per-channel weighting happen

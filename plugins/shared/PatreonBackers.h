@@ -19,6 +19,7 @@
     3. Rebuild all plugins
 
     Tier Benefits:
+    - Hugs ($1/month):       Development updates, name in credits
     - Supporter ($3/month):  Development updates, name in credits
     - Patron ($5/month):     Development updates, name in credits
     - Champion ($10/month):  Development updates, name in credits
@@ -56,7 +57,15 @@ namespace PatreonCredits
     inline const std::vector<juce::String> supporters = {
         "Eblen Macari",
         "Jano",
+        "Manav",
+        "Someone64",
         "Stefan Windus",
+    };
+
+    // Hugs ($1/month)
+    inline const std::vector<juce::String> hugs = {
+        "Adrienne",
+        "mister-universe",
     };
 
     // Past Supporters — thank you for your support!
@@ -96,6 +105,13 @@ namespace PatreonCredits
                 result += name + "\n";
         }
 
+        if (!hugs.empty())
+        {
+            result += "\nHUGS\n\n";
+            for (const auto& name : hugs)
+                result += name + "\n";
+        }
+
         if (!pastSupporters.empty())
         {
             result += "\nPAST SUPPORTERS\n\n";
@@ -113,6 +129,7 @@ namespace PatreonCredits
     inline int getTotalBackerCount()
     {
         return static_cast<int>(champions.size() + patrons.size() +
-                                supporters.size() + pastSupporters.size());
+                                supporters.size() + hugs.size() +
+                                pastSupporters.size());
     }
 }

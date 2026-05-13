@@ -23,6 +23,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     spring_.prepare (sampleRate, maxBlockSize);
     nonLinear_.prepare (sampleRate, maxBlockSize);
     shimmer_.prepare (sampleRate, maxBlockSize);
+    dattorroVintage_.prepare (sampleRate, maxBlockSize);
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
@@ -46,7 +47,6 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     // Per-sample smoothers — short time constants, advance once per sample.
     constexpr float kPerSampleSmoothMs = 2.0f;
-    mixSmoother_     .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
     widthSmoother_   .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
     erLevelSmoother_ .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
     gainTrimSmoother_.setSmoothingTime (sampleRate, 5.0f);
@@ -60,7 +60,6 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     hiCutSmoother_    .setSmoothingTime (sampleRate, kPerBlockSmoothMs);
     monoBelowSmoother_.setSmoothingTime (sampleRate, kPerBlockSmoothMs);
 
-    mixSmoother_     .reset (1.0f);
     widthSmoother_   .reset (1.0f);
     erLevelSmoother_ .reset (1.0f);
     gainTrimSmoother_.reset (1.0f);
@@ -92,6 +91,7 @@ void DuskVerbEngine::clearAllBuffers()
     spring_   .clearBuffers();
     nonLinear_.clearBuffers();
     shimmer_  .clearBuffers();
+    dattorroVintage_.clearBuffers();
 
     // Pre-tank input diffuser and early reflections — both retain
     // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
@@ -118,7 +118,6 @@ void DuskVerbEngine::snapSmoothersToTargets()
     // produces target-value output from the next sample onward — required when
     // an idle engine is being swapped in via crossfade and must not glide
     // through stale shell-parameter values.
-    mixSmoother_      .current = mixSmoother_      .target;
     widthSmoother_    .current = widthSmoother_    .target;
     erLevelSmoother_  .current = erLevelSmoother_  .target;
     gainTrimSmoother_ .current = gainTrimSmoother_ .target;
@@ -133,6 +132,18 @@ void DuskVerbEngine::snapSmoothersToTargets()
     lastAppliedLoCut_  = -1.0f;
     lastAppliedHiCut_  = -1.0f;
     lastAppliedMonoHz_ = -1.0f;
+}
+
+void DuskVerbEngine::copyInputHistoryFrom (const DuskVerbEngine& other)
+{
+    if (preDelayBufL_.size() == other.preDelayBufL_.size())
+    {
+        preDelayBufL_     = other.preDelayBufL_;
+        preDelayBufR_     = other.preDelayBufR_;
+        preDelayWritePos_ = other.preDelayWritePos_;
+    }
+    er_.copySignalStateFrom (other.er_);
+    diffuser_.copyStateFrom (other.diffuser_);
 }
 
 void DuskVerbEngine::setAlgorithm (int index)
@@ -150,6 +161,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
     shimmer_.clearBuffers();
+    dattorroVintage_.clearBuffers();
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -164,6 +176,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     spring_.setFreeze (frozen);
     nonLinear_.setFreeze (frozen);
     shimmer_.setFreeze (frozen);
+    dattorroVintage_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -181,6 +194,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     spring_.setDecayTime (seconds);
     nonLinear_.setDecayTime (seconds);
     shimmer_.setDecayTime (seconds);
+    dattorroVintage_.setDecayTime (seconds);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -198,6 +212,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     spring_.setSize (size);
     nonLinear_.setSize (size);
     shimmer_.setSize (size);
+    dattorroVintage_.setSize (size);
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
@@ -209,6 +224,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     spring_.setBassMultiply (mult);
     nonLinear_.setBassMultiply (mult);
     shimmer_.setBassMultiply (mult);
+    dattorroVintage_.setBassMultiply (mult);
 }
 
 void DuskVerbEngine::setMidMultiply (float mult)
@@ -220,6 +236,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
     spring_.setMidMultiply (mult);
     nonLinear_.setMidMultiply (mult);
     shimmer_.setMidMultiply (mult);
+    dattorroVintage_.setMidMultiply (mult);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -231,6 +248,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     spring_.setTrebleMultiply (mult);
     nonLinear_.setTrebleMultiply (mult);
     shimmer_.setTrebleMultiply (mult);
+    dattorroVintage_.setTrebleMultiply (mult);
 }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
@@ -242,6 +260,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     spring_.setCrossoverFreq (hz);
     nonLinear_.setCrossoverFreq (hz);
     shimmer_.setCrossoverFreq (hz);
+    dattorroVintage_.setCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setHighCrossoverFreq (float hz)
@@ -253,6 +272,7 @@ void DuskVerbEngine::setHighCrossoverFreq (float hz)
     spring_.setHighCrossoverFreq (hz);
     nonLinear_.setHighCrossoverFreq (hz);
     shimmer_.setHighCrossoverFreq (hz);
+    dattorroVintage_.setHighCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setSaturation (float amount)
@@ -264,6 +284,7 @@ void DuskVerbEngine::setSaturation (float amount)
     spring_.setSaturation (amount);
     nonLinear_.setSaturation (amount);
     shimmer_.setSaturation (amount);
+    dattorroVintage_.setSaturation (amount);
 }
 
 void DuskVerbEngine::setModDepth (float depth)
@@ -281,6 +302,7 @@ void DuskVerbEngine::setModDepth (float depth)
     spring_.setModDepth (depth);
     nonLinear_.setModDepth (depth);
     shimmer_.setModDepth (depth);   // hijacked → PITCH (0..1 → 0..24 semitones)
+    dattorroVintage_.setModDepth (depth);
 }
 
 void DuskVerbEngine::setModRate (float hz)
@@ -292,6 +314,7 @@ void DuskVerbEngine::setModRate (float hz)
     spring_.setModRate (hz);
     nonLinear_.setModRate (hz);
     shimmer_.setModRate (hz);       // hijacked → FEEDBACK (0.1..10 Hz → 0..0.95 cascade gain)
+    dattorroVintage_.setModRate (hz);
 }
 
 void DuskVerbEngine::setDiffusion (float amount)
@@ -312,11 +335,21 @@ void DuskVerbEngine::setDiffusion (float amount)
     spring_.setTankDiffusion      (amount);
     nonLinear_.setTankDiffusion   (amount);
     shimmer_.setTankDiffusion     (amount);   // no-op (FDN's mix IS the diffusion)
+    dattorroVintage_.setTankDiffusion (amount);
+}
+
+void DuskVerbEngine::setBassChokeHz (float hz)
+{
+    // Only the DattorroVintage engine uses this. Other engines: no-op.
+    dattorroVintage_.setBassChokeHz (hz);
 }
 
 void DuskVerbEngine::setERLevel (float level)
 {
     erLevelSmoother_.setTarget (std::clamp (level, 0.0f, 1.0f));
+    // DattorroVintage uses its own sparse-tap ER generator and reads
+    // this level directly. Other engines ignore the call.
+    dattorroVintage_.setSparseTapLevel (level);
 }
 
 void DuskVerbEngine::setERSize (float size)
@@ -329,11 +362,6 @@ void DuskVerbEngine::setPreDelay (float milliseconds)
     float clamped = std::clamp (milliseconds, 0.0f, 250.0f);
     int samples = static_cast<int> (clamped * 0.001f * static_cast<float> (sampleRate_));
     preDelaySamples_ = std::min (samples, preDelayMask_);
-}
-
-void DuskVerbEngine::setMix (float dryWet)
-{
-    mixSmoother_.setTarget (std::clamp (dryWet, 0.0f, 1.0f));
 }
 
 void DuskVerbEngine::setLoCut (float hz)
@@ -486,9 +514,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     //              stacking the diffuser would smear the chirp character
     //   • NonLinear — feed-forward TDL with abrupt envelope edges; pre-
     //              smearing the input would round off the gate cliff
+    //   • DattorroVintage — owns its own 6-stage lossless AP front-end
     if (currentEngine_ != EngineType::SixAPTank
         && currentEngine_ != EngineType::Spring
-        && currentEngine_ != EngineType::NonLinear)
+        && currentEngine_ != EngineType::NonLinear
+        && currentEngine_ != EngineType::DattorroVintage)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
 
     // ---- 4) Selected late tank ----
@@ -522,14 +552,28 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             shimmer_.process (tankInL_.data(), tankInR_.data(),
                               tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
+        case EngineType::DattorroVintage:
+            dattorroVintage_.process (tankInL_.data(), tankInR_.data(),
+                                       tankOutL_.data(), tankOutR_.data(), numSamples);
+            break;
     }
 
     // ---- 5) Sum + Shell ----
-    constexpr float kHalfPi = 1.5707963267948966f;
+    // DattorroVintage runs its own discrete sparse-tap ER generator and
+    // already sums it into the late output. Skip the smooth EarlyReflections
+    // contribution for that engine to avoid double-ER.
+    //
+    // Slot 7 (formerly DattorroVintage, now DattorroPlateVintage) stays
+    // bypassed. Briefly re-enabled smooth-ER for it 2026-05-13 but the
+    // erLevelSmoother (which resets to 1.0 in prepareToPlay) introduced
+    // an audible 5-10 ms ER bleed on every processBlock attack while it
+    // ramped down to the preset's er_level=0 target — heard as a tonal
+    // shift on transients. Bypass keeps the engine's output pristine.
+    const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage);
     for (int i = 0; i < numSamples; ++i)
     {
-        const float erL   = erOutL_[static_cast<size_t> (i)];
-        const float erR   = erOutR_[static_cast<size_t> (i)];
+        const float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;
+        const float erR   = useSmoothER ? erOutR_[static_cast<size_t> (i)] : 0.0f;
         const float lateL = tankOutL_[static_cast<size_t> (i)];
         const float lateR = tankOutR_[static_cast<size_t> (i)];
 
@@ -564,20 +608,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         wetL = mid + side * width;
         wetR = mid - side * width;
 
-        const float mix = mixSmoother_.next();
-        const float wetGain = std::sin (mix * kHalfPi);
-        const float dryGain = std::cos (mix * kHalfPi);
-
-        const float dryL = left[i];
-        const float dryR = right[i];
-
+        // gain_trim is a WET-PATH gain — baked into the engine's wet output so
+        // each preset's calibrated wet level is preserved through the
+        // processor-side dry/wet crossfade (the dry signal is applied AFTER
+        // the engine, so trim never touches it).
         const float trim = gainTrimSmoother_.next();
-        // gain_trim is a WET-PATH gain — applies only to the wet signal so
-        // the dry passthrough remains unity-gain. Otherwise a preset with
-        // +17 dB trim (needed to reach the calibrated wet level) would
-        // amplify the dry by +17 dB too, clipping the output even at
-        // Dry/Wet = 0 (full passthrough).
-        left[i]  = dryL * dryGain + wetL * wetGain * trim;
-        right[i] = dryR * dryGain + wetR * wetGain * trim;
+        left[i]  = wetL * trim;
+        right[i] = wetR * trim;
     }
 }

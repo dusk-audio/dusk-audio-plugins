@@ -2,6 +2,7 @@
 
 #include "AlgorithmConfig.h"
 #include "DattorroTank.h"
+#include "DattorroPlateVintage.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
@@ -105,12 +106,16 @@ public:
 
     // Shell parameters (smoothed in process()).
     void setPreDelay  (float milliseconds);
-    void setMix       (float dryWet);
     void setLoCut     (float hz);
     void setHiCut     (float hz);
     void setWidth     (float width);
     void setGainTrim  (float dB);
     void setMonoBelow (float hz);             // 20 = bypass; up = sums lows to mono
+
+    // DattorroVintage-specific: in-loop bass choke HPF cutoff. Other
+    // engines ignore this call. Forwarded from APVTS so it shows up in
+    // host / preset state like any other parameter.
+    void setBassChokeHz (float hz);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
@@ -134,15 +139,25 @@ public:
     // Call after force-pushing parameters to a freshly-cleared engine.
     void snapSmoothersToTargets();
 
+    // Pre-fill THIS engine's pre-tank state (pre-delay buffer + early
+    // reflections signal state) from `other`. Used at preset-swap time so
+    // the new engine has real input history at sample 0 — without this,
+    // ER taps fire from silence over their 8-80 ms delay range, producing
+    // audible discrete onsets that the equal-power crossfade can't mask.
+    // Late-tank state stays cleared (it's algorithm-specific; pre-filling
+    // would feed wrong-coefficient history into a different topology).
+    void copyInputHistoryFrom (const DuskVerbEngine& other);
+
 private:
     // Engines (all owned; only one runs at a time).
     DattorroTank       dattorro_;
-    SixAPTankEngine  sixAPTank_;
+    SixAPTankEngine    sixAPTank_;
     QuadTank           quad_;
     FDNReverb          fdn_;
     SpringEngine       spring_;
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
+    DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-Lex post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -166,7 +181,8 @@ private:
     std::vector<float> erOutL_, erOutR_;
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
-    OnePoleSmoother mixSmoother_;
+    // mixSmoother lives on the processor (so the dry signal stays correlated
+    // across the preset crossfade); engine outputs wet-only.
     OnePoleSmoother widthSmoother_;
     OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother gainTrimSmoother_;
