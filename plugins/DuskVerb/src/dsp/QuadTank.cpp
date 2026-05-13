@@ -85,11 +85,13 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
         {
             int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
             tank.densityAP[i].allocate (dapMax);
-            // jitterDepthFraction left at 0 — see issue #87 follow-up.
-            // The audio-band PM (5-200 Hz, 1.5 % depth) was the second
-            // source of the user-reported vibrato/bell artifact. v0.3 had
-            // non-modulated density APs; we restore that.
-            tank.densityAP[i].jitterDepthFraction = 0.0f;
+            // Sub-audio (1.5 Hz) density-AP jitter — mirrors the DattorroTank
+            // fix. The audio-band variant generated #87 vibrato; slow
+            // random-walk wander breaks comb-tooth phase-lock on Hall/Room/
+            // Chamber presets without sidebands. 5 % depth needed for short
+            // QuadTank density-AP delays (~100-200 samples on small-size
+            // presets) where 3 % wasn't enough to spread comb teeth.
+            tank.densityAP[i].jitterDepthFraction = 0.05f;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));

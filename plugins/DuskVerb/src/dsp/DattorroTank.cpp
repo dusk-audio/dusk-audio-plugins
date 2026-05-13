@@ -149,14 +149,19 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
             int dapMax = static_cast<int> (std::ceil (
                 tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale)) + 4;
             tank.densityAP[i].allocate (dapMax);
-            // jitterDepthFraction left at 0 — the per-AP audio-band PM
-            // (5-200 Hz, 1.5 % depth) was the second source of issue #87's
-            // vibrato/bell artifact. v0.3 had non-modulated density APs;
-            // we restore that behaviour. Short-period modal ringing may
-            // return on plate presets; acceptable trade per the user's
-            // listening evaluation. Re-enable per-AP only if a sub-audio
-            // (<= 2 Hz) variant is wanted later.
-            tank.densityAP[i].jitterDepthFraction = 0.0f;
+            // Sub-audio (1.5 Hz) density-AP jitter — the implementation the
+            // #87 fix's TODO comment anticipated. The audio-band variant
+            // (5-200 Hz at 1.5 % depth) generated FM sidebands heard as
+            // vibrato/bell artifacts; the slow random-walk variant gives the
+            // same comb-tooth phase-lock breakage without any sidebands, so
+            // plate presets stop ringing at their 28-30 ms tank loop period
+            // (Vocal Plate, Vintage Vocal Plate, Fat Pop Plate were all
+            // audibly ringing without this). 2 % depth = ±3-5 samples
+            // wander on each density-AP delay line — enough to spread
+            // 28-30 ms comb teeth on the worst-case plates while keeping
+            // the residual pitch wobble inaudible on sustained content
+            // (3 % was perceptible as chorus on Rich Plate).
+            tank.densityAP[i].jitterDepthFraction = 0.02f;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));

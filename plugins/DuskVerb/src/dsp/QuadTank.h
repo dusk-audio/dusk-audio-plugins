@@ -122,14 +122,17 @@ private:
         void allocate (int maxSamples);
         void clear();
 
-        void updateJitterDepth (float sampleRate)
+        // Sub-audio (1.5 Hz) wander, mirroring the DattorroTank fix. The
+        // audio-band (5-200 Hz) variant generated FM sidebands on the
+        // recursive AP feedback path — perceived as #87's vibrato/bell
+        // artifact. Slow random-walk wander breaks comb-tooth phase-lock
+        // without producing any audio-rate PM.
+        void updateJitterDepth (float /*sampleRate*/)
         {
             if (jitterDepthFraction <= 0.0f || delaySamples <= 0)
                 return;
             jitterLFO.setDepth (static_cast<float> (delaySamples) * jitterDepthFraction);
-            const float period    = 2.0f * static_cast<float> (delaySamples);
-            const float lfoRateHz = sampleRate / period;
-            jitterLFO.setRate (std::min (std::max (lfoRateHz, 5.0f), 200.0f));
+            jitterLFO.setRate (1.5f);
         }
 
         float process (float input, float g)
