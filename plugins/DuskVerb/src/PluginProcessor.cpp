@@ -79,7 +79,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_choke", 1 }, "Bass Choke",
-        juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), 20.0f));
+        juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), fp0.bassChoke));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "saturation", 1 }, "Saturation",

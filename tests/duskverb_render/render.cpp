@@ -285,12 +285,12 @@ namespace
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f, 0.78f, 0.45f, 0.55f, 100.0f, 9000.0f, 1.15f, -1.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
         // Chambers
         if (name == "Wood Chamber")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.05f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
         if (name == "Realistic Chamber")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 14.0f, 1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f, 0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, 2.0f, 20.0f, 1.00f, 5000.0f, 0.05f);
         // Rooms
         if (name == "Tight Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 4.0f, 0.50f, 0.20f, 0.10f, 0.60f, 0.95f, 0.95f, 1500.0f, 0.65f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 4.0f, 0.50f, 0.20f, 0.25f, 0.60f, 0.95f, 0.95f, 1500.0f, 0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.10f);
         if (name == "Studio Room")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f, 0.85f, 0.60f, 0.40f, 80.0f, 9000.0f, 1.05f, 4.5f, 20.0f, 1.00f, 5000.0f, 0.05f);
         if (name == "80s Non-Lin Drum")

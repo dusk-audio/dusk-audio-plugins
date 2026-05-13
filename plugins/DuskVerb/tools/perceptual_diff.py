@@ -833,10 +833,10 @@ def main():
     print("─── EDT vs T20 (perceived vs measured RT60, seconds) ──")
     print(f"  {'band':>7s}  {'Lex_EDT':>8s}  {'Lex_T20':>8s}  {'DV_EDT':>8s}  {'DV_T20':>8s}  {'EDT_diff':>10s}")
     for fc in [125, 250, 500, 1000, 2000, 4000]:
-        le = edt(lex_ir, sr, fc)
-        lt = rt60_t20(lex_ir, sr, fc)
-        de = edt(dv_ir, sr, fc)
-        dt = rt60_t20(dv_ir, sr, fc)
+        le = edt(lex_ir_t, sr, fc)
+        lt = rt60_t20(lex_ir_t, sr, fc)
+        de = edt(dv_ir_t, sr, fc)
+        dt = rt60_t20(dv_ir_t, sr, fc)
         flag = '' if abs(de - le) <= max(le * 0.10, 0.05) else '  ←'
         print(f"  {fc:>5d}Hz  {le:>7.2f}s  {lt:>7.2f}s  {de:>7.2f}s  {dt:>7.2f}s  {de-le:>+9.2f}s{flag}")
 
@@ -905,8 +905,8 @@ def main():
     print("─── Centroid drift per band (Hz from 50-250 ms → 750-1750 ms) ──")
     print(f"  {'band':>7s}  {'Lex_drift':>10s}  {'DV_drift':>9s}  {'diff':>8s}")
     for fc in [250, 500, 1000, 2000]:
-        ld = centroid_drift_db(lex_ir, sr, fc)
-        dd = centroid_drift_db(dv_ir,  sr, fc)
+        ld = centroid_drift_db(lex_ir_t, sr, fc)
+        dd = centroid_drift_db(dv_ir_t,  sr, fc)
         print(f"  {fc:>5d}Hz  {ld:>+10.1f}  {dd:>+9.1f}  {dd-ld:>+8.1f}")
 
     # Per-band stereo correlation — broadband stereo_correlation hides
