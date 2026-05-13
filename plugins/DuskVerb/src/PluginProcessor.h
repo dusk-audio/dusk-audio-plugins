@@ -145,6 +145,7 @@ private:
     std::atomic<float>* midMultParam_       = nullptr;
     std::atomic<float>* crossoverParam_     = nullptr;
     std::atomic<float>* highCrossoverParam_ = nullptr;
+    std::atomic<float>* bassChokeParam_     = nullptr;
     std::atomic<float>* saturationParam_    = nullptr;
     std::atomic<float>* diffusionParam_     = nullptr;
     std::atomic<float>* erLevelParam_       = nullptr;
@@ -169,6 +170,7 @@ private:
     float lastMidMult_     = -1.0f;
     float lastCrossover_   = -1.0f;
     float lastHighCrossover_ = -1.0f;
+    float lastBassChoke_     = -1.0f;
     float lastSaturation_  = -1.0f;
     float lastDiffusion_   = -1.0f;
     float lastModDepth_    = -1.0f;

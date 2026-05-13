@@ -27,6 +27,7 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::Spring:          return juce::Colour (0xff4dd9b8);  // teal — springy mechanical character
         case EngineType::NonLinear:       return juce::Colour (0xffe85a3a);  // red-orange — gated drum punch
         case EngineType::Shimmer:         return juce::Colour (0xffd47de8);  // lavender-pink — ethereal cascade
+        case EngineType::DattorroVintage: return juce::Colour (0xff00d9ff); // cyan — dense plate
     }
     return juce::Colour (0xffff7a3d);
 }

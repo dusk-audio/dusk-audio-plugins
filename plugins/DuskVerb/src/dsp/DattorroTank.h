@@ -147,18 +147,17 @@ private:
         void allocate (int maxSamples);
         void clear();
 
-        // Push the latest delaySamples into the LFO. Both depth (1.5 % of
-        // delaySamples) AND rate (period = 2 × delaySamples, so the wander
-        // traverses meaningful range within one ring period) scale with the
-        // delay so the *relative* modulation stays constant across all sizes.
-        void updateJitterDepth (float sampleRate)
+        // Depth tracks delaySamples (fractional). Rate is FIXED at sub-
+        // audio 1.5 Hz: the original delay-period-scaled rate (5-200 Hz)
+        // generated broadband FM sidebands on the recursive AP feedback
+        // path — perceived as vibrato/bell (issue #87). Slow random-walk
+        // wander breaks comb-tooth phase-lock without sidebands.
+        void updateJitterDepth (float /*sampleRate*/)
         {
             if (jitterDepthFraction <= 0.0f || delaySamples <= 0)
                 return;
             jitterLFO.setDepth (static_cast<float> (delaySamples) * jitterDepthFraction);
-            const float period    = 2.0f * static_cast<float> (delaySamples);
-            const float lfoRateHz = sampleRate / period;
-            jitterLFO.setRate (std::min (std::max (lfoRateHz, 5.0f), 200.0f));
+            jitterLFO.setRate (1.5f);
         }
 
         float process (float input, float g)
