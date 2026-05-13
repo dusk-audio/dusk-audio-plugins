@@ -67,6 +67,12 @@ struct FactoryPreset
     float sixAPEarlyMix        = 0.5f;
     float sixAPOutputTrim      = 1.3f;
 
+    // In-loop bass-choke HPF cutoff (Hz). Only the legacy HighDensityPlate
+    // engine used this; current engines ignore it. 20 Hz = effective
+    // bypass. Placed last so existing brace-init preset rows don't need
+    // to grow trailing arguments — every row picks up the default.
+    float bassChoke            = 20.0f;
+
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
         auto setIfExists = [&apvts] (const juce::String& id, float v) {

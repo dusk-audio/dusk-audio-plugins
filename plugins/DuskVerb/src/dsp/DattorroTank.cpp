@@ -214,13 +214,16 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     if (softOnsetMs_ > 0.0f)
         setSoftOnsetMs (softOnsetMs_);
 
-    // Clear stateful trackers (structural HF damping state). Without this,
-    // a host re-prepare would start with empty delay buffers but retain
-    // the previous run's tracker state.
+    // Clear stateful trackers. Without this, a host re-prepare would start
+    // with empty delay buffers but retain the previous run's tracker state
+    // (structural HF filter, AP1 mod source, soft-onset ramp, limiter
+    // envelope). Soft-onset and limiter resets mirror clearBuffers().
     structHFStateL_ = 0.0f;
     structHFStateR_ = 0.0f;
     leftTank_ .savedAP1Mod = 0.0f;
     rightTank_.savedAP1Mod = 0.0f;
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_    = 0.0f;
 }
 
 // -----------------------------------------------------------------------
