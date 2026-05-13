@@ -1,0 +1,100 @@
+#pragma once
+
+#include "DattorroTank.h"
+
+#include <cmath>
+
+// DattorroPlateVintage — Dattorro figure-8 tank + vintage-Lex corrective
+// EQ chain for the "Vintage Vocal Plate" preset.
+//
+// Built 2026-05-13 as a structural fix for the boxiness artifact that
+// the bare Dattorro tank produces in the 200-500 Hz band on noise-burst
+// tails (~+12 dB peak/flank ratio above the Lex Vintage Plate target).
+// Param sweeps (low_crossover × bass_mult × mid_mult) couldn't move the
+// box ratio below +9 dB above Lex — it's intrinsic to the tank's modal
+// structure. The existing DattorroTank stays untouched (other presets
+// depend on its current sound); this wrapper adds a fixed post-EQ chain
+// to carve out the 300-400 Hz hump and lift the Lex-style ~8 kHz
+// brick-wall ceiling without altering the underlying tank.
+//
+// Interface mirrors DattorroVintage so the DuskVerbEngine glue layer
+// is a pure rename — call sites unchanged. HDP-specific setters
+// (setBassChokeHz, setSparseTapLevel, setSubMultiply, setSubCrossoverFreq)
+// are no-ops here because the Dattorro topology doesn't use them.
+class DattorroPlateVintage
+{
+public:
+    void prepare (double sampleRate, int maxBlockSize);
+    void clearBuffers();
+    void process (const float* inputL, const float* inputR,
+                  float* outputL, float* outputR, int numSamples);
+
+    // Forwarded to internal DattorroTank — same semantics as DattorroTank.
+    void setDecayTime         (float seconds);
+    void setSize              (float size);
+    void setBassMultiply      (float mult);
+    void setMidMultiply       (float mult);
+    void setTrebleMultiply    (float mult);
+    void setCrossoverFreq     (float hz);
+    void setHighCrossoverFreq (float hz);
+    void setSaturation        (float amount);
+    void setModDepth          (float depth);
+    void setModRate           (float hz);
+    void setTankDiffusion     (float amount);
+    void setFreeze            (bool frozen);
+
+    // HDP-compat no-ops. The Dattorro architecture has no in-loop bass
+    // choke, no sparse-tap ER generator, no 4-band damper sub-band.
+    // Calls accepted silently so the engine glue layer stays uniform.
+    void setSubMultiply       (float /*mult*/) {}
+    void setSubCrossoverFreq  (float /*hz*/)   {}
+    void setBassChokeHz       (float /*hz*/)   {}
+    void setSparseTapLevel    (float /*level*/) {}
+
+private:
+    DattorroTank tank_;
+
+    // RBJ peaking biquad — vintage-Lex corrective EQ. Two stages used:
+    //   1) box-cut: 350 Hz peak, Q=1.4, gain set in prepare() to flatten
+    //      the Dattorro tank's intrinsic 200-500 Hz hump.
+    //   2) low_shelf-style "tightness" cut: gentler low-mid trim that
+    //      keeps the bass from getting woofy after the box is gone.
+    struct PeakBiquad
+    {
+        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+        float z1L = 0.0f, z2L = 0.0f, z1R = 0.0f, z2R = 0.0f;
+        void design (float fcHz, float Q, float gainDb, float sr)
+        {
+            const float A     = std::pow (10.0f, gainDb / 40.0f);
+            const float w0    = 6.283185307f * std::min (fcHz, 0.49f * sr) / sr;
+            const float cosw  = std::cos (w0);
+            const float sinw  = std::sin (w0);
+            const float alpha = sinw / (2.0f * std::max (Q, 0.1f));
+            const float a0    = 1.0f + alpha / A;
+            b0 = (1.0f + alpha * A) / a0;
+            b1 = -2.0f * cosw / a0;
+            b2 = (1.0f - alpha * A) / a0;
+            a1 = -2.0f * cosw / a0;
+            a2 = (1.0f - alpha / A) / a0;
+        }
+        float processL (float x)
+        {
+            const float y = b0 * x + z1L;
+            z1L = b1 * x - a1 * y + z2L;
+            z2L = b2 * x - a2 * y;
+            return y;
+        }
+        float processR (float x)
+        {
+            const float y = b0 * x + z1R;
+            z1R = b1 * x - a1 * y + z2R;
+            z2R = b2 * x - a2 * y;
+            return y;
+        }
+        void reset() { z1L = z2L = z1R = z2R = 0.0f; }
+    };
+
+    PeakBiquad boxCut_;       // 350 Hz, narrow, -6 dB
+    PeakBiquad lowMidTrim_;   // 200 Hz, broad, -2 dB
+    bool prepared_ = false;
+};

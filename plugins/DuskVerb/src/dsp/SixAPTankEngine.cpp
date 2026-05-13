@@ -88,13 +88,11 @@ void SixAPTankEngine::prepare (double sampleRate, int maxBlockSize)
         {
             t.densityAP[i].allocate (static_cast<int> (
                 static_cast<float> (densBase[i]) * rateRatio * kMaxSizeScale + 16.0f));
-            // jitterDepthFraction left at 0 — see issue #87 follow-up.
-            // The per-AP RandomWalkLFO ran at 5-200 Hz (audio band) with
-            // 1.5 % depth, producing audible vibrato/bell-like PM artefacts
-            // at high wet levels. v0.3 had no SixAPTank, but the analogous
-            // density APs in DattorroTank and QuadTank were non-modulated;
-            // we match that here.
-            t.densityAP[i].jitterDepthFraction = 0.0f;
+            // Sub-audio (1.5 Hz) density-AP jitter — mirrors DattorroTank/
+            // QuadTank fix. Audio-band variant produced #87 vibrato/bell;
+            // slow random-walk wander breaks comb-tooth phase-lock on Hall/
+            // Ambient presets without sidebands. 3 % depth.
+            t.densityAP[i].jitterDepthFraction = 0.03f;
         }
 
         t.damping.prepare (static_cast<float> (sampleRate));

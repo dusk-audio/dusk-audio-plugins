@@ -78,6 +78,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::NormalisableRange<float> (1000.0f, 12000.0f, 0.0f, 0.5f), fp0.highCrossover));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "bass_choke", 1 }, "Bass Choke",
+        juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), 20.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "saturation", 1 }, "Saturation",
         juce::NormalisableRange<float> (0.0f, 1.0f), fp0.saturation));
 
@@ -147,6 +151,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     midMultParam_       = parameters.getRawParameterValue ("mid_mult");
     crossoverParam_     = parameters.getRawParameterValue ("crossover");
     highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
+    bassChokeParam_     = parameters.getRawParameterValue ("bass_choke");
     saturationParam_    = parameters.getRawParameterValue ("saturation");
     diffusionParam_     = parameters.getRawParameterValue ("diffusion");
     erLevelParam_       = parameters.getRawParameterValue ("er_level");
@@ -252,6 +257,21 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (numSamples == 0)
         return;
 
+    // Defensive clamp. JUCE contract: numSamples <= samplesPerBlock passed to
+    // prepareToPlay(), and fadeBufL_/R_ + dryBufL_/R_ are sized to that
+    // (kMinPreparedBlockSize-floored). Some hosts violate the contract on
+    // tempo-sync edge cases or aggressive lookahead — without this clamp the
+    // memcpy + indexed access below would overrun. Cap at preparedBlockSize_
+    // so the worst case is a partially-processed block, not a crash. The
+    // unprocessed tail is zeroed so the host doesn't see stale input or
+    // garbage past the clamp boundary.
+    if (preparedBlockSize_ > 0 && numSamples > preparedBlockSize_)
+    {
+        for (int ch = 0; ch < totalNumOutputChannels; ++ch)
+            buffer.clear (ch, preparedBlockSize_, numSamples - preparedBlockSize_);
+        numSamples = preparedBlockSize_;
+    }
+
     // Promote mono input to stereo before any other processing.
     if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
         buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
@@ -354,6 +374,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastMidMult_,   midMultParam_->load(),   [this] (float v) { activeEngine_->setMidMultiply (v); });
     pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
     pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
+    pushIfChanged (lastBassChoke_,     bassChokeParam_->load(),     [this] (float v) { activeEngine_->setBassChokeHz (v); });
     pushIfChanged (lastSaturation_,    saturationParam_->load(),    [this] (float v) { activeEngine_->setSaturation (v); });
     pushIfChanged (lastDiffusion_, diffusionParam_->load(), [this] (float v) { activeEngine_->setDiffusion (v); });
     pushIfChanged (lastModDepth_,  modDepthParam_->load(),  [this] (float v) { activeEngine_->setModDepth (v); });
@@ -496,7 +517,7 @@ juce::AudioProcessorEditor* DuskVerbProcessor::createEditor()
 // sixAPEarlyMix, sixAPOutputTrim) to the state ValueTree. Loading a v1
 // save file is fully supported — missing properties fall through to the
 // engine's default values, which match the v1 historical behavior.
-static constexpr int kStateVersion = 2;
+static constexpr int kStateVersion = 3;
 static const juce::Identifier kStateVersionId { "stateVersion" };
 
 void DuskVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -532,6 +553,25 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
                       : 1;
     if (version > kStateVersion)
         return;  // future state — keep current params, don't risk mis-mapping
+
+    // v3 reordered the algorithm enum so the two Dattorro variants sit
+    // adjacent in the dropdown. Old saved sessions store algorithm as
+    // the pre-reorder index; remap to the new layout before replaceState
+    // so the loaded plugin selects the engine the user originally saved.
+    if (version < 3)
+    {
+        for (int i = 0; i < tree.getNumChildren(); ++i)
+        {
+            auto child = tree.getChild (i);
+            if (child.getProperty ("id").toString() == "algorithm")
+            {
+                const int oldIdx = static_cast<int> (child.getProperty ("value"));
+                const int newIdx = migrateLegacyAlgorithmIndex (oldIdx);
+                child.setProperty ("value", newIdx, nullptr);
+                break;
+            }
+        }
+    }
 
     parameters.replaceState (tree);
 
@@ -598,6 +638,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setMidMultiply       (midMultParam_->load());
     target->setCrossoverFreq     (crossoverParam_->load());
     target->setHighCrossoverFreq (highCrossoverParam_->load());
+    target->setBassChokeHz (bassChokeParam_->load());
     target->setSaturation        (saturationParam_->load());
     target->setDiffusion         (diffusionParam_->load());
     target->setModDepth          (modDepthParam_->load());
@@ -633,6 +674,7 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastMidMult_       = midMultParam_->load();
     lastCrossover_     = crossoverParam_->load();
     lastHighCrossover_ = highCrossoverParam_->load();
+    lastBassChoke_     = bassChokeParam_->load();
     lastSaturation_    = saturationParam_->load();
     lastDiffusion_     = diffusionParam_->load();
     lastModDepth_      = modDepthParam_->load();

@@ -161,17 +161,16 @@ private:
         //     phase-locking even on the shortest APs (otherwise a 7 Hz
         //     LFO completes only a tiny fraction of a transition within
         //     a 7 ms ring → ring stays coherent → audible echo).
-        void updateJitterDepth (float sampleRate)
+        // Sub-audio (1.5 Hz) wander — mirrors the DattorroTank/QuadTank fix.
+        // Audio-band rates (5-200 Hz) generated FM sidebands on the
+        // recursive AP feedback path (issue #87 vibrato/bell). Slow
+        // random-walk wander breaks comb-tooth phase-lock without sidebands.
+        void updateJitterDepth (float /*sampleRate*/)
         {
             if (jitterDepthFraction <= 0.0f || delaySamples <= 0)
                 return;
             jitterLFO.setDepth (static_cast<float> (delaySamples) * jitterDepthFraction);
-            const float period = 2.0f * static_cast<float> (delaySamples);
-            const float lfoRateHz = sampleRate / period;
-            // Clamp to a musically sensible range. Too slow (< 5 Hz) doesn't
-            // break short rings; too fast (> 200 Hz) becomes audible flutter.
-            const float clamped = std::min (std::max (lfoRateHz, 5.0f), 200.0f);
-            jitterLFO.setRate (clamped);
+            jitterLFO.setRate (1.5f);
         }
 
         float process (float input, float g)
