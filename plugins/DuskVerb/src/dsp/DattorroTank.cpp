@@ -146,8 +146,16 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
         // buffer underruns when delayScale_ > 1.
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
-            int dapMax = static_cast<int> (std::ceil (
-                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale)) + 4;
+            const float baseMax =
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale;
+            // Jitter depth is 0.02 × delaySamples per the assignment below.
+            // Add explicit headroom for the read offset (jitter) plus 4
+            // samples for cubic Hermite (reads intIdx-1 .. intIdx+2) plus
+            // a safety margin. Without this, a worst-case jitter sample
+            // could read into not-yet-written buffer positions.
+            const int extraSamples = static_cast<int> (std::ceil (baseMax * 0.02f));
+            const int dapMax = static_cast<int> (std::ceil (baseMax))
+                             + extraSamples + 4;
             tank.densityAP[i].allocate (dapMax);
             // Sub-audio (1.5 Hz) density-AP jitter — the implementation the
             // #87 fix's TODO comment anticipated. The audio-band variant
