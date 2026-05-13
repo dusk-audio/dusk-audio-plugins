@@ -85,9 +85,13 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
         {
             int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
             tank.densityAP[i].allocate (dapMax);
-            // Lexicon spin-and-wander on each density AP — same fix as
-            // SixAPTank + Dattorro got. Breaks AP modal phase-locking.
-            tank.densityAP[i].jitterDepthFraction = 0.015f;  // 1.5 % wander
+            // Sub-audio (1.5 Hz) density-AP jitter — mirrors the DattorroTank
+            // fix. The audio-band variant generated #87 vibrato; slow
+            // random-walk wander breaks comb-tooth phase-lock on Hall/Room/
+            // Chamber presets without sidebands. 5 % depth needed for short
+            // QuadTank density-AP delays (~100-200 samples on small-size
+            // presets) where 3 % wasn't enough to spread comb teeth.
+            tank.densityAP[i].jitterDepthFraction = 0.05f;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));
@@ -97,14 +101,21 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // Random-walk LFOs — distinct seeds so each tank's modulation traces an
     // independent path. Per-tank rate detune (in updateLFORates) further
-    // ensures the four streams never settle into a beating pattern.
-    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
+    // ensures the streams never settle into a beating pattern. Three LFOs
+    // per tank: AP1 modulation + delay1 + delay2 read taps. The delay-tap
+    // seeds are XOR-derived from the AP1 seed so all three are deterministic
+    // and decorrelated. Mirrors DattorroTank v0.5.3.
+    static constexpr uint32_t kLFOSeeds[kNumTanks] = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
 
     for (int t = 0; t < kNumTanks; ++t)
     {
-        tanks_[t].lfo.prepare (static_cast<float> (sampleRate), kLFOSeeds[t]);
-        tanks_[t].noiseState = kNoiseSeeds[t];
+        const float sr = static_cast<float> (sampleRate);
+        tanks_[t].lfo       .prepare (sr, kLFOSeeds[t]);
+        tanks_[t].delay1Lfo .prepare (sr, kLFOSeeds[t] ^ 0xA5A5A5A5u);
+        tanks_[t].delay2Lfo .prepare (sr, kLFOSeeds[t] ^ 0x5A5A5A5Au);
+        tanks_[t].savedAP1Mod    = 0.0f;
+        tanks_[t].savedDelay1Mod = 0.0f;
+        tanks_[t].savedDelay2Mod = 0.0f;
 
         // Per-density-AP jitter LFOs with distinct seeds per tank+stage.
         for (int i = 0; i < kNumDensityAPs; ++i)
@@ -112,7 +123,7 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
             const std::uint32_t s = 0xBADBEEFu
                                     + static_cast<std::uint32_t> (t * 0x9E3779B9u)
                                     + static_cast<std::uint32_t> (i * 31337);
-            tanks_[t].densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate), s);
+            tanks_[t].densityAP[i].jitterLFO.prepare (sr, s);
         }
     }
 
@@ -124,32 +135,18 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
     setModDepth (lastModDepthRaw_);
 
     // Replay sample-rate-dependent setters so their scaled state is correct
-    // after a host re-prepare at a different sample rate.
-    if (lastNoiseModRawSamples_ >= 0.0f)
-        setNoiseModDepth (lastNoiseModRawSamples_);
+    // after a host re-prepare at a different sample rate. setModDepth()
+    // (called above) updates delay1Lfo/delay2Lfo depths — there's no
+    // separate noise-jitter setter any more (the white-noise modulation
+    // has been replaced by the smoothstep-interpolated delay LFOs).
     if (lastStructHFRawHz_ > 0.0f)
         setStructuralHFDamping (lastStructHFRawHz_);
 
-    // Terminal decay: sample-rate-invariant smoothing coefficients.
-    // At 44.1kHz these produce the same behavior as the original constants.
-    constexpr float kRmsTauMs  = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
-    constexpr float kPeakTauMs = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
-    float sr = static_cast<float> (sampleRate);
-    rmsAlpha_       = std::exp (-1000.0f / (kRmsTauMs * sr));
-    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
-
-    // Clear all per-tank stateful fields (RMS history, terminal-decay flags,
-    // structural HF damping state). Without this, a host re-prepare would
-    // start with empty delay buffers but retain the previous run's tracker
+    // Clear structural HF damping state. Without this, a host re-prepare
+    // would start with empty delay buffers but retain previous tracker
     // state, leaking session state across reconfigure.
     for (int t = 0; t < kNumTanks; ++t)
-    {
-        auto& tank = tanks_[t];
-        tank.currentRMS = 0.0f;
-        tank.peakRMS = 0.0f;
-        tank.terminalDecayActive = false;
         structHFState_[t] = 0.0f;
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -158,9 +155,6 @@ void QuadTank::process (const float* inputL, const float* inputR,
 {
     if (! prepared_)
         return;
-
-    const float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
-                                  ? independentNoiseModDepth_ : noiseModDepth_;
 
     // Drive-style saturation (see DattorroTank for rationale).
     const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
@@ -199,8 +193,15 @@ void QuadTank::process (const float* inputL, const float* inputR,
             tank.ap1Buffer.write (ap1In);
             float ap1Out = ap1Delayed - coeff1 * ap1In;
 
-            // --- Delay 1 with noise jitter ---
-            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
+            // --- Delay 1 with band-limited random-walk modulation ---
+            // Replaces per-sample white-noise jitter (issue #87). LFO output
+            // is bounded to ±delayModDepthSamples_ and band-limited by
+            // smoothstep interpolation, so it wanders the read tap enough
+            // to break modal resonances without producing audio-rate FM
+            // sidebands.
+            float jitter1 = frozen_ ? tank.savedDelay1Mod : tank.delay1Lfo.next();
+            if (! frozen_)
+                tank.savedDelay1Mod = jitter1;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -228,8 +229,10 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float coeff2 = frozen_ ? 0.0f : decayDiff2_;
             float ap2Out = tank.ap2.process (damped, coeff2);
 
-            // --- Delay 2 with noise jitter ---
-            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
+            // --- Delay 2 with band-limited random-walk modulation ---
+            float jitter2 = frozen_ ? tank.savedDelay2Mod : tank.delay2Lfo.next();
+            if (! frozen_)
+                tank.savedDelay2Mod = jitter2;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -238,19 +241,6 @@ void QuadTank::process (const float* inputL, const float* inputR,
                                         ? +DspUtils::kDenormalPrevention
                                         : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
-
-            // Terminal decay HARD-DISABLED — see VocalPlatePreset.cpp for rationale.
-            if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
-            {
-                float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = rmsAlpha_ * tank.currentRMS + (1.0f - rmsAlpha_) * sampleEnergy;
-                if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= peakDecayAlpha_;
-                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
-                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
-                if (tank.terminalDecayActive)
-                    del2Out *= terminalDecayFactor_;
-            }
 
             // Cross-feed: feeds next tank. Soft-clip on the way out — analog
             // tape/transformer-style warmth that engages only when transients
@@ -349,24 +339,38 @@ void QuadTank::setCrossoverFreq (float hz)
 
 void QuadTank::setModDepth (float depth)
 {
+    // Cache the original requested value so prepare() can replay it at a new
+    // sample rate without losing precision from clamping.
     lastModDepthRaw_ = depth;
+
+    // Clamp depth so modDepthSamples_ cannot exceed the ±32-sample modulation
+    // headroom reserved in prepare()'s buffer allocation (maxModExcursion).
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = depth * 16.0f * rateRatio;
-    noiseModDepth_ = depth * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
+    float maxDepth = 32.0f / (16.0f * std::max (rateRatio, 1.0f));
+    float clampedDepth = std::clamp (depth, 0.0f, maxDepth);
+    modDepthSamples_ = clampedDepth * 16.0f * rateRatio;
+
+    // Delay-tap modulation depth. Half of the AP1 LFO depth so the long
+    // delay reads don't pitch-warp on sustained content (mirrors
+    // DattorroTank: a 100 ms delay wandering ±8 samples at <1 Hz is well
+    // below detection threshold), while still moving the read tap enough
+    // to disrupt modal resonances on long decays.
+    delayModDepthSamples_ = clampedDepth * 8.0f * rateRatio;
+
     for (int t = 0; t < kNumTanks; ++t)
-        tanks_[t].lfo.setDepth (modDepthSamples_);
+    {
+        tanks_[t].lfo       .setDepth (modDepthSamples_);
+        tanks_[t].delay1Lfo .setDepth (delayModDepthSamples_);
+        tanks_[t].delay2Lfo .setDepth (delayModDepthSamples_);
+    }
 }
 
-void QuadTank::setNoiseModDepth (float samples)
-{
-    // Independent noise jitter, decoupled from LFO modDepth. When set (>= 0),
-    // this overrides the modDepth-coupled noise jitter. Mirrors DattorroTank.
-    lastNoiseModRawSamples_ = samples;
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    // Clamp to the modulation headroom reserved in prepare() (32 samples at base rate)
-    float maxAllowed = 32.0f * rateRatio;
-    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxAllowed);
-}
+// setNoiseModDepth() removed in fix for issue #87: per-sample white-noise
+// jitter on delay reads has been replaced by smoothstep-interpolated
+// random-walk LFOs (delay1Lfo / delay2Lfo). Same diagnosis as DattorroTank
+// v0.5.3 — white noise on a delay-line read is audio-rate phase modulation,
+// which generates broadband FM sidebands audible as vibrato/bell-like
+// artifacts.
 
 void QuadTank::setModRate (float hz)
 {
@@ -398,12 +402,7 @@ void QuadTank::setFreeze (bool frozen)
     if (wasTransition)
     {
         for (int t = 0; t < kNumTanks; ++t)
-        {
             structHFState_[t] = 0.0f;
-            tanks_[t].currentRMS = 0.0f;
-            tanks_[t].peakRMS = 0.0f;
-            tanks_[t].terminalDecayActive = false;
-        }
     }
 }
 void QuadTank::setLateGainScale (float scale) { lateGainScale_ = std::max (scale, 0.0f); }
@@ -411,13 +410,6 @@ void QuadTank::setLateGainScale (float scale) { lateGainScale_ = std::max (scale
 void QuadTank::setHighCrossoverFreq (float hz)
 {
     highCrossoverFreq_ = std::max (hz, 100.0f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void QuadTank::setAirDampingScale (float scale)
-{
-    airDampingScale_ = std::max (scale, 0.1f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -460,19 +452,6 @@ void QuadTank::setStructuralHFDamping (float hz)
     structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
-void QuadTank::setTerminalDecay (float thresholdDB, float factor)
-{
-    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    // Accept the full [0.0, 1.0] range to match DattorroTank and the
-    // wrapper's pass-through behavior. PluginProcessor already gates the
-    // override path on factor>0.001, so an inadvertent factor=0 from the
-    // automation layer cannot reach here in normal use; but if the
-    // calibrator or a future API caller wants a value below 0.8, it
-    // should be honored exactly rather than silently rounded up.
-    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
-    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
-}
-
 void QuadTank::clearBuffers()
 {
     for (int t = 0; t < kNumTanks; ++t)
@@ -486,17 +465,13 @@ void QuadTank::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
-        tank.currentRMS = 0.0f;
-        tank.peakRMS = 0.0f;
-        tank.terminalDecayActive = false;
     }
-    // Re-seed the random-walk LFOs (and noise PRNGs) so each clear gives the
-    // same predictable starting state — important for A/B compare and bypass
-    // toggling in DAWs. Density-AP jitter LFOs are reseeded too so per-stage
-    // wander is also deterministic across resets (the buffer .clear() above
-    // zeros sample state but leaves the LFO phase/seed where it left off).
-    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
+    // Re-seed the random-walk LFOs so each clear gives the same predictable
+    // starting state — important for A/B compare and bypass toggling in
+    // DAWs. Density-AP jitter LFOs are reseeded too so per-stage wander is
+    // also deterministic across resets (the buffer .clear() above zeros
+    // sample state but leaves the LFO phase/seed where it left off).
+    static constexpr uint32_t kLFOSeeds[kNumTanks] = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
     const float sr = static_cast<float> (sampleRate_);
     for (int t = 0; t < kNumTanks; ++t)
     {
@@ -505,7 +480,18 @@ void QuadTank::clearBuffers()
         tanks_[t].lfo.setRate  (modRateHz_);
         tanks_[t].lfo.setDepth (modDepthSamples_);
         tanks_[t].savedAP1Mod = 0.0f;
-        tanks_[t].noiseState = kNoiseSeeds[t];
+
+        // Reset the delay-tap LFOs too. Re-prepare with the same XOR-derived
+        // seeds used in prepare() so each engine instance produces the same
+        // wander pattern from a clean state — important during the dual-
+        // engine preset crossfade so the swapped-in engine starts
+        // deterministically rather than carrying stale LFO phase.
+        tanks_[t].delay1Lfo.prepare (sr, kLFOSeeds[t] ^ 0xA5A5A5A5u);
+        tanks_[t].delay1Lfo.setDepth (delayModDepthSamples_);
+        tanks_[t].delay2Lfo.prepare (sr, kLFOSeeds[t] ^ 0x5A5A5A5Au);
+        tanks_[t].delay2Lfo.setDepth (delayModDepthSamples_);
+        tanks_[t].savedDelay1Mod = 0.0f;
+        tanks_[t].savedDelay2Mod = 0.0f;
 
         // Mirror prepare()'s per-density-AP seeding scheme so each stage's
         // jitterLFO restarts from the same deterministic state.
@@ -518,6 +504,8 @@ void QuadTank::clearBuffers()
             tanks_[t].densityAP[i].updateJitterDepth (sr);
         }
     }
+    // updateLFORates() needs to run after re-prepare to set per-tap rates.
+    updateLFORates();
 }
 
 // -----------------------------------------------------------------------
@@ -579,7 +567,9 @@ void QuadTank::updateDecayCoefficients()
         float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         // True 3-band: mid band uses midMultiply_ (default 1.0 = natural rate).
         float gMid  = std::clamp (std::pow (gBase, 1.0f / midMultiply_), 0.001f, 0.9999f);
-        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
+        // Inlined airDampingScale = 0.70 (former tunable, never set externally).
+        // Pre-computed product trebleMultiply_ * 0.70f.
+        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * 0.70f)), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
     }
@@ -593,6 +583,17 @@ void QuadTank::updateLFORates()
     static constexpr float kRateMultipliers[kNumTanks] = {
         1.0f, 1.1180339887f, 0.8944271910f, 1.2360679775f  // 1, √5/2, 2/√5, (1+√5)/2/φ
     };
+    // Detune the delay-tap LFOs from the AP1 rate. Slightly slower on
+    // delay1, slightly faster on delay2 — the three modulators in each
+    // tank then trace incommensurable paths and don't beat against each
+    // other periodically (mirrors DattorroTank v0.5.3).
+    constexpr float kDelay1RateScale = 0.83f;
+    constexpr float kDelay2RateScale = 1.27f;
     for (int t = 0; t < kNumTanks; ++t)
-        tanks_[t].lfo.setRate (modRateHz_ * kRateMultipliers[t]);
+    {
+        const float ap1Rate = modRateHz_ * kRateMultipliers[t];
+        tanks_[t].lfo       .setRate (ap1Rate);
+        tanks_[t].delay1Lfo .setRate (ap1Rate * kDelay1RateScale);
+        tanks_[t].delay2Lfo .setRate (ap1Rate * kDelay2RateScale);
+    }
 }

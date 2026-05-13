@@ -78,6 +78,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::NormalisableRange<float> (1000.0f, 12000.0f, 0.0f, 0.5f), fp0.highCrossover));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "bass_choke", 1 }, "Bass Choke",
+        juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), fp0.bassChoke));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "saturation", 1 }, "Saturation",
         juce::NormalisableRange<float> (0.0f, 1.0f), fp0.saturation));
 
@@ -147,6 +151,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     midMultParam_       = parameters.getRawParameterValue ("mid_mult");
     crossoverParam_     = parameters.getRawParameterValue ("crossover");
     highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
+    bassChokeParam_     = parameters.getRawParameterValue ("bass_choke");
     saturationParam_    = parameters.getRawParameterValue ("saturation");
     diffusionParam_     = parameters.getRawParameterValue ("diffusion");
     erLevelParam_       = parameters.getRawParameterValue ("er_level");
@@ -200,6 +205,18 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         // engine output at a time.
         fadeBufL_.assign (static_cast<size_t> (safeBlockSize), 0.0f);
         fadeBufR_.assign (static_cast<size_t> (safeBlockSize), 0.0f);
+        dryBufL_ .assign (static_cast<size_t> (safeBlockSize), 0.0f);
+        dryBufR_ .assign (static_cast<size_t> (safeBlockSize), 0.0f);
+
+        // Dry/wet mix smoother lives on the processor — see PluginProcessor.h.
+        // 2 ms matches the engine's old internal mix-smoothing time so user
+        // knob movements stay responsive but any preset-driven mix jump
+        // ramps instead of stepping.
+        mixSmoother_.setSmoothingTime (sampleRate, 2.0f);
+        const bool busMode = busModeParam_ && busModeParam_->load() >= 0.5f;
+        const float initialMix = busMode ? 1.0f
+                                         : (mixParam_ ? mixParam_->load() : 1.0f);
+        mixSmoother_.reset (initialMix);
 
         // Cancel any in-flight fade — both engines are reset, no tail to
         // continue.
@@ -239,6 +256,21 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     if (numSamples == 0)
         return;
+
+    // Defensive clamp. JUCE contract: numSamples <= samplesPerBlock passed to
+    // prepareToPlay(), and fadeBufL_/R_ + dryBufL_/R_ are sized to that
+    // (kMinPreparedBlockSize-floored). Some hosts violate the contract on
+    // tempo-sync edge cases or aggressive lookahead — without this clamp the
+    // memcpy + indexed access below would overrun. Cap at preparedBlockSize_
+    // so the worst case is a partially-processed block, not a crash. The
+    // unprocessed tail is zeroed so the host doesn't see stale input or
+    // garbage past the clamp boundary.
+    if (preparedBlockSize_ > 0 && numSamples > preparedBlockSize_)
+    {
+        for (int ch = 0; ch < totalNumOutputChannels; ++ch)
+            buffer.clear (ch, preparedBlockSize_, numSamples - preparedBlockSize_);
+        numSamples = preparedBlockSize_;
+    }
 
     // Promote mono input to stereo before any other processing.
     if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
@@ -289,7 +321,15 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // SixAPBrightnessState writes preceding the flag are visible here. The
     // swap reconfigures the idle engine from the just-applied APVTS values
     // and arms the equal-power crossfade window.
-    if (pendingPresetSwap_.exchange (false, std::memory_order_acquire))
+    //
+    // Gated on `presetFadeRemaining_ == 0`: starting a new swap mid-fade
+    // would mean clearAllBuffers'ing the engine that's currently fading out,
+    // dropping its tail abruptly — audible as a click on rapid preset
+    // cycling. Holding the flag until the current fade completes defers the
+    // swap by up to ~50 ms; the UI stays responsive (each click registers,
+    // it just applies after the prior tail finishes).
+    if (presetFadeRemaining_ == 0
+        && pendingPresetSwap_.exchange (false, std::memory_order_acquire))
         performPresetSwap();
 
     // ---- Push parameter changes to the engine on edges only ----
@@ -334,6 +374,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastMidMult_,   midMultParam_->load(),   [this] (float v) { activeEngine_->setMidMultiply (v); });
     pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
     pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
+    pushIfChanged (lastBassChoke_,     bassChokeParam_->load(),     [this] (float v) { activeEngine_->setBassChokeHz (v); });
     pushIfChanged (lastSaturation_,    saturationParam_->load(),    [this] (float v) { activeEngine_->setSaturation (v); });
     pushIfChanged (lastDiffusion_, diffusionParam_->load(), [this] (float v) { activeEngine_->setDiffusion (v); });
     pushIfChanged (lastModDepth_,  modDepthParam_->load(),  [this] (float v) { activeEngine_->setModDepth (v); });
@@ -346,10 +387,13 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastGainTrim_,  gainTrimParam_->load(),  [this] (float v) { activeEngine_->setGainTrim (v); });
     pushIfChanged (lastMonoBelow_, monoBelowParam_->load(), [this] (float v) { activeEngine_->setMonoBelow (v); });
 
-    // Mix: bus_mode forces 100 % wet (override of user mix knob).
+    // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
+    // smoother lives on the processor (see PluginProcessor.h) so the dry
+    // signal is added AFTER any preset crossfade and stays correlated
+    // across the swap.
     const bool busMode = busModeParam_->load() >= 0.5f;
     const float mixVal = busMode ? 1.0f : mixParam_->load();
-    pushIfChanged (lastMix_, mixVal, [this] (float v) { activeEngine_->setMix (v); });
+    pushIfChanged (lastMix_, mixVal, [this] (float v) { mixSmoother_.setTarget (v); });
 
     // Freeze (boolean — push only on transitions).
     const bool freezeNow = freezeParam_->load() >= 0.5f;
@@ -370,12 +414,20 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         haveLastGateEnabled_ = true;
     }
 
-    // Save a copy of the input for the previous engine before the active
-    // engine consumes the buffer in place. Only needed during a preset
-    // crossfade — outside that window the second engine sits idle.
+    // Save the dry input BEFORE either engine consumes it. The engines now
+    // output WET-ONLY (see DuskVerbEngine::process tail) so the dry/wet mix
+    // is applied here after the crossfade — keeps the dry signal correlated
+    // across the swap and eliminates the +3 dB midpoint swell that
+    // equal-power blending produced when each engine had its own dry path.
+    std::memcpy (dryBufL_.data(), left,  static_cast<size_t> (numSamples) * sizeof (float));
+    std::memcpy (dryBufR_.data(), right, static_cast<size_t> (numSamples) * sizeof (float));
+
     const bool fading = (presetFadeRemaining_ > 0 && previousEngine_ != nullptr);
     if (fading)
     {
+        // Snapshot input for the previous engine. activeEngine_->process will
+        // overwrite left/right with the new engine's wet, so the previous
+        // engine has to read from a saved copy.
         std::memcpy (fadeBufL_.data(), left,  static_cast<size_t> (numSamples) * sizeof (float));
         std::memcpy (fadeBufR_.data(), right, static_cast<size_t> (numSamples) * sizeof (float));
     }
@@ -386,19 +438,23 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         // Run the saved input through the previous engine so its tail keeps
         // evolving (modulation, internal feedback) instead of being a static
-        // snapshot. Then equal-power crossfade the two engines' outputs.
+        // snapshot. Then equal-power crossfade the two engines' WET outputs
+        // — now mathematically correct since the dry was pulled out.
         previousEngine_->process (fadeBufL_.data(), fadeBufR_.data(), numSamples);
 
         const int samplesToCrossfade = std::min (numSamples, presetFadeRemaining_);
-        const float invTotal = (presetFadeTotal_ > 0)
-                                  ? 1.0f / static_cast<float> (presetFadeTotal_)
-                                  : 0.0f;
+        // Denominator is (total - 1) so the LAST fade sample lands at t=1
+        // exactly (gOld=0). Using `total` instead would leave a residual
+        // ~cos(π/2 - π/(2·total)) at the boundary that drops to 0 in one
+        // sample post-fade — audible as a tiny tick on long sustained tails.
+        const int spanDen = std::max (1, presetFadeTotal_ - 1);
+        const float invSpan = 1.0f / static_cast<float> (spanDen);
         const int idxBase = presetFadeTotal_ - presetFadeRemaining_;
         constexpr float kHalfPi = 1.5707963267948966f;
 
         for (int i = 0; i < samplesToCrossfade; ++i)
         {
-            const float t    = static_cast<float> (idxBase + i) * invTotal;
+            const float t    = std::min (1.0f, static_cast<float> (idxBase + i) * invSpan);
             const float gNew = std::sin (t * kHalfPi);
             const float gOld = std::cos (t * kHalfPi);
             left[i]  = left[i]  * gNew + fadeBufL_[i] * gOld;
@@ -412,7 +468,23 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             presetFadeRemaining_ = 0;
         }
         // Samples past samplesToCrossfade in this block are pure activeEngine_
-        // output (already in left/right) — leave them alone.
+        // wet output (already in left/right) — leave them alone.
+    }
+
+    // ---- Dry/wet mix ----
+    // Apply once, outside the engines, so the dry passthrough is unity-gain
+    // and shared between the two engines during a crossfade.
+    {
+        constexpr float kHalfPi = 1.5707963267948966f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float mix = mixSmoother_.next();
+            const float wetGain = std::sin (mix * kHalfPi);
+            const float dryGain = std::cos (mix * kHalfPi);
+            const size_t idx = static_cast<size_t> (i);
+            left[i]  = dryBufL_[idx] * dryGain + left[i]  * wetGain;
+            right[i] = dryBufR_[idx] * dryGain + right[i] * wetGain;
+        }
     }
 
     // Output metering.
@@ -445,7 +517,7 @@ juce::AudioProcessorEditor* DuskVerbProcessor::createEditor()
 // sixAPEarlyMix, sixAPOutputTrim) to the state ValueTree. Loading a v1
 // save file is fully supported — missing properties fall through to the
 // engine's default values, which match the v1 historical behavior.
-static constexpr int kStateVersion = 2;
+static constexpr int kStateVersion = 3;
 static const juce::Identifier kStateVersionId { "stateVersion" };
 
 void DuskVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -481,6 +553,25 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
                       : 1;
     if (version > kStateVersion)
         return;  // future state — keep current params, don't risk mis-mapping
+
+    // v3 reordered the algorithm enum so the two Dattorro variants sit
+    // adjacent in the dropdown. Old saved sessions store algorithm as
+    // the pre-reorder index; remap to the new layout before replaceState
+    // so the loaded plugin selects the engine the user originally saved.
+    if (version < 3)
+    {
+        for (int i = 0; i < tree.getNumChildren(); ++i)
+        {
+            auto child = tree.getChild (i);
+            if (child.getProperty ("id").toString() == "algorithm")
+            {
+                const int oldIdx = static_cast<int> (child.getProperty ("value"));
+                const int newIdx = migrateLegacyAlgorithmIndex (oldIdx);
+                child.setProperty ("value", newIdx, nullptr);
+                break;
+            }
+        }
+    }
 
     parameters.replaceState (tree);
 
@@ -547,6 +638,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setMidMultiply       (midMultParam_->load());
     target->setCrossoverFreq     (crossoverParam_->load());
     target->setHighCrossoverFreq (highCrossoverParam_->load());
+    target->setBassChokeHz (bassChokeParam_->load());
     target->setSaturation        (saturationParam_->load());
     target->setDiffusion         (diffusionParam_->load());
     target->setModDepth          (modDepthParam_->load());
@@ -559,8 +651,9 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setGainTrim          (gainTrimParam_->load());
     target->setMonoBelow         (monoBelowParam_->load());
 
-    const bool busMode = busModeParam_->load() >= 0.5f;
-    target->setMix (busMode ? 1.0f : mixParam_->load());
+    // Mix lives on the processor — not pushed to the engine. The
+    // processor's mixSmoother target is updated in performPresetSwap so
+    // it picks up the new preset's value without re-pushing here.
 
     target->setFreeze              (freezeParam_->load() >= 0.5f);
     target->setNonLinearGateEnabled(gateEnabledParam_->load() >= 0.5f);
@@ -581,6 +674,7 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastMidMult_       = midMultParam_->load();
     lastCrossover_     = crossoverParam_->load();
     lastHighCrossover_ = highCrossoverParam_->load();
+    lastBassChoke_     = bassChokeParam_->load();
     lastSaturation_    = saturationParam_->load();
     lastDiffusion_     = diffusionParam_->load();
     lastModDepth_      = modDepthParam_->load();
@@ -613,6 +707,23 @@ void DuskVerbProcessor::performPresetSwap()
     newActive->clearAllBuffers();
     forcePushAllParametersTo (newActive);
     newActive->snapSmoothersToTargets();
+
+    // Inherit pre-tank input history (pre-delay buffer + ER signal state)
+    // from the currently-active engine. Without this the new engine's ER
+    // taps fire from silence over their 8-80 ms delay range, producing
+    // audible discrete onsets that the 50 ms equal-power crossfade can't
+    // fully mask. Tank state stays cleared — pre-filling it across a
+    // potentially different algorithm topology would feed wrong-coefficient
+    // history into the new tank's feedback loop.
+    newActive->copyInputHistoryFrom (*activeEngine_);
+
+    // Retarget the processor's mix smoother to the new preset's value.
+    // forcePushAllParametersTo doesn't touch mix (it lives on the processor),
+    // and syncParameterCacheToCurrent below will set lastMix_ so the regular
+    // pushIfChanged loop won't re-push it either. Without this update the
+    // smoother would keep gliding toward the OLD preset's mix target.
+    const bool busMode = busModeParam_->load() >= 0.5f;
+    mixSmoother_.setTarget (busMode ? 1.0f : mixParam_->load());
 
     // If a fade was already in progress, the prior fading-out engine gets
     // dropped here — the current active becomes the new fading-out engine

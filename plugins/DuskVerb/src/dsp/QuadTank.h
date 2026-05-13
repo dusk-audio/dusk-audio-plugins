@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <vector>
 
 // 4-tank cross-coupled allpass reverb for Hall algorithm.
@@ -40,7 +39,6 @@ public:
     void setCrossoverFreq (float hz);
     void setHighCrossoverFreq (float hz);
     void setSaturation (float amount);             // NEW: 0..1 drive softClip
-    void setAirDampingScale (float scale);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -52,9 +50,7 @@ public:
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
     void setDecayBoost (float boost);
-    void setNoiseModDepth (float samples);
     void setStructuralHFDamping (float hz);
-    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -126,14 +122,17 @@ private:
         void allocate (int maxSamples);
         void clear();
 
-        void updateJitterDepth (float sampleRate)
+        // Sub-audio (1.5 Hz) wander, mirroring the DattorroTank fix. The
+        // audio-band (5-200 Hz) variant generated FM sidebands on the
+        // recursive AP feedback path — perceived as #87's vibrato/bell
+        // artifact. Slow random-walk wander breaks comb-tooth phase-lock
+        // without producing any audio-rate PM.
+        void updateJitterDepth (float /*sampleRate*/)
         {
             if (jitterDepthFraction <= 0.0f || delaySamples <= 0)
                 return;
             jitterLFO.setDepth (static_cast<float> (delaySamples) * jitterDepthFraction);
-            const float period    = 2.0f * static_cast<float> (delaySamples);
-            const float lfoRateHz = sampleRate / period;
-            jitterLFO.setRate (std::min (std::max (lfoRateHz, 5.0f), 200.0f));
+            jitterLFO.setRate (1.5f);
         }
 
         float process (float input, float g)
@@ -187,17 +186,22 @@ private:
 
         float crossFeedState = 0.0f;
 
-        // Random-walk LFO — replaces the previous sine + drift modulator
-        // for consistency with Dattorro and SixAPTank. Aperiodic wander
-        // never beats with the tank's modal frequencies.
+        // Random-walk LFO on AP1. Aperiodic wander never beats with the
+        // tank's modal frequencies.
         DspUtils::RandomWalkLFO lfo;
         float savedAP1Mod = 0.0f;   // held during freeze to avoid read-head snap
-        uint32_t noiseState = 0;
 
-        // Per-tank terminal decay tracking
-        float currentRMS = 0.0f;
-        float peakRMS = 0.0f;
-        bool terminalDecayActive = false;
+        // Independent random-walk LFOs for delay1 and delay2 read taps.
+        // Replaces the per-sample white-noise jitter that used to modulate
+        // these reads — white noise on a delay-read is audio-rate phase
+        // modulation, which generates broadband FM sidebands (heard as
+        // vibrato/bell-like artifacts at high wet levels — issue #87).
+        // Smoothstep-interpolated wander gives the same mode-breaking
+        // benefit without the HF artifacts. Mirrors DattorroTank v0.5.3.
+        DspUtils::RandomWalkLFO delay1Lfo;
+        DspUtils::RandomWalkLFO delay2Lfo;
+        float savedDelay1Mod = 0.0f;  // held during freeze (mirrors savedAP1Mod)
+        float savedDelay2Mod = 0.0f;
     };
 
     Tank tanks_[kNumTanks];
@@ -255,15 +259,6 @@ private:
     };
 
     // -----------------------------------------------------------------------
-    static float nextDrift (uint32_t& state)
-    {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return static_cast<float> (static_cast<int32_t> (state)) * (1.0f / 2147483648.0f);
-    }
-
-    // -----------------------------------------------------------------------
     double sampleRate_ = 44100.0;
     float decayTime_ = 1.0f;
     float bassMultiply_ = 1.0f;
@@ -271,7 +266,6 @@ private:
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 4000.0f;
-    float airDampingScale_ = 0.70f;
     float saturationAmount_ = 0.0f;       // 0..1 drive (NEW)
     float modDepthSamples_ = 8.0f;
     float lastModDepthRaw_ = 0.5f;
@@ -288,14 +282,6 @@ private:
     float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFState_[4] {};
-    float terminalDecayThresholdDB_ = -40.0f;
-    float terminalDecayFactor_ = 1.0f;
-    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
-    float rmsAlpha_ = 0.9995f;           // Exponential smoothing for RMS tracking
-    float peakDecayAlpha_ = 0.99999f;    // Peak envelope decay coefficient
-    float peakRMS_ = 0.0f;
-    float currentRMS_ = 0.0f;
-    bool terminalDecayActive_ = false;
 
     float decayDiff1_ = 0.70f;
     float decayDiff2_ = 0.50f;
@@ -305,9 +291,7 @@ private:
     // hall-density convention. setTankDiffusion() scales around this baseline.
     static constexpr float kDensityDiffBaseline_ = 0.50f;
     float densityDiffCoeff_ = kDensityDiffBaseline_;
-    float noiseModDepth_ = 2.0f;
-    float independentNoiseModDepth_ = -1.0f;  // -1 = use modDepth-coupled value
-    float lastNoiseModRawSamples_ = -1.0f;    // Raw caller value for replay after sample-rate change
+    float delayModDepthSamples_ = 4.0f;       // Per-tap delay LFO depth (samples). Set by setModDepth.
     float lastStructHFRawHz_ = 0.0f;          // Raw caller value for replay after sample-rate change
 
     void updateDelayLengths();

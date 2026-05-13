@@ -563,6 +563,16 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
 
     setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
     startTimerHz (15);
+
+    // Re-apply engine accent NOW that every component is constructed and
+    // addAndMakeVisible'd. The early call inside the algorithmBox_ setup
+    // block runs before gateButton_ is added, so its setVisible(false)
+    // there gets overwritten by the later addAndMakeVisible (which forces
+    // visible). Without this second call, sessions saved with a non-RMX16
+    // algorithm reopen with the GATE button showing.
+    const auto currentEngine = getAlgorithmConfig (
+        static_cast<int> (p.parameters.getRawParameterValue ("algorithm")->load())).engine;
+    applyEngineAccent (currentEngine);
 }
 
 DuskVerbEditor::~DuskVerbEditor()
@@ -1483,6 +1493,23 @@ void EngineGlyph::paint (juce::Graphics& g)
             g.strokePath (p, juce::PathStrokeType (1.4f,
                                                     juce::PathStrokeType::mitered,
                                                     juce::PathStrokeType::rounded));
+            break;
+        }
+        case EngineType::DattorroVintage:
+        {
+            // 4 × 4 dot grid — visually communicates the 16-line FDN density.
+            const float gridW = inner.getWidth() * 0.85f;
+            const float gridH = h * 0.70f;
+            const float x0    = cx - gridW * 0.5f;
+            const float y0    = cy - gridH * 0.5f;
+            const float dotR  = h * 0.05f;
+            for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+            {
+                const float dx = x0 + (gridW * col) / 3.0f;
+                const float dy = y0 + (gridH * row) / 3.0f;
+                g.fillEllipse (dx - dotR, dy - dotR, dotR * 2.0f, dotR * 2.0f);
+            }
             break;
         }
     }

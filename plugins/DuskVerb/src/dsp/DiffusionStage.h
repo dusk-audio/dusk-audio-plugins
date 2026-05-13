@@ -21,6 +21,21 @@ public:
                   float lfoDepthSamples, float lfoStartPhase, double sampleRate);
     float process (float input, float g);
     void clear();
+
+    // Copy SIGNAL state from `other` (delay buffer + write position). LFO
+    // phase, depth, jitter config are kept at THIS instance's values so the
+    // new engine's modulation continues from its own LFO state rather than
+    // inheriting `other`'s phase. Only the audio buffer is copied — that's
+    // what carries the warm-up history that prevents cold-start transients
+    // when an idle engine is swapped in mid-program.
+    void copyStateFrom (const ModulatedAllpass& other)
+    {
+        if (buffer_.size() == other.buffer_.size())
+        {
+            buffer_ = other.buffer_;
+            writePos_ = other.writePos_;
+        }
+    }
     // Scale the LFO depth by a factor (0 = disable modulation, 1 = original).
     // Used to tame the cumulative seasick wobble when many stages cascade.
     void setLfoDepthScale (float scale) { lfoDepth_ = baseLfoDepth_ * scale; }
@@ -67,6 +82,22 @@ public:
         {
             leftAP_[s] .clear();
             rightAP_[s].clear();
+        }
+    }
+
+    // Copy each stage's signal state (delay buffer + write position) from
+    // `other`. Diffusion coefficients and LFO state are NOT copied — they
+    // stay at this instance's values so the new engine processes the
+    // copied state with its own (potentially different) per-preset
+    // coefficients. Used at preset-swap time so the new engine's cascade
+    // is warm at sample 0 instead of building up over its ~14 ms total
+    // smear width.
+    void copyStateFrom (const DiffusionStage& other)
+    {
+        for (int s = 0; s < kNumStages; ++s)
+        {
+            leftAP_[s] .copyStateFrom (other.leftAP_[s]);
+            rightAP_[s].copyStateFrom (other.rightAP_[s]);
         }
     }
 

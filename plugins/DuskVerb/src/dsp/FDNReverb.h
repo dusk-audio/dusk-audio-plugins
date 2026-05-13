@@ -3,7 +3,6 @@
 #include "DspUtils.h"
 #include "TwoBandDamping.h"
 
-#include <random>
 #include <vector>
 
 // Multi-point output tap: reads from a fractional position within a delay line.
@@ -52,7 +51,6 @@ public:
                               const FDNOutputTap* right, int numR);
     void setMultiPointDensity (int tapsPerChannel);  // Generate taps dynamically
     void setModDepthFloor (float floor);
-    void setNoiseModDepth (float samples);
     void setHadamardPerturbation (float amount);
     void setUseHouseholder (bool enable);
     void setUseWeightedGains (bool enable);
@@ -65,7 +63,6 @@ public:
     void setFeedbackModDepth (float depth);
     void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
-    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -174,22 +171,18 @@ private:
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;
     ThreeBandDamping dampFilter_[N];
-    // Random-walk LFO per channel — replaces the previous sine + drift
-    // pattern for consistency with the other engines. Aperiodic wander
-    // never beats with the FDN's modal frequencies. The noise PRNG below
-    // (lfoPRNG_) is REPURPOSED as the per-channel jitter PRNG that
-    // complements the LFO with fast aperiodic delay-read jitter.
+    // Random-walk LFO per channel. Smoothstep-interpolated wander is
+    // band-limited (no FM sidebands) and aperiodic (never beats with the
+    // FDN's modal frequencies). One LFO per delay tap matches the
+    // commercial-reverb convention (Lexicon Random Hall, Valhalla
+    // VintageVerb, Bricasti M7).
     DspUtils::RandomWalkLFO lfos_[N];
-    uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state — used ONLY
-                               // for the per-sample jitter now.
     float delayLength_[N] {};
     float inputGainScale_[N] {};  // Per-channel input gain: 1/sqrt(delay_length/min_delay) for uniform modal excitation
     float outputGainScale_[N] {}; // Per-channel output gain: same weighting for spectral flatness
     bool useWeightedGains_ = false; // Enable delay-weighted input/output gains
     float modDepthScale_[N] {}; // Per-delay mod scaling (proportional to delay length)
     float modDepthFloor_ = 0.35f; // Minimum mod depth scaling (per-algorithm)
-    float noiseModDepthParam_ = 0.0f; // Raw noise mod depth (unscaled)
-    float noiseModDepth_ = 0.0f;      // Per-sample random delay jitter (samples, scaled by rate)
 
     // Structural HF damping: gentle first-order LP modeling air absorption.
     // Per-algorithm, applied after TwoBandDamping in feedback loop.
@@ -217,16 +210,6 @@ private:
     float dcX1_[N] {};   // Previous input
     float dcY1_[N] {};   // Previous output
     float dcCoeff_ = 0.9993f;  // R = 1 - 2*pi*5/sr
-
-    // Cheap xorshift32 PRNG returning float in [-1, +1].
-    // Used for aperiodic LFO drift ("Wander").
-    static float nextDrift (uint32_t& state)
-    {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return static_cast<float> (static_cast<int32_t> (state)) * (1.0f / 2147483648.0f);
-    }
 
     // Perturbed feedback mixing matrix (optional replacement for Hadamard).
     // Small random offsets break deterministic mode coupling that causes ringing.
@@ -266,14 +249,7 @@ private:
     float baseLowCrossoverCoeff_ = 0.0f;
     float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
-    float terminalDecayThresholdDB_ = -40.0f;
-    float terminalDecayFactor_ = 1.0f;
-    float terminalLinearThreshold_ = 0.01f;     // 10^(-40/20) — amplitude RMS threshold
-    float rmsAlpha_ = 0.9995f;                  // Exponential smoothing for RMS tracking
-    float peakDecayAlpha_ = 0.99999f;            // Peak envelope decay coefficient
-    float peakRMS_ = 0.0f;
-    float currentRMS_ = 0.0f;
-    bool terminalDecayActive_ = false;    bool frozen_ = false;
+    bool frozen_ = false;
     bool prepared_ = false;
 
     void updateDelayLengths();
