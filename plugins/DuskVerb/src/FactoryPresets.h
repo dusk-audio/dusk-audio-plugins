@@ -67,6 +67,12 @@ struct FactoryPreset
     float sixAPEarlyMix        = 0.5f;
     float sixAPOutputTrim      = 1.3f;
 
+    // In-loop bass-choke HPF cutoff (Hz). Only the legacy HighDensityPlate
+    // engine used this; current engines ignore it. 20 Hz = effective
+    // bypass. Placed last so existing brace-init preset rows don't need
+    // to grow trailing arguments — every row picks up the default.
+    float bassChoke            = 20.0f;
+
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
         auto setIfExists = [&apvts] (const juce::String& id, float v) {
@@ -120,8 +126,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Lexicon PCM digital-plate sound — brighter, shorter, less diffused.
         { "Vocal Plate",          "Plates",
           0,  0.35f, false,  4.0f, 0,
-          0.95f, 0.45f, 0.05f, 0.50f, 0.85f, 1.00f,  700.0f,
-          0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, false, 16.5f,
+          0.95f, 0.45f, 0.30f, 0.60f, 0.85f, 1.00f,  700.0f,
+          0.85f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, false, 16.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Rich Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: Lexicon PCM 90 "Rich Plate" (Bank P2 0.1)
@@ -131,10 +137,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   centroid 50ms 10.8 kHz   diffusion-proxy 2.04 (dense)   predelay 0
         // The flat per-band decay + bright top is the "Rich" character.
         { "Rich Plate",           "Plates",
-          0,  0.40f, false,  0.0f, 0,
-          1.60f, 0.55f, 0.10f, 0.45f, 0.95f, 1.00f,  600.0f,
-          0.85f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, false, 14.5f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
+          4,  0.40f, false,  0.0f, 0,
+          1.60f, 0.55f, 0.10f, 0.45f, 0.85f, 1.50f,  300.0f,
+          0.92f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, false, -1.0f,
+          /* mono */ 20.0f, /* mid */ 0.60f, /* highX */ 3000.0f, /* sat */ 0.15f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
         // smooth, classic Lexicon plate.
@@ -145,7 +151,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tail that doesn't glass up.
         { "Gold Plate",           "Plates",
           0,  0.30f, false,  0.0f, 0,
-          1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f,  600.0f,
+          1.96f, 0.357f, 0.22f, 0.35f, 1.00f, 0.55f,  600.0f,
           0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, false, 16.0f,
           /* mono */ 20.0f, /* mid */ 0.80f, /* highX */ 3000.0f, /* sat */ 0.00f },
         // ── Fat Pop Plate ────────────────────────────────────────────────────
@@ -166,7 +172,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //     -0.2 dB. Tighter mix bass, less mud on busy material.
         { "Fat Pop Plate",        "Plates",
           0,  0.40f, false, 18.0f, 0,
-          2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f,  480.0f,
+          2.10f, 0.55f, 0.45f, 0.85f, 0.55f, 1.10f,  480.0f,
           0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, false, 13.0f,
           /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 4500.0f, /* sat */ 0.30f },
         // ── Modulated Plate ──────────────────────────────────────────────────
@@ -178,43 +184,29 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // ER zeroed: PCM-70/80 plate algorithms layer chorus on the plate
         // tank itself — no ER stage. Keep the FDN density doing the work.
         { "Modulated Plate",      "Plates",
-          3,  0.40f, false,  8.0f, 0,
+          4,  0.40f, false,  8.0f, 0,
           2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f,
           0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, false, 0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4500.0f, /* sat */ 0.25f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
-        // Anchor: EMT 140 steel plate (1957), medium damper, vocal channel.
-        // Acoustic plate — no LFO, intrinsic bass roll-off, top capped ~9.5 k
-        // by the steel. The ABBA / Dancing-Queen lead-vocal sound.
+        // Anchor: Lex VST2 "Vocal Plate" preset. Algorithmically tuned via
+        // dual ESS+Dirac match against the Lex reference IR; Six-AP topology
+        // closest of all four algos (loss 4.72, autocorr 0.505 vs Lex 0.977).
+        // Parameter-space ceiling — tank density limits structural match.
         // name, cat, algo, mix, bus, predelay, sync,
         // decay, size, modD, modR, damp, bass, xover,
         // diff, erLv, erSz, loCut, hiCut, width, freeze, trim
-        // Predelay 18 ms ≈ Abbey Road STEED tape-slap before the plate
-        // (engineers historically padded the 2-3 ms physical pickup delay).
-        // ER zeroed: a real EMT 140 has no early reflections — it's a 2D
-        // steel plate with sample-zero diffuse buildup, no walls to bounce off.
-        // Tightened against VVV Vocal Plate / Vox Plate render comparison:
-        //   • decay 2.40 → 3.20 — Dattorro broadband-RMS measures ~18 % short
-        //     of UI on this preset (bassMult 0.75 + trebleMult 0.65 weighted
-        //     toward fast treble). 2.90 closed it to -11 % (right at the
-        //     audible JND boundary); 3.20 lands measured at the user-
-        //     perceived 2.4 s for honest DECAY-knob calibration.
-        //   • hi_cut 9500 → 14000 Hz — opens the air band to compete with
-        //     VVV Vocal Plate's bright character (their HighCut = 20 kHz).
-        //     Still darker than VVV, preserves "EMT 140 steel" colouration.
-        //   • bassMult 0.85 → 0.75 — cleaner vocal-mix bass, matching the
-        //     ~3 dB bass cut that VVV Vocal Plate engineers in.
-        // mod_depth 0.00 → 0.05 + rate 0.50 → 0.40 — even acoustic plates had
-        // microscopic delay-line wobble to prevent metallic ringing on
-        // sustained vocal notes. 0.05 is a whisper (≈ ±1 cent at 44.1k);
-        // not a chorus effect, just enough to keep the long vocal sustain
-        // from glassing up.
+// `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
+//   0 = Vintage Plate (Dattorro)
+//   1 = DattorroVintage
+//   2 = Quad Room     (QuadTank, no modulation)
+//   3 = Realistic Space (FDN)
         { "Vintage Vocal Plate",  "Plates",
-          0,  0.32f, false, 18.0f, 0,
-          3.20f, 0.50f, 0.05f, 0.40f, 0.65f, 0.75f,  800.0f,
-          0.85f, 0.00f, 0.30f, 90.0f, 14000.0f, 1.10f, false, 12.5f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 5000.0f, /* sat */ 0.20f },
+          1,  0.5f,   true,  10.0f, 0,
+          1.30f, 0.45f, 0.30f, 0.60f, 0.72f, 0.65f,  400.0f,
+          0.55f, 0.00f, 0.30f,  80.0f, 8000.0f, 1.10f, false, 10.0f,
+          /* mono */ 20.0f, /* mid */ 0.85f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Snare Plate XL ───────────────────────────────────────────────────
         // Long-decay plate for '80s big-snare/tom slap. Engine matched to
         // VVV's DrumPlate / FatPlate architecture (forensic L/R-correlation
@@ -223,7 +215,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // vintage character. Bright top + controlled bass + a touch of
         // saturation evoke the JBL-tape-into-EMT-140 era.
         { "Snare Plate XL",       "Plates",
-          3,  0.42f, false, 12.0f, 0,
+          4,  0.42f, false, 12.0f, 0,
           4.50f, 0.65f, 0.15f, 0.50f, 0.85f, 0.65f,  600.0f,
           0.75f, 0.30f, 0.55f, 180.0f, 14000.0f, 1.30f, false, 1.0f,
           /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.20f },
@@ -236,7 +228,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // mod_depth (SPRING LEN) and mod_rate (DRIP) knobs control the
         // characteristic ambient wobble.
         { "Surf '63 Spring",      "Springs",
-          4,  0.35f, false,  0.0f, 0,
+          5,  0.35f, false,  0.0f, 0,
           1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f,
           0.45f, 0.10f, 0.30f,  80.0f,  4000.0f, 1.10f, false, 2.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -246,7 +238,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // "boing" on transients. The diffusion knob (CHIRP) at 0.85 gives
         // the full Fender-on-eleven boing character.
         { "Tank Drip",            "Springs",
-          4,  0.40f, false,  0.0f, 0,
+          5,  0.40f, false,  0.0f, 0,
           2.20f, 0.65f, 0.30f, 0.80f, 0.70f, 1.10f, 1000.0f,
           0.85f, 0.10f, 0.30f, 100.0f,  3000.0f, 1.20f, false, 2.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.20f },
@@ -262,7 +254,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   centroid 50ms 10.5 kHz   centroid 1s 10.6 kHz (bright sustained)
         //   diffusion-proxy 2.07 (dense)   predelay 1 ms
         { "Utility Hall",         "Halls",
-          3,  0.40f, false,  1.0f, 0,
+          4,  0.40f, false,  1.0f, 0,
           1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f,
           0.75f, 0.50f, 0.50f, 100.0f,  8000.0f, 1.10f, false, 2.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.05f },
@@ -274,7 +266,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Articulate top, present mids, ER tap density on the higher side
         // for that "I can hear the room shape" quality on pop arrangements.
         { "Bright Studio Hall",   "Halls",
-          3,  0.40f, false, 18.0f, 0,
+          4,  0.40f, false, 18.0f, 0,
           1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f,  400.0f,
           0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, false, 1.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5500.0f, /* sat */ 0.05f },
@@ -288,7 +280,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // brighter-than-mid HF persistence. FDN engine handles that better
         // than the Dattorro tank's bass-favouring damping curve.
         { "Bright Hall",          "Halls",
-          3,  0.40f, false,  0.0f, 0,
+          4,  0.40f, false,  0.0f, 0,
           1.80f, 0.65f, 0.12f, 0.50f, 1.20f, 1.00f, 1000.0f,
           0.75f, 0.50f, 0.50f,  80.0f, 18000.0f, 1.20f, false, 1.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.05f },
@@ -298,7 +290,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // phase-locks that make a perfectly-deterministic tank ring metallically.
         // High diffusion (0.85) smooths modal grain; mild bass bloom (×1.2).
         { "Smooth Concert Hall",  "Halls",
-          2,  0.35f, false, 28.0f, 0,
+          3,  0.35f, false, 28.0f, 0,
           2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f,  900.0f,
           0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, false, -0.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
@@ -322,7 +314,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // dialled in. "Blade Runner 224" remains the long-decay extended
         // version for sustained-pad cinematic use.
         { "Blade Runner Concert", "Halls",
-          1,  0.45f, false,  5.0f, 0,
+          2,  0.45f, false,  5.0f, 0,
           3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f,  700.0f,
           0.85f, 0.45f, 0.55f,  60.0f,  8000.0f, 1.20f, false, 8.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -337,7 +329,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   shape: REVERSE — energy builds late (the "swelling cathedral" character)
         //   predelay 10 ms
         { "Deep Blue",            "Halls",
-          1,  0.45f, false, 10.0f, 0,
+          2,  0.45f, false, 10.0f, 0,
           3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f,  600.0f,
           0.85f, 0.40f, 0.65f,  60.0f,  8500.0f, 1.30f, false, 9.0f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -367,7 +359,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   • width 1.30 → 1.40: wider stereo spread on FDN's decorrelated
         //     channels (still leaves headroom under the 1.50 max).
         { "Lush Dark Hall",       "Halls",
-          3,  0.40f, false, 35.0f, 0,
+          4,  0.40f, false, 35.0f, 0,
           3.30f, 0.75f, 0.12f, 0.55f, 0.35f, 1.40f,  550.0f,
           0.75f, 0.25f, 0.55f, 150.0f, 7000.0f, 1.40f, false, -0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 2700.0f, /* sat */ 0.20f },
@@ -382,7 +374,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   • hi_cut 12500 → 9000 — VVV is much darker (-11.6 dB at 8 kHz
         //     vs our -3.7 dB). Tames sibilance on vocal returns.
         { "Vocal Hall",           "Halls",
-          3,  0.35f, false, 22.0f, 0,
+          4,  0.35f, false, 22.0f, 0,
           3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f,
           0.78f, 0.45f, 0.55f, 100.0f,  9000.0f, 1.15f, false, -1.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -407,7 +399,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //     channels can take more width without phase coherence loss).
         //   • Predelay 30 ms preserved (Valhalla cathedral convention).
         { "Cathedral",            "Halls",
-          3,  0.45f, false, 30.0f, 0,
+          4,  0.45f, false, 30.0f, 0,
           6.50f, 0.95f, 0.15f, 0.45f, 0.40f, 1.30f,  750.0f,
           0.78f, 0.30f, 0.85f, 60.0f,  8500.0f, 1.50f, false, -3.5f,
           /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 2400.0f, /* sat */ 0.15f },
@@ -475,7 +467,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // full top-end response, prominent realistic ER pattern. Sounds like
         // a real room.
         { "Realistic Chamber",    "Chambers",
-          3,  0.30f, false, 14.0f, 0,
+          4,  0.30f, false, 14.0f, 0,
           1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f,
           0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, false, 2.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
@@ -491,8 +483,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   • lo_cut 70 → 150 Hz — cleaner room bass, matches VVV's bass
         //     cut (-6.9 dB at 125 Hz vs ours -2.1 dB).
         { "Wood Chamber",         "Chambers",
-          2,  0.30f, false, 18.0f, 0,
-          2.30f, 0.40f, 0.05f, 0.60f, 0.65f, 1.20f,  850.0f,
+          3,  0.30f, false, 18.0f, 0,
+          2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f,  850.0f,
           0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, false, 0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.20f },
         // ── 80s Non-Lin Drum ─────────────────────────────────────────────────
@@ -508,7 +500,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //     ours -3.9 dB). 80s gated snare is a DARK sound — the cut
         //     keeps the fizz under the snare crack.
         { "80s Non-Lin Drum",     "Rooms",
-          2,  0.30f, false,  0.0f, 0,
+          3,  0.30f, false,  0.0f, 0,
           0.30f, 0.15f, 0.20f, 1.00f, 0.95f, 0.85f, 1500.0f,
           1.00f, 0.85f, 0.20f, 120.0f,  8000.0f, 1.20f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 0.80f, /* highX */ 3500.0f, /* sat */ 0.40f },
@@ -522,7 +514,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // robs the percussive-slap feel we'd want for a real wooden booth,
         // pivot to QuadTank algo=2 with same parameter values.
         { "Vocal Booth",          "Rooms",
-          3,  0.30f, false,  2.0f, 0,
+          4,  0.30f, false,  2.0f, 0,
           0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f,
           0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.05f },
@@ -536,9 +528,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Mod 0.10 (was 0.05): same modal-locking-margin bump as Bright
         // Drum Plate; QuadTank measured σ 1.12 dB at 0.05 → just above floor.
         { "Tight Drum Room",      "Rooms",
-          2,  0.25f, false,  4.0f, 0,
-          0.50f, 0.20f, 0.10f, 0.60f, 0.95f, 0.95f, 1500.0f,
-          0.65f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, false, 4.0f,
+          3,  0.25f, false,  4.0f, 0,
+          0.50f, 0.20f, 0.25f, 0.60f, 0.95f, 0.95f, 1500.0f,
+          0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Studio Room ──────────────────────────────────────────────────────
         // Anchor: Quantec QRS "Studio Room" (1982) — first true room simulator.
@@ -551,7 +543,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   • hi_cut 14500 → 9000 — VVV is much darker (-10 dB at 8 kHz vs
         //     ours -1.9 dB). Tight rooms in pro work are darker not brighter.
         { "Studio Room",          "Rooms",
-          3,  0.30f, false,  8.0f, 0,
+          4,  0.30f, false,  8.0f, 0,
           0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f,
           0.85f, 0.60f, 0.40f, 80.0f,  9000.0f, 1.05f, false, 4.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
@@ -569,7 +561,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // kept very low — Ambience character is about precise spatial
         // imaging, not warble.
         { "Ambience",             "Rooms",
-          2,  0.40f, false,  1.0f, 0,
+          3,  0.40f, false,  1.0f, 0,
           0.60f, 0.40f, 0.05f, 0.45f, 1.05f, 0.90f,  900.0f,
           0.65f, 0.70f, 0.50f, 100.0f, 14000.0f, 1.20f, false, 3.5f,
           /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.10f },
@@ -582,7 +574,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Distinct from "Tight Drum Room" (FDN-based, longer): this is the
         // shorter, more present PCM-style drum room with heavy ER cluster.
         { "PCM Drum Room",        "Rooms",
-          2,  0.40f, false,  0.0f, 0,
+          3,  0.40f, false,  0.0f, 0,
           0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f,  900.0f,
           0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.10f },
@@ -614,7 +606,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   This is the "In The Air Tonight" Phil Collins/Padgham/Townhouse sound:
         //   thick hall bloom for 150 ms then a longer fade to silence.
         { "1981 Gated Snare",     "Rooms",
-          5,  1.00f, false,  0.0f, 0,
+          6,  1.00f, false,  0.0f, 0,
           1.50f, 0.70f, 0.00f, 1.117f, 0.80f, 1.00f,  500.0f,
           0.30f, 0.00f, 0.00f,  60.0f, 14000.0f, 1.40f, false, 0.0f,
           /* mono */ 100.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -628,7 +620,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //         hold 250 ms (diffusion 0.50), release 150 ms (mod_rate 0.794)
         //   Mix 22 % — light send/return blend, dry-forward.
         { "In The Air Tonight",   "Rooms",
-          5,  0.216f, false,  0.0f, 0,
+          6,  0.216f, false,  0.0f, 0,
           2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f,  500.0f,
           0.50f, 0.00f, 0.30f,  60.0f, 10000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -652,7 +644,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   GATE: threshold -32 dB (mid 0.75), attack 25 ms (mod_depth 0.49),
         //         hold 500 ms (diffusion 1.0, max), release 1500 ms (mod_rate 7.52)
         { "Reverse Taps",         "Rooms",
-          5,  1.00f, false, 30.0f, 0,
+          6,  1.00f, false, 30.0f, 0,
           3.00f, 0.85f, 0.49f, 7.52f, 0.70f, 1.00f,  500.0f,
           1.00f, 0.00f, 0.30f,  80.0f,  8000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -668,7 +660,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // sustained synth pads, ambient guitar swells, evolving textures.
         // (ASCII name — keeps shell + UTF-8 toolchain matching reliable.)
         { "Mobius Pad",           "Ambient",
-          1,  0.45f, false, 45.0f, 0,
+          2,  0.45f, false, 45.0f, 0,
           5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f,  500.0f,
           0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 4.5f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3200.0f, /* sat */ 0.10f },
@@ -687,7 +679,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   • lo_cut 80 → 150 — keeps cinematic low end clean instead of
         //     building up muddy bass over the long tail.
         { "Ambient Swell",        "Ambient",
-          1,  0.50f, false, 60.0f, 0,
+          2,  0.50f, false, 60.0f, 0,
           8.00f, 0.92f, 0.28f, 0.40f, 0.60f, 1.50f,  600.0f,
           0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, false, 4.0f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3500.0f, /* sat */ 0.15f },
@@ -726,7 +718,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // 0.85→0.92, steeper stagger). These don't affect other SixAPTank
         // presets because they default to the historical hardcoded values.
         { "Black Hole",           "Ambient",
-          1,  0.50f, false,   0.0f, 0,
+          2,  0.50f, false,   0.0f, 0,
           14.00f, 0.95f, 0.35f, 0.60f, 1.00f, 1.10f,  700.0f,
           0.85f, 0.05f, 0.70f,  60.0f, 18000.0f, 1.40f, false, -2.0f,
           /* mono */ 60.0f, /* mid */ 1.10f, /* highX */ 8000.0f, /* sat */ 0.08f,
@@ -751,7 +743,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // transient room to breathe but lets the wall-of-sound attach to
         // the source more naturally.
         { "Infinite Blackhole",   "Ambient",
-          1,  0.55f, false, 85.0f, 0,
+          2,  0.55f, false, 85.0f, 0,
           18.00f, 1.00f, 0.35f, 0.30f, 0.55f, 1.60f,  550.0f,
           0.90f, 0.05f, 0.80f, 100.0f,  7500.0f, 1.50f, false, -1.0f,
           /* mono */ 100.0f, /* mid */ 1.30f, /* highX */ 3000.0f, /* sat */ 0.25f },
@@ -762,7 +754,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // decay (6 s) for the stacked-octave swell, slightly darker hi-cut
         // (6 kHz) to keep the upper-octave stack from glassing up.
         { "Cascading Heaven",     "Shimmer",
-          6,  0.361f, false,  60.0f, 0,
+          7,  0.361f, false,  60.0f, 0,
           6.00f, 0.85f, 1.00f, 2.705f, 0.95f, 1.10f,  800.0f,
           0.85f, 0.20f, 0.50f,  60.0f,  6000.0f, 1.40f, false, -3.0f,
           /* mono */ 60.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
@@ -775,7 +767,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // the pitched recirculation.
         // mod_depth 0.5 = +12 st; mod_rate 4.5 Hz maps to feedback ≈ 0.42.
         { "Deep Blue Day",        "Shimmer",
-          6,  0.38f, false,  25.0f, 0,
+          7,  0.38f, false,  25.0f, 0,
           10.30f, 1.00f, 0.50f, 2.395f, 1.00f, 1.10f,  800.0f,
           0.85f, 0.20f, 0.50f,  60.0f,  7000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
