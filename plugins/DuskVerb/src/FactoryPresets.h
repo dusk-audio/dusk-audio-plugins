@@ -197,15 +197,11 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // name, cat, algo, mix, bus, predelay, sync,
         // decay, size, modD, modR, damp, bass, xover,
         // diff, erLv, erSz, loCut, hiCut, width, freeze, trim
-        // Re-pointed 2026-05-13 to algo=7 (DattorroPlateVintage). Algo
-        // slot 7 was originally DattorroVintage (16-line Hadamard FDN)
-        // but couldn't reach Lex's sparse-early-discrete-echo plate
-        // character (η<0.15 first 50ms vs DV's hyper-dense η≈1.0).
-        // Now hosts a Dattorro figure-8 tank + fixed post-EQ chain
-        // (300-400 Hz box-cut + low-mid trim) that targets vintage
-        // Lex Vintage Plate (EMT-140 anchor) characteristics. Params
-        // adapted from existing "Vocal Plate" (PCM 90) starting point,
-        // then swept against the Lex IR for hi_cut + boxiness fixes.
+// `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
+//   0 = Vintage Plate (Dattorro)
+//   1 = DattorroVintage
+//   2 = Quad Room     (QuadTank, no modulation)
+//   3 = Realistic Space (FDN)
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
           1.30f, 0.45f, 0.30f, 0.60f, 0.72f, 0.65f,  400.0f,
