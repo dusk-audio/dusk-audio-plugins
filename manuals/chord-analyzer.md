@@ -1,7 +1,7 @@
 ---
 slug: chord-analyzer
-version: 1.1.3
-last_updated: 2026-05-08
+version: 1.1.4
+last_updated: 2026-05-13
 tagline: Real-time MIDI chord detection with theory and inversion display
 ---
 
