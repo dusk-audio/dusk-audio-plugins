@@ -155,6 +155,7 @@ juce_add_plugin(ChordAnalyzerMIDI
     PRODUCT_NAME "Chord Analyzer MIDI"
     VST3_CAN_REPLACE_VST2 FALSE
     VST3_AUTO_MANIFEST FALSE
+    VST3_CATEGORIES "Fx" "Instrument"
 )
 
 juce_generate_juce_header(ChordAnalyzerMIDI)
