@@ -130,12 +130,29 @@ private:
 class ThreeBandDamping
 {
 public:
+    // POD coefficient block. Used by the snapshot path: filter state stays
+    // inside the filter object; coefficients live in the snapshot and are
+    // passed by const-ref to process() each sample. Zero-tear: the snapshot
+    // pointer swap is atomic, so the RT thread never sees half-written
+    // biquad coefficients.
+    struct Coeffs
+    {
+        // Low-shelf biquad
+        float lowB0 = 1.0f, lowB1 = 0.0f, lowB2 = 0.0f, lowA1 = 0.0f, lowA2 = 0.0f;
+        // High-shelf biquad
+        float highB0 = 1.0f, highB1 = 0.0f, highB2 = 0.0f, highA1 = 0.0f, highA2 = 0.0f;
+        float broadbandGain = 1.0f;
+    };
+
     void prepare (float sampleRate)
     {
         sampleRate_ = sampleRate;
         reset();
     }
 
+    // Legacy API: writes coefficients into the internal ShelfBiquad objects.
+    // Kept for engines (Dattorro, QuadTank, SixAPTank) not yet migrated to
+    // the snapshot path.
     void setCoefficients (float gLow, float gMid, float gHigh,
                           float lowCrossoverCoeff, float highCrossoverCoeff)
     {
@@ -166,12 +183,53 @@ public:
         highShelf_.designHighShelf (lastHighShelfGain_, lastHighFcHz_, sampleRate_);
     }
 
+    // Snapshot-path coefficient design: pure function of inputs, returns a
+    // Coeffs POD by value. Caller stores into LiveParams; no filter state
+    // mutation. Mirrors the cascade order of the legacy path.
+    static Coeffs designCoeffs (float gLow, float gMid, float gHigh,
+                                float lowCrossoverCoeff, float highCrossoverCoeff,
+                                float sampleRate)
+    {
+        const float lowCoeff  = std::clamp (lowCrossoverCoeff,  1.0e-6f, 1.0f - 1.0e-6f);
+        const float highCoeff = std::clamp (highCrossoverCoeff, 1.0e-6f, 1.0f - 1.0e-6f);
+        const float lowFc  = -std::log (lowCoeff)  * sampleRate * (1.0f / 6.283185307179586f);
+        const float highFc = -std::log (highCoeff) * sampleRate * (1.0f / 6.283185307179586f);
+        const float lowShelfGain  = gLow  / std::max (gMid, 1.0e-12f);
+        const float highShelfGain = gHigh / std::max (gMid, 1.0e-12f);
+
+        ShelfBiquad lowBq, highBq;
+        lowBq .designLowShelf  (lowShelfGain,  lowFc,  sampleRate);
+        highBq.designHighShelf (highShelfGain, highFc, sampleRate);
+
+        Coeffs c;
+        c.lowB0 = lowBq.b0;   c.lowB1 = lowBq.b1;   c.lowB2 = lowBq.b2;
+        c.lowA1 = lowBq.a1;   c.lowA2 = lowBq.a2;
+        c.highB0 = highBq.b0; c.highB1 = highBq.b1; c.highB2 = highBq.b2;
+        c.highA1 = highBq.a1; c.highA2 = highBq.a2;
+        c.broadbandGain = gMid;
+        return c;
+    }
+
+    // Legacy process: reads coefficients from internal biquads.
     float process (float input)
     {
-        // Cascade order doesn't affect magnitude response; pick high-shelf
-        // first so the low-shelf operates on a slightly pre-shaped spectrum
-        // (matches Lexicon-style serial topology).
         return broadbandGain_ * lowShelf_.process (highShelf_.process (input));
+    }
+
+    // Snapshot process: coefficients come by const-ref each sample.
+    // Filter state (z1/z2 inside each shelf) stays on the RT side.
+    // Cascade order matches the legacy path (high-shelf, then low-shelf).
+    float process (float input, const Coeffs& c)
+    {
+        // High-shelf
+        const float yHigh = c.highB0 * input + highShelf_.z1;
+        highShelf_.z1 = c.highB1 * input - c.highA1 * yHigh + highShelf_.z2;
+        highShelf_.z2 = c.highB2 * input - c.highA2 * yHigh;
+        // Low-shelf
+        const float yLow  = c.lowB0 * yHigh + lowShelf_.z1;
+        lowShelf_.z1  = c.lowB1 * yHigh - c.lowA1 * yLow + lowShelf_.z2;
+        lowShelf_.z2  = c.lowB2 * yHigh - c.lowA2 * yLow;
+        return c.broadbandGain * yLow;
     }
 
     void reset()

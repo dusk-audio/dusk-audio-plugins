@@ -3,6 +3,8 @@
 #include "DspUtils.h"
 #include "TwoBandDamping.h"
 
+#include <array>
+#include <atomic>
 #include <vector>
 
 // Multi-point output tap: reads from a fractional position within a delay line.
@@ -72,32 +74,120 @@ private:
     static constexpr float kOutputLevel = 1.121f;     // 1/sqrt(8) * 2.0 * 1.585 — consolidated output scaling
     static constexpr float kSafetyClip  = 32.0f;     // Soft-clip ceiling — raised for dual-slope (high fast-tap gain)
     static constexpr int kNumOutputTaps = 8;
+    static constexpr int kMaxMultiTaps = 256;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
     // Must be >= the largest value in any preset delay table.
     // Currently: kPresetFatSnareHall reaches 6613.
     static constexpr int kMaxBaseDelay = 6700;
 
-    // Mutable delay and tap configuration (initialized to Hall defaults)
-    int baseDelays_[N];
-    int leftTaps_[8];
-    int rightTaps_[8];
-    float leftSigns_[8];
-    float rightSigns_[8];
+    // =========================================================================
+    // LiveParams — RT-safe parameter snapshot.
+    //
+    // Every value that processBlock reads in its inner loop lives here.
+    // Setters (message thread) write into the pending slot, then atomically
+    // publish the pointer. processBlock (RT thread) loads the pointer once at
+    // block entry via memory_order_acquire and dereferences it for every
+    // sample. No torn reads of multi-word state (perturb matrix, biquad
+    // coefficients, multi-point tap config) are possible.
+    //
+    // Zero-tear damping: ThreeBandDamping::Coeffs lives in the snapshot.
+    // Filter state (biquad z1/z2) stays in the dampFilter_ array on the
+    // RT side. process() takes the coefficients by const-ref.
+    // =========================================================================
+    struct LiveParams
+    {
+        // Per-channel arrays (inner-loop hot)
+        float delayLength       [N] {};
+        float modDepthScale     [N] {};
+        float inputGainScale    [N] {};
+        float outputGainScale   [N] {};
+        float outputTapGain     [N] { 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1 };
 
-    // Multi-point output tapping (Dattorro-inspired)
-    static constexpr int kMaxMultiTaps = 256;
-    FDNOutputTap multiTapsL_[kMaxMultiTaps] {};
-    FDNOutputTap multiTapsR_[kMaxMultiTaps] {};
-    int numMultiTapsL_ = 0;
-    int numMultiTapsR_ = 0;
-    bool useMultiPointOutput_ = false;
+        // Tap routing (standard 8-tap path)
+        int   leftTaps          [kNumOutputTaps] { 0,3,5,7,8,10,12,15 };
+        int   rightTaps         [kNumOutputTaps] { 1,2,4,6,9,11,13,14 };
+        float leftSigns         [kNumOutputTaps] { 1,-1,1,-1,1,-1,1,-1 };
+        float rightSigns        [kNumOutputTaps] { -1,1,-1,1,-1,1,-1,1 };
 
-    float lateGainScale_ = 1.0f;
-    float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
+        // Feedback mixing
+        float perturbMatrix     [N][N] {};
+        bool  usePerturbedMatrix = false;
+        bool  useHouseholder     = false;
+
+        // Stereo split / dual-slope routing
+        bool  stereoSplitEnabled = false;
+        float stereoCoupling     = 0.0f;
+        int   dualSlopeFastCount = 0;
+
+        // Output / inline diffusion
+        float lateGainScale      = 1.0f;
+        float sizeCompensation   = 1.0f;
+        float inlineDiffCoeff    = 0.0f;
+        float inlineDiffCoeff2   = 0.0f;
+        float inlineDiffCoeff3   = 0.0f;
+        bool  useShortInlineAP   = false;
+
+        // Multi-point output tap config
+        FDNOutputTap multiTapsL  [kMaxMultiTaps] {};
+        FDNOutputTap multiTapsR  [kMaxMultiTaps] {};
+        int   numMultiTapsL      = 0;
+        int   numMultiTapsR      = 0;
+        bool  useMultiPointOutput = false;
+
+        // Damping coefficients (zero-tear: passed by const-ref each sample)
+        ThreeBandDamping::Coeffs damping[N] {};
+
+        // Structural / anti-alias / DC-blocker coefficients
+        float structHFCoeff      = 0.0f;
+        float structLFCoeff      = 0.0f;
+        float antiAliasCoeff     = 0.0f;
+        float dcCoeff            = 0.9993f;
+        bool  structHFEnabled    = false;
+        bool  structLFEnabled    = false;
+
+        // Saturation drive (read in inner loop)
+        float saturationAmount   = 0.0f;
+
+        // Freeze flag (every-sample read)
+        bool  frozen             = false;
+    };
+
+    std::array<LiveParams, 2> paramSlots_;
+    std::atomic<LiveParams*>  liveParams_ { nullptr };
+    int                       pendingSlot_ = 1;   // message-thread-owned
+
+    LiveParams& pending()   { return paramSlots_[pendingSlot_]; }
+    void publishPending();
+    // Snapshot derivation: each writes only into the supplied LiveParams.
+    void computeDelayLengths       (LiveParams& p);
+    void computeDecayCoefficients  (LiveParams& p);
+    void computeModDepth           ();
+
+    // Raw input state (message-thread, feeds the snapshot)
+    int   baseDelays_[N];
+    int   leftTapsIn_[8];
+    int   rightTapsIn_[8];
+    float leftSignsIn_[8];
+    float rightSignsIn_[8];
+
+    // Storage for setMultiPoint* setters; copied into pending().multiTaps[L|R].
+    FDNOutputTap multiTapsLIn_[kMaxMultiTaps] {};
+    FDNOutputTap multiTapsRIn_[kMaxMultiTaps] {};
+    int   numMultiTapsLIn_ = 0;
+    int   numMultiTapsRIn_ = 0;
+    bool  useMultiPointIn_ = false;
+
+    // Stored perturb matrix (message-thread); copied into pending() on publish.
+    float perturbMatrixIn_[N][N] {};
+    bool  usePerturbedIn_  = false;
+
+    // -----------------------------------------------------------------------
+    // RT-side state (mutated each sample; never read by message thread)
+    // -----------------------------------------------------------------------
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
-    float sizeRangeAllocatedMax_ = 4.0f; // Max size scale that prepare() allocated buffers for
+    float sizeRangeAllocatedMax_ = 4.0f;
 
     struct DelayLine
     {
@@ -154,8 +244,6 @@ private:
     };
 
     // Short inline allpass delays (7-47 samples at 44.1kHz) for Hall.
-    // Much shorter = nearly flat group delay → avoids spectral centroid shift.
-    // Combined with multi-point output tapping for maximum density.
     static constexpr int kInlineAPDelaysShort[N] = {
         7, 11, 13, 17, 19, 23, 29, 31,
         37, 41, 43, 47, 7, 11, 13, 17
@@ -166,80 +254,27 @@ private:
     InlineAllpass inlineAP2_[N];
     InlineAllpass inlineAP3_[N];
     InlineAllpass inlineAPShort_[N];
-    bool useShortInlineAP_ = false;
-    float inlineDiffCoeff_ = 0.0f;
-    float inlineDiffCoeff2_ = 0.0f;
-    float inlineDiffCoeff3_ = 0.0f;
-    ThreeBandDamping dampFilter_[N];
-    // Random-walk LFO per channel. Smoothstep-interpolated wander is
-    // band-limited (no FM sidebands) and aperiodic (never beats with the
-    // FDN's modal frequencies). One LFO per delay tap matches the
-    // commercial-reverb convention (Lexicon Random Hall, Valhalla
-    // VintageVerb, Bricasti M7).
+    ThreeBandDamping dampFilter_[N];     // holds biquad state only; coeffs come from lp.damping[]
     DspUtils::RandomWalkLFO lfos_[N];
-    float delayLength_[N] {};
-    float inputGainScale_[N] {};  // Per-channel input gain: 1/sqrt(delay_length/min_delay) for uniform modal excitation
-    float outputGainScale_[N] {}; // Per-channel output gain: same weighting for spectral flatness
-    bool useWeightedGains_ = false; // Enable delay-weighted input/output gains
-    float modDepthScale_[N] {}; // Per-delay mod scaling (proportional to delay length)
-    float modDepthFloor_ = 0.35f; // Minimum mod depth scaling (per-algorithm)
 
-    // Structural HF damping: gentle first-order LP modeling air absorption.
-    // Per-algorithm, applied after TwoBandDamping in feedback loop.
-    // Effective frequency scales with treble_multiply: lower treble → lower cutoff → more damping.
+    // Per-channel structural/anti-alias/DC-blocker FILTER STATE
     float structHFState_[N] {};
-    float structHFCoeff_ = 0.0f;
-    float structHFBaseFreq_ = 0.0f;  // Stored for re-computation when treble changes
-    bool structHFEnabled_ = false;
-
-    // Structural LF damping: first-order highpass in feedback loop.
-    // Reduces bass RT60 inflation (Room mode). Applied after structural HF damping.
     float structLFState_[N] {};
-    float structLFCoeff_ = 0.0f;   // exp(-2π·f/sr), 0 = bypassed
-    bool structLFEnabled_ = false;
-
-    // Anti-alias LP: gentle first-order LP at ~17kHz inside feedback loop.
-    // Accumulates across iterations to suppress modulation-induced aliasing
-    // without killing air on the first pass (unlike the 6th-order output LP).
     float antiAliasState_[N] {};
-    float antiAliasCoeff_ = 0.0f;  // exp(-2*pi*17000/sr), 0 = bypassed
+    float dcX1_[N] {};
+    float dcY1_[N] {};
 
-    // Per-channel DC blocker (first-order highpass, ~5Hz).
-    // Prevents DC accumulation inside the FDN feedback loop from
-    // denormal bias and allpass filter drift.
-    float dcX1_[N] {};   // Previous input
-    float dcY1_[N] {};   // Previous output
-    float dcCoeff_ = 0.9993f;  // R = 1 - 2*pi*5/sr
-
-    // Perturbed feedback mixing matrix (optional replacement for Hadamard).
-    // Small random offsets break deterministic mode coupling that causes ringing.
-    // Projected to nearest orthogonal matrix via polar decomposition for energy conservation.
-    float perturbMatrix_[N][N] {};
-    bool usePerturbedMatrix_ = false;
-    bool useHouseholder_ = false;
-
-    // Stereo split: channels 0-7 = L group, 8-15 = R group.
-    // Two independent 8×8 Hadamards with controlled cross-coupling between groups.
-    // coupling=0 → fully independent L/R (widest), coupling=0.5 → fully mixed (mono).
-    float stereoCoupling_ = 0.0f;
-    bool stereoSplitEnabled_ = false;
-
-    // Dual-slope decay: channels [0, dualSlopeFastCount_) get shorter RT60
-    // and boosted output tap gain to create double-slope decay (loud fast + quiet slow).
-    float dualSlopeRatio_ = 0.0f;     // Fast RT60 as fraction of effective RT60 (0 = disabled)
-    int   dualSlopeFastCount_ = 0;    // Number of fast-decay channels
-    float outputTapGain_[N] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-                                1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-
+    // -----------------------------------------------------------------------
+    // Raw user-set values (input to snapshot derivation; not RT-read directly)
+    // -----------------------------------------------------------------------
     double sampleRate_ = 44100.0;
     float decayTime_ = 1.0f;
     float bassMultiply_ = 1.0f;
-    float midMultiply_ = 1.0f;            // 3-band mid (NEW)
+    float midMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
-    float airTrebleMultiply_ = 1.0f;  // Independent air band damping (above highCrossoverFreq)
+    float airTrebleMultiply_ = 1.0f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 20000.0f;
-    float saturationAmount_ = 0.0f;       // 0..1 drive (NEW)
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
@@ -249,11 +284,12 @@ private:
     float baseLowCrossoverCoeff_ = 0.0f;
     float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
-    bool frozen_ = false;
-    bool prepared_ = false;
+    float structHFBaseFreq_ = 0.0f;
+    float modDepthFloor_ = 0.35f;
+    float dualSlopeRatio_ = 0.0f;
+    bool  useWeightedGains_ = false;
+    bool  prepared_ = false;
 
-    void updateDelayLengths();
-    void updateDecayCoefficients();
     void updateLFORates();
     void updateModDepth();
 };
