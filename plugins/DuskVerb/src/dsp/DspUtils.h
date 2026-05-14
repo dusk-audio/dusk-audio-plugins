@@ -7,10 +7,6 @@
 namespace DspUtils
 {
 
-// Tiny DC bias added to feedback paths to prevent denormal accumulation.
-// Small enough to be inaudible but keeps FPU out of slow denormal mode.
-static constexpr float kDenormalPrevention = 1.0e-15f;
-
 // Calibration reference sample rate. All base delay lengths and modulation
 // excursions in the engines are tuned at this rate; runtime values scale
 // linearly via `sampleRate / kBaseSampleRate`. The plugin runs correctly at

@@ -521,10 +521,8 @@ void SixAPTankEngine::process (const float* inputL, const float* inputR,
         // flips polarity, mathematically guaranteed not to converge.
         const float l = DspUtils::softClip (rightLoop, satThreshold, satCeiling);
         const float r = DspUtils::softClip (leftLoop,  satThreshold, satCeiling);
-        leftTank_.crossFeedState  = std::clamp ( l, -kSafetyClip, kSafetyClip)
-                                  + DspUtils::kDenormalPrevention;
-        rightTank_.crossFeedState = std::clamp (-r, -kSafetyClip, kSafetyClip)
-                                  - DspUtils::kDenormalPrevention;
+        leftTank_.crossFeedState  = std::clamp ( l, -kSafetyClip, kSafetyClip);
+        rightTank_.crossFeedState = std::clamp (-r, -kSafetyClip, kSafetyClip);
 
         // STEREO BIND: each output channel mixes its own tank's post-cascade
         // `damped` signal (primary) with a phase-inverted ½-amplitude slice
