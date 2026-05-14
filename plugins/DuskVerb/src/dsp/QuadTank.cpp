@@ -259,14 +259,30 @@ void QuadTank::process (const float* inputL, const float* inputR,
         }
 
         // ------------------------------------------------------------------
-        // Output: sum 14 signed taps from all 4 tanks per channel
+        // Output: sum 48 signed taps from all 4 tanks per channel. Each
+        // resolvedTap holds a stable buffer pointer, mask, writePos pointer,
+        // current delaySamples (positionFrac × total) and sign — resolved at
+        // prepare() / updateDelayLengths(). Inner loop is a pure fractional
+        // cubic-Hermite fetch, no switch, no per-tap branching.
         float outL = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
-            outL += readOutputTap (kLeftOutputTaps[t]) * kLeftOutputTaps[t].sign;
+        {
+            const auto& rt = resolvedTapsL_[t];
+            const float readPos = static_cast<float> (*rt.writePos) - rt.delaySamples;
+            const int   intIdx  = static_cast<int> (std::floor (readPos));
+            const float frac    = readPos - static_cast<float> (intIdx);
+            outL += DspUtils::cubicHermite (rt.buffer, rt.mask, intIdx, frac) * rt.sign;
+        }
 
         float outR = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
-            outR += readOutputTap (kRightOutputTaps[t]) * kRightOutputTaps[t].sign;
+        {
+            const auto& rt = resolvedTapsR_[t];
+            const float readPos = static_cast<float> (*rt.writePos) - rt.delaySamples;
+            const int   intIdx  = static_cast<int> (std::floor (readPos));
+            const float frac    = readPos - static_cast<float> (intIdx);
+            outR += DspUtils::cubicHermite (rt.buffer, rt.mask, intIdx, frac) * rt.sign;
+        }
 
         // Normalize output tap sum. With alternating signs on highly correlated
         // taps (same tank, adjacent delay positions), effective independence is
@@ -282,32 +298,49 @@ void QuadTank::process (const float* inputL, const float* inputR,
 }
 
 // -----------------------------------------------------------------------
-float QuadTank::readOutputTap (const OutputTap& tap) const
+void QuadTank::resolveOutputTaps()
 {
     // Buffer index mapping:
     //   0-3:  Delay1 from tanks 0-3
     //   4-7:  Delay2 from tanks 0-3
     //   8-11: AP2 from tanks 0-3
-    int tankIdx = tap.bufferIndex % kNumTanks;
-    int bufType = tap.bufferIndex / kNumTanks;  // 0=del1, 1=del2, 2=ap2
-
-    const auto& tank = tanks_[tankIdx];
-
-    if (bufType == 2)
+    auto resolveOne = [&] (const OutputTap& tap, ResolvedTap& out)
     {
-        // Read from AP2 internal buffer at fractional position
-        const auto& ap = tank.ap2;
-        int tapOffset = static_cast<int> (tap.positionFrac * static_cast<float> (ap.delaySamples));
-        tapOffset = std::max (tapOffset, 1);
-        return ap.buffer[static_cast<size_t> ((ap.writePos - tapOffset) & ap.mask)];
+        const int tankIdx = tap.bufferIndex % kNumTanks;
+        const int bufType = tap.bufferIndex / kNumTanks;
+        auto& tank = tanks_[tankIdx];
+        out.sign = tap.sign;
+
+        if (bufType == 0)
+        {
+            out.buffer       = tank.delay1.buffer.data();
+            out.mask         = tank.delay1.mask;
+            out.writePos     = &tank.delay1.writePos;
+            out.delaySamples = std::max (tap.positionFrac * tank.delay1Samples, 1.0f);
+        }
+        else if (bufType == 1)
+        {
+            out.buffer       = tank.delay2.buffer.data();
+            out.mask         = tank.delay2.mask;
+            out.writePos     = &tank.delay2.writePos;
+            out.delaySamples = std::max (tap.positionFrac * tank.delay2Samples, 1.0f);
+        }
+        else // bufType == 2 (AP2)
+        {
+            out.buffer       = tank.ap2.buffer.data();
+            out.mask         = tank.ap2.mask;
+            out.writePos     = &tank.ap2.writePos;
+            out.delaySamples = std::max (tap.positionFrac
+                                            * static_cast<float> (tank.ap2.delaySamples),
+                                         1.0f);
+        }
+    };
+
+    for (int t = 0; t < kNumOutputTaps; ++t)
+    {
+        resolveOne (kLeftOutputTaps[t],  resolvedTapsL_[t]);
+        resolveOne (kRightOutputTaps[t], resolvedTapsR_[t]);
     }
-
-    const DelayLine* delayBuf = (bufType == 0) ? &tank.delay1 : &tank.delay2;
-    float totalDelay = (bufType == 0) ? tank.delay1Samples : tank.delay2Samples;
-
-    float tapDelay = tap.positionFrac * totalDelay;
-    tapDelay = std::max (tapDelay, 1.0f);
-    return delayBuf->readInterpolated (tapDelay);
 }
 
 // -----------------------------------------------------------------------
@@ -544,6 +577,10 @@ void QuadTank::updateDelayLengths()
             tank.densityAP[i].updateJitterDepth (sr);
         }
     }
+
+    // Tap resolution depends on the freshly-updated delay1Samples /
+    // delay2Samples / ap2.delaySamples — refresh after the tank loop.
+    resolveOutputTaps();
 }
 
 void QuadTank::updateDecayCoefficients()
