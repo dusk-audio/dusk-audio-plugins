@@ -171,11 +171,23 @@ void QuadTank::process (const float* inputL, const float* inputR,
         for (int t = 0; t < kNumTanks; ++t)
             cf[t] = tanks_[t].crossFeedState;
 
-        // Process each tank with circular cross-coupling (0←3, 1←0, 2←1, 3←2)
+        // Process each tank with bidirectional attenuated cross-coupling.
+        // Previous single-direction ring 0→1→2→3→0 with unity cross-feed
+        // concentrated energy into a deterministic 4-tank rotation, audible
+        // as a periodic modal pattern at sr/(4·L_pertank). Mixing the
+        // previous AND next tank's output (forward-weighted) breaks that
+        // ring; total cross-feed gain < 1 keeps cascade stability margin
+        // above 6 dB across all damping settings. The reduced loop gain
+        // is compensated downstream in updateDecayCoefficients().
+        constexpr float kCrossFeedFwd  = 0.55f;
+        constexpr float kCrossFeedBack = 0.20f;
         for (int t = 0; t < kNumTanks; ++t)
         {
             auto& tank = tanks_[t];
-            float otherCrossFeed = cf[(t + kNumTanks - 1) % kNumTanks];
+            const int prev = (t + kNumTanks - 1) % kNumTanks;
+            const int next = (t + 1) % kNumTanks;
+            const float otherCrossFeed = kCrossFeedFwd  * cf[prev]
+                                       + kCrossFeedBack * cf[next];
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
@@ -236,11 +248,8 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
-            float bias = frozen_ ? 0.0f
-                                 : (((tank.delay2.writePos ^ 1) & 1)
-                                        ? +DspUtils::kDenormalPrevention
-                                        : -DspUtils::kDenormalPrevention);
-            tank.delay2.write (ap2Out + bias);
+            // Denormals handled at processBlock entry via ScopedNoDenormals.
+            tank.delay2.write (ap2Out);
 
             // Cross-feed: feeds next tank. Soft-clip on the way out — analog
             // tape/transformer-style warmth that engages only when transients
@@ -562,8 +571,14 @@ void QuadTank::updateDecayCoefficients()
             densityLen += static_cast<float> (tank.densityAP[i].delaySamples);
         loopLength += densityLen * storageFactor;
 
-        float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
-        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
+        // Bidirectional cross-feed attenuation (process() line ~180) reduces
+        // per-cycle loop gain to g_damping × kCrossFeedTotal. Solve for the
+        // damping gain that yields the target g_eff after RT60 seconds.
+        // Keep in sync with kCrossFeedFwd + kCrossFeedBack in process().
+        constexpr float kCrossFeedTotal = 0.55f + 0.20f;
+        const float gEffTarget = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
+        const float gBaseRaw   = gEffTarget / kCrossFeedTotal;
+        float gBase = std::clamp (std::pow (gBaseRaw, decayBoost_), 0.001f, 0.9999f);
         float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         // True 3-band: mid band uses midMultiply_ (default 1.0 = natural rate).
         float gMid  = std::clamp (std::pow (gBase, 1.0f / midMultiply_), 0.001f, 0.9999f);
