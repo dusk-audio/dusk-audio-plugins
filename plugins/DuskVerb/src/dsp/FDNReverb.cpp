@@ -1056,20 +1056,6 @@ void FDNReverb::setStructuralLFDamping (float hz)
     publishPending();
 }
 
-void FDNReverb::setFeedbackModDepth (float depth)
-{
-    feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
-}
-
-void FDNReverb::setCrossoverModDepth (float depth)
-{
-    // The previous behaviour pushed the base coefficient back into the
-    // legacy setLowCrossoverCoeff path. With the snapshot now owning the
-    // damping coefficients, that route is no longer wired — crossover mod
-    // is fully driven by the next computeDecayCoefficients() call.
-    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
-}
-
 void FDNReverb::setDecayBoost (float boost)
 {
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
@@ -1164,11 +1150,8 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
 {
     const float sr = static_cast<float> (sampleRate_);
 
-    float lowCrossoverCoeff  = std::exp (-kTwoPi * crossoverFreq_ / sr);
-    float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
-
-    baseLowCrossoverCoeff_  = lowCrossoverCoeff;
-    baseHighCrossoverCoeff_ = highCrossoverCoeff;
+    const float lowCrossoverCoeff  = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    const float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
     const int dualSlopeFastCount = p.dualSlopeFastCount;
 

@@ -62,8 +62,6 @@ public:
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
-    void setFeedbackModDepth (float depth);
-    void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
     void clearBuffers();
 
@@ -279,10 +277,6 @@ private:
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
     float sizeParam_ = 1.0f;
-    float feedbackModDepth_ = 0.0f;
-    float crossoverModDepth_ = 0.0f;
-    float baseLowCrossoverCoeff_ = 0.0f;
-    float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
     float structHFBaseFreq_ = 0.0f;
     float modDepthFloor_ = 0.35f;
