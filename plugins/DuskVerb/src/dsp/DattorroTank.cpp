@@ -327,12 +327,8 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
-            // Denormal prevention: tiny alternating bias
-            float bias = frozen_ ? 0.0f
-                                 : (((tank.delay2.writePos ^ 1) & 1)
-                                        ? +DspUtils::kDenormalPrevention
-                                        : -DspUtils::kDenormalPrevention);
-            tank.delay2.write (ap2Out + bias);
+            // Denormals handled at processBlock entry via ScopedNoDenormals.
+            tank.delay2.write (ap2Out);
 
             // Cross-feed output: end of this tank feeds the other tank's input.
             // softClip on the cross-feed write delivers analog-style soft

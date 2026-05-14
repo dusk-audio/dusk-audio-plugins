@@ -57,7 +57,7 @@ float SpringEngine::Spring::process (float input, float lfoOffset) noexcept
     // 3) Write input + feedback × read into the buffer (Karplus-Strong style).
     //    Feedback gain scales per-spring so all springs hit the same RT60.
     const float bufIn = disp + feedback * read;
-    delayBuf[static_cast<size_t> (writePos)] = bufIn + DspUtils::kDenormalPrevention;
+    delayBuf[static_cast<size_t> (writePos)] = bufIn;
     writePos = (writePos + 1) & mask;
 
     // 4) HF damping — 1-pole LP on the read path emulates the spring's high-

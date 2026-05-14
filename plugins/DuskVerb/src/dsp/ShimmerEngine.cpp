@@ -118,7 +118,7 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
         // Still keep the buffer + write-head alive so we can resume
         // gracefully if pitchRatio changes mid-block (parameter automation).
         const float filteredPassthrough = aaStage2_.process (aaStage1_.process (input));
-        buffer_[static_cast<size_t> (writePos_)] = filteredPassthrough + DspUtils::kDenormalPrevention;
+        buffer_[static_cast<size_t> (writePos_)] = filteredPassthrough;
         writePos_ = (writePos_ + 1) & mask_;
         return filteredPassthrough;
     }
@@ -127,7 +127,7 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     const float filtered = aaStage2_.process (aaStage1_.process (input));
 
     // Write filtered input to buffer.
-    buffer_[static_cast<size_t> (writePos_)] = filtered + DspUtils::kDenormalPrevention;
+    buffer_[static_cast<size_t> (writePos_)] = filtered;
 
     // Read both grains with linear interpolation.
     const float v1 = readLinear (readPos1_);

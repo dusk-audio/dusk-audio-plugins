@@ -53,8 +53,7 @@ void EarlyReflections::process (const float* inputL, const float* inputR,
                        & static_cast<unsigned> (mask_));
             float tapL = bufferL_[static_cast<size_t> (readL)] * tapsL_[t].gain;
             tapsL_[t].lpState = (1.0f - tapsL_[t].lpCoeff) * tapL
-                              + tapsL_[t].lpCoeff * tapsL_[t].lpState
-                              + DspUtils::kDenormalPrevention;
+                              + tapsL_[t].lpCoeff * tapsL_[t].lpState;
             outL += tapsL_[t].lpState;
 
             int readR = static_cast<int> ((static_cast<unsigned> (writePos_)
@@ -62,8 +61,7 @@ void EarlyReflections::process (const float* inputL, const float* inputR,
                        & static_cast<unsigned> (mask_));
             float tapR = bufferR_[static_cast<size_t> (readR)] * tapsR_[t].gain;
             tapsR_[t].lpState = (1.0f - tapsR_[t].lpCoeff) * tapR
-                              + tapsR_[t].lpCoeff * tapsR_[t].lpState
-                              + DspUtils::kDenormalPrevention;
+                              + tapsR_[t].lpCoeff * tapsR_[t].lpState;
             outR += tapsR_[t].lpState;
         }
 

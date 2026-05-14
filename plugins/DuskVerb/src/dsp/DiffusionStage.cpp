@@ -61,11 +61,9 @@ float ModulatedAllpass::process (float input, float g)
     float vd = DspUtils::cubicHermite (buffer_.data(), mask_, intIdx, frac);
 
     // Schroeder allpass: s[n] = x[n] + g*s[n-D],  y[n] = s[n-D] - g*s[n]
-    // Alternating-sign bias prevents denormal accumulation without adding DC.
+    // Denormals handled at processBlock entry via ScopedNoDenormals.
     float vn = input + g * vd;
-    float denormalBias = (writePos_ & 1) ? DspUtils::kDenormalPrevention
-                                         : -DspUtils::kDenormalPrevention;
-    buffer_[static_cast<size_t> (writePos_)] = vn + denormalBias;
+    buffer_[static_cast<size_t> (writePos_)] = vn;
     writePos_ = (writePos_ + 1) & mask_;
 
     float output = vd - g * vn;
