@@ -84,39 +84,55 @@ void hadamardInPlace8 (float* data)
     }
 }
 
-// In-place Householder reflection for N=16: H = I - (2/N) * ones * ones^T.
-// Provides moderate inter-channel mixing (each output = input - mean),
-// avoiding the eigentone clustering that maximum-mixing Hadamard causes.
-// O(N) complexity: one sum + N subtracts. Energy-preserving (unitary matrix).
-void householderInPlace16 (float* data)
+// In-place Householder reflection H = I - 2·v·vᵀ with a seeded, randomized
+// unit vector v. Replaces the degenerate v = 1/√N form, which had
+// eigenvalue −1 only along the all-ones axis and +1 on the 15-dim
+// orthogonal complement — every channel just received the same DC term
+// (output[i] = input[i] − 2·mean), with no cross-channel mixing
+// orthogonal to the mean. The randomized v places the −1 axis on an
+// arbitrary direction in N-space so every input channel influences every
+// output channel with weight 2·v[i]·v[j] ≠ 0. Still O(N), still unitary.
+// Deterministic across instances/sessions (xorshift32 with fixed seed).
+struct HouseholderVecs
 {
-    constexpr int n = 16;
-    constexpr float kScale = 2.0f / static_cast<float> (n); // 0.125
+    float v16[16];
+    float v8 [8];
 
-    float sum = 0.0f;
-    for (int i = 0; i < n; ++i)
-        sum += data[i];
+    HouseholderVecs()
+    {
+        uint32_t s = 0x9E3779B9u;
+        auto next01 = [&s]() {
+            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+            return static_cast<float> (static_cast<int32_t> (s)) * (1.0f / 2147483648.0f);
+        };
 
-    sum *= kScale;
+        float sumSq = 0.0f;
+        for (int i = 0; i < 16; ++i) { v16[i] = next01(); sumSq += v16[i] * v16[i]; }
+        const float inv16 = 1.0f / std::sqrt (sumSq);
+        for (int i = 0; i < 16; ++i) v16[i] *= inv16;
 
-    for (int i = 0; i < n; ++i)
-        data[i] -= sum;
+        sumSq = 0.0f;
+        for (int i = 0; i < 8; ++i)  { v8[i]  = next01(); sumSq += v8[i] * v8[i]; }
+        const float inv8 = 1.0f / std::sqrt (sumSq);
+        for (int i = 0; i < 8;  ++i) v8[i]  *= inv8;
+    }
+};
+const HouseholderVecs kHouseholder;
+
+inline void householderInPlace16 (float* data)
+{
+    float dot = 0.0f;
+    for (int i = 0; i < 16; ++i) dot += data[i] * kHouseholder.v16[i];
+    const float k = 2.0f * dot;
+    for (int i = 0; i < 16; ++i) data[i] -= k * kHouseholder.v16[i];
 }
 
-// In-place Householder reflection for N=8 (stereo split mode).
-void householderInPlace8 (float* data)
+inline void householderInPlace8 (float* data)
 {
-    constexpr int n = 8;
-    constexpr float kScale = 2.0f / static_cast<float> (n); // 0.25
-
-    float sum = 0.0f;
-    for (int i = 0; i < n; ++i)
-        sum += data[i];
-
-    sum *= kScale;
-
-    for (int i = 0; i < n; ++i)
-        data[i] -= sum;
+    float dot = 0.0f;
+    for (int i = 0; i < 8; ++i) dot += data[i] * kHouseholder.v8[i];
+    const float k = 2.0f * dot;
+    for (int i = 0; i < 8; ++i) data[i] -= k * kHouseholder.v8[i];
 }
 
 } // anonymous namespace
@@ -127,9 +143,14 @@ void householderInPlace8 (float* data)
 // and right output sums share the same number of contributors with alternating
 // signs for natural decorrelation.
 namespace {
+    // Logarithmically spaced primes spanning ~2.49 octaves (6451/1151 = 5.605).
+    // Previous table spanned only 1.62 octaves (5521/1801 = 3.07), producing
+    // tight modal clustering that capped echo density. All primes → mutually
+    // coprime → no shared modal alignment. Fits inside kMaxBaseDelay = 6700.
+    // Extending to a full 3 octaves requires bumping kMaxBaseDelay to ~9400.
     constexpr int   kDefaultDelays[16] = {
-        1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
-        3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521
+        1151, 1289, 1447, 1619, 1823, 2039, 2287, 2579,
+        2887, 3229, 3631, 4073, 4567, 5119, 5749, 6451
     };
     constexpr int   kDefaultLeftTaps[8]  = { 0, 3, 5, 7, 8, 10, 12, 15 };
     constexpr int   kDefaultRightTaps[8] = { 1, 2, 4, 6, 9, 11, 13, 14 };
@@ -471,18 +492,14 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             float polarity = (ch & 1) ? -1.0f : 1.0f;
             float inputSample = stereoSplitEnabled_ ? ((ch < 8) ? inL : inR)
                                                     : ((ch & 1) ? inR : inL);
-            // Suppress denormal bias when frozen to prevent tail mutation
-            float denormalBias = frozen_ ? 0.0f
-                                         : (((dl.writePos ^ ch) & 1)
-                                                ? DspUtils::kDenormalPrevention
-                                                : -DspUtils::kDenormalPrevention);
             // Soft-clip the post-filter feedback before write-back. Engages
             // only when the loop pushes above ±1.0 — adds analog-style warmth
             // on loud transients while leaving quiet tail samples linear
-            // (preserves RT60 calibration).
+            // (preserves RT60 calibration). Denormals handled at processBlock
+            // entry via juce::ScopedNoDenormals (FTZ/DAZ on x86, FZ on ARM).
             const float satFiltered = DspUtils::softClip (filtered, satThreshold, satCeiling);
             dl.buffer[static_cast<size_t> (dl.writePos)] =
-                satFiltered + inputSample * polarity * inputGain + denormalBias;
+                satFiltered + inputSample * polarity * inputGain;
 
             dl.writePos = (dl.writePos + 1) & dl.mask;
         }
@@ -493,36 +510,33 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         if (useMultiPointOutput_)
         {
             // Multi-point output: read from fractional positions within delay lines.
-            // Each tap reads at positionFrac * delayLength, producing multiple virtual
-            // output paths from the same delay structure — Dattorro-inspired density.
-            // Standard multi-point fractional tap reading
+            // Uses the same cubicHermite convention as the main feedback read
+            // (line ~303). The previous linear-interp version walked i0/i1 into
+            // the past from writePos-1-iDelay, which (a) shifted the effective
+            // delay by +1 sample and (b) interpolated in the wrong direction —
+            // taps with identical readDelay returned spectrally different
+            // signals from the main read, breaking stereo decorrelation.
             for (int t = 0; t < numMultiTapsL_; ++t)
             {
                 const auto& tap = multiTapsL_[t];
                 const auto& dl  = delayLines_[tap.channelIndex];
-                float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
-                int   iDelay    = static_cast<int> (readDelay);
-                float frac      = readDelay - static_cast<float> (iDelay);
-                int   i0        = (dl.writePos - 1 - iDelay) & dl.mask;
-                int   i1        = (i0 - 1) & dl.mask;
-                float sample    = dl.buffer[static_cast<size_t> (i0)]
-                                + frac * (dl.buffer[static_cast<size_t> (i1)]
-                                        - dl.buffer[static_cast<size_t> (i0)]);
-                outL += sample * tap.sign;
+                const float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
+                const float readPos   = static_cast<float> (dl.writePos) - readDelay;
+                const int   intIdx    = static_cast<int> (std::floor (readPos));
+                const float frac      = readPos - static_cast<float> (intIdx);
+                outL += DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac)
+                        * tap.sign;
             }
             for (int t = 0; t < numMultiTapsR_; ++t)
             {
                 const auto& tap = multiTapsR_[t];
                 const auto& dl  = delayLines_[tap.channelIndex];
-                float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
-                int   iDelay    = static_cast<int> (readDelay);
-                float frac      = readDelay - static_cast<float> (iDelay);
-                int   i0        = (dl.writePos - 1 - iDelay) & dl.mask;
-                int   i1        = (i0 - 1) & dl.mask;
-                float sample    = dl.buffer[static_cast<size_t> (i0)]
-                                + frac * (dl.buffer[static_cast<size_t> (i1)]
-                                        - dl.buffer[static_cast<size_t> (i0)]);
-                outR += sample * tap.sign;
+                const float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
+                const float readPos   = static_cast<float> (dl.writePos) - readDelay;
+                const int   intIdx    = static_cast<int> (std::floor (readPos));
+                const float frac      = readPos - static_cast<float> (intIdx);
+                outR += DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac)
+                        * tap.sign;
             }
             // Normalize by 1/N — arithmetic mean of tap reads.
             outL /= static_cast<float> (numMultiTapsL_);
@@ -542,14 +556,18 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
         // Linear output: 1/sqrt(8) normalization + 6dB level match.
         // sizeCompensation_ = sqrt(sizeScale) normalizes steady-state energy
-        // across sizes — shorter delays at small sizes pack more recirculations
-        // per unit time, producing higher energy density without compensation.
-        // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
-        // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
-        float rawL = outL * kOutputLevel * sizeCompensation_;
-        float rawR = outR * kOutputLevel * sizeCompensation_;
-        outputL[i] = std::clamp (DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);    }
+        // across sizes. lateGainScale_ folded in BEFORE clipping so the
+        // limiter sees the true loud-sample peak, not a re-amplified
+        // post-shaper signal. softClip is linear below threshold (zero THD
+        // on quiet tail) and tanh-shaped above; hard clamp catches any
+        // pathological transient that exceeds the soft-clip's ceiling.
+        const float rawL = outL * kOutputLevel * sizeCompensation_ * lateGainScale_;
+        const float rawR = outR * kOutputLevel * sizeCompensation_ * lateGainScale_;
+        outputL[i] = std::clamp (DspUtils::softClip (rawL, 1.0f, kSafetyClip),
+                                 -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (DspUtils::softClip (rawR, 1.0f, kSafetyClip),
+                                 -kSafetyClip, kSafetyClip);
+    }
 }
 
 // ---------------------------------------------------------------------------
