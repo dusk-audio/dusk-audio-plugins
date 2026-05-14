@@ -294,9 +294,31 @@ private:
     float delayModDepthSamples_ = 4.0f;       // Per-tap delay LFO depth (samples). Set by setModDepth.
     float lastStructHFRawHz_ = 0.0f;          // Raw caller value for replay after sample-rate change
 
+    // Resolved per-tap state. Pre-computed at prepare() and refreshed in
+    // updateDelayLengths() so the audio thread does a pure fractional fetch
+    // with no per-tap branching. `buffer` and `writePos` are stable pointers
+    // into the owning DelayLine/Allpass (only invalidated on prepare()).
+    // `delaySamples` is positionFrac × the buffer's current total delay;
+    // a single 4-byte float, written on the message thread, read on the RT
+    // thread — racy but bounded to ~1 sample of mistracking on size automation
+    // (atomic enough at the FP word level on x86_64/AArch64).
+    struct ResolvedTap
+    {
+        const float* buffer       = nullptr;
+        int          mask         = 0;
+        const int*   writePos     = nullptr;
+        float        delaySamples = 1.0f;
+        float        sign         = 1.0f;
+    };
+
+    ResolvedTap resolvedTapsL_[kNumOutputTaps] {};
+    ResolvedTap resolvedTapsR_[kNumOutputTaps] {};
+
     void updateDelayLengths();
     void updateDecayCoefficients();
     void updateLFORates();
-
-    float readOutputTap (const OutputTap& tap) const;
+    // Refresh resolvedTapsL_/R_ from the current tank delay/AP state.
+    // Cheap (96 taps × ~5 pointer/float writes). Called from prepare() and
+    // updateDelayLengths().
+    void resolveOutputTaps();
 };
