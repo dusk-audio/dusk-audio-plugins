@@ -1,0 +1,126 @@
+# Tune DuskVerb "Smooth Concert Hall" preset with FDN engine (algo 4 —
+# "Realistic Space") against Lexicon PCM Native Concert Hall preset
+# "000.Concert Hall" under "02.Large Halls". Companion to the SixAPTank
+# config; running both lets us compare engines on their respective
+# 9-axis-optimized bests rather than at fixed shipping-preset params.
+
+job:
+  name: fdn_smooth_ch_vs_lex
+  target_preset: "Smooth Concert Hall"
+  engine_algorithm: 4                    # FDN
+  notes: |
+    Reference: Lex PCM Native Concert Hall, "02.Large Halls/000.Concert Hall.xml".
+    Engine: FDN — 16-channel Hadamard with random-walk LFO. Internal density
+    ~130 early peaks vs SixAPTank's ~61. At fixed shipping params FDN was
+    composite loss 47.56 vs SixAPTank 28.66, but those params were tuned
+    for QuadTank — fair compare requires per-engine optimization.
+    Bus Mode locked on, Dry/Wet locked 1.0 for wet-only comparison.
+    FDN has random-walk LFO per channel — n_renders=3 averaging needed
+    to suppress phase variance between runs.
+
+renderer:
+  bin: ../../../../build/tests/duskverb_render/duskverb_render
+  cache_dir: /tmp/tune_reverb_cache
+  output_dir: /tmp/tune_reverb_runs
+  averaging:
+    n_renders: 3                         # FDN random-walk LFO per channel needs more samples
+    aggregate: median
+
+anchor:
+  # Lex Concert Hall preset "02.Large Halls/000.Concert Hall" rendered via:
+  #   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so \
+  #     --load-state /tmp/concert_hall.fxp/Lch1/lex-concert-hall.fxp \
+  #     --slug lex_ch_v5 --output-dir /tmp/lex_concerthall --wait-after-load 2000
+  # Sanity check: RT60@500 ≈ 3.6s, C80 ≈ +4 dB, D50 ≈ +3.5 dB
+  # vs default-state which had RT60@500 ≈ 1.6s, C80 ≈ +0.5 dB.
+  impulse_wav: /tmp/lex_concerthall/lex_ch_v5_impulse.wav
+  noiseburst_wav: /tmp/lex_concerthall/lex_ch_v5_noiseburst.wav
+
+# Locked params reflect the shipping "Smooth Concert Hall" row in
+# FactoryPresets.h. Mix + Bus Mode force 100% wet for the comparison.
+# Predelay, lo/hi cut, width, gain_trim stay locked so the search space
+# captures only the reverb-character knobs.
+locked_params:
+  Algorithm:       "Realistic Space (FDN)"
+  Bus Mode:        "on"
+  Dry/Wet:         "1.0"                 # NOT "Mix" — DV display name is Dry/Wet
+  Pre-Delay:       "28"
+  Pre-Delay Sync:  "Free"
+  Mod Depth:       "0.0"                 # FDN random-walk LFO off — Lex Concert Hall is largely static
+  Mod Rate:        "0.6"
+  Lo Cut:          "60"
+  Hi Cut:          "13000"
+  Width:           "1.25"
+  Gain Trim:       "-0.5"
+  Early Ref Size:  "0.65"
+  Mono Below:      "20"
+  Freeze:          "Off"
+  Gate:            "On"
+  Saturation:      "0.10"
+
+# Sweep the reverb-character axes. Ranges sized to reach Lex Concert Hall:
+#   RT60 ≈ 3.6-4.6s broadband (Decay 2.0-5.0 covers this with margin)
+#   TR=1.30 → less HF damping, so Damping lo=0.30 opens up brighter tails
+# Other axes stay near current shipping values.
+search_space:
+  # 9 reverb-character axes. Ranges from PluginProcessor.cpp param layout
+  # (NormalisableRange bounds); steps are coarse since CMA-ES refines past
+  # the grid. CMA-ES samples continuously — `step` only matters if a future
+  # --grid-only run is added back.
+  Decay Time:      { lo: 2.0,  hi: 5.0,  step: 0.30, scale: linear }
+  Size:            { lo: 0.40, hi: 0.95, step: 0.10, scale: linear }
+  Treble Multiply: { lo: 0.40, hi: 1.40, step: 0.15, scale: linear }
+  Bass Multiply:   { lo: 0.70, hi: 1.80, step: 0.20, scale: linear }
+  Mid Multiply:    { lo: 0.70, hi: 1.30, step: 0.10, scale: linear }
+  Diffusion:       { lo: 0.65, hi: 0.95, step: 0.05, scale: linear }
+  Low Crossover:   { lo: 400,  hi: 1500, step: 200,  scale: linear }
+  High Crossover:  { lo: 2500, hi: 8000, step: 1000, scale: linear }
+  Early Ref Level: { lo: 0.10, hi: 0.75, step: 0.10, scale: linear }
+# 9-axis CMA-ES: max_evals=200 over [0,1]^9 hypercube, ~6-12 min wall @ workers=10.
+
+# JND-weighted composite loss. Per-band RT60 + EDT carry RT60/spectral
+# decay accuracy; C80/D50 carry early-vs-late energy balance; BR/TR carry
+# perceived warmth/brightness; box/crest catch midrange honk and tail
+# texture.
+metrics:
+  rt60_per_band:       { weight: 1.0, jnd: 0.10 }
+  edt_500:             { weight: 1.0, jnd: 0.10 }
+  edt:                 { weight: 0.6, jnd: 0.10 }
+  c80:                 { weight: 0.8, jnd: 1.0  }
+  c80_per_octave:      { weight: 0.5, jnd: 2.0  }
+  d50:                 { weight: 0.5, jnd: 1.0  }
+  bass_ratio:          { weight: 1.0, jnd: 0.10 }
+  treble_ratio:        { weight: 1.0, jnd: 0.10 }
+  box_ratio_db:        { weight: 0.6, jnd: 1.0  }
+  a_weighted_rms_db:   { weight: 0.5, jnd: 0.5  }
+  spectral_crest_db:   { weight: 0.3, jnd: 1.5  }
+  time_domain_crest:   { weight: 0.3, jnd: 2.0  }
+  stereo_correlation:  { weight: 0.3, jnd: 0.10 }
+
+# Two-stage: 9-axis cartesian product is ~2M cells — too large. Use a
+# COARSE grid (step values above give 9×5×6×5×4×4×5×5×4 = ~360k cells if
+# fully exploded). Instead, treat grid as a sparse Sobol sample by setting
+# coarse step and rely on optimizer for the actual refinement.
+# For now, the user should run --measure-only first, then narrow which
+# axes matter, then re-run with fewer axes.
+optimizer:
+  enabled: true
+  algorithm: cma                         # cma package installed; ThreadPool parallel evals/generation
+  sigma0: 0.20
+  max_evals: 200
+  tolerance: 0.05
+  parallel_workers: 10                   # DV VST3 native; thread-safe per render
+
+patch:
+  enabled: true
+  dry_run_first: true                    # always emit diff first
+  fields_to_patch:
+    - decay
+    - size
+    - damping
+    - bassMult
+    - midMult
+    - crossover
+    - highCrossover
+    - diffusion
+    - erLevel

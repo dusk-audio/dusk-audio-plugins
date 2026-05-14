@@ -1,0 +1,84 @@
+# Regression / parity config: re-tunes "Vintage Vocal Plate" against the Lex
+# VST2 anchor. Used to validate the universal tuner — it must converge to
+# params within 1 grid step of the currently-shipped Vintage Vocal Plate.
+#
+# Locked params + JNDs are lifted verbatim from sweep_perceptual.py
+# (BASE_PARAMS at line 33-51, JND at line 62-73) so the tuner gets the same
+# starting conditions the plate sweeps used.
+
+job:
+  name: plate_vs_lex_vocalplate
+  target_preset: "Vintage Vocal Plate"
+  engine_algorithm: 1                    # DattorroVintage
+  notes: |
+    Regression config — backfilled from sweep_perceptual.py. New tuner must
+    recover the shipping Vintage Vocal Plate params within 1 grid step.
+
+renderer:
+  # bin path is resolved relative to this YAML file's directory.
+  # Override cache_dir / output_dir by exporting $CACHE_DIR / $OUTPUT_DIR
+  # before running (the loader expands env vars).
+  bin: ../../../../build/tests/duskverb_render/duskverb_render
+  cache_dir: /tmp/tune_reverb_cache
+  output_dir: /tmp/tune_reverb_runs
+  averaging:
+    n_renders: 1                         # plate decay sweep used n=1 historically
+    aggregate: median
+
+anchor:
+  impulse_wav: /tmp/lex_compare/lex_v3_impulse.wav
+  noiseburst_wav: /tmp/lex_compare/lex_v3_noiseburst.wav
+
+locked_params:
+  Algorithm:       "Plate (Dattorro Vintage)"
+  Bus Mode:        "on"
+  Pre-Delay:       "20"
+  Size:            "0.55"
+  Mod Depth:       "0.0"
+  Mod Rate:        "1.8"
+  Treble Multiply: "1.1"
+  Bass Multiply:   "0.10"
+  Low Crossover:   "200"
+  Lo Cut:          "30"
+  Hi Cut:          "18000"
+  Width:           "1.1"
+  Gain Trim:       "3.5"
+  High Crossover:  "3500"
+  Saturation:      "0.05"
+  Bass Choke:      "300"
+  Early Ref Size:  "0.30"
+  Diffusion:       "0.40"
+
+# Mirrors sweep_perceptual.py's DECAY_GRID × MID_GRID × ER_LEVEL_GRID
+# (line 56-59). Diffusion is locked at 0.40 there — kept locked here too.
+search_space:
+  Decay Time:      { lo: 0.85, hi: 1.30, step: 0.225, scale: linear }
+  Mid Multiply:    { lo: 0.85, hi: 1.10, step: 0.125, scale: linear }
+  Early Ref Level: { lo: 0.02, hi: 0.06, step: 0.02,  scale: linear }
+
+# JND values from sweep_perceptual.py:62-73. Weights default to 1.0 unless
+# the original script downweighted (it didn't — all axes are equally weighted
+# there, which made the sum-of-|Δ|/JND score behave as max-flag count).
+metrics:
+  a_weighted_rms_db:   { weight: 1.0, jnd: 0.5 }
+  bass_ratio:          { weight: 1.0, jnd: 0.10 }
+  treble_ratio:        { weight: 1.0, jnd: 0.10 }
+  c80:                 { weight: 1.0, jnd: 1.0 }
+  spectral_crest_db:   { weight: 1.0, jnd: 1.5 }
+  d50:                 { weight: 1.0, jnd: 1.0 }
+  stereo_correlation:  { weight: 1.0, jnd: 0.10 }
+  time_domain_crest:   { weight: 1.0, jnd: 2.0 }
+  edt_500:             { weight: 1.0, jnd: 0.10 }
+
+optimizer:
+  enabled: true
+  algorithm: cma
+  sigma0: 0.15
+  max_evals: 80                          # ~3 axes — small budget suffices
+  tolerance: 0.05
+  parallel_workers: 4
+
+patch:
+  enabled: false                         # regression config — never auto-patch
+  dry_run_first: true
+  fields_to_patch: []

@@ -9,11 +9,15 @@
 class DuskVerbEngine;
 
 // Factory presets — 16 hardware-anchored voicings.
-// `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
-//   0 = Vintage Plate (Dattorro)
-//   1 = High Density  (6-AP)
-//   2 = Quad Room     (QuadTank, no modulation)
-//   3 = Realistic Space (FDN)
+// `algorithm` is the engine index (0..7) per AlgorithmConfig.h:
+//   0 = Dattorro
+//   1 = DattorroVintage
+//   2 = SixAPTank (High Density 6-AP)
+//   3 = QuadTank (no modulation)
+//   4 = FDN (Realistic Space)
+//   5 = Spring (6G15)
+//   6 = NonLinear (RMX16)
+//   7 = Shimmer (Eno FDN)
 //
 // IMPORTANT: presets are grouped CONTIGUOUSLY by category — the editor's
 // dropdown adds a section heading whenever the category changes, so any
@@ -66,6 +70,26 @@ struct FactoryPreset
     float sixAPBloomStagger[6] = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f };
     float sixAPEarlyMix        = 0.5f;
     float sixAPOutputTrim      = 1.3f;
+    // Highpass cutoff (Hz) applied to the early-fill mix. Default 20 Hz =
+    // effective bypass. Concert-Hall-style presets opt in to ~300-500 Hz so
+    // the early ParallelDiffuser output doesn't dump unfiltered bass into
+    // the 0-50 ms window — keeps d50 / box_ratio / c80@250 from collapsing.
+    float sixAPEarlyHighpassHz = 20.0f;
+
+    // Specular first-reflection injector (2 discrete taps, L+R). Defaults
+    // muted (-60 dB) so existing presets that don't opt in produce identical
+    // sound. Hall-style presets (Concert Hall, Cathedral) opt in to e.g.
+    // L=3 ms / 0 dB, R=8 ms / -3 dB matching Lex PCM Native L_Rfl_Dly /
+    // R_Rfl_Dly behaviour — gives the sharp specular onset that diffuse
+    // reverbs lack.
+    float firstReflLDlyMs   = 3.0f;
+    float firstReflRDlyMs   = 8.0f;
+    float firstReflLGainDb  = -60.0f;
+    float firstReflRGainDb  = -60.0f;
+    // HF lowpass on the specular taps (air absorption). Default 20 kHz =
+    // bypass. Halls opt in to ~3-6 kHz so specular reflections don't carry
+    // full-bandwidth HF energy that pushes treble_ratio above hall norms.
+    float firstReflHFCutHz  = 20000.0f;
 
     // In-loop bass-choke HPF cutoff (Hz). Only the legacy HighDensityPlate
     // engine used this; current engines ignore it. 20 Hz = effective
@@ -105,6 +129,11 @@ struct FactoryPreset
         setIfExists ("width",     width);
         setIfExists ("gain_trim", gainTrim);
         setIfExists ("mono_below", monoBelow);
+        setIfExists ("first_refl_l_dly",  firstReflLDlyMs);
+        setIfExists ("first_refl_r_dly",  firstReflRDlyMs);
+        setIfExists ("first_refl_l_gain", firstReflLGainDb);
+        setIfExists ("first_refl_r_gain", firstReflRGainDb);
+        setIfExists ("first_refl_hf_cut", firstReflHFCutHz);
     }
 
     // Apply engine-specific (non-APVTS) tunables. Currently only the
@@ -197,11 +226,6 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // name, cat, algo, mix, bus, predelay, sync,
         // decay, size, modD, modR, damp, bass, xover,
         // diff, erLv, erSz, loCut, hiCut, width, freeze, trim
-// `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
-//   0 = Vintage Plate (Dattorro)
-//   1 = DattorroVintage
-//   2 = Quad Room     (QuadTank, no modulation)
-//   3 = Realistic Space (FDN)
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
           1.30f, 0.45f, 0.30f, 0.60f, 0.72f, 0.65f,  400.0f,
@@ -285,15 +309,37 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.75f, 0.50f, 0.50f,  80.0f, 18000.0f, 1.20f, false, 1.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.05f },
         // ── Smooth Concert Hall ──────────────────────────────────────────────
-        // Anchor: Lexicon 480L "Smooth Hall" no-mod variant + Bricasti M7 hall.
+        // Anchor: Lexicon PCM Native Concert Hall "02.Large Halls/000.Concert Hall"
+        // (RT60@500≈3.6s, density≈72/s, C80≈+4dB, BR=0.25, TR=1.30).
+        // Engine: SixAPTank (algo 2). At identical params it was the closest
+        // match to Lex on density (61 vs 72), C80 (+0.78 vs +3.98), and TR
+        // (1.16 vs 1.30); QuadTank density 13/s and FDN's random-walk LFOs
+        // both fell short. SixAP-specific brightness/density tunables stay
+        // at engine defaults (0.62 / 0.85 / [0.7..1.2] / 0.5 / 1.3) so the
+        // preset behaves as a vanilla SixAP hall.
         // 5 % LFO at 0.6 Hz is sub-audible vibrato but breaks the static
         // phase-locks that make a perfectly-deterministic tank ring metallically.
-        // High diffusion (0.85) smooths modal grain; mild bass bloom (×1.2).
+        // Diffusion at max (0.95) for the Concert-Hall-dense modal grain.
+        // AUTO-TUNED 2026-05-14 by tune_reverb.py sixap_smooth_ch_vs_lex
+        // (CMA-ES 9-axis, loss=22.44 vs FDN-best 40.49; anchor: Lex Concert
+        // Hall preset 02.Large Halls/000.Concert Hall.xml).
         { "Smooth Concert Hall",  "Halls",
-          3,  0.35f, false, 28.0f, 0,
-          2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f,  900.0f,
-          0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, false, -0.5f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
+          2,  0.35f, false,  8.0f, 0,
+          2.14f, 0.62f, 0.45f, 0.60f, 0.89f, 2.23f, 1500.0f,
+          0.94f, 0.75f, 0.65f, 60.0f, 13000.0f, 0.96f, false, -3.5f,
+          /* mono */ 20.0f, /* mid */ 1.42f, /* highX */ 6163.0f, /* sat */ 0.10f,
+          /* gate */ true,
+          /* sixAPDensityBaseline */ 0.62f,
+          /* sixAPBloomCeiling    */ 0.85f,
+          /* sixAPBloomStagger    */ { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f },
+          /* sixAPEarlyMix        */ 0.5f,
+          /* sixAPOutputTrim      */ 1.3f,
+          /* sixAPEarlyHighpassHz */ 350.0f,
+          /* firstReflLDlyMs      */ 3.0f,
+          /* firstReflRDlyMs      */ 8.0f,
+          /* firstReflLGainDb     */ -0.06f,
+          /* firstReflRGainDb     */ -6.5f,
+          /* firstReflHFCutHz     */ 11725.0f },
         // ── Blade Runner Concert (PCM 90) ────────────────────────────────────
         // Engine: SixAPTank. Anchor: PCM 90 "Concert Hall" (Bank P0,
         // preset 574) — the purest vanilla form of the algorithm Vangelis

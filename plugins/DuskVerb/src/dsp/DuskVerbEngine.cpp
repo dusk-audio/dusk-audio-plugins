@@ -27,6 +27,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
+    firstRefl_.prepare (sampleRate, maxBlockSize);
 
     // Pre-delay buffer sized for 250 ms (max in APVTS layout).
     int maxPreDelaySamples =
@@ -44,6 +45,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     tankOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutL_.assign   (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutR_.assign   (static_cast<size_t> (maxBlockSize), 0.0f);
+    firstReflOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    firstReflOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
     // Per-sample smoothers — short time constants, advance once per sample.
     constexpr float kPerSampleSmoothMs = 2.0f;
@@ -403,6 +406,13 @@ void DuskVerbEngine::setSixAPBloomCeiling    (float v) { sixAPTank_.setBloomCeil
 void DuskVerbEngine::setSixAPBloomStagger    (const float values[6]) { sixAPTank_.setBloomStagger (values); }
 void DuskVerbEngine::setSixAPEarlyMix        (float v) { sixAPTank_.setEarlyMix        (v); }
 void DuskVerbEngine::setSixAPOutputTrim      (float v) { sixAPTank_.setOutputTrim      (v); }
+void DuskVerbEngine::setSixAPEarlyHighpassHz (float v) { sixAPTank_.setEarlyHighpassHz (v); }
+
+void DuskVerbEngine::setFirstReflLDelayMs (float ms) { firstRefl_.setLeftDelayMs  (std::clamp (ms, 1.0f, 50.0f)); }
+void DuskVerbEngine::setFirstReflRDelayMs (float ms) { firstRefl_.setRightDelayMs (std::clamp (ms, 1.0f, 50.0f)); }
+void DuskVerbEngine::setFirstReflLGainDb  (float db) { firstRefl_.setLeftGainDb   (std::clamp (db, -60.0f, 6.0f)); }
+void DuskVerbEngine::setFirstReflRGainDb  (float db) { firstRefl_.setRightGainDb  (std::clamp (db, -60.0f, 6.0f)); }
+void DuskVerbEngine::setFirstReflHFCutHz  (float hz) { firstRefl_.setHFCutHz      (std::clamp (hz, 100.0f, 20000.0f)); }
 
 void DuskVerbEngine::updateLoCutCoeffs (float hz)
 {
@@ -495,6 +505,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         preDelayWritePos_ = (preDelayWritePos_ + 1) & preDelayMask_;
     }
 
+    // ---- 1b) Specular first-reflection injector (sparse 2-tap) ----
+    // Reads the RAW input (pre-predelay) so the specular taps arrive at
+    // their configured ms timings absolutely — independent of the user's
+    // predelay knob. Matches Lex PCM Native behaviour: L_Rfl/R_Rfl fire at
+    // their delay times measured from t=0, regardless of Predelay setting.
+    // Output buffered for step-5 sum. Default gains = 0 (muted) for any
+    // preset that doesn't opt in.
+    std::memset (firstReflOutL_.data(), 0, sizeof (float) * static_cast<size_t> (numSamples));
+    std::memset (firstReflOutR_.data(), 0, sizeof (float) * static_cast<size_t> (numSamples));
+    firstRefl_.processAdd (left, right,
+                            firstReflOutL_.data(), firstReflOutR_.data(), numSamples);
+
     // ---- 2) Early reflections ----
     er_.process (tankInL_.data(), tankInR_.data(),
                  erOutL_.data(),  erOutR_.data(), numSamples);
@@ -576,11 +598,16 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         const float erR   = useSmoothER ? erOutR_[static_cast<size_t> (i)] : 0.0f;
         const float lateL = tankOutL_[static_cast<size_t> (i)];
         const float lateR = tankOutR_[static_cast<size_t> (i)];
+        // FirstReflections specular taps — pre-summed during step 1b. Zero
+        // when both per-channel gains are 0, so this is a no-op cost for
+        // presets that don't opt in.
+        const float frL   = firstReflOutL_[static_cast<size_t> (i)];
+        const float frR   = firstReflOutR_[static_cast<size_t> (i)];
 
         const float erLevel = erLevelSmoother_.next();
 
-        float wetL = erL * erLevel + lateL;
-        float wetR = erR * erLevel + lateR;
+        float wetL = erL * erLevel + lateL + frL;
+        float wetR = erR * erLevel + lateR + frR;
 
         wetL = loCutFilter_.processL (wetL);
         wetR = loCutFilter_.processR (wetR);

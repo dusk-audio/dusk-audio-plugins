@@ -132,6 +132,15 @@ void SixAPTankEngine::prepare (double sampleRate, int maxBlockSize)
 
     parallelDiffuser_.prepare (sampleRate);
 
+    // Design the early-mix highpass cascade. Default 20 Hz = effective
+    // bypass; presets that want to keep bass out of the 0-50 ms window
+    // (Concert Hall, large halls) opt in to a higher cutoff (200-500 Hz).
+    {
+        const float srF = static_cast<float> (sampleRate);
+        for (auto& f : earlyHpL_) { f.setCutoff (earlyHighpassHz_, srF); f.reset(); }
+        for (auto& f : earlyHpR_) { f.setCutoff (earlyHighpassHz_, srF); f.reset(); }
+    }
+
     prepared_ = true;
 }
 
@@ -151,6 +160,8 @@ void SixAPTankEngine::clearBuffers()
     clearTank (leftTank_);
     clearTank (rightTank_);
     parallelDiffuser_.clear();
+    for (auto& f : earlyHpL_) f.reset();
+    for (auto& f : earlyHpR_) f.reset();
 }
 
 void SixAPTankEngine::setDecayTime (float seconds)
@@ -270,6 +281,17 @@ void SixAPTankEngine::setEarlyMix (float v)
 void SixAPTankEngine::setOutputTrim (float v)
 {
     outputTrim_ = std::clamp (v, 0.5f, 2.0f);
+}
+
+void SixAPTankEngine::setEarlyHighpassHz (float hz)
+{
+    earlyHighpassHz_ = std::clamp (hz, 20.0f, 2000.0f);
+    if (prepared_)
+    {
+        const float sr = static_cast<float> (sampleRate_);
+        for (auto& f : earlyHpL_) f.setCutoff (earlyHighpassHz_, sr);
+        for (auto& f : earlyHpR_) f.setCutoff (earlyHighpassHz_, sr);
+    }
 }
 
 void SixAPTankEngine::setFreeze (bool frozen)
@@ -550,8 +572,20 @@ void SixAPTankEngine::process (const float* inputL, const float* inputR,
         // so individual presets can opt in to brighter onsets / different
         // trim balance without affecting other presets sharing this engine.
         // Defaults preserve the historical 0.5 / 1.3 values.
-        const float earlyL = diffusedL_[static_cast<size_t> (n)];
-        const float earlyR = diffusedR_[static_cast<size_t> (n)];
+        // Per-sample highpass of the ParallelDiffuser early-mix before it
+        // sums into the wet output. Cascaded 2× single-pole stages =
+        // 12 dB/oct total slope (see header for full rationale + Lex
+        // measurements). At default 20 Hz cutoff, each stage's coeff ≈
+        // 0.9974 — essentially a unity passthrough above 20 Hz, no
+        // audible effect on presets that haven't opted in. Concert Hall
+        // sets 350 Hz to keep bass out of the 0-50 ms onset window
+        // (measured: c80@250 lifts ~4 dB, d50 lifts ~0.8 dB at 350 Hz
+        // vs 20 Hz; tank-loop bass still arrives via the main decay
+        // path, so total bass RT60 is preserved).
+        const float earlyL = earlyHpL_[1].process (
+            earlyHpL_[0].process (diffusedL_[static_cast<size_t> (n)]));
+        const float earlyR = earlyHpR_[1].process (
+            earlyHpR_[0].process (diffusedR_[static_cast<size_t> (n)]));
         outputL[n] = (damped  + rightLoop * 0.5f + earlyL * earlyMix_) * outputTrim_;
         outputR[n] = (dampedR - leftLoop  * 0.5f + earlyR * earlyMix_) * outputTrim_;
     }

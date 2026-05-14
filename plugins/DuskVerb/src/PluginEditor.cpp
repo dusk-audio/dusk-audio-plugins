@@ -347,6 +347,22 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         "Stereo width of the wet signal");
     gainTrim_ .init (*this, p.parameters, "gain_trim", "TRIM",        " dB",
         "Output gain offset applied after the dry/wet mix");
+    // FirstReflections — discrete L/R specular tap injector. Per-channel
+    // delay + gain + shared HF cut for air absorption. Defaults muted;
+    // hall-style presets (Concert Hall, Cathedral) opt in to inject
+    // sharp 3 ms / 8 ms specular reflections matching Lex PCM Native
+    // L_Rfl_Dly / R_Rfl_Dly behaviour.
+    firstReflLDly_  .init (*this, p.parameters, "first_refl_l_dly",  "FR L DLY",  " ms",
+        "Delay of the LEFT specular first reflection. Lex Concert Hall uses 3 ms.");
+    firstReflRDly_  .init (*this, p.parameters, "first_refl_r_dly",  "FR R DLY",  " ms",
+        "Delay of the RIGHT specular first reflection. Lex Concert Hall uses 8 ms.");
+    firstReflLGain_ .init (*this, p.parameters, "first_refl_l_gain", "FR L GAIN", " dB",
+        "Gain of the LEFT specular tap. -60 dB = muted (engine bypassed).");
+    firstReflRGain_ .init (*this, p.parameters, "first_refl_r_gain", "FR R GAIN", " dB",
+        "Gain of the RIGHT specular tap. Lex Concert Hall uses -3 dB.");
+    firstReflHFCut_ .init (*this, p.parameters, "first_refl_hf_cut", "FR HF CUT", " Hz",
+        "1-pole lowpass on the specular taps (air absorption). 20 kHz = bypass; "
+        "halls use 3-12 kHz so taps don't carry full-band HF.");
 
     // ---- Algorithm selector + topology glyph ----
     // The glyph reads the current algorithm and renders a tiny topology icon
@@ -607,6 +623,9 @@ void DuskVerbEditor::timerCallback()
     update (highCrossover_); update (saturation_); update (diffusion_);
     update (erLevel_);   update (erSize_);    update (mix_);       update (loCut_);
     update (hiCut_);     update (monoBelow_); update (width_);     update (gainTrim_);
+    update (firstReflLDly_);  update (firstReflRDly_);
+    update (firstReflLGain_); update (firstReflRGain_);
+    update (firstReflHFCut_);
 
     inputMeter_.setStereoLevels  (processorRef.getInputLevelL(),  processorRef.getInputLevelR());
     outputMeter_.setStereoLevels (processorRef.getOutputLevelL(), processorRef.getOutputLevelR());
@@ -839,6 +858,7 @@ void DuskVerbEditor::resized()
     // fill the new column widths instead of looking lost.
     int knobBig = juce::roundToInt (78.0f * sf);
     int knobMed = juce::roundToInt (62.0f * sf);
+    int knobSmall = juce::roundToInt (44.0f * sf);  // FirstReflections row (5 knobs cramped)
 
     // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
     // The two knobs sit adjacent so the row reads as a coherent pair, and
@@ -928,8 +948,25 @@ void DuskVerbEditor::resized()
         gateButton_.setBounds (modPanel.reduced (8, 2));
     }
 
-    layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
-                        { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
+    {
+        // ER section split vertically: top 60% = original 3 knobs at knobMed,
+        // bottom 40% = FirstReflections 5-knob row at knobSmall. Cramped but
+        // functional — gives the user direct access to the new specular tap
+        // params for live tweaking. Future iteration: move FR to its own
+        // dedicated section if user prefers more breathing room.
+        juce::Rectangle<int> erPanel { erX, bottomY, erW, bottomH };
+        auto upperER = erPanel.removeFromTop (juce::roundToInt (erPanel.getHeight() * 0.60f));
+        layoutKnobsInGroup (upperER, topPad,
+                            { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
+        // FR row: 5 knobs side-by-side. Skip topPad (already past the title band)
+        // so the knobs sit flush against the ER row above them.
+        layoutKnobsInGroup (erPanel, 0,
+                            { { &firstReflLDly_,   knobSmall },
+                              { &firstReflRDly_,   knobSmall },
+                              { &firstReflLGain_,  knobSmall },
+                              { &firstReflRGain_,  knobSmall },
+                              { &firstReflHFCut_,  knobSmall } }, sf);
+    }
 
     layoutKnobsInGroup ({ eqX, bottomY, eqW, bottomH }, topPad,
                         { { &loCut_, knobMed }, { &hiCut_, knobMed }, { &monoBelow_, knobMed } }, sf);
@@ -1201,7 +1238,9 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                      &damping_,  &bassMult_,  &midMult_,       &crossover_,
                      &highCrossover_, &saturation_, &diffusion_,
                      &erLevel_, &erSize_, &mix_, &loCut_, &hiCut_,
-                     &monoBelow_, &width_, &gainTrim_ })
+                     &monoBelow_, &width_, &gainTrim_,
+                     &firstReflLDly_, &firstReflRDly_,
+                     &firstReflLGain_, &firstReflRGain_, &firstReflHFCut_ })
         k->setAccent (accent);
 
     // 3) Components that paint their own accent regions.

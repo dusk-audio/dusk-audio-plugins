@@ -1,0 +1,153 @@
+# Tune DuskVerb "Smooth Concert Hall" preset (SixAPTank engine, algo 2 —
+# "High Density (6-AP)") against Lexicon PCM Native Concert Hall preset
+# "000.Concert Hall" under the "02.Large Halls" category.
+#
+# Why SixAPTank: the FactoryPresets.h "Smooth Concert Hall" row currently
+# uses algorithm=2 (SixAPTank / High Density 6-AP). The plate-style anchor
+# comment cites Lexicon 480L Smooth Hall + Bricasti M7 hall, but the engine
+# choice is SixAPTank. Tune SixAPTank here; FDN tuning for the FDN-targeted
+# presets lives in a separate config.
+#
+# 100% wet comparison: both DV and Lex render with Bus Mode=on / Mix=100%
+# so we isolate the wet path only. The preset's mix=0.35 + busMode=false
+# user-facing defaults are restored by the patch step after tuning.
+
+job:
+  name: sixap_smooth_ch_vs_lex
+  target_preset: "Smooth Concert Hall"
+  engine_algorithm: 2                    # SixAPTank
+  notes: |
+    Reference: Lex PCM Native Concert Hall, preset "02.Large Halls/000.Concert Hall.xml".
+    Engine: SixAPTank — chosen via engine_compare test (composite loss 28.66 vs
+    QuadTank 37.78 vs FDN 47.56 at the shipping Smooth Concert Hall params).
+    SixAPTank's 6-AP cascade gave the densest in-family modal echo (61/s vs
+    Lex 72/s), closest C80 (+0.78 vs +3.98), and closest TR (1.16 vs 1.30).
+    Bus Mode locked on, Mix locked 1.0 for fair wet-only comparison.
+    SixAPTank has light internal modulation — n_renders=2 averaging for
+    robustness against any LFO phase variance.
+
+renderer:
+  bin: ../../../../build/tests/duskverb_render/duskverb_render
+  cache_dir: /tmp/tune_reverb_cache
+  output_dir: /tmp/tune_reverb_runs
+  averaging:
+    n_renders: 2                         # SixAPTank has light internal modulation
+    aggregate: median
+
+anchor:
+  # Lex Concert Hall preset "02.Large Halls/000.Concert Hall" rendered via:
+  #   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so \
+  #     --load-state /tmp/concert_hall.fxp/Lch1/lex-concert-hall.fxp \
+  #     --slug lex_ch_v5 --output-dir /tmp/lex_concerthall --wait-after-load 2000
+  # Sanity check: RT60@500 ≈ 3.6s, C80 ≈ +4 dB, D50 ≈ +3.5 dB
+  # vs default-state which had RT60@500 ≈ 1.6s, C80 ≈ +0.5 dB.
+  impulse_wav: /tmp/lex_concerthall/lex_ch_v5_impulse.wav
+  noiseburst_wav: /tmp/lex_concerthall/lex_ch_v5_noiseburst.wav
+
+# Locked params reflect the shipping "Smooth Concert Hall" row in
+# FactoryPresets.h. Mix + Bus Mode force 100% wet for the comparison.
+# Predelay, lo/hi cut, width, gain_trim stay locked so the search space
+# captures only the reverb-character knobs.
+locked_params:
+  Algorithm:       "High Density (6-AP)"
+  Bus Mode:        "on"
+  Dry/Wet:         "1.0"                 # NOT "Mix" — DV display name is Dry/Wet
+  Pre-Delay:       "8"                   # matches Lex Predelay=8.00 ms exactly
+  Pre-Delay Sync:  "Free"
+  Mod Depth:       "0.05"                # SixAPTank: subtle motion, not 0
+  Mod Rate:        "0.6"
+  Lo Cut:          "60"
+  Hi Cut:          "13000"
+  Gain Trim:       "-3.5"                # compensates for FirstReflections gain
+  Early Ref Size:  "0.65"
+  Mono Below:      "20"
+  Freeze:          "Off"
+  Gate:            "On"
+  First Refl L Dly: "3.0"                # Lex L_Rfl_Dly = 3 ms
+  First Refl R Dly: "8.0"                # Lex R_Rfl_Dly = 8 ms
+
+# Sweep the reverb-character axes. Ranges sized to reach Lex Concert Hall:
+#   RT60 ≈ 3.6-4.6s broadband (Decay 2.0-5.0 covers this with margin)
+#   TR=1.30 → less HF damping, so Damping lo=0.30 opens up brighter tails
+# Other axes stay near current shipping values.
+search_space:
+  # 9 reverb-character axes. Ranges from PluginProcessor.cpp param layout
+  # (NormalisableRange bounds); steps are coarse since CMA-ES refines past
+  # the grid. CMA-ES samples continuously — `step` only matters if a future
+  # --grid-only run is added back.
+  # Per-band multiplier ranges widened to PluginProcessor UI maxima so the
+  # optimizer can reach Lex Concert Hall's 2.7× bass/treble RT60 spread.
+  # Engine clamps are actually 0.1-4.0 (bass/mid) / 0.05-4.0 (treble); UI
+  # maxes are 2.5 / 1.5 — we use UI maxes for now.
+  Decay Time:      { lo: 2.0,  hi: 5.0,  step: 0.30, scale: linear }
+  Size:            { lo: 0.40, hi: 0.95, step: 0.10, scale: linear }
+  Treble Multiply: { lo: 0.30, hi: 1.50, step: 0.15, scale: linear }   # UI max 1.5
+  Bass Multiply:   { lo: 0.70, hi: 2.50, step: 0.20, scale: linear }   # UI max 2.5
+  Mid Multiply:    { lo: 0.70, hi: 1.50, step: 0.10, scale: linear }
+  Diffusion:       { lo: 0.65, hi: 0.95, step: 0.05, scale: linear }
+  Low Crossover:   { lo: 400,  hi: 1500, step: 200,  scale: linear }
+  High Crossover:  { lo: 2500, hi: 8000, step: 1000, scale: linear }
+  Early Ref Level: { lo: 0.10, hi: 0.75, step: 0.10, scale: linear }
+  Width:           { lo: 0.85, hi: 1.35, step: 0.05, scale: linear }   # Lex Tail Width=Stereo
+  Saturation:      { lo: 0.00, hi: 0.20, step: 0.05, scale: linear }   # tame transient peaks
+  First Refl L Gain: { lo: -12.0, hi: 0.0, step: 1.0, scale: linear }   # specular L tap level
+  First Refl R Gain: { lo: -15.0, hi: -3.0, step: 1.0, scale: linear }  # specular R tap level
+  First Refl HF Cut: { lo: 2000,  hi: 12000, step: 500, scale: linear } # air absorption on taps
+# 11-axis CMA: max_evals=300 over [0,1]^11, ~10-15 min @ workers=10.
+
+# JND-weighted composite loss. Per-band RT60 + EDT carry RT60/spectral
+# decay accuracy; C80/D50 carry early-vs-late energy balance; BR/TR carry
+# perceived warmth/brightness; box/crest catch midrange honk and tail
+# texture.
+metrics:
+  # rt60_per_band uses analyze_ir Schroeder T20 (8 octaves). The legacy
+  # bass_ratio / treble_ratio metrics use perceptual_diff rt60_t20 (different
+  # filter/integration); the two methods disagree by ~5× on Lex Concert Hall.
+  # Use rt60_per_band as the single source of truth for shape — its 8 values
+  # pin every octave directly.
+  rt60_per_band:       { weight: 2.0, jnd: 0.10 }
+  edt_500:             { weight: 1.0, jnd: 0.10 }
+  edt:                 { weight: 0.6, jnd: 0.10 }
+  c80:                 { weight: 0.8, jnd: 1.0  }
+  c80_per_octave:      { weight: 1.5, jnd: 2.0  }   # bumped 0.5→1.5: address 250Hz under-clarity
+  d50:                 { weight: 1.2, jnd: 1.0  }   # bumped 0.5→1.2: address weak onset definition
+  # centroid_drift_per_band: signed dB shift in spectral centroid between
+  # early (50-250ms) and late (750-1750ms) windows, per octave at 500/1k/2k/4k.
+  # Captures HF modal ringing in the tail that other metrics miss. SixAPTank
+  # measured +39/+27 dB at 2k/4k vs Lex -47/-148 (opposite sign — engine
+  # artifact). High weight + tight JND because this is the dominant user-audible
+  # "weird/distorted" character contributor.
+  centroid_drift_per_band: { weight: 2.5, jnd: 5.0 }
+  box_ratio_db:        { weight: 0.6, jnd: 1.0  }
+  a_weighted_rms_db:   { weight: 0.5, jnd: 0.5  }
+  spectral_crest_db:   { weight: 0.3, jnd: 1.5  }
+  time_domain_crest:   { weight: 0.8, jnd: 2.0  }   # bumped 0.3→0.8: tame transient peakiness
+  stereo_correlation:  { weight: 1.0, jnd: 0.10 }   # bumped 0.3→1.0: stop DV being anti-correlated
+
+# Two-stage: 9-axis cartesian product is ~2M cells — too large. Use a
+# COARSE grid (step values above give 9×5×6×5×4×4×5×5×4 = ~360k cells if
+# fully exploded). Instead, treat grid as a sparse Sobol sample by setting
+# coarse step and rely on optimizer for the actual refinement.
+# For now, the user should run --measure-only first, then narrow which
+# axes matter, then re-run with fewer axes.
+optimizer:
+  enabled: true
+  algorithm: cma                         # cma package installed; ThreadPool parallel evals/generation
+  sigma0: 0.20
+  max_evals: 300                         # 11 axes need more evals
+  tolerance: 0.05
+  parallel_workers: 10                   # DV VST3 native; thread-safe per render
+
+patch:
+  enabled: true
+  dry_run_first: true                    # always emit diff first
+  fields_to_patch:
+    - decay
+    - size
+    - damping
+    - bassMult
+    - midMult
+    - crossover
+    - highCrossover
+    - diffusion
+    - erLevel
