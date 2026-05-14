@@ -1249,10 +1249,24 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
 {
     const float sr = static_cast<float> (sampleRate_);
 
+    // Two exps + the four trig + four sqrts inside Crossover::from. Whole
+    // setup is done once and reused across all 16 channels — old per-channel
+    // path called std::log/cos/sin/sqrt/pow inside designCoeffs and the gBase
+    // pow chain, ~17 transcendentals × 16 = 272 per setter invocation. New
+    // path is ~6 setup + ~5 per channel = ~86 per invocation.
     const float lowCrossoverCoeff  = std::exp (-kTwoPi * crossoverFreq_ / sr);
     const float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
+    const auto xover = ThreeBandDamping::Crossover::from (lowCrossoverCoeff,
+                                                          highCrossoverCoeff, sr);
 
     const int dualSlopeFastCount = p.dualSlopeFastCount;
+    constexpr float kLn10        = 2.302585092994046f;
+    const float kGBaseScale      = -3.0f * kLn10 / sr;      // gBase = exp(kGBaseScale · L / RT60)
+    const float invBassMult      = 1.0f / bassMultiply_;
+    const float invMidMult       = 1.0f / midMultiply_;
+    const float invAirTrebleMult = 1.0f / std::max (airTrebleMultiply_, 0.01f);
+    const float rateRatio        = static_cast<float> (sampleRate_ / kBaseSampleRate);
+    const bool  boostIsUnity     = std::abs (decayBoost_ - 1.0f) < 1.0e-6f;
 
     for (int i = 0; i < N; ++i)
     {
@@ -1263,7 +1277,6 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
         float effectiveLength = p.delayLength[i];
         if (p.inlineDiffCoeff > 0.0f)
         {
-            float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
             if (p.useShortInlineAP)
                 effectiveLength += static_cast<float> (kInlineAPDelaysShort[i]) * rateRatio;
             else
@@ -1273,17 +1286,23 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
             if (p.inlineDiffCoeff3 > 0.0f)
                 effectiveLength += static_cast<float> (kInlineAPDelays3[i]) * rateRatio;
         }
-        float gBase = std::pow (10.0f, -3.0f * effectiveLength / (channelRT60 * sr));
-        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
 
-        float gLow  = std::pow (gBase, 1.0f / bassMultiply_);
-        float gMid  = std::pow (gBase, 1.0f / midMultiply_);
-        float gHigh = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_, 0.01f));
+        // gBase = 10^(-3·L/(RT60·sr)) = exp(ln10 · -3·L/(RT60·sr)). Replacing
+        // std::pow with exp(scale · arg) saves the libm pow's internal log
+        // step (which is otherwise paid every call).
+        float gBase = std::exp (kGBaseScale * effectiveLength / channelRT60);
+        if (! boostIsUnity)
+            gBase = std::exp (decayBoost_ * std::log (gBase));
+        gBase = std::clamp (gBase, 0.001f, 0.9999f);
 
-        p.damping[i] = ThreeBandDamping::designCoeffs (gLow, gMid, gHigh,
-                                                       lowCrossoverCoeff,
-                                                       highCrossoverCoeff,
-                                                       sr);
+        // Share one log across the three band exponentiations. Replaces three
+        // std::pow calls (each = internal log + exp) with one log + three exps.
+        const float logG = std::log (gBase);
+        const float gLow  = std::exp (logG * invBassMult);
+        const float gMid  = std::exp (logG * invMidMult);
+        const float gHigh = std::exp (logG * invAirTrebleMult);
+
+        p.damping[i] = ThreeBandDamping::designCoeffs (gLow, gMid, gHigh, xover);
     }
 }
 

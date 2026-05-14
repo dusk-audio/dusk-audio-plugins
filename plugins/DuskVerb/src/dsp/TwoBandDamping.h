@@ -144,6 +144,43 @@ public:
         float broadbandGain = 1.0f;
     };
 
+    // Pure-trig portion of the shelf design, depends only on the two
+    // crossover frequencies + sample rate. Hoisted out of designCoeffs so a
+    // caller iterating over many channels (e.g. FDNReverb's 16-line damping)
+    // pays the cos/sin/sqrt cost once instead of 16×. Mirrors the RBJ
+    // cookbook intermediate variables.
+    struct Crossover
+    {
+        float lowCosw     = 1.0f;
+        float lowAlpha    = 0.0f;
+        float highCosw    = 1.0f;
+        float highAlpha   = 0.0f;
+
+        static Crossover from (float lowCrossoverCoeff,
+                               float highCrossoverCoeff,
+                               float sampleRate)
+        {
+            constexpr float kTwoPi   = 6.283185307179586f;
+            constexpr float kInvTwoPi = 1.0f / kTwoPi;
+            constexpr float kSqrt12  = 0.7071067811865475f;
+            constexpr float kInv2Sq12 = 1.0f / (2.0f * kSqrt12);
+
+            const float lowCoeff  = std::clamp (lowCrossoverCoeff,  1.0e-6f, 1.0f - 1.0e-6f);
+            const float highCoeff = std::clamp (highCrossoverCoeff, 1.0e-6f, 1.0f - 1.0e-6f);
+            const float lowFc  = -std::log (lowCoeff)  * sampleRate * kInvTwoPi;
+            const float highFc = -std::log (highCoeff) * sampleRate * kInvTwoPi;
+            const float lowW0  = kTwoPi * std::min (lowFc,  0.49f * sampleRate) / sampleRate;
+            const float highW0 = kTwoPi * std::min (highFc, 0.49f * sampleRate) / sampleRate;
+
+            Crossover x;
+            x.lowCosw   = std::cos (lowW0);
+            x.lowAlpha  = std::sin (lowW0)  * kInv2Sq12;
+            x.highCosw  = std::cos (highW0);
+            x.highAlpha = std::sin (highW0) * kInv2Sq12;
+            return x;
+        }
+    };
+
     void prepare (float sampleRate)
     {
         sampleRate_ = sampleRate;
@@ -190,22 +227,48 @@ public:
                                 float lowCrossoverCoeff, float highCrossoverCoeff,
                                 float sampleRate)
     {
-        const float lowCoeff  = std::clamp (lowCrossoverCoeff,  1.0e-6f, 1.0f - 1.0e-6f);
-        const float highCoeff = std::clamp (highCrossoverCoeff, 1.0e-6f, 1.0f - 1.0e-6f);
-        const float lowFc  = -std::log (lowCoeff)  * sampleRate * (1.0f / 6.283185307179586f);
-        const float highFc = -std::log (highCoeff) * sampleRate * (1.0f / 6.283185307179586f);
-        const float lowShelfGain  = gLow  / std::max (gMid, 1.0e-12f);
-        const float highShelfGain = gHigh / std::max (gMid, 1.0e-12f);
+        return designCoeffs (gLow, gMid, gHigh,
+                             Crossover::from (lowCrossoverCoeff, highCrossoverCoeff, sampleRate));
+    }
 
-        ShelfBiquad lowBq, highBq;
-        lowBq .designLowShelf  (lowShelfGain,  lowFc,  sampleRate);
-        highBq.designHighShelf (highShelfGain, highFc, sampleRate);
+    // Precomputed-trig overload: the cos/sin/alpha terms come from a
+    // Crossover instance built once per call site. Per-channel cost is now
+    // pure algebra + 4 sqrts; no transcendentals beyond what Crossover::from
+    // already paid once.
+    static Coeffs designCoeffs (float gLow, float gMid, float gHigh,
+                                const Crossover& xover)
+    {
+        const float invMid = 1.0f / std::max (gMid, 1.0e-12f);
 
         Coeffs c;
-        c.lowB0 = lowBq.b0;   c.lowB1 = lowBq.b1;   c.lowB2 = lowBq.b2;
-        c.lowA1 = lowBq.a1;   c.lowA2 = lowBq.a2;
-        c.highB0 = highBq.b0; c.highB1 = highBq.b1; c.highB2 = highBq.b2;
-        c.highA1 = highBq.a1; c.highA2 = highBq.a2;
+        // Low-shelf (RBJ cookbook with prebaked cos/sin)
+        {
+            const float A     = std::sqrt (std::max (gLow * invMid, 1.0e-12f));
+            const float sqrtA = std::sqrt (A);
+            const float cosw  = xover.lowCosw;
+            const float alpha = xover.lowAlpha;
+            const float a0    = (A + 1.0f) + (A - 1.0f) * cosw + 2.0f * sqrtA * alpha;
+            const float invA0 = 1.0f / a0;
+            c.lowB0 =  A * ((A + 1.0f) - (A - 1.0f) * cosw + 2.0f * sqrtA * alpha) * invA0;
+            c.lowB1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw)                  * invA0;
+            c.lowB2 =  A * ((A + 1.0f) - (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) * invA0;
+            c.lowA1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw)                     * invA0;
+            c.lowA2 =         ((A + 1.0f) + (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) * invA0;
+        }
+        // High-shelf
+        {
+            const float A     = std::sqrt (std::max (gHigh * invMid, 1.0e-12f));
+            const float sqrtA = std::sqrt (A);
+            const float cosw  = xover.highCosw;
+            const float alpha = xover.highAlpha;
+            const float a0    = (A + 1.0f) - (A - 1.0f) * cosw + 2.0f * sqrtA * alpha;
+            const float invA0 = 1.0f / a0;
+            c.highB0 =  A * ((A + 1.0f) + (A - 1.0f) * cosw + 2.0f * sqrtA * alpha) * invA0;
+            c.highB1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw)                 * invA0;
+            c.highB2 =  A * ((A + 1.0f) + (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) * invA0;
+            c.highA1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosw)                      * invA0;
+            c.highA2 =        ((A + 1.0f) - (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) * invA0;
+        }
         c.broadbandGain = gMid;
         return c;
     }
