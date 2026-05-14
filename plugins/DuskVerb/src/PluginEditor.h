@@ -289,6 +289,14 @@ private:
     KnobWithLabel monoBelow_;
     KnobWithLabel width_;
     KnobWithLabel gainTrim_;
+    // FirstReflections specular taps (per-channel delay + gain, shared HF cut).
+    // Hall-style presets opt in; default gains = -60 dB make this section a
+    // no-op for non-hall presets. See FirstReflections.h for full rationale.
+    KnobWithLabel firstReflLDly_;
+    KnobWithLabel firstReflRDly_;
+    KnobWithLabel firstReflLGain_;
+    KnobWithLabel firstReflRGain_;
+    KnobWithLabel firstReflHFCut_;
 
     juce::ToggleButton freezeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment_;

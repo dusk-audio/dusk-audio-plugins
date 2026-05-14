@@ -52,6 +52,13 @@ public:
     void setBloomStagger (const float values[6]); // per-stage [0..2] coeff multipliers
     void setEarlyMix (float v);                 // default 0.5, range [0, 1.5]
     void setOutputTrim (float v);               // default 1.3, range [0.5, 2.0]
+    // Highpass cutoff (Hz) applied to the ParallelDiffuser early-mix signal
+    // before it's added to the wet output. Default 20 Hz = effective bypass
+    // (preserves prior behaviour). Set higher (200-500 Hz) on halls to keep
+    // bass energy out of the 0-50 ms window — fixes Concert-Hall-style
+    // presets where the broadband early-fill makes d50/box_ratio/c80@250
+    // too low. 12 dB/oct via cascaded 1-pole HPFs.
+    void setEarlyHighpassHz (float hz);         // default 20.0 (bypass), range [20, 2000]
 
     void clearBuffers();
 
@@ -298,6 +305,66 @@ private:
     // and the post-mix output trim. Per-preset tunable.
     float earlyMix_   = 0.5f;
     float outputTrim_ = 1.3f;
+
+    // ── Early-mix highpass (cascaded 1-pole HPFs, 12 dB/oct total) ────
+    //
+    // Applied to the ParallelDiffuser output before it gets mixed into
+    // the wet output. Two 1-pole HPFs in series = 12 dB/oct rolloff,
+    // chosen as the steepest slope that stays stable and ripple-free
+    // under arbitrary cutoff sweeps (a 4-pole Butterworth would give
+    // 24 dB/oct but risks numerical instability at very low cutoffs).
+    //
+    // WHY THIS EXISTS: Lex PCM Native "Concert Hall" has a DC-flat
+    // early-reflection structure — its specular taps carry full-band
+    // content. But our ParallelDiffuser output (used as early-fill in
+    // the SixAPTank wet path) bandpasses energy from ~30 Hz to Nyquist
+    // and the LOW-frequency portion of that early signal interacts
+    // badly with the tank's bass-band damping: it lifts the 0-100 ms
+    // bass energy without contributing to the matched-RT60 tail.
+    //
+    // Measured impact on Smooth Concert Hall vs Lex (anchor):
+    //   no HPF       : c80@250=-6.6 dB, d50=+0.7 dB (bass washy onset)
+    //   HPF @ 350 Hz : c80@250=-2.5 dB, d50=+1.5 dB (closer to Lex)
+    //
+    // The 350 Hz Concert Hall cutoff was chosen by optimizer sweep
+    // (range 200-500 Hz) to match Lex's measured bass clarity without
+    // hollowing the early onset of a bass-dominant input. Other halls
+    // (Cathedral, Blade Runner Concert) may want different cutoffs —
+    // this is a per-preset opt-in, default 20 Hz = effective bypass.
+    //
+    // FILTER MATH: Standard 1-pole HPF transfer function:
+    //   y[n] = a · (y[n-1] + x[n] - x[n-1])
+    //   a = exp(-2π · fc / sr)
+    // The pole approaches 1 as fc → 0 (HPF approaches passthrough);
+    // approaches 0 as fc → Nyquist. At fc=20 Hz / sr=48 kHz, a ≈ 0.9974
+    // — essentially a unity passthrough above the sub-DC region, no
+    // audible spectral effect on non-opt-in presets.
+    struct OnePoleHP
+    {
+        float coeff   = 0.0f;
+        float prevIn  = 0.0f;
+        float prevOut = 0.0f;
+        void setCutoff (float fc, float sr)
+        {
+            // Tight clamp prevents NaN / unstable behavior if caller passes
+            // 0 / negative (would divide by zero) or above Nyquist (would
+            // alias). 1 Hz lower bound is musical-DC; sr*0.49 upper bound
+            // is a safe margin below Nyquist.
+            const float clamped = std::clamp (fc, 1.0f, sr * 0.49f);
+            coeff = std::exp (-kTwoPi * clamped / sr);
+        }
+        float process (float x)
+        {
+            const float y = coeff * (prevOut + x - prevIn);
+            prevIn  = x;
+            prevOut = y;
+            return y;
+        }
+        void reset() { prevIn = 0.0f; prevOut = 0.0f; }
+    };
+    OnePoleHP earlyHpL_[2];          // L cascade: stage 0 → stage 1
+    OnePoleHP earlyHpR_[2];          // R cascade
+    float earlyHighpassHz_ = 20.0f;  // 20 Hz default = effective bypass
 
     bool frozen_ = false;
     bool prepared_ = false;

@@ -106,6 +106,7 @@ private:
         float bloomStagger[6] = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f };
         float earlyMix        = 0.5f;
         float outputTrim      = 1.3f;
+        float earlyHighpassHz = 20.0f;     // 20 Hz = effective bypass
     };
     SixAPBrightnessState sixAPBrightness_;
 
@@ -157,6 +158,11 @@ private:
     std::atomic<float>* gateEnabledParam_   = nullptr;
     std::atomic<float>* gainTrimParam_      = nullptr;
     std::atomic<float>* monoBelowParam_     = nullptr;
+    std::atomic<float>* firstReflLDlyParam_  = nullptr;
+    std::atomic<float>* firstReflRDlyParam_  = nullptr;
+    std::atomic<float>* firstReflLGainParam_ = nullptr;
+    std::atomic<float>* firstReflRGainParam_ = nullptr;
+    std::atomic<float>* firstReflHFCutParam_ = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -184,6 +190,11 @@ private:
     float lastWidth_       = -1.0f;
     float lastGainTrim_    = -999.0f;
     float lastMonoBelow_   = -1.0f;
+    float lastFirstReflLDly_  = -1.0f;
+    float lastFirstReflRDly_  = -1.0f;
+    float lastFirstReflLGain_ = -999.0f;
+    float lastFirstReflRGain_ = -999.0f;
+    float lastFirstReflHFCut_ = -1.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

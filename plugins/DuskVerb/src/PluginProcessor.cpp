@@ -128,6 +128,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "mono_below", 1 }, "Mono Below",
         juce::NormalisableRange<float> (20.0f, 300.0f, 0.0f, 0.5f), fp0.monoBelow));
 
+    // FirstReflections specular taps. Default gains = -60 dB (silent) so any
+    // preset that doesn't opt in is unchanged. Hall-style presets (Concert
+    // Hall, Cathedral) set L=3-5 ms / 0 dB, R=8-12 ms / -3 dB to match the
+    // Lex PCM Native L_Rfl_Dly + R_Rfl_Dly specular onset.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "first_refl_l_dly", 1 }, "First Refl L Dly",
+        juce::NormalisableRange<float> (1.0f, 50.0f, 0.0f, 0.5f), fp0.firstReflLDlyMs));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "first_refl_r_dly", 1 }, "First Refl R Dly",
+        juce::NormalisableRange<float> (1.0f, 50.0f, 0.0f, 0.5f), fp0.firstReflRDlyMs));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "first_refl_l_gain", 1 }, "First Refl L Gain",
+        juce::NormalisableRange<float> (-60.0f, 6.0f), fp0.firstReflLGainDb));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "first_refl_r_gain", 1 }, "First Refl R Gain",
+        juce::NormalisableRange<float> (-60.0f, 6.0f), fp0.firstReflRGainDb));
+    // HF lowpass on FirstReflections taps. Default 20 kHz = bypass.
+    // Halls opt in to ~3-6 kHz to model air absorption (Lex Concert Hall
+    // uses Rvb Out Freq=7 kHz; the specular taps need similar HF rolloff
+    // or treble_ratio overshoots).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "first_refl_hf_cut", 1 }, "First Refl HF Cut",
+        juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.5f), fp0.firstReflHFCutHz));
+
     return layout;
 }
 
@@ -163,6 +187,11 @@ DuskVerbProcessor::DuskVerbProcessor()
     gateEnabledParam_   = parameters.getRawParameterValue ("gate_enabled");
     gainTrimParam_      = parameters.getRawParameterValue ("gain_trim");
     monoBelowParam_     = parameters.getRawParameterValue ("mono_below");
+    firstReflLDlyParam_  = parameters.getRawParameterValue ("first_refl_l_dly");
+    firstReflRDlyParam_  = parameters.getRawParameterValue ("first_refl_r_dly");
+    firstReflLGainParam_ = parameters.getRawParameterValue ("first_refl_l_gain");
+    firstReflRGainParam_ = parameters.getRawParameterValue ("first_refl_r_gain");
+    firstReflHFCutParam_ = parameters.getRawParameterValue ("first_refl_hf_cut");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -230,6 +259,9 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastCrossover_ = lastHighCrossover_ = lastSaturation_ =
         lastDiffusion_ = lastModDepth_ = lastModRate_ = lastERSize_ = lastPreDelayMs_ =
         lastMix_ = lastLoCut_ = lastHiCut_ = lastWidth_ = lastMonoBelow_ = -1.0f;
+        lastFirstReflLDly_ = lastFirstReflRDly_ = -1.0f;
+        lastFirstReflLGain_ = lastFirstReflRGain_ = -999.0f;
+        lastFirstReflHFCut_ = -1.0f;
         lastERLevel_ = -2.0f;
         lastGainTrim_ = -999.0f;
         haveLastFreeze_ = false;
@@ -386,6 +418,11 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastWidth_,     widthParam_->load(),     [this] (float v) { activeEngine_->setWidth (v); });
     pushIfChanged (lastGainTrim_,  gainTrimParam_->load(),  [this] (float v) { activeEngine_->setGainTrim (v); });
     pushIfChanged (lastMonoBelow_, monoBelowParam_->load(), [this] (float v) { activeEngine_->setMonoBelow (v); });
+    pushIfChanged (lastFirstReflLDly_,  firstReflLDlyParam_->load(),  [this] (float v) { activeEngine_->setFirstReflLDelayMs (v); });
+    pushIfChanged (lastFirstReflRDly_,  firstReflRDlyParam_->load(),  [this] (float v) { activeEngine_->setFirstReflRDelayMs (v); });
+    pushIfChanged (lastFirstReflLGain_, firstReflLGainParam_->load(), [this] (float v) { activeEngine_->setFirstReflLGainDb  (v); });
+    pushIfChanged (lastFirstReflRGain_, firstReflRGainParam_->load(), [this] (float v) { activeEngine_->setFirstReflRGainDb  (v); });
+    pushIfChanged (lastFirstReflHFCut_, firstReflHFCutParam_->load(), [this] (float v) { activeEngine_->setFirstReflHFCutHz  (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -531,6 +568,7 @@ void DuskVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("sixAPBloomCeiling",    sixAPBrightness_.bloomCeiling,    nullptr);
     state.setProperty ("sixAPEarlyMix",        sixAPBrightness_.earlyMix,        nullptr);
     state.setProperty ("sixAPOutputTrim",      sixAPBrightness_.outputTrim,      nullptr);
+    state.setProperty ("sixAPEarlyHighpassHz", sixAPBrightness_.earlyHighpassHz, nullptr);
     for (int i = 0; i < 6; ++i)
         state.setProperty (juce::Identifier ("sixAPBloomStagger" + juce::String (i)),
                           sixAPBrightness_.bloomStagger[i], nullptr);
@@ -595,6 +633,8 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
         sixAPBrightness_.earlyMix = static_cast<float> (tree.getProperty ("sixAPEarlyMix"));
     if (tree.hasProperty ("sixAPOutputTrim"))
         sixAPBrightness_.outputTrim = static_cast<float> (tree.getProperty ("sixAPOutputTrim"));
+    if (tree.hasProperty ("sixAPEarlyHighpassHz"))
+        sixAPBrightness_.earlyHighpassHz = static_cast<float> (tree.getProperty ("sixAPEarlyHighpassHz"));
     for (int i = 0; i < 6; ++i)
     {
         const juce::Identifier id ("sixAPBloomStagger" + juce::String (i));
@@ -615,6 +655,7 @@ void DuskVerbProcessor::pushSixAPBrightnessTo (DuskVerbEngine& target)
     target.setSixAPBloomStagger    (sixAPBrightness_.bloomStagger);
     target.setSixAPEarlyMix        (sixAPBrightness_.earlyMix);
     target.setSixAPOutputTrim      (sixAPBrightness_.outputTrim);
+    target.setSixAPEarlyHighpassHz (sixAPBrightness_.earlyHighpassHz);
 }
 
 void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
@@ -650,6 +691,11 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setWidth             (widthParam_->load());
     target->setGainTrim          (gainTrimParam_->load());
     target->setMonoBelow         (monoBelowParam_->load());
+    target->setFirstReflLDelayMs (firstReflLDlyParam_->load());
+    target->setFirstReflRDelayMs (firstReflRDlyParam_->load());
+    target->setFirstReflLGainDb  (firstReflLGainParam_->load());
+    target->setFirstReflRGainDb  (firstReflRGainParam_->load());
+    target->setFirstReflHFCutHz  (firstReflHFCutParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -686,6 +732,11 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastWidth_         = widthParam_->load();
     lastGainTrim_      = gainTrimParam_->load();
     lastMonoBelow_     = monoBelowParam_->load();
+    lastFirstReflLDly_  = firstReflLDlyParam_->load();
+    lastFirstReflRDly_  = firstReflRDlyParam_->load();
+    lastFirstReflLGain_ = firstReflLGainParam_->load();
+    lastFirstReflRGain_ = firstReflRGainParam_->load();
+    lastFirstReflHFCut_ = firstReflHFCutParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
@@ -756,6 +807,7 @@ void DuskVerbProcessor::applyFactoryPreset (const FactoryPreset& preset)
     sixAPBrightness_.bloomCeiling    = preset.sixAPBloomCeiling;
     sixAPBrightness_.earlyMix        = preset.sixAPEarlyMix;
     sixAPBrightness_.outputTrim      = preset.sixAPOutputTrim;
+    sixAPBrightness_.earlyHighpassHz = preset.sixAPEarlyHighpassHz;
     for (int i = 0; i < 6; ++i)
         sixAPBrightness_.bloomStagger[i] = preset.sixAPBloomStagger[i];
 
@@ -773,6 +825,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     engine.setSixAPBloomStagger    (sixAPBloomStagger);
     engine.setSixAPEarlyMix        (sixAPEarlyMix);
     engine.setSixAPOutputTrim      (sixAPOutputTrim);
+    engine.setSixAPEarlyHighpassHz (sixAPEarlyHighpassHz);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

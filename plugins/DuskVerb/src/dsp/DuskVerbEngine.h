@@ -5,6 +5,7 @@
 #include "DattorroPlateVintage.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
+#include "FirstReflections.h"
 #include "FDNReverb.h"
 #include "SixAPTankEngine.h"
 #include "NonLinearEngine.h"
@@ -127,6 +128,17 @@ public:
     void setSixAPBloomStagger    (const float values[6]);
     void setSixAPEarlyMix        (float v);
     void setSixAPOutputTrim      (float v);
+    void setSixAPEarlyHighpassHz (float v);
+
+    // Per-channel specular early-reflection injector (2 discrete taps). All
+    // engines route through this stage; default gain = 0 means muted. Per-
+    // preset opt-in: e.g. Concert Hall sets L=3ms/0dB, R=8ms/-3dB to match
+    // Lex PCM Native's L_Rfl_Dly + R_Rfl_Dly behaviour.
+    void setFirstReflLDelayMs (float ms);
+    void setFirstReflRDelayMs (float ms);
+    void setFirstReflLGainDb  (float db);
+    void setFirstReflRGainDb  (float db);
+    void setFirstReflHFCutHz  (float hz);
 
     // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
     // to silence. Used by the processor to bring an idle engine to a clean
@@ -164,6 +176,7 @@ private:
     // arriving as discrete clicks.
     DiffusionStage diffuser_;
     EarlyReflections er_;
+    FirstReflections firstRefl_;
 
     EngineType currentEngine_ = EngineType::Dattorro;
     int currentAlgorithm_ = 0;
@@ -179,6 +192,7 @@ private:
     std::vector<float> tankInL_, tankInR_;
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
+    std::vector<float> firstReflOutL_, firstReflOutR_;
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated
