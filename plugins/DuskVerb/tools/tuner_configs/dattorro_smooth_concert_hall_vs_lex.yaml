@@ -1,64 +1,67 @@
-# Tune DuskVerb "Smooth Concert Hall" preset (SixAPTank engine, algo 2 —
-# "High Density (6-AP)") against Lexicon PCM Native Concert Hall preset
-# "000.Concert Hall" under the "02.Large Halls" category.
+# Tune DuskVerb "Smooth Concert Hall" preset with the Dattorro plate engine
+# (algorithm=0, "Plate (Dattorro)") against Lexicon PCM Native Concert Hall
+# preset "000.Concert Hall" under the "02.Large Halls" category.
 #
-# Why SixAPTank: the FactoryPresets.h "Smooth Concert Hall" row currently
-# uses algorithm=2 (SixAPTank / High Density 6-AP). The plate-style anchor
-# comment cites Lexicon 480L Smooth Hall + Bricasti M7 hall, but the engine
-# choice is SixAPTank. Tune SixAPTank here; FDN tuning for the FDN-targeted
-# presets lives in a separate config.
+# Why a separate Dattorro config: the shipping "Smooth Concert Hall" row in
+# FactoryPresets.h uses algorithm=2 (SixAPTank, tuned in the sibling file
+# sixap_smooth_concert_hall_vs_lex.yaml). The earlier engine_compare test
+# scored SixAPTank composite loss 28.66 vs Dattorro N/A (Dattorro was not
+# in that comparison; FDN scored 47.56, QuadTank 37.78). This config is the
+# parallel experiment: can Dattorro reach an equal or lower composite loss
+# on the same Concert Hall anchor? A win promotes Dattorro to the preset;
+# otherwise the run becomes a reference number for future engine_compare.
+#
+# Search space, locked params, and metric weights are intentionally
+# identical to the SixAPTank file so the two runs are head-to-head fair.
+# Differences from the SixAP file are confined to: engine_algorithm,
+# Algorithm display string, job.name, and engine-specific comments.
 #
 # 100% wet comparison: both DV and Lex render with Bus Mode=on / Mix=100%
 # so we isolate the wet path only. The preset's mix=0.35 + busMode=false
 # user-facing defaults are restored by the patch step after tuning.
 
 job:
-  name: sixap_smooth_ch_vs_lex
+  name: dattorro_smooth_ch_vs_lex
   target_preset: "Smooth Concert Hall"
-  engine_algorithm: 2                    # SixAPTank
+  engine_algorithm: 0                    # Dattorro plate
   notes: |
     Reference: Lex PCM Native Concert Hall, preset "02.Large Halls/000.Concert Hall.xml".
-    Engine: SixAPTank — chosen via engine_compare test (composite loss 28.66 vs
-    QuadTank 37.78 vs FDN 47.56 at the shipping Smooth Concert Hall params).
-    SixAPTank's 6-AP cascade gave the densest in-family modal echo (61/s vs
-    Lex 72/s), closest C80 (+0.78 vs +3.98), and closest TR (1.16 vs 1.30).
+    Anchor stats: RT60@500 ≈ 3.6s, C80 ≈ +4 dB, D50 ≈ +3.5 dB, TR=1.30.
+    Engine under test: Dattorro plate (algorithm=0). Head-to-head with the
+    SixAPTank tuning of the same preset (see sixap_smooth_concert_hall_vs_lex.yaml).
     Bus Mode locked on, Mix locked 1.0 for fair wet-only comparison.
-    SixAPTank has light internal modulation — n_renders=2 averaging for
-    robustness against any LFO phase variance.
+    Dattorro tank has its own modulation — n_renders=2 averaging matches
+    the SixAP file so per-render LFO phase variance doesn't bias the comparison.
 
 renderer:
   bin: ../../../../build/tests/duskverb_render/duskverb_render
-  cache_dir: /home/marc/projects/dusk-audio-tools/tuner_cache
-  output_dir: /home/marc/projects/dusk-audio-tools/tuner_runs
+  cache_dir: /tmp/tune_reverb_cache
+  output_dir: /tmp/tune_reverb_runs
   averaging:
     n_renders: 2                         # SixAPTank has light internal modulation
     aggregate: median
 
 anchor:
-  # Lex Concert Hall preset "02.Large Halls/000.Concert Hall" rendered via
-  # (anchors persist under dusk-audio-tools/anchors/lex/, not /tmp):
-  #   FXP=~/projects/dusk-audio-tools/anchors/lex/fxp/concert_hall
-  #   WAV=~/projects/dusk-audio-tools/anchors/lex/wavs/concert_hall
-  #   ardour2fxp ~/.config/ardour9/presets/vst-1281583153 -o "$FXP"
+  # Lex Concert Hall preset "02.Large Halls/000.Concert Hall" rendered via:
   #   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so \
-  #     --load-state "$FXP/Lch1/lex-concert-hall.fxp" \
-  #     --slug lex_ch_v5 --output-dir "$WAV" --wait-after-load 2000
+  #     --load-state /tmp/concert_hall.fxp/Lch1/lex-concert-hall.fxp \
+  #     --slug lex_ch_v5 --output-dir /tmp/lex_concerthall --wait-after-load 2000
   # Sanity check: RT60@500 ≈ 3.6s, C80 ≈ +4 dB, D50 ≈ +3.5 dB
   # vs default-state which had RT60@500 ≈ 1.6s, C80 ≈ +0.5 dB.
-  impulse_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/concert_hall/lex_ch_v5_impulse.wav
-  noiseburst_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/concert_hall/lex_ch_v5_noiseburst.wav
+  impulse_wav: /tmp/lex_concerthall/lex_ch_v5_impulse.wav
+  noiseburst_wav: /tmp/lex_concerthall/lex_ch_v5_noiseburst.wav
 
 # Locked params reflect the shipping "Smooth Concert Hall" row in
 # FactoryPresets.h. Mix + Bus Mode force 100% wet for the comparison.
 # Predelay, lo/hi cut, width, gain_trim stay locked so the search space
 # captures only the reverb-character knobs.
 locked_params:
-  Algorithm:       "High Density (6-AP)"
+  Algorithm:       "Plate (Dattorro)"
   Bus Mode:        "on"
   Dry/Wet:         "1.0"                 # NOT "Mix" — DV display name is Dry/Wet
   Pre-Delay:       "8"                   # matches Lex Predelay=8.00 ms exactly
   Pre-Delay Sync:  "Free"
-  Mod Depth:       "0.05"                # SixAPTank: subtle motion, not 0
+  Mod Depth:       "0.05"                # subtle motion; matches SixAP run for parity
   Mod Rate:        "0.6"
   Lo Cut:          "60"
   Gain Trim:       "-3.5"                # compensates for FirstReflections gain

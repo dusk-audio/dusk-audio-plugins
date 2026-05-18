@@ -1,0 +1,156 @@
+# Tune DuskVerb "Rich Plate" preset (DattorroVintage engine, algo 1 —
+# "Plate (Dattorro Vintage)") against Lexicon PCM Native Vintage Plate
+# plugin's factory "Rich Plate" preset under category "Instrument Plates".
+#
+# Engine choice: pivoted from FDN (algo 4) to DattorroVintage (algo 1) on
+# 2026-05-18 because FDN tuning plateaued at composite loss 44.7 with only
+# 5/8 RT60 bands within JND — FDN's smooth modal decay could not reproduce
+# the Lex plate's late-tail signature. DattorroVintage shares the Dattorro
+# 1997 plate topology with Lex's Vintage Plate algorithm AND adds fixed
+# post-EQ tuned for vintage Lex character. Baseline render at sensible
+# defaults (Decay 1.30, flat Mults, Diffusion 0.89) already landed 6/8 bands
+# in JND with 16k near-exact (Δ +0.008s). This run refines the remaining
+# off-bands (125 short, 500 long, 4k borderline) + the C80/D50/EDT
+# early-late energy balance.
+#
+# 100% wet comparison: both DV and Lex render with Mix=100% / Bus Mode=on
+# so we isolate the wet path. The user-facing preset defaults (mix=0.40,
+# busMode=false) are restored by the patch step.
+#
+# Anchor lineage:
+#   Mac/Windows VST2 (yabridge) Lex Vintage Plate factory preset
+#   "00.Instrument Plates/010.Rich Plate.xml" loaded in Ardour 9,
+#   exported via ardour2fxp, fed to duskverb_render --load-state.
+#   Re-render command (anchors live under dusk-audio-tools/anchors/lex/
+#   so /tmp wipes don't kill them):
+#     FXP=~/projects/dusk-audio-tools/anchors/lex/fxp/rich_plate
+#     WAV=~/projects/dusk-audio-tools/anchors/lex/wavs/rich_plate
+#     ardour2fxp ~/.config/ardour9/presets/vst-1282436144 -o "$FXP"
+#     duskverb_render --vst2 ~/.vst/yabridge/LexVintagePlate.so \
+#       --load-state "$FXP/Lpl0/lex-rich-plate.fxp" \
+#       --slug lex_richplate_v1 --output-dir "$WAV" --wait-after-load 2000
+
+job:
+  name: plate_vs_lex_richplate
+  target_preset: "Rich Plate"
+  engine_algorithm: 1                    # DattorroVintage (matches Lex Vintage Plate algorithm)
+  notes: |
+    Reference: Lex PCM Native Vintage Plate preset "00.Instrument Plates/010.Rich Plate".
+    Anchor stats from the rendered IR:
+      RT60 per band (125/250/500/1k/2k/4k/8k/16k Hz):
+        1.568 / 1.338 / 1.298 / 1.283 / 1.333 / 1.323 / 1.263 / 1.100 s
+      Broadband EDT: 1.905 s   C80: -1.06 dB
+    Lex spec (from plugin UI): Reverb Time=1.2406s, BassRT=1.00x flat,
+    Bass XOV=800Hz, RT HiCut=12750Hz, Diffusion=89%, Size=24m, Shape=35,
+    Spread=47%, Spin=1.0Hz, Wander=1.5ms, Tail Width=Stereo.
+    Output bus: 1-Pole Lopass at 14250Hz, -2.5dB.
+    No ER (Early Level OFF), no echoes (all gains OFF).
+    Lex Rich Plate is the industry-standard bright + dense Lexicon plate;
+    flat per-band decay is the signature character.
+
+renderer:
+  bin: ../../../../build/tests/duskverb_render/duskverb_render
+  cache_dir: /home/marc/projects/dusk-audio-tools/tuner_cache
+  output_dir: /home/marc/projects/dusk-audio-tools/tuner_runs
+  averaging:
+    n_renders: 2                         # FDN has LFO modulation — average 2 to suppress phase variance
+    aggregate: median
+
+anchor:
+  impulse_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/rich_plate/lex_richplate_v1_impulse.wav
+  noiseburst_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/rich_plate/lex_richplate_v1_noiseburst.wav
+
+# Locked params reflect the Lex Rich Plate spec + force 100% wet for the
+# comparison. ER and FR muted to match Lex (no Early Reflections, no echo
+# taps in the source preset).
+locked_params:
+  Algorithm:       "Plate (Dattorro Vintage)"
+  Bus Mode:        "on"
+  Dry/Wet:         "1.0"
+  Pre-Delay:       "0"                   # Lex Predelay=0.00 ms
+  Pre-Delay Sync:  "Free"
+  Lo Cut:          "20"                  # Lex doesn't HPF low end
+  Early Ref Level: "0.0"                 # Lex Early Level OFF
+  Early Ref Size:  "0.30"                # not used when ER muted
+  Mono Below:      "20"
+  Freeze:          "Off"
+  Gate:            "On"
+  First Refl L Dly:   "3.0"
+  First Refl R Dly:   "8.0"
+  First Refl L Gain:  "-60.0"            # Lex L_Rfl_Gain OFF — mute DV FR too
+  First Refl R Gain:  "-60.0"            # Lex R_Rfl_Gain OFF
+  First Refl HF Cut:  "20000"            # bypass (FR muted)
+
+# Sweep the reverb-character axes. Ranges sized around Lex Rich Plate target
+# (RT60 ~1.24s, flat per-band, dense diffusion). Bass + treble multipliers
+# kept relatively tight to favour the flat-decay character of the Lex plate.
+search_space:
+  # Ranges narrowed around DattorroVintage dv2 baseline (already 6/8 in JND).
+  Decay Time:      { lo: 1.0,  hi: 1.7,  step: 0.10, scale: linear }   # dv2 1.30 → target 1.24s spec
+  Size:            { lo: 0.30, hi: 0.75, step: 0.05, scale: linear }   # dv2 0.50; engine-specific
+  Treble Multiply: { lo: 0.60, hi: 1.20, step: 0.08, scale: linear }
+  Bass Multiply:   { lo: 0.80, hi: 1.40, step: 0.08, scale: linear }   # dv2 needed ~1.22 to fix 125
+  Mid Multiply:    { lo: 0.70, hi: 1.20, step: 0.08, scale: linear }
+  Diffusion:       { lo: 0.80, hi: 0.97, step: 0.03, scale: linear }   # Lex 0.89
+  Low Crossover:   { lo: 500,  hi: 1200, step: 100,  scale: linear }   # Lex Bass XOV 800
+  High Crossover:  { lo: 3000, hi: 8000, step: 500,  scale: linear }
+  Hi Cut:          { lo: 8000, hi: 16000, step: 500,  scale: linear }  # Lex RT HiCut 12750
+  Mod Depth:       { lo: 0.05, hi: 0.30, step: 0.04, scale: linear }
+  Mod Rate:        { lo: 0.5,  hi: 2.0,  step: 0.25, scale: linear }   # Lex Spin 1.0Hz
+  Width:           { lo: 0.85, hi: 1.20, step: 0.05, scale: linear }
+  Saturation:      { lo: 0.00, hi: 0.15, step: 0.03, scale: linear }
+  Gain Trim:       { lo:  8.0, hi: 13.0, step: 0.3,  scale: linear }   # DV-Vintage output ~14 dB lower than FDN; dv2 needs ~10.85
+# 14-axis CMA on DattorroVintage engine: max_evals=600 over [0,1]^14, ~15-20 min @ workers=4.
+
+# JND-weighted composite loss. Same metric set as the SixAP / FDN Smooth
+# Concert Hall configs — RT60 per band carries decay shape, C80/D50 carry
+# early-vs-late balance, centroid_drift catches spectral evolution, and
+# the late-tail windows penalize fast-decay drift.
+metrics:
+  # ── Decay & Timing ────────────────────────────────────────────────────────
+  rt60_per_band:       { weight: 6.0, jnd: 0.10 }   # 8 bands, 125-16k; v5 bumped 3.5→6.0 — v4 still off across mid-HF
+  edt_500:             { weight: 2.0, jnd: 0.10 }
+  edt:                 { weight: 1.5, jnd: 0.10 }
+  decay_envelope_db:   { weight: 4.0, jnd: 3.0 }    # 12×250ms RMS bins; v5 bumped 3.0→4.0 — v4 deep-tail bins drifted -25 dB
+  peak_locations_ms:   { weight: 1.0, jnd: 1.0 }    # 4 specular peak times in 0-50ms (low weight for ER-muted plates)
+  # ── Energy & Clarity ──────────────────────────────────────────────────────
+  c80:                 { weight: 1.5, jnd: 0.8  }
+  c80_per_octave:      { weight: 2.0, jnd: 1.5  }   # 250/500/1k/2k octaves
+  d50:                 { weight: 2.5, jnd: 0.8  }
+  # ── Tonal Balance ────────────────────────────────────────────────────────
+  bass_ratio:          { weight: 2.0, jnd: 0.15 }   # low-band RT60 / mid-band RT60
+  treble_ratio:        { weight: 2.0, jnd: 0.15 }   # HF RT60 / mid RT60
+  centroid_drift_per_band: { weight: 5.0, jnd: 2.5 }   # spectral evolution per octave
+  box_ratio_db:        { weight: 3.0, jnd: 1.0  }   # midrange energy concentration
+  # ── Loudness & Dynamics ──────────────────────────────────────────────────
+  a_weighted_rms_db:   { weight: 8.0, jnd: 0.5  }   # high weight = volume-first rule: must stay within JND while other axes tune (Gain Trim is in search_space)
+  spectral_crest_db:   { weight: 1.0, jnd: 1.0  }
+  time_domain_crest:   { weight: 1.2, jnd: 1.5  }
+  # ── Spatial ──────────────────────────────────────────────────────────────
+  stereo_correlation:  { weight: 2.5, jnd: 0.08 }
+  # ── Late-tail anchors (kept; coarser than decay_envelope_db, weighted lower) ─
+  late_tail_500ms_1s:  { weight: 1.0, jnd: 0.8 }
+  late_tail_1s_2s:     { weight: 1.0, jnd: 1.0 }
+  late_tail_2s_3s:     { weight: 1.0, jnd: 1.5 }
+
+optimizer:
+  enabled: true
+  algorithm: cma
+  sigma0: 0.20
+  max_evals: 600                         # narrowed ranges + DattorroVintage engine — fewer evals needed
+  tolerance: 0.05
+  parallel_workers: 4
+
+patch:
+  enabled: true
+  dry_run_first: true
+  fields_to_patch:
+    - decay
+    - size
+    - damping
+    - bassMult
+    - midMult
+    - crossover
+    - highCrossover
+    - diffusion
+    - erLevel

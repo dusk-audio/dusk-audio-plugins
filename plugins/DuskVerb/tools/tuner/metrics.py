@@ -41,7 +41,13 @@ CENTROID_DRIFT_OCTAVES_HZ = (500.0, 1000.0, 2000.0, 4000.0)
 # Vector-typed metric keys — compute_loss / format_report treat these as
 # per-band arrays. Add new vector metrics here and to measure_pair only.
 _VECTOR_METRIC_KEYS = ("rt60_per_band", "c80_per_octave",
-                       "centroid_drift_per_band")
+                       "centroid_drift_per_band",
+                       "decay_envelope_db", "peak_locations_ms")
+
+# Decay-envelope window edges (seconds, peak-relative). 12 windows × 250 ms
+# = 3 s coverage; finer-grained than the three late_tail_* metrics so the
+# optimizer can shape the 0-3 s decay curve point-by-point.
+DECAY_ENVELOPE_EDGES_S = tuple(round(0.0 + i * 0.25, 3) for i in range(13))
 
 
 def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
@@ -53,10 +59,81 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
     ir_trim = ir[peak:]
     nb_tail = nb[int(0.1 * sr_n):] if len(nb) > int(0.1 * sr_n) else nb
 
+    # Late-tail energy windows (peak-relative): captures how quickly the
+    # reverb decays past the early-decay window. Lex Concert Hall has
+    # consistent -55 to -65 dB at 1-2s post-peak across tested musical
+    # signals; DV measured 10 dB QUIETER in same window → DV tail decays
+    # faster than Lex. Adding as explicit loss terms forces optimizer to
+    # preserve late energy instead of trading it off for early clarity.
+    def _window_db (signal: np.ndarray, sr: float, t0: float, t1: float) -> float:
+        p = int(np.argmax(np.abs(signal)))
+        s0 = p + int(t0 * sr)
+        s1 = min(p + int(t1 * sr), len(signal))
+        if s1 <= s0:
+            return -120.0
+        rms = float(np.sqrt(np.mean(signal[s0:s1] ** 2)) + 1e-12)
+        return 20.0 * float(np.log10(rms))
+
+    # Decay envelope: dense RMS-in-dB sampling over 12×250 ms windows from
+    # the impulse peak. Captures the actual SHAPE of the decay curve, not
+    # just its endpoints. Three late_tail_* metrics give coarse anchors at
+    # 0.5-1, 1-2, 2-3 s; this fills in the 12 evenly-spaced bins so the
+    # optimizer can match the precise slope (e.g. Lex Rich Plate's 1.24 s
+    # plate decay produces a near-exponential dB drop while DV's FDN
+    # initially drops fast then plateaus — that shape mismatch is invisible
+    # to broadband RT60 alone).
+    def _decay_envelope_db (signal: np.ndarray, sr: float,
+                            edges: tuple[float, ...]) -> list[float]:
+        out: list[float] = []
+        for i in range(len(edges) - 1):
+            out.append(_window_db(signal, sr, edges[i], edges[i + 1]))
+        return out
+
+    # Peak locations (ms, peak-relative): detect the first N local maxima
+    # in the impulse response within 0-50 ms of the main peak. Pads to a
+    # fixed length of 4 with sentinel value 999.0 so vector-loss math
+    # stays length-stable across presets. Used to lock specular reflection
+    # timings (Lex's 3 ms L / 8 ms R direct reflections); presets without
+    # ER (like Lex Rich Plate) will have a single peak at 0.0 and zeros
+    # elsewhere — anchor and measured both pad the same way so the loss
+    # is well-defined.
+    def _peak_locations_ms (signal: np.ndarray, sr: float,
+                            max_peaks: int = 4,
+                            window_ms: float = 50.0) -> list[float]:
+        env = np.abs(signal).astype(np.float64)
+        p0 = int(np.argmax(env))
+        end = min(len(env), p0 + int(window_ms * 1e-3 * sr))
+        seg = env[p0:end]
+        if len(seg) < 3:
+            return [0.0] + [999.0] * (max_peaks - 1)
+        # Local maxima: strictly greater than both neighbours; min gain
+        # threshold -40 dB relative to global peak to suppress noise floor.
+        peak = seg[0] if seg[0] > 0 else 1.0
+        thresh = peak * 10.0 ** (-40.0 / 20.0)
+        idx_peaks: list[int] = [0]
+        for i in range(1, len(seg) - 1):
+            if seg[i] > seg[i - 1] and seg[i] >= seg[i + 1] and seg[i] >= thresh:
+                idx_peaks.append(i)
+                if len(idx_peaks) >= max_peaks:
+                    break
+        ms = [round(idx / sr * 1000.0, 3) for idx in idx_peaks]
+        while len(ms) < max_peaks:
+            ms.append(999.0)
+        return ms[:max_peaks]
+
     return {
         # Per-band vectors
         "rt60_per_band":   ai.per_band_rt60(ir, sr_i),     # 8 floats / None
         "c80_per_octave":  [pd.c80_per_octave(ir, sr_i, fc) for fc in C80_OCTAVES_HZ],
+        # Late-tail energy at three windows past the peak. Penalizes DV
+        # presets whose tail dies faster (or slower) than Lex anchor.
+        "late_tail_500ms_1s":  _window_db(ir, sr_i, 0.5, 1.0),
+        "late_tail_1s_2s":     _window_db(ir, sr_i, 1.0, 2.0),
+        "late_tail_2s_3s":     _window_db(ir, sr_i, 2.0, 3.0),
+        # Decay envelope: fine-grained shape of the 0-3 s tail decay.
+        "decay_envelope_db":   _decay_envelope_db(ir, sr_i, DECAY_ENVELOPE_EDGES_S),
+        # Peak timing of first 4 specular peaks in 0-50 ms post-onset.
+        "peak_locations_ms":   _peak_locations_ms(ir, sr_i),
         # Centroid drift per octave: signed dB shift (late_window - early_window).
         # Lex Concert Hall: -40 to -55 dB across 500/1k/2k/4k (HF dies naturally).
         # SixAPTank Smooth Concert Hall: +30 to +50 dB (late-tail modal ringing

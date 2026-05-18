@@ -57,8 +57,11 @@
 //
 // SAFETY
 // ------
-// Default gains = 0 (linear) → entire module is a no-op (early-bail in
-// processAdd). Existing presets that don't add the four new factory-
+// Default gains = 0 (linear) → processAdd contributes nothing to outputL/R
+// (mute fast-path skips read + filter + output add). Ring buffer and
+// writePos_ still advance during mute so a later un-mute via automation
+// or preset switch reads coherent recent history instead of pre-mute
+// stale content. Existing presets that don't add the four new factory-
 // preset fields produce byte-identical output to before this module
 // existed.
 // =====================================================================
@@ -144,16 +147,29 @@ public:
     void processAdd (const float* inputL, const float* inputR,
                      float* outputL, float* outputR, int numSamples)
     {
-        // Fast bail when both taps muted — preset hasn't opted in, so
-        // skip the entire buffer write + read + filter cycle. Critical
-        // because every active engine in DuskVerb instantiates this
-        // class regardless of preset; defaults must be free of cost.
-        if (leftGain_ == 0.0f && rightGain_ == 0.0f)
-            return;
-
         const int bufLen        = static_cast<int> (bufferL_.size());
         const int leftDelayInt  = static_cast<int> (leftDelay_);
         const int rightDelayInt = static_cast<int> (rightDelay_);
+
+        // Muted fast-path: skip the read + filter + output add, but KEEP
+        // the ring buffer and writePos_ advancing with the current input.
+        // If gains later come back via automation or a preset switch, the
+        // taps need recent history to read — without these writes, the
+        // first `leftDelay_` / `rightDelay_` samples after un-mute would
+        // come from pre-mute stale content. Filter state is zeroed so
+        // the first un-muted sample isn't biased by a frozen y[n-1].
+        if (leftGain_ == 0.0f && rightGain_ == 0.0f)
+        {
+            for (int n = 0; n < numSamples; ++n)
+            {
+                bufferL_[static_cast<size_t> (writePos_)] = inputL[n];
+                bufferR_[static_cast<size_t> (writePos_)] = inputR[n];
+                ++writePos_;
+                if (writePos_ >= bufLen) writePos_ = 0;
+            }
+            hfStateL_ = hfStateR_ = 0.0f;
+            return;
+        }
 
         for (int n = 0; n < numSamples; ++n)
         {
