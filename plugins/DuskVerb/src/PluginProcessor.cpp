@@ -57,21 +57,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "mod_rate", 1 }, "Mod Rate",
         juce::NormalisableRange<float> (0.10f, 10.0f, 0.0f, 0.5f), fp0.modRate));
 
+    // Bass / Mid / Treble Multiply ranges widened 2026-05-18 (originally
+    // 2.5 / 2.5 / 1.5 max) so PlateEngine's Lex-Vintage-Plate tunes can
+    // push bandGain → 1.0 at edge bands. Existing FactoryPreset values
+    // stay well within the new range; the wider headroom only activates
+    // for presets that opt in. Engine clamps (e.g. PlateEngine's internal
+    // kMaxBandGain 0.98) keep the final gain bounded.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_mult", 1 }, "Bass Multiply",
-        juce::NormalisableRange<float> (0.3f, 2.5f), fp0.bassMult));
+        juce::NormalisableRange<float> (0.3f, 4.0f), fp0.bassMult));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mid_mult", 1 }, "Mid Multiply",
-        juce::NormalisableRange<float> (0.3f, 2.5f), fp0.midMult));
+        juce::NormalisableRange<float> (0.3f, 4.0f), fp0.midMult));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "damping", 1 }, "Treble Multiply",
-        juce::NormalisableRange<float> (0.1f, 1.5f), fp0.damping));
+        juce::NormalisableRange<float> (0.1f, 2.5f), fp0.damping));
 
+    // Low Crossover lower bound widened 2026-05-18 from 200 → 80 Hz so
+    // PlateEngine's LR4 split can place fLow well below 125 Hz when
+    // a preset needs the bass band to extend to LF roots without LP
+    // attenuation. Engine-side LR4 clamps to >= 20 Hz internally.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "crossover", 1 }, "Low Crossover",
-        juce::NormalisableRange<float> (200.0f, 4000.0f, 0.0f, 0.5f), fp0.crossover));
+        juce::NormalisableRange<float> (80.0f, 4000.0f, 0.0f, 0.5f), fp0.crossover));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "high_crossover", 1 }, "High Crossover",

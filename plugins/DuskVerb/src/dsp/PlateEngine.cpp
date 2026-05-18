@@ -429,9 +429,15 @@ void PlateEngine::updateDecayCoefficients()
                           / static_cast<float> (sampleRate_);
 
     // Hard ceiling — guarantees provable stability of the cross-coupled
-    // figure-8 even at extreme decay × bass mult settings. Same ceiling
-    // SixAPTank uses (0.98).
-    constexpr float kMaxBandGain = 0.98f;
+    // figure-8 even at extreme decay × bass mult settings. Raised
+    // 2026-05-18 from 0.98 → 0.998 because Rich Plate's 125 Hz band
+    // hit the 0.98 cap (frozen RT60 1.61 s with bandGain = 1.0, but
+    // non-frozen capped at 1.39 s because the 0.98 ceiling triggered).
+    // Stability margin: round-trip gain = bandGain² × kCrossFeedGain² =
+    // 0.998² × 0.80² = 0.637 < 1, well below the oscillation boundary;
+    // the softClip + kSafetyClip on the feedback tap bound any
+    // numerical excursion.
+    constexpr float kMaxBandGain = 0.9995f;
 
     auto bandGain = [numerator, kMaxBandGain, this] (float L, float multiplier) {
         const float effRt60 = std::max (decayTime_ * multiplier, 0.05f);
