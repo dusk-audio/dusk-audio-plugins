@@ -138,3 +138,9 @@ option(BUILD_DUSKVERB_RENDER "Build DuskVerb plugin-host render tool" OFF)
 if(BUILD_DUSKVERB_RENDER)
     add_subdirectory(tests/duskverb_render)
 endif()
+
+# DuskVerb AVX2 vs scalar parity test for the FDN feedback kernels.
+option(BUILD_DUSKVERB_SIMD_PARITY "Build DuskVerb FDN AVX2 parity test" OFF)
+if(BUILD_DUSKVERB AND BUILD_DUSKVERB_SIMD_PARITY)
+    add_subdirectory(tests/duskverb_simd_parity)
+endif()
