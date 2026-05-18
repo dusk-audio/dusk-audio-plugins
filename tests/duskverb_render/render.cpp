@@ -88,7 +88,7 @@ namespace
             "Lush Dark Hall",
             {
                 // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                { "Algorithm",       4.0f / 8.0f},     // FDN — Realistic Space (choice 3 of 0..6)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       35.0f },
@@ -122,7 +122,7 @@ namespace
             "Cathedral",
             {
                 // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                { "Algorithm",       4.0f / 8.0f},     // FDN — Realistic Space (choice 3 of 0..6)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       30.0f },
@@ -186,7 +186,7 @@ namespace
                 //   • Diffusion 0.50 → 0.85 — smooth sustained tail (like
                 //                              Arturia's Lexicon Hall) vs the
                 //                              spikier 0.50 we'd dialled in
-                { "Algorithm",       0.0f / 7.0f },     // 0 = Vintage Plate (Dattorro)
+                { "Algorithm",       0.0f / 8.0f },     // 0 = Vintage Plate (Dattorro)
                 { "Dry/Wet",         0.412f },
                 { "Bus Mode",        0.0f },
                 { "Pre-Delay",       24.0f },     // Lexicon 224 hardware spec for Vangelis cues
@@ -240,13 +240,13 @@ namespace
         return {
             juce::String (name),
             {
-                // Divisor must equal (numAlgorithms - 1). With 7 algorithms
-                // (Dattorro / 6-AP / QuadTank / FDN / Spring / NonLinear /
-                // Shimmer) → divisor = 6. Mismatching the divisor silently
-                // misroutes the algorithm index (e.g. /5 with 7 algos sends
-                // algoIdx 4 → 4/5=0.8 → Shimmer (idx 6 in 0..6) instead of
-                // Spring).
-                { "Algorithm",       static_cast<float> (algoIdx) / 7.0f },
+                // Divisor must equal (numAlgorithms - 1). With 9 algorithms
+                // (Dattorro / DattorroVintage / 6-AP / QuadTank / FDN /
+                // Spring / NonLinear / Shimmer / Plate-Foil) → divisor = 8.
+                // Mismatching the divisor silently misroutes the algorithm
+                // index (e.g. /6 with 9 algos sends algoIdx 4 → 4/6=0.667 →
+                // Shimmer (idx ~6) instead of FDN).
+                { "Algorithm",       static_cast<float> (algoIdx) / 8.0f },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
                 { "Pre-Delay",       predelay },
@@ -299,7 +299,7 @@ namespace
             return makePreset (name.toRawUTF8(), 0, 1.0f, true, 18.0f, 2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f, 480.0f, 0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, 13.0f, 20.0f, 1.20f, 4500.0f, 0.30f);
         // Other halls
         if (name == "Smooth Concert Hall")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true,  8.0f, 2.14f, 0.62f, 0.45f, 0.60f, 0.89f, 2.23f, 1500.0f, 0.94f, 0.75f, 0.65f, 60.0f, 13000.0f, 0.96f, -3.5f, 20.0f, 1.42f, 6163.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 2, 1.0f, true,  8.0f, 2.81f, 0.69f, 0.45f, 0.60f, 0.88f, 1.92f, 804.0f, 0.76f, 0.68f, 0.65f, 60.0f, 5505.0f, 1.13f, -3.5f, 20.0f, 1.34f, 2679.0f, 0.01f);
         if (name == "Vocal Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f, 0.78f, 0.45f, 0.55f, 100.0f, 9000.0f, 1.15f, -1.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
         // Chambers

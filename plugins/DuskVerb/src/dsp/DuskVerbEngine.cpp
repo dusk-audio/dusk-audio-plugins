@@ -24,6 +24,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     nonLinear_.prepare (sampleRate, maxBlockSize);
     shimmer_.prepare (sampleRate, maxBlockSize);
     dattorroVintage_.prepare (sampleRate, maxBlockSize);
+    plate_.prepare (sampleRate, maxBlockSize);
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
@@ -95,6 +96,7 @@ void DuskVerbEngine::clearAllBuffers()
     nonLinear_.clearBuffers();
     shimmer_  .clearBuffers();
     dattorroVintage_.clearBuffers();
+    plate_.clearBuffers();
 
     // Pre-tank input diffuser and early reflections — both retain
     // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
@@ -165,6 +167,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     nonLinear_.clearBuffers();
     shimmer_.clearBuffers();
     dattorroVintage_.clearBuffers();
+    plate_.clearBuffers();
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -180,6 +183,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     nonLinear_.setFreeze (frozen);
     shimmer_.setFreeze (frozen);
     dattorroVintage_.setFreeze (frozen);
+    plate_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -198,6 +202,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     nonLinear_.setDecayTime (seconds);
     shimmer_.setDecayTime (seconds);
     dattorroVintage_.setDecayTime (seconds);
+    plate_.setDecayTime (seconds);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -216,6 +221,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     nonLinear_.setSize (size);
     shimmer_.setSize (size);
     dattorroVintage_.setSize (size);
+    plate_.setSize (size);
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
@@ -228,6 +234,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     nonLinear_.setBassMultiply (mult);
     shimmer_.setBassMultiply (mult);
     dattorroVintage_.setBassMultiply (mult);
+    plate_.setBassMultiply (mult);
 }
 
 void DuskVerbEngine::setMidMultiply (float mult)
@@ -240,6 +247,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
     nonLinear_.setMidMultiply (mult);
     shimmer_.setMidMultiply (mult);
     dattorroVintage_.setMidMultiply (mult);
+    plate_.setMidMultiply (mult);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -252,6 +260,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     nonLinear_.setTrebleMultiply (mult);
     shimmer_.setTrebleMultiply (mult);
     dattorroVintage_.setTrebleMultiply (mult);
+    plate_.setTrebleMultiply (mult);
 }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
@@ -264,6 +273,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     nonLinear_.setCrossoverFreq (hz);
     shimmer_.setCrossoverFreq (hz);
     dattorroVintage_.setCrossoverFreq (hz);
+    plate_.setCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setHighCrossoverFreq (float hz)
@@ -276,6 +286,7 @@ void DuskVerbEngine::setHighCrossoverFreq (float hz)
     nonLinear_.setHighCrossoverFreq (hz);
     shimmer_.setHighCrossoverFreq (hz);
     dattorroVintage_.setHighCrossoverFreq (hz);
+    plate_.setHighCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setSaturation (float amount)
@@ -288,6 +299,7 @@ void DuskVerbEngine::setSaturation (float amount)
     nonLinear_.setSaturation (amount);
     shimmer_.setSaturation (amount);
     dattorroVintage_.setSaturation (amount);
+    plate_.setSaturation (amount);
 }
 
 void DuskVerbEngine::setModDepth (float depth)
@@ -306,6 +318,7 @@ void DuskVerbEngine::setModDepth (float depth)
     nonLinear_.setModDepth (depth);
     shimmer_.setModDepth (depth);   // hijacked → PITCH (0..1 → 0..24 semitones)
     dattorroVintage_.setModDepth (depth);
+    plate_.setModDepth (depth);
 }
 
 void DuskVerbEngine::setModRate (float hz)
@@ -318,6 +331,7 @@ void DuskVerbEngine::setModRate (float hz)
     nonLinear_.setModRate (hz);
     shimmer_.setModRate (hz);       // hijacked → FEEDBACK (0.1..10 Hz → 0..0.95 cascade gain)
     dattorroVintage_.setModRate (hz);
+    plate_.setModRate (hz);
 }
 
 void DuskVerbEngine::setDiffusion (float amount)
@@ -339,6 +353,7 @@ void DuskVerbEngine::setDiffusion (float amount)
     nonLinear_.setTankDiffusion   (amount);
     shimmer_.setTankDiffusion     (amount);   // no-op (FDN's mix IS the diffusion)
     dattorroVintage_.setTankDiffusion (amount);
+    plate_.setTankDiffusion        (amount);
 }
 
 void DuskVerbEngine::setBassChokeHz (float hz)
@@ -540,7 +555,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     if (currentEngine_ != EngineType::SixAPTank
         && currentEngine_ != EngineType::Spring
         && currentEngine_ != EngineType::NonLinear
-        && currentEngine_ != EngineType::DattorroVintage)
+        && currentEngine_ != EngineType::DattorroVintage
+        && currentEngine_ != EngineType::Plate)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
 
     // ---- 4) Selected late tank ----
@@ -577,6 +593,10 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         case EngineType::DattorroVintage:
             dattorroVintage_.process (tankInL_.data(), tankInR_.data(),
                                        tankOutL_.data(), tankOutR_.data(), numSamples);
+            break;
+        case EngineType::Plate:
+            plate_.process (tankInL_.data(), tankInR_.data(),
+                            tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
     }
 
