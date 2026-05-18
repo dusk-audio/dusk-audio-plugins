@@ -158,18 +158,38 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.95f, 0.45f, 0.30f, 0.60f, 0.85f, 1.00f,  700.0f,
           0.85f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, false, 16.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
-        // ── Rich Plate (PCM 90) ──────────────────────────────────────────────
-        // Engine: Dattorro. Anchor: Lexicon PCM 90 "Rich Plate" (Bank P2 0.1)
-        // — the industry-standard bright + diffuse Lexicon plate. Measured
-        // against the PCM 90 IR set:
-        //   RT60 1.52 s   bass_mult 0.98 (flat)   treble_mult 0.96 (almost flat)
-        //   centroid 50ms 10.8 kHz   diffusion-proxy 2.04 (dense)   predelay 0
-        // The flat per-band decay + bright top is the "Rich" character.
+        // ── Rich Plate (Lex Vintage Plate) ───────────────────────────────────
+        // Engine: PlateEngine (algo 8, "Plate (Foil)"). Anchor: Lexicon PCM
+        // Native Vintage Plate factory preset "00.Instrument Plates/010.Rich
+        // Plate" hosted via yabridge in Ardour 9, exported via ardour2fxp,
+        // rendered through duskverb_render.
+        //
+        // Engine choice rationale: FDN (algo 4), DattorroVintage (algo 1),
+        // Dattorro (algo 0), and SixAPTank (algo 2) all plateaued at 5-6/8
+        // RT60 bands within JND on this anchor — first-order crossover damping
+        // couples 125-500Hz so fixing 125Hz LF rolloff broke 250/500/1k. The
+        // PlateEngine (added 2026-05-18 via additive-copy from f0e9471 on
+        // feature/duskverb-calibration-v2) was purpose-built for Lex Vintage
+        // Plate per-band fit: 2-AP cross-coupled input network + 6-AP density
+        // cascade with per-AP RandomWalkLFO jitter, ThreeBandDamping, and
+        // ~half the cascade length of SixAPTank so HF energy survives past
+        // 9 kHz centroid.
+        //
+        // Lex anchor stats (per-band RT60 @ 125/250/500/1k/2k/4k/8k/16k Hz):
+        //   1.568 / 1.338 / 1.298 / 1.283 / 1.333 / 1.323 / 1.263 / 1.100 s
+        //   Broadband EDT 1.91 s, C80 -1.06 dB. Lex UI spec: Reverb Time=1.2406s,
+        //   BassRT=1.00× (flat), Bass XOV=800Hz, RT HiCut=12750Hz, Diffusion=89%,
+        //   Size=24m, Spin=1.0Hz, Wander=1.5ms. No ER, no echoes.
+        //
+        // Values below are post-engine-switch baseline (sensible defaults for
+        // PlateEngine: Decay 1.3s ≈ Lex spec, flat band Mults, Lex Bass XOV
+        // 800Hz, Lex RT HiCut 12750Hz, Diffusion 89%). Pending PlateEngine
+        // tuner round to land all metrics within JND.
         { "Rich Plate",           "Plates",
-          4,  0.40f, false,  0.0f, 0,
-          1.60f, 0.55f, 0.10f, 0.45f, 0.85f, 1.50f,  300.0f,
-          0.92f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, false, -1.0f,
-          /* mono */ 20.0f, /* mid */ 0.60f, /* highX */ 3000.0f, /* sat */ 0.15f },
+          8,  0.40f, false,  0.0f, 0,
+          5.000f, 0.950f, 0.100f, 1.000f, 1.300f, 1.800f,  400.0f,
+          0.050f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -5.870f,
+          /* mono */ 20.0f, /* mid */ 1.000f, /* highX */ 5000.0f, /* sat */ 0.000f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
         // smooth, classic Lexicon plate.
@@ -325,9 +345,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Hall preset 02.Large Halls/000.Concert Hall.xml).
         { "Smooth Concert Hall",  "Halls",
           2,  0.35f, false,  8.0f, 0,
-          2.14f, 0.62f, 0.45f, 0.60f, 0.89f, 2.23f, 1500.0f,
-          0.94f, 0.75f, 0.65f, 60.0f, 13000.0f, 0.96f, false, -3.5f,
-          /* mono */ 20.0f, /* mid */ 1.42f, /* highX */ 6163.0f, /* sat */ 0.10f,
+          2.81f, 0.69f, 0.45f, 0.60f, 0.88f, 1.92f,  804.0f,
+          0.76f, 0.68f, 0.65f, 60.0f,  5505.0f, 1.13f, false, -3.5f,
+          /* mono */ 20.0f, /* mid */ 1.34f, /* highX */ 2679.0f, /* sat */ 0.01f,
           /* gate */ true,
           /* sixAPDensityBaseline */ 0.62f,
           /* sixAPBloomCeiling    */ 0.85f,
@@ -337,9 +357,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* sixAPEarlyHighpassHz */ 350.0f,
           /* firstReflLDlyMs      */ 3.0f,
           /* firstReflRDlyMs      */ 8.0f,
-          /* firstReflLGainDb     */ -0.06f,
-          /* firstReflRGainDb     */ -6.5f,
-          /* firstReflHFCutHz     */ 11725.0f },
+          /* firstReflLGainDb     */ 0.0f,       // Lex L_Rfl_Gain locked
+          /* firstReflRGainDb     */ -3.0f,      // Lex R_Rfl_Gain locked
+          /* firstReflHFCutHz     */ 7170.0f },  // matches Lex Rvb Out Freq=7000
         // ── Blade Runner Concert (PCM 90) ────────────────────────────────────
         // Engine: SixAPTank. Anchor: PCM 90 "Concert Hall" (Bank P0,
         // preset 574) — the purest vanilla form of the algorithm Vangelis
