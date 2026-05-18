@@ -189,10 +189,17 @@ private:
             jitterLFO.setRate (clamped);
         }
 
-        // Allpass kernel with optional cubic-Hermite interpolated read at
+        // Allpass kernel with optional 6-point Lagrange interpolated read at
         // (writePos − delaySamples − jitter). When jitterDepthFraction is
         // 0 the kernel collapses to a simple integer-tap read for the
         // input-section APs that don't need modulation.
+        //
+        // Lagrange-6 (was cubicHermite pre-2026-05-18) cuts the per-AP HF
+        // rolloff from ~3 dB to <0.5 dB at 16 kHz / 48 kHz sample rate.
+        // Critical because the 6-AP density cascade passes through this
+        // path 6× per signal traversal — cubicHermite's HF loss compounded
+        // to ~18 dB at 16 kHz, manifesting as a fixed 0.7 s RT60 deficit
+        // at 16 kHz even with all bandGains set to 1.0 (FREEZE mode).
         float process (float input, float g)
         {
             float vd;
@@ -206,7 +213,7 @@ private:
                 const float frac = readPos - static_cast<float> (intIdx);
                 intIdx = static_cast<int> (static_cast<unsigned int> (intIdx)
                                             & static_cast<unsigned int> (mask));
-                vd = DspUtils::cubicHermite (buffer.data(), mask, intIdx, frac);
+                vd = DspUtils::lagrange6 (buffer.data(), mask, intIdx, frac);
             }
             else
             {
@@ -378,15 +385,16 @@ private:
     // audible into the late tail. Stability bound (kMaxBandGain in
     // updateDecayCoefficients) keeps the loop from oscillating.
     //
-    // 2026-05-18 raised 0.6 → 0.80 to lift the engine's RT60 ceiling. The
-    // figure-8 round-trip gain ≈ bandGain² × kCrossFeedGain² controls
-    // measurable RT60 — at 0.6 the ceiling was ~0.65 s regardless of Decay
-    // Time / Size params (cross-feed dominated even when bandGain ≈ 0.95).
-    // Raising to 0.80 puts the round-trip ceiling around 1.3-1.6 s so Lex
-    // Vintage Plate Rich Plate (target 1.24 s) becomes reachable. Stability
-    // margin: 0.20 below the unity-feedback boundary; signal-flow soft-clip
-    // (kSafetyClip in process()) still bounds runaway.
-    static constexpr float kCrossFeedGain = 0.80f;
+    // 2026-05-18 raised 0.6 → 0.81 in two steps (0.6→0.80, then 0.80→0.81)
+    // to lift the engine's RT60 ceiling. The figure-8 round-trip gain
+    // ≈ bandGain² × kCrossFeedGain² controls measurable RT60 — at 0.6 the
+    // ceiling was ~0.65 s regardless of Decay Time / Size params (cross-feed
+    // dominated even when bandGain ≈ 0.95). Raising to 0.81 puts the
+    // round-trip ceiling around 1.6 s so Lex Vintage Plate Rich Plate
+    // (target 125 Hz = 1.568 s) becomes reachable with bandGain near the
+    // 0.998 cap. Stability margin: 0.19 below the unity-feedback boundary;
+    // signal-flow soft-clip (kSafetyClip in process()) still bounds runaway.
+    static constexpr float kCrossFeedGain = 0.83f;
 
     // Input-section AP coefficient — small (Dattorro typical 0.5..0.7).
     static constexpr float kInputAPGain = 0.65f;

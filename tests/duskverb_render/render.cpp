@@ -363,11 +363,11 @@ namespace
         // Mirrors FactoryPresets.h "Rich Plate" row exactly.
         if (name == "Rich Plate")
             return makePreset (name.toRawUTF8(), 8, 1.0f, true, 0.0f,
-                               5.000f, 0.950f, 0.100f, 1.000f,
-                               1.500f, 2.500f, 200.0f,
+                               7.000f, 0.950f, 0.100f, 1.000f,
+                               0.400f, 5.000f, 300.0f,
                                0.050f, 0.00f, 0.30f,
-                               20.0f, 18000.0f, 1.000f, -5.870f,
-                               20.0f, 1.000f, 5000.0f, 0.000f);
+                               20.0f, 18000.0f, 1.000f, -6.000f,
+                               20.0f, 0.550f, 9000.0f, 0.000f);
         if (name == "Gold Plate")
             return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f, 600.0f, 0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, 16.0f, 20.0f, 0.80f, 3000.0f, 0.00f);
         if (name == "Vocal Plate")
