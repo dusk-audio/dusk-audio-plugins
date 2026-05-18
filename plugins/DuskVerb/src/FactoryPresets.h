@@ -187,7 +187,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tuner round to land all metrics within JND.
         { "Rich Plate",           "Plates",
           8,  0.40f, false,  0.0f, 0,
-          5.000f, 0.950f, 0.100f, 1.000f, 1.300f, 1.800f,  400.0f,
+          5.000f, 0.950f, 0.100f, 1.000f, 1.500f, 2.500f,  200.0f,
           0.050f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -5.870f,
           /* mono */ 20.0f, /* mid */ 1.000f, /* highX */ 5000.0f, /* sat */ 0.000f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
