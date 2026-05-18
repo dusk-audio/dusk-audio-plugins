@@ -22,6 +22,7 @@ enum class EngineType : int
     Spring            = 5,  // Fender 6G15-style 3-spring tank with dispersion-AP chirp.
     NonLinear         = 6,  // RMX16-NonLin2-style 64-tap feed-forward TDL with envelope shapes.
     Shimmer           = 7,  // 8-channel Hadamard FDN with in-loop granular pitch shifter.
+    Plate             = 8,  // PCM-style foil plate (PlateEngine): 2-AP cross-coupled input + 6-AP density cascade with per-AP RandomWalkLFO jitter, ThreeBandDamping. Built for Lex-Vintage-Plate per-band fit.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -31,7 +32,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 8; }
+inline int getNumAlgorithms() { return 9; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -44,8 +45,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Spring Tank (6G15)",       EngineType::Spring          },
         { "Non-Linear (RMX16)",       EngineType::NonLinear       },
         { "Shimmer (Eno FDN)",        EngineType::Shimmer         },
+        { "Plate (Foil)",             EngineType::Plate           },
     };
-    if (index < 0 || index >= 8)
+    if (index < 0 || index >= 9)
         index = 0;
     return kEngines[index];
 }

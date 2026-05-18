@@ -3,6 +3,7 @@
 #include "AlgorithmConfig.h"
 #include "DattorroTank.h"
 #include "DattorroPlateVintage.h"
+#include "PlateEngine.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FirstReflections.h"
@@ -170,6 +171,7 @@ private:
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-Lex post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
+    PlateEngine        plate_;              // algo 8 (2026-05-18): PCM-foil-plate engine, built for Lex Vintage Plate per-band fit when no other engine could land all RT60 bands within JND.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
