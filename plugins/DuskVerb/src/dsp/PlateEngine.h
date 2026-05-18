@@ -219,6 +219,65 @@ private:
         }
     };
 
+    // ---------------------------------------------------------------------
+    // 3-band LR4 (Linkwitz-Riley 24 dB/oct) split + per-band gain. Replaces
+    // ThreeBandDamping's shelving 2026-05-18 because shelving's 12 dB/oct
+    // slope couples 125 Hz to 250-500 Hz so we could never fix one without
+    // breaking the other (Rich Plate plateaued at 5/8 bands within JND).
+    //
+    // Topology:
+    //   bass    = LR4_LP(x, fLow)        — 2 cascaded 2nd-order Butterworth LP
+    //   treble  = LR4_HP(x, fHigh)       — 2 cascaded 2nd-order Butterworth HP
+    //   mid     = x − bass − treble       — complementary sum-minus
+    //   out     = gLow * bass + gMid * mid + gHigh * treble
+    //
+    // Sum-minus mid relies on the LR4 sum = allpass property, which is
+    // exact at a single xover. With two well-separated xovers (fLow ≪
+    // fHigh) the mid band is correct away from transitions; mild phase
+    // ripple near transitions is acceptable inside the feedback loop
+    // (per-band decay rate is the dominant audible quantity, not phase).
+    //
+    // Cost: 4 biquads per channel per sample (~32 ops). Cheap enough
+    // for the inner loop.
+    struct LR4BandSplit
+    {
+        struct Biquad
+        {
+            float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+            float z1 = 0.0f, z2 = 0.0f;
+            void designLP (float fcHz, float sr);
+            void designHP (float fcHz, float sr);
+            float process (float x)
+            {
+                const float y = b0 * x + z1;
+                z1 = b1 * x - a1 * y + z2;
+                z2 = b2 * x - a2 * y;
+                return y;
+            }
+            void reset() { z1 = z2 = 0.0f; }
+        };
+
+        Biquad lpA, lpB;   // cascaded LP for bass band
+        Biquad hpA, hpB;   // cascaded HP for treble band
+        float  gLow = 1.0f, gMid = 1.0f, gHigh = 1.0f;
+
+        void setCoefficients (float gLow_, float gMid_, float gHigh_,
+                              float fLowHz, float fHighHz, float sr);
+        float process (float x)
+        {
+            const float bass   = lpB.process (lpA.process (x));
+            const float treble = hpB.process (hpA.process (x));
+            const float mid    = x - bass - treble;
+            return gLow * bass + gMid * mid + gHigh * treble;
+        }
+        void prepare (float /*sr*/) { reset(); }
+        void reset()
+        {
+            lpA.reset(); lpB.reset();
+            hpA.reset(); hpB.reset();
+        }
+    };
+
     // One side of the figure-8 (L or R).
     struct Branch
     {
@@ -244,8 +303,8 @@ private:
         // compounding through the loop.
         ShelfBiquad inputHighShelf;
 
-        // Damping (low + high shelves around a broadband mid gain).
-        ThreeBandDamping damping;
+        // Damping: 3-band LR4 (24 dB/oct) split, per-band gain.
+        LR4BandSplit damping;
 
         // Static "polish" allpass after damping (no jitter, like Dattorro
         // ap2). Gives the late tail a final smear without adding modal

@@ -28,7 +28,11 @@ float PlateEngine::DelayLine::readInterpolated (float delaySamples) const
     int   intPart  = static_cast<int> (delaySamples);
     float fracPart = delaySamples - static_cast<float> (intPart);
     int   readPos  = (writePos - intPart - 1) & mask;
-    return DspUtils::cubicHermite (buffer.data(), mask, readPos, 1.0f - fracPart);
+    // 6-point 5th-order Lagrange. Holds 16 kHz amplitude at 48 kHz sample
+    // rate (cubicHermite rolled it off ~3 dB, which appeared as a fixed
+    // 0.3 s RT60 deficit at 16 kHz on the Lex Rich Plate match regardless
+    // of Hi Cut / Treble Mult settings).
+    return DspUtils::lagrange6 (buffer.data(), mask, readPos, 1.0f - fracPart);
 }
 
 void PlateEngine::Allpass::allocate (int maxSamples)
@@ -43,6 +47,66 @@ void PlateEngine::Allpass::clear()
 {
     std::fill (buffer.begin(), buffer.end(), 0.0f);
     writePos = 0;
+}
+
+// =====================================================================
+// LR4 3-band split (Linkwitz-Riley 24 dB/oct)
+// =====================================================================
+//
+// RBJ-cookbook 2nd-order Butterworth (Q = 1/√2). LR4 = 2 cascaded copies
+// of the same RBJ 2nd-order filter at the same fc — gives a 4th-order
+// 24 dB/oct rolloff with a Q = 1/2 (critically damped) effective response,
+// and the sum LR4_LP + LR4_HP at one xover is a unity-gain allpass.
+
+namespace
+{
+constexpr float kTwoPiInternal = 6.283185307179586f;
+constexpr float kSqrt12_LR4    = 0.7071067811865475f;
+} // anonymous namespace
+
+void PlateEngine::LR4BandSplit::Biquad::designLP (float fcHz, float sr)
+{
+    const float w0    = kTwoPiInternal * std::min (fcHz, 0.49f * sr) / sr;
+    const float cosw  = std::cos (w0);
+    const float sinw  = std::sin (w0);
+    const float alpha = sinw / (2.0f * kSqrt12_LR4);
+    const float a0    = 1.0f + alpha;
+    b0 = (1.0f - cosw) * 0.5f / a0;
+    b1 = (1.0f - cosw)        / a0;
+    b2 = (1.0f - cosw) * 0.5f / a0;
+    a1 = -2.0f * cosw         / a0;
+    a2 = (1.0f - alpha)       / a0;
+}
+
+void PlateEngine::LR4BandSplit::Biquad::designHP (float fcHz, float sr)
+{
+    const float w0    = kTwoPiInternal * std::min (fcHz, 0.49f * sr) / sr;
+    const float cosw  = std::cos (w0);
+    const float sinw  = std::sin (w0);
+    const float alpha = sinw / (2.0f * kSqrt12_LR4);
+    const float a0    = 1.0f + alpha;
+    b0 =  (1.0f + cosw) * 0.5f / a0;
+    b1 = -(1.0f + cosw)        / a0;
+    b2 =  (1.0f + cosw) * 0.5f / a0;
+    a1 = -2.0f * cosw          / a0;
+    a2 = (1.0f - alpha)        / a0;
+}
+
+void PlateEngine::LR4BandSplit::setCoefficients (float gLow_, float gMid_,
+                                                 float gHigh_,
+                                                 float fLowHz, float fHighHz,
+                                                 float sr)
+{
+    gLow  = gLow_;
+    gMid  = gMid_;
+    gHigh = gHigh_;
+    // Keep fHigh above fLow so the band assignment stays monotonic.
+    const float fLowClamped  = std::clamp (fLowHz, 20.0f, 0.45f * sr);
+    const float fHighClamped = std::max (fHighHz, fLowClamped + 10.0f);
+    lpA.designLP (fLowClamped,  sr);
+    lpB.designLP (fLowClamped,  sr);
+    hpA.designHP (fHighClamped, sr);
+    hpB.designHP (fHighClamped, sr);
 }
 
 // =====================================================================
@@ -95,8 +159,11 @@ void PlateEngine::prepare (double sampleRate, int maxBlockSize)
 
         b.damping.prepare (static_cast<float> (sampleRate));
         // Initial 3-band coefficients — overwritten by first
-        // updateDecayCoefficients() call below.
-        b.damping.setCoefficients (0.99f, 0.95f, 0.5f, 0.95f, 0.6f);
+        // updateDecayCoefficients() call below. xover Hz instead of exp
+        // coefficients now that LR4 split replaced ThreeBandDamping.
+        b.damping.setCoefficients (0.99f, 0.95f, 0.5f,
+                                   500.0f, 5000.0f,
+                                   static_cast<float> (sampleRate));
 
         b.inputHighShelf.reset();
         b.crossFeedState = 0.0f;
@@ -327,13 +394,17 @@ void PlateEngine::updateDelayLengths()
 
 void PlateEngine::updateDecayCoefficients()
 {
+    const float srHz = static_cast<float> (sampleRate_);
     if (frozen_)
     {
-        // Frozen plate: unity gain at all bands, no shelving — tail rings
-        // forever. The user is responsible for not blowing up via cross-
-        // feedback; kCrossFeedGain × 1.0 = 0.6 < 1 so it stays stable.
-        leftBranch_ .damping.setCoefficients (1.0f, 1.0f, 1.0f, 0.0f, 0.0f);
-        rightBranch_.damping.setCoefficients (1.0f, 1.0f, 1.0f, 0.0f, 0.0f);
+        // Frozen plate: unity gain at all bands — tail rings forever. LR4
+        // crossover frequencies arbitrary (gains all 1.0 → split is a sum
+        // = allpass = unity). Use moderate xover values so the biquad
+        // coefficients stay numerically clean.
+        leftBranch_ .damping.setCoefficients (1.0f, 1.0f, 1.0f,
+                                              500.0f, 5000.0f, srHz);
+        rightBranch_.damping.setCoefficients (1.0f, 1.0f, 1.0f,
+                                              500.0f, 5000.0f, srHz);
         return;
     }
 
@@ -367,10 +438,8 @@ void PlateEngine::updateDecayCoefficients()
         return std::clamp (std::exp (numerator * L / effRt60), 0.0f, kMaxBandGain);
     };
 
-    const float lowXover  = std::exp (-kTwoPi * crossoverFreq_
-                                      / static_cast<float> (sampleRate_));
-    const float highXover = std::exp (-kTwoPi * highCrossoverFreq_
-                                      / static_cast<float> (sampleRate_));
+    // LR4 split takes corner frequencies in Hz, not exp-form coefficients.
+    const float sr = static_cast<float> (sampleRate_);
 
     auto applyToBranch = [&] (Branch& b)
     {
@@ -378,7 +447,8 @@ void PlateEngine::updateDecayCoefficients()
         const float gLow = bandGain (L, bassMultiply_);
         const float gMid = bandGain (L, midMultiply_);
         const float gHi  = bandGain (L, trebleMultiply_);
-        b.damping.setCoefficients (gLow, gMid, gHi, lowXover, highXover);
+        b.damping.setCoefficients (gLow, gMid, gHi,
+                                   crossoverFreq_, highCrossoverFreq_, sr);
     };
     applyToBranch (leftBranch_);
     applyToBranch (rightBranch_);

@@ -364,7 +364,7 @@ namespace
         if (name == "Rich Plate")
             return makePreset (name.toRawUTF8(), 8, 1.0f, true, 0.0f,
                                5.000f, 0.950f, 0.100f, 1.000f,
-                               1.300f, 1.800f, 400.0f,
+                               1.500f, 2.500f, 200.0f,
                                0.050f, 0.00f, 0.30f,
                                20.0f, 18000.0f, 1.000f, -5.870f,
                                20.0f, 1.000f, 5000.0f, 0.000f);
