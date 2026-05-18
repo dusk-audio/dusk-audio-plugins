@@ -1,156 +1,19 @@
 #include "FDNReverb.h"
 #include "DspUtils.h"
+#include "FDNReverbSIMDKernels.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
-// ---------------------------------------------------------------------------
-// SIMD dispatch. Compile-time only — guarded on the compiler-defined macros
-// __AVX2__ and __FMA__ which appear when the build flags -mavx2 -mfma are
-// active. On ARM / Apple Silicon and on x86_64 builds without those flags,
-// the scalar fallback runs and produces bit-identical output. To enable on
-// Linux/Windows x86_64 add `target_compile_options(... -mavx2 -mfma)` to
-// CMakeLists; on macOS x86_64 add `-mavx2 -mfma` (recent Intel Macs only —
-// pre-Haswell CPUs lack AVX2).
-// ---------------------------------------------------------------------------
-#if defined(__AVX2__) && defined(__FMA__)
-    #include <immintrin.h>
-    #define DUSK_FDN_USE_AVX2 1
-#else
-    #define DUSK_FDN_USE_AVX2 0
-#endif
-
 namespace {
 
-#if DUSK_FDN_USE_AVX2
-// 16-point in-place Walsh-Hadamard transform using AVX2 + FMA.
-// Math: H_16 v = (H_2 ⊗ H_2 ⊗ H_2 ⊗ H_2) v — four butterfly stages.
-// Each stage maps `out = data * sign_mask + swapped_data` so a single
-// _mm256_fmadd_ps per __m256 covers a whole pass.
-//   Stage 0: butterfly adjacent scalars (pairwise swap within 128-lanes)
-//   Stage 1: butterfly 2-float halves (lo/hi pair swap within 128-lanes)
-//   Stage 2: butterfly 4-float halves (cross 128-lane permute within 256)
-//   Stage 3: butterfly 8-float halves (lo ↔ hi 256, folded with 1/√16 norm)
-void hadamardInPlace16 (float* data)
-{
-    __m256 lo = _mm256_loadu_ps (data);
-    __m256 hi = _mm256_loadu_ps (data + 8);
+using duskverb::detail::hadamardInPlace16;
+using duskverb::detail::perturbMatVec16;
 
-    // Stage 0: swap[i] = data[i ^ 1], sign = [+1,-1,+1,-1,...]
-    {
-        const __m256 loSwap = _mm256_shuffle_ps (lo, lo, _MM_SHUFFLE (2, 3, 0, 1));
-        const __m256 hiSwap = _mm256_shuffle_ps (hi, hi, _MM_SHUFFLE (2, 3, 0, 1));
-        const __m256 sign   = _mm256_setr_ps (1.f,-1.f, 1.f,-1.f, 1.f,-1.f, 1.f,-1.f);
-        lo = _mm256_fmadd_ps (lo, sign, loSwap);
-        hi = _mm256_fmadd_ps (hi, sign, hiSwap);
-    }
-
-    // Stage 1: swap[i] = data[i ^ 2], sign = [+1,+1,-1,-1,...]
-    {
-        const __m256 loSwap = _mm256_shuffle_ps (lo, lo, _MM_SHUFFLE (1, 0, 3, 2));
-        const __m256 hiSwap = _mm256_shuffle_ps (hi, hi, _MM_SHUFFLE (1, 0, 3, 2));
-        const __m256 sign   = _mm256_setr_ps (1.f, 1.f,-1.f,-1.f, 1.f, 1.f,-1.f,-1.f);
-        lo = _mm256_fmadd_ps (lo, sign, loSwap);
-        hi = _mm256_fmadd_ps (hi, sign, hiSwap);
-    }
-
-    // Stage 2: swap[i] = data[i ^ 4], sign = [+1,+1,+1,+1,-1,-1,-1,-1]
-    {
-        const __m256 loSwap = _mm256_permute2f128_ps (lo, lo, 0x01);
-        const __m256 hiSwap = _mm256_permute2f128_ps (hi, hi, 0x01);
-        const __m256 sign   = _mm256_setr_ps (1.f, 1.f, 1.f, 1.f,-1.f,-1.f,-1.f,-1.f);
-        lo = _mm256_fmadd_ps (lo, sign, loSwap);
-        hi = _mm256_fmadd_ps (hi, sign, hiSwap);
-    }
-
-    // Stage 3: butterfly across the two __m256s, fold the 1/√16 = 0.25 norm.
-    {
-        const __m256 kNorm = _mm256_set1_ps (0.25f);
-        const __m256 sum   = _mm256_mul_ps (_mm256_add_ps (lo, hi), kNorm);
-        const __m256 diff  = _mm256_mul_ps (_mm256_sub_ps (lo, hi), kNorm);
-        _mm256_storeu_ps (data,     sum);
-        _mm256_storeu_ps (data + 8, diff);
-    }
-}
-#else
-// Scalar fallback: O(N log N) Walsh-Hadamard, normalization folded into the
-// final butterfly stage.
-void hadamardInPlace16 (float* data)
-{
-    constexpr int n = 16;
-    constexpr int kLog2N = 4;
-
-    for (int stage = 0; stage < kLog2N - 1; ++stage)
-    {
-        int len = 1 << stage;
-        for (int i = 0; i < n; i += 2 * len)
-        {
-            for (int j = 0; j < len; ++j)
-            {
-                float a = data[i + j];
-                float b = data[i + j + len];
-                data[i + j]       = a + b;
-                data[i + j + len] = a - b;
-            }
-        }
-    }
-
-    constexpr float kNorm = 0.25f;
-    constexpr int lastLen = 1 << (kLog2N - 1); // 8
-    for (int i = 0; i < n; i += 2 * lastLen)
-    {
-        for (int j = 0; j < lastLen; ++j)
-        {
-            float a = data[i + j];
-            float b = data[i + j + lastLen];
-            data[i + j]            = (a + b) * kNorm;
-            data[i + j + lastLen]  = (a - b) * kNorm;
-        }
-    }
-}
-#endif
-
-// 16×16 matrix-vector multiply for the perturb-matrix feedback path.
-// Scalar version is the obvious 16×16 = 256 multiply-add inner loop.
-// AVX2 version: each row dot product computed as two _mm256_fmadd_ps
-// followed by a 7-add horizontal reduction. ~3.5× faster than scalar
-// on Haswell-and-later; bit-identical when both produce IEEE-correct
-// accumulation order (the matvec is sensitive to ULP-level differences
-// from FMA fused multiply-add; verified equivalent under -fno-fast-math).
-inline void perturbMatVec16 (const float (&M)[16][16],
-                             const float* in,
-                             float*       out)
-{
-#if DUSK_FDN_USE_AVX2
-    const __m256 xLo = _mm256_loadu_ps (in);
-    const __m256 xHi = _mm256_loadu_ps (in + 8);
-    for (int row = 0; row < 16; ++row)
-    {
-        const __m256 mLo = _mm256_loadu_ps (&M[row][0]);
-        const __m256 mHi = _mm256_loadu_ps (&M[row][8]);
-        const __m256 prod = _mm256_fmadd_ps (mHi, xHi,
-                                _mm256_mul_ps (mLo, xLo));
-        // Horizontal sum of 8 floats → scalar.
-        const __m128 lo128 = _mm256_castps256_ps128 (prod);
-        const __m128 hi128 = _mm256_extractf128_ps  (prod, 1);
-        __m128 s = _mm_add_ps (lo128, hi128);          // 4 partial sums
-        s = _mm_hadd_ps (s, s);                        // 2 unique
-        s = _mm_hadd_ps (s, s);                        // 1 unique broadcast
-        out[row] = _mm_cvtss_f32 (s);
-    }
-#else
-    for (int row = 0; row < 16; ++row)
-    {
-        float sum = 0.0f;
-        for (int col = 0; col < 16; ++col)
-            sum += M[row][col] * in[col];
-        out[row] = sum;
-    }
-#endif
-}
-
-// In-place fast Walsh-Hadamard transform for N=8.
+// In-place fast Walsh-Hadamard transform for N=8. Scalar only — the 8-channel
+// path is used in stereo-split mode and isn't on the hot single-bus codepath
+// that benefits from AVX2.
 void hadamardInPlace8 (float* data)
 {
     constexpr int n = 8;
@@ -185,52 +48,29 @@ void hadamardInPlace8 (float* data)
     }
 }
 
-// In-place Householder reflection H = I - 2·v·vᵀ with a seeded, randomized
-// unit vector v. Replaces the degenerate v = 1/√N form, which had
+// In-place Householder reflection H = I - 2·v·vᵀ with a per-instance,
+// randomized unit vector v. Replaces the degenerate v = 1/√N form, which had
 // eigenvalue −1 only along the all-ones axis — output[i] = input[i] − 2·mean,
 // i.e. a common DC offset, no true cross-channel mixing. The randomized v
 // places the −1 axis on an arbitrary direction in N-space so every input
 // channel influences every output channel with weight 2·v[i]·v[j] ≠ 0.
-struct HouseholderVecs
-{
-    float v16[16];
-    float v8 [8];
-
-    HouseholderVecs()
-    {
-        uint32_t s = 0x9E3779B9u;
-        auto next01 = [&s]() {
-            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-            return static_cast<float> (static_cast<int32_t> (s)) * (1.0f / 2147483648.0f);
-        };
-
-        float sumSq = 0.0f;
-        for (int i = 0; i < 16; ++i) { v16[i] = next01(); sumSq += v16[i] * v16[i]; }
-        const float inv16 = 1.0f / std::sqrt (sumSq);
-        for (int i = 0; i < 16; ++i) v16[i] *= inv16;
-
-        sumSq = 0.0f;
-        for (int i = 0; i < 8; ++i)  { v8[i]  = next01(); sumSq += v8[i] * v8[i]; }
-        const float inv8 = 1.0f / std::sqrt (sumSq);
-        for (int i = 0; i < 8;  ++i) v8[i]  *= inv8;
-    }
-};
-const HouseholderVecs kHouseholder;
-
-inline void householderInPlace16 (float* data)
+// Seed lives on the FDNReverb instance so two reverbs on the same bus see
+// different reflector axes (a shared static seed produced correlated tails
+// across instances).
+inline void householderInPlace16 (float* data, const float* v)
 {
     float dot = 0.0f;
-    for (int i = 0; i < 16; ++i) dot += data[i] * kHouseholder.v16[i];
+    for (int i = 0; i < 16; ++i) dot += data[i] * v[i];
     const float k = 2.0f * dot;
-    for (int i = 0; i < 16; ++i) data[i] -= k * kHouseholder.v16[i];
+    for (int i = 0; i < 16; ++i) data[i] -= k * v[i];
 }
 
-inline void householderInPlace8 (float* data)
+inline void householderInPlace8 (float* data, const float* v)
 {
     float dot = 0.0f;
-    for (int i = 0; i < 8; ++i) dot += data[i] * kHouseholder.v8[i];
+    for (int i = 0; i < 8; ++i) dot += data[i] * v[i];
     const float k = 2.0f * dot;
-    for (int i = 0; i < 8; ++i) data[i] -= k * kHouseholder.v8[i];
+    for (int i = 0; i < 8; ++i) data[i] -= k * v[i];
 }
 
 } // anonymous namespace
@@ -267,6 +107,32 @@ FDNReverb::FDNReverb()
     std::memcpy (paramSlots_[0].leftSigns,  kDefaultLeftSigns,  sizeof (kDefaultLeftSigns));
     std::memcpy (paramSlots_[0].rightSigns, kDefaultRightSigns, sizeof (kDefaultRightSigns));
     paramSlots_[1] = paramSlots_[0];
+
+    // Per-instance Householder reflector seed. Each FDNReverb gets a distinct
+    // axis so eigenmodes don't align across stacked instances on the same bus.
+    static std::atomic<uint32_t> kHouseholderSeedCounter { 0x9E3779B9u };
+    uint32_t seed = kHouseholderSeedCounter.fetch_add (0x85EBCA77u,
+                                                       std::memory_order_relaxed);
+    if (seed == 0u) seed = 0x9E3779B9u;
+    seedHouseholderVectors (seed);
+}
+
+void FDNReverb::seedHouseholderVectors (uint32_t seed)
+{
+    auto next01 = [&seed]() {
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        return static_cast<float> (static_cast<int32_t> (seed)) * (1.0f / 2147483648.0f);
+    };
+
+    float sumSq = 0.0f;
+    for (int i = 0; i < 16; ++i) { householderV16_[i] = next01(); sumSq += householderV16_[i] * householderV16_[i]; }
+    const float inv16 = 1.0f / std::sqrt (sumSq);
+    for (int i = 0; i < 16; ++i) householderV16_[i] *= inv16;
+
+    sumSq = 0.0f;
+    for (int i = 0; i < 8; ++i)  { householderV8_[i]  = next01(); sumSq += householderV8_[i] * householderV8_[i]; }
+    const float inv8 = 1.0f / std::sqrt (sumSq);
+    for (int i = 0; i < 8;  ++i) householderV8_[i]  *= inv8;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,8 +341,8 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             std::memcpy (feedback, delayOut, sizeof (feedback));
             if (lp.stereoSplitEnabled && lp.dualSlopeFastCount == 0)
             {
-                householderInPlace8 (feedback);
-                householderInPlace8 (feedback + 8);
+                householderInPlace8 (feedback,     householderV8_);
+                householderInPlace8 (feedback + 8, householderV8_);
                 if (lp.stereoCoupling > 0.0f)
                 {
                     float sinC = lp.stereoCoupling;
@@ -492,12 +358,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             }
             else if (lp.dualSlopeFastCount == 8)
             {
-                householderInPlace8 (feedback);
-                householderInPlace8 (feedback + 8);
+                householderInPlace8 (feedback,     householderV8_);
+                householderInPlace8 (feedback + 8, householderV8_);
             }
             else
             {
-                householderInPlace16 (feedback);
+                householderInPlace16 (feedback, householderV16_);
             }
         }
         else if (lp.stereoSplitEnabled && ! lp.usePerturbedMatrix && lp.dualSlopeFastCount == 0)
