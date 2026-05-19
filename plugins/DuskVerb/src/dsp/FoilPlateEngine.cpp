@@ -252,14 +252,26 @@ float BandReverberator::process (float input)
 
 // ----- OnsetEnvelope -----------------------------------------------
 
+void OnsetEnvelope::setShape (float holdMs, float tauSec, float minGainArg)
+{
+    // Caller must invoke setShape before prepare so the ramp coefficient
+    // and hold-sample count are computed from the correct sample rate.
+    minGain         = minGainArg;
+    pendingTauSec_  = tauSec;
+    pendingHoldMs_  = holdMs;
+}
+
 void OnsetEnvelope::prepare (float sr)
 {
     // Peak detector decay: τ ≈ 100 ms (slow enough that sustained
     // material keeps peakHold up, so the "fresh transient" trigger only
     // fires on attacks above peakHold × triggerRatio).
     peakDecayCoeff = std::exp (-1.0f / (0.1f * sr));
-    // Envelope ramp τ = 30 ms (matches FoilPlateEngine::kOnsetTauMs).
-    envRampCoeff   = std::exp (-1.0f / (0.030f * sr));
+    // Envelope ramp τ from setShape (default 0.050 s if not set).
+    const float tauSec = pendingTauSec_ > 0.0f ? pendingTauSec_ : 0.050f;
+    envRampCoeff   = std::exp (-1.0f / (tauSec * sr));
+    // Hold duration (default 0 = no hold, same as original single-pole).
+    holdSamples    = static_cast<int> (pendingHoldMs_ * 0.001f * sr);
     clear();
 }
 
@@ -281,10 +293,16 @@ float OnsetEnvelope::process (float input)
                     && (absIn > triggerThresh)
                     && (absIn > prevAbsInput);
     if (fresh)
-        envelope = minGain;
+    {
+        envelope     = minGain;
+        holdRemaining = holdSamples;
+    }
 
-    // Exponential ramp from current envelope value back to 1.0.
-    envelope = 1.0f + envRampCoeff * (envelope - 1.0f);
+    // Hold env at minGain for holdSamples; then ramp toward 1.0.
+    if (holdRemaining > 0)
+        --holdRemaining;
+    else
+        envelope = 1.0f + envRampCoeff * (envelope - 1.0f);
 
     // Peak detector: fast attack, slow decay.
     peakHold = std::max (absIn, peakHold * peakDecayCoeff);
@@ -355,6 +373,7 @@ void FoilPlateEngine::prepare (double sampleRate, int /*maxBlockSize*/)
             foil_plate::BandReverberator::FbFilterType::HighPass,
             highCrossoverFreq_, sr);
 
+        b.onsetEnv.setShape (kOnsetHoldMs, kOnsetTauMs * 0.001f, kOnsetMinGain);
         b.onsetEnv.prepare (sr);
         b.crossFeedState = 0.0f;
     };
@@ -436,6 +455,7 @@ void FoilPlateEngine::process (const float* inputL, const float* inputR,
         const float wetSum = bassOut + midOut + trebleOut;
         return wetSum * envGain;
     };
+
 
     for (int n = 0; n < numSamples; ++n)
     {
