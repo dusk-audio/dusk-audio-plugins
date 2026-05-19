@@ -136,6 +136,15 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
 
         tank_.process (tankInL_.data(), tankInR_.data(), outL, outR, chunk);
 
+        // Post-tank stage: box-cut EQ + optional low-mid trim + linear
+        // M/S widener for stereo-correlation lock.
+        //
+        // Output mixer: outL = a·L − b·R (mirror on R). Time-invariant
+        // matrix → stab is preserved (any per-window correlation
+        // pattern transforms uniformly). b nudges broadband corr
+        // toward the Lex anchor's slight anti-correlation (≈ −0.07).
+        constexpr float kOutMixA = 1.0f;
+        constexpr float kOutMixB = 0.02f;
         for (int n = 0; n < chunk; ++n)
         {
             float l = boxCut_.processL (outL[n]);
@@ -145,8 +154,8 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
                 l = lowMidTrim_.processL (l);
                 r = lowMidTrim_.processR (r);
             }
-            outL[n] = l;
-            outR[n] = r;
+            outL[n] = kOutMixA * l - kOutMixB * r;
+            outR[n] = kOutMixA * r - kOutMixB * l;
         }
 
         processed += chunk;
