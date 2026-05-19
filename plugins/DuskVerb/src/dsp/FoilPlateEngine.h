@@ -282,7 +282,7 @@ private:
     static constexpr int kLeftIn2Base   = 263;
     static constexpr int kRightIn1Base  = 167;
     static constexpr int kRightIn2Base  = 281;
-    static constexpr float kInputAPGain = 0.55f;
+    static constexpr float kInputAPGain = 0.68f;
 
     // Per-band reverberator delay base lengths. Designed so each band's
     // loop fundamental sits in its own LR4 passband (no out-of-band
@@ -355,12 +355,19 @@ private:
     static constexpr int   kTap3SamplesAt48k        = 2496;   // 52 ms
     static constexpr int   kTap4SamplesAt48k        = 4080;   // 85 ms
     static constexpr int   kTap5SamplesAt48k        = 7920;   // 165 ms
+    static constexpr int   kTap6SamplesAt48k        = 2400;   // 50 ms
+                                                              // (lands at 60-80 ms output
+                                                              //  to fill the EDT-suppressing
+                                                              //  valley between primary
+                                                              //  peak and 110ms secondary
+                                                              //  bump).
     static constexpr float kTap0Weight              = 0.70f;
     static constexpr float kTap1Weight              = 0.55f;
     static constexpr float kTap2Weight              = 0.40f;
     static constexpr float kTap3Weight              = 0.40f;
     static constexpr float kTap4Weight              = 0.60f;
-    static constexpr float kTap5Weight              = 0.50f;
+    static constexpr float kTap5Weight              = 0.66f;
+    static constexpr float kTap6Weight              = 0.00f;
 
     // Figure-8 cross-coupling — each band's L loop sums the previous
     // sample's R-loop output (scaled by α) into its input, and vice
@@ -376,7 +383,7 @@ private:
     // out of JND but stab is much closer to lex anchor 0.029 than the
     // dual-independent-reverbs baseline (0.17–0.24).
     static constexpr float kFigure8AlphaBass    = 0.70f;
-    static constexpr float kFigure8AlphaMid     = 0.70f;
+    static constexpr float kFigure8AlphaMid     = 0.48f;
     static constexpr float kFigure8AlphaTreble  = 0.70f;
 
     // Output decorrelation mixer. The strong figure-8 coupling drives

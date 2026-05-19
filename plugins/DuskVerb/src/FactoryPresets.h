@@ -190,7 +190,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // values; sync both files when adjusting.
         { "Rich Plate",           "Plates",
           9,  0.40f, false,  0.0f, 0,
-          1.420f, 0.950f, 0.300f, 1.000f, 0.380f, 1.400f,  200.0f,
+          1.420f, 0.950f, 0.300f, 1.000f, 0.380f, 1.480f,  200.0f,
           0.500f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, 0.100f,
           /* mono */ 20.0f, /* mid */ 0.920f, /* highX */ 9000.0f, /* sat */ 0.000f },
         // ── Modern Clear Plate ───────────────────────────────────────────────
