@@ -571,7 +571,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         && currentEngine_ != EngineType::Spring
         && currentEngine_ != EngineType::NonLinear
         && currentEngine_ != EngineType::DattorroVintage
-        && currentEngine_ != EngineType::Plate)
+        && currentEngine_ != EngineType::Plate
+        && currentEngine_ != EngineType::FoilPlate)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
 
     // ---- 4) Selected late tank ----

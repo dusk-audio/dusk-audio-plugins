@@ -213,11 +213,23 @@ struct OnsetEnvelope
     float envelope       = 1.0f;
     float prevAbsInput   = 0.0f;
     float peakDecayCoeff = 0.0f;   // exponential decay of the peak hold
-    float envRampCoeff   = 0.0f;   // exp coeff for the 0.30 → 1.0 ramp
-    float minGain        = 0.30f;  // floor when a fresh transient fires
+    float envRampCoeff   = 0.0f;   // exp coeff for the minGain → 1.0 ramp
+    float minGain        = 0.15f;  // floor when a fresh transient fires
     float triggerThresh  = 0.05f;  // rising-edge threshold (linear amp)
     float triggerRatio   = 4.0f;   // input must exceed peakHold × this to fire
+    int   holdSamples    = 0;      // samples to hold env at minGain after trigger
+    int   holdRemaining  = 0;      // counter, decremented per sample
+    float pendingTauSec_ = 0.0f;   // stashed by setShape, consumed in prepare
+    float pendingHoldMs_ = 0.0f;   // stashed by setShape, consumed in prepare
 
+    // Configure shape before the first call. holdMs holds env at minGain
+    // for that duration after each fresh trigger; tauSec then ramps it
+    // back toward 1.0 with that exponential time constant; minGainArg is
+    // the floor (lowest wet-output gain during the hold period). The
+    // hold-then-ramp shape suppresses the entire 0–50 ms D50 / C80
+    // window without inflating RT60 (env fully recovered before the
+    // T20 fit region opens).
+    void  setShape (float holdMs, float tauSec, float minGainArg);
     void  prepare (float sr);
     void  clear();
     // input: the *dry* signal that's about to enter the tank. Returns the
@@ -313,6 +325,7 @@ private:
     // ~30 ms in (front of tail is energy-buildup, not energy-spike).
     // τ = 30 ms, min gain 0.30 = −10.5 dB floor at transient onset,
     // recovery to unity by ~80 ms (one C80 window).
+    static constexpr float kOnsetHoldMs  = 0.0f;
     static constexpr float kOnsetTauMs   = 30.0f;
     static constexpr float kOnsetMinGain = 0.30f;
 
