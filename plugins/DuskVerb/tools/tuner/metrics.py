@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import soundfile as sf
 
 # Shared libs live in the parent tools/ dir.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +43,103 @@ CENTROID_DRIFT_OCTAVES_HZ = (500.0, 1000.0, 2000.0, 4000.0)
 # per-band arrays. Add new vector metrics here and to measure_pair only.
 _VECTOR_METRIC_KEYS = ("rt60_per_band", "c80_per_octave",
                        "centroid_drift_per_band",
-                       "decay_envelope_db", "peak_locations_ms")
+                       "decay_envelope_db", "peak_locations_ms",
+                       "rt60_per_band_stereo")
+
+
+def _stereo_corr_stability(impulse_path: Path) -> float:
+    """Std of L/R correlation across 100 ms windows in the IR tail.
+
+    Captures audible "spinning" / image-wander artifacts that mean
+    stereo_correlation misses. Lex Rich Plate measures ~0.029 (rock-
+    stable image); a DV PlateEngine with symmetric cross-feed measured
+    0.254 (image cycles mono ↔ spread → perceived rotation). JND ≈ 0.05.
+    """
+    sig, sr = sf.read(str(impulse_path))
+    if sig.ndim == 1:
+        return 0.0  # mono file, no stereo wander to measure
+    L = sig[:, 0].astype(np.float64)
+    R = sig[:, 1].astype(np.float64)
+    pk = int(np.argmax(np.abs(L + R)))
+    tail_secs = 2.0
+    end = pk + int(tail_secs * sr)
+    L = L[pk:end]
+    R = R[pk:end]
+    if len(L) < int(0.5 * sr):
+        return 0.0
+    win = int(0.1 * sr)
+    corrs: list[float] = []
+    for i in range(0, len(L) - win, win):
+        l = L[i : i + win]
+        r = R[i : i + win]
+        if np.std(l) > 1e-10 and np.std(r) > 1e-10:
+            corrs.append(float(np.corrcoef(l, r)[0, 1]))
+    if not corrs:
+        return 0.0
+    return float(np.std(corrs))
+
+
+def _modal_density(impulse_path: Path) -> tuple[float, float]:
+    """(peak_count, max_peak_prominence_dB) for the 200-8000 Hz IR tail.
+
+    Detects "metallic" discrete-tone ringing — DV plate engines with
+    few/sharp modal peaks at high prominence sound tonal vs Lex's many
+    moderate peaks. Returns peak count + max prominence (dB above local
+    floor) so a tuner can penalize both sparsity AND prominence.
+    """
+    sig, sr = sf.read(str(impulse_path))
+    if sig.ndim > 1:
+        mono = sig.mean(axis=1).astype(np.float64)
+    else:
+        mono = sig.astype(np.float64)
+    pk = int(np.argmax(np.abs(mono)))
+    tail = mono[pk : pk + int(1.0 * sr)]
+    if len(tail) < int(0.5 * sr):
+        return (0.0, 0.0)
+    N = 16384
+    pad = max(N - len(tail), 0)
+    y = np.concatenate([tail[:N], np.zeros(pad)])[:N]
+    F = np.fft.rfft(y * np.hanning(N))
+    S = 20.0 * np.log10(np.abs(F) + 1e-12)
+    freqs = np.fft.rfftfreq(N, 1.0 / sr)
+    mask = (freqs >= 200.0) & (freqs <= 8000.0)
+    region = S[mask]
+    if len(region) < 50:
+        return (0.0, 0.0)
+    peaks: list[float] = []
+    for i in range(20, len(region) - 20):
+        if region[i] > region[i - 1] and region[i] > region[i + 1]:
+            local_avg = (
+                float(np.mean(region[i - 20 : i]))
+                + float(np.mean(region[i + 1 : i + 21]))
+            ) * 0.5
+            prom = float(region[i] - local_avg)
+            if prom > 4.0:
+                peaks.append(prom)
+    if not peaks:
+        return (0.0, 0.0)
+    return (float(len(peaks)), float(np.max(peaks)))
+
+
+def _rt60_per_band_stereo(impulse_path: Path,
+                          ai_module: Any) -> list[float]:
+    """Per-band RT60 averaged over L and R channels separately, then averaged.
+
+    The original rt60_per_band sums L+R to mono before measuring, which
+    under-reads RT60 when L and R late tails are anti-correlated (a side
+    effect of polarity-flipped cross-feed in PlateEngine). Per-channel
+    measurement reflects what a listener actually perceives at each ear.
+    """
+    sig, sr = sf.read(str(impulse_path))
+    if sig.ndim == 1:
+        rt = ai_module.per_band_rt60(sig.astype(np.float64), sr)
+        return [float(v) if v else 0.0 for v in rt]
+    L = sig[:, 0].astype(np.float64)
+    R = sig[:, 1].astype(np.float64)
+    rL = ai_module.per_band_rt60(L, sr)
+    rR = ai_module.per_band_rt60(R, sr)
+    return [(float(a) + float(b)) * 0.5 if a and b else 0.0
+            for a, b in zip(rL, rR)]
 
 # Decay-envelope window edges (seconds, peak-relative). 12 windows × 250 ms
 # = 3 s coverage; finer-grained than the three late_tail_* metrics so the
@@ -156,6 +253,23 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
         # Stereo metric needs the file path (perceptual_diff loads the stereo
         # version internally — load_mono above would collapse channels).
         "stereo_correlation": pd.stereo_correlation(str(noiseburst_path)),
+        # Stereo image stability over time. High value = image cycles
+        # mono ↔ spread (audible as "spinning" / rotation). Added 2026-05-18
+        # after Rich Plate iteration where mono-sum metrics looked clean but
+        # listening revealed strong image wander from symmetric cross-feed.
+        # Lex Rich Plate measures ~0.03; PlateEngine symmetric-cross
+        # baseline measured 0.25.
+        "stereo_corr_stability": _stereo_corr_stability(impulse_path),
+        # Per-channel RT60: average of L and R RT60 (not mono sum). Catches
+        # cases where polarity-flipped feedback or L/R-asymmetric processing
+        # makes the mono sum read a different decay than each ear perceives.
+        "rt60_per_band_stereo": _rt60_per_band_stereo(impulse_path, ai),
+        # Modal density (peak count, max prominence dB) in 200-8000 Hz tail.
+        # Detects "metallic" discrete-tone ringing — few sharp peaks at high
+        # prominence vs Lex's many moderate peaks. Returned as a 2-tuple
+        # but exposed as two scalar keys for the loss function.
+        "modal_peak_count":     _modal_density(impulse_path)[0],
+        "modal_peak_max_db":    _modal_density(impulse_path)[1],
     }
 
 
