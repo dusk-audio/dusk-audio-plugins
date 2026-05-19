@@ -196,6 +196,28 @@ void PlateEngine::prepare (double sampleRate, int maxBlockSize)
     applyDensityScale();
     updateDecayCoefficients();
 
+    // Parallel bass extension resonator — per-channel. Slightly different
+    // delay lengths to keep stereo width. Buffer sizes account for 88.2k
+    // (rateRatio=2) plus slack. Prime delays at 48k: ~62 ms = 2971 L,
+    // ~67 ms = 3221 R. Feedback / output gain tuned at first
+    // updateDecayCoefficients() once decayTime_ is set by host.
+    {
+        const float rateRatioBE = static_cast<float> (sampleRate / 44100.0);
+        const int reserveBE = std::max (4096,
+            static_cast<int> (6400.0f * rateRatioBE) + 64);
+        bassExtL_.allocate (reserveBE);
+        bassExtR_.allocate (reserveBE);
+        bassExtL_.prepare (static_cast<float> (sampleRate));
+        bassExtR_.prepare (static_cast<float> (sampleRate));
+        // Delays at ~62 ms / ~67 ms — long enough to sustain a 125 Hz
+        // comb resonance over the 1.5 s+ target tail without the
+        // resonance peaks crystallising into audible periodicity (slow
+        // 16 Hz comb fundamental gets smeared by the input/feedback LP
+        // chain). Distinct primes for L/R width.
+        bassExtL_.delaySamples = static_cast<int> (2971.0f * rateRatioBE);
+        bassExtR_.delaySamples = static_cast<int> (3221.0f * rateRatioBE);
+    }
+
     // Design the per-branch input high-shelf at the new sample rate using
     // whatever gain/fc the host has already pushed in (or the defaults if
     // this is the first prepare() of the session).
@@ -226,6 +248,8 @@ void PlateEngine::clearBuffers()
     };
     clearBranch (leftBranch_);
     clearBranch (rightBranch_);
+    bassExtL_.clear();
+    bassExtR_.clear();
 }
 
 // =====================================================================
@@ -601,7 +625,17 @@ void PlateEngine::process (const float* inputL, const float* inputR,
         // output = right-branch-late. The primary stereo decorrelation
         // comes from the L/R having distinct prime delays AND independent
         // jitter LFOs throughout the cascade.
-        outputL[n] = lOut;
-        outputR[n] = rOut;
+        // Parallel bass extension — fed by dry input only, not part of the
+        // cross-coupled loop. Adds 125 Hz tail without affecting mid/treble
+        // RT60. Lex Vintage Plate Rich Plate has 1.57 s at 125 Hz vs 1.30 s
+        // broadband; main tank tops out at ~1.25 s at 125 Hz so this loop
+        // adds the missing 0.32 s.
+        // Bass extension — per-channel feedback loops with right polarity-
+        // flipped for stereo decorrelation. Mono input variant tested and
+        // produced WORSE stereo stability (0.295 vs 0.193) because mono
+        // bass dominates moments alternate with cross-fed mid, oscillating
+        // correlation.
+        outputL[n] = lOut + bassExtL_.process (inputL[n]);
+        outputR[n] = rOut - bassExtR_.process (inputR[n]);
     }
 }
