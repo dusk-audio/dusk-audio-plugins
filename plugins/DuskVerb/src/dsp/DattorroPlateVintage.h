@@ -2,7 +2,9 @@
 
 #include "DattorroTank.h"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 // DattorroPlateVintage — Dattorro figure-8 tank + vintage-Lex corrective
 // EQ chain for the "Vintage Vocal Plate" preset.
@@ -97,4 +99,60 @@ private:
     PeakBiquad boxCut_;       // 350 Hz, narrow, -6 dB
     PeakBiquad lowMidTrim_;   // 200 Hz, broad, -2 dB
     bool prepared_ = false;
+
+    // ─────────────────────────────────────────────────────────
+    // Multi-tap input injection — added 2026-05-19 to close
+    // EDT / D50 / 250 Hz RT60 gap vs Lex Vocal Plate anchor.
+    //
+    // The bare DattorroTank produces a fast-rising IR whose first
+    // 50 ms holds too much energy (D50 over-positive) and whose
+    // initial decay slope is steeper than Lex's (EDT under-target).
+    // Spreading the dry input across 4 staggered predelay taps
+    // before the tank lets the tank's recirculation present an
+    // energy buildup (≈ 0–35 ms) rather than a single spike.
+    // Outputs of the four taps overlap at the tank input and
+    // recirculate through the figure-8 normally, so RT60 stays
+    // anchored to the existing decay / damping params.
+    //
+    // Tap times + weights tuned against the lex anchor; see
+    // the matching commit message.
+    // ─────────────────────────────────────────────────────────
+    static constexpr int   kPredelayMaxSamplesAt48k = 7680;   // 160 ms
+    static constexpr int   kTap0SamplesAt48k        =  960;   //  20 ms (primary, after silent predelay)
+    static constexpr int   kTap1SamplesAt48k        = 1440;   //  30 ms
+    static constexpr int   kTap2SamplesAt48k        = 2400;   //  50 ms
+    static constexpr int   kTap3SamplesAt48k        = 3840;   //  80 ms (secondary plateau)
+    static constexpr int   kTap4SamplesAt48k        = 5280;   // 110 ms (late tail)
+    static constexpr float kTap0Weight              = 1.00f;
+    static constexpr float kTap1Weight              = 0.50f;
+    static constexpr float kTap2Weight              = 0.40f;
+    static constexpr float kTap3Weight              = 0.35f;
+    static constexpr float kTap4Weight              = 0.05f;
+    // Sum of all tap weights = 2.30. Normalised at runtime (kTapNorm)
+    // so the tank sees DC-gain = 1.0 regardless of how many taps fire
+    // — preserves the tank's pre-multi-tap saturation calibration.
+    static constexpr float kTapWeightSum            = kTap0Weight + kTap1Weight
+                                                    + kTap2Weight + kTap3Weight
+                                                    + kTap4Weight;
+    static constexpr float kTapNorm                 = 1.0f / kTapWeightSum;
+
+    struct MultiTapDelay
+    {
+        std::vector<float> buffer;
+        int writePos = 0;
+        int mask     = 0;
+        void allocate (int requestedMax);
+        void clear();
+        void  write (float sample);
+        float read  (int delaySamples) const;
+    };
+
+    MultiTapDelay predelayL_, predelayR_;
+    std::vector<float> tankInL_, tankInR_;     // pre-tank scratch buffers
+    double sampleRate_ = 48000.0;
+
+    // Cached at prepare() so process() does no per-block math for
+    // sample-rate-scaled tap positions.
+    int tapSamples_[5] = {};
+    bool lowMidTrimEnabled_ = false;   // skip biquad when gain == 0 dB
 };
