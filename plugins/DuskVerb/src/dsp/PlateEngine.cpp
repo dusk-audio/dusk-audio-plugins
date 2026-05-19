@@ -196,6 +196,26 @@ void PlateEngine::prepare (double sampleRate, int maxBlockSize)
     applyDensityScale();
     updateDecayCoefficients();
 
+    // Internal pre-delay buffer — non-recursive 20 ms pre-delay on each
+    // dry input. Lex Vintage Plate Rich Plate has late-energy-dominant
+    // C80 / D50; this shifts the entire reverb onset back by 20 ms so
+    // the 50 / 80 ms early-window contains less recently-injected energy.
+    {
+        const int pdSamplesAt48k = 960;  // 20 ms × 48 kHz
+        // +1 compensates for write-then-read order in InternalPredelay
+        // (write advances writePos, so the read at writePos-delay reads
+        // delay-1 samples back; +1 here restores the exact 20 ms).
+        const int pdDelay = static_cast<int> (
+            static_cast<float> (pdSamplesAt48k) * (sampleRate / 48000.0)) + 1;
+        const int reservePD = pdDelay + 64;
+        internalPredelayL_.allocate (reservePD);
+        internalPredelayR_.allocate (reservePD);
+        internalPredelayL_.clear();
+        internalPredelayR_.clear();
+        internalPredelayL_.delaySamples = pdDelay;
+        internalPredelayR_.delaySamples = pdDelay;
+    }
+
     // Parallel bass extension resonator — per-channel. Slightly different
     // delay lengths to keep stereo width. Buffer sizes account for 88.2k
     // (rateRatio=2) plus slack. Prime delays at 48k: ~62 ms = 2971 L,
@@ -250,6 +270,8 @@ void PlateEngine::clearBuffers()
     clearBranch (rightBranch_);
     bassExtL_.clear();
     bassExtR_.clear();
+    internalPredelayL_.clear();
+    internalPredelayR_.clear();
 }
 
 // =====================================================================
@@ -542,11 +564,15 @@ void PlateEngine::process (const float* inputL, const float* inputR,
     for (int n = 0; n < numSamples; ++n)
     {
         // -------- LEFT BRANCH --------
+        // Internal pre-delay (20 ms) — non-recursive shift of dry input
+        // before any further processing. Shapes Lex-style soft onset
+        // (late-energy-dominant C80 / D50).
+        const float lDryPredelay = internalPredelayL_.process (inputL[n]);
         // Apply the per-branch input high-shelf to the dry input ONLY
         // (not to the recirculating cross-feedback). With default gain
         // 0 dB the filter is a true bypass — see PlateEngine.h for why
         // this stays out of the loop.
-        const float lDryShelved = leftBranch_.inputHighShelf.process (inputL[n]);
+        const float lDryShelved = leftBranch_.inputHighShelf.process (lDryPredelay);
         // Mix input + cross-feedback FROM right branch (figure-8 topology).
         float lIn = lDryShelved + leftBranch_.crossFeedState;
 
@@ -582,7 +608,8 @@ void PlateEngine::process (const float* inputL, const float* inputR,
             softClip (lOut * kCrossFeedGain), -kSafetyClip, kSafetyClip);
 
         // -------- RIGHT BRANCH --------
-        const float rDryShelved = rightBranch_.inputHighShelf.process (inputR[n]);
+        const float rDryPredelay = internalPredelayR_.process (inputR[n]);
+        const float rDryShelved = rightBranch_.inputHighShelf.process (rDryPredelay);
         float rIn = rDryShelved + rightBranch_.crossFeedState;
 
         rIn = rightBranch_.in1.process (rIn, kInputAPGain);
@@ -625,17 +652,21 @@ void PlateEngine::process (const float* inputL, const float* inputR,
         // output = right-branch-late. The primary stereo decorrelation
         // comes from the L/R having distinct prime delays AND independent
         // jitter LFOs throughout the cascade.
-        // Parallel bass extension — fed by dry input only, not part of the
-        // cross-coupled loop. Adds 125 Hz tail without affecting mid/treble
-        // RT60. Lex Vintage Plate Rich Plate has 1.57 s at 125 Hz vs 1.30 s
-        // broadband; main tank tops out at ~1.25 s at 125 Hz so this loop
-        // adds the missing 0.32 s.
-        // Bass extension — per-channel feedback loops with right polarity-
-        // flipped for stereo decorrelation. Mono input variant tested and
-        // produced WORSE stereo stability (0.295 vs 0.193) because mono
-        // bass dominates moments alternate with cross-fed mid, oscillating
-        // correlation.
-        outputL[n] = lOut + bassExtL_.process (inputL[n]);
-        outputR[n] = rOut - bassExtR_.process (inputR[n]);
+        //
+        // Optional parallel bass extension (right polarity-flipped for
+        // L↔R decorrelation). Disabled-by-default for Rich Plate
+        // (gains == 0); see PlateEngine.h::BassExtensionLoop. The skip
+        // saves the 16 biquads + delay read/write per sample when not
+        // contributing.
+        if (bassExtL_.outputGain != 0.0f || bassExtR_.outputGain != 0.0f)
+        {
+            outputL[n] = lOut + bassExtL_.process (lDryPredelay);
+            outputR[n] = rOut - bassExtR_.process (rDryPredelay);
+        }
+        else
+        {
+            outputL[n] = lOut;
+            outputR[n] = rOut;
+        }
     }
 }

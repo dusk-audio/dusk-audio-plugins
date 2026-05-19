@@ -181,15 +181,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   BassRT=1.00× (flat), Bass XOV=800Hz, RT HiCut=12750Hz, Diffusion=89%,
         //   Size=24m, Spin=1.0Hz, Wander=1.5ms. No ER, no echoes.
         //
-        // Values below are post-engine-switch baseline (sensible defaults for
-        // PlateEngine: Decay 1.3s ≈ Lex spec, flat band Mults, Lex Bass XOV
-        // 800Hz, Lex RT HiCut 12750Hz, Diffusion 89%). Pending PlateEngine
-        // tuner round to land all metrics within JND.
+        // 2026-05-19 retune (in-flight): PlateEngine got density-AP delay
+        // shift (AP6 = 397/401), kInputAPGain 0.65→0.83, 20 ms internal
+        // pre-delay, bloomStagger AP6 → 0. Lands 7/8 RT60 bands within
+        // JND; only 16 kHz still short by ~0.15 s (HF cascade roll-off).
+        // C80/D50/EDT moved toward Lex but still over JND.
+        // TUNING IN FLIGHT — render.cpp Rich Plate row mirrors these
+        // values; sync both files when adjusting.
         { "Rich Plate",           "Plates",
           8,  0.40f, false,  0.0f, 0,
-          6.500f, 0.950f, 0.300f, 1.000f, 0.700f, 0.950f,  500.0f,
+          6.200f, 0.950f, 0.500f, 1.000f, 0.950f, 0.950f,  500.0f,
           0.150f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -6.000f,
-          /* mono */ 20.0f, /* mid */ 0.500f, /* highX */ 9000.0f, /* sat */ 0.000f },
+          /* mono */ 20.0f, /* mid */ 0.450f, /* highX */ 9000.0f, /* sat */ 0.000f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
         // smooth, classic Lexicon plate.
