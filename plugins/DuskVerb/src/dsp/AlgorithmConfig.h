@@ -23,6 +23,7 @@ enum class EngineType : int
     NonLinear         = 6,  // RMX16-NonLin2-style 64-tap feed-forward TDL with envelope shapes.
     Shimmer           = 7,  // 8-channel Hadamard FDN with in-loop granular pitch shifter.
     Plate             = 8,  // PCM-style foil plate (PlateEngine): 2-AP cross-coupled input + 6-AP density cascade with per-AP RandomWalkLFO jitter, ThreeBandDamping. Built for Lex-Vintage-Plate per-band fit.
+    FoilPlate         = 9,  // Second-generation foil plate (FoilPlateEngine): 2-AP flat input + LR4 3-band split + 3 parallel per-band reverberators + onset envelope on wet output + deterministic sine LFOs (anti-correlated L/R phase). Built to close C80/D50/EDT/16kHz/stereo-stability gaps that PlateEngine plateaued on.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -32,7 +33,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 9; }
+inline int getNumAlgorithms() { return 10; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -46,8 +47,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Non-Linear (RMX16)",       EngineType::NonLinear       },
         { "Shimmer (Eno FDN)",        EngineType::Shimmer         },
         { "Plate (Foil)",             EngineType::Plate           },
+        { "Plate (Foil II)",          EngineType::FoilPlate       },
     };
-    if (index < 0 || index >= 9)
+    if (index < 0 || index >= 10)
         index = 0;
     return kEngines[index];
 }

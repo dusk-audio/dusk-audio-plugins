@@ -88,7 +88,7 @@ namespace
             "Lush Dark Hall",
             {
                 // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 8.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                { "Algorithm",       4.0f / 9.0f},     // FDN — Realistic Space (choice 3 of 0..6)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       35.0f },
@@ -122,7 +122,7 @@ namespace
             "Cathedral",
             {
                 // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 8.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                { "Algorithm",       4.0f / 9.0f},     // FDN — Realistic Space (choice 3 of 0..6)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       30.0f },
@@ -186,7 +186,7 @@ namespace
                 //   • Diffusion 0.50 → 0.85 — smooth sustained tail (like
                 //                              Arturia's Lexicon Hall) vs the
                 //                              spikier 0.50 we'd dialled in
-                { "Algorithm",       0.0f / 8.0f },     // 0 = Vintage Plate (Dattorro)
+                { "Algorithm",       0.0f / 9.0f },     // 0 = Vintage Plate (Dattorro)
                 { "Dry/Wet",         0.412f },
                 { "Bus Mode",        0.0f },
                 { "Pre-Delay",       24.0f },     // Lexicon 224 hardware spec for Vangelis cues
@@ -240,13 +240,12 @@ namespace
         return {
             juce::String (name),
             {
-                // Divisor must equal (numAlgorithms - 1). With 9 algorithms
+                // Divisor must equal (numAlgorithms - 1). With 10 algorithms
                 // (Dattorro / DattorroVintage / 6-AP / QuadTank / FDN /
-                // Spring / NonLinear / Shimmer / Plate-Foil) → divisor = 8.
-                // Mismatching the divisor silently misroutes the algorithm
-                // index (e.g. /6 with 9 algos sends algoIdx 4 → 4/6=0.667 →
-                // Shimmer (idx ~6) instead of FDN).
-                { "Algorithm",       static_cast<float> (algoIdx) / 8.0f },
+                // Spring / NonLinear / Shimmer / Plate-Foil / Plate-Foil-II)
+                // → divisor = 9. Mismatching the divisor silently misroutes
+                // the algorithm index.
+                { "Algorithm",       static_cast<float> (algoIdx) / 9.0f },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
                 { "Pre-Delay",       predelay },
@@ -357,17 +356,17 @@ namespace
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
 
         // Plates:
-        // Rich Plate — algo 8 (PlateEngine, "Plate (Foil)"). TUNING IN
-        // FLIGHT: mirrors FactoryPresets.h "Rich Plate" row; sync both
-        // files when retuning. Current state lands 7/8 per-band RT60
-        // within JND vs Lex Vintage Plate Rich Plate anchor.
+        // Rich Plate — algo 9 (FoilPlateEngine, "Plate (Foil II)"). Migrated
+        // 2026-05-19 from PlateEngine (algo 8) to the second-gen foil engine.
+        // Sensible-default baseline below — anchor-tune metrics still
+        // pending. Mirrors FactoryPresets.h "Rich Plate" row.
         if (name == "Rich Plate")
-            return makePreset (name.toRawUTF8(), 8, 1.0f, true, 0.0f,
-                               6.200f, 0.950f, 0.500f, 1.000f,
-                               0.950f, 0.950f, 500.0f,
-                               0.150f, 0.00f, 0.30f,
-                               20.0f, 18000.0f, 1.000f, -4.500f,
-                               20.0f, 0.450f, 9000.0f, 0.000f);
+            return makePreset (name.toRawUTF8(), 9, 1.0f, true, 0.0f,
+                               1.300f, 0.950f, 0.300f, 1.000f,
+                               1.000f, 1.000f, 500.0f,
+                               0.500f, 0.00f, 0.30f,
+                               20.0f, 18000.0f, 1.000f, 0.000f,
+                               20.0f, 1.000f, 9000.0f, 0.000f);
         // Modern Clear Plate — snapshot of the PlateEngine Rich Plate
         // tune at 7/8 RT60 within JND, preserved before PlateLexEngine
         // surgery begins. Mirrors FactoryPresets.h "Modern Clear Plate".

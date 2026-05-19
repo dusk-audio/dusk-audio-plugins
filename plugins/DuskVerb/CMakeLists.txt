@@ -83,6 +83,7 @@ target_sources(DuskVerb
         src/dsp/ShimmerEngine.cpp
         src/dsp/DattorroPlateVintage.cpp
         src/dsp/PlateEngine.cpp
+        src/dsp/FoilPlateEngine.cpp
         ../shared/LEDMeter.cpp
 )
 
