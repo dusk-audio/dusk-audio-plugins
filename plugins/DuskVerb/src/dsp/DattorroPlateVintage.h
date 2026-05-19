@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DattorroTank.h"
+#include "DattorroVocalTank.h"
 
 #include <algorithm>
 #include <cmath>
@@ -54,7 +54,7 @@ public:
     void setSparseTapLevel    (float /*level*/) {}
 
 private:
-    DattorroTank tank_;
+    DattorroVocalTank tank_;
 
     // RBJ peaking biquad — vintage-Lex corrective EQ. Two stages used:
     //   1) box-cut: 350 Hz peak, Q=1.4, gain set in prepare() to flatten
