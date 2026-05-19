@@ -101,7 +101,7 @@ search_space:
   # First Refl L/R Gain locked at Lex spec (0 dB / -3 dB) — see locked_params.
   First Refl HF Cut: { lo: 3000,  hi: 9000,  step: 500, scale: linear } # air absorption on taps; cap closer to Lex Rvb Out Freq=7kHz
   Hi Cut:          { lo: 5000,  hi: 13000, step: 500, scale: linear }   # wet-bus lowpass; Lex damps HF in wet path
-# 11-axis CMA: max_evals=300 over [0,1]^11, ~10-15 min @ workers=10.
+# 13-axis CMA: max_evals=300 over [0,1]^13, ~10-15 min @ workers=10.
 
 # JND-weighted composite loss. Per-band RT60 + EDT carry RT60/spectral
 # decay accuracy; C80/D50 carry early-vs-late energy balance; BR/TR carry
