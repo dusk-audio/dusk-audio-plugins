@@ -363,8 +363,8 @@ namespace
         // Mirrors FactoryPresets.h "Rich Plate" row exactly.
         if (name == "Rich Plate")
             return makePreset (name.toRawUTF8(), 8, 1.0f, true, 0.0f,
-                               7.000f, 0.950f, 0.300f, 1.000f,
-                               0.380f, 0.900f, 500.0f,
+                               6.500f, 0.950f, 0.300f, 1.000f,
+                               0.700f, 0.950f, 500.0f,
                                0.150f, 0.00f, 0.30f,
                                20.0f, 18000.0f, 1.000f, -6.000f,
                                20.0f, 0.500f, 9000.0f, 0.000f);

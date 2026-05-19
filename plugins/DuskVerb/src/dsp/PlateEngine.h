@@ -285,6 +285,65 @@ private:
         }
     };
 
+    // Parallel bass-band extension resonator. The main figure-8 tank cannot
+    // produce Lex Vintage Plate Rich Plate's bass bump (125 Hz at 1.57 s,
+    // mid bands at 1.30 s) because raising the bass damping multiplier lifts
+    // the entire loop's modulation-sideband energy into the mid bands too —
+    // measured at 5/8 RT60 bands within JND with bands 125 / 250 / 16 k all
+    // out. This sidechain is fed by the dry input (LR4 LP at fLowHz so only
+    // sub-200 Hz content enters), recirculates through a comb-filter with
+    // adjustable feedback gain, and sums into the main tank's output. It
+    // is *not* part of the cross-coupled loop, so increasing its gain
+    // extends the 125 Hz tail without touching the mid/treble decay. Per
+    // channel; L/R run at slightly different delays for natural width.
+    struct BassExtensionLoop
+    {
+        DelayLine delay;
+        // 8th-order LP (4 cascaded biquads). 24 dB/oct LR4 attenuation
+        // wasn't steep enough to keep the resonator's ~1.7 s tail out of
+        // the 250 Hz octave RT60 measurement (Schroeder reads slope, so
+        // even at −28 dB the slow tail dominated). Two cascaded LR4s
+        // (= 48 dB/oct) puts 250 Hz at −56 dB below cutoff, safely under
+        // the 125 Hz tail amplitude.
+        LR4BandSplit::Biquad lpA, lpB, lpC, lpD;
+        // Post-feedback LP — applied to the recirculating signal so each
+        // loop further bandlimits, preventing energy aliasing up into mid
+        // bands across multiple loops.
+        LR4BandSplit::Biquad fbLpA, fbLpB;
+        int      delaySamples  = 0;
+        float    feedbackGain  = 0.83f;
+        float    outputGain    = 0.50f;
+        float    cutoffHz      = 110.0f;
+        float    fbCutoffHz    = 160.0f;
+
+        void allocate (int maxSamples) { delay.allocate (maxSamples); }
+        void clear()
+        {
+            delay.clear();
+            lpA.reset(); lpB.reset(); lpC.reset(); lpD.reset();
+            fbLpA.reset(); fbLpB.reset();
+        }
+        void prepare (float sr)
+        {
+            lpA.designLP (cutoffHz, sr);
+            lpB.designLP (cutoffHz, sr);
+            lpC.designLP (cutoffHz, sr);
+            lpD.designLP (cutoffHz, sr);
+            fbLpA.designLP (fbCutoffHz, sr);
+            fbLpB.designLP (fbCutoffHz, sr);
+            clear();
+        }
+        float process (float dryInput)
+        {
+            const float low = lpD.process (lpC.process (lpB.process (lpA.process (dryInput))));
+            const float fbRaw = delay.read (delaySamples);
+            const float fb = fbLpB.process (fbLpA.process (fbRaw));
+            const float toWrite = low + fb * feedbackGain;
+            delay.write (toWrite);
+            return fb * outputGain;
+        }
+    };
+
     // One side of the figure-8 (L or R).
     struct Branch
     {
@@ -325,6 +384,12 @@ private:
 
     Branch leftBranch_;
     Branch rightBranch_;
+
+    // Per-channel parallel bass extension. L and R run at slightly
+    // different delay samples to preserve stereo width — same prime-delay
+    // strategy as the main tank.
+    BassExtensionLoop bassExtL_;
+    BassExtensionLoop bassExtR_;
 
     double sampleRate_ = 44100.0;
     bool   prepared_   = false;
