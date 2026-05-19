@@ -193,6 +193,27 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           6.200f, 0.950f, 0.500f, 1.000f, 0.950f, 0.950f,  500.0f,
           0.150f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -4.500f,
           /* mono */ 20.0f, /* mid */ 0.450f, /* highX */ 9000.0f, /* sat */ 0.000f },
+        // ── Modern Clear Plate ───────────────────────────────────────────────
+        // Snapshot of the PlateEngine (algo 8) Rich Plate tune at 7/8 RT60
+        // bands within JND vs Lex Vintage Plate. C80 +3.85 / D50 +4.74
+        // delta from Lex (front-loaded onset) gives this preset its
+        // punchy, present "modern plate" character — pulled out of the
+        // Rich Plate tuning lineage 2026-05-19 and preserved as its own
+        // factory preset before PlateLexEngine surgery starts (which will
+        // override Rich Plate with a slower-onset Lex-faithful build).
+        //
+        // Measured vs Lex Rich Plate anchor at commit time:
+        //   RT60 per band (125/250/500/1k/2k/4k/8k/16k):
+        //     1.61/1.32/1.30/1.28/1.28/1.34/1.24/0.94 s  (7/8 within JND)
+        //   Volume Δ +0.000 dB, stereo_correlation Δ −0.004 (both within JND)
+        //   EDT 1.46 s, C80 +2.78 dB, D50 −0.50 dB (early-dominant signature)
+        //   stereo_corr_stability 0.18 (Δ +0.15 over JND — density-AP
+        //     random-walk drift, lives as part of the preset's "shimmer").
+        { "Modern Clear Plate",   "Plates",
+          8,  0.40f, false,  0.0f, 0,
+          6.200f, 0.950f, 0.500f, 1.000f, 0.950f, 0.950f,  500.0f,
+          0.150f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -4.500f,
+          /* mono */ 20.0f, /* mid */ 0.450f, /* highX */ 9000.0f, /* sat */ 0.000f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
         // smooth, classic Lexicon plate.
