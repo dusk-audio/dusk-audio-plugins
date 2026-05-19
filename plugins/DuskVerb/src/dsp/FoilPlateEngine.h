@@ -175,18 +175,33 @@ struct LR4BandSplit
 };
 
 // Single per-band reverberator. One delay + feedback + optional sine-LFO
-// modulated read. Independent per-band RT60 control via feedbackGain.
+// modulated read + an optional pair of cascaded biquads in the feedback
+// path. The biquad pair lets each band's loop re-filter its own
+// recirculated signal so a bass loop's harmonics never bleed into mid
+// or treble measurement bands (the LR4 split upstream can't catch them
+// once they're in the loop — they have to be killed *inside* the loop).
+//
+//   Bass loop:    feedback biquads → LR4 LP at fLow  (passes only bass)
+//   Mid loop:     feedback biquads → bypassed         (mid passband already shaped upstream)
+//   Treble loop:  feedback biquads → LR4 HP at fHigh (passes only treble)
+//
+// The mid-band loop runs broadband because most of the mid octaves
+// (1k-8k) sit comfortably between the bass and treble xovers, and a
+// passive BP in the feedback would compromise pulse response.
 struct BandReverberator
 {
     DelayLine delay;
     SineLFO   modLFO;
+    LR4BandSplit::Biquad fbBiquadA, fbBiquadB;   // 4th-order LR4 in feedback
+    bool      fbBiquadEnabled = false;
     int       baseDelaySamples = 0;
     float     feedbackGain     = 0.0f;
 
+    enum class FbFilterType { Bypass, LowPass, HighPass };
+
     void  prepare (double sr, int baseDelay, float modRateHz, float modPhaseRad);
     void  clear();
-    // Returns the new tap value AND writes back the feedback for the
-    // next sample. modLFO output read internally.
+    void  setFeedbackFilter (FbFilterType type, float fcHz, float sr);
     float process (float input);
 };
 
@@ -300,6 +315,14 @@ private:
     // recovery to unity by ~80 ms (one C80 window).
     static constexpr float kOnsetTauMs   = 30.0f;
     static constexpr float kOnsetMinGain = 0.30f;
+
+    // Per-band comb DC normalisation factor (1 − g) drops total wet
+    // amplitude by ~10 dB at typical RT60 targets — three bands each
+    // scaled to unity DC sum to ≈ one full-amplitude impulse response.
+    // Multiplying by an output gain restores the dry-equivalent level.
+    // 3.0 puts a unity-input impulse at roughly the reference target's
+    // measured A-weighted RMS; refine via the tuner round.
+    static constexpr float kEngineOutputGain = 3.0f;
 
     // ─────────────────────────────────────────────────────────
     // Per-channel signal chain.
