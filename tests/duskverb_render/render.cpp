@@ -286,12 +286,12 @@ namespace
         // mirror FactoryPresets.h "Vintage Vocal Plate" row post-reorder.
         if (name == "Vintage Vocal Plate" || name == "Vocal Plate (Vintage)")
             return makePreset (name.toRawUTF8(), 1, 1.0f, true, 10.0f,
-                /* decay  */ 1.30f, /* size    */ 0.45f, /* modD   */ 0.30f, /* modR   */ 0.60f,
-                /* damp   */ 0.72f, /* bassMlt */ 0.65f, /* xover  */ 400.0f,
-                /* diff   */ 0.55f, /* erLvl   */ 0.00f, /* erSz   */ 0.30f,
+                /* decay  */ 0.85f, /* size    */ 0.45f, /* modD   */ 0.30f, /* modR   */ 0.60f,
+                /* damp   */ 0.65f, /* bassMlt */ 0.65f, /* xover  */ 200.0f,
+                /* diff   */ 0.65f, /* erLvl   */ 0.00f, /* erSz   */ 0.30f,
                 /* loCut  */ 80.0f, /* hiCut   */ 8000.0f, /* width */ 1.10f,
-                /* trim   */ 10.0f,
-                /* mono   */ 20.0f, /* midMlt  */ 0.85f, /* highX  */ 4500.0f, /* sat    */ 0.10f);
+                /* trim   */ 11.0f,
+                /* mono   */ 20.0f, /* midMlt  */ 0.88f, /* highX  */ 4500.0f, /* sat    */ 0.10f);
         if (name == "Modulated Plate")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f, 0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, 0.5f, 20.0f, 1.10f, 4500.0f, 0.25f);
         if (name == "Fat Pop Plate")

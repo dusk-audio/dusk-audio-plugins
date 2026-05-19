@@ -272,9 +272,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // diff, erLv, erSz, loCut, hiCut, width, freeze, trim
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
-          1.30f, 0.45f, 0.30f, 0.60f, 0.72f, 0.65f,  400.0f,
-          0.55f, 0.00f, 0.30f,  80.0f, 8000.0f, 1.10f, false, 10.0f,
-          /* mono */ 20.0f, /* mid */ 0.85f, /* highX */ 4500.0f, /* sat */ 0.10f },
+          0.85f, 0.45f, 0.30f, 0.60f, 0.65f, 0.65f,  200.0f,
+          0.65f, 0.00f, 0.30f,  80.0f, 8000.0f, 1.10f, false, 11.0f,
+          /* mono */ 20.0f, /* mid */ 0.88f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Snare Plate XL ───────────────────────────────────────────────────
         // Long-decay plate for '80s big-snare/tom slap. Engine matched to
         // VVV's DrumPlate / FatPlate architecture (forensic L/R-correlation
