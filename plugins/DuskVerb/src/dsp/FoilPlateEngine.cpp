@@ -436,6 +436,7 @@ void FoilPlateEngine::process (const float* inputL, const float* inputR,
     const int tap3Samples = static_cast<int> (kTap3SamplesAt48k * rateRatio) + 1;
     const int tap4Samples = static_cast<int> (kTap4SamplesAt48k * rateRatio) + 1;
     const int tap5Samples = static_cast<int> (kTap5SamplesAt48k * rateRatio) + 1;
+    const int tap6Samples = static_cast<int> (kTap6SamplesAt48k * rateRatio) + 1;
 
     // Front-end per-branch: predelay multi-tap → AP diffuser →
     // LR4 split. Produces the three band-input signals; tap3 is summed
@@ -453,11 +454,15 @@ void FoilPlateEngine::process (const float* inputL, const float* inputR,
         const float t3 = b.predelay.read (tap3Samples);
         const float t4 = b.predelay.read (tap4Samples);
         const float t5 = b.predelay.read (tap5Samples);
+        const float t6 = b.predelay.read (tap6Samples);
 
         // ─── 2-AP diffuser with staggered tap injections ───
-        // tap0 + tap4 + tap5 → AP1 input (tap4 fires the secondary
-        // 110 ms peak; tap5 sustains the 150-250 ms region).
+        // AP1 input is the SUM of all primary-path taps: tap0 fires
+        // the impulse, tap6 fills the 60–80 ms EDT-suppressing valley,
+        // tap4 fires the 110 ms secondary peak, tap5 sustains the
+        // 150-250 ms region.
         const float ap1In  = kTap0Weight * t0
+                           + kTap6Weight * t6
                            + kTap4Weight * t4
                            + kTap5Weight * t5;
         const float ap1Out = b.in1.process (ap1In, kInputAPGain, 0.0f);
