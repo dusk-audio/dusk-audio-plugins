@@ -583,8 +583,17 @@ void PlateEngine::process (const float* inputL, const float* inputR,
         // Each branch's NEXT iteration sees the OTHER branch's current
         // delayed+saturated output. Exchanging at end-of-sample keeps the
         // figure-8 symmetric and free of one-sample bias.
-        leftBranch_ .crossFeedState = rFeedback;
-        rightBranch_.crossFeedState = lFeedback;
+        //
+        // Polarity-flipped cross-feed on left branch (2026-05-18). Symmetric
+        // cross-feed caused periodic stereo-correlation wander (image
+        // cycled between mono and spread → audible "spinning"). Lex Rich
+        // Plate measures stereo-correlation std 0.029 (rock-stable image);
+        // symmetric DV measured 0.254. Inverting one branch breaks the
+        // L↔R sync loop while preserving per-channel RT60 magnitude (only
+        // the mono L+R sum reads slightly shorter due to partial late-tail
+        // cancellation — per-channel decay rate is unchanged).
+        leftBranch_ .crossFeedState = -rFeedback;
+        rightBranch_.crossFeedState =  lFeedback;
 
         // -------- Output --------
         // Read each branch's main delay at slightly different points for

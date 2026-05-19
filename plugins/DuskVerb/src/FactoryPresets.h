@@ -187,9 +187,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tuner round to land all metrics within JND.
         { "Rich Plate",           "Plates",
           8,  0.40f, false,  0.0f, 0,
-          7.000f, 0.950f, 0.100f, 1.000f, 0.400f, 5.000f,  300.0f,
+          7.000f, 0.950f, 0.100f, 1.000f, 0.380f, 5.000f,  350.0f,
           0.050f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -6.000f,
-          /* mono */ 20.0f, /* mid */ 0.550f, /* highX */ 9000.0f, /* sat */ 0.000f },
+          /* mono */ 20.0f, /* mid */ 0.500f, /* highX */ 9000.0f, /* sat */ 0.000f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
         // smooth, classic Lexicon plate.
