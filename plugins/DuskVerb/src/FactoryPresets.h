@@ -191,7 +191,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Rich Plate",           "Plates",
           8,  0.40f, false,  0.0f, 0,
           6.200f, 0.950f, 0.500f, 1.000f, 0.950f, 0.950f,  500.0f,
-          0.150f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -6.000f,
+          0.150f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -4.500f,
           /* mono */ 20.0f, /* mid */ 0.450f, /* highX */ 9000.0f, /* sat */ 0.000f },
         // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
         // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,

@@ -212,8 +212,12 @@ void PlateEngine::prepare (double sampleRate, int maxBlockSize)
         internalPredelayR_.allocate (reservePD);
         internalPredelayL_.clear();
         internalPredelayR_.clear();
-        internalPredelayL_.delaySamples = pdDelay;
-        internalPredelayR_.delaySamples = pdDelay;
+        // Bound delaySamples against the ring buffer's mask so a future
+        // size-bump without growing reservePD wraps to the max valid
+        // delay instead of reading random history via the mask AND.
+        const int pdSafe = std::min (pdDelay, internalPredelayL_.delay.mask);
+        internalPredelayL_.delaySamples = pdSafe;
+        internalPredelayR_.delaySamples = pdSafe;
     }
 
     // Parallel bass extension resonator — per-channel. Slightly different
@@ -552,6 +556,11 @@ void PlateEngine::process (const float* inputL, const float* inputR,
         return x;
     };
 
+    // Hoist bass-extension active check out of the inner loop — gains
+    // are constant across the block.
+    const bool bassExtActive = (bassExtL_.outputGain != 0.0f)
+                            || (bassExtR_.outputGain != 0.0f);
+
     const float densityG = densityDiffCoeff_;
     // Pre-compute per-stage staggered coefficients (clamped to ceiling).
     // Lifting this out of the inner loop saves 6 multiplies + clamps per
@@ -655,10 +664,9 @@ void PlateEngine::process (const float* inputL, const float* inputR,
         //
         // Optional parallel bass extension (right polarity-flipped for
         // L↔R decorrelation). Disabled-by-default for Rich Plate
-        // (gains == 0); see PlateEngine.h::BassExtensionLoop. The skip
-        // saves the 16 biquads + delay read/write per sample when not
-        // contributing.
-        if (bassExtL_.outputGain != 0.0f || bassExtR_.outputGain != 0.0f)
+        // (gains == 0); see PlateEngine.h::BassExtensionLoop. bassExtActive
+        // hoisted from outputGain check before the loop.
+        if (bassExtActive)
         {
             outputL[n] = lOut + bassExtL_.process (lDryPredelay);
             outputR[n] = rOut - bassExtR_.process (rDryPredelay);
