@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DspUtils.h"
+#include "LR4BandSplit.h"
 
 #include <cstdint>
 #include <vector>
@@ -148,31 +149,13 @@ struct SineLFO
     float next();                         // returns sin(phase) × depth
 };
 
-// LR4 3-band split (Linkwitz-Riley 24 dB/oct). The *sum-minus mid* mode
-// used in PlateEngine is replaced here with an explicit band-pass
-// (LP(fHigh) − LP(fLow)). Eliminates the phase-ripple leakage that bled
-// bass band into mid RT60 in the old engine.
-struct LR4BandSplit
-{
-    struct Biquad
-    {
-        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
-        float z1 = 0.0f, z2 = 0.0f;
-        void  designLP (float fcHz, float sr);
-        void  designHP (float fcHz, float sr);
-        float process (float x);
-        void  reset() { z1 = z2 = 0.0f; }
-    };
-
-    Biquad lpA,   lpB;            // bass band: LP(fLow) cascaded
-    Biquad hpA,   hpB;            // treble band: HP(fHigh) cascaded
-    Biquad midLpA, midLpB;        // mid band: LP(fHigh) cascaded (then minus bass)
-
-    void  prepare (float sr);
-    void  setCrossovers (float fLowHz, float fHighHz, float sr);
-    void  reset();
-    void  split (float x, float& outBass, float& outMid, float& outTreble);
-};
+// LR4 3-band split (Linkwitz-Riley 24 dB/oct) lives in the shared
+// duskverb::dsp namespace so the Hall family (HallReverb, ConcertHallReverb,
+// RandomHallReverb) can pre-split inputs into independent per-band
+// reverberators without copy-pasting filter code. Re-exported here under the
+// existing foil_plate name so the rest of FoilPlateEngine + Branch members
+// keep working unchanged.
+using LR4BandSplit = duskverb::dsp::LR4BandSplit;
 
 // Single per-band reverberator. One delay + feedback + optional sine-LFO
 // modulated read + an optional pair of cascaded biquads in the feedback
