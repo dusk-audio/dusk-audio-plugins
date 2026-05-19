@@ -189,10 +189,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // TUNING IN FLIGHT — render.cpp Rich Plate row mirrors these
         // values; sync both files when adjusting.
         { "Rich Plate",           "Plates",
-          8,  0.40f, false,  0.0f, 0,
-          6.200f, 0.950f, 0.500f, 1.000f, 0.950f, 0.950f,  500.0f,
-          0.150f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, -4.500f,
-          /* mono */ 20.0f, /* mid */ 0.450f, /* highX */ 9000.0f, /* sat */ 0.000f },
+          9,  0.40f, false,  0.0f, 0,
+          1.300f, 0.950f, 0.300f, 1.000f, 1.000f, 1.000f,  500.0f,
+          0.500f, 0.00f, 0.30f,  20.0f, 18000.0f, 1.000f, false, 0.000f,
+          /* mono */ 20.0f, /* mid */ 1.000f, /* highX */ 9000.0f, /* sat */ 0.000f },
         // ── Modern Clear Plate ───────────────────────────────────────────────
         // Snapshot of the PlateEngine (algo 8) Rich Plate tune at 7/8 RT60
         // bands within JND vs Lex Vintage Plate. C80 +3.85 / D50 +4.74

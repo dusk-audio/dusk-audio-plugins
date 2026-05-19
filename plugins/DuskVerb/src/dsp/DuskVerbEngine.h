@@ -4,6 +4,7 @@
 #include "DattorroTank.h"
 #include "DattorroPlateVintage.h"
 #include "PlateEngine.h"
+#include "FoilPlateEngine.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FirstReflections.h"
@@ -172,6 +173,7 @@ private:
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-Lex post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
     PlateEngine        plate_;              // algo 8 (2026-05-18): PCM-foil-plate engine, built for Lex Vintage Plate per-band fit when no other engine could land all RT60 bands within JND.
+    FoilPlateEngine    foilPlate_;          // algo 9 (2026-05-19): second-gen foil-plate engine — per-band LR4 split + parallel reverberators + onset envelope + deterministic sine LFOs. Built to close C80/D50/EDT/16k/stab gaps PlateEngine plateaued on.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
