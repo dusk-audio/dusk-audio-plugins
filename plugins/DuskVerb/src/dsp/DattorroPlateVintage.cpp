@@ -1,22 +1,82 @@
 #include "DattorroPlateVintage.h"
+#include "DspUtils.h"
+
+#include <algorithm>
+#include <cstring>
+
+void DattorroPlateVintage::MultiTapDelay::allocate (int requestedMax)
+{
+    const int size = DspUtils::nextPowerOf2 (std::max (requestedMax + 4, 16));
+    buffer.assign (static_cast<size_t> (size), 0.0f);
+    mask     = size - 1;
+    writePos = 0;
+}
+
+void DattorroPlateVintage::MultiTapDelay::clear()
+{
+    std::fill (buffer.begin(), buffer.end(), 0.0f);
+    writePos = 0;
+}
+
+void DattorroPlateVintage::MultiTapDelay::write (float sample)
+{
+    buffer[static_cast<size_t> (writePos)] = sample;
+    writePos = (writePos + 1) & mask;
+}
+
+float DattorroPlateVintage::MultiTapDelay::read (int delaySamples) const
+{
+    // After write(), writePos points to the NEXT slot. read(0) must
+    // return the sample just written → subtract 1 here so tap0=0
+    // means "current input sample".
+    return buffer[static_cast<size_t> ((writePos - 1 - delaySamples) & mask)];
+}
 
 void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
 {
+    sampleRate_ = sampleRate;
     tank_.prepare (sampleRate, maxBlockSize);
 
-    const float sr = static_cast<float> (sampleRate);
+    const float sr  = static_cast<float> (sampleRate);
+    const float rateRatio = sr / 48000.0f;
+
+    // Multi-tap predelay ring — sized for the longest tap plus a
+    // sample-rate-scaled headroom factor so 96 kHz / 192 kHz sessions
+    // get the same time-domain footprint.
+    const int predelayMax = static_cast<int> (kPredelayMaxSamplesAt48k * rateRatio) + 32;
+    predelayL_.allocate (predelayMax);
+    predelayR_.allocate (predelayMax);
+    predelayL_.clear();
+    predelayR_.clear();
+
+    // Cache sample-rate-scaled tap positions (constant between
+    // prepare() calls — no need to recompute per-block).
+    tapSamples_[0] = static_cast<int> (kTap0SamplesAt48k * rateRatio);
+    tapSamples_[1] = static_cast<int> (kTap1SamplesAt48k * rateRatio);
+    tapSamples_[2] = static_cast<int> (kTap2SamplesAt48k * rateRatio);
+    tapSamples_[3] = static_cast<int> (kTap3SamplesAt48k * rateRatio);
+    tapSamples_[4] = static_cast<int> (kTap4SamplesAt48k * rateRatio);
+
+    // Pre-allocate scratch buffers with a safety oversize so the audio
+    // thread never has to grow them. Hosts that exceed this safety size
+    // are processed in chunks (see process()).
+    constexpr int kSafetyBlockSize = 8192;
+    const int reserve = std::max (maxBlockSize, kSafetyBlockSize);
+    tankInL_.assign (static_cast<size_t> (reserve), 0.0f);
+    tankInR_.assign (static_cast<size_t> (reserve), 0.0f);
+
     // Box-cut: 320 Hz, Q=2.0, -3.5 dB. Initial -6 dB Q=1.4 over-cut
     // 250-500 Hz steady-state by 4-6 dB (per measurement); narrower Q
     // + gentler gain hits the box peak without scooping the entire
     // low-mid region. -3 dB-points sit at ~270 Hz and ~380 Hz so the
     // hump is flattened while 200 Hz and 500 Hz stay close to flat.
     boxCut_.design     (320.0f, 2.0f, -3.5f, sr);
-    // Low-mid trim disabled — the broad shelf was double-cutting low
-    // mids on top of the box-cut, pulling 200 Hz down 1 dB further
-    // than Lex. Set to 0 dB (no-op) until measurement justifies it.
-    lowMidTrim_.design (200.0f, 0.7f,  0.0f, sr);
     boxCut_.reset();
+    // Low-mid trim disabled (gain = 0 dB no-op). Designed only so it
+    // resets cleanly; not invoked in process() while disabled.
+    lowMidTrim_.design (200.0f, 0.7f,  0.0f, sr);
     lowMidTrim_.reset();
+    lowMidTrimEnabled_ = false;
 
     prepared_ = true;
 }
@@ -26,23 +86,70 @@ void DattorroPlateVintage::clearBuffers()
     tank_.clearBuffers();
     boxCut_.reset();
     lowMidTrim_.reset();
+    predelayL_.clear();
+    predelayR_.clear();
 }
 
 void DattorroPlateVintage::process (const float* inputL, const float* inputR,
                                     float* outputL, float* outputR, int numSamples)
 {
     if (! prepared_) return;
-    tank_.process (inputL, inputR, outputL, outputR, numSamples);
-    for (int n = 0; n < numSamples; ++n)
+
+    // Chunk the block to whatever scratch capacity we sized at prepare().
+    // Audio thread never reallocates — if a host exceeds the safety
+    // size, we process in two or more passes instead of growing.
+    const int reserveSize = static_cast<int> (tankInL_.size());
+    int processed = 0;
+    while (processed < numSamples)
     {
-        float l = outputL[n];
-        float r = outputR[n];
-        l = boxCut_.processL (l);
-        r = boxCut_.processR (r);
-        l = lowMidTrim_.processL (l);
-        r = lowMidTrim_.processR (r);
-        outputL[n] = l;
-        outputR[n] = r;
+        const int chunk = std::min (reserveSize, numSamples - processed);
+        const float* const inL  = inputL  + processed;
+        const float* const inR  = inputR  + processed;
+        float* const       outL = outputL + processed;
+        float* const       outR = outputR + processed;
+
+        // ─── Multi-tap input injection ───
+        // Spread dry input across 5 staggered predelay taps before the
+        // Dattorro tank's intrinsic input diffuser. Pre-tank IR is no
+        // longer a single spike; the tank's recirculation presents a
+        // 20-110 ms energy plateau. kTapNorm normalises the tap sum to
+        // unity DC gain so the tank's saturation calibration is
+        // unchanged from the bare-tank case.
+        for (int n = 0; n < chunk; ++n)
+        {
+            predelayL_.write (inL[n]);
+            predelayR_.write (inR[n]);
+
+            tankInL_[static_cast<size_t> (n)] = kTapNorm * (
+                  kTap0Weight * predelayL_.read (tapSamples_[0])
+                + kTap1Weight * predelayL_.read (tapSamples_[1])
+                + kTap2Weight * predelayL_.read (tapSamples_[2])
+                + kTap3Weight * predelayL_.read (tapSamples_[3])
+                + kTap4Weight * predelayL_.read (tapSamples_[4]));
+            tankInR_[static_cast<size_t> (n)] = kTapNorm * (
+                  kTap0Weight * predelayR_.read (tapSamples_[0])
+                + kTap1Weight * predelayR_.read (tapSamples_[1])
+                + kTap2Weight * predelayR_.read (tapSamples_[2])
+                + kTap3Weight * predelayR_.read (tapSamples_[3])
+                + kTap4Weight * predelayR_.read (tapSamples_[4]));
+        }
+
+        tank_.process (tankInL_.data(), tankInR_.data(), outL, outR, chunk);
+
+        for (int n = 0; n < chunk; ++n)
+        {
+            float l = boxCut_.processL (outL[n]);
+            float r = boxCut_.processR (outR[n]);
+            if (lowMidTrimEnabled_)
+            {
+                l = lowMidTrim_.processL (l);
+                r = lowMidTrim_.processR (r);
+            }
+            outL[n] = l;
+            outR[n] = r;
+        }
+
+        processed += chunk;
     }
 }
 
