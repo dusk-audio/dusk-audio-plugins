@@ -15,7 +15,6 @@ namespace foil_plate
 namespace
 {
     constexpr float kTwoPi      = 6.283185307179586f;
-    constexpr float kSqrt12_LR4 = 0.7071067811865475f;
     constexpr float kSafetyClip = 4.0f;
 }
 
@@ -112,77 +111,12 @@ float SineLFO::next()
     return s * depth;
 }
 
-// ----- LR4BandSplit::Biquad ----------------------------------------
-
-void LR4BandSplit::Biquad::designLP (float fcHz, float sr)
-{
-    const float w0    = kTwoPi * std::min (fcHz, 0.49f * sr) / sr;
-    const float cosw  = std::cos (w0);
-    const float sinw  = std::sin (w0);
-    const float alpha = sinw / (2.0f * kSqrt12_LR4);
-    const float a0    = 1.0f + alpha;
-    b0 = (1.0f - cosw) * 0.5f / a0;
-    b1 = (1.0f - cosw)        / a0;
-    b2 = (1.0f - cosw) * 0.5f / a0;
-    a1 = -2.0f * cosw         / a0;
-    a2 = (1.0f - alpha)       / a0;
-}
-
-void LR4BandSplit::Biquad::designHP (float fcHz, float sr)
-{
-    const float w0    = kTwoPi * std::min (fcHz, 0.49f * sr) / sr;
-    const float cosw  = std::cos (w0);
-    const float sinw  = std::sin (w0);
-    const float alpha = sinw / (2.0f * kSqrt12_LR4);
-    const float a0    = 1.0f + alpha;
-    b0 =  (1.0f + cosw) * 0.5f / a0;
-    b1 = -(1.0f + cosw)        / a0;
-    b2 =  (1.0f + cosw) * 0.5f / a0;
-    a1 = -2.0f * cosw          / a0;
-    a2 = (1.0f - alpha)        / a0;
-}
-
-float LR4BandSplit::Biquad::process (float x)
-{
-    const float y = b0 * x + z1;
-    z1 = b1 * x - a1 * y + z2;
-    z2 = b2 * x - a2 * y;
-    return y;
-}
-
-// ----- LR4BandSplit -------------------------------------------------
-
-void LR4BandSplit::prepare (float /*sr*/) { reset(); }
-
-void LR4BandSplit::setCrossovers (float fLowHz, float fHighHz, float sr)
-{
-    const float fLowClamped  = std::clamp (fLowHz, 20.0f, 0.45f * sr);
-    const float fHighClamped = std::max (fHighHz, fLowClamped + 10.0f);
-    lpA    .designLP (fLowClamped,  sr);
-    lpB    .designLP (fLowClamped,  sr);
-    hpA    .designHP (fHighClamped, sr);
-    hpB    .designHP (fHighClamped, sr);
-    midLpA .designLP (fHighClamped, sr);
-    midLpB .designLP (fHighClamped, sr);
-}
-
-void LR4BandSplit::reset()
-{
-    lpA.reset();    lpB.reset();
-    hpA.reset();    hpB.reset();
-    midLpA.reset(); midLpB.reset();
-}
-
-void LR4BandSplit::split (float x, float& outBass, float& outMid, float& outTreble)
-{
-    outBass   = lpB.process    (lpA.process    (x));
-    outTreble = hpB.process    (hpA.process    (x));
-    // Explicit band-pass: LP at fHigh, then subtract bass.
-    // Avoids the (x − bass − treble) phase ripple that bled bass into
-    // mid-band RT60 in the old engine.
-    const float lowAndMid = midLpB.process (midLpA.process (x));
-    outMid    = lowAndMid - outBass;
-}
+// LR4BandSplit method bodies now live in the shared header
+// plugins/DuskVerb/src/dsp/LR4BandSplit.h (header-only struct under
+// duskverb::dsp::LR4BandSplit). FoilPlateEngine.h re-exports the type
+// under foil_plate::LR4BandSplit via a using-declaration, so the rest of
+// this file and all dependents (BandReverberator::fbBiquadA/B etc.) keep
+// compiling unchanged.
 
 // ----- BandReverberator --------------------------------------------
 

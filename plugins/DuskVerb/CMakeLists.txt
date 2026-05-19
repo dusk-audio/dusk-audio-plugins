@@ -72,6 +72,7 @@ target_sources(DuskVerb
         src/PluginEditor.cpp
         src/dsp/FDNReverb.cpp
         src/dsp/HallReverb.cpp
+        src/dsp/HallSubTank.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/DattorroVocalTank.cpp
         src/dsp/QuadTank.cpp
