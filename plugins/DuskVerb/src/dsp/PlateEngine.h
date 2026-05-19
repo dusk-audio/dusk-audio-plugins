@@ -125,8 +125,17 @@ private:
     // 6-AP density cascade — sum 728 / 780 (down from 4298 / 4364).
     // Shorter per-stage smear, faster modal buildup. All values prime,
     // mutually distinct, distinct from delay/ap2/input primes.
-    static constexpr int kLeftDensityAPBase[kNumDensityAPs]  = {  53,  67,  97, 127, 173, 211 };
-    static constexpr int kRightDensityAPBase[kNumDensityAPs] = {  59,  73, 101, 137, 181, 229 };
+    // 2026-05-19: shifted the last two density-AP delays out of the
+    // 250 Hz octave modal band (samples 135-271 at 48 k → 177-355 Hz
+    // fundamentals) into the 125 Hz octave (samples 271-547 → 88-177 Hz).
+    // The original 173 / 181 / 211 / 229 sample delays parked AP
+    // resonances at 227 / 265 / 227 / 210 Hz, locking RT60 at 250 Hz
+    // octave near 1.6 s regardless of bass damping multiplier. New
+    // 277 / 283 / 397 / 401 primes shift those resonances to 173 / 170 /
+    // 121 / 120 Hz — supporting Lex Vintage Plate Rich Plate's 125 Hz
+    // bass bump while freeing the 250 Hz band to follow gLow damping.
+    static constexpr int kLeftDensityAPBase[kNumDensityAPs]  = {  53,  67,  97, 127, 277, 397 };
+    static constexpr int kRightDensityAPBase[kNumDensityAPs] = {  59,  73, 101, 137, 283, 401 };
 
     // Worst-case sizing: max base delay × 88.2k/44.1k × 1.5 size scale.
     // Largest base delay is now 419 (kRightDel2Base) so we can shrink
@@ -285,17 +294,22 @@ private:
         }
     };
 
-    // Parallel bass-band extension resonator. The main figure-8 tank cannot
-    // produce Lex Vintage Plate Rich Plate's bass bump (125 Hz at 1.57 s,
-    // mid bands at 1.30 s) because raising the bass damping multiplier lifts
-    // the entire loop's modulation-sideband energy into the mid bands too —
-    // measured at 5/8 RT60 bands within JND with bands 125 / 250 / 16 k all
-    // out. This sidechain is fed by the dry input (LR4 LP at fLowHz so only
-    // sub-200 Hz content enters), recirculates through a comb-filter with
-    // adjustable feedback gain, and sums into the main tank's output. It
-    // is *not* part of the cross-coupled loop, so increasing its gain
-    // extends the 125 Hz tail without touching the mid/treble decay. Per
-    // channel; L/R run at slightly different delays for natural width.
+    // Parallel bass-band extension resonator. Sidechain fed by the
+    // (pre-delayed) dry input through an 8th-order LP, recirculated
+    // through a delay with feedback gain, summed into the main tank
+    // output. Not part of the cross-coupled loop, so its gain extends
+    // the 125 Hz tail without touching mid/treble decay.
+    //
+    // DISABLED BY DEFAULT (feedbackGain = 0, outputGain = 0) on
+    // 2026-05-19. The density-AP delay shift (kLeftDensityAPBase[5] =
+    // 397 / kRightDensityAPBase[5] = 401, ~120 Hz fundamentals) now
+    // provides the Lex Vintage Plate Rich Plate 125 Hz lift via
+    // density-cascade modal resonance — running both mechanisms
+    // simultaneously over-lifted 125 Hz past 2.0 s vs the 1.57 s target.
+    // Kept in code (and the LP biquads / delay buffer still allocated)
+    // so other plate presets can opt in by setting non-zero gains via a
+    // future setter; current Rich Plate path skips the resonator
+    // contribution at runtime (returns 0).
     struct BassExtensionLoop
     {
         DelayLine delay;
@@ -311,8 +325,8 @@ private:
         // bands across multiple loops.
         LR4BandSplit::Biquad fbLpA, fbLpB;
         int      delaySamples  = 0;
-        float    feedbackGain  = 0.83f;
-        float    outputGain    = 0.50f;
+        float    feedbackGain  = 0.0f;
+        float    outputGain    = 0.0f;
         float    cutoffHz      = 110.0f;
         float    fbCutoffHz    = 160.0f;
 
@@ -341,6 +355,26 @@ private:
             const float toWrite = low + fb * feedbackGain;
             delay.write (toWrite);
             return fb * outputGain;
+        }
+    };
+
+    // Internal pre-delay buffer — sits between the dry input and the tank
+    // loop. Pure single-tap delay (no feedback), so it shifts the onset
+    // forward without changing the loop's RT60. Lex Vintage Plate Rich
+    // Plate has C80 −1.06 dB / D50 −5.23 dB (late-energy dominant); the
+    // tank's natural onset is too fast to reproduce that shape. Adding
+    // a non-recursive pre-delay pushes all reflection energy past the
+    // 50 / 80 ms windows without touching per-band damping.
+    struct InternalPredelay
+    {
+        DelayLine delay;
+        int delaySamples = 0;
+        void allocate (int maxSamples) { delay.allocate (maxSamples); }
+        void clear() { delay.clear(); }
+        float process (float input)
+        {
+            delay.write (input);
+            return delay.read (delaySamples);
         }
     };
 
@@ -391,6 +425,9 @@ private:
     BassExtensionLoop bassExtL_;
     BassExtensionLoop bassExtR_;
 
+    InternalPredelay internalPredelayL_;
+    InternalPredelay internalPredelayR_;
+
     double sampleRate_ = 44100.0;
     bool   prepared_   = false;
     bool   frozen_     = false;
@@ -435,7 +472,20 @@ private:
     // Effective per-AP coefficient = clamp (densityDiffCoeff_ × bloomStagger_[i],
     //                                       0, bloomCeiling_).
     // The ceiling guarantees stability even at extreme stagger × diffusion.
-    float bloomStagger_[kNumDensityAPs] = { 0.65f, 0.80f, 0.95f, 1.10f, 1.22f, 1.35f };
+    // 2026-05-19: AP6 stagger forced to 0.0 (delays 397/401 → 121/120 Hz
+    // fundamentals). With stagger ≥ 0.5 the 125 Hz modal RT60 ran to
+    // ~1.8-2.0 s vs Lex Rich Plate's 1.57 s target. AP5 (277/283 →
+    // 173/170 Hz) stays at 1.22; 173 Hz lifts the 125 Hz octave without
+    // overshooting because it sits at the band's upper edge.
+    //
+    // Side effect: g=0 collapses the allpass kernel to a plain tap-
+    // delay (vn = input; out = vd − 0·vn = vd). AP6 still contributes a
+    // 397-sample delay but no longer has the allpass phase-flatness
+    // property. Acceptable here because the preceding 5 APs already
+    // diffuse the signal and AP6 is only there for the modal-lift
+    // delay tap. If the cascade ever needs all 6 stages allpass-pure,
+    // restore stagger ≥ 0.05 or drop kNumDensityAPs to 5.
+    float bloomStagger_[kNumDensityAPs] = { 0.65f, 0.80f, 0.95f, 1.10f, 1.22f, 0.0f };
     float bloomCeiling_                  = 0.85f;
 
     // Input high-shelf state — kept here so prepare() can re-design the
@@ -461,8 +511,19 @@ private:
     // signal-flow soft-clip (kSafetyClip in process()) still bounds runaway.
     static constexpr float kCrossFeedGain = 0.83f;
 
-    // Input-section AP coefficient — small (Dattorro typical 0.5..0.7).
-    static constexpr float kInputAPGain = 0.65f;
+    // Input-section AP coefficient. Raised 0.65→0.83 to push more
+    // diffusion into the first 80 ms — Lex Vintage Plate Rich Plate has
+    // C80 −1.06 dB (slightly late-energy dominant); engine at 0.65 read
+    // C80 +2.7 dB (front-loaded). Higher coefficient smears the impulse
+    // longer before it enters the density cascade.
+    //
+    // 0.83 sits above the documented Dattorro typical range (0.5..0.7).
+    // Two cascaded APs at this g put the input network within 0.17 of
+    // unity. The cross-feed soft-clip (kSafetyClip in process()) is the
+    // ONLY safety net here — there is no clamp on the input-section
+    // chain itself. Verified stable on impulse / noise burst / 1 kHz
+    // sine inputs through duskverb_render; bump up with caution.
+    static constexpr float kInputAPGain = 0.83f;
 
     // Static AP2 coefficient — moderate.
     static constexpr float kAP2Gain = 0.55f;
