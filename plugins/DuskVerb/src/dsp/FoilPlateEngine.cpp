@@ -205,15 +205,42 @@ void BandReverberator::prepare (double sr, int baseDelay, float modRateHz,
 void BandReverberator::clear()
 {
     delay.clear();
+    fbBiquadA.reset();
+    fbBiquadB.reset();
     // LFO phase intentionally NOT reset on clearBuffers — keeps the
     // deterministic phase relationship after a host transport jump.
+}
+
+void BandReverberator::setFeedbackFilter (FbFilterType type, float fcHz, float sr)
+{
+    if (type == FbFilterType::Bypass)
+    {
+        fbBiquadEnabled = false;
+        return;
+    }
+    if (type == FbFilterType::LowPass)
+    {
+        fbBiquadA.designLP (fcHz, sr);
+        fbBiquadB.designLP (fcHz, sr);
+    }
+    else
+    {
+        fbBiquadA.designHP (fcHz, sr);
+        fbBiquadB.designHP (fcHz, sr);
+    }
+    fbBiquadEnabled = true;
 }
 
 float BandReverberator::process (float input)
 {
     const float modSample = modLFO.next();
     const float effectiveDelay = static_cast<float> (baseDelaySamples) + modSample;
-    const float fb = delay.readInterpolated (effectiveDelay);
+    float fb = delay.readInterpolated (effectiveDelay);
+    // Run feedback through optional 4th-order LR4 filter — keeps each
+    // band's loop locked to its measurement octave (no harmonics
+    // bleeding upstream into neighbouring bands).
+    if (fbBiquadEnabled)
+        fb = fbBiquadB.process (fbBiquadA.process (fb));
     const float toWrite = input + fb * feedbackGain;
     delay.write (toWrite);
     // Normalise output to unity DC gain. Each comb's geometric series
@@ -315,6 +342,18 @@ void FoilPlateEngine::prepare (double sampleRate, int /*maxBlockSize*/)
                              static_cast<int> (trebleBase * rateRatio),
                              kTrebleLFORateHz,
                              lfoPhaseOffset);
+        // Lock each band's loop to its measurement octave via a 4th-order
+        // LR4 in the feedback path. Mid stays broadband (its passband
+        // already sits comfortably between the two xovers).
+        b.bassRev  .setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::LowPass,
+            crossoverFreq_, sr);
+        b.midRev   .setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::Bypass,
+            0.0f, sr);
+        b.trebleRev.setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::HighPass,
+            highCrossoverFreq_, sr);
 
         b.onsetEnv.prepare (sr);
         b.crossFeedState = 0.0f;
@@ -391,7 +430,9 @@ void FoilPlateEngine::process (const float* inputL, const float* inputR,
         const float midOut    = b.midRev   .process (midBand);
         const float trebleOut = b.trebleRev.process (trebleBand);
 
-        // ─── Sum bands → onset envelope on wet ───
+        // ─── Sum bands → onset envelope (gain applied OUTSIDE the cross-
+        //     feed loop in the caller; otherwise the gain compounds
+        //     through cross-feed each round trip and the loop runs away).
         const float wetSum = bassOut + midOut + trebleOut;
         return wetSum * envGain;
     };
@@ -413,8 +454,8 @@ void FoilPlateEngine::process (const float* inputL, const float* inputR,
         leftBranch_ .crossFeedState = -rFeedback;
         rightBranch_.crossFeedState =  lFeedback;
 
-        outputL[n] = lWet;
-        outputR[n] = rWet;
+        outputL[n] = lWet * kEngineOutputGain;
+        outputR[n] = rWet * kEngineOutputGain;
     }
 }
 
@@ -454,6 +495,14 @@ void FoilPlateEngine::setCrossoverFreq (float hz)
         const float sr = static_cast<float> (sampleRate_);
         leftBranch_ .split.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
         rightBranch_.split.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
+        // Re-tune the bass-loop feedback LP at the new xover so the loop
+        // stays locked to its band.
+        leftBranch_ .bassRev.setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::LowPass,
+            crossoverFreq_, sr);
+        rightBranch_.bassRev.setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::LowPass,
+            crossoverFreq_, sr);
     }
 }
 
@@ -465,6 +514,13 @@ void FoilPlateEngine::setHighCrossoverFreq (float hz)
         const float sr = static_cast<float> (sampleRate_);
         leftBranch_ .split.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
         rightBranch_.split.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
+        // Re-tune the treble-loop feedback HP at the new xover.
+        leftBranch_ .trebleRev.setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::HighPass,
+            highCrossoverFreq_, sr);
+        rightBranch_.trebleRev.setFeedbackFilter (
+            foil_plate::BandReverberator::FbFilterType::HighPass,
+            highCrossoverFreq_, sr);
     }
 }
 

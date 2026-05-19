@@ -363,10 +363,10 @@ namespace
         if (name == "Rich Plate")
             return makePreset (name.toRawUTF8(), 9, 1.0f, true, 0.0f,
                                1.300f, 0.950f, 0.300f, 1.000f,
-                               1.000f, 1.000f, 500.0f,
+                               0.780f, 1.500f, 200.0f,
                                0.500f, 0.00f, 0.30f,
-                               20.0f, 18000.0f, 1.000f, 0.000f,
-                               20.0f, 1.000f, 9000.0f, 0.000f);
+                               20.0f, 18000.0f, 1.000f, 1.200f,
+                               20.0f, 0.940f, 9000.0f, 0.000f);
         // Modern Clear Plate — snapshot of the PlateEngine Rich Plate
         // tune at 7/8 RT60 within JND, preserved before PlateLexEngine
         // surgery begins. Mirrors FactoryPresets.h "Modern Clear Plate".
