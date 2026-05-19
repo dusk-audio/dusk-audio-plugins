@@ -311,23 +311,86 @@ private:
     // modulation → stereo_corr_stability locked low by construction.
     static constexpr float kRightLFOPhaseRad = 3.14159265358979323846f;
 
-    // Cross-feed gain on each branch's late tap → other branch's input.
-    // Polarity-flipped on the right channel (R = +lFeedback, L = −rFeedback)
-    // for the same decorrelation strategy that worked in PlateEngine.
-    static constexpr float kCrossFeedGain = 0.62f;
+    // Output L↔R cross-feed retired in favour of per-band figure-8
+    // coupling (kFigure8Alpha) inside the dual-tank matrix — see below.
+    // Kept at zero for API parity / fall-back.
+    static constexpr float kCrossFeedGain = 0.00f;
 
-    // Internal predelay — short (only the onset-envelope correction is
-    // structural; predelay just keeps the dry-input peak detector
-    // sample-aligned with the diffuser output).
-    static constexpr int kPredelaySamplesAt48k = 384;     // 8 ms
+    // Staggered multi-tap input injection. The dry signal is written into
+    // a 64-ms ring buffer, then read at 4 different tap times and summed
+    // into different nodes of the front-end all-pass network. Mimics a
+    // Lexicon-style "specular reflections at predelay taps" topology —
+    // distributes the impulse energy across the 0–32 ms window
+    // *internally* (no output-side amplitude shaping required). C80, D50,
+    // and EDT are shaped by this distribution instead of by a wet-output
+    // envelope, which means the per-band RT60 measurements are no longer
+    // disturbed by the energy redistribution.
+    //
+    // Tap times (at 48 kHz) and per-tap weights:
+    //   tap0 20 ms  → AP1 input              w0 = 1.00 (primary path)
+    //   tap1 27 ms  → AP1 output / AP2 in    w1 = 0.60
+    //   tap2 37 ms  → AP2 output / split in  w2 = 0.40
+    //   tap3 52 ms  → per-band input (sum)   w3 = 0.20 (still recirculates)
+    //   tap4 85 ms  → AP1 input              w4 = 0.45 (secondary peak driver)
+    //   tap5 165 ms → AP1 input              w5 = 0.30 (late-tail sustainer)
+    //
+    // Taps 0..3 are shifted +20 ms vs the dry impulse so the wet output
+    // has a 20 ms silent predelay (the Lex anchor measures −71 dB RMS
+    // in 0–20 ms then builds up over 20–60 ms).
+    //
+    // Tap 4 is the SECONDARY-PEAK DRIVER: at 85 ms it fires a second
+    // strong primary-path injection that exits the AP / split / band
+    // chain ≈ 110 ms after the dry impulse — exactly where the Lex
+    // anchor has its 100–120 ms secondary energy bloom.
+    //
+    // Tap 5 is the LATE-TAIL SUSTAINER: at 165 ms it fires a third
+    // injection (output at ≈ 190 ms) that prevents the engine's
+    // natural exponential decay from getting 4 dB ahead of the Lex
+    // anchor in the 150–250 ms region — closing the late-energy
+    // deficit that drives C80 / D50 / EDT positive.
+    static constexpr int   kPredelayMaxSamplesAt48k = 9600;   // 200 ms headroom
+    static constexpr int   kTap0SamplesAt48k        =  960;   // 20 ms
+    static constexpr int   kTap1SamplesAt48k        = 1296;   // 27 ms
+    static constexpr int   kTap2SamplesAt48k        = 1776;   // 37 ms
+    static constexpr int   kTap3SamplesAt48k        = 2496;   // 52 ms
+    static constexpr int   kTap4SamplesAt48k        = 4080;   // 85 ms
+    static constexpr int   kTap5SamplesAt48k        = 7920;   // 165 ms
+    static constexpr float kTap0Weight              = 0.70f;
+    static constexpr float kTap1Weight              = 0.55f;
+    static constexpr float kTap2Weight              = 0.40f;
+    static constexpr float kTap3Weight              = 0.40f;
+    static constexpr float kTap4Weight              = 0.60f;
+    static constexpr float kTap5Weight              = 0.50f;
 
-    // Onset envelope shape constants. The reference target's IR peaks
-    // ~30 ms in (front of tail is energy-buildup, not energy-spike).
-    // τ = 30 ms, min gain 0.30 = −10.5 dB floor at transient onset,
-    // recovery to unity by ~80 ms (one C80 window).
-    static constexpr float kOnsetHoldMs  = 0.0f;
-    static constexpr float kOnsetTauMs   = 30.0f;
-    static constexpr float kOnsetMinGain = 0.30f;
+    // Figure-8 cross-coupling — each band's L loop sums the previous
+    // sample's R-loop output (scaled by α) into its input, and vice
+    // versa. Builds true Dattorro-style figure-8 topology: the signal
+    // alternates between the two tanks, so the L and R modal evolution
+    // tracks each other (lex anchor's stereo_corr_stability ≈ 0.029 is
+    // a consequence of this kind of strong coupling between the two
+    // sides of a single physical plate).
+    //
+    // Strong uniform cross-coupling locks each band's modal evolution
+    // L↔R, dropping stereo_corr_stability roughly in proportion to α.
+    // α = 0.70 measured corr +0.13 stab 0.10 on Rich Plate — both still
+    // out of JND but stab is much closer to lex anchor 0.029 than the
+    // dual-independent-reverbs baseline (0.17–0.24).
+    static constexpr float kFigure8AlphaBass    = 0.70f;
+    static constexpr float kFigure8AlphaMid     = 0.70f;
+    static constexpr float kFigure8AlphaTreble  = 0.70f;
+
+    // Output decorrelation mixer. The strong figure-8 coupling drives
+    // L/R correlation up (≈ +0.13 with the chosen α). This linear
+    // mid-side widener subtracts a small fraction of the opposite-side
+    // wet output from each channel:
+    //   outL = a·lWet − b·rWet
+    //   outR = a·rWet − b·lWet
+    // Time-invariant linear → stereo_corr_stability is preserved
+    // (linear matrix on a stably-correlated pair stays stably
+    // correlated). b ≈ 0.05 brings the residual correlation from
+    // ≈ +0.13 down to ≈ +0.03–0.04, matching the lex anchor.
+    static constexpr float kOutMixA = 1.0f;
+    static constexpr float kOutMixB = 0.05f;
 
     // Per-band comb DC normalisation factor (1 − g) drops total wet
     // amplitude by ~10 dB at typical RT60 targets — three bands each
@@ -342,14 +405,23 @@ private:
     // ─────────────────────────────────────────────────────────
     struct Branch
     {
-        foil_plate::DelayLine        predelay;
+        foil_plate::DelayLine        predelay;       // multi-tap, 64 ms ring
         foil_plate::Allpass          in1, in2;
         foil_plate::LR4BandSplit     split;
         foil_plate::BandReverberator bassRev, midRev, trebleRev;
-        foil_plate::OnsetEnvelope    onsetEnv;
+        foil_plate::OnsetEnvelope    onsetEnv;       // retained, no longer applied
 
-        // Cross-feed sample carried over to the next iteration —
-        // identical mechanism to PlateEngine for stable feedback.
+        // Per-band previous-sample outputs. The figure-8 cross-coupling
+        // feeds each band's L-loop input from the prior sample's R-loop
+        // output (scaled by α), and vice versa, so both tanks evolve
+        // together rather than as two independent reverbs.
+        float prevBassOut    = 0.0f;
+        float prevMidOut     = 0.0f;
+        float prevTrebleOut  = 0.0f;
+
+        // Cross-feed sample no longer used (per-band coupling above
+        // replaces the legacy output-level cross-feed). Retained at 0
+        // so cleared-state semantics stay obvious.
         float crossFeedState = 0.0f;
     };
 

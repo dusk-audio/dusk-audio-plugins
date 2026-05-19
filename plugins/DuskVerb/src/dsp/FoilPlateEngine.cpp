@@ -330,9 +330,9 @@ void FoilPlateEngine::prepare (double sampleRate, int /*maxBlockSize*/)
                             int bassBase, int midBase, int trebleBase,
                             float lfoPhaseOffset)
     {
-        const int predelaySamples = static_cast<int> (
-            static_cast<float> (kPredelaySamplesAt48k) * rateRatio) + 1;
-        b.predelay.allocate (predelaySamples + 64);
+        const int predelayMaxSamples = static_cast<int> (
+            static_cast<float> (kPredelayMaxSamplesAt48k) * rateRatio) + 1;
+        b.predelay.allocate (predelayMaxSamples + 64);
         b.predelay.clear();
 
         b.in1.allocate (static_cast<int> (in1Base * rateRatio + 16.0f));
@@ -373,9 +373,11 @@ void FoilPlateEngine::prepare (double sampleRate, int /*maxBlockSize*/)
             foil_plate::BandReverberator::FbFilterType::HighPass,
             highCrossoverFreq_, sr);
 
-        b.onsetEnv.setShape (kOnsetHoldMs, kOnsetTauMs * 0.001f, kOnsetMinGain);
-        b.onsetEnv.prepare (sr);
+        b.onsetEnv.prepare (sr);   // retained for API parity; output not applied
         b.crossFeedState = 0.0f;
+        b.prevBassOut    = 0.0f;
+        b.prevMidOut     = 0.0f;
+        b.prevTrebleOut  = 0.0f;
     };
 
     setupBranch (leftBranch_,
@@ -408,6 +410,9 @@ void FoilPlateEngine::clearBuffers()
         b.trebleRev.clear();
         b.onsetEnv.clear();
         b.crossFeedState = 0.0f;
+        b.prevBassOut    = 0.0f;
+        b.prevMidOut     = 0.0f;
+        b.prevTrebleOut  = 0.0f;
     };
     clearBranch (leftBranch_);
     clearBranch (rightBranch_);
@@ -423,59 +428,109 @@ void FoilPlateEngine::process (const float* inputL, const float* inputR,
         return;
     }
 
-    const int predelaySamples = static_cast<int> (
-        static_cast<float> (kPredelaySamplesAt48k)
-        * (static_cast<float> (sampleRate_) / 48000.0f)) + 1;
+    // Multi-tap predelay positions (sample-rate scaled).
+    const float rateRatio = static_cast<float> (sampleRate_) / 48000.0f;
+    const int tap0Samples = static_cast<int> (kTap0SamplesAt48k * rateRatio) + 1;
+    const int tap1Samples = static_cast<int> (kTap1SamplesAt48k * rateRatio) + 1;
+    const int tap2Samples = static_cast<int> (kTap2SamplesAt48k * rateRatio) + 1;
+    const int tap3Samples = static_cast<int> (kTap3SamplesAt48k * rateRatio) + 1;
+    const int tap4Samples = static_cast<int> (kTap4SamplesAt48k * rateRatio) + 1;
+    const int tap5Samples = static_cast<int> (kTap5SamplesAt48k * rateRatio) + 1;
 
-    auto processBranch = [&] (Branch& b, float dryIn, float crossIn) -> float
+    // Front-end per-branch: predelay multi-tap → AP diffuser →
+    // LR4 split. Produces the three band-input signals; tap3 is summed
+    // into each band's input so it still recirculates through the tank
+    // (acts like a delayed re-injection, not an output-side specular
+    // bypass — bypass produced an audible early spike that wrecked C80
+    // and D50 in the first build of this topology).
+    auto frontEnd = [&] (Branch& b, float dryIn,
+                         float& outBass, float& outMid, float& outTreble)
     {
-        // ─── Predelay (non-recursive) ───
         b.predelay.write (dryIn);
-        const float predelayed = b.predelay.read (predelaySamples);
+        const float t0 = b.predelay.read (tap0Samples);
+        const float t1 = b.predelay.read (tap1Samples);
+        const float t2 = b.predelay.read (tap2Samples);
+        const float t3 = b.predelay.read (tap3Samples);
+        const float t4 = b.predelay.read (tap4Samples);
+        const float t5 = b.predelay.read (tap5Samples);
 
-        // ─── Onset envelope (peak-detect dry pre-tank signal) ───
-        const float envGain = b.onsetEnv.process (predelayed);
-
-        // ─── 2-AP input diffuser (flat cascade, low g) ───
-        float diffused = b.in1.process (predelayed + crossIn, kInputAPGain, 0.0f);
-        diffused       = b.in2.process (diffused,             kInputAPGain, 0.0f);
+        // ─── 2-AP diffuser with staggered tap injections ───
+        // tap0 + tap4 + tap5 → AP1 input (tap4 fires the secondary
+        // 110 ms peak; tap5 sustains the 150-250 ms region).
+        const float ap1In  = kTap0Weight * t0
+                           + kTap4Weight * t4
+                           + kTap5Weight * t5;
+        const float ap1Out = b.in1.process (ap1In, kInputAPGain, 0.0f);
+        // tap1 → AP2 input (sum).
+        const float ap2In  = ap1Out + kTap1Weight * t1;
+        const float ap2Out = b.in2.process (ap2In, kInputAPGain, 0.0f);
+        // tap2 → split input (sum).
+        const float splitIn = ap2Out + kTap2Weight * t2;
 
         // ─── LR4 3-band split ───
-        float bassBand, midBand, trebleBand;
-        b.split.split (diffused, bassBand, midBand, trebleBand);
+        b.split.split (splitIn, outBass, outMid, outTreble);
 
-        // ─── Per-band reverberators (independent feedback) ───
-        const float bassOut   = b.bassRev  .process (bassBand);
-        const float midOut    = b.midRev   .process (midBand);
-        const float trebleOut = b.trebleRev.process (trebleBand);
-
-        // ─── Sum bands → onset envelope (gain applied OUTSIDE the cross-
-        //     feed loop in the caller; otherwise the gain compounds
-        //     through cross-feed each round trip and the loop runs away).
-        const float wetSum = bassOut + midOut + trebleOut;
-        return wetSum * envGain;
+        // tap3 → each band input (sum). Per-band weighting splits tap3
+        // evenly across the three loops so its total injection energy
+        // matches w3. Each band loop independently band-filters the
+        // late re-injection.
+        const float t3WeightPerBand = kTap3Weight * (1.0f / 3.0f);
+        outBass   += t3WeightPerBand * t3;
+        outMid    += t3WeightPerBand * t3;
+        outTreble += t3WeightPerBand * t3;
     };
-
 
     for (int n = 0; n < numSamples; ++n)
     {
-        const float lWet = processBranch (leftBranch_,  inputL[n], leftBranch_.crossFeedState);
-        const float rWet = processBranch (rightBranch_, inputR[n], rightBranch_.crossFeedState);
+        float L_bass, L_mid, L_treble;
+        float R_bass, R_mid, R_treble;
 
-        // ─── Cross-feed exchange (polarity-flipped on left, same as
-        //     PlateEngine — symmetric cross-feed previously caused image
-        //     wobble). Clamp for safety against transient bursts. ───
-        const float lFeedback = std::clamp (lWet * kCrossFeedGain,
-                                            -foil_plate::kSafetyClip,
-                                             foil_plate::kSafetyClip);
-        const float rFeedback = std::clamp (rWet * kCrossFeedGain,
-                                            -foil_plate::kSafetyClip,
-                                             foil_plate::kSafetyClip);
-        leftBranch_ .crossFeedState = -rFeedback;
-        rightBranch_.crossFeedState =  lFeedback;
+        frontEnd (leftBranch_,  inputL[n],  L_bass, L_mid, L_treble);
+        frontEnd (rightBranch_, inputR[n],  R_bass, R_mid, R_treble);
 
-        outputL[n] = lWet * kEngineOutputGain;
-        outputR[n] = rWet * kEngineOutputGain;
+        // ─── Figure-8 per-band cross-coupling ───
+        // Each band's L input mixes the previous-sample R-loop output
+        // (scaled by its band-specific α). Bass uses +α (drives corr
+        // toward +1 in low band), treble uses −α (drives corr toward
+        // −1 in high band). Mid is neutral. The opposite-sign bands
+        // cancel each other in the broadband cross-correlation while
+        // EACH band's modal evolution is individually locked.
+        const float L_bass_in   = L_bass   + kFigure8AlphaBass   * rightBranch_.prevBassOut;
+        const float L_mid_in    = L_mid    + kFigure8AlphaMid    * rightBranch_.prevMidOut;
+        const float L_treble_in = L_treble + kFigure8AlphaTreble * rightBranch_.prevTrebleOut;
+
+        const float R_bass_in   = R_bass   + kFigure8AlphaBass   * leftBranch_.prevBassOut;
+        const float R_mid_in    = R_mid    + kFigure8AlphaMid    * leftBranch_.prevMidOut;
+        const float R_treble_in = R_treble + kFigure8AlphaTreble * leftBranch_.prevTrebleOut;
+
+        // ─── Run each band-reverberator ───
+        const float L_bassOut   = leftBranch_ .bassRev  .process (L_bass_in);
+        const float L_midOut    = leftBranch_ .midRev   .process (L_mid_in);
+        const float L_trebleOut = leftBranch_ .trebleRev.process (L_treble_in);
+        const float R_bassOut   = rightBranch_.bassRev  .process (R_bass_in);
+        const float R_midOut    = rightBranch_.midRev   .process (R_mid_in);
+        const float R_trebleOut = rightBranch_.trebleRev.process (R_treble_in);
+
+        // ─── Update previous-sample outputs AFTER both branches done ───
+        leftBranch_ .prevBassOut   = L_bassOut;
+        leftBranch_ .prevMidOut    = L_midOut;
+        leftBranch_ .prevTrebleOut = L_trebleOut;
+        rightBranch_.prevBassOut   = R_bassOut;
+        rightBranch_.prevMidOut    = R_midOut;
+        rightBranch_.prevTrebleOut = R_trebleOut;
+
+        // ─── Sum bands ───
+        const float lWet = L_bassOut + L_midOut + L_trebleOut;
+        const float rWet = R_bassOut + R_midOut + R_trebleOut;
+
+        // ─── Linear output decorrelation mixer ───
+        // Reduces residual broadband correlation introduced by the
+        // strong figure-8 coupling. Time-invariant → stab preserved.
+        const float lOut = kOutMixA * lWet - kOutMixB * rWet;
+        const float rOut = kOutMixA * rWet - kOutMixB * lWet;
+
+        outputL[n] = lOut * kEngineOutputGain;
+        outputR[n] = rOut * kEngineOutputGain;
     }
 }
 
