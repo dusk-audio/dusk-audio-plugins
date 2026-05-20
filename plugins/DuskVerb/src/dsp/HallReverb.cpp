@@ -128,6 +128,18 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     wetHiCutBiquadR_.designLP (wetHiCutHz_, sr);
     wetHiCutBiquadL_.reset();
     wetHiCutBiquadR_.reset();
+
+    // P10 peaking-EQ biquads — design at current (gain_dB, Q) so any
+    // value pushed via APVTS before prepare is already in effect.
+    bassEQL_  .designPeaking (kBassEQFc,   bassEQQ_,   bassEQGainDb_,   sr);
+    bassEQR_  .designPeaking (kBassEQFc,   bassEQQ_,   bassEQGainDb_,   sr);
+    midEQL_   .designPeaking (kMidEQFc,    midEQQ_,    midEQGainDb_,    sr);
+    midEQR_   .designPeaking (kMidEQFc,    midEQQ_,    midEQGainDb_,    sr);
+    trebleEQL_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
+    trebleEQR_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
+    bassEQL_.reset();   bassEQR_.reset();
+    midEQL_.reset();    midEQR_.reset();
+    trebleEQL_.reset(); trebleEQR_.reset();
 }
 
 void HallReverb::recomputePredelayTaps()
@@ -202,6 +214,36 @@ void HallReverb::setWetHiCutHz (float hz)
     wetHiCutBiquadR_.designLP (wetHiCutHz_, sr);
 }
 
+void HallReverb::setBassEQ (float gainDb, float q)
+{
+    bassEQGainDb_ = std::clamp (gainDb, -18.0f, 18.0f);
+    bassEQQ_      = std::clamp (q,        0.3f,  6.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    bassEQL_.designPeaking (kBassEQFc, bassEQQ_, bassEQGainDb_, sr);
+    bassEQR_.designPeaking (kBassEQFc, bassEQQ_, bassEQGainDb_, sr);
+}
+
+void HallReverb::setMidEQ (float gainDb, float q)
+{
+    midEQGainDb_ = std::clamp (gainDb, -18.0f, 18.0f);
+    midEQQ_      = std::clamp (q,        0.3f,  6.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    midEQL_.designPeaking (kMidEQFc, midEQQ_, midEQGainDb_, sr);
+    midEQR_.designPeaking (kMidEQFc, midEQQ_, midEQGainDb_, sr);
+}
+
+void HallReverb::setTrebleEQ (float gainDb, float q)
+{
+    trebleEQGainDb_ = std::clamp (gainDb, -18.0f, 18.0f);
+    trebleEQQ_      = std::clamp (q,        0.3f,  6.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    trebleEQL_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
+    trebleEQR_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
+}
+
 void HallReverb::setSpecularTimeMs (int index, float ms)
 {
     if (index < 0 || index >= kNumSpecularTaps) return;
@@ -241,6 +283,9 @@ void HallReverb::clearBuffers()
     specularLP2StateL_ = specularLP2StateR_ = 0.0f;
     wetHiCutBiquadL_.reset();
     wetHiCutBiquadR_.reset();
+    bassEQL_.reset();   bassEQR_.reset();
+    midEQL_.reset();    midEQR_.reset();
+    trebleEQL_.reset(); trebleEQR_.reset();
 }
 
 void HallReverb::updateCrossovers()
@@ -367,8 +412,20 @@ void HallReverb::process (const float* inputL, const float* inputR,
             treblePostL_.split (trebleOutL_[i], tL_b, tL_m, tL_t);
             treblePostR_.split (trebleOutR_[i], tR_b, tR_m, tR_t);
 
-            float wetL = bL_b * gB + mL_m * gM + tL_t * gT;
-            float wetR = bR_b * gB + mR_m * gM + tR_t * gT;
+            // P10 per-band peaking EQ — applied to each band's post-LR4
+            // contribution before the band-gain sum. Each EQ only sees
+            // content from its own band so cross-band spectral leakage
+            // is minimised; gain shapes the bump centred at the band's
+            // mid-octave fc. Default gain 0 dB = unity passthrough.
+            const float eqBassL   = bassEQL_  .process (bL_b);
+            const float eqBassR   = bassEQR_  .process (bR_b);
+            const float eqMidL    = midEQL_   .process (mL_m);
+            const float eqMidR    = midEQR_   .process (mR_m);
+            const float eqTrebleL = trebleEQL_.process (tL_t);
+            const float eqTrebleR = trebleEQR_.process (tR_t);
+
+            float wetL = eqBassL * gB + eqMidL * gM + eqTrebleL * gT;
+            float wetR = eqBassR * gB + eqMidR * gM + eqTrebleR * gT;
 
             // ── P8c — wet-only Hi Cut (2-pole RBJ LP) ─────────────────
             // Replaces DuskVerbEngine's global Hi Cut filter for this

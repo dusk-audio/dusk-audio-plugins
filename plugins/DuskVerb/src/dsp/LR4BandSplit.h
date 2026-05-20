@@ -54,6 +54,24 @@ struct LR4BandSplit
             a2 = (1.0f - alpha)        / a0;
         }
 
+        // RBJ cookbook peaking EQ. gainDb > 0 boosts, < 0 cuts. q controls
+        // bandwidth (higher Q = narrower).
+        void designPeaking (float fcHz, float qFactor, float gainDb, float sr)
+        {
+            const float A     = std::pow (10.0f, gainDb / 40.0f);
+            const float w0    = kTwoPi * std::min (fcHz, 0.49f * sr) / sr;
+            const float cosw  = std::cos (w0);
+            const float sinw  = std::sin (w0);
+            const float qSafe = std::max (0.1f, qFactor);
+            const float alpha = sinw / (2.0f * qSafe);
+            const float a0    = 1.0f + alpha / A;
+            b0 = (1.0f + alpha * A) / a0;
+            b1 = -2.0f * cosw       / a0;
+            b2 = (1.0f - alpha * A) / a0;
+            a1 = -2.0f * cosw       / a0;
+            a2 = (1.0f - alpha / A) / a0;
+        }
+
         float process (float x)
         {
             const float y = b0 * x + z1;

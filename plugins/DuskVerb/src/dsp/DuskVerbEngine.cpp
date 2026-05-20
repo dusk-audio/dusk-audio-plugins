@@ -429,6 +429,25 @@ void DuskVerbEngine::setHallSpec2Weight (float w)  { hall_.setSpecularWeight (2,
 void DuskVerbEngine::setHallSpec3Weight (float w)  { hall_.setSpecularWeight (3, w);  }
 void DuskVerbEngine::setHallSpecHFCutHz (float hz) { hall_.setSpecularHFCutHz (hz);   }
 
+// P10 per-band peaking EQ. Each gain/Q pair routed to its band's
+// setBassEQ/setMidEQ/setTrebleEQ which redesigns the biquad coefs.
+// We cache the OTHER axis locally in HallReverb so an isolated gain
+// update doesn't reset Q (and vice versa).
+namespace {
+    // Module-scope shadow caches per HallReverb instance would be ideal,
+    // but DuskVerbEngine only owns one hall_ — a single static is OK
+    // here. Defaults track HallReverb defaults.
+    float sHallBassEQGain = 0.0f, sHallBassEQQ = 0.707f;
+    float sHallMidEQGain  = 0.0f, sHallMidEQQ  = 0.707f;
+    float sHallTrebleEQGain = 0.0f, sHallTrebleEQQ = 0.707f;
+}
+void DuskVerbEngine::setHallBassEQGain   (float gainDb) { sHallBassEQGain = gainDb;  hall_.setBassEQ   (sHallBassEQGain,   sHallBassEQQ);   }
+void DuskVerbEngine::setHallBassEQQ      (float q)      { sHallBassEQQ    = q;       hall_.setBassEQ   (sHallBassEQGain,   sHallBassEQQ);   }
+void DuskVerbEngine::setHallMidEQGain    (float gainDb) { sHallMidEQGain  = gainDb;  hall_.setMidEQ    (sHallMidEQGain,    sHallMidEQQ);    }
+void DuskVerbEngine::setHallMidEQQ       (float q)      { sHallMidEQQ     = q;       hall_.setMidEQ    (sHallMidEQGain,    sHallMidEQQ);    }
+void DuskVerbEngine::setHallTrebleEQGain (float gainDb) { sHallTrebleEQGain = gainDb; hall_.setTrebleEQ (sHallTrebleEQGain, sHallTrebleEQQ); }
+void DuskVerbEngine::setHallTrebleEQQ    (float q)      { sHallTrebleEQQ    = q;     hall_.setTrebleEQ (sHallTrebleEQGain, sHallTrebleEQQ); }
+
 void DuskVerbEngine::setERLevel (float level)
 {
     erLevelSmoother_.setTarget (std::clamp (level, 0.0f, 1.0f));
