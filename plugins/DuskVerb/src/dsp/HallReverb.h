@@ -91,8 +91,40 @@ public:
     void setTankDiffusion     (float amount);
 
 private:
+    // Multi-tap input injection (Phase 3 — FoilPlate Pillar 1 shape applied
+    // to hall scale). A single predelay ring buffer feeds N taps at staggered
+    // delays before the LR4 band split. The summed (and unity-DC-normalized)
+    // tap output replaces the raw dry input as what reaches the SubTanks.
+    //
+    // Why: shaping ER density at the input gives clarity (C80, D50) and
+    // onset (EDT) control independent of tank decay. Wet-output envelope
+    // shaping (the alternative) breaks per-band RT60 measurements because
+    // peak-relative T20 fit windows shift with amplitude — multi-tap
+    // injection is the only Pillar-1-style EDT/C80/D50 lever that leaves
+    // rt60_per_band measurements undisturbed.
+    //
+    // Tap times anchored to Lex Hall "Med Hall" early-reflection structure
+    // (L_L_Rfl_Dly 22ms / L_R_Rfl_Dly 41ms / R_R_Rfl_Dly 26ms / R_L_Rfl_Dly
+    // 39ms per the saved fxp's XML). Three primary reflections in 22-55 ms,
+    // three sustainers in 90-200 ms keep the late-tail density up so the
+    // 1-3 s window doesn't die 4-10 dB faster than the Lex anchor (the
+    // failure we measured on the FDN Vocal Hall in the diagnosis pass).
+    static constexpr int   kNumPredelayTaps = 6;
+    static constexpr float kTapTimesMs[kNumPredelayTaps] =
+        { 22.0f, 35.0f, 55.0f, 90.0f, 140.0f, 200.0f };
+    static constexpr float kTapWeights[kNumPredelayTaps] =
+        {  1.00f, 0.65f, 0.50f, 0.40f, 0.30f, 0.20f };
+
     duskverb::dsp::LR4BandSplit splitL_, splitR_;
     duskverb::dsp::HallSubTank  bassTank_, midTank_, trebleTank_;
+
+    // Predelay ring buffer (sized at prepare() to fit the longest tap +
+    // headroom, rounded up to next power of 2 for mask-and addressing).
+    std::vector<float> predelayL_, predelayR_;
+    int                predelayWritePos_ = 0;
+    int                predelayMask_     = 0;
+    int                tapSamples_[kNumPredelayTaps] {};
+    float              tapNorm_          = 1.0f;   // = 1 / Σ kTapWeights
 
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop
@@ -120,4 +152,5 @@ private:
 
     void updateSubTankDecays();
     void updateCrossovers();
+    void recomputePredelayTaps();
 };

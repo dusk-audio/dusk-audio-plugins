@@ -1,7 +1,14 @@
 #include "HallReverb.h"
+#include "DspUtils.h"
 
 #include <algorithm>
 #include <cmath>
+
+// Out-of-line storage for the static constexpr arrays. C++17 makes these
+// inline by default for in-class definitions, but emitting the addresses
+// once here is harmless and keeps older toolchains happy.
+constexpr float HallReverb::kTapTimesMs[HallReverb::kNumPredelayTaps];
+constexpr float HallReverb::kTapWeights[HallReverb::kNumPredelayTaps];
 
 namespace
 {
@@ -55,6 +62,18 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     midTank_   .prepare (sampleRate, kMidDelays,    scratchBlockSize_);
     trebleTank_.prepare (sampleRate, kTrebleDelays, scratchBlockSize_);
 
+    // Predelay ring buffer — size to fit longest tap + modulation/safety
+    // headroom, rounded up to next power of 2 for mask-and addressing.
+    const float maxTapSec     = kTapTimesMs[kNumPredelayTaps - 1] * 0.001f;
+    const int   maxTapSamples = static_cast<int> (std::ceil (maxTapSec
+                              * static_cast<float> (sampleRate))) + 64;
+    const int   predelaySize  = DspUtils::nextPowerOf2 (std::max (maxTapSamples, 1024));
+    predelayL_.assign (static_cast<size_t> (predelaySize), 0.0f);
+    predelayR_.assign (static_cast<size_t> (predelaySize), 0.0f);
+    predelayMask_     = predelaySize - 1;
+    predelayWritePos_ = 0;
+    recomputePredelayTaps();
+
     const size_t sz = static_cast<size_t> (scratchBlockSize_);
     bassInL_  .assign (sz, 0.0f); bassInR_  .assign (sz, 0.0f);
     midInL_   .assign (sz, 0.0f); midInR_   .assign (sz, 0.0f);
@@ -68,6 +87,25 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     setDamping (dampingAmount_);
 }
 
+void HallReverb::recomputePredelayTaps()
+{
+    // Convert each tap's ms into sample count at the current sample rate.
+    // Compute tapNorm so summed tap output has unity DC gain — keeps tank
+    // input level identical to bare-tank case so the soft-clip threshold
+    // and any preset gainTrim calibration carry over unchanged.
+    float sumW = 0.0f;
+    for (int t = 0; t < kNumPredelayTaps; ++t)
+    {
+        tapSamples_[t] = static_cast<int> (std::round (kTapTimesMs[t]
+                                            * 0.001f * static_cast<float> (sampleRate_)));
+        // Cap to (bufferSize - 1) defensively; predelay buffer is sized
+        // above to fit the longest tap so this clamp shouldn't fire.
+        if (tapSamples_[t] > predelayMask_) tapSamples_[t] = predelayMask_;
+        sumW += kTapWeights[t];
+    }
+    tapNorm_ = (sumW > 0.0f) ? (1.0f / sumW) : 1.0f;
+}
+
 void HallReverb::clearBuffers()
 {
     bassTank_.clear();
@@ -75,6 +113,9 @@ void HallReverb::clearBuffers()
     trebleTank_.clear();
     splitL_.reset();
     splitR_.reset();
+    std::fill (predelayL_.begin(), predelayL_.end(), 0.0f);
+    std::fill (predelayR_.begin(), predelayR_.end(), 0.0f);
+    predelayWritePos_ = 0;
 }
 
 void HallReverb::updateCrossovers()
@@ -105,14 +146,34 @@ void HallReverb::process (const float* inputL, const float* inputR,
     {
         const int n = std::min (remaining, scratchBlockSize_);
 
-        // ── LR4 band split per channel ──
+        // ── Multi-tap input injection → LR4 band split per channel ──
+        // Each sample: write dry input to predelay ring, read N taps at
+        // staggered delays, sum × unity-DC-norm, feed the result to the
+        // band split. Tank input retains unity DC gain so the soft-clip
+        // calibration carries over unchanged from the bare-tank baseline.
         for (int i = 0; i < n; ++i)
         {
-            const float xL = inputL[offset + i];
-            const float xR = inputR[offset + i];
+            const float dryL = inputL[offset + i];
+            const float dryR = inputR[offset + i];
+
+            predelayL_[static_cast<size_t> (predelayWritePos_)] = dryL;
+            predelayR_[static_cast<size_t> (predelayWritePos_)] = dryR;
+
+            float sumL = 0.0f, sumR = 0.0f;
+            for (int t = 0; t < kNumPredelayTaps; ++t)
+            {
+                const int readIdx = (predelayWritePos_ - tapSamples_[t]) & predelayMask_;
+                sumL += predelayL_[static_cast<size_t> (readIdx)] * kTapWeights[t];
+                sumR += predelayR_[static_cast<size_t> (readIdx)] * kTapWeights[t];
+            }
+            predelayWritePos_ = (predelayWritePos_ + 1) & predelayMask_;
+
+            sumL *= tapNorm_;
+            sumR *= tapNorm_;
+
             float bL, mL, tL, bR, mR, tR;
-            splitL_.split (xL, bL, mL, tL);
-            splitR_.split (xR, bR, mR, tR);
+            splitL_.split (sumL, bL, mL, tL);
+            splitR_.split (sumR, bR, mR, tR);
             bassInL_  [i] = bL; bassInR_  [i] = bR;
             midInL_   [i] = mL; midInR_   [i] = mR;
             trebleInL_[i] = tL; trebleInR_[i] = tR;
