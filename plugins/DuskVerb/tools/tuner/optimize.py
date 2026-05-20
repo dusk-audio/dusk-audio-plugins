@@ -111,7 +111,7 @@ def _make_eval_fn(cfg: TuneConfig, anchor: dict, axis_names: list[str],
                 slug_prefix=f"{cfg.name}_opt",
             )
             meas.pop("_warnings", None)
-            loss, breakdown = metrics_mod.compute_loss(meas, anchor, cfg.metrics)
+            loss, breakdown, _penalties = metrics_mod.compute_loss(meas, anchor, cfg.metrics)
         except Exception as e:
             print(f"  ! eval failed: {e}", file=sys.stderr)
             loss, breakdown, meas = float("inf"), {}, {}
