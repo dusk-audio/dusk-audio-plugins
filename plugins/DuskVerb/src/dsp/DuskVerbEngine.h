@@ -158,6 +158,9 @@ public:
     void setHallMidEQQ      (float q);
     void setHallTrebleEQGain (float gainDb);
     void setHallTrebleEQQ    (float q);
+    void setHallBassEQFc     (float hz);
+    void setHallMidEQFc      (float hz);
+    void setHallTrebleEQFc   (float hz);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the

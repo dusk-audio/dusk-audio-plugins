@@ -131,12 +131,12 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
 
     // P10 peaking-EQ biquads — design at current (gain_dB, Q) so any
     // value pushed via APVTS before prepare is already in effect.
-    bassEQL_  .designPeaking (kBassEQFc,   bassEQQ_,   bassEQGainDb_,   sr);
-    bassEQR_  .designPeaking (kBassEQFc,   bassEQQ_,   bassEQGainDb_,   sr);
-    midEQL_   .designPeaking (kMidEQFc,    midEQQ_,    midEQGainDb_,    sr);
-    midEQR_   .designPeaking (kMidEQFc,    midEQQ_,    midEQGainDb_,    sr);
-    trebleEQL_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
-    trebleEQR_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
+    bassEQL_  .designPeaking (bassEQFc_,   bassEQQ_,   bassEQGainDb_,   sr);
+    bassEQR_  .designPeaking (bassEQFc_,   bassEQQ_,   bassEQGainDb_,   sr);
+    midEQL_   .designPeaking (midEQFc_,    midEQQ_,    midEQGainDb_,    sr);
+    midEQR_   .designPeaking (midEQFc_,    midEQQ_,    midEQGainDb_,    sr);
+    trebleEQL_.designPeaking (trebleEQFc_, trebleEQQ_, trebleEQGainDb_, sr);
+    trebleEQR_.designPeaking (trebleEQFc_, trebleEQQ_, trebleEQGainDb_, sr);
     bassEQL_.reset();   bassEQR_.reset();
     midEQL_.reset();    midEQR_.reset();
     trebleEQL_.reset(); trebleEQR_.reset();
@@ -220,8 +220,8 @@ void HallReverb::setBassEQ (float gainDb, float q)
     bassEQQ_      = std::clamp (q,        0.3f,  6.0f);
     if (! prepared_) return;
     const float sr = static_cast<float> (sampleRate_);
-    bassEQL_.designPeaking (kBassEQFc, bassEQQ_, bassEQGainDb_, sr);
-    bassEQR_.designPeaking (kBassEQFc, bassEQQ_, bassEQGainDb_, sr);
+    bassEQL_.designPeaking (bassEQFc_, bassEQQ_, bassEQGainDb_, sr);
+    bassEQR_.designPeaking (bassEQFc_, bassEQQ_, bassEQGainDb_, sr);
 }
 
 void HallReverb::setMidEQ (float gainDb, float q)
@@ -230,8 +230,8 @@ void HallReverb::setMidEQ (float gainDb, float q)
     midEQQ_      = std::clamp (q,        0.3f,  6.0f);
     if (! prepared_) return;
     const float sr = static_cast<float> (sampleRate_);
-    midEQL_.designPeaking (kMidEQFc, midEQQ_, midEQGainDb_, sr);
-    midEQR_.designPeaking (kMidEQFc, midEQQ_, midEQGainDb_, sr);
+    midEQL_.designPeaking (midEQFc_, midEQQ_, midEQGainDb_, sr);
+    midEQR_.designPeaking (midEQFc_, midEQQ_, midEQGainDb_, sr);
 }
 
 void HallReverb::setTrebleEQ (float gainDb, float q)
@@ -240,8 +240,40 @@ void HallReverb::setTrebleEQ (float gainDb, float q)
     trebleEQQ_      = std::clamp (q,        0.3f,  6.0f);
     if (! prepared_) return;
     const float sr = static_cast<float> (sampleRate_);
-    trebleEQL_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
-    trebleEQR_.designPeaking (kTrebleEQFc, trebleEQQ_, trebleEQGainDb_, sr);
+    trebleEQL_.designPeaking (trebleEQFc_, trebleEQQ_, trebleEQGainDb_, sr);
+    trebleEQR_.designPeaking (trebleEQFc_, trebleEQQ_, trebleEQGainDb_, sr);
+}
+
+// Per-band EQ centre-frequency setters. Each clamps to a band-local
+// range so the optimizer can't push a band's EQ outside its sub-tank's
+// passband. Range bounds picked to keep ±octave of headroom around
+// the default while staying inside the LR4 split's bass/mid/treble
+// territory (split fLow/fHigh defaults 600/4500).
+void HallReverb::setBassEQFc (float hz)
+{
+    bassEQFc_ = std::clamp (hz, 50.0f, 800.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    bassEQL_.designPeaking (bassEQFc_, bassEQQ_, bassEQGainDb_, sr);
+    bassEQR_.designPeaking (bassEQFc_, bassEQQ_, bassEQGainDb_, sr);
+}
+
+void HallReverb::setMidEQFc (float hz)
+{
+    midEQFc_ = std::clamp (hz, 200.0f, 5000.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    midEQL_.designPeaking (midEQFc_, midEQQ_, midEQGainDb_, sr);
+    midEQR_.designPeaking (midEQFc_, midEQQ_, midEQGainDb_, sr);
+}
+
+void HallReverb::setTrebleEQFc (float hz)
+{
+    trebleEQFc_ = std::clamp (hz, 2000.0f, 18000.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    trebleEQL_.designPeaking (trebleEQFc_, trebleEQQ_, trebleEQGainDb_, sr);
+    trebleEQR_.designPeaking (trebleEQFc_, trebleEQQ_, trebleEQGainDb_, sr);
 }
 
 void HallReverb::setSpecularTimeMs (int index, float ms)
