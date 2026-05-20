@@ -35,40 +35,57 @@ static inline float lcgSigned (uint32_t& state)
 
 namespace
 {
-    // Per-channel LFO phase seeds — distinct fractions of 2π so the 8 channels
-    // never line up periodically. Acts on top of the SubTank's
-    // bandPhaseOffset_ (the per-band offset HallReverb sets to stagger bass /
-    // mid / treble).
+    // Per-channel LFO phase seeds — distinct fractions of 2π so the 16
+    // channels never line up periodically. Acts on top of the SubTank's
+    // bandPhaseOffset_ (the per-band offset HallReverb sets to stagger
+    // bass / mid / treble). P12 expanded from 8 → 16 with the seeds at
+    // 2π·k/16 for k=0..15.
     constexpr float kChannelPhaseSeeds[HallSubTank::N] = {
-        0.000f, 0.785f, 1.571f, 2.356f, 3.142f, 3.927f, 4.712f, 5.498f
+        0.0000f, 0.3927f, 0.7854f, 1.1781f, 1.5708f, 1.9635f, 2.3562f, 2.7489f,
+        3.1416f, 3.5343f, 3.9270f, 4.3197f, 4.7124f, 5.1051f, 5.4978f, 5.8905f
     };
 
-    // 1/√8 — kept file-local so the kernel doesn't depend on a private
+    // 1/√16 — kept file-local so the kernel doesn't depend on a private
     // class constant. Identical numerical value to HallSubTank::kHadamardNorm.
-    constexpr float kInternalHadamardNorm = 0.353553390593274f;
+    constexpr float kInternalHadamardNorm = 0.25f;
 
-    // In-place 8-channel Hadamard transform (1/√8 normalized). Same kernel as
-    // FDNReverbSIMDKernels::hadamardInPlace8 — duplicated here as a private
-    // static so HallSubTank doesn't depend on the FDN-flavoured SIMD header.
-    inline void hadamard8 (float* d)
+    // In-place 16-channel Hadamard transform (1/√16 normalized). 4
+    // butterfly passes for the 16 = 2^4 case: pairs → quads → octets →
+    // halves. Normalization applied once at the final pass to keep the
+    // matrix unitary (energy-preserving). P12 expanded from hadamard8 to
+    // densify modal field across each band's feedback loops.
+    inline void hadamard16 (float* d)
     {
-        for (int i = 0; i < 8; i += 2)
+        // Pass 1: adjacent pairs (n=2 butterfly).
+        for (int i = 0; i < 16; i += 2)
         {
             const float a = d[i], b = d[i + 1];
             d[i] = a + b; d[i + 1] = a - b;
         }
-        for (int i = 0; i < 8; i += 4)
+        // Pass 2: adjacent quads (n=4 butterfly).
+        for (int i = 0; i < 16; i += 4)
         {
-            float a0 = d[i], a1 = d[i + 1];
-            float b0 = d[i + 2], b1 = d[i + 3];
+            const float a0 = d[i],     a1 = d[i + 1];
+            const float b0 = d[i + 2], b1 = d[i + 3];
             d[i]     = a0 + b0; d[i + 1] = a1 + b1;
             d[i + 2] = a0 - b0; d[i + 3] = a1 - b1;
         }
-        for (int j = 0; j < 4; ++j)
+        // Pass 3: adjacent octets (n=8 butterfly).
+        for (int i = 0; i < 16; i += 8)
         {
-            const float a = d[j], b = d[j + 4];
+            for (int j = 0; j < 4; ++j)
+            {
+                const float a = d[i + j], b = d[i + j + 4];
+                d[i + j]     = a + b;
+                d[i + j + 4] = a - b;
+            }
+        }
+        // Pass 4: lower vs upper half (n=16 butterfly), apply norm here.
+        for (int j = 0; j < 8; ++j)
+        {
+            const float a = d[j], b = d[j + 8];
             d[j]     = (a + b) * kInternalHadamardNorm;
-            d[j + 4] = (a - b) * kInternalHadamardNorm;
+            d[j + 8] = (a - b) * kInternalHadamardNorm;
         }
     }
 }
@@ -85,18 +102,22 @@ constexpr int   HallSubTank::kInlineAPDelays[HallSubTank::N];
 
 HallSubTank::HallSubTank()
 {
-    // Default base delays: small primes in the 200-1000 sample range at 44.1k.
-    // Caller should override via prepare() with band-appropriate primes.
-    constexpr int kDefaults[N] = { 281, 311, 353, 401, 449, 503, 569, 631 };
+    // Default base delays: small primes in the 200-1200 sample range at
+    // 44.1k. Caller should override via prepare() with band-appropriate
+    // primes. P12 expanded from 8 → 16 entries.
+    constexpr int kDefaults[N] = {
+        281, 311, 353, 401, 449, 503, 569, 631,
+        701, 743, 811, 859, 919, 983, 1051, 1117
+    };
     std::memcpy (baseDelays_, kDefaults, sizeof (baseDelays_));
 }
 
-void HallSubTank::prepare (double sampleRate, const int* baseDelays8,
+void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
                            int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
-    if (baseDelays8 != nullptr)
-        std::memcpy (baseDelays_, baseDelays8, sizeof (baseDelays_));
+    if (baseDelaysN != nullptr)
+        std::memcpy (baseDelays_, baseDelaysN, sizeof (baseDelays_));
 
     // Allocate buffers for max-size scale 2.0× plus modulation excursion
     // headroom. Caller's setSize is clamped to [0.5, 2.0] in HallReverb.
@@ -391,7 +412,7 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         }
 
         // ──── Hadamard cross-mixing (in place, normalized) ─────────────
-        hadamard8 (channelOut);
+        hadamard16 (channelOut);
 
         // ──── Write back to each delay line with feedback gain + input ─
         for (int i = 0; i < N; ++i)
