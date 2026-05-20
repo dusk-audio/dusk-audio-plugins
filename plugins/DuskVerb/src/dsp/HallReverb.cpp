@@ -119,8 +119,15 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     setBandDamping (dampingBass_, dampingMid_, dampingTreble_);
     recomputeSpecularTaps();
     recomputeSpecularLP();
-    specularLPStateL_ = 0.0f;
-    specularLPStateR_ = 0.0f;
+    specularLP1StateL_ = specularLP1StateR_ = 0.0f;
+    specularLP2StateL_ = specularLP2StateR_ = 0.0f;
+    // Initialize wet Hi Cut biquad in bypass state. setWetHiCutHz() from
+    // DuskVerbEngine will configure it to the user's hi_cut value.
+    const float sr = static_cast<float> (sampleRate);
+    wetHiCutBiquadL_.designLP (wetHiCutHz_, sr);
+    wetHiCutBiquadR_.designLP (wetHiCutHz_, sr);
+    wetHiCutBiquadL_.reset();
+    wetHiCutBiquadR_.reset();
 }
 
 void HallReverb::recomputePredelayTaps()
@@ -173,14 +180,26 @@ void HallReverb::recomputeSpecularTaps()
 
 void HallReverb::recomputeSpecularLP()
 {
-    // One-pole low-pass coefficient: y = alpha · x + (1 − alpha) · y_z1.
-    // alpha = 1 − exp(−2π · fc / sr) — standard analog-prototype mapping.
-    // HF guardrail keeps raw dry HF transients from spiking treble_ratio
-    // and spectral_crest_db when the specular path mixes into the output.
+    // Cascade of 2× 1-pole LPs (P8c — strictly monotonic impulse so the
+    // peak_locations_ms detector doesn't pick up spurious rebound peaks).
+    // Each stage uses alpha = 1 − exp(−2π · fc / sr) with the SAME
+    // per-stage cutoff; the cascade is -6 dB at fc instead of the -3 dB
+    // a single biquad would give at the same fc, which is acceptable for
+    // a guardrail (exact corner doesn't matter, slope and impulse shape
+    // do).
     const float fc = std::max (50.0f, std::min (specularHFCutHz_, 20000.0f));
     const float twoPiFcOverSr = 6.283185307179586f * fc
                               / static_cast<float> (std::max (sampleRate_, 1000.0));
     specularLPAlpha_ = 1.0f - std::exp (-twoPiFcOverSr);
+}
+
+void HallReverb::setWetHiCutHz (float hz)
+{
+    wetHiCutHz_ = std::clamp (hz, 50.0f, 20000.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    wetHiCutBiquadL_.designLP (wetHiCutHz_, sr);
+    wetHiCutBiquadR_.designLP (wetHiCutHz_, sr);
 }
 
 void HallReverb::setSpecularTimeMs (int index, float ms)
@@ -218,8 +237,10 @@ void HallReverb::clearBuffers()
     std::fill (predelayL_.begin(), predelayL_.end(), 0.0f);
     std::fill (predelayR_.begin(), predelayR_.end(), 0.0f);
     predelayWritePos_ = 0;
-    specularLPStateL_ = 0.0f;
-    specularLPStateR_ = 0.0f;
+    specularLP1StateL_ = specularLP1StateR_ = 0.0f;
+    specularLP2StateL_ = specularLP2StateR_ = 0.0f;
+    wetHiCutBiquadL_.reset();
+    wetHiCutBiquadR_.reset();
 }
 
 void HallReverb::updateCrossovers()
@@ -346,26 +367,37 @@ void HallReverb::process (const float* inputL, const float* inputR,
             treblePostL_.split (trebleOutL_[i], tL_b, tL_m, tL_t);
             treblePostR_.split (trebleOutR_[i], tR_b, tR_m, tR_t);
 
-            const float wetL = bL_b * gB + mL_m * gM + tL_t * gT;
-            const float wetR = bR_b * gB + mR_m * gM + tR_t * gT;
+            float wetL = bL_b * gB + mL_m * gM + tL_t * gT;
+            float wetR = bR_b * gB + mR_m * gM + tR_t * gT;
+
+            // ── P8c — wet-only Hi Cut (2-pole RBJ LP) ─────────────────
+            // Replaces DuskVerbEngine's global Hi Cut filter for this
+            // engine (DuskVerbEngine bypasses its filter when
+            // currentEngine_ == Hall). Wet tank tail gets shaped here;
+            // specular path stays untouched by this filter.
+            wetL = wetHiCutBiquadL_.process (wetL);
+            wetR = wetHiCutBiquadR_.process (wetR);
 
             float oL = wetL - b * wetR;
             float oR = wetR - b * wetL;
 
-            // ── P8b — direct specular taps (bypass sub-tanks + widener) ──
-            // Per-sample raw specular sum was captured in the injection
-            // loop while predelayWritePos_ tracked sample i. Apply the
-            // 1-pole LP guardrail here and mix into the band-summed wet
-            // signal after the widener (so specular L/R signs carry
-            // through without M/S re-encoding).
+            // ── P8b/c — direct specular taps (bypass sub-tanks + widener
+            // + wet Hi Cut). Per-sample raw specular sum was captured in
+            // the injection loop while predelayWritePos_ tracked sample i.
+            // Cascade of 2× 1-pole LPs gives 12 dB/oct with a strictly
+            // monotonic impulse response — earlier 2-pole RBJ biquad's
+            // small negative impulse lobes were detected by the
+            // peak_locations_ms metric as ghost peaks.
             const float rawSpecL = specularInL_[static_cast<size_t> (i)];
             const float rawSpecR = specularInR_[static_cast<size_t> (i)];
-            specularLPStateL_ = specularLPAlpha_ * rawSpecL
-                              + (1.0f - specularLPAlpha_) * specularLPStateL_;
-            specularLPStateR_ = specularLPAlpha_ * rawSpecR
-                              + (1.0f - specularLPAlpha_) * specularLPStateR_;
-            oL += specularLPStateL_;
-            oR += specularLPStateR_;
+            const float a1 = specularLPAlpha_;
+            const float oma = 1.0f - a1;
+            specularLP1StateL_ = a1 * rawSpecL + oma * specularLP1StateL_;
+            specularLP1StateR_ = a1 * rawSpecR + oma * specularLP1StateR_;
+            specularLP2StateL_ = a1 * specularLP1StateL_ + oma * specularLP2StateL_;
+            specularLP2StateR_ = a1 * specularLP1StateR_ + oma * specularLP2StateR_;
+            oL += specularLP2StateL_;
+            oR += specularLP2StateR_;
 
             if (doSat)
             {

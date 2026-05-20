@@ -138,6 +138,11 @@ public:
     void setSpecularTimeMs    (int index, float ms);
     void setSpecularWeight    (int index, float weight);
     void setSpecularHFCutHz   (float hz);
+    // Wet-only Hi Cut (P8c). HallReverb owns its own LP on the band-summed
+    // wet path so DuskVerbEngine can bypass its global Hi Cut filter for
+    // the Hall engine — the specular path stays outside this filter and
+    // gets only its dedicated 2-pole LP at hall_spec_hf_cut.
+    void setWetHiCutHz        (float hz);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
@@ -253,9 +258,23 @@ private:
     float              specularWeights_[kNumSpecularTaps] {};
     int                specularTapSamples_[kNumSpecularTaps] {};
     float              specularHFCutHz_  = kDefaultSpecularHFCutHz;
-    float              specularLPAlpha_  = 0.5f;       // recomputed from HF cut + sr
-    float              specularLPStateL_ = 0.0f;
-    float              specularLPStateR_ = 0.0f;
+    // Specular HF guardrail. Two cascaded 1-pole LPs per channel — 12 dB/oct
+    // slope with a strictly monotonic impulse response (no rebound). RBJ
+    // Butterworth (Q=0.707) was first tried but its impulse response has
+    // small negative lobes at samples 5-7 which the peak_locations_ms
+    // detector reads as additional peaks; cascaded 1-poles eliminate the
+    // oscillation while keeping the steeper-than-1-pole rolloff that
+    // preserves the early-reflection bite while damping HF "metallic"
+    // transients.
+    float              specularLPAlpha_   = 0.5f;     // shared per-stage coeff
+    float              specularLP1StateL_ = 0.0f, specularLP1StateR_ = 0.0f;
+    float              specularLP2StateL_ = 0.0f, specularLP2StateR_ = 0.0f;
+    // Wet-path Hi Cut biquad (P8c). Replaces DuskVerbEngine's global Hi Cut
+    // for the Hall engine — applied to the band-summed wet signal before
+    // the specular taps mix in, so specular content stays unfiltered by
+    // this LP.
+    duskverb::dsp::LR4BandSplit::Biquad wetHiCutBiquadL_, wetHiCutBiquadR_;
+    float              wetHiCutHz_      = 20000.0f;     // bypass-effective until set
 
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop

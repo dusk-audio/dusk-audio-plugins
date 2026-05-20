@@ -562,6 +562,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         {
             lastAppliedHiCut_ = hiCutNow;
             updateHiCutCoeffs (hiCutNow);
+            // P8c — HallReverb owns its own wet Hi Cut so its specular path
+            // stays outside this filter. Pushing the same value here keeps
+            // the wet-tail timbre identical to other engines' post-tank
+            // Hi Cut response. The engine-level hiCutFilter_ is bypassed
+            // for the Hall engine below.
+            hall_.setWetHiCutHz (hiCutNow);
         }
         if (std::abs (monoNow - lastAppliedMonoHz_) > 0.5f)
         {
@@ -708,8 +714,16 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
 
         wetL = loCutFilter_.processL (wetL);
         wetR = loCutFilter_.processR (wetR);
-        wetL = hiCutFilter_.processL (wetL);
-        wetR = hiCutFilter_.processR (wetR);
+        // P8c — Hall engine owns its own wet Hi Cut (applied inside
+        // HallReverb's process() before specular mix), so the engine-level
+        // hi-cut filter is bypassed here for Hall. Specular taps then
+        // route to output past the global Hi Cut, fixing the gain-staging
+        // bottleneck that forced spec weights to crank to 6-8.
+        if (currentEngine_ != EngineType::Hall)
+        {
+            wetL = hiCutFilter_.processL (wetL);
+            wetR = hiCutFilter_.processR (wetR);
+        }
 
         // Mono Maker — sums L+R below the cutoff to mono before width
         // processing. 1st-order matched-phase complementary split: HP = input
