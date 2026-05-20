@@ -1551,6 +1551,27 @@ void EngineGlyph::paint (juce::Graphics& g)
             }
             break;
         }
+        case EngineType::Plate:
+        case EngineType::FoilPlate:
+        case EngineType::Hall:
+        {
+            // Placeholder glyph for engines that don't yet have a bespoke
+            // illustration. Three stacked horizontal bars — generic
+            // "multi-band parallel" cue that also covers Plate / FoilPlate
+            // (LR4 split) and Hall (3-band parallel sub-tanks). Replace
+            // with engine-specific glyphs in a UI pass once the engine
+            // family stabilises.
+            const float barW = inner.getWidth() * 0.75f;
+            const float barH = h * 0.12f;
+            const float gap  = h * 0.06f;
+            const float x0   = cx - barW * 0.5f;
+            for (int i = 0; i < 3; ++i)
+            {
+                const float y = cy + (static_cast<float> (i) - 1.0f) * (barH + gap) - barH * 0.5f;
+                g.fillRoundedRectangle (x0, y, barW, barH, barH * 0.4f);
+            }
+            break;
+        }
     }
 }
 

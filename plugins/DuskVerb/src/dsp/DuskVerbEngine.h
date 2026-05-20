@@ -5,6 +5,7 @@
 #include "DattorroPlateVintage.h"
 #include "PlateEngine.h"
 #include "FoilPlateEngine.h"
+#include "HallReverb.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FirstReflections.h"
@@ -174,6 +175,7 @@ private:
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-Lex post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
     PlateEngine        plate_;              // algo 8 (2026-05-18): PCM-foil-plate engine, built for Lex Vintage Plate per-band fit when no other engine could land all RT60 bands within JND.
     FoilPlateEngine    foilPlate_;          // algo 9 (2026-05-19): second-gen foil-plate engine — per-band LR4 split + parallel reverberators + onset envelope + deterministic sine LFOs. Built to close C80/D50/EDT/16k/stab gaps PlateEngine plateaued on.
+    HallReverb         hall_;               // algo 10 (2026-05-19): 3-band parallel sub-tank hall — LR4 split → 3× 8-ch Hadamard FDN sub-tanks, multi-tap input injection, post-tank M/S widener. Built for the LexHall natural-hall family (Med Hall / Large Hall / Vocal Hall anchors); first proof preset migration in Phase 6.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
