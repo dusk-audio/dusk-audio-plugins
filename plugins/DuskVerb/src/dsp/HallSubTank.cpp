@@ -203,6 +203,11 @@ void HallSubTank::recomputeFeedbackGains()
         const float loopSec = static_cast<float> (scaledDelay_[i])
                             / static_cast<float> (sampleRate_);
         feedbackGain_[i] = std::pow (10.0f, -3.0f * loopSec / decayClamped);
+        feedbackGain_[i] *= channelGainScale_[i];
+        // Stability cap — channelGainSpread can push gain above unity
+        // if the loop is short relative to RT60. Clamp keeps the FDN
+        // from running away under extreme settings.
+        if (feedbackGain_[i] > 0.999f) feedbackGain_[i] = 0.999f;
         if (frozen_) feedbackGain_[i] = 1.0f;
     }
 }
@@ -238,6 +243,37 @@ void HallSubTank::setModRate (float hz)
 void HallSubTank::setModShape (float shape)
 {
     modShape_ = std::clamp (shape, 0.0f, 1.0f);
+}
+
+void HallSubTank::setChannelGainSpread (float spread)
+{
+    const float clamped = std::clamp (spread, 0.0f, 0.4f);
+    if (clamped == channelGainSpread_) return;
+    channelGainSpread_ = clamped;
+    // Deterministic per-channel scale factors. Seed mixes channel index
+    // with a band-distinguishing salt so the three SubTanks (bass / mid /
+    // treble) get independent gain patterns; same scheme as the random-
+    // walk modulator's seeding.
+    const uint32_t bandSalt = static_cast<uint32_t> (
+        static_cast<int> (bandPhaseOffset_ * 1000.0f) & 0xFFFF);
+    for (int i = 0; i < N; ++i)
+    {
+        uint32_t seed = (static_cast<uint32_t> (i) * 2246822519u)
+                      ^ (bandSalt * 3266489917u)
+                      ^ 0xCAFEBABEu;
+        if (seed == 0u) seed = 1u;
+        // Attenuation-only scale ∈ [1 - spread, 1.0]. Never amplifies the
+        // baseline feedbackGain_[i] = pow(10, -3·loopSec/RT60), so the
+        // 0.999 stability clamp in recomputeFeedbackGains can't be tripped
+        // by spread alone (it's still there as a safety net for the
+        // baseline gain). The result: some channels decay slightly faster,
+        // none decay slower — net RT60 a few percent shorter than the
+        // nominal Decay Time, but per-channel rates are decorrelated.
+        const float xiUnsigned = static_cast<float> (lcgNext (seed))
+                               * (1.0f / 4294967296.0f);  // [0, 1)
+        channelGainScale_[i] = 1.0f - channelGainSpread_ * xiUnsigned;
+    }
+    recomputeFeedbackGains();
 }
 
 void HallSubTank::setSize (float sizeScale)

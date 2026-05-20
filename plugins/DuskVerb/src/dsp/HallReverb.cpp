@@ -651,6 +651,9 @@ void HallReverb::setTrebleModRate  (float hz)      { trebleTank_.setModRate  (hz
 void HallReverb::setBassModShape   (float shape)   { bassTank_  .setModShape (shape); }
 void HallReverb::setMidModShape    (float shape)   { midTank_   .setModShape (shape); }
 void HallReverb::setTrebleModShape (float shape)   { trebleTank_.setModShape (shape); }
+void HallReverb::setBassChannelGainSpread   (float s) { bassTank_  .setChannelGainSpread (s); }
+void HallReverb::setMidChannelGainSpread    (float s) { midTank_   .setChannelGainSpread (s); }
+void HallReverb::setTrebleChannelGainSpread (float s) { trebleTank_.setChannelGainSpread (s); }
 
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }
 void HallReverb::setMidGain    (float g) { gainMid_    = std::max (0.0f, g); }

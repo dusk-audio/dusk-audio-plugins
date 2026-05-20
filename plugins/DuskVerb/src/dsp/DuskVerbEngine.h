@@ -173,6 +173,9 @@ public:
     void setHallBassModShape    (float shape);
     void setHallMidModShape     (float shape);
     void setHallTrebleModShape  (float shape);
+    void setHallBassChannelGainSpread   (float spread);
+    void setHallMidChannelGainSpread    (float spread);
+    void setHallTrebleChannelGainSpread (float spread);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the

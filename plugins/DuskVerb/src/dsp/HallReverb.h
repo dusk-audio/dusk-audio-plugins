@@ -128,6 +128,16 @@ public:
     void setBassModShape      (float shape);
     void setMidModShape       (float shape);
     void setTrebleModShape    (float shape);
+    // Per-band channel feedback gain spread (Lex-style decoherence). 0 =
+    // identical gain across the 8 channels of the band's SubTank → fully
+    // synchronous modal decay → centroid_drift_per_band peaks. Positive
+    // spread decorrelates per-channel decay rates WITHOUT differential
+    // frequency attenuation (unlike the in-feedback damping LP). Default
+    // 0 preserves backwards compatibility; calibration target is non-zero
+    // in conjunction with low Damping setting.
+    void setBassChannelGainSpread   (float spread);
+    void setMidChannelGainSpread    (float spread);
+    void setTrebleChannelGainSpread (float spread);
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
