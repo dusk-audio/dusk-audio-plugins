@@ -47,16 +47,24 @@ namespace duskverb::dsp
 class HallSubTank
 {
 public:
-    static constexpr int N = 8;
-    static constexpr int kNumOutputTaps = 4;     // 4 L + 4 R
+    // P12 16-channel expansion. Doubled from 8 → 16 to densify the modal
+    // field — directly attacks box_ratio + spectral_crest + the FDN
+    // intrinsic-peak masking that keeps peak_locations OUT. The doubled
+    // modal count also doubles RT60-loop-gain headroom (more channels =
+    // each per-loop attenuation contributes less to the round-trip
+    // energy), but the gain formula pow(10, -3·loopSec/RT60) stays
+    // channel-count-independent by construction since RT60 is derived
+    // per-loop.
+    static constexpr int N = 16;
+    static constexpr int kNumOutputTaps = 8;     // 8 L + 8 R
 
     HallSubTank();
 
-    // Caller passes 8 prime base delay lengths in samples at 44.1k. SubTank
+    // Caller passes N prime base delay lengths in samples at 44.1k. SubTank
     // scales them by (sampleRate / 44100) × sizeScale at prepare/setSize time.
     // maxBlockSize is informational — buffers are allocated for the max
     // delay-line length, not per-block.
-    void prepare (double sampleRate, const int* baseDelays8, int maxBlockSize);
+    void prepare (double sampleRate, const int* baseDelaysN, int maxBlockSize);
     void clear();
     void process (const float* inputL, const float* inputR,
                   float* outputL, float* outputR, int numSamples);
@@ -131,9 +139,9 @@ public:
 private:
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float  kTwoPi          = 6.283185307179586f;
-    // 1/sqrt(8) Hadamard normalization, applied once per sample inside the
-    // mixing kernel so the FDN matrix is unitary.
-    static constexpr float  kHadamardNorm   = 0.353553390593274f;
+    // 1/sqrt(16) Hadamard normalization, applied once per sample inside
+    // the mixing kernel so the FDN matrix is unitary. P12 16-channel.
+    static constexpr float  kHadamardNorm   = 0.25f;
     // Soft-clip ceiling — catches numerical blow-up under freeze / extreme
     // mod-depth. Same value FDNReverb uses.
     static constexpr float  kSafetyClip     = 8.0f;
@@ -176,10 +184,13 @@ private:
     };
 
     // Inline AP prime delays — coprime with the main delay-line primes
-    // any caller supplies via prepare(). At 44.1 kHz these are 0.9–3.0 ms
-    // loops; SubTank scales by sampleRate ratio at prepare time.
+    // any caller supplies via prepare(). At 44.1 kHz these are 0.9–3.3 ms
+    // loops; SubTank scales by sampleRate ratio at prepare time. P12
+    // expanded from 8 → 16 primes; all primes mutually coprime and
+    // coprime with the bass/mid/treble main delay primes in HallReverb.cpp.
     static constexpr int kInlineAPDelays[N] = {
-        41, 47, 53, 59, 67, 71, 79, 83
+        41,  47,  53,  59,  67,  71,  79,  83,
+        89,  97, 101, 103, 107, 109, 113, 127
     };
 
     // Per-channel state (RT-side; written each sample, never the snapshot).
@@ -202,7 +213,10 @@ private:
     // Per-channel gain scale factor 1 + spread·ξᵢ for ξᵢ ∈ [-0.5, +0.5].
     // Recomputed only when channelGainSpread_ changes; multiplied into
     // feedbackGain_ in recomputeFeedbackGains().
-    float channelGainScale_ [N] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    float channelGainScale_ [N] = {
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f
+    };
 
     // Scaled delay lengths in samples (base × sr-ratio × sizeScale, rounded).
     int   scaledDelay_  [N] {};
@@ -232,10 +246,14 @@ private:
     // Output tap routing — alternating signs decorrelate L/R from the same
     // set of channels. Indexes chosen so left and right read disjoint
     // channel subsets (no shared mode visible in either output).
-    static constexpr int   kLeftTaps  [kNumOutputTaps] = { 0, 2, 4, 6 };
-    static constexpr int   kRightTaps [kNumOutputTaps] = { 1, 3, 5, 7 };
-    static constexpr float kLeftSigns [kNumOutputTaps] = { +1.0f, -1.0f, +1.0f, -1.0f };
-    static constexpr float kRightSigns[kNumOutputTaps] = { -1.0f, +1.0f, -1.0f, +1.0f };
+    static constexpr int   kLeftTaps  [kNumOutputTaps] = { 0, 2, 4, 6, 8, 10, 12, 14 };
+    static constexpr int   kRightTaps [kNumOutputTaps] = { 1, 3, 5, 7, 9, 11, 13, 15 };
+    static constexpr float kLeftSigns [kNumOutputTaps] = {
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f
+    };
+    static constexpr float kRightSigns[kNumOutputTaps] = {
+        -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f
+    };
 
     void recomputeDelayLengths();
     void recomputeFeedbackGains();

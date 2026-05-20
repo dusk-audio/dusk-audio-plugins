@@ -40,9 +40,27 @@ namespace
     // Primes are mutually coprime within each band so no two channels in
     // a SubTank share a modal period (Hadamard mixing depends on this for
     // its decorrelation guarantee).
-    constexpr int kBassDelays  [8] = { 1543, 1607, 1721, 1847, 1993, 2143, 2281, 2417 };
-    constexpr int kMidDelays   [8] = {  541,  571,  613,  643,  683,  719,  761,  809 };
-    constexpr int kTrebleDelays[8] = {  211,  227,  239,  257,  271,  283,  307,  331 };
+    // P12 16-channel expansion. Doubled per-band coprime prime sets;
+    // additional primes extend each band's range upward to add longer
+    // loops alongside the original short ones (richer modal spread and
+    // longer EDT decorrelation per band). All primes mutually coprime
+    // within each set + across sets to keep modal frequencies
+    // non-overlapping; verified vs HallSubTank::kInlineAPDelays.
+    //   Bass:   1543..2417  (orig 8) + 2549..3433  (new 8) — 1500..3400 range
+    //   Mid:     541..809   (orig 8) +  829..1021  (new 8) — 540..1020 range
+    //   Treble:  211..331   (orig 8) +  347..433   (new 8) — 210..435 range
+    constexpr int kBassDelays  [16] = {
+        1543, 1607, 1721, 1847, 1993, 2143, 2281, 2417,
+        2549, 2671, 2789, 2917, 3037, 3169, 3299, 3433
+    };
+    constexpr int kMidDelays   [16] = {
+         541,  571,  613,  643,  683,  719,  761,  809,
+         829,  853,  881,  907,  937,  967,  991, 1021
+    };
+    constexpr int kTrebleDelays[16] = {
+         211,  227,  239,  257,  271,  283,  307,  331,
+         347,  359,  367,  379,  389,  401,  421,  433
+    };
 
     // Anti-correlated LFO phase offsets per band — bass / mid / treble each
     // see a different sub-tank modulation pattern. Keeps periodicity from
