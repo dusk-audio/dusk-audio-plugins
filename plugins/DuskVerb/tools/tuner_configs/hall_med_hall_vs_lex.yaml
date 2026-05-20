@@ -61,28 +61,83 @@ anchor:
   impulse_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall/lex_hall_med_hall_impulse.wav
   noiseburst_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall/lex_hall_med_hall_noiseburst.wav
 
-# Locked params — Lex spec values for the standard hall character + 100% wet
-# isolation. Multi-tap pattern (kTapTimesMs/kTapWeights) is engine-internal,
-# not in APVTS, so it's not searchable in this round; if CMA can't close
-# c80/d50 we'll expose taps as params and add to search_space.
+# P11 9/19 architectural baseline — locked in after DE v4 no-crutch run
+# (Damping=0 forced, post-tank shelves + Mid Chan Gain Spread carry 100% of
+# spectral shaping) + manual nudges (Bass Mult 1.55, Gain Trim -9.59).
+#
+# Centroid_drift bin1 = -4.71 Hz (was -141 baseline) — the architectural
+# wall is BROKEN. Within 2.2 Hz of JND 2.5 for bins 0 + 1; bin 3 still
+# drifts (-150) due to 8-channel treble band modal sparsity.
+#
+# 9 PASS: c80, d50, treble_ratio, a_weighted, time_crest, stereo_corr,
+#         late_tail_500ms_1s, late_tail_1s_2s, late_tail_2s_3s.
+# 10 OUT (most close): edt +0.11, bass_ratio -0.20, edt_500 -0.49,
+#         decay_envelope 10/12, c80_per_octave 3/4, centroid_drift 0/4,
+#         peak_locations 1/4 (spec timing not in this search), box_ratio
+#         +4.75, spectral_crest +6.55 (both modal-density architectural).
 locked_params:
   Algorithm:       "Hall (Lex)"
   Bus Mode:        "on"
   Dry/Wet:         "1.0"
   Pre-Delay:       "14"                  # Lex Predelay 14.00ms
   Pre-Delay Sync:  "Free"
-  Lo Cut:          "60"                  # gentle bass HPF, Lex doesn't sub-bass roll
-  Early Ref Level: "0.0"                 # Hall engine doesn't use the smooth ER path
-  Early Ref Size:  "0.30"                # unused with ER muted
+  Lo Cut:          "60"
+  Early Ref Level: "0.0"
+  Early Ref Size:  "0.30"
   Mono Below:      "20"
   Freeze:          "Off"
   Gate:            "On"
   First Refl L Dly:   "3.0"
   First Refl R Dly:   "8.0"
-  First Refl L Gain:  "-60.0"            # Hall doesn't use the FirstReflections path
+  First Refl L Gain:  "-60.0"
   First Refl R Gain:  "-60.0"
   First Refl HF Cut:  "20000"
-  Width:           "1.0"                 # Lex Tail_Width=Stereo
+  Width:           "1.0"
+  # P11 calibration — frame
+  Decay Time:      "1.6859"              # Lex spec
+  Size:            "0.7"
+  Bass Multiply:   "1.55"
+  Mid Multiply:    "1.7567"              # DE v4 winner
+  Treble Multiply: "1.6"
+  Low Crossover:   "600"
+  High Crossover:  "4500"
+  Mod Depth:       "0.15"
+  Mod Rate:        "2.9"
+  Hi Cut:          "4750"
+  Diffusion:       "0.97"
+  Saturation:      "0.0"
+  Gain Trim:       "-9.59"
+  # P11 calibration — Hall internals (in-loop damping PERMANENTLY OFF;
+  # post-tank shelves do all spectral shaping)
+  Hall Inline Diffusion:        "0.10"
+  Hall Bass Damping:            "0.0"
+  Hall Mid Damping:             "0.0"
+  Hall Treble Damping:          "0.0"
+  Hall Bass Gain:               "1.0"
+  Hall Mid Gain:                "1.0"
+  Hall Treble Gain:             "1.0"
+  Hall Stereo Width:            "-0.15"
+  Hall Bass EQ Gain:            "-8.69773"
+  Hall Mid EQ Gain:             "-14"
+  Hall Mid EQ Q:                "4"
+  Hall Mid EQ Fc:               "380"
+  Hall Treble EQ Gain:          "1.17623"
+  Hall Spec 0 Ms:               "3.0"
+  Hall Spec 1 Ms:               "6.0"
+  Hall Spec 2 Ms:               "11.0"
+  Hall Spec 3 Ms:               "17.0"
+  Hall Spec 0 Weight:           "0.655867"
+  Hall Spec 1 Weight:           "0.102401"
+  Hall Spec 2 Weight:           "3.8090"
+  Hall Spec 3 Weight:           "3.8090"
+  Hall Spec HF Cut:             "6276.25"
+  Hall Mid Chan Gain Spread:    "0.0306"
+  Hall Bass Shelf Gain:         "-12.8072"
+  Hall Bass Shelf Fc:           "3079.0669"
+  Hall Mid Shelf Gain:          "-16.8995"
+  Hall Mid Shelf Fc:            "1622.7323"
+  Hall Treble Shelf Gain:       "-1.6880"
+  Hall Treble Shelf Fc:         "2509.3244"
 
 # Sweep the reverb-character axes + the 8 Hall-internal axes. Standard
 # preset params bracket around the Lex spec values; Hall-internal params
