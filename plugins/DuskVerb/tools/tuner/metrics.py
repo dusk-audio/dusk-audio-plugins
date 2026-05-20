@@ -406,9 +406,42 @@ def compute_loss(meas: dict, anchor: dict,
                     f"a_vec={len(a_vec)}; zip will truncate to shorter",
                     file=sys.stderr,
                 )
-            pairs = [p for p in (_safe_pair(mv, av)
-                                 for mv, av in zip(m_vec, a_vec)) if p]
+            # Count missing slots up-front — anything where the anchor
+            # expects a value but the measurement gave us None / NaN /
+            # length-mismatch is a MISSING slot. Optimizer used to gain
+            # PASS-status on metrics like peak_locations_ms by producing
+            # only the first peak and letting the rest be NaN (Lex's
+            # remaining 3 peaks zip-paired with NaN → skipped → empty
+            # delta vector when only NaN remained → metric not counted).
+            # Closes that loophole by ADDING a fixed penalty per missing
+            # slot AND forcing breakdown to inf (status = always fail).
+            n_expected = len(a_vec)
+            paired = list(zip(m_vec, a_vec))
+            # Pad with (None, anchor) for any anchor slot not even covered
+            # by the measurement vector (length-mismatch case).
+            if len(m_vec) < n_expected:
+                for av in a_vec[len(m_vec):]:
+                    paired.append((None, av))
+            pairs = []
+            n_missing = 0
+            for mv, av in paired:
+                sp = _safe_pair(mv, av)
+                if sp is None:
+                    n_missing += 1
+                else:
+                    pairs.append(sp)
+            # Static missing-peak penalty — terror-bonus per missing slot.
+            # Scaled at 100·w.weight so a 5-peak metric (e.g. peaks lex=5,
+            # dv=1) with metric-weight 80 contributes +32 000 to the loss
+            # — far worse than any in-range timing mismatch could produce.
+            missing_penalty = 100.0 * n_missing
             if not pairs:
+                # Total miss — record large breakdown + missing penalty,
+                # contribute missing_penalty to the total loss.
+                breakdown[key]      = float('inf')
+                contribution        = w.weight * missing_penalty
+                true_penalties[key] = contribution
+                total              += contribution
                 continue
             # Per-element strict excess (for breakdown / status reporting)
             # and per-element leaky penalty (for optimizer gradient).
@@ -416,8 +449,8 @@ def compute_loss(meas: dict, anchor: dict,
                         for mv, av in pairs]
             penalties = [_leaky_barrier_penalty(mv - av, w.jnd)
                          for mv, av in pairs]
-            d       = max(excesses)
-            penalty = sum(penalties) / len(penalties)
+            d       = max(excesses) if not n_missing else float('inf')
+            penalty = sum(penalties) / len(penalties) + missing_penalty
         else:
             pair = _safe_pair(meas.get(key), anchor.get(key))
             if pair is None:
