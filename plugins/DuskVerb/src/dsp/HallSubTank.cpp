@@ -98,7 +98,7 @@ constexpr int   HallSubTank::kLeftTaps  [HallSubTank::kNumOutputTaps];
 constexpr int   HallSubTank::kRightTaps [HallSubTank::kNumOutputTaps];
 constexpr float HallSubTank::kLeftSigns [HallSubTank::kNumOutputTaps];
 constexpr float HallSubTank::kRightSigns[HallSubTank::kNumOutputTaps];
-constexpr int   HallSubTank::kInlineAPDelays[HallSubTank::N];
+constexpr int   HallSubTank::kChainPrimes[HallSubTank::N][HallSubTank::kChainStages];
 
 HallSubTank::HallSubTank()
 {
@@ -139,17 +139,22 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
         delays_[i].mask     = bufSize - 1;
         delays_[i].writePos = 0;
 
-        // Inline allpass sized for max kInlineAPDelay × sr ratio.
-        const int apLen = static_cast<int> (std::ceil (
-            static_cast<float> (kInlineAPDelays[i]) * rateRatio)) + 4;
-        const int apBufSize = DspUtils::nextPowerOf2 (std::max (apLen, 16));
-        inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
-        inlineAP_[i].mask     = apBufSize - 1;
-        inlineAP_[i].writePos = 0;
-        inlineAP_[i].delaySamples = static_cast<int> (std::round (
-            static_cast<float> (kInlineAPDelays[i]) * rateRatio));
-        if (inlineAP_[i].delaySamples >= apBufSize)
-            inlineAP_[i].delaySamples = apBufSize - 1;
+        // P14 InlineAllpassChain — 3 stages per channel. Each stage gets
+        // its own prime delay from kChainPrimes, sized to nextPowerOf2.
+        for (int s = 0; s < kChainStages; ++s)
+        {
+            const int apLen = static_cast<int> (std::ceil (
+                static_cast<float> (kChainPrimes[i][s]) * rateRatio)) + 4;
+            const int apBufSize = DspUtils::nextPowerOf2 (std::max (apLen, 16));
+            auto& stage = inlineAPChain_[i].stages[s];
+            stage.buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
+            stage.mask     = apBufSize - 1;
+            stage.writePos = 0;
+            stage.delaySamples = static_cast<int> (std::round (
+                static_cast<float> (kChainPrimes[i][s]) * rateRatio));
+            if (stage.delaySamples >= apBufSize)
+                stage.delaySamples = apBufSize - 1;
+        }
 
         dampState_[i]   = 0.0f;
         lfoPhase_  [i]  = kChannelPhaseSeeds[i] + bandPhaseOffset_;
@@ -191,7 +196,7 @@ void HallSubTank::clear()
         std::fill (delays_[i].buffer.begin(), delays_[i].buffer.end(), 0.0f);
         delays_[i].writePos = 0;
         dampState_[i] = 0.0f;
-        inlineAP_[i].clear();
+        inlineAPChain_[i].clear();
         rwState_[i]   = 0.0f;
     }
 }
@@ -431,7 +436,7 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         if (apG > 1e-4f)
         {
             for (int i = 0; i < N; ++i)
-                channelOut[i] = inlineAP_[i].process (channelOut[i], apG);
+                channelOut[i] = inlineAPChain_[i].process (channelOut[i], apG);
         }
 
         // ──── Hadamard cross-mixing (in place, normalized) ─────────────

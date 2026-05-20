@@ -6,6 +6,8 @@
 #include "PlateEngine.h"
 #include "FoilPlateEngine.h"
 #include "HallReverb.h"
+#include "RingReverb.h"
+#include "HybridHallReverb.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FirstReflections.h"
@@ -182,6 +184,33 @@ public:
     void setHallMidShelfFc       (float hz);
     void setHallTrebleShelfGain  (float dB);
     void setHallTrebleShelfFc    (float hz);
+    void setHallInputDiffusion   (float g);
+
+    // RingReverb (algo 11) setters — Griesinger ring topology. Same
+    // tank-parameter pattern as HallReverb but routed to hallRing_.
+    void setRingDecayTime    (float seconds);
+    void setRingSize         (float scale);
+    void setRingDamping      (float coeff);
+    void setRingDampingFc    (float hz);
+    void setRingSpread       (float multiplier);
+    void setRingShape        (float coeff);
+    void setRingSpin         (float hz);
+    void setRingWander       (float samples);
+    void setRingStereoWidth  (float w);
+
+    // HybridHallReverb (algo 12) setters — P16 parallel ER + Ring engine.
+    void setHybridERTapWeight (int tapIdx, float weight);   // 4 taps (0..3)
+    void setHybridERLevel     (float level);
+    void setHybridRingLevel   (float level);
+    void setHybridLowShelf    (float gainDb, float fcHz);
+    void setHybridHighShelf   (float gainDb, float fcHz);
+    void setHybridRingDamping     (float c);
+    void setHybridRingDampingFc   (float hz);
+    void setHybridRingSpread      (float m);
+    void setHybridRingShape       (float c);
+    void setHybridRingSpin        (float hz);
+    void setHybridRingWander      (float s);
+    void setHybridRingStereoWidth (float w);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
@@ -238,6 +267,8 @@ private:
     PlateEngine        plate_;              // algo 8 (2026-05-18): PCM-foil-plate engine, built for Lex Vintage Plate per-band fit when no other engine could land all RT60 bands within JND.
     FoilPlateEngine    foilPlate_;          // algo 9 (2026-05-19): second-gen foil-plate engine — per-band LR4 split + parallel reverberators + onset envelope + deterministic sine LFOs. Built to close C80/D50/EDT/16k/stab gaps PlateEngine plateaued on.
     HallReverb         hall_;               // algo 10 (2026-05-19): 3-band parallel sub-tank hall — LR4 split → 3× 8-ch Hadamard FDN sub-tanks, multi-tap input injection, post-tank M/S widener. Built for the LexHall natural-hall family (Med Hall / Large Hall / Vocal Hall anchors); first proof preset migration in Phase 6.
+    duskverb::dsp::RingReverb hallRing_;    // algo 11 (P15): Griesinger/Carnes sequential ring — 6-stage pre-diffuser → 6-stage modulated delay ring with embedded 3-AP cascades per stage. Built to bypass the FDN modal-density Pareto frontier the parallel-Hadamard Hall (algo 10) plateaued at 10/19 on.
+    duskverb::dsp::HybridHallReverb hallHybrid_;  // algo 12 (P16): parallel ER + Ring hybrid — 4-tap discrete ER TDL (taps hardcoded at Lex anchor times) mixed with the P15 Ring tail via macro early/late mix axis. Built to break the 10/19 single-topology ceiling by combining the FDN family's strength on c80/d50 with the Ring family's strength on spectral_crest/late_tail.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than

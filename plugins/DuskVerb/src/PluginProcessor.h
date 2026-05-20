@@ -228,6 +228,31 @@ private:
     std::atomic<float>* hallMidShelfFcParam_      = nullptr;
     std::atomic<float>* hallTrebleShelfGainParam_ = nullptr;
     std::atomic<float>* hallTrebleShelfFcParam_   = nullptr;
+    std::atomic<float>* hallInputDiffusionParam_  = nullptr;
+    // RingReverb (algo 11) APVTS — 7 ring-specific axes (Decay Time +
+    // Size already broadcast by the shared setDecayTime/setSize setters).
+    std::atomic<float>* ringDampingParam_     = nullptr;
+    std::atomic<float>* ringDampingFcParam_   = nullptr;
+    std::atomic<float>* ringSpreadParam_      = nullptr;
+    std::atomic<float>* ringShapeParam_       = nullptr;
+    std::atomic<float>* ringSpinParam_        = nullptr;
+    std::atomic<float>* ringWanderParam_      = nullptr;
+    std::atomic<float>* ringStereoWidthParam_ = nullptr;
+    // HybridHallReverb (algo 12) — 14 axes.
+    std::atomic<float>* hybridRingLevelParam_    = nullptr;
+    std::atomic<float>* hybridERLevelParam_      = nullptr;
+    std::atomic<float>* hybridERW1Param_         = nullptr;
+    std::atomic<float>* hybridERW2Param_         = nullptr;
+    std::atomic<float>* hybridERW3Param_         = nullptr;
+    std::atomic<float>* hybridLowShelfGainParam_ = nullptr;
+    std::atomic<float>* hybridLowShelfFcParam_   = nullptr;
+    std::atomic<float>* hybridHighShelfGainParam_= nullptr;
+    std::atomic<float>* hybridHighShelfFcParam_  = nullptr;
+    std::atomic<float>* hybridRingDampingParam_  = nullptr;
+    std::atomic<float>* hybridRingDampingFcParam_= nullptr;
+    std::atomic<float>* hybridRingSpinParam_     = nullptr;
+    std::atomic<float>* hybridRingWanderParam_   = nullptr;
+    std::atomic<float>* hybridRingStereoParam_   = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -321,6 +346,28 @@ private:
     float lastHallMidShelfFc_      = -999.0f;
     float lastHallTrebleShelfGain_ = -999.0f;
     float lastHallTrebleShelfFc_   = -999.0f;
+    float lastHallInputDiffusion_  = -999.0f;
+    float lastRingDamping_     = -999.0f;
+    float lastRingDampingFc_   = -999.0f;
+    float lastRingSpread_      = -999.0f;
+    float lastRingShape_       = -999.0f;
+    float lastRingSpin_        = -999.0f;
+    float lastRingWander_      = -999.0f;
+    float lastRingStereoWidth_ = -999.0f;
+    float lastHybridRingLevel_    = -999.0f;
+    float lastHybridERLevel_      = -999.0f;
+    float lastHybridERW1_         = -999.0f;
+    float lastHybridERW2_         = -999.0f;
+    float lastHybridERW3_         = -999.0f;
+    float lastHybridLowShelfGain_ = -999.0f;
+    float lastHybridLowShelfFc_   = -999.0f;
+    float lastHybridHighShelfGain_= -999.0f;
+    float lastHybridHighShelfFc_  = -999.0f;
+    float lastHybridRingDamping_  = -999.0f;
+    float lastHybridRingDampingFc_= -999.0f;
+    float lastHybridRingSpin_     = -999.0f;
+    float lastHybridRingWander_   = -999.0f;
+    float lastHybridRingStereo_   = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

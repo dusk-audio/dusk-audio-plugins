@@ -394,6 +394,83 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_treble_shelf_fc", 1 }, "Hall Treble Shelf Fc",
         juce::NormalisableRange<float> (100.0f, 16000.0f, 0.0f, 0.3f), 4000.0f));
 
+    // P14 input diffuser coefficient — 4-stage Schroeder allpass cascade
+    // applied BEFORE the LR4 split into bands. 0 = bypass; 0.65 = classic
+    // Schroeder; max 0.85 (stays well shy of allpass instability margin).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_input_diffusion", 1 }, "Hall Input Diffusion",
+        juce::NormalisableRange<float> (0.0f, 0.85f), 0.65f));
+
+    // ─── P15 Hall (Ring) — Griesinger sequential ring topology ───
+    // 7 ring-specific axes (Decay Time + Size are shared engine axes).
+    // Defaults sit at Lex Med Hall reference: 1.69 s RT60 + 0.625 Shape
+    // (Schroeder classic) + 2.9 Hz Spin + 8-sample Wander (≈ Lex docs).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_damping", 1 }, "Ring Damping",
+        juce::NormalisableRange<float> (0.0f, 0.95f), 0.20f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_damping_fc", 1 }, "Ring Damping Fc",
+        juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.3f), 6000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_spread", 1 }, "Ring Spread",
+        juce::NormalisableRange<float> (0.5f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_shape", 1 }, "Ring Shape",
+        juce::NormalisableRange<float> (0.0f, 0.85f), 0.625f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_spin", 1 }, "Ring Spin",
+        juce::NormalisableRange<float> (0.01f, 20.0f, 0.0f, 0.5f), 2.9f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_wander", 1 }, "Ring Wander",
+        juce::NormalisableRange<float> (0.0f, 64.0f), 8.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "ring_stereo_width", 1 }, "Ring Stereo Width",
+        juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
+
+    // ─── P16 Hall (Hybrid) — parallel ER + Ring + macro mix + shelves ─
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_ring_level", 1 }, "Hybrid Ring Level",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_er_level", 1 }, "Hybrid ER Level",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_er_w1", 1 }, "Hybrid ER W1",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 0.65f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_er_w2", 1 }, "Hybrid ER W2",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 0.45f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_er_w3", 1 }, "Hybrid ER W3",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 0.30f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_low_shelf_gain", 1 }, "Hybrid Low Shelf Gain",
+        juce::NormalisableRange<float> (-18.0f, 18.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_low_shelf_fc", 1 }, "Hybrid Low Shelf Fc",
+        juce::NormalisableRange<float> (60.0f, 2000.0f, 0.0f, 0.3f), 250.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_high_shelf_gain", 1 }, "Hybrid High Shelf Gain",
+        juce::NormalisableRange<float> (-18.0f, 18.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_high_shelf_fc", 1 }, "Hybrid High Shelf Fc",
+        juce::NormalisableRange<float> (1000.0f, 16000.0f, 0.0f, 0.3f), 6000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_ring_damping", 1 }, "Hybrid Ring Damping",
+        juce::NormalisableRange<float> (0.0f, 0.95f), 0.20f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_ring_damping_fc", 1 }, "Hybrid Ring Damping Fc",
+        juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.3f), 6000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_ring_spin", 1 }, "Hybrid Ring Spin",
+        juce::NormalisableRange<float> (0.01f, 20.0f, 0.0f, 0.5f), 2.9f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_ring_wander", 1 }, "Hybrid Ring Wander",
+        juce::NormalisableRange<float> (0.0f, 64.0f), 8.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_ring_stereo", 1 }, "Hybrid Ring Stereo",
+        juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
+
     return layout;
 }
 
@@ -497,6 +574,28 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallMidShelfFcParam_      = parameters.getRawParameterValue ("hall_mid_shelf_fc");
     hallTrebleShelfGainParam_ = parameters.getRawParameterValue ("hall_treble_shelf_gain");
     hallTrebleShelfFcParam_   = parameters.getRawParameterValue ("hall_treble_shelf_fc");
+    hallInputDiffusionParam_  = parameters.getRawParameterValue ("hall_input_diffusion");
+    ringDampingParam_         = parameters.getRawParameterValue ("ring_damping");
+    ringDampingFcParam_       = parameters.getRawParameterValue ("ring_damping_fc");
+    ringSpreadParam_          = parameters.getRawParameterValue ("ring_spread");
+    ringShapeParam_           = parameters.getRawParameterValue ("ring_shape");
+    ringSpinParam_            = parameters.getRawParameterValue ("ring_spin");
+    ringWanderParam_          = parameters.getRawParameterValue ("ring_wander");
+    ringStereoWidthParam_     = parameters.getRawParameterValue ("ring_stereo_width");
+    hybridRingLevelParam_     = parameters.getRawParameterValue ("hybrid_ring_level");
+    hybridERLevelParam_       = parameters.getRawParameterValue ("hybrid_er_level");
+    hybridERW1Param_          = parameters.getRawParameterValue ("hybrid_er_w1");
+    hybridERW2Param_          = parameters.getRawParameterValue ("hybrid_er_w2");
+    hybridERW3Param_          = parameters.getRawParameterValue ("hybrid_er_w3");
+    hybridLowShelfGainParam_  = parameters.getRawParameterValue ("hybrid_low_shelf_gain");
+    hybridLowShelfFcParam_    = parameters.getRawParameterValue ("hybrid_low_shelf_fc");
+    hybridHighShelfGainParam_ = parameters.getRawParameterValue ("hybrid_high_shelf_gain");
+    hybridHighShelfFcParam_   = parameters.getRawParameterValue ("hybrid_high_shelf_fc");
+    hybridRingDampingParam_   = parameters.getRawParameterValue ("hybrid_ring_damping");
+    hybridRingDampingFcParam_ = parameters.getRawParameterValue ("hybrid_ring_damping_fc");
+    hybridRingSpinParam_      = parameters.getRawParameterValue ("hybrid_ring_spin");
+    hybridRingWanderParam_    = parameters.getRawParameterValue ("hybrid_ring_wander");
+    hybridRingStereoParam_    = parameters.getRawParameterValue ("hybrid_ring_stereo");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -818,6 +917,41 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallMidShelfFc_,      hallMidShelfFcParam_->load(),      [this] (float v) { activeEngine_->setHallMidShelfFc      (v); });
     pushIfChanged (lastHallTrebleShelfGain_, hallTrebleShelfGainParam_->load(), [this] (float v) { activeEngine_->setHallTrebleShelfGain (v); });
     pushIfChanged (lastHallTrebleShelfFc_,   hallTrebleShelfFcParam_->load(),   [this] (float v) { activeEngine_->setHallTrebleShelfFc   (v); });
+    pushIfChanged (lastHallInputDiffusion_,  hallInputDiffusionParam_->load(),  [this] (float v) { activeEngine_->setHallInputDiffusion  (v); });
+    pushIfChanged (lastRingDamping_,     ringDampingParam_->load(),     [this] (float v) { activeEngine_->setRingDamping     (v); });
+    pushIfChanged (lastRingDampingFc_,   ringDampingFcParam_->load(),   [this] (float v) { activeEngine_->setRingDampingFc   (v); });
+    pushIfChanged (lastRingSpread_,      ringSpreadParam_->load(),      [this] (float v) { activeEngine_->setRingSpread      (v); });
+    pushIfChanged (lastRingShape_,       ringShapeParam_->load(),       [this] (float v) { activeEngine_->setRingShape       (v); });
+    pushIfChanged (lastRingSpin_,        ringSpinParam_->load(),        [this] (float v) { activeEngine_->setRingSpin        (v); });
+    pushIfChanged (lastRingWander_,      ringWanderParam_->load(),      [this] (float v) { activeEngine_->setRingWander      (v); });
+    pushIfChanged (lastRingStereoWidth_, ringStereoWidthParam_->load(), [this] (float v) { activeEngine_->setRingStereoWidth (v); });
+    pushIfChanged (lastHybridRingLevel_,   hybridRingLevelParam_->load(),   [this] (float v) { activeEngine_->setHybridRingLevel   (v); });
+    pushIfChanged (lastHybridERLevel_,     hybridERLevelParam_->load(),     [this] (float v) { activeEngine_->setHybridERLevel     (v); });
+    pushIfChanged (lastHybridERW1_,        hybridERW1Param_->load(),        [this] (float v) { activeEngine_->setHybridERTapWeight (1, v); });
+    pushIfChanged (lastHybridERW2_,        hybridERW2Param_->load(),        [this] (float v) { activeEngine_->setHybridERTapWeight (2, v); });
+    pushIfChanged (lastHybridERW3_,        hybridERW3Param_->load(),        [this] (float v) { activeEngine_->setHybridERTapWeight (3, v); });
+    // Shelf gain + fc applied together via single setter; trigger on EITHER change.
+    {
+        const float lg = hybridLowShelfGainParam_->load();
+        const float lf = hybridLowShelfFcParam_->load();
+        if (lg != lastHybridLowShelfGain_ || lf != lastHybridLowShelfFc_) {
+            activeEngine_->setHybridLowShelf (lg, lf);
+            lastHybridLowShelfGain_ = lg;
+            lastHybridLowShelfFc_ = lf;
+        }
+        const float hg = hybridHighShelfGainParam_->load();
+        const float hf = hybridHighShelfFcParam_->load();
+        if (hg != lastHybridHighShelfGain_ || hf != lastHybridHighShelfFc_) {
+            activeEngine_->setHybridHighShelf (hg, hf);
+            lastHybridHighShelfGain_ = hg;
+            lastHybridHighShelfFc_ = hf;
+        }
+    }
+    pushIfChanged (lastHybridRingDamping_,   hybridRingDampingParam_->load(),   [this] (float v) { activeEngine_->setHybridRingDamping   (v); });
+    pushIfChanged (lastHybridRingDampingFc_, hybridRingDampingFcParam_->load(), [this] (float v) { activeEngine_->setHybridRingDampingFc (v); });
+    pushIfChanged (lastHybridRingSpin_,      hybridRingSpinParam_->load(),      [this] (float v) { activeEngine_->setHybridRingSpin      (v); });
+    pushIfChanged (lastHybridRingWander_,    hybridRingWanderParam_->load(),    [this] (float v) { activeEngine_->setHybridRingWander    (v); });
+    pushIfChanged (lastHybridRingStereo_,    hybridRingStereoParam_->load(),    [this] (float v) { activeEngine_->setHybridRingStereoWidth (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -1153,6 +1287,26 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallMidShelfFc      (hallMidShelfFcParam_->load());
     target->setHallTrebleShelfGain (hallTrebleShelfGainParam_->load());
     target->setHallTrebleShelfFc   (hallTrebleShelfFcParam_->load());
+    target->setHallInputDiffusion  (hallInputDiffusionParam_->load());
+    target->setRingDamping     (ringDampingParam_->load());
+    target->setRingDampingFc   (ringDampingFcParam_->load());
+    target->setRingSpread      (ringSpreadParam_->load());
+    target->setRingShape       (ringShapeParam_->load());
+    target->setRingSpin        (ringSpinParam_->load());
+    target->setRingWander      (ringWanderParam_->load());
+    target->setRingStereoWidth (ringStereoWidthParam_->load());
+    target->setHybridRingLevel   (hybridRingLevelParam_->load());
+    target->setHybridERLevel     (hybridERLevelParam_->load());
+    target->setHybridERTapWeight (1, hybridERW1Param_->load());
+    target->setHybridERTapWeight (2, hybridERW2Param_->load());
+    target->setHybridERTapWeight (3, hybridERW3Param_->load());
+    target->setHybridLowShelf  (hybridLowShelfGainParam_->load(),  hybridLowShelfFcParam_->load());
+    target->setHybridHighShelf (hybridHighShelfGainParam_->load(), hybridHighShelfFcParam_->load());
+    target->setHybridRingDamping     (hybridRingDampingParam_->load());
+    target->setHybridRingDampingFc   (hybridRingDampingFcParam_->load());
+    target->setHybridRingSpin        (hybridRingSpinParam_->load());
+    target->setHybridRingWander      (hybridRingWanderParam_->load());
+    target->setHybridRingStereoWidth (hybridRingStereoParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1254,6 +1408,28 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallMidShelfFc_      = hallMidShelfFcParam_->load();
     lastHallTrebleShelfGain_ = hallTrebleShelfGainParam_->load();
     lastHallTrebleShelfFc_   = hallTrebleShelfFcParam_->load();
+    lastHallInputDiffusion_  = hallInputDiffusionParam_->load();
+    lastRingDamping_     = ringDampingParam_->load();
+    lastRingDampingFc_   = ringDampingFcParam_->load();
+    lastRingSpread_      = ringSpreadParam_->load();
+    lastRingShape_       = ringShapeParam_->load();
+    lastRingSpin_        = ringSpinParam_->load();
+    lastRingWander_      = ringWanderParam_->load();
+    lastRingStereoWidth_ = ringStereoWidthParam_->load();
+    lastHybridRingLevel_     = hybridRingLevelParam_->load();
+    lastHybridERLevel_       = hybridERLevelParam_->load();
+    lastHybridERW1_          = hybridERW1Param_->load();
+    lastHybridERW2_          = hybridERW2Param_->load();
+    lastHybridERW3_          = hybridERW3Param_->load();
+    lastHybridLowShelfGain_  = hybridLowShelfGainParam_->load();
+    lastHybridLowShelfFc_    = hybridLowShelfFcParam_->load();
+    lastHybridHighShelfGain_ = hybridHighShelfGainParam_->load();
+    lastHybridHighShelfFc_   = hybridHighShelfFcParam_->load();
+    lastHybridRingDamping_   = hybridRingDampingParam_->load();
+    lastHybridRingDampingFc_ = hybridRingDampingFcParam_->load();
+    lastHybridRingSpin_      = hybridRingSpinParam_->load();
+    lastHybridRingWander_    = hybridRingWanderParam_->load();
+    lastHybridRingStereo_    = hybridRingStereoParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();

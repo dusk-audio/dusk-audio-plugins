@@ -153,12 +153,10 @@ private:
         int mask     = 0;
     };
 
-    // Inline single-stage Schroeder allpass for modal smoothing inside the
-    // FDN feedback path. Lifted from the FDNReverb inlineAP_ pattern; one
-    // per channel, short prime delays coprime with the main delay-line
-    // primes so AP modes don't align with FDN modes. Acts on the dampened
-    // channel signal before the Hadamard mix — adds phase decorrelation
-    // without altering RT60 (allpass has unity magnitude response).
+    // Inline single-stage Schroeder allpass for modal smoothing inside
+    // the FDN feedback path. Used as the building block of the 3-stage
+    // InlineAllpassChain below (P14). Pure unity-magnitude allpass — only
+    // shifts phase; cannot affect RT60 regardless of g.
     struct InlineAllpass
     {
         std::vector<float> buffer;
@@ -183,19 +181,42 @@ private:
         }
     };
 
-    // Inline AP prime delays — coprime with the main delay-line primes
-    // any caller supplies via prepare(). At 44.1 kHz these are 0.9–3.3 ms
-    // loops; SubTank scales by sampleRate ratio at prepare time. P12
-    // expanded from 8 → 16 primes; all primes mutually coprime and
-    // coprime with the bass/mid/treble main delay primes in HallReverb.cpp.
-    static constexpr int kInlineAPDelays[N] = {
-        41,  47,  53,  59,  67,  71,  79,  83,
-        89,  97, 101, 103, 107, 109, 113, 127
+    // P14 PCM Native overhaul: replace single-AP-per-channel with 3-stage
+    // nested allpass chain. 16 channels × 3 stages = 48 allpass filters
+    // inside the FDN feedback loop — each delay-line round trip passes
+    // through 3 APs that phase-scramble before re-entering Hadamard mixing.
+    // Direct attack on spectral_crest + box_ratio: static comb resonance
+    // is impossible when 48 nested unity-magnitude filters scramble phase
+    // on every cycle.
+    static constexpr int kChainStages = 3;
+    struct InlineAllpassChain
+    {
+        InlineAllpass stages[kChainStages];
+        float process (float input, float g)
+        {
+            for (int s = 0; s < kChainStages; ++s)
+                input = stages[s].process (input, g);
+            return input;
+        }
+        void clear() { for (auto& s : stages) s.clear(); }
+    };
+
+    // Per-channel × per-stage prime delays. All 48 entries mutually
+    // coprime + coprime with the main bass/mid/treble delay primes in
+    // HallReverb.cpp + the input-diffuser primes in HallReverb.h. Layout:
+    // stage 0 = short (41-107 samples, 0.9-2.4 ms @ 44.1k), stage 1 =
+    // medium (109-523), stage 2 = longer (163-1033) — geometric per-stage
+    // ratio so the 3 APs span different modal density scales.
+    static constexpr int kChainPrimes[N][kChainStages] = {
+        { 41, 109, 199}, { 43, 113, 197}, { 47, 127, 193}, { 53, 131, 191},
+        { 59, 137, 181}, { 61, 139, 179}, { 67, 149, 173}, { 71, 151, 167},
+        { 73, 157, 163}, { 79, 449, 457}, { 83, 461, 463}, { 89, 467, 479},
+        { 97, 487, 491}, {101, 499, 503}, {103, 509, 521}, {107, 523, 1033}
     };
 
     // Per-channel state (RT-side; written each sample, never the snapshot).
     Delay delays_        [N] {};
-    InlineAllpass inlineAP_[N] {};     // one short Schroeder AP per channel
+    InlineAllpassChain inlineAPChain_[N] {};   // P14: 3-stage chain per channel
     float dampState_     [N] {};       // one-pole LP z^-1 per channel (held between samples)
     float lfoPhase_      [N] {};       // current phase in [0, 2π)
     float lfoPhaseInc_   [N] {};       // 2π × rate / sr
