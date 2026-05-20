@@ -459,6 +459,9 @@ void DuskVerbEngine::setHallMidModDepth     (float s)   { hall_.setMidModDepth  
 void DuskVerbEngine::setHallMidModRate      (float hz)  { hall_.setMidModRate     (hz); }
 void DuskVerbEngine::setHallTrebleModDepth  (float s)   { hall_.setTrebleModDepth (s); }
 void DuskVerbEngine::setHallTrebleModRate   (float hz)  { hall_.setTrebleModRate  (hz); }
+void DuskVerbEngine::setHallBassModShape    (float sh)  { hall_.setBassModShape   (sh); }
+void DuskVerbEngine::setHallMidModShape     (float sh)  { hall_.setMidModShape    (sh); }
+void DuskVerbEngine::setHallTrebleModShape  (float sh)  { hall_.setTrebleModShape (sh); }
 
 void DuskVerbEngine::setERLevel (float level)
 {

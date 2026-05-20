@@ -170,6 +170,9 @@ public:
     void setHallMidModRate      (float hz);
     void setHallTrebleModDepth  (float samples);
     void setHallTrebleModRate   (float hz);
+    void setHallBassModShape    (float shape);
+    void setHallMidModShape     (float shape);
+    void setHallTrebleModShape  (float shape);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the

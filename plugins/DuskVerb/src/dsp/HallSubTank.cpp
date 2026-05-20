@@ -17,6 +17,22 @@ static inline float computeOnepoleAlpha (float fcHz, double sr)
     return 1.0f - std::exp (-twoPiFcOverSr);
 }
 
+// RT-safe per-channel LCG (Numerical Recipes constants). Returns next
+// uint32 and advances the state in place. Used to drive the random-walk
+// modulator without juce::Random overhead; deterministic given fixed
+// seed at prepare().
+static inline uint32_t lcgNext (uint32_t& state)
+{
+    state = state * 1664525u + 1013904223u;
+    return state;
+}
+
+// Map LCG output to a signed unit float in [-1, +1).
+static inline float lcgSigned (uint32_t& state)
+{
+    return static_cast<float> (lcgNext (state)) * (2.0f / 4294967296.0f) - 1.0f;
+}
+
 namespace
 {
     // Per-channel LFO phase seeds — distinct fractions of 2π so the 8 channels
@@ -113,6 +129,17 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelays8,
         dampState_[i]   = 0.0f;
         lfoPhase_  [i]  = kChannelPhaseSeeds[i] + bandPhaseOffset_;
         if (lfoPhase_[i] >= kTwoPi) lfoPhase_[i] -= kTwoPi;
+        // Deterministic per-channel RNG seed. Mixes channel index with a
+        // band-distinguishing salt derived from bandPhaseOffset_ so the
+        // three SubTanks (bass / mid / treble) get independent sequences
+        // without sharing the same per-channel pattern.
+        const uint32_t bandSalt = static_cast<uint32_t> (
+            static_cast<int> (bandPhaseOffset_ * 1000.0f) & 0xFFFF);
+        rwRngState_[i] = (static_cast<uint32_t> (i) * 2654435761u)
+                       ^ (bandSalt * 1597334677u)
+                       ^ 0xA5A5A5A5u;
+        if (rwRngState_[i] == 0u) rwRngState_[i] = 1u;
+        rwState_[i] = 0.0f;
     }
 
     prepared_ = true;
@@ -130,6 +157,7 @@ void HallSubTank::clear()
         delays_[i].writePos = 0;
         dampState_[i] = 0.0f;
         inlineAP_[i].clear();
+        rwState_[i]   = 0.0f;
     }
 }
 
@@ -154,6 +182,10 @@ void HallSubTank::recomputeLFORates()
     if (! prepared_) return;
     const float inc = kTwoPi * modRateHz_ / static_cast<float> (sampleRate_);
     for (int i = 0; i < N; ++i) lfoPhaseInc_[i] = inc;
+    // Random-walk autocorrelation alpha uses the same 1-pole form as the
+    // damping LP. modRateHz_ controls how quickly the bounded sequence
+    // traverses its range; higher rate = faster mode-smear.
+    rwAlpha_ = computeOnepoleAlpha (modRateHz_, sampleRate_);
 }
 
 void HallSubTank::recomputeFeedbackGains()
@@ -201,6 +233,11 @@ void HallSubTank::setModRate (float hz)
 {
     modRateHz_ = std::clamp (hz, 0.01f, 20.0f);
     recomputeLFORates();
+}
+
+void HallSubTank::setModShape (float shape)
+{
+    modShape_ = std::clamp (shape, 0.0f, 1.0f);
 }
 
 void HallSubTank::setSize (float sizeScale)
@@ -252,6 +289,11 @@ void HallSubTank::process (const float* inputL, const float* inputR,
     const float lpAlpha  = dampingAlpha_;             // from setDampingFc
     const float lpComp   = 1.0f - lpAlpha;
     const float modDepth = modDepthSamples_;
+    const float modShape = modShape_;                 // 0=sine, 1=random-walk
+    const float sineMix  = 1.0f - modShape;
+    const float rwMix    = modShape;
+    const float rwA      = rwAlpha_;
+    const float rwAComp  = 1.0f - rwA;
 
     for (int n = 0; n < numSamples; ++n)
     {
@@ -264,12 +306,17 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         float channelOut[N];
 
         // ──── Read each channel's delay tap (with LFO modulation) ──────
+        // Modulator is a per-channel blend of deterministic sine and a
+        // bounded random-walk (OU-style smoothing of uniform draws). Both
+        // outputs are in [-1, +1] before being scaled by modDepth.
         for (int i = 0; i < N; ++i)
         {
-            const float lfo  = std::sin (lfoPhase_[i]);
+            const float sine = std::sin (lfoPhase_[i]);
             lfoPhase_[i] += lfoPhaseInc_[i];
             if (lfoPhase_[i] >= kTwoPi) lfoPhase_[i] -= kTwoPi;
 
+            rwState_[i] = rwAComp * rwState_[i] + rwA * lcgSigned (rwRngState_[i]);
+            const float lfo = sineMix * sine + rwMix * rwState_[i];
             const float modOffset = modDepth * lfo;
             const float readPos   = static_cast<float> (scaledDelay_[i]) + modOffset;
             // Linear interpolation between two integer taps. Adequate for

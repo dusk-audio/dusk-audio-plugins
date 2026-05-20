@@ -119,6 +119,15 @@ public:
     void setMidModRate        (float hz);
     void setTrebleModDepth    (float samples);
     void setTrebleModRate     (float hz);
+    // Per-band modulation shape — 0 = sine (legacy), 1 = bounded
+    // random-walk per channel. Random-walk is the architectural lever
+    // for centroid_drift_per_band: sine LFOs create discrete sidebands
+    // that leave modal peaks intact; random-walk smears them into
+    // continuous noise floor. Default 0 preserves the 7/19 baseline;
+    // dial up per-band to chase centroid_drift + spectral_crest closes.
+    void setBassModShape      (float shape);
+    void setMidModShape       (float shape);
+    void setTrebleModShape    (float shape);
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
