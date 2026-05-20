@@ -291,6 +291,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_treble_eq_fc", 1 }, "Hall Treble EQ Fc",
         juce::NormalisableRange<float> (2000.0f, 18000.0f, 0.0f, 0.5f), 8000.0f));
 
+    // Per-band damping LP cutoff (Hz). Paired with hall_{bass/mid/treble}_damping
+    // amount to form a 1-pole high-shelf per band. Independent fc per
+    // band lets the optimizer match Lex's per-octave HF rolloff signature
+    // (closes centroid_drift_per_band).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_damping_fc", 1 }, "Hall Bass Damping Fc",
+        juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.5f), 8000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_damping_fc", 1 }, "Hall Mid Damping Fc",
+        juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.5f), 2000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_damping_fc", 1 }, "Hall Treble Damping Fc",
+        juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.5f), 12000.0f));
+
     return layout;
 }
 
@@ -373,6 +387,9 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallBassEQFcParam_     = parameters.getRawParameterValue ("hall_bass_eq_fc");
     hallMidEQFcParam_      = parameters.getRawParameterValue ("hall_mid_eq_fc");
     hallTrebleEQFcParam_   = parameters.getRawParameterValue ("hall_treble_eq_fc");
+    hallBassDampingFcParam_   = parameters.getRawParameterValue ("hall_bass_damping_fc");
+    hallMidDampingFcParam_    = parameters.getRawParameterValue ("hall_mid_damping_fc");
+    hallTrebleDampingFcParam_ = parameters.getRawParameterValue ("hall_treble_damping_fc");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -644,6 +661,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallBassEQFc_,     hallBassEQFcParam_->load(),     [this] (float v) { activeEngine_->setHallBassEQFc     (v); });
     pushIfChanged (lastHallMidEQFc_,      hallMidEQFcParam_->load(),      [this] (float v) { activeEngine_->setHallMidEQFc      (v); });
     pushIfChanged (lastHallTrebleEQFc_,   hallTrebleEQFcParam_->load(),   [this] (float v) { activeEngine_->setHallTrebleEQFc   (v); });
+    pushIfChanged (lastHallBassDampingFc_,   hallBassDampingFcParam_->load(),   [this] (float v) { activeEngine_->setHallBassDampingFc   (v); });
+    pushIfChanged (lastHallMidDampingFc_,    hallMidDampingFcParam_->load(),    [this] (float v) { activeEngine_->setHallMidDampingFc    (v); });
+    pushIfChanged (lastHallTrebleDampingFc_, hallTrebleDampingFcParam_->load(), [this] (float v) { activeEngine_->setHallTrebleDampingFc (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -958,6 +978,9 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallBassEQFc     (hallBassEQFcParam_->load());
     target->setHallMidEQFc      (hallMidEQFcParam_->load());
     target->setHallTrebleEQFc   (hallTrebleEQFcParam_->load());
+    target->setHallBassDampingFc   (hallBassDampingFcParam_->load());
+    target->setHallMidDampingFc    (hallMidDampingFcParam_->load());
+    target->setHallTrebleDampingFc (hallTrebleDampingFcParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1038,6 +1061,9 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallBassEQFc_     = hallBassEQFcParam_->load();
     lastHallMidEQFc_      = hallMidEQFcParam_->load();
     lastHallTrebleEQFc_   = hallTrebleEQFcParam_->load();
+    lastHallBassDampingFc_   = hallBassDampingFcParam_->load();
+    lastHallMidDampingFc_    = hallMidDampingFcParam_->load();
+    lastHallTrebleDampingFc_ = hallTrebleDampingFcParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();

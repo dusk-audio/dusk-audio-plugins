@@ -1,10 +1,21 @@
 #include "HallSubTank.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace duskverb::dsp
 {
+
+// 1-pole LP coefficient from cutoff frequency + sample rate.
+// alpha = 1 − exp(−2π · fc / sr). Clamped fc to [20 Hz, 0.49·sr] to
+// keep numerically stable across sample rates the host might give us.
+static inline float computeOnepoleAlpha (float fcHz, double sr)
+{
+    const float fc = std::max (20.0f, std::min (fcHz, static_cast<float> (sr) * 0.49f));
+    const float twoPiFcOverSr = 6.283185307179586f * fc / static_cast<float> (std::max (sr, 1000.0));
+    return 1.0f - std::exp (-twoPiFcOverSr);
+}
 
 namespace
 {
@@ -108,6 +119,7 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelays8,
     recomputeDelayLengths();
     recomputeLFORates();
     recomputeFeedbackGains();
+    dampingAlpha_ = computeOnepoleAlpha (dampingFcHz_, sampleRate_);
 }
 
 void HallSubTank::clear()
@@ -174,6 +186,12 @@ void HallSubTank::setDamping (float amount)
     dampingCoeff_ = std::clamp (amount, 0.0f, 0.95f);
 }
 
+void HallSubTank::setDampingFc (float hz)
+{
+    dampingFcHz_ = std::clamp (hz, 100.0f, 20000.0f);
+    dampingAlpha_ = computeOnepoleAlpha (dampingFcHz_, sampleRate_);
+}
+
 void HallSubTank::setModDepth (float samples)
 {
     modDepthSamples_ = std::max (0.0f, samples);
@@ -222,10 +240,17 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         return;
     }
 
-    // Snapshot of damping coefficient (one-pole high-shelf: y = (1-c)·x + c·y_z1).
-    // Larger c = darker (more HF rolled into the integrator state).
-    const float damp     = dampingCoeff_;
-    const float dampComp = 1.0f - damp;
+    // Per-channel HF damping: parallel mix of dry channel + 1-pole LP.
+    // alpha is the LP coefficient derived from dampingFcHz_; the
+    // dampingCoeff_ ("amount") sets the wet/dry mix between dry and LP.
+    // Together they form a 1-pole high-shelf with independent cutoff
+    // freq + depth controls, fixing the prior implementation where the
+    // amount-as-forgetting-factor coupled freq and depth into one knob
+    // (Phase 6 centroid_drift fix).
+    const float dampMix  = dampingCoeff_;             // [0..0.95]
+    const float dampDry  = 1.0f - dampMix;
+    const float lpAlpha  = dampingAlpha_;             // from setDampingFc
+    const float lpComp   = 1.0f - lpAlpha;
     const float modDepth = modDepthSamples_;
 
     for (int n = 0; n < numSamples; ++n)
@@ -261,12 +286,13 @@ void HallSubTank::process (const float* inputL, const float* inputR,
             channelOut[i] = a + readFrac * (b - a);
         }
 
-        // ──── Per-channel one-pole high-shelf damping in the feedback ─
+        // ──── Per-channel HF damping: parallel dry + 1-pole LP mix ────
+        // lp_state ← α·channel + (1−α)·lp_state  (true LP at fc)
+        // channel  ← (1−mix)·channel + mix·lp_state  (high-shelf via mix)
         for (int i = 0; i < N; ++i)
         {
-            const float y = dampComp * channelOut[i] + damp * dampState_[i];
-            dampState_[i] = y;
-            channelOut[i] = y;
+            dampState_[i] = lpAlpha * channelOut[i] + lpComp * dampState_[i];
+            channelOut[i] = dampDry * channelOut[i] + dampMix * dampState_[i];
         }
 
         // ──── Inline Schroeder allpass diffusion (modal smoothing) ─────

@@ -117,6 +117,11 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     prepared_ = true;
     updateSubTankDecays();
     setBandDamping (dampingBass_, dampingMid_, dampingTreble_);
+    // Push per-band damping fc to each SubTank now that prepare() has
+    // set sampleRate_ — recomputes the LP alpha from fc + sr.
+    bassTank_  .setDampingFc (dampingFcBass_);
+    midTank_   .setDampingFc (dampingFcMid_);
+    trebleTank_.setDampingFc (dampingFcTreble_);
     recomputeSpecularTaps();
     recomputeSpecularLP();
     specularLP1StateL_ = specularLP1StateR_ = 0.0f;
@@ -617,6 +622,24 @@ void HallReverb::setTrebleDamping (float c)
 {
     dampingTreble_ = std::clamp (c, 0.0f, 0.95f);
     trebleTank_.setDamping (dampingTreble_);
+}
+
+void HallReverb::setBassDampingFc (float hz)
+{
+    dampingFcBass_ = std::clamp (hz, 100.0f, 20000.0f);
+    bassTank_.setDampingFc (dampingFcBass_);
+}
+
+void HallReverb::setMidDampingFc (float hz)
+{
+    dampingFcMid_ = std::clamp (hz, 100.0f, 20000.0f);
+    midTank_.setDampingFc (dampingFcMid_);
+}
+
+void HallReverb::setTrebleDampingFc (float hz)
+{
+    dampingFcTreble_ = std::clamp (hz, 100.0f, 20000.0f);
+    trebleTank_.setDampingFc (dampingFcTreble_);
 }
 
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }

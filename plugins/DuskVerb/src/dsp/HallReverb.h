@@ -99,6 +99,15 @@ public:
     void setBassDamping       (float coeff);
     void setMidDamping        (float coeff);
     void setTrebleDamping     (float coeff);
+    // Per-band damping LP cutoff frequency (paired with the existing
+    // damping AMOUNT setters above; together they form a 1-pole high
+    // shelf via parallel mix of dry channel + LP'd channel inside each
+    // SubTank's feedback path). Independent per-band fc closes
+    // centroid_drift_per_band by letting each band damp HF at a
+    // different frequency matching Lex's per-octave rolloff.
+    void setBassDampingFc     (float hz);
+    void setMidDampingFc      (float hz);
+    void setTrebleDampingFc   (float hz);
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
@@ -368,6 +377,15 @@ private:
     float  dampingBass_        = 0.40f;     // restored — damping doesn't reach the 250-500 Hz box-ratio zone
     float  dampingMid_         = 0.25f;
     float  dampingTreble_      = 0.05f;
+    // Per-band damping LP cutoff frequencies. Bass band defaults higher
+    // (8 kHz — gentle HF roll, bass content is below this anyway), mid
+    // defaults lower (2 kHz — most mid-tank harmonic content sits in
+    // 1-3 kHz where damping should bite), treble high (12 kHz — very
+    // light, treble already short due to LR4 + tank decay). All
+    // overridable per preset via the new APVTS axes.
+    float  dampingFcBass_      = 8000.0f;
+    float  dampingFcMid_       = 2000.0f;
+    float  dampingFcTreble_    = 12000.0f;
     float  stereoWidth_        = 0.0f;
     // Per-band gain defaults at unity — preset-tunable. Phase 6 spectral
     // diagnosis showed that bass tank gain alone can't close box_ratio_db
