@@ -254,9 +254,22 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
             if len(idx_peaks) >= max_peaks:
                 break
         ms = [round(idx / sr * 1000.0, 3) for idx in idx_peaks]
+        # Pad missing slots with NaN — _safe_pair skips NaN, so the loss
+        # function ignores unmeasured-vs-anchor slots instead of
+        # treating "missing peak" as a 999 ms timing delta (which
+        # exploded the barrier penalty under the strict-loss regime
+        # introduced 2026-05-20). If anchor has 4 peaks and DV finds
+        # only 2, the loss now only penalises the 2 we DO have vs the
+        # first 2 anchor peaks — fewer peaks no longer dominates the
+        # objective.
         while len(ms) < max_peaks:
-            ms.append(999.0)
+            ms.append(float('nan'))
         return ms[:max_peaks]
+
+    # _modal_density runs a full-IR FFT + peak-pick — expensive enough
+    # that calling it twice (once per output key) was a measurable cost.
+    # Compute once, unpack into both scalar fields.
+    modal_density_pair = _modal_density(impulse_path)
 
     return {
         # Per-band vectors
@@ -308,8 +321,8 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
         # Detects "metallic" discrete-tone ringing — few sharp peaks at high
         # prominence vs Lex's many moderate peaks. Returned as a 2-tuple
         # but exposed as two scalar keys for the loss function.
-        "modal_peak_count":     _modal_density(impulse_path)[0],
-        "modal_peak_max_db":    _modal_density(impulse_path)[1],
+        "modal_peak_count":     modal_density_pair[0],
+        "modal_peak_max_db":    modal_density_pair[1],
     }
 
 
@@ -331,13 +344,57 @@ def _safe_pair(m: Any, a: Any) -> tuple[float, float] | None:
     return mf, af
 
 
+def _leaky_barrier_penalty(delta: float, jnd: float) -> float:
+    """Per-sample leaky barrier loss.
+
+        delta <= jnd : penalty = 0.01 · (delta / jnd)        (linear gradient)
+        delta >  jnd : penalty = excess² + 0.01               (quadratic past JND)
+
+    The leak inside the JND gives the optimizer a tiny but non-zero
+    gradient pulling every metric toward delta=0. Without it the loss
+    surface becomes perfectly flat once all metrics are inside their
+    JNDs, and CMA-ES has no gradient signal to differentiate among
+    "all-passing" configs — it can't decide which one to converge on.
+
+    The +0.01 step at the JND boundary keeps the function piecewise
+    monotonic in delta: 0.01·(jnd/jnd) = 0.01 = 0² + 0.01. Continuous,
+    no jump, no derivative discontinuity that would confuse CMA.
+    """
+    abs_delta = abs(delta)
+    if abs_delta <= jnd:
+        return 0.01 * (abs_delta / jnd)
+    excess = (abs_delta - jnd) / jnd
+    return excess * excess + 0.01
+
+
 def compute_loss(meas: dict, anchor: dict,
-                 weights_cfg: dict) -> tuple[float, dict[str, float]]:
-    """Weighted L1 (each term divided by its JND). Returns (total, breakdown).
-    Missing metric values are skipped (do not contribute), so a partially-
-    measured render still produces a finite loss instead of NaN."""
+                 weights_cfg: dict
+                 ) -> tuple[float, dict[str, float], dict[str, float]]:
+    """Leaky barrier loss — tiny linear pull inside the JND, quadratic
+    penalty outside (see `_leaky_barrier_penalty`).
+
+        L = Σ w_i · leaky(Δ_i, JND_i)              (scalar metric)
+        L = Σ w_i · MEAN_j(leaky(Δ_ij, JND_i))     (vector metric, averaged
+                                                    over j elements so a
+                                                    12-bin vector doesn't
+                                                    out-vote a scalar)
+
+    Returns a 3-tuple:
+
+      • total                — sum of every per-metric loss term.
+      • breakdown[key]       — STRICT status excess. Scalar: per-metric
+                                excess = max(0, |Δ|−JND)/JND. Vector:
+                                MAX over elements of the per-element
+                                excess. Status "ok" iff breakdown[key]
+                                == 0 (every element inside JND).
+      • true_penalties[key]  — EXACT per-metric loss contribution
+                                (w.weight × per-key penalty), so callers
+                                can render a w·d column that sums to
+                                total.
+    """
     total = 0.0
     breakdown: dict[str, float] = {}
+    true_penalties: dict[str, float] = {}
 
     for key, w in weights_cfg.items():
         if key in _VECTOR_METRIC_KEYS:
@@ -353,24 +410,40 @@ def compute_loss(meas: dict, anchor: dict,
                                  for mv, av in zip(m_vec, a_vec)) if p]
             if not pairs:
                 continue
-            d = sum(abs(mv - av) for mv, av in pairs) / (w.jnd * len(pairs))
+            # Per-element strict excess (for breakdown / status reporting)
+            # and per-element leaky penalty (for optimizer gradient).
+            excesses = [max(0.0, abs(mv - av) - w.jnd) / w.jnd
+                        for mv, av in pairs]
+            penalties = [_leaky_barrier_penalty(mv - av, w.jnd)
+                         for mv, av in pairs]
+            d       = max(excesses)
+            penalty = sum(penalties) / len(penalties)
         else:
             pair = _safe_pair(meas.get(key), anchor.get(key))
             if pair is None:
                 continue
-            d = abs(pair[0] - pair[1]) / w.jnd
-        breakdown[key] = d
-        total += w.weight * d
-    return total, breakdown
+            delta = pair[0] - pair[1]
+            d       = max(0.0, abs(delta) - w.jnd) / w.jnd
+            penalty = _leaky_barrier_penalty(delta, w.jnd)
+        breakdown[key]      = d
+        contribution        = w.weight * penalty
+        true_penalties[key] = contribution
+        total              += contribution
+    return total, breakdown, true_penalties
 
 
 def format_report(meas: dict, anchor: dict,
                   weights_cfg: dict) -> str:
     """Plain-text before/after table for stdout / report.md.
-    Columns: metric, anchor, measured, |Δ|, |Δ|/JND, status."""
-    loss, breakdown = compute_loss(meas, anchor, weights_cfg)
+    Columns: metric, anchor, measured, |Δ|, excess (|Δ| past JND in
+    JND units), w·penalty (exact loss contribution), status.
+
+    The `w·penalty` column sums to the totalled loss at the bottom —
+    no more visually-irreconcilable max-excess vs mean-of-squared
+    mismatch between per-row and aggregate."""
+    loss, breakdown, true_penalties = compute_loss(meas, anchor, weights_cfg)
     lines = [f"{'metric':<22s} {'anchor':>10s} {'measured':>10s} "
-             f"{'|Δ|':>8s} {'|Δ|/JND':>8s} {'w·d':>8s}  status"]
+             f"{'|Δ|':>8s} {'excess':>8s} {'w·pen':>10s}  status"]
     lines.append("-" * 80)
     for key, w in weights_cfg.items():
         if key in _VECTOR_METRIC_KEYS:
@@ -381,26 +454,34 @@ def format_report(meas: dict, anchor: dict,
                 if pair is None:
                     continue
                 delta = abs(pair[0] - pair[1])
-                norm = delta / w.jnd
-                status = "ok" if norm <= 1.0 else "OFF"
+                # Per-element excess (in JND units) — matches the loss
+                # function exactly: "ok" iff delta <= JND.
+                excess = max(0.0, delta - w.jnd) / w.jnd
+                status = "ok" if excess == 0.0 else "OFF"
                 lines.append(
                     f"  {key}[{i}]{'':<10s} {pair[1]:>10.3f} {pair[0]:>10.3f} "
-                    f"{delta:>8.3f} {norm:>8.2f} {'':>8s}  {status}")
-            agg = breakdown.get(key, 0.0)
-            lines.append(f"{key:<22s} {'(mean)':>10s} {'':>10s} {'':>8s} "
-                         f"{agg:>8.2f} {w.weight * agg:>8.2f}  "
-                         f"{'ok' if agg <= 1.0 else 'OFF'}")
+                    f"{delta:>8.3f} {excess:>8.2f} {'':>10s}  {status}")
+            # Aggregate line — print the EXACT loss contribution
+            # (w.weight × mean-leaky-penalty) from compute_loss so the
+            # column sums to total at the bottom.
+            agg     = breakdown.get(key, 0.0)
+            wpen    = true_penalties.get(key, 0.0)
+            lines.append(f"{key:<22s} {'(max)':>10s} {'':>10s} {'':>8s} "
+                         f"{agg:>8.2f} {wpen:>10.3f}  "
+                         f"{'ok' if agg == 0.0 else 'OFF'}")
         else:
             pair = _safe_pair(meas.get(key), anchor.get(key))
             if pair is None:
                 lines.append(f"{key:<22s} {'(missing)':>10s}")
                 continue
-            delta = abs(pair[0] - pair[1])
-            norm = delta / w.jnd
-            status = "ok" if norm <= 1.0 else "OFF"
+            delta  = abs(pair[0] - pair[1])
+            # Barrier-shifted excess matches compute_loss for status.
+            excess = max(0.0, delta - w.jnd) / w.jnd
+            status = "ok" if excess == 0.0 else "OFF"
+            wpen   = true_penalties.get(key, 0.0)
             lines.append(
                 f"{key:<22s} {pair[1]:>10.3f} {pair[0]:>10.3f} "
-                f"{delta:>8.3f} {norm:>8.2f} {w.weight * norm:>8.2f}  {status}")
+                f"{delta:>8.3f} {excess:>8.2f} {wpen:>10.3f}  {status}")
     lines.append("-" * 80)
     lines.append(f"{'total loss':<22s} {'':>10s} {'':>10s} {'':>8s} {'':>8s} "
                  f"{loss:>8.2f}")

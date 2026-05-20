@@ -77,7 +77,7 @@ def _score_cell(cell_vals: tuple[float, ...], axis_names: list[str],
         slug_prefix=_cell_slug(cfg.name, cell_idx),
     )
     warnings = meas.pop("_warnings", None)
-    loss, breakdown = metrics_mod.compute_loss(meas, anchor, cfg.metrics)
+    loss, breakdown, _penalties = metrics_mod.compute_loss(meas, anchor, cfg.metrics)
     return {
         "idx": cell_idx,
         "axes": dict(zip(axis_names, cell_vals)),
