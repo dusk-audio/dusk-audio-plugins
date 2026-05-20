@@ -158,8 +158,17 @@ private:
     float  crossoverFreq_      = 500.0f;
     float  highCrossoverFreq_  = 4000.0f;
     float  saturationAmount_   = 0.0f;
-    float  dampingAmount_      = 0.0f;
-    float  stereoWidth_        = 0.05f;   // M/S widener coefficient `b`
+    // Phase 6 calibration defaults:
+    //   dampingAmount_ = 0.3 — closes the +5 to +8 dB late-tail-energy
+    //     overshoot vs the Lex Med Hall anchor (DV's bare 8-ch Hadamard
+    //     loops have no natural HF roll-off; Lex's RT_HiCut/HF damping
+    //     produces the natural -8 dB-per-octave HF decay above ~4 kHz).
+    //   stereoWidth_ = 0.0 — the tap-sign decorrelation inside HallSubTank
+    //     already pulls broadband stereo_correlation toward -0.25 on bare
+    //     output; the +0.05 widener was overshooting Lex's -0.07 anchor.
+    //     Per-preset tuning can re-introduce widening via setStereoWidth.
+    float  dampingAmount_      = 0.3f;
+    float  stereoWidth_        = 0.0f;
 
     void updateSubTankDecays();
     void updateCrossovers();
