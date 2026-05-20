@@ -61,20 +61,23 @@ anchor:
   impulse_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall/lex_hall_med_hall_impulse.wav
   noiseburst_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall/lex_hall_med_hall_noiseburst.wav
 
-# P11 9/19 architectural baseline — locked in after DE v4 no-crutch run
-# (Damping=0 forced, post-tank shelves + Mid Chan Gain Spread carry 100% of
-# spectral shaping) + manual nudges (Bass Mult 1.55, Gain Trim -9.59).
+# P11 10/19 architectural baseline — DE v4 no-crutch (Damping=0 forced,
+# post-tank shelves + Mid Chan Gain Spread carry 100% of spectral shaping)
+# + manual nudges (Bass Mult 1.55, Gain Trim -9.59) + specular DE v4 strict
+# (Spec 0/1/2 clustered 6-8 ms, Spec 3 at 48.9 ms — closed edt).
 #
 # Centroid_drift bin1 = -4.71 Hz (was -141 baseline) — the architectural
 # wall is BROKEN. Within 2.2 Hz of JND 2.5 for bins 0 + 1; bin 3 still
-# drifts (-150) due to 8-channel treble band modal sparsity.
+# drifts (-147) due to 8-channel treble band modal sparsity.
 #
-# 9 PASS: c80, d50, treble_ratio, a_weighted, time_crest, stereo_corr,
-#         late_tail_500ms_1s, late_tail_1s_2s, late_tail_2s_3s.
-# 10 OUT (most close): edt +0.11, bass_ratio -0.20, edt_500 -0.49,
-#         decay_envelope 10/12, c80_per_octave 3/4, centroid_drift 0/4,
-#         peak_locations 1/4 (spec timing not in this search), box_ratio
-#         +4.75, spectral_crest +6.55 (both modal-density architectural).
+# 10 PASS: edt, c80, d50, treble_ratio, a_weighted, time_crest,
+#          stereo_corr, late_tail_500ms_1s, late_tail_1s_2s, late_tail_2s_3s.
+# 9 OUT (most close): bass_ratio -0.19, edt_500 -0.49, rt60_per_band 1/8,
+#         decay_envelope 10/12, c80_per_octave 2/4, peak_locations 1/4
+#         (FDN intrinsic peaks dominate specular taps — bottlenecked by
+#         8-channel modal density, addressable only via 16-channel SubTank
+#         expansion), centroid_drift 0/4, box_ratio +4.75, spectral_crest
+#         +6.55 (both modal-density architectural).
 locked_params:
   Algorithm:       "Hall (Lex)"
   Bus Mode:        "on"
@@ -122,12 +125,12 @@ locked_params:
   Hall Mid EQ Q:                "4"
   Hall Mid EQ Fc:               "380"
   Hall Treble EQ Gain:          "1.17623"
-  Hall Spec 0 Ms:               "3.0"
-  Hall Spec 1 Ms:               "6.0"
-  Hall Spec 2 Ms:               "11.0"
-  Hall Spec 3 Ms:               "17.0"
-  Hall Spec 0 Weight:           "0.655867"
-  Hall Spec 1 Weight:           "0.102401"
+  Hall Spec 0 Ms:               "6.0984"
+  Hall Spec 1 Ms:               "6.6598"
+  Hall Spec 2 Ms:               "8.0472"
+  Hall Spec 3 Ms:               "48.8765"
+  Hall Spec 0 Weight:           "0.9166"
+  Hall Spec 1 Weight:           "0.1299"
   Hall Spec 2 Weight:           "3.8090"
   Hall Spec 3 Weight:           "3.8090"
   Hall Spec HF Cut:             "6276.25"
@@ -183,7 +186,7 @@ search_space:
   Hall Bass EQ Gain:     { lo: -10.0, hi: 6.0, step: 1.0, scale: linear }
   Hall Mid EQ Gain:      { lo: -10.0, hi: 6.0, step: 1.0, scale: linear }
   Hall Treble EQ Gain:   { lo: -6.0,  hi: 8.0, step: 1.0, scale: linear }
-# 27-axis CMA on HallReverb engine. Current settings: workers=4,
+# 29-axis CMA on HallReverb engine. Current settings: workers=4,
 # max_evals=300, sigma=0.15. The OOM that locked the workstation
 # was on the prior 1500-eval / 4-worker run — keeping max_evals at
 # 300 bounds peak memory regardless of worker count.
