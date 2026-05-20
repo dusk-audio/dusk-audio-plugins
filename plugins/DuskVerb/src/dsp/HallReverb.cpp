@@ -642,6 +642,13 @@ void HallReverb::setTrebleDampingFc (float hz)
     trebleTank_.setDampingFc (dampingFcTreble_);
 }
 
+void HallReverb::setBassModDepth   (float samples) { bassTank_  .setModDepth (samples); }
+void HallReverb::setBassModRate    (float hz)      { bassTank_  .setModRate  (hz); }
+void HallReverb::setMidModDepth    (float samples) { midTank_   .setModDepth (samples); }
+void HallReverb::setMidModRate     (float hz)      { midTank_   .setModRate  (hz); }
+void HallReverb::setTrebleModDepth (float samples) { trebleTank_.setModDepth (samples); }
+void HallReverb::setTrebleModRate  (float hz)      { trebleTank_.setModRate  (hz); }
+
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }
 void HallReverb::setMidGain    (float g) { gainMid_    = std::max (0.0f, g); }
 void HallReverb::setTrebleGain (float g) { gainTreble_ = std::max (0.0f, g); }

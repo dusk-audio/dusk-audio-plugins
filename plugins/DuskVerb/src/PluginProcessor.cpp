@@ -305,6 +305,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_treble_damping_fc", 1 }, "Hall Treble Damping Fc",
         juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.5f), 12000.0f));
 
+    // Per-band modulation depth + rate. Bass default = slow + deep
+    // (matches Lex's bass-band wander), treble default = faster +
+    // shallower (matches Lex's HF spin pattern). Mid centred on the
+    // Lex Med Hall Spin 2.9 Hz / Wander 15 ms baseline.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_mod_depth", 1 }, "Hall Bass Mod Depth",
+        juce::NormalisableRange<float> (0.0f, 16.0f), 0.20f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_mod_rate", 1 }, "Hall Bass Mod Rate",
+        juce::NormalisableRange<float> (0.01f, 10.0f, 0.0f, 0.5f), 1.2f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_mod_depth", 1 }, "Hall Mid Mod Depth",
+        juce::NormalisableRange<float> (0.0f, 16.0f), 0.15f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_mod_rate", 1 }, "Hall Mid Mod Rate",
+        juce::NormalisableRange<float> (0.01f, 10.0f, 0.0f, 0.5f), 2.9f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_mod_depth", 1 }, "Hall Treble Mod Depth",
+        juce::NormalisableRange<float> (0.0f, 16.0f), 0.10f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_mod_rate", 1 }, "Hall Treble Mod Rate",
+        juce::NormalisableRange<float> (0.01f, 10.0f, 0.0f, 0.5f), 5.5f));
+
     return layout;
 }
 
@@ -390,6 +413,12 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallBassDampingFcParam_   = parameters.getRawParameterValue ("hall_bass_damping_fc");
     hallMidDampingFcParam_    = parameters.getRawParameterValue ("hall_mid_damping_fc");
     hallTrebleDampingFcParam_ = parameters.getRawParameterValue ("hall_treble_damping_fc");
+    hallBassModDepthParam_    = parameters.getRawParameterValue ("hall_bass_mod_depth");
+    hallBassModRateParam_     = parameters.getRawParameterValue ("hall_bass_mod_rate");
+    hallMidModDepthParam_     = parameters.getRawParameterValue ("hall_mid_mod_depth");
+    hallMidModRateParam_      = parameters.getRawParameterValue ("hall_mid_mod_rate");
+    hallTrebleModDepthParam_  = parameters.getRawParameterValue ("hall_treble_mod_depth");
+    hallTrebleModRateParam_   = parameters.getRawParameterValue ("hall_treble_mod_rate");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -664,6 +693,12 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallBassDampingFc_,   hallBassDampingFcParam_->load(),   [this] (float v) { activeEngine_->setHallBassDampingFc   (v); });
     pushIfChanged (lastHallMidDampingFc_,    hallMidDampingFcParam_->load(),    [this] (float v) { activeEngine_->setHallMidDampingFc    (v); });
     pushIfChanged (lastHallTrebleDampingFc_, hallTrebleDampingFcParam_->load(), [this] (float v) { activeEngine_->setHallTrebleDampingFc (v); });
+    pushIfChanged (lastHallBassModDepth_,    hallBassModDepthParam_->load(),    [this] (float v) { activeEngine_->setHallBassModDepth    (v); });
+    pushIfChanged (lastHallBassModRate_,     hallBassModRateParam_->load(),     [this] (float v) { activeEngine_->setHallBassModRate     (v); });
+    pushIfChanged (lastHallMidModDepth_,     hallMidModDepthParam_->load(),     [this] (float v) { activeEngine_->setHallMidModDepth     (v); });
+    pushIfChanged (lastHallMidModRate_,      hallMidModRateParam_->load(),      [this] (float v) { activeEngine_->setHallMidModRate      (v); });
+    pushIfChanged (lastHallTrebleModDepth_,  hallTrebleModDepthParam_->load(),  [this] (float v) { activeEngine_->setHallTrebleModDepth  (v); });
+    pushIfChanged (lastHallTrebleModRate_,   hallTrebleModRateParam_->load(),   [this] (float v) { activeEngine_->setHallTrebleModRate   (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -981,6 +1016,12 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallBassDampingFc   (hallBassDampingFcParam_->load());
     target->setHallMidDampingFc    (hallMidDampingFcParam_->load());
     target->setHallTrebleDampingFc (hallTrebleDampingFcParam_->load());
+    target->setHallBassModDepth    (hallBassModDepthParam_->load());
+    target->setHallBassModRate     (hallBassModRateParam_->load());
+    target->setHallMidModDepth     (hallMidModDepthParam_->load());
+    target->setHallMidModRate      (hallMidModRateParam_->load());
+    target->setHallTrebleModDepth  (hallTrebleModDepthParam_->load());
+    target->setHallTrebleModRate   (hallTrebleModRateParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1064,6 +1105,12 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallBassDampingFc_   = hallBassDampingFcParam_->load();
     lastHallMidDampingFc_    = hallMidDampingFcParam_->load();
     lastHallTrebleDampingFc_ = hallTrebleDampingFcParam_->load();
+    lastHallBassModDepth_    = hallBassModDepthParam_->load();
+    lastHallBassModRate_     = hallBassModRateParam_->load();
+    lastHallMidModDepth_     = hallMidModDepthParam_->load();
+    lastHallMidModRate_      = hallMidModRateParam_->load();
+    lastHallTrebleModDepth_  = hallTrebleModDepthParam_->load();
+    lastHallTrebleModRate_   = hallTrebleModRateParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
