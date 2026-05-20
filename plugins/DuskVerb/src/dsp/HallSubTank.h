@@ -205,7 +205,19 @@ private:
     // prepare() for deterministic renders across runs.
     float    rwState_       [N] {};
     uint32_t rwRngState_    [N] {};   // per-channel LCG state, seeded in prepare
-    float    rwAlpha_       = 0.0f;   // 1-pole alpha derived from modRateHz_/sr
+    // P13: rwAlpha is per-channel — each channel runs the random-walk
+    // 1-pole at a slightly different rate (deterministic 85%-115% scatter
+    // around the nominal modRateHz_) so the 16 random walks decorrelate
+    // and produce true "Random Hall"-style modulation. Single global
+    // rwAlpha would chorus all 16 channels in lock-step → no comb-mode
+    // break-up benefit beyond a sine LFO.
+    float    rwAlpha_       [N] {};   // 1-pole alpha per channel
+    // Per-channel rate scatter multiplier (constant after prepare). Read
+    // by recomputeLFORates to produce final per-channel inc/alpha.
+    float    rateScatter_   [N] = {
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f
+    };
 
     // Per-channel feedback gain (derived from decay × loop length).
     float feedbackGain_ [N] {};

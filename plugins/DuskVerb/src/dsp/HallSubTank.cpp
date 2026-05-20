@@ -121,8 +121,12 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
 
     // Allocate buffers for max-size scale 2.0× plus modulation excursion
     // headroom. Caller's setSize is clamped to [0.5, 2.0] in HallReverb.
+    // P13: headroom raised 32 → 128 samples to fit the heavy 64-sample
+    // wander defaults + linear-interp slop without overshooting the
+    // ring-buffer mask. Each delay-line buffer is sized to nextPowerOf2
+    // so the actual overhead is one bin extra in most cases.
     constexpr float kMaxSizeScale = 2.0f;
-    constexpr int   kModHeadroom  = 32;     // samples
+    constexpr int   kModHeadroom  = 128;    // samples
     const float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
 
     for (int i = 0; i < N; ++i)
@@ -161,6 +165,16 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
                        ^ 0xA5A5A5A5u;
         if (rwRngState_[i] == 0u) rwRngState_[i] = 1u;
         rwState_[i] = 0.0f;
+        // P13 per-channel rate scatter ∈ [0.85, 1.15]. Deterministic LCG
+        // seeded with a DIFFERENT salt from rwRngState_ so the rate of
+        // each channel is decoupled from its random-walk sequence.
+        uint32_t rateSeed = (static_cast<uint32_t> (i) * 3266489917u)
+                          ^ (bandSalt * 374761393u)
+                          ^ 0xDEADBEEFu;
+        if (rateSeed == 0u) rateSeed = 1u;
+        const float xiUnsigned = static_cast<float> (lcgNext (rateSeed))
+                               * (1.0f / 4294967296.0f);  // [0, 1)
+        rateScatter_[i] = 0.85f + 0.30f * xiUnsigned;     // [0.85, 1.15)
     }
 
     prepared_ = true;
@@ -192,8 +206,9 @@ void HallSubTank::recomputeDelayLengths()
             static_cast<float> (baseDelays_[i]) * rateRatio * sizeScale_));
         if (scaledDelay_[i] < 4) scaledDelay_[i] = 4;
         // Cap to buffer-size minus modulation headroom; should not trip when
-        // sizeScale is clamped at the HallReverb level.
-        const int cap = static_cast<int> (delays_[i].buffer.size()) - 32;
+        // sizeScale is clamped at the HallReverb level. P13: headroom raised
+        // to 128 to fit the heavy 64-sample wander defaults + interp slop.
+        const int cap = static_cast<int> (delays_[i].buffer.size()) - 128;
         if (scaledDelay_[i] > cap) scaledDelay_[i] = cap;
     }
 }
@@ -201,12 +216,19 @@ void HallSubTank::recomputeDelayLengths()
 void HallSubTank::recomputeLFORates()
 {
     if (! prepared_) return;
-    const float inc = kTwoPi * modRateHz_ / static_cast<float> (sampleRate_);
-    for (int i = 0; i < N; ++i) lfoPhaseInc_[i] = inc;
-    // Random-walk autocorrelation alpha uses the same 1-pole form as the
-    // damping LP. modRateHz_ controls how quickly the bounded sequence
-    // traverses its range; higher rate = faster mode-smear.
-    rwAlpha_ = computeOnepoleAlpha (modRateHz_, sampleRate_);
+    const float baseInc = kTwoPi * modRateHz_ / static_cast<float> (sampleRate_);
+    // P13 per-channel rate scatter — each channel gets its base inc + alpha
+    // multiplied by rateScatter_[i] ∈ [0.85, 1.15] so the 16 LFOs run at
+    // mutually irrational rates. Critical for breaking 16-channel static
+    // comb resonance: global locked rate produces lock-step modulation
+    // that just chorus-shifts the whole feedback loop without scrambling
+    // mode relationships.
+    for (int i = 0; i < N; ++i)
+    {
+        const float rateHz = modRateHz_ * rateScatter_[i];
+        lfoPhaseInc_[i] = baseInc * rateScatter_[i];
+        rwAlpha_[i]     = computeOnepoleAlpha (rateHz, sampleRate_);
+    }
 }
 
 void HallSubTank::recomputeFeedbackGains()
@@ -349,8 +371,7 @@ void HallSubTank::process (const float* inputL, const float* inputR,
     const float modShape = modShape_;                 // 0=sine, 1=random-walk
     const float sineMix  = 1.0f - modShape;
     const float rwMix    = modShape;
-    const float rwA      = rwAlpha_;
-    const float rwAComp  = 1.0f - rwA;
+    // P13: rwAlpha now per-channel — read inside the per-channel loop.
 
     for (int n = 0; n < numSamples; ++n)
     {
@@ -372,7 +393,9 @@ void HallSubTank::process (const float* inputL, const float* inputR,
             lfoPhase_[i] += lfoPhaseInc_[i];
             if (lfoPhase_[i] >= kTwoPi) lfoPhase_[i] -= kTwoPi;
 
-            rwState_[i] = rwAComp * rwState_[i] + rwA * lcgSigned (rwRngState_[i]);
+            const float rwA_i = rwAlpha_[i];
+            rwState_[i] = (1.0f - rwA_i) * rwState_[i]
+                        +         rwA_i  * lcgSigned (rwRngState_[i]);
             const float lfo = sineMix * sine + rwMix * rwState_[i];
             const float modOffset = modDepth * lfo;
             const float readPos   = static_cast<float> (scaledDelay_[i]) + modOffset;
@@ -425,14 +448,26 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         }
 
         // ──── Output: signed tap routing for stereo decorrelation ──────
+        // P12 normalization: output is the signed sum of kNumOutputTaps
+        // channels. With alternating ±1 signs on uncorrelated channel
+        // values, the expected magnitude scales as sqrt(kNumOutputTaps).
+        // Old 8-ch had 4 taps → sqrt(4)=2.0 baseline. New 16-ch has 8 taps
+        // → sqrt(8)=2.83 (+3 dB hotter). Pre-scale by sqrt(4/8) = 1/sqrt(2)
+        // ≈ 0.707 so 16-channel matches the 8-channel per-band output
+        // level — keeps Gain Trim / Mid Mult calibrations comparable
+        // across the channel-count change. Eliminates the +3 dB headroom
+        // collision DE v4-p12 hit (Mid Mult ceiling + Gain Trim ceiling
+        // both slammed while a_weighted still +3.4 dB OUT).
+        static constexpr float kOutputTapNorm =
+            0.70710678118654752f;  // sqrt(4/8) — old-level-compat for kNumOutputTaps=8
         float outL = 0.0f, outR = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
         {
             outL += channelOut[kLeftTaps [t]] * kLeftSigns [t];
             outR += channelOut[kRightTaps[t]] * kRightSigns[t];
         }
-        if (outputL != nullptr) outputL[n] = outL;
-        if (outputR != nullptr) outputR[n] = outR;
+        if (outputL != nullptr) outputL[n] = outL * kOutputTapNorm;
+        if (outputR != nullptr) outputR[n] = outR * kOutputTapNorm;
     }
 }
 

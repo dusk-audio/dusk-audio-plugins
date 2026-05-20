@@ -310,42 +310,48 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     // shallower (matches Lex's HF spin pattern). Mid centred on the
     // Lex Med Hall Spin 2.9 Hz / Wander 15 ms baseline.
     //
-    // Defaults unified to legacy global mod (0.15 samples / 2.9 Hz) per
-    // 7/19 calibration baseline; differentiated bass-slow / treble-fast
-    // shapes regressed treble_ratio + spectral_crest. Per-band axes still
-    // free for user/CMA exploration.
+    // P13 Heavy Spin & Wander defaults — 16-channel topology static comb
+    // resonance is defeated by Lexicon-style heavy time-varying delay
+    // modulation. Depth range extended 16 → 64 samples (Lex Wander 15 ms
+    // ≈ 720 samples at 48 kHz; even our 64-cap is a fraction). Default
+    // shape = 1.0 (full random-walk, no static sine LFO sidebands).
+    // Default rate = 5.0 Hz (Lex Spin range 1-10 Hz). Default depth =
+    // 8 samples — enough to slide each delay tap by ±8 / N samples
+    // sample-by-sample so combs never settle into resonance.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_bass_mod_depth", 1 }, "Hall Bass Mod Depth",
-        juce::NormalisableRange<float> (0.0f, 16.0f), 0.15f));
+        juce::NormalisableRange<float> (0.0f, 64.0f), 8.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_bass_mod_rate", 1 }, "Hall Bass Mod Rate",
-        juce::NormalisableRange<float> (0.01f, 10.0f, 0.0f, 0.5f), 2.9f));
+        juce::NormalisableRange<float> (0.01f, 20.0f, 0.0f, 0.5f), 5.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_mid_mod_depth", 1 }, "Hall Mid Mod Depth",
-        juce::NormalisableRange<float> (0.0f, 16.0f), 0.15f));
+        juce::NormalisableRange<float> (0.0f, 64.0f), 8.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_mid_mod_rate", 1 }, "Hall Mid Mod Rate",
-        juce::NormalisableRange<float> (0.01f, 10.0f, 0.0f, 0.5f), 2.9f));
+        juce::NormalisableRange<float> (0.01f, 20.0f, 0.0f, 0.5f), 5.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_treble_mod_depth", 1 }, "Hall Treble Mod Depth",
-        juce::NormalisableRange<float> (0.0f, 16.0f), 0.15f));
+        juce::NormalisableRange<float> (0.0f, 64.0f), 8.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_treble_mod_rate", 1 }, "Hall Treble Mod Rate",
-        juce::NormalisableRange<float> (0.01f, 10.0f, 0.0f, 0.5f), 2.9f));
+        juce::NormalisableRange<float> (0.01f, 20.0f, 0.0f, 0.5f), 5.0f));
 
     // Per-band modulation shape — 0 = sine (legacy), 1 = bounded
-    // random-walk per channel (P9 architectural lever for centroid_drift
-    // + spectral_crest). Default 0 preserves the 7/19 baseline; dial up
-    // per band to chase those specific metrics.
+    // random-walk per channel. P13 default flipped to 1.0 (full
+    // random-walk) to defeat the 16-channel topology's static comb
+    // resonance — sine creates discrete LFO sidebands that align with
+    // delay modes, random-walk produces continuous spectral smear that
+    // prevents coherent mode buildup.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_bass_mod_shape", 1 }, "Hall Bass Mod Shape",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_mid_mod_shape", 1 }, "Hall Mid Mod Shape",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hall_treble_mod_shape", 1 }, "Hall Treble Mod Shape",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
 
     // Per-band channel feedback gain spread — Lex-style decoherence.
     // Range 0..0.4: 0 = identical gain across the 8 channels of the band
@@ -565,6 +571,35 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastGainTrim_ = -999.0f;
         haveLastFreeze_ = false;
         haveLastGateEnabled_ = false;
+
+        // Invalidate all Hall advanced cached values so the active engine
+        // gets its Hall parameters force-replayed on the next process() call
+        // (mirrors the FirstReflections/ER/gainTrim sentinel reset above).
+        lastHallBassDamping_ = lastHallMidDamping_ = lastHallTrebleDamping_ =
+        lastHallBassGain_ = lastHallMidGain_ = lastHallTrebleGain_ =
+        lastHallInlineDiffusion_ = lastHallStereoWidth_ = -999.0f;
+        lastHallTap0Ms_ = lastHallTap1Ms_ = lastHallTap2Ms_ =
+        lastHallTap3Ms_ = lastHallTap4Ms_ = lastHallTap5Ms_ = -999.0f;
+        lastHallTap0Weight_ = lastHallTap1Weight_ = lastHallTap2Weight_ =
+        lastHallTap3Weight_ = lastHallTap4Weight_ = lastHallTap5Weight_ = -999.0f;
+        lastHallSpec0Ms_ = lastHallSpec1Ms_ = lastHallSpec2Ms_ = lastHallSpec3Ms_ = -999.0f;
+        lastHallSpec0Weight_ = lastHallSpec1Weight_ =
+        lastHallSpec2Weight_ = lastHallSpec3Weight_ = -999.0f;
+        lastHallSpecHFCut_ = -999.0f;
+        lastHallBassEQGain_ = lastHallBassEQQ_ =
+        lastHallMidEQGain_  = lastHallMidEQQ_ =
+        lastHallTrebleEQGain_ = lastHallTrebleEQQ_ = -999.0f;
+        lastHallBassEQFc_ = lastHallMidEQFc_ = lastHallTrebleEQFc_ = -999.0f;
+        lastHallBassDampingFc_ = lastHallMidDampingFc_ = lastHallTrebleDampingFc_ = -999.0f;
+        lastHallBassModDepth_ = lastHallBassModRate_ =
+        lastHallMidModDepth_  = lastHallMidModRate_ =
+        lastHallTrebleModDepth_ = lastHallTrebleModRate_ = -999.0f;
+        lastHallBassModShape_ = lastHallMidModShape_ = lastHallTrebleModShape_ = -999.0f;
+        lastHallBassChanGainSpread_ = lastHallMidChanGainSpread_ =
+        lastHallTrebleChanGainSpread_ = -999.0f;
+        lastHallBassShelfGain_ = lastHallBassShelfFc_ =
+        lastHallMidShelfGain_  = lastHallMidShelfFc_ =
+        lastHallTrebleShelfGain_ = lastHallTrebleShelfFc_ = -999.0f;
     }
 
     setLatencySamples (0);
