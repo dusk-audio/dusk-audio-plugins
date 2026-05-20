@@ -164,6 +164,17 @@ private:
     std::atomic<float>* firstReflRGainParam_ = nullptr;
     std::atomic<float>* firstReflHFCutParam_ = nullptr;
 
+    // HallReverb advanced (algo 10 only) — forwarded straight to hall_
+    // through DuskVerbEngine::setHall* methods. Other engines ignore.
+    std::atomic<float>* hallBassDampingParam_     = nullptr;
+    std::atomic<float>* hallMidDampingParam_      = nullptr;
+    std::atomic<float>* hallTrebleDampingParam_   = nullptr;
+    std::atomic<float>* hallBassGainParam_        = nullptr;
+    std::atomic<float>* hallMidGainParam_         = nullptr;
+    std::atomic<float>* hallTrebleGainParam_      = nullptr;
+    std::atomic<float>* hallInlineDiffusionParam_ = nullptr;
+    std::atomic<float>* hallStereoWidthParam_     = nullptr;
+
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
     // Edge-detected last-pushed values so the audio thread only forwards
@@ -195,6 +206,16 @@ private:
     float lastFirstReflLGain_ = -999.0f;
     float lastFirstReflRGain_ = -999.0f;
     float lastFirstReflHFCut_ = -1.0f;
+    // Hall (Lex) advanced — edge-detect against -999 so the first push
+    // from snapEnginesToCurrentValues always fires regardless of default.
+    float lastHallBassDamping_     = -999.0f;
+    float lastHallMidDamping_      = -999.0f;
+    float lastHallTrebleDamping_   = -999.0f;
+    float lastHallBassGain_        = -999.0f;
+    float lastHallMidGain_         = -999.0f;
+    float lastHallTrebleGain_      = -999.0f;
+    float lastHallInlineDiffusion_ = -999.0f;
+    float lastHallStereoWidth_     = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

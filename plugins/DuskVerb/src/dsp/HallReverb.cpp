@@ -355,6 +355,37 @@ void HallReverb::setBandGain (float bass, float mid, float treble)
     gainTreble_ = std::max (0.0f, treble);
 }
 
+void HallReverb::setBassDamping (float c)
+{
+    dampingBass_ = std::clamp (c, 0.0f, 0.95f);
+    bassTank_.setDamping (dampingBass_);
+}
+
+void HallReverb::setMidDamping (float c)
+{
+    dampingMid_ = std::clamp (c, 0.0f, 0.95f);
+    midTank_.setDamping (dampingMid_);
+}
+
+void HallReverb::setTrebleDamping (float c)
+{
+    dampingTreble_ = std::clamp (c, 0.0f, 0.95f);
+    trebleTank_.setDamping (dampingTreble_);
+}
+
+void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }
+void HallReverb::setMidGain    (float g) { gainMid_    = std::max (0.0f, g); }
+void HallReverb::setTrebleGain (float g) { gainTreble_ = std::max (0.0f, g); }
+
+void HallReverb::setInlineDiffusion (float coeff)
+{
+    // Uniform across all 3 sub-tanks. Per-band override available via
+    // setBandInlineDiffusion if tuning needs it (not currently exposed).
+    bassTank_  .setInlineDiffusion (coeff);
+    midTank_   .setInlineDiffusion (coeff);
+    trebleTank_.setInlineDiffusion (coeff);
+}
+
 void HallReverb::setStereoWidth (float b)
 {
     // Clamp to [-0.4, +0.4]. Beyond ±0.5 the matrix approaches singular

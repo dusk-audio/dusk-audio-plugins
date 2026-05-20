@@ -121,6 +121,20 @@ public:
     // host / preset state like any other parameter.
     void setBassChokeHz (float hz);
 
+    // HallReverb-specific advanced controls. Forwarded directly to hall_;
+    // other engines see no effect. These exist as APVTS params so the
+    // tuner (CMA-ES) can reach the engine internals that the standard
+    // setX broadcast methods don't cover. The plugin editor shows their
+    // knobs only when the current algorithm is "Hall (Lex)".
+    void setHallBassDamping      (float coeff);
+    void setHallMidDamping       (float coeff);
+    void setHallTrebleDamping    (float coeff);
+    void setHallBassGain         (float gain);
+    void setHallMidGain          (float gain);
+    void setHallTrebleGain       (float gain);
+    void setHallInlineDiffusion  (float coeff);
+    void setHallStereoWidth      (float b);
+
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
     // SixAPTank is the active engine, but pre-applying them at preset-load

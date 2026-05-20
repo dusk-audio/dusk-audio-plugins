@@ -162,6 +162,38 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "first_refl_hf_cut", 1 }, "First Refl HF Cut",
         juce::NormalisableRange<float> (100.0f, 20000.0f, 0.0f, 0.5f), fp0.firstReflHFCutHz));
 
+    // ───── HallReverb advanced params (algo 10 only) ─────────────────────
+    // These map 1-to-1 onto HallReverb's per-band internal controls so the
+    // tuner (CMA-ES) can search engine internals that the standard
+    // setBassMultiply / setMidMultiply / setSaturation / etc. don't cover.
+    // Other engines ignore these param values (DuskVerbEngine forwards
+    // them only to hall_). The editor hides these knobs when the active
+    // algorithm isn't "Hall (Lex)".
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_damping", 1 }, "Hall Bass Damping",
+        juce::NormalisableRange<float> (0.0f, 0.95f), 0.40f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_damping", 1 }, "Hall Mid Damping",
+        juce::NormalisableRange<float> (0.0f, 0.95f), 0.25f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_damping", 1 }, "Hall Treble Damping",
+        juce::NormalisableRange<float> (0.0f, 0.95f), 0.05f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_gain", 1 }, "Hall Bass Gain",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_gain", 1 }, "Hall Mid Gain",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_gain", 1 }, "Hall Treble Gain",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_inline_diffusion", 1 }, "Hall Inline Diffusion",
+        juce::NormalisableRange<float> (0.0f, 0.85f), 0.30f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_stereo_width", 1 }, "Hall Stereo Width",
+        juce::NormalisableRange<float> (-0.4f, 0.4f), 0.0f));
+
     return layout;
 }
 
@@ -202,6 +234,15 @@ DuskVerbProcessor::DuskVerbProcessor()
     firstReflLGainParam_ = parameters.getRawParameterValue ("first_refl_l_gain");
     firstReflRGainParam_ = parameters.getRawParameterValue ("first_refl_r_gain");
     firstReflHFCutParam_ = parameters.getRawParameterValue ("first_refl_hf_cut");
+
+    hallBassDampingParam_     = parameters.getRawParameterValue ("hall_bass_damping");
+    hallMidDampingParam_      = parameters.getRawParameterValue ("hall_mid_damping");
+    hallTrebleDampingParam_   = parameters.getRawParameterValue ("hall_treble_damping");
+    hallBassGainParam_        = parameters.getRawParameterValue ("hall_bass_gain");
+    hallMidGainParam_         = parameters.getRawParameterValue ("hall_mid_gain");
+    hallTrebleGainParam_      = parameters.getRawParameterValue ("hall_treble_gain");
+    hallInlineDiffusionParam_ = parameters.getRawParameterValue ("hall_inline_diffusion");
+    hallStereoWidthParam_     = parameters.getRawParameterValue ("hall_stereo_width");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -433,6 +474,16 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastFirstReflLGain_, firstReflLGainParam_->load(), [this] (float v) { activeEngine_->setFirstReflLGainDb  (v); });
     pushIfChanged (lastFirstReflRGain_, firstReflRGainParam_->load(), [this] (float v) { activeEngine_->setFirstReflRGainDb  (v); });
     pushIfChanged (lastFirstReflHFCut_, firstReflHFCutParam_->load(), [this] (float v) { activeEngine_->setFirstReflHFCutHz  (v); });
+
+    // ───── Hall (Lex) advanced — algo 10 only; other engines no-op ─────
+    pushIfChanged (lastHallBassDamping_,     hallBassDampingParam_->load(),     [this] (float v) { activeEngine_->setHallBassDamping     (v); });
+    pushIfChanged (lastHallMidDamping_,      hallMidDampingParam_->load(),      [this] (float v) { activeEngine_->setHallMidDamping      (v); });
+    pushIfChanged (lastHallTrebleDamping_,   hallTrebleDampingParam_->load(),   [this] (float v) { activeEngine_->setHallTrebleDamping   (v); });
+    pushIfChanged (lastHallBassGain_,        hallBassGainParam_->load(),        [this] (float v) { activeEngine_->setHallBassGain        (v); });
+    pushIfChanged (lastHallMidGain_,         hallMidGainParam_->load(),         [this] (float v) { activeEngine_->setHallMidGain         (v); });
+    pushIfChanged (lastHallTrebleGain_,      hallTrebleGainParam_->load(),      [this] (float v) { activeEngine_->setHallTrebleGain      (v); });
+    pushIfChanged (lastHallInlineDiffusion_, hallInlineDiffusionParam_->load(), [this] (float v) { activeEngine_->setHallInlineDiffusion (v); });
+    pushIfChanged (lastHallStereoWidth_,     hallStereoWidthParam_->load(),     [this] (float v) { activeEngine_->setHallStereoWidth     (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -707,6 +758,17 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setFirstReflRGainDb  (firstReflRGainParam_->load());
     target->setFirstReflHFCutHz  (firstReflHFCutParam_->load());
 
+    // Hall (Lex) advanced — DuskVerbEngine forwards only to hall_; other
+    // engines see no effect, so this is safe to push unconditionally.
+    target->setHallBassDamping      (hallBassDampingParam_->load());
+    target->setHallMidDamping       (hallMidDampingParam_->load());
+    target->setHallTrebleDamping    (hallTrebleDampingParam_->load());
+    target->setHallBassGain         (hallBassGainParam_->load());
+    target->setHallMidGain          (hallMidGainParam_->load());
+    target->setHallTrebleGain       (hallTrebleGainParam_->load());
+    target->setHallInlineDiffusion  (hallInlineDiffusionParam_->load());
+    target->setHallStereoWidth      (hallStereoWidthParam_->load());
+
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
     // it picks up the new preset's value without re-pushing here.
@@ -747,6 +809,15 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastFirstReflLGain_ = firstReflLGainParam_->load();
     lastFirstReflRGain_ = firstReflRGainParam_->load();
     lastFirstReflHFCut_ = firstReflHFCutParam_->load();
+
+    lastHallBassDamping_     = hallBassDampingParam_->load();
+    lastHallMidDamping_      = hallMidDampingParam_->load();
+    lastHallTrebleDamping_   = hallTrebleDampingParam_->load();
+    lastHallBassGain_        = hallBassGainParam_->load();
+    lastHallMidGain_         = hallMidGainParam_->load();
+    lastHallTrebleGain_      = hallTrebleGainParam_->load();
+    lastHallInlineDiffusion_ = hallInlineDiffusionParam_->load();
+    lastHallStereoWidth_     = hallStereoWidthParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
