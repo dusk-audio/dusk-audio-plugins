@@ -107,12 +107,19 @@ private:
     // The bare DattorroTank produces a fast-rising IR whose first
     // 50 ms holds too much energy (D50 over-positive) and whose
     // initial decay slope is steeper than Lex's (EDT under-target).
-    // Spreading the dry input across 4 staggered predelay taps
+    // Spreading the dry input across 5 staggered predelay taps
     // before the tank lets the tank's recirculation present an
-    // energy buildup (≈ 0–35 ms) rather than a single spike.
-    // Outputs of the four taps overlap at the tank input and
+    // energy buildup (≈ 0–110 ms) rather than a single spike.
+    // Outputs of the five taps overlap at the tank input and
     // recirculate through the figure-8 normally, so RT60 stays
     // anchored to the existing decay / damping params.
+    //
+    // Note: the signal hits TWO diffusion stages in series — this
+    // multi-tap distributor sits in front of DattorroTank's own
+    // intrinsic 4-stage input diffuser (4 Schroeder APs at the
+    // tank head). The multi-tap shapes WHERE the dry energy lands
+    // in time; the tank's diffuser then smears each tap into a
+    // smooth wavefront before the figure-8 recirculation begins.
     //
     // Tap times + weights tuned against the lex anchor; see
     // the matching commit message.
