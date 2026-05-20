@@ -93,6 +93,12 @@ public:
     // shaped by post-tank HiCut alone). Each coefficient is clamped
     // independently to [0, 0.95] inside HallSubTank.
     void setBandDamping       (float bass, float mid, float treble);
+    // Individual per-band damping setters — exposed for APVTS plumbing so
+    // each band's damping has its own parameter slot. Update the local
+    // state then forward to the corresponding sub-tank.
+    void setBassDamping       (float coeff);
+    void setMidDamping        (float coeff);
+    void setTrebleDamping     (float coeff);
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
@@ -103,6 +109,16 @@ public:
     // a little while leaving its RT60 intact). Linear scalars; range
     // unbounded but typical [0.0, 1.5].
     void setBandGain          (float bass, float mid, float treble);
+    // Individual per-band gain setters — APVTS plumbing companion to the
+    // per-band damping setters above. Linear scalars; typical range [0, 2].
+    void setBassGain          (float gain);
+    void setMidGain           (float gain);
+    void setTrebleGain        (float gain);
+    // Inline diffusion + stereo width also need APVTS exposure for the
+    // Hall-engine advanced section. setStereoWidth already declared above;
+    // setInlineDiffusion forwards uniformly to all 3 sub-tanks (per-band
+    // override available via setBandInlineDiffusion if tuning needs it).
+    void setInlineDiffusion   (float coeff);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.

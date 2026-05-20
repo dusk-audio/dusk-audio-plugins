@@ -392,6 +392,20 @@ void DuskVerbEngine::setBassChokeHz (float hz)
     dattorroVintage_.setBassChokeHz (hz);
 }
 
+// ───── HallReverb advanced controls ─────────────────────────────────
+// All eight setters forward only to hall_ — they have no effect on the
+// other engines (which don't expose per-band damping / gain / inline
+// diffusion / output widener as separate knobs). The editor hides their
+// UI knobs when the active algorithm isn't "Hall (Lex)" (algo 10).
+void DuskVerbEngine::setHallBassDamping     (float coeff) { hall_.setBassDamping     (coeff); }
+void DuskVerbEngine::setHallMidDamping      (float coeff) { hall_.setMidDamping      (coeff); }
+void DuskVerbEngine::setHallTrebleDamping   (float coeff) { hall_.setTrebleDamping   (coeff); }
+void DuskVerbEngine::setHallBassGain        (float gain)  { hall_.setBassGain        (gain);  }
+void DuskVerbEngine::setHallMidGain         (float gain)  { hall_.setMidGain         (gain);  }
+void DuskVerbEngine::setHallTrebleGain      (float gain)  { hall_.setTrebleGain      (gain);  }
+void DuskVerbEngine::setHallInlineDiffusion (float coeff) { hall_.setInlineDiffusion (coeff); }
+void DuskVerbEngine::setHallStereoWidth     (float b)     { hall_.setStereoWidth     (b);     }
+
 void DuskVerbEngine::setERLevel (float level)
 {
     erLevelSmoother_.setTarget (std::clamp (level, 0.0f, 1.0f));
