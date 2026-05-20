@@ -81,10 +81,28 @@ public:
     void setModRate           (float hz);
     void setFreeze            (bool frozen);
     void setSaturation        (float amount);
-    // Damping (HF roll-off in tank feedback). Applied uniformly across
-    // bands for now; per-band damping override lands in a later phase if
-    // tuning calls for it.
+    // Uniform damping helper — equivalent to setBandDamping(a, a, a).
+    // Kept so callers that don't care about per-band control stay simple.
     void setDamping           (float amount);
+    // Per-band damping (one-pole HF shelf coefficient inside each SubTank's
+    // feedback path). Phase 6 iteration 1 exposed that uniform damping kills
+    // treble RT60 while only partially controlling late-tail energy in the
+    // bass / mid bands — Lex's RT_HiCut + HF damping are non-uniform across
+    // octaves. Per-band control lets the bass band recirculate cleanly,
+    // mid band shape decay shape, and treble damp less aggressively (or be
+    // shaped by post-tank HiCut alone). Each coefficient is clamped
+    // independently to [0, 0.95] inside HallSubTank.
+    void setBandDamping       (float bass, float mid, float treble);
+    // Per-band output gain. Each SubTank's wet output is multiplied by its
+    // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
+    // 8-channel Hadamard mixing concentrates midrange modal density,
+    // producing box_ratio_db +13 dB vs the Lex Med Hall anchor. Mid-band
+    // attenuation (default 0.40 ≈ −8 dB) is the structural lever that
+    // closes that overshoot without touching tank decay or damping. Per-
+    // band gain is also a clean way to trim bass_ratio (drop bass output
+    // a little while leaving its RT60 intact). Linear scalars; range
+    // unbounded but typical [0.0, 1.5].
+    void setBandGain          (float bass, float mid, float treble);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
@@ -125,8 +143,24 @@ private:
     static constexpr float kTapWeights[kNumPredelayTaps] =
         {  1.00f, 0.65f, 0.50f, 0.40f, 0.30f, 0.20f };
 
+    // Pre-tank input band split — feeds each SubTank its assigned band of
+    // dry input.
     duskverb::dsp::LR4BandSplit splitL_, splitR_;
     duskverb::dsp::HallSubTank  bassTank_, midTank_, trebleTank_;
+    // Post-tank band isolation. Each SubTank's 8-channel Hadamard mixing
+    // scatters input frequencies across all channels, so the wet output of
+    // (e.g.) the BASS sub-tank includes 250-500 Hz harmonic content that
+    // bleeds into the broadband sum. Without post-filtering, that upper-
+    // bass harmonic packing was driving box_ratio_db +13 dB above the Lex
+    // Med Hall anchor — and per-band gain or damping alone could only
+    // close 2 dB of that gap (verified Phase 6 iteration 2 spectral
+    // diagnosis). Post-filtering each band's output back into its LR4
+    // passband makes per-band gain genuinely correspond to per-band
+    // amplitude, and keeps the broadband sum from re-introducing the
+    // overlap that the upstream split removed.
+    duskverb::dsp::LR4BandSplit bassPostL_,   bassPostR_;
+    duskverb::dsp::LR4BandSplit midPostL_,    midPostR_;
+    duskverb::dsp::LR4BandSplit treblePostL_, treblePostR_;
 
     // Predelay ring buffer (sized at prepare() to fit the longest tap +
     // headroom, rounded up to next power of 2 for mask-and addressing).
@@ -158,17 +192,43 @@ private:
     float  crossoverFreq_      = 500.0f;
     float  highCrossoverFreq_  = 4000.0f;
     float  saturationAmount_   = 0.0f;
-    // Phase 6 calibration defaults:
-    //   dampingAmount_ = 0.3 — closes the +5 to +8 dB late-tail-energy
-    //     overshoot vs the Lex Med Hall anchor (DV's bare 8-ch Hadamard
-    //     loops have no natural HF roll-off; Lex's RT_HiCut/HF damping
-    //     produces the natural -8 dB-per-octave HF decay above ~4 kHz).
-    //   stereoWidth_ = 0.0 — the tap-sign decorrelation inside HallSubTank
-    //     already pulls broadband stereo_correlation toward -0.25 on bare
-    //     output; the +0.05 widener was overshooting Lex's -0.07 anchor.
-    //     Per-preset tuning can re-introduce widening via setStereoWidth.
-    float  dampingAmount_      = 0.3f;
+    // Phase 6 + Sprint 1.5 calibration defaults:
+    //   dampingBass_  = 0.20 — gentle bass HF roll, lets bass band ring
+    //     naturally for the long low-end decay halls characteristically
+    //     hold (Lex BassRT 1.5x is preset-controlled, not engine-set).
+    //   dampingMid_   = 0.35 — strongest damping in mids where late-tail
+    //     energy overshoot was largest in the uniform-damping iteration.
+    //   dampingTreble_ = 0.05 — minimal in-tank HF damping; trust the
+    //     post-tank HiCut filter for HF shaping. The uniform damping=0.3
+    //     of iteration 1 killed treble RT60 by 0.34→0.73s vs the Lex
+    //     anchor; pulling treble damping near zero restores HF decay
+    //     to natural-FDN rates while bass/mid damping still controls
+    //     late-tail energy.
+    //   stereoWidth_ = 0.0 — tap-sign decorrelation inside HallSubTank
+    //     pulls broadband stereo_correlation toward -0.25 on bare output;
+    //     widening must be applied per-preset, not as engine default.
+    // Phase 6 iteration 2 spectral diagnosis: the +13 dB box_ratio_db
+    // overshoot vs the Lex Med Hall anchor was driven by the BASS sub-
+    // tank's harmonic packing at 250–500 Hz (long bass delays → dense
+    // modal comb between fundamentals and the LR4 fLow crossover),
+    // NOT the mid sub-tank. Cutting mid_gain in iteration 1 made things
+    // worse because mid output was already 3-7 dB UNDER Lex in the 1-4 kHz
+    // octaves. The fix is heavier bass damping (kills the upper-bass
+    // harmonics riding the bass tank's recirculation) with mid/treble
+    // gain restored to unity.
+    float  dampingBass_        = 0.40f;     // restored — damping doesn't reach the 250-500 Hz box-ratio zone
+    float  dampingMid_         = 0.25f;
+    float  dampingTreble_      = 0.05f;
     float  stereoWidth_        = 0.0f;
+    // Per-band gain defaults at unity — preset-tunable. Phase 6 spectral
+    // diagnosis showed that bass tank gain alone can't close box_ratio_db
+    // (the offending 380 Hz modal peak is 10 dB stronger than Lex's anchor;
+    // cutting bass_gain proportionally drops the flanks too, ratio holds).
+    // The structural fix is modal smoothing via inline allpass diffusion
+    // inside HallSubTank — planned Sprint 1.5 P3.
+    float  gainBass_           = 1.0f;
+    float  gainMid_            = 1.0f;
+    float  gainTreble_         = 1.0f;
 
     void updateSubTankDecays();
     void updateCrossovers();
