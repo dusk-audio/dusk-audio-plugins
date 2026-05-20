@@ -197,22 +197,62 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
     def _peak_locations_ms (signal: np.ndarray, sr: float,
                             max_peaks: int = 4,
                             window_ms: float = 50.0) -> list[float]:
+        """First N specular peak times in 0-50ms post-onset.
+
+        Patched 2026-05-20 (P8c follow-up): the prior implementation used
+        only a -40 dB amplitude gate which picked up sub-tank modal
+        ripples in the 0-4ms post-peak window as "peaks", drowning the
+        true specular reflections that fired later. Three additions:
+
+          - HEIGHT THRESHOLD: -20 dB below global peak (was -40 dB) so
+            sub-modal ripples that sit 40-50 dB below peak are dropped
+            below the gate.
+
+          - PROMINENCE: candidate peak must exceed its local 0.5 ms
+            envelope minimum by at least 6 dB. Filters bumps that
+            wobble around their own baseline without a real specular
+            energy spike.
+
+          - MIN SEPARATION: 1 ms between accepted peaks. Lex anchor
+            specular reflections are 3-4 ms apart minimum; modal
+            density artefacts on a < 1 ms scale aren't true specular
+            events.
+        """
         env = np.abs(signal).astype(np.float64)
         p0 = int(np.argmax(env))
         end = min(len(env), p0 + int(window_ms * 1e-3 * sr))
         seg = env[p0:end]
         if len(seg) < 3:
             return [0.0] + [999.0] * (max_peaks - 1)
-        # Local maxima: strictly greater than both neighbours; min gain
-        # threshold -40 dB relative to global peak to suppress noise floor.
-        peak = seg[0] if seg[0] > 0 else 1.0
-        thresh = peak * 10.0 ** (-40.0 / 20.0)
+        peak_amp = seg[0] if seg[0] > 0 else 1.0
+        thresh = peak_amp * 10.0 ** (-20.0 / 20.0)        # was -40 dB
+        prom_thresh_db = 6.0
+        min_sep_samples = int(round(0.001 * sr))           # 1 ms
+        prom_window_samples = int(round(0.0005 * sr))      # 0.5 ms
+
         idx_peaks: list[int] = [0]
+        last_accepted = 0
         for i in range(1, len(seg) - 1):
-            if seg[i] > seg[i - 1] and seg[i] >= seg[i + 1] and seg[i] >= thresh:
-                idx_peaks.append(i)
-                if len(idx_peaks) >= max_peaks:
-                    break
+            if not (seg[i] > seg[i - 1] and seg[i] >= seg[i + 1]):
+                continue
+            if seg[i] < thresh:
+                continue
+            if i - last_accepted < min_sep_samples:
+                continue
+            # Prominence: peak must rise prom_thresh_db above the local
+            # minimum in the ±0.5 ms window centred on the candidate.
+            lo = max(0, i - prom_window_samples)
+            hi = min(len(seg), i + prom_window_samples)
+            local_min = float(seg[lo:hi].min())
+            if local_min <= 0.0:
+                local_min = peak_amp * 1e-9
+            prom_db = 20.0 * float(np.log10(seg[i] / local_min))
+            if prom_db < prom_thresh_db:
+                continue
+            idx_peaks.append(i)
+            last_accepted = i
+            if len(idx_peaks) >= max_peaks:
+                break
         ms = [round(idx / sr * 1000.0, 3) for idx in idx_peaks]
         while len(ms) < max_peaks:
             ms.append(999.0)

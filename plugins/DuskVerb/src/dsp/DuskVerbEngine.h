@@ -150,6 +150,14 @@ public:
     void setHallSpec2Ms (float ms); void setHallSpec2Weight (float w);
     void setHallSpec3Ms (float ms); void setHallSpec3Weight (float w);
     void setHallSpecHFCutHz (float hz);
+    // P10 per-band peaking EQ. Caller pushes gain + Q; HallReverb owns
+    // the fixed centre frequencies (250 / 1500 / 8000 Hz).
+    void setHallBassEQGain  (float gainDb);
+    void setHallBassEQQ     (float q);
+    void setHallMidEQGain   (float gainDb);
+    void setHallMidEQQ      (float q);
+    void setHallTrebleEQGain (float gainDb);
+    void setHallTrebleEQQ    (float q);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the

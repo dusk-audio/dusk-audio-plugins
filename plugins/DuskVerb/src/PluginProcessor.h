@@ -197,6 +197,13 @@ private:
     std::atomic<float>* hallSpec2WeightParam_ = nullptr;
     std::atomic<float>* hallSpec3WeightParam_ = nullptr;
     std::atomic<float>* hallSpecHFCutParam_   = nullptr;
+    // P10 per-band peaking EQ
+    std::atomic<float>* hallBassEQGainParam_   = nullptr;
+    std::atomic<float>* hallBassEQQParam_      = nullptr;
+    std::atomic<float>* hallMidEQGainParam_    = nullptr;
+    std::atomic<float>* hallMidEQQParam_       = nullptr;
+    std::atomic<float>* hallTrebleEQGainParam_ = nullptr;
+    std::atomic<float>* hallTrebleEQQParam_    = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -260,6 +267,12 @@ private:
     float lastHallSpec2Weight_ = -999.0f;
     float lastHallSpec3Weight_ = -999.0f;
     float lastHallSpecHFCut_   = -999.0f;
+    float lastHallBassEQGain_   = -999.0f;
+    float lastHallBassEQQ_      = -999.0f;
+    float lastHallMidEQGain_    = -999.0f;
+    float lastHallMidEQQ_       = -999.0f;
+    float lastHallTrebleEQGain_ = -999.0f;
+    float lastHallTrebleEQQ_    = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

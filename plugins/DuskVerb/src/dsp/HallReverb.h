@@ -143,6 +143,20 @@ public:
     // the Hall engine — the specular path stays outside this filter and
     // gets only its dedicated 2-pole LP at hall_spec_hf_cut.
     void setWetHiCutHz        (float hz);
+    // P10 — per-band post-tank peaking EQ. Fixed centre frequencies at
+    // the mid-octave of each LR4 band (bass 250 Hz, mid 1500 Hz, treble
+    // 8000 Hz). 6 APVTS-tunable axes total (3 bands × {gain, Q}) keep
+    // optimiser dimensionality low while giving direct control over the
+    // metrics that the existing per-band gain / damping can't reach:
+    //   • box_ratio_db   ← mid-band cut centred on the 380 Hz hump
+    //                      (bass-band peaking EQ targets the 250-500 Hz
+    //                      slope; mid-band peaking EQ shapes 1-2 kHz)
+    //   • centroid_drift ← per-band gain shapes the time-evolving
+    //                      spectrum since each EQ only fires within its
+    //                      own LR4 passband
+    void setBassEQ            (float gainDb, float q);
+    void setMidEQ             (float gainDb, float q);
+    void setTrebleEQ          (float gainDb, float q);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
@@ -275,6 +289,19 @@ private:
     // this LP.
     duskverb::dsp::LR4BandSplit::Biquad wetHiCutBiquadL_, wetHiCutBiquadR_;
     float              wetHiCutHz_      = 20000.0f;     // bypass-effective until set
+
+    // P10 per-band peaking EQ. Fixed centre frequencies; gain + Q
+    // tunable per band. Default gain 0 dB → bypass (peaking biquad with
+    // 0 dB gain is unity passthrough at any Q).
+    static constexpr float kBassEQFc   = 250.0f;
+    static constexpr float kMidEQFc    = 1500.0f;
+    static constexpr float kTrebleEQFc = 8000.0f;
+    duskverb::dsp::LR4BandSplit::Biquad bassEQL_,   bassEQR_;
+    duskverb::dsp::LR4BandSplit::Biquad midEQL_,    midEQR_;
+    duskverb::dsp::LR4BandSplit::Biquad trebleEQL_, trebleEQR_;
+    float              bassEQGainDb_   = 0.0f, bassEQQ_   = 0.707f;
+    float              midEQGainDb_    = 0.0f, midEQQ_    = 0.707f;
+    float              trebleEQGainDb_ = 0.0f, trebleEQQ_ = 0.707f;
 
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop
