@@ -24,6 +24,7 @@ enum class EngineType : int
     Shimmer           = 7,  // 8-channel Hadamard FDN with in-loop granular pitch shifter.
     Plate             = 8,  // PCM-style foil plate (PlateEngine): 2-AP cross-coupled input + 6-AP density cascade with per-AP RandomWalkLFO jitter, ThreeBandDamping. Built for Lex-Vintage-Plate per-band fit.
     FoilPlate         = 9,  // Second-generation foil plate (FoilPlateEngine): 2-AP flat input + LR4 3-band split + 3 parallel per-band reverberators + onset envelope on wet output + deterministic sine LFOs (anti-correlated L/R phase). Built to close C80/D50/EDT/16kHz/stereo-stability gaps that PlateEngine plateaued on.
+    Hall              = 10, // Lex-Hall-anchored hall (HallReverb): multi-tap input injection (FoilPlate Pillar 1) → LR4 3-band split → 3× 8-ch Hadamard FDN sub-tanks (per-band decay / damping / mod) → post-tank linear M/S widener. Built for the LexHall natural-hall family (Med Hall / Large Hall / Vocal Hall anchors). Replaces FDN (algo 4) for hall presets in the Sprint 1 product reset.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -33,7 +34,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 10; }
+inline int getNumAlgorithms() { return 11; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -48,8 +49,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Shimmer (Eno FDN)",        EngineType::Shimmer         },
         { "Plate (Foil)",             EngineType::Plate           },
         { "Plate (Foil II)",          EngineType::FoilPlate       },
+        { "Hall (Lex)",               EngineType::Hall            },
     };
-    if (index < 0 || index >= 10)
+    if (index < 0 || index >= 11)
         index = 0;
     return kEngines[index];
 }

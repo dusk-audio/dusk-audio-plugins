@@ -27,7 +27,10 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::Spring:          return juce::Colour (0xff4dd9b8);  // teal — springy mechanical character
         case EngineType::NonLinear:       return juce::Colour (0xffe85a3a);  // red-orange — gated drum punch
         case EngineType::Shimmer:         return juce::Colour (0xffd47de8);  // lavender-pink — ethereal cascade
-        case EngineType::DattorroVintage: return juce::Colour (0xff00d9ff); // cyan — dense plate
+        case EngineType::DattorroVintage: return juce::Colour (0xff00d9ff);  // cyan — dense plate
+        case EngineType::Plate:           return juce::Colour (0xffb0b8c0);  // silver-grey — foil plate
+        case EngineType::FoilPlate:       return juce::Colour (0xffb89eff);  // lavender — second-gen foil plate
+        case EngineType::Hall:            return juce::Colour (0xff4d8fff);  // royal blue — natural Lex hall
     }
     return juce::Colour (0xffff7a3d);
 }
