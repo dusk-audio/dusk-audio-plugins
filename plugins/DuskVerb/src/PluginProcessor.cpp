@@ -347,6 +347,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_treble_mod_shape", 1 }, "Hall Treble Mod Shape",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
+    // Per-band channel feedback gain spread — Lex-style decoherence.
+    // Range 0..0.4: 0 = identical gain across the 8 channels of the band
+    // (synchronous modal decay → centroid_drift peaks); 0.4 = ±20 %
+    // per-channel gain variation. Frequency-flat by construction, so no
+    // c80/d50 trade-off the in-feedback damping LP imposes. Default 0
+    // preserves backwards compatibility; calibration target is non-zero.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_chan_gain_spread", 1 }, "Hall Bass Chan Gain Spread",
+        juce::NormalisableRange<float> (0.0f, 0.4f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_chan_gain_spread", 1 }, "Hall Mid Chan Gain Spread",
+        juce::NormalisableRange<float> (0.0f, 0.4f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_chan_gain_spread", 1 }, "Hall Treble Chan Gain Spread",
+        juce::NormalisableRange<float> (0.0f, 0.4f), 0.0f));
+
     return layout;
 }
 
@@ -441,6 +457,9 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallBassModShapeParam_    = parameters.getRawParameterValue ("hall_bass_mod_shape");
     hallMidModShapeParam_     = parameters.getRawParameterValue ("hall_mid_mod_shape");
     hallTrebleModShapeParam_  = parameters.getRawParameterValue ("hall_treble_mod_shape");
+    hallBassChanGainSpreadParam_   = parameters.getRawParameterValue ("hall_bass_chan_gain_spread");
+    hallMidChanGainSpreadParam_    = parameters.getRawParameterValue ("hall_mid_chan_gain_spread");
+    hallTrebleChanGainSpreadParam_ = parameters.getRawParameterValue ("hall_treble_chan_gain_spread");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -724,6 +743,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallBassModShape_,    hallBassModShapeParam_->load(),    [this] (float v) { activeEngine_->setHallBassModShape    (v); });
     pushIfChanged (lastHallMidModShape_,     hallMidModShapeParam_->load(),     [this] (float v) { activeEngine_->setHallMidModShape     (v); });
     pushIfChanged (lastHallTrebleModShape_,  hallTrebleModShapeParam_->load(),  [this] (float v) { activeEngine_->setHallTrebleModShape  (v); });
+    pushIfChanged (lastHallBassChanGainSpread_,   hallBassChanGainSpreadParam_->load(),   [this] (float v) { activeEngine_->setHallBassChannelGainSpread   (v); });
+    pushIfChanged (lastHallMidChanGainSpread_,    hallMidChanGainSpreadParam_->load(),    [this] (float v) { activeEngine_->setHallMidChannelGainSpread    (v); });
+    pushIfChanged (lastHallTrebleChanGainSpread_, hallTrebleChanGainSpreadParam_->load(), [this] (float v) { activeEngine_->setHallTrebleChannelGainSpread (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -1050,6 +1072,9 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallBassModShape    (hallBassModShapeParam_->load());
     target->setHallMidModShape     (hallMidModShapeParam_->load());
     target->setHallTrebleModShape  (hallTrebleModShapeParam_->load());
+    target->setHallBassChannelGainSpread   (hallBassChanGainSpreadParam_->load());
+    target->setHallMidChannelGainSpread    (hallMidChanGainSpreadParam_->load());
+    target->setHallTrebleChannelGainSpread (hallTrebleChanGainSpreadParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1142,6 +1167,9 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallBassModShape_    = hallBassModShapeParam_->load();
     lastHallMidModShape_     = hallMidModShapeParam_->load();
     lastHallTrebleModShape_  = hallTrebleModShapeParam_->load();
+    lastHallBassChanGainSpread_   = hallBassChanGainSpreadParam_->load();
+    lastHallMidChanGainSpread_    = hallMidChanGainSpreadParam_->load();
+    lastHallTrebleChanGainSpread_ = hallTrebleChanGainSpreadParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
