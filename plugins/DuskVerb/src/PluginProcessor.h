@@ -174,6 +174,19 @@ private:
     std::atomic<float>* hallTrebleGainParam_      = nullptr;
     std::atomic<float>* hallInlineDiffusionParam_ = nullptr;
     std::atomic<float>* hallStereoWidthParam_     = nullptr;
+    // Multi-tap input injection (6 taps × {ms, weight})
+    std::atomic<float>* hallTap0MsParam_     = nullptr;
+    std::atomic<float>* hallTap1MsParam_     = nullptr;
+    std::atomic<float>* hallTap2MsParam_     = nullptr;
+    std::atomic<float>* hallTap3MsParam_     = nullptr;
+    std::atomic<float>* hallTap4MsParam_     = nullptr;
+    std::atomic<float>* hallTap5MsParam_     = nullptr;
+    std::atomic<float>* hallTap0WeightParam_ = nullptr;
+    std::atomic<float>* hallTap1WeightParam_ = nullptr;
+    std::atomic<float>* hallTap2WeightParam_ = nullptr;
+    std::atomic<float>* hallTap3WeightParam_ = nullptr;
+    std::atomic<float>* hallTap4WeightParam_ = nullptr;
+    std::atomic<float>* hallTap5WeightParam_ = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -216,6 +229,18 @@ private:
     float lastHallTrebleGain_      = -999.0f;
     float lastHallInlineDiffusion_ = -999.0f;
     float lastHallStereoWidth_     = -999.0f;
+    float lastHallTap0Ms_     = -999.0f;
+    float lastHallTap1Ms_     = -999.0f;
+    float lastHallTap2Ms_     = -999.0f;
+    float lastHallTap3Ms_     = -999.0f;
+    float lastHallTap4Ms_     = -999.0f;
+    float lastHallTap5Ms_     = -999.0f;
+    float lastHallTap0Weight_ = -999.0f;
+    float lastHallTap1Weight_ = -999.0f;
+    float lastHallTap2Weight_ = -999.0f;
+    float lastHallTap3Weight_ = -999.0f;
+    float lastHallTap4Weight_ = -999.0f;
+    float lastHallTap5Weight_ = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

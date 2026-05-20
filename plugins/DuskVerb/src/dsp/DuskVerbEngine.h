@@ -134,6 +134,16 @@ public:
     void setHallTrebleGain       (float gain);
     void setHallInlineDiffusion  (float coeff);
     void setHallStereoWidth      (float b);
+    // Multi-tap input injection (6 taps × {time, weight} = 12 axes). Each
+    // setter forwards directly to hall_.setTapTimeMs/setTapWeight with
+    // its index baked in — keeps the PluginProcessor pushIfChanged
+    // pattern uniform across all 12 params.
+    void setHallTap0Ms (float ms);  void setHallTap0Weight (float w);
+    void setHallTap1Ms (float ms);  void setHallTap1Weight (float w);
+    void setHallTap2Ms (float ms);  void setHallTap2Weight (float w);
+    void setHallTap3Ms (float ms);  void setHallTap3Weight (float w);
+    void setHallTap4Ms (float ms);  void setHallTap4Weight (float w);
+    void setHallTap5Ms (float ms);  void setHallTap5Weight (float w);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
