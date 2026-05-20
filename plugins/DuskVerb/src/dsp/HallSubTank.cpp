@@ -54,6 +54,7 @@ constexpr int   HallSubTank::kLeftTaps  [HallSubTank::kNumOutputTaps];
 constexpr int   HallSubTank::kRightTaps [HallSubTank::kNumOutputTaps];
 constexpr float HallSubTank::kLeftSigns [HallSubTank::kNumOutputTaps];
 constexpr float HallSubTank::kRightSigns[HallSubTank::kNumOutputTaps];
+constexpr int   HallSubTank::kInlineAPDelays[HallSubTank::N];
 
 HallSubTank::HallSubTank()
 {
@@ -86,6 +87,18 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelays8,
         delays_[i].mask     = bufSize - 1;
         delays_[i].writePos = 0;
 
+        // Inline allpass sized for max kInlineAPDelay × sr ratio.
+        const int apLen = static_cast<int> (std::ceil (
+            static_cast<float> (kInlineAPDelays[i]) * rateRatio)) + 4;
+        const int apBufSize = DspUtils::nextPowerOf2 (std::max (apLen, 16));
+        inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
+        inlineAP_[i].mask     = apBufSize - 1;
+        inlineAP_[i].writePos = 0;
+        inlineAP_[i].delaySamples = static_cast<int> (std::round (
+            static_cast<float> (kInlineAPDelays[i]) * rateRatio));
+        if (inlineAP_[i].delaySamples >= apBufSize)
+            inlineAP_[i].delaySamples = apBufSize - 1;
+
         dampState_[i]   = 0.0f;
         lfoPhase_  [i]  = kChannelPhaseSeeds[i] + bandPhaseOffset_;
         if (lfoPhase_[i] >= kTwoPi) lfoPhase_[i] -= kTwoPi;
@@ -104,6 +117,7 @@ void HallSubTank::clear()
         std::fill (delays_[i].buffer.begin(), delays_[i].buffer.end(), 0.0f);
         delays_[i].writePos = 0;
         dampState_[i] = 0.0f;
+        inlineAP_[i].clear();
     }
 }
 
@@ -184,6 +198,11 @@ void HallSubTank::setFreeze (bool frozen)
     recomputeFeedbackGains();
 }
 
+void HallSubTank::setInlineDiffusion (float coeff)
+{
+    inlineDiffusion_ = std::clamp (coeff, 0.0f, 0.85f);
+}
+
 void HallSubTank::setLFOPhaseOffset (float radians)
 {
     bandPhaseOffset_ = std::fmod (radians, kTwoPi);
@@ -248,6 +267,18 @@ void HallSubTank::process (const float* inputL, const float* inputR,
             const float y = dampComp * channelOut[i] + damp * dampState_[i];
             dampState_[i] = y;
             channelOut[i] = y;
+        }
+
+        // ──── Inline Schroeder allpass diffusion (modal smoothing) ─────
+        // Single per-channel AP with short prime delay coprime with the
+        // main delay-line primes. Adds phase decorrelation across modes
+        // without altering RT60 (allpass has unity magnitude response).
+        // Bypassed when inlineDiffusion_ ≈ 0 — caller can opt out per band.
+        const float apG = inlineDiffusion_;
+        if (apG > 1e-4f)
+        {
+            for (int i = 0; i < N; ++i)
+                channelOut[i] = inlineAP_[i].process (channelOut[i], apG);
         }
 
         // ──── Hadamard cross-mixing (in place, normalized) ─────────────

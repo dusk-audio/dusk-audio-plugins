@@ -79,6 +79,16 @@ public:
     // phase. Use to break periodicity between the three SubTanks in
     // HallReverb (e.g. 0, π/3, 2π/3 across bands).
     void setLFOPhaseOffset (float radians);
+    // Inline Schroeder allpass diffusion coefficient [0, 0.85]. Per-channel
+    // single-AP runs between damping and Hadamard mixing. Adds phase
+    // decorrelation that smears modal peaks WITHOUT shortening RT60 (an
+    // allpass has unity magnitude response). Closes the modal-peak gap vs
+    // smoother references like Lex Hall — pure 8-channel Hadamard FDN
+    // produces sharp comb-like modes; inline AP makes them dense enough
+    // to merge into a smoother modal density. 0.0 = bypass; 0.55 is the
+    // Schroeder-classic coefficient that nearly halves perceived modal
+    // peak heights; 0.7-0.85 over-smears into chorusy / hollow territory.
+    void setInlineDiffusion (float coeff);
 
 private:
     static constexpr double kBaseSampleRate = 44100.0;
@@ -97,11 +107,49 @@ private:
         int mask     = 0;
     };
 
+    // Inline single-stage Schroeder allpass for modal smoothing inside the
+    // FDN feedback path. Lifted from the FDNReverb inlineAP_ pattern; one
+    // per channel, short prime delays coprime with the main delay-line
+    // primes so AP modes don't align with FDN modes. Acts on the dampened
+    // channel signal before the Hadamard mix — adds phase decorrelation
+    // without altering RT60 (allpass has unity magnitude response).
+    struct InlineAllpass
+    {
+        std::vector<float> buffer;
+        int writePos     = 0;
+        int mask         = 0;
+        int delaySamples = 0;
+
+        float process (float input, float g)
+        {
+            const int readIdx = (writePos - delaySamples) & mask;
+            const float vd = buffer[static_cast<size_t> (readIdx)];
+            const float vn = input + g * vd;
+            buffer[static_cast<size_t> (writePos)] = vn;
+            writePos = (writePos + 1) & mask;
+            return vd - g * vn;
+        }
+
+        void clear()
+        {
+            std::fill (buffer.begin(), buffer.end(), 0.0f);
+            writePos = 0;
+        }
+    };
+
+    // Inline AP prime delays — coprime with the main delay-line primes
+    // any caller supplies via prepare(). At 44.1 kHz these are 0.9–3.0 ms
+    // loops; SubTank scales by sampleRate ratio at prepare time.
+    static constexpr int kInlineAPDelays[N] = {
+        41, 47, 53, 59, 67, 71, 79, 83
+    };
+
     // Per-channel state (RT-side; written each sample, never the snapshot).
-    Delay delays_       [N] {};
-    float dampState_    [N] {};        // one-pole shelf z^-1 per channel
-    float lfoPhase_     [N] {};        // current phase in [0, 2π)
-    float lfoPhaseInc_  [N] {};        // 2π × rate / sr
+    Delay delays_        [N] {};
+    InlineAllpass inlineAP_[N] {};     // one short Schroeder AP per channel
+    float dampState_     [N] {};       // one-pole shelf z^-1 per channel
+    float lfoPhase_      [N] {};       // current phase in [0, 2π)
+    float lfoPhaseInc_   [N] {};       // 2π × rate / sr
 
     // Per-channel feedback gain (derived from decay × loop length).
     float feedbackGain_ [N] {};
@@ -118,6 +166,7 @@ private:
     float  modDepthSamples_  = 0.0f;
     float  modRateHz_        = 1.0f;
     float  bandPhaseOffset_  = 0.0f;
+    float  inlineDiffusion_  = 0.30f;   // dialed back from Schroeder-classic 0.55 — Phase 6 measure showed 0.55 closed box_ratio +8 dB but pushed c80/d50 -2 dB worse via time-spreading; 0.30 keeps modal smoothing while limiting the early/late shift
     bool   frozen_           = false;
     bool   prepared_         = false;
 

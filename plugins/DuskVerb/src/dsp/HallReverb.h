@@ -140,8 +140,15 @@ private:
     static constexpr int   kNumPredelayTaps = 6;
     static constexpr float kTapTimesMs[kNumPredelayTaps] =
         { 22.0f, 35.0f, 55.0f, 90.0f, 140.0f, 200.0f };
+    // Phase 6 P3 retune: heavier on early taps, almost off on late taps,
+    // to push c80/d50 positive. Inline AP diffusion (Sprint 1.5 P3) smears
+    // energy later in time as a side-effect of modal smoothing; the
+    // multi-tap injection has to compensate by front-loading more of the
+    // dry signal into the 0-50 ms window so the LATE-half-vs-EARLY-half
+    // energy ratio matches Lex (Lex Med Hall c80 = +3.6, d50 = +0.9 —
+    // distinctly early-loaded). Sum still hits unity DC via tapNorm.
     static constexpr float kTapWeights[kNumPredelayTaps] =
-        {  1.00f, 0.65f, 0.50f, 0.40f, 0.30f, 0.20f };
+        {  1.50f, 0.80f, 0.30f, 0.10f, 0.05f, 0.02f };
 
     // Pre-tank input band split — feeds each SubTank its assigned band of
     // dry input.
