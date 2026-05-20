@@ -7,8 +7,14 @@
 // Out-of-line storage for the static constexpr arrays. C++17 makes these
 // inline by default for in-class definitions, but emitting the addresses
 // once here is harmless and keeps older toolchains happy.
-constexpr float HallReverb::kTapTimesMs[HallReverb::kNumPredelayTaps];
-constexpr float HallReverb::kTapWeights[HallReverb::kNumPredelayTaps];
+constexpr float HallReverb::kDefaultTapTimesMs[HallReverb::kNumPredelayTaps];
+constexpr float HallReverb::kDefaultTapWeights[HallReverb::kNumPredelayTaps];
+
+// APVTS maximum for tap times (matches the hall_tap_N_ms NormalisableRange
+// in PluginProcessor::createParameterLayout). The predelay ring buffer is
+// sized for this value so per-tap delay changes never realloc on the
+// audio thread.
+static constexpr float kMaxTapTimeMs = 250.0f;
 
 namespace
 {
@@ -43,7 +49,16 @@ namespace
     constexpr float kTrebleBandPhase = 2.094f;   // ≈ 4π/6
 }
 
-HallReverb::HallReverb() = default;
+HallReverb::HallReverb()
+{
+    // Seed mutable tap arrays from the defaults so APVTS setters have a
+    // sensible starting point until the host pushes its own values.
+    for (int t = 0; t < kNumPredelayTaps; ++t)
+    {
+        tapTimesMs_[t] = kDefaultTapTimesMs[t];
+        tapWeights_[t] = kDefaultTapWeights[t];
+    }
+}
 
 void HallReverb::prepare (double sampleRate, int maxBlockSize)
 {
@@ -68,9 +83,10 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     midTank_   .prepare (sampleRate, kMidDelays,    scratchBlockSize_);
     trebleTank_.prepare (sampleRate, kTrebleDelays, scratchBlockSize_);
 
-    // Predelay ring buffer — size to fit longest tap + modulation/safety
-    // headroom, rounded up to next power of 2 for mask-and addressing.
-    const float maxTapSec     = kTapTimesMs[kNumPredelayTaps - 1] * 0.001f;
+    // Predelay ring buffer — sized for the APVTS maximum tap time (250 ms)
+    // plus headroom, so any combination of per-tap setter values reachable
+    // through the host parameter range fits without reallocation.
+    const float maxTapSec     = kMaxTapTimeMs * 0.001f;
     const int   maxTapSamples = static_cast<int> (std::ceil (maxTapSec
                               * static_cast<float> (sampleRate))) + 64;
     const int   predelaySize  = DspUtils::nextPowerOf2 (std::max (maxTapSamples, 1024));
@@ -95,21 +111,36 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
 
 void HallReverb::recomputePredelayTaps()
 {
-    // Convert each tap's ms into sample count at the current sample rate.
-    // Compute tapNorm so summed tap output has unity DC gain — keeps tank
-    // input level identical to bare-tank case so the soft-clip threshold
-    // and any preset gainTrim calibration carry over unchanged.
+    // Convert each tap's ms into sample count at the current sample rate
+    // and recompute tapNorm so summed tap output has unity DC gain.
+    // Reads from the mutable per-tap arrays (tapTimesMs_, tapWeights_)
+    // which the APVTS setters update — keeps tank input level identical
+    // to the bare-tank case so the soft-clip threshold and any preset
+    // gainTrim calibration carry over unchanged regardless of tap config.
     float sumW = 0.0f;
     for (int t = 0; t < kNumPredelayTaps; ++t)
     {
-        tapSamples_[t] = static_cast<int> (std::round (kTapTimesMs[t]
+        tapSamples_[t] = static_cast<int> (std::round (tapTimesMs_[t]
                                             * 0.001f * static_cast<float> (sampleRate_)));
-        // Cap to (bufferSize - 1) defensively; predelay buffer is sized
-        // above to fit the longest tap so this clamp shouldn't fire.
         if (tapSamples_[t] > predelayMask_) tapSamples_[t] = predelayMask_;
-        sumW += kTapWeights[t];
+        if (tapSamples_[t] < 0)             tapSamples_[t] = 0;
+        sumW += tapWeights_[t];
     }
     tapNorm_ = (sumW > 0.0f) ? (1.0f / sumW) : 1.0f;
+}
+
+void HallReverb::setTapTimeMs (int index, float ms)
+{
+    if (index < 0 || index >= kNumPredelayTaps) return;
+    tapTimesMs_[index] = std::clamp (ms, 0.0f, kMaxTapTimeMs);
+    recomputePredelayTaps();
+}
+
+void HallReverb::setTapWeight (int index, float weight)
+{
+    if (index < 0 || index >= kNumPredelayTaps) return;
+    tapWeights_[index] = std::max (0.0f, weight);
+    recomputePredelayTaps();
 }
 
 void HallReverb::clearBuffers()
@@ -178,8 +209,8 @@ void HallReverb::process (const float* inputL, const float* inputR,
             for (int t = 0; t < kNumPredelayTaps; ++t)
             {
                 const int readIdx = (predelayWritePos_ - tapSamples_[t]) & predelayMask_;
-                sumL += predelayL_[static_cast<size_t> (readIdx)] * kTapWeights[t];
-                sumR += predelayR_[static_cast<size_t> (readIdx)] * kTapWeights[t];
+                sumL += predelayL_[static_cast<size_t> (readIdx)] * tapWeights_[t];
+                sumR += predelayR_[static_cast<size_t> (readIdx)] * tapWeights_[t];
             }
             predelayWritePos_ = (predelayWritePos_ + 1) & predelayMask_;
 

@@ -406,6 +406,19 @@ void DuskVerbEngine::setHallTrebleGain      (float gain)  { hall_.setTrebleGain 
 void DuskVerbEngine::setHallInlineDiffusion (float coeff) { hall_.setInlineDiffusion (coeff); }
 void DuskVerbEngine::setHallStereoWidth     (float b)     { hall_.setStereoWidth     (b);     }
 
+void DuskVerbEngine::setHallTap0Ms     (float ms) { hall_.setTapTimeMs (0, ms); }
+void DuskVerbEngine::setHallTap1Ms     (float ms) { hall_.setTapTimeMs (1, ms); }
+void DuskVerbEngine::setHallTap2Ms     (float ms) { hall_.setTapTimeMs (2, ms); }
+void DuskVerbEngine::setHallTap3Ms     (float ms) { hall_.setTapTimeMs (3, ms); }
+void DuskVerbEngine::setHallTap4Ms     (float ms) { hall_.setTapTimeMs (4, ms); }
+void DuskVerbEngine::setHallTap5Ms     (float ms) { hall_.setTapTimeMs (5, ms); }
+void DuskVerbEngine::setHallTap0Weight (float w)  { hall_.setTapWeight (0, w);  }
+void DuskVerbEngine::setHallTap1Weight (float w)  { hall_.setTapWeight (1, w);  }
+void DuskVerbEngine::setHallTap2Weight (float w)  { hall_.setTapWeight (2, w);  }
+void DuskVerbEngine::setHallTap3Weight (float w)  { hall_.setTapWeight (3, w);  }
+void DuskVerbEngine::setHallTap4Weight (float w)  { hall_.setTapWeight (4, w);  }
+void DuskVerbEngine::setHallTap5Weight (float w)  { hall_.setTapWeight (5, w);  }
+
 void DuskVerbEngine::setERLevel (float level)
 {
     erLevelSmoother_.setTarget (std::clamp (level, 0.0f, 1.0f));

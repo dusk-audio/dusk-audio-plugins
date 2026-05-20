@@ -119,6 +119,14 @@ public:
     // setInlineDiffusion forwards uniformly to all 3 sub-tanks (per-band
     // override available via setBandInlineDiffusion if tuning needs it).
     void setInlineDiffusion   (float coeff);
+    // Multi-tap setters — index 0..5 for the 6 input-injection taps.
+    // Out-of-range index is a silent no-op. Time changes recompute
+    // tapSamples_ and tapNorm_; weight changes recompute tapNorm_ only.
+    // Both produce an instantaneous read-position / amplitude change —
+    // for clean automation the host should ramp these slowly OR the
+    // editor should attach them through a smoothed parameter widget.
+    void setTapTimeMs         (int index, float ms);
+    void setTapWeight         (int index, float weight);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
@@ -154,16 +162,17 @@ private:
     // 1-3 s window doesn't die 4-10 dB faster than the Lex anchor (the
     // failure we measured on the FDN Vocal Hall in the diagnosis pass).
     static constexpr int   kNumPredelayTaps = 6;
-    static constexpr float kTapTimesMs[kNumPredelayTaps] =
+    // Default tap pattern — early-heavy, dialed in during Phase 6 P3+P4
+    // hand-iteration to push c80/d50 toward Lex Med Hall's +3.6 / +0.9
+    // (early-loaded) signature. Each tap's time + weight is now exposed
+    // via APVTS (hall_tap_N_ms / hall_tap_N_w) so the optimizer can
+    // search this 12-axis space directly — peak_locations_ms is a
+    // function of the delays, c80/d50 are functions of both delays and
+    // weights, so leaving them as compile-time constants closed the
+    // tuner's escape routes for those metrics.
+    static constexpr float kDefaultTapTimesMs[kNumPredelayTaps] =
         { 22.0f, 35.0f, 55.0f, 90.0f, 140.0f, 200.0f };
-    // Phase 6 P3 retune: heavier on early taps, almost off on late taps,
-    // to push c80/d50 positive. Inline AP diffusion (Sprint 1.5 P3) smears
-    // energy later in time as a side-effect of modal smoothing; the
-    // multi-tap injection has to compensate by front-loading more of the
-    // dry signal into the 0-50 ms window so the LATE-half-vs-EARLY-half
-    // energy ratio matches Lex (Lex Med Hall c80 = +3.6, d50 = +0.9 —
-    // distinctly early-loaded). Sum still hits unity DC via tapNorm.
-    static constexpr float kTapWeights[kNumPredelayTaps] =
+    static constexpr float kDefaultTapWeights[kNumPredelayTaps] =
         {  1.50f, 0.80f, 0.30f, 0.10f, 0.05f, 0.02f };
 
     // Pre-tank input band split — feeds each SubTank its assigned band of
@@ -185,13 +194,23 @@ private:
     duskverb::dsp::LR4BandSplit midPostL_,    midPostR_;
     duskverb::dsp::LR4BandSplit treblePostL_, treblePostR_;
 
-    // Predelay ring buffer (sized at prepare() to fit the longest tap +
-    // headroom, rounded up to next power of 2 for mask-and addressing).
+    // Predelay ring buffer (sized at prepare() to fit the longest possible
+    // tap time + headroom, rounded up to next power of 2 for mask-and
+    // addressing). The buffer is sized for the APVTS maximum tap time
+    // (250 ms) so per-tap delay changes never force a reallocation on the
+    // audio thread.
     std::vector<float> predelayL_, predelayR_;
     int                predelayWritePos_ = 0;
     int                predelayMask_     = 0;
-    int                tapSamples_[kNumPredelayTaps] {};
-    float              tapNorm_          = 1.0f;   // = 1 / Σ kTapWeights
+
+    // Mutable per-tap state — replaces the old static constexpr arrays so
+    // each tap is APVTS-tunable. tapSamples_ is recomputed in
+    // recomputePredelayTaps() whenever a tap time changes; tapNorm_ is
+    // 1 / Σ tapWeights_ for unity DC gain.
+    float              tapTimesMs_   [kNumPredelayTaps] {};
+    float              tapWeights_   [kNumPredelayTaps] {};
+    int                tapSamples_   [kNumPredelayTaps] {};
+    float              tapNorm_      = 1.0f;
 
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop

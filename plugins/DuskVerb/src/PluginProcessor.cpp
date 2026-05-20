@@ -194,6 +194,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_stereo_width", 1 }, "Hall Stereo Width",
         juce::NormalisableRange<float> (-0.4f, 0.4f), 0.0f));
 
+    // Multi-tap input injection — 6 taps × {ms, weight}. Defaults match
+    // HallReverb::kDefaultTapTimesMs / kDefaultTapWeights. Max tap time
+    // = 250 ms matches HallReverb::kMaxTapTimeMs; the predelay ring is
+    // sized for that maximum so live setter changes never realloc on
+    // the audio thread.
+    static constexpr float kTapMsDefaults[6] = { 22.0f, 35.0f, 55.0f, 90.0f, 140.0f, 200.0f };
+    static constexpr float kTapWDefaults [6] = {  1.50f, 0.80f, 0.30f, 0.10f, 0.05f, 0.02f };
+    const char* const kTapMsNames[6] = {
+        "Hall Tap 0 Ms", "Hall Tap 1 Ms", "Hall Tap 2 Ms",
+        "Hall Tap 3 Ms", "Hall Tap 4 Ms", "Hall Tap 5 Ms"
+    };
+    const char* const kTapMsIds[6] = {
+        "hall_tap_0_ms", "hall_tap_1_ms", "hall_tap_2_ms",
+        "hall_tap_3_ms", "hall_tap_4_ms", "hall_tap_5_ms"
+    };
+    const char* const kTapWNames[6] = {
+        "Hall Tap 0 Weight", "Hall Tap 1 Weight", "Hall Tap 2 Weight",
+        "Hall Tap 3 Weight", "Hall Tap 4 Weight", "Hall Tap 5 Weight"
+    };
+    const char* const kTapWIds[6] = {
+        "hall_tap_0_w", "hall_tap_1_w", "hall_tap_2_w",
+        "hall_tap_3_w", "hall_tap_4_w", "hall_tap_5_w"
+    };
+    for (int i = 0; i < 6; ++i)
+    {
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { kTapMsIds[i], 1 }, kTapMsNames[i],
+            juce::NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.5f), kTapMsDefaults[i]));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { kTapWIds[i], 1 }, kTapWNames[i],
+            juce::NormalisableRange<float> (0.0f, 2.0f), kTapWDefaults[i]));
+    }
+
     return layout;
 }
 
@@ -243,6 +276,19 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallTrebleGainParam_      = parameters.getRawParameterValue ("hall_treble_gain");
     hallInlineDiffusionParam_ = parameters.getRawParameterValue ("hall_inline_diffusion");
     hallStereoWidthParam_     = parameters.getRawParameterValue ("hall_stereo_width");
+
+    hallTap0MsParam_     = parameters.getRawParameterValue ("hall_tap_0_ms");
+    hallTap1MsParam_     = parameters.getRawParameterValue ("hall_tap_1_ms");
+    hallTap2MsParam_     = parameters.getRawParameterValue ("hall_tap_2_ms");
+    hallTap3MsParam_     = parameters.getRawParameterValue ("hall_tap_3_ms");
+    hallTap4MsParam_     = parameters.getRawParameterValue ("hall_tap_4_ms");
+    hallTap5MsParam_     = parameters.getRawParameterValue ("hall_tap_5_ms");
+    hallTap0WeightParam_ = parameters.getRawParameterValue ("hall_tap_0_w");
+    hallTap1WeightParam_ = parameters.getRawParameterValue ("hall_tap_1_w");
+    hallTap2WeightParam_ = parameters.getRawParameterValue ("hall_tap_2_w");
+    hallTap3WeightParam_ = parameters.getRawParameterValue ("hall_tap_3_w");
+    hallTap4WeightParam_ = parameters.getRawParameterValue ("hall_tap_4_w");
+    hallTap5WeightParam_ = parameters.getRawParameterValue ("hall_tap_5_w");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -484,6 +530,18 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallTrebleGain_,      hallTrebleGainParam_->load(),      [this] (float v) { activeEngine_->setHallTrebleGain      (v); });
     pushIfChanged (lastHallInlineDiffusion_, hallInlineDiffusionParam_->load(), [this] (float v) { activeEngine_->setHallInlineDiffusion (v); });
     pushIfChanged (lastHallStereoWidth_,     hallStereoWidthParam_->load(),     [this] (float v) { activeEngine_->setHallStereoWidth     (v); });
+    pushIfChanged (lastHallTap0Ms_,     hallTap0MsParam_->load(),     [this] (float v) { activeEngine_->setHallTap0Ms     (v); });
+    pushIfChanged (lastHallTap1Ms_,     hallTap1MsParam_->load(),     [this] (float v) { activeEngine_->setHallTap1Ms     (v); });
+    pushIfChanged (lastHallTap2Ms_,     hallTap2MsParam_->load(),     [this] (float v) { activeEngine_->setHallTap2Ms     (v); });
+    pushIfChanged (lastHallTap3Ms_,     hallTap3MsParam_->load(),     [this] (float v) { activeEngine_->setHallTap3Ms     (v); });
+    pushIfChanged (lastHallTap4Ms_,     hallTap4MsParam_->load(),     [this] (float v) { activeEngine_->setHallTap4Ms     (v); });
+    pushIfChanged (lastHallTap5Ms_,     hallTap5MsParam_->load(),     [this] (float v) { activeEngine_->setHallTap5Ms     (v); });
+    pushIfChanged (lastHallTap0Weight_, hallTap0WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap0Weight (v); });
+    pushIfChanged (lastHallTap1Weight_, hallTap1WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap1Weight (v); });
+    pushIfChanged (lastHallTap2Weight_, hallTap2WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap2Weight (v); });
+    pushIfChanged (lastHallTap3Weight_, hallTap3WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap3Weight (v); });
+    pushIfChanged (lastHallTap4Weight_, hallTap4WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap4Weight (v); });
+    pushIfChanged (lastHallTap5Weight_, hallTap5WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap5Weight (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -768,6 +826,18 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallTrebleGain       (hallTrebleGainParam_->load());
     target->setHallInlineDiffusion  (hallInlineDiffusionParam_->load());
     target->setHallStereoWidth      (hallStereoWidthParam_->load());
+    target->setHallTap0Ms     (hallTap0MsParam_->load());
+    target->setHallTap1Ms     (hallTap1MsParam_->load());
+    target->setHallTap2Ms     (hallTap2MsParam_->load());
+    target->setHallTap3Ms     (hallTap3MsParam_->load());
+    target->setHallTap4Ms     (hallTap4MsParam_->load());
+    target->setHallTap5Ms     (hallTap5MsParam_->load());
+    target->setHallTap0Weight (hallTap0WeightParam_->load());
+    target->setHallTap1Weight (hallTap1WeightParam_->load());
+    target->setHallTap2Weight (hallTap2WeightParam_->load());
+    target->setHallTap3Weight (hallTap3WeightParam_->load());
+    target->setHallTap4Weight (hallTap4WeightParam_->load());
+    target->setHallTap5Weight (hallTap5WeightParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -818,6 +888,18 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallTrebleGain_      = hallTrebleGainParam_->load();
     lastHallInlineDiffusion_ = hallInlineDiffusionParam_->load();
     lastHallStereoWidth_     = hallStereoWidthParam_->load();
+    lastHallTap0Ms_     = hallTap0MsParam_->load();
+    lastHallTap1Ms_     = hallTap1MsParam_->load();
+    lastHallTap2Ms_     = hallTap2MsParam_->load();
+    lastHallTap3Ms_     = hallTap3MsParam_->load();
+    lastHallTap4Ms_     = hallTap4MsParam_->load();
+    lastHallTap5Ms_     = hallTap5MsParam_->load();
+    lastHallTap0Weight_ = hallTap0WeightParam_->load();
+    lastHallTap1Weight_ = hallTap1WeightParam_->load();
+    lastHallTap2Weight_ = hallTap2WeightParam_->load();
+    lastHallTap3Weight_ = hallTap3WeightParam_->load();
+    lastHallTap4Weight_ = hallTap4WeightParam_->load();
+    lastHallTap5Weight_ = hallTap5WeightParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
