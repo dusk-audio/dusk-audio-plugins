@@ -127,6 +127,17 @@ public:
     // editor should attach them through a smoothed parameter widget.
     void setTapTimeMs         (int index, float ms);
     void setTapWeight         (int index, float weight);
+    // Direct specular output taps (P8b). 4 taps read from the same
+    // predelay ring as the multi-tap injection but bypass the LR4 split
+    // + sub-tank Hadamard matrix entirely — they mix straight into the
+    // output between the M/S widener and the soft-clip stage. Lets
+    // discrete 3-20 ms early reflections survive through to the IR
+    // measurement window (sub-tank diffusion swallows them otherwise).
+    // setSpecularHFCutHz controls the 1-pole LP guardrail that prevents
+    // raw dry HF transients from inflating treble_ratio / spec_crest.
+    void setSpecularTimeMs    (int index, float ms);
+    void setSpecularWeight    (int index, float weight);
+    void setSpecularHFCutHz   (float hz);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
@@ -175,6 +186,29 @@ private:
     static constexpr float kDefaultTapWeights[kNumPredelayTaps] =
         {  1.50f, 0.80f, 0.30f, 0.10f, 0.05f, 0.02f };
 
+    // P8b — direct specular output taps. 4 short delays read straight from
+    // the predelay ring, no LR4 / sub-tank routing. Defaults targeted at
+    // Lex Med Hall's measured 3 / 7 / 9 / sub-15 ms early-peak signature.
+    // L/R signs alternate per tap so each tap contributes decorrelated
+    // content to both channels (without needing per-tap L/R cross-feed
+    // routing knobs — keeps the APVTS surface to 4 + 4 = 8 params + 1
+    // shared HF cut).
+    static constexpr int   kNumSpecularTaps = 4;
+    static constexpr float kDefaultSpecularTimesMs[kNumSpecularTaps] =
+        { 3.0f, 6.0f, 11.0f, 17.0f };
+    static constexpr float kDefaultSpecularWeights[kNumSpecularTaps] =
+        { 0.80f, 0.60f, 0.40f, 0.20f };
+    static constexpr float kDefaultSpecularHFCutHz = 6000.0f;
+    // Per-tap L/R routing — asymmetric so the mono sum (which the
+    // peak_locations_ms metric operates on) sees each tap. Even taps go
+    // L-only, odd taps go R-only — alternating channels decorrelates L
+    // from R while each tap remains visible in the mono mix. Earlier
+    // mirrored signs ({+1,-1,+1,-1} / {-1,+1,-1,+1}) produced perfectly
+    // anti-correlated L/R → mono sum cancelled to zero → specular
+    // invisible in IR measurements.
+    static constexpr float kSpecularSignL[kNumSpecularTaps] = { +1.0f, 0.0f, +1.0f, 0.0f };
+    static constexpr float kSpecularSignR[kNumSpecularTaps] = {  0.0f, +1.0f, 0.0f, +1.0f };
+
     // Pre-tank input band split — feeds each SubTank its assigned band of
     // dry input.
     duskverb::dsp::LR4BandSplit splitL_, splitR_;
@@ -212,6 +246,17 @@ private:
     int                tapSamples_   [kNumPredelayTaps] {};
     float              tapNorm_      = 1.0f;
 
+    // Specular path state. Reuses predelayL_/R_ for the buffer reads;
+    // owns only the per-tap delays + weights + the 1-pole LP guardrail
+    // state (one filter per output channel, shared coefficient).
+    float              specularTimesMs_[kNumSpecularTaps] {};
+    float              specularWeights_[kNumSpecularTaps] {};
+    int                specularTapSamples_[kNumSpecularTaps] {};
+    float              specularHFCutHz_  = kDefaultSpecularHFCutHz;
+    float              specularLPAlpha_  = 0.5f;       // recomputed from HF cut + sr
+    float              specularLPStateL_ = 0.0f;
+    float              specularLPStateR_ = 0.0f;
+
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop
     // chunks the incoming buffer to stay within these sizes (JUCE
@@ -222,6 +267,10 @@ private:
     std::vector<float> bassOutL_,  bassOutR_;
     std::vector<float> midOutL_,   midOutR_;
     std::vector<float> trebleOutL_, trebleOutR_;
+    // Per-sample specular reads — captured in the injection loop (when
+    // predelayWritePos_ still tracks the current input sample), consumed
+    // in the band-sum/output loop after one-pole LP filtering.
+    std::vector<float> specularInL_, specularInR_;
 
     double sampleRate_         = 44100.0;
     int    scratchBlockSize_   = 0;
@@ -275,4 +324,6 @@ private:
     void updateSubTankDecays();
     void updateCrossovers();
     void recomputePredelayTaps();
+    void recomputeSpecularTaps();
+    void recomputeSpecularLP();
 };

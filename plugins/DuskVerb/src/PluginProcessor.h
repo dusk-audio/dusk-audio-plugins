@@ -187,6 +187,16 @@ private:
     std::atomic<float>* hallTap3WeightParam_ = nullptr;
     std::atomic<float>* hallTap4WeightParam_ = nullptr;
     std::atomic<float>* hallTap5WeightParam_ = nullptr;
+    // P8b specular taps (4 × {ms, weight} + shared HF cut)
+    std::atomic<float>* hallSpec0MsParam_     = nullptr;
+    std::atomic<float>* hallSpec1MsParam_     = nullptr;
+    std::atomic<float>* hallSpec2MsParam_     = nullptr;
+    std::atomic<float>* hallSpec3MsParam_     = nullptr;
+    std::atomic<float>* hallSpec0WeightParam_ = nullptr;
+    std::atomic<float>* hallSpec1WeightParam_ = nullptr;
+    std::atomic<float>* hallSpec2WeightParam_ = nullptr;
+    std::atomic<float>* hallSpec3WeightParam_ = nullptr;
+    std::atomic<float>* hallSpecHFCutParam_   = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -241,6 +251,15 @@ private:
     float lastHallTap3Weight_ = -999.0f;
     float lastHallTap4Weight_ = -999.0f;
     float lastHallTap5Weight_ = -999.0f;
+    float lastHallSpec0Ms_     = -999.0f;
+    float lastHallSpec1Ms_     = -999.0f;
+    float lastHallSpec2Ms_     = -999.0f;
+    float lastHallSpec3Ms_     = -999.0f;
+    float lastHallSpec0Weight_ = -999.0f;
+    float lastHallSpec1Weight_ = -999.0f;
+    float lastHallSpec2Weight_ = -999.0f;
+    float lastHallSpec3Weight_ = -999.0f;
+    float lastHallSpecHFCut_   = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

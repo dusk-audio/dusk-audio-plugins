@@ -9,6 +9,10 @@
 // once here is harmless and keeps older toolchains happy.
 constexpr float HallReverb::kDefaultTapTimesMs[HallReverb::kNumPredelayTaps];
 constexpr float HallReverb::kDefaultTapWeights[HallReverb::kNumPredelayTaps];
+constexpr float HallReverb::kDefaultSpecularTimesMs[HallReverb::kNumSpecularTaps];
+constexpr float HallReverb::kDefaultSpecularWeights[HallReverb::kNumSpecularTaps];
+constexpr float HallReverb::kSpecularSignL[HallReverb::kNumSpecularTaps];
+constexpr float HallReverb::kSpecularSignR[HallReverb::kNumSpecularTaps];
 
 // APVTS maximum for tap times (matches the hall_tap_N_ms NormalisableRange
 // in PluginProcessor::createParameterLayout). The predelay ring buffer is
@@ -58,6 +62,11 @@ HallReverb::HallReverb()
         tapTimesMs_[t] = kDefaultTapTimesMs[t];
         tapWeights_[t] = kDefaultTapWeights[t];
     }
+    for (int s = 0; s < kNumSpecularTaps; ++s)
+    {
+        specularTimesMs_[s] = kDefaultSpecularTimesMs[s];
+        specularWeights_[s] = kDefaultSpecularWeights[s];
+    }
 }
 
 void HallReverb::prepare (double sampleRate, int maxBlockSize)
@@ -103,10 +112,15 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     bassOutL_ .assign (sz, 0.0f); bassOutR_ .assign (sz, 0.0f);
     midOutL_  .assign (sz, 0.0f); midOutR_  .assign (sz, 0.0f);
     trebleOutL_.assign (sz, 0.0f); trebleOutR_.assign (sz, 0.0f);
+    specularInL_.assign (sz, 0.0f); specularInR_.assign (sz, 0.0f);
 
     prepared_ = true;
     updateSubTankDecays();
     setBandDamping (dampingBass_, dampingMid_, dampingTreble_);
+    recomputeSpecularTaps();
+    recomputeSpecularLP();
+    specularLPStateL_ = 0.0f;
+    specularLPStateR_ = 0.0f;
 }
 
 void HallReverb::recomputePredelayTaps()
@@ -143,6 +157,54 @@ void HallReverb::setTapWeight (int index, float weight)
     recomputePredelayTaps();
 }
 
+void HallReverb::recomputeSpecularTaps()
+{
+    // Specular delays live in the same predelay ring as the multi-tap
+    // injection — sized at prepare() for kMaxTapTimeMs so any specular
+    // time in [0, 50] ms fits without realloc.
+    for (int s = 0; s < kNumSpecularTaps; ++s)
+    {
+        specularTapSamples_[s] = static_cast<int> (std::round (
+            specularTimesMs_[s] * 0.001f * static_cast<float> (sampleRate_)));
+        if (specularTapSamples_[s] > predelayMask_) specularTapSamples_[s] = predelayMask_;
+        if (specularTapSamples_[s] < 0)             specularTapSamples_[s] = 0;
+    }
+}
+
+void HallReverb::recomputeSpecularLP()
+{
+    // One-pole low-pass coefficient: y = alpha · x + (1 − alpha) · y_z1.
+    // alpha = 1 − exp(−2π · fc / sr) — standard analog-prototype mapping.
+    // HF guardrail keeps raw dry HF transients from spiking treble_ratio
+    // and spectral_crest_db when the specular path mixes into the output.
+    const float fc = std::max (50.0f, std::min (specularHFCutHz_, 20000.0f));
+    const float twoPiFcOverSr = 6.283185307179586f * fc
+                              / static_cast<float> (std::max (sampleRate_, 1000.0));
+    specularLPAlpha_ = 1.0f - std::exp (-twoPiFcOverSr);
+}
+
+void HallReverb::setSpecularTimeMs (int index, float ms)
+{
+    if (index < 0 || index >= kNumSpecularTaps) return;
+    // Cap at 50 ms — specular peaks past that aren't peaks_locations_ms
+    // candidates (the metric only scans 0-50 ms post-onset) and would
+    // bleed into the sub-tank wet window's territory.
+    specularTimesMs_[index] = std::clamp (ms, 0.0f, 50.0f);
+    if (prepared_) recomputeSpecularTaps();
+}
+
+void HallReverb::setSpecularWeight (int index, float weight)
+{
+    if (index < 0 || index >= kNumSpecularTaps) return;
+    specularWeights_[index] = std::max (0.0f, weight);
+}
+
+void HallReverb::setSpecularHFCutHz (float hz)
+{
+    specularHFCutHz_ = std::clamp (hz, 50.0f, 20000.0f);
+    if (prepared_) recomputeSpecularLP();
+}
+
 void HallReverb::clearBuffers()
 {
     bassTank_.clear();
@@ -156,6 +218,8 @@ void HallReverb::clearBuffers()
     std::fill (predelayL_.begin(), predelayL_.end(), 0.0f);
     std::fill (predelayR_.begin(), predelayR_.end(), 0.0f);
     predelayWritePos_ = 0;
+    specularLPStateL_ = 0.0f;
+    specularLPStateR_ = 0.0f;
 }
 
 void HallReverb::updateCrossovers()
@@ -212,6 +276,21 @@ void HallReverb::process (const float* inputL, const float* inputR,
                 sumL += predelayL_[static_cast<size_t> (readIdx)] * tapWeights_[t];
                 sumR += predelayR_[static_cast<size_t> (readIdx)] * tapWeights_[t];
             }
+            // ── P8b specular reads happen HERE (per-sample) so they use
+            // the per-sample write head; staging arrays consumed in the
+            // band-sum loop below where one-pole LP + output mix happens.
+            float specL = 0.0f, specR = 0.0f;
+            for (int s = 0; s < kNumSpecularTaps; ++s)
+            {
+                const int sIdx = (predelayWritePos_ - specularTapSamples_[s]) & predelayMask_;
+                specL += specularWeights_[s] * kSpecularSignL[s]
+                       * predelayL_[static_cast<size_t> (sIdx)];
+                specR += specularWeights_[s] * kSpecularSignR[s]
+                       * predelayR_[static_cast<size_t> (sIdx)];
+            }
+            specularInL_[static_cast<size_t> (i)] = specL;
+            specularInR_[static_cast<size_t> (i)] = specR;
+
             predelayWritePos_ = (predelayWritePos_ + 1) & predelayMask_;
 
             sumL *= tapNorm_;
@@ -272,6 +351,21 @@ void HallReverb::process (const float* inputL, const float* inputR,
 
             float oL = wetL - b * wetR;
             float oR = wetR - b * wetL;
+
+            // ── P8b — direct specular taps (bypass sub-tanks + widener) ──
+            // Per-sample raw specular sum was captured in the injection
+            // loop while predelayWritePos_ tracked sample i. Apply the
+            // 1-pole LP guardrail here and mix into the band-summed wet
+            // signal after the widener (so specular L/R signs carry
+            // through without M/S re-encoding).
+            const float rawSpecL = specularInL_[static_cast<size_t> (i)];
+            const float rawSpecR = specularInR_[static_cast<size_t> (i)];
+            specularLPStateL_ = specularLPAlpha_ * rawSpecL
+                              + (1.0f - specularLPAlpha_) * specularLPStateL_;
+            specularLPStateR_ = specularLPAlpha_ * rawSpecR
+                              + (1.0f - specularLPAlpha_) * specularLPStateR_;
+            oL += specularLPStateL_;
+            oR += specularLPStateR_;
 
             if (doSat)
             {

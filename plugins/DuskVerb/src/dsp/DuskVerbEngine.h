@@ -144,6 +144,12 @@ public:
     void setHallTap3Ms (float ms);  void setHallTap3Weight (float w);
     void setHallTap4Ms (float ms);  void setHallTap4Weight (float w);
     void setHallTap5Ms (float ms);  void setHallTap5Weight (float w);
+    // P8b specular direct-output taps. 4 taps + shared HF cut.
+    void setHallSpec0Ms (float ms); void setHallSpec0Weight (float w);
+    void setHallSpec1Ms (float ms); void setHallSpec1Weight (float w);
+    void setHallSpec2Ms (float ms); void setHallSpec2Weight (float w);
+    void setHallSpec3Ms (float ms); void setHallSpec3Weight (float w);
+    void setHallSpecHFCutHz (float hz);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
