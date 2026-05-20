@@ -1,0 +1,186 @@
+# Tune DuskVerb HallReverb (algo 10 — "Hall (Lex)") against the Lex PCM Native
+# LexHall factory preset "02.Medium Halls/000.Med Hall.xml".
+#
+# Phase 6 hand-iteration plateaued at 2/19 — the per-band damping, per-band
+# gain, inline AP diffusion, multi-tap weight, and post-tank LR4 isolation
+# levers interact too strongly for single-axis tuning to converge. CMA-ES
+# over the 17 standard + 8 Hall-advanced = 25-axis search space should find
+# the configuration that closes Lex Med Hall to 19/19.
+#
+# 100% wet comparison: both DV and Lex render with Mix=100% / Bus Mode=on
+# so we isolate the wet path.
+#
+# Anchor lineage:
+#   Lex PCM Native LexHall factory "02.Medium Halls/000.Med Hall.xml" loaded
+#   in Ardour 9, exported via ardour2fxp from vst-1281911857, fed to
+#   duskverb_render --load-state.
+#   Re-render command:
+#     FXP=~/projects/dusk-audio-tools/anchors/lex/fxp/hall_med_hall
+#     WAV=~/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall
+#     duskverb_render --vst2 ~/.vst/yabridge/LexHall.so \
+#       --load-state "$FXP/Lhl1/dv_lex_hall_med_hall.fxp" \
+#       --slug lex_hall_med_hall --output-dir "$WAV" --wait-after-load 2000
+
+job:
+  name: hall_med_hall_vs_lex
+  target_preset: "Med Hall"
+  engine_algorithm: 10                   # HallReverb — "Hall (Lex)"
+  notes: |
+    Reference: Lex PCM Native LexHall factory preset "02.Medium Halls/000.Med Hall".
+    Anchor stats from the rendered IR (lex_hall_med_hall_impulse.wav):
+      RT60 per band (125/250/500/1k/2k/4k/8k/16k Hz):
+        2.39 / 2.67 / 2.46 / 2.17 / 1.87 / 1.61 / 1.34 / 1.03 s
+      Broadband EDT: 1.38 s   C80: +3.61 dB   D50: +0.94 dB
+      box_ratio_db: +12.34   stereo_correlation: -0.07
+    Lex spec (from the saved fxp XML):
+      Predelay=14.00ms, Diffusion=97%, Shape=17, Spread=51%, Size=35m,
+      Reverb_Time=1.6859s, BassRT=1.50x, Bass_XOV=600Hz, RT_HiCut=4500Hz,
+      Spin=2.9Hz, Wander=15.0ms, Tail_Width=Stereo.
+      Specular reflections: L_L 22ms/-6dB, L_R 41ms/-8dB, R_R 26ms/-6dB,
+                            R_L 39ms/-9dB. Early_Level=-1.5dB.
+      Output: One Pole Lopass at 4750Hz, 1.1 Oct, OFF shelf. Rvb_Level=-5.5dB.
+
+    Engine architecture (commits 76699e5 → fe4b213):
+      • LR4 3-band split → 3× 8-channel Hadamard FDN sub-tanks
+      • Per-band damping (one-pole HF shelf in feedback)
+      • Per-band output gain trim
+      • Inline Schroeder allpass diffusion per channel
+      • Multi-tap input injection (6 taps, 22-200ms)
+      • Post-tank LR4 band isolation (re-filter each band's output)
+      • Post-tank linear M/S widener
+
+renderer:
+  bin: ../../../../build/tests/duskverb_render/duskverb_render
+  cache_dir: /home/marc/projects/dusk-audio-tools/tuner_cache
+  output_dir: /home/marc/projects/dusk-audio-tools/tuner_runs
+  averaging:
+    n_renders: 2                         # FDN-style modulation — average 2 to suppress phase variance
+    aggregate: median
+
+anchor:
+  impulse_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall/lex_hall_med_hall_impulse.wav
+  noiseburst_wav: /home/marc/projects/dusk-audio-tools/anchors/lex/wavs/hall_med_hall/lex_hall_med_hall_noiseburst.wav
+
+# Locked params — Lex spec values for the standard hall character + 100% wet
+# isolation. Multi-tap pattern (kTapTimesMs/kTapWeights) is engine-internal,
+# not in APVTS, so it's not searchable in this round; if CMA can't close
+# c80/d50 we'll expose taps as params and add to search_space.
+locked_params:
+  Algorithm:       "Hall (Lex)"
+  Bus Mode:        "on"
+  Dry/Wet:         "1.0"
+  Pre-Delay:       "14"                  # Lex Predelay 14.00ms
+  Pre-Delay Sync:  "Free"
+  Lo Cut:          "60"                  # gentle bass HPF, Lex doesn't sub-bass roll
+  Early Ref Level: "0.0"                 # Hall engine doesn't use the smooth ER path
+  Early Ref Size:  "0.30"                # unused with ER muted
+  Mono Below:      "20"
+  Freeze:          "Off"
+  Gate:            "On"
+  First Refl L Dly:   "3.0"
+  First Refl R Dly:   "8.0"
+  First Refl L Gain:  "-60.0"            # Hall doesn't use the FirstReflections path
+  First Refl R Gain:  "-60.0"
+  First Refl HF Cut:  "20000"
+  Width:           "1.0"                 # Lex Tail_Width=Stereo
+
+# Sweep the reverb-character axes + the 8 Hall-internal axes. Standard
+# preset params bracket around the Lex spec values; Hall-internal params
+# bracket around the engine defaults (commit fe4b213).
+search_space:
+  # Standard preset params (Lex spec brackets)
+  Decay Time:      { lo: 1.4,  hi: 2.2,  step: 0.05, scale: linear }   # Lex 1.6859
+  Size:            { lo: 0.40, hi: 0.95, step: 0.05, scale: linear }   # Lex 35m abstract
+  Treble Multiply: { lo: 0.50, hi: 1.10, step: 0.05, scale: linear }
+  Bass Multiply:   { lo: 1.10, hi: 1.80, step: 0.05, scale: linear }   # Lex BassRT 1.5x
+  Mid Multiply:    { lo: 0.70, hi: 1.20, step: 0.05, scale: linear }
+  Diffusion:       { lo: 0.80, hi: 0.98, step: 0.02, scale: linear }   # Lex 0.97 (no-op on Hall but kept for state parity)
+  Low Crossover:   { lo: 400,  hi: 900,  step: 50,   scale: linear }   # Lex Bass_XOV 600
+  High Crossover:  { lo: 3000, hi: 6000, step: 200,  scale: linear }   # Lex RT_HiCut 4500
+  Hi Cut:          { lo: 4000, hi: 8000, step: 250,  scale: linear }   # Lex Rvb_Out_Freq 4750
+  Mod Depth:       { lo: 0.05, hi: 0.40, step: 0.05, scale: linear }
+  Mod Rate:        { lo: 1.5,  hi: 4.0,  step: 0.25, scale: linear }   # Lex Spin 2.9Hz
+  Saturation:      { lo: 0.00, hi: 0.10, step: 0.02, scale: linear }
+  Gain Trim:       { lo: -14.0, hi: -5.0, step: 0.5,  scale: linear }  # iteration baseline trim -9 / -11.5
+
+  # Hall-internal advanced (APVTS, algo 10 only)
+  Hall Bass Damping:     { lo: 0.10, hi: 0.80, step: 0.05, scale: linear }
+  Hall Mid Damping:      { lo: 0.10, hi: 0.70, step: 0.05, scale: linear }
+  Hall Treble Damping:   { lo: 0.00, hi: 0.40, step: 0.05, scale: linear }
+  Hall Bass Gain:        { lo: 0.30, hi: 1.50, step: 0.10, scale: linear }
+  Hall Mid Gain:         { lo: 0.50, hi: 1.50, step: 0.10, scale: linear }
+  Hall Treble Gain:      { lo: 0.50, hi: 1.50, step: 0.10, scale: linear }
+  Hall Inline Diffusion: { lo: 0.05, hi: 0.40, step: 0.05, scale: linear }
+  Hall Stereo Width:     { lo: -0.30, hi: 0.30, step: 0.05, scale: linear }
+
+  # P8b specular taps (weights only — times locked at sane defaults to
+  # keep search space tractable; times become tunable in a follow-up if
+  # the optimizer demands more flex on specular timing).
+  Hall Spec 0 Weight:    { lo: 0.0, hi: 1.5, step: 0.1, scale: linear }
+  Hall Spec 1 Weight:    { lo: 0.0, hi: 1.5, step: 0.1, scale: linear }
+  Hall Spec 2 Weight:    { lo: 0.0, hi: 1.5, step: 0.1, scale: linear }
+  Hall Spec 3 Weight:    { lo: 0.0, hi: 1.5, step: 0.1, scale: linear }
+  Hall Spec HF Cut:      { lo: 3000, hi: 12000, step: 500, scale: linear }
+
+  # P10 per-band peaking EQ — gain only; Q locked at default 0.707 for
+  # this round. If centroid_drift / box_ratio don't close, expose Q
+  # in a follow-up.
+  Hall Bass EQ Gain:     { lo: -10.0, hi: 6.0, step: 1.0, scale: linear }
+  Hall Mid EQ Gain:      { lo: -10.0, hi: 6.0, step: 1.0, scale: linear }
+  Hall Treble EQ Gain:   { lo: -6.0,  hi: 8.0, step: 1.0, scale: linear }
+# 27-axis CMA on HallReverb engine. Current settings: workers=4,
+# max_evals=300, sigma=0.15. The OOM that locked the workstation
+# was on the prior 1500-eval / 4-worker run — keeping max_evals at
+# 300 bounds peak memory regardless of worker count.
+
+# JND-weighted composite loss — identical metric set + JNDs to the Rich Plate
+# config. 19 weighted terms; 19/19 close requires every term within JND.
+metrics:
+  # ── Decay & Timing ────────────────────────────────────────────────────────
+  # rt60_per_band weight 30 (was 6) — core metric, forbidden to drift past
+  # JND under the new barrier loss. With L = w·max(0,|Δ|−JND)² each unit
+  # of excess past JND costs 30; a sacrificed band that drifts 0.5 JND
+  # over still costs 7.5, more than the optimizer can recover via gains
+  # elsewhere.
+  rt60_per_band:       { weight: 30.0, jnd: 0.10 }
+  edt_500:             { weight: 5.0, jnd: 0.10 }
+  edt:                 { weight: 5.0, jnd: 0.10 }
+  decay_envelope_db:   { weight: 4.0, jnd: 3.0 }
+  peak_locations_ms:   { weight: 1.0, jnd: 1.0 }
+  # ── Energy & Clarity ──────────────────────────────────────────────────────
+  c80:                 { weight: 3.0, jnd: 0.8  }
+  c80_per_octave:      { weight: 2.0, jnd: 1.5  }
+  d50:                 { weight: 4.0, jnd: 0.8  }
+  # ── Tonal Balance ────────────────────────────────────────────────────────
+  bass_ratio:          { weight: 8.0, jnd: 0.15 }
+  treble_ratio:        { weight: 8.0, jnd: 0.15 }
+  centroid_drift_per_band: { weight: 5.0, jnd: 2.5 }
+  box_ratio_db:        { weight: 4.0, jnd: 1.0  }
+  # ── Loudness & Dynamics ──────────────────────────────────────────────────
+  # a_weighted_rms_db weight 40 (was 8) — VOLUME-FIRST is non-negotiable.
+  # 40 dwarfs every other term so the optimizer treats it as a literal
+  # gate before any other metric matters.
+  a_weighted_rms_db:   { weight: 40.0, jnd: 0.5  }
+  spectral_crest_db:   { weight: 1.5, jnd: 1.0  }
+  time_domain_crest:   { weight: 1.5, jnd: 1.5  }
+  # ── Spatial ──────────────────────────────────────────────────────────────
+  stereo_correlation:  { weight: 6.0, jnd: 0.08 }
+  # ── Late-tail anchors ────────────────────────────────────────────────────
+  late_tail_500ms_1s:  { weight: 1.5, jnd: 0.8 }
+  late_tail_1s_2s:     { weight: 1.5, jnd: 1.0 }
+  late_tail_2s_3s:     { weight: 1.5, jnd: 1.5 }
+
+optimizer:
+  enabled: true
+  algorithm: cma
+  sigma0: 0.15                           # gentle — sticks closer to manual-tune seed
+  max_evals: 300                         # was 1500 — prior run OOM'd workstation
+  tolerance: 0.05
+  parallel_workers: 4                    # 300 evals × 4 workers ≈ 600MB peak, safe on 32GB box
+
+# No automatic patch back to FactoryPresets.h yet — first close the metrics,
+# then manually translate the best config into a new "Lex Med Hall" preset
+# row. Hall-internal params will need either preset-level storage extension
+# or per-preset setter calls in applyEngineConfig().
+patch:
+  enabled: false

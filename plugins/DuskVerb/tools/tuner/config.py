@@ -177,8 +177,8 @@ def load(yaml_path: str | Path) -> TuneConfig:
         )
 
     eng_algo = int(_require(job, "engine_algorithm", "job"))
-    if not 0 <= eng_algo <= 7:
-        raise ValueError(f"config: job.engine_algorithm must be 0..7, got {eng_algo}")
+    if not 0 <= eng_algo <= 10:
+        raise ValueError(f"config: job.engine_algorithm must be 0..10, got {eng_algo}")
 
     n_renders = int(averaging.get("n_renders", 3))
     sigma0 = float(opt.get("sigma0", 0.15))
