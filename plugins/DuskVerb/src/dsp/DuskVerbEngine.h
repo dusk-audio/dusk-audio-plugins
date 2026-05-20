@@ -164,6 +164,12 @@ public:
     void setHallBassDampingFc   (float hz);
     void setHallMidDampingFc    (float hz);
     void setHallTrebleDampingFc (float hz);
+    void setHallBassModDepth    (float samples);
+    void setHallBassModRate     (float hz);
+    void setHallMidModDepth     (float samples);
+    void setHallMidModRate      (float hz);
+    void setHallTrebleModDepth  (float samples);
+    void setHallTrebleModRate   (float hz);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the

@@ -108,6 +108,17 @@ public:
     void setBassDampingFc     (float hz);
     void setMidDampingFc      (float hz);
     void setTrebleDampingFc   (float hz);
+    // Per-band modulation depth + rate. The shared setModDepth/setModRate
+    // above broadcast a single value to all 3 SubTanks; these override
+    // per band so the optimizer / preset can give bass slow+deep and
+    // treble fast+shallow (closer to Lex's frequency-dependent spin and
+    // wander pattern that drives centroid_drift + spectral_crest).
+    void setBassModDepth      (float samples);
+    void setBassModRate       (float hz);
+    void setMidModDepth       (float samples);
+    void setMidModRate        (float hz);
+    void setTrebleModDepth    (float samples);
+    void setTrebleModRate     (float hz);
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
