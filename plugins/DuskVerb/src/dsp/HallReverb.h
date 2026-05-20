@@ -138,6 +138,18 @@ public:
     void setBassChannelGainSpread   (float spread);
     void setMidChannelGainSpread    (float spread);
     void setTrebleChannelGainSpread (float spread);
+    // Per-band post-tank high-shelf (P11 architectural decoupling). Applied
+    // after LR4 isolation + peaking EQ and before band-gain sum, on each
+    // band's filtered output. Gain in dB (negative cuts above fc, 0 = flat),
+    // fc in Hz. Use to replicate the natural HF rolloff a real hall has
+    // WITHOUT putting an LP inside the FDN feedback loop (which would
+    // re-introduce the centroid_drift drift the in-loop damping LP causes).
+    void setBassShelfGain     (float dB);
+    void setBassShelfFc       (float hz);
+    void setMidShelfGain      (float dB);
+    void setMidShelfFc        (float hz);
+    void setTrebleShelfGain   (float dB);
+    void setTrebleShelfFc     (float hz);
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
@@ -353,6 +365,19 @@ private:
     float              bassEQGainDb_   = 0.0f, bassEQQ_   = 0.707f, bassEQFc_   = kDefaultBassEQFc;
     float              midEQGainDb_    = 0.0f, midEQQ_    = 0.707f, midEQFc_    = kDefaultMidEQFc;
     float              trebleEQGainDb_ = 0.0f, trebleEQQ_ = 0.707f, trebleEQFc_ = kDefaultTrebleEQFc;
+
+    // Post-tank decoupled HF rolloff (P11) — per-band high-shelf filter
+    // applied AFTER LR4 isolation + peaking EQ, BEFORE band-gain sum.
+    // Topology decouples spectral shaping from feedback: SubTank's
+    // feedback runs uniform (no centroid_drift) while the shelf shapes
+    // HF rolloff (closes c80/d50). Defaults gain=0 dB → transparent.
+    static constexpr float kDefaultShelfFc = 4000.0f;
+    duskverb::dsp::LR4BandSplit::Biquad bassShelfL_,   bassShelfR_;
+    duskverb::dsp::LR4BandSplit::Biquad midShelfL_,    midShelfR_;
+    duskverb::dsp::LR4BandSplit::Biquad trebleShelfL_, trebleShelfR_;
+    float              bassShelfGainDb_   = 0.0f, bassShelfFc_   = kDefaultShelfFc;
+    float              midShelfGainDb_    = 0.0f, midShelfFc_    = kDefaultShelfFc;
+    float              trebleShelfGainDb_ = 0.0f, trebleShelfFc_ = kDefaultShelfFc;
 
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop

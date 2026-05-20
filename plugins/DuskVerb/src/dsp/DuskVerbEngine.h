@@ -176,6 +176,12 @@ public:
     void setHallBassChannelGainSpread   (float spread);
     void setHallMidChannelGainSpread    (float spread);
     void setHallTrebleChannelGainSpread (float spread);
+    void setHallBassShelfGain    (float dB);
+    void setHallBassShelfFc      (float hz);
+    void setHallMidShelfGain     (float dB);
+    void setHallMidShelfFc       (float hz);
+    void setHallTrebleShelfGain  (float dB);
+    void setHallTrebleShelfFc    (float hz);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the

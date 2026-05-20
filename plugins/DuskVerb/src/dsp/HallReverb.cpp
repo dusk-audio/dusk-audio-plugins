@@ -145,6 +145,21 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     bassEQL_.reset();   bassEQR_.reset();
     midEQL_.reset();    midEQR_.reset();
     trebleEQL_.reset(); trebleEQR_.reset();
+
+    // P11 post-tank high-shelf biquads — same prepare pattern as the
+    // peaking EQs above. Defaults gainDb=0 → flat passthrough; calibration
+    // dials in negative gain on each band for HF rolloff that closes
+    // c80/d50 without re-introducing the centroid_drift drift the
+    // in-feedback damping LP causes.
+    bassShelfL_  .designHighShelf (bassShelfFc_,   bassShelfGainDb_,   sr);
+    bassShelfR_  .designHighShelf (bassShelfFc_,   bassShelfGainDb_,   sr);
+    midShelfL_   .designHighShelf (midShelfFc_,    midShelfGainDb_,    sr);
+    midShelfR_   .designHighShelf (midShelfFc_,    midShelfGainDb_,    sr);
+    trebleShelfL_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+    trebleShelfR_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+    bassShelfL_.reset();   bassShelfR_.reset();
+    midShelfL_.reset();    midShelfR_.reset();
+    trebleShelfL_.reset(); trebleShelfR_.reset();
 }
 
 void HallReverb::recomputePredelayTaps()
@@ -323,6 +338,9 @@ void HallReverb::clearBuffers()
     bassEQL_.reset();   bassEQR_.reset();
     midEQL_.reset();    midEQR_.reset();
     trebleEQL_.reset(); trebleEQR_.reset();
+    bassShelfL_.reset();   bassShelfR_.reset();
+    midShelfL_.reset();    midShelfR_.reset();
+    trebleShelfL_.reset(); trebleShelfR_.reset();
 }
 
 void HallReverb::updateCrossovers()
@@ -461,8 +479,19 @@ void HallReverb::process (const float* inputL, const float* inputR,
             const float eqTrebleL = trebleEQL_.process (tL_t);
             const float eqTrebleR = trebleEQR_.process (tR_t);
 
-            float wetL = eqBassL * gB + eqMidL * gM + eqTrebleL * gT;
-            float wetR = eqBassR * gB + eqMidR * gM + eqTrebleR * gT;
+            // P11 post-tank high-shelf — decoupled HF rolloff per band.
+            // Replaces in-feedback damping LP for closing c80/d50 without
+            // re-introducing the centroid_drift drift that an in-loop LP
+            // causes. Default gainDb=0 → flat passthrough.
+            const float shBassL   = bassShelfL_  .process (eqBassL);
+            const float shBassR   = bassShelfR_  .process (eqBassR);
+            const float shMidL    = midShelfL_   .process (eqMidL);
+            const float shMidR    = midShelfR_   .process (eqMidR);
+            const float shTrebleL = trebleShelfL_.process (eqTrebleL);
+            const float shTrebleR = trebleShelfR_.process (eqTrebleR);
+
+            float wetL = shBassL * gB + shMidL * gM + shTrebleL * gT;
+            float wetR = shBassR * gB + shMidR * gM + shTrebleR * gT;
 
             // ── P8c — wet-only Hi Cut (2-pole RBJ LP) ─────────────────
             // Replaces DuskVerbEngine's global Hi Cut filter for this
@@ -654,6 +683,60 @@ void HallReverb::setTrebleModShape (float shape)   { trebleTank_.setModShape (sh
 void HallReverb::setBassChannelGainSpread   (float s) { bassTank_  .setChannelGainSpread (s); }
 void HallReverb::setMidChannelGainSpread    (float s) { midTank_   .setChannelGainSpread (s); }
 void HallReverb::setTrebleChannelGainSpread (float s) { trebleTank_.setChannelGainSpread (s); }
+
+void HallReverb::setBassShelfGain (float dB)
+{
+    bassShelfGainDb_ = std::clamp (dB, -24.0f, 6.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    bassShelfL_.designHighShelf (bassShelfFc_, bassShelfGainDb_, sr);
+    bassShelfR_.designHighShelf (bassShelfFc_, bassShelfGainDb_, sr);
+}
+
+void HallReverb::setBassShelfFc (float hz)
+{
+    bassShelfFc_ = std::clamp (hz, 100.0f, 16000.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    bassShelfL_.designHighShelf (bassShelfFc_, bassShelfGainDb_, sr);
+    bassShelfR_.designHighShelf (bassShelfFc_, bassShelfGainDb_, sr);
+}
+
+void HallReverb::setMidShelfGain (float dB)
+{
+    midShelfGainDb_ = std::clamp (dB, -24.0f, 6.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    midShelfL_.designHighShelf (midShelfFc_, midShelfGainDb_, sr);
+    midShelfR_.designHighShelf (midShelfFc_, midShelfGainDb_, sr);
+}
+
+void HallReverb::setMidShelfFc (float hz)
+{
+    midShelfFc_ = std::clamp (hz, 100.0f, 16000.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    midShelfL_.designHighShelf (midShelfFc_, midShelfGainDb_, sr);
+    midShelfR_.designHighShelf (midShelfFc_, midShelfGainDb_, sr);
+}
+
+void HallReverb::setTrebleShelfGain (float dB)
+{
+    trebleShelfGainDb_ = std::clamp (dB, -24.0f, 6.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    trebleShelfL_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+    trebleShelfR_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+}
+
+void HallReverb::setTrebleShelfFc (float hz)
+{
+    trebleShelfFc_ = std::clamp (hz, 100.0f, 16000.0f);
+    if (! prepared_) return;
+    const float sr = static_cast<float> (sampleRate_);
+    trebleShelfL_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+    trebleShelfR_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+}
 
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }
 void HallReverb::setMidGain    (float g) { gainMid_    = std::max (0.0f, g); }

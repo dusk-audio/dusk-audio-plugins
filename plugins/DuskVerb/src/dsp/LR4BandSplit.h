@@ -54,6 +54,28 @@ struct LR4BandSplit
             a2 = (1.0f - alpha)        / a0;
         }
 
+        // RBJ cookbook high-shelf. gainDb < 0 attenuates content ABOVE fc
+        // (flat passband below fc, sloped transition near fc, full
+        // attenuation gainDb above the transition). Use for post-tank
+        // decoupled HF rolloff — closes c80/d50 without the in-feedback
+        // damping LP that drives centroid_drift_per_band peaks.
+        void designHighShelf (float fcHz, float gainDb, float sr)
+        {
+            const float A     = std::pow (10.0f, gainDb / 40.0f);
+            const float w0    = kTwoPi * std::min (fcHz, 0.49f * sr) / sr;
+            const float cosw  = std::cos (w0);
+            const float sinw  = std::sin (w0);
+            // Shelf-slope S = 1 (max slope without resonance peak).
+            const float alpha = sinw * 0.5f * std::sqrt ((A + 1.0f / A) + 2.0f);
+            const float beta  = 2.0f * std::sqrt (A) * alpha;
+            const float a0    = (A + 1.0f) - (A - 1.0f) * cosw + beta;
+            b0 =  A * ((A + 1.0f) + (A - 1.0f) * cosw + beta)        / a0;
+            b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw)        / a0;
+            b2 =  A * ((A + 1.0f) + (A - 1.0f) * cosw - beta)        / a0;
+            a1 =  2.0f * ((A - 1.0f) - (A + 1.0f) * cosw)            / a0;
+            a2 = ((A + 1.0f) - (A - 1.0f) * cosw - beta)             / a0;
+        }
+
         // RBJ cookbook peaking EQ. gainDb > 0 boosts, < 0 cuts. q controls
         // bandwidth (higher Q = narrower).
         void designPeaking (float fcHz, float qFactor, float gainDb, float sr)

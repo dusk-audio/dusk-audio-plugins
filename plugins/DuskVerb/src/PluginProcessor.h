@@ -222,6 +222,12 @@ private:
     std::atomic<float>* hallBassChanGainSpreadParam_   = nullptr;
     std::atomic<float>* hallMidChanGainSpreadParam_    = nullptr;
     std::atomic<float>* hallTrebleChanGainSpreadParam_ = nullptr;
+    std::atomic<float>* hallBassShelfGainParam_   = nullptr;
+    std::atomic<float>* hallBassShelfFcParam_     = nullptr;
+    std::atomic<float>* hallMidShelfGainParam_    = nullptr;
+    std::atomic<float>* hallMidShelfFcParam_      = nullptr;
+    std::atomic<float>* hallTrebleShelfGainParam_ = nullptr;
+    std::atomic<float>* hallTrebleShelfFcParam_   = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -309,6 +315,12 @@ private:
     float lastHallBassChanGainSpread_   = -999.0f;
     float lastHallMidChanGainSpread_    = -999.0f;
     float lastHallTrebleChanGainSpread_ = -999.0f;
+    float lastHallBassShelfGain_   = -999.0f;
+    float lastHallBassShelfFc_     = -999.0f;
+    float lastHallMidShelfGain_    = -999.0f;
+    float lastHallMidShelfFc_      = -999.0f;
+    float lastHallTrebleShelfGain_ = -999.0f;
+    float lastHallTrebleShelfFc_   = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

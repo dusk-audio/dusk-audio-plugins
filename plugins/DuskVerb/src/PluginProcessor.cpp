@@ -363,6 +363,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_treble_chan_gain_spread", 1 }, "Hall Treble Chan Gain Spread",
         juce::NormalisableRange<float> (0.0f, 0.4f), 0.0f));
 
+    // P11 per-band post-tank high-shelf — decoupled HF rolloff. Replaces
+    // the role the in-feedback damping LP plays in the tail spectrum
+    // (closes c80/d50 via natural HF rolloff) WITHOUT the in-loop drift
+    // an LP causes inside the FDN. Default gain 0 dB = flat passthrough
+    // → zero regression on 7/19 baseline; calibration target is negative
+    // gain on bass/mid/treble shelves combined with low in-feedback damping.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_shelf_gain", 1 }, "Hall Bass Shelf Gain",
+        juce::NormalisableRange<float> (-24.0f, 6.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_shelf_fc", 1 }, "Hall Bass Shelf Fc",
+        juce::NormalisableRange<float> (100.0f, 16000.0f, 0.0f, 0.3f), 4000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_shelf_gain", 1 }, "Hall Mid Shelf Gain",
+        juce::NormalisableRange<float> (-24.0f, 6.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_shelf_fc", 1 }, "Hall Mid Shelf Fc",
+        juce::NormalisableRange<float> (100.0f, 16000.0f, 0.0f, 0.3f), 4000.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_shelf_gain", 1 }, "Hall Treble Shelf Gain",
+        juce::NormalisableRange<float> (-24.0f, 6.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_shelf_fc", 1 }, "Hall Treble Shelf Fc",
+        juce::NormalisableRange<float> (100.0f, 16000.0f, 0.0f, 0.3f), 4000.0f));
+
     return layout;
 }
 
@@ -460,6 +485,12 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallBassChanGainSpreadParam_   = parameters.getRawParameterValue ("hall_bass_chan_gain_spread");
     hallMidChanGainSpreadParam_    = parameters.getRawParameterValue ("hall_mid_chan_gain_spread");
     hallTrebleChanGainSpreadParam_ = parameters.getRawParameterValue ("hall_treble_chan_gain_spread");
+    hallBassShelfGainParam_   = parameters.getRawParameterValue ("hall_bass_shelf_gain");
+    hallBassShelfFcParam_     = parameters.getRawParameterValue ("hall_bass_shelf_fc");
+    hallMidShelfGainParam_    = parameters.getRawParameterValue ("hall_mid_shelf_gain");
+    hallMidShelfFcParam_      = parameters.getRawParameterValue ("hall_mid_shelf_fc");
+    hallTrebleShelfGainParam_ = parameters.getRawParameterValue ("hall_treble_shelf_gain");
+    hallTrebleShelfFcParam_   = parameters.getRawParameterValue ("hall_treble_shelf_fc");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -746,6 +777,12 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallBassChanGainSpread_,   hallBassChanGainSpreadParam_->load(),   [this] (float v) { activeEngine_->setHallBassChannelGainSpread   (v); });
     pushIfChanged (lastHallMidChanGainSpread_,    hallMidChanGainSpreadParam_->load(),    [this] (float v) { activeEngine_->setHallMidChannelGainSpread    (v); });
     pushIfChanged (lastHallTrebleChanGainSpread_, hallTrebleChanGainSpreadParam_->load(), [this] (float v) { activeEngine_->setHallTrebleChannelGainSpread (v); });
+    pushIfChanged (lastHallBassShelfGain_,   hallBassShelfGainParam_->load(),   [this] (float v) { activeEngine_->setHallBassShelfGain   (v); });
+    pushIfChanged (lastHallBassShelfFc_,     hallBassShelfFcParam_->load(),     [this] (float v) { activeEngine_->setHallBassShelfFc     (v); });
+    pushIfChanged (lastHallMidShelfGain_,    hallMidShelfGainParam_->load(),    [this] (float v) { activeEngine_->setHallMidShelfGain    (v); });
+    pushIfChanged (lastHallMidShelfFc_,      hallMidShelfFcParam_->load(),      [this] (float v) { activeEngine_->setHallMidShelfFc      (v); });
+    pushIfChanged (lastHallTrebleShelfGain_, hallTrebleShelfGainParam_->load(), [this] (float v) { activeEngine_->setHallTrebleShelfGain (v); });
+    pushIfChanged (lastHallTrebleShelfFc_,   hallTrebleShelfFcParam_->load(),   [this] (float v) { activeEngine_->setHallTrebleShelfFc   (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -1075,6 +1112,12 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallBassChannelGainSpread   (hallBassChanGainSpreadParam_->load());
     target->setHallMidChannelGainSpread    (hallMidChanGainSpreadParam_->load());
     target->setHallTrebleChannelGainSpread (hallTrebleChanGainSpreadParam_->load());
+    target->setHallBassShelfGain   (hallBassShelfGainParam_->load());
+    target->setHallBassShelfFc     (hallBassShelfFcParam_->load());
+    target->setHallMidShelfGain    (hallMidShelfGainParam_->load());
+    target->setHallMidShelfFc      (hallMidShelfFcParam_->load());
+    target->setHallTrebleShelfGain (hallTrebleShelfGainParam_->load());
+    target->setHallTrebleShelfFc   (hallTrebleShelfFcParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1170,6 +1213,12 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallBassChanGainSpread_   = hallBassChanGainSpreadParam_->load();
     lastHallMidChanGainSpread_    = hallMidChanGainSpreadParam_->load();
     lastHallTrebleChanGainSpread_ = hallTrebleChanGainSpreadParam_->load();
+    lastHallBassShelfGain_   = hallBassShelfGainParam_->load();
+    lastHallBassShelfFc_     = hallBassShelfFcParam_->load();
+    lastHallMidShelfGain_    = hallMidShelfGainParam_->load();
+    lastHallMidShelfFc_      = hallMidShelfFcParam_->load();
+    lastHallTrebleShelfGain_ = hallTrebleShelfGainParam_->load();
+    lastHallTrebleShelfFc_   = hallTrebleShelfFcParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();

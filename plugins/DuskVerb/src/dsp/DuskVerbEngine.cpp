@@ -465,6 +465,12 @@ void DuskVerbEngine::setHallTrebleModShape  (float sh)  { hall_.setTrebleModShap
 void DuskVerbEngine::setHallBassChannelGainSpread   (float s) { hall_.setBassChannelGainSpread   (s); }
 void DuskVerbEngine::setHallMidChannelGainSpread    (float s) { hall_.setMidChannelGainSpread    (s); }
 void DuskVerbEngine::setHallTrebleChannelGainSpread (float s) { hall_.setTrebleChannelGainSpread (s); }
+void DuskVerbEngine::setHallBassShelfGain   (float dB) { hall_.setBassShelfGain   (dB); }
+void DuskVerbEngine::setHallBassShelfFc     (float hz) { hall_.setBassShelfFc     (hz); }
+void DuskVerbEngine::setHallMidShelfGain    (float dB) { hall_.setMidShelfGain    (dB); }
+void DuskVerbEngine::setHallMidShelfFc      (float hz) { hall_.setMidShelfFc      (hz); }
+void DuskVerbEngine::setHallTrebleShelfGain (float dB) { hall_.setTrebleShelfGain (dB); }
+void DuskVerbEngine::setHallTrebleShelfFc   (float hz) { hall_.setTrebleShelfFc   (hz); }
 
 void DuskVerbEngine::setERLevel (float level)
 {
