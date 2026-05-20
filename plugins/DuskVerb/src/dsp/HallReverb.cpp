@@ -52,6 +52,12 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
 
     splitL_.prepare (static_cast<float> (sampleRate));
     splitR_.prepare (static_cast<float> (sampleRate));
+    bassPostL_  .prepare (static_cast<float> (sampleRate));
+    bassPostR_  .prepare (static_cast<float> (sampleRate));
+    midPostL_   .prepare (static_cast<float> (sampleRate));
+    midPostR_   .prepare (static_cast<float> (sampleRate));
+    treblePostL_.prepare (static_cast<float> (sampleRate));
+    treblePostR_.prepare (static_cast<float> (sampleRate));
     updateCrossovers();
 
     bassTank_  .setLFOPhaseOffset (kBassBandPhase);
@@ -84,7 +90,7 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
 
     prepared_ = true;
     updateSubTankDecays();
-    setDamping (dampingAmount_);
+    setBandDamping (dampingBass_, dampingMid_, dampingTreble_);
 }
 
 void HallReverb::recomputePredelayTaps()
@@ -113,6 +119,9 @@ void HallReverb::clearBuffers()
     trebleTank_.clear();
     splitL_.reset();
     splitR_.reset();
+    bassPostL_.reset();   bassPostR_.reset();
+    midPostL_.reset();    midPostR_.reset();
+    treblePostL_.reset(); treblePostR_.reset();
     std::fill (predelayL_.begin(), predelayL_.end(), 0.0f);
     std::fill (predelayR_.begin(), predelayR_.end(), 0.0f);
     predelayWritePos_ = 0;
@@ -122,8 +131,14 @@ void HallReverb::updateCrossovers()
 {
     if (! prepared_) return;
     const float sr = static_cast<float> (sampleRate_);
-    splitL_.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
-    splitR_.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
+    splitL_.setCrossovers      (crossoverFreq_, highCrossoverFreq_, sr);
+    splitR_.setCrossovers      (crossoverFreq_, highCrossoverFreq_, sr);
+    bassPostL_.setCrossovers   (crossoverFreq_, highCrossoverFreq_, sr);
+    bassPostR_.setCrossovers   (crossoverFreq_, highCrossoverFreq_, sr);
+    midPostL_.setCrossovers    (crossoverFreq_, highCrossoverFreq_, sr);
+    midPostR_.setCrossovers    (crossoverFreq_, highCrossoverFreq_, sr);
+    treblePostL_.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
+    treblePostR_.setCrossovers (crossoverFreq_, highCrossoverFreq_, sr);
 }
 
 void HallReverb::updateSubTankDecays()
@@ -199,10 +214,30 @@ void HallReverb::process (const float* inputL, const float* inputR,
         const float invSatDrive = 1.0f / satDrive;
         const float b = stereoWidth_;
 
+        const float gB = gainBass_, gM = gainMid_, gT = gainTreble_;
+
         for (int i = 0; i < n; ++i)
         {
-            const float wetL = bassOutL_[i] + midOutL_[i] + trebleOutL_[i];
-            const float wetR = bassOutR_[i] + midOutR_[i] + trebleOutR_[i];
+            // Post-tank LR4 band isolation. Each SubTank's Hadamard mixing
+            // produces broadband output (modal content spreads across the
+            // full spectrum regardless of input frequency). Re-applying the
+            // LR4 split to each band's output keeps the bass tank's upper-
+            // harmonic content from polluting the mid passband, the mid
+            // tank's modal residue out of bass/treble, etc. We discard the
+            // off-band outputs and keep only the slot that matches the
+            // SubTank's role.
+            float bL_b, bL_m, bL_t, bR_b, bR_m, bR_t;
+            float mL_b, mL_m, mL_t, mR_b, mR_m, mR_t;
+            float tL_b, tL_m, tL_t, tR_b, tR_m, tR_t;
+            bassPostL_  .split (bassOutL_  [i], bL_b, bL_m, bL_t);
+            bassPostR_  .split (bassOutR_  [i], bR_b, bR_m, bR_t);
+            midPostL_   .split (midOutL_   [i], mL_b, mL_m, mL_t);
+            midPostR_   .split (midOutR_   [i], mR_b, mR_m, mR_t);
+            treblePostL_.split (trebleOutL_[i], tL_b, tL_m, tL_t);
+            treblePostR_.split (trebleOutR_[i], tR_b, tR_m, tR_t);
+
+            const float wetL = bL_b * gB + mL_m * gM + tL_t * gT;
+            const float wetR = bR_b * gB + mR_m * gM + tR_t * gT;
 
             float oL = wetL - b * wetR;
             float oR = wetR - b * wetL;
@@ -298,10 +333,26 @@ void HallReverb::setSaturation (float amount)
 
 void HallReverb::setDamping (float amount)
 {
-    dampingAmount_ = std::clamp (amount, 0.0f, 0.95f);
-    bassTank_  .setDamping (dampingAmount_);
-    midTank_   .setDamping (dampingAmount_);
-    trebleTank_.setDamping (dampingAmount_);
+    // Legacy uniform-damping path: broadcast the same coefficient to all
+    // three SubTanks. Equivalent to setBandDamping(a, a, a).
+    setBandDamping (amount, amount, amount);
+}
+
+void HallReverb::setBandDamping (float bass, float mid, float treble)
+{
+    dampingBass_   = std::clamp (bass,   0.0f, 0.95f);
+    dampingMid_    = std::clamp (mid,    0.0f, 0.95f);
+    dampingTreble_ = std::clamp (treble, 0.0f, 0.95f);
+    bassTank_  .setDamping (dampingBass_);
+    midTank_   .setDamping (dampingMid_);
+    trebleTank_.setDamping (dampingTreble_);
+}
+
+void HallReverb::setBandGain (float bass, float mid, float treble)
+{
+    gainBass_   = std::max (0.0f, bass);
+    gainMid_    = std::max (0.0f, mid);
+    gainTreble_ = std::max (0.0f, treble);
 }
 
 void HallReverb::setStereoWidth (float b)
