@@ -450,6 +450,9 @@ void DuskVerbEngine::setHallTrebleEQQ    (float q)      { sHallTrebleEQQ    = q;
 void DuskVerbEngine::setHallBassEQFc     (float hz)     { hall_.setBassEQFc   (hz); }
 void DuskVerbEngine::setHallMidEQFc      (float hz)     { hall_.setMidEQFc    (hz); }
 void DuskVerbEngine::setHallTrebleEQFc   (float hz)     { hall_.setTrebleEQFc (hz); }
+void DuskVerbEngine::setHallBassDampingFc   (float hz)  { hall_.setBassDampingFc   (hz); }
+void DuskVerbEngine::setHallMidDampingFc    (float hz)  { hall_.setMidDampingFc    (hz); }
+void DuskVerbEngine::setHallTrebleDampingFc (float hz)  { hall_.setTrebleDampingFc (hz); }
 
 void DuskVerbEngine::setERLevel (float level)
 {

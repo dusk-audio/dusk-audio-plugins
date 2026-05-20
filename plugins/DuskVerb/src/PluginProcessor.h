@@ -207,6 +207,9 @@ private:
     std::atomic<float>* hallBassEQFcParam_     = nullptr;
     std::atomic<float>* hallMidEQFcParam_      = nullptr;
     std::atomic<float>* hallTrebleEQFcParam_   = nullptr;
+    std::atomic<float>* hallBassDampingFcParam_   = nullptr;
+    std::atomic<float>* hallMidDampingFcParam_    = nullptr;
+    std::atomic<float>* hallTrebleDampingFcParam_ = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -279,6 +282,9 @@ private:
     float lastHallBassEQFc_     = -999.0f;
     float lastHallMidEQFc_      = -999.0f;
     float lastHallTrebleEQFc_   = -999.0f;
+    float lastHallBassDampingFc_   = -999.0f;
+    float lastHallMidDampingFc_    = -999.0f;
+    float lastHallTrebleDampingFc_ = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

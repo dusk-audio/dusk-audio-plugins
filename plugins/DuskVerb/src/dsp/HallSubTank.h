@@ -63,9 +63,25 @@ public:
     // Decay time: RT60 (seconds) at this band. Internally translates to
     // per-channel feedback gain = 10^(-3 × loopSeconds / decayTime).
     void setDecayTime    (float seconds);
-    // Damping coefficient [0, 1] — 0 = bypass, 1 = aggressive HF roll-off in
-    // every feedback path. Implemented as one-pole shelf coefficient.
+    // Damping WET MIX [0, 1] — 0 = bypass (channel signal passes through),
+    // 1 = full LP (channel signal replaced by low-pass-filtered version).
+    // The shelf-like behaviour is the parallel mix of dry channel + LP,
+    // so amount + fc together describe a 1-pole high-shelf: lower fc and
+    // higher amount = more HF cut. The previous implementation used the
+    // amount as the IIR forgetting factor with NO cutoff control — every
+    // band rolled HF starting at the same fixed knee, which Phase 6 found
+    // unable to match Lex's per-band time-evolving spectrum
+    // (centroid_drift 0/4). Now the cutoff is independent per band via
+    // setDampingFc.
     void setDamping      (float amount);
+    // Damping LP cutoff frequency. Combined with setDamping amount,
+    // controls where HF roll-off begins per band. Each SubTank's LP
+    // sits in the feedback path (after the inline AP, before Hadamard
+    // mixing) so the cutoff shapes how the band-internal recirculation
+    // loses HF energy over time. Closes centroid_drift_per_band by
+    // letting bass / mid / treble bands damp at different frequencies
+    // matching the Lex anchor's per-octave HF rolloff signature.
+    void setDampingFc    (float hz);
     // Modulation depth in samples (0..N samples typical), shared across all
     // 8 LFOs (each channel has its own phase offset for decorrelation).
     void setModDepth     (float samples);
@@ -147,7 +163,7 @@ private:
     // Per-channel state (RT-side; written each sample, never the snapshot).
     Delay delays_        [N] {};
     InlineAllpass inlineAP_[N] {};     // one short Schroeder AP per channel
-    float dampState_     [N] {};       // one-pole shelf z^-1 per channel
+    float dampState_     [N] {};       // one-pole LP z^-1 per channel (held between samples)
     float lfoPhase_      [N] {};       // current phase in [0, 2π)
     float lfoPhaseInc_   [N] {};       // 2π × rate / sr
 
@@ -162,7 +178,14 @@ private:
     int    baseDelays_  [N]  {};
     float  sizeScale_        = 1.0f;
     float  decayTime_        = 1.5f;
-    float  dampingCoeff_     = 0.0f;     // 0 = bypass; one-pole shelf coeff
+    // Damping wet mix [0..0.95]. 0 = dry channel passes through (LP path
+    // ignored). 1 = full LP. Combined with dampingFc_ this gives a 1-pole
+    // high-shelf via parallel mix of dry + LP.
+    float  dampingCoeff_     = 0.0f;
+    // Damping LP cutoff frequency. recomputeDampingAlpha() converts to the
+    // standard 1-pole coefficient alpha = 1 − exp(−2π·fc/sr).
+    float  dampingFcHz_      = 8000.0f;
+    float  dampingAlpha_     = 0.5f;     // recomputed from fc + sr
     float  modDepthSamples_  = 0.0f;
     float  modRateHz_        = 1.0f;
     float  bandPhaseOffset_  = 0.0f;
