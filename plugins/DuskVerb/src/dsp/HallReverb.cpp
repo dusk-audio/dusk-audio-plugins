@@ -13,6 +13,8 @@ constexpr float HallReverb::kDefaultSpecularTimesMs[HallReverb::kNumSpecularTaps
 constexpr float HallReverb::kDefaultSpecularWeights[HallReverb::kNumSpecularTaps];
 constexpr float HallReverb::kSpecularSignL[HallReverb::kNumSpecularTaps];
 constexpr float HallReverb::kSpecularSignR[HallReverb::kNumSpecularTaps];
+constexpr int   HallReverb::kInputDiffPrimesL[HallReverb::InputDiffuser::kStages];
+constexpr int   HallReverb::kInputDiffPrimesR[HallReverb::InputDiffuser::kStages];
 
 // APVTS maximum for tap times (matches the hall_tap_N_ms NormalisableRange
 // in PluginProcessor::createParameterLayout). The predelay ring buffer is
@@ -131,6 +133,14 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     midOutL_  .assign (sz, 0.0f); midOutR_  .assign (sz, 0.0f);
     trebleOutL_.assign (sz, 0.0f); trebleOutR_.assign (sz, 0.0f);
     specularInL_.assign (sz, 0.0f); specularInR_.assign (sz, 0.0f);
+
+    // P14 input diffuser — L+R independently primed with different prime
+    // sets for stereo decorrelation. Buffers allocated to nextPowerOf2
+    // of (max_prime × sr_ratio + 4).
+    inputDiffL_.prepareWithPrimes (sampleRate, kInputDiffPrimesL);
+    inputDiffR_.prepareWithPrimes (sampleRate, kInputDiffPrimesR);
+    inputDiffL_.g = inputDiffusion_;
+    inputDiffR_.g = inputDiffusion_;
 
     prepared_ = true;
     updateSubTankDecays();
@@ -359,6 +369,7 @@ void HallReverb::clearBuffers()
     bassShelfL_.reset();   bassShelfR_.reset();
     midShelfL_.reset();    midShelfR_.reset();
     trebleShelfL_.reset(); trebleShelfR_.reset();
+    inputDiffL_.clear();   inputDiffR_.clear();
 }
 
 void HallReverb::updateCrossovers()
@@ -434,6 +445,14 @@ void HallReverb::process (const float* inputL, const float* inputR,
 
             sumL *= tapNorm_;
             sumR *= tapNorm_;
+
+            // P14 pre-tank input diffusion — Lex/Dattorro 4-stage Schroeder
+            // allpass cascade. Smears phase + builds echo density BEFORE
+            // the LR4 split feeds the late tank. L/R use independently-
+            // primed cascades so the diffuser preserves stereo image.
+            // Specular path (above) bypasses this — its taps stay clean.
+            sumL = inputDiffL_.process (sumL);
+            sumR = inputDiffR_.process (sumR);
 
             float bL, mL, tL, bR, mR, tR;
             splitL_.split (sumL, bL, mL, tL);
@@ -754,6 +773,13 @@ void HallReverb::setTrebleShelfFc (float hz)
     const float sr = static_cast<float> (sampleRate_);
     trebleShelfL_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
     trebleShelfR_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
+}
+
+void HallReverb::setInputDiffusion (float g)
+{
+    inputDiffusion_ = std::clamp (g, 0.0f, 0.85f);
+    inputDiffL_.g = inputDiffusion_;
+    inputDiffR_.g = inputDiffusion_;
 }
 
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }

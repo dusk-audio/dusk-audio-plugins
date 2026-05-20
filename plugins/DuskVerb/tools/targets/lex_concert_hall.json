@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "preset_name": "Lex Concert Hall",
+  "anchor_source": "LexConcertHall/factory preset",
+  "fxp_path": "projects/dusk-audio-tools/anchors/lex/fxp/concert_hall/Lch1/lex-concert-hall.fxp",
+  "vst2_plugin": "/home/marc/.vst/yabridge/LexConcertHall.so",
+  "render_settings": {
+    "sample_rate": 48000,
+    "block_size": 2048,
+    "preroll_seconds": 0.5,
+    "lex_mix_percent": 100,
+    "duskverb_render_git_sha": "51853b0"
+  },
+  "captured_iso": "2026-05-20T23:09:03+00:00",
+  "metrics": {
+    "rt60_per_band": {
+      "value": [
+        4.581570835414115,
+        4.6514764942212805,
+        4.18738926169235,
+        3.577781184982063,
+        2.8515430115330567,
+        2.3517502260880128,
+        1.9953280618405906,
+        1.6852535207936148
+      ],
+      "unit": "s",
+      "jnd": 0.1,
+      "bin_freqs_hz": [
+        125,
+        250,
+        500,
+        1000,
+        2000,
+        4000,
+        8000,
+        16000
+      ]
+    },
+    "edt_500": {
+      "value": 2.638625,
+      "unit": "s",
+      "jnd": 0.1
+    },
+    "edt": {
+      "value": 1.94225,
+      "unit": "s",
+      "jnd": 0.1
+    },
+    "decay_envelope_db": {
+      "value": [
+        -52.555008480079806,
+        -61.31207196544107,
+        -67.56865313166794,
+        -72.8003440964522,
+        -77.31571042590869,
+        -81.3227282405175,
+        -85.72641578047521,
+        -89.70341323694804,
+        -92.50386538748943,
+        -96.81283016584277,
+        -98.89488790479615,
+        -103.42076688730697
+      ],
+      "unit": "dB",
+      "jnd": 3.0
+    },
+    "peak_locations_ms": {
+      "value": [
+        0.0,
+        5.0,
+        31.417,
+        "NaN"
+      ],
+      "unit": "ms",
+      "jnd": 1.0
+    },
+    "c80": {
+      "value": 3.979869711273621,
+      "unit": "dB",
+      "jnd": 0.8
+    },
+    "c80_per_octave": {
+      "value": [
+        -0.39925971173023034,
+        2.0015940538818033,
+        1.649045215301253,
+        1.7800267867598654
+      ],
+      "unit": "dB",
+      "jnd": 1.5,
+      "bin_freqs_hz": [
+        250,
+        500,
+        1000,
+        2000
+      ]
+    },
+    "d50": {
+      "value": 3.499497436945713,
+      "unit": "dB",
+      "jnd": 0.8
+    },
+    "bass_ratio": {
+      "value": 0.2494921673265622,
+      "unit": "ratio",
+      "jnd": 0.15
+    },
+    "treble_ratio": {
+      "value": 1.2958168359442244,
+      "unit": "ratio",
+      "jnd": 0.15
+    },
+    "centroid_drift_per_band": {
+      "value": [
+        -21.858039961213308,
+        -42.2408536920974,
+        -47.44150586783144,
+        -148.13219381457566
+      ],
+      "unit": "Hz",
+      "jnd": 2.5,
+      "bin_freqs_hz": [
+        500,
+        1000,
+        2000,
+        4000
+      ]
+    },
+    "box_ratio_db": {
+      "value": 22.944861656317816,
+      "unit": "dB",
+      "jnd": 1.0
+    },
+    "a_weighted_rms_db": {
+      "value": -43.99042711784744,
+      "unit": "dB",
+      "jnd": 0.5
+    },
+    "spectral_crest_db": {
+      "value": 40.32196269077937,
+      "unit": "dB",
+      "jnd": 1.0
+    },
+    "time_domain_crest": {
+      "value": 15.214302367042425,
+      "unit": "ratio",
+      "jnd": 1.5
+    },
+    "stereo_correlation": {
+      "value": 0.11075218117732642,
+      "unit": "corr",
+      "jnd": 0.08
+    },
+    "late_tail_500ms_1s": {
+      "value": -69.44018943315866,
+      "unit": "dB",
+      "jnd": 0.8
+    },
+    "late_tail_1s_2s": {
+      "value": -81.29684894618248,
+      "unit": "dB",
+      "jnd": 1.0
+    },
+    "late_tail_2s_3s": {
+      "value": -96.26802026050798,
+      "unit": "dB",
+      "jnd": 1.5
+    }
+  },
+  "graded_keys": [
+    "rt60_per_band",
+    "edt_500",
+    "edt",
+    "decay_envelope_db",
+    "peak_locations_ms",
+    "c80",
+    "c80_per_octave",
+    "d50",
+    "bass_ratio",
+    "treble_ratio",
+    "centroid_drift_per_band",
+    "box_ratio_db",
+    "a_weighted_rms_db",
+    "spectral_crest_db",
+    "time_domain_crest",
+    "stereo_correlation",
+    "late_tail_500ms_1s",
+    "late_tail_1s_2s",
+    "late_tail_2s_3s"
+  ],
+  "graded_count": 19
+}

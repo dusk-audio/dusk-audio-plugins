@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "preset_name": "Lex Med Hall",
+  "anchor_source": "LexHall/02.Medium Halls/000.Med Hall",
+  "fxp_path": "projects/dusk-audio-tools/anchors/lex/fxp/hall_med_hall/Lhl1/dv_lex_hall_med_hall.fxp",
+  "vst2_plugin": "/home/marc/.vst/yabridge/LexHall.so",
+  "render_settings": {
+    "sample_rate": 48000,
+    "block_size": 2048,
+    "preroll_seconds": 0.5,
+    "lex_mix_percent": 100,
+    "duskverb_render_git_sha": "51853b0"
+  },
+  "captured_iso": "2026-05-20T23:09:00+00:00",
+  "metrics": {
+    "rt60_per_band": {
+      "value": [
+        2.3941231435282204,
+        2.66599375439474,
+        2.460731163385397,
+        2.169371751782681,
+        1.8748940244037724,
+        1.6078296133160948,
+        1.3403754505472694,
+        1.0267958362112681
+      ],
+      "unit": "s",
+      "jnd": 0.1,
+      "bin_freqs_hz": [
+        125,
+        250,
+        500,
+        1000,
+        2000,
+        4000,
+        8000,
+        16000
+      ]
+    },
+    "edt_500": {
+      "value": 2.492875,
+      "unit": "s",
+      "jnd": 0.1
+    },
+    "edt": {
+      "value": 1.381375,
+      "unit": "s",
+      "jnd": 0.1
+    },
+    "decay_envelope_db": {
+      "value": [
+        -51.0181469091696,
+        -62.65808076093932,
+        -70.61025211773793,
+        -77.66169585316246,
+        -84.68678286580378,
+        -91.44985983958215,
+        -97.56132307236369,
+        -102.44956160872798,
+        -109.3315499685235,
+        -116.62039157798185,
+        -119.12343638418082,
+        -124.12842183674101
+      ],
+      "unit": "dB",
+      "jnd": 3.0
+    },
+    "peak_locations_ms": {
+      "value": [
+        0.0,
+        4.0,
+        7.521,
+        9.792
+      ],
+      "unit": "ms",
+      "jnd": 1.0
+    },
+    "c80": {
+      "value": 3.6085598462991313,
+      "unit": "dB",
+      "jnd": 0.8
+    },
+    "c80_per_octave": {
+      "value": [
+        -0.7028120460339478,
+        -1.0727800275588333,
+        -1.147240707544657,
+        1.7606086453059682
+      ],
+      "unit": "dB",
+      "jnd": 1.5,
+      "bin_freqs_hz": [
+        250,
+        500,
+        1000,
+        2000
+      ]
+    },
+    "d50": {
+      "value": 0.9365221631752445,
+      "unit": "dB",
+      "jnd": 0.8
+    },
+    "bass_ratio": {
+      "value": 0.5389351741648813,
+      "unit": "ratio",
+      "jnd": 0.15
+    },
+    "treble_ratio": {
+      "value": 0.8168531302070936,
+      "unit": "ratio",
+      "jnd": 0.15
+    },
+    "centroid_drift_per_band": {
+      "value": [
+        -17.99295645397433,
+        -14.729200204682911,
+        -81.4810593036168,
+        -230.33687629438964
+      ],
+      "unit": "Hz",
+      "jnd": 2.5,
+      "bin_freqs_hz": [
+        500,
+        1000,
+        2000,
+        4000
+      ]
+    },
+    "box_ratio_db": {
+      "value": 12.338627261781532,
+      "unit": "dB",
+      "jnd": 1.0
+    },
+    "a_weighted_rms_db": {
+      "value": -43.409413477041596,
+      "unit": "dB",
+      "jnd": 0.5
+    },
+    "spectral_crest_db": {
+      "value": 31.359876966357266,
+      "unit": "dB",
+      "jnd": 1.0
+    },
+    "time_domain_crest": {
+      "value": 20.908179747543826,
+      "unit": "ratio",
+      "jnd": 1.5
+    },
+    "stereo_correlation": {
+      "value": -0.07067123391047192,
+      "unit": "corr",
+      "jnd": 0.08
+    },
+    "late_tail_500ms_1s": {
+      "value": -72.83896946004253,
+      "unit": "dB",
+      "jnd": 0.8
+    },
+    "late_tail_1s_2s": {
+      "value": -89.63854191962093,
+      "unit": "dB",
+      "jnd": 1.0
+    },
+    "late_tail_2s_3s": {
+      "value": -114.13086434304923,
+      "unit": "dB",
+      "jnd": 1.5
+    }
+  },
+  "graded_keys": [
+    "rt60_per_band",
+    "edt_500",
+    "edt",
+    "decay_envelope_db",
+    "peak_locations_ms",
+    "c80",
+    "c80_per_octave",
+    "d50",
+    "bass_ratio",
+    "treble_ratio",
+    "centroid_drift_per_band",
+    "box_ratio_db",
+    "a_weighted_rms_db",
+    "spectral_crest_db",
+    "time_domain_crest",
+    "stereo_correlation",
+    "late_tail_500ms_1s",
+    "late_tail_1s_2s",
+    "late_tail_2s_3s"
+  ],
+  "graded_count": 19
+}

@@ -27,6 +27,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     plate_.prepare (sampleRate, maxBlockSize);
     foilPlate_.prepare (sampleRate, maxBlockSize);
     hall_.prepare (sampleRate, maxBlockSize);
+    hallRing_.prepare (sampleRate, maxBlockSize);
+    hallHybrid_.prepare (sampleRate, maxBlockSize);
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
@@ -101,6 +103,8 @@ void DuskVerbEngine::clearAllBuffers()
     plate_.clearBuffers();
     foilPlate_.clearBuffers();
     hall_.clearBuffers();
+    hallRing_.clearBuffers();
+    hallHybrid_.clearBuffers();
 
     // Pre-tank input diffuser and early reflections — both retain
     // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
@@ -174,6 +178,8 @@ void DuskVerbEngine::setAlgorithm (int index)
     plate_.clearBuffers();
     foilPlate_.clearBuffers();
     hall_.clearBuffers();
+    hallRing_.clearBuffers();
+    hallHybrid_.clearBuffers();
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -192,6 +198,8 @@ void DuskVerbEngine::setFreeze (bool frozen)
     plate_.setFreeze (frozen);
     foilPlate_.setFreeze (frozen);
     hall_.setFreeze (frozen);
+    hallRing_.setFreeze (frozen);
+    hallHybrid_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -213,6 +221,8 @@ void DuskVerbEngine::setDecayTime (float seconds)
     plate_.setDecayTime (seconds);
     foilPlate_.setDecayTime (seconds);
     hall_.setDecayTime (seconds);
+    hallRing_.setDecayTime (seconds);
+    hallHybrid_.setDecayTime (seconds);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -234,6 +244,8 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     plate_.setSize (size);
     foilPlate_.setSize (size);
     hall_.setSize (size);
+    hallRing_.setSize (size);
+    hallHybrid_.setSize (size);
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
@@ -471,6 +483,30 @@ void DuskVerbEngine::setHallMidShelfGain    (float dB) { hall_.setMidShelfGain  
 void DuskVerbEngine::setHallMidShelfFc      (float hz) { hall_.setMidShelfFc      (hz); }
 void DuskVerbEngine::setHallTrebleShelfGain (float dB) { hall_.setTrebleShelfGain (dB); }
 void DuskVerbEngine::setHallTrebleShelfFc   (float hz) { hall_.setTrebleShelfFc   (hz); }
+void DuskVerbEngine::setHallInputDiffusion  (float g)  { hall_.setInputDiffusion  (g); }
+
+void DuskVerbEngine::setRingDecayTime   (float s)   { hallRing_.setDecayTime    (s); }
+void DuskVerbEngine::setRingSize        (float sc)  { hallRing_.setSize         (sc); }
+void DuskVerbEngine::setRingDamping     (float c)   { hallRing_.setDamping      (c); }
+void DuskVerbEngine::setRingDampingFc   (float hz)  { hallRing_.setDampingFc    (hz); }
+void DuskVerbEngine::setRingSpread      (float m)   { hallRing_.setSpread       (m); }
+void DuskVerbEngine::setRingShape       (float c)   { hallRing_.setShape        (c); }
+void DuskVerbEngine::setRingSpin        (float hz)  { hallRing_.setSpin         (hz); }
+void DuskVerbEngine::setRingWander      (float s)   { hallRing_.setWander       (s); }
+void DuskVerbEngine::setRingStereoWidth (float w)   { hallRing_.setStereoWidth  (w); }
+
+void DuskVerbEngine::setHybridERTapWeight (int idx, float w) { hallHybrid_.setERTapWeight (idx, w); }
+void DuskVerbEngine::setHybridERLevel     (float l)          { hallHybrid_.setERLevel     (l); }
+void DuskVerbEngine::setHybridRingLevel   (float l)          { hallHybrid_.setRingLevel   (l); }
+void DuskVerbEngine::setHybridLowShelf    (float g, float f) { hallHybrid_.setLowShelf    (g, f); }
+void DuskVerbEngine::setHybridHighShelf   (float g, float f) { hallHybrid_.setHighShelf   (g, f); }
+void DuskVerbEngine::setHybridRingDamping     (float c)  { hallHybrid_.setRingDamping     (c); }
+void DuskVerbEngine::setHybridRingDampingFc   (float hz) { hallHybrid_.setRingDampingFc   (hz); }
+void DuskVerbEngine::setHybridRingSpread      (float m)  { hallHybrid_.setRingSpread      (m); }
+void DuskVerbEngine::setHybridRingShape       (float c)  { hallHybrid_.setRingShape       (c); }
+void DuskVerbEngine::setHybridRingSpin        (float hz) { hallHybrid_.setRingSpin        (hz); }
+void DuskVerbEngine::setHybridRingWander      (float s)  { hallHybrid_.setRingWander      (s); }
+void DuskVerbEngine::setHybridRingStereoWidth (float w)  { hallHybrid_.setRingStereoWidth (w); }
 
 void DuskVerbEngine::setERLevel (float level)
 {
@@ -723,6 +759,14 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         case EngineType::Hall:
             hall_.process (tankInL_.data(), tankInR_.data(),
                            tankOutL_.data(), tankOutR_.data(), numSamples);
+            break;
+        case EngineType::HallRing:
+            hallRing_.process (tankInL_.data(), tankInR_.data(),
+                               tankOutL_.data(), tankOutR_.data(), numSamples);
+            break;
+        case EngineType::HallHybrid:
+            hallHybrid_.process (tankInL_.data(), tankInR_.data(),
+                                 tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
     }
 

@@ -25,6 +25,8 @@ enum class EngineType : int
     Plate             = 8,  // PCM-style foil plate (PlateEngine): 2-AP cross-coupled input + 6-AP density cascade with per-AP RandomWalkLFO jitter, ThreeBandDamping. Built for Lex-Vintage-Plate per-band fit.
     FoilPlate         = 9,  // Second-generation foil plate (FoilPlateEngine): 2-AP flat input + LR4 3-band split + 3 parallel per-band reverberators + onset envelope on wet output + deterministic sine LFOs (anti-correlated L/R phase). Built to close C80/D50/EDT/16kHz/stereo-stability gaps that PlateEngine plateaued on.
     Hall              = 10, // Lex-Hall-anchored hall (HallReverb): multi-tap input injection (FoilPlate Pillar 1) → LR4 3-band split → 3× 8-ch Hadamard FDN sub-tanks (per-band decay / damping / mod) → post-tank linear M/S widener. Built for the LexHall natural-hall family (Med Hall / Large Hall / Vocal Hall anchors). Replaces FDN (algo 4) for hall presets in the Sprint 1 product reset.
+    HallRing          = 11, // Griesinger/Carnes sequential ring (RingReverb): 6-stage pre-diffuser → 6-stage modulated delay ring with embedded 3-AP cascades per stage → per-sample feedback to stage 0. Built for the natural-hall family — replaces parallel FDN math with sequential ring math to defeat the modal density Pareto frontier the FDN-based Hall (algo 10) plateaued at 10/19 on.
+    HallHybrid        = 12, // Parallel ER + Ring hybrid (HybridHallReverb): 4-tap discrete ER TDL (taps hardcoded at Lex anchor [0/4/7.52/9.79] ms — guarantees peak_locations_ms PASS by construction) mixed against the P15 RingReverb tail. Macro early/late mix axis solves c80/d50; post-mix shelves shape c80_per_octave + bass/treble ratio. Built to break the 10/19 single-topology Pareto ceiling.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -34,7 +36,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 11; }
+inline int getNumAlgorithms() { return 13; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -50,8 +52,10 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Plate (Foil)",             EngineType::Plate           },
         { "Plate (Foil II)",          EngineType::FoilPlate       },
         { "Hall (Lex)",               EngineType::Hall            },
+        { "Hall (Ring)",              EngineType::HallRing        },
+        { "Hall (Hybrid)",            EngineType::HallHybrid      },
     };
-    if (index < 0 || index >= 11)
+    if (index < 0 || index >= 13)
         index = 0;
     return kEngines[index];
 }
