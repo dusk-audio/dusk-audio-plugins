@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace duskverb::dsp
@@ -86,6 +87,15 @@ public:
     // 8 LFOs (each channel has its own phase offset for decorrelation).
     void setModDepth     (float samples);
     void setModRate      (float hz);
+    // Modulation shape — blend between deterministic sine (0.0) and
+    // bounded random-walk per-channel (1.0). Random-walk is a 1-pole
+    // smoothed sequence of uniform draws in [-1, +1], autocorrelation
+    // time set by setModRate (same alpha shape as the damping LP). Use
+    // shape > 0 to smear the centroid_drift_per_band peaks that pure
+    // sine modulation can't reach (sine creates discrete sidebands;
+    // random-walk creates continuous spectral smear). RNG is seeded per
+    // channel at prepare() so renders stay deterministic across runs.
+    void setModShape     (float shape);
     // Size: multiplies base delay lengths. 1.0 = nominal; range [0.5, 2.0]
     // typical. Larger size → longer per-loop period → longer RT60 for the
     // same feedback gain.
@@ -167,6 +177,13 @@ private:
     float lfoPhase_      [N] {};       // current phase in [0, 2π)
     float lfoPhaseInc_   [N] {};       // 2π × rate / sr
 
+    // Per-channel random-walk modulator state (bounded in [-1, +1] by
+    // the OU-style 1-pole smoothing). Seeded per channel via rwRng_ at
+    // prepare() for deterministic renders across runs.
+    float    rwState_       [N] {};
+    uint32_t rwRngState_    [N] {};   // per-channel LCG state, seeded in prepare
+    float    rwAlpha_       = 0.0f;   // 1-pole alpha derived from modRateHz_/sr
+
     // Per-channel feedback gain (derived from decay × loop length).
     float feedbackGain_ [N] {};
 
@@ -188,6 +205,7 @@ private:
     float  dampingAlpha_     = 0.5f;     // recomputed from fc + sr
     float  modDepthSamples_  = 0.0f;
     float  modRateHz_        = 1.0f;
+    float  modShape_         = 0.0f;   // 0 = pure sine, 1 = pure random-walk
     float  bandPhaseOffset_  = 0.0f;
     float  inlineDiffusion_  = 0.30f;   // dialed back from Schroeder-classic 0.55 — Phase 6 measure showed 0.55 closed box_ratio +8 dB but pushed c80/d50 -2 dB worse via time-spreading; 0.30 keeps modal smoothing while limiting the early/late shift
     bool   frozen_           = false;

@@ -648,6 +648,9 @@ void HallReverb::setMidModDepth    (float samples) { midTank_   .setModDepth (sa
 void HallReverb::setMidModRate     (float hz)      { midTank_   .setModRate  (hz); }
 void HallReverb::setTrebleModDepth (float samples) { trebleTank_.setModDepth (samples); }
 void HallReverb::setTrebleModRate  (float hz)      { trebleTank_.setModRate  (hz); }
+void HallReverb::setBassModShape   (float shape)   { bassTank_  .setModShape (shape); }
+void HallReverb::setMidModShape    (float shape)   { midTank_   .setModShape (shape); }
+void HallReverb::setTrebleModShape (float shape)   { trebleTank_.setModShape (shape); }
 
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }
 void HallReverb::setMidGain    (float g) { gainMid_    = std::max (0.0f, g); }
