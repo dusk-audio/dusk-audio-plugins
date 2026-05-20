@@ -419,6 +419,16 @@ void DuskVerbEngine::setHallTap3Weight (float w)  { hall_.setTapWeight (3, w);  
 void DuskVerbEngine::setHallTap4Weight (float w)  { hall_.setTapWeight (4, w);  }
 void DuskVerbEngine::setHallTap5Weight (float w)  { hall_.setTapWeight (5, w);  }
 
+void DuskVerbEngine::setHallSpec0Ms     (float ms) { hall_.setSpecularTimeMs (0, ms); }
+void DuskVerbEngine::setHallSpec1Ms     (float ms) { hall_.setSpecularTimeMs (1, ms); }
+void DuskVerbEngine::setHallSpec2Ms     (float ms) { hall_.setSpecularTimeMs (2, ms); }
+void DuskVerbEngine::setHallSpec3Ms     (float ms) { hall_.setSpecularTimeMs (3, ms); }
+void DuskVerbEngine::setHallSpec0Weight (float w)  { hall_.setSpecularWeight (0, w);  }
+void DuskVerbEngine::setHallSpec1Weight (float w)  { hall_.setSpecularWeight (1, w);  }
+void DuskVerbEngine::setHallSpec2Weight (float w)  { hall_.setSpecularWeight (2, w);  }
+void DuskVerbEngine::setHallSpec3Weight (float w)  { hall_.setSpecularWeight (3, w);  }
+void DuskVerbEngine::setHallSpecHFCutHz (float hz) { hall_.setSpecularHFCutHz (hz);   }
+
 void DuskVerbEngine::setERLevel (float level)
 {
     erLevelSmoother_.setTarget (std::clamp (level, 0.0f, 1.0f));

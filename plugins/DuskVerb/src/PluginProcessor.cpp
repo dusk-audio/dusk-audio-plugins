@@ -227,6 +227,34 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
             juce::NormalisableRange<float> (0.0f, 2.0f), kTapWDefaults[i]));
     }
 
+    // P8b specular taps (4 × {ms, weight} + shared HF cut)
+    static constexpr float kSpecMsDefaults[4] = { 3.0f, 6.0f, 11.0f, 17.0f };
+    static constexpr float kSpecWDefaults [4] = { 0.80f, 0.60f, 0.40f, 0.20f };
+    const char* const kSpecMsNames[4] = {
+        "Hall Spec 0 Ms", "Hall Spec 1 Ms", "Hall Spec 2 Ms", "Hall Spec 3 Ms"
+    };
+    const char* const kSpecMsIds[4] = {
+        "hall_spec_0_ms", "hall_spec_1_ms", "hall_spec_2_ms", "hall_spec_3_ms"
+    };
+    const char* const kSpecWNames[4] = {
+        "Hall Spec 0 Weight", "Hall Spec 1 Weight", "Hall Spec 2 Weight", "Hall Spec 3 Weight"
+    };
+    const char* const kSpecWIds[4] = {
+        "hall_spec_0_w", "hall_spec_1_w", "hall_spec_2_w", "hall_spec_3_w"
+    };
+    for (int i = 0; i < 4; ++i)
+    {
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { kSpecMsIds[i], 1 }, kSpecMsNames[i],
+            juce::NormalisableRange<float> (0.0f, 50.0f, 0.0f, 0.7f), kSpecMsDefaults[i]));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { kSpecWIds[i], 1 }, kSpecWNames[i],
+            juce::NormalisableRange<float> (0.0f, 2.0f), kSpecWDefaults[i]));
+    }
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_spec_hf_cut", 1 }, "Hall Spec HF Cut",
+        juce::NormalisableRange<float> (200.0f, 20000.0f, 0.0f, 0.5f), 6000.0f));
+
     return layout;
 }
 
@@ -289,6 +317,16 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallTap3WeightParam_ = parameters.getRawParameterValue ("hall_tap_3_w");
     hallTap4WeightParam_ = parameters.getRawParameterValue ("hall_tap_4_w");
     hallTap5WeightParam_ = parameters.getRawParameterValue ("hall_tap_5_w");
+
+    hallSpec0MsParam_     = parameters.getRawParameterValue ("hall_spec_0_ms");
+    hallSpec1MsParam_     = parameters.getRawParameterValue ("hall_spec_1_ms");
+    hallSpec2MsParam_     = parameters.getRawParameterValue ("hall_spec_2_ms");
+    hallSpec3MsParam_     = parameters.getRawParameterValue ("hall_spec_3_ms");
+    hallSpec0WeightParam_ = parameters.getRawParameterValue ("hall_spec_0_w");
+    hallSpec1WeightParam_ = parameters.getRawParameterValue ("hall_spec_1_w");
+    hallSpec2WeightParam_ = parameters.getRawParameterValue ("hall_spec_2_w");
+    hallSpec3WeightParam_ = parameters.getRawParameterValue ("hall_spec_3_w");
+    hallSpecHFCutParam_   = parameters.getRawParameterValue ("hall_spec_hf_cut");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -542,6 +580,15 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallTap3Weight_, hallTap3WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap3Weight (v); });
     pushIfChanged (lastHallTap4Weight_, hallTap4WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap4Weight (v); });
     pushIfChanged (lastHallTap5Weight_, hallTap5WeightParam_->load(), [this] (float v) { activeEngine_->setHallTap5Weight (v); });
+    pushIfChanged (lastHallSpec0Ms_,     hallSpec0MsParam_->load(),     [this] (float v) { activeEngine_->setHallSpec0Ms     (v); });
+    pushIfChanged (lastHallSpec1Ms_,     hallSpec1MsParam_->load(),     [this] (float v) { activeEngine_->setHallSpec1Ms     (v); });
+    pushIfChanged (lastHallSpec2Ms_,     hallSpec2MsParam_->load(),     [this] (float v) { activeEngine_->setHallSpec2Ms     (v); });
+    pushIfChanged (lastHallSpec3Ms_,     hallSpec3MsParam_->load(),     [this] (float v) { activeEngine_->setHallSpec3Ms     (v); });
+    pushIfChanged (lastHallSpec0Weight_, hallSpec0WeightParam_->load(), [this] (float v) { activeEngine_->setHallSpec0Weight (v); });
+    pushIfChanged (lastHallSpec1Weight_, hallSpec1WeightParam_->load(), [this] (float v) { activeEngine_->setHallSpec1Weight (v); });
+    pushIfChanged (lastHallSpec2Weight_, hallSpec2WeightParam_->load(), [this] (float v) { activeEngine_->setHallSpec2Weight (v); });
+    pushIfChanged (lastHallSpec3Weight_, hallSpec3WeightParam_->load(), [this] (float v) { activeEngine_->setHallSpec3Weight (v); });
+    pushIfChanged (lastHallSpecHFCut_,   hallSpecHFCutParam_->load(),   [this] (float v) { activeEngine_->setHallSpecHFCutHz (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -838,6 +885,15 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallTap3Weight (hallTap3WeightParam_->load());
     target->setHallTap4Weight (hallTap4WeightParam_->load());
     target->setHallTap5Weight (hallTap5WeightParam_->load());
+    target->setHallSpec0Ms     (hallSpec0MsParam_->load());
+    target->setHallSpec1Ms     (hallSpec1MsParam_->load());
+    target->setHallSpec2Ms     (hallSpec2MsParam_->load());
+    target->setHallSpec3Ms     (hallSpec3MsParam_->load());
+    target->setHallSpec0Weight (hallSpec0WeightParam_->load());
+    target->setHallSpec1Weight (hallSpec1WeightParam_->load());
+    target->setHallSpec2Weight (hallSpec2WeightParam_->load());
+    target->setHallSpec3Weight (hallSpec3WeightParam_->load());
+    target->setHallSpecHFCutHz (hallSpecHFCutParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -900,6 +956,15 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallTap3Weight_ = hallTap3WeightParam_->load();
     lastHallTap4Weight_ = hallTap4WeightParam_->load();
     lastHallTap5Weight_ = hallTap5WeightParam_->load();
+    lastHallSpec0Ms_     = hallSpec0MsParam_->load();
+    lastHallSpec1Ms_     = hallSpec1MsParam_->load();
+    lastHallSpec2Ms_     = hallSpec2MsParam_->load();
+    lastHallSpec3Ms_     = hallSpec3MsParam_->load();
+    lastHallSpec0Weight_ = hallSpec0WeightParam_->load();
+    lastHallSpec1Weight_ = hallSpec1WeightParam_->load();
+    lastHallSpec2Weight_ = hallSpec2WeightParam_->load();
+    lastHallSpec3Weight_ = hallSpec3WeightParam_->load();
+    lastHallSpecHFCut_   = hallSpecHFCutParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
