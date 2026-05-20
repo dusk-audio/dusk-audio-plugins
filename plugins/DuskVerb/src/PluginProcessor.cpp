@@ -277,6 +277,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hall_treble_eq_q", 1 }, "Hall Treble EQ Q",
         juce::NormalisableRange<float> (0.3f, 6.0f), 0.707f));
 
+    // Per-band EQ centre frequencies (added 2026-05-20 to attack
+    // box_ratio_db's 380 Hz modal spike that the fixed fc defaults
+    // couldn't reach). Mid defaults to 380 Hz so the box-ratio target
+    // is in immediate reach; bass/treble keep their previous defaults.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_bass_eq_fc", 1 }, "Hall Bass EQ Fc",
+        juce::NormalisableRange<float> (50.0f, 800.0f, 0.0f, 0.5f), 250.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_mid_eq_fc", 1 }, "Hall Mid EQ Fc",
+        juce::NormalisableRange<float> (200.0f, 5000.0f, 0.0f, 0.5f), 380.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hall_treble_eq_fc", 1 }, "Hall Treble EQ Fc",
+        juce::NormalisableRange<float> (2000.0f, 18000.0f, 0.0f, 0.5f), 8000.0f));
+
     return layout;
 }
 
@@ -356,6 +370,9 @@ DuskVerbProcessor::DuskVerbProcessor()
     hallMidEQQParam_       = parameters.getRawParameterValue ("hall_mid_eq_q");
     hallTrebleEQGainParam_ = parameters.getRawParameterValue ("hall_treble_eq_gain");
     hallTrebleEQQParam_    = parameters.getRawParameterValue ("hall_treble_eq_q");
+    hallBassEQFcParam_     = parameters.getRawParameterValue ("hall_bass_eq_fc");
+    hallMidEQFcParam_      = parameters.getRawParameterValue ("hall_mid_eq_fc");
+    hallTrebleEQFcParam_   = parameters.getRawParameterValue ("hall_treble_eq_fc");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -624,6 +641,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHallMidEQQ_,       hallMidEQQParam_->load(),       [this] (float v) { activeEngine_->setHallMidEQQ       (v); });
     pushIfChanged (lastHallTrebleEQGain_, hallTrebleEQGainParam_->load(), [this] (float v) { activeEngine_->setHallTrebleEQGain (v); });
     pushIfChanged (lastHallTrebleEQQ_,    hallTrebleEQQParam_->load(),    [this] (float v) { activeEngine_->setHallTrebleEQQ    (v); });
+    pushIfChanged (lastHallBassEQFc_,     hallBassEQFcParam_->load(),     [this] (float v) { activeEngine_->setHallBassEQFc     (v); });
+    pushIfChanged (lastHallMidEQFc_,      hallMidEQFcParam_->load(),      [this] (float v) { activeEngine_->setHallMidEQFc      (v); });
+    pushIfChanged (lastHallTrebleEQFc_,   hallTrebleEQFcParam_->load(),   [this] (float v) { activeEngine_->setHallTrebleEQFc   (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -935,6 +955,9 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHallMidEQQ       (hallMidEQQParam_->load());
     target->setHallTrebleEQGain (hallTrebleEQGainParam_->load());
     target->setHallTrebleEQQ    (hallTrebleEQQParam_->load());
+    target->setHallBassEQFc     (hallBassEQFcParam_->load());
+    target->setHallMidEQFc      (hallMidEQFcParam_->load());
+    target->setHallTrebleEQFc   (hallTrebleEQFcParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1012,6 +1035,9 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHallMidEQQ_       = hallMidEQQParam_->load();
     lastHallTrebleEQGain_ = hallTrebleEQGainParam_->load();
     lastHallTrebleEQQ_    = hallTrebleEQQParam_->load();
+    lastHallBassEQFc_     = hallBassEQFcParam_->load();
+    lastHallMidEQFc_      = hallMidEQFcParam_->load();
+    lastHallTrebleEQFc_   = hallTrebleEQFcParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();

@@ -157,6 +157,14 @@ public:
     void setBassEQ            (float gainDb, float q);
     void setMidEQ             (float gainDb, float q);
     void setTrebleEQ          (float gainDb, float q);
+    // Per-band EQ centre frequency setters (exposed 2026-05-20 to attack
+    // box_ratio_db's 380 Hz modal spike that the fixed fc=250/1500/8000
+    // defaults couldn't reach). Setter clamps to a sensible band-local
+    // range so the optimizer / preset can't push a band's EQ outside
+    // its sub-tank's actual passband.
+    void setBassEQFc          (float hz);
+    void setMidEQFc           (float hz);
+    void setTrebleEQFc        (float hz);
     // No-op kept for API parity with FDNReverb's TankDiffusion knob.
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
@@ -293,15 +301,19 @@ private:
     // P10 per-band peaking EQ. Fixed centre frequencies; gain + Q
     // tunable per band. Default gain 0 dB → bypass (peaking biquad with
     // 0 dB gain is unity passthrough at any Q).
-    static constexpr float kBassEQFc   = 250.0f;
-    static constexpr float kMidEQFc    = 1500.0f;
-    static constexpr float kTrebleEQFc = 8000.0f;
+    // Default centre frequencies. Mid defaulted to 380 Hz so the existing
+    // mid-band peaking EQ lands directly on the box_ratio_db modal spike
+    // measured at +10 dB above flank in the Phase 6 diagnostic. fc is now
+    // mutable per-band via setBassEQFc / setMidEQFc / setTrebleEQFc.
+    static constexpr float kDefaultBassEQFc   = 250.0f;
+    static constexpr float kDefaultMidEQFc    = 380.0f;
+    static constexpr float kDefaultTrebleEQFc = 8000.0f;
     duskverb::dsp::LR4BandSplit::Biquad bassEQL_,   bassEQR_;
     duskverb::dsp::LR4BandSplit::Biquad midEQL_,    midEQR_;
     duskverb::dsp::LR4BandSplit::Biquad trebleEQL_, trebleEQR_;
-    float              bassEQGainDb_   = 0.0f, bassEQQ_   = 0.707f;
-    float              midEQGainDb_    = 0.0f, midEQQ_    = 0.707f;
-    float              trebleEQGainDb_ = 0.0f, trebleEQQ_ = 0.707f;
+    float              bassEQGainDb_   = 0.0f, bassEQQ_   = 0.707f, bassEQFc_   = kDefaultBassEQFc;
+    float              midEQGainDb_    = 0.0f, midEQQ_    = 0.707f, midEQFc_    = kDefaultMidEQFc;
+    float              trebleEQGainDb_ = 0.0f, trebleEQQ_ = 0.707f, trebleEQFc_ = kDefaultTrebleEQFc;
 
     // Per-block scratch buffers — sized at prepare() to maxBlockSize.
     // Inputs/outputs of each SubTank live here; the process() loop
