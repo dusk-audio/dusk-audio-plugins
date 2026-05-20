@@ -89,6 +89,16 @@ public:
     // The 3-band parallel topology gets its density from Hadamard mixing
     // inside each SubTank — no inline-AP diffusion stage to tune.
     void setTankDiffusion     (float amount);
+    // Post-tank linear M/S widener coefficient `b`. Applied as a
+    // time-invariant 2×2 matrix on the band-summed wet signal:
+    //     outL = wetL − b · wetR
+    //     outR = wetR − b · wetL
+    // b > 0  → decorrelates (widens). b = 0 → bypass. b < 0 → narrows.
+    // Linear matrix on a stably-correlated pair stays stably correlated, so
+    // stereo_corr_stability is preserved — drops stereo_correlation cleanly
+    // without disturbing the per-band modulation stability. Defaults to a
+    // mild widening (matches FoilPlateEngine's kOutMixB = 0.05 baseline).
+    void setStereoWidth       (float b);
 
 private:
     // Multi-tap input injection (Phase 3 — FoilPlate Pillar 1 shape applied
@@ -149,6 +159,7 @@ private:
     float  highCrossoverFreq_  = 4000.0f;
     float  saturationAmount_   = 0.0f;
     float  dampingAmount_      = 0.0f;
+    float  stereoWidth_        = 0.05f;   // M/S widener coefficient `b`
 
     void updateSubTankDecays();
     void updateCrossovers();

@@ -187,16 +187,26 @@ void HallReverb::process (const float* inputL, const float* inputR,
         trebleTank_.process (trebleInL_.data(), trebleInR_.data(),
                              trebleOutL_.data(), trebleOutR_.data(), n);
 
-        // ── Sum bands → output (optional soft-clip saturation) ──
+        // ── Sum bands → M/S widener → soft-clip → output ──
+        // Order matters: widener BEFORE soft-clip so the (nonlinear) clip
+        // operates on the already-decorrelated signal. Clipping after the
+        // widener preserves the matrix's stability guarantee on the linear
+        // portion of the signal — important content that doesn't approach
+        // the clip threshold sees a strictly linear transformation.
         const float sat = saturationAmount_;
         const bool  doSat = sat > 0.0001f;
         const float satDrive    = 1.0f + sat * 4.0f;
         const float invSatDrive = 1.0f / satDrive;
+        const float b = stereoWidth_;
 
         for (int i = 0; i < n; ++i)
         {
-            float oL = bassOutL_[i] + midOutL_[i] + trebleOutL_[i];
-            float oR = bassOutR_[i] + midOutR_[i] + trebleOutR_[i];
+            const float wetL = bassOutL_[i] + midOutL_[i] + trebleOutL_[i];
+            const float wetR = bassOutR_[i] + midOutR_[i] + trebleOutR_[i];
+
+            float oL = wetL - b * wetR;
+            float oR = wetR - b * wetL;
+
             if (doSat)
             {
                 oL = std::tanh (oL * satDrive) * invSatDrive;
@@ -292,6 +302,17 @@ void HallReverb::setDamping (float amount)
     bassTank_  .setDamping (dampingAmount_);
     midTank_   .setDamping (dampingAmount_);
     trebleTank_.setDamping (dampingAmount_);
+}
+
+void HallReverb::setStereoWidth (float b)
+{
+    // Clamp to [-0.4, +0.4]. Beyond ±0.5 the matrix approaches singular
+    // (mid-side decoder territory) — channels start cancelling for
+    // correlated content. The range here covers everything from strong
+    // narrowing (b = -0.4 ≈ near-mono) to strong widening (b = +0.4 ≈
+    // -0.6 stereo_correlation typical) without flipping into the
+    // pathological zone.
+    stereoWidth_ = std::clamp (b, -0.4f, 0.4f);
 }
 
 void HallReverb::setTankDiffusion (float /*amount*/)
