@@ -131,10 +131,35 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     {
         constexpr float kMaxDelayScale = 4.0f;  // Must match setDelayScale() clamp
         float maxScale = sizeRangeAllocatedMax_ * kMaxDelayScale;
-        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
-        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
-        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
-        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        // setDelayBaseMs override can grow delay1/delay2 to kDelayBaseOverrideMaxMs.
+        // Pre-size using BOTH the room-init base AND the hall-scale max so the
+        // ring-buffer mask is stable across setHallScale + setDelayBaseMs, and
+        // override < hall doesn't end up reading from a smaller buffer.
+        const float overrideMaxBaseAtRef = kDelayBaseOverrideMaxMs * 0.001f
+                                         * static_cast<float> (kBaseSampleRate);
+        const float hallDel1Max = static_cast<float> (std::max (
+            kLeftDel1BaseHall, kRightDel1BaseHall));
+        const float hallDel2Max = static_cast<float> (std::max (
+            kLeftDel2BaseHall, kRightDel2BaseHall));
+        const float del1BaseAlloc = std::max ({static_cast<float> (tank.delay1BaseDelay),
+                                               hallDel1Max, overrideMaxBaseAtRef});
+        const float del2BaseAlloc = std::max ({static_cast<float> (tank.delay2BaseDelay),
+                                               hallDel2Max, overrideMaxBaseAtRef});
+        // v30 — AP1/AP2 override worst-case allocation.
+        const float apOverrideMaxBaseAtRef = kAPBaseOverrideMaxMs * 0.001f
+                                           * static_cast<float> (kBaseSampleRate);
+        const float hallAp1Max = static_cast<float> (std::max (
+            kLeftAP1BaseHall, kRightAP1BaseHall));
+        const float hallAp2Max = static_cast<float> (std::max (
+            kLeftAP2BaseHall, kRightAP2BaseHall));
+        const float ap1BaseAlloc = std::max ({static_cast<float> (tank.ap1BaseDelay),
+                                              hallAp1Max, apOverrideMaxBaseAtRef});
+        const float ap2BaseAlloc = std::max ({static_cast<float> (tank.ap2BaseDelay),
+                                              hallAp2Max, apOverrideMaxBaseAtRef});
+        int ap1Max = static_cast<int> (std::ceil (ap1BaseAlloc * rateRatio * maxScale)) + maxModExcursion;
+        int del1Max = static_cast<int> (std::ceil (del1BaseAlloc * rateRatio * maxScale)) + maxModExcursion;
+        int ap2Max = static_cast<int> (std::ceil (ap2BaseAlloc * rateRatio * maxScale)) + maxModExcursion;
+        int del2Max = static_cast<int> (std::ceil (del2BaseAlloc * rateRatio * maxScale)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
         tank.delay1.allocate (del1Max + maxModExcursion);  // Extra headroom for noise jitter
@@ -144,10 +169,18 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
         // Density cascade allpasses. updateDelayLengths() scales these by
         // delayScale_ too, so the max allocation must include it to avoid
         // buffer underruns when delayScale_ > 1.
+        // setDensityAPDelayMs override can grow the runtime delay to 50 ms;
+        // allocation must cover that worst case (~2205 samples at 44.1 kHz)
+        // independent of densityAPBase so the override never overruns the
+        // ring buffer.
+        constexpr float kMaxOverrideBaseAtRef = 50.0f * 0.001f
+                                              * static_cast<float> (kBaseSampleRate);
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
+            const float baseAtRef = std::max (
+                static_cast<float> (tank.densityAPBase[i]), kMaxOverrideBaseAtRef);
             const float baseMax =
-                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale;
+                baseAtRef * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale;
             // Jitter depth is 0.02 × delaySamples per the assignment below.
             // Add explicit headroom for the read offset (jitter) plus 4
             // samples for cubic Hermite (reads intIdx-1 .. intIdx+2) plus
@@ -169,11 +202,17 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
             // 28-30 ms comb teeth on the worst-case plates while keeping
             // the residual pitch wobble inaudible on sustained content
             // (3 % was perceptible as chorus on Rich Plate).
-            tank.densityAP[i].jitterDepthFraction = 0.02f;
+            // Engine 10 + plates use the tank-default 0.02f / 1.5f.
+            // LexFigure8 (Engine 15) overrides via setDensityJitterDepth /
+            // setDensityJitterRate to break the 200-500 Hz hump.
+            tank.densityAP[i].jitterDepthFraction = densityJitterDepth_;
+            tank.densityAP[i].jitterRateHz        = densityJitterRate_;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));
         tank.damping.reset();
+        tank.eightBandDamping.prepare (static_cast<float> (sampleRate));
+        tank.eightBandDamping.reset();
         tank.crossFeedState = 0.0f;
     };
 
@@ -263,10 +302,11 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         // Order: left first, then right. The one-sample delay in cross-feed
         // is intentional (Dattorro's figure-8 topology).
 
-        auto processTank = [&] (Tank& tank, float otherCrossFeed)
+        auto processTank = [&] (Tank& tank, float otherCrossFeed, int channelIdx)
         {
             // Tank input: new audio + cross-fed signal from the other tank
-            float tankIn = input + otherCrossFeed;
+            // (scaled by per-channel coefficient; default 1.0 = canonical bleed).
+            float tankIn = input + crossFeedCoeff_[channelIdx] * otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
             // Random-walk LFO replaces the previous std::sin(phase) + drift
@@ -299,16 +339,29 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float del1Out = tank.delay1.readInterpolated (del1Read);
             tank.delay1.write (ap1Out);
 
-            // --- Density cascade: 3 allpasses to multiply echo density ---
+            // --- Density cascade: 3-4 allpasses to multiply echo density ---
+            // Active count gated by densityStages_ (default 3 for Engine 10
+            // + plates, 4 for Engine 15 LexFigure8 modal smearing).
             float dense = del1Out;
             if (! frozen_)
             {
-                for (int d = 0; d < kNumDensityAPs; ++d)
+                for (int d = 0; d < densityStages_; ++d)
                     dense = tank.densityAP[d].process (dense, densityDiffCoeff_);
             }
 
-            // --- Two-band damping ---
-            float damped = frozen_ ? dense : tank.damping.process (dense);
+            // --- Damping ---
+            // Engine 10 + plates use ThreeBandDamping. LexFigure8
+            // switches to 8-band when ANY band multiplier moves off 1.0.
+            float damped;
+            if (frozen_) damped = dense;
+            else if (eightBandActive_) damped = tank.eightBandDamping.process (dense);
+            else damped = tank.damping.process (dense);
+
+            // --- Sub-bass shelf (4th band, LexFigure8 only) ---
+            // Engine 10 + plates: subBassActive_ stays false (multiply==1.0)
+            // → branch skipped → zero CPU cost, zero state mutation.
+            if (subBassActive_ && ! frozen_)
+                damped = tank.subBassShelf.process (damped);
 
             // --- Structural HF damping ---
             if (structHFCoeff_ > 0.0f && ! frozen_)
@@ -317,6 +370,16 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                 hfState = (1.0f - structHFCoeff_) * damped + structHFCoeff_ * hfState;
                 damped = hfState;
             }
+
+            // --- Phase F — air-band high-shelf (4th damping band) ---
+            // Engine 10 + plates: airActive_ stays false → branch skipped.
+            if (airActive_ && ! frozen_)
+                damped = tank.airShelf.process (damped);
+
+            // --- Phase D — in-loop tilt high-shelf (LexFigure8 only) ---
+            // Engine 10 + plates: tiltActive_ stays false → branch skipped.
+            if (tiltActive_ && ! frozen_)
+                damped = tank.tiltShelf.process (damped);
 
             // --- Static allpass (decay diffusion 2) ---
             float coeff2 = frozen_ ? 0.0f : decayDiff2_;
@@ -343,8 +406,8 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         float rightCrossFeed = rightTank_.crossFeedState;
         float leftCrossFeed = leftTank_.crossFeedState;
 
-        processTank (leftTank_, rightCrossFeed);
-        processTank (rightTank_, leftCrossFeed);
+        processTank (leftTank_,  rightCrossFeed, 0);
+        processTank (rightTank_, leftCrossFeed,  1);
 
         // ------------------------------------------------------------------
         // Output: sum 7 signed taps from both tanks per channel.
@@ -705,6 +768,161 @@ void DattorroTank::setStructuralHFDamping (float hz)
     structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
+void DattorroTank::setDensityStages (int stages)
+{
+    const int clamped = std::clamp (stages, 1, kNumDensityAPs);
+    if (clamped == densityStages_) return;
+    densityStages_ = clamped;
+    // Loop length changes with active stage count → decay coefficients
+    // must be recomputed so RT60 stays calibrated to the new path.
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setDensityJitterDepth (float frac)
+{
+    densityJitterDepth_ = std::clamp (frac, 0.0f, 0.20f);
+    // Push to live density-AP instances (both tanks). updateDelayLengths
+    // will refresh the LFO depth via updateJitterDepth() per stage.
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        leftTank_ .densityAP[i].jitterDepthFraction = densityJitterDepth_;
+        rightTank_.densityAP[i].jitterDepthFraction = densityJitterDepth_;
+    }
+    if (prepared_)
+        updateDelayLengths();
+}
+
+void DattorroTank::setDensityJitterRate (float hz)
+{
+    densityJitterRate_ = std::clamp (hz, 0.1f, 10.0f);
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        leftTank_ .densityAP[i].jitterRateHz = densityJitterRate_;
+        rightTank_.densityAP[i].jitterRateHz = densityJitterRate_;
+    }
+    if (prepared_)
+        updateDelayLengths();
+}
+
+void DattorroTank::setDensityAPDelayMs (int stageIdx, float ms)
+{
+    if (stageIdx < 0 || stageIdx >= kNumDensityAPs) return;
+    densityAPDelayMsOverride_[stageIdx] = std::clamp (ms, 0.0f, 50.0f);
+    if (prepared_)
+        updateDelayLengths();
+}
+
+void DattorroTank::setOutputTapFraction (int channel, int tapIdx, float frac)
+{
+    if (tapIdx  < 0 || tapIdx  >= kNumOutputTaps) return;
+    if (channel < 0 || channel > 1) return;
+    if (! useCustomTaps_)
+    {
+        for (int i = 0; i < kNumOutputTaps; ++i)
+        {
+            customLeftTaps_[i]  = kLeftOutputTaps[i];
+            customRightTaps_[i] = kRightOutputTaps[i];
+        }
+        useCustomTaps_ = true;
+    }
+    const float clamped = std::clamp (frac, 0.0f, 1.0f);
+    if (channel == 0) customLeftTaps_ [tapIdx].positionFrac = clamped;
+    else              customRightTaps_[tapIdx].positionFrac = clamped;
+}
+
+void DattorroTank::setDelayBaseMs (int channel, int delayIdx, float ms)
+{
+    if (channel  < 0 || channel  > 1) return;
+    if (delayIdx < 0 || delayIdx > 1) return;
+    const float clamped = std::clamp (ms, 0.0f, kDelayBaseOverrideMaxMs);
+    if (delayIdx == 0) delay1BaseMsOverride_[channel] = clamped;
+    else               delay2BaseMsOverride_[channel] = clamped;
+    if (prepared_)
+        updateDelayLengths();
+}
+
+void DattorroTank::setAPBaseMs (int channel, int apIdx, float ms)
+{
+    if (channel < 0 || channel > 1) return;
+    if (apIdx   < 0 || apIdx   > 1) return;
+    const float clamped = std::clamp (ms, 0.0f, kAPBaseOverrideMaxMs);
+    if (apIdx == 0) ap1BaseMsOverride_[channel] = clamped;
+    else            ap2BaseMsOverride_[channel] = clamped;
+    if (prepared_)
+        updateDelayLengths();
+}
+
+void DattorroTank::setCrossFeedCoeff (int channel, float coeff)
+{
+    if (channel < 0 || channel > 1) return;
+    crossFeedCoeff_[channel] = std::clamp (coeff, 0.0f, 2.0f);
+}
+
+void DattorroTank::setSubBassMultiply (float mult)
+{
+    subBassMultiply_ = std::clamp (mult, 0.1f, 4.0f);
+    // Only engage if user actually moved off neutral (multiply != 1.0).
+    // Engine 10 + plates leave this at 1.0 → branch skipped in process().
+    subBassActive_ = (std::abs (subBassMultiply_ - 1.0f) > 1.0e-4f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setSubBassCrossover (float hz)
+{
+    subBassCrossover_ = std::clamp (hz, 50.0f, 600.0f);
+    if (prepared_ && subBassActive_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setStructuralTilt (float dbPerOctave)
+{
+    tiltDbPerOctave_ = std::clamp (dbPerOctave, -12.0f, 12.0f);
+    tiltActive_ = (std::abs (tiltDbPerOctave_) > 1.0e-3f);
+    if (prepared_ && tiltActive_)
+    {
+        // High-shelf at 2 kHz pivot. shelfGain = 10^(tilt_db/20)
+        // applied above 2 kHz. Negative tilt darkens late tail (HF
+        // decays faster), positive brightens.
+        const float shelfGain = std::pow (10.0f, tiltDbPerOctave_ * 0.05f);
+        const float pivotHz   = 2000.0f;
+        leftTank_ .tiltShelf.designHighShelf (shelfGain, pivotHz, static_cast<float> (sampleRate_));
+        rightTank_.tiltShelf.designHighShelf (shelfGain, pivotHz, static_cast<float> (sampleRate_));
+    }
+}
+
+void DattorroTank::setAirMultiply (float mult)
+{
+    airMultiply_ = std::clamp (mult, 0.1f, 4.0f);
+    airActive_ = (std::abs (airMultiply_ - 1.0f) > 1.0e-4f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setAirCrossover (float hz)
+{
+    airCrossover_ = std::clamp (hz, 4000.0f, 12000.0f);
+    if (prepared_ && airActive_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setEightBandMultiply (int bandIdx, float mult)
+{
+    if (bandIdx < 0 || bandIdx >= 8) return;
+    eightBandMultiply_[bandIdx] = std::clamp (mult, 0.1f, 4.0f);
+    // Auto-enable if ANY band moves off neutral. Engine 10 + plates
+    // never call this → all bands stay 1.0 → eightBandActive_ false.
+    bool anyNonOne = false;
+    for (int i = 0; i < 8; ++i)
+    {
+        if (std::abs (eightBandMultiply_[i] - 1.0f) > 1.0e-4f) { anyNonOne = true; break; }
+    }
+    eightBandActive_ = anyNonOne;
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
 void DattorroTank::clearBuffers()
 {
     auto clearTank = [this] (Tank& tank, uint32_t seed)
@@ -716,6 +934,10 @@ void DattorroTank::clearBuffers()
         tank.ap2.clear();
         tank.delay2.clear();
         tank.damping.reset();
+        tank.subBassShelf.reset();
+        tank.tiltShelf.reset();
+        tank.airShelf.reset();
+        tank.eightBandDamping.reset();
         tank.crossFeedState = 0.0f;
         tank.savedAP1Mod = 0.0f;  // keep from the code-review fix
         tank.lfo.prepare (static_cast<float> (sampleRate_), seed);
@@ -754,15 +976,50 @@ void DattorroTank::updateDelayLengths()
     float sizeScale = sizeRangeMin_ + (sizeRangeMax_ - sizeRangeMin_) * sizeParam_;
     float totalScale = sizeScale * delayScale_;  // Combined size + per-algorithm delay scaling
 
-    auto updateTank = [&] (Tank& tank)
+    auto updateTank = [&] (Tank& tank, int channelIdx)
     {
-        tank.ap1DelaySamples = static_cast<float> (tank.ap1BaseDelay) * rateRatio * totalScale;
-        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * totalScale;
-        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * totalScale;
+        // v30 — AP1 base override.
+        float ap1BaseRef = static_cast<float> (tank.ap1BaseDelay);
+        if (ap1BaseMsOverride_[channelIdx] > 0.0f)
+        {
+            const int s = (int) std::round (ap1BaseMsOverride_[channelIdx]
+                                            * 0.001f * static_cast<float> (kBaseSampleRate));
+            ap1BaseRef = static_cast<float> (s);
+        }
+        tank.ap1DelaySamples = ap1BaseRef * rateRatio * totalScale;
+        // v29 — per-channel delay1/delay2 base override. ms > 0 replaces
+        // Tank::delay1BaseDelay / delay2BaseDelay at 44.1 kHz reference.
+        // Round to int samples first so override = hardcoded_samples/44.1ms
+        // produces a bit-identical baseRef vs the int hardcoded path
+        // (otherwise float-precision drift flips JND-borderline metrics).
+        // Engine 10 + plates leave overrides at 0 → bit-for-bit identical.
+        float del1BaseRef = static_cast<float> (tank.delay1BaseDelay);
+        if (delay1BaseMsOverride_[channelIdx] > 0.0f)
+        {
+            const int s = (int) std::round (delay1BaseMsOverride_[channelIdx]
+                                            * 0.001f * static_cast<float> (kBaseSampleRate));
+            del1BaseRef = static_cast<float> (s);
+        }
+        float del2BaseRef = static_cast<float> (tank.delay2BaseDelay);
+        if (delay2BaseMsOverride_[channelIdx] > 0.0f)
+        {
+            const int s = (int) std::round (delay2BaseMsOverride_[channelIdx]
+                                            * 0.001f * static_cast<float> (kBaseSampleRate));
+            del2BaseRef = static_cast<float> (s);
+        }
+        tank.delay1Samples   = del1BaseRef * rateRatio * totalScale;
+        tank.delay2Samples   = del2BaseRef * rateRatio * totalScale;
 
-        // AP2 delay (integer, used by Allpass::process)
+        // AP2 delay (integer, used by Allpass::process). v30 — override.
+        float ap2BaseRef = static_cast<float> (tank.ap2BaseDelay);
+        if (ap2BaseMsOverride_[channelIdx] > 0.0f)
+        {
+            const int s = (int) std::round (ap2BaseMsOverride_[channelIdx]
+                                            * 0.001f * static_cast<float> (kBaseSampleRate));
+            ap2BaseRef = static_cast<float> (s);
+        }
         tank.ap2.delaySamples = std::max (1, static_cast<int> (
-            static_cast<float> (tank.ap2BaseDelay) * rateRatio * totalScale));
+            ap2BaseRef * rateRatio * totalScale));
 
         // Density cascade allpass delays (integer, scaled by rate + size + delayScale)
         // After updating delaySamples we MUST refresh the jitter LFO depth+rate
@@ -770,14 +1027,22 @@ void DattorroTank::updateDelayLengths()
         const float sr = static_cast<float> (sampleRate_);
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
+            // Per-stage override (LexFigure8 path). ms > 0 replaces densityAPBase
+            // with a runtime ms value at the 44.1 kHz reference (then scaled by
+            // rateRatio + totalScale exactly like the default base). Engine 10
+            // + plates leave override at 0 → preserved bit-for-bit.
+            float baseAtRef = static_cast<float> (tank.densityAPBase[i]);
+            if (densityAPDelayMsOverride_[i] > 0.0f)
+                baseAtRef = densityAPDelayMsOverride_[i] * 0.001f
+                          * static_cast<float> (kBaseSampleRate);
             tank.densityAP[i].delaySamples = std::max (1, static_cast<int> (
-                static_cast<float> (tank.densityAPBase[i]) * rateRatio * totalScale));
+                baseAtRef * rateRatio * totalScale));
             tank.densityAP[i].updateJitterDepth (sr);
         }
     };
 
-    updateTank (leftTank_);
-    updateTank (rightTank_);
+    updateTank (leftTank_,  0);
+    updateTank (rightTank_, 1);
 }
 
 void DattorroTank::updateDecayCoefficients()
@@ -799,7 +1064,9 @@ void DattorroTank::updateDecayCoefficients()
                          + tank.delay1Samples
                          + static_cast<float> (tank.ap2.delaySamples)
                          + tank.delay2Samples;
-        for (int i = 0; i < kNumDensityAPs; ++i)
+        // Only the active density stages contribute to total loop length
+        // (an inactive AP doesn't run; gBase computation must exclude it).
+        for (int i = 0; i < densityStages_; ++i)
             loopLength += static_cast<float> (tank.densityAP[i].delaySamples);
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
@@ -810,6 +1077,41 @@ void DattorroTank::updateDecayCoefficients()
         float gHi  = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHi, lowXoverCoeff, highXoverCoeff);
+
+        // 4th band — sub-bass low-shelf. Engaged only when
+        // subBassMultiply != 1.0 (Engine 10 + plates leave this neutral).
+        // Gain relative to bass band so the shelf shapes sub-bass decay
+        // independently of the main bass multiplier.
+        if (subBassActive_)
+        {
+            const float gSub = std::clamp (std::pow (gBase, 1.0f / subBassMultiply_),
+                                           0.001f, 0.9999f);
+            const float shelfGain = gSub / std::max (gLow, 1.0e-12f);
+            tank.subBassShelf.designLowShelf (shelfGain, subBassCrossover_, sr);
+        }
+        // Phase F — air-band high-shelf. Gain relative to treble band.
+        // airMultiply < 1.0 makes air decay FASTER than treble (the
+        // Lex-hardware HF-loss gradient that fixes centroid_drift +
+        // rt60 bins 6,7 in one move).
+        if (airActive_)
+        {
+            const float gAir = std::clamp (std::pow (gBase, 1.0f / airMultiply_),
+                                           0.001f, 0.9999f);
+            const float shelfGain = gAir / std::max (gHi, 1.0e-12f);
+            tank.airShelf.designHighShelf (shelfGain, airCrossover_, sr);
+        }
+        // Phase G — 8-band damping. Per-octave gains for direct
+        // alignment with rt60_per_band metric bins.
+        if (eightBandActive_)
+        {
+            float gBands[8];
+            for (int i = 0; i < 8; ++i)
+            {
+                gBands[i] = std::clamp (std::pow (gBase, 1.0f / eightBandMultiply_[i]),
+                                        0.001f, 0.9999f);
+            }
+            tank.eightBandDamping.setCoefficients (gBands);
+        }
     };
 
     updateTankDamping (leftTank_);

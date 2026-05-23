@@ -107,6 +107,110 @@ LOCKED = {
     'Hall Spec 2 Weight':   '3.8090',
     'Hall Spec 3 Weight':   '3.8090',
     'Hall Spec HF Cut':     '6276.25',
+
+    # ── Engine 13 (TrueLex) defaults — inert when Algorithm != Hall (TrueLex)
+    # since the APVTS axes only route to hallTrueLex_. Locked here so the
+    # render is reproducible between hall_iter and hall_truelex_optuna.
+    'TrueLex ER Level':     '1.0',
+    'TrueLex Tank Level':   '1.0',
+    'TrueLex ER W0':        '1.0',
+    'TrueLex ER W1':        '0.65',
+    'TrueLex ER W2':        '0.45',
+    'TrueLex ER W3':        '0.30',
+    'TrueLex AP Coeff':     '0.075',
+
+    # ── Engine 14 (TrueLex 16) defaults — inert for non-Engine-14.
+    'TrueLex16 ER Level':   '1.0',
+    'TrueLex16 Tank Level': '1.0',
+    'TrueLex16 ER W0':      '1.0',
+    'TrueLex16 ER W1':      '0.65',
+    'TrueLex16 ER W2':      '0.45',
+    'TrueLex16 ER W3':      '0.30',
+    'TrueLex16 ER W4':      '0.0',
+    'TrueLex16 AP Coeff':   '0.0',
+    # Engine 15 (LexFigure8) — in-loop structural HF damping cutoff.
+    'LexFig8 Struct HF':    '8000.0',
+    # Phase A — Pre-tank ER TDL (4 taps). Defaults match Lex Med Hall
+    # peak_locations anchor [0.0, 4.0, 7.52, 9.79] ms with progressive
+    # attenuation. Inert when Algorithm != Hall (LexFigure8).
+    'LexFig8 ER Tap0 Dly':       '0.0',
+    'LexFig8 ER Tap1 Dly':       '4.0',
+    'LexFig8 ER Tap2 Dly':       '7.52',
+    'LexFig8 ER Tap3 Dly':       '9.79',
+    # v27 baseline — ER taps audible at -27/-30/-33/-36 dB (each below tank
+    # peak amp ~0.055 so argmax stays on tank → late_tail still measured
+    # at tank+500 ms via argmax-relative grader). Combined with the
+    # 2026-05-22 first-significant peak_locations anchor, ER spikes at
+    # 0/4/7.52/9.79 ms now drive peak_locations PASS without flipping
+    # late_tail. Lifts v14 14/19 → v27 15/19.
+    'LexFig8 ER Tap0 Gain':      '-27.0',
+    'LexFig8 ER Tap1 Gain':      '-30.0',
+    'LexFig8 ER Tap2 Gain':      '-33.0',
+    'LexFig8 ER Tap3 Gain':      '-36.0',
+    'LexFig8 ER Stereo Offset':  '0.20',
+    'LexFig8 Tank Atten':        '1.0',
+    'LexFig8 Tank In':           '1.0',
+    # v18 Bloom — tank pre-delay default 0 (baseline behavior); CMA
+    # pushes to ~11 ms so tank emerges AFTER ER tap 3 (9.79 ms).
+    'LexFig8 Tank PreDly':       '0.0',
+    # Phase B-redux — density-AP jitter exposed as APVTS. Defaults
+    # match hardcoded pre-redux values so engine state is unchanged
+    # when defaults are used. CMA pushes these up to smear box_ratio
+    # + spectral_crest comb teeth at 200-500 Hz.
+    'LexFig8 Density Jitter':    '0.02',
+    'LexFig8 Density Rate':      '1.5',
+    # Phase C — sub-bass band damping. Default 1.0 = neutral / shelf
+    # bypassed entirely (Engine 10 + plates unchanged when this stays
+    # at default). LexFigure8 lets CMA push >1 for warmer sub-bass or
+    # <1 for tighter sub-bass.
+    'LexFig8 Sub-Bass Mult':     '1.0',
+    'LexFig8 Sub-Bass Xover':    '300',
+    # Phase D — in-loop tilt high-shelf at 2 kHz. Default 0 = neutral
+    # (shelf bypassed). Engine 10 + plates never set this.
+    'LexFig8 Tilt':              '0.0',
+    # Phase F — air-band shelf. v27 default 0.78 @ 7500 Hz delivers rt60
+    # bin 7 PASS + centroid_drift bin 3 PASS without trashing bin 6.
+    'LexFig8 Air Mult':          '0.78',
+    'LexFig8 Air Xover':         '7500.0',
+    # Phase J — per-stage density-AP delay overrides. Default 0 = no
+    # override → tank uses hardcoded hall-scale densityAPBase. Tuner
+    # explores > 0 to reshape rt60/density (does NOT move peak_locations
+    # — output tap structure determines that, see DattorroTank.h:349).
+    'LexFig8 DAP 0 Dly':         '0.0',
+    'LexFig8 DAP 1 Dly':         '0.0',
+    'LexFig8 DAP 2 Dly':         '0.0',
+    'LexFig8 DAP 3 Dly':         '0.0',
+    # Phase K (v28) — first-4 output-tap positionFrac overrides per channel.
+    # Defaults match DattorroTank::kLeftOutputTaps[0..3] / kRightOutputTaps[0..3]
+    # → identical audible state until tuner moves them.
+    'LexFig8 OTap L0':           '0.120',
+    'LexFig8 OTap L1':           '0.675',
+    'LexFig8 OTap L2':           '0.480',
+    'LexFig8 OTap L3':           '0.450',
+    'LexFig8 OTap R0':           '0.140',
+    'LexFig8 OTap R1':           '0.710',
+    'LexFig8 OTap R2':           '0.520',
+    'LexFig8 OTap R3':           '0.410',
+    # Phase L (v29) — per-channel delay1/delay2 base ms override. Default
+    # 0 = no override sentinel → tank uses hardcoded Dattorro hall constants
+    # (44.1 kHz reference: 4507/4219/3769/3299 = 102.2/95.7/85.5/74.8 ms).
+    # Tuner explores 0..150 ms; override = default ms is NOT bit-equivalent
+    # to override = 0 (float-path divergence flips 5 PASSes).
+    'LexFig8 Del1 L':            '0.0',
+    'LexFig8 Del1 R':            '0.0',
+    'LexFig8 Del2 L':            '0.0',
+    'LexFig8 Del2 R':            '0.0',
+    # Phase M (v30) — per-channel AP1/AP2 base ms override (diffuser rearch).
+    # 0 = no override sentinel. Hall defaults at 16.1/21.6/42.4/62.3 ms.
+    'LexFig8 AP1 L':             '0.0',
+    'LexFig8 AP1 R':             '0.0',
+    'LexFig8 AP2 L':             '0.0',
+    'LexFig8 AP2 R':             '0.0',
+    # Phase N+O (v31) — front-door rearch. Cross-feed coefficients default
+    # 1.0 (Dattorro canonical full bleed). Bypass diffuser default 0 (active).
+    'LexFig8 XFd L':             '1.0',
+    'LexFig8 XFd R':             '1.0',
+    'LexFig8 Bypass Diff':       '0.0',
 }
 
 JND = {

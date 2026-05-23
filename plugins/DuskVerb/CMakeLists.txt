@@ -75,6 +75,10 @@ target_sources(DuskVerb
         src/dsp/HallSubTank.cpp
         src/dsp/RingReverb.cpp
         src/dsp/HybridHallReverb.cpp
+        src/dsp/HallTrueLexReverb.cpp
+        src/dsp/HallTrueLex16Reverb.cpp
+        src/dsp/LexFigure8Reverb.cpp
+        src/dsp/LexiconMTDLEngine.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/DattorroVocalTank.cpp
         src/dsp/QuadTank.cpp

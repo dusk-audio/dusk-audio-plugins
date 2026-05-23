@@ -73,6 +73,75 @@ public:
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
     void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
+    // Density cascade active stage count (1..kNumDensityAPs). Default 3 to
+    // preserve Engine 10 + plate engine voicing. Engine 15 (LexFigure8)
+    // calls setDensityStages(4) at prepare time to engage the 4th AP for
+    // modal smearing (box_ratio + spectral_crest reduction).
+    void setDensityStages (int stages);
+    // Density-AP per-stage jitter controls. Default values match the
+    // historical hardcoded constants (0.02 depth / 1.5 Hz rate) so any
+    // engine that does NOT call these setters (Engine 10, plate engines)
+    // sees bit-for-bit identical behavior. LexFigure8 (Engine 15)
+    // exposes these via APVTS for spectral-comb smearing of box_ratio
+    // and spectral_crest residuals.
+    void setDensityJitterDepth (float frac);
+    void setDensityJitterRate  (float hz);
+    // Sub-bass band damping. At multiply=1.0 (default) the shelf is
+    // bypassed; Engine 10 + plates stay bit-for-bit identical. LexFigure8
+    // engages this to split bass below crossover into a 4th sub-bass band
+    // for finer rt60_per_band shaping.
+    void setSubBassMultiply  (float mult);
+    void setSubBassCrossover (float hz);
+    // Phase D — in-loop tilt high-shelf. dbPerOctave clamped ±12 dB.
+    // Default 0 = neutral / shelf bypassed. Engine 10 + plates never
+    // call this → preserved bit-for-bit.
+    void setStructuralTilt (float dbPerOctave);
+    // Phase F — 4th damping band (air, above main treble crossover).
+    // Multiplier 1.0 = neutral / shelf bypassed (Engine 10 + plates
+    // preserved bit-for-bit). Crossover 4–12 kHz, typical 8 kHz pivot.
+    void setAirMultiply  (float mult);
+    void setAirCrossover (float hz);
+    // Phase G — 8-band damping per octave (rt60_per_band bin alignment).
+    // idx 0..7 = bins 125/250/500/1k/2k/4k/8k/16k Hz. Multiplier 1.0
+    // (default for all bands) keeps eightBandActive_ false → uses
+    // ThreeBandDamping (Engine 10 + plates preserved bit-for-bit).
+    // Auto-enables when ANY band multiplier moves off 1.0.
+    void setEightBandMultiply (int bandIdx, float mult);
+    // Density-AP per-stage delay override (LexFigure8 only). ms > 0 replaces
+    // the hardcoded densityAPBase[stageIdx] (set by setHallScale) with a
+    // runtime ms value rounded to integer samples at 44.1 kHz reference.
+    // ms <= 0 clears the override (default 0 → no effect → Engine 10 +
+    // plates preserved bit-for-bit since they never call this).
+    void setDensityAPDelayMs (int stageIdx, float ms);
+    // Per-output-tap positionFrac override. channel 0 = left, 1 = right.
+    // tapIdx 0..kNumOutputTaps-1. frac is clamped [0,1] and writes the
+    // positionFrac field of customLeftTaps_/customRightTaps_; the first
+    // call switches useCustomTaps_ on (which is per-instance, so other
+    // DattorroTank consumers — Engine 10, Dattorro engine, plates —
+    // remain bit-for-bit identical because each engine owns its own
+    // tank instance and they never call this setter).
+    void setOutputTapFraction (int channel, int tapIdx, float frac);
+    // Per-channel delay1/delay2 base override in ms at 44.1 kHz reference.
+    // channel 0 = left, 1 = right. delayIdx 0 = delay1, 1 = delay2.
+    // ms > 0 replaces the hardcoded Tank::delay1BaseDelay / delay2BaseDelay
+    // (set by setHallScale) with a runtime ms value. ms <= 0 clears the
+    // override. Defaults at 0 → Engine 10 + plates preserved bit-for-bit.
+    // Range clamped to kDelayBaseOverrideMaxMs (150 ms) which matches the
+    // allocation worst case in prepare().
+    void setDelayBaseMs (int channel, int delayIdx, float ms);
+    // Per-channel ap1/ap2 base override in ms at 44.1 kHz reference (v30
+    // diffuser rearch). channel 0 = left, 1 = right. apIdx 0 = ap1
+    // (modulated allpass), 1 = ap2 (static allpass). ms > 0 replaces the
+    // hardcoded Tank::ap1BaseDelay / ap2BaseDelay (set by setHallScale).
+    // Range clamped to kAPBaseOverrideMaxMs (100 ms). Engine 10 + plates
+    // leave overrides at 0 → preserved bit-for-bit.
+    void setAPBaseMs (int channel, int apIdx, float ms);
+    // Per-channel cross-feed coefficient (v31 front-door rearch). Multiplier
+    // applied to the other tank's cross-feed signal at this tank's input.
+    // Default 1.0 = Dattorro canonical (full bleed). Range [0, 2]. Engine
+    // 10 + plates leave at 1.0 → bit-for-bit identical. LexFigure8 tunes
+    // to reshape centroid_drift_per_band via inter-tank coupling control.
+    void setCrossFeedCoeff (int channel, float coeff);
     void clearBuffers();
 
 private:
@@ -143,6 +212,10 @@ private:
 
         DspUtils::RandomWalkLFO jitterLFO;
         float                   jitterDepthFraction = 0.0f;
+        // jitterRateHz overridable per-AP. Default 1.5 Hz matches the
+        // hardcoded sub-audio rate from issue #87 (audio-band rates
+        // generated FM sidebands → vibrato artifact).
+        float                   jitterRateHz        = 1.5f;
 
         void allocate (int maxSamples);
         void clear();
@@ -157,7 +230,7 @@ private:
             if (jitterDepthFraction <= 0.0f || delaySamples <= 0)
                 return;
             jitterLFO.setDepth (static_cast<float> (delaySamples) * jitterDepthFraction);
-            jitterLFO.setRate (1.5f);
+            jitterLFO.setRate (jitterRateHz);
         }
 
         float process (float input, float g)
@@ -187,15 +260,20 @@ private:
     };
 
     // -----------------------------------------------------------------------
-    // Density cascade: 3 additional allpasses between delay1 and damping.
-    // Multiplies echo density ~8× per loop pass (each AP doubles mode count).
-    // Delays are prime and coprime to all other elements.
-    static constexpr int kNumDensityAPs = 3;
+    // Density cascade: up to 4 allpasses between delay1 and damping.
+    // Multiplies echo density ~8-16× per loop pass (each AP doubles mode
+    // count). Delays are prime and coprime to all other elements. Active
+    // stage count gated by densityStages_ runtime setter (default 3 to
+    // preserve Engine 10 + plate engines that share this tank class).
+    // Engine 15 (LexFigure8) calls setDensityStages(4) to enable the
+    // 4th stage for box_ratio + spectral_crest mitigation.
+    static constexpr int kNumDensityAPs = 4;
 
-    // Left tank density AP delays (at 44100 Hz)
-    static constexpr int kLeftDensityAPBase[kNumDensityAPs] = { 137, 199, 281 };
+    // Left tank density AP delays (at 44100 Hz). Stages 0-2 = room mode.
+    // Stage 3 added for LexFigure8 (kept coprime to other delays).
+    static constexpr int kLeftDensityAPBase[kNumDensityAPs] = { 137, 199, 281, 359 };
     // Right tank density AP delays (at 44100 Hz)
-    static constexpr int kRightDensityAPBase[kNumDensityAPs] = { 149, 211, 263 };
+    static constexpr int kRightDensityAPBase[kNumDensityAPs] = { 149, 211, 263, 353 };
 
     // Hall-scale delays: ~2x room for 1-12s RT60 (all prime, coprime to room delays)
     // Total loop: left=12161 (275.8ms), right=12559 (284.8ms)
@@ -209,8 +287,8 @@ private:
     static constexpr int kRightDel1BaseHall = 4219;  // ~95.7ms
     static constexpr int kRightAP2BaseHall  = 2749;  // ~62.3ms
     static constexpr int kRightDel2BaseHall = 3299;  // ~74.8ms
-    static constexpr int kLeftDensityAPBaseHall[kNumDensityAPs]  = { 307, 421, 577 };
-    static constexpr int kRightDensityAPBaseHall[kNumDensityAPs] = { 337, 461, 541 };
+    static constexpr int kLeftDensityAPBaseHall[kNumDensityAPs]  = { 307, 421, 577, 83 };
+    static constexpr int kRightDensityAPBaseHall[kNumDensityAPs] = { 337, 461, 541, 89 };
 
     // -----------------------------------------------------------------------
     // Each cross-coupled feedback loop.
@@ -232,6 +310,28 @@ private:
 
         // Three-band damping (bass / mid / air with independent per-band decay)
         ThreeBandDamping damping;
+
+        // Sub-bass shelf — optional 4th band below the main bass crossover.
+        // Only engaged when subBassActive_ == true (LexFigure8 only). At
+        // multiply=1.0 (default) the shelf is bypassed entirely so Engine 10
+        // and plate engines see ZERO additional processing.
+        ShelfBiquad subBassShelf;
+
+        // Phase D — in-loop tilt high-shelf at 2 kHz pivot. Negative dB
+        // darkens the late tail (centroid_drift bins shift DOWN more);
+        // positive brightens. Bypassed unless tiltActive_ == true.
+        ShelfBiquad tiltShelf;
+
+        // Phase F — in-loop air-band high-shelf (4th damping band) at
+        // 8 kHz pivot. Independent decay multiplier above 8 kHz creates
+        // the HF-fade-faster-than-mid gradient that Lex hardware exhibits.
+        // Bypassed unless airActive_ == true.
+        ShelfBiquad airShelf;
+
+        // Phase G — 8-band damping (per-octave RT60 control). When
+        // eightBandActive_ is true, this replaces ThreeBandDamping in
+        // the process loop. Engine 10 + plates leave it inactive.
+        EightBandDamping eightBandDamping;
 
         // Static allpass (decay diffusion 2)
         Allpass ap2;
@@ -344,6 +444,49 @@ private:
     // smearing, producing audible discrete tap echoes in the tail.
     static constexpr float kDensityDiffBaseline_ = 0.55f;
     float densityDiffCoeff_ = kDensityDiffBaseline_;
+    int   densityStages_     = 3;  // Engine 10 default; LexFig8 sets to 4.
+    // Density-AP jitter tunables. Defaults preserve Engine 10 + plate
+    // behavior. LexFigure8 sets these via APVTS to smear box_ratio /
+    // spectral_crest comb teeth at 200-500 Hz.
+    float densityJitterDepth_ = 0.02f;
+    float densityJitterRate_  = 1.5f;
+    // Sub-bass band — disabled when multiply == 1.0 (default).
+    // Engine 10 + plates leave this at default → bit-for-bit identical.
+    float subBassMultiply_  = 1.0f;
+    float subBassCrossover_ = 300.0f;
+    bool  subBassActive_    = false;
+    // Phase D — tilt EQ state. Pivot fixed at 2 kHz.
+    float tiltDbPerOctave_  = 0.0f;
+    bool  tiltActive_       = false;
+    // Phase F — air band state. Disabled when multiply == 1.0 (default).
+    float airMultiply_  = 1.0f;
+    float airCrossover_ = 8000.0f;
+    bool  airActive_    = false;
+    // Phase G — 8-band damping per-octave multipliers. Default 1.0 = neutral
+    // (eightBandActive_ stays false). Engine 10 + plates leave at default.
+    float eightBandMultiply_[8] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    bool  eightBandActive_       = false;
+    // Per-stage density-AP delay override in ms. 0 = no override → tank
+    // uses densityAPBase set by setHallScale. > 0 = override applied at
+    // updateDelayLengths. Engine 10 + plates leave at 0 → bit-for-bit
+    // identical. LexFigure8 reshapes peak_locations via APVTS.
+    float densityAPDelayMsOverride_[kNumDensityAPs] = {};
+    // Per-channel delay1/delay2 base ms override. Index 0 = left, 1 = right.
+    // 0 = no override (use Tank::delay1BaseDelay / delay2BaseDelay set by
+    // setHallScale). > 0 = override applied. Engine 10 + plates leave 0 →
+    // bit-for-bit identical. LexFigure8 lets CMA reshape the tank's room
+    // size + modal-frequency structure for the last 4 metric blocks.
+    float delay1BaseMsOverride_[2] = {};
+    float delay2BaseMsOverride_[2] = {};
+    static constexpr float kDelayBaseOverrideMaxMs = 150.0f;
+    // v30 — per-channel AP1/AP2 base ms override. Engine 10 + plates leave
+    // at 0 → bit-for-bit identical. LexFigure8 reshapes diffuser geometry.
+    float ap1BaseMsOverride_[2] = {};
+    float ap2BaseMsOverride_[2] = {};
+    static constexpr float kAPBaseOverrideMaxMs = 100.0f;
+    // v31 — per-channel cross-feed coefficient. Default 1.0 = Dattorro
+    // canonical bleed. Engine 10 + plates leave at 1.0 → preserved.
+    float crossFeedCoeff_[2] = { 1.0f, 1.0f };
 
     // Delay-read modulation depth (peak excursion in samples). Applied to
     // delay1 and delay2 read taps via per-tank RandomWalkLFOs. Replaces the

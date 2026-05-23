@@ -171,6 +171,22 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
         rms = float(np.sqrt(np.mean(signal[s0:s1] ** 2)) + 1e-12)
         return 20.0 * float(np.log10(rms))
 
+    # Absolute-t=0 windowed RMS used by late_tail_* ONLY. The argmax-
+    # relative variant (above) is fair for the decay_envelope_db shape
+    # comparison, but late_tail measures absolute energy after the
+    # impulse fires and must NOT shift with the global peak — otherwise
+    # an ER-style generator that pulls argmax to t=0 silently moves the
+    # measurement window earlier in the decay (breaks 14/19 ceiling
+    # experiments). Lex's impulse argmax IS at ~t=0 so anchor values are
+    # numerically identical under either reference.
+    def _window_db_abs (signal: np.ndarray, sr: float, t0: float, t1: float) -> float:
+        s0 = int(t0 * sr)
+        s1 = min(int(t1 * sr), len(signal))
+        if s1 <= s0:
+            return -120.0
+        rms = float(np.sqrt(np.mean(signal[s0:s1] ** 2)) + 1e-12)
+        return 20.0 * float(np.log10(rms))
+
     # Decay envelope: dense RMS-in-dB sampling over 12×250 ms windows from
     # the impulse peak. Captures the actual SHAPE of the decay curve, not
     # just its endpoints. Three late_tail_* metrics give coarse anchors at
@@ -219,12 +235,29 @@ def measure_pair(impulse_path: Path, noiseburst_path: Path) -> dict[str, Any]:
             events.
         """
         env = np.abs(signal).astype(np.float64)
-        p0 = int(np.argmax(env))
+        global_max = float(env.max()) if len(env) else 0.0
+        if global_max <= 0.0:
+            return [0.0] + [999.0] * (max_peaks - 1)
+        # 2026-05-22 — anchor at FIRST significant arrival rather than
+        # global argmax. The argmax-anchored variant broke under any
+        # architecture that emits a SOFT-but-temporally-early ER spike
+        # followed by a LOUD-but-temporally-late tank peak (e.g. our
+        # LexFigure8 Engine 15): argmax sat on the tank peak at ~137 ms
+        # so the 50 ms detection window scanned 137-187 ms and missed
+        # the four ER taps at 0/4/7.52/9.79 ms entirely. First-significant
+        # uses a -20 dB-below-global-max floor so the detection origin
+        # is the first arrival time, independent of whether the loudest
+        # sample lives at t=0, mid-tail, or late-tail. Lex's anchor
+        # impulse has argmax at t=0 (direct path) so first-significant
+        # == argmax == t=0 → anchor numerics unchanged.
+        floor = global_max * 10.0 ** (-20.0 / 20.0)
+        mask = env >= floor
+        p0 = int(np.argmax(mask)) if mask.any() else int(np.argmax(env))
         end = min(len(env), p0 + int(window_ms * 1e-3 * sr))
         seg = env[p0:end]
         if len(seg) < 3:
             return [0.0] + [999.0] * (max_peaks - 1)
-        peak_amp = seg[0] if seg[0] > 0 else 1.0
+        peak_amp = global_max
         thresh = peak_amp * 10.0 ** (-20.0 / 20.0)        # was -40 dB
         prom_thresh_db = 6.0
         min_sep_samples = int(round(0.001 * sr))           # 1 ms

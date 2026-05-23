@@ -2,7 +2,6 @@
 
 #include "HallSubTank.h"
 #include "LR4BandSplit.h"
-#include "DspUtils.h"
 
 #include <vector>
 
@@ -151,11 +150,12 @@ public:
     void setMidShelfFc        (float hz);
     void setTrebleShelfGain   (float dB);
     void setTrebleShelfFc     (float hz);
-    // P14 input diffuser coefficient — shared g for L+R 4-stage cascade
-    // before the late tank. [0..0.85]; 0 = bypass (transparent),
-    // 0.65 = Schroeder classic. Higher = denser pre-tank diffusion at
-    // the cost of more pre-echo ringing.
-    void setInputDiffusion    (float g);
+    // P14 input diffuser axis is exposed by PluginProcessor's APVTS for
+    // Ring/Hybrid engines. On Hall (Lex) the P11 baseline does NOT use
+    // a pre-tank Schroeder cascade — Multi-tap injection + LR4 split +
+    // 8-ch SubTanks carry the density. Stub here keeps the engine-wide
+    // setter chain compiling without altering Hall (Lex) DSP.
+    void setInputDiffusion    (float /*g*/) {}
     // Per-band output gain. Each SubTank's wet output is multiplied by its
     // band gain before the 3-band sum. Phase 6 iteration 1 exposed that the
     // 8-channel Hadamard mixing concentrates midrange modal density,
@@ -195,6 +195,13 @@ public:
     void setSpecularTimeMs    (int index, float ms);
     void setSpecularWeight    (int index, float weight);
     void setSpecularHFCutHz   (float hz);
+    // Engine 13 hook: when Hall (Lex) is embedded as the tank inside
+    // HallTrueLexReverb, the late-stage specular taps are muted so the
+    // hardcoded parallel ER TDL (at Lex anchor peak times) is the sole
+    // carrier of early specular energy. The flag is checked at the
+    // specular sum site in process(); weight setters keep working so
+    // hot APVTS changes don't fight with the bypass.
+    void setSpecularEnabled   (bool enabled) { specularEnabled_ = enabled; }
     // Wet-only Hi Cut (P8c). HallReverb owns its own LP on the band-summed
     // wet path so DuskVerbEngine can bypass its global Hi Cut filter for
     // the Hall engine — the specular path stays outside this filter and
@@ -348,6 +355,9 @@ private:
     float              specularLPAlpha_   = 0.5f;     // shared per-stage coeff
     float              specularLP1StateL_ = 0.0f, specularLP1StateR_ = 0.0f;
     float              specularLP2StateL_ = 0.0f, specularLP2StateR_ = 0.0f;
+    // Engine 13 specular-taps mute flag. When false, the specular sum
+    // is gated out of the band-sum output. Set via setSpecularEnabled().
+    bool               specularEnabled_   = true;
     // Wet-path Hi Cut biquad (P8c). Replaces DuskVerbEngine's global Hi Cut
     // for the Hall engine — applied to the band-summed wet signal before
     // the specular taps mix in, so specular content stays unfiltered by
@@ -399,68 +409,6 @@ private:
     // predelayWritePos_ still tracks the current input sample), consumed
     // in the band-sum/output loop after one-pole LP filtering.
     std::vector<float> specularInL_, specularInR_;
-
-    // P14 PCM-Native input diffuser — 4-stage Schroeder allpass cascade
-    // applied AFTER predelay+multi-tap, BEFORE the LR4 split into tank
-    // bands. Pre-builds echo density so the late tank sees a diffuse
-    // input rather than raw multi-tap impulses. L/R get independently
-    // delayed cascades (different prime sets) for stereo decorrelation.
-    // All primes mutually coprime with chain + tank delays (verified).
-    struct InputDiffuser
-    {
-        static constexpr int kStages = 4;
-        struct Stage
-        {
-            std::vector<float> buf;
-            int writePos = 0, mask = 0, delaySamples = 0;
-            float process (float input, float g)
-            {
-                const int r = (writePos - delaySamples) & mask;
-                const float vd = buf[static_cast<size_t> (r)];
-                const float vn = input + g * vd;
-                buf[static_cast<size_t> (writePos)] = vn;
-                writePos = (writePos + 1) & mask;
-                return vd - g * vn;
-            }
-            void clear()
-            {
-                std::fill (buf.begin(), buf.end(), 0.0f);
-                writePos = 0;
-            }
-        };
-        Stage stages[kStages];
-        float g = 0.65f;     // Schroeder classic; tunable via APVTS
-
-        void prepareWithPrimes (double sr, const int* basePrimes)
-        {
-            const float rateRatio = static_cast<float> (sr / 44100.0);
-            for (int s = 0; s < kStages; ++s)
-            {
-                const int target = static_cast<int> (std::round (
-                    static_cast<float> (basePrimes[s]) * rateRatio));
-                const int bufSize = ::DspUtils::nextPowerOf2 (
-                    std::max (target + 4, 16));
-                stages[s].buf.assign (static_cast<size_t> (bufSize), 0.0f);
-                stages[s].mask = bufSize - 1;
-                stages[s].writePos = 0;
-                stages[s].delaySamples = std::min (target, bufSize - 1);
-            }
-        }
-        float process (float x)
-        {
-            for (int s = 0; s < kStages; ++s)
-                x = stages[s].process (x, g);
-            return x;
-        }
-        void clear() { for (auto& s : stages) s.clear(); }
-    };
-
-    // L / R have slightly different coprime prime sets for stereo
-    // decorrelation. ~5-9 ms range at 44.1 kHz — Dattorro hall pattern.
-    static constexpr int kInputDiffPrimesL[InputDiffuser::kStages] = { 223, 263, 313, 397 };
-    static constexpr int kInputDiffPrimesR[InputDiffuser::kStages] = { 229, 269, 317, 409 };
-    InputDiffuser inputDiffL_, inputDiffR_;
-    float inputDiffusion_ = 0.65f;    // shared g for L+R
 
     double sampleRate_         = 44100.0;
     int    scratchBlockSize_   = 0;

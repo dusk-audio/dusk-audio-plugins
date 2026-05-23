@@ -253,6 +253,82 @@ private:
     std::atomic<float>* hybridRingSpinParam_     = nullptr;
     std::atomic<float>* hybridRingWanderParam_   = nullptr;
     std::atomic<float>* hybridRingStereoParam_   = nullptr;
+    // HallTrueLexReverb (algo 13) — 7 axes (everything else borrowed
+    // from the engine-shared / Hall (Lex) APVTS surface).
+    std::atomic<float>* truelexERLevelParam_     = nullptr;
+    std::atomic<float>* truelexTankLevelParam_   = nullptr;
+    std::atomic<float>* truelexERW0Param_        = nullptr;
+    std::atomic<float>* truelexERW1Param_        = nullptr;
+    std::atomic<float>* truelexERW2Param_        = nullptr;
+    std::atomic<float>* truelexERW3Param_        = nullptr;
+    std::atomic<float>* truelexAPCoeffParam_     = nullptr;
+    // HallTrueLex16Reverb (algo 14) — 7 axes (16-ch FDN variant).
+    std::atomic<float>* truelex16ERLevelParam_   = nullptr;
+    std::atomic<float>* truelex16TankLevelParam_ = nullptr;
+    std::atomic<float>* truelex16ERW0Param_      = nullptr;
+    std::atomic<float>* truelex16ERW1Param_      = nullptr;
+    std::atomic<float>* truelex16ERW2Param_      = nullptr;
+    std::atomic<float>* truelex16ERW3Param_      = nullptr;
+    std::atomic<float>* truelex16ERW4Param_      = nullptr;
+    std::atomic<float>* truelex16APCoeffParam_   = nullptr;
+    // LexFigure8Reverb (algo 15) — 1 axis (in-loop structural HF damping)
+    // + Phase A: 9 ER TDL axes (4 dly, 4 gain, 1 stereo offset).
+    std::atomic<float>* lexFig8StructHFParam_    = nullptr;
+    std::atomic<float>* lexFig8ERTap0DlyParam_   = nullptr;
+    std::atomic<float>* lexFig8ERTap1DlyParam_   = nullptr;
+    std::atomic<float>* lexFig8ERTap2DlyParam_   = nullptr;
+    std::atomic<float>* lexFig8ERTap3DlyParam_   = nullptr;
+    std::atomic<float>* lexFig8ERTap0GainParam_  = nullptr;
+    std::atomic<float>* lexFig8ERTap1GainParam_  = nullptr;
+    std::atomic<float>* lexFig8ERTap2GainParam_  = nullptr;
+    std::atomic<float>* lexFig8ERTap3GainParam_  = nullptr;
+    std::atomic<float>* lexFig8ERStereoOffsetParam_ = nullptr;
+    std::atomic<float>* lexFig8TankAttenParam_   = nullptr;
+    std::atomic<float>* lexFig8TankInParam_      = nullptr;
+    std::atomic<float>* lexFig8TankPDlyParam_    = nullptr;
+    std::atomic<float>* lexFig8DensityJitterParam_ = nullptr;
+    std::atomic<float>* lexFig8DensityRateParam_   = nullptr;
+    std::atomic<float>* lexFig8SubBassMultParam_   = nullptr;
+    std::atomic<float>* lexFig8SubBassXoverParam_  = nullptr;
+    std::atomic<float>* lexFig8TiltParam_           = nullptr;
+    std::atomic<float>* lexFig8AirMultParam_        = nullptr;
+    std::atomic<float>* lexFig8AirXoverParam_       = nullptr;
+    std::atomic<float>* lexFig8BandMultParam_[8]    = { nullptr };
+    std::atomic<float>* lexFig8DapDelayParam_[4]    = { nullptr };
+    std::atomic<float>* lexFig8OTapLParam_[4]       = { nullptr };
+    std::atomic<float>* lexFig8OTapRParam_[4]       = { nullptr };
+    std::atomic<float>* lexFig8Del1LParam_          = nullptr;
+    std::atomic<float>* lexFig8Del1RParam_          = nullptr;
+    std::atomic<float>* lexFig8Del2LParam_          = nullptr;
+    std::atomic<float>* lexFig8Del2RParam_          = nullptr;
+    std::atomic<float>* lexFig8AP1LParam_           = nullptr;
+    std::atomic<float>* lexFig8AP1RParam_           = nullptr;
+    std::atomic<float>* lexFig8AP2LParam_           = nullptr;
+    std::atomic<float>* lexFig8AP2RParam_           = nullptr;
+    std::atomic<float>* lexFig8XFdLParam_           = nullptr;
+    std::atomic<float>* lexFig8XFdRParam_           = nullptr;
+    std::atomic<float>* lexFig8BypassDiffParam_     = nullptr;
+    std::atomic<float>* lexFig8DuckThreshParam_     = nullptr;
+    std::atomic<float>* lexFig8DuckAtkParam_        = nullptr;
+    std::atomic<float>* lexFig8DuckRelParam_        = nullptr;
+    std::atomic<float>* lexFig8DuckDepthParam_      = nullptr;
+
+    // LexiconMTDL (algo 16) tuning axes. v35: per-line damping (8 axes).
+    // v36: per-line feedback (8), per-tap ER gain dB (4), per-line LFO
+    // depth ms (8) — full Lexicon-style spin-and-wander surface.
+    std::atomic<float>* mtdlFeedbackParam_         = nullptr;
+    std::atomic<float>* mtdlFeedbackAtParam_[8]    = { nullptr };
+    std::atomic<float>* mtdlDampingHzParam_[8]     = { nullptr };
+    std::atomic<float>* mtdlERLevelParam_          = nullptr;
+    std::atomic<float>* mtdlERTapGainDbParam_[4]   = { nullptr };
+    std::atomic<float>* mtdlLateLevelParam_        = nullptr;
+    std::atomic<float>* mtdlLineModMsParam_[8]     = { nullptr };
+    // v37
+    std::atomic<float>* mtdlSchroederCoeffParam_   = nullptr;
+    std::atomic<float>* mtdlTiltDbParam_           = nullptr;
+    // v38 — Engine 17 hybrid mix axes
+    std::atomic<float>* hybridWashLevelParam_      = nullptr;
+    std::atomic<float>* hybridChatterLevelParam_   = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -368,6 +444,81 @@ private:
     float lastHybridRingSpin_     = -999.0f;
     float lastHybridRingWander_   = -999.0f;
     float lastHybridRingStereo_   = -999.0f;
+    float lastTrueLexERLevel_     = -999.0f;
+    float lastTrueLexTankLevel_   = -999.0f;
+    float lastTrueLexERW0_        = -999.0f;
+    float lastTrueLexERW1_        = -999.0f;
+    float lastTrueLexERW2_        = -999.0f;
+    float lastTrueLexERW3_        = -999.0f;
+    float lastTrueLexAPCoeff_     = -999.0f;
+    float lastTrueLex16ERLevel_   = -999.0f;
+    float lastTrueLex16TankLevel_ = -999.0f;
+    float lastTrueLex16ERW0_      = -999.0f;
+    float lastTrueLex16ERW1_      = -999.0f;
+    float lastTrueLex16ERW2_      = -999.0f;
+    float lastTrueLex16ERW3_      = -999.0f;
+    float lastTrueLex16ERW4_      = -999.0f;
+    float lastTrueLex16APCoeff_   = -999.0f;
+    float lastLexFig8StructHF_    = -999.0f;
+    float lastLexFig8ERTap0Dly_   = -999.0f;
+    float lastLexFig8ERTap1Dly_   = -999.0f;
+    float lastLexFig8ERTap2Dly_   = -999.0f;
+    float lastLexFig8ERTap3Dly_   = -999.0f;
+    float lastLexFig8ERTap0Gain_  = -999.0f;
+    float lastLexFig8ERTap1Gain_  = -999.0f;
+    float lastLexFig8ERTap2Gain_  = -999.0f;
+    float lastLexFig8ERTap3Gain_  = -999.0f;
+    float lastLexFig8ERStereoOffset_ = -999.0f;
+    float lastLexFig8TankAtten_   = -999.0f;
+    float lastLexFig8TankIn_      = -999.0f;
+    float lastLexFig8TankPDly_    = -999.0f;
+    float lastLexFig8DensityJitter_ = -999.0f;
+    float lastLexFig8DensityRate_   = -999.0f;
+    float lastLexFig8SubBassMult_   = -999.0f;
+    float lastLexFig8SubBassXover_  = -999.0f;
+    float lastLexFig8Tilt_           = -999.0f;
+    float lastLexFig8AirMult_        = -999.0f;
+    float lastLexFig8AirXover_       = -999.0f;
+    float lastLexFig8BandMult_[8]    = { -999.0f, -999.0f, -999.0f, -999.0f,
+                                         -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastLexFig8DapDelay_[4]    = { -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastLexFig8OTapL_[4]       = { -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastLexFig8OTapR_[4]       = { -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastLexFig8Del1L_          = -999.0f;
+    float lastLexFig8Del1R_          = -999.0f;
+    float lastLexFig8Del2L_          = -999.0f;
+    float lastLexFig8Del2R_          = -999.0f;
+    float lastLexFig8AP1L_           = -999.0f;
+    float lastLexFig8AP1R_           = -999.0f;
+    float lastLexFig8AP2L_           = -999.0f;
+    float lastLexFig8AP2R_           = -999.0f;
+    float lastLexFig8XFdL_           = -999.0f;
+    float lastLexFig8XFdR_           = -999.0f;
+    float lastLexFig8BypassDiff_     = -999.0f;
+    float lastLexFig8DuckThresh_     = -999.0f;
+    float lastLexFig8DuckAtk_        = -999.0f;
+    float lastLexFig8DuckRel_        = -999.0f;
+    float lastLexFig8DuckDepth_      = -999.0f;
+
+    // LexiconMTDL (algo 16). v35 per-line damping. v36 per-line feedback,
+    // per-tap ER gain dB, per-line LFO depth ms. ER tap delays still
+    // LOCKED at Lex anchor 0/4/7.52/9.79 ms (not exposed).
+    float lastMTDLFeedback_         = -999.0f;
+    float lastMTDLFeedbackAt_[8]    = { -999.0f, -999.0f, -999.0f, -999.0f,
+                                        -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastMTDLDampingHz_[8]     = { -999.0f, -999.0f, -999.0f, -999.0f,
+                                        -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastMTDLERLevel_          = -999.0f;
+    float lastMTDLERTapGainDb_[4]   = { -999.0f, -999.0f, -999.0f, -999.0f };
+    float lastMTDLLateLevel_        = -999.0f;
+    float lastMTDLLineModMs_[8]     = { -999.0f, -999.0f, -999.0f, -999.0f,
+                                        -999.0f, -999.0f, -999.0f, -999.0f };
+    // v37
+    float lastMTDLSchroederCoeff_   = -999.0f;
+    float lastMTDLTiltDb_           = -999.0f;
+    // v38 — hybrid mix
+    float lastHybridWashLevel_      = -999.0f;
+    float lastHybridChatterLevel_   = -999.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

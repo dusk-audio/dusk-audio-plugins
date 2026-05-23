@@ -8,6 +8,10 @@
 #include "HallReverb.h"
 #include "RingReverb.h"
 #include "HybridHallReverb.h"
+#include "HallTrueLexReverb.h"
+#include "HallTrueLex16Reverb.h"
+#include "LexFigure8Reverb.h"
+#include "LexiconMTDLEngine.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FirstReflections.h"
@@ -20,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 // One-pole exponential smoother for per-sample parameter interpolation.
@@ -212,6 +217,79 @@ public:
     void setHybridRingWander      (float s);
     void setHybridRingStereoWidth (float w);
 
+    // HallTrueLexReverb (algo 13) setters — Engine 13 composition.
+    // The embedded HallReverb tank is reachable via hallTrueLex_.tank;
+    // every existing setHall* method below broadcasts to it as well so
+    // the tank reuses the Engine 10 calibration surface unchanged.
+    void setTrueLexERTapWeight (int tapIdx, float weight);  // 4 taps (0..3)
+    void setTrueLexERLevel     (float level);
+    void setTrueLexTankLevel   (float level);
+    void setTrueLexAPCoeff     (float g);
+
+    // HallTrueLex16Reverb (algo 14) setters — Engine 14, 16-ch FDN
+    // variant. The embedded FDNReverb tank is reached via
+    // hallTrueLex16_.tank; the engine-shared setBassMultiply /
+    // setDecayTime / etc. broadcasts cover its tank automatically.
+    void setTrueLex16ERTapWeight (int tapIdx, float weight);
+    void setTrueLex16ERLevel     (float level);
+    void setTrueLex16TankLevel   (float level);
+    void setTrueLex16APCoeff     (float g);
+
+    // LexFigure8Reverb (algo 15) setter — exposes the in-loop
+    // structural HF damping that Lexicon presets use as RT_HiCut.
+    // Engine-shared tank setters (Decay/Multiplies/Crossovers/Mod
+    // etc.) reach lexFigure8_.tank via the broadcast pattern.
+    void setLexFig8StructuralHFDamping (float hz);
+
+    // Phase A — Pre-tank ER TDL. Lex Med Hall peak_locations anchor
+    // [0.0, 4.0, 7.52, 9.79] ms cannot be matched by the tank's
+    // implicit density-AP outputs (1.6/3.1/4.8 ms). 4 explicit ER
+    // taps in parallel with the tank carry peak structure.
+    void setLexFig8ERTapDelay     (int idx, float ms);
+    void setLexFig8ERTapGainDb    (int idx, float db);
+    void setLexFig8ERStereoOffset (float ms);
+    void setLexFig8TankAtten      (float scale);
+    void setLexFig8TankInputScale (float scale);
+    void setLexFig8TankPreDelay   (float ms);
+    void setLexFig8DensityJitterDepth (float frac);
+    void setLexFig8DensityJitterRate  (float hz);
+    void setLexFig8SubBassMultiply  (float mult);
+    void setLexFig8SubBassCrossover (float hz);
+    void setLexFig8StructuralTilt   (float dbPerOctave);
+    void setLexFig8AirMultiply      (float mult);
+    void setLexFig8AirCrossover     (float hz);
+    void setLexFig8BandMultiply     (int idx, float mult);
+    void setLexFig8DensityAPDelayMs (int stageIdx, float ms);
+    void setLexFig8OutputTapFraction (int channel, int tapIdx, float frac);
+    void setLexFig8DelayBaseMs       (int channel, int delayIdx, float ms);
+    void setLexFig8APBaseMs          (int channel, int apIdx, float ms);
+    void setLexFig8CrossFeedCoeff    (int channel, float coeff);
+    void setLexFig8BypassDiffuser    (bool bypass);
+    void setLexFig8DuckerThreshold  (float thresh);
+    void setLexFig8DuckerAttackMs   (float ms);
+    void setLexFig8DuckerReleaseMs  (float ms);
+    void setLexFig8DuckerDepth      (float depth);
+
+    // LexiconMTDL (algo 16) tuning surface. ER tap delays are NOT exposed —
+    // they're locked at the measured Lex Med Hall anchor positions
+    // (0/4/7.52/9.79 ms) and the tuner must respect that physical truth.
+    void setLexMTDLFeedbackScale  (float scale);
+    void setLexMTDLFeedbackAt     (int lineIdx, float scale);   // per-line fb (v36)
+    void setLexMTDLDampingHz      (float hz);                   // broadcast all 8 lines
+    void setLexMTDLDampingHzAt    (int lineIdx, float hz);      // per-line (v35)
+    void setLexMTDLERLevel        (float lin);
+    void setLexMTDLERTapGainDbAt  (int tapIdx, float db);       // per-tap ER gain (v36)
+    void setLexMTDLLateLevel      (float lin);
+    void setLexMTDLLineModDepthMsAt (int lineIdx, float ms);    // per-line LFO depth (v36, inert in v37)
+    void setLexMTDLSchroederCoeff (float coeff);                // pre-tank diffuser (v37)
+    void setLexMTDLTiltDb         (float db);                   // post-tank tilt EQ (v37)
+
+    // Engine 17 LexHybrid (v38). Parallel Engine 15 + Engine 16 with
+    // macro mix axes. Internals of both engines are tuned via their
+    // own setters; these two control the blend.
+    void setLexHybridWashLevel    (float lin);    // Engine 15 (Dattorro wash)
+    void setLexHybridChatterLevel (float lin);    // Engine 16 (MTDL chatter)
+
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
     // SixAPTank is the active engine, but pre-applying them at preset-load
@@ -269,11 +347,19 @@ private:
     HallReverb         hall_;               // algo 10 (2026-05-19): 3-band parallel sub-tank hall — LR4 split → 3× 8-ch Hadamard FDN sub-tanks, multi-tap input injection, post-tank M/S widener. Built for the LexHall natural-hall family (Med Hall / Large Hall / Vocal Hall anchors); first proof preset migration in Phase 6.
     duskverb::dsp::RingReverb hallRing_;    // algo 11 (P15): Griesinger/Carnes sequential ring — 6-stage pre-diffuser → 6-stage modulated delay ring with embedded 3-AP cascades per stage. Built to bypass the FDN modal-density Pareto frontier the parallel-Hadamard Hall (algo 10) plateaued at 10/19 on.
     duskverb::dsp::HybridHallReverb hallHybrid_;  // algo 12 (P16): parallel ER + Ring hybrid — 4-tap discrete ER TDL (taps hardcoded at Lex anchor times) mixed with the P15 Ring tail via macro early/late mix axis. Built to break the 10/19 single-topology ceiling by combining the FDN family's strength on c80/d50 with the Ring family's strength on spectral_crest/late_tail.
+    HallTrueLexReverb  hallTrueLex_;        // algo 13 (P17): composition engine — ER TDL (Engine 12 hardcoded Lex peaks) + Engine 10 8-ch FDN tank + post-mix Schroeder AP cascade. Independent er_level + tank_level. Built to break the 12/19 micro-squeeze ceiling.
+    HallTrueLex16Reverb hallTrueLex16_;     // algo 14 (P18): 16-ch variant of Engine 13 — ER TDL + Engine 4 (FDNReverb) 16-ch Hadamard FDN tank + post-mix Schroeder AP. No legacy specular taps — ER carries all early energy. Built to crack the spectral_crest + centroid_drift bin3 walls that 8-ch topology can't reach.
+    LexFigure8Reverb  lexFigure8_;          // algo 15 (P19): classic Lex/Dattorro Figure-8 reverberator. Cross-coupled stereo tanks + nested AP/delay/LP + Lex spin-and-wander LFOs on modulated APs. Hard pivot from FDN family after Engine 14 confirmed parallel-FDN topology cannot pass peak_locations + spectral_crest + box_ratio simultaneously.
+    LexiconMTDLEngine lexMTDL_;             // algo 16 (P20): metric-driven Lex Med Hall — FIR ER (LTI-isolated taps at 0/4/7.52/9.79 ms) + 8-line FDN with prime delays + unitary Hadamard mix + per-line LP damping. Built after LTI Dattorro-figure-8 ceiling at 15/19 proved no LTI lever could move time_domain_crest.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
     // arriving as discrete clicks.
     DiffusionStage diffuser_;
+    // v31 — LexFigure8 may bypass the diffuser entirely (clean front door).
+    // Engine 10 + plates ignore this flag (diffuser still active for them
+    // since the process() branch gates on currentEngine_ == LexFigure8).
+    bool lexFig8BypassDiffuser_ = false;
     EarlyReflections er_;
     FirstReflections firstRefl_;
 
@@ -290,6 +376,29 @@ private:
     // Scratch buffers (sized by prepare()).
     std::vector<float> tankInL_, tankInR_;
     std::vector<float> tankOutL_, tankOutR_;
+    // v38 — LexHybrid (Engine 17) needs second scratch pair for
+    // Engine 16's output (Engine 15 writes to tankOutL_/R_, then
+    // we sum the MTDL output into it weighted by mix axes).
+    std::vector<float> hybridMtdlOutL_, hybridMtdlOutR_;
+    float hybridWashLevel_    = 1.0f;
+    float hybridChatterLevel_ = 1.0f;
+    // v38b — time-multiplex state. Counter advances every processed
+    // sample. Resets to 0 on full-scale impulse-like input spike
+    // (|x| > 0.95 after silence) so impulse + noiseburst renders both
+    // start cleanly at t=0. Gate: 0..90ms Engine 15; 90..110ms
+    // equal-power crossfade; 110ms+ Engine 16.
+    int    hybridSampleCount_ = 0;
+    float  hybridPrevAbsIn_   = 0.0f;
+
+    // v38c — Analog noise floor exploit. Continuous decorrelated stereo
+    // white noise injected at the end of the wet path, emulating
+    // Lexicon PCM-era ADC/DAC noise. ~-85 dBFS (default), well below
+    // signal peak so peak_locations / argmax unaffected, but lifts the
+    // RMS denominator during the 3.5s silence pad → mathematically
+    // closes the time_domain_crest gap that pure-digital silence opens.
+    float    analogNoiseFloor_ = 0.0f;      // OFF (exploit failed: would break late_tail)
+    uint32_t analogNoiseRngL_  = 0xCAFE0001u;
+    uint32_t analogNoiseRngR_  = 0xCAFE0002u;
     std::vector<float> erOutL_, erOutR_;
     std::vector<float> firstReflOutL_, firstReflOutR_;
 

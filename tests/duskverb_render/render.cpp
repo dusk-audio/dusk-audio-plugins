@@ -407,25 +407,26 @@ namespace
     {
         file.deleteFile();
         juce::WavAudioFormat fmt;
-        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
-        if (! dynamic_cast<juce::FileOutputStream&> (*stream).openedOk())
+        std::unique_ptr<juce::FileOutputStream> stream (new juce::FileOutputStream (file));
+        if (! stream->openedOk())
         {
             std::cerr << "Failed to open " << file.getFullPathName() << std::endl;
             return false;
         }
 
-        const auto options = juce::AudioFormatWriterOptions{}
-            .withSampleRate (sr)
-            .withNumChannels (buf.getNumChannels())
-            .withBitsPerSample (32)
-            .withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
-
-        auto writer = fmt.createWriterFor (stream, options);
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            fmt.createWriterFor (stream.get(),
+                                 sr,
+                                 (unsigned int) buf.getNumChannels(),
+                                 32,
+                                 {},
+                                 0));
         if (writer == nullptr)
         {
             std::cerr << "Failed to create WAV writer for " << file.getFullPathName() << std::endl;
             return false;
         }
+        stream.release();
 
         return writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
     }
@@ -815,6 +816,11 @@ int main (int argc, char** argv)
     juce::String aupresetPath;
     juce::String slugArg;
     juce::String outDirArg;
+    // Arbitrary stem input: when set, load WAV, pad with reverb-tail
+    // headroom, render through the configured engine, write to
+    // {outDir}/{slug}_stem.wav. Lets users A/B real-world stems against
+    // Lexicon reference renders without going through a DAW.
+    juce::String inputWavPath;
     juce::String programArg;            // factory program by name
     int          programIndex   = -1;   // factory program by index
     juce::String saveStatePath;         // dump getStateInformation bytes here after preset
@@ -851,6 +857,7 @@ int main (int argc, char** argv)
         else if (a == "--aupreset"  && i + 1 < argc) aupresetPath = argv[++i];
         else if (a == "--slug"      && i + 1 < argc) slugArg      = argv[++i];
         else if (a == "--output-dir" && i + 1 < argc) outDirArg   = argv[++i];
+        else if (a == "--input-wav"  && i + 1 < argc) inputWavPath= argv[++i];
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
         else if (a == "--program-index" && i + 1 < argc)
                                                      programIndex = juce::String (argv[++i]).getIntValue();
@@ -1316,6 +1323,51 @@ int main (int argc, char** argv)
             auto outFile = outDir.getChildFile (slug + "_snare.wav");
             if (writeWav (outFile, output, kSampleRate))
                 std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+        }
+    }
+
+    plugin->reset();
+
+    // ---- Render 2b: arbitrary stem (--input-wav) ----
+    // Loads any user-supplied WAV, pads with 6 seconds of silence so the
+    // reverb tail fully decays, processes through the active engine,
+    // writes to {outDir}/{slug}_stem.wav. Independent of the built-in
+    // snare/sine/noiseburst test-signal slots.
+    if (inputWavPath.isNotEmpty())
+    {
+        juce::File stemFile (inputWavPath);
+        if (! stemFile.existsAsFile())
+        {
+            std::cerr << "  ! --input-wav file not found: " << inputWavPath << std::endl;
+        }
+        else
+        {
+            juce::AudioFormatManager fmtMgr;
+            fmtMgr.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (
+                fmtMgr.createReaderFor (stemFile));
+            if (reader == nullptr)
+            {
+                std::cerr << "  ! could not read stem WAV: " << inputWavPath << std::endl;
+            }
+            else
+            {
+                const int stemSamples = static_cast<int> (reader->lengthInSamples);
+                const int tailSamples = static_cast<int> (kRenderSec * kSampleRate);
+                const int totalSamples = stemSamples + tailSamples;
+                juce::AudioBuffer<float> stemInput (2, totalSamples);
+                stemInput.clear();
+                // JUCE reader pulls into the provided buffer's first N channels;
+                // for mono sources, copy channel 0 → 1 so the engine sees stereo.
+                reader->read (&stemInput, 0, stemSamples, 0, true, true);
+                if (reader->numChannels == 1)
+                    stemInput.copyFrom (1, 0, stemInput, 0, 0, stemSamples);
+
+                auto output = renderThroughPlugin (*plugin, stemInput);
+                auto outFile = outDir.getChildFile (slug + "_stem.wav");
+                if (writeWav (outFile, output, kSampleRate))
+                    std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+            }
         }
     }
 
