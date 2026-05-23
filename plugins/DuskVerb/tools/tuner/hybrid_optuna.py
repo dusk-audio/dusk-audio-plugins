@@ -152,8 +152,8 @@ def objective (trial):
     if outdir.exists(): shutil.rmtree (outdir)
     outdir.mkdir (parents=True)
 
-    decay      = trial.suggest_float ('decay',           1.0, 4.0)
-    gain_trim  = trial.suggest_float ('gain_trim',      -12.0, 0.0)
+    decay      = trial.suggest_float ('decay',           1.0, 8.0)
+    gain_trim  = trial.suggest_float ('gain_trim',      -12.0, 24.0)
     # Fix B: INDEPENDENT er_level + ring_level (no more zero-sum macro_mix).
     er_level   = trial.suggest_float ('er_level',        0.0, 2.0)
     ring_level = trial.suggest_float ('ring_level',      0.0, 2.0)

@@ -471,6 +471,327 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hybrid_ring_stereo", 1 }, "Hybrid Ring Stereo",
         juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
 
+    // ─── P17 Hall (TrueLex) — ER TDL + FDN tank + post-mix Schroeder AP ─
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_er_level", 1 }, "TrueLex ER Level",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_tank_level", 1 }, "TrueLex Tank Level",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_er_w0", 1 }, "TrueLex ER W0",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_er_w1", 1 }, "TrueLex ER W1",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.65f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_er_w2", 1 }, "TrueLex ER W2",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.45f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_er_w3", 1 }, "TrueLex ER W3",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.30f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex_ap_coeff", 1 }, "TrueLex AP Coeff",
+        juce::NormalisableRange<float> (-0.85f, 0.85f), 0.5f));
+
+    // ─── P18 Hall (TrueLex 16) — 16-ch FDN variant ────────────────────
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_er_level", 1 }, "TrueLex16 ER Level",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_tank_level", 1 }, "TrueLex16 Tank Level",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_er_w0", 1 }, "TrueLex16 ER W0",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_er_w1", 1 }, "TrueLex16 ER W1",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.65f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_er_w2", 1 }, "TrueLex16 ER W2",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.45f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_er_w3", 1 }, "TrueLex16 ER W3",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.30f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_er_w4", 1 }, "TrueLex16 ER W4",
+        juce::NormalisableRange<float> (0.0f, 4.0f), 0.0f));   // C80-only fill tap @ 49ms
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "truelex16_ap_coeff", 1 }, "TrueLex16 AP Coeff",
+        juce::NormalisableRange<float> (-0.85f, 0.85f), 0.5f));
+
+    // ─── P19 Hall (LexFigure8) — exposed structural HF damping ─────
+    // In-loop one-pole damping cutoff. Lower fc = HF dies faster
+    // inside the recirculation loop → closes rt60_per_band 8k/16k
+    // bins that floor at Lex's RT_HiCut spec (4500 Hz).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_struct_hf", 1 }, "LexFig8 Struct HF",
+        juce::NormalisableRange<float> (1000.0f, 16000.0f, 0.0f, 0.3f), 8000.0f));
+
+    // Phase A — Pre-tank ER TDL. 4 taps with independent delay (ms) +
+    // gain (dB) + stereo offset. Defaults seed Lex Med Hall peak_locations
+    // anchor [0.0, 4.0, 7.52, 9.79] ms with progressive -3/-6/-9/-12 dB
+    // attenuation (ITDG decay typical of medium hall ER pattern).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap0_dly", 1 }, "LexFig8 ER Tap0 Dly",
+        juce::NormalisableRange<float> (0.0f, 30.0f, 0.0f, 0.5f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap1_dly", 1 }, "LexFig8 ER Tap1 Dly",
+        juce::NormalisableRange<float> (0.0f, 30.0f, 0.0f, 0.5f), 4.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap2_dly", 1 }, "LexFig8 ER Tap2 Dly",
+        juce::NormalisableRange<float> (0.0f, 30.0f, 0.0f, 0.5f), 7.52f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap3_dly", 1 }, "LexFig8 ER Tap3 Dly",
+        juce::NormalisableRange<float> (0.0f, 30.0f, 0.0f, 0.5f), 9.79f));
+    // ER tap gains default to -60 dB (effectively muted). Engine 15
+    // returns to v5 12/19 baseline by default; tuner can unmute taps
+    // when exploring.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap0_gain", 1 }, "LexFig8 ER Tap0 Gain",
+        juce::NormalisableRange<float> (-60.0f, 6.0f), -60.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap1_gain", 1 }, "LexFig8 ER Tap1 Gain",
+        juce::NormalisableRange<float> (-60.0f, 6.0f), -60.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap2_gain", 1 }, "LexFig8 ER Tap2 Gain",
+        juce::NormalisableRange<float> (-60.0f, 6.0f), -60.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_tap3_gain", 1 }, "LexFig8 ER Tap3 Gain",
+        juce::NormalisableRange<float> (-60.0f, 6.0f), -60.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_er_stereo_offset", 1 }, "LexFig8 ER Stereo Offset",
+        juce::NormalisableRange<float> (-2.0f, 2.0f), 0.20f));
+    // Tank output attenuation 0..1. 1.0 = full tank (Phase A default).
+    // Lower lets ER taps dominate the early window.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_tank_atten", 1 }, "LexFig8 Tank Atten",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+    // Tank INPUT scale 0..1. Pre-attenuates audio fed into tank so
+    // density-AP early peaks (at +0.25/1.27/2.27 ms) shrink while ER
+    // taps stay full amplitude. Key knob for peak_locations_ms PASS.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_tank_in", 1 }, "LexFig8 Tank In",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+    // Tank pre-delay 0..20 ms. Shifts tank density-AP early peaks
+    // PAST ER tap times so peak_locations detector finds ER peaks
+    // as the dominant first 4.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_tank_pdly", 1 }, "LexFig8 Tank PreDly",
+        juce::NormalisableRange<float> (0.0f, 20.0f), 0.0f));
+    // Density-AP jitter depth fraction (0..0.20). Drives the
+    // RandomWalkLFO modulation amplitude on each density allpass —
+    // higher values smear modal comb teeth in 200-500 Hz (target
+    // box_ratio + spectral_crest). Default 0.02 matches the
+    // pre-Phase-B-redux hardcoded value so engine state is unchanged
+    // unless this knob is moved.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_density_jitter", 1 }, "LexFig8 Density Jitter",
+        juce::NormalisableRange<float> (0.0f, 0.20f), 0.02f));
+    // Density-AP jitter rate (Hz). Sub-audio (≤3 Hz typical) keeps the
+    // FM sidebands inaudible while wider depth smears the comb teeth.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_density_rate", 1 }, "LexFig8 Density Rate",
+        juce::NormalisableRange<float> (0.1f, 10.0f), 1.5f));
+    // Phase C — sub-bass band damping (4-band split). Multiply=1.0 default
+    // = neutral / shelf bypassed; values >1 extend sub-bass decay, <1
+    // shorten it independently of the main bass multiplier.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_sub_bass_mult", 1 }, "LexFig8 Sub-Bass Mult",
+        juce::NormalisableRange<float> (0.1f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_sub_bass_xover", 1 }, "LexFig8 Sub-Bass Xover",
+        juce::NormalisableRange<float> (50.0f, 600.0f, 0.0f, 0.5f), 300.0f));
+    // Phase D — in-loop tilt high-shelf at 2 kHz pivot. Negative dB darkens
+    // late tail (centroid drifts DOWN more), positive brightens. Default 0
+    // = neutral / shelf bypassed → Engine 10 + plates unaffected.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_tilt_db_oct", 1 }, "LexFig8 Tilt",
+        juce::NormalisableRange<float> (-6.0f, 6.0f), 0.0f));
+    // Phase F — 4th damping band (air, above 8 kHz). Default 1.0 = neutral
+    // / shelf bypassed → Engine 10 + plates preserved bit-for-bit.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_air_mult", 1 }, "LexFig8 Air Mult",
+        juce::NormalisableRange<float> (0.1f, 4.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_air_xover", 1 }, "LexFig8 Air Xover",
+        juce::NormalisableRange<float> (4000.0f, 12000.0f, 0.0f, 0.5f), 8000.0f));
+    // Phase G — 8-band damping. Per-octave multipliers (idx 0..7 =
+    // 125/250/500/1k/2k/4k/8k/16k Hz). All default 1.0 keeps
+    // eightBandActive_ false → uses ThreeBandDamping (Engine 10 +
+    // plates preserved bit-for-bit when never set).
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String id   = "lexfig8_band_mult_" + juce::String (i);
+        const juce::String name = "LexFig8 Band " + juce::String (i) + " Mult";
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.1f, 4.0f), 1.0f));
+    }
+    // Phase J — per-stage density-AP delay override (ms at 44.1 kHz reference).
+    // 4 stages, default 0 = no override → engine uses hardcoded hall-scale
+    // densityAPBase. Range 0..50 ms covers the Lex peak_locations anchor
+    // span (0/4/7.52/9.79 ms) with headroom. Engine 10 + plates ignore.
+    for (int i = 0; i < 4; ++i)
+    {
+        const juce::String id   = "lexfig8_dap_delay_" + juce::String (i);
+        const juce::String name = "LexFig8 DAP " + juce::String (i) + " Dly";
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.0f, 50.0f), 0.0f));
+    }
+    // Phase K — first-4 output-tap positionFrac overrides per channel
+    // (v28 output-tap rearch). Defaults match DattorroTank::kLeftOutputTaps[0..3]
+    // and kRightOutputTaps[0..3] so the audible behavior is bit-for-bit
+    // identical until the tuner moves them. Range 0.0..1.0 covers full
+    // delay-line span. Engine 10 + plates ignore (each engine owns its
+    // own DattorroTank instance and never calls the new setter).
+    constexpr float kOtapDefaultL[4] = { 0.120f, 0.675f, 0.480f, 0.450f };
+    constexpr float kOtapDefaultR[4] = { 0.140f, 0.710f, 0.520f, 0.410f };
+    for (int i = 0; i < 4; ++i)
+    {
+        const juce::String idL   = "lexfig8_otap_L" + juce::String (i);
+        const juce::String nameL = "LexFig8 OTap L" + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { idL, 1 }, nameL,
+            juce::NormalisableRange<float> (0.0f, 1.0f), kOtapDefaultL[i]));
+        const juce::String idR   = "lexfig8_otap_R" + juce::String (i);
+        const juce::String nameR = "LexFig8 OTap R" + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { idR, 1 }, nameR,
+            juce::NormalisableRange<float> (0.0f, 1.0f), kOtapDefaultR[i]));
+    }
+    // Phase L — per-channel delay1/delay2 base ms override (v29 Lexicon-primes
+    // rearch). 0 = no override → uses Tank::delay1BaseDelay / delay2BaseDelay
+    // (set by setHallScale, hall = 4507 / 3769 L, 4219 / 3299 R samples @
+    // 44.1 kHz = 102.2 / 85.5 / 95.7 / 74.8 ms). Range 0..150 ms covers ±50%
+    // around the hall defaults. Engine 10 + plates ignore.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_del1_L", 1 }, "LexFig8 Del1 L",
+        juce::NormalisableRange<float> (0.0f, 150.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_del1_R", 1 }, "LexFig8 Del1 R",
+        juce::NormalisableRange<float> (0.0f, 150.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_del2_L", 1 }, "LexFig8 Del2 L",
+        juce::NormalisableRange<float> (0.0f, 150.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_del2_R", 1 }, "LexFig8 Del2 R",
+        juce::NormalisableRange<float> (0.0f, 150.0f), 0.0f));
+    // Phase M — per-channel AP1/AP2 base ms override (v30 diffuser rearch).
+    // 0 = no override → tank uses Tank::ap1BaseDelay / ap2BaseDelay (set by
+    // setHallScale, hall = 709/953 AP1, 1871/2749 AP2 @ 44.1 kHz =
+    // 16.1/21.6/42.4/62.3 ms). Range 0..100 ms covers full diffuser reshape.
+    // Engine 10 + plates ignore.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_ap1_L", 1 }, "LexFig8 AP1 L",
+        juce::NormalisableRange<float> (0.0f, 100.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_ap1_R", 1 }, "LexFig8 AP1 R",
+        juce::NormalisableRange<float> (0.0f, 100.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_ap2_L", 1 }, "LexFig8 AP2 L",
+        juce::NormalisableRange<float> (0.0f, 100.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_ap2_R", 1 }, "LexFig8 AP2 R",
+        juce::NormalisableRange<float> (0.0f, 100.0f), 0.0f));
+    // Phase N (v31) — per-channel cross-feed coefficient. Default 1.0 =
+    // Dattorro canonical figure-8 bleed (current behavior). Range 0..2.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_xfd_L", 1 }, "LexFig8 XFd L",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_xfd_R", 1 }, "LexFig8 XFd R",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    // Phase O (v31) — diffuser bypass (LexFigure8 only). Default 0 = diffuser
+    // active (canonical behavior, identical to pre-v31). 1 = skipped entirely.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_bypass_diff", 1 }, "LexFig8 Bypass Diff",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+    // Phase H — transient-gated tank ducker. Depth default 0 = disabled
+    // (Engine 10 + plates never touch these params → preserved). When
+    // depth > 0, envelope follower on raw input modulates per-sample
+    // gain on tank input. ER taps bypass entirely.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_duck_thresh", 1 }, "LexFig8 Duck Thresh",
+        juce::NormalisableRange<float> (0.001f, 1.0f, 0.0f, 0.4f), 0.10f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_duck_atk", 1 }, "LexFig8 Duck Atk",
+        juce::NormalisableRange<float> (0.1f, 50.0f, 0.0f, 0.4f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_duck_rel", 1 }, "LexFig8 Duck Rel",
+        juce::NormalisableRange<float> (0.1f, 500.0f, 0.0f, 0.4f), 8.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lexfig8_duck_depth", 1 }, "LexFig8 Duck Depth",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    // LexiconMTDL (algo 16) tuning surface. ER tap delays are LOCKED at
+    // 0/4/7.52/9.79 ms inside LexiconMTDLEngine — not exposed to the
+    // optimizer because they're the measured Lex Med Hall anchor positions.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mtdl_feedback", 1 }, "MTDL Feedback",
+        juce::NormalisableRange<float> (0.50f, 0.999f, 0.0f, 1.5f), 0.98f));
+    // v35 per-line damping (8) + v36 per-line feedback override (8)
+    // + v36 per-tap ER gain dB (4) + v36 per-line LFO depth ms (8).
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String id   = juce::String ("mtdl_damping_hz_") + juce::String (i);
+        const juce::String name = juce::String ("MTDL Damping Hz ") + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (1000.0f, 18000.0f, 0.0f, 0.3f), 10000.0f));
+    }
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String id   = juce::String ("mtdl_fb_") + juce::String (i);
+        const juce::String name = juce::String ("MTDL Feedback ") + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.5f, 1.5f), 1.0f));
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        const juce::String id   = juce::String ("mtdl_er_tap_gain_db_") + juce::String (i);
+        const juce::String name = juce::String ("MTDL ER Tap Gain dB ") + juce::String (i);
+        const float defaults[4] = { -15.0f, -18.0f, -21.0f, -24.0f };
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (-36.0f, -3.0f), defaults[i]));
+    }
+    // v37 — LFO axes LOCKED to 0..0 (proven toxic to spectral metrics
+    // across 1494 v36 trials). Params retained for state-load compat.
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String id   = juce::String ("mtdl_line_mod_ms_") + juce::String (i);
+        const juce::String name = juce::String ("MTDL Line Mod ms ") + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.0f, 5.0f, 0.0f, 0.5f), 0.0f));
+    }
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mtdl_er_level", 1 }, "MTDL ER Level",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mtdl_late_level", 1 }, "MTDL Late Level",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    // v37 — Schroeder pre-diffuser (multiplies modal density before FDN)
+    // + tilt EQ (one knob targets box_ratio_db).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mtdl_schroeder_coeff", 1 }, "MTDL Schroeder",
+        juce::NormalisableRange<float> (0.0f, 0.95f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mtdl_tilt_db", 1 }, "MTDL Tilt dB",
+        juce::NormalisableRange<float> (-6.0f, 6.0f), 0.0f));
+
+    // v38 — Engine 17 hybrid mix axes. Wash = Engine 15 (Dattorro) output
+    // weight; Chatter = Engine 16 (MTDL) output weight. Linear gain.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_wash_level", 1 }, "Hybrid Wash",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hybrid_chatter_level", 1 }, "Hybrid Chatter",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+
     return layout;
 }
 
@@ -596,6 +917,93 @@ DuskVerbProcessor::DuskVerbProcessor()
     hybridRingSpinParam_      = parameters.getRawParameterValue ("hybrid_ring_spin");
     hybridRingWanderParam_    = parameters.getRawParameterValue ("hybrid_ring_wander");
     hybridRingStereoParam_    = parameters.getRawParameterValue ("hybrid_ring_stereo");
+    truelexERLevelParam_      = parameters.getRawParameterValue ("truelex_er_level");
+    truelexTankLevelParam_    = parameters.getRawParameterValue ("truelex_tank_level");
+    truelexERW0Param_         = parameters.getRawParameterValue ("truelex_er_w0");
+    truelexERW1Param_         = parameters.getRawParameterValue ("truelex_er_w1");
+    truelexERW2Param_         = parameters.getRawParameterValue ("truelex_er_w2");
+    truelexERW3Param_         = parameters.getRawParameterValue ("truelex_er_w3");
+    truelexAPCoeffParam_      = parameters.getRawParameterValue ("truelex_ap_coeff");
+    truelex16ERLevelParam_    = parameters.getRawParameterValue ("truelex16_er_level");
+    truelex16TankLevelParam_  = parameters.getRawParameterValue ("truelex16_tank_level");
+    truelex16ERW0Param_       = parameters.getRawParameterValue ("truelex16_er_w0");
+    truelex16ERW1Param_       = parameters.getRawParameterValue ("truelex16_er_w1");
+    truelex16ERW2Param_       = parameters.getRawParameterValue ("truelex16_er_w2");
+    truelex16ERW3Param_       = parameters.getRawParameterValue ("truelex16_er_w3");
+    truelex16ERW4Param_       = parameters.getRawParameterValue ("truelex16_er_w4");
+    truelex16APCoeffParam_    = parameters.getRawParameterValue ("truelex16_ap_coeff");
+    lexFig8StructHFParam_     = parameters.getRawParameterValue ("lexfig8_struct_hf");
+    lexFig8ERTap0DlyParam_    = parameters.getRawParameterValue ("lexfig8_er_tap0_dly");
+    lexFig8ERTap1DlyParam_    = parameters.getRawParameterValue ("lexfig8_er_tap1_dly");
+    lexFig8ERTap2DlyParam_    = parameters.getRawParameterValue ("lexfig8_er_tap2_dly");
+    lexFig8ERTap3DlyParam_    = parameters.getRawParameterValue ("lexfig8_er_tap3_dly");
+    lexFig8ERTap0GainParam_   = parameters.getRawParameterValue ("lexfig8_er_tap0_gain");
+    lexFig8ERTap1GainParam_   = parameters.getRawParameterValue ("lexfig8_er_tap1_gain");
+    lexFig8ERTap2GainParam_   = parameters.getRawParameterValue ("lexfig8_er_tap2_gain");
+    lexFig8ERTap3GainParam_   = parameters.getRawParameterValue ("lexfig8_er_tap3_gain");
+    lexFig8ERStereoOffsetParam_ = parameters.getRawParameterValue ("lexfig8_er_stereo_offset");
+    lexFig8TankAttenParam_    = parameters.getRawParameterValue ("lexfig8_tank_atten");
+    lexFig8TankInParam_       = parameters.getRawParameterValue ("lexfig8_tank_in");
+    lexFig8TankPDlyParam_     = parameters.getRawParameterValue ("lexfig8_tank_pdly");
+    lexFig8DensityJitterParam_ = parameters.getRawParameterValue ("lexfig8_density_jitter");
+    lexFig8DensityRateParam_   = parameters.getRawParameterValue ("lexfig8_density_rate");
+    lexFig8SubBassMultParam_   = parameters.getRawParameterValue ("lexfig8_sub_bass_mult");
+    lexFig8SubBassXoverParam_  = parameters.getRawParameterValue ("lexfig8_sub_bass_xover");
+    lexFig8TiltParam_          = parameters.getRawParameterValue ("lexfig8_tilt_db_oct");
+    lexFig8AirMultParam_       = parameters.getRawParameterValue ("lexfig8_air_mult");
+    lexFig8AirXoverParam_      = parameters.getRawParameterValue ("lexfig8_air_xover");
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String id = "lexfig8_band_mult_" + juce::String (i);
+        lexFig8BandMultParam_[i] = parameters.getRawParameterValue (id);
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        const juce::String id = "lexfig8_dap_delay_" + juce::String (i);
+        lexFig8DapDelayParam_[i] = parameters.getRawParameterValue (id);
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        lexFig8OTapLParam_[i] = parameters.getRawParameterValue ("lexfig8_otap_L" + juce::String (i));
+        lexFig8OTapRParam_[i] = parameters.getRawParameterValue ("lexfig8_otap_R" + juce::String (i));
+    }
+    lexFig8Del1LParam_       = parameters.getRawParameterValue ("lexfig8_del1_L");
+    lexFig8Del1RParam_       = parameters.getRawParameterValue ("lexfig8_del1_R");
+    lexFig8Del2LParam_       = parameters.getRawParameterValue ("lexfig8_del2_L");
+    lexFig8Del2RParam_       = parameters.getRawParameterValue ("lexfig8_del2_R");
+    lexFig8AP1LParam_        = parameters.getRawParameterValue ("lexfig8_ap1_L");
+    lexFig8AP1RParam_        = parameters.getRawParameterValue ("lexfig8_ap1_R");
+    lexFig8AP2LParam_        = parameters.getRawParameterValue ("lexfig8_ap2_L");
+    lexFig8AP2RParam_        = parameters.getRawParameterValue ("lexfig8_ap2_R");
+    lexFig8XFdLParam_        = parameters.getRawParameterValue ("lexfig8_xfd_L");
+    lexFig8XFdRParam_        = parameters.getRawParameterValue ("lexfig8_xfd_R");
+    lexFig8BypassDiffParam_  = parameters.getRawParameterValue ("lexfig8_bypass_diff");
+    lexFig8DuckThreshParam_  = parameters.getRawParameterValue ("lexfig8_duck_thresh");
+    lexFig8DuckAtkParam_     = parameters.getRawParameterValue ("lexfig8_duck_atk");
+    lexFig8DuckRelParam_     = parameters.getRawParameterValue ("lexfig8_duck_rel");
+    lexFig8DuckDepthParam_   = parameters.getRawParameterValue ("lexfig8_duck_depth");
+
+    mtdlFeedbackParam_  = parameters.getRawParameterValue ("mtdl_feedback");
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String dampId = juce::String ("mtdl_damping_hz_") + juce::String (i);
+        mtdlDampingHzParam_[i] = parameters.getRawParameterValue (dampId);
+        const juce::String fbId = juce::String ("mtdl_fb_") + juce::String (i);
+        mtdlFeedbackAtParam_[i] = parameters.getRawParameterValue (fbId);
+        const juce::String modId = juce::String ("mtdl_line_mod_ms_") + juce::String (i);
+        mtdlLineModMsParam_[i] = parameters.getRawParameterValue (modId);
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        const juce::String erId = juce::String ("mtdl_er_tap_gain_db_") + juce::String (i);
+        mtdlERTapGainDbParam_[i] = parameters.getRawParameterValue (erId);
+    }
+    mtdlERLevelParam_   = parameters.getRawParameterValue ("mtdl_er_level");
+    mtdlLateLevelParam_ = parameters.getRawParameterValue ("mtdl_late_level");
+    mtdlSchroederCoeffParam_ = parameters.getRawParameterValue ("mtdl_schroeder_coeff");
+    mtdlTiltDbParam_         = parameters.getRawParameterValue ("mtdl_tilt_db");
+    hybridWashLevelParam_    = parameters.getRawParameterValue ("hybrid_wash_level");
+    hybridChatterLevelParam_ = parameters.getRawParameterValue ("hybrid_chatter_level");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -953,6 +1361,119 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastHybridRingWander_,    hybridRingWanderParam_->load(),    [this] (float v) { activeEngine_->setHybridRingWander    (v); });
     pushIfChanged (lastHybridRingStereo_,    hybridRingStereoParam_->load(),    [this] (float v) { activeEngine_->setHybridRingStereoWidth (v); });
 
+    // ─── Engine 13 (TrueLex) — 7 axes; tank knobs share Hall (Lex) APVTS ──
+    pushIfChanged (lastTrueLexERLevel_,   truelexERLevelParam_->load(),   [this] (float v) { activeEngine_->setTrueLexERLevel   (v); });
+    pushIfChanged (lastTrueLexTankLevel_, truelexTankLevelParam_->load(), [this] (float v) { activeEngine_->setTrueLexTankLevel (v); });
+    pushIfChanged (lastTrueLexERW0_,      truelexERW0Param_->load(),      [this] (float v) { activeEngine_->setTrueLexERTapWeight (0, v); });
+    pushIfChanged (lastTrueLexERW1_,      truelexERW1Param_->load(),      [this] (float v) { activeEngine_->setTrueLexERTapWeight (1, v); });
+    pushIfChanged (lastTrueLexERW2_,      truelexERW2Param_->load(),      [this] (float v) { activeEngine_->setTrueLexERTapWeight (2, v); });
+    pushIfChanged (lastTrueLexERW3_,      truelexERW3Param_->load(),      [this] (float v) { activeEngine_->setTrueLexERTapWeight (3, v); });
+    pushIfChanged (lastTrueLexAPCoeff_,   truelexAPCoeffParam_->load(),   [this] (float v) { activeEngine_->setTrueLexAPCoeff   (v); });
+
+    // ─── Engine 14 (TrueLex 16) — 7 axes ──────────────────────────────
+    pushIfChanged (lastTrueLex16ERLevel_,   truelex16ERLevelParam_->load(),   [this] (float v) { activeEngine_->setTrueLex16ERLevel   (v); });
+    pushIfChanged (lastTrueLex16TankLevel_, truelex16TankLevelParam_->load(), [this] (float v) { activeEngine_->setTrueLex16TankLevel (v); });
+    pushIfChanged (lastTrueLex16ERW0_,      truelex16ERW0Param_->load(),      [this] (float v) { activeEngine_->setTrueLex16ERTapWeight (0, v); });
+    pushIfChanged (lastTrueLex16ERW1_,      truelex16ERW1Param_->load(),      [this] (float v) { activeEngine_->setTrueLex16ERTapWeight (1, v); });
+    pushIfChanged (lastTrueLex16ERW2_,      truelex16ERW2Param_->load(),      [this] (float v) { activeEngine_->setTrueLex16ERTapWeight (2, v); });
+    pushIfChanged (lastTrueLex16ERW3_,      truelex16ERW3Param_->load(),      [this] (float v) { activeEngine_->setTrueLex16ERTapWeight (3, v); });
+    pushIfChanged (lastTrueLex16ERW4_,      truelex16ERW4Param_->load(),      [this] (float v) { activeEngine_->setTrueLex16ERTapWeight (4, v); });
+    pushIfChanged (lastTrueLex16APCoeff_,   truelex16APCoeffParam_->load(),   [this] (float v) { activeEngine_->setTrueLex16APCoeff   (v); });
+    pushIfChanged (lastLexFig8StructHF_,    lexFig8StructHFParam_->load(),    [this] (float v) { activeEngine_->setLexFig8StructuralHFDamping (v); });
+    pushIfChanged (lastLexFig8ERTap0Dly_,   lexFig8ERTap0DlyParam_->load(),   [this] (float v) { activeEngine_->setLexFig8ERTapDelay (0, v); });
+    pushIfChanged (lastLexFig8ERTap1Dly_,   lexFig8ERTap1DlyParam_->load(),   [this] (float v) { activeEngine_->setLexFig8ERTapDelay (1, v); });
+    pushIfChanged (lastLexFig8ERTap2Dly_,   lexFig8ERTap2DlyParam_->load(),   [this] (float v) { activeEngine_->setLexFig8ERTapDelay (2, v); });
+    pushIfChanged (lastLexFig8ERTap3Dly_,   lexFig8ERTap3DlyParam_->load(),   [this] (float v) { activeEngine_->setLexFig8ERTapDelay (3, v); });
+    pushIfChanged (lastLexFig8ERTap0Gain_,  lexFig8ERTap0GainParam_->load(),  [this] (float v) { activeEngine_->setLexFig8ERTapGainDb (0, v); });
+    pushIfChanged (lastLexFig8ERTap1Gain_,  lexFig8ERTap1GainParam_->load(),  [this] (float v) { activeEngine_->setLexFig8ERTapGainDb (1, v); });
+    pushIfChanged (lastLexFig8ERTap2Gain_,  lexFig8ERTap2GainParam_->load(),  [this] (float v) { activeEngine_->setLexFig8ERTapGainDb (2, v); });
+    pushIfChanged (lastLexFig8ERTap3Gain_,  lexFig8ERTap3GainParam_->load(),  [this] (float v) { activeEngine_->setLexFig8ERTapGainDb (3, v); });
+    pushIfChanged (lastLexFig8ERStereoOffset_, lexFig8ERStereoOffsetParam_->load(), [this] (float v) { activeEngine_->setLexFig8ERStereoOffset (v); });
+    pushIfChanged (lastLexFig8TankAtten_,   lexFig8TankAttenParam_->load(),   [this] (float v) { activeEngine_->setLexFig8TankAtten (v); });
+    pushIfChanged (lastLexFig8TankIn_,      lexFig8TankInParam_->load(),      [this] (float v) { activeEngine_->setLexFig8TankInputScale (v); });
+    pushIfChanged (lastLexFig8TankPDly_,    lexFig8TankPDlyParam_->load(),    [this] (float v) { activeEngine_->setLexFig8TankPreDelay (v); });
+    pushIfChanged (lastLexFig8DensityJitter_, lexFig8DensityJitterParam_->load(), [this] (float v) { activeEngine_->setLexFig8DensityJitterDepth (v); });
+    pushIfChanged (lastLexFig8DensityRate_,   lexFig8DensityRateParam_->load(),   [this] (float v) { activeEngine_->setLexFig8DensityJitterRate  (v); });
+    pushIfChanged (lastLexFig8SubBassMult_,   lexFig8SubBassMultParam_->load(),   [this] (float v) { activeEngine_->setLexFig8SubBassMultiply (v); });
+    pushIfChanged (lastLexFig8SubBassXover_,  lexFig8SubBassXoverParam_->load(),  [this] (float v) { activeEngine_->setLexFig8SubBassCrossover (v); });
+    pushIfChanged (lastLexFig8Tilt_,          lexFig8TiltParam_->load(),          [this] (float v) { activeEngine_->setLexFig8StructuralTilt (v); });
+    pushIfChanged (lastLexFig8AirMult_,       lexFig8AirMultParam_->load(),       [this] (float v) { activeEngine_->setLexFig8AirMultiply  (v); });
+    pushIfChanged (lastLexFig8AirXover_,      lexFig8AirXoverParam_->load(),      [this] (float v) { activeEngine_->setLexFig8AirCrossover (v); });
+    for (int i = 0; i < 8; ++i)
+    {
+        const int bandIdx = i;
+        pushIfChanged (lastLexFig8BandMult_[i], lexFig8BandMultParam_[i]->load(),
+                       [this, bandIdx] (float v) { activeEngine_->setLexFig8BandMultiply (bandIdx, v); });
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        const int stageIdx = i;
+        pushIfChanged (lastLexFig8DapDelay_[i], lexFig8DapDelayParam_[i]->load(),
+                       [this, stageIdx] (float v) { activeEngine_->setLexFig8DensityAPDelayMs (stageIdx, v); });
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        const int tapIdx = i;
+        pushIfChanged (lastLexFig8OTapL_[i], lexFig8OTapLParam_[i]->load(),
+                       [this, tapIdx] (float v) { activeEngine_->setLexFig8OutputTapFraction (0, tapIdx, v); });
+        pushIfChanged (lastLexFig8OTapR_[i], lexFig8OTapRParam_[i]->load(),
+                       [this, tapIdx] (float v) { activeEngine_->setLexFig8OutputTapFraction (1, tapIdx, v); });
+    }
+    pushIfChanged (lastLexFig8Del1L_, lexFig8Del1LParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8DelayBaseMs (0, 0, v); });
+    pushIfChanged (lastLexFig8Del1R_, lexFig8Del1RParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8DelayBaseMs (1, 0, v); });
+    pushIfChanged (lastLexFig8Del2L_, lexFig8Del2LParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8DelayBaseMs (0, 1, v); });
+    pushIfChanged (lastLexFig8Del2R_, lexFig8Del2RParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8DelayBaseMs (1, 1, v); });
+    pushIfChanged (lastLexFig8AP1L_, lexFig8AP1LParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8APBaseMs (0, 0, v); });
+    pushIfChanged (lastLexFig8AP1R_, lexFig8AP1RParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8APBaseMs (1, 0, v); });
+    pushIfChanged (lastLexFig8AP2L_, lexFig8AP2LParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8APBaseMs (0, 1, v); });
+    pushIfChanged (lastLexFig8AP2R_, lexFig8AP2RParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8APBaseMs (1, 1, v); });
+    pushIfChanged (lastLexFig8XFdL_, lexFig8XFdLParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8CrossFeedCoeff (0, v); });
+    pushIfChanged (lastLexFig8XFdR_, lexFig8XFdRParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8CrossFeedCoeff (1, v); });
+    pushIfChanged (lastLexFig8BypassDiff_, lexFig8BypassDiffParam_->load(),
+                   [this] (float v) { activeEngine_->setLexFig8BypassDiffuser (v >= 0.5f); });
+    pushIfChanged (lastLexFig8DuckThresh_, lexFig8DuckThreshParam_->load(), [this] (float v) { activeEngine_->setLexFig8DuckerThreshold (v); });
+    pushIfChanged (lastLexFig8DuckAtk_,    lexFig8DuckAtkParam_->load(),    [this] (float v) { activeEngine_->setLexFig8DuckerAttackMs  (v); });
+    pushIfChanged (lastLexFig8DuckRel_,    lexFig8DuckRelParam_->load(),    [this] (float v) { activeEngine_->setLexFig8DuckerReleaseMs (v); });
+    pushIfChanged (lastLexFig8DuckDepth_,  lexFig8DuckDepthParam_->load(),  [this] (float v) { activeEngine_->setLexFig8DuckerDepth     (v); });
+
+    pushIfChanged (lastMTDLFeedback_,  mtdlFeedbackParam_->load(),  [this] (float v) { activeEngine_->setLexMTDLFeedbackScale (v); });
+    for (int i = 0; i < 8; ++i)
+    {
+        const int idx = i;
+        pushIfChanged (lastMTDLDampingHz_[i], mtdlDampingHzParam_[i]->load(),
+                       [this, idx] (float v) { activeEngine_->setLexMTDLDampingHzAt (idx, v); });
+        pushIfChanged (lastMTDLFeedbackAt_[i], mtdlFeedbackAtParam_[i]->load(),
+                       [this, idx] (float v) { activeEngine_->setLexMTDLFeedbackAt (idx, v); });
+        pushIfChanged (lastMTDLLineModMs_[i], mtdlLineModMsParam_[i]->load(),
+                       [this, idx] (float v) { activeEngine_->setLexMTDLLineModDepthMsAt (idx, v); });
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        const int idx = i;
+        pushIfChanged (lastMTDLERTapGainDb_[i], mtdlERTapGainDbParam_[i]->load(),
+                       [this, idx] (float v) { activeEngine_->setLexMTDLERTapGainDbAt (idx, v); });
+    }
+    pushIfChanged (lastMTDLERLevel_,   mtdlERLevelParam_->load(),   [this] (float v) { activeEngine_->setLexMTDLERLevel       (v); });
+    pushIfChanged (lastMTDLLateLevel_, mtdlLateLevelParam_->load(), [this] (float v) { activeEngine_->setLexMTDLLateLevel     (v); });
+    pushIfChanged (lastMTDLSchroederCoeff_, mtdlSchroederCoeffParam_->load(),
+                   [this] (float v) { activeEngine_->setLexMTDLSchroederCoeff (v); });
+    pushIfChanged (lastMTDLTiltDb_, mtdlTiltDbParam_->load(),
+                   [this] (float v) { activeEngine_->setLexMTDLTiltDb (v); });
+    pushIfChanged (lastHybridWashLevel_,    hybridWashLevelParam_->load(),
+                   [this] (float v) { activeEngine_->setLexHybridWashLevel    (v); });
+    pushIfChanged (lastHybridChatterLevel_, hybridChatterLevelParam_->load(),
+                   [this] (float v) { activeEngine_->setLexHybridChatterLevel (v); });
+
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
     // signal is added AFTER any preset crossfade and stays correlated
@@ -1308,6 +1829,83 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setHybridRingWander      (hybridRingWanderParam_->load());
     target->setHybridRingStereoWidth (hybridRingStereoParam_->load());
 
+    target->setTrueLexERLevel      (truelexERLevelParam_->load());
+    target->setTrueLexTankLevel    (truelexTankLevelParam_->load());
+    target->setTrueLexERTapWeight  (0, truelexERW0Param_->load());
+    target->setTrueLexERTapWeight  (1, truelexERW1Param_->load());
+    target->setTrueLexERTapWeight  (2, truelexERW2Param_->load());
+    target->setTrueLexERTapWeight  (3, truelexERW3Param_->load());
+    target->setTrueLexAPCoeff      (truelexAPCoeffParam_->load());
+
+    target->setTrueLex16ERLevel      (truelex16ERLevelParam_->load());
+    target->setTrueLex16TankLevel    (truelex16TankLevelParam_->load());
+    target->setTrueLex16ERTapWeight  (0, truelex16ERW0Param_->load());
+    target->setTrueLex16ERTapWeight  (1, truelex16ERW1Param_->load());
+    target->setTrueLex16ERTapWeight  (2, truelex16ERW2Param_->load());
+    target->setTrueLex16ERTapWeight  (3, truelex16ERW3Param_->load());
+    target->setTrueLex16ERTapWeight  (4, truelex16ERW4Param_->load());
+    target->setTrueLex16APCoeff      (truelex16APCoeffParam_->load());
+    target->setLexFig8StructuralHFDamping (lexFig8StructHFParam_->load());
+    target->setLexFig8ERTapDelay     (0, lexFig8ERTap0DlyParam_->load());
+    target->setLexFig8ERTapDelay     (1, lexFig8ERTap1DlyParam_->load());
+    target->setLexFig8ERTapDelay     (2, lexFig8ERTap2DlyParam_->load());
+    target->setLexFig8ERTapDelay     (3, lexFig8ERTap3DlyParam_->load());
+    target->setLexFig8ERTapGainDb    (0, lexFig8ERTap0GainParam_->load());
+    target->setLexFig8ERTapGainDb    (1, lexFig8ERTap1GainParam_->load());
+    target->setLexFig8ERTapGainDb    (2, lexFig8ERTap2GainParam_->load());
+    target->setLexFig8ERTapGainDb    (3, lexFig8ERTap3GainParam_->load());
+    target->setLexFig8ERStereoOffset (lexFig8ERStereoOffsetParam_->load());
+    target->setLexFig8TankAtten      (lexFig8TankAttenParam_->load());
+    target->setLexFig8TankInputScale (lexFig8TankInParam_->load());
+    target->setLexFig8TankPreDelay   (lexFig8TankPDlyParam_->load());
+    target->setLexFig8DensityJitterDepth (lexFig8DensityJitterParam_->load());
+    target->setLexFig8DensityJitterRate  (lexFig8DensityRateParam_->load());
+    target->setLexFig8SubBassMultiply  (lexFig8SubBassMultParam_->load());
+    target->setLexFig8SubBassCrossover (lexFig8SubBassXoverParam_->load());
+    target->setLexFig8StructuralTilt   (lexFig8TiltParam_->load());
+    target->setLexFig8AirMultiply      (lexFig8AirMultParam_->load());
+    target->setLexFig8AirCrossover     (lexFig8AirXoverParam_->load());
+    for (int i = 0; i < 8; ++i)
+        target->setLexFig8BandMultiply (i, lexFig8BandMultParam_[i]->load());
+    for (int i = 0; i < 4; ++i)
+        target->setLexFig8DensityAPDelayMs (i, lexFig8DapDelayParam_[i]->load());
+    for (int i = 0; i < 4; ++i)
+    {
+        target->setLexFig8OutputTapFraction (0, i, lexFig8OTapLParam_[i]->load());
+        target->setLexFig8OutputTapFraction (1, i, lexFig8OTapRParam_[i]->load());
+    }
+    target->setLexFig8DelayBaseMs (0, 0, lexFig8Del1LParam_->load());
+    target->setLexFig8DelayBaseMs (1, 0, lexFig8Del1RParam_->load());
+    target->setLexFig8DelayBaseMs (0, 1, lexFig8Del2LParam_->load());
+    target->setLexFig8DelayBaseMs (1, 1, lexFig8Del2RParam_->load());
+    target->setLexFig8APBaseMs (0, 0, lexFig8AP1LParam_->load());
+    target->setLexFig8APBaseMs (1, 0, lexFig8AP1RParam_->load());
+    target->setLexFig8APBaseMs (0, 1, lexFig8AP2LParam_->load());
+    target->setLexFig8APBaseMs (1, 1, lexFig8AP2RParam_->load());
+    target->setLexFig8CrossFeedCoeff (0, lexFig8XFdLParam_->load());
+    target->setLexFig8CrossFeedCoeff (1, lexFig8XFdRParam_->load());
+    target->setLexFig8BypassDiffuser (lexFig8BypassDiffParam_->load() >= 0.5f);
+    target->setLexFig8DuckerThreshold  (lexFig8DuckThreshParam_->load());
+    target->setLexFig8DuckerAttackMs   (lexFig8DuckAtkParam_->load());
+    target->setLexFig8DuckerReleaseMs  (lexFig8DuckRelParam_->load());
+    target->setLexFig8DuckerDepth      (lexFig8DuckDepthParam_->load());
+
+    target->setLexMTDLFeedbackScale (mtdlFeedbackParam_->load());
+    for (int i = 0; i < 8; ++i)
+    {
+        target->setLexMTDLDampingHzAt (i, mtdlDampingHzParam_[i]->load());
+        target->setLexMTDLFeedbackAt  (i, mtdlFeedbackAtParam_[i]->load());
+        target->setLexMTDLLineModDepthMsAt (i, mtdlLineModMsParam_[i]->load());
+    }
+    for (int i = 0; i < 4; ++i)
+        target->setLexMTDLERTapGainDbAt (i, mtdlERTapGainDbParam_[i]->load());
+    target->setLexMTDLERLevel       (mtdlERLevelParam_->load());
+    target->setLexMTDLLateLevel     (mtdlLateLevelParam_->load());
+    target->setLexMTDLSchroederCoeff (mtdlSchroederCoeffParam_->load());
+    target->setLexMTDLTiltDb         (mtdlTiltDbParam_->load());
+    target->setLexHybridWashLevel    (hybridWashLevelParam_->load());
+    target->setLexHybridChatterLevel (hybridChatterLevelParam_->load());
+
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
     // it picks up the new preset's value without re-pushing here.
@@ -1430,6 +2028,65 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastHybridRingSpin_      = hybridRingSpinParam_->load();
     lastHybridRingWander_    = hybridRingWanderParam_->load();
     lastHybridRingStereo_    = hybridRingStereoParam_->load();
+    lastTrueLexERLevel_      = truelexERLevelParam_->load();
+    lastTrueLexTankLevel_    = truelexTankLevelParam_->load();
+    lastTrueLexERW0_         = truelexERW0Param_->load();
+    lastTrueLexERW1_         = truelexERW1Param_->load();
+    lastTrueLexERW2_         = truelexERW2Param_->load();
+    lastTrueLexERW3_         = truelexERW3Param_->load();
+    lastTrueLexAPCoeff_      = truelexAPCoeffParam_->load();
+    lastTrueLex16ERLevel_    = truelex16ERLevelParam_->load();
+    lastTrueLex16TankLevel_  = truelex16TankLevelParam_->load();
+    lastTrueLex16ERW0_       = truelex16ERW0Param_->load();
+    lastTrueLex16ERW1_       = truelex16ERW1Param_->load();
+    lastTrueLex16ERW2_       = truelex16ERW2Param_->load();
+    lastTrueLex16ERW3_       = truelex16ERW3Param_->load();
+    lastTrueLex16ERW4_       = truelex16ERW4Param_->load();
+    lastTrueLex16APCoeff_    = truelex16APCoeffParam_->load();
+    lastLexFig8StructHF_     = lexFig8StructHFParam_->load();
+    lastLexFig8ERTap0Dly_    = lexFig8ERTap0DlyParam_->load();
+    lastLexFig8ERTap1Dly_    = lexFig8ERTap1DlyParam_->load();
+    lastLexFig8ERTap2Dly_    = lexFig8ERTap2DlyParam_->load();
+    lastLexFig8ERTap3Dly_    = lexFig8ERTap3DlyParam_->load();
+    lastLexFig8ERTap0Gain_   = lexFig8ERTap0GainParam_->load();
+    lastLexFig8ERTap1Gain_   = lexFig8ERTap1GainParam_->load();
+    lastLexFig8ERTap2Gain_   = lexFig8ERTap2GainParam_->load();
+    lastLexFig8ERTap3Gain_   = lexFig8ERTap3GainParam_->load();
+    lastLexFig8ERStereoOffset_ = lexFig8ERStereoOffsetParam_->load();
+    lastLexFig8TankAtten_    = lexFig8TankAttenParam_->load();
+    lastLexFig8TankIn_       = lexFig8TankInParam_->load();
+    lastLexFig8TankPDly_     = lexFig8TankPDlyParam_->load();
+    lastLexFig8DensityJitter_ = lexFig8DensityJitterParam_->load();
+    lastLexFig8DensityRate_   = lexFig8DensityRateParam_->load();
+    lastLexFig8SubBassMult_   = lexFig8SubBassMultParam_->load();
+    lastLexFig8SubBassXover_  = lexFig8SubBassXoverParam_->load();
+    lastLexFig8Tilt_          = lexFig8TiltParam_->load();
+    lastLexFig8AirMult_       = lexFig8AirMultParam_->load();
+    lastLexFig8AirXover_      = lexFig8AirXoverParam_->load();
+    for (int i = 0; i < 8; ++i)
+        lastLexFig8BandMult_[i] = lexFig8BandMultParam_[i]->load();
+    for (int i = 0; i < 4; ++i)
+        lastLexFig8DapDelay_[i] = lexFig8DapDelayParam_[i]->load();
+    for (int i = 0; i < 4; ++i)
+    {
+        lastLexFig8OTapL_[i] = lexFig8OTapLParam_[i]->load();
+        lastLexFig8OTapR_[i] = lexFig8OTapRParam_[i]->load();
+    }
+    lastLexFig8Del1L_ = lexFig8Del1LParam_->load();
+    lastLexFig8Del1R_ = lexFig8Del1RParam_->load();
+    lastLexFig8Del2L_ = lexFig8Del2LParam_->load();
+    lastLexFig8Del2R_ = lexFig8Del2RParam_->load();
+    lastLexFig8AP1L_  = lexFig8AP1LParam_->load();
+    lastLexFig8AP1R_  = lexFig8AP1RParam_->load();
+    lastLexFig8AP2L_  = lexFig8AP2LParam_->load();
+    lastLexFig8AP2R_  = lexFig8AP2RParam_->load();
+    lastLexFig8XFdL_  = lexFig8XFdLParam_->load();
+    lastLexFig8XFdR_  = lexFig8XFdRParam_->load();
+    lastLexFig8BypassDiff_ = lexFig8BypassDiffParam_->load();
+    lastLexFig8DuckThresh_ = lexFig8DuckThreshParam_->load();
+    lastLexFig8DuckAtk_    = lexFig8DuckAtkParam_->load();
+    lastLexFig8DuckRel_    = lexFig8DuckRelParam_->load();
+    lastLexFig8DuckDepth_  = lexFig8DuckDepthParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();

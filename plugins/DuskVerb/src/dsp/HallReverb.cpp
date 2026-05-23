@@ -13,8 +13,6 @@ constexpr float HallReverb::kDefaultSpecularTimesMs[HallReverb::kNumSpecularTaps
 constexpr float HallReverb::kDefaultSpecularWeights[HallReverb::kNumSpecularTaps];
 constexpr float HallReverb::kSpecularSignL[HallReverb::kNumSpecularTaps];
 constexpr float HallReverb::kSpecularSignR[HallReverb::kNumSpecularTaps];
-constexpr int   HallReverb::kInputDiffPrimesL[HallReverb::InputDiffuser::kStages];
-constexpr int   HallReverb::kInputDiffPrimesR[HallReverb::InputDiffuser::kStages];
 
 // APVTS maximum for tap times (matches the hall_tap_N_ms NormalisableRange
 // in PluginProcessor::createParameterLayout). The predelay ring buffer is
@@ -42,27 +40,9 @@ namespace
     // Primes are mutually coprime within each band so no two channels in
     // a SubTank share a modal period (Hadamard mixing depends on this for
     // its decorrelation guarantee).
-    // P12 16-channel expansion. Doubled per-band coprime prime sets;
-    // additional primes extend each band's range upward to add longer
-    // loops alongside the original short ones (richer modal spread and
-    // longer EDT decorrelation per band). All primes mutually coprime
-    // within each set + across sets to keep modal frequencies
-    // non-overlapping; verified vs HallSubTank::kInlineAPDelays.
-    //   Bass:   1543..2417  (orig 8) + 2549..3433  (new 8) — 1500..3400 range
-    //   Mid:     541..809   (orig 8) +  829..1021  (new 8) — 540..1020 range
-    //   Treble:  211..331   (orig 8) +  347..433   (new 8) — 210..435 range
-    constexpr int kBassDelays  [16] = {
-        1543, 1607, 1721, 1847, 1993, 2143, 2281, 2417,
-        2549, 2671, 2789, 2917, 3037, 3169, 3299, 3433
-    };
-    constexpr int kMidDelays   [16] = {
-         541,  571,  613,  643,  683,  719,  761,  809,
-         829,  853,  881,  907,  937,  967,  991, 1021
-    };
-    constexpr int kTrebleDelays[16] = {
-         211,  227,  239,  257,  271,  283,  307,  331,
-         347,  359,  367,  379,  389,  401,  421,  433
-    };
+    constexpr int kBassDelays  [8] = { 1543, 1607, 1721, 1847, 1993, 2143, 2281, 2417 };
+    constexpr int kMidDelays   [8] = {  541,  571,  613,  643,  683,  719,  761,  809 };
+    constexpr int kTrebleDelays[8] = {  211,  227,  239,  257,  271,  283,  307,  331 };
 
     // Anti-correlated LFO phase offsets per band — bass / mid / treble each
     // see a different sub-tank modulation pattern. Keeps periodicity from
@@ -133,14 +113,6 @@ void HallReverb::prepare (double sampleRate, int maxBlockSize)
     midOutL_  .assign (sz, 0.0f); midOutR_  .assign (sz, 0.0f);
     trebleOutL_.assign (sz, 0.0f); trebleOutR_.assign (sz, 0.0f);
     specularInL_.assign (sz, 0.0f); specularInR_.assign (sz, 0.0f);
-
-    // P14 input diffuser — L+R independently primed with different prime
-    // sets for stereo decorrelation. Buffers allocated to nextPowerOf2
-    // of (max_prime × sr_ratio + 4).
-    inputDiffL_.prepareWithPrimes (sampleRate, kInputDiffPrimesL);
-    inputDiffR_.prepareWithPrimes (sampleRate, kInputDiffPrimesR);
-    inputDiffL_.g = inputDiffusion_;
-    inputDiffR_.g = inputDiffusion_;
 
     prepared_ = true;
     updateSubTankDecays();
@@ -369,7 +341,6 @@ void HallReverb::clearBuffers()
     bassShelfL_.reset();   bassShelfR_.reset();
     midShelfL_.reset();    midShelfR_.reset();
     trebleShelfL_.reset(); trebleShelfR_.reset();
-    inputDiffL_.clear();   inputDiffR_.clear();
 }
 
 void HallReverb::updateCrossovers()
@@ -445,14 +416,6 @@ void HallReverb::process (const float* inputL, const float* inputR,
 
             sumL *= tapNorm_;
             sumR *= tapNorm_;
-
-            // P14 pre-tank input diffusion — Lex/Dattorro 4-stage Schroeder
-            // allpass cascade. Smears phase + builds echo density BEFORE
-            // the LR4 split feeds the late tank. L/R use independently-
-            // primed cascades so the diffuser preserves stereo image.
-            // Specular path (above) bypasses this — its taps stay clean.
-            sumL = inputDiffL_.process (sumL);
-            sumR = inputDiffR_.process (sumR);
 
             float bL, mL, tL, bR, mR, tR;
             splitL_.split (sumL, bL, mL, tL);
@@ -556,8 +519,11 @@ void HallReverb::process (const float* inputL, const float* inputR,
             specularLP1StateR_ = a1 * rawSpecR + oma * specularLP1StateR_;
             specularLP2StateL_ = a1 * specularLP1StateL_ + oma * specularLP2StateL_;
             specularLP2StateR_ = a1 * specularLP1StateR_ + oma * specularLP2StateR_;
-            oL += specularLP2StateL_;
-            oR += specularLP2StateR_;
+            if (specularEnabled_)
+            {
+                oL += specularLP2StateL_;
+                oR += specularLP2StateR_;
+            }
 
             if (doSat)
             {
@@ -773,13 +739,6 @@ void HallReverb::setTrebleShelfFc (float hz)
     const float sr = static_cast<float> (sampleRate_);
     trebleShelfL_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
     trebleShelfR_.designHighShelf (trebleShelfFc_, trebleShelfGainDb_, sr);
-}
-
-void HallReverb::setInputDiffusion (float g)
-{
-    inputDiffusion_ = std::clamp (g, 0.0f, 0.85f);
-    inputDiffL_.g = inputDiffusion_;
-    inputDiffR_.g = inputDiffusion_;
 }
 
 void HallReverb::setBassGain   (float g) { gainBass_   = std::max (0.0f, g); }

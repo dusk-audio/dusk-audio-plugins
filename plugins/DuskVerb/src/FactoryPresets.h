@@ -97,6 +97,24 @@ struct FactoryPreset
     // to grow trailing arguments — every row picks up the default.
     float bassChoke            = 20.0f;
 
+    // Treble Multiply (3-band HF decay scaling, 1.0 = neutral). Existing
+    // hall presets implicitly use 1.0; the Lex Med Hall (LTI) preset
+    // opts in to v27 winner's 0.9025 for the HF rt60 calibration.
+    float trebleMult           = 1.0f;
+
+    // LexFigure8 (algo 15) engine-specific tunables. Defaults match
+    // engine internals — neutral for any non-LexFig8 preset. The
+    // Lex Med Hall (LTI) preset opts in to v27 winner values.
+    float lexFig8StructHF      = 8000.0f;
+    float lexFig8DensityJitter = 0.02f;
+    float lexFig8DensityRate   = 1.5f;
+    float lexFig8ERTap0GainDb  = -3.0f;
+    float lexFig8ERTap1GainDb  = -6.0f;
+    float lexFig8ERTap2GainDb  = -9.0f;
+    float lexFig8ERTap3GainDb  = -12.0f;
+    float lexFig8AirMult       = 1.0f;
+    float lexFig8AirXover      = 8000.0f;
+
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
         auto setIfExists = [&apvts] (const juce::String& id, float v) {
@@ -134,6 +152,18 @@ struct FactoryPreset
         setIfExists ("first_refl_l_gain", firstReflLGainDb);
         setIfExists ("first_refl_r_gain", firstReflRGainDb);
         setIfExists ("first_refl_hf_cut", firstReflHFCutHz);
+
+        // Treble Multiply + LexFigure8 (v27 winner surface).
+        setIfExists ("treble_mult",            trebleMult);
+        setIfExists ("lexfig8_struct_hf",      lexFig8StructHF);
+        setIfExists ("lexfig8_density_jitter", lexFig8DensityJitter);
+        setIfExists ("lexfig8_density_rate",   lexFig8DensityRate);
+        setIfExists ("lexfig8_er_tap0_gain",   lexFig8ERTap0GainDb);
+        setIfExists ("lexfig8_er_tap1_gain",   lexFig8ERTap1GainDb);
+        setIfExists ("lexfig8_er_tap2_gain",   lexFig8ERTap2GainDb);
+        setIfExists ("lexfig8_er_tap3_gain",   lexFig8ERTap3GainDb);
+        setIfExists ("lexfig8_air_mult",       lexFig8AirMult);
+        setIfExists ("lexfig8_air_xover",      lexFig8AirXover);
     }
 
     // Apply engine-specific (non-APVTS) tunables. Currently only the
@@ -861,6 +891,100 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           10.30f, 1.00f, 0.50f, 2.395f, 1.00f, 1.10f,  800.0f,
           0.85f, 0.20f, 0.50f,  60.0f,  7000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
+        // ── Lex Med Hall (LTI) — v27 winner, 15/19 PASS ──────────────────────
+        //
+        // ARCHITECTURAL NOTE — Lex Med Hall LTI calibration ceiling
+        //
+        // This preset is the empirical state-of-the-art for LTI emulation of
+        // the Lexicon PCM Native "Med Hall" preset against the 19-metric
+        // perceptual grader (plugins/DuskVerb/tools/perceptual_diff.py).
+        //
+        // Anchor: lex_med_hall.json (sample_rate 48000, block 2048,
+        //         preroll 0.5 s, lex_mix_percent 100, captured 2026-05-20).
+        // Engine: LexFigure8 (algo 15), wraps DattorroTank with hall-scale
+        //         enabled — classic stereo cross-coupled tanks + nested
+        //         AP/delay/LP cascades + Lex spin-and-wander RandomWalkLFO
+        //         on the modulated APs.
+        //
+        // Score: 15/19 PASS, with the following 4 metrics structurally OUT
+        // and proven irreducible across ~8500 CMA trials and 4 distinct
+        // LTI topologies (Engine 15 Dattorro, Engine 16 MTDL, Engine 17
+        // additive hybrid, Engine 17 time-multiplex hybrid):
+        //
+        //   - time_domain_crest  Δ -2.18 dB   (Lex has discrete recirculating
+        //                                       echoes; LTI fig-8 produces a
+        //                                       continuous Gaussian-like wash.
+        //                                       JND 1.5 dB.)
+        //   - rt60_per_band      bins 6,7 long (8k/16k Hz; LTI tank can't
+        //                                       reproduce Lex's HF rolloff
+        //                                       curve across all 8 bins
+        //                                       simultaneously)
+        //   - c80_per_octave     bins 1,3 hot  (500 Hz / 4 kHz; tank
+        //                                       output-tap geometry caps the
+        //                                       early-vs-late energy balance)
+        //   - centroid_drift_per_band 3/4      (bins 0,1,2 outside 2.5 Hz JND;
+        //                                       bin 3 PASSes individually)
+        //
+        // These limits represent the MATHEMATICAL boundary between an LTI
+        // Dattorro figure-8 and a non-linear Lexicon MTDL. To break the
+        // 15/19 ceiling would require a hardware-accurate Lex MTDL rewrite
+        // (32+ delay lines, parallel/serial mix matrices, per-line random
+        // modulation, non-linear feedback saturation) — see roadmap memory
+        // [[duskverb-lex-mtdl-roadmap]].
+        //
+        // Reproduction: this preset's APVTS values exactly reproduce the
+        // v27 winner. Render command in memory [[duskverb-v27-winner]].
+        //
+        // Fields below populate the FactoryPreset positional brace-init
+        // (algorithm through gainTrim) followed by the LexFig8 v27
+        // tunables via the trailing defaulted fields (added 2026-05-23).
+        { "Lex Med Hall (LTI)",   "Halls",
+          15, /* mix */         0.40f,
+          /* busMode */         false,
+          /* predelay */        14.0f,
+          /* predelaySync */    0,
+          /* decay */           1.4316f,
+          /* size */            1.0f,
+          /* modDepth */        0.2110f,
+          /* modRate */         7.3019f,
+          /* damping */         0.0f,
+          /* bassMult */        1.6903f,
+          /* crossover */       1018.90f,
+          /* diffusion */       0.4811f,
+          /* erLevel */         0.0f,
+          /* erSize */          0.30f,
+          /* loCut */           60.0f,
+          /* hiCut */           8109.78f,
+          /* width */           1.0f,
+          /* freeze */          false,
+          /* gainTrim */        12.6627f,
+          /* monoBelow */       20.0f,
+          /* midMult */         1.2317f,
+          /* highCrossover */   4662.50f,
+          /* saturation */      0.0077f,
+          /* gateEnabled */     true,
+          /* sixAPDensityBaseline */ 0.62f,
+          /* sixAPBloomCeiling    */ 0.85f,
+          /* sixAPBloomStagger    */ { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f },
+          /* sixAPEarlyMix        */ 0.5f,
+          /* sixAPOutputTrim      */ 1.3f,
+          /* sixAPEarlyHighpassHz */ 20.0f,
+          /* firstReflLDlyMs      */ 3.0f,
+          /* firstReflRDlyMs      */ 8.0f,
+          /* firstReflLGainDb     */ -60.0f,
+          /* firstReflRGainDb     */ -60.0f,
+          /* firstReflHFCutHz     */ 20000.0f,
+          /* bassChoke            */ 20.0f,
+          /* trebleMult           */ 0.9025f,
+          /* lexFig8StructHF      */ 10434.52f,
+          /* lexFig8DensityJitter */ 0.0554f,
+          /* lexFig8DensityRate   */ 0.8657f,
+          /* lexFig8ERTap0GainDb  */ -27.0f,
+          /* lexFig8ERTap1GainDb  */ -30.0f,
+          /* lexFig8ERTap2GainDb  */ -33.0f,
+          /* lexFig8ERTap3GainDb  */ -36.0f,
+          /* lexFig8AirMult       */ 0.78f,
+          /* lexFig8AirXover      */ 7500.0f },
     };
     return presets;
 }

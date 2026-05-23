@@ -35,57 +35,40 @@ static inline float lcgSigned (uint32_t& state)
 
 namespace
 {
-    // Per-channel LFO phase seeds — distinct fractions of 2π so the 16
-    // channels never line up periodically. Acts on top of the SubTank's
-    // bandPhaseOffset_ (the per-band offset HallReverb sets to stagger
-    // bass / mid / treble). P12 expanded from 8 → 16 with the seeds at
-    // 2π·k/16 for k=0..15.
+    // Per-channel LFO phase seeds — distinct fractions of 2π so the 8 channels
+    // never line up periodically. Acts on top of the SubTank's
+    // bandPhaseOffset_ (the per-band offset HallReverb sets to stagger bass /
+    // mid / treble).
     constexpr float kChannelPhaseSeeds[HallSubTank::N] = {
-        0.0000f, 0.3927f, 0.7854f, 1.1781f, 1.5708f, 1.9635f, 2.3562f, 2.7489f,
-        3.1416f, 3.5343f, 3.9270f, 4.3197f, 4.7124f, 5.1051f, 5.4978f, 5.8905f
+        0.000f, 0.785f, 1.571f, 2.356f, 3.142f, 3.927f, 4.712f, 5.498f
     };
 
-    // 1/√16 — kept file-local so the kernel doesn't depend on a private
+    // 1/√8 — kept file-local so the kernel doesn't depend on a private
     // class constant. Identical numerical value to HallSubTank::kHadamardNorm.
-    constexpr float kInternalHadamardNorm = 0.25f;
+    constexpr float kInternalHadamardNorm = 0.353553390593274f;
 
-    // In-place 16-channel Hadamard transform (1/√16 normalized). 4
-    // butterfly passes for the 16 = 2^4 case: pairs → quads → octets →
-    // halves. Normalization applied once at the final pass to keep the
-    // matrix unitary (energy-preserving). P12 expanded from hadamard8 to
-    // densify modal field across each band's feedback loops.
-    inline void hadamard16 (float* d)
+    // In-place 8-channel Hadamard transform (1/√8 normalized). Same kernel as
+    // FDNReverbSIMDKernels::hadamardInPlace8 — duplicated here as a private
+    // static so HallSubTank doesn't depend on the FDN-flavoured SIMD header.
+    inline void hadamard8 (float* d)
     {
-        // Pass 1: adjacent pairs (n=2 butterfly).
-        for (int i = 0; i < 16; i += 2)
+        for (int i = 0; i < 8; i += 2)
         {
             const float a = d[i], b = d[i + 1];
             d[i] = a + b; d[i + 1] = a - b;
         }
-        // Pass 2: adjacent quads (n=4 butterfly).
-        for (int i = 0; i < 16; i += 4)
+        for (int i = 0; i < 8; i += 4)
         {
-            const float a0 = d[i],     a1 = d[i + 1];
-            const float b0 = d[i + 2], b1 = d[i + 3];
+            float a0 = d[i], a1 = d[i + 1];
+            float b0 = d[i + 2], b1 = d[i + 3];
             d[i]     = a0 + b0; d[i + 1] = a1 + b1;
             d[i + 2] = a0 - b0; d[i + 3] = a1 - b1;
         }
-        // Pass 3: adjacent octets (n=8 butterfly).
-        for (int i = 0; i < 16; i += 8)
+        for (int j = 0; j < 4; ++j)
         {
-            for (int j = 0; j < 4; ++j)
-            {
-                const float a = d[i + j], b = d[i + j + 4];
-                d[i + j]     = a + b;
-                d[i + j + 4] = a - b;
-            }
-        }
-        // Pass 4: lower vs upper half (n=16 butterfly), apply norm here.
-        for (int j = 0; j < 8; ++j)
-        {
-            const float a = d[j], b = d[j + 8];
+            const float a = d[j], b = d[j + 4];
             d[j]     = (a + b) * kInternalHadamardNorm;
-            d[j + 8] = (a - b) * kInternalHadamardNorm;
+            d[j + 4] = (a - b) * kInternalHadamardNorm;
         }
     }
 }
@@ -98,35 +81,27 @@ constexpr int   HallSubTank::kLeftTaps  [HallSubTank::kNumOutputTaps];
 constexpr int   HallSubTank::kRightTaps [HallSubTank::kNumOutputTaps];
 constexpr float HallSubTank::kLeftSigns [HallSubTank::kNumOutputTaps];
 constexpr float HallSubTank::kRightSigns[HallSubTank::kNumOutputTaps];
-constexpr int   HallSubTank::kChainPrimes[HallSubTank::N][HallSubTank::kChainStages];
+constexpr int   HallSubTank::kInlineAPDelays[HallSubTank::N];
 
 HallSubTank::HallSubTank()
 {
-    // Default base delays: small primes in the 200-1200 sample range at
-    // 44.1k. Caller should override via prepare() with band-appropriate
-    // primes. P12 expanded from 8 → 16 entries.
-    constexpr int kDefaults[N] = {
-        281, 311, 353, 401, 449, 503, 569, 631,
-        701, 743, 811, 859, 919, 983, 1051, 1117
-    };
+    // Default base delays: small primes in the 200-1000 sample range at 44.1k.
+    // Caller should override via prepare() with band-appropriate primes.
+    constexpr int kDefaults[N] = { 281, 311, 353, 401, 449, 503, 569, 631 };
     std::memcpy (baseDelays_, kDefaults, sizeof (baseDelays_));
 }
 
-void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
+void HallSubTank::prepare (double sampleRate, const int* baseDelays8,
                            int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
-    if (baseDelaysN != nullptr)
-        std::memcpy (baseDelays_, baseDelaysN, sizeof (baseDelays_));
+    if (baseDelays8 != nullptr)
+        std::memcpy (baseDelays_, baseDelays8, sizeof (baseDelays_));
 
     // Allocate buffers for max-size scale 2.0× plus modulation excursion
     // headroom. Caller's setSize is clamped to [0.5, 2.0] in HallReverb.
-    // P13: headroom raised 32 → 128 samples to fit the heavy 64-sample
-    // wander defaults + linear-interp slop without overshooting the
-    // ring-buffer mask. Each delay-line buffer is sized to nextPowerOf2
-    // so the actual overhead is one bin extra in most cases.
     constexpr float kMaxSizeScale = 2.0f;
-    constexpr int   kModHeadroom  = 128;    // samples
+    constexpr int   kModHeadroom  = 32;     // samples
     const float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
 
     for (int i = 0; i < N; ++i)
@@ -139,22 +114,17 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
         delays_[i].mask     = bufSize - 1;
         delays_[i].writePos = 0;
 
-        // P14 InlineAllpassChain — 3 stages per channel. Each stage gets
-        // its own prime delay from kChainPrimes, sized to nextPowerOf2.
-        for (int s = 0; s < kChainStages; ++s)
-        {
-            const int apLen = static_cast<int> (std::ceil (
-                static_cast<float> (kChainPrimes[i][s]) * rateRatio)) + 4;
-            const int apBufSize = DspUtils::nextPowerOf2 (std::max (apLen, 16));
-            auto& stage = inlineAPChain_[i].stages[s];
-            stage.buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
-            stage.mask     = apBufSize - 1;
-            stage.writePos = 0;
-            stage.delaySamples = static_cast<int> (std::round (
-                static_cast<float> (kChainPrimes[i][s]) * rateRatio));
-            if (stage.delaySamples >= apBufSize)
-                stage.delaySamples = apBufSize - 1;
-        }
+        // Inline allpass sized for max kInlineAPDelay × sr ratio.
+        const int apLen = static_cast<int> (std::ceil (
+            static_cast<float> (kInlineAPDelays[i]) * rateRatio)) + 4;
+        const int apBufSize = DspUtils::nextPowerOf2 (std::max (apLen, 16));
+        inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
+        inlineAP_[i].mask     = apBufSize - 1;
+        inlineAP_[i].writePos = 0;
+        inlineAP_[i].delaySamples = static_cast<int> (std::round (
+            static_cast<float> (kInlineAPDelays[i]) * rateRatio));
+        if (inlineAP_[i].delaySamples >= apBufSize)
+            inlineAP_[i].delaySamples = apBufSize - 1;
 
         dampState_[i]   = 0.0f;
         lfoPhase_  [i]  = kChannelPhaseSeeds[i] + bandPhaseOffset_;
@@ -170,16 +140,6 @@ void HallSubTank::prepare (double sampleRate, const int* baseDelaysN,
                        ^ 0xA5A5A5A5u;
         if (rwRngState_[i] == 0u) rwRngState_[i] = 1u;
         rwState_[i] = 0.0f;
-        // P13 per-channel rate scatter ∈ [0.85, 1.15]. Deterministic LCG
-        // seeded with a DIFFERENT salt from rwRngState_ so the rate of
-        // each channel is decoupled from its random-walk sequence.
-        uint32_t rateSeed = (static_cast<uint32_t> (i) * 3266489917u)
-                          ^ (bandSalt * 374761393u)
-                          ^ 0xDEADBEEFu;
-        if (rateSeed == 0u) rateSeed = 1u;
-        const float xiUnsigned = static_cast<float> (lcgNext (rateSeed))
-                               * (1.0f / 4294967296.0f);  // [0, 1)
-        rateScatter_[i] = 0.85f + 0.30f * xiUnsigned;     // [0.85, 1.15)
     }
 
     prepared_ = true;
@@ -196,7 +156,7 @@ void HallSubTank::clear()
         std::fill (delays_[i].buffer.begin(), delays_[i].buffer.end(), 0.0f);
         delays_[i].writePos = 0;
         dampState_[i] = 0.0f;
-        inlineAPChain_[i].clear();
+        inlineAP_[i].clear();
         rwState_[i]   = 0.0f;
     }
 }
@@ -211,9 +171,8 @@ void HallSubTank::recomputeDelayLengths()
             static_cast<float> (baseDelays_[i]) * rateRatio * sizeScale_));
         if (scaledDelay_[i] < 4) scaledDelay_[i] = 4;
         // Cap to buffer-size minus modulation headroom; should not trip when
-        // sizeScale is clamped at the HallReverb level. P13: headroom raised
-        // to 128 to fit the heavy 64-sample wander defaults + interp slop.
-        const int cap = static_cast<int> (delays_[i].buffer.size()) - 128;
+        // sizeScale is clamped at the HallReverb level.
+        const int cap = static_cast<int> (delays_[i].buffer.size()) - 32;
         if (scaledDelay_[i] > cap) scaledDelay_[i] = cap;
     }
 }
@@ -221,19 +180,12 @@ void HallSubTank::recomputeDelayLengths()
 void HallSubTank::recomputeLFORates()
 {
     if (! prepared_) return;
-    const float baseInc = kTwoPi * modRateHz_ / static_cast<float> (sampleRate_);
-    // P13 per-channel rate scatter — each channel gets its base inc + alpha
-    // multiplied by rateScatter_[i] ∈ [0.85, 1.15] so the 16 LFOs run at
-    // mutually irrational rates. Critical for breaking 16-channel static
-    // comb resonance: global locked rate produces lock-step modulation
-    // that just chorus-shifts the whole feedback loop without scrambling
-    // mode relationships.
-    for (int i = 0; i < N; ++i)
-    {
-        const float rateHz = modRateHz_ * rateScatter_[i];
-        lfoPhaseInc_[i] = baseInc * rateScatter_[i];
-        rwAlpha_[i]     = computeOnepoleAlpha (rateHz, sampleRate_);
-    }
+    const float inc = kTwoPi * modRateHz_ / static_cast<float> (sampleRate_);
+    for (int i = 0; i < N; ++i) lfoPhaseInc_[i] = inc;
+    // Random-walk autocorrelation alpha uses the same 1-pole form as the
+    // damping LP. modRateHz_ controls how quickly the bounded sequence
+    // traverses its range; higher rate = faster mode-smear.
+    rwAlpha_ = computeOnepoleAlpha (modRateHz_, sampleRate_);
 }
 
 void HallSubTank::recomputeFeedbackGains()
@@ -376,7 +328,8 @@ void HallSubTank::process (const float* inputL, const float* inputR,
     const float modShape = modShape_;                 // 0=sine, 1=random-walk
     const float sineMix  = 1.0f - modShape;
     const float rwMix    = modShape;
-    // P13: rwAlpha now per-channel — read inside the per-channel loop.
+    const float rwA      = rwAlpha_;
+    const float rwAComp  = 1.0f - rwA;
 
     for (int n = 0; n < numSamples; ++n)
     {
@@ -398,9 +351,7 @@ void HallSubTank::process (const float* inputL, const float* inputR,
             lfoPhase_[i] += lfoPhaseInc_[i];
             if (lfoPhase_[i] >= kTwoPi) lfoPhase_[i] -= kTwoPi;
 
-            const float rwA_i = rwAlpha_[i];
-            rwState_[i] = (1.0f - rwA_i) * rwState_[i]
-                        +         rwA_i  * lcgSigned (rwRngState_[i]);
+            rwState_[i] = rwAComp * rwState_[i] + rwA * lcgSigned (rwRngState_[i]);
             const float lfo = sineMix * sine + rwMix * rwState_[i];
             const float modOffset = modDepth * lfo;
             const float readPos   = static_cast<float> (scaledDelay_[i]) + modOffset;
@@ -436,11 +387,11 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         if (apG > 1e-4f)
         {
             for (int i = 0; i < N; ++i)
-                channelOut[i] = inlineAPChain_[i].process (channelOut[i], apG);
+                channelOut[i] = inlineAP_[i].process (channelOut[i], apG);
         }
 
         // ──── Hadamard cross-mixing (in place, normalized) ─────────────
-        hadamard16 (channelOut);
+        hadamard8 (channelOut);
 
         // ──── Write back to each delay line with feedback gain + input ─
         for (int i = 0; i < N; ++i)
@@ -453,26 +404,14 @@ void HallSubTank::process (const float* inputL, const float* inputR,
         }
 
         // ──── Output: signed tap routing for stereo decorrelation ──────
-        // P12 normalization: output is the signed sum of kNumOutputTaps
-        // channels. With alternating ±1 signs on uncorrelated channel
-        // values, the expected magnitude scales as sqrt(kNumOutputTaps).
-        // Old 8-ch had 4 taps → sqrt(4)=2.0 baseline. New 16-ch has 8 taps
-        // → sqrt(8)=2.83 (+3 dB hotter). Pre-scale by sqrt(4/8) = 1/sqrt(2)
-        // ≈ 0.707 so 16-channel matches the 8-channel per-band output
-        // level — keeps Gain Trim / Mid Mult calibrations comparable
-        // across the channel-count change. Eliminates the +3 dB headroom
-        // collision DE v4-p12 hit (Mid Mult ceiling + Gain Trim ceiling
-        // both slammed while a_weighted still +3.4 dB OUT).
-        static constexpr float kOutputTapNorm =
-            0.70710678118654752f;  // sqrt(4/8) — old-level-compat for kNumOutputTaps=8
         float outL = 0.0f, outR = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
         {
             outL += channelOut[kLeftTaps [t]] * kLeftSigns [t];
             outR += channelOut[kRightTaps[t]] * kRightSigns[t];
         }
-        if (outputL != nullptr) outputL[n] = outL * kOutputTapNorm;
-        if (outputR != nullptr) outputR[n] = outR * kOutputTapNorm;
+        if (outputL != nullptr) outputL[n] = outL;
+        if (outputR != nullptr) outputR[n] = outR;
     }
 }
 

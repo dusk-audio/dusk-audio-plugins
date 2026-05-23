@@ -311,3 +311,58 @@ private:
     ShelfBiquad lowShelf_;
     ShelfBiquad highShelf_;
 };
+
+// =====================================================================
+// EightBandDamping — 8-band feedback-loop damping. Cascade of 7
+// high-shelf biquads at octave-center crossovers gives piecewise-constant
+// decay-gain response across the 8 rt60_per_band octave bins (125 / 250 /
+// 500 / 1k / 2k / 4k / 8k / 16k Hz). Each band has independent multiplier
+// → per-bin RT60 control. Engine 10 + plates use ThreeBandDamping;
+// LexFigure8 uses EightBandDamping when activated.
+// =====================================================================
+class EightBandDamping
+{
+public:
+    static constexpr int kNumBands = 8;
+    // Crossover frequencies between adjacent octave bands (geometric
+    // midpoints between octave centers). 7 crossovers between 8 bands.
+    static constexpr float kCrossoverHz[7] = {
+        88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f
+    };
+
+    void prepare (float sampleRate)
+    {
+        sampleRate_ = sampleRate;
+        reset();
+    }
+
+    // Per-band decay gains. gBand[0] = sub-bass (<88 Hz), gBand[7] = air
+    // (>5657 Hz). Cascade computes shelf gain = gBand[i+1]/gBand[i] so
+    // the running product converges to gBand[i] in each band.
+    void setCoefficients (const float gBand[kNumBands])
+    {
+        broadbandGain_ = gBand[0];
+        for (int i = 0; i < 7; ++i)
+        {
+            const float shelfGain = gBand[i + 1] / std::max (gBand[i], 1.0e-12f);
+            shelves_[i].designHighShelf (shelfGain, kCrossoverHz[i], sampleRate_);
+        }
+    }
+
+    float process (float x)
+    {
+        float y = x;
+        for (int i = 0; i < 7; ++i) y = shelves_[i].process (y);
+        return broadbandGain_ * y;
+    }
+
+    void reset()
+    {
+        for (int i = 0; i < 7; ++i) shelves_[i].reset();
+    }
+
+private:
+    float       sampleRate_    = 44100.0f;
+    float       broadbandGain_ = 1.0f;
+    ShelfBiquad shelves_[7];
+};
