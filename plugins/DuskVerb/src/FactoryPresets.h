@@ -395,9 +395,17 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // [0.1, 1.5] and was clamped to 1.5 during the trial render; storing
         // 1.5 here keeps the file source-of-truth consistent with what the
         // engine actually sees.
+        //
+        // 2026-05-24 follow-up: Optuna's mod_depth=0.50 + mod_rate=2.10 Hz
+        // produced an audibly funky / chorused tail vs VVV's milder
+        // ModDepth=19.2% + ModRate=1.80 Hz. Manual re-render at VVV's
+        // modulation values shows ALL 5 strict metrics still within
+        // tolerance (loss delta < 0.001, env P2P +1.37 vs +1.06 dB), so the
+        // optimizer's heavy-mod local optimum was unnecessary. Pulled mod
+        // back to the VVV values to remove the audible mod artifact.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          2.82f, 0.52f, 0.50f, 2.10f, 1.50f, 1.97f, 1857.0f,
+          2.82f, 0.52f, 0.20f, 1.80f, 1.50f, 1.97f, 1857.0f,
           0.64f, 0.45f, 0.55f,  29.0f,  7691.0f, 1.07f, false, -1.5f,
           /* mono */ 20.0f, /* mid */ 0.38f, /* highX */ 1233.0f, /* sat */ 0.05f },
         // ── Cathedral ────────────────────────────────────────────────────────
