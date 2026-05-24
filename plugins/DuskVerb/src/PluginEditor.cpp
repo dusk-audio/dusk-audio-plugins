@@ -296,10 +296,12 @@ namespace
 // Tightened 2026-05-24: previous 1400×640 left ~30% empty whitespace inside
 // every panel column (knobs vertically over-centred). Pass 2 cuts height
 // to 470 + bumps knob diameters (62/78 → 76/92). Pass 3 nudges height
-// back to 510 so the DECAY hero (limited by knob-area H) can grow to ~135 px
-// while keeping the rest of the layout tight.
+// back to 510 so the DECAY hero (limited by knob-area H) can grow to ~135 px.
+// Pass 4 pushes further (510 → 560) + shrinks TIME's FREEZE strip 22 → 16
+// + bumps knobMed 76 → 84 so the hero grows to ~165 px (vs MIX at 92) while
+// the secondary-tier knobs eat more of their column yPad.
 static constexpr int kBaseWidth  = 1240;
-static constexpr int kBaseHeight = 510;
+static constexpr int kBaseHeight = 560;
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -566,21 +568,25 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
                         kBaseWidth * 2, kBaseHeight * 2,
                         true);
 
-    // One-time UI-v2 migration: pre-2026-05-24 builds shipped a 1400×640
-    // base (aspect 2.19); the v3 layout is 1240×510 (aspect 2.43). If the
-    // persisted size still has the old aspect, force the new defaults so
-    // the user sees the tighter layout without having to manually reset.
-    // A user who legitimately resized to a non-default aspect within ±10%
-    // of v3 keeps their stored size.
+    // One-time UI migration: pre-v4 builds shipped a sequence of default
+    // sizes (1400×640, 1240×540, 1240×470, 1240×510). The v4 layout is
+    // 1240×560. New v4 aspect happens to land near the original 1400×640
+    // aspect, so a pure aspect check no longer discriminates. Instead,
+    // match the persisted size against the known prior defaults and snap
+    // to the v4 defaults on hit. Users who manually resized to anything
+    // OTHER than those exact values keep their stored size.
     {
-        const float baseAspect   = static_cast<float> (kBaseWidth) / static_cast<float> (kBaseHeight);
-        const float storedAspect = static_cast<float> (scaler_.getStoredWidth())
-                                 / static_cast<float> (scaler_.getStoredHeight());
-        const bool aspectDrifted = std::abs (storedAspect - baseAspect) / baseAspect > 0.10f;
-        if (aspectDrifted)
+        const int sw = scaler_.getStoredWidth();
+        const int sh = scaler_.getStoredHeight();
+        const bool priorDefault =
+               (sw == 1400 && sh == 640)
+            || (sw == 1240 && sh == 540)
+            || (sw == 1240 && sh == 470)
+            || (sw == 1240 && sh == 510);
+        if (priorDefault)
             setSize (kBaseWidth, kBaseHeight);
         else
-            setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
+            setSize (sw, sh);
     }
     startTimerHz (15);
 
@@ -848,13 +854,13 @@ void DuskVerbEditor::resized()
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    // Two-tier knob hierarchy — primary (DECAY, SIZE, MIX) reads as the
-    // hero of each row; everything else sits at one consistent secondary
-    // size. Sizes bumped 2026-05-24 (62 → 76, 78 → 92) so knob stacks
-    // fill the tighter panel columns without the column-centring yPad
-    // showing as wasted space below each knob.
+    // Two-tier knob hierarchy — primary (MIX) is knobBig; secondary
+    // (everything else except the DECAY hero) is knobMed. DECAY's
+    // concentric-ring rendering uses heroSize (computed below) which
+    // dominates at ~165 px diameter. Pass 4 bumped knobMed 76 → 84
+    // to soak up the remaining column yPad in non-hero panels.
     int knobBig = juce::roundToInt (92.0f * sf);
-    int knobMed = juce::roundToInt (76.0f * sf);
+    int knobMed = juce::roundToInt (84.0f * sf);
 
     // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
     // The two knobs sit adjacent so the row reads as a coherent pair, and
@@ -886,7 +892,9 @@ void DuskVerbEditor::resized()
     {
         auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
         timeArea.removeFromTop (topPad);
-        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
+        // FREEZE strip slimmed to 16 px (was 22) — the button glyph only
+        // needs ~12 px tall; the extra 6 px now belongs to the hero.
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (16));
 
         // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
         // The hero is the visual centrepiece of the entire plugin — its
