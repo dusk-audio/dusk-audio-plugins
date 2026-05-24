@@ -297,9 +297,10 @@ namespace
 // every panel column (knobs vertically over-centred). Pass 2 cuts height
 // to 470 + bumps knob diameters (62/78 → 76/92). Pass 3 nudges height
 // back to 510 so the DECAY hero (limited by knob-area H) can grow to ~135 px.
-// Pass 4 pushes further (510 → 560) + shrinks TIME's FREEZE strip 22 → 16
-// + bumps knobMed 76 → 84 so the hero grows to ~165 px (vs MIX at 92) while
-// the secondary-tier knobs eat more of their column yPad.
+// Pass 4 pushes further (510 → 560) and bumps knobMed 76 → 84 so the hero
+// grows to ~159 px (vs MIX at 92) while the secondary-tier knobs eat more of
+// their column yPad. Pass 5 keeps the FREEZE strip at 22 px (was briefly
+// shrunk to 16) so FREEZE / BUS / GATE all render at the same visual height.
 static constexpr int kBaseWidth  = 1240;
 static constexpr int kBaseHeight = 560;
 
@@ -892,9 +893,9 @@ void DuskVerbEditor::resized()
     {
         auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
         timeArea.removeFromTop (topPad);
-        // FREEZE strip slimmed to 16 px (was 22) — the button glyph only
-        // needs ~12 px tall; the extra 6 px now belongs to the hero.
-        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (16));
+        // FREEZE strip 22 px — matches BUS and GATE strip heights so all
+        // three toggle buttons read as the same visual element.
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
 
         // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
         // The hero is the visual centrepiece of the entire plugin — its
@@ -911,7 +912,9 @@ void DuskVerbEditor::resized()
         // the hero for top-row dominance.
         placeKnob (size_, knobArea, knobMed, sf);
 
-        // FREEZE spans the full bottom strip of the TIME group.
+        // FREEZE spans the full bottom strip of the TIME group. (8, 2) inset
+        // matches the BUS and GATE buttons so all three toggles render at the
+        // same visual height.
         freezeButton_.setBounds (timeArea.reduced (8, 2));
     }
 
