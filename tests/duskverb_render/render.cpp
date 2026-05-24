@@ -311,8 +311,10 @@ namespace
             return makePreset (name.toRawUTF8(), 4, 1.0f, true,  2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f,  4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
         // Vocal Hall — Optuna-aligned to VVV Vocal Hall (all 5 metrics within strict noise floor).
         // Treble Multiply written as the APVTS ceiling (1.5) — Optuna's raw 3.84 clamps to 1.5 on apply.
+        // ModDepth + ModRate pulled to VVV's mild values (0.20, 1.80 Hz) post-Optuna —
+        // optimizer's heavy mod (0.50, 2.10) sounded funky in the tail; metrics unchanged within JND.
         if (name == "Vocal Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.82f, 0.52f, 0.50f, 2.10f, 1.50f, 1.97f, 1857.0f, 0.64f, 0.45f, 0.55f, 29.0f, 7691.0f, 1.07f, -1.5f, 20.0f, 0.38f, 1233.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.82f, 0.52f, 0.20f, 1.80f, 1.50f, 1.97f, 1857.0f, 0.64f, 0.45f, 0.55f, 29.0f, 7691.0f, 1.07f, -1.5f, 20.0f, 0.38f, 1233.0f, 0.05f);
         // Chambers
         if (name == "Wood Chamber")
             return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
