@@ -297,8 +297,19 @@ namespace
         if (name == "Fat Pop Plate")
             return makePreset (name.toRawUTF8(), 0, 1.0f, true, 18.0f, 2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f, 480.0f, 0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, 13.0f, 20.0f, 1.20f, 4500.0f, 0.30f);
         // Other halls
+        // Smooth Concert Hall — algo=3 (QuadTank) per FactoryPresets.h post-reorder.
+        // Stress-test rendering: BUS=true, Mix=1.0 to expose any FDN/QuadTank
+        // residual artifacts. Factory bus/mix/predelay otherwise preserved.
         if (name == "Smooth Concert Hall")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true,  8.0f, 2.81f, 0.69f, 0.45f, 0.60f, 0.88f, 1.92f, 804.0f, 0.76f, 0.68f, 0.65f, 60.0f, 5505.0f, 1.13f, -3.5f, 20.0f, 1.34f, 2679.0f, 0.01f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 28.0f, 2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f, 900.0f, 0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, -0.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
+        // Rich Plate — algo=4 (FDN). Bright + diffuse Lexicon PCM-90 plate
+        // anchor. Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.40 bus=false).
+        if (name == "Rich Plate")
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true,  0.0f, 1.60f, 0.55f, 0.10f, 0.45f, 0.85f, 1.50f,  300.0f, 0.92f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, -1.0f, 20.0f, 0.60f, 3000.0f, 0.15f);
+        // Vocal Booth — algo=4 (FDN). Sub-second tight close-mic room.
+        // Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.30 bus=false).
+        if (name == "Vocal Booth")
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true,  2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f,  4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
         if (name == "Vocal Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f, 0.78f, 0.45f, 0.55f, 100.0f, 9000.0f, 1.15f, -1.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
         // Chambers
