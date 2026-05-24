@@ -292,9 +292,9 @@ namespace
                 /* trim   */ 16.5f,
                 /* mono   */ 20.0f, /* midMlt  */ 0.90f, /* highX  */ 4500.0f, /* sat    */ 0.10f);
         if (name == "Modulated Plate")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f, 0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, 0.5f, 20.0f, 1.10f, 4500.0f, 0.25f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 2.40f, 0.50f, 0.30f, 1.40f, 0.85f, 1.00f, 1300.0f, 0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, 0.5f, 20.0f, 1.10f, 4500.0f, 0.25f);
         if (name == "Fat Pop Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 18.0f, 2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f, 480.0f, 0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, 13.0f, 20.0f, 1.20f, 4500.0f, 0.30f);
+            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 18.0f, 2.10f, 0.55f, 0.25f, 0.85f, 0.55f, 1.10f, 480.0f, 0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, 13.0f, 20.0f, 1.20f, 4500.0f, 0.30f);
         // Other halls
         // Smooth Concert Hall — algo=3 (QuadTank) per FactoryPresets.h post-reorder.
         // Stress-test rendering: BUS=true, Mix=1.0 to expose any FDN/QuadTank
@@ -322,16 +322,16 @@ namespace
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 14.0f, 1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f, 0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, 2.0f, 20.0f, 1.00f, 5000.0f, 0.05f);
         // Rooms
         if (name == "Tight Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 4.0f, 0.50f, 0.20f, 0.25f, 0.60f, 0.95f, 0.95f, 1500.0f, 0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 4.0f, 0.50f, 0.20f, 0.15f, 0.60f, 0.95f, 0.95f, 1500.0f, 0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.10f);
         if (name == "Studio Room")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f, 0.85f, 0.60f, 0.40f, 80.0f, 9000.0f, 1.05f, 4.5f, 20.0f, 1.00f, 5000.0f, 0.05f);
         if (name == "80s Non-Lin Drum")
             return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.30f, 0.15f, 0.20f, 1.00f, 0.95f, 0.85f, 1500.0f, 1.00f, 0.85f, 0.20f, 120.0f, 8000.0f, 1.20f, 4.0f, 20.0f, 0.80f, 3500.0f, 0.40f);
         // Ambient (bus_mode=true in source, mono_below set)
         if (name == "Ambient Swell")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 60.0f, 8.00f, 0.92f, 0.28f, 0.40f, 0.60f, 1.50f, 600.0f, 0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, 4.0f, 80.0f, 1.20f, 3500.0f, 0.15f);
+            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 60.0f, 8.00f, 0.92f, 0.20f, 0.40f, 0.60f, 1.50f, 600.0f, 0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, 4.0f, 80.0f, 1.20f, 3500.0f, 0.15f);
         if (name == "Infinite Blackhole")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 85.0f, 18.00f, 1.00f, 0.35f, 0.30f, 0.55f, 1.60f, 550.0f, 0.90f, 0.05f, 0.80f, 100.0f, 7500.0f, 1.50f, -1.0f, 100.0f, 1.30f, 3000.0f, 0.25f);
+            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 85.0f, 18.00f, 1.00f, 0.25f, 0.30f, 0.55f, 1.60f, 550.0f, 0.90f, 0.05f, 0.80f, 100.0f, 7500.0f, 1.50f, -1.0f, 100.0f, 1.30f, 3000.0f, 0.25f);
         // New presets (2026-04-26):
         if (name == "Snare Plate XL")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 12.0f, 4.50f, 0.65f, 0.15f, 0.50f, 0.85f, 0.65f, 600.0f, 0.75f, 0.30f, 0.55f, 180.0f, 14000.0f, 1.30f, 1.0f, 20.0f, 1.05f, 5000.0f, 0.20f);
@@ -339,7 +339,7 @@ namespace
         if (name == "Surf '63 Spring")
             return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f, 0.45f, 0.10f, 0.30f, 80.0f, 4000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.10f);
         if (name == "Tank Drip")
-            return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 2.20f, 0.65f, 0.30f, 0.80f, 0.70f, 1.10f, 1000.0f, 0.85f, 0.10f, 0.30f, 100.0f, 3000.0f, 1.20f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.20f);
+            return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 2.20f, 0.65f, 0.22f, 0.80f, 0.70f, 1.10f, 1000.0f, 0.85f, 0.10f, 0.30f, 100.0f, 3000.0f, 1.20f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.20f);
         // Non-Linear engine (algo 5) — Phase B v3.0:
         if (name == "In The Air Tonight")
             return makePreset (name.toRawUTF8(), 6, 0.216f, false, 0.0f, 2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f, 500.0f, 0.50f, 0.00f, 0.30f, 60.0f, 10000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
@@ -351,7 +351,7 @@ namespace
             return makePreset (name.toRawUTF8(), 7, 0.361f, false, 60.0f,  6.00f, 0.85f, 1.00f, 2.705f, 0.95f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 6000.0f, 1.40f, -3.0f, 60.0f, 1.00f, 4000.0f, 0.10f);
         if (name == "Black Hole")
         {
-            auto p = makePreset (name.toRawUTF8(), 2, 0.50f, false,  0.0f, 14.00f, 0.95f, 0.35f, 0.60f, 1.00f, 1.10f,  700.0f, 0.85f, 0.05f, 0.70f, 60.0f, 18000.0f, 1.40f, -2.0f, 60.0f, 1.10f, 8000.0f, 0.08f);
+            auto p = makePreset (name.toRawUTF8(), 2, 0.50f, false,  0.0f, 14.00f, 0.95f, 0.25f, 0.60f, 1.00f, 1.10f,  700.0f, 0.85f, 0.05f, 0.70f, 60.0f, 18000.0f, 1.40f, -2.0f, 60.0f, 1.10f, 8000.0f, 0.08f);
             p.hasSixAP = true;
             p.sixAPDensityBaseline = 0.72f;
             p.sixAPBloomCeiling    = 0.92f;
@@ -365,12 +365,12 @@ namespace
         if (name == "Bright Studio Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 18.0f, 1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f, 400.0f, 0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, 1.5f, 20.0f, 1.00f, 5500.0f, 0.05f);
         if (name == "Mobius Pad")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
 
         if (name == "Gold Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f, 600.0f, 0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, 16.0f, 20.0f, 0.80f, 3000.0f, 0.00f);
+            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.96f, 0.357f, 0.15f, 0.35f, 1.00f, 0.55f, 600.0f, 0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, 16.0f, 20.0f, 0.80f, 3000.0f, 0.00f);
         if (name == "Vocal Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 4.0f, 0.95f, 0.45f, 0.05f, 0.50f, 0.85f, 1.00f, 700.0f, 0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, 16.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 4.0f, 0.95f, 0.45f, 0.18f, 0.50f, 0.85f, 1.00f, 700.0f, 0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, 16.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
         // PCM 90 — Halls (SixAPTank / FDN):
         if (name == "Blade Runner Concert")
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 5.0f, 3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f, 700.0f, 0.85f, 0.45f, 0.55f, 60.0f, 8000.0f, 1.20f, 8.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
@@ -395,7 +395,7 @@ namespace
         if (name == "1981 Gated Snare")
             return makePreset (name.toRawUTF8(), 6, 1.0f, true, 0.0f, 1.50f, 0.70f, 0.00f, 1.117f, 0.80f, 1.00f, 500.0f, 0.30f, 0.00f, 0.00f, 60.0f, 14000.0f, 1.40f, 0.0f, 100.0f, 0.75f, 4000.0f, 0.10f);
         if (name == "Reverse Taps")
-            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 30.0f, 3.00f, 0.85f, 0.49f, 7.52f, 0.70f, 1.00f, 500.0f, 1.00f, 0.00f, 0.30f, 80.0f, 8000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 30.0f, 3.00f, 0.85f, 0.20f, 7.52f, 0.70f, 1.00f, 500.0f, 1.00f, 0.00f, 0.30f, 80.0f, 8000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
 
         return getLushDarkHall();
     }
