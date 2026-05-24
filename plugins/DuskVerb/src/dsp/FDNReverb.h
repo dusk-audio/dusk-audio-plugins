@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
 // Multi-point output tap: reads from a fractional position within a delay line.
@@ -292,4 +293,13 @@ private:
 
     void updateLFORates();
     void updateModDepth();
+
+    // Per-instance Householder reflector vectors. Seeded once at construction
+    // from a process-wide atomic counter so two FDN instances on the same bus
+    // do NOT share the same v·vᵀ axis — sharing produced convergent eigenmodes
+    // and audibly correlated tails. Written only on the message thread (here);
+    // read-only on the RT thread thereafter.
+    float householderV16_[N] {};
+    float householderV8_[N / 2] {};
+    void seedHouseholderVectors (uint32_t seed);
 };
