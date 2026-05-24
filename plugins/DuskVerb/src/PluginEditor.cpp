@@ -295,12 +295,11 @@ namespace
 
 // Tightened 2026-05-24: previous 1400×640 left ~30% empty whitespace inside
 // every panel column (knobs vertically over-centred). Pass 2 cuts height
-// further (540 → 470) and bumps knob diameters (62/78 → 76/92) so the
-// knob stacks consume more of each column. Both axes shrunk; constants
-// downstream (topY, titleBandH, tail-meter band, bottom-strip heights)
-// tightened to match.
+// to 470 + bumps knob diameters (62/78 → 76/92). Pass 3 nudges height
+// back to 510 so the DECAY hero (limited by knob-area H) can grow to ~135 px
+// while keeping the rest of the layout tight.
 static constexpr int kBaseWidth  = 1240;
-static constexpr int kBaseHeight = 470;
+static constexpr int kBaseHeight = 510;
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -568,11 +567,11 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
                         true);
 
     // One-time UI-v2 migration: pre-2026-05-24 builds shipped a 1400×640
-    // base (aspect 2.19); the v2 layout is 1240×470 (aspect 2.64). If the
+    // base (aspect 2.19); the v3 layout is 1240×510 (aspect 2.43). If the
     // persisted size still has the old aspect, force the new defaults so
     // the user sees the tighter layout without having to manually reset.
     // A user who legitimately resized to a non-default aspect within ±10%
-    // of v2 keeps their stored size.
+    // of v3 keeps their stored size.
     {
         const float baseAspect   = static_cast<float> (kBaseWidth) / static_cast<float> (kBaseHeight);
         const float storedAspect = static_cast<float> (scaler_.getStoredWidth())
@@ -898,8 +897,11 @@ void DuskVerbEditor::resized()
         const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
         decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
 
-        // SIZE remains a standard rotary at the secondary tier (knobBig = 70).
-        placeKnob (size_, knobArea, knobBig, sf);
+        // SIZE renders at the secondary tier (knobMed) so DECAY's
+        // concentric-ring hero is the unambiguously largest knob on the UI.
+        // Previously SIZE shared knobBig with MIX; visually it competed with
+        // the hero for top-row dominance.
+        placeKnob (size_, knobArea, knobMed, sf);
 
         // FREEZE spans the full bottom strip of the TIME group.
         freezeButton_.setBounds (timeArea.reduced (8, 2));
