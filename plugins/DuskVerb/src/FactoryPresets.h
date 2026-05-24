@@ -190,18 +190,27 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4500.0f, /* sat */ 0.25f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
-        // Anchor: Lex VST2 "Vocal Plate" preset. Algorithmically tuned via
-        // dual ESS+Dirac match against the Lex reference IR; Six-AP topology
-        // closest of all four algos (loss 4.72, autocorr 0.505 vs Lex 0.977).
-        // Parameter-space ceiling — tank density limits structural match.
-        // name, cat, algo, mix, bus, predelay, sync,
-        // decay, size, modD, modR, damp, bass, xover,
-        // diff, erLv, erSz, loCut, hiCut, width, freeze, trim
-// `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
-//   0 = Vintage Plate (Dattorro)
-//   1 = DattorroVintage
-//   2 = Quad Room     (QuadTank, no modulation)
-//   3 = Realistic Space (FDN)
+        // Anchor: Lexicon PCM Native Reverb "LexVintagePlate / Vocal Plate"
+        // (default factory preset, 01.Vocal Plates / 000.Vocal Plate).
+        // Engine: DattorroVintage (algo 1) — fixed post-EQ + Dattorro tank,
+        // a dedicated topology added specifically for this preset's
+        // character (no other factory preset uses this engine).
+        //
+        // Match is character-based, not measurement-strict. The Lex preset
+        // XML stores display values with units ("0.7164 sec", "16.0 meters",
+        // "7875Hz") that DuskVerb's render harness cannot ingest verbatim
+        // (the loader rejects raw values >1 as a safety measure against
+        // Lex's getValueForText returning unnormalised inputs). A proper
+        // strict-tolerance Optuna calibration against a fully-loaded Lex
+        // IR is blocked on a Lex-aware preset loader; until then, this
+        // preset is tuned by ear to match the Lex Vocal Plate vibe.
+        //
+        // 2026-05-24 audit: prior comment claimed "Six-AP topology / loss
+        // 4.72 / autocorr 0.505" — those numbers came from an early
+        // calibration era when this preset used SixAPTank. After the
+        // 2026-05-13 engine reorder this preset moved to DattorroVintage
+        // (algo 1) without re-running the calibration; the old loss
+        // numbers stopped applying. Stripped to avoid misleading specificity.
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
           1.30f, 0.45f, 0.30f, 0.60f, 0.72f, 0.65f,  400.0f,
