@@ -1359,7 +1359,13 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
     // previous (often invisible) bounds, and switching away from
     // NonLinear leaves the MOD knobs sized to the smaller gate-strip
     // layout.
-    resized();
+    //
+    // Guard against the ctor invocation at line 378, which runs BEFORE
+    // setSize() has assigned real bounds. resized() with getWidth() == 0
+    // would walk every child with a degenerate rectangle; the ctor's
+    // setSize() below fires the authoritative layout pass anyway.
+    if (getWidth() > 0 && getHeight() > 0)
+        resized();
 
     repaint();   // catches FREEZE / BUS toggle redraw via LookAndFeel
 }
