@@ -379,14 +379,17 @@ namespace
         // Bright Hall — Optuna-aligned to VVV Bright Hall (perceptual match,
         // RT60 +7% within JND on 5.5s tail, env P2P -4dB within FDN smoothing).
         // Treble Multiply written as the APVTS ceiling (1.5) — Optuna's raw 3.58 clamps to 1.5 on apply.
+        // ModDepth + ModRate pulled to VVV's actual values (0.316, 2.53 Hz) post-Optuna —
+        // optimizer's heavy mod (0.51, 2.24) sounded funky in the tail; metrics drift negligible.
         if (name == "Bright Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 3.18f, 0.72f, 0.51f, 2.24f, 1.50f, 3.23f, 525.0f, 0.81f, 0.50f, 0.50f, 66.0f, 16315.0f, 1.00f, 1.5f, 20.0f, 1.67f, 4887.0f, 0.11f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 3.18f, 0.72f, 0.316f, 2.53f, 1.50f, 3.23f, 525.0f, 0.81f, 0.50f, 0.50f, 66.0f, 16315.0f, 1.00f, 1.5f, 20.0f, 1.67f, 4887.0f, 0.11f);
         if (name == "Utility Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 1.0f, 1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f, 0.75f, 0.50f, 0.50f, 100.0f, 8000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4500.0f, 0.05f);
         // PCM 90 — Rooms (QuadTank / NonLinear):
         // Ambience — Optuna-aligned to VVV Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
+        // ModRate pulled to VVV's slow drift (0.32 Hz) — optimizer's 2.67 Hz was 8× faster than VVV and audibly funky.
         if (name == "Ambience")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.0f, 0.91f, 0.59f, 0.33f, 2.67f, 1.31f, 3.10f, 161.0f, 0.34f, 0.70f, 0.50f, 74.0f, 13437.0f, 1.02f, 3.5f, 20.0f, 1.14f, 6545.0f, 0.02f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.0f, 0.91f, 0.59f, 0.36f, 0.32f, 1.31f, 3.10f, 161.0f, 0.34f, 0.70f, 0.50f, 74.0f, 13437.0f, 1.02f, 3.5f, 20.0f, 1.14f, 6545.0f, 0.02f);
         if (name == "PCM Drum Room")
             return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f, 900.0f, 0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, 4.0f, 20.0f, 1.05f, 5000.0f, 0.10f);
         if (name == "1981 Gated Snare")

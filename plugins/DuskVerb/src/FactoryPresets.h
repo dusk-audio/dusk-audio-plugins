@@ -289,9 +289,16 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (3.58) exceeds the APVTS damping range [0.1, 1.5] and was clamped
         // to 1.5 during the trial render; storing 1.5 here keeps the file
         // source-of-truth consistent with the value the engine actually sees.
+        //
+        // 2026-05-24 follow-up: Optuna's mod_depth=0.51 vs VVV's 31.6% was
+        // ~60% heavier and produced a similar audible chorus artifact to
+        // the one diagnosed on Vocal Hall. Mod pulled to VVV's actual
+        // values (mod_depth 0.316, mod_rate 2.53 Hz); metrics drift is
+        // negligible — preset remains in the "perceptual match" envelope
+        // it was accepted under originally.
         { "Bright Hall",          "Halls",
           4,  0.40f, false,  0.0f, 0,
-          3.18f, 0.72f, 0.51f, 2.24f, 1.50f, 3.23f,  525.0f,
+          3.18f, 0.72f, 0.316f, 2.53f, 1.50f, 3.23f,  525.0f,
           0.81f, 0.50f, 0.50f,  66.0f, 16315.0f, 1.00f, false, 1.5f,
           /* mono */ 20.0f, /* mid */ 1.67f, /* highX */ 4887.0f, /* sat */ 0.11f },
         // ── Smooth Concert Hall ──────────────────────────────────────────────
@@ -596,9 +603,16 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Ambience character: dense early reflections (high ER level 0.70),
         // bright bass-favoring tilt (Bass Mult 3.10 + Low Crossover 161Hz —
         // bass-heavy lift, treble rolloff via Mid 1.14 + Treble 1.31).
+        //
+        // 2026-05-24 follow-up: Optuna's mod_rate=2.67 Hz was 8× faster
+        // than VVV's slow drift (0.32 Hz) — same heavy-mod local-optimum
+        // pattern that broke Vocal Hall. Mod pulled to VVV's values
+        // (mod_depth 0.36, mod_rate 0.32 Hz); ALL 5 strict-tolerance
+        // metrics still pass with slight improvements (stereo Δ tighter,
+        // env P2P closer to target).
         { "Ambience",             "Rooms",
           3,  0.40f, false,  1.0f, 0,
-          0.91f, 0.59f, 0.33f, 2.67f, 1.31f, 3.10f,  161.0f,
+          0.91f, 0.59f, 0.36f, 0.32f, 1.31f, 3.10f,  161.0f,
           0.34f, 0.70f, 0.50f,  74.0f, 13437.0f, 1.02f, false, 3.5f,
           /* mono */ 20.0f, /* mid */ 1.14f, /* highX */ 6545.0f, /* sat */ 0.02f },
         // ── Drum Room (PCM 90) ───────────────────────────────────────────────
