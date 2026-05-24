@@ -113,13 +113,15 @@ def _third_octave_magnitude_db(
 
 def _rms_normalize_db(mags_db: np.ndarray) -> np.ndarray:
     """
-    Subtract the RMS-level (in dB) so the array has zero mean (in dB).
+    Subtract the mean-power level (in dB) so the array has zero mean
+    in the power domain.
 
-    Mathematically: convert dB → linear power, compute RMS, convert
-    back to dB, subtract. Equivalent to subtracting (10*log10(mean(P)))
-    where P = 10**(dB/10). This is robust against -inf entries because
-    the RMS is dominated by the finite (non-floor) bands; if every
-    band is at the -120 dB floor the offset is well-defined (~-120 dB).
+    Mathematically: convert dB → linear power, compute mean power,
+    convert back to dB, subtract. Equivalent to subtracting
+    10·log10(mean(P)) where P = 10**(dB/10). Floor bands (-120 dB from
+    `_third_octave_magnitude_db`) contribute negligible power so the
+    mean is dominated by the finite bands; if every band is at the
+    -120 dB floor the offset is well-defined (~-120 dB).
     """
     # Convert to linear power, compute mean, convert back to dB.
     p = np.power(10.0, mags_db / 10.0)

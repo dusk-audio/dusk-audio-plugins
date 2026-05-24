@@ -87,8 +87,8 @@ namespace
         return {
             "Lush Dark Hall",
             {
-                // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                // Migrated from 6-AP → FDN on 2026-04-26.
+                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 4 of 0..7)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       35.0f },
@@ -121,8 +121,8 @@ namespace
         return {
             "Cathedral",
             {
-                // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                // Migrated from 6-AP → FDN on 2026-04-26.
+                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 4 of 0..7)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       30.0f },
@@ -186,7 +186,7 @@ namespace
                 //   • Diffusion 0.50 → 0.85 — smooth sustained tail (like
                 //                              Arturia's Lexicon Hall) vs the
                 //                              spikier 0.50 we'd dialled in
-                { "Algorithm",       0.0f / 7.0f },     // 0 = Vintage Plate (Dattorro)
+                { "Algorithm",       0.0f / 7.0f },     // 0 = Plate (Dattorro) — choice 0 of 0..7
                 { "Dry/Wet",         0.412f },
                 { "Bus Mode",        0.0f },
                 { "Pre-Delay",       24.0f },     // Lexicon 224 hardware spec for Vangelis cues
@@ -240,11 +240,10 @@ namespace
         return {
             juce::String (name),
             {
-                // Divisor must equal (numAlgorithms - 1). With 10 algorithms
-                // (Dattorro / DattorroVintage / 6-AP / QuadTank / FDN /
-                // Spring / NonLinear / Shimmer / Plate-Foil / Plate-Foil-II)
-                // → divisor = 9. Mismatching the divisor silently misroutes
-                // the algorithm index.
+                // Divisor must equal (numAlgorithms - 1). With 8 algorithms
+                // (Dattorro / DattorroVintage / SixAPTank / QuadTank / FDN /
+                // Spring / NonLinear / Shimmer) → divisor = 7. Mismatching
+                // the divisor silently misroutes the algorithm index.
                 { "Algorithm",       static_cast<float> (algoIdx) / 7.0f },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
@@ -311,8 +310,9 @@ namespace
         if (name == "Vocal Booth")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true,  2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f,  4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
         // Vocal Hall — Optuna-aligned to VVV Vocal Hall (all 5 metrics within strict noise floor).
+        // Treble Multiply written as the APVTS ceiling (1.5) — Optuna's raw 3.84 clamps to 1.5 on apply.
         if (name == "Vocal Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.82f, 0.52f, 0.50f, 2.10f, 3.84f, 1.97f, 1857.0f, 0.64f, 0.45f, 0.55f, 29.0f, 7691.0f, 1.07f, -1.5f, 20.0f, 0.38f, 1233.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.82f, 0.52f, 0.50f, 2.10f, 1.50f, 1.97f, 1857.0f, 0.64f, 0.45f, 0.55f, 29.0f, 7691.0f, 1.07f, -1.5f, 20.0f, 0.38f, 1233.0f, 0.05f);
         // Chambers
         if (name == "Wood Chamber")
             return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
@@ -362,33 +362,9 @@ namespace
         }
         if (name == "Bright Studio Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 18.0f, 1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f, 400.0f, 0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, 1.5f, 20.0f, 1.00f, 5500.0f, 0.05f);
-        if (name == "Vocal Booth")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f, 800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
         if (name == "Mobius Pad")
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
 
-        // Plates:
-        // Rich Plate — algo 9 (FoilPlateEngine, "Plate (Foil II)"). Migrated
-        // 2026-05-19 from PlateEngine (algo 8) to the second-gen foil engine.
-        // Sensible-default baseline below — anchor-tune metrics still
-        // pending. Mirrors FactoryPresets.h "Rich Plate" row.
-        if (name == "Rich Plate")
-            return makePreset (name.toRawUTF8(), 9, 1.0f, true, 0.0f,
-                               1.420f, 0.950f, 0.300f, 1.000f,
-                               0.380f, 1.480f, 200.0f,
-                               0.500f, 0.00f, 0.30f,
-                               20.0f, 18000.0f, 1.000f, 0.100f,
-                               20.0f, 0.920f, 9000.0f, 0.000f);
-        // Modern Clear Plate — snapshot of the PlateEngine Rich Plate
-        // tune at 7/8 RT60 within JND, preserved before PlateLexEngine
-        // surgery begins. Mirrors FactoryPresets.h "Modern Clear Plate".
-        if (name == "Modern Clear Plate")
-            return makePreset (name.toRawUTF8(), 8, 1.0f, true, 0.0f,
-                               6.200f, 0.950f, 0.500f, 1.000f,
-                               0.950f, 0.950f, 500.0f,
-                               0.150f, 0.00f, 0.30f,
-                               20.0f, 18000.0f, 1.000f, -4.500f,
-                               20.0f, 0.450f, 9000.0f, 0.000f);
         if (name == "Gold Plate")
             return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f, 600.0f, 0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, 16.0f, 20.0f, 0.80f, 3000.0f, 0.00f);
         if (name == "Vocal Plate")
@@ -400,8 +376,9 @@ namespace
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 10.0f, 3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f, 600.0f, 0.85f, 0.40f, 0.65f, 60.0f, 8500.0f, 1.30f, 9.0f, 20.0f, 1.10f, 4000.0f, 0.10f);
         // Bright Hall — Optuna-aligned to VVV Bright Hall (perceptual match,
         // RT60 +7% within JND on 5.5s tail, env P2P -4dB within FDN smoothing).
+        // Treble Multiply written as the APVTS ceiling (1.5) — Optuna's raw 3.58 clamps to 1.5 on apply.
         if (name == "Bright Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 3.18f, 0.72f, 0.51f, 2.24f, 3.58f, 3.23f, 525.0f, 0.81f, 0.50f, 0.50f, 66.0f, 16315.0f, 1.00f, 1.5f, 20.0f, 1.67f, 4887.0f, 0.11f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 3.18f, 0.72f, 0.51f, 2.24f, 1.50f, 3.23f, 525.0f, 0.81f, 0.50f, 0.50f, 66.0f, 16315.0f, 1.00f, 1.5f, 20.0f, 1.67f, 4887.0f, 0.11f);
         if (name == "Utility Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 1.0f, 1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f, 0.75f, 0.50f, 0.50f, 100.0f, 8000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4500.0f, 0.05f);
         // PCM 90 — Rooms (QuadTank / NonLinear):

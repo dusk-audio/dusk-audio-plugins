@@ -284,11 +284,14 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.47 dB — excellent timbre match.
         // VVV vpreset Mix=100%, PreDelay=20ms (UI decay knob 4.00s; measured
         // RT60 5.52s — VVV decay-knob calibration differs from DV's).
-        // Per-band damping pushed treble (3.58) and mid (1.67) high to chase
-        // VVV's bright-but-not-fizzy spectral tilt.
+        // Per-band damping pushed treble and mid high to chase VVV's bright-
+        // but-not-fizzy spectral tilt. Optuna's raw treble best-trial value
+        // (3.58) exceeds the APVTS damping range [0.1, 1.5] and was clamped
+        // to 1.5 during the trial render; storing 1.5 here keeps the file
+        // source-of-truth consistent with the value the engine actually sees.
         { "Bright Hall",          "Halls",
           4,  0.40f, false,  0.0f, 0,
-          3.18f, 0.72f, 0.51f, 2.24f, 3.58f, 3.23f,  525.0f,
+          3.18f, 0.72f, 0.51f, 2.24f, 1.50f, 3.23f,  525.0f,
           0.81f, 0.50f, 0.50f,  66.0f, 16315.0f, 1.00f, false, 1.5f,
           /* mono */ 20.0f, /* mid */ 1.67f, /* highX */ 4887.0f, /* sat */ 0.11f },
         // ── Smooth Concert Hall ──────────────────────────────────────────────
@@ -386,11 +389,15 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // VVV vpreset Mix=100%, PreDelay=8ms (UI decay knob 2.17s; measured
         // RT60 4.91s — VVV decay knob ≠ measured RT60).
         // Tuning surprised initial intuition: VVV runs Mid Multiply LOW (0.38)
-        // and Treble Multiply VERY HIGH (3.84) — a deeply scooped, treble-heavy
-        // EQ footprint that the RMS-normalized spectral loss revealed.
+        // and Treble Multiply at the ceiling — a deeply scooped, treble-heavy
+        // EQ footprint that the RMS-normalized spectral loss revealed. Optuna's
+        // raw treble best-trial value (3.84) exceeds the APVTS damping range
+        // [0.1, 1.5] and was clamped to 1.5 during the trial render; storing
+        // 1.5 here keeps the file source-of-truth consistent with what the
+        // engine actually sees.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          2.82f, 0.52f, 0.50f, 2.10f, 3.84f, 1.97f, 1857.0f,
+          2.82f, 0.52f, 0.50f, 2.10f, 1.50f, 1.97f, 1857.0f,
           0.64f, 0.45f, 0.55f,  29.0f,  7691.0f, 1.07f, false, -1.5f,
           /* mono */ 20.0f, /* mid */ 0.38f, /* highX */ 1233.0f, /* sat */ 0.05f },
         // ── Cathedral ────────────────────────────────────────────────────────

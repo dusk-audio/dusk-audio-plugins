@@ -58,23 +58,25 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 RENDER_BIN = REPO_ROOT / "build" / "tests" / "duskverb_render" / "duskverb_render"
 DEFAULT_VST3 = Path.home() / ".vst3" / "DuskVerb.vst3"
 
-# Free parameter search space. Ranges chosen to cover the full sensible
-# APVTS range for each axis (matches plugin's RangedAudioParameter).
+# Free parameter search space. Ranges align with the plugin's APVTS
+# RangedAudioParameter clamps (see PluginProcessor.cpp). Sampling outside
+# the APVTS range wastes trial budget because the setter clamps and many
+# trials produce identical effective values.
 FREE_PARAMS = {
-    "Decay Time":      (0.20,   12.00),    # seconds
-    "Size":            (0.10,    1.00),
-    "Mod Depth":       (0.00,    0.60),
-    "Mod Rate":        (0.05,    3.00),    # Hz
-    "Treble Multiply": (0.05,    4.00),
-    "Bass Multiply":   (0.10,    4.00),
-    "Mid Multiply":    (0.10,    4.00),
-    "Low Crossover":   (100.0, 2000.0),    # Hz
-    "High Crossover":  (1000.0, 12000.0),  # Hz
-    "Diffusion":       (0.00,    1.00),
-    "Lo Cut":          (20.0,   500.0),    # Hz
-    "Hi Cut":          (4000.0, 20000.0),  # Hz
-    "Width":           (0.50,    1.50),
-    "Saturation":      (0.00,    0.40),
+    "Decay Time":      (0.20,   12.00),    # APVTS [0.2, 30.0] — 12s ceiling matches longest current preset
+    "Size":            (0.10,    1.00),    # APVTS [0.0, 1.0]
+    "Mod Depth":       (0.00,    0.60),    # APVTS [0.0, 1.0] — 0.6 keeps tail from over-modulating
+    "Mod Rate":        (0.10,    3.00),    # APVTS [0.10, 10.0]
+    "Treble Multiply": (0.10,    1.50),    # APVTS [0.10, 1.50]
+    "Bass Multiply":   (0.30,    2.50),    # APVTS [0.30, 2.50]
+    "Mid Multiply":    (0.30,    2.50),    # APVTS [0.30, 2.50]
+    "Low Crossover":   (200.0, 4000.0),    # APVTS [200, 4000]
+    "High Crossover":  (1000.0, 12000.0),  # APVTS [1000, 12000]
+    "Diffusion":       (0.00,    1.00),    # APVTS [0.0, 1.0]
+    "Lo Cut":          (20.0,   500.0),    # APVTS [5, 500] — 20Hz practical floor
+    "Hi Cut":          (4000.0, 20000.0),  # APVTS [1000, 20000]
+    "Width":           (0.50,    1.50),    # APVTS [0.0, 2.0] — narrowed to musical range
+    "Saturation":      (0.00,    0.40),    # APVTS [0.0, 1.0] — 0.4 cap; above is destructive
 }
 
 # Locked overrides applied on top of the preset's factory baseline.
@@ -188,14 +190,20 @@ def make_objective(
             if isinstance(v, (int, float)):
                 trial.set_user_attr(k, float(v))
 
-        # Best-effort cleanup so the trial root doesn't balloon.
-        # Keep impulse for the best trial — we'll re-load it from
-        # trial.user_attrs path. For other trials, drop the whole dir.
-        # Optuna keeps the params, so we can re-render the winner later.
+        # Keep the impulse WAV for the current best trial so callers can
+        # audit the audio without re-rendering. For non-best trials drop
+        # the whole per-trial dir to bound scratch usage. Optuna's
+        # best_value raises ValueError until at least one trial completes;
+        # treat that case as "this is the first complete, keep it".
         try:
+            study_best = trial.study.best_value
+            is_best = loss < study_best
+        except ValueError:
+            is_best = True
+        if is_best:
+            trial.set_user_attr('impulse_path', str(impulse))
+        else:
             shutil.rmtree(out_dir, ignore_errors=True)
-        except Exception:
-            pass
 
         return loss
 
