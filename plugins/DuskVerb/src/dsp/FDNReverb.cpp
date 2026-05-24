@@ -572,6 +572,7 @@ void FDNReverb::setMidMultiply (float mult)
 void FDNReverb::setSaturation (float amount)
 {
     pending().saturationAmount = std::clamp (amount, 0.0f, 1.0f);
+    if (! prepared_) return;
     publishPending();
 }
 
