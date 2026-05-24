@@ -310,8 +310,9 @@ namespace
         // Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.30 bus=false).
         if (name == "Vocal Booth")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true,  2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f,  4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
+        // Vocal Hall — Optuna-aligned to VVV Vocal Hall (all 5 metrics within strict noise floor).
         if (name == "Vocal Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f, 0.78f, 0.45f, 0.55f, 100.0f, 9000.0f, 1.15f, -1.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.82f, 0.52f, 0.50f, 2.10f, 3.84f, 1.97f, 1857.0f, 0.64f, 0.45f, 0.55f, 29.0f, 7691.0f, 1.07f, -1.5f, 20.0f, 0.38f, 1233.0f, 0.05f);
         // Chambers
         if (name == "Wood Chamber")
             return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
@@ -397,13 +398,16 @@ namespace
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 5.0f, 3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f, 700.0f, 0.85f, 0.45f, 0.55f, 60.0f, 8000.0f, 1.20f, 8.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
         if (name == "Deep Blue")
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 10.0f, 3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f, 600.0f, 0.85f, 0.40f, 0.65f, 60.0f, 8500.0f, 1.30f, 9.0f, 20.0f, 1.10f, 4000.0f, 0.10f);
+        // Bright Hall — Optuna-aligned to VVV Bright Hall (perceptual match,
+        // RT60 +7% within JND on 5.5s tail, env P2P -4dB within FDN smoothing).
         if (name == "Bright Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 1.80f, 0.65f, 0.12f, 0.50f, 1.20f, 1.00f, 1000.0f, 0.75f, 0.50f, 0.50f, 80.0f, 18000.0f, 1.20f, 1.5f, 20.0f, 1.00f, 6000.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 3.18f, 0.72f, 0.51f, 2.24f, 3.58f, 3.23f, 525.0f, 0.81f, 0.50f, 0.50f, 66.0f, 16315.0f, 1.00f, 1.5f, 20.0f, 1.67f, 4887.0f, 0.11f);
         if (name == "Utility Hall")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 1.0f, 1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f, 0.75f, 0.50f, 0.50f, 100.0f, 8000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4500.0f, 0.05f);
         // PCM 90 — Rooms (QuadTank / NonLinear):
+        // Ambience — Optuna-aligned to VVV Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
         if (name == "Ambience")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.0f, 0.60f, 0.40f, 0.05f, 0.45f, 1.05f, 0.90f, 900.0f, 0.65f, 0.70f, 0.50f, 100.0f, 14000.0f, 1.20f, 3.5f, 20.0f, 1.05f, 5000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.0f, 0.91f, 0.59f, 0.33f, 2.67f, 1.31f, 3.10f, 161.0f, 0.34f, 0.70f, 0.50f, 74.0f, 13437.0f, 1.02f, 3.5f, 20.0f, 1.14f, 6545.0f, 0.02f);
         if (name == "PCM Drum Room")
             return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f, 900.0f, 0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, 4.0f, 20.0f, 1.05f, 5000.0f, 0.10f);
         if (name == "1981 Gated Snare")

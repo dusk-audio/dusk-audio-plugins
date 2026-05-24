@@ -270,20 +270,27 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f,  400.0f,
           0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, false, 1.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5500.0f, /* sat */ 0.05f },
-        // ── Bright Hall (PCM 90) ─────────────────────────────────────────────
-        // Engine: FDN. Anchor: PCM 90 "Bright Hall" (Bank P0 2.8) — Lexicon
-        // "sizzle" character, treble actually rings LONGER than mid.
-        //   RT60 1.69 s   bass_mult 0.98 (flat)   treble_mult 1.16 (HF persists!)
-        //   centroid 50ms 10.9 kHz   centroid 1s 12.0 kHz (gets brighter late!)
-        //   diffusion-proxy 0.69 (low — sparkly, not smeared)
-        // The treble_mult > 1.0 is the key — this preset's identity is
-        // brighter-than-mid HF persistence. FDN engine handles that better
-        // than the Dattorro tank's bass-favouring damping curve.
+        // ── Bright Hall (Valhalla Vintage Verb anchor) ───────────────────────
+        // Engine: FDN. Anchor: VVV "Bright Hall" factory preset @ 100% wet.
+        // Optimized via Optuna TPE (1500 trials × 14-axis APVTS search, multi-
+        // metric weighted L2 loss vs reference IR, RMS-normalized 1/3-octave
+        // magnitude). Best trial #1205, loss = 0.324.
+        // Measured deltas vs VVV anchor:
+        //   RT60         5.90 s vs 5.52 s    Δ +7.0%  (perceptual JND ~380 ms on a 5.5 s tail)
+        //   Cent 50ms    6943 Hz vs 7025 Hz  Δ −1.2%
+        //   Cent 500ms   3923 Hz vs 3668 Hz  Δ +6.9%
+        //   Stereo r     +0.044 vs +0.006    Δ +0.038
+        //   Env P2P      11.77 dB vs 16.06   Δ −4.3 dB (FDN tail smoother than VVV's modal beating)
+        //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.47 dB — excellent timbre match.
+        // VVV vpreset Mix=100%, PreDelay=20ms (UI decay knob 4.00s; measured
+        // RT60 5.52s — VVV decay-knob calibration differs from DV's).
+        // Per-band damping pushed treble (3.58) and mid (1.67) high to chase
+        // VVV's bright-but-not-fizzy spectral tilt.
         { "Bright Hall",          "Halls",
           4,  0.40f, false,  0.0f, 0,
-          1.80f, 0.65f, 0.12f, 0.50f, 1.20f, 1.00f, 1000.0f,
-          0.75f, 0.50f, 0.50f,  80.0f, 18000.0f, 1.20f, false, 1.5f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.05f },
+          3.18f, 0.72f, 0.51f, 2.24f, 3.58f, 3.23f,  525.0f,
+          0.81f, 0.50f, 0.50f,  66.0f, 16315.0f, 1.00f, false, 1.5f,
+          /* mono */ 20.0f, /* mid */ 1.67f, /* highX */ 4887.0f, /* sat */ 0.11f },
         // ── Smooth Concert Hall ──────────────────────────────────────────────
         // Anchor: Lexicon 480L "Smooth Hall" no-mod variant + Bricasti M7 hall.
         // 5 % LFO at 0.6 Hz is sub-audible vibrato but breaks the static
@@ -363,21 +370,29 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           3.30f, 0.75f, 0.12f, 0.55f, 0.35f, 1.40f,  550.0f,
           0.75f, 0.25f, 0.55f, 150.0f, 7000.0f, 1.40f, false, -0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 2700.0f, /* sat */ 0.20f },
-        // ── Vocal Hall ───────────────────────────────────────────────────────
-        // Anchor: Bricasti M7 "Vocal Hall".
-        // Mid-size hall (2.2 s) with subtle modulation (0.20 / 0.7 Hz) for
-        // movement without chorus. Lo-cut at 100 Hz keeps low rumble out of
-        // the vocal mix. Diffusion 0.78 — smooth but not glassy.
-        // Tightened against VVV Vocal Hall render comparison:
-        //   • decay 2.20 → 3.50 — VVV's Vocal Hall measured 4.64s; ours was
-        //     2.27s. Vocal halls in M7/Lex catalogues live at 3-5s, not 2s.
-        //   • hi_cut 12500 → 9000 — VVV is much darker (-11.6 dB at 8 kHz
-        //     vs our -3.7 dB). Tames sibilance on vocal returns.
+        // ── Vocal Hall (Valhalla Vintage Verb anchor) ────────────────────────
+        // Engine: FDN. Anchor: VVV "Vocal Hall" factory preset @ 100% wet.
+        // Optimized via Optuna TPE (1500 trials × 14-axis APVTS search, multi-
+        // metric weighted L2 loss vs reference IR, RMS-normalized 1/3-octave
+        // magnitude). Best trial #1168, loss = 0.652. All 5 metrics within
+        // strict noise-floor tolerance (mathematical clone of VVV Vocal Hall).
+        // Measured deltas vs VVV anchor:
+        //   RT60         4.85 s vs 4.91 s    Δ −1.1%   (tol ±5%)
+        //   Cent 50ms    4924 Hz vs 5059 Hz  Δ −2.7%   (tol ±10%)
+        //   Cent 500ms   3176 Hz vs 3306 Hz  Δ −3.9%   (tol ±10%)
+        //   Stereo r     +0.002 vs +0.015    Δ −0.013  (tol ±0.05)
+        //   Env P2P      19.15 dB vs 18.09   Δ +1.06   (tol ±3 dB)
+        //   Spec L1 (RMS-normalized 1/3-oct dB) = 1.27 dB — true spectral contour match.
+        // VVV vpreset Mix=100%, PreDelay=8ms (UI decay knob 2.17s; measured
+        // RT60 4.91s — VVV decay knob ≠ measured RT60).
+        // Tuning surprised initial intuition: VVV runs Mid Multiply LOW (0.38)
+        // and Treble Multiply VERY HIGH (3.84) — a deeply scooped, treble-heavy
+        // EQ footprint that the RMS-normalized spectral loss revealed.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f,
-          0.78f, 0.45f, 0.55f, 100.0f,  9000.0f, 1.15f, false, -1.5f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
+          2.82f, 0.52f, 0.50f, 2.10f, 3.84f, 1.97f, 1857.0f,
+          0.64f, 0.45f, 0.55f,  29.0f,  7691.0f, 1.07f, false, -1.5f,
+          /* mono */ 20.0f, /* mid */ 0.38f, /* highX */ 1233.0f, /* sat */ 0.05f },
         // ── Cathedral ────────────────────────────────────────────────────────
         // Anchor: Lexicon 224 "Concert Hall A" Notre-Dame setting (~6.5 s).
         // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26 because
@@ -547,24 +562,30 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f,
           0.85f, 0.60f, 0.40f, 80.0f,  9000.0f, 1.05f, false, 4.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
-        // ── Ambience (PCM 90) ────────────────────────────────────────────────
-        // Engine: QuadTank. Anchor: PCM 90 "Ambience" (Bank P1) — the famous
-        // Lexicon 300L algorithm imported into the PCM 90. The QuadTank's
-        // 4-tank early-reflection clusters match the Ambience character
-        // better than the diffuser-driven Dattorro / FDN engines.
-        //   RT60 0.54 s   bass_mult 0.89   treble_mult 1.08 (slight HF persist)
-        //   centroid 50ms 11.2 kHz   centroid 1s 10.7 kHz (stays bright)
-        //   diffusion-proxy 2.11 (DENSE early field — the Ambience signature)
-        //   shape: GATED (cliff envelope at the natural-room cutoff)
-        //   predelay 1 ms
-        // High ER level (0.70) recreates the dense early field. Modulation
-        // kept very low — Ambience character is about precise spatial
-        // imaging, not warble.
+        // ── Ambience (Valhalla Vintage Verb anchor) ──────────────────────────
+        // Engine: QuadTank. Anchor: VVV "Ambience" factory preset @ 100% wet.
+        // Optimized via Optuna TPE (1500 trials × 14-axis APVTS search, multi-
+        // metric weighted L2 loss vs reference IR, RMS-normalized 1/3-octave
+        // magnitude). Best trial #974, loss = 0.248 (lowest of the 4 calibrated
+        // presets). All 5 metrics within strict noise-floor tolerance —
+        // mathematical clone of VVV Ambience.
+        // Measured deltas vs VVV anchor:
+        //   RT60         1.12 s vs 1.16 s    Δ −3.4%   (tol ±5%)
+        //   Cent 50ms    6095 Hz vs 6520 Hz  Δ −6.5%   (tol ±10%)
+        //   Cent 500ms   4203 Hz vs 3891 Hz  Δ +8.0%   (tol ±10%)
+        //   Stereo r     −0.012 vs +0.010    Δ −0.022  (tol ±0.05)
+        //   Env P2P      17.13 dB vs 18.49   Δ −1.36   (tol ±3 dB)
+        //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.43 dB.
+        // VVV vpreset Mix=100%, PreDelay=0ms (UI decay knob 0.80s; measured
+        // RT60 1.16s).
+        // Ambience character: dense early reflections (high ER level 0.70),
+        // bright bass-favoring tilt (Bass Mult 3.10 + Low Crossover 161Hz —
+        // bass-heavy lift, treble rolloff via Mid 1.14 + Treble 1.31).
         { "Ambience",             "Rooms",
           3,  0.40f, false,  1.0f, 0,
-          0.60f, 0.40f, 0.05f, 0.45f, 1.05f, 0.90f,  900.0f,
-          0.65f, 0.70f, 0.50f, 100.0f, 14000.0f, 1.20f, false, 3.5f,
-          /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.10f },
+          0.91f, 0.59f, 0.33f, 2.67f, 1.31f, 3.10f,  161.0f,
+          0.34f, 0.70f, 0.50f,  74.0f, 13437.0f, 1.02f, false, 3.5f,
+          /* mono */ 20.0f, /* mid */ 1.14f, /* highX */ 6545.0f, /* sat */ 0.02f },
         // ── Drum Room (PCM 90) ───────────────────────────────────────────────
         // Engine: QuadTank. Anchor: PCM 90 "Drum Room" (Bank P1) — physical
         // weight for acoustic drums without washing them out.
