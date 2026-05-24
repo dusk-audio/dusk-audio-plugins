@@ -126,7 +126,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Lexicon PCM digital-plate sound — brighter, shorter, less diffused.
         { "Vocal Plate",          "Plates",
           0,  0.35f, false,  4.0f, 0,
-          0.95f, 0.45f, 0.30f, 0.60f, 0.85f, 1.00f,  700.0f,
+          0.95f, 0.45f, 0.18f, 0.60f, 0.85f, 1.00f,  700.0f,
           0.85f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, false, 16.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Rich Plate (PCM 90) ──────────────────────────────────────────────
@@ -151,7 +151,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tail that doesn't glass up.
         { "Gold Plate",           "Plates",
           0,  0.30f, false,  0.0f, 0,
-          1.96f, 0.357f, 0.22f, 0.35f, 1.00f, 0.55f,  600.0f,
+          1.96f, 0.357f, 0.15f, 0.35f, 1.00f, 0.55f,  600.0f,
           0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, false, 16.0f,
           /* mono */ 20.0f, /* mid */ 0.80f, /* highX */ 3000.0f, /* sat */ 0.00f },
         // ── Fat Pop Plate ────────────────────────────────────────────────────
@@ -172,7 +172,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //     -0.2 dB. Tighter mix bass, less mud on busy material.
         { "Fat Pop Plate",        "Plates",
           0,  0.40f, false, 18.0f, 0,
-          2.10f, 0.55f, 0.45f, 0.85f, 0.55f, 1.10f,  480.0f,
+          2.10f, 0.55f, 0.25f, 0.85f, 0.55f, 1.10f,  480.0f,
           0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, false, 13.0f,
           /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 4500.0f, /* sat */ 0.30f },
         // ── Modulated Plate ──────────────────────────────────────────────────
@@ -185,7 +185,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tank itself — no ER stage. Keep the FDN density doing the work.
         { "Modulated Plate",      "Plates",
           4,  0.40f, false,  8.0f, 0,
-          2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f,
+          2.40f, 0.50f, 0.30f, 1.40f, 0.85f, 1.00f, 1300.0f,
           0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, false, 0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4500.0f, /* sat */ 0.25f },
         // ═══════════ PLATES ═══════════
@@ -239,7 +239,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // the full Fender-on-eleven boing character.
         { "Tank Drip",            "Springs",
           5,  0.40f, false,  0.0f, 0,
-          2.20f, 0.65f, 0.30f, 0.80f, 0.70f, 1.10f, 1000.0f,
+          2.20f, 0.65f, 0.22f, 0.80f, 0.70f, 1.10f, 1000.0f,
           0.85f, 0.10f, 0.30f, 100.0f,  3000.0f, 1.20f, false, 2.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.20f },
         // ── Utility Hall (PCM 90) ────────────────────────────────────────────
@@ -566,7 +566,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Drum Plate; QuadTank measured σ 1.12 dB at 0.05 → just above floor.
         { "Tight Drum Room",      "Rooms",
           3,  0.25f, false,  4.0f, 0,
-          0.50f, 0.20f, 0.25f, 0.60f, 0.95f, 0.95f, 1500.0f,
+          0.50f, 0.20f, 0.15f, 0.60f, 0.95f, 0.95f, 1500.0f,
           0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Studio Room ──────────────────────────────────────────────────────
@@ -695,7 +695,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //         hold 500 ms (diffusion 1.0, max), release 1500 ms (mod_rate 7.52)
         { "Reverse Taps",         "Rooms",
           6,  1.00f, false, 30.0f, 0,
-          3.00f, 0.85f, 0.49f, 7.52f, 0.70f, 1.00f,  500.0f,
+          3.00f, 0.85f, 0.20f, 7.52f, 0.70f, 1.00f,  500.0f,
           1.00f, 0.00f, 0.30f,  80.0f,  8000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Mobius Pad ───────────────────────────────────────────────────────
@@ -711,7 +711,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (ASCII name — keeps shell + UTF-8 toolchain matching reliable.)
         { "Mobius Pad",           "Ambient",
           2,  0.45f, false, 45.0f, 0,
-          5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f,  500.0f,
+          5.50f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f,  500.0f,
           0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 4.5f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3200.0f, /* sat */ 0.10f },
         // ═══════════ AMBIENT ═══════════
@@ -730,7 +730,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //     building up muddy bass over the long tail.
         { "Ambient Swell",        "Ambient",
           2,  0.50f, false, 60.0f, 0,
-          8.00f, 0.92f, 0.28f, 0.40f, 0.60f, 1.50f,  600.0f,
+          8.00f, 0.92f, 0.20f, 0.40f, 0.60f, 1.50f,  600.0f,
           0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, false, 4.0f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3500.0f, /* sat */ 0.15f },
         // ── Black Hole ───────────────────────────────────────────────────────
@@ -769,7 +769,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // presets because they default to the historical hardcoded values.
         { "Black Hole",           "Ambient",
           2,  0.50f, false,   0.0f, 0,
-          14.00f, 0.95f, 0.35f, 0.60f, 1.00f, 1.10f,  700.0f,
+          14.00f, 0.95f, 0.25f, 0.60f, 1.00f, 1.10f,  700.0f,
           0.85f, 0.05f, 0.70f,  60.0f, 18000.0f, 1.40f, false, -2.0f,
           /* mono */ 60.0f, /* mid */ 1.10f, /* highX */ 8000.0f, /* sat */ 0.08f,
           /* gate */ true,
@@ -794,7 +794,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // the source more naturally.
         { "Infinite Blackhole",   "Ambient",
           2,  0.55f, false, 85.0f, 0,
-          18.00f, 1.00f, 0.35f, 0.30f, 0.55f, 1.60f,  550.0f,
+          18.00f, 1.00f, 0.25f, 0.30f, 0.55f, 1.60f,  550.0f,
           0.90f, 0.05f, 0.80f, 100.0f,  7500.0f, 1.50f, false, -1.0f,
           /* mono */ 100.0f, /* mid */ 1.30f, /* highX */ 3000.0f, /* sat */ 0.25f },
         // ── Cascading Heaven ─────────────────────────────────────────────
