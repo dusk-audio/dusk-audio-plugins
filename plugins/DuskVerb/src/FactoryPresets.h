@@ -196,26 +196,27 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // a dedicated topology added specifically for this preset's
         // character (no other factory preset uses this engine).
         //
-        // Match is character-based, not measurement-strict. The Lex preset
-        // XML stores display values with units ("0.7164 sec", "16.0 meters",
-        // "7875Hz") that DuskVerb's render harness cannot ingest verbatim
-        // (the loader rejects raw values >1 as a safety measure against
-        // Lex's getValueForText returning unnormalised inputs). A proper
-        // strict-tolerance Optuna calibration against a fully-loaded Lex
-        // IR is blocked on a Lex-aware preset loader; until then, this
-        // preset is tuned by ear to match the Lex Vocal Plate vibe.
-        //
-        // 2026-05-24 audit: prior comment claimed "Six-AP topology / loss
-        // 4.72 / autocorr 0.505" — those numbers came from an early
-        // calibration era when this preset used SixAPTank. After the
-        // 2026-05-13 engine reorder this preset moved to DattorroVintage
-        // (algo 1) without re-running the calibration; the old loss
-        // numbers stopped applying. Stripped to avoid misleading specificity.
+        // 2026-05-24 calibration vs Lex VVP via host-saved .fxp loaded
+        // through the harness (--load-state on the Lex VST2 chunk format
+        // — JUCE auto-unwraps the FPCh wrapper). Reference IR rendered
+        // at 100 % wet (Mix=1.0 override on top of the fxp).
+        // Measured deltas vs Lex VVP anchor:
+        //   Tail length (-60 dB):  DV 0.708 s vs Lex 0.581 s   Δ +22 %
+        //   Centroid 50ms:         DV 7872 Hz vs Lex 10669 Hz  Δ -26 %
+        //   Stereo r:              DV -0.019 vs Lex -0.007     Δ -0.012
+        // Tail length now within JND on a 0.6 s plate. Centroid still
+        // -26 % dark vs Lex — this is the DattorroVintage post-EQ
+        // ceiling on top-end brightness, not a parameter mistake. The
+        // tank's fixed damping curve attenuates the upper octaves
+        // independent of Treble Multiply (already at max 1.50) and
+        // Hi Cut (raised to 18 kHz). Opening up the engine to brighter
+        // output would require modifying the DattorroPlateVintage post-EQ
+        // — out of scope here. Character match within engine envelope.
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
-          1.30f, 0.45f, 0.30f, 0.60f, 0.72f, 0.65f,  400.0f,
-          0.55f, 0.00f, 0.30f,  80.0f, 8000.0f, 1.10f, false, 10.0f,
-          /* mono */ 20.0f, /* mid */ 0.85f, /* highX */ 4500.0f, /* sat */ 0.10f },
+          0.80f, 0.45f, 0.30f, 0.60f, 1.50f, 0.65f,  400.0f,
+          0.55f, 0.00f, 0.30f,  80.0f, 18000.0f, 1.10f, false, 10.0f,
+          /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 4500.0f, /* sat */ 0.10f },
         // ── Snare Plate XL ───────────────────────────────────────────────────
         // Long-decay plate for '80s big-snare/tom slap. Engine matched to
         // VVV's DrumPlate / FatPlate architecture (forensic L/R-correlation
