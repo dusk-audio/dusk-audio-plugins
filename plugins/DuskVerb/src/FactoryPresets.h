@@ -275,13 +275,13 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Optimized via Optuna TPE (1500 trials × 14-axis APVTS search, multi-
         // metric weighted L2 loss vs reference IR, RMS-normalized 1/3-octave
         // magnitude). Best trial #1205, loss = 0.324.
-        // Measured deltas vs VVV anchor:
-        //   RT60         5.90 s vs 5.52 s    Δ +7.0%  (perceptual JND ~380 ms on a 5.5 s tail)
-        //   Cent 50ms    6943 Hz vs 7025 Hz  Δ −1.2%
-        //   Cent 500ms   3923 Hz vs 3668 Hz  Δ +6.9%
-        //   Stereo r     +0.044 vs +0.006    Δ +0.038
-        //   Env P2P      11.77 dB vs 16.06   Δ −4.3 dB (FDN tail smoother than VVV's modal beating)
-        //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.47 dB — excellent timbre match.
+        // Measured deltas vs VVV anchor (post-mod follow-up below):
+        //   RT60         5.92 s vs 5.52 s    Δ +7.2%  (perceptual JND ~400 ms on a 5.5 s tail)
+        //   Cent 50ms    6864 Hz vs 7025 Hz  Δ −2.3%
+        //   Cent 500ms   3928 Hz vs 3668 Hz  Δ +7.1%
+        //   Stereo r     +0.056 vs +0.006    Δ +0.050  (right at ±0.05 strict ceiling)
+        //   Env P2P      10.97 dB vs 16.06   Δ −5.1 dB (FDN tail smoother than VVV's modal beating)
+        //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.51 dB — excellent timbre match.
         // VVV vpreset Mix=100%, PreDelay=20ms (UI decay knob 4.00s; measured
         // RT60 5.52s — VVV decay-knob calibration differs from DV's).
         // Per-band damping pushed treble and mid high to chase VVV's bright-
@@ -386,13 +386,13 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // metric weighted L2 loss vs reference IR, RMS-normalized 1/3-octave
         // magnitude). Best trial #1168, loss = 0.652. All 5 metrics within
         // strict noise-floor tolerance (mathematical clone of VVV Vocal Hall).
-        // Measured deltas vs VVV anchor:
-        //   RT60         4.85 s vs 4.91 s    Δ −1.1%   (tol ±5%)
-        //   Cent 50ms    4924 Hz vs 5059 Hz  Δ −2.7%   (tol ±10%)
-        //   Cent 500ms   3176 Hz vs 3306 Hz  Δ −3.9%   (tol ±10%)
-        //   Stereo r     +0.002 vs +0.015    Δ −0.013  (tol ±0.05)
-        //   Env P2P      19.15 dB vs 18.09   Δ +1.06   (tol ±3 dB)
-        //   Spec L1 (RMS-normalized 1/3-oct dB) = 1.27 dB — true spectral contour match.
+        // Measured deltas vs VVV anchor (post-mod follow-up below):
+        //   RT60         4.84 s vs 4.91 s    Δ −1.3%   (tol ±5%)
+        //   Cent 50ms    4966 Hz vs 5059 Hz  Δ −1.8%   (tol ±10%)
+        //   Cent 500ms   3224 Hz vs 3306 Hz  Δ −2.5%   (tol ±10%)
+        //   Stereo r     +0.006 vs +0.015    Δ −0.009  (tol ±0.05)
+        //   Env P2P      19.46 dB vs 18.09   Δ +1.37   (tol ±3 dB)
+        //   Spec L1 (RMS-normalized 1/3-oct dB) = 1.30 dB — true spectral contour match.
         // VVV vpreset Mix=100%, PreDelay=8ms (UI decay knob 2.17s; measured
         // RT60 4.91s — VVV decay knob ≠ measured RT60).
         // Tuning surprised initial intuition: VVV runs Mid Multiply LOW (0.38)
@@ -591,13 +591,13 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // magnitude). Best trial #974, loss = 0.248 (lowest of the 4 calibrated
         // presets). All 5 metrics within strict noise-floor tolerance —
         // mathematical clone of VVV Ambience.
-        // Measured deltas vs VVV anchor:
-        //   RT60         1.12 s vs 1.16 s    Δ −3.4%   (tol ±5%)
-        //   Cent 50ms    6095 Hz vs 6520 Hz  Δ −6.5%   (tol ±10%)
-        //   Cent 500ms   4203 Hz vs 3891 Hz  Δ +8.0%   (tol ±10%)
-        //   Stereo r     −0.012 vs +0.010    Δ −0.022  (tol ±0.05)
-        //   Env P2P      17.13 dB vs 18.49   Δ −1.36   (tol ±3 dB)
-        //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.43 dB.
+        // Measured deltas vs VVV anchor (post-mod follow-up below):
+        //   RT60         1.13 s vs 1.16 s    Δ −3.0%   (tol ±5%)
+        //   Cent 50ms    5943 Hz vs 6520 Hz  Δ −8.9%   (tol ±10%)
+        //   Cent 500ms   4075 Hz vs 3891 Hz  Δ +4.7%   (tol ±10%)
+        //   Stereo r     −0.025 vs +0.010    Δ −0.035  (tol ±0.05)
+        //   Env P2P      17.56 dB vs 18.49   Δ −0.93   (tol ±3 dB)
+        //   Spec L1 (RMS-normalized 1/3-oct dB) = 0.54 dB.
         // VVV vpreset Mix=100%, PreDelay=0ms (UI decay knob 0.80s; measured
         // RT60 1.16s).
         // Ambience character: dense early reflections (high ER level 0.70),
