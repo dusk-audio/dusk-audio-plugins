@@ -294,11 +294,13 @@ namespace
 // =============================================================================
 
 // Tightened 2026-05-24: previous 1400×640 left ~30% empty whitespace inside
-// every panel column (knobs vertically over-centred with large yPad above &
-// below). Both axes shrunk; constants downstream (topY, titleBandH, tail-meter
-// band, bottom-strip heights) tightened to match.
+// every panel column (knobs vertically over-centred). Pass 2 cuts height
+// further (540 → 470) and bumps knob diameters (62/78 → 76/92) so the
+// knob stacks consume more of each column. Both axes shrunk; constants
+// downstream (topY, titleBandH, tail-meter band, bottom-strip heights)
+// tightened to match.
 static constexpr int kBaseWidth  = 1240;
-static constexpr int kBaseHeight = 540;
+static constexpr int kBaseHeight = 470;
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -565,7 +567,22 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
                         kBaseWidth * 2, kBaseHeight * 2,
                         true);
 
-    setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
+    // One-time UI-v2 migration: pre-2026-05-24 builds shipped a 1400×640
+    // base (aspect 2.19); the v2 layout is 1240×470 (aspect 2.64). If the
+    // persisted size still has the old aspect, force the new defaults so
+    // the user sees the tighter layout without having to manually reset.
+    // A user who legitimately resized to a non-default aspect within ±10%
+    // of v2 keeps their stored size.
+    {
+        const float baseAspect   = static_cast<float> (kBaseWidth) / static_cast<float> (kBaseHeight);
+        const float storedAspect = static_cast<float> (scaler_.getStoredWidth())
+                                 / static_cast<float> (scaler_.getStoredHeight());
+        const bool aspectDrifted = std::abs (storedAspect - baseAspect) / baseAspect > 0.10f;
+        if (aspectDrifted)
+            setSize (kBaseWidth, kBaseHeight);
+        else
+            setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
+    }
     startTimerHz (15);
 
     // Re-apply engine accent NOW that every component is constructed and
@@ -834,11 +851,11 @@ void DuskVerbEditor::resized()
 
     // Two-tier knob hierarchy — primary (DECAY, SIZE, MIX) reads as the
     // hero of each row; everything else sits at one consistent secondary
-    // size. The previous three-tier layout fragmented visually.
-    // Sizes bumped (70→78, 56→62) after widening to 1400 px so the knobs
-    // fill the new column widths instead of looking lost.
-    int knobBig = juce::roundToInt (78.0f * sf);
-    int knobMed = juce::roundToInt (62.0f * sf);
+    // size. Sizes bumped 2026-05-24 (62 → 76, 78 → 92) so knob stacks
+    // fill the tighter panel columns without the column-centring yPad
+    // showing as wasted space below each knob.
+    int knobBig = juce::roundToInt (92.0f * sf);
+    int knobMed = juce::roundToInt (76.0f * sf);
 
     // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
     // The two knobs sit adjacent so the row reads as a coherent pair, and
