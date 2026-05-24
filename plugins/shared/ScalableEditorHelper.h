@@ -11,12 +11,18 @@ public:
     ScalableEditorHelper() = default;
     ~ScalableEditorHelper() = default;
 
+    // uiVersion (default 0 = no version check, backwards-compatible) bumps
+    // the persistence "uiVersion" key. If the stored uiVersion is lower
+    // than the value passed here, loadStoredSize() resets the persisted
+    // size to the new defaults. Bump this in any caller after a layout
+    // change that requires existing sessions to pick up the new defaults.
     void initialize(juce::AudioProcessorEditor* editor,
                     juce::AudioProcessor* processor,
                     int defaultWidth, int defaultHeight,
                     int minWidth, int minHeight,
                     int maxWidth, int maxHeight,
-                    bool fixedAspectRatio = false)
+                    bool fixedAspectRatio = false,
+                    int uiVersion = 0)
     {
         parentEditor = editor;
         audioProcessor = processor;
@@ -28,6 +34,7 @@ public:
         minH = minHeight;
         maxW = maxWidth;
         maxH = maxHeight;
+        currentUiVersion = uiVersion;
 
         loadStoredSize();
 
@@ -128,9 +135,11 @@ private:
     int maxH = 1200;
     int storedWidth = 800;
     int storedHeight = 600;
+    int currentUiVersion = 0;   // 0 = no version gate (legacy callers)
 
     static constexpr const char* kWindowWidth = "windowWidth";
     static constexpr const char* kWindowHeight = "windowHeight";
+    static constexpr const char* kUiVersion    = "uiVersion";
 
     void loadStoredSize()
     {
@@ -149,6 +158,18 @@ private:
             return;
 
         juce::String prefix = getPluginPrefix();
+
+        // UI version gate: if the caller passed a non-zero uiVersion and the
+        // persisted version is older, the stored size is from a prior
+        // layout and is no longer valid — fall back to defaults so the
+        // user sees the new layout without having to manually resize.
+        if (currentUiVersion > 0)
+        {
+            const int storedUiVersion = userSettings->getIntValue(prefix + kUiVersion, 0);
+            if (storedUiVersion < currentUiVersion)
+                return;   // storedWidth / Height already = defaults
+        }
+
         storedWidth = userSettings->getIntValue(prefix + kWindowWidth, defaultW);
         storedHeight = userSettings->getIntValue(prefix + kWindowHeight, defaultH);
 
@@ -175,6 +196,8 @@ private:
         juce::String prefix = getPluginPrefix();
         userSettings->setValue(prefix + kWindowWidth, parentEditor->getWidth());
         userSettings->setValue(prefix + kWindowHeight, parentEditor->getHeight());
+        if (currentUiVersion > 0)
+            userSettings->setValue(prefix + kUiVersion, currentUiVersion);
         props->saveIfNeeded();
     }
 

@@ -563,32 +563,19 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     outputMeter_.setRefreshRate (15.0f);
     addAndMakeVisible (outputMeter_);
 
+    // uiVersion 4: pre-v4 builds shipped layouts at 1400×640 (v0), 1240×540
+    // (v1), 1240×470 (v2), 1240×510 (v3). ScalableEditorHelper now resets
+    // the persisted size to the new defaults whenever the stored uiVersion
+    // is older than the value passed here — no more maintaining an explicit
+    // list of prior defaults inside this file. Bump this when a future
+    // layout pass should auto-reset existing sessions.
     scaler_.initialize (this, &p, kBaseWidth, kBaseHeight,
                         static_cast<int> (kBaseWidth * 0.7f),
                         static_cast<int> (kBaseHeight * 0.7f),
                         kBaseWidth * 2, kBaseHeight * 2,
-                        true);
+                        true, /* uiVersion */ 4);
 
-    // One-time UI migration: pre-v4 builds shipped a sequence of default
-    // sizes (1400×640, 1240×540, 1240×470, 1240×510). The v4 layout is
-    // 1240×560. New v4 aspect happens to land near the original 1400×640
-    // aspect, so a pure aspect check no longer discriminates. Instead,
-    // match the persisted size against the known prior defaults and snap
-    // to the v4 defaults on hit. Users who manually resized to anything
-    // OTHER than those exact values keep their stored size.
-    {
-        const int sw = scaler_.getStoredWidth();
-        const int sh = scaler_.getStoredHeight();
-        const bool priorDefault =
-               (sw == 1400 && sh == 640)
-            || (sw == 1240 && sh == 540)
-            || (sw == 1240 && sh == 470)
-            || (sw == 1240 && sh == 510);
-        if (priorDefault)
-            setSize (kBaseWidth, kBaseHeight);
-        else
-            setSize (sw, sh);
-    }
+    setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
     startTimerHz (15);
 
     // Re-apply engine accent NOW that every component is constructed and
@@ -1363,6 +1350,16 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
     // entirely (the MODULATION group goes back to its original look with
     // just DEPTH/RATE knobs and no button below them).
     gateButton_.setVisible (isNonLinear);
+
+    // The MOD-panel layout in resized() now carves a strip for the GATE
+    // button only when it is visible. setVisible() does not re-fire
+    // resized(), so we trigger one here to keep the panel bounds + the
+    // gate button's own bounds in sync with the new visibility state.
+    // Without this, switching to NonLinear leaves the GATE button at its
+    // previous (often invisible) bounds, and switching away from
+    // NonLinear leaves the MOD knobs sized to the smaller gate-strip
+    // layout.
+    resized();
 
     repaint();   // catches FREEZE / BUS toggle redraw via LookAndFeel
 }
