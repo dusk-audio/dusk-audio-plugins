@@ -80,52 +80,29 @@ void hadamardInPlace8 (float* data)
     }
 }
 
-// In-place Householder reflection H = I - 2·v·vᵀ with a seeded, randomized
-// unit vector v. Replaces the degenerate v = 1/√N form, which had
+// In-place Householder reflection H = I - 2·v·vᵀ with a per-instance,
+// randomized unit vector v. Replaces the degenerate v = 1/√N form, which had
 // eigenvalue −1 only along the all-ones axis — output[i] = input[i] − 2·mean,
 // i.e. a common DC offset, no true cross-channel mixing. The randomized v
 // places the −1 axis on an arbitrary direction in N-space so every input
 // channel influences every output channel with weight 2·v[i]·v[j] ≠ 0.
-struct HouseholderVecs
-{
-    float v16[16];
-    float v8 [8];
-
-    HouseholderVecs()
-    {
-        uint32_t s = 0x9E3779B9u;
-        auto next01 = [&s]() {
-            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-            return static_cast<float> (static_cast<int32_t> (s)) * (1.0f / 2147483648.0f);
-        };
-
-        float sumSq = 0.0f;
-        for (int i = 0; i < 16; ++i) { v16[i] = next01(); sumSq += v16[i] * v16[i]; }
-        const float inv16 = 1.0f / std::sqrt (sumSq);
-        for (int i = 0; i < 16; ++i) v16[i] *= inv16;
-
-        sumSq = 0.0f;
-        for (int i = 0; i < 8; ++i)  { v8[i]  = next01(); sumSq += v8[i] * v8[i]; }
-        const float inv8 = 1.0f / std::sqrt (sumSq);
-        for (int i = 0; i < 8;  ++i) v8[i]  *= inv8;
-    }
-};
-const HouseholderVecs kHouseholder;
-
-inline void householderInPlace16 (float* data)
+// Seed lives on the FDNReverb instance so two reverbs on the same bus see
+// different reflector axes (a shared static seed produced correlated tails
+// across instances).
+inline void householderInPlace16 (float* data, const float* v)
 {
     float dot = 0.0f;
-    for (int i = 0; i < 16; ++i) dot += data[i] * kHouseholder.v16[i];
+    for (int i = 0; i < 16; ++i) dot += data[i] * v[i];
     const float k = 2.0f * dot;
-    for (int i = 0; i < 16; ++i) data[i] -= k * kHouseholder.v16[i];
+    for (int i = 0; i < 16; ++i) data[i] -= k * v[i];
 }
 
-inline void householderInPlace8 (float* data)
+inline void householderInPlace8 (float* data, const float* v)
 {
     float dot = 0.0f;
-    for (int i = 0; i < 8; ++i) dot += data[i] * kHouseholder.v8[i];
+    for (int i = 0; i < 8; ++i) dot += data[i] * v[i];
     const float k = 2.0f * dot;
-    for (int i = 0; i < 8; ++i) data[i] -= k * kHouseholder.v8[i];
+    for (int i = 0; i < 8; ++i) data[i] -= k * v[i];
 }
 
 } // anonymous namespace
@@ -162,6 +139,32 @@ FDNReverb::FDNReverb()
     std::memcpy (paramSlots_[0].leftSigns,  kDefaultLeftSigns,  sizeof (kDefaultLeftSigns));
     std::memcpy (paramSlots_[0].rightSigns, kDefaultRightSigns, sizeof (kDefaultRightSigns));
     paramSlots_[1] = paramSlots_[0];
+
+    // Per-instance Householder reflector seed. Each FDNReverb gets a distinct
+    // axis so eigenmodes don't align across stacked instances on the same bus.
+    static std::atomic<uint32_t> kHouseholderSeedCounter { 0x9E3779B9u };
+    uint32_t seed = kHouseholderSeedCounter.fetch_add (0x85EBCA77u,
+                                                       std::memory_order_relaxed);
+    if (seed == 0u) seed = 0x9E3779B9u;
+    seedHouseholderVectors (seed);
+}
+
+void FDNReverb::seedHouseholderVectors (uint32_t seed)
+{
+    auto next01 = [&seed]() {
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        return static_cast<float> (static_cast<int32_t> (seed)) * (1.0f / 2147483648.0f);
+    };
+
+    float sumSq = 0.0f;
+    for (int i = 0; i < 16; ++i) { householderV16_[i] = next01(); sumSq += householderV16_[i] * householderV16_[i]; }
+    const float inv16 = 1.0f / std::sqrt (sumSq);
+    for (int i = 0; i < 16; ++i) householderV16_[i] *= inv16;
+
+    sumSq = 0.0f;
+    for (int i = 0; i < 8; ++i)  { householderV8_[i]  = next01(); sumSq += householderV8_[i] * householderV8_[i]; }
+    const float inv8 = 1.0f / std::sqrt (sumSq);
+    for (int i = 0; i < 8;  ++i) householderV8_[i]  *= inv8;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,8 +373,8 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             std::memcpy (feedback, delayOut, sizeof (feedback));
             if (lp.stereoSplitEnabled && lp.dualSlopeFastCount == 0)
             {
-                householderInPlace8 (feedback);
-                householderInPlace8 (feedback + 8);
+                householderInPlace8 (feedback,     householderV8_);
+                householderInPlace8 (feedback + 8, householderV8_);
                 if (lp.stereoCoupling > 0.0f)
                 {
                     float sinC = lp.stereoCoupling;
@@ -387,12 +390,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             }
             else if (lp.dualSlopeFastCount == 8)
             {
-                householderInPlace8 (feedback);
-                householderInPlace8 (feedback + 8);
+                householderInPlace8 (feedback,     householderV8_);
+                householderInPlace8 (feedback + 8, householderV8_);
             }
             else
             {
-                householderInPlace16 (feedback);
+                householderInPlace16 (feedback, householderV16_);
             }
         }
         else if (lp.stereoSplitEnabled && ! lp.usePerturbedMatrix && lp.dualSlopeFastCount == 0)
