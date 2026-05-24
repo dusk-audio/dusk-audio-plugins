@@ -293,8 +293,12 @@ namespace
 // DuskVerbEditor
 // =============================================================================
 
-static constexpr int kBaseWidth  = 1400;  // 1250→1400: more breathing room for the 5-knob damping group + bottom row
-static constexpr int kBaseHeight = 640;   // 600→640 for the slightly taller damping group
+// Tightened 2026-05-24: previous 1400×640 left ~30% empty whitespace inside
+// every panel column (knobs vertically over-centred with large yPad above &
+// below). Both axes shrunk; constants downstream (topY, titleBandH, tail-meter
+// band, bottom-strip heights) tightened to match.
+static constexpr int kBaseWidth  = 1240;
+static constexpr int kBaseHeight = 540;
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -642,24 +646,21 @@ void DuskVerbEditor::paint (juce::Graphics& g)
                           static_cast<float> (contentX),
                           static_cast<float> (contentX + contentW));
 
-    int topY       = scaler_.scaled (152);
+    int topY       = scaler_.scaled (128);
     int gap        = scaler_.scaled (8);   // MUST match resized()
-    int titleBandH = scaler_.scaled (20);
+    int titleBandH = scaler_.scaled (16);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.45f);
+    int topRowH = juce::roundToInt (availH * 0.48f);
     int bottomH = availH - topRowH;
     int bottomY = topY + topRowH + gap;
 
     // Group panel widths MUST match resized() exactly — knobs are placed in
-    // resized() using these same percentages. Previously paint() used a
-    // 25/30/45 split while resized() used 30/36/34, so DAMPING's drawn box
-    // overshot its knob columns by ~11 % and INPUT's knobs spilled past the
-    // INPUT box edge.
-    // 2026-04-26: TIME 36 → 28, DAMPING auto-grows 34 → 42 to give the
-    // 5-knob damping group breathing room (was visibly cramped).
+    // resized() using these same percentages.
+    // INPUT 26 / TIME 28 / DAMPING 46 — INPUT narrowed (only 2 knobs + SYNC
+    // combo) so DAMPING's 5-knob row gets its full breathing room.
     int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.30f);
+    int inputW     = static_cast<int> (topUsable * 0.26f);
     int timeW      = static_cast<int> (topUsable * 0.28f);
     int characterW = topUsable - inputW - timeW;
 
@@ -798,20 +799,20 @@ void DuskVerbEditor::resized()
     // width of the group panels below it (no width cap) so it reads as the
     // visual roof of the layout rather than a centred badge.
     {
-        const int meterY = scaler_.scaled (88);
-        const int meterH = scaler_.scaled (36);
+        const int meterY = scaler_.scaled (80);
+        const int meterH = scaler_.scaled (28);
         tailMeter_.setBounds (contentX, meterY, contentW, meterH);
     }
 
-    // Group rows start below the tail meter (ends y=124) plus a 16 px band
-    // for the brighter IN / OUT labels (y=128–144) plus a small gap.
-    int topY       = scaler_.scaled (152);
+    // Group rows start below the tail meter (ends y=108) plus the IN / OUT
+    // label band (y=112-124) plus a small gap.
+    int topY       = scaler_.scaled (128);
     int gap        = scaler_.scaled (8);
-    int titleBandH = scaler_.scaled (20);
-    int topPad     = titleBandH + scaler_.scaled (4);
+    int titleBandH = scaler_.scaled (16);
+    int topPad     = titleBandH + scaler_.scaled (2);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.45f);
+    int topRowH = juce::roundToInt (availH * 0.48f);
     int bottomH = availH - topRowH;
     int bottomY = topY + topRowH + gap;
 
@@ -819,12 +820,11 @@ void DuskVerbEditor::resized()
     inputMeter_.setBounds  (margin,                       topY, meterW, availH + gap);
     outputMeter_.setBounds (getWidth() - margin - meterW, topY, meterW, availH + gap);
 
-    // 30 / 28 / 42 split — TIME shrunk and DAMPING widened so the 5 damping
-    // knobs (BASS / MID / TREBLE / LOW XOVER / HIGH XOVER) get breathing
-    // room. MUST stay in lock-step with paint() — see the comment block
-    // there for the original alignment-bug history.
+    // 26 / 28 / 46 split — INPUT narrowed (only 2 knobs + SYNC combo) so
+    // DAMPING's 5-knob row gets its full breathing room. MUST stay in
+    // lock-step with paint().
     int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.30f);
+    int inputW     = static_cast<int> (topUsable * 0.26f);
     int timeW      = static_cast<int> (topUsable * 0.28f);
     int characterW = topUsable - inputW - timeW;
 
@@ -870,7 +870,7 @@ void DuskVerbEditor::resized()
     {
         auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
         timeArea.removeFromTop (topPad);
-        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (28));
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
 
         // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
         // The hero is the visual centrepiece of the entire plugin — its
@@ -884,10 +884,8 @@ void DuskVerbEditor::resized()
         // SIZE remains a standard rotary at the secondary tier (knobBig = 70).
         placeKnob (size_, knobArea, knobBig, sf);
 
-        // FREEZE spans the full bottom strip of the TIME group (back to
-        // its original layout — GATE button moved to the MODULATION/GATE
-        // group below where it sits next to ATTACK/RELEASE).
-        freezeButton_.setBounds (timeArea.reduced (8, 4));
+        // FREEZE spans the full bottom strip of the TIME group.
+        freezeButton_.setBounds (timeArea.reduced (8, 2));
     }
 
     // DAMPING: full 3-band (BASS/MID/TREBLE multipliers + LOW/HIGH crossovers).
@@ -917,15 +915,24 @@ void DuskVerbEditor::resized()
 
     {
         // Reserve a bottom strip in the MODULATION/GATE group for the GATE
-        // toggle button. Knobs lay out in the upper portion; the button
-        // sits underneath next to where the ATTACK/RELEASE values are
-        // displayed on the NonLinear engine.
-        const int gateButtonH = scaler_.scaled (24);
+        // toggle button ONLY when the GATE button is visible (NonLinear
+        // engine). On every other engine the GATE button is hidden and the
+        // strip carve wasted vertical space. Now the knob area takes the
+        // full panel height when GATE is hidden.
         juce::Rectangle<int> modPanel { modX, bottomY, modW, bottomH };
-        auto modKnobArea = modPanel.removeFromTop (modPanel.getHeight() - gateButtonH);
-        layoutKnobsInGroup (modKnobArea, topPad,
-                            { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
-        gateButton_.setBounds (modPanel.reduced (8, 2));
+        if (gateButton_.isVisible())
+        {
+            const int gateButtonH = scaler_.scaled (22);
+            auto modKnobArea = modPanel.removeFromTop (modPanel.getHeight() - gateButtonH);
+            layoutKnobsInGroup (modKnobArea, topPad,
+                                { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+            gateButton_.setBounds (modPanel.reduced (8, 2));
+        }
+        else
+        {
+            layoutKnobsInGroup (modPanel, topPad,
+                                { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+        }
     }
 
     layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
@@ -939,7 +946,7 @@ void DuskVerbEditor::resized()
     {
         auto outArea = juce::Rectangle<int> (outputX, bottomY, outputW, bottomH).reduced (4, 0);
         outArea.removeFromTop (topPad);
-        int knobAreaH = outArea.getHeight() - scaler_.scaled (28);
+        int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
         auto knobArea = outArea.removeFromTop (knobAreaH);
         // MIX is primary (peer of DECAY/SIZE in TIME); WIDTH and TRIM sit
         // at the secondary tier.
@@ -948,8 +955,7 @@ void DuskVerbEditor::resized()
         placeKnob (mix_,      knobArea.removeFromLeft (mixCol),  knobBig, sf);
         placeKnob (width_,    knobArea.removeFromLeft (restCol), knobMed, sf);
         placeKnob (gainTrim_, knobArea,                          knobMed, sf);
-        // BUS spans the full bottom strip (locks were removed).
-        busModeButton_.setBounds (outArea.reduced (8, 4));
+        busModeButton_.setBounds (outArea.reduced (8, 2));
     }
 
     titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };
