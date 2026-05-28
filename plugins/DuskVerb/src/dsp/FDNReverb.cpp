@@ -267,6 +267,10 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
             const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
             lfos_[i].prepare (static_cast<float> (sampleRate), seed);
         }
+        // Phase 2: master coherent LFO uses a separate seed so its starting
+        // phase doesn't track the random-walk seeds.
+        coherentLfo_.prepare (static_cast<float> (sampleRate), 0xC0FFEE1Fu);
+        coherentLfo_.setRate (modRateHz_);
     }
 
     // -----------------------------------------------------------------------
@@ -321,17 +325,51 @@ void FDNReverb::process (const float* inputL, const float* inputR,
     const float satCeiling   = 2.0f;
     const bool  frozen       = lp.frozen;
 
+    // Phase 2: precompute per-line phase taps for CoherentLoop topology.
+    // Lines split into two halves of 8. Half A (ch 0..7) shares the master
+    // phase; half B (ch 8..15) sits at +π (180°) — pair-mates move opposite.
+    // Inside each half, a small (π/8) intra-half spread per index keeps the
+    // chorus of lines decorrelated so the macro motion has texture, not
+    // flat unison. Total spread per half = 7·π/8 ≈ 157°.
+    constexpr float kPi = 3.14159265358979f;
+    static constexpr float kHalfSpreadStep = kPi / 8.0f;
+    const bool useCoherent =
+        (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
+        && ! frozen;
+
     for (int i = 0; i < numSamples; ++i)
     {
         const float inL = inputL[i];
         const float inR = inputR[i];
 
         // --- 1) Read from all delay lines with LFO-modulated fractional position ---
+        // Phase 2: advance the master coherent LFO once per sample (NOT
+        // per-line) when in CoherentLoop mode. All 16 lines tap it at
+        // phase offsets — keeps the cost identical to RandomWalk.
+        if (useCoherent)
+            coherentLfo_.advance();
+
         float delayOut[N];
         for (int ch = 0; ch < N; ++ch)
         {
             auto& dl = delayLines_[ch];
-            float mod    = frozen ? 0.0f : (lfos_[ch].next() * lp.modDepthScale[ch]);
+            float mod;
+            if (frozen)
+            {
+                mod = 0.0f;
+            }
+            else if (useCoherent)
+            {
+                // Phase pair offset: 0 for first half, π for second half.
+                // Intra-half spread: ch%8 × π/8 → 0, π/8, … 7π/8.
+                const float pairBase = (ch < N / 2) ? 0.0f : kPi;
+                const float spread   = static_cast<float> (ch % (N / 2)) * kHalfSpreadStep;
+                mod = coherentLfo_.read (pairBase + spread) * lp.modDepthScale[ch];
+            }
+            else
+            {
+                mod = lfos_[ch].next() * lp.modDepthScale[ch];
+            }
             float readDelay = std::max (lp.delayLength[ch] + mod, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
@@ -1065,6 +1103,19 @@ void FDNReverb::setFeedbackModDepth (float depth)
     feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
 }
 
+void FDNReverb::setModulationTopology (DspUtils::ModulationTopology t)
+{
+    if (t == modulationTopology_)
+        return;
+    modulationTopology_ = t;
+    // When switching INTO CoherentLoop, sync the master sine's rate to
+    // the current modRateHz_ so it starts cycling at the preset's rate.
+    // No state reset — abrupt phase change is inaudible at typical rates
+    // (1 sample at 1 Hz = 0.02° phase step).
+    if (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
+        coherentLfo_.setRate (modRateHz_);
+}
+
 void FDNReverb::setCrossoverModDepth (float depth)
 {
     // The previous behaviour pushed the base coefficient back into the
@@ -1219,10 +1270,20 @@ void FDNReverb::updateModDepth()
 
 void FDNReverb::updateLFORates()
 {
+    // Tightly clustered LFO rate spread (0.95×–1.05×) so 16 delay-line
+    // modulators breathe together as a unified slow mass rather than
+    // beating against each other like a 16-voice chorus pedal.
+    //
+    // Previous spread was 0.80×–1.36× (70 %), which produced audible
+    // sideband beating and chorus-in-the-tail across every long-decay
+    // FDN preset — the dominant complaint on the hall tails.
     static constexpr float kRateFactors[N] = {
-        0.801f, 0.857f, 0.919f, 0.953f, 0.991f, 1.031f, 1.063f, 1.097f,
-        1.127f, 1.163f, 1.193f, 1.223f, 1.259f, 1.289f, 1.319f, 1.361f
+        0.950f, 0.957f, 0.964f, 0.971f, 0.978f, 0.985f, 0.992f, 0.998f,
+        1.002f, 1.008f, 1.015f, 1.022f, 1.029f, 1.036f, 1.043f, 1.050f
     };
     for (int i = 0; i < N; ++i)
         lfos_[i].setRate (modRateHz_ * kRateFactors[i]);
+    // Phase 2 master sine LFO uses the BASE rate (no per-line spread —
+    // intra-half spread comes from phase offset, not detune).
+    coherentLfo_.setRate (modRateHz_);
 }

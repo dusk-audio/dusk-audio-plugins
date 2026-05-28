@@ -131,7 +131,7 @@ private:
         float readInterpolated (float delaySamples) const;
     };
 
-    // Non-modulated Schroeder allpass with optional Lexicon-style "spin and
+    // Non-modulated Schroeder allpass with optional vintage-hardware-style "spin and
     // wander" jitter (see SixAPTankEngine::Allpass for the full rationale).
     // Default jitterDepthFraction = 0 = static AP (back-compat).
     struct Allpass
@@ -338,7 +338,7 @@ private:
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
     float decayDiff2_ = 0.50f;   // Static allpass feedback
     // Density cascade feedback baseline. setTankDiffusion() scales this around
-    // its baseline; 0.55 matches the Lexicon hall-density convention (Dattorro
+    // its baseline; 0.55 matches the reference hardware hall-density convention (Dattorro
     // 1997 used 0.5/0.625) and replaces the old 0.18 which was too low to
     // actually diffuse — at 0.18 each AP rang at its delay period instead of
     // smearing, producing audible discrete tap echoes in the tail.

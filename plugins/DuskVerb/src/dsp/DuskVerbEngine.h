@@ -108,6 +108,12 @@ public:
     void setPreDelay  (float milliseconds);
     void setLoCut     (float hz);
     void setHiCut     (float hz);
+    // Post-tank high-shelf attenuation depth (dB, range [-24, 0], 0 = flat).
+    // Replaces the prior brick-wall LP behavior of the Hi Cut filter — the
+    // corner (set via setHiCut) is now a SHELF, content above the corner
+    // is attenuated by this much instead of decapitated. Per-preset on
+    // FactoryPreset. Default -12 dB.
+    void setHiCutShelfGainDb (float dB);
     void setWidth     (float width);
     void setGainTrim  (float dB);
     void setMonoBelow (float hz);             // 20 = bypass; up = sums lows to mono
@@ -116,6 +122,11 @@ public:
     // engines ignore this call. Forwarded from APVTS so it shows up in
     // host / preset state like any other parameter.
     void setBassChokeHz (float hz);
+
+    // Phase 2: route modulation topology to FDN + QuadTank.
+    // RandomWalk = legacy independent per-line LFOs (default).
+    // CoherentLoop = single master sine + per-line phase-paired offsets.
+    void setModulationTopology (DspUtils::ModulationTopology t);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
@@ -127,6 +138,22 @@ public:
     void setSixAPBloomStagger    (const float values[6]);
     void setSixAPEarlyMix        (float v);
     void setSixAPOutputTrim      (float v);
+
+    // DattorroPlateVintage (algo 1) per-preset brightness controls. Forwarded
+    // only to dattorroVintage_; audible only when algo=1 is active but
+    // applied at preset-load time so the values are in place before swap.
+    void setDpvHfShelfGainDb     (float v);
+    void setDpvHfShelfFreqHz     (float v);
+    void setDpvStructHfDampHz    (float v);
+
+    // DattorroPlateVintage corrective EQ controls. boxCut is post-tank notch
+    // (configurable depth + corner); bassShelf is pre-tank low-shelf (depth +
+    // corner). Used by dark plates to compensate the 200-500 Hz scoop the
+    // boxCut creates without disabling the corrective filter entirely.
+    void setDpvBoxCutGainDb      (float v);
+    void setDpvBoxCutFreqHz      (float v);
+    void setDpvBassShelfGainDb   (float v);
+    void setDpvBassShelfFreqHz   (float v);
 
     // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
     // to silence. Used by the processor to bring an idle engine to a clean
@@ -157,7 +184,7 @@ private:
     SpringEngine       spring_;
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
-    DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-Lex post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
+    DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -243,6 +270,10 @@ private:
 
     Biquad loCutFilter_;
     Biquad hiCutFilter_;
+    // High-shelf attenuation depth feeding into updateHiCutCoeffs(). Stored
+    // here (not just smoothed in real time) because it's per-preset, not
+    // exposed in APVTS, and only changes when the Processor loads a preset.
+    float hiCutShelfGainDb_ = -12.0f;
 
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);

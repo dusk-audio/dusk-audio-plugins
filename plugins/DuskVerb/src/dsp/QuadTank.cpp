@@ -129,6 +129,10 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
     prepared_ = true;
 
+    // Phase 2 master coherent LFO. Distinct seed so phase doesn't track any
+    // tank's random walk; updateLFORates() will push the actual rate.
+    coherentLfo_.prepare (static_cast<float> (sampleRate), 0xC0FFEE2Cu);
+
     updateDelayLengths();
     updateDecayCoefficients();
     updateLFORates();
@@ -160,11 +164,30 @@ void QuadTank::process (const float* inputL, const float* inputR,
     const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
     const float satCeiling   = 2.0f;
 
+    // Phase 2: per-tank phase offsets for CoherentLoop topology. Quadrature
+    // spread — tanks 0/2 oppose at 180°, tanks 1/3 oppose at 180° but offset
+    // 90° from the (0,2) pair. Result: cyclic rotation across the 4 tanks,
+    // creating coherent envelope pumping rather than independent smearing.
+    constexpr float kPi = 3.14159265358979f;
+    static const float kTankPhase[kNumTanks] = {
+        0.0f,
+        kPi * 0.5f,
+        kPi,
+        kPi * 1.5f,
+    };
+    const bool useCoherent =
+        (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
+        && ! frozen_;
+
     for (int i = 0; i < numSamples; ++i)
     {
         float input = (inputL[i] + inputR[i]) * 0.5f;
         if (frozen_)
             input = 0.0f;
+
+        // Phase 2: advance master sine ONCE per sample (not per tank).
+        if (useCoherent)
+            coherentLfo_.advance();
 
         // Save all cross-feed states before processing
         float cf[kNumTanks];
@@ -191,11 +214,28 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            // Random-walk LFO read. When frozen, hold the last value so the
-            // read head doesn't snap to centre on freeze entry.
-            float mod = frozen_ ? tank.savedAP1Mod : tank.lfo.next();
-            if (! frozen_)
+            // Phase 2: in CoherentLoop mode, read from master sine at this
+            // tank's quadrature phase offset and scale to the AP1 mod depth.
+            // delay1Lfo / delay2Lfo below stay random-walk because they're
+            // micro-jitter decorrelators, not envelope modulators.
+            float mod;
+            if (frozen_)
+            {
+                mod = tank.savedAP1Mod;
+            }
+            else if (useCoherent)
+            {
+                // tank.lfo's RandomWalk depth was already set by setModDepth
+                // via updateLFORates; reuse that scale for amplitude parity
+                // between topologies. ModDepthSamples_ field tracks it.
+                mod = coherentLfo_.read (kTankPhase[t]) * modDepthSamples_;
                 tank.savedAP1Mod = mod;
+            }
+            else
+            {
+                mod = tank.lfo.next();
+                tank.savedAP1Mod = mod;
+            }
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
 
@@ -592,18 +632,18 @@ void QuadTank::updateDecayCoefficients()
 
 void QuadTank::updateLFORates()
 {
-    // 4 asymmetric rates using irrational multipliers — keeps the four
-    // random-walk streams from drifting into a synchronised pattern even
-    // if their seeds happened to align briefly.
+    // Tightly clustered per-tank rate spread (0.97×–1.03×). Previous
+    // 0.89×–1.24× spread (38 %) produced sideband beating between the
+    // four tanks audible as chorusing on long room tails. With unique
+    // PRNG seeds per tank, slight rate variance is enough to avoid
+    // mechanical phase-lock without producing audible chorus character.
     static constexpr float kRateMultipliers[kNumTanks] = {
-        1.0f, 1.1180339887f, 0.8944271910f, 1.2360679775f  // 1, √5/2, 2/√5, (1+√5)/2/φ
+        0.970f, 0.990f, 1.010f, 1.030f
     };
-    // Detune the delay-tap LFOs from the AP1 rate. Slightly slower on
-    // delay1, slightly faster on delay2 — the three modulators in each
-    // tank then trace incommensurable paths and don't beat against each
-    // other periodically (mirrors DattorroTank v0.5.3).
-    constexpr float kDelay1RateScale = 0.83f;
-    constexpr float kDelay2RateScale = 1.27f;
+    // Delay-tap LFOs tightened similarly (was 0.83×/1.27× = 44 % span).
+    // Keeps the three modulators per tank incommensurable but tight.
+    constexpr float kDelay1RateScale = 0.95f;
+    constexpr float kDelay2RateScale = 1.05f;
     for (int t = 0; t < kNumTanks; ++t)
     {
         const float ap1Rate = modRateHz_ * kRateMultipliers[t];
@@ -611,4 +651,16 @@ void QuadTank::updateLFORates()
         tanks_[t].delay1Lfo .setRate (ap1Rate * kDelay1RateScale);
         tanks_[t].delay2Lfo .setRate (ap1Rate * kDelay2RateScale);
     }
+    // Phase 2 master sine — base rate, no per-tank spread (per-tank phase
+    // offset comes from kTankPhase[] in the process loop).
+    coherentLfo_.setRate (modRateHz_);
+}
+
+void QuadTank::setModulationTopology (DspUtils::ModulationTopology t)
+{
+    if (t == modulationTopology_)
+        return;
+    modulationTopology_ = t;
+    if (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
+        coherentLfo_.setRate (modRateHz_);
 }

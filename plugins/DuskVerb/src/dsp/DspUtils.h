@@ -78,14 +78,25 @@ inline float softClip (float x, float threshold = 1.0f, float ceiling = 2.0f)
     return sign * (threshold + range * fastTanh (over));
 }
 
+// Phase 2 modulation topology selector. Engines can be in legacy random-
+// walk mode (independent per-line LFOs) or coherent-loop mode (single
+// master sine with phase-paired per-line offsets). Per-preset field,
+// flowed through FactoryPreset and applied via the engine glue.
+enum class ModulationTopology : int
+{
+    RandomWalk   = 0,    // legacy — independent per-line random walks
+    CoherentLoop = 1,    // Phase 2 — single master sine, phase-paired lines
+};
+
+
 // Smoothed-step random-walk LFO for reverb modulation.
 //
 // Picks a new random target every `periodSamples` and smoothstep-interpolates
 // toward it, producing band-limited "wander" with no audible cyclic warble.
 // Unlike a sine LFO (which has a fixed period and locks into beating with
 // other modulators), this drifts aperiodically — gives the "expensive"
-// shimmer of high-end hardware random reverbs (Lexicon 480L random hall,
-// Eventide ModFactor).
+// shimmer of high-end hardware random reverbs (1980s flagship hall hardware random hall,
+// modern modulation pedal).
 //
 // Output bounded exactly to ±depth. Allocation-free.
 struct RandomWalkLFO
@@ -144,6 +155,67 @@ private:
     int           phase_      = 0;
     int           period_     = 1000;
     std::uint32_t state_      = 0xC0FFEEu;
+};
+
+
+// =====================================================================
+// CoherentSineLFO — single master sine generator with phase-tap readout.
+//
+// Phase 2 modulation topology (2026-05-28). The existing RandomWalkLFO
+// gives smooth aperiodic wander but per-line LFOs are statistically
+// independent — across many delay lines the modulation envelope sums to
+// ~zero, killing the macro-rhythmic envelope ripple that vintage
+// hardware reverbs produce (osc P2P ±22 dB on VVV).
+//
+// CoherentLoop topology: ONE master sine LFO, sampled at PER-LINE phase
+// offsets. Pair (line_i, line_j) sample the sine 180° apart so when
+// line_i runs short, line_j runs long — coherent macro motion that
+// creates the rhythmic pumping ripple. Each line still gets a small
+// phase spread inside its pair-half so the full chorus of lines doesn't
+// collapse into mono.
+//
+// Allocation-free. Per-sample cost = 1× std::sin + 1× phase wrap.
+struct CoherentSineLFO
+{
+    static constexpr float kTwoPi = 6.283185307179586f;
+
+    void prepare (float sampleRate, std::uint32_t seed = 0xC0FFEEu)
+    {
+        sampleRate_ = sampleRate;
+        // Seed → starting phase in [0, 2π). Stays deterministic per render.
+        phase_ = (static_cast<float> (seed & 0xFFFFu) / 65535.0f) * kTwoPi;
+        phaseInc_ = 0.0f;
+    }
+
+    void setRate (float hz)
+    {
+        const float clamped = std::max (hz, 0.001f);
+        phaseInc_ = kTwoPi * clamped / sampleRate_;
+    }
+
+    // Advance the master phase by one sample. Call ONCE per sample
+    // (NOT per delay line) — all readers tap the same master.
+    void advance()
+    {
+        phase_ += phaseInc_;
+        if (phase_ >= kTwoPi) phase_ -= kTwoPi;
+    }
+
+    // Sample the sine at master phase + per-line offset. The pairOffset
+    // separates pair-mates by π so they oppose; the intra-pair spread
+    // gives each line its own decorrelated trail.
+    float read (float pairOffset) const
+    {
+        return std::sin (phase_ + pairOffset);
+    }
+
+    float phase() const { return phase_; }
+    void  reset()       { phase_ = 0.0f; }
+
+private:
+    float sampleRate_ = 44100.0f;
+    float phase_      = 0.0f;
+    float phaseInc_   = 0.0f;
 };
 
 } // namespace DspUtils
