@@ -426,10 +426,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // exactly). Stage 3 loss 278.13. 22 / 40 gates fail — widest
         // architectural gap in the queue so far. DV is its own chamber.
         { "Realistic Chamber",    "Chambers",
-          3,  0.30f, false, 14.00f, 0,
-          1.62f, 0.46f, 0.14f, 0.33f, 0.62f, 1.48f,  898.0f,
-          0.08f, 0.13f, 0.43f,  31.0f, 10035.0f, 0.95f, false, -3.90f,
-          /* mono */ 20.0f, /* mid */ 1.22f, /* highX */ 3071.0f, /* sat */ 0.09f,
+          3,  0.30f, false,  8.39f, 0,
+          5.05f, 0.44f, 0.20f, 0.50f, 0.56f, 0.71f,  324.0f,
+          0.42f, 0.20f, 0.44f,  26.0f, 10060.0f, 0.96f, false, -8.55f,
+          /* mono */ 20.0f, /* mid */ 1.14f, /* highX */ 5957.0f, /* sat */ 0.26f,
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════

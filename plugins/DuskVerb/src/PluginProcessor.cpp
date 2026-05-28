@@ -928,7 +928,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Net Phase 2 verdict: FDN halls with lush motion character (long
         // tail, light modal content) are the sweet spot. QuadTank rooms +
         // FDN presets with sensitive modal resonances stay on RandomWalk.
-        { "Cathedral", DspUtils::ModulationTopology::CoherentLoop },
+        { "Cathedral",         DspUtils::ModulationTopology::CoherentLoop },
+        // 2026-05-28 retry after render.cpp harness shelf bug fix:
+        //   Realistic Chamber — marginal -1 gate vs RandomWalk (22→21).
+        //     osc P2P closes (-2.87 dB) but QuadTank's 12.9 kHz HF spur
+        //     persists even at -23.5 dB shelf — architectural artifact.
+        //   Ambience — regressed +5 vs RandomWalk (21→26). Reverted.
+        { "Realistic Chamber", DspUtils::ModulationTopology::CoherentLoop },
     };
     DspUtils::ModulationTopology topo = DspUtils::ModulationTopology::RandomWalk;
     auto it = kTopologyByName.find (std::string_view (name));
