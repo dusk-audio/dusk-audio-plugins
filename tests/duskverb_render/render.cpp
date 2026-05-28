@@ -292,10 +292,18 @@ namespace
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.04f, 0.76f, 0.123f, 0.54f, 0.86f, 1.50f, 396.0f, 0.12f, 0.45f, 0.55f, 33.0f, 5884.0f, 0.88f, -1.52f, 20.0f, 1.13f, 8042.0f, 0.32f);
         // Chambers
         if (name == "Realistic Chamber")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 14.00f, 1.62f, 0.46f, 0.14f, 0.33f, 0.62f, 1.48f, 898.0f, 0.08f, 0.13f, 0.43f, 31.0f, 10035.0f, 0.95f, -3.90f, 20.0f, 1.22f, 3071.0f, 0.09f);
+        {
+            auto p = makePreset (name.toRawUTF8(), 3, 1.0f, true, 8.39f, 5.05f, 0.44f, 0.20f, 0.50f, 0.56f, 0.71f, 324.0f, 0.42f, 0.20f, 0.44f, 26.0f, 10060.0f, 0.96f, -8.55f, 20.0f, 1.14f, 5957.0f, 0.26f);
+            p.values["Hi Cut Shelf"] = -23.5f;
+            return p;
+        }
         // Rooms
         if (name == "Tight Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.18f, 0.43f, 0.38f, 0.03f, 1.11f, 1.01f, 0.71f, 641.0f, 0.38f, 0.80f, 0.57f, 37.0f, 10005.0f, 1.04f, -2.13f, 20.0f, 0.84f, 7586.0f, 0.22f);
+        {
+            auto p = makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.18f, 0.43f, 0.38f, 0.03f, 1.11f, 1.01f, 0.71f, 641.0f, 0.38f, 0.80f, 0.57f, 37.0f, 10005.0f, 1.04f, -2.13f, 20.0f, 0.84f, 7586.0f, 0.22f);
+            p.values["Hi Cut Shelf"] = -23.5f;
+            return p;
+        }
         if (name == "Tiled Room")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.20f, 0.73f, 0.48f, 0.21f, 1.39f, 0.82f, 0.94f, 424.0f, 0.75f, 0.46f, 0.40f, 20.0f, 10007.0f, 0.85f, -2.18f, 20.0f, 1.17f, 6356.0f, 0.27f);
         // Ambient (bus_mode=true in source, mono_below set)
