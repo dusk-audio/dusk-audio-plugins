@@ -399,11 +399,11 @@ void SixAPTankEngine::updateDecayCoefficients()
 
 void SixAPTankEngine::updateLFORates()
 {
-    // Slight L/R detune (1.13× on the right tank) so the two random walks
-    // never settle into a beating pattern even if their seeds happen to align
-    // briefly.
-    leftTank_.lfo.setRate  (modRateHz_);
-    rightTank_.lfo.setRate (modRateHz_ * 1.13f);
+    // Tightly clustered L/R spread (0.98×/1.02×). Previous 1.0/1.13×
+    // (13 %) trimmed to match the global engine-wide de-chorus policy.
+    // Distinct PRNG seeds keep per-sample variance to avoid phase-lock.
+    leftTank_.lfo.setRate  (modRateHz_ * 0.98f);
+    rightTank_.lfo.setRate (modRateHz_ * 1.02f);
 }
 
 void SixAPTankEngine::process (const float* inputL, const float* inputR,

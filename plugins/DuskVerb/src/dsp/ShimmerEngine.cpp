@@ -149,7 +149,7 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     // 200 Hz fundamental migrates octave-by-octave through the loop.
     // Modulation smears those peaks across narrow bands so they blend with
     // the rest of the cascade tail (the "subdued" character the user
-    // observed in Valhalla Shimmer).
+    // observed in external reference Shimmer).
     const float effectiveRatio = ratioModEnabled_
         ? pitchRatio_ * (1.0f + ratioModDepth_ * ratioMod_.next())
         : pitchRatio_;
@@ -192,7 +192,7 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     pitchR_.setModulation (7.3f, 0.015f, 0xBADC0DEu);
 
     // Hall reverb baseline: long, lush, slightly dark (period-correct
-    // for the Lexicon 224 character that the original Eno/Lanois rig used).
+    // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
     reverb_.prepare (sampleRate, maxBlockSize);
     reverb_.setDecayTime         (4.0f);
     reverb_.setSize              (0.75f);

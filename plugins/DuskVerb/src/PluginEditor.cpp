@@ -642,7 +642,7 @@ void DuskVerbEditor::paint (juce::Graphics& g)
 
     // Brand wordmark — large, bold, slightly compressed for visual character.
     // The plugin name is the brand; no need to explain "Algorithmic Reverb"
-    // (Valhalla, Crystalline, Blackhole all skip the explanatory subtitle).
+    // (external reference, Crystalline, Blackhole all skip the explanatory subtitle).
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kText));
     juce::Font titleFont (juce::FontOptions (32.0f * sf, juce::Font::bold));
     titleFont.setHorizontalScale (0.95f);
@@ -1360,10 +1360,10 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
     // NonLinear leaves the MOD knobs sized to the smaller gate-strip
     // layout.
     //
-    // Guard against the ctor invocation at line 378, which runs BEFORE
-    // setSize() has assigned real bounds. resized() with getWidth() == 0
-    // would walk every child with a degenerate rectangle; the ctor's
-    // setSize() below fires the authoritative layout pass anyway.
+    // Guard against the ctor's pre-setSize() invocation: resized() with
+    // getWidth() == 0 would walk every child with a degenerate rectangle.
+    // The ctor's setSize() (after this returns) fires the authoritative
+    // layout pass anyway.
     if (getWidth() > 0 && getHeight() > 0)
         resized();
 

@@ -5,7 +5,7 @@
 
 // NoiseGate — classic outboard-rig noise gate with sidechain-style trigger.
 //
-// Modeled after the SSL G-bus / drawmer-style hardware gates used on the
+// Modeled after the classic outboard hardware gates used on the
 // 1980s big-snare records. The trigger envelope follower watches the DRY
 // input (which IS the sidechain in our single-plugin context). When the
 // dry signal crosses the threshold, the gate opens fast, holds for HOLD

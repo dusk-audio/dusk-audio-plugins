@@ -113,6 +113,11 @@ private:
     // engines on state load and for the new active engine during a preset
     // swap.
     void pushSixAPBrightnessTo (DuskVerbEngine& target);
+    // DPV brightness + corrective EQ migrated to APVTS-only on 2026-05-25.
+    // Single source of truth = the 7 dpv* APVTS atomics; no struct cache.
+    // setStateInformation forwards legacy custom-property values into APVTS
+    // via migrateLegacyDpvProp(). Next processBlock's edge-detect pushes to
+    // active engine; forcePushAllParametersTo pushes to idle engine at swap.
 
     // Force-pushes every current APVTS parameter and the cached SixAPTank
     // brightness state to a target engine. Called from the audio thread at
@@ -152,11 +157,24 @@ private:
     std::atomic<float>* erSizeParam_        = nullptr;
     std::atomic<float>* loCutParam_         = nullptr;
     std::atomic<float>* hiCutParam_         = nullptr;
+    // Phase 1 post-tank shelf depth — sweepable per preset.
+    std::atomic<float>* hiCutShelfDbParam_  = nullptr;
     std::atomic<float>* widthParam_         = nullptr;
     std::atomic<float>* freezeParam_        = nullptr;
     std::atomic<float>* gateEnabledParam_   = nullptr;
     std::atomic<float>* gainTrimParam_      = nullptr;
     std::atomic<float>* monoBelowParam_     = nullptr;
+
+    // DattorroPlateVintage corrective EQ + brightness — APVTS-driven so
+    // Optuna can sweep them via --param. Only the active engine sees
+    // the values; non-DPV engines forward to no-op setters.
+    std::atomic<float>* dpvHfShelfDbParam_       = nullptr;
+    std::atomic<float>* dpvHfShelfHzParam_       = nullptr;
+    std::atomic<float>* dpvStructHfDampHzParam_  = nullptr;
+    std::atomic<float>* dpvBoxCutDbParam_        = nullptr;
+    std::atomic<float>* dpvBoxCutHzParam_        = nullptr;
+    std::atomic<float>* dpvBassShelfDbParam_     = nullptr;
+    std::atomic<float>* dpvBassShelfHzParam_     = nullptr;
 
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
@@ -167,6 +185,14 @@ private:
     float lastSize_        = -1.0f;
     float lastDamping_     = -1.0f;
     float lastBassMult_    = -1.0f;
+    // DPV edge-detect last-pushed values. Sentinel +9999 = never pushed.
+    float lastDpvHfShelfDb_     = 9999.0f;
+    float lastDpvHfShelfHz_     = 9999.0f;
+    float lastDpvStructHfDamp_  = 9999.0f;
+    float lastDpvBoxCutDb_      = 9999.0f;
+    float lastDpvBoxCutHz_      = 9999.0f;
+    float lastDpvBassShelfDb_   = 9999.0f;
+    float lastDpvBassShelfHz_   = 9999.0f;
     float lastMidMult_     = -1.0f;
     float lastCrossover_   = -1.0f;
     float lastHighCrossover_ = -1.0f;
@@ -181,6 +207,7 @@ private:
     float lastMix_         = -1.0f;
     float lastLoCut_       = -1.0f;
     float lastHiCut_       = -1.0f;
+    float lastHiCutShelfDb_= 999.0f;   // out-of-range sentinel
     float lastWidth_       = -1.0f;
     float lastGainTrim_    = -999.0f;
     float lastMonoBelow_   = -1.0f;

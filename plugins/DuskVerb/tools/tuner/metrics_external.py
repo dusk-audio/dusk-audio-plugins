@@ -53,6 +53,116 @@ def _envelope(mono: np.ndarray, sr: int, win_ms: float = 10.0) -> np.ndarray:
     return (cs[n:] - cs[:-n]) / n
 
 
+def _per_band_decay_times(mono: np.ndarray, sr: int) -> dict:
+    """Per-band tail decay measurement. Splits the signal into bands and runs
+    noise-floor-aware peak-to-(-NdB) measurement on each. Includes t10 (EDT)
+    which captures the perceived initial-tail character that t30/t60 hide.
+
+    Returns dict {band_name: {t10, t30, t60}}. t10 = Early Decay Time —
+    the time from peak to -10 dB. Critical for matching "weight" / "hold"
+    of low bands that mono t60 averages away.
+    """
+    from scipy.signal import butter, sosfiltfilt
+    bands = [('sub',     20,  100),
+             ('low',    100,  500),
+             ('low_mid', 250,  500),  # extra resolution for the user-perceived gap
+             ('mid',    500, 2000),
+             ('hi',    2000, 8000)]
+    out = {}
+    for name, lo, hi in bands:
+        hi_c = min(hi, sr * 0.49)
+        if lo <= 0:
+            sos = butter(4, hi_c, 'low', fs=sr, output='sos')
+        else:
+            sos = butter(4, [lo, hi_c], 'band', fs=sr, output='sos')
+        y = sosfiltfilt(sos, mono)
+        decays = _tail_decay_times(y, sr)
+        out[name] = {'t10': decays.get('t10'),
+                     't30': decays.get('t30'),
+                     't60': decays.get('t60')}
+    return out
+
+
+def _envelope_array_db(mono: np.ndarray, sr: int, win_ms: float = 5.0,
+                       post_peak_ms: float = 500.0) -> tuple:
+    """Smoothed log-envelope array for the first `post_peak_ms` ms after the
+    signal peak. Returns (times_array, env_db_array). Used by the comparator
+    to compute envelope-shape MSE/L1 between DV and reference — captures
+    the ATTACK / EARLY-DECAY contour that scalar t30 misses.
+
+    The envelope is Hilbert magnitude smoothed with a boxcar of `win_ms`,
+    converted to dB relative to the peak. Both signals' envelopes are
+    self-normalized so the comparison is gain-invariant.
+    """
+    from scipy.signal import hilbert
+    env = np.abs(hilbert(mono))
+    win = max(int(win_ms / 1000.0 * sr), 1)
+    env_sm = np.convolve(env, np.ones(win) / win, mode='same')
+    pidx = int(np.argmax(env_sm))
+    end = min(pidx + int(post_peak_ms / 1000.0 * sr), len(env_sm))
+    seg = env_sm[pidx:end]
+    if len(seg) < 16:
+        return np.array([]), np.array([])
+    # Normalize to peak (so shape, not absolute level, is compared)
+    peak = float(np.max(seg) + 1e-30)
+    seg_db = 20.0 * np.log10((seg / peak) + 1e-9)
+    # Clamp very low values to -60 dB so noise floor doesn't dominate L1
+    seg_db = np.maximum(seg_db, -60.0)
+    times = np.arange(len(seg)) / sr
+    return times, seg_db
+
+
+def envelope_shape_l1(dv_mono: np.ndarray, lex_mono: np.ndarray, sr: int,
+                      post_peak_ms: float = 500.0) -> float:
+    """L1 distance between the peak-normalized envelopes of DV vs reference,
+    over [0, post_peak_ms]ms post-peak. Higher = bigger shape mismatch.
+    Returns mean |Δ_dB| over the window. Typical good match: < 2 dB.
+    Typical "DV drops fast, Lex holds flat" mismatch: > 5 dB.
+    """
+    _, dv_env = _envelope_array_db(dv_mono, sr, post_peak_ms=post_peak_ms)
+    _, lx_env = _envelope_array_db(lex_mono, sr, post_peak_ms=post_peak_ms)
+    n = min(len(dv_env), len(lx_env))
+    if n < 16:
+        return float('nan')
+    return float(np.mean(np.abs(dv_env[:n] - lx_env[:n])))
+
+
+def _tail_decay_times(mono: np.ndarray, sr: int) -> dict:
+    """
+    Direct noise-floor-aware peak-to-(-NdB) tail decay measurement.
+
+    Returns the time (in seconds, post-peak) at which the smoothed envelope
+    drops to peak - {10, 20, 30, 40, 60} dB. Uses a noise-floor estimate
+    (median of last 500 ms) to clamp threshold above floor so slope-fit
+    artifacts on short tails (<2 s) cannot return spurious large times.
+
+    This is the PERCEPTUALLY MEANINGFUL decay measurement that the old
+    `_slope_fit` -> rt60 path failed to deliver: a 0.6 s plate slope-fit
+    over a 5 s window returns ~9 s (noise floor slope), driving optimizers
+    to pick 3-5x too long a decay.
+    """
+    win = max(int(0.01 * sr), 1)
+    pow_ = mono ** 2
+    sm = np.convolve(pow_, np.ones(win) / win, mode='same')
+    peak = float(np.max(sm))
+    if peak < 1e-12:
+        return {f't{db}': None for db in (10, 20, 30, 40, 60)}
+    pidx = int(np.argmax(sm))
+    # Noise floor: median of last 500 ms power.
+    floor_window = sm[-min(int(0.5 * sr), len(sm)):]
+    noise = float(np.median(floor_window)) if len(floor_window) > 0 else peak * 1e-9
+    out = {}
+    for db in (10, 20, 30, 40, 60):
+        # Threshold in linear power = peak * 10^(-db/10), clipped to 6 dB
+        # above noise floor so the "decayed below detection" point is
+        # honest, not an extrapolation of slope through noise.
+        thr = max(peak * 10 ** (-db / 10), noise * 4.0)
+        tail = sm[pidx + 1:]
+        below = np.where(tail < thr)[0]
+        out[f't{db}'] = (int(below[0]) + 1) / sr if len(below) else None
+    return out
+
+
 def _slope_fit(env_seg: np.ndarray, sr: int) -> tuple[float, np.ndarray]:
     """Log-linear fit of envelope in dB. Returns (slope_dB_per_s, residual_dB)."""
     seg = env_seg[env_seg > env_seg.max() * 1e-4]
@@ -141,7 +251,7 @@ def _stereo_waveform_corr(L: np.ndarray, R: np.ndarray) -> float:
 # Public metrics
 # ---------------------------------------------------------------------------
 
-def compute_metrics(wav_path: str, decay_seek_s: float = 5.0) -> dict:
+def compute_metrics(wav_path: str, decay_seek_s: float = 5.0, normalize_rms: bool = True) -> dict:
     """
     Extract a vector of comparable metrics from a single render.
 
@@ -165,7 +275,47 @@ def compute_metrics(wav_path: str, decay_seek_s: float = 5.0) -> dict:
     L, R = x[:, 0], x[:, 1]
     mono = 0.5 * (L + R)
 
-    # Tail envelope + slope fit.
+    # ─── PEAK-ALIGN ALL WINDOWS ───
+    # Find the absolute amplitude peak. All time windows below are computed
+    # relative to this peak so DV and reference signals with different
+    # pre-delays (Lex VVP has ~150 ms baked into its fxp; DV typically has
+    # 10 ms) compare apples to apples. Without this, the 50-500 ms window
+    # measured DV's main bloom against Lex's pre-delay silence, producing
+    # garbage centroid + spec_L1 values that misled the optimizer for the
+    # entire prior calibration sprint.
+    peak_idx = int(np.argmax(np.abs(mono)))
+    peak_s = peak_idx / sr
+
+    # Crop everything to peak-aligned coordinates. `mono` etc. are reused
+    # below but with origin shifted to peak. Subsequent code treats sample 0
+    # as the peak sample.
+    L = L[peak_idx:]
+    R = R[peak_idx:]
+    mono = mono[peak_idx:]
+
+    # Capture the RAW absolute-level signal BEFORE any normalization so the
+    # noise-floor gate can make honest decisions in dBFS. Without this
+    # snapshot the gate sees the post-normalize signal (boosted by tens of
+    # dB) and treats actual noise floor as audible content.
+    mono_raw = mono.copy()
+
+    # Level normalize so absolute-amplitude metrics (late_tail) compare across
+    # IRs with different output gain. RMS over 50-550 ms (post-peak) set to
+    # -36 dBFS reference (arbitrary; the absolute value doesn't matter — only
+    # that both DV and anchor get same target). Skip if requested (raw mode).
+    if normalize_rms:
+        t0 = int(0.05 * sr); t1 = min(int(0.55 * sr), len(mono))
+        if t1 - t0 > 16:
+            seg_rms = float(np.sqrt(np.mean(mono[t0:t1] ** 2) + 1e-30))
+            target_rms_dbfs = -36.0
+            target_rms = 10 ** (target_rms_dbfs / 20.0)
+            gain = target_rms / max(seg_rms, 1e-30)
+            L = L * gain
+            R = R * gain
+            mono = mono * gain
+
+    # Tail envelope + slope fit. Window is peak-aligned (samples are already
+    # peak-cropped above), starting at 50 ms post-peak.
     sm = _envelope(mono, sr, win_ms=10.0)
     t0 = int(0.05 * sr)
     t1 = min(int(decay_seek_s * sr), len(sm))
@@ -173,14 +323,56 @@ def compute_metrics(wav_path: str, decay_seek_s: float = 5.0) -> dict:
     slope, residual = _slope_fit(seg, sr)
     rt60 = -60.0 / slope if slope < -1.0 else float('inf')
 
-    # Centroids in two windows.
+    # Direct, noise-floor-aware decay-time measurements. These replace
+    # rt60-slope-fit as the perceptual decay metric — slope-fit on short
+    # tails (<2 s) returns garbage (~9 s) because the fit drifts into the
+    # noise floor. tail_t30/t60 are the loud, audible part of the decay.
+    tail_times = _tail_decay_times(mono, sr)
+
+    # Per-band tail decay: tracks frequency-dependent decay character.
+    # Reveals e.g. bass-sustained tail (low_t60 > hi_t60) that mono t60
+    # averages away. Critical for perception of "warmth" vs "darkness".
+    band_decays = _per_band_decay_times(mono, sr)
+
+    # Centroids in two windows. Each window includes a noise-floor gate:
+    # if the segment's RMS drops below NOISE_FLOOR_DBFS the centroid is
+    # set to None and propagates as "not measurable" to the comparator —
+    # prevents the optimizer from chasing noise-floor spectral content
+    # on short-tail plates where the anchor has already decayed.
+    NOISE_FLOOR_DBFS = -80.0
+
     def _seg(a_s, b_s):
         a = int(a_s * sr)
         b = min(int(b_s * sr), len(mono))
         return mono[a:b]
 
-    cent_50 = _spectral_centroid(_seg(0.05, 0.50), sr)
-    cent_500 = _spectral_centroid(_seg(0.50, 1.50), sr) if len(mono) > int(0.50 * sr) + 16 else cent_50
+    def _seg_rms_db_raw(a_s, b_s):
+        """RMS in dBFS on the RAW pre-normalized signal. The noise-floor
+        gate must use this, not the post-normalize mono, otherwise the
+        normalize-gain falsely lifts the noise floor above the gate."""
+        a = int(a_s * sr); b = min(int(b_s * sr), len(mono_raw))
+        if b - a < 16:
+            return float('-inf')
+        return float(20 * np.log10(np.sqrt(np.mean(mono_raw[a:b] ** 2) + 1e-30) + 1e-30))
+
+    def _gated_centroid(a_s, b_s):
+        seg = _seg(a_s, b_s)
+        if len(seg) < 16:
+            return None
+        if _seg_rms_db_raw(a_s, b_s) < NOISE_FLOOR_DBFS:
+            return None
+        return _spectral_centroid(seg, sr)
+
+    cent_50 = _gated_centroid(0.05, 0.50)
+    cent_500 = _gated_centroid(0.50, 1.50)
+    # Backward-compat: callers that don't handle None expect a float.
+    # Fall back to the early-window centroid only when the late window is
+    # below noise floor — this preserves the previous "use cent_50 as
+    # fallback" behavior without lying that there's mid-tail content.
+    if cent_50 is None:
+        cent_50 = float('nan')
+    if cent_500 is None:
+        cent_500 = float('nan')
 
     # Stereo waveform correlation over tail.
     Lt = L[t0:t1]
@@ -190,6 +382,70 @@ def compute_metrics(wav_path: str, decay_seek_s: float = 5.0) -> dict:
     # 1/3-octave magnitude of the entire signal, RMS-normalized.
     oct_centers, oct_db = _third_octave_magnitude_db(mono, sr)
     oct_db_norm = _rms_normalize_db(oct_db)
+
+    # ── Tail-character metrics added 2026-05-25 ──
+    # Time-domain crest: peak-of-envelope / RMS-of-envelope past 100 ms.
+    # High TDC = specular chatter (MTDL / sparse FDN); low TDC = Gaussian wash.
+    e_late = sm[int(0.10 * sr):] if len(sm) > int(0.10 * sr) else np.array([])
+    if len(e_late) > 16:
+        e_pos = e_late[e_late > e_late.max() * 1e-5]
+        tdc = float(e_pos.max() / max(np.sqrt(np.mean(e_pos**2)), 1e-30)) if len(e_pos) > 0 else 0.0
+    else:
+        tdc = 0.0
+
+    # Centroid drift: cent measured over a 300 ms window starting at
+    # 50/150/300/500/1000/2000 ms. Each window is noise-floor gated; below
+    # gate the value is None so the comparator skips the term instead of
+    # comparing DV-real-signal against anchor's noise floor.
+    centroid_drift = {}
+    for ms in [50, 150, 300, 500, 1000, 2000]:
+        a, b = int((ms / 1000) * sr), min(int((ms / 1000 + 0.3) * sr), len(mono))
+        # Gate uses raw signal RMS.
+        if b - a > 32 and _seg_rms_db_raw(ms / 1000, ms / 1000 + 0.3) >= NOISE_FLOOR_DBFS:
+            centroid_drift[ms] = _spectral_centroid(mono[a:b], sr)
+        else:
+            centroid_drift[ms] = None
+
+    # Late-tail RMS (dB) in fixed time windows.
+    def _rms_db_window(a_s, b_s):
+        a, b = int(a_s * sr), min(int(b_s * sr), len(mono))
+        if b - a < 16:
+            return float('nan')
+        r = float(np.sqrt(np.mean(mono[a:b] ** 2) + 1e-30))
+        return float(20 * np.log10(r))
+
+    late_tail = {
+        '1s_2s': _rms_db_window(1.0, 2.0),
+        '2s_3s': _rms_db_window(2.0, 3.0),
+        '3s_4s': _rms_db_window(3.0, 4.0),
+    }
+
+    # Treble / bass energy ratios over the *audible* tail. Window ends
+    # when the signal drops below the noise floor (default 600 ms cap for
+    # short plates so we don't average in noise). Without this cap, a
+    # 0.6 s plate has 0.6 s of signal + 2.4 s of noise, and the integration
+    # mostly measures the noise floor's spectrum.
+    a = int(0.05 * sr)
+    # Find the end of the audible tail: first index where the RAW-signal
+    # moving RMS (pre-normalize) drops below the noise-floor gate.
+    win_n = max(int(0.05 * sr), 1)  # 50 ms moving RMS
+    sq_raw = mono_raw ** 2
+    sq_sm = np.convolve(sq_raw, np.ones(win_n) / win_n, mode='same')
+    rms_db = 10.0 * np.log10(sq_sm + 1e-30)
+    below = np.where((np.arange(len(rms_db)) > a) & (rms_db < NOISE_FLOOR_DBFS))[0]
+    b_audible = int(below[0]) if len(below) > 0 else min(int(3.0 * sr), len(mono))
+    b = max(b_audible, a + int(0.1 * sr))  # at least 100 ms window
+    b = min(b, len(mono))
+    if b - a > 32:
+        seg_full = mono[a:b] * np.hanning(b - a)
+        S2 = np.abs(np.fft.rfft(seg_full)) ** 2
+        ff = np.fft.rfftfreq(b - a, 1 / sr)
+        total_e = float(S2.sum() + 1e-30)
+        treble_ratio = float(S2[ff > 5000].sum() / total_e)
+        bass_ratio = float(S2[ff < 200].sum() / total_e)
+    else:
+        treble_ratio = 0.0
+        bass_ratio = 0.0
 
     return {
         'sr': sr,
@@ -202,6 +458,23 @@ def compute_metrics(wav_path: str, decay_seek_s: float = 5.0) -> dict:
         'stereo_corr': stereo,
         'oct_centers': oct_centers,
         'oct_db_norm': oct_db_norm,
+        # Direct tail-decay times (post-peak, noise-floor-aware).
+        # tail_t30 / tail_t60 are the canonical perceptual decay metric;
+        # rt60-slope-fit above is retained for legacy callers only.
+        'tail_t10': tail_times.get('t10'),
+        'tail_t20': tail_times.get('t20'),
+        'tail_t30': tail_times.get('t30'),
+        'tail_t40': tail_times.get('t40'),
+        'tail_t60': tail_times.get('t60'),
+        # Per-band decay times (post-peak, noise-floor-aware).
+        # Reveals frequency-dependent decay that mono t60 hides.
+        'band_decays': band_decays,
+        # New tail-character metrics:
+        'tdc': tdc,
+        'centroid_drift': centroid_drift,
+        'late_tail': late_tail,
+        'treble_ratio': treble_ratio,
+        'bass_ratio': bass_ratio,
     }
 
 
@@ -210,12 +483,21 @@ def compute_metrics(wav_path: str, decay_seek_s: float = 5.0) -> dict:
 # ---------------------------------------------------------------------------
 
 DEFAULT_WEIGHTS = {
-    'rt60': 1.0,
-    'cent_50': 1.0,
-    'cent_500': 0.5,
-    'spec_l1': 0.5,
-    'stereo': 0.5,
-    'envelope': 0.3,
+    # rt60-slope-fit is unreliable on short tails — kept at 0 weight so
+    # legacy callers don't break, but the perceptual decay match comes
+    # from `tail_shape` (t30/t40/t60 noise-floor-aware times).
+    'rt60': 0.0,
+    'tail_shape': 6.0,       # raised from 4.0 — late-tail t60 was drifting +30% past gate
+    'cent_50': 4.0,          # raised from 1.0 — early-bloom brightness was -35% past gate
+    'cent_500': 1.5,         # raised from 1.0
+    'spec_l1': 1.0,          # RMS-norm L1 captures EQ-shape match
+    'stereo': 0.3,           # reduced — DPV figure-8 can't reach Lex's anti-correlated stereo within Width clamp
+    'envelope': 0.5,         # env_p2p
+    'tdc': 1.0,              # time-domain crest (specular vs wash)
+    'cent_drift': 1.5,       # multi-window centroid drift (HF plunge)
+    'late_tail': 0.5,        # late-window RMS match
+    'treble_ratio': 0.5,     # high-freq energy ratio
+    'bass_ratio': 0.5,       # low-freq energy ratio
 }
 
 
@@ -241,14 +523,42 @@ def compare(
     vv = compute_metrics(vvv_path, decay_seek_s=decay_seek_s)
 
     # RT60 relative-error squared (skip if VVV RT60 is inf/<= 0).
+    # Kept for legacy/diagnostic only — default weight is 0 because the
+    # slope-fit RT60 on tails <2 s returns noise-floor artifacts.
     if math.isfinite(vv['rt60']) and vv['rt60'] > 0.05 and math.isfinite(dv['rt60']):
         rt60_term = ((dv['rt60'] - vv['rt60']) / vv['rt60']) ** 2
     else:
         rt60_term = 0.0
 
-    # Centroid relative-error squared.
-    cent50_term = ((dv['cent_50'] - vv['cent_50']) / max(vv['cent_50'], 1.0)) ** 2
-    cent500_term = ((dv['cent_500'] - vv['cent_500']) / max(vv['cent_500'], 1.0)) ** 2
+    # Tail shape: direct, noise-floor-aware decay-time match across
+    # t30/t40/t60 (post-peak times to reach -30/-40/-60 dB). Weighted
+    # squared relative error, clamped per point so a single "decayed below
+    # noise floor" doesn't blow up the term. This is the PERCEPTUAL decay
+    # match — replaces rt60-slope-fit which is broken on short tails.
+    tail_shape_term = 0.0
+    tail_pts = 0
+    for k, point_clamp in (('tail_t30', 1.0), ('tail_t40', 1.5), ('tail_t60', 2.0)):
+        dv_t = dv.get(k); vv_t = vv.get(k)
+        if dv_t is None or vv_t is None or vv_t <= 0:
+            continue
+        rel = abs(dv_t - vv_t) / max(vv_t, 0.05)
+        # Squared, clipped per-point so one bad axis cannot dominate.
+        tail_shape_term += min(rel, point_clamp) ** 2
+        tail_pts += 1
+    tail_shape_term = tail_shape_term / max(tail_pts, 1)
+
+    # Centroid relative-error squared. NaN values (noise-floor gated) skip
+    # the term entirely so the optimizer doesn't chase noise.
+    def _cent_term(d, v):
+        if not math.isfinite(d) or not math.isfinite(v) or v <= 1.0:
+            return None
+        return ((d - v) / v) ** 2
+    cent50_term = _cent_term(dv['cent_50'], vv['cent_50'])
+    cent500_term = _cent_term(dv['cent_500'], vv['cent_500'])
+    cent50_active = cent50_term is not None
+    cent500_active = cent500_term is not None
+    if cent50_term is None: cent50_term = 0.0
+    if cent500_term is None: cent500_term = 0.0
 
     # RMS-normalized 1/3-octave dB L1.
     # Both vectors share the same band centers (same sr, same f_lo/f_hi).
@@ -266,19 +576,68 @@ def compare(
     # Envelope residual P2P relative-error, magnitude only (no sign).
     env_term = abs(dv['env_res_p2p'] - vv['env_res_p2p']) / max(vv['env_res_p2p'], 1.0)
 
+    # ── New tail-character terms ──
+    # TDC: squared relative error. High weight for "wash vs chatter" distinction.
+    tdc_term = ((dv['tdc'] - vv['tdc']) / max(vv['tdc'], 1.0)) ** 2
+
+    # Centroid drift: sum of squared relative errors across 50/150/300/500/1000/2000 ms windows.
+    # Captures whether the tail darkens with the right shape (anchor's centroid plunge).
+    # Each window is noise-floor gated; skip the term entirely if either side
+    # returns None (segment dropped below -80 dBFS).
+    cent_drift_term = 0.0
+    cent_drift_active = 0
+    for ms in [50, 150, 300, 500, 1000, 2000]:
+        dvc = dv['centroid_drift'].get(ms)
+        vvc = vv['centroid_drift'].get(ms)
+        if dvc is None or vvc is None or vvc <= 1.0:
+            continue
+        cent_drift_term += ((dvc - vvc) / vvc) ** 2
+        cent_drift_active += 1
+    cent_drift_term = cent_drift_term / max(cent_drift_active, 1)
+
+    # Late-tail RMS: squared dB-absolute error in the 1-2 / 2-3 / 3-4 s windows.
+    # Bounded to keep noise-floor differences from dominating.
+    late_term = 0.0
+    late_count = 0
+    for k in ['1s_2s', '2s_3s', '3s_4s']:
+        dvl = dv['late_tail'].get(k, float('nan'))
+        vvl = vv['late_tail'].get(k, float('nan'))
+        if math.isfinite(dvl) and math.isfinite(vvl):
+            # Clamp very low (noise-floor) values
+            if dvl < -160 and vvl < -160:
+                continue
+            d = abs(dvl - vvl)
+            late_term += (min(d, 30.0) / 30.0) ** 2  # normalize and clamp
+            late_count += 1
+    late_term = late_term / max(late_count, 1)
+
+    # Treble / bass ratio: squared absolute error (bounded [0, 1]).
+    treble_term = (dv['treble_ratio'] - vv['treble_ratio']) ** 2
+    bass_term = (dv['bass_ratio'] - vv['bass_ratio']) ** 2
+
     loss = (
-        w['rt60']     * rt60_term
-        + w['cent_50']  * cent50_term
-        + w['cent_500'] * cent500_term
-        + w['spec_l1']  * spec_term
-        + w['stereo']   * stereo_term
-        + w['envelope'] * env_term
+        w['rt60']         * rt60_term
+        + w['tail_shape']   * tail_shape_term
+        + (w['cent_50']     * cent50_term  if cent50_active  else 0.0)
+        + (w['cent_500']    * cent500_term if cent500_active else 0.0)
+        + w['spec_l1']      * spec_term
+        + w['stereo']       * stereo_term
+        + w['envelope']     * env_term
+        + w['tdc']          * tdc_term
+        + w['cent_drift']   * cent_drift_term
+        + w['late_tail']    * late_term
+        + w['treble_ratio'] * treble_term
+        + w['bass_ratio']   * bass_term
     )
 
     breakdown = {
         'loss': loss,
         'rt60_dv': dv['rt60'],
         'rt60_vvv': vv['rt60'],
+        'tail_t30_dv': dv.get('tail_t30'),
+        'tail_t30_vvv': vv.get('tail_t30'),
+        'tail_t60_dv': dv.get('tail_t60'),
+        'tail_t60_vvv': vv.get('tail_t60'),
         'cent50_dv': dv['cent_50'],
         'cent50_vvv': vv['cent_50'],
         'cent500_dv': dv['cent_500'],
@@ -289,6 +648,7 @@ def compare(
         'envP2P_vvv': vv['env_res_p2p'],
         'spec_l1_db': spec_term,
         'rt60_term': rt60_term,
+        'tail_shape_term': tail_shape_term,
         'cent50_term': cent50_term,
         'cent500_term': cent500_term,
         'stereo_term': stereo_term,
@@ -313,7 +673,11 @@ if __name__ == '__main__':
 
     loss, b = compare(args.dv, args.vvv, decay_seek_s=args.decay_seek)
     print(f"loss        = {loss:.6f}")
-    print(f"RT60        DV={b['rt60_dv']:.3f}s   VVV={b['rt60_vvv']:.3f}s   term={b['rt60_term']:.5f}")
+    def _fmt(v):
+        return f"{v:.3f}s" if isinstance(v, (int, float)) else "none"
+    print(f"Tail t30    DV={_fmt(b['tail_t30_dv'])}  VVV={_fmt(b['tail_t30_vvv'])}")
+    print(f"Tail t60    DV={_fmt(b['tail_t60_dv'])}  VVV={_fmt(b['tail_t60_vvv'])}  shape_term={b['tail_shape_term']:.5f}")
+    print(f"RT60(legacy) DV={b['rt60_dv']:.3f}s   VVV={b['rt60_vvv']:.3f}s   term={b['rt60_term']:.5f}")
     print(f"Cent 50ms   DV={b['cent50_dv']:.0f}Hz  VVV={b['cent50_vvv']:.0f}Hz  term={b['cent50_term']:.5f}")
     print(f"Cent 500ms  DV={b['cent500_dv']:.0f}Hz  VVV={b['cent500_vvv']:.0f}Hz term={b['cent500_term']:.5f}")
     print(f"Stereo r    DV={b['stereo_dv']:+.3f}    VVV={b['stereo_vvv']:+.3f}    term={b['stereo_term']:.5f}")

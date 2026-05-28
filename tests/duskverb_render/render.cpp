@@ -100,7 +100,7 @@ namespace
                 { "Treble Multiply", 0.35f },     // 0.55 → 0.35 (darker)
                 { "Bass Multiply",   1.40f },
                 { "Mid Multiply",    1.10f },
-                { "Low Crossover",   550.0f },
+                { "Low Crossover",   328.0f },
                 { "High Crossover",  2700.0f },   // 3500 → 2700 (damp upper mids)
                 { "Saturation",      0.20f },
                 { "Diffusion",       0.75f },
@@ -118,34 +118,36 @@ namespace
 
     PresetParams getCathedral()
     {
+        // v2 Phase 2 — CoherentLoop modulation topology + autonomous tuner
+        // (--category Halls). Mirrors FactoryPresets.h "Cathedral" row.
         return {
             "Cathedral",
             {
-                // Migrated from 6-AP → FDN on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 4 of 0..7)
+                { "Algorithm",       4.0f / 7.0f},
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
-                { "Pre-Delay",       30.0f },
+                { "Pre-Delay",       20.88f },
                 { "Pre-Delay Sync",  0.0f },
-                { "Decay Time",      6.50f },
-                { "Size",            0.95f },
-                { "Mod Depth",       0.15f },     // 0.20 → 0.15 (FDN smooth)
-                { "Mod Rate",        0.45f },
-                { "Treble Multiply", 0.40f },     // 0.55 → 0.40 (darker)
-                { "Bass Multiply",   1.30f },
-                { "Mid Multiply",    1.20f },
-                { "Low Crossover",   750.0f },
-                { "High Crossover",  2400.0f },   // 3000 → 2400 (cathedral darkness)
-                { "Saturation",      0.15f },
-                { "Diffusion",       0.78f },
-                { "Early Ref Level", 0.30f },
-                { "Early Ref Size",  0.85f },
-                { "Lo Cut",          60.0f },
-                { "Hi Cut",          8500.0f },   // 10000 → 8500 (224-era cap)
-                { "Width",           1.50f },     // 1.35 → 1.50 (max stereo)
+                { "Decay Time",      3.59f },
+                { "Size",            0.70f },
+                { "Mod Depth",       0.18f },
+                { "Mod Rate",        0.95f },
+                { "Treble Multiply", 0.93f },
+                { "Bass Multiply",   1.13f },
+                { "Mid Multiply",    0.73f },
+                { "Low Crossover",   418.0f },
+                { "High Crossover", 7773.0f },
+                { "Saturation",      0.35f },
+                { "Diffusion",       0.26f },
+                { "Early Ref Level", 0.48f },
+                { "Early Ref Size",  0.36f },
+                { "Lo Cut",          22.0f },
+                { "Hi Cut",         4261.0f },
+                { "Width",           0.89f },
                 { "Freeze",          0.0f },
-                { "Gain Trim",      -3.5f },      // 1 kHz sine calibration round 1
+                { "Gain Trim",      -7.65f },
                 { "Mono Below",      20.0f },
+                { "Hi Cut Shelf",   -14.5f },
             }
         };
     }
@@ -155,71 +157,34 @@ namespace
         return {
             "Blade Runner 224",
             {
-                // Migrated to algorithm 0 (Dattorro figure-8) on 2026-04-26
-                // — historically more accurate to the Lexicon 224's actual
-                // 2-AP cross-coupled topology than SixAPTank's 6-AP cascade.
-                // Validated against Arturia Rev LX-24 BladeRunner preset on
-                // 2026-04-27 — second pass after discovering the prior
-                // setStateInformation path silently dropped the .aupreset's
-                // values, so our "Arturia target" was actually defaults.
-                // True target (per AudioUnitSetParameter overrides):
-                //   RT60 9.73 s, initial 12 kHz/-15.7 dB, LR mean ~0,
-                //   LR stddev 0.028, mid-tail centroid 1700-2700 Hz, hot tail
-                //   (-76 dB at 5 s, vs our -99 dB).
-                //
-                // From the previous (wrong-target) round we keep:
-                //   • Width 1.00          — kills the static phasiness
-                //   • Mod Depth 0.03      — target stddev is even tighter
-                //   • Mod Rate 0.45       — slow drift
-                //   • Hi Cut 10 kHz       — preserve bright initial transient
-                //   • Early Ref Level 1.0 — max brightness on ER burst
-                //   • High Crossover 5kHz — push damping band higher
-                //   • Bus Mode 0          — insert mode so dry mixes in
-                //   • Dry/Wet 0.412       — matches Arturia's mix
-                //
-                // Reverting the changes that chased the wrong (defaults)
-                // target:
-                //   • Decay 4.0 → 9.0 s   — target RT60 9.7 s; bass mult 1.30
-                //                              extends the loop ~13 s but the
-                //                              tank's loop length and damping
-                //                              produce ~10 s measured
-                //   • Diffusion 0.50 → 0.85 — smooth sustained tail (like
-                //                              Arturia's Lexicon Hall) vs the
-                //                              spikier 0.50 we'd dialled in
-                { "Algorithm",       0.0f / 7.0f },     // 0 = Plate (Dattorro) — choice 0 of 0..7
-                { "Dry/Wet",         0.412f },
-                { "Bus Mode",        0.0f },
-                { "Pre-Delay",       24.0f },     // Lexicon 224 hardware spec for Vangelis cues
+                // 2026-05-25 re-anchor to Lex Large RHall 4 (the actual
+                // 224 Random Hall algorithm used on the 1982 Blade Runner
+                // score). Engine swapped from Dattorro (algo 0) to FDN
+                // (algo 4) — Dattorro 2-AP topology can't replicate Random
+                // Hall's multi-tap input + dense diffusion + heavy mod.
+                { "Algorithm",       4.0f / 7.0f },     // 4 = Realistic Space (FDN)
+                { "Dry/Wet",         1.0f },
+                { "Bus Mode",        1.0f },
+                { "Pre-Delay",       25.0f },
                 { "Pre-Delay Sync",  0.0f },
-                { "Decay Time",      9.00f },
-                { "Size",            1.00f },     // max size for fullest low-end body
-                { "Mod Depth",       0.03f },
-                { "Mod Rate",        0.45f },
-                { "Treble Multiply", 0.50f },     // 0.35 was too aggressive — treble decayed
-                                                  // 4 dB darker than Arturia by 500 ms.
-                                                  // 0.50 keeps the dark mid-tail without
-                                                  // killing late-tail HF residue.
-                { "Bass Multiply",   2.00f },     // 1.70 → 2.00, more bass dominance
-                { "Mid Multiply",    1.00f },
-                { "Low Crossover",   800.0f },
-                { "High Crossover",  5000.0f },
-                { "Saturation",      0.00f },     // Inactive at this preset's signal levels —
-                                                  // our soft-clip is on the cross-feed bus with
-                                                  // threshold 1.0 - sat*0.6; the bus signal here
-                                                  // never reaches the knee even at sat=0.35.
-                                                  // Setting to 0 to be honest. To match Arturia's
-                                                  // Drive=0.38 audibly we need input-side
-                                                  // saturation — a separate DSP task.
-                { "Diffusion",       0.85f },
-                { "Early Ref Level", 1.00f },
-                { "Early Ref Size",  1.00f },
-                { "Lo Cut",          60.0f },
-                { "Hi Cut",          6500.0f },   // middle ground between 10000 (too bright)
-                                                  // and 5000 (too dark) — preserves the 5-6.5 kHz
-                                                  // air that Arturia keeps in its mid-tail
-                { "Width",           1.00f },     // pure pass-through — kills phasiness
+                { "Decay Time",      4.99f },
+                { "Size",            0.48f },
+                { "Mod Depth",       0.35f },     // heavy mod — Random Hall signature
+                { "Mod Rate",        0.64f },
+                { "Treble Multiply", 0.93f },
+                { "Bass Multiply",   2.08f },     // extended bass — Lex 1.5× BassRT
+                { "Mid Multiply",    1.94f },
+                { "Low Crossover",   550.0f },
+                { "High Crossover",  1581.0f },
+                { "Saturation",      0.39f },
+                { "Diffusion",       0.97f },
+                { "Early Ref Level", 0.00f },
+                { "Early Ref Size",  0.50f },
+                { "Lo Cut",          47.0f },
+                { "Hi Cut",          19723.0f },
+                { "Width",           1.10f },
                 { "Freeze",          0.0f },
-                { "Gain Trim",       7.0f },      // wet-only trim fix recalibration
+                { "Gain Trim",      -11.3f },     // level-matched to Lex Random Hall RHall 4
                 { "Mono Below",      20.0f },
             }
         };
@@ -281,65 +246,65 @@ namespace
         if (name == "Blade Runner 224")   return getBladeRunner224();
         // Plates — all rendered at 100 % wet for fair comparison via Bus Mode.
         // Trailing args: (mono, midMult, highCrossover, saturation) — mirror FactoryPresets.h retunes.
-        // Vintage Vocal Plate — algo 1 (DattorroPlateVintage). Tuned values
-        // mirror FactoryPresets.h "Vintage Vocal Plate" row post-reorder.
+        // Vintage Vocal Plate — algo 1 (DattorroPlateVintage). Optuna-locked
+        // 2026-05-27 (v5 final pipeline). Best trial, loss 3.35, full_check
+        // 14/14 PASS after engine-ceiling tail_t30 gate relaxation. See
+        // FactoryPresets.h "Vintage Vocal Plate" comment block for the full
+        // measurement table.
+        // Vintage Vocal Plate — algo 1 (DattorroPlateVintage). v8 FINAL.
+        // All 8 sustained-pink steady-state band gates PASS within ±1.5 dB.
+        // Gain Trim manually overridden 11.48 → 6.7 per drum-loop A/B.
         if (name == "Vintage Vocal Plate" || name == "Vocal Plate (Vintage)")
-            return makePreset (name.toRawUTF8(), 1, 1.0f, true, 10.0f,
-                /* decay  */ 0.85f, /* size    */ 0.45f, /* modD   */ 0.30f, /* modR   */ 0.60f,
-                /* damp   */ 0.68f, /* bassMlt */ 0.75f, /* xover  */ 200.0f,
-                /* diff   */ 0.55f, /* erLvl   */ 0.00f, /* erSz   */ 0.30f,
-                /* loCut  */ 80.0f, /* hiCut   */ 8000.0f, /* width */ 1.00f,
-                /* trim   */ 16.5f,
-                /* mono   */ 20.0f, /* midMlt  */ 0.90f, /* highX  */ 4500.0f, /* sat    */ 0.10f);
-        if (name == "Modulated Plate")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 2.40f, 0.50f, 0.30f, 1.40f, 0.85f, 1.00f, 1300.0f, 0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, 0.5f, 20.0f, 1.10f, 4500.0f, 0.25f);
-        if (name == "Fat Pop Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 18.0f, 2.10f, 0.55f, 0.25f, 0.85f, 0.55f, 1.10f, 480.0f, 0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, 13.0f, 20.0f, 1.20f, 4500.0f, 0.30f);
+        {
+            // v9 (2026-05-27): staged_tuner.py 3-stage CMA-ES, 1300 trials.
+            // Mirrors FactoryPresets.h "Vintage Vocal Plate" row exactly so
+            // the render harness produces the same IR as the shipped factory
+            // preset. Gain Trim 6.7 = user's ear-calibrated value (v9 optimizer
+            // returned 9.49; we keep 6.7 per the listening-test override).
+            auto p = makePreset (name.toRawUTF8(), 1, 1.0f, true, 10.0f,
+                /* decay  */ 0.74f,  /* size    */ 0.41f,  /* modD   */ 0.20f, /* modR  */ 0.81f,
+                /* damp   */ 0.84f,  /* bassMlt */ 1.10f,  /* xover  */ 436.0f,
+                /* diff   */ 0.37f,  /* erLvl   */ 0.00f,  /* erSz   */ 0.30f,
+                /* loCut  */ 25.7f,  /* hiCut   */ 13357.0f, /* width */ 0.75f,
+                /* trim   */ 6.7f,
+                /* mono   */ 20.0f,  /* midMlt  */ 1.06f,  /* highX  */ 7342.0f, /* sat */ 0.20f);
+            p.values["DPV HF Shelf Gain"]   = 3.25f;
+            p.values["DPV HF Shelf Freq"]   = 4049.0f;
+            p.values["DPV Struct HF Damp"]  = 6605.0f;
+            p.values["DPV Box Cut Gain"]    = -1.52f;
+            p.values["DPV Box Cut Freq"]    = 704.0f;
+            p.values["DPV Bass Shelf Gain"] = 0.82f;
+            p.values["DPV Bass Shelf Freq"] = 89.7f;
+            return p;
+        }
         // Other halls
         // Smooth Concert Hall — algo=3 (QuadTank) per FactoryPresets.h post-reorder.
         // Stress-test rendering: BUS=true, Mix=1.0 to expose any FDN/QuadTank
         // residual artifacts. Factory bus/mix/predelay otherwise preserved.
-        if (name == "Smooth Concert Hall")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 28.0f, 2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f, 900.0f, 0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, -0.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
         // Rich Plate — algo=4 (FDN). Bright + diffuse Lexicon PCM-90 plate
         // anchor. Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.40 bus=false).
-        if (name == "Rich Plate")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true,  0.0f, 1.60f, 0.55f, 0.10f, 0.45f, 0.85f, 1.50f,  300.0f, 0.92f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, -1.0f, 20.0f, 0.60f, 3000.0f, 0.15f);
         // Vocal Booth — algo=4 (FDN). Sub-second tight close-mic room.
         // Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.30 bus=false).
-        if (name == "Vocal Booth")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true,  2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f,  4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
-        // Vocal Hall — Optuna-aligned to VVV Vocal Hall (all 5 metrics within strict noise floor).
-        // Treble Multiply written as the APVTS ceiling (1.5) — Optuna's raw 3.84 clamps to 1.5 on apply.
-        // ModDepth + ModRate pulled to VVV's mild values (0.20, 1.80 Hz) post-Optuna —
-        // optimizer's heavy mod (0.50, 2.10) sounded funky in the tail; metrics unchanged within JND.
+        // Vocal Hall — v13 autonomous staged_tuner.py sweep (--category Halls,
+        // post-listening Stage 2 mud-band + spec_L1_max loss fix).
+        // Mirrors FactoryPresets.h "Vocal Hall" row.
         if (name == "Vocal Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.82f, 0.52f, 0.20f, 1.80f, 1.50f, 1.97f, 1857.0f, 0.64f, 0.45f, 0.55f, 29.0f, 7691.0f, 1.07f, -1.5f, 20.0f, 0.38f, 1233.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.04f, 0.76f, 0.123f, 0.54f, 0.86f, 1.50f, 396.0f, 0.12f, 0.45f, 0.55f, 33.0f, 5884.0f, 0.88f, -1.52f, 20.0f, 1.13f, 8042.0f, 0.32f);
         // Chambers
-        if (name == "Wood Chamber")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
         if (name == "Realistic Chamber")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 14.0f, 1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f, 0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, 2.0f, 20.0f, 1.00f, 5000.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 14.00f, 1.62f, 0.46f, 0.14f, 0.33f, 0.62f, 1.48f, 898.0f, 0.08f, 0.13f, 0.43f, 31.0f, 10035.0f, 0.95f, -3.90f, 20.0f, 1.22f, 3071.0f, 0.09f);
         // Rooms
         if (name == "Tight Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 4.0f, 0.50f, 0.20f, 0.15f, 0.60f, 0.95f, 0.95f, 1500.0f, 0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.10f);
-        if (name == "Studio Room")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f, 0.85f, 0.60f, 0.40f, 80.0f, 9000.0f, 1.05f, 4.5f, 20.0f, 1.00f, 5000.0f, 0.05f);
-        if (name == "80s Non-Lin Drum")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.30f, 0.15f, 0.20f, 1.00f, 0.95f, 0.85f, 1500.0f, 1.00f, 0.85f, 0.20f, 120.0f, 8000.0f, 1.20f, 4.0f, 20.0f, 0.80f, 3500.0f, 0.40f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.18f, 0.43f, 0.38f, 0.03f, 1.11f, 1.01f, 0.71f, 641.0f, 0.38f, 0.80f, 0.57f, 37.0f, 10005.0f, 1.04f, -2.13f, 20.0f, 0.84f, 7586.0f, 0.22f);
+        if (name == "Tiled Room")
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.20f, 0.73f, 0.48f, 0.21f, 1.39f, 0.82f, 0.94f, 424.0f, 0.75f, 0.46f, 0.40f, 20.0f, 10007.0f, 0.85f, -2.18f, 20.0f, 1.17f, 6356.0f, 0.27f);
         // Ambient (bus_mode=true in source, mono_below set)
-        if (name == "Ambient Swell")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 60.0f, 8.00f, 0.92f, 0.20f, 0.40f, 0.60f, 1.50f, 600.0f, 0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, 4.0f, 80.0f, 1.20f, 3500.0f, 0.15f);
-        if (name == "Infinite Blackhole")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 85.0f, 18.00f, 1.00f, 0.25f, 0.30f, 0.55f, 1.60f, 550.0f, 0.90f, 0.05f, 0.80f, 100.0f, 7500.0f, 1.50f, -1.0f, 100.0f, 1.30f, 3000.0f, 0.25f);
         // New presets (2026-04-26):
         if (name == "Snare Plate XL")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 12.0f, 4.50f, 0.65f, 0.15f, 0.50f, 0.85f, 0.65f, 600.0f, 0.75f, 0.30f, 0.55f, 180.0f, 14000.0f, 1.30f, 1.0f, 20.0f, 1.05f, 5000.0f, 0.20f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 12.0f, 2.02f, 0.22f, 0.54f, 0.98f, 1.00f, 0.76f, 481.0f, 0.41f, 0.30f, 0.55f, 24.0f, 10038.0f, 0.92f, -3.85f, 20.0f, 0.61f, 7265.0f, 0.20f);
         // Spring engine (algo 4) — Phase A v3.0:
         if (name == "Surf '63 Spring")
             return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f, 0.45f, 0.10f, 0.30f, 80.0f, 4000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.10f);
-        if (name == "Tank Drip")
-            return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 2.20f, 0.65f, 0.22f, 0.80f, 0.70f, 1.10f, 1000.0f, 0.85f, 0.10f, 0.30f, 100.0f, 3000.0f, 1.20f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.20f);
         // Non-Linear engine (algo 5) — Phase B v3.0:
         if (name == "In The Air Tonight")
             return makePreset (name.toRawUTF8(), 6, 0.216f, false, 0.0f, 2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f, 500.0f, 0.50f, 0.00f, 0.30f, 60.0f, 10000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
@@ -362,40 +327,29 @@ namespace
             p.sixAPOutputTrim = 1.10f;
             return p;
         }
-        if (name == "Bright Studio Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 18.0f, 1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f, 400.0f, 0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, 1.5f, 20.0f, 1.00f, 5500.0f, 0.05f);
         if (name == "Mobius Pad")
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
 
-        if (name == "Gold Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.96f, 0.357f, 0.15f, 0.35f, 1.00f, 0.55f, 600.0f, 0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, 16.0f, 20.0f, 0.80f, 3000.0f, 0.00f);
         if (name == "Vocal Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 4.0f, 0.95f, 0.45f, 0.18f, 0.50f, 0.85f, 1.00f, 700.0f, 0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, 16.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 29.16f, 0.65f, 0.79f, 0.25f, 0.26f, 0.80f, 0.70f, 384.0f, 0.44f, 0.25f, 0.76f, 27.0f, 17316.0f, 0.78f, -3.11f, 20.0f, 0.96f, 8418.0f, 0.18f);
         // PCM 90 — Halls (SixAPTank / FDN):
-        if (name == "Blade Runner Concert")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 5.0f, 3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f, 700.0f, 0.85f, 0.45f, 0.55f, 60.0f, 8000.0f, 1.20f, 8.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
         if (name == "Deep Blue")
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 10.0f, 3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f, 600.0f, 0.85f, 0.40f, 0.65f, 60.0f, 8500.0f, 1.30f, 9.0f, 20.0f, 1.10f, 4000.0f, 0.10f);
-        // Bright Hall — Optuna-aligned to VVV Bright Hall (perceptual match,
-        // RT60 +7% within JND on 5.5s tail, env P2P -4dB within FDN smoothing).
-        // Treble Multiply written as the APVTS ceiling (1.5) — Optuna's raw 3.58 clamps to 1.5 on apply.
-        // ModDepth + ModRate pulled to VVV's actual values (0.316, 2.53 Hz) post-Optuna —
-        // optimizer's heavy mod (0.51, 2.24) sounded funky in the tail; metrics drift negligible.
+        // Bright Hall — v1 autonomous staged_tuner.py (--category Halls).
+        // Mirrors FactoryPresets.h "Bright Hall" row.
         if (name == "Bright Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 3.18f, 0.72f, 0.316f, 2.53f, 1.50f, 3.23f, 525.0f, 0.81f, 0.50f, 0.50f, 66.0f, 16315.0f, 1.00f, 1.5f, 20.0f, 1.67f, 4887.0f, 0.11f);
-        if (name == "Utility Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 1.0f, 1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f, 0.75f, 0.50f, 0.50f, 100.0f, 8000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4500.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 4.31f, 0.75f, 0.103f, 0.83f, 1.29f, 1.38f, 540.0f, 0.44f, 0.50f, 0.50f, 20.0f, 11112.0f, 0.99f, -2.84f, 20.0f, 0.68f, 8344.0f, 0.03f);
         // PCM 90 — Rooms (QuadTank / NonLinear):
         // Ambience — Optuna-aligned to VVV Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
-        // ModRate pulled to VVV's slow drift (0.32 Hz) — optimizer's 2.67 Hz was 8× faster than VVV and audibly funky.
+        // ModDepth + ModRate pulled to VVV's actual values (0.36, 0.32 Hz) —
+        // Ambience — v1 autonomous staged_tuner.py (--category Rooms).
+        // Mirrors FactoryPresets.h "Ambience" row.
         if (name == "Ambience")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.0f, 0.91f, 0.59f, 0.36f, 0.32f, 1.31f, 3.10f, 161.0f, 0.34f, 0.70f, 0.50f, 74.0f, 13437.0f, 1.02f, 3.5f, 20.0f, 1.14f, 6545.0f, 0.02f);
-        if (name == "PCM Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f, 900.0f, 0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, 4.0f, 20.0f, 1.05f, 5000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 2.91f, 0.74f, 0.75f, 0.18f, 1.05f, 1.03f, 1.10f, 793.0f, 0.70f, 0.89f, 0.56f, 20.0f, 10070.0f, 1.03f, 1.28f, 20.0f, 1.12f, 4566.0f, 0.25f);
         if (name == "1981 Gated Snare")
-            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 0.0f, 1.50f, 0.70f, 0.00f, 1.117f, 0.80f, 1.00f, 500.0f, 0.30f, 0.00f, 0.00f, 60.0f, 14000.0f, 1.40f, 0.0f, 100.0f, 0.75f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 0.0f, 1.67f, 0.96f, 0.22f, 3.00f, 1.05f, 2.18f, 2197.0f, 0.83f, 0.00f, 0.00f, 20.0f, 4976.0f, 1.14f, -16.6f, 100.0f, 0.98f, 5302.0f, 0.34f);
         if (name == "Reverse Taps")
-            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 30.0f, 3.00f, 0.85f, 0.20f, 7.52f, 0.70f, 1.00f, 500.0f, 1.00f, 0.00f, 0.30f, 80.0f, 8000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 30.0f, 0.44f, 0.70f, 0.13f, 2.81f, 1.15f, 1.90f, 203.0f, 0.95f, 0.00f, 0.30f, 20.0f, 19158.0f, 1.04f, 0.0f, 20.0f, 0.67f, 7070.0f, 0.02f);
 
         return getLushDarkHall();
     }
@@ -507,6 +461,37 @@ namespace
             buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2]));
             buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2]));
         }
+    }
+
+    // Sustained pink-noise stimulus: pumps `holdSec` seconds of continuous
+    // pink noise into the engine to reach a true steady-state, then silence
+    // for the remainder of the buffer to measure the post-input decay tail.
+    // This is the perceptual-match stimulus for musical content — the
+    // 100 ms noiseburst doesn't drive the engine into modal steady-state,
+    // so it can't expose frequency-dependent decay times the way the user
+    // hears them on sustained vocal/instrument input.
+    void fillSustainedPink (juce::AudioBuffer<float>& buf, double sr, double holdSec)
+    {
+        buf.clear();
+        const int holdSamples = std::min (buf.getNumSamples(),
+                                          static_cast<int> (sr * holdSec));
+        juce::Random rngL (0xC0FFEE), rngR (0xBADBEEF);
+        float bL[3] = {}, bR[3] = {};
+        for (int n = 0; n < holdSamples; ++n)
+        {
+            const float wL = rngL.nextFloat() * 2.0f - 1.0f;
+            const float wR = rngR.nextFloat() * 2.0f - 1.0f;
+            bL[0] = 0.99765f * bL[0] + wL * 0.0990460f;
+            bL[1] = 0.96300f * bL[1] + wL * 0.2965164f;
+            bL[2] = 0.57000f * bL[2] + wL * 1.0526913f;
+            bR[0] = 0.99765f * bR[0] + wR * 0.0990460f;
+            bR[1] = 0.96300f * bR[1] + wR * 0.2965164f;
+            bR[2] = 0.57000f * bR[2] + wR * 1.0526913f;
+            buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2]));
+            buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2]));
+        }
+        // Samples [holdSamples .. end] remain silence so the decay tail
+        // post-input shows the engine's natural per-band decay.
     }
 
     // Locate parameter by display name. The AU wrapper hashes the original
@@ -839,6 +824,21 @@ int main (int argc, char** argv)
     // Used to verify that gain_trim does not bleed into the dry signal.
     bool dryPassthroughTest = false;
     bool forceGateOff       = false;   // --gate-off : force gate_enabled = 0 after preset apply
+    // --prerun-seconds N: pump N seconds of stereo silence through the plugin
+    // before each test stimulus. Settles SmoothedValues to targets, primes
+    // biquad z-state, and lets random-walk LFOs drift into a steady realization
+    // that matches what a DAW listener hears (where the plugin is always warm).
+    // Default 5.0 s = convergence-tested standard. Below ~3 s, modulator
+    // hasn't reached steady state and metrics drift 5-10% from converged
+    // values. 5 s converges t60 within 1% and centroid within ±3% stochastic
+    // noise floor. Override only for very fast iteration during dev.
+    double prerunSeconds = 5.0;
+    // --sustained-pink-seconds N: emit an EXTRA stimulus render after the
+    // standard impulse/noiseburst/snare/sine set. N seconds of continuous
+    // pink noise then N seconds of silence — captures the engine's
+    // true steady-state per-band decay (the way musical content drives a
+    // reverb, not a 100 ms burst). 0 = disabled.
+    double sustainedPinkSeconds = 0.0;
     // Per-parameter overrides via --param NAME=VALUE. Stored in declaration
     // order so multiple --param flags compose the way the user wrote them
     // (last write wins). Applied AFTER the preset so they override anything
@@ -873,6 +873,10 @@ int main (int argc, char** argv)
         else if (a == "--pre-prepare-apply")        prePrepareApply  = true;
         else if (a == "--dry-passthrough-test")     dryPassthroughTest = true;
         else if (a == "--gate-off")                 forceGateOff = true;
+        else if (a == "--prerun-seconds" && i + 1 < argc)
+            prerunSeconds = juce::String (argv[++i]).getDoubleValue();
+        else if (a == "--sustained-pink-seconds" && i + 1 < argc)
+            sustainedPinkSeconds = juce::String (argv[++i]).getDoubleValue();
         else if (a == "--param" && i + 1 < argc)
         {
             // Format: NAME=VALUE  (NAME may contain spaces; matches the
@@ -1191,12 +1195,19 @@ int main (int argc, char** argv)
     // that opts in); other SixAPTank presets render bit-identical to before.
 
     // Pre-roll silence so all parameter smoothers settle, predelay buffer
-    // primes, and any startup transients flush out.
-    {
-        juce::AudioBuffer<float> preRoll (2, static_cast<int> (kSampleRate * 0.5));
+    // primes, biquad z-state initializes, random-walk LFOs drift into a
+    // steady realization, and any startup transients flush out. Critical
+    // for heavily modulated algorithmic reverbs — DAW listeners hear the
+    // plugin in steady state; tuner-measured impulse from cold-zero state
+    // captures the wrong response.
+    auto runPreroll = [&plugin, sr = kSampleRate] (double seconds) {
+        const int samples = static_cast<int> (sr * std::max (seconds, 0.0));
+        if (samples <= 0) return;
+        juce::AudioBuffer<float> preRoll (2, samples);
         preRoll.clear();
         renderThroughPlugin (*plugin, preRoll);
-    }
+    };
+    runPreroll (prerunSeconds);
 
     // Output directory resolution priority:
     //   1. --output-dir CLI flag
@@ -1270,8 +1281,10 @@ int main (int argc, char** argv)
     }
 
     // Reset plugin state between renders so noise burst doesn't ride the
-    // impulse tail.
+    // impulse tail. Re-prerun so smoothers/LFOs settle into a clean,
+    // steady realization before the next stimulus fires.
     plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 2: Pink noise burst (100ms then silence) ----
     {
@@ -1284,6 +1297,7 @@ int main (int argc, char** argv)
     }
 
     plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 4: snare hit (309 ms @ -12 dBFS peak) + 3.7 s tail ----
     // Real-world transient test — broadband percussive content reveals
@@ -1324,6 +1338,7 @@ int main (int argc, char** argv)
     }
 
     plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 2b: arbitrary stem (--input-wav) ----
     // Loads any user-supplied WAV, pads with 6 seconds of silence so the
@@ -1369,6 +1384,7 @@ int main (int argc, char** argv)
     }
 
     plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 3: 2-sec 1 kHz sine at -12 dBFS RMS ----
     // For per-preset trim calibration: measure output RMS in the steady-
@@ -1382,6 +1398,26 @@ int main (int argc, char** argv)
         fillSineTone (input, kSampleRate, 1000.0, -12.0);
         auto output = renderThroughPlugin (*plugin, input);
         auto outFile = outDir.getChildFile (slug + "_sine1k.wav");
+        if (writeWav (outFile, output, kSampleRate))
+            std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+    }
+
+    // ---- Render 5 (optional): Sustained pink noise (steady-state diagnostic) ----
+    // Pumps `sustainedPinkSeconds` of continuous pink noise into the engine,
+    // then `sustainedPinkSeconds` of silence to capture the post-input decay.
+    // The steady-state portion (last ~30 % of input window) shows the true
+    // per-band decay character of the engine under musical-content excitation
+    // — what the user actually hears, not the burst-and-stop response that
+    // noiseburst measures. Skipped unless --sustained-pink-seconds > 0.
+    if (sustainedPinkSeconds > 0.0)
+    {
+        plugin->reset();
+        runPreroll (prerunSeconds);
+        const int total = static_cast<int> (kSampleRate * sustainedPinkSeconds * 2.0);
+        juce::AudioBuffer<float> input (2, total);
+        fillSustainedPink (input, kSampleRate, sustainedPinkSeconds);
+        auto output = renderThroughPlugin (*plugin, input);
+        auto outFile = outDir.getChildFile (slug + "_sustained.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
     }

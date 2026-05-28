@@ -46,7 +46,7 @@ public:
     void setInlineDiffusion (float coeff);
     // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
     // Linear map to inline-AP coefficient: knob 0 → off (Hadamard-only density,
-    // current behaviour), knob 1 → 0.55 (Lexicon hall-density convention).
+    // current behaviour), knob 1 → 0.55 (reference hardware hall-density convention).
     // Routes through setInlineDiffusion which also updates inlineDiffCoeff2_/3_.
     void setTankDiffusion (float amount);
     void setUseShortInlineAP (bool use);
@@ -64,6 +64,11 @@ public:
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
     void setFeedbackModDepth (float depth);
+
+    // Phase 2: switch modulation topology. RandomWalk = legacy per-line
+    // independent random walks. CoherentLoop = single master sine, phase-
+    // paired across the 16 delay lines for cohesive macro-envelope motion.
+    void setModulationTopology (DspUtils::ModulationTopology t);
     void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
     void clearBuffers();
@@ -257,6 +262,12 @@ private:
     InlineAllpass inlineAPShort_[N];
     ThreeBandDamping dampFilter_[N];     // holds biquad state only; coeffs come from lp.damping[]
     DspUtils::RandomWalkLFO lfos_[N];
+    // Phase 2: single master sine LFO for CoherentLoop topology. All 16
+    // delay lines tap THIS one LFO at per-line phase offsets so they
+    // move in coordinated, phase-paired motion (line ch and ch+8 are
+    // 180° apart). Per-sample cost vs RandomWalk: identical (1× sin).
+    DspUtils::CoherentSineLFO coherentLfo_;
+    DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
 
     // Per-channel structural/anti-alias/DC-blocker FILTER STATE
     float structHFState_[N] {};
@@ -286,7 +297,11 @@ private:
     float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
     float structHFBaseFreq_ = 0.0f;
-    float modDepthFloor_ = 0.35f;
+    // Minimum per-line mod-depth scale. Lowered 0.35→0.10 so short delay
+    // lines barely modulate; only the longest lines breathe noticeably.
+    // Previous 0.35 floor forced short delays to wobble too — contributed
+    // to the chorus-in-tail issue alongside the LFO rate spread.
+    float modDepthFloor_ = 0.10f;
     float dualSlopeRatio_ = 0.0f;
     bool  useWeightedGains_ = false;
     bool  prepared_ = false;

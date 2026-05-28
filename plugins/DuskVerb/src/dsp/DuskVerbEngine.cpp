@@ -305,6 +305,15 @@ void DuskVerbEngine::setModDepth (float depth)
     dattorroVintage_.setModDepth (depth);
 }
 
+void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
+{
+    // Phase 2: only FDN + QuadTank have the coherent topology implemented
+    // for now. Other engines silently ignore (they use their own bespoke
+    // modulators — DPV's structured tank, Shimmer's pitch loop, etc.).
+    fdn_.setModulationTopology (t);
+    quad_.setModulationTopology (t);
+}
+
 void DuskVerbEngine::setModRate (float hz)
 {
     dattorro_.setModRate (hz);
@@ -375,6 +384,17 @@ void DuskVerbEngine::setHiCut (float hz)
     hiCutSmoother_.setTarget (std::clamp (hz, 1000.0f, 20000.0f));
 }
 
+void DuskVerbEngine::setHiCutShelfGainDb (float dB)
+{
+    const float clamped = std::clamp (dB, -24.0f, 0.0f);
+    if (clamped == hiCutShelfGainDb_)
+        return;
+    hiCutShelfGainDb_ = clamped;
+    // Force coefficient recompute at the current corner — the per-block
+    // smoother won't re-run updateHiCutCoeffs unless the FREQUENCY moves.
+    updateHiCutCoeffs (hiCutSmoother_.current);
+}
+
 void DuskVerbEngine::setWidth (float width)
 {
     widthSmoother_.setTarget (std::clamp (width, 0.0f, 2.0f));
@@ -404,6 +424,16 @@ void DuskVerbEngine::setSixAPBloomStagger    (const float values[6]) { sixAPTank
 void DuskVerbEngine::setSixAPEarlyMix        (float v) { sixAPTank_.setEarlyMix        (v); }
 void DuskVerbEngine::setSixAPOutputTrim      (float v) { sixAPTank_.setOutputTrim      (v); }
 
+// DattorroPlateVintage (algo 1) per-preset brightness controls. Forwarded
+// only to dattorroVintage_; other engines have their own HF handling.
+void DuskVerbEngine::setDpvHfShelfGainDb    (float v) { dattorroVintage_.setHfShelfGainDb    (v); }
+void DuskVerbEngine::setDpvHfShelfFreqHz    (float v) { dattorroVintage_.setHfShelfFreqHz    (v); }
+void DuskVerbEngine::setDpvStructHfDampHz   (float v) { dattorroVintage_.setStructHfDampHz   (v); }
+void DuskVerbEngine::setDpvBoxCutGainDb     (float v) { dattorroVintage_.setBoxCutGainDb     (v); }
+void DuskVerbEngine::setDpvBoxCutFreqHz     (float v) { dattorroVintage_.setBoxCutFreqHz     (v); }
+void DuskVerbEngine::setDpvBassShelfGainDb  (float v) { dattorroVintage_.setBassShelfGainDb  (v); }
+void DuskVerbEngine::setDpvBassShelfFreqHz  (float v) { dattorroVintage_.setBassShelfFreqHz  (v); }
+
 void DuskVerbEngine::updateLoCutCoeffs (float hz)
 {
     // RBJ 2nd-order Butterworth high-pass.
@@ -423,19 +453,35 @@ void DuskVerbEngine::updateLoCutCoeffs (float hz)
 
 void DuskVerbEngine::updateHiCutCoeffs (float hz)
 {
-    // RBJ 2nd-order Butterworth low-pass.
-    float fc = std::clamp (hz, 1000.0f, 0.49f * static_cast<float> (sampleRate_));
-    float w0 = kTwoPi * fc / static_cast<float> (sampleRate_);
-    float cosw = std::cos (w0);
-    float sinw = std::sin (w0);
-    float alpha = sinw / (2.0f * 0.7071067811865475f);
-    float a0 = 1.0f + alpha;
+    // RBJ 2nd-order high-SHELF at Q = 1/√2 (Butterworth-aligned skirt).
+    // Replaces the prior brick-wall biquad low-pass — content above the
+    // corner is now ATTENUATED by hiCutShelfGainDb_ dB and retained
+    // instead of decapitated. Solves the "cliff-drop" perceptual gap
+    // we hit on Vocal Hall / Cathedral. Corner stays mapped to the user
+    // APVTS Hi Cut knob exactly as before; shelf depth is a per-preset
+    // field on FactoryPreset (default -12 dB).
+    const float fc = std::clamp (hz, 1000.0f, 0.49f * static_cast<float> (sampleRate_));
+    const float fs = static_cast<float> (sampleRate_);
+    const float gainDb = std::clamp (hiCutShelfGainDb_, -24.0f, 0.0f);
+    // RBJ uses A = sqrt(10^(dB/20)) = 10^(dB/40). At gainDb = 0 this is 1.0
+    // (shelf flat), at -12 dB → 0.501 (so above-corner content drops -12 dB
+    // toward DC ratio sqrt(A^2) → -12 dB peak attenuation).
+    const float A     = std::max (std::pow (10.0f, gainDb / 40.0f), 1.0e-6f);
+    const float sqrtA = std::sqrt (A);
+    const float w0      = kTwoPi * fc / fs;
+    const float cosw    = std::cos (w0);
+    const float sinw    = std::sin (w0);
+    const float alpha   = sinw / (2.0f * 0.7071067811865475f);
+    const float twoSqrtAalpha = 2.0f * sqrtA * alpha;
+    const float Aplus1  = A + 1.0f;
+    const float Aminus1 = A - 1.0f;
+    const float a0      = Aplus1 - Aminus1 * cosw + twoSqrtAalpha;
 
-    hiCutFilter_.b0 = (1.0f - cosw) * 0.5f / a0;
-    hiCutFilter_.b1 = (1.0f - cosw) / a0;
-    hiCutFilter_.b2 = (1.0f - cosw) * 0.5f / a0;
-    hiCutFilter_.a1 = -2.0f * cosw / a0;
-    hiCutFilter_.a2 = (1.0f - alpha) / a0;
+    hiCutFilter_.b0 =  A * (Aplus1 + Aminus1 * cosw + twoSqrtAalpha) / a0;
+    hiCutFilter_.b1 = -2.0f * A * (Aminus1 + Aplus1 * cosw)          / a0;
+    hiCutFilter_.b2 =  A * (Aplus1 + Aminus1 * cosw - twoSqrtAalpha) / a0;
+    hiCutFilter_.a1 =  2.0f * (Aminus1 - Aplus1 * cosw)              / a0;
+    hiCutFilter_.a2 =        (Aplus1 - Aminus1 * cosw - twoSqrtAalpha) / a0;
 }
 
 void DuskVerbEngine::process (float* left, float* right, int numSamples)

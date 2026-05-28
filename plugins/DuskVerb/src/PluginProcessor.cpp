@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
+#include <unordered_map>
 
 juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createParameterLayout()
 {
@@ -105,6 +107,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "hi_cut", 1 }, "Hi Cut",
         juce::NormalisableRange<float> (1000.0f, 20000.0f, 0.0f, 0.3f), fp0.hiCut));
 
+    // Phase 1 engine surgery (2026-05-28): the Hi Cut filter was upgraded
+    // from a brick-wall biquad LP to a 2nd-order RBJ high-shelf. This
+    // controls the shelf attenuation depth — 0 dB = shelf flat (Hi Cut
+    // does nothing), -24 dB = deep tuck. Per-preset, automatable, and
+    // tunable via the staged sweep. Not currently surfaced on the main
+    // UI grid; lives in the "internal" automation category.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hi_cut_shelf_db", 1 }, "Hi Cut Shelf",
+        juce::NormalisableRange<float> (-24.0f, 0.0f, 0.0f, 1.0f), fp0.hiCutShelfGainDb));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "width", 1 }, "Width",
         juce::NormalisableRange<float> (0.0f, 2.0f), fp0.width));
@@ -127,6 +139,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mono_below", 1 }, "Mono Below",
         juce::NormalisableRange<float> (20.0f, 300.0f, 0.0f, 0.5f), fp0.monoBelow));
+
+    // DattorroPlateVintage (algo 1) corrective EQ + brightness controls.
+    // Exposed as APVTS so Optuna can sweep them via --param overrides and
+    // the host can automate them. Active only when algorithm=1; ignored
+    // (no audible effect) on other engines.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_hf_shelf_db", 1 }, "DPV HF Shelf Gain",
+        juce::NormalisableRange<float> (-12.0f, 24.0f, 0.1f), fp0.dpvHfShelfGainDb));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_hf_shelf_hz", 1 }, "DPV HF Shelf Freq",
+        juce::NormalisableRange<float> (2000.0f, 20000.0f, 1.0f, 0.5f), fp0.dpvHfShelfFreqHz));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_struct_hf_damp_hz", 1 }, "DPV Struct HF Damp",
+        juce::NormalisableRange<float> (2000.0f, 18000.0f, 1.0f, 0.5f), fp0.dpvStructHfDampHz));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_box_cut_db", 1 }, "DPV Box Cut Gain",
+        juce::NormalisableRange<float> (-12.0f, 6.0f, 0.1f), fp0.dpvBoxCutGainDb));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_box_cut_hz", 1 }, "DPV Box Cut Freq",
+        juce::NormalisableRange<float> (100.0f, 800.0f, 1.0f, 0.5f), fp0.dpvBoxCutFreqHz));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_bass_shelf_db", 1 }, "DPV Bass Shelf Gain",
+        juce::NormalisableRange<float> (-6.0f, 18.0f, 0.1f), fp0.dpvBassShelfGainDb));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "dpv_bass_shelf_hz", 1 }, "DPV Bass Shelf Freq",
+        juce::NormalisableRange<float> (60.0f, 500.0f, 1.0f, 0.5f), fp0.dpvBassShelfFreqHz));
 
     return layout;
 }
@@ -158,11 +196,20 @@ DuskVerbProcessor::DuskVerbProcessor()
     erSizeParam_        = parameters.getRawParameterValue ("er_size");
     loCutParam_         = parameters.getRawParameterValue ("lo_cut");
     hiCutParam_         = parameters.getRawParameterValue ("hi_cut");
+    hiCutShelfDbParam_  = parameters.getRawParameterValue ("hi_cut_shelf_db");
     widthParam_         = parameters.getRawParameterValue ("width");
     freezeParam_        = parameters.getRawParameterValue ("freeze");
     gateEnabledParam_   = parameters.getRawParameterValue ("gate_enabled");
     gainTrimParam_      = parameters.getRawParameterValue ("gain_trim");
     monoBelowParam_     = parameters.getRawParameterValue ("mono_below");
+
+    dpvHfShelfDbParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_db");
+    dpvHfShelfHzParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_hz");
+    dpvStructHfDampHzParam_  = parameters.getRawParameterValue ("dpv_struct_hf_damp_hz");
+    dpvBoxCutDbParam_        = parameters.getRawParameterValue ("dpv_box_cut_db");
+    dpvBoxCutHzParam_        = parameters.getRawParameterValue ("dpv_box_cut_hz");
+    dpvBassShelfDbParam_     = parameters.getRawParameterValue ("dpv_bass_shelf_db");
+    dpvBassShelfHzParam_     = parameters.getRawParameterValue ("dpv_bass_shelf_hz");
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
@@ -232,6 +279,7 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastMix_ = lastLoCut_ = lastHiCut_ = lastWidth_ = lastMonoBelow_ = -1.0f;
         lastERLevel_ = -2.0f;
         lastGainTrim_ = -999.0f;
+        lastHiCutShelfDb_ = 999.0f;   // out-of-range sentinel forces push
         haveLastFreeze_ = false;
         haveLastGateEnabled_ = false;
     }
@@ -383,9 +431,21 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
     pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
     pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { activeEngine_->setHiCut (v); });
+    pushIfChanged (lastHiCutShelfDb_, hiCutShelfDbParam_->load(),
+                   [this] (float v) { activeEngine_->setHiCutShelfGainDb (v); });
     pushIfChanged (lastWidth_,     widthParam_->load(),     [this] (float v) { activeEngine_->setWidth (v); });
     pushIfChanged (lastGainTrim_,  gainTrimParam_->load(),  [this] (float v) { activeEngine_->setGainTrim (v); });
     pushIfChanged (lastMonoBelow_, monoBelowParam_->load(), [this] (float v) { activeEngine_->setMonoBelow (v); });
+
+    // DPV EQ + brightness — only the DattorroPlateVintage engine listens;
+    // others forward to no-op setters via DuskVerbEngine glue.
+    pushIfChanged (lastDpvHfShelfDb_,    dpvHfShelfDbParam_->load(),      [this] (float v) { activeEngine_->setDpvHfShelfGainDb    (v); });
+    pushIfChanged (lastDpvHfShelfHz_,    dpvHfShelfHzParam_->load(),      [this] (float v) { activeEngine_->setDpvHfShelfFreqHz    (v); });
+    pushIfChanged (lastDpvStructHfDamp_, dpvStructHfDampHzParam_->load(), [this] (float v) { activeEngine_->setDpvStructHfDampHz   (v); });
+    pushIfChanged (lastDpvBoxCutDb_,     dpvBoxCutDbParam_->load(),       [this] (float v) { activeEngine_->setDpvBoxCutGainDb     (v); });
+    pushIfChanged (lastDpvBoxCutHz_,     dpvBoxCutHzParam_->load(),       [this] (float v) { activeEngine_->setDpvBoxCutFreqHz     (v); });
+    pushIfChanged (lastDpvBassShelfDb_,  dpvBassShelfDbParam_->load(),    [this] (float v) { activeEngine_->setDpvBassShelfGainDb  (v); });
+    pushIfChanged (lastDpvBassShelfHz_,  dpvBassShelfHzParam_->load(),    [this] (float v) { activeEngine_->setDpvBassShelfFreqHz  (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob). The mix
     // smoother lives on the processor (see PluginProcessor.h) so the dry
@@ -534,6 +594,20 @@ void DuskVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
     for (int i = 0; i < 6; ++i)
         state.setProperty (juce::Identifier ("sixAPBloomStagger" + juce::String (i)),
                           sixAPBrightness_.bloomStagger[i], nullptr);
+    // DattorroPlateVintage brightness + corrective EQ — APVTS already serializes
+    // the 7 dpv* params via parameters.copyState() above. These duplicate custom
+    // properties exist solely for downgrade safety: pre-2026-05-25 plugin binaries
+    // ignore the new APVTS dpv params and read only these custom properties to
+    // populate the (legacy) dpvBrightness_ struct. Source = current APVTS atomic
+    // values; do not delete this path without also bumping kStateVersion and
+    // dropping downgrade compatibility.
+    state.setProperty ("dpvHfShelfGainDb",    dpvHfShelfDbParam_->load(),      nullptr);
+    state.setProperty ("dpvHfShelfFreqHz",    dpvHfShelfHzParam_->load(),      nullptr);
+    state.setProperty ("dpvStructHfDampHz",   dpvStructHfDampHzParam_->load(), nullptr);
+    state.setProperty ("dpvBoxCutGainDb",     dpvBoxCutDbParam_->load(),       nullptr);
+    state.setProperty ("dpvBoxCutFreqHz",     dpvBoxCutHzParam_->load(),       nullptr);
+    state.setProperty ("dpvBassShelfGainDb",  dpvBassShelfDbParam_->load(),    nullptr);
+    state.setProperty ("dpvBassShelfFreqHz",  dpvBassShelfHzParam_->load(),    nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -601,9 +675,32 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
         if (tree.hasProperty (id))
             sixAPBrightness_.bloomStagger[i] = static_cast<float> (tree.getProperty (id));
     }
+    // DPV brightness state is APVTS-driven as of 2026-05-25. Legacy sessions
+    // saved before APVTS migration may carry these as custom properties only;
+    // forward the legacy values into APVTS so the processBlock edge-detect
+    // doesn't immediately overwrite them with the new APVTS defaults.
+    auto migrateLegacyDpvProp = [this, &tree] (const char* propName, const char* paramId) {
+        if (tree.hasProperty (propName))
+        {
+            const float v = static_cast<float> (tree.getProperty (propName));
+            if (auto* p = parameters.getParameter (paramId))
+                p->setValueNotifyingHost (p->convertTo0to1 (v));
+        }
+    };
+    migrateLegacyDpvProp ("dpvHfShelfGainDb",   "dpv_hf_shelf_db");
+    migrateLegacyDpvProp ("dpvHfShelfFreqHz",   "dpv_hf_shelf_hz");
+    migrateLegacyDpvProp ("dpvStructHfDampHz",  "dpv_struct_hf_damp_hz");
+    migrateLegacyDpvProp ("dpvBoxCutGainDb",    "dpv_box_cut_db");
+    migrateLegacyDpvProp ("dpvBoxCutFreqHz",    "dpv_box_cut_hz");
+    migrateLegacyDpvProp ("dpvBassShelfGainDb", "dpv_bass_shelf_db");
+    migrateLegacyDpvProp ("dpvBassShelfFreqHz", "dpv_bass_shelf_hz");
     // State load happens before audio starts (or via host-driven message-thread
-    // call). Push to both engines so the idle one is in sync for the next
-    // preset swap. No fade involved — this is a hard reset to the saved state.
+    // call). Push SixAP brightness to both engines so the idle one is in sync
+    // for the next preset swap. DPV: APVTS is single source of truth — the
+    // next processBlock edge-detects the migrated values and pushes to the
+    // active engine; forcePushAllParametersTo handles the idle engine at swap
+    // time. No message-thread biquad coefficient write here (avoids the race
+    // against audio-thread process() reads).
     pushSixAPBrightnessTo (engineA_);
     pushSixAPBrightnessTo (engineB_);
 }
@@ -647,6 +744,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setERLevel           (erLevelParam_->load());
     target->setLoCut             (loCutParam_->load());
     target->setHiCut             (hiCutParam_->load());
+    target->setHiCutShelfGainDb  (hiCutShelfDbParam_->load());
     target->setWidth             (widthParam_->load());
     target->setGainTrim          (gainTrimParam_->load());
     target->setMonoBelow         (monoBelowParam_->load());
@@ -659,6 +757,16 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setNonLinearGateEnabled(gateEnabledParam_->load() >= 0.5f);
 
     pushSixAPBrightnessTo (*target);
+    // DPV EQ + brightness: read from APVTS atomics (single source of truth
+    // since 2026-05-25 migration). Legacy custom properties bridge to APVTS
+    // via migrateLegacyDpvProp() in setStateInformation.
+    target->setDpvHfShelfGainDb    (dpvHfShelfDbParam_->load());
+    target->setDpvHfShelfFreqHz    (dpvHfShelfHzParam_->load());
+    target->setDpvStructHfDampHz   (dpvStructHfDampHzParam_->load());
+    target->setDpvBoxCutGainDb     (dpvBoxCutDbParam_->load());
+    target->setDpvBoxCutFreqHz     (dpvBoxCutHzParam_->load());
+    target->setDpvBassShelfGainDb  (dpvBassShelfDbParam_->load());
+    target->setDpvBassShelfFreqHz  (dpvBassShelfHzParam_->load());
 }
 
 void DuskVerbProcessor::syncParameterCacheToCurrent()
@@ -683,9 +791,17 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastERLevel_       = erLevelParam_->load();
     lastLoCut_         = loCutParam_->load();
     lastHiCut_         = hiCutParam_->load();
+    lastHiCutShelfDb_  = hiCutShelfDbParam_->load();
     lastWidth_         = widthParam_->load();
     lastGainTrim_      = gainTrimParam_->load();
     lastMonoBelow_     = monoBelowParam_->load();
+    lastDpvHfShelfDb_    = dpvHfShelfDbParam_->load();
+    lastDpvHfShelfHz_    = dpvHfShelfHzParam_->load();
+    lastDpvStructHfDamp_ = dpvStructHfDampHzParam_->load();
+    lastDpvBoxCutDb_     = dpvBoxCutDbParam_->load();
+    lastDpvBoxCutHz_     = dpvBoxCutHzParam_->load();
+    lastDpvBassShelfDb_  = dpvBassShelfDbParam_->load();
+    lastDpvBassShelfHz_  = dpvBassShelfHzParam_->load();
 
     const bool busMode = busModeParam_->load() >= 0.5f;
     lastMix_ = busMode ? 1.0f : mixParam_->load();
@@ -759,6 +875,11 @@ void DuskVerbProcessor::applyFactoryPreset (const FactoryPreset& preset)
     for (int i = 0; i < 6; ++i)
         sixAPBrightness_.bloomStagger[i] = preset.sixAPBloomStagger[i];
 
+    // DPV brightness + corrective EQ: preset.applyTo above wrote the 7 dpv*
+    // values into APVTS via setIfExists. Next processBlock edge-detect picks
+    // them up; performPresetSwap's forcePushAllParametersTo reads APVTS for
+    // the idle engine. No struct cache write needed (single source of truth).
+
     // Release ordering pairs with the acquire load in processBlock to publish
     // the brightness writes above.
     pendingPresetSwap_.store (true, std::memory_order_release);
@@ -773,6 +894,47 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     engine.setSixAPBloomStagger    (sixAPBloomStagger);
     engine.setSixAPEarlyMix        (sixAPEarlyMix);
     engine.setSixAPOutputTrim      (sixAPOutputTrim);
+    engine.setDpvHfShelfGainDb     (dpvHfShelfGainDb);
+    engine.setDpvHfShelfFreqHz     (dpvHfShelfFreqHz);
+    engine.setDpvStructHfDampHz    (dpvStructHfDampHz);
+    engine.setDpvBoxCutGainDb      (dpvBoxCutGainDb);
+    engine.setDpvBoxCutFreqHz      (dpvBoxCutFreqHz);
+    engine.setDpvBassShelfGainDb   (dpvBassShelfGainDb);
+    engine.setDpvBassShelfFreqHz   (dpvBassShelfFreqHz);
+    // hi_cut_shelf_db now flows through APVTS (set in FactoryPreset::applyTo),
+    // so no explicit engine setter call here.
+
+    // Phase 2 modulation topology — per-preset opt-in via name lookup so we
+    // don't have to add a new field to FactoryPreset (would break the
+    // aggregate-initializability of the brace-init preset list).
+    // Names that aren't listed get RandomWalk (legacy bit-identical).
+    static const std::unordered_map<std::string_view, DspUtils::ModulationTopology> kTopologyByName = {
+        // Phase 2 opt-ins (2026-05-28). Final list after listening +
+        // measurement validation:
+        //
+        // Cathedral — CONFIRMED. CoherentLoop closed 6 gates (14→8). FDN
+        //   feedback's 16 lines on phase-paired sine LFO produce coherent
+        //   macro pumping that matches the cathedral character. osc P2P
+        //   went from -2.66 → +0.74 (dead-on); all 8 ss-band energies pass.
+        //
+        // Vocal Hall  — REVERTED. Coherent topology reinforced the 320 Hz
+        //   modal resonance that random-walk averaging used to mask.
+        //
+        // Realistic Chamber — REVERTED. QuadTank's quadrature phase mapping
+        //   re-energized the 12.9 kHz parasitic spur (76 dB spec_L1 max).
+        //   QuadTank engine prefers independent random-walk LFOs to
+        //   suppress its cross-coupling cross-coupling artifacts.
+        //
+        // Net Phase 2 verdict: FDN halls with lush motion character (long
+        // tail, light modal content) are the sweet spot. QuadTank rooms +
+        // FDN presets with sensitive modal resonances stay on RandomWalk.
+        { "Cathedral", DspUtils::ModulationTopology::CoherentLoop },
+    };
+    DspUtils::ModulationTopology topo = DspUtils::ModulationTopology::RandomWalk;
+    auto it = kTopologyByName.find (std::string_view (name));
+    if (it != kTopologyByName.end())
+        topo = it->second;
+    engine.setModulationTopology (topo);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

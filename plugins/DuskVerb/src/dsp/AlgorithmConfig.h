@@ -15,7 +15,7 @@
 enum class EngineType : int
 {
     Dattorro          = 0,  // 2-AP cross-coupled plate (Dattorro 1997).
-    DattorroVintage   = 1,  // Dattorro tank + fixed post-EQ for vintage-Lex character (DattorroPlateVintage wrapper).
+    DattorroVintage   = 1,  // Dattorro tank + fixed post-EQ for vintage-hardware character (DattorroPlateVintage wrapper).
     SixAPTank         = 2,  // 6-AP density cascade tank (lush halls, dense ambience).
     QuadTank          = 3,  // 4 cross-coupled tanks, 48 taps, no modulation.
     FDN               = 4,  // 16-channel Hadamard feedback delay network.
