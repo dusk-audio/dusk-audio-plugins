@@ -40,4 +40,5 @@ namespace DuskAmpParams
     static constexpr const char* OUTPUT_LEVEL_NAM = "output_level_nam";
     static constexpr const char* OVERSAMPLING    = "oversampling";
     static constexpr const char* BYPASS          = "bypass";
+    static constexpr const char* TUNER_REF_HZ    = "tuner_ref_hz"; // A4 reference, 415–466 Hz, default 440
 }

@@ -27,7 +27,7 @@ void CabinetIR::process (juce::AudioBuffer<float>& buffer)
         filtersDirty_ = false;
     }
 
-    if (! enabled_ || ! irLoaded_)
+    if (! enabled_ || ! irLoaded_.load (std::memory_order_acquire))
         return;
 
     int numSamples = buffer.getNumSamples();
@@ -49,7 +49,7 @@ void CabinetIR::process (juce::AudioBuffer<float>& buffer)
     // the optional loudness-match makeup to the wet signal (only when enabled)
     // so the dry/wet mix still crossfades against an un-boosted dry.
     float* data = buffer.getWritePointer (0);
-    const float gain = normalize_ ? normalizeMakeup_ : 1.0f;
+    const float gain = normalize_ ? normalizeMakeup_.load (std::memory_order_acquire) : 1.0f;
     for (int i = 0; i < numSamples; ++i)
     {
         data[i] = hiCutFilter_.process (data[i]);
@@ -82,10 +82,40 @@ void CabinetIR::reset()
     filtersDirty_ = true;
 }
 
-void CabinetIR::loadIR (const juce::File& file)
+bool CabinetIR::loadIR (const juce::File& file)
 {
     if (! file.existsAsFile())
-        return;
+    {
+        lastError_ = "file not found: " + file.getFullPathName();
+        return false;
+    }
+
+    // Sanity-check the extension. JUCE's loadImpulseResponse will silently
+    // produce silence for unsupported formats, so surface that ourselves.
+    const auto ext = file.getFileExtension().toLowerCase();
+    if (ext != ".wav" && ext != ".aif" && ext != ".aiff")
+    {
+        lastError_ = "unsupported format (need .wav/.aif/.aiff): " + ext;
+        return false;
+    }
+
+    // Verify the audio reader can actually parse the file before kicking
+    // it to the async convolution loader (which won't tell us if it fails).
+    {
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        if (reader == nullptr)
+        {
+            lastError_ = "could not decode audio file";
+            return false;
+        }
+        if (reader->lengthInSamples <= 0)
+        {
+            lastError_ = "audio file is empty";
+            return false;
+        }
+    }
 
     convolution_.loadImpulseResponse (file,
                                        juce::dsp::Convolution::Stereo::no,
@@ -94,7 +124,8 @@ void CabinetIR::loadIR (const juce::File& file)
 
     loadedFile_ = file;
     loadedFileName_ = file.getFileNameWithoutExtension();
-    irLoaded_ = true;
+    irLoaded_.store (true, std::memory_order_release);
+    lastError_.clear();
 
     // Loudness-match makeup: measure the cab's actual RMS attenuation by
     // running pink noise through a SEPARATE juce::dsp::Convolution instance
@@ -108,6 +139,7 @@ void CabinetIR::loadIR (const juce::File& file)
                                 juce::dsp::Convolution::Trim::yes,
                                 0);
     });
+    return true;
 }
 
 void CabinetIR::loadIR (const void* data, size_t sizeInBytes,
@@ -127,7 +159,7 @@ void CabinetIR::loadIR (const void* data, size_t sizeInBytes,
 
     loadedFile_ = juce::File();
     loadedFileName_ = displayName;
-    irLoaded_ = true;
+    irLoaded_.store (true, std::memory_order_release);
 
     // Same loudness-match procedure as the file path — measure pink-noise
     // RMS attenuation through a parallel Convolution loaded from the same
@@ -254,7 +286,7 @@ void CabinetIR::measureNormalizeMakeup (std::function<void (juce::dsp::Convoluti
     const double inRms  = std::sqrt (inSumSq);
     const double outRms = std::sqrt (outSumSq);
     if (outRms > 1.0e-9 && inRms > 1.0e-9)
-        normalizeMakeup_ = static_cast<float> (inRms / outRms);
+        normalizeMakeup_.store (static_cast<float> (inRms / outRms), std::memory_order_release);
 }
 
 void CabinetIR::setEnabled (bool on)

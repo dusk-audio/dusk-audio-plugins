@@ -33,6 +33,7 @@ TESTS_SKIPPED=0
 PLUGINS=(
     "4K EQ"
     "Convolution Reverb"
+    "DuskAmp"
     "DuskVerb"
     "Multi-Q"
     "Universal Compressor"

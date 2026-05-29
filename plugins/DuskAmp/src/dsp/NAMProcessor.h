@@ -32,6 +32,17 @@ public:
 
     juce::String getLastError() const { return lastError_; }
 
+    // Latency contribution of the NAM stage (samples, host SR).
+    // WaveNet/LSTM/ConvNet models are streaming/causal — zero latency
+    // today. If the host SR differs from the model's expected SR a future
+    // resampler wrapper would add latency here. Returning a real number
+    // (not just 0) lets the engine plumb total latency through correctly.
+    int getLatencyInSamples() const noexcept { return 0; }
+
+    // Expected sample rate of the currently loaded model, or 0 if unknown.
+    // Used to warn the user when host SR differs from model SR.
+    double getModelExpectedSampleRate() const noexcept { return modelExpectedSR_; }
+
 private:
 #if DUSKAMP_NAM_SUPPORT
     // Model swap: message thread writes pendingModel_, sets pendingReady_ flag.
@@ -51,6 +62,7 @@ private:
     juce::File modelFile_;
     juce::String lastError_;
     std::atomic<bool> modelLoaded_ { false };
+    double modelExpectedSR_ = 0.0;
 
     std::vector<double> inputBuffer_;
     std::vector<double> outputBuffer_;

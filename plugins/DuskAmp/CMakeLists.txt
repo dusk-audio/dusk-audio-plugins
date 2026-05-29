@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(DUSKAMP_DEFAULT_VERSION "0.1.0")
+set(DUSKAMP_DEFAULT_VERSION "0.0.1")
 get_plugin_version("duskamp" DUSKAMP_VERSION)
 if(NOT DUSKAMP_VERSION OR DUSKAMP_VERSION STREQUAL "0.0.0")
     set(DUSKAMP_VERSION ${DUSKAMP_DEFAULT_VERSION})
@@ -37,6 +37,12 @@ else()
     option(BUILD_AU "Build AU format" OFF)
 endif()
 
+# Bundle the three cabinet impulse responses into the plugin binary. ON by
+# default — IR captures in Resources/cabs/ ship with the app, one per amp
+# model (Fender Twin / Marshall JCM800 / Vox AC30). Pass
+# -DDUSKAMP_BUNDLE_IRS=OFF for builds that should ship without bundled IRs.
+option(DUSKAMP_BUNDLE_IRS "Bundle cabinet IRs in the plugin binary" ON)
+
 # Determine which formats to build
 set(PLUGIN_FORMATS "")
 if(BUILD_VST3)
@@ -48,6 +54,11 @@ endif()
 if(BUILD_AU)
     list(APPEND PLUGIN_FORMATS AU)
 endif()
+# Standalone format always built for local dev — gives a quick way to
+# launch the editor without a host (useful for UI screenshots + manual
+# smoke tests). No cost in the shipped artifact; CI builds the plugin
+# formats only, not Standalone.
+list(APPEND PLUGIN_FORMATS Standalone)
 
 # Create plugin target
 juce_add_plugin(DuskAmp
@@ -125,16 +136,21 @@ if(NAM_ENABLED)
     )
 endif()
 
-# Bundled cabinet IRs — three captures used with explicit permission from
-# their creators (see Resources/cabs/NOTICE.txt). JUCE generates a header
-# named BinaryData.h exposing each WAV as a const char* + size_t pair.
-juce_add_binary_data(DuskAmpCabIRs
-    SOURCES
-        Resources/cabs/Twin_Reverb_SM57_A.wav
-        Resources/cabs/JCM800_NT1A_B.wav
-        Resources/cabs/AC30_Blue_1.wav
-)
-target_link_libraries(DuskAmp PRIVATE DuskAmpCabIRs)
+# Bundled cabinet IRs — three captures used with permission from their
+# creators (see Resources/cabs/NOTICE.txt). Gated behind DUSKAMP_BUNDLE_IRS
+# because written permission is still pending for the bundled set; OFF
+# builds ship without IRs and fall back to user-loaded cabs.
+if(DUSKAMP_BUNDLE_IRS)
+    juce_add_binary_data(DuskAmpCabIRs
+        SOURCES
+            Resources/cabs/Twin_Reverb_SM57_A.wav
+            Resources/cabs/JCM800_NT1A_B.wav
+            Resources/cabs/AC30_Blue_1.wav
+    )
+    target_link_libraries(DuskAmp PRIVATE DuskAmpCabIRs)
+else()
+    target_compile_definitions(DuskAmp PUBLIC DUSKAMP_NO_BUNDLED_IRS=1)
+endif()
 
 # Set include directories
 target_include_directories(DuskAmp

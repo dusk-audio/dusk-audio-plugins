@@ -198,21 +198,24 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     // 7. Post FX: delay + reverb (stereo processing)
     postFx_.process (left, right, numSamples);
 
-    // 8. Final soft-limit + output gain. Power amp already does per-amp
-    // tanh limiting at its output, so this is a chain-end SAFETY NET for
-    // peak amplification introduced downstream — cab convolution can
-    // amplify transients (constructive impulse-response interference),
-    // delay feedback can push tail level near 1.0, and reverb wet adds
-    // on top of that. Loose K=1.6 so signals up to ~0.8 RMS pass through
-    // essentially un-touched and only true overloads (>1.0) get caught.
-    // Output gain is per-mode so DSP and NAM keep independent levels —
-    // crossfade above already handles the swap silently.
-    constexpr float kLimitK = 1.6f;
+    // 8. Output gain THEN chain-end safety limiter. Order matters: the
+    // output trim is applied first so the limiter is the true final
+    // ceiling — a positive trim can never push peaks past it.
+    //
+    // The limiter soft-caps at `kCeiling` (≈ 0 dBFS). `kCeiling*tanh(x/kCeiling)`
+    // has unity slope at 0, so normal playing levels (below ~-6 dBFS) pass
+    // essentially unchanged; only transients that would exceed 0 dBFS get
+    // softly compressed. This replaces the prior `tanh(x/1.8)*1.8` whose
+    // asymptote was +5.1 dBFS — that let cab-convolution / FX transients
+    // (and any positive output trim) clip the host. Power amp still does
+    // its own per-amp tanh voicing upstream, so this stage only catches
+    // true downstream overloads without re-coloring the amp character.
+    constexpr float kCeiling = 0.99f;   // -0.1 dBFS
     const float outGain = (currentMode_ == AmpMode::NAM) ? outputGainNam_ : outputGain_;
     for (int i = 0; i < numSamples; ++i)
     {
-        left[i]  = std::tanh (left[i]  / kLimitK) * kLimitK * outGain;
-        right[i] = std::tanh (right[i] / kLimitK) * kLimitK * outGain;
+        left[i]  = kCeiling * std::tanh (left[i]  * outGain / kCeiling);
+        right[i] = kCeiling * std::tanh (right[i] * outGain / kCeiling);
     }
 }
 
@@ -587,5 +590,10 @@ void DuskAmpEngine::setOversamplingFactor (int factor)
 
 int DuskAmpEngine::getLatencyInSamples() const
 {
-    return oversampling_.getLatencyInSamples();
+    // Oversampling FIRs add real latency; NAM is reported here so any
+    // future resampling wrapper around NAM gets accounted for upstream
+    // (today it returns 0). Cab IR uses NonUniform partitioned conv with
+    // zero head latency, so nothing to add there.
+    return oversampling_.getLatencyInSamples()
+         + nam_.getLatencyInSamples();
 }

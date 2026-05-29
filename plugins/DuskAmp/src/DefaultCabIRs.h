@@ -1,7 +1,10 @@
 #pragma once
 
-#include <BinaryData.h>
 #include <juce_core/juce_core.h>
+
+#ifndef DUSKAMP_NO_BUNDLED_IRS
+ #include <BinaryData.h>
+#endif
 
 namespace DuskAmpDefaults
 {
@@ -22,6 +25,7 @@ namespace DuskAmpDefaults
     //   2 = AC       (Vox)     → AC30 2x12 Celestion Blue
     inline BundledIR getDefaultIRForToneType (int toneType)
     {
+       #ifndef DUSKAMP_NO_BUNDLED_IRS
         switch (toneType)
         {
             case 0:
@@ -39,5 +43,9 @@ namespace DuskAmpDefaults
             default:
                 return { nullptr, 0, "" };
         }
+       #else
+        juce::ignoreUnused (toneType);
+        return { nullptr, 0, "" };
+       #endif
     }
 }

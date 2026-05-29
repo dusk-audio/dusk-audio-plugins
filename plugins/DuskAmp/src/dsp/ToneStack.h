@@ -56,6 +56,17 @@ private:
         float trebleMaxDb;
         bool  hasMid;          // false for AC (Top Boost)
         bool  hasCathodeFollower; // true for AC only
+
+        // Per-amp character at flat knobs ("noon" position). Real tone
+        // stacks aren't flat at 12 o'clock — JCM800's FMV network scoops
+        // mid + lifts treble, Vox's Top Boost preserves chime, Fender is
+        // closer to flat with mild mid scoop. Biquads with knob=0.5 sum
+        // to 0 dB by design, so without this bias the DSP loses every
+        // amp's noon signature. Each value adds to the user's knob delta
+        // before the biquad is designed.
+        float noonBassDb;
+        float noonMidDb;
+        float noonTrebleDb;
     };
 
     static Voicing getVoicing (Type type);

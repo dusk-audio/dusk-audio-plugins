@@ -37,6 +37,26 @@ private:
     float couplingCapState_[kMaxStages] = {};
     float couplingCapCoeff_ = 0.995f;
 
+    // Per-stage pre-emphasis + de-emphasis pair around the waveshaper. Aiken
+    // trick: HPF-shelf before clipping pulls treble UP into saturation so HF
+    // content survives the nonlinearity; complementary LPF-shelf after pulls
+    // the boosted treble back DOWN to flat. Net effect on the dry path = flat;
+    // on the distorted path = HF content reaches the user instead of being
+    // folded into mud by the symmetric clip. This is the single biggest lever
+    // for "tube saturated" vs "fizzy waveshaper" character.
+    float preEmphHpfState_[kMaxStages] = {};   // HPF state per stage
+    float deEmphLpfState_[kMaxStages] = {};    // LPF state per stage
+    float preEmphCoeff_ = 0.0f;                // HPF feedback coeff (~400 Hz)
+    float deEmphCoeff_ = 0.0f;                 // LPF coeff (mirror of preEmph)
+    float preEmphMix_ = 0.35f;                 // amount of HPF mixed into stage input
+    // Per-stage DC bias offset — real triode grids sit at -1.5 V to -2 V
+    // relative to the cathode, so the operating point is asymmetric. Even
+    // harmonics are generated AT ALL gain levels (not just at clipping),
+    // which is part of why real preamps sound warm at "clean" settings.
+    // Values halved from initial v1 — earlier values pushed too hard,
+    // produced overload at Lead-channel drive levels.
+    float stageDcOffset_[kMaxStages] = { 0.02f, 0.012f, 0.008f };
+
     // Bright cap boost (treble boost when bright switch on)
     float brightBoostState_ = 0.0f;
     float brightBoostCoeff_ = 0.0f;
@@ -66,4 +86,5 @@ private:
     void updateBrightCoeff();
     void updateMarshallVoicingCoeffs();
     void updateCathodeEnvCoeffs();
+    void updatePreEmphCoeffs();
 };

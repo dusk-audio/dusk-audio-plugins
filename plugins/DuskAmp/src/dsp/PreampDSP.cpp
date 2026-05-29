@@ -17,6 +17,7 @@ void PreampDSP::prepare (double sampleRate)
     updateBrightCoeff();
     updateMarshallVoicingCoeffs();
     updateCathodeEnvCoeffs();
+    updatePreEmphCoeffs();
     updateGainStaging();
     reset();
 }
@@ -28,6 +29,8 @@ void PreampDSP::reset()
         stages_[i].reset();
         interStageDC_[i].reset();
         couplingCapState_[i] = 0.0f;
+        preEmphHpfState_[i] = 0.0f;
+        deEmphLpfState_[i] = 0.0f;
     }
 
     brightBoostState_   = 0.0f;
@@ -138,10 +141,47 @@ void PreampDSP::process (float* buffer, int numSamples)
             couplingCapState_[stage] += hpOut * (1.0f - couplingCapCoeff_);
             sample = hpOut;
 
-            // Tube stage (mono, channel 0)
-            sample = stages_[stage].processSample (sample, 0);
+            // --- Pre-emphasis HPF (Aiken-style): boost treble going into the
+            // FIRST tube stage only — applying it to all 3 stages cascades
+            // the treble lift through saturation and ends up either folding
+            // HF down to mud (at crunch/lead) or overloading the safety
+            // stage. Single-stage application keeps HF content alive into
+            // the first saturating element without compounding through
+            // later stages.
+            const bool applyEmph = (stage == 0);
+            float emphasized = sample;
+            if (applyEmph)
+            {
+                const float preHp = sample - preEmphHpfState_[stage];
+                preEmphHpfState_[stage] += preHp * preEmphCoeff_;
+                emphasized = sample + preHp * preEmphMix_;
+            }
 
-            // DC block between stages
+            // Per-stage DC bias offset — seeds even harmonics at ALL gain
+            // levels, not just at clipping. Real triode grid sits at a
+            // negative DC offset relative to cathode → operating point is
+            // asymmetric → second harmonic generated even at low signal.
+            float driven = emphasized + stageDcOffset_[stage];
+
+            // Tube stage (mono, channel 0)
+            driven = stages_[stage].processSample (driven, 0);
+
+            // --- De-emphasis LPF: complementary one-pole LPF that pulls the
+            // boosted treble back toward flat. Only when pre-emphasis fired.
+            if (applyEmph)
+            {
+                deEmphLpfState_[stage] += (driven - deEmphLpfState_[stage]) * deEmphCoeff_;
+                const float lpf = deEmphLpfState_[stage];
+                sample = lpf + (driven - lpf) * (1.0f - preEmphMix_);
+            }
+            else
+            {
+                sample = driven;
+            }
+            sample -= stageDcOffset_[stage];
+
+            // DC block between stages — also catches any residual DC from
+            // the asymmetric tube response.
             sample = interStageDC_[stage].processSample (sample);
         }
 
@@ -199,11 +239,31 @@ void PreampDSP::updateGainStaging()
     }
 }
 
+void PreampDSP::updatePreEmphCoeffs()
+{
+    // Pre-emphasis HPF + de-emphasis LPF at 400 Hz. Aiken's "no-fizz"
+    // recommendation: cut bass into the saturation stage by ~6 dB, then
+    // restore it after, so the waveshaper doesn't muddy the low-mids that
+    // accompany a sustained note. Real tubes do this naturally via the
+    // grid-stop resistor + coupling cap RC; the explicit pair gives us the
+    // same character with a tunable cutoff. 400 Hz pushes lower-mids out
+    // of the saturation while leaving treble emphasis modest.
+    const float fc = 400.0f;
+    const float w = 2.0f * 3.14159265359f * fc / static_cast<float> (sampleRate_);
+    preEmphCoeff_ = w / (w + 1.0f);
+    deEmphCoeff_  = w / (w + 1.0f);
+}
+
 void PreampDSP::updateCouplingCapCoeff()
 {
-    // Coupling cap HPF: ~30Hz cutoff
-    // coeff = exp(-2*pi*fc/fs)
-    float fc = 30.0f;
+    // Inter-stage coupling-cap HPF. Raised 30→60 Hz: at 30 Hz nearly all
+    // bass passed into each gain stage's waveshaper, so low frequencies
+    // intermodulated through the distortion → muddy, over-bassy breakup
+    // (measured +18 dB low-end vs a real Deluxe Reverb capture). Real amp
+    // coupling caps high-pass progressively up the chain; 60 Hz across the
+    // 3 cascaded stages tightens the low end going into saturation without
+    // thinning the clean tone. coeff = exp(-2*pi*fc/fs).
+    float fc = 60.0f;
     couplingCapCoeff_ = std::exp (-2.0f * 3.14159265359f * fc / static_cast<float> (sampleRate_));
 }
 

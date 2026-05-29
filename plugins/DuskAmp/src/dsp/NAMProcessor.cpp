@@ -53,7 +53,14 @@ void NAMProcessor::prepare(double sampleRate, int maxBlockSize)
 
 void NAMProcessor::process(float* buffer, int numSamples)
 {
+    // Hard runtime guard: inputBuffer_/outputBuffer_ are sized to
+    // maxBlockSize_ in prepare(). A host that sends a larger block than it
+    // declared (or calls process before prepare) would overrun them. The
+    // jassert catches it in debug; this guard prevents the overrun in
+    // Release by passing the block through dry rather than corrupting heap.
     jassert(numSamples <= maxBlockSize_);
+    if (numSamples > maxBlockSize_ || numSamples <= 0)
+        return;
 
 #if DUSKAMP_NAM_SUPPORT
     // Swap in pending model if ready (atomic flag — no data race)
@@ -78,12 +85,29 @@ void NAMProcessor::process(float* buffer, int numSamples)
     double* outPtr = outputBuffer_.data();
     activeModel_->process(&inPtr, &outPtr, numSamples);
 
-    // Output gain + optional loudness compensation, double → float
+    // Loudness normalization to the NAM-standard −18 dB reference. A model's
+    // GetLoudness() is its output level (dB) for a standardized input; we
+    // bring it to kTargetLoudnessDb so every profile lands at a consistent
+    // level — the same target the reference NeuralAmpModeler plugin uses, so
+    // a profile sounds equally loud in DuskAmp as in any other NAM host, and
+    // lands ≈ the DSP path's nominal output.
+    //
+    // The prior code used `10^(-loudness/20)` (an implicit 0 dB target),
+    // which boosted typical −11..−19 dB profiles by +11..+19 dB — slamming
+    // the output limiter (a high-gain capture measured −3.5 dBFS RMS).
+    // Models with NO loudness metadata pass through raw (NAM convention —
+    // user trims OUTPUT by ear).
+    constexpr float kTargetLoudnessDb = -18.0f;
     float loudnessComp = 1.0f;
     if (activeModel_->HasLoudness())
     {
         float dB = static_cast<float>(activeModel_->GetLoudness());
-        loudnessComp = std::pow(10.0f, -dB / 20.0f);
+        loudnessComp = std::pow(10.0f, (kTargetLoudnessDb - dB) / 20.0f);
+        // Guard against corrupt / absurd loudness metadata: a wildly
+        // negative value would otherwise produce a multi-thousand-x boost
+        // and slam the chain. Clamp to ±18 dB of make-up — wider than any
+        // legit profile (observed loudness range −25.5..−8 dB).
+        loudnessComp = std::clamp(loudnessComp, 0.125f, 8.0f);
     }
 
     float totalGain = outputGain_ * loudnessComp;
@@ -129,6 +153,8 @@ bool NAMProcessor::loadModel(const juce::File& file)
         lastError_ = "prewarming...";
         newModel->prewarm();
 
+        modelExpectedSR_ = newModel->GetExpectedSampleRate();
+
         pendingModel_ = std::move(newModel);
         pendingReady_.store(true, std::memory_order_release);
 
@@ -136,7 +162,23 @@ bool NAMProcessor::loadModel(const juce::File& file)
         modelFile_ = file;
         modelLoaded_.store(true, std::memory_order_release);
 
-        lastError_ = ""; // success
+        // Sample-rate mismatch warning. Most NAM models are 48 kHz;
+        // running through a 96 k or 44.1 k host produces aliased output
+        // because the network's internal time constants assume the
+        // training SR. -1 == unknown — skip the warning.
+        if (modelExpectedSR_ > 0.0
+            && std::abs (modelExpectedSR_ - sampleRate_) > 1.0)
+        {
+            lastError_ = "model trained at "
+                       + juce::String (modelExpectedSR_ / 1000.0, 1)
+                       + " kHz; host is "
+                       + juce::String (sampleRate_ / 1000.0, 1)
+                       + " kHz — output may alias";
+        }
+        else
+        {
+            lastError_.clear();
+        }
         return true;
     }
     catch (const std::exception& e)

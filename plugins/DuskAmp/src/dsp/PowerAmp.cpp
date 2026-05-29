@@ -104,7 +104,10 @@ void PowerAmp::updateAmpTypeParams()
             biasAsymmetry_ = 0.0f;
             pushPullAsymmetry_ = 0.025f; // 2.5% mismatch — typical AB763 pair
             phaseInvAsymmetry_ = 0.0f;   // LTP PI is balanced
-            cathodeBloomAmount_ = 0.0f;  // fixed-bias amp — no cathode bloom
+            // Bloom on all amps now — fixed-bias amps still show ~0.5-1 dB
+            // dynamic-compression slope from filter-cap recharge under
+            // sustained playing. Smaller than Vox class-A bloom but audible.
+            cathodeBloomAmount_ = 0.15f;
             maxDriveGain_ = 3.5f; // widened drive range — cranked AB763 hits 12-18% THD
             inputScale_ = 1.0f;  // 6V6 lowest Gm — reference sensitivity
             nfbRatio_ = 0.30f;   // ≈ 12 dB (AB763 820Ω / 47Ω)
@@ -112,22 +115,31 @@ void PowerAmp::updateAmpTypeParams()
             postMakeup_ = 1.0f;  // reference level — Fender is the loudness anchor
             // Loose tanh — the per-amp limiter used to be tight at K=1.1 which
             // smoothed away the 6V6 curve's saturation harmonics ("lifeless").
-            // K=2.0 is nearly transparent; chain-end limiter at K=1.6 in the
-            // engine catches actual peaks.
-            outputLimitK_ = 2.0f;
+            // K=2.5 leaves the 6V6 character intact; chain-end limiter at
+            // K=2.5 in the engine catches actual peaks.
+            outputLimitK_ = 2.5f;
             gridChargeThreshold_ = 1.5f; // 6V6 has higher grid headroom — milder blocking
             gridChargeAmount_    = 0.18f;
-            otPeakFreq_   = 3500.0f;     // Fender 40W OT — modest HF resonance
-            otPeakGainDb_ = 1.5f;
-            otPeakQ_      = 1.0f;
+            // Fender 40W OT HF resonance pushed +2 dB (was +1.5) — gives the
+            // top end the "bell" presence the NAM Twin reference shows. Still
+            // modest compared to Marshall + Vox.
+            otPeakFreq_   = 3500.0f;
+            otPeakGainDb_ = 3.5f;
+            otPeakQ_      = 1.2f;
             // 12" Jensen-style cone: ~95 Hz fundamental. Strong NFB (12 dB)
-            // damps the impedance peak heavily — only a small audible bump.
+            // damps the impedance peak heavily. Pulled the LF bump 3.0→1.0 dB:
+            // the +3 "Twin bark" stacked with the cab IR + resonance to run
+            // ~9 dB bassier than a real Deluxe Reverb capture. 1 dB keeps a
+            // hint of cone resonance without the boom.
             spkPeakFreq_   = 95.0f;
-            spkPeakGainDb_ = 1.5f;
-            spkPeakQ_      = 1.5f;
+            spkPeakGainDb_ = 1.0f;
+            spkPeakQ_      = 1.8f;
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);
-            // Fender 40W OT: darker (8 kHz HF), early saturation, asymmetric.
-            // Hysteresis 0.10 — moderate iron mass, audible 3rd-order memory.
+            // Fender 40W OT: 8 kHz HF rolloff, early saturation, asymmetric.
+            // (Measurement showed the driven path already carries MORE air
+            // than a real Deluxe capture — the low driven centroid is excess
+            // bass, not missing treble — so HF stays at 8 kHz; raising it
+            // only added fizz.) Hysteresis 0.10 — moderate iron mass.
             transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
                 0.72f, 0.14f, 1.30f, 8000.0f, 20.0f, 0.012f, 0.004f, 0.75f, 0.10f));
             break;
@@ -142,23 +154,28 @@ void PowerAmp::updateAmpTypeParams()
             biasAsymmetry_ = 0.0f;       // no static bias offset — proper Class A
             pushPullAsymmetry_ = 0.0f;   // tubes are well-matched
             phaseInvAsymmetry_ = 0.04f;  // cathodyne 4% imbalance: anode/cathode outputs
-            cathodeBloomAmount_ = 0.4f;  // AC30 cathode-bias bloom — slow gain reduction
+            cathodeBloomAmount_ = 0.5f;  // AC30 cathode-bias bloom — strong gain reduction
             maxDriveGain_ = 5.0f; // widened — AC30 cranked is genuinely choking
             inputScale_ = 0.7f;  // EL84 higher Gm than 6V6
             nfbRatio_ = 0.0f;    // AC30 has NO negative feedback loop
             nfbLpfFreq_ = 20000.0f; // unused (no NFB) — wide-open sentinel
             postMakeup_ = 1.15f; // +1.2 dB to match Fender's clean RMS at matched user settings
-            outputLimitK_ = 2.0f;        // loose — EL84 curve is the saturation source, not tanh
+            outputLimitK_ = 2.5f;        // loose — EL84 curve is the saturation source, not tanh
             gridChargeThreshold_ = 1.1f; // EL84 small-tube — lower grid headroom, blocks earlier
             gridChargeAmount_    = 0.20f;
-            otPeakFreq_   = 5500.0f;     // Vox 30W OT — small resonance, contributes chime
-            otPeakGainDb_ = 1.5f;
-            otPeakQ_      = 1.2f;
+            // Vox 30W OT HF resonance — THE chime peak. Broadened + lifted
+            // (5.5k/+5/Q1.6 → 5.0k/+9/Q0.9): A/B vs a real AC30 Top Boost
+            // capture showed amp-only presence (3.5-7 kHz) at −5 dB vs the
+            // capture's +8 — the chime was missing. Lower Q spreads the lift
+            // across the presence band instead of a narrow spike.
+            otPeakFreq_   = 5000.0f;
+            otPeakGainDb_ = 9.0f;
+            otPeakQ_      = 0.9f;
             // 12" Celestion Blue: ~110 Hz fundamental, low Q. NO global NFB
-            // means the impedance peak rings pretty hard — the AC30 LF
-            // "bloom" lives here, not in the cathode-bias dynamic alone.
+            // means the impedance peak rings pretty hard. Pushed further to
+            // +7 dB — Vox open-back is famously LF-pronounced live.
             spkPeakFreq_   = 110.0f;
-            spkPeakGainDb_ = 5.0f;
+            spkPeakGainDb_ = 7.0f;
             spkPeakQ_      = 2.0f;
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
             // Vox 30W OT: darker (9 kHz HF), earliest saturation, asymmetric.
@@ -173,11 +190,17 @@ void PowerAmp::updateAmpTypeParams()
             biasAsymmetry_ = 0.0f;
             pushPullAsymmetry_ = 0.020f; // ~2% — Marshall production pairs run tight
             phaseInvAsymmetry_ = 0.0f;   // LTP PI is balanced
-            cathodeBloomAmount_ = 0.0f;  // fixed-bias amp — no cathode bloom
+            // Marshall bloom — fixed-bias but Plexi's filter caps droop under
+            // sustained playing, giving a small dynamic compression slope.
+            // Lower than Vox but audible — the "Plexi sag at full volume".
+            cathodeBloomAmount_ = 0.20f;
             maxDriveGain_ = 6.0f; // widened — cranked Plexi is screaming, not polite
             inputScale_ = 0.25f; // EL34 highest Gm (~11 mA/V, 3× 6V6); widen drive range
             nfbRatio_ = 0.25f;   // ≈ 10 dB (JTM45/1959 27kΩ / 5kΩ presence)
-            nfbLpfFreq_ = 5500.0f; // 1959 presence cap — slightly brighter than Fender
+            nfbLpfFreq_ = 3800.0f; // 1959 presence cap. Lowered 5.5k→3.8k: less
+                                    // HF fed into the NFB loop = more presence/bite
+                                    // passes to the output. A/B showed amp-only
+                                    // presence 13 dB short of a real JCM800.
             // +12 dB to match Fender's clean RMS at matched user settings.
             // Marshall's chain attenuates heavily at clean drive (V1A cathode-bypass
             // shelf cuts ~7 dB LF + EL34 inputScale=0.25 cuts another ~12 dB into the
@@ -185,17 +208,23 @@ void PowerAmp::updateAmpTypeParams()
             // ceiling at outputLimitK_ lets the EL34_Plexi curve's saturation
             // harmonics through unmolested at cranked drive.
             postMakeup_ = 4.0f;
-            outputLimitK_ = 2.0f; // loose — EL34_Plexi curve provides the Plexi bite
+            outputLimitK_ = 2.5f; // loose — EL34_Plexi curve provides the Plexi bite
             gridChargeThreshold_ = 1.2f; // EL34 grids hard-block on hot input — Plexi "bark"
             gridChargeAmount_    = 0.30f;
-            otPeakFreq_   = 4500.0f;     // Marshall Drake OT — pronounced HF peak ("Plexi bite")
-            otPeakGainDb_ = 3.0f;
-            otPeakQ_      = 1.5f;
+            // Marshall Drake OT — "Plexi bite" presence peak. Broadened +
+            // lifted (4.5k/+5/Q1.6 → 4.2k/+10/Q0.9): A/B vs a real JCM800
+            // capture showed amp-only presence (3.5-7 kHz) at −11 dB vs the
+            // capture's +14 — no bite at all. Low Q spreads the lift across
+            // the presence band rather than a narrow spike.
+            otPeakFreq_   = 4200.0f;
+            otPeakGainDb_ = 10.0f;
+            otPeakQ_      = 0.9f;
             // 4×12 Celestion: ~100 Hz fundamental, sharper than open-back combos
             // because of the closed cab loading. Moderate NFB (10 dB) gives
-            // partial damping — audible LF bump but not as pronounced as Vox.
+            // partial damping. Pushed +2 dB to give the closed-back 4x12 the
+            // chesty LF the Plexi is famous for.
             spkPeakFreq_   = 100.0f;
-            spkPeakGainDb_ = 2.5f;
+            spkPeakGainDb_ = 4.5f;
             spkPeakQ_      = 1.8f;
             powerSupply_.setType (PowerSupply::Type::Silicon);
             // Marshall 50W OT: brighter (11 kHz HF), later saturation, more symmetric.

@@ -110,6 +110,45 @@ void AmpModeSelector::resized()
     }
 }
 
+// =============================================================================
+// PillButton — single-segment styled trigger that mirrors AmpModeSelector's
+// pill aesthetic so the TUNER button doesn't look like a generic TextButton
+// next to the DSP/NAM toggle.
+// =============================================================================
+
+void PillButton::paintButton (juce::Graphics& g,
+                              bool shouldDrawButtonAsHighlighted,
+                              bool shouldDrawButtonAsDown)
+{
+    float cornerRadius = static_cast<float> (getHeight()) * 0.35f;
+    auto bounds = getLocalBounds().toFloat();
+
+    g.setColour (juce::Colour (DuskAmpLookAndFeel::kPanel));
+    g.fillRoundedRectangle (bounds, cornerRadius);
+
+    g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), cornerRadius, 1.0f);
+
+    const bool active = active_ || shouldDrawButtonAsDown;
+
+    if (active)
+    {
+        g.setColour (juce::Colour (DuskAmpLookAndFeel::kAccent));
+        g.fillRoundedRectangle (bounds.reduced (2.0f), cornerRadius - 2.0f);
+    }
+    else if (shouldDrawButtonAsHighlighted)
+    {
+        g.setColour (juce::Colour (DuskAmpLookAndFeel::kAccent).withAlpha (0.15f));
+        g.fillRoundedRectangle (bounds.reduced (2.0f), cornerRadius - 2.0f);
+    }
+
+    g.setColour (active ? juce::Colours::white
+                 : shouldDrawButtonAsHighlighted ? juce::Colour (0xffd0d0d0)
+                                                  : juce::Colour (DuskAmpLookAndFeel::kGroupText));
+    g.setFont (juce::FontOptions (13.0f, active ? juce::Font::bold : juce::Font::plain));
+    g.drawText (getButtonText(), bounds.toNearestInt(), juce::Justification::centred);
+}
+
 void AmpModeSelector::paint (juce::Graphics& g)
 {
     float cornerRadius = static_cast<float> (getHeight()) * 0.35f;
@@ -170,8 +209,11 @@ void AmpModeSelector::mouseDown (const juce::MouseEvent& e)
 // DuskAmpEditor
 // =============================================================================
 
-static constexpr int kBaseWidth  = 1050;
-static constexpr int kBaseHeight = 720;
+// Left BROWSERS sidebar + 3 rows of metallic cards. Height tuned so the
+// cards hug their content (title + knob cluster) with only light breathing
+// room — a taller window left ~120 px of dead space below every card.
+static constexpr int kBaseWidth  = 1024;
+static constexpr int kBaseHeight = 600;
 
 DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     : AudioProcessorEditor (&p),
@@ -223,6 +265,18 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     outputLevel_   .init (*this, params, DuskAmpParams::OUTPUT_LEVEL,    "OUTPUT",     " dB",
         "Master output level");
 
+    // DRIVE-knob value formatter shows "OFF" when at zero. The default
+    // formatter would print "0.0%" which reads as a non-engaged stage but
+    // doesn't communicate the bypass state — "OFF" is unambiguous.
+    powerDrive_.slider.textFromValueFunction = [] (double v)
+    {
+        if (v <= 1.0e-4) return juce::String ("OFF");
+        return juce::String (v * 100.0, 1) + "%";
+    };
+    // Force initial label to reflect current value via the new formatter.
+    powerDrive_.valueLabel.setText (powerDrive_.slider.getTextFromValue (powerDrive_.slider.getValue()),
+                                     juce::dontSendNotification);
+
     // --- Mode selector (DSP / NAM) ---
     auto* modeParam = params.getParameter (DuskAmpParams::AMP_MODE);
     jassert (modeParam != nullptr);
@@ -251,16 +305,17 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
         params, DuskAmpParams::PREAMP_BRIGHT, brightButton_);
 
     // --- Cabinet enabled toggle ---
-    cabEnabled_.setButtonText ("CAB");
+    cabEnabled_.setButtonText ("CABINET");
     cabEnabled_.setClickingTogglesState (true);
+    cabEnabled_.setTooltip ("Toggle the cabinet IR convolution stage on / off.");
     addAndMakeVisible (cabEnabled_);
     cabEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::CAB_ENABLED, cabEnabled_);
 
     // --- Cabinet normalize toggle ---
-    cabNormalize_.setButtonText ("NORM");
+    cabNormalize_.setButtonText ("NORM IR");
     cabNormalize_.setClickingTogglesState (true);
-    cabNormalize_.setTooltip ("Match cab loudness to pre-cab level. Useful when the IR drops the volume significantly.");
+    cabNormalize_.setTooltip ("Normalize cab IR loudness to pre-cab level. Useful when the IR drops volume significantly.");
     addAndMakeVisible (cabNormalize_);
     cabNormalizeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::CAB_NORMALIZE, cabNormalize_);
@@ -312,6 +367,8 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     // --- Delay enabled toggle ---
     delayEnabled_.setButtonText ("DELAY");
     delayEnabled_.setClickingTogglesState (true);
+    delayEnabled_.setTooltip ("Click to bypass / enable the delay section.");
+    delayEnabled_.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     addAndMakeVisible (delayEnabled_);
     delayEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::DELAY_ENABLED, delayEnabled_);
@@ -319,6 +376,8 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     // --- Reverb enabled toggle ---
     reverbEnabled_.setButtonText ("REVERB");
     reverbEnabled_.setClickingTogglesState (true);
+    reverbEnabled_.setTooltip ("Click to bypass / enable the reverb section.");
+    reverbEnabled_.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     addAndMakeVisible (reverbEnabled_);
     reverbEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::REVERB_ENABLED, reverbEnabled_);
@@ -335,6 +394,26 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     tunerButton_.setTooltip ("Open chromatic tuner. Output mutes while open so you can tune in silence.");
     tunerButton_.onClick = [this] { showTunerPanel(); };
     addAndMakeVisible (tunerButton_);
+
+    // A/B snapshot pills. Right-click is the explicit "save current to this
+    // slot" gesture; left-click recalls (or, on an empty slot, captures).
+    auto wireSlot = [this] (ABPillButton& btn, int slot, const char* label)
+    {
+        btn.setButtonText (label);
+        btn.setTooltip ("Left-click: recall slot (captures current state on first click). "
+                        "Right-click: snapshot current state into this slot.");
+        btn.onClick = [this, slot]
+        {
+            if (processorRef.isABSlotPopulated (slot))
+                processorRef.recallABSlot (slot);
+            else
+                processorRef.pushABSlot (slot);
+        };
+        btn.onCapture = [this, slot] { processorRef.pushABSlot (slot); };
+        addAndMakeVisible (btn);
+    };
+    wireSlot (slotAButton_, 0, "A");
+    wireSlot (slotBButton_, 1, "B");
 
     // --- User preset manager ---
     userPresetManager_ = std::make_unique<UserPresetManager> ("DuskAmp");
@@ -360,8 +439,21 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
                 loadUserPreset (userPresets[static_cast<size_t> (userIdx)].name);
         }
         updateDeleteButtonVisibility();
+        capturePresetSnapshot();
     };
     addAndMakeVisible (presetBox_);
+
+    // "*" indicator that lights up when the live state diverges from the
+    // last-loaded preset. Painted in accent so it's visible without grabbing
+    // attention when knobs are at preset defaults.
+    presetDirtyLabel_.setText ("", juce::dontSendNotification);
+    presetDirtyLabel_.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+    presetDirtyLabel_.setColour (juce::Label::textColourId,
+                                  juce::Colour (DuskAmpLookAndFeel::kAccent));
+    presetDirtyLabel_.setJustificationType (juce::Justification::centredLeft);
+    presetDirtyLabel_.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (presetDirtyLabel_);
+
     refreshPresetList();
 
     // Restore preset selection from saved state
@@ -435,8 +527,46 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
                         kBaseWidth * 2, kBaseHeight * 2,
                         true);
 
-    setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
+    // --- Footer labels ---
+    footerVersionLabel_.setText ("DuskAmp v" + juce::String (JucePlugin_VersionString),
+                                  juce::dontSendNotification);
+    footerVersionLabel_.setFont (juce::FontOptions (10.0f));
+    footerVersionLabel_.setColour (juce::Label::textColourId,
+                                    juce::Colour (DuskAmpLookAndFeel::kSubtleText));
+    footerVersionLabel_.setJustificationType (juce::Justification::centredLeft);
+    footerVersionLabel_.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (footerVersionLabel_);
+
+    footerTooltipLabel_.setText ("", juce::dontSendNotification);
+    footerTooltipLabel_.setFont (juce::FontOptions (10.0f));
+    footerTooltipLabel_.setColour (juce::Label::textColourId,
+                                    juce::Colour (DuskAmpLookAndFeel::kText).withAlpha (0.75f));
+    footerTooltipLabel_.setJustificationType (juce::Justification::centred);
+    footerTooltipLabel_.setInterceptsMouseClicks (false, false);
+    footerTooltipLabel_.setMinimumHorizontalScale (0.6f);
+    addAndMakeVisible (footerTooltipLabel_);
+
+    footerCpuLabel_.setText ("CPU --", juce::dontSendNotification);
+    footerCpuLabel_.setFont (juce::FontOptions (10.0f));
+    footerCpuLabel_.setColour (juce::Label::textColourId,
+                                juce::Colour (DuskAmpLookAndFeel::kSubtleText));
+    footerCpuLabel_.setJustificationType (juce::Justification::centredRight);
+    footerCpuLabel_.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (footerCpuLabel_);
+
+    // If a previous version stored a window size that's now smaller than
+    // the layout needs (post-UI-overhaul base is 820 tall vs prior 720),
+    // grow on launch. ScalableEditorHelper will clamp future user resizes
+    // to the min defined in initialize() above.
+    int w = std::max (scaler_.getStoredWidth(),  kBaseWidth);
+    int h = std::max (scaler_.getStoredHeight(), kBaseHeight);
+    setSize (w, h);
     startTimerHz (30);
+
+    // Establish the preset baseline AFTER the saved-state restore so the
+    // "*" indicator stays dark when the user reopens a session that was
+    // already at preset defaults. Any subsequent param tweak will mark dirty.
+    capturePresetSnapshot();
 }
 
 DuskAmpEditor::~DuskAmpEditor()
@@ -454,6 +584,13 @@ DuskAmpEditor::~DuskAmpEditor()
 
 void DuskAmpEditor::rebindToneStackForMode (int ampMode)
 {
+    // Idempotent guard — timer fires at 30 Hz; without this, every tick
+    // walked through 7 KnobWithLabel::rebind() no-op checks plus opened
+    // a brief window where the ComboBoxAttachment was destroyed before
+    // its replacement was constructed. Bail out unless the mode flipped.
+    if (toneTypeBoundMode_ == ampMode)
+        return;
+
     auto& params = processorRef.parameters;
     // Per-mode params: tone stack (bass/mid/treble + tone-type) AND input/
     // output (input gain, gate threshold, gate release, output level). The
@@ -461,6 +598,11 @@ void DuskAmpEditor::rebindToneStackForMode (int ampMode)
     // never blast the user when the two modes have different gain
     // calibrations (a hot NAM model with the DSP path's input gain could
     // damage hearing or speakers).
+    //
+    // rebindToneStackForMode runs on the message thread (timer callback /
+    // mode-change notification). APVTS is thread-safe for reads from the
+    // audio thread; tearing down a SliderAttachment here doesn't touch
+    // audio-thread state.
     if (ampMode == 1) // NAM
     {
         bass_         .rebind (params, DuskAmpParams::BASS_NAM);
@@ -470,14 +612,11 @@ void DuskAmpEditor::rebindToneStackForMode (int ampMode)
         gateThreshold_.rebind (params, DuskAmpParams::GATE_THRESHOLD_NAM);
         gateRelease_  .rebind (params, DuskAmpParams::GATE_RELEASE_NAM);
         outputLevel_  .rebind (params, DuskAmpParams::OUTPUT_LEVEL_NAM);
-        if (toneTypeBoundMode_ != 1)
-        {
-            toneTypeAttachment_.reset();
-            toneTypeAttachment_ = std::make_unique<
-                juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-                params, DuskAmpParams::TONE_TYPE_NAM, toneTypeBox_);
-            toneTypeBoundMode_ = 1;
-        }
+        toneTypeAttachment_.reset();
+        toneTypeAttachment_ = std::make_unique<
+            juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+            params, DuskAmpParams::TONE_TYPE_NAM, toneTypeBox_);
+        toneTypeBoundMode_ = 1;
     }
     else // DSP
     {
@@ -488,14 +627,11 @@ void DuskAmpEditor::rebindToneStackForMode (int ampMode)
         gateThreshold_.rebind (params, DuskAmpParams::GATE_THRESHOLD);
         gateRelease_  .rebind (params, DuskAmpParams::GATE_RELEASE);
         outputLevel_  .rebind (params, DuskAmpParams::OUTPUT_LEVEL);
-        if (toneTypeBoundMode_ != 0)
-        {
-            toneTypeAttachment_.reset();
-            toneTypeAttachment_ = std::make_unique<
-                juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-                params, DuskAmpParams::TONE_TYPE, toneTypeBox_);
-            toneTypeBoundMode_ = 0;
-        }
+        toneTypeAttachment_.reset();
+        toneTypeAttachment_ = std::make_unique<
+            juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+            params, DuskAmpParams::TONE_TYPE, toneTypeBox_);
+        toneTypeBoundMode_ = 0;
     }
 }
 
@@ -539,6 +675,39 @@ void DuskAmpEditor::timerCallback()
     update (reverbDecay_);
     update (outputLevel_);
 
+    // Footer text: prefer surfacing IR / NAM load status when it differs
+    // from the boring idle/OK state; otherwise mirror the tooltip under
+    // the mouse. Statuses appear immediately after a load attempt and
+    // give the user feedback on background NAM parsing.
+    {
+        juce::String text;
+        const juce::String irStatus  = processorRef.getLastIRStatus();
+        const juce::String namStatus = processorRef.getLastNAMStatus();
+
+        auto isInteresting = [] (const juce::String& s)
+        {
+            return s.isNotEmpty()
+                && s != "idle"
+                && (s.startsWith ("FAIL")
+                    || s.startsWith ("loading")
+                    || s.containsIgnoreCase ("alias")
+                    || s.containsIgnoreCase ("warn"));
+        };
+
+        if (isInteresting (namStatus))      text = "NAM: " + namStatus;
+        else if (isInteresting (irStatus))  text = "IR: "  + irStatus;
+        else
+        {
+            // Fall back to tooltip-under-mouse mirror.
+            if (auto* c = getComponentAt (getMouseXYRelative()))
+                if (auto* tc = dynamic_cast<juce::TooltipClient*> (c))
+                    text = tc->getTooltip();
+        }
+
+        if (text != footerTooltipLabel_.getText())
+            footerTooltipLabel_.setText (text, juce::dontSendNotification);
+    }
+
     // Dim cabinet knobs when cab is disabled
     bool cabOff = ! cabEnabled_.getToggleState();
     cabMix_.setDimmed (cabOff);
@@ -559,6 +728,17 @@ void DuskAmpEditor::timerCallback()
     bool reverbOff = ! reverbEnabled_.getToggleState();
     reverbMix_.setDimmed (reverbOff);
     reverbDecay_.setDimmed (reverbOff);
+
+    // Preset dirty detection — compare live APVTS state against the snapshot
+    // captured at the last preset load. Cheap (~30 floats); runs at 30 Hz.
+    {
+        const bool dirty = ! presetSnapshot_.empty() && ! currentStateMatchesSnapshot();
+        if (dirty != presetDirty_)
+        {
+            presetDirty_ = dirty;
+            presetDirtyLabel_.setText (dirty ? "*" : "", juce::dontSendNotification);
+        }
+    }
 
     // NAM mode: show/hide controls and trigger relayout when mode changes
     bool namMode = processorRef.parameters.getRawParameterValue (DuskAmpParams::AMP_MODE)->load() >= 0.5f;
@@ -589,187 +769,226 @@ void DuskAmpEditor::timerCallback()
     if (tunerOverlay_ && tunerOverlay_->isVisible())
         tunerOverlay_->setDetected (processorRef.getDetectedHz(),
                                     processorRef.getDetectedLevel());
+
+    // A/B pills follow the processor's active slot.
+    const int activeSlot = processorRef.getABActiveSlot();
+    slotAButton_.setActive (activeSlot == 0);
+    slotBButton_.setActive (activeSlot == 1);
 }
 
 // =============================================================================
 // Paint
 // =============================================================================
 
-static void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
-                          const juce::String& title, bool centerTitle = false)
-{
-    g.setColour (juce::Colour (DuskAmpLookAndFeel::kPanel));
-    g.fillRoundedRectangle (bounds.toFloat(), 6.0f);
-
-    g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder));
-    g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 6.0f, 1.0f);
-
-    g.setColour (juce::Colour (DuskAmpLookAndFeel::kGroupText));
-    g.setFont (juce::FontOptions (10.0f));
-
-    juce::String spaced;
-    for (int i = 0; i < title.length(); ++i)
-    {
-        spaced += title[i];
-        if (i < title.length() - 1)
-            spaced += ' ';
-    }
-
-    auto titleArea = bounds.withHeight (20);
-    if (centerTitle)
-        g.drawText (spaced, titleArea, juce::Justification::centred);
-    else
-        g.drawText (spaced, titleArea.withTrimmedLeft (10), juce::Justification::centredLeft);
-
-    int underlineW = juce::jmin (static_cast<int> (title.length()) * 12, bounds.getWidth() - 20);
-    int underlineX = centerTitle ? bounds.getX() + (bounds.getWidth() - underlineW) / 2
-                                 : bounds.getX() + 10;
-    g.setColour (juce::Colour (DuskAmpLookAndFeel::kAccent).withAlpha (0.3f));
-    g.fillRect (underlineX, bounds.getY() + 19, underlineW, 2);
-}
-
 void DuskAmpEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (DuskAmpLookAndFeel::kBackground));
-
     auto sf = scaler_.getScaleFactor();
 
-    // Title
+    // --- Subtle vertical gradient background ---
+    {
+        juce::ColourGradient bgGrad (
+            juce::Colour (DuskAmpLookAndFeel::kBackground).darker (0.20f),
+            0.0f, 0.0f,
+            juce::Colour (DuskAmpLookAndFeel::kBackground).brighter (0.04f),
+            0.0f, static_cast<float> (getHeight()),
+            false);
+        g.setGradientFill (bgGrad);
+        g.fillAll();
+    }
+
+    // --- Brand block: logo + accent rule + tagline ---
     g.setColour (juce::Colour (DuskAmpLookAndFeel::kText));
-    g.setFont (juce::FontOptions (22.0f * sf, juce::Font::bold));
-    titleClickArea_ = { scaler_.scaled (12), scaler_.scaled (8),
-                        scaler_.scaled (180), scaler_.scaled (30) };
+    g.setFont (juce::FontOptions (24.0f * sf, juce::Font::bold));
+    titleClickArea_ = { scaler_.scaled (14), scaler_.scaled (8),
+                        scaler_.scaled (180), scaler_.scaled (32) };
     g.drawText ("DUSKAMP", titleClickArea_, juce::Justification::centredLeft);
-
-    // Subtitle
+    g.setColour (juce::Colour (DuskAmpLookAndFeel::kAccent));
+    g.fillRect (scaler_.scaled (14), scaler_.scaled (38),
+                scaler_.scaled (52), scaler_.scaled (2));
     g.setColour (juce::Colour (DuskAmpLookAndFeel::kSubtleText));
-    g.setFont (juce::FontOptions (11.0f * sf));
-    g.drawText ("Guitar Amp Simulator", scaler_.scaled (12), scaler_.scaled (30),
-                scaler_.scaled (200), scaler_.scaled (16), juce::Justification::centredLeft);
+    g.setFont (juce::FontOptions (10.0f * sf));
+    g.drawText ("GUITAR  AMP  SIMULATOR", scaler_.scaled (14), scaler_.scaled (42),
+                scaler_.scaled (220), scaler_.scaled (14),
+                juce::Justification::centredLeft);
 
-    // Divider line under top bar
-    g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder));
-    int dividerY = scaler_.scaled (48);
-    int margin = scaler_.scaled (10);
-    int meterW = scaler_.scaled (22);
-    int meterGap = scaler_.scaled (6);
-    int contentX = margin + meterW + meterGap;
-    int contentW = getWidth() - 2 * (margin + meterW + meterGap);
-    g.drawHorizontalLine (dividerY, static_cast<float> (contentX),
-                          static_cast<float> (contentX + contentW));
-
-    // Group boxes from stored bounds
-    drawGroupBox (g, inputGroupBounds_, "INPUT", true);
-    drawGroupBox (g, outputGroupBounds_, "OUTPUT", true);
-
-    if (layoutIsNamMode_)
+    // --- BROWSERS sidebar — header + sub-panel titles ---
+    if (! sidebarBounds_.isEmpty())
     {
-        drawGroupBox (g, centerTopBounds_, "NAM MODEL");
-        drawGroupBox (g, centerMidBounds_, "TONE");
-    }
-    else
-    {
-        drawGroupBox (g, centerTopBounds_, "AMP / TONE");
-    }
-    drawGroupBox (g, centerBotBounds_, "POWER AMP");
-    drawGroupBox (g, cabGroupBounds_, "CABINET");
-    drawGroupBox (g, fxGroupBounds_, "EFFECTS");
+        // "BROWSERS" header strip across top of sidebar.
+        {
+            auto hdr = juce::Rectangle<int> (sidebarBounds_.getX(), sidebarBounds_.getY(),
+                                              sidebarBounds_.getWidth(), scaler_.scaled (22));
+            juce::String spaced;
+            const juce::String title = "BROWSERS";
+            for (int i = 0; i < title.length(); ++i)
+            {
+                spaced += title[i];
+                if (i < title.length() - 1) spaced += " ";
+            }
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kValueText));
+            g.setFont (juce::FontOptions (11.0f * sf, juce::Font::bold));
+            g.drawText (spaced, hdr, juce::Justification::centredLeft);
 
-    // Vertical divider inside EFFECTS between the delay (60%) and reverb
-    // (40%) sub-sections. The sub-section identity is already conveyed by
-    // the orange "DELAY"/"REVERB" toggle buttons, so no drawn sub-labels —
-    // an earlier version had them and they collided with the EFFECTS title.
-    {
-        const int innerX     = fxGroupBounds_.getX() + scaler_.scaled (8);
-        const int totalInnerW= fxGroupBounds_.getWidth() - scaler_.scaled (16);
-        const int dividerW   = scaler_.scaled (8);
-        const int delayHalfW = (totalInnerW - dividerW) * 6 / 10;
-        const int divX       = innerX + delayHalfW + dividerW / 2;
-        const int divTop     = fxGroupBounds_.getY() + scaler_.scaled (28);
-        const int divBot     = fxGroupBounds_.getBottom() - scaler_.scaled (12);
-        g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder).withAlpha (0.5f));
-        g.drawVerticalLine (divX, (float) divTop, (float) divBot);
+            // Thin accent rule under header.
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kAccent));
+            g.fillRect (hdr.getX(), hdr.getBottom(), scaler_.scaled (36), scaler_.scaled (1));
+        }
+
+        auto drawSubPanel = [&] (juce::Rectangle<int> r, const juce::String& title)
+        {
+            if (r.isEmpty()) return;
+
+            // Panel background — metallic vertical gradient.
+            juce::ColourGradient panelGrad (
+                juce::Colour (DuskAmpLookAndFeel::kPanel).brighter (0.04f),
+                0.0f, float (r.getY()),
+                juce::Colour (DuskAmpLookAndFeel::kPanel).darker (0.15f),
+                0.0f, float (r.getBottom()),
+                false);
+            g.setGradientFill (panelGrad);
+            g.fillRoundedRectangle (r.toFloat(), 4.0f);
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder));
+            g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 4.0f, 1.0f);
+
+            // Header title.
+            auto hdr = juce::Rectangle<int> (r.getX() + scaler_.scaled (8), r.getY(),
+                                              r.getWidth() - scaler_.scaled (16),
+                                              scaler_.scaled (16));
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kLabelText));
+            g.setFont (juce::FontOptions (9.5f * sf, juce::Font::bold));
+            g.drawText (title, hdr, juce::Justification::centredLeft);
+        };
+
+        drawSubPanel (sidebarAmpListBounds_, "AMP MODELS");
+        drawSubPanel (sidebarCabListBounds_, "CABINET IRs");
     }
 
-    // Meter labels
-    int mainY = inputGroupBounds_.getY();
-    g.setColour (juce::Colour (DuskAmpLookAndFeel::kGroupText));
-    g.setFont (juce::FontOptions (8.0f * sf));
-    g.drawText ("IN", margin, mainY - scaler_.scaled (12), meterW, scaler_.scaled (12),
-                juce::Justification::centred);
-    g.drawText ("OUT", getWidth() - margin - meterW, mainY - scaler_.scaled (12), meterW,
-                scaler_.scaled (12), juce::Justification::centred);
+    // --- Sub-card metallic panels with per-card titles. Cards touch with
+    // no gap — only the outermost corners of each row are rounded so the
+    // row reads as a single panel divided into titled sections.
+    auto drawCardSegment = [&] (const juce::Rectangle<int>& r,
+                                bool firstInRow, bool lastInRow,
+                                const juce::String& title)
+    {
+        if (r.isEmpty()) return;
+        auto rf = r.toFloat();
+        constexpr float radius = 5.0f;
+
+        juce::Path path;
+        path.addRoundedRectangle (rf.getX(), rf.getY(),
+                                   rf.getWidth(), rf.getHeight(),
+                                   radius, radius,
+                                   firstInRow, lastInRow,
+                                   firstInRow, lastInRow);
+
+        juce::ColourGradient panelGrad (
+            juce::Colour (DuskAmpLookAndFeel::kPanel).darker (0.10f),
+            0.0f, rf.getY(),
+            juce::Colour (DuskAmpLookAndFeel::kPanel).brighter (0.06f),
+            0.0f, rf.getY() + rf.getHeight() * 0.5f,
+            false);
+        panelGrad.addColour (1.0, juce::Colour (DuskAmpLookAndFeel::kPanel).darker (0.18f));
+        g.setGradientFill (panelGrad);
+        g.fillPath (path);
+
+        g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder));
+        g.strokePath (path, juce::PathStrokeType (1.0f));
+
+        // Thin internal divider — shared rule between adjacent cards.
+        if (! lastInRow)
+        {
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kBorder).withAlpha (0.7f));
+            g.drawLine (rf.getRight(), rf.getY() + 6.0f,
+                        rf.getRight(), rf.getBottom() - 6.0f, 1.0f);
+        }
+
+        // Uniform 1-px bottom shadow on every card.
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.drawLine (rf.getX() + 4.0f, rf.getBottom() + 1,
+                    rf.getRight() - 4.0f, rf.getBottom() + 1, 1.0f);
+
+        // --- Card title (top-left), tracked uppercase + accent rule ---
+        if (title.isNotEmpty())
+        {
+            const int padX = scaler_.scaled (10);
+            const int titleTop = r.getY() + scaler_.scaled (4);
+            const int titleH = scaler_.scaled (12);
+
+            juce::String spaced;
+            for (int i = 0; i < title.length(); ++i)
+            {
+                spaced += title[i];
+                if (i < title.length() - 1) spaced += " ";
+            }
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kLabelText));
+            g.setFont (juce::FontOptions (10.0f * sf, juce::Font::bold));
+            g.drawText (spaced, r.getX() + padX, titleTop,
+                        r.getWidth() - padX * 2, titleH,
+                        juce::Justification::centredLeft);
+
+            // 1-px accent rule under the title.
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kAccent));
+            g.fillRect (r.getX() + padX,
+                        titleTop + titleH + scaler_.scaled (1),
+                        scaler_.scaled (22),
+                        scaler_.scaled (1));
+        }
+    };
+
+    const juce::String ampTitle = layoutIsNamMode_ ? "INPUT" : "AMP";
+    drawCardSegment (row1LeftCard_,   true,  false, ampTitle);
+    drawCardSegment (row1RightCard_,  false, true,  "TONE");
+    drawCardSegment (row2LeftCard_,   true,  false, "POWER");
+    drawCardSegment (row2RightCard_,  false, true,  "CABINET");
+    drawCardSegment (row3DelayCard_,  true,  false, "DELAY");
+    drawCardSegment (row3ReverbCard_, false, false, "REVERB");
+    drawCardSegment (row3OutputCard_, false, true,  "OUTPUT");
+
+    // DSP-mode AMP-card selector captions — clarify that the left dropdown
+    // is the amp MODEL (American/British/AC = tone circuit + power tubes +
+    // cab) and the right is the gain CHANNEL. Drawn above each box from its
+    // live bounds so the caption tracks the layout automatically.
+    if (! layoutIsNamMode_)
+    {
+        auto caption = [&] (const juce::Component& box, const juce::String& text)
+        {
+            auto b = box.getBounds();
+            if (b.isEmpty()) return;
+            g.setColour (juce::Colour (DuskAmpLookAndFeel::kGroupText));
+            g.setFont (juce::FontOptions (9.0f * sf, juce::Font::bold));
+            g.drawText (text,
+                        b.getX(), b.getY() - scaler_.scaled (12),
+                        b.getWidth(), scaler_.scaled (11),
+                        juce::Justification::centred);
+        };
+        caption (toneTypeBox_, "MODEL");
+        caption (channelBox_,  "CHANNEL");
+    }
 }
 
 // =============================================================================
 // Layout
 // =============================================================================
 
-static void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize,
-                       float scaleFactor)
-{
-    int nameH  = juce::roundToInt (14.0f * scaleFactor);
-    bool largeKnob = (knobSize >= juce::roundToInt (90.0f * scaleFactor));
-    int valueH = largeKnob ? 0 : juce::roundToInt (14.0f * scaleFactor);
-    int totalH = nameH + knobSize + valueH;
-
-    int yPad = (area.getHeight() - totalH) / 2;
-    auto col = area;
-    if (yPad > 0)
-        col.removeFromTop (yPad);
-
-    k.nameLabel.setBounds (col.removeFromTop (nameH));
-
-    auto knobArea = col.removeFromTop (knobSize);
-    k.slider.setBounds (knobArea.withSizeKeepingCentre (knobSize, knobSize));
-
-    if (largeKnob)
-    {
-        k.valueLabel.setBounds (0, 0, 0, 0);
-        k.valueLabel.setVisible (false);
-    }
-    else
-    {
-        k.valueLabel.setVisible (true);
-        k.valueLabel.setBounds (col.removeFromTop (juce::roundToInt (14.0f * scaleFactor)));
-    }
-}
-
-static void layoutKnobsInGroup (juce::Rectangle<int> groupBounds, int topPad,
-                                std::vector<std::pair<KnobWithLabel*, int>> knobs,
-                                float scaleFactor)
-{
-    auto area = groupBounds.reduced (4, 0);
-    area.removeFromTop (topPad);
-
-    int numKnobs = static_cast<int> (knobs.size());
-    int colW = area.getWidth() / numKnobs;
-
-    for (auto& [knob, knobSize] : knobs)
-    {
-        auto col = area.removeFromLeft (colW);
-        placeKnob (*knob, col, knobSize, scaleFactor);
-    }
-}
-
 void DuskAmpEditor::resized()
 {
     scaler_.updateResizer();
     auto sf = scaler_.getScaleFactor();
 
-    int margin   = scaler_.scaled (10);
-    int meterW   = scaler_.scaled (22);
-    int meterGap = scaler_.scaled (6);
-    int gap      = scaler_.scaled (10);
-    int topPad   = scaler_.scaled (24);
+    const int margin   = scaler_.scaled (10);
+    const int meterGap = scaler_.scaled (6);
 
-    int contentX = margin + meterW + meterGap;
-    int contentW = getWidth() - 2 * (margin + meterW + meterGap);
+    // Mockup layout: left BROWSERS sidebar + main right area. Far-left
+    // input meter is a thin sliver; output meter lives inside row 3.
+    const int inMeterW    = scaler_.scaled (10);   // de-emphasised sliver
+    const int sidebarW    = scaler_.scaled (210);
+    const int sidebarGap  = scaler_.scaled (10);
 
-    // Knob sizes (scaled to ~10% of window width for main knobs)
-    int smallKnob  = scaler_.scaled (60);
-    int mediumKnob = scaler_.scaled (76);
-    int largeKnob  = scaler_.scaled (100);
+    // No edge meter slivers — meters now live inside the OUTPUT card.
+    juce::ignoreUnused (meterGap, inMeterW);
+    const int sidebarX = margin;
+    const int contentX = sidebarX + sidebarW + sidebarGap;
+    const int contentW = getWidth() - contentX - margin;
 
     // --- Top bar ---
     int topBarH = scaler_.scaled (50);
@@ -781,282 +1000,440 @@ void DuskAmpEditor::resized()
     int btnGap  = scaler_.scaled (4);
 
     int presetStartX = (getWidth() - presetW) / 2 - saveW / 2;
+    int dirtyW = scaler_.scaled (14);
     presetBox_.setBounds (presetStartX, presetY, presetW, presetH);
+    presetDirtyLabel_.setBounds (presetStartX - dirtyW - scaler_.scaled (2),
+                                  presetY, dirtyW, presetH);
     savePresetButton_.setBounds (presetStartX + presetW + btnGap, presetY, saveW, presetH);
     deletePresetButton_.setBounds (presetStartX + presetW + btnGap + saveW + btnGap,
                                    presetY, delW, presetH);
 
-    int modeW = scaler_.scaled (150);
-    int modeH = scaler_.scaled (30);
-    int modeY = presetY + (presetH - modeH) / 2;
-    // (modeSelector bounds set below, after tuner+oversampling X is known.)
-
+    // Utility cluster on the far right of the top bar — A/B + tuner + OS.
+    // DSP/NAM is no longer here; it moved to the top of the amp panel as a
+    // primary navigation tab strip (see below).
     int osW    = scaler_.scaled (55);
     int tunerW = scaler_.scaled (60);
     int tunerGap = scaler_.scaled (4);
-    oversamplingBox_.setBounds (getWidth() - margin - meterW - osW, presetY, osW, presetH);
-    tunerButton_.setBounds     (getWidth() - margin - meterW - osW - tunerGap - tunerW,
+    int abW   = scaler_.scaled (28);
+    int abGap = scaler_.scaled (12); // wider gap so A/B reads as its own cluster
+    oversamplingBox_.setBounds (getWidth() - margin - osW, presetY, osW, presetH);
+    tunerButton_.setBounds     (getWidth() - margin - osW - tunerGap - tunerW,
                                 presetY, tunerW, presetH);
-    // Mode selector sits to the LEFT of the tuner button — recompute X.
-    modeSelector_->setBounds (tunerButton_.getX() - tunerGap - modeW, modeY, modeW, modeH);
+    slotBButton_.setBounds     (getWidth() - margin - osW - tunerGap - tunerW - abGap - abW,
+                                presetY, abW, presetH);
+    slotAButton_.setBounds     (getWidth() - margin - osW - tunerGap - tunerW - abGap - abW - btnGap - abW,
+                                presetY, abW, presetH);
+
+    // --- Mode tab strip (DSP / NAM) ---
+    // Sits directly above the centre amp panel as the primary navigation for
+    // the amp section. Spans the full centre-column width so the tabs read
+    // as section header (not a hidden corner toggle). Main amp groups shift
+    // down by the tab height so all 3 columns (input / amp / output) keep
+    // their top alignment.
+    int tabBarH = scaler_.scaled (32);
+    int tabBarY = topBarH + margin;
 
     // --- Main area ---
-    int mainY = topBarH + margin;
-    // 160 px fits topPad (22) + toggle row (24) + knob row (label 14 + medium
-    // 76 + value 14) + bottom pad with no overlap. The previous 180 left a
-    // tall empty band beneath the knob value labels — reclaiming 20 px gives
-    // more vertical room to the centre stack (notably NAM tone + browser).
-    int bottomH = scaler_.scaled (160);
-    int mainH = getHeight() - mainY - gap - bottomH - margin;
+    // === Wide signal-flow layout (Modern minimalist Phase R2) ===
+    //
+    //   topRow (signal flow L→R): INPUT col │ AMP+TONE col │ POWER AMP col │ OUTPUT col
+    //   bottomRow:                CABINET (left half) │ EFFECTS (right half)
+    //
+    // No panel boxes — just section headers with horizontal rules underneath.
 
-    // Proportional columns
-    int usable = contentW - gap * 2;
-    int leftColW  = static_cast<int> (usable * 0.12f);
-    int rightColW = static_cast<int> (usable * 0.12f);
-    int centerW   = usable - leftColW - rightColW;
+    // ===== Three-row flat layout (no cards, no per-feature panels) =====
+    //
+    // Body splits into 3 horizontal rows separated by thin rules. Each row
+    // has a small label in its left gutter, controls fill the rest. All
+    // knobs uniform size — equipment-strip aesthetic, not modular cards.
 
-    int inputX  = contentX;
-    int centerX = inputX + leftColW + gap;
-    int outputX = centerX + centerW + gap;
+    const int footerReserve = scaler_.scaled (20);
+    const int mainY = tabBarY + tabBarH + scaler_.scaled (4);
+    const int bodyH = getHeight() - mainY - footerReserve - margin;
+    const int rowGap = scaler_.scaled (10);
 
-    // Store group bounds
-    inputGroupBounds_  = { inputX, mainY, leftColW, mainH };
-    outputGroupBounds_ = { outputX, mainY, rightColW, mainH };
+    // Three roughly-equal rows; row 2 slightly taller for IR list visibility.
+    // Row 1 gets the most height — it hosts the 2-row AMP card (knob row +
+    // model/channel selector row). Rows 2/3 are single knob rows.
+    const int rowH1 = (bodyH - 2 * rowGap) * 36 / 100;
+    const int rowH2 = (bodyH - 2 * rowGap) * 32 / 100;
+    const int rowH3 = (bodyH - 2 * rowGap) - rowH1 - rowH2;
 
-    // --- LEFT: INPUT ---
-    layoutKnobsInGroup ({ inputX, mainY, leftColW, mainH / 3 }, topPad,
-        { { &inputGain_, mediumKnob } }, sf);
-    layoutKnobsInGroup ({ inputX, mainY + mainH / 3, leftColW, mainH / 3 }, scaler_.scaled (4),
-        { { &gateThreshold_, smallKnob } }, sf);
-    layoutKnobsInGroup ({ inputX, mainY + 2 * mainH / 3, leftColW, mainH / 3 }, scaler_.scaled (4),
-        { { &gateRelease_, smallKnob } }, sf);
+    const int row1Y = mainY;
+    const int row2Y = row1Y + rowH1 + rowGap;
+    const int row3Y = row2Y + rowH2 + rowGap;
 
-    // --- RIGHT: OUTPUT ---
-    layoutKnobsInGroup ({ outputX, mainY, rightColW, mainH }, topPad,
-        { { &outputLevel_, largeKnob } }, sf);
-
-    // --- CENTER: mode-dependent ---
-    bool namMode = processorRef.parameters.getRawParameterValue (
+    const bool namMode = processorRef.parameters.getRawParameterValue (
         DuskAmpParams::AMP_MODE)->load() >= 0.5f;
     layoutIsNamMode_ = namMode;
 
-    int controlsH = scaler_.scaled (28);
-    int controlsGap = scaler_.scaled (6);
+    // Cards now self-identify with per-card titles, so the rotated
+    // right-edge row labels are dropped and the content area widens.
+    const int rowsContentW = contentW;
 
-    // Heights for the compact POWER AMP + CABINET (now in the centre column).
-    // POWER AMP needs just enough for one row of knobs (label + knob + value
-    // + topPad). CABINET needs room for toggle column, 3 small knobs, and
-    // the IR browser list. Tuned so AMP/TONE keeps enough vertical room
-    // below the knob value labels for the dropdown row underneath without
-    // visual overlap (the old 140/140 was too tight at typical window sizes).
-    const int powerCompactH = scaler_.scaled (128);
-    const int cabCenterH    = scaler_.scaled (124);
+    row1Bounds_ = { contentX, row1Y, rowsContentW, rowH1 };
+    row2Bounds_ = { contentX, row2Y, rowsContentW, rowH2 };
+    row3Bounds_ = { contentX, row3Y, rowsContentW, rowH3 };
 
+    // Sidebar bounds — full body height to the left of contentX.
+    sidebarBounds_ = { sidebarX, mainY, sidebarW, row3Y + rowH3 - mainY };
+    const int sidebarHeaderH = scaler_.scaled (24);   // "BROWSERS" title row
+    const int subPanelGap    = scaler_.scaled (8);
     if (namMode)
     {
-        // 4-row layout: NAM BROWSER | TONE | POWER AMP (compact) | CABINET.
-        //
-        // TONE is a single horizontal row: [tone-type dropdown] [bass]
-        // [mid] [treble]. Knobs sit clustered tight on the right; dropdown
-        // is to their left, vertically centred against the rotary midline.
-        const int namToneKnob = smallKnob; // 60 px
-        const int namToneH    = topPad
-                              + scaler_.scaled (14)            // name label
-                              + namToneKnob                     // rotary
-                              + scaler_.scaled (14)            // value label
-                              + scaler_.scaled (8);            // bottom pad
-
-        int centerH    = mainH;
-        int powH       = powerCompactH;
-        int cabH       = cabCenterH;
-        int remaining  = centerH - powH - cabH - gap * 3;
-        int toneH      = juce::jmin (namToneH, remaining - scaler_.scaled (60));
-        int namH       = remaining - toneH;
-
-        int toneY = mainY + namH + gap;
-        int powY  = toneY + toneH + gap;
-        int cabY  = powY  + powH  + gap;
-
-        centerTopBounds_ = { centerX, mainY, centerW, namH };
-        centerMidBounds_ = { centerX, toneY, centerW, toneH };
-        centerBotBounds_ = { centerX, powY,  centerW, powH };
-        cabGroupBounds_  = { centerX, cabY,  centerW, cabH };
-
-        // NAM browser: inside the top group, full remaining vertical room.
-        namBrowser_.setBounds (centerX + scaler_.scaled (8), mainY + topPad,
-                               centerW - scaler_.scaled (16), namH - topPad - scaler_.scaled (4));
-
-        // Single TONE row: dropdown on the left, three tightly-clustered
-        // knobs on the right. The whole row is centred horizontally in the
-        // group so it doesn't drift to one edge at large window widths.
-        {
-            const int dropdownW   = scaler_.scaled (130);
-            const int knobColW    = scaler_.scaled (80); // 60 px knob + 10 px each side
-            const int knobsTotalW = knobColW * 3;
-            const int interGap    = scaler_.scaled (20);
-            const int rowW        = dropdownW + interGap + knobsTotalW;
-            const int rowX        = centerX + (centerW - rowW) / 2;
-
-            const int knobAreaH   = topPad + scaler_.scaled (14) + namToneKnob
-                                  + scaler_.scaled (14);
-
-            // Dropdown vertically aligned to the rotary midline (not the
-            // full label+knob+value stack) — reads cleaner side-by-side.
-            const int knobMidY    = toneY + topPad + scaler_.scaled (14)
-                                  + namToneKnob / 2;
-            const int dropdownY   = knobMidY - controlsH / 2;
-            toneTypeBox_.setBounds (rowX, dropdownY, dropdownW, controlsH);
-
-            const int knobsX = rowX + dropdownW + interGap;
-            layoutKnobsInGroup ({ knobsX, toneY, knobsTotalW, knobAreaH }, topPad,
-                { { &bass_, namToneKnob }, { &mid_, namToneKnob },
-                  { &treble_, namToneKnob } }, sf);
-        }
-
-        // Power amp
-        layoutKnobsInGroup ({ centerX, powY, centerW, powH }, topPad,
-            { { &powerDrive_, mediumKnob }, { &presence_, smallKnob },
-              { &resonance_, smallKnob }, { &sag_, smallKnob } }, sf);
-
-        // Hide DSP preamp controls
-        preampGain_.slider.setVisible (false);
-        preampGain_.nameLabel.setVisible (false);
-        preampGain_.valueLabel.setVisible (false);
-        channelBox_.setVisible (false);
-        brightButton_.setVisible (false);
-        namBrowser_.setVisible (true);
+        // Two sub-panels: AMP MODELS (top) + CABINET IRs (bottom).
+        const int innerY = sidebarBounds_.getY() + sidebarHeaderH;
+        const int innerH = sidebarBounds_.getHeight() - sidebarHeaderH;
+        const int eachH  = (innerH - subPanelGap) / 2;
+        sidebarAmpListBounds_ = { sidebarX, innerY, sidebarW, eachH };
+        sidebarCabListBounds_ = { sidebarX, innerY + eachH + subPanelGap,
+                                   sidebarW, innerH - eachH - subPanelGap };
     }
     else
     {
-        // 3-row: AMP/TONE | POWER AMP (compact) | CABINET — bottom row
-        // becomes Effects-only (full content width). POWER AMP and CABINET
-        // get fixed heights so AMP/TONE absorbs the leftover for its big
-        // medium knobs + bottom controls row.
-        int centerH  = mainH;
-        int powH     = powerCompactH;
-        int cabH     = cabCenterH;
-        int ampToneH = centerH - powH - cabH - gap * 2;
-        int powY     = mainY + ampToneH + gap;
-        int cabY     = powY  + powH     + gap;
+        // DSP mode: only CABINET IRs (no list of DSP voicings).
+        sidebarAmpListBounds_ = {};
+        sidebarCabListBounds_ = { sidebarX, sidebarBounds_.getY() + sidebarHeaderH,
+                                   sidebarW, sidebarBounds_.getHeight() - sidebarHeaderH };
+    }
 
-        centerTopBounds_ = { centerX, mainY, centerW, ampToneH };
-        centerMidBounds_ = {}; // unused in DSP mode
-        centerBotBounds_ = { centerX, powY,  centerW, powH };
-        cabGroupBounds_  = { centerX, cabY,  centerW, cabH };
+    // Sub-panel headers reserve ~18 px from the top of each browser slot
+    // for paint() to draw the "AMP MODELS" / "CABINET IRs" title. The
+    // browser components themselves sit just below.
+    const int subPanelHeaderH = scaler_.scaled (18);
+    auto applyBrowserBounds = [subPanelHeaderH] (juce::Component& c,
+                                                 juce::Rectangle<int> r)
+    {
+        if (r.isEmpty()) { c.setBounds (0, 0, 0, 0); c.setVisible (false); return; }
+        c.setVisible (true);
+        c.setBounds (r.withTrimmedTop (subPanelHeaderH));
+    };
+    applyBrowserBounds (namBrowser_, sidebarAmpListBounds_);
+    applyBrowserBounds (cabBrowser_, sidebarCabListBounds_);
 
-        // AMP/TONE: gain + bass/mid/treble (all medium). Reserve a bit of
-        // padding below the knob value labels so the dropdowns row doesn't
-        // visually crowd them.
-        const int knobToControlsPad = scaler_.scaled (8);
-        layoutKnobsInGroup ({ centerX, mainY, centerW,
-                              ampToneH - controlsH - controlsGap - knobToControlsPad },
-                            topPad,
-                            { { &preampGain_, mediumKnob }, { &bass_, mediumKnob },
-                              { &mid_, mediumKnob }, { &treble_, mediumKnob } }, sf);
+    // DSP/NAM tabs — narrower, centred above the AMP card.
+    const int tabW = scaler_.scaled (280);
+    modeSelector_->setBounds ((getWidth() - tabW) / 2, tabBarY, tabW, tabBarH);
 
-        // Controls row: channel, tone type, bright
+    // Shared sizes — uniform knobs + toggles across rows.
+    const int knobSize    = scaler_.scaled (56);
+    const int widgetGap   = scaler_.scaled (8);
+    const int ctrlH       = scaler_.scaled (26);
+    const int dropdownW   = scaler_.scaled (72);
+    const int toggleW     = scaler_.scaled (64);   // unified across all toggles
+
+    // Each card reserves a top strip for its title; cluster anchors below.
+    const int cardTitleH    = scaler_.scaled (18);
+    const int cardTitleGap  = scaler_.scaled (4);
+    const int clusterTopOff = cardTitleH + cardTitleGap;
+
+    // Height of one knob cluster (name label + rotary + value label).
+    const int clusterNameH  = juce::roundToInt (12.0f * sf);
+    const int clusterValueH = juce::roundToInt (12.0f * sf);
+    const int knobContentH  = clusterNameH + knobSize + clusterValueH + scaler_.scaled (2);
+
+    // Vertically centre a content block of `contentH` in the card area below
+    // the title strip — leftover space splits top+bottom so cards aren't
+    // bottom-heavy. Never rides up into the title.
+    auto centeredTop = [&] (int rowY, int rowH, int contentH)
+    {
+        const int avail = rowH - clusterTopOff;
+        return rowY + clusterTopOff + std::max (0, (avail - contentH) / 2);
+    };
+
+    // (Sub-card padding no longer used — cards now touch with no inter-gap
+    // and contents centre inside each equal-width slot.)
+
+    // Place a knob (name label + rotary + value) at column X. If topAnchorY
+    // is given, the cluster anchors there (top-down). Otherwise it
+    // vertical-centres in the row.
+    auto placeKnobAt = [&] (KnobWithLabel& k, int colX, int rowY, int rowH,
+                             int knobPx, int topAnchorY = -1)
+    {
+        const int nameH  = juce::roundToInt (12.0f * sf);
+        const int valueH = juce::roundToInt (12.0f * sf);
+        const int totalH = nameH + knobPx + valueH + scaler_.scaled (2);
+
+        int y = (topAnchorY >= 0)
+            ? topAnchorY
+            : rowY + std::max ((rowH - totalH) / 2, 0);
+
+        k.nameLabel.setBounds  (colX, y, knobPx, nameH);
+        y += nameH;
+        k.slider.setBounds     (colX, y, knobPx, knobPx);
+        y += knobPx + scaler_.scaled (2);
+        k.valueLabel.setVisible (true);
+        k.valueLabel.setBounds (colX, y, knobPx, valueH);
+    };
+
+    const int rowInsetL = scaler_.scaled (12);   // inset from row left edge
+    const int rowInsetR = scaler_.scaled (12);
+
+    // Cluster widths (computed up front, used for horizontal centring).
+    // DSP AMP card uses a 2-row layout (knobs over selectors); its width is
+    // the wider of the two rows. NAM AMP card is a single IN/GATE/REL row.
+    const int ampKnobRowW = namMode ? (3 * knobSize + 2 * widgetGap)   // IN GATE REL
+                                     : (4 * knobSize + 3 * widgetGap);  // + GAIN
+    const int ampCtrlRowW = dropdownW + widgetGap + dropdownW + widgetGap + toggleW; // Model Channel Bright
+    const int row1AmpClusterW = namMode ? ampKnobRowW
+                                         : std::max (ampKnobRowW, ampCtrlRowW);
+    // DSP TONE card = pure BASS/MID/TREBLE. NAM TONE card keeps the
+    // tone-stack-type dropdown (NAM is the amp; this only shapes EQ).
+    const int row1ToneClusterW = namMode
+        ? (3 * knobSize + 2 * widgetGap + widgetGap + dropdownW)
+        : (3 * knobSize + 2 * widgetGap);
+    const int row2PowerClusterW = 4 * knobSize + 3 * widgetGap;
+    const int row2CabTogW       = scaler_.scaled (72);
+    const int row2CabClusterW   = row2CabTogW + widgetGap + 3 * knobSize + 2 * widgetGap;
+    // Row-3 FX toggle is narrower than the global toggleW: row 3 packs 3
+    // cards so each is only ~rowAvailW/3 wide, and the DELAY cluster
+    // (toggle + 3 knobs) overflowed the card at toggleW=64. 52 keeps the
+    // cluster inside the card third with margin; "DELAY"/"REVERB" still fit.
+    const int row3FxTogW        = scaler_.scaled (52);
+    const int row3DelayClusterW  = row3FxTogW + widgetGap + 3 * knobSize + 2 * widgetGap;
+    const int row3ReverbClusterW = row3FxTogW + widgetGap + 2 * knobSize + widgetGap;
+
+    // Each row fills the full available width with equal-width cards that
+    // touch (no inter-card gap). Equal widths keep visual rhythm consistent
+    // and the shared outer edges align all three rows.
+    const int rowAvailW = (contentX + rowsContentW - rowInsetR) - (contentX + rowInsetL);
+
+    auto layoutRowCards = [&] (int rowY, int rowH,
+                                const std::vector<int>& clusterWidths,
+                                std::vector<juce::Rectangle<int>*> outCards)
+    {
+        jassert (clusterWidths.size() == outCards.size());
+        juce::ignoreUnused (clusterWidths);
+
+        const int rowX0 = contentX + rowInsetL;
+        const int n = static_cast<int> (outCards.size());
+        int x = rowX0;
+        for (int i = 0; i < n; ++i)
         {
-            int ctrlY = mainY + ampToneH - controlsH - scaler_.scaled (6);
-            int ctrlW = (centerW - scaler_.scaled (16) - controlsGap * 2) / 3;
-            int ctrlX = centerX + scaler_.scaled (8);
-            // Order: amp model (American/British/AC) first — picks the
-            // whole amp character (Fender/Marshall/Vox); channel (Clean/
-            // Crunch/Lead) second — picks the gain stage on that amp.
-            toneTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
-            channelBox_.setBounds  (ctrlX + ctrlW + controlsGap, ctrlY, ctrlW, controlsH);
-            brightButton_.setBounds (ctrlX + 2 * (ctrlW + controlsGap), ctrlY, ctrlW, controlsH);
+            // Last card consumes any rounding remainder so the row ends
+            // exactly on the right inset edge.
+            const int cardW = (i == n - 1) ? (rowX0 + rowAvailW - x)
+                                            : (rowAvailW / n);
+            *outCards[i] = { x, rowY, cardW, rowH };
+            x += cardW;
         }
+    };
 
-        // Power amp
-        layoutKnobsInGroup ({ centerX, powY, centerW, powH }, topPad,
-            { { &powerDrive_, mediumKnob }, { &presence_, smallKnob },
-              { &resonance_, smallKnob }, { &sag_, smallKnob } }, sf);
-
-        // Show DSP preamp controls, hide NAM browser
-        preampGain_.slider.setVisible (true);
-        preampGain_.nameLabel.setVisible (true);
-        preampGain_.valueLabel.setVisible (true);
-        channelBox_.setVisible (true);
-        brightButton_.setVisible (true);
-        namBrowser_.setVisible (false);
-    }
-
-    // --- CABINET section (now in centre column, above the bottom row) ---
-    // cabGroupBounds_ was set during the centre-column subdivision above.
+    auto clusterX = [&] (const juce::Rectangle<int>& card, int clusterW)
     {
-        int cabX     = cabGroupBounds_.getX();
-        int cabY     = cabGroupBounds_.getY();
-        int cabW     = cabGroupBounds_.getWidth();
-        int cabH     = cabGroupBounds_.getHeight();
-        int toggleW  = scaler_.scaled (50);
-        int toggleH  = scaler_.scaled (22);
-        int innerX   = cabX + scaler_.scaled (8);
-        int innerY   = cabY + scaler_.scaled (22);
-        int knobAreaH = cabH - scaler_.scaled (26);
+        return card.getX() + (card.getWidth() - clusterW) / 2;
+    };
 
-        cabEnabled_.setBounds   (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
-        cabNormalize_.setBounds (innerX, innerY + scaler_.scaled (2) + toggleH + scaler_.scaled (4),
-                                 toggleW, toggleH);
-
-        int knobStartX = innerX + toggleW + btnGap;
-        int knobColW   = scaler_.scaled (70);
-
-        placeKnob (cabMix_,   { knobStartX,                 innerY, knobColW, knobAreaH }, smallKnob, sf);
-        placeKnob (cabHiCut_, { knobStartX + knobColW,      innerY, knobColW, knobAreaH }, smallKnob, sf);
-        placeKnob (cabLoCut_, { knobStartX + 2 * knobColW,  innerY, knobColW, knobAreaH }, smallKnob, sf);
-
-        // Browser fills the remaining horizontal space — much wider now
-        // that CABINET spans the full centre column instead of half the
-        // bottom row, so cab-IR file names won't get truncated.
-        int browserX = knobStartX + 3 * knobColW + gap;
-        int browserW = cabX + cabW - browserX - scaler_.scaled (4);
-        cabBrowser_.setBounds (browserX, innerY, browserW, knobAreaH);
-    }
-
-    // --- Bottom row: EFFECTS only, full content width ---
-    int bottomY = mainY + mainH + gap;
-    fxGroupBounds_ = { contentX, bottomY, contentW, bottomH };
-
-    // EFFECTS section: delay | reverb (medium knobs, more breathing room)
+    // Y for a small control (toggle / dropdown) vertically aligned with
+    // the knob slider when the cluster is top-anchored at `topAnchor`.
+    auto ctrlYAtKnob = [&] (int topAnchor, int ctrlSize)
     {
-        int innerX  = contentX + scaler_.scaled (8);
-        int innerY  = bottomY + scaler_.scaled (22);
-        int toggleW = scaler_.scaled (60);
-        int toggleH = scaler_.scaled (22);
+        const int nameH = juce::roundToInt (12.0f * sf);
+        return topAnchor + nameH + (knobSize - ctrlSize) / 2;
+    };
 
-        // 60% delay / 40% reverb — delay has 3 knobs, reverb has 2.
-        const int totalInnerW = contentW - scaler_.scaled (16);
-        const int dividerW    = scaler_.scaled (8);
-        const int delayHalfW  = (totalInnerW - dividerW) * 6 / 10;
-        const int revHalfW    = (totalInnerW - dividerW) - delayHalfW;
+    const int meterColW = scaler_.scaled (12);   // I/O meter sliver in OUTPUT card
 
-        // Delay sub-section: toggle on the left, knobs filling the rest.
-        delayEnabled_.setBounds (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
-        const int dKnobY = innerY + toggleH + scaler_.scaled (6);
-        const int dKnobH = bottomH - toggleH - scaler_.scaled (32);
-        const int dColW  = delayHalfW / 3;
-        placeKnob (delayTime_,     { innerX,                  dKnobY, dColW, dKnobH }, mediumKnob, sf);
-        placeKnob (delayFeedback_, { innerX + dColW,          dKnobY, dColW, dKnobH }, mediumKnob, sf);
-        placeKnob (delayMix_,      { innerX + 2 * dColW,      dKnobY, dColW, dKnobH }, mediumKnob, sf);
+    // ----- ROW 1: AMP / NAM — 2 cards [AMP] [TONE] -------------------------
+    {
+        layoutRowCards (row1Y, rowH1, { row1AmpClusterW, row1ToneClusterW },
+                         { &row1LeftCard_, &row1RightCard_ });
 
-        // Reverb sub-section
-        const int revX = innerX + delayHalfW + dividerW;
-        reverbEnabled_.setBounds (revX, innerY + scaler_.scaled (2), toggleW, toggleH);
-        const int rColW = revHalfW / 2;
-        placeKnob (reverbMix_,   { revX,         dKnobY, rColW, dKnobH }, mediumKnob, sf);
-        placeKnob (reverbDecay_, { revX + rColW, dKnobY, rColW, dKnobH }, mediumKnob, sf);
+        const int knobTotalH = knobContentH;
+        // TONE card content is one knob row in both modes; centre it.
+        const int toneTop = centeredTop (row1Y, rowH1, knobTotalH);
+
+        if (namMode)
+        {
+            // --- INPUT card: IN/GATE/REL single row (centred) ---
+            const int inpTop = centeredTop (row1Y, rowH1, knobTotalH);
+            int x = clusterX (row1LeftCard_, ampKnobRowW);
+            placeKnobAt (inputGain_,     x, row1Y, rowH1, knobSize, inpTop); x += knobSize + widgetGap;
+            placeKnobAt (gateThreshold_, x, row1Y, rowH1, knobSize, inpTop); x += knobSize + widgetGap;
+            placeKnobAt (gateRelease_,   x, row1Y, rowH1, knobSize, inpTop);
+
+            // DSP-only controls hidden + disabled (still bound to live params).
+            preampGain_.slider.setVisible (false);
+            preampGain_.nameLabel.setVisible (false);
+            preampGain_.valueLabel.setVisible (false);
+            channelBox_.setVisible (false);
+            brightButton_.setVisible (false);
+            preampGain_.slider.setEnabled (false);
+            channelBox_.setEnabled (false);
+            brightButton_.setEnabled (false);
+
+            // --- TONE card: BASS/MID/TREBLE + tone-stack-type dropdown ---
+            int tx = clusterX (row1RightCard_, row1ToneClusterW);
+            placeKnobAt (bass_,   tx, row1Y, rowH1, knobSize, toneTop); tx += knobSize + widgetGap;
+            placeKnobAt (mid_,    tx, row1Y, rowH1, knobSize, toneTop); tx += knobSize + widgetGap;
+            placeKnobAt (treble_, tx, row1Y, rowH1, knobSize, toneTop); tx += knobSize + widgetGap;
+            toneTypeBox_.setBounds (tx, ctrlYAtKnob (toneTop, ctrlH), dropdownW, ctrlH);
+        }
+        else
+        {
+            // --- AMP card: 2-row layout. Knobs on top, model/channel/bright
+            // selectors below. The American/British/AC selector lives here
+            // (not in TONE) because in DSP mode it picks the whole amp model
+            // — tone circuit + power tubes + cab IR. The combined block
+            // (knob row + caption + selector row) is vertically centred. ---
+            const int captionH = scaler_.scaled (11);
+            const int blockH   = knobTotalH + captionH + scaler_.scaled (4) + ctrlH;
+            const int ampTop   = centeredTop (row1Y, rowH1, blockH);
+
+            int x = clusterX (row1LeftCard_, ampKnobRowW);
+            placeKnobAt (inputGain_,     x, row1Y, rowH1, knobSize, ampTop); x += knobSize + widgetGap;
+            placeKnobAt (gateThreshold_, x, row1Y, rowH1, knobSize, ampTop); x += knobSize + widgetGap;
+            placeKnobAt (gateRelease_,   x, row1Y, rowH1, knobSize, ampTop); x += knobSize + widgetGap;
+            placeKnobAt (preampGain_,    x, row1Y, rowH1, knobSize, ampTop);
+
+            const int ctrlRowY = ampTop + knobTotalH + captionH + scaler_.scaled (4);
+            int cx = clusterX (row1LeftCard_, ampCtrlRowW);
+            toneTypeBox_.setBounds (cx, ctrlRowY, dropdownW, ctrlH); cx += dropdownW + widgetGap;
+            channelBox_.setBounds  (cx, ctrlRowY, dropdownW, ctrlH); cx += dropdownW + widgetGap;
+            brightButton_.setBounds (cx, ctrlRowY, toggleW, ctrlH);
+
+            preampGain_.slider.setVisible (true);
+            preampGain_.nameLabel.setVisible (true);
+            preampGain_.valueLabel.setVisible (true);
+            channelBox_.setVisible (true);
+            brightButton_.setVisible (true);
+            preampGain_.slider.setEnabled (true);
+            channelBox_.setEnabled (true);
+            brightButton_.setEnabled (true);
+
+            // --- TONE card: pure BASS/MID/TREBLE, vertically centred ---
+            int tx = clusterX (row1RightCard_, row1ToneClusterW);
+            placeKnobAt (bass_,   tx, row1Y, rowH1, knobSize, toneTop); tx += knobSize + widgetGap;
+            placeKnobAt (mid_,    tx, row1Y, rowH1, knobSize, toneTop); tx += knobSize + widgetGap;
+            placeKnobAt (treble_, tx, row1Y, rowH1, knobSize, toneTop);
+        }
     }
 
-    // --- Level meters ---
-    int meterTop = mainY;
-    int meterBot = getHeight() - margin;
-    inputMeter_.setBounds (margin, meterTop, meterW, meterBot - meterTop);
-    outputMeter_.setBounds (getWidth() - margin - meterW, meterTop, meterW, meterBot - meterTop);
+    // ----- ROW 2: POWER + CAB — 2 cards [POWER] [CAB] ----------------------
+    {
+        layoutRowCards (row2Y, rowH2, { row2PowerClusterW, row2CabClusterW },
+                         { &row2LeftCard_, &row2RightCard_ });
+
+        const int topA = centeredTop (row2Y, rowH2, knobContentH);
+
+        // --- POWER card content ---
+        int x = clusterX (row2LeftCard_, row2PowerClusterW);
+        placeKnobAt (powerDrive_, x, row2Y, rowH2, knobSize, topA); x += knobSize + widgetGap;
+        placeKnobAt (presence_,   x, row2Y, rowH2, knobSize, topA); x += knobSize + widgetGap;
+        placeKnobAt (resonance_,  x, row2Y, rowH2, knobSize, topA); x += knobSize + widgetGap;
+        placeKnobAt (sag_,        x, row2Y, rowH2, knobSize, topA);
+
+        // --- CAB card content ---
+        int cx = clusterX (row2RightCard_, row2CabClusterW);
+        const int togH    = scaler_.scaled (24);
+        const int togGap  = scaler_.scaled (6);
+        // Vertically centre the 2-toggle stack against the knob slider
+        // band (so toggles align with knob bodies, not full row).
+        const int togStackH = togH * 2 + togGap;
+        const int togColTop = topA + juce::roundToInt (12.0f * sf)
+                                 + (knobSize - togStackH) / 2;
+        cabEnabled_.setBounds   (cx, togColTop,                row2CabTogW, togH);
+        cabNormalize_.setBounds (cx, togColTop + togH + togGap, row2CabTogW, togH);
+        cx += row2CabTogW + widgetGap;
+        placeKnobAt (cabMix_,   cx, row2Y, rowH2, knobSize, topA); cx += knobSize + widgetGap;
+        placeKnobAt (cabHiCut_, cx, row2Y, rowH2, knobSize, topA); cx += knobSize + widgetGap;
+        placeKnobAt (cabLoCut_, cx, row2Y, rowH2, knobSize, topA);
+    }
+
+    // ----- ROW 3: FX + OUT — 3 cards [DELAY] [REVERB] [OUTPUT] -------------
+    // OUTPUT card now holds the I/O meters inline (replacing the dropped
+    // far-edge slivers).
+    const int outputClusterWWithMeters =
+        meterColW + widgetGap + knobSize + widgetGap + meterColW;
+    {
+        const int fxTogH = scaler_.scaled (24);
+
+        layoutRowCards (row3Y, rowH3,
+                         { row3DelayClusterW, row3ReverbClusterW, outputClusterWWithMeters },
+                         { &row3DelayCard_, &row3ReverbCard_, &row3OutputCard_ });
+
+        const int topA = centeredTop (row3Y, rowH3, knobContentH);
+
+        // --- DELAY card content ---
+        int x = clusterX (row3DelayCard_, row3DelayClusterW);
+        delayEnabled_.setBounds (x, ctrlYAtKnob (topA, fxTogH), row3FxTogW, fxTogH);
+        x += row3FxTogW + widgetGap;
+        placeKnobAt (delayTime_,     x, row3Y, rowH3, knobSize, topA); x += knobSize + widgetGap;
+        placeKnobAt (delayFeedback_, x, row3Y, rowH3, knobSize, topA); x += knobSize + widgetGap;
+        placeKnobAt (delayMix_,      x, row3Y, rowH3, knobSize, topA);
+
+        // --- REVERB card content ---
+        int rx = clusterX (row3ReverbCard_, row3ReverbClusterW);
+        reverbEnabled_.setBounds (rx, ctrlYAtKnob (topA, fxTogH), row3FxTogW, fxTogH);
+        rx += row3FxTogW + widgetGap;
+        placeKnobAt (reverbMix_,   rx, row3Y, rowH3, knobSize, topA); rx += knobSize + widgetGap;
+        placeKnobAt (reverbDecay_, rx, row3Y, rowH3, knobSize, topA);
+
+        // --- OUTPUT card content: [IN-meter] [OUTPUT knob] [OUT-meter] ---
+        int ox = clusterX (row3OutputCard_, outputClusterWWithMeters);
+        const int nameH = juce::roundToInt (12.0f * sf);
+        const int valueH = juce::roundToInt (12.0f * sf);
+        const int meterTop = topA + nameH;
+        const int meterH   = knobSize + valueH + scaler_.scaled (2);
+
+        inputMeter_.setBounds (ox, meterTop, meterColW, meterH);
+        ox += meterColW + widgetGap;
+
+        placeKnobAt (outputLevel_, ox, row3Y, rowH3, knobSize, topA);
+        ox += knobSize + widgetGap;
+
+        outputMeter_.setBounds (ox, meterTop, meterColW, meterH);
+    }
+
+    // ----- Footer strip -----------------------------------------------------
+    const int footerH = scaler_.scaled (16);
+    const int footerY = getHeight() - footerH - scaler_.scaled (2);
+    const int footerVerW = scaler_.scaled (110);
+    const int footerCpuW = scaler_.scaled (60);
+    footerVersionLabel_.setBounds (contentX, footerY, footerVerW, footerH);
+    footerCpuLabel_.setBounds (contentX + contentW - footerCpuW, footerY, footerCpuW, footerH);
+    footerTooltipLabel_.setBounds (contentX + footerVerW + scaler_.scaled (6), footerY,
+                                    contentW - footerVerW - footerCpuW - scaler_.scaled (12),
+                                    footerH);
+
+    // Input/output meters are positioned inside the OUTPUT card (see Row 3).
+    juce::ignoreUnused (footerY);
 }
 
 // =============================================================================
 // User Preset Management
 // =============================================================================
+
+void DuskAmpEditor::capturePresetSnapshot()
+{
+    presetSnapshot_.clear();
+    for (auto* p : processorRef.getParameters())
+    {
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+            presetSnapshot_.push_back (ranged->getValue());
+    }
+    presetDirty_ = false;
+    presetDirtyLabel_.setText ("", juce::dontSendNotification);
+}
+
+bool DuskAmpEditor::currentStateMatchesSnapshot() const
+{
+    size_t idx = 0;
+    for (auto* p : processorRef.getParameters())
+    {
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            if (idx >= presetSnapshot_.size())
+                return false;
+            // Compare normalised values with a tiny epsilon so float-roundtrip
+            // through APVTS smoothing doesn't trip false-positive dirtiness.
+            if (std::abs (ranged->getValue() - presetSnapshot_[idx]) > 1.0e-4f)
+                return false;
+            ++idx;
+        }
+    }
+    return idx == presetSnapshot_.size();
+}
 
 void DuskAmpEditor::refreshPresetList()
 {
@@ -1197,11 +1574,18 @@ void DuskAmpEditor::showTunerPanel()
         tunerOverlay_ = std::make_unique<TunerOverlay>();
         tunerOverlay_->onDismiss = [this] { hideTunerPanel(); };
         addAndMakeVisible (tunerOverlay_.get());
+
+        // Bind the overlay's reference-Hz editor to TUNER_REF_HZ so the
+        // user's calibration persists in the host project state.
+        tunerRefHzAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+            processorRef.parameters, DuskAmpParams::TUNER_REF_HZ,
+            tunerOverlay_->getRefHzSlider());
     }
     tunerOverlay_->setBounds (getLocalBounds());
     tunerOverlay_->toFront (true);
     tunerOverlay_->setVisible (true);
     processorRef.setTunerActive (true); // mute output while tuning
+    tunerButton_.setActive (true);
 }
 
 void DuskAmpEditor::hideTunerPanel()
@@ -1209,6 +1593,7 @@ void DuskAmpEditor::hideTunerPanel()
     if (tunerOverlay_)
         tunerOverlay_->setVisible (false);
     processorRef.setTunerActive (false);
+    tunerButton_.setActive (false);
 }
 
 void DuskAmpEditor::updateDeleteButtonVisibility()

@@ -4,5 +4,8 @@
 class CabBrowser : public FileBrowserPanel
 {
 public:
-    CabBrowser() : FileBrowserPanel("Cabinet IRs", "*.wav;*.aiff;*.aif", "Select Cabinet IR or Folder") {}
+    CabBrowser() : FileBrowserPanel("Cabinet IRs", "*.wav;*.aiff;*.aif", "Select Cabinet IR or Folder")
+    {
+        setEmptyStateText("No cabinet IR loaded - click Browse to load a .wav.");
+    }
 };

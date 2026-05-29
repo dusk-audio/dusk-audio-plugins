@@ -22,7 +22,23 @@ public:
     TunerOverlay()
     {
         setInterceptsMouseClicks (true, false);
+
+        // Reference-frequency editor. Editor attaches a SliderAttachment
+        // binding this to TUNER_REF_HZ after construction. Range/default
+        // mirror the APVTS spec (415–466 Hz, default 440). Inc/dec buttons
+        // + text box give a single-touch UI without a rotary footprint.
+        refHzSlider_.setRange (415.0, 466.0, 0.1);
+        refHzSlider_.setValue (440.0, juce::dontSendNotification);
+        refHzSlider_.setSliderStyle (juce::Slider::IncDecButtons);
+        refHzSlider_.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 60, 20);
+        refHzSlider_.setTextValueSuffix (" Hz");
+        refHzSlider_.setTooltip ("Tuner reference frequency for A4. Default 440 Hz; "
+                                 "use 432 for vintage tuning, 415 for baroque.");
+        addAndMakeVisible (refHzSlider_);
     }
+
+    /** Access the reference-Hz slider so the editor can bind it to APVTS. */
+    juce::Slider& getRefHzSlider() noexcept { return refHzSlider_; }
 
     /** Audio-driven update from the editor's timer. hz=0 means "no signal". */
     void setDetected (float hz, float level)
@@ -34,7 +50,8 @@ public:
             // Smooth the cents reading so the indicator doesn't twitch.
             if (hz > 0.0f)
             {
-                const float midi = 69.0f + 12.0f * std::log2 (hz / 440.0f);
+                const float refHz = static_cast<float> (refHzSlider_.getValue());
+                const float midi = 69.0f + 12.0f * std::log2 (hz / refHz);
                 const float nearest = std::round (midi);
                 const float newCents = (midi - nearest) * 100.0f;
                 smoothedCents_ += 0.25f * (newCents - smoothedCents_);
@@ -158,6 +175,15 @@ public:
                         panel.getWidth(), 20, juce::Justification::centred);
         }
 
+        // Reference-frequency label — sits just left of the slider, which
+        // is positioned by resized(). Drawn here so the panel repaint paths
+        // stay aligned with the layout.
+        const auto sliderBounds = refHzSlider_.getBounds();
+        g.setFont (juce::Font (juce::FontOptions (12.0f)));
+        g.setColour (juce::Colour (0xff909090));
+        g.drawText ("A4 =", sliderBounds.getX() - 50, sliderBounds.getY(),
+                    44, sliderBounds.getHeight(), juce::Justification::centredRight);
+
         // Footer
         g.setFont (juce::Font (juce::FontOptions (12.0f)));
         g.setColour (juce::Colour (0xff707070));
@@ -166,8 +192,27 @@ public:
                     panel.getWidth(), 18, juce::Justification::centred);
     }
 
-    void mouseDown (const juce::MouseEvent&) override
+    void resized() override
     {
+        const int w = getWidth();
+        const int h = getHeight();
+        const int panelW = juce::jmin (640, w - 80);
+        const int panelH = juce::jmin (380, h - 80);
+        const int panelY = (h - panelH) / 2;
+
+        // Slider sits between the cents text and the footer caption.
+        juce::ignoreUnused (panelW);
+        const int sliderW = 180;
+        const int sliderH = 22;
+        const int sliderY = panelY + panelH - 62;
+        refHzSlider_.setBounds ((w - sliderW) / 2, sliderY, sliderW, sliderH);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        // Don't dismiss when the click was inside the ref-Hz editor.
+        if (refHzSlider_.getBounds().contains (e.getPosition()))
+            return;
         if (onDismiss) onDismiss();
     }
 
@@ -187,6 +232,8 @@ private:
     {
         return midi / 12 - 1;
     }
+
+    juce::Slider refHzSlider_;
 
     float currentHz_      = 0.0f;
     float currentLevel_   = 0.0f;

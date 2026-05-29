@@ -14,6 +14,7 @@ on:
       - 'duskverb-v*'           # DuskVerb only
       - 'chord-analyzer-v*'    # Chord Analyzer only
       - 'spectrum-analyzer-v*' # Spectrum Analyzer only
+      - 'duskamp-v*'           # DuskAmp only
   workflow_dispatch:
     inputs:
       plugin:
@@ -33,6 +34,7 @@ on:
           - 'duskverb'
           - 'chord-analyzer'
           - 'spectrum-analyzer'
+          - 'duskamp'
 
 env:
   BUILD_TYPE: Release
@@ -112,6 +114,10 @@ jobs:
               TARGET="SpectrumAnalyzer_All"
               NAME="Spectrum Analyzer"
               RELEASE_NAME="spectrum-analyzer"
+            elif [[ "$TAG" == duskamp-v* ]]; then
+              TARGET="DuskAmp_All"
+              NAME="DuskAmp"
+              RELEASE_NAME="duskamp"
             fi
           elif [[ -n "$MANUAL_PLUGIN" ]]; then
             case "$MANUAL_PLUGIN" in
@@ -125,6 +131,7 @@ jobs:
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
               chord-analyzer) TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
               spectrum-analyzer) TARGET="SpectrumAnalyzer_All"; NAME="Spectrum Analyzer"; RELEASE_NAME="spectrum-analyzer" ;;
+              duskamp) TARGET="DuskAmp_All"; NAME="DuskAmp"; RELEASE_NAME="duskamp" ;;
             esac
           fi
 
@@ -284,6 +291,33 @@ jobs:
 
           echo "=== Validation passed ==="
 
+      - name: Install pluginval
+        shell: bash
+        run: |
+          curl -L -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -q pluginval.zip
+          chmod +x pluginval
+          ./pluginval --version
+
+      - name: Pluginval strictness 5
+        shell: bash
+        run: |
+          set -e
+          echo "=== Running pluginval at strictness 5 ==="
+          failed=0
+          while IFS= read -r -d '' vst3; do
+            if ! ls "$vst3/Contents/x86_64-linux/"*.so >/dev/null 2>&1; then
+              continue
+            fi
+            echo "→ pluginval: $vst3"
+            if ! ./pluginval --strictness-level 5 --validate-in-process --skip-gui-tests --validate "$vst3"; then
+              echo "✗ pluginval FAIL: $vst3"
+              failed=1
+            fi
+          done < <(find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null)
+          if [ "$failed" -ne 0 ]; then exit 1; fi
+          echo "=== pluginval passed ==="
+
       - name: Prepare artifacts
         shell: bash
         run: |
@@ -302,6 +336,17 @@ jobs:
               cp -r "$lv2" artifacts/linux/LV2/
             fi
           done
+
+          # Bundle DuskAmp license + beta docs when releasing duskamp-v*
+          if [ "${{ needs.setup.outputs.release_name }}" = "duskamp" ]; then
+            for f in LICENSE plugins/DuskAmp/THIRDPARTY-LICENSES.txt plugins/DuskAmp/BETA.md; do
+              if [ ! -f "$f" ]; then
+                echo "✗ Required DuskAmp release file missing: $f" >&2
+                exit 1
+              fi
+              cp "$f" artifacts/linux/
+            done
+          fi
 
           # List what we collected
           echo "=== Linux Artifacts ==="
@@ -473,6 +518,17 @@ jobs:
             fi
           done
 
+          # Bundle DuskAmp license + beta docs when releasing duskamp-v*
+          if [ "${{ needs.setup.outputs.release_name }}" = "duskamp" ]; then
+            for f in LICENSE plugins/DuskAmp/THIRDPARTY-LICENSES.txt plugins/DuskAmp/BETA.md; do
+              if [ ! -f "$f" ]; then
+                echo "✗ Required DuskAmp release file missing: $f" >&2
+                exit 1
+              fi
+              cp "$f" artifacts/linux-arm64/
+            done
+          fi
+
           echo "=== Linux ARM64 Artifacts ==="
           find artifacts/linux-arm64 -type f -name "*.so" | head -20
 
@@ -584,6 +640,18 @@ jobs:
             }
           }
 
+          # Bundle DuskAmp license + beta docs when releasing duskamp-v*
+          if ('${{ needs.setup.outputs.release_name }}' -eq 'duskamp') {
+            $required = @('LICENSE', 'plugins/DuskAmp/THIRDPARTY-LICENSES.txt', 'plugins/DuskAmp/BETA.md')
+            foreach ($f in $required) {
+              if (-not (Test-Path -LiteralPath $f -PathType Leaf)) {
+                Write-Error "Required DuskAmp release file missing: $f"
+                exit 1
+              }
+              Copy-Item -LiteralPath $f -Destination artifacts/windows/ -ErrorAction Stop
+            }
+          }
+
           Write-Host "=== Windows Artifacts ==="
           Get-ChildItem -Path artifacts/windows -Recurse -Filter "*.vst3" | Select-Object FullName
 
@@ -682,6 +750,52 @@ jobs:
 
           echo "=== Validation passed ==="
 
+      - name: Install pluginval
+        run: |
+          curl -L -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          chmod +x pluginval.app/Contents/MacOS/pluginval
+          ./pluginval.app/Contents/MacOS/pluginval --version
+
+      - name: Pluginval strictness 5 (VST3 + AU)
+        run: |
+          set -e
+          echo "=== Running pluginval at strictness 5 ==="
+          PV=./pluginval.app/Contents/MacOS/pluginval
+          failed=0
+          # Validate every VST3 we built.
+          while IFS= read -r -d '' vst3; do
+            plugin_name=$(basename "$vst3" .vst3)
+            if [ ! -f "$vst3/Contents/MacOS/$plugin_name" ]; then continue; fi
+            echo "→ pluginval VST3: $vst3"
+            if ! "$PV" --strictness-level 5 --validate-in-process --skip-gui-tests --validate "$vst3"; then
+              echo "✗ pluginval FAIL: $vst3"; failed=1
+            fi
+          done < <(find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null)
+          # Validate every AU we built. AU validation needs the bundle in the
+          # canonical user location so auval can find it, AND the AU
+          # registrar daemon must be flushed first so it picks up the
+          # freshly-installed bundle (otherwise pluginval may run against
+          # a stale cached binary or fail to locate the component).
+          while IFS= read -r -d '' au; do
+            plugin_name=$(basename "$au" .component)
+            if [ ! -f "$au/Contents/MacOS/$plugin_name" ]; then continue; fi
+            dest="$HOME/Library/Audio/Plug-Ins/Components/$(basename "$au")"
+            mkdir -p "$(dirname "$dest")"
+            # Kill the registrar BEFORE replacing the bundle so no daemon
+            # holds open file handles into the old .component during the
+            # rm -rf / cp -R. Daemon respawns on pluginval's first AU API
+            # call and scans the freshly-installed bundle.
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+            rm -rf "$dest" && cp -R "$au" "$dest"
+            echo "→ pluginval AU: $dest"
+            if ! "$PV" --strictness-level 5 --validate-in-process --skip-gui-tests --validate "$dest"; then
+              echo "✗ pluginval FAIL: $dest"; failed=1
+            fi
+          done < <(find build/lib build/bin build/plugins -name "*.component" -type d -print0 2>/dev/null)
+          if [ "$failed" -ne 0 ]; then exit 1; fi
+          echo "=== pluginval passed ==="
+
       - name: Import Code Signing Certificate
         if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
         env:
@@ -738,7 +852,10 @@ jobs:
           done
 
       - name: Notarize Plugins
-        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/v') }}
+        # Notarize any tagged release: legacy `v*` umbrella tags and the
+        # per-plugin `<slug>-v*` pattern. Previously only `v*` was honored,
+        # which silently shipped duskamp-v*/4k-eq-v*/etc. unsigned.
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/') }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -798,6 +915,17 @@ jobs:
               if [ -f "$au/Contents/MacOS/$plugin_name" ]; then
                 cp -r "$au" artifacts/macos/AU/
               fi
+            done
+          fi
+
+          # Bundle DuskAmp license + beta docs when releasing duskamp-v*
+          if [ "${{ needs.setup.outputs.release_name }}" = "duskamp" ]; then
+            for f in LICENSE plugins/DuskAmp/THIRDPARTY-LICENSES.txt plugins/DuskAmp/BETA.md; do
+              if [ ! -f "$f" ]; then
+                echo "✗ Required DuskAmp release file missing: $f" >&2
+                exit 1
+              fi
+              cp "$f" artifacts/macos/
             done
           fi
 

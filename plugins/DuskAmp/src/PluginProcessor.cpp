@@ -166,6 +166,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::OVERSAMPLING, 1 }, "Oversampling",
         juce::StringArray { "2x", "4x", "8x" }, 2)); // default 8x — modern best-practice for nonlinear amp stages
 
+    // Tuner reference frequency (A4). Standard is 440 Hz; baroque tuning is
+    // 415, modern orchestral can go as high as 446. Persisted so the user's
+    // pitch reference survives session reload.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { DuskAmpParams::TUNER_REF_HZ, 1 }, "Tuner Reference",
+        juce::NormalisableRange<float> (415.0f, 466.0f, 0.1f, 1.0f), 440.0f));
+
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { DuskAmpParams::BYPASS, 1 }, "Bypass", false));
 
@@ -221,29 +228,49 @@ DuskAmpProcessor::DuskAmpProcessor()
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter (DuskAmpParams::BYPASS));
 
-    // Listen for amp-model changes so we can swap in a matching default IR.
+    // Listen for amp-model changes so we can swap in a matching default IR,
+    // and for amp-mode changes so the reported latency stays correct (NAM
+    // currently contributes 0 samples but a future resampler wrapper would).
     parameters.addParameterListener (DuskAmpParams::TONE_TYPE, this);
+    parameters.addParameterListener (DuskAmpParams::AMP_MODE,  this);
 }
 
 DuskAmpProcessor::~DuskAmpProcessor()
 {
     parameters.removeParameterListener (DuskAmpParams::TONE_TYPE, this);
+    parameters.removeParameterListener (DuskAmpParams::AMP_MODE,  this);
 }
 
 void DuskAmpProcessor::parameterChanged (const juce::String& paramID, float /*newValue*/)
 {
     // APVTS may invoke this from any thread (host automation can run on the
-    // audio thread). File I/O on the audio thread is unsafe, so bounce the
-    // load to the message thread.
+    // audio thread). File I/O + setLatencySamples on the audio thread are
+    // unsafe / disallowed, so bounce work to the message thread. Capture a
+    // WeakReference so a callback that fires after the processor is
+    // destroyed (DAW closes plugin between callAsync and dispatch) no
+    // longer touches a dangling `this`.
+    juce::WeakReference<DuskAmpProcessor> safeThis (this);
     if (paramID == DuskAmpParams::TONE_TYPE)
     {
-        juce::MessageManager::callAsync ([this] { loadDefaultIRForCurrentToneType(); });
+        juce::MessageManager::callAsync ([safeThis]
+        {
+            if (auto* p = safeThis.get())
+                p->loadDefaultIRForCurrentToneType();
+        });
+    }
+    else if (paramID == DuskAmpParams::AMP_MODE)
+    {
+        juce::MessageManager::callAsync ([safeThis]
+        {
+            if (auto* p = safeThis.get())
+                p->setLatencySamples (p->engine_.getLatencyInSamples());
+        });
     }
 }
 
 void DuskAmpProcessor::loadDefaultIRForCurrentToneType()
 {
-    if (userLoadedIR_)
+    if (userLoadedIR_.load (std::memory_order_acquire))
         return; // user picked their own — don't clobber it
 
     if (toneTypeParam_ == nullptr)
@@ -252,13 +279,29 @@ void DuskAmpProcessor::loadDefaultIRForCurrentToneType()
     const int toneType = static_cast<int> (toneTypeParam_->load());
     const auto bundled = DuskAmpDefaults::getDefaultIRForToneType (toneType);
 
-    if (bundled.data != nullptr && bundled.size > 0)
+    if (bundled.data == nullptr || bundled.size == 0)
+        return;
+
+    const juce::String displayName (bundled.displayName);
+
     {
-        engine_.getCabinetIR().loadIR (bundled.data,
-                                        static_cast<size_t> (bundled.size),
-                                        juce::String (bundled.displayName));
-        cabIRPath_ = juce::String (bundled.displayName); // shown in UI; not a real path
+        const juce::ScopedLock lk (statusLock_);
+        lastIRStatus_ = "loading: " + displayName;
     }
+
+    // Defer to background worker — CabinetIR::loadIR runs a pink-noise
+    // RMS measurement that sleep-polls JUCE's async convolution loader.
+    // BinaryData pointers and `bundled.size` are static-lifetime, safe to
+    // capture by value. The display name is copied into the lambda.
+    cabLoadPool_.addJob (
+        [this, data = bundled.data, size = static_cast<size_t> (bundled.size), displayName]() -> void
+        {
+            engine_.getCabinetIR().loadIR (data, size, displayName);
+
+            const juce::ScopedLock lk (statusLock_);
+            cabIRPath_ = displayName; // shown in UI; not a real path
+            lastIRStatus_ = "OK: " + displayName;
+        });
 }
 
 bool DuskAmpProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -311,8 +354,15 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     // Fresh-insert default: if no IR has been loaded yet (no saved state, or
     // saved state had an empty path), pull in the default for the current
-    // amp model so the user hears something sensible immediately.
-    if (cabIRPath_.isEmpty() && ! userLoadedIR_)
+    // amp model so the user hears something sensible immediately. cabIRPath_
+    // is written from the cab-load worker under statusLock_, so the read
+    // must take the same lock or risk a torn juce::String ref-count.
+    bool cabPathEmpty;
+    {
+        const juce::ScopedLock lk (statusLock_);
+        cabPathEmpty = cabIRPath_.isEmpty();
+    }
+    if (cabPathEmpty && ! userLoadedIR_.load (std::memory_order_acquire))
         loadDefaultIRForCurrentToneType();
 
     auto rampSamples = static_cast<double> (kSmoothingBlockSize);
@@ -601,32 +651,109 @@ juce::AudioProcessorEditor* DuskAmpProcessor::createEditor()
     return new DuskAmpEditor (*this);
 }
 
+void DuskAmpProcessor::loadCabinetIR (const juce::File& file)
+{
+    {
+        const juce::ScopedLock lk (statusLock_);
+        lastIRStatus_ = "loading: " + file.getFileName();
+    }
+
+    // Defer to background worker — CabinetIR::loadIR runs a pink-noise
+    // RMS measurement that sleep-polls JUCE's async convolution loader
+    // for up to ~1 s. Running that on the message thread freezes the
+    // editor. Same threading contract as loadNAMModel above.
+    cabLoadPool_.addJob (
+        [this, file]() -> void
+        {
+            auto& cab = engine_.getCabinetIR();
+            const bool ok = cab.loadIR (file);
+
+            const juce::ScopedLock lk (statusLock_);
+            if (ok)
+            {
+                cabIRPath_ = file.getFullPathName();
+                userLoadedIR_.store (true, std::memory_order_release);
+                lastIRStatus_ = "OK: " + file.getFileNameWithoutExtension();
+            }
+            else
+            {
+                lastIRStatus_ = "FAIL: " + cab.getLastError();
+            }
+        });
+}
+
 void DuskAmpProcessor::loadNAMModel (const juce::File& file)
 {
 #if DUSKAMP_NAM_SUPPORT
-    lastNAMStatus_ = "loading: " + file.getFileName();
-    auto& nam = engine_.getNAMProcessor();
-    if (nam.loadModel (file))
     {
-        namModelPath_ = file.getFullPathName();
-        lastNAMStatus_ = "OK: " + file.getFileNameWithoutExtension();
+        const juce::ScopedLock lk (statusLock_);
+        lastNAMStatus_ = "loading: " + file.getFileName();
     }
-    else
-    {
-        lastNAMStatus_ = "FAIL: " + nam.getLastError();
-    }
+
+    // Defer parsing to a background worker — nam::get_dsp() walks the full
+    // network architecture and can stall the message thread for hundreds
+    // of ms on big WaveNets. The model swap inside NAMProcessor is
+    // already lock-free + audio-thread safe (pendingReady_ atomic flag).
+    namLoadPool_.addJob (
+        [this, file]() -> void
+        {
+            auto& nam = engine_.getNAMProcessor();
+            const bool ok = nam.loadModel (file);
+
+            const juce::ScopedLock lk (statusLock_);
+            if (ok)
+            {
+                namModelPath_ = file.getFullPathName();
+                // If NAMProcessor flagged a SR-mismatch via lastError, keep
+                // that surfaced; otherwise show the loaded model name.
+                auto warn = nam.getLastError();
+                lastNAMStatus_ = warn.isNotEmpty()
+                    ? ("OK (" + warn + ")")
+                    : ("OK: " + file.getFileNameWithoutExtension());
+            }
+            else
+            {
+                lastNAMStatus_ = "FAIL: " + nam.getLastError();
+            }
+        });
 #else
     juce::ignoreUnused (file);
+    const juce::ScopedLock lk (statusLock_);
     lastNAMStatus_ = "NAM not compiled";
 #endif
+}
+
+juce::String DuskAmpProcessor::getNAMModelPath() const
+{
+    const juce::ScopedLock lk (statusLock_);
+    return namModelPath_;
+}
+
+juce::String DuskAmpProcessor::getLastNAMStatus() const
+{
+    const juce::ScopedLock lk (statusLock_);
+    return lastNAMStatus_;
+}
+
+juce::String DuskAmpProcessor::getLastIRStatus() const
+{
+    const juce::ScopedLock lk (statusLock_);
+    return lastIRStatus_;
 }
 
 void DuskAmpProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
-    // Store file paths as properties
-    state.setProperty ("cabIRPath", cabIRPath_, nullptr);
-    state.setProperty ("namModelPath", namModelPath_, nullptr);
+    // Snapshot both worker-thread-written strings under statusLock_ before
+    // handing them to the ValueTree (which copies internally).
+    juce::String cabPath, namPath;
+    {
+        const juce::ScopedLock lk (statusLock_);
+        cabPath = cabIRPath_;
+        namPath = namModelPath_;
+    }
+    state.setProperty ("cabIRPath",   cabPath, nullptr);
+    state.setProperty ("namModelPath", namPath, nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -642,9 +769,16 @@ std::unique_ptr<juce::XmlElement> DuskAmpProcessor::getStateXML()
     auto state = parameters.copyState();
     // Only persist the cab IR path when the user explicitly chose it — auto-
     // loaded defaults are looked up at restore time so amp-swap auto-load
-    // keeps working across sessions.
-    state.setProperty ("cabIRPath", userLoadedIR_ ? cabIRPath_ : juce::String(), nullptr);
-    state.setProperty ("namModelPath", namModelPath_, nullptr);
+    // keeps working across sessions. Snapshot under statusLock_ for the
+    // same reason as getStateInformation.
+    juce::String cabPath, namPath;
+    {
+        const juce::ScopedLock lk (statusLock_);
+        cabPath = userLoadedIR_.load (std::memory_order_acquire) ? cabIRPath_ : juce::String();
+        namPath = namModelPath_;
+    }
+    state.setProperty ("cabIRPath",   cabPath, nullptr);
+    state.setProperty ("namModelPath", namPath, nullptr);
     return state.createXml();
 }
 
@@ -654,27 +788,73 @@ void DuskAmpProcessor::setStateXML (const juce::XmlElement& xml)
     {
         parameters.replaceState (juce::ValueTree::fromXml (xml));
 
-        // Restore cab IR path from saved state
-        cabIRPath_ = parameters.state.getProperty ("cabIRPath", "").toString();
-        if (cabIRPath_.isNotEmpty())
+        // Restore cab IR path from saved state. When the saved file is
+        // missing (renamed / moved / cross-machine), fall back to the
+        // bundled default for the current amp model so the cabinet
+        // doesn't go silent. Clear the user-override flag so subsequent
+        // amp-model changes resume auto-loading defaults.
+        const juce::String savedCabPath =
+            parameters.state.getProperty ("cabIRPath", "").toString();
         {
-            juce::File cabFile (cabIRPath_);
+            const juce::ScopedLock lk (statusLock_);
+            cabIRPath_ = savedCabPath;
+        }
+        if (savedCabPath.isNotEmpty())
+        {
+            juce::File cabFile (savedCabPath);
             if (cabFile.existsAsFile())
             {
-                engine_.getCabinetIR().loadIR (cabFile);
-                userLoadedIR_ = true;
+                // Route through the async wrapper so A/B recalls and host
+                // state restores don't block the message thread for the
+                // ~500 ms pink-noise loudness measurement (Phase 1).
+                loadCabinetIR (cabFile);
+            }
+            else
+            {
+                {
+                    const juce::ScopedLock lk (statusLock_);
+                    cabIRPath_.clear();
+                    lastIRStatus_ = "warn: saved IR missing — using bundled default";
+                }
+                userLoadedIR_.store (false, std::memory_order_release);
+                loadDefaultIRForCurrentToneType();
             }
         }
 
-        // Restore NAM model path from saved state
+        // Restore NAM model path from saved state.
         namModelPath_ = parameters.state.getProperty ("namModelPath", "").toString();
         if (namModelPath_.isNotEmpty())
         {
             juce::File namFile (namModelPath_);
             if (namFile.existsAsFile())
+            {
                 loadNAMModel (namFile);
+            }
+            else
+            {
+                // namModelPath_ is written by the NAM worker thread under
+                // statusLock_; clearing it must go through the same lock
+                // to avoid a torn juce::String reassignment.
+                const juce::ScopedLock lk (statusLock_);
+                namModelPath_.clear();
+                lastNAMStatus_ = "warn: saved NAM model missing — load a new one";
+            }
         }
     }
+}
+
+void DuskAmpProcessor::pushABSlot (int slot)
+{
+    if (slot < 0 || slot > 1) return;
+    abSlots_[slot] = getStateXML();
+    abActiveSlot_  = slot;
+}
+
+void DuskAmpProcessor::recallABSlot (int slot)
+{
+    if (slot < 0 || slot > 1 || abSlots_[slot] == nullptr) return;
+    setStateXML (*abSlots_[slot]);
+    abActiveSlot_ = slot;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

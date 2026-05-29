@@ -15,8 +15,13 @@ public:
 
     void setLoadedFile(const juce::File& file);
 
+    /** Override the hint shown when the list is empty (no files scanned).
+        Default is "No files — click Browse to load.". */
+    void setEmptyStateText(const juce::String& text) { emptyStateText_ = text; repaint(); }
+
     void resized() override;
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
 
 private:
     int getNumRows() override;
@@ -32,10 +37,12 @@ private:
     juce::ListBox fileList_{"", this};
     juce::TextButton browseButton_{"Browse"};
     juce::Label headerLabel_;
+    juce::Label loadedNameLabel_;
 
     juce::File rootDir_;
     juce::File loadedFile_;
     juce::Array<juce::File> files_;
+    juce::String emptyStateText_ { "No files - click Browse to load." };
 
     std::unique_ptr<juce::FileChooser> fileChooser_;
 

@@ -1,6 +1,10 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
+// Modern minimalist look — single-accent, flat, no skeumorphic gradients.
+// Drawing principle: reserve ALL orange for engaged / actively-changing
+// state. Static labels are neutral grey. Knob arc only fills past the
+// 12-o'clock position to make value-at-a-glance obvious.
 class DuskAmpLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -16,24 +20,30 @@ public:
                            bool shouldDrawButtonAsHighlighted,
                            bool shouldDrawButtonAsDown) override;
 
-    // Dark amp-style theme with warm amber accent
-    static constexpr juce::uint32 kBackground   = 0xff1a1a1a;  // Very dark grey
-    static constexpr juce::uint32 kPanel        = 0xff242424;  // Dark panel
-    static constexpr juce::uint32 kAccent       = 0xffda8a2e;  // Warm amber/orange
-    static constexpr juce::uint32 kKnobFill     = 0xff3a3a3a;  // Dark knob
-    static constexpr juce::uint32 kBorder       = 0xff4a4a4a;  // Subtle border
+    void drawComboBox (juce::Graphics&, int width, int height, bool isButtonDown,
+                       int buttonX, int buttonY, int buttonW, int buttonH,
+                       juce::ComboBox&) override;
 
-    // 4-tier text hierarchy (brightest -> dimmest)
-    static constexpr juce::uint32 kValueText    = 0xfff0f0f0;  // value readouts (brightest)
-    static constexpr juce::uint32 kLabelText    = 0xffb0b0b0;  // knob name labels (bold)
-    static constexpr juce::uint32 kGroupText    = 0xff888888;  // group titles, inactive buttons
-    static constexpr juce::uint32 kDimText      = 0xff555555;  // disabled controls
+    // ===== Modern minimalist palette =====
+    // Background = warm near-black; panels = one notch up; accent = single
+    // amber used ONLY for engaged state. Text uses 3 tiers, all neutral.
+    static constexpr juce::uint32 kBackground   = 0xff0e0e10;  // near-black, faintly warm
+    static constexpr juce::uint32 kPanel        = 0xff17171a;  // panel — one notch up
+    static constexpr juce::uint32 kAccent       = 0xffda8a2e;  // amber — ENGAGED state only
+    static constexpr juce::uint32 kKnobFill     = 0xff1c1c20;  // slightly darker than panel
+    static constexpr juce::uint32 kBorder       = 0xff2a2a2e;  // thin border
 
-    // Legacy aliases (title, tooltips)
-    static constexpr juce::uint32 kText         = 0xffe0e0e0;
-    static constexpr juce::uint32 kSubtleText   = 0xff888888;
+    // 3 tiers — no more 4-tier ramp; flat hierarchy.
+    static constexpr juce::uint32 kValueText    = 0xffe8e8ea;  // primary readouts
+    static constexpr juce::uint32 kLabelText    = 0xff9a9a9e;  // knob names + section titles
+    static constexpr juce::uint32 kGroupText    = 0xff707074;  // inactive UI
 
-    // Amp-specific
-    static constexpr juce::uint32 kLED          = 0xff44ff44;  // Green LED
-    static constexpr juce::uint32 kLEDOff       = 0xff224422;  // LED off state
+    // Compatibility aliases (still referenced by some call sites).
+    static constexpr juce::uint32 kDimText      = 0xff4a4a4e;
+    static constexpr juce::uint32 kText         = 0xffe8e8ea;
+    static constexpr juce::uint32 kSubtleText   = 0xff707074;
+
+    // LED indicator (gate/clip)
+    static constexpr juce::uint32 kLED          = 0xffda8a2e;  // accent for ON
+    static constexpr juce::uint32 kLEDOff       = 0xff2a2a2e;  // off = border colour
 };

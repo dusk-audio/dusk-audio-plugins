@@ -144,3 +144,7 @@ plugins/DuskVerb/tests/reference_comparison
 *.zip
 tests/test_linear_phase
 tests/velvet90_match/
+
+# DuskAmp A/B reference renders (~650 MB local-only dev material, not
+# shipped — used by tests/comparison/ python comparison scripts).
+plugins/DuskAmp/tests/comparison/ab_recordings/

@@ -18,30 +18,55 @@ ToneStack::Voicing ToneStack::getVoicing (Type type)
     switch (type)
     {
         case Type::American:
-            // Fender black-panel voicing: bass shelf at 150 Hz (where most
-            // of the perceived bass-knob effect lives), broad lower-mid
-            // peak around 500 Hz, HF shelf at 4 kHz.
-            return { 150.0f, 9.0f,   // bass shelf, ±dB
-                     500.0f, 0.65f, 7.0f, // mid peak, Q, ±dB
-                    4000.0f, 0.0f, 9.0f,  // treble: shelf, ±dB
-                     true, false };
+            // Fender Bassman / AB763 Twin tone-stack — Yeh & Smith DAFx-06
+            // analytical reference: R1=250k R2=1M R3=25k R4=56k
+            // C1=250pF C2=C3=20nF. Bass corner ~80-100 Hz; mid scoop
+            // centred ~400 Hz; treble corner ~4-5 kHz. Noon (flat-knob)
+            // character: mild mid scoop (-3 dB) + small treble lift
+            // (+1 dB) — what a real AB763 measures at all-knobs-noon
+            // before the user touches anything.
+            return { 100.0f, 12.0f,
+                     400.0f, 0.6f, 8.0f,
+                    4500.0f, 0.0f, 9.0f,
+                     true, false,
+                    +1.0f, -3.0f, +1.0f }; // noon bias dB
         case Type::British:
-            // Marshall voicing: bass shelf a bit higher (the 1959/JCM has
-            // a fuller LF corner), mid peak around 650 Hz with tighter Q
-            // (the Marshall "honk"), HF shelf at 3.5 kHz to tame ice-pick.
-            return { 180.0f, 9.0f,
-                     650.0f, 0.85f, 6.0f,
-                    3500.0f, 0.0f, 10.0f,
-                     true, false };
+            // Marshall JCM800 2203 — FMV stack with mods vs Fender:
+            // R4=33k (Fender 56k) tightens mid coupling and pushes the
+            // mid centre up to ~700-800 Hz; C1=470pF (Fender 250pF) drops
+            // the treble corner to ~2-2.5 kHz. Treble at noon is REAL
+            // JCM800's distinctive lift (+5 dB pre-fader) — measured on
+            // production amps via Yeh/Smith stack. Mid scoop -3 dB.
+            return {  80.0f, 10.0f,
+                     750.0f, 1.0f, 10.0f,
+                    2500.0f, 0.7f, 10.0f,  // moderate Q — JCM800 470pF cap +
+                                            //  33k R4 produce a defined treble
+                                            //  presence not a wide shelf
+                     true, false,
+                    +2.0f, -3.0f, +1.0f }; // noon bias dB — matches real FMV
+                                            //  stack at 12-o'clock: mild LF
+                                            //  bump, mid scoop, modest HF lift.
+                                            //  Hz target left to user's TREBLE
+                                            //  knob (real Marshall players
+                                            //  tend to run 6-7/10 anyway).
         case Type::AC:
         default:
-            // Vox AC30 Top Boost — no mid stage, peaking treble for the
-            // signature "chime" resonance at 6.5 kHz, plus the cathode-
-            // follower nonlinearity preserved from the prior implementation.
-            return { 100.0f, 12.0f,
+            // Vox AC30 Top Boost — no mid band. Treble peak centred at
+            // 7 kHz with tight Q=2.2 for the unmistakable "chime" lift.
+            // Noon bias: +6 dB treble pre-fader because real AC30 Top
+            // Boost network has an inherent presence emphasis even with
+            // the cut control at maximum cut — it's how the amp gets the
+            // famous chime without HF boost from the user.
+            return { 100.0f, 15.0f,
                        0.0f, 0.0f, 0.0f, // mid disabled
-                    6500.0f, 1.4f, 15.0f, // peaking HF (chime)
-                     false, true };
+                    4500.0f, 1.0f, 15.0f, // peaking HF (chime) — wider Q + lower
+                                          //  centre so the noon bias affects more
+                                          //  octaves of HF energy (cab IR rolls
+                                          //  off above 6 kHz, so the peak has to
+                                          //  sit where the cab still passes audio)
+                     false, true,
+                    +2.0f, 0.0f, +10.0f }; // noon bias dB — strong HF lift for
+                                            //  the AC30 chime signature
     }
 }
 
@@ -159,9 +184,13 @@ void ToneStack::recomputeCoefficients()
 {
     const auto v = getVoicing (currentType_);
 
-    // Knob 0..1 → ±max dB, with knob=0.5 = flat (0 dB).
-    const float bassDb   = (bass_   - 0.5f) * 2.0f * v.bassMaxDb;
-    const float trebleDb = (treble_ - 0.5f) * 2.0f * v.trebleMaxDb;
+    // Knob 0..1 → ±max dB plus per-amp noon bias. Real tone stacks at
+    // 12-o'clock knob position aren't flat — they carry the amp's
+    // signature shape (Marshall scoop, AC30 chime, Fender mid dip).
+    // noonBias terms encode that shape so the DSP shows the correct
+    // character even when the user hasn't moved a knob.
+    const float bassDb   = (bass_   - 0.5f) * 2.0f * v.bassMaxDb   + v.noonBassDb;
+    const float trebleDb = (treble_ - 0.5f) * 2.0f * v.trebleMaxDb + v.noonTrebleDb;
 
     designLowShelf (bassBq_, v.bassHz, bassDb, sampleRate_);
 
@@ -172,7 +201,7 @@ void ToneStack::recomputeCoefficients()
 
     if (v.hasMid)
     {
-        const float midDb = (mid_ - 0.5f) * 2.0f * v.midMaxDb;
+        const float midDb = (mid_ - 0.5f) * 2.0f * v.midMaxDb + v.noonMidDb;
         designPeakingEQ (midBq_, v.midHz, midDb, v.midQ, sampleRate_);
     }
 }

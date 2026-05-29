@@ -1,0 +1,133 @@
+DuskAmp — Third-Party License Notices
+=====================================
+
+DuskAmp itself is licensed under the GNU General Public License v3.0
+(see the LICENSE file at the root of this distribution).
+
+This binary additionally incorporates the following third-party software.
+Each component is reproduced here as required by its respective license.
+
+-----------------------------------------------------------------------
+1.  JUCE 8
+-----------------------------------------------------------------------
+
+DuskAmp is built with JUCE 8 (https://juce.com) and is distributed under
+the terms of the GNU General Public License v3.0, which is compatible
+with JUCE's GPL licensing option.
+
+Copyright (c) 2024 - Raw Material Software Limited.
+
+The JUCE source code is available from https://github.com/juce-framework/JUCE
+under the GNU GPL v3.0. By accepting the DuskAmp LICENSE you also accept
+the terms of the JUCE GPL distribution.
+
+-----------------------------------------------------------------------
+2.  NeuralAmpModelerCore (NAM)
+-----------------------------------------------------------------------
+
+When DuskAmp is built with BUILD_NAM_SUPPORT=ON (the default), the
+plugin links against the NeuralAmpModelerCore inference library.
+
+Upstream:   https://github.com/sdatkinson/NeuralAmpModelerCore
+License:    MIT
+
+    MIT License
+
+    Copyright (c) 2022 Steven Atkinson
+
+    Permission is hereby granted, free of charge, to any person obtaining
+    a copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be
+    included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+-----------------------------------------------------------------------
+3.  nlohmann/json
+-----------------------------------------------------------------------
+
+The NAM model loader uses nlohmann/json for parsing model metadata.
+
+Upstream:   https://github.com/nlohmann/json
+License:    MIT
+
+    MIT License
+
+    Copyright (c) 2013-2022 Niels Lohmann
+
+    Permission is hereby granted, free of charge, to any person obtaining
+    a copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be
+    included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+-----------------------------------------------------------------------
+4.  Eigen
+-----------------------------------------------------------------------
+
+NAM inference uses the Eigen linear algebra template library.
+
+Upstream:   https://eigen.tuxfamily.org
+License:    Mozilla Public License 2.0 (MPL2 subset only)
+
+This DuskAmp build defines EIGEN_MPL2_ONLY at compile time, which
+restricts the Eigen usage to the MPL 2.0-licensed portion of the
+library. No LGPL-only Eigen modules are linked.
+
+The full text of the Mozilla Public License 2.0 is available at
+https://www.mozilla.org/MPL/2.0/ and is reproduced in the Eigen source
+distribution at the upstream URL above.
+
+In summary (not a substitute for the full license):
+
+    Eigen is distributed under the Mozilla Public License v2.0. Under
+    MPL 2.0 you may use Eigen in proprietary or open-source projects.
+    Modifications to Eigen source files themselves must be released
+    under MPL 2.0; combining Eigen with other code (such as DuskAmp)
+    does not impose MPL terms on the other code.
+
+Source for the Eigen subset used by this build is available from the
+upstream URL above at the version pinned in
+external/NeuralAmpModelerCore/Dependencies/eigen/.
+
+-----------------------------------------------------------------------
+5.  Cabinet IRs
+-----------------------------------------------------------------------
+
+DuskAmp ships three cabinet impulse responses bundled in the plugin
+binary, one per amp model. Each capture is used with full authorization
+from its respective creator. See plugins/DuskAmp/Resources/cabs/NOTICE.txt
+for the full attribution list. Summary:
+
+  American (Fender)    Twin_Reverb_SM57_A.wav   Rocksta Reactions
+  British (Marshall)   JCM800_NT1A_B.wav        Rocksta Reactions
+  AC (Vox)             AC30_Blue_1.wav          Vulterized
+
+All bundled IRs remain the property of their respective creators.
+Extracting and redistributing the IR WAV files outside of DuskAmp's
+distribution channel is not authorized by this attribution.

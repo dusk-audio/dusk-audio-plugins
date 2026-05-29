@@ -47,12 +47,7 @@ public:
 
     // Load a cabinet IR file (called from editor's Load IR... button).
     // Marks the IR as user-chosen so amp-model changes won't overwrite it.
-    void loadCabinetIR (const juce::File& file)
-    {
-        engine_.getCabinetIR().loadIR (file);
-        cabIRPath_ = file.getFullPathName();
-        userLoadedIR_ = true;
-    }
+    void loadCabinetIR (const juce::File& file);
 
     // APVTS::Listener — fires on TONE_TYPE change to swap in the default IR
     // for the new amp model (unless the user has explicitly loaded one).
@@ -61,12 +56,28 @@ public:
     // Clears the "user picked an IR" override so factory presets and
     // amp-model swaps will load the matching bundled default. Called from
     // the preset dropdown when a factory preset is selected.
-    void clearUserIROverride() noexcept { userLoadedIR_ = false; }
+    void clearUserIROverride() noexcept { userLoadedIR_.store (false, std::memory_order_release); }
 
-    // Load a NAM model file (called from editor)
+    // Load a NAM model file (called from editor). Parsing is deferred to a
+    // background thread — caller returns immediately; poll getLastNAMStatus().
     void loadNAMModel (const juce::File& file);
-    juce::String getNAMModelPath() const { return namModelPath_; }
-    juce::String getLastNAMStatus() const { return lastNAMStatus_; }
+    juce::String getNAMModelPath() const;
+    juce::String getLastNAMStatus() const;
+
+    // Cabinet IR status (mirror of getLastNAMStatus for IR loads).
+    juce::String getLastIRStatus() const;
+
+    // A/B slot snapshot — session-only (not persisted to host state). Each
+    // slot stores a complete state XML (APVTS + cab/NAM paths). Left-click
+    // on the editor's A/B pill recalls; right-click captures. Initial state:
+    // both slots empty until first capture. `slot` must be 0 (A) or 1 (B).
+    void pushABSlot   (int slot);
+    void recallABSlot (int slot);
+    int  getABActiveSlot()   const noexcept { return abActiveSlot_; }
+    bool isABSlotPopulated (int slot) const noexcept
+    {
+        return slot >= 0 && slot < 2 && abSlots_[slot] != nullptr;
+    }
 
     juce::AudioProcessorValueTreeState parameters;
 
@@ -93,17 +104,50 @@ private:
     // Cab IR path (persisted in state)
     juce::String cabIRPath_;
     // True once the user explicitly picks an IR via the editor — prevents
-    // amp-model changes from clobbering their choice.
-    bool userLoadedIR_ = false;
+    // amp-model changes from clobbering their choice. Written from the
+    // cab-load worker (cabLoadPool_) and read from the message thread in
+    // loadDefaultIRForCurrentToneType/prepareToPlay/getStateXML — atomic
+    // with acquire/release ordering is the lightest correct guard.
+    std::atomic<bool> userLoadedIR_ { false };
 
     // Loads the default IR for the current TONE_TYPE if the user hasn't
     // already picked one. Safe to call from any thread (file I/O is queued
     // by juce::dsp::Convolution internally).
     void loadDefaultIRForCurrentToneType();
 
-    // NAM model path (persisted in state)
+    // NAM model path (persisted in state). All string state read/written
+    // from worker thread (NAM load) and UI thread (timer poll) goes under
+    // statusLock_. Without the lock, juce::String's ref-counted copy is
+    // unsafe across threads.
+    juce::CriticalSection statusLock_;
     juce::String namModelPath_;
     juce::String lastNAMStatus_ { "idle" };
+    juce::String lastIRStatus_  { "idle" };
+
+    // Worker thread for NAM model parsing (.nam files for large WaveNet
+    // models can take several hundred ms — must not block the UI / DAW
+    // event loop when the user picks a file).
+    //
+    // INVARIANT: namLoadPool_ MUST be declared AFTER engine_. C++ destroys
+    // non-static members in reverse declaration order ([class.dtor]), so
+    // ~ThreadPool runs FIRST and joins any in-flight jobs (its destructor
+    // calls removeAllJobs() + stopThreads()). This guarantees the lambda
+    // capturing `this` no longer touches engine_ by the time engine_'s
+    // own destructor runs. Reordering these members introduces a UAF.
+    juce::ThreadPool namLoadPool_ { 1 };
+
+    // Worker thread for cabinet IR loading. CabinetIR::loadIR does a pink-
+    // noise loudness-match measurement that polls juce::dsp::Convolution's
+    // async loader with juce::Thread::sleep(5) × up-to-200 — running it on
+    // the message thread freezes the editor for 200–500 ms per IR pick.
+    // Same destruction-order invariant as namLoadPool_.
+    juce::ThreadPool cabLoadPool_ { 1 };
+
+    // A/B snapshot slots. Stored as full state XML so a recall round-trips
+    // every APVTS param plus cabIRPath_/namModelPath_ in one shot. Session-
+    // only — getStateInformation/setStateInformation don't touch these.
+    std::unique_ptr<juce::XmlElement> abSlots_[2];
+    int abActiveSlot_ = -1;
 
     // Discrete / choice parameter pointers
     std::atomic<float>* ampModeParam_       = nullptr;
@@ -203,5 +247,11 @@ private:
     std::atomic<float> detectedHz_    { 0.0f };
     std::atomic<float> detectedLevel_ { 0.0f };
 
+    // WeakReference support — message-thread async callbacks queued via
+    // juce::MessageManager::callAsync from parameterChanged() may not fire
+    // until after this processor is destroyed (DAW closes the plugin while
+    // an automation event is in flight). Lambdas capture a WeakReference
+    // and bail out if the target is gone.
+    JUCE_DECLARE_WEAK_REFERENCEABLE (DuskAmpProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DuskAmpProcessor)
 };
