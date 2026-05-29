@@ -1667,7 +1667,8 @@ public:
     float process(float input, int channel, float inputGainDb, float outputGainDb,
                   float attackMs, float releaseMs, int ratioIndex, bool oversample = false,
                   const LookupTables* lookupTables = nullptr, TransientShaper* transientShaper = nullptr,
-                  bool useMeasuredCurve = false, float transientSensitivity = 0.0f, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
+                  bool useMeasuredCurve = false, float transientSensitivity = 0.0f, float sidechainSignal = 0.0f, bool useExternalSidechain = false,
+                  float thresholdDb = Constants::FET_THRESHOLD_DB)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -1682,14 +1683,11 @@ public:
         // Adds subtle saturation and frequency-dependent coloration
         float transformedInput = inputTransformer.processSample(input, channel);
 
-        // FET Input control - AUTHENTIC BEHAVIOR
-        // The FET has a FIXED threshold that the input knob drives signal into
-        // More input = more compression (not threshold change)
-
-        // Fixed threshold (FET characteristic)
-        // The FET threshold is around -10 dBFS according to specifications
-        // This is the level where compression begins to engage
-        const float thresholdDb = Constants::FET_THRESHOLD_DB; // Authentic FET threshold
+        // FET Input control — host-adjustable threshold (default
+        // Constants::FET_THRESHOLD_DB = -10 dBFS, the original fixed
+        // value, preserves legacy behavior when callers don't pass it).
+        // The input knob still drives signal into the threshold — turn
+        // input up to over-compress without moving threshold.
         float threshold = juce::Decibels::decibelsToGain(thresholdDb);
 
         // Apply FULL input gain - this is how you drive into compression
@@ -4410,6 +4408,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "fet_ratio", "Ratio",
         juce::StringArray{"4:1", "8:1", "12:1", "20:1", "All"}, 0));
+    // Adjustable FET threshold (default -10 dBFS = original fixed value, so
+    // legacy presets / saved state default to identical behaviour). Host
+    // can sweep the effective compression threshold while preserving the
+    // FET stage's characteristic saturation / transformer colouration.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "fet_threshold", "Threshold",
+        juce::NormalisableRange<float>(-40.0f, 0.0f, 0.1f), -10.0f));
 
     // FET All-Buttons mode curve selection (Modern = current algorithm, Measured = hardware-measured)
     layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -5123,7 +5128,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // Cache active mode params once (mirrors the switch below in the
         // standard path but only reads what THIS mode needs).
         const CompressorMode fastMode = getCurrentMode();
-        float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f, p3 = 0.0f, p4 = 0.0f, p5 = 0.0f, p6 = 0.0f;
+        float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f, p3 = 0.0f, p4 = 0.0f, p5 = 0.0f, p6 = 0.0f, p7 = Constants::FET_THRESHOLD_DB;
         switch (fastMode)
         {
             case CompressorMode::Opto:
@@ -5132,13 +5137,14 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 if (auto* a = parameters.getRawParameterValue ("opto_limit"))          p2 = a->load();
                 break;
             case CompressorMode::FET:
-                if (auto* a = parameters.getRawParameterValue ("fet_input"))    p0 = a->load();
-                if (auto* a = parameters.getRawParameterValue ("fet_output"))   p1 = a->load();
-                if (auto* a = parameters.getRawParameterValue ("fet_attack"))   p2 = a->load();
-                if (auto* a = parameters.getRawParameterValue ("fet_release")) p3 = a->load();
-                if (auto* a = parameters.getRawParameterValue ("fet_ratio"))    p4 = a->load();
-                if (auto* a = parameters.getRawParameterValue ("fet_curve_mode"))      p5 = a->load();
-                if (auto* a = parameters.getRawParameterValue ("fet_transient"))       p6 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_input"))     p0 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_output"))    p1 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_attack"))    p2 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_release"))   p3 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_ratio"))     p4 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_curve_mode")) p5 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_transient"))  p6 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_threshold"))  p7 = a->load();
                 break;
             case CompressorMode::VCA:
                 if (auto* a = parameters.getRawParameterValue ("vca_threshold")) p0 = a->load();
@@ -5224,7 +5230,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         for (int i = 0; i < numSamples; ++i)
                             data[i] = fetCompressor->process (data[i], ch, p0, p1, p2, p3, static_cast<int>(p4), false,
                                                                 lookupTables.get(), transientShaper.get(),
-                                                                p5 > 0.5f, p6, data[i], false);
+                                                                p5 > 0.5f, p6, data[i], false, p7);
                         break;
                     case CompressorMode::VCA:
                         for (int i = 0; i < numSamples; ++i)
@@ -5456,6 +5462,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p5 = parameters.getRawParameterValue("fet_ratio");
             auto* p6 = parameters.getRawParameterValue("fet_curve_mode");
             auto* p7 = parameters.getRawParameterValue("fet_transient");
+            auto* p8 = parameters.getRawParameterValue("fet_threshold");
             if (p1 && p2 && p3 && p4 && p5) {
                 cachedParams[0] = p1->load();
                 // When auto-makeup is enabled, force output to 0dB (unity)
@@ -5465,6 +5472,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 cachedParams[4] = p5->load();
                 cachedParams[5] = (p6 != nullptr) ? p6->load() : 0.0f;  // Curve mode (0=Modern, 1=Measured)
                 cachedParams[6] = (p7 != nullptr) ? p7->load() : 0.0f;  // Transient sensitivity (0-100%)
+                cachedParams[7] = (p8 != nullptr) ? p8->load() : Constants::FET_THRESHOLD_DB;  // Adjustable threshold dBFS
             } else validParams = false;
             break;
         }
@@ -6189,7 +6197,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         data[i] = fetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1],
                                                          cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), true,
                                                          lookupTables.get(), transientShaper.get(),
-                                                         cachedParams[5] > 0.5f, cachedParams[6], scData[i], hasExternalSidechain);
+                                                         cachedParams[5] > 0.5f, cachedParams[6], scData[i], hasExternalSidechain,
+                                                         cachedParams[7]);
                     break;
                 case CompressorMode::VCA:
                     for (int i = 0; i < osNumSamples; ++i)
@@ -6291,7 +6300,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         data[i] = fetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1],
                                                          cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), false,
                                                          lookupTables.get(), transientShaper.get(),
-                                                         cachedParams[5] > 0.5f, cachedParams[6], scSignal, hasExternalSidechain) * compensationGain;
+                                                         cachedParams[5] > 0.5f, cachedParams[6], scSignal, hasExternalSidechain,
+                                                         cachedParams[7]) * compensationGain;
                     }
                     break;
                 case CompressorMode::VCA:
