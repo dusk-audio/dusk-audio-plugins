@@ -182,7 +182,7 @@ private:
         bool  useMultiPointOutput = false;
 
         // Damping coefficients (zero-tear: passed by const-ref each sample)
-        ThreeBandDamping::Coeffs damping[N] {};
+        FiveBandDamping::Coeffs damping[N] {};
 
         // Structural / anti-alias / DC-blocker coefficients
         float structHFCoeff      = 0.0f;
@@ -300,7 +300,7 @@ private:
     InlineAllpass inlineAP2_[N];
     InlineAllpass inlineAP3_[N];
     InlineAllpass inlineAPShort_[N];
-    ThreeBandDamping dampFilter_[N];     // holds biquad state only; coeffs come from lp.damping[]
+    FiveBandDamping dampFilter_[N];      // holds biquad state only; coeffs come from lp.damping[]
     DspUtils::RandomWalkLFO lfos_[N];
     // Phase 2: single master sine LFO for CoherentLoop topology. All 16
     // delay lines tap THIS one LFO at per-line phase offsets so they
@@ -345,7 +345,7 @@ private:
     // noise" artefact caused by the prior raw-coefficient lerp briefly
     // pulling (a1, a2) outside the stability region twice per LFO cycle.
     static constexpr int kDampingSteps = 32;
-    ThreeBandDamping::Coeffs dampingModTable_[N][kDampingSteps] {};
+    FiveBandDamping::Coeffs dampingModTable_[N][kDampingSteps] {};
     bool dampingModActive_ = false;        // true only when topology == ModulatedDamping
                                             // AND designCoeffs has populated the table
 
