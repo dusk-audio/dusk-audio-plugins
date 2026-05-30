@@ -83,7 +83,7 @@ FREE_PARAMS = {
     "High Crossover":  (3000.0, 10000.0),  # APVTS [1000, 12000] — clamped
     "Diffusion":       (0.00,    1.00),    # APVTS [0.0, 1.0]
     "Lo Cut":          (20.0,   500.0),    # APVTS [5, 500] — 20Hz practical floor
-    "Hi Cut":          (10000.0, 20000.0), # APVTS [1000, 20000] — clamped above 10 kHz so Optuna can't kill the bright-bloom centroid
+    "Hi Cut":          (3000.0, 20000.0),  # APVTS [1000, 20000]. Widened down to 3 kHz 2026-05-30 for dark presets (Cathedral HiCut=4261). Safe under the direct-scoreboard objective — the cent_50/bloom gates now police over-darkening, so the old "Optuna kills bright bloom" clamp is obsolete.
     "Width":           (0.50,    1.05),    # APVTS [0.0, 2.0] — clamped to mono-compatible range; >1.05 with sparse Dattorro taps produces anti-correlated L/R
     "Saturation":      (0.00,    0.40),    # APVTS [0.0, 1.0] — 0.4 cap; above is destructive
     # DattorroPlateVintage corrective EQ + brightness (algo=1 only). Optimizer
