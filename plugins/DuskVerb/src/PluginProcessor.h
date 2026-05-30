@@ -29,10 +29,14 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 30.0; }
 
-    int getNumPrograms() override                              { return 1; }
-    int getCurrentProgram() override                           { return 0; }
-    void setCurrentProgram (int) override                      {}
-    const juce::String getProgramName (int) override           { return {}; }
+    // VST3 program API wired to FactoryPresets list. Lets hosts + the
+    // render harness route a preset apply through applyFactoryPreset() so
+    // the full engine config (sixAP brightness, DPV shelves, PostTankEQ
+    // bands) gets installed alongside the APVTS parameter values.
+    int getNumPrograms() override;
+    int getCurrentProgram() override                           { return currentProgram_; }
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destData) override;
@@ -79,6 +83,17 @@ private:
     // Crossfade state (audio thread only).
     int presetFadeRemaining_ = 0;
     int presetFadeTotal_     = 0;
+
+    // VST3 program API state (message thread only — host calls these on
+    // the message thread). Indexed into getFactoryPresets() vector.
+    int currentProgram_ = 0;
+
+    // Last factory preset applied via applyFactoryPreset(). Read from the
+    // audio thread inside performPresetSwap() to run preset.applyEngineConfig()
+    // on the newly active engine — that's where modulation topology and the
+    // PostTankEQ band overrides actually install (forcePushAllParametersTo
+    // only handles APVTS-routed parameters). Nullptr until first apply.
+    std::atomic<const FactoryPreset*> lastAppliedPreset_ { nullptr };
 
     // Scratch buffers for the previous engine's output during a fade. Sized
     // in prepareToPlay() to safeBlockSize so they're never reallocated on
@@ -164,6 +179,80 @@ private:
     std::atomic<float>* gateEnabledParam_   = nullptr;
     std::atomic<float>* gainTrimParam_      = nullptr;
     std::atomic<float>* monoBelowParam_     = nullptr;
+
+    // Phase α: PostTankEQ 4-band GAIN APVTS-driven. Freq + Q live in the
+    // per-preset kPostTankEQByName map (engine-config only). Optimizer
+    // touches these from --param sweeps in Stage 3.
+    std::atomic<float>* pteqBand0GainParam_ = nullptr;
+    std::atomic<float>* pteqBand1GainParam_ = nullptr;
+    std::atomic<float>* pteqBand2GainParam_ = nullptr;
+    std::atomic<float>* pteqBand3GainParam_ = nullptr;
+    // Per-band freq + Q cached from kPostTankEQByName at preset-swap time
+    // so edge-detect can re-issue engine.setPostTankEQBand on gain changes.
+    float pteqBandFreq_[4] {  80.0f,  500.0f, 3000.0f, 10000.0f };
+    float pteqBandQ_   [4] {   1.5f,    1.0f,    1.5f,     0.8f };
+    float lastPteqBand0Gain_ = 0.0f;
+    float lastPteqBand1Gain_ = 0.0f;
+    float lastPteqBand2Gain_ = 0.0f;
+    float lastPteqBand3Gain_ = 0.0f;
+
+    // Phase γ (2026-05-29): PostTankBandTrim 4-region gain trims. Independent
+    // linear gain stage that sits AFTER PostTankEQ, BEFORE the dry/wet mix
+    // matrix. Decoupled from FDN loop damping — corrective scalpel for EDT
+    // band shape and late bass boom. All defaults 0 dB → bit-identical
+    // bypass on legacy presets that don't opt in.
+    std::atomic<float>* postBandSubParam_    = nullptr;
+    std::atomic<float>* postBandLowMidParam_ = nullptr;
+    std::atomic<float>* postBandMidHiParam_  = nullptr;
+    std::atomic<float>* postBandAirParam_    = nullptr;
+    float lastPostBandSub_    = 0.0f;
+    float lastPostBandLowMid_ = 0.0f;
+    float lastPostBandMidHi_  = 0.0f;
+    float lastPostBandAir_    = 0.0f;
+
+    // Phase δ (2026-05-29): per-band attack-ramp envelope shape. 4 regions ×
+    // {attack_db, tau_ms}. All attack_db default 0 dB → AttackRamp gains
+    // stay at unity → bit-identical pass-through on legacy presets.
+    std::atomic<float>* edtSubAtkParam_     = nullptr;
+    std::atomic<float>* edtSubTauParam_     = nullptr;
+    std::atomic<float>* edtLowMidAtkParam_  = nullptr;
+    std::atomic<float>* edtLowMidTauParam_  = nullptr;
+    std::atomic<float>* edtMidHiAtkParam_   = nullptr;
+    std::atomic<float>* edtMidHiTauParam_   = nullptr;
+    std::atomic<float>* edtAirAtkParam_     = nullptr;
+    std::atomic<float>* edtAirTauParam_     = nullptr;
+    float lastEDTSubAtk_    = 0.0f;
+    float lastEDTSubTau_    = 100.0f;
+    float lastEDTLowMidAtk_ = 0.0f;
+    float lastEDTLowMidTau_ = 100.0f;
+    float lastEDTMidHiAtk_  = 0.0f;
+    float lastEDTMidHiTau_  = 100.0f;
+    float lastEDTAirAtk_    = 0.0f;
+    float lastEDTAirTau_    = 100.0f;
+
+    // Phase ε (2026-05-29): in-loop narrow-Q peaking band on FDN feedback
+    // path. gainDb default 0 → bypass guard in FDNReverb skips the per-
+    // line biquad → zero audio-thread cost when not in use.
+    std::atomic<float>* inLoopPeakHzParam_ = nullptr;
+    std::atomic<float>* inLoopPeakQParam_  = nullptr;
+    std::atomic<float>* inLoopPeakDbParam_ = nullptr;
+    float lastInLoopPeakHz_ = 1000.0f;
+    float lastInLoopPeakQ_  = 2.0f;
+    float lastInLoopPeakDb_ = 0.0f;
+
+    // Phase η (2026-05-29): per-line dual-time-constant bass shelf. Both
+    // gains 0 dB → bypass guard inside FDNReverb (dualBassShelfActive_)
+    // → no audio-thread cost on legacy presets.
+    std::atomic<float>* bassShelfFastFcParam_     = nullptr;
+    std::atomic<float>* bassShelfSlowFcParam_     = nullptr;
+    std::atomic<float>* bassShelfFastDbParam_     = nullptr;
+    std::atomic<float>* bassShelfSlowDbParam_     = nullptr;
+    std::atomic<float>* bassShelfTransitionParam_ = nullptr;
+    float lastBassShelfFastFc_     = 400.0f;
+    float lastBassShelfSlowFc_     = 200.0f;
+    float lastBassShelfFastDb_     = 0.0f;
+    float lastBassShelfSlowDb_     = 0.0f;
+    float lastBassShelfTransition_ = 100.0f;
 
     // DattorroPlateVintage corrective EQ + brightness — APVTS-driven so
     // Optuna can sweep them via --param. Only the active engine sees

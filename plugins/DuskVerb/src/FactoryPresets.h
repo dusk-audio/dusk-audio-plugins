@@ -99,6 +99,21 @@ struct FactoryPreset
     float dpvBassShelfGainDb   = 0.0f;
     float dpvBassShelfFreqHz   = 180.0f;
 
+    // Phase γ (2026-05-29): per-preset post-tank band-trim region gains —
+    // NOT struct fields (would break aggregate-init of every existing
+    // brace-init preset row). Per-preset overrides live in PluginProcessor.cpp::
+    // FactoryPreset::applyEngineConfig via a static name → 4-float-region
+    // map (kPostBandTrimByName). Presets not in the map get an all-zero-
+    // dB trim → bit-identical bypass.
+
+    // Post-tank parametric EQ (4 bands × {freqHz, Q, gainDb}) — NOT a struct
+    // field for the same reason as Phase 2 modulation topology: adding 12
+    // array entries to FactoryPreset would break the aggregate-init of every
+    // existing brace-init preset row that doesn't reach into DPV territory.
+    // Per-preset overrides live in PluginProcessor.cpp::FactoryPreset::
+    // applyEngineConfig via a static name → bands map (kPostTankEQByName).
+    // Presets not in the map get an all-zero-gain EQ → bit-identical bypass.
+
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
         auto setIfExists = [&apvts] (const juce::String& id, float v) {
@@ -142,6 +157,34 @@ struct FactoryPreset
         setIfExists ("dpv_bass_shelf_db",      dpvBassShelfGainDb);
         setIfExists ("dpv_bass_shelf_hz",      dpvBassShelfFreqHz);
         setIfExists ("hi_cut_shelf_db",        hiCutShelfGainDb);
+        // Phase γ post-tank per-band trim — per-preset overrides live in
+        // PluginProcessor.cpp::kPostBandTrimByName and are applied via
+        // engine.setPostTankBandTrimGainDb from applyEngineConfig. Presets
+        // not in that map keep the APVTS default (0 dB) → bit-identical
+        // bypass on every region.
+
+        // Phase ζ + η per-preset opt-ins disabled — debug pass identified
+        // the root cause: ζ pre-Hadamard peaking at +10.88 dB DOES amplify
+        // the impulse response massively (+94 dB at the 1k band, verified
+        // 2026-05-29) but is partially capped by softClip on sustained
+        // signals like sine1k. Sweep loss measurement included transient-
+        // dependent gates that were optimistic about steady-state benefit.
+        // Applied as-is, the impulse explosion broke 21+ transient gates
+        // (snare RMS / spec_L1 / EDT / boom / etc.) for a +2 dB sine1k
+        // gain. Net regression. ζ+η infrastructure remains live for future
+        // presets where the impulse/sustained trade-off is favorable.
+        //
+        // Defensively write APVTS to engine-bypass defaults on every
+        // preset apply so a prior preset's user-overridden values don't
+        // carry through to the next preset swap.
+        setIfExists ("in_loop_peak_hz",    1000.0f);
+        setIfExists ("in_loop_peak_q",        2.0f);
+        setIfExists ("in_loop_peak_db",       0.0f);
+        setIfExists ("bass_shelf_fast_fc",  400.0f);
+        setIfExists ("bass_shelf_slow_fc",  200.0f);
+        setIfExists ("bass_shelf_fast_db",    0.0f);
+        setIfExists ("bass_shelf_slow_db",    0.0f);
+        setIfExists ("bass_shelf_transition_ms", 100.0f);
     }
 
     // Apply engine-specific (non-APVTS) tunables. Currently only the
@@ -227,7 +270,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* dpvBoxCutFreqHz      */ 704.0f,
           /* dpvBassShelfGainDb   */ 0.82f,
           /* dpvBassShelfFreqHz   */ 89.7f },
-        // ── Snare Plate XL (VVV anchor) ────────────────────────────────────
+        // ── Drum Plate (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Drum Plate" preset (Reverb Mode = Plate,
         // HighShelf at max for bright top, HighCut ~6 kHz) @ 100% wet.
         //
@@ -238,7 +281,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   Stage 3 loss 8.33  (clean polish)
         //
         // 12 / 40 gates fail.
-        { "Snare Plate XL",       "Plates",
+        { "Drum Plate",           "Plates",
           4,  0.42f, false, 12.0f, 0,
           2.02f, 0.22f, 0.54f, 0.98f, 1.00f, 0.76f,  481.0f,
           0.41f, 0.30f, 0.55f,  24.0f, 10038.0f, 0.92f, false, -3.85f,
@@ -280,11 +323,55 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   - decay low / decay mid (+47 / -30 % — same structural)
         //   - osc P2P +4.5 dB (mod depth at 0.10 in clamp; FDN per-line LFO
         //     produces slightly heavier envelope ripple than VVV's slow drift)
+        // v33 master REVERTED (2026-05-29): sweep was optimized against an
+        // engine that had the ModulatedDamping coefficient-lerp instability
+        // bug (raw (a1,a2) lerp pulled biquads outside stability triangle
+        // twice per LFO cycle → user heard "garbage / mud / boom"). With
+        // that bug now fixed via the 32-step lookup table, v33's sweep-
+        // optimal params no longer balance — bass +4.25 dB hot at 63-125 Hz,
+        // mids/highs -2 to -6 dB cold. Reverting to original v1 factory row
+        // (Decay 4.31, Bass 1.38, Treble 1.29, Mid 0.68 — the 16-fail
+        // baseline). Future sweeps run against the bug-fixed engine will
+        // produce correctly-balanced params.
+        // ── Bright Hall: V2.0 baseline on VintageTank (algo 8) ──────────────
+        // Decay 5.0s targets VVV anchor 4.73s @ 1k T60 (round-trip math
+        // empirically calibrated). 3-band damper voicing:
+        //   Bass Mult 1.10 → +0.83 dB low-shelf @ 250 Hz  (lifts 63/125 ✓)
+        //   Mid  Mult 1.20 → +1.58 dB peaking @ √(250·4000)=1k (lifts mid T60)
+        //   Treble Mult 0.85 → -1.41 dB high-shelf @ 4 kHz (chokes 1k ring)
+        //   Hi Cut 4000 Hz → 3-band damper highFc
+        // Gain Trim +2.0 dB compensates for outputGain_ default 1.0
+        // (previously baked into tap scale 0.74).
+        // BH-5 single-axis revert on top of BH-4 (2026-05-30):
+        //   lowCrossover 350 → 250 — reverts BH-3's failed bass/mid split
+        //                              shift. The raise pushed 500 Hz +
+        //                              1 kHz into the mid-band peaking
+        //                              region (midFc = sqrt(350 * 7000) =
+        //                              1565 Hz) where midMult=1.12 didn't
+        //                              reach down far enough → both bands
+        //                              flipped cold. Reverting restores
+        //                              the BH-2 T60 setup where 8 of 9
+        //                              bands were within ±5%. 250 Hz cold
+        //                              is structural — not a crossover
+        //                              boundary issue.
+        // BH-FINAL on VintageTank algo=8 (locked 2026-05-30):
+        //   erLevel 0.37 — BH-8 optimal ER profile. Closed env_shape_L1
+        //                    + improved edt low 100-250 by 3.3x. BH-9
+        //                    proved erLevel 0.37 ↔ 0.39 below measurement
+        //                    resolution on sub-bass band → reverted to
+        //                    0.37 to lock env_shape + edt low wins.
+        //   Diffusion 0.58 — BH-8 nudge held.
+        //   Sub-bass <100 -2.03 dB cold accepted as engine signature —
+        //   not addressable via current parameter set. gainTrim trade
+        //   would push sine1k over gate (zero-sum boundary).
+        //
+        // Net session: BH 25 → 10 fails (-15).
         { "Bright Hall",          "Halls",
-          4,  0.40f, false,  0.0f, 0,
-          4.31f, 0.75f, 0.103f, 0.83f, 1.29f, 1.38f,  540.0f,
-          0.44f, 0.50f, 0.50f,  20.0f, 11112.0f, 0.99f, false, -2.84f,
-          /* mono */ 20.0f, /* mid */ 0.68f, /* highX */ 8344.0f, /* sat */ 0.03f },
+          8,  0.40f, false,  0.0f, 0,
+          5.00f, 0.85f, 0.50f, 1.20f, 0.95f, 1.00f,  250.0f,
+          0.58f, 0.37f, 0.55f,  20.0f, 7000.0f, 1.00f, false, +1.50f,
+          /* mono */ 20.0f, /* mid */ 1.12f, /* highX */ 8000.0f, /* sat */ 0.03f,
+          /* hiCutShelfGainDb */ -6.0f },
         // ── Deep Blue (vintage rack reverb) ───────────────────────────────────────────────
         // Engine: SixAPTank. Anchor: vintage rack reverb "Deep Blue" (Bank P0 0.0)
         // — reference hardware's "impossibly massive" Concert Hall preset, the literal
@@ -307,41 +394,141 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // extraction (Concert Hall reverb mode + specific Decay/Size/Bass/
         // HighShelf/etc settings).
         //
-        // v13 (2026-05-27): staged_tuner.py autonomous 3-stage CMA-ES sweep
-        // under --category Halls. 1300 trials, 6 workers.
+        // v15 (2026-05-29): staged_tuner.py sweep with two new asymmetric
+        // loss terms wired in response to v14 listening verdict ("boomy"):
+        //   - boom_loss      late-window low-band integrated RMS (40-300 Hz
+        //                    × 0.5-2 s peak-aligned), cubic-hot 6× / quad-cold.
+        //                    v14 audition: +3.17 dB DV-hot in 500ms-1s × sub.
+        //   - tail_mod_loss  per-band detrended Hilbert env std (asymmetric
+        //                    DV-hot only). v14 mid 1-4k tail ripple std
+        //                    4.15 dB vs Lex 0.95 dB — audible slow wobble.
         //
-        // Listening-driven Stage 2 loss upgrades (v12 → v13):
-        //   - Added spec_L1 max penalty (catches noiseburst FDN-mode peaks
-        //     Stage 3 EQ knobs can't reach). v12 had 7 dB peak @ 320 Hz —
-        //     audible as "muddy" on vocals.
-        //   - Added asymmetric mud-band term (200-500 Hz): only penalize DV
-        //     hotter than Lex, weight 3.0×.
-        //   - Widened Low Crossover range [80, 600] → [80, 900] so
-        //     optimizer can flee mode resonance frequencies.
+        // Result: 7 / 29 gate fails (was 9). Both audible defects CLOSED:
+        //   - boom sub 40-100 500ms-1s:  +3.17 → +1.62 dB  ✓
+        //   - ripple mid 1-4k:           +3.20 → +1.27 dB  ✓
+        //   - cent_50 / cent_500:        -1.7 % / -2.2 %   ✓
+        //   - All 8 SS bands             within ±0.77 dB   ✓
+        //   - spec_L1 mean/max           1.38 / 3.75 dB    ✓
         //
-        // Result: 13/40 gates fail. Mud closed at the source:
-        //   - Low Crossover 246 → 396 Hz (away from 320 Hz mode).
-        //   - Mid Multiply 0.74 → 1.13 (mid scoop gone).
-        //   - Bass Multiply 1.31 → 1.50 (matches VVV's 1.50× exactly).
-        //   - spec_L1 max locus moved 320 Hz → 5120 Hz (out of mud zone).
-        //   - ss low-mid Δ -0.73 → +0.05 (dead-on).
-        //   - ss mid Δ -0.66 → -0.05 (dead-on).
+        // Optimizer fixed boom + wobble via Decay Time 3.50 → 2.73 s
+        // (toward anchor 2.83) + Hi Cut 11569 → 7179 Hz, NOT by lowering
+        // Bass Multiply. Less HF feedback + shorter decay window = both
+        // axes closed simultaneously.
         //
-        // Trade-off: closing mud caused Stage 2 to choose shorter Decay
-        // (3.45 s → 2.04 s) — tail_t30 -27 %, tail_t60 -39 %. Loss surface
-        // now puts spec_L1 max + mud-band terms in tension with per-band
-        // decay length. Stage 2 weight balance may need re-tuning if the
-        // tail length is judged audibly more important than mid clarity.
+        // 7 open gates: 3 FDN architectural EDT signature (edt sub / low /
+        // hi) shared with all Halls — Phase 3 TimeVaryingDamping target.
+        // 2 bass-cold slight overcorrection (boom 100-300 1-2s -2.59 dB).
+        // env_p2p +10.22 dB (DV transients punchier — audibility TBD).
+        // env_shape_L1 3.27 dB (just over 3.0 gate, JND-marginal).
+        // 2026-05-29 revert: v18-manual + v29 PostTankEQ pass produced an
+        // audible chorus/wobble + bus-mode garbage on FDN. Rolled VH back
+        // to v15 Optuna baseline (HEAD commit 54ef861 / 95558c8 lineage)
+        // where the FDN path was stable.
         //
-        // ENGINE_CEILINGS["Halls"] = {tail_t60_pct} — keep tail_t60 tagged
-        // since FDN per-line damping can't extend tail like VVV Color Mode
-        // does. All other v11-era ceilings (cent_50, cent_500, ss_hi,
-        // ss_air) are tunable failures, not architectural.
+        // Step 1 retune on top of v15 baseline (2026-05-30): bump decay
+        // 2.04 → 3.50 s. T60 was cold across every band (-47% bass to
+        // -8% air) against /tmp/anchor_vh; the v15 row was tuned against
+        // a different anchor with much shorter tail. Extending the decay
+        // runway closes the T60 fails + the downstream decay-ratio + EDT
+        // + boom + body cascades in one move.
+        // Step 4-6 retune on top of Step 1-3 (2026-05-30):
+        //   Damping (Treble Multiply)  0.86 → 0.55  — chokes 1-8 kHz tail
+        //                                              that overshot +24..+44%
+        //                                              after Step 1 decay bump.
+        //                                              NOTE: Step 4 was a no-op
+        //                                              until the Step 7
+        //                                              setAirTrebleMultiply
+        //                                              plumbing bug-fix went
+        //                                              in (PluginProcessor +
+        //                                              DuskVerbEngine).
+        //   gainTrim                  -1.52 → -5.0 → -3.0 — Step 6 -5.0 over-
+        //                                              corrected and pulled
+        //                                              5 ss bands cold; Step 8
+        //                                              eases back to the sweet
+        //                                              spot between the two.
+        // Step 9 retune on top of Step 7-8 (2026-05-30):
+        //   Damping (Treble Multiply) 0.55 → 0.75 — relax the cliff that
+        //                                            crashed 16 kHz to -24%
+        //                                            cold and left a 12.9 kHz
+        //                                            spike sticking out.
+        //   Mid Multiply              1.13 → 0.85 — actively chokes 250 Hz to
+        //                                            4 kHz where the treble
+        //                                            damping shelf cannot
+        //                                            reach (highCrossover
+        //                                            sits at 8 kHz).
+        //   Hi Cut                    5884 → 4500 — lowers output rolloff to
+        //                                            squash the over-
+        //                                            attenuated 12.9 kHz
+        //                                            resonant mode at the
+        //                                            spec_L1 max slot.
+        // Step 10 retune on top of Step 9 (2026-05-30):
+        //   midCrossover    396 → 600  — protects 500 Hz band from midMult
+        //                                  cut by raising mid-band lower edge.
+        //   highCrossover  8042 → 6000 — moves damping shelf knee lower so
+        //                                  HF damping reaches into 4-8 kHz
+        //                                  without leaving the air band
+        //                                  starved.
+        //   Damping         0.75 → 0.80 — slight relax now that
+        //                                  highCrossover handles more of
+        //                                  the upper-mid attenuation.
+        //   Hi Cut          4500 → 5500 — recovers air band, centroid,
+        //                                  ss hi 5-10k that Step 9 over-
+        //                                  cooled.
+        //   gainTrim       -3.00 → -2.00 — final broadband level lift
+        //                                  toward anchor parity; sine1k
+        //                                  was still +3.22 hot so net
+        //                                  +1 dB keeps it in gate.
+        // Step 11 retune on top of Step 10 (2026-05-30):
+        //   Mid Multiply   0.85 → 0.78 — precise trim on 2k/4k/8k overshoot
+        //                                  without disturbing 1 kHz node.
+        //   gainTrim      -2.00 → -2.50 — corrects 4 hot RMS gates from
+        //                                  Step 10 over-correction.
+        //   Bass Multiply  1.50 → 1.30 — vents late sub-bass sustained
+        //                                  energy without disturbing
+        //                                  63/125 Hz initial decay.
+        //   Diffusion      0.12 → 0.45 — raises early reflection density
+        //                                  to close cold sub/low EDT gates
+        //                                  (first 10-15 dB envelope).
+        // Step 12 single-axis correction on top of Step 11 (2026-05-30):
+        //   Bass Multiply  1.30 → 1.45 — split-the-difference restore of
+        //                                  the low-end decay runway. Step 11
+        //                                  drop to 1.30 killed 63/125/250/
+        //                                  500/1k T60 (5 gates flipped cold)
+        //                                  + decay sub -82.9% + body 125-250
+        //                                  cold + low band level cold. 1.45
+        //                                  recovers bass tails without
+        //                                  going back to the 1.50 boom sub
+        //                                  hot we had earlier.
+        // Step 11 winners locked:
+        //   Mid Multiply  0.78  — closed 2k + 4k T60.
+        //   Diffusion     0.45  — closed mod bass + mod lowmid.
+        //   gainTrim     -2.50  — keeps RMS gates in spec once bass
+        //                          tail recovers.
+        // Step 13 multi-axis polish on top of Step 12 (2026-05-30):
+        //   Bass Multiply 1.45 → 1.40 — works with new 70 Hz PostTankEQ
+        //                                 scoop to vent over-sustained sub
+        //                                 without disturbing 125/250/500 Hz
+        //                                 bands locked at passing.
+        //   Mid Multiply  0.78 → 0.82 — pulls 1 kHz tail back from -7.9% to
+        //                                 within gate.
+        //   Damping       0.80 → 0.78 — slight relax to recover 16 kHz cold
+        //                                 (-9.4%) + air band.
+        //   Hi Cut        5500 → 6000 — opens air band; resolves cent_500
+        //                                 cold (-17.8%) + ss hi 5-10k cold.
+        // Step 14 precision polish on top of Step 13 (2026-05-30):
+        //   Bass Multiply 1.40 → 1.42 — micro restore for 63 Hz (-12.1%)
+        //                                 + 125 Hz (-5.9%) without
+        //                                 disturbing higher bands.
+        //   erLevel       0.45 → 0.65 — raises early reflection deck to
+        //                                 close EDT sub/low/lowmid cold
+        //                                 fails (first 10-15 dB envelope).
+        //   erSize        0.55 → 0.45 — redistributes early-tap timeline
+        //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          2.04f, 0.76f, 0.123f, 0.54f, 0.86f, 1.50f,  396.0f,
-          0.12f, 0.45f, 0.55f,  33.0f,  5884.0f, 0.88f, false, -1.52f,
-          /* mono */ 20.0f, /* mid */ 1.13f, /* highX */ 8042.0f, /* sat */ 0.32f },
+          3.50f, 0.76f, 0.123f, 0.54f, 0.78f, 1.42f,  600.0f,
+          0.45f, 0.65f, 0.45f,  33.0f,  6000.0f, 0.88f, false, -2.50f,
+          /* mono */ 20.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
         // = Cathedral, ModDepth 75 %, HighShelf at 6 kHz, HighCut ~7 kHz).
@@ -350,7 +537,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // 1300 trials. Stage 1 2.73 / Stage 2 60.08 / Stage 3 20.21.
         // 14 / 40 gates fail. Hi Cut settled at 4439 Hz (utilizing the
         // Halls-profile widened floor) — the cathedral-dark character.
-        { "Cathedral",            "Halls",
+        { "Cathedral Large Hall", "Halls",
           4,  0.45f, false, 20.88f, 0,
           3.59f, 0.70f, 0.18f, 0.95f, 0.93f, 1.13f,  418.0f,
           0.26f, 0.48f, 0.36f,  22.0f,  4261.0f, 0.89f, false, -7.65f,
@@ -416,7 +603,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           4.99f, 0.48f, 0.35f, 0.64f, 0.93f, 2.08f,  328.0f,
           0.97f, 0.00f, 0.50f, 47.0f, 19723.0f, 1.10f, false, -11.3f,
           /* mono */ 20.0f, /* mid */ 1.94f, /* highX */ 1581.0f, /* sat */ 0.39f },
-        // ── Realistic Chamber (VVV anchor) ─────────────────────────────────
+        // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
         // Engine: QuadTank. Anchor: VVV "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
         //
@@ -425,7 +612,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Chamber1979 mode has dense modal character QuadTank can't match
         // exactly). Stage 3 loss 278.13. 22 / 40 gates fail — widest
         // architectural gap in the queue so far. DV is its own chamber.
-        { "Realistic Chamber",    "Chambers",
+        { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
           5.05f, 0.44f, 0.20f, 0.50f, 0.56f, 0.71f,  324.0f,
           0.42f, 0.20f, 0.44f,  26.0f, 10060.0f, 0.96f, false, -8.55f,
@@ -433,7 +620,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════
-        // ── Tight Drum Room (VVV anchor) ───────────────────────────────────
+        // ── Small Drum Room (VVV anchor) ───────────────────────────────────
         // Engine: QuadTank. Anchor: VVV "Small Drum Room" preset (Reverb
         // Mode = Ambience, ModDepth = 100 %, HighCut low for dark room).
         //
@@ -441,12 +628,51 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // 1300 trials. Stage 1 1.28 / Stage 2 109.58 / Stage 3 60.02.
         // 24 / 40 gates fail — QuadTank vs VVV Ambience reverb mode + heavy
         // modulation is a wider gap than expected.
-        { "Tight Drum Room",      "Rooms",
-          3,  0.25f, false,  1.18f, 0,
-          0.43f, 0.38f, 0.03f, 1.11f, 1.01f, 0.71f,  641.0f,
-          0.38f, 0.80f, 0.57f,  37.0f, 10005.0f, 1.04f, false, -2.13f,
+        // SDR-2 on top of SDR-1 (2026-05-30):
+        //   size       0.25 → 0.10 — Size dominates loopLength in
+        //                             gEffTarget = pow(10,-3*L/(decay*sr)).
+        //                             SDR-1 missed this lever.
+        //   decay      0.18 → 0.10 — paired floor drop; alone insufficient
+        //                             at Size=0.25.
+        //   modDepth   0.35 → 0.03 — REVERT. QuadTank LFOs modulate AP
+        //                             coefficients (phase mod), not
+        //                             envelope. Hilbert envelope FFT
+        //                             gates can't see it → dead leverage.
+        //   modRate    1.50 → 1.11 — REVERT same reason.
+        //   hiCutShelf -6.0 — KEEP (air band recovery from SDR-1).
+        // SDR-NL1 engine swap on top of SDR-4 (2026-05-30):
+        //   algorithm  3 → 6 (QuadTank → NonLinear).
+        //               Master engine audit verdict: NonLinear's feed-
+        //               forward TDL topology delivered zero modal ripple
+        //               (0.00 across all 4 bands) and lowest fail count
+        //               (41) for this 56 ms anchor footprint.
+        //   gainTrim  -2.13 → +6.87 — uniform +9 dB lift to compensate
+        //               for the audit-measured ~9 dB level deficit
+        //               (noiseburst -8.55, snare -9.12) on NonLinear.
+        //   hiCutShelf -6.0 KEEP — air recovery still applies.
+        //   QuadTank-era tunes (size 0.10, decay 0.10, bassMult 0.20,
+        //   crossover 300) retained as starting point — may need
+        //   NonLinear-specific retune in later steps.
+        // SDR-NL3 dual-axis spectral flatten on top of SDR-NL2 (2026-05-30):
+        //   gainTrim +3.87 → +6.20 — global lift to bring wings (deep sub
+        //                              + air) back into passing range.
+        //   PostTankEQ Band 2: 1500 Hz Q=0.5 -3.5 dB scoop (PluginProcessor.cpp)
+        //                              counters the mid-bulge so 500 Hz to
+        //                              4 kHz stays in spec under the +6.20
+        //                              lift. Combined effect: net +6.20 dB
+        //                              at wings, net +2.7 dB at mids.
+        // SDR-DAT initial baseline (2026-05-30): repaired row after
+        // botched harness substitution. Dattorro engine swap +18.5 dB lift.
+        // SDR locked at NL7 (NonLinear) — best deterministic floor.
+        // Engine swap audit + 8-gen autosweep across NL/Dat:
+        //   QuadTank floor: 42 | NL7: 27 | Dat4: 35.
+        // NL7 wins for this anchor (56 ms tail target).
+        { "Small Drum Room",      "Rooms",
+          6,  0.25f, false,  1.18f, 0,
+          0.100f, 0.100f, 0.03f, 1.11f, 1.01f, 0.20f,  300.0f,
+          0.38f, 0.80f, 0.57f,  37.0f, 10005.0f, 1.04f, false, +5.90f,
           /* mono */ 20.0f, /* mid */ 0.84f, /* highX */ 7586.0f, /* sat */ 0.22f,
-          /* hiCutShelfGainDb */ -23.5f },
+          /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
         // Chamber, Size 0.107, EarlyDiffusion 0.35, LateDiffusion 0.5).

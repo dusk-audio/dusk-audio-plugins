@@ -11,6 +11,7 @@
 #include "QuadTank.h"
 #include "ShimmerEngine.h"
 #include "SpringEngine.h"
+#include "VintageTankEngine.h"
 
 #include <algorithm>
 #include <cmath>
@@ -93,6 +94,13 @@ public:
     void setBassMultiply  (float mult);
     void setMidMultiply   (float mult);            // 3-band mid multiplier
     void setTrebleMultiply(float mult);
+    // FDN-specific: forwards into FDNReverb::setAirTrebleMultiply, which is
+    // the field actually consumed in computeDecayCoefficients to produce the
+    // gHigh feedback gain. Bug-fix 2026-05-30: the APVTS damping → engine
+    // chain previously only hit setTrebleMultiply, whose trebleMultiply_
+    // member is unread inside the loop. Push to this method alongside so
+    // damping edits actually choke HF feedback in the FDN engine.
+    void setAirTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);              // bass↔mid (legacy "crossover")
     void setHighCrossoverFreq (float hz);          // mid↔high (3-band)
     void setSaturation    (float amount);          // 0..1 drive-style softClip
@@ -114,6 +122,37 @@ public:
     // is attenuated by this much instead of decapitated. Per-preset on
     // FactoryPreset. Default -12 dB.
     void setHiCutShelfGainDb (float dB);
+
+    // Post-tank parametric EQ (4-band). Each band is freq + Q + gainDb.
+    // Lives AFTER the Hi Cut Shelf and BEFORE the dry/wet mix matrix.
+    // gainDb == 0 designs unity coefficients → bit-identical bypass.
+    // Default state for all bands is gainDb=0, so presets that don't
+    // call this leave the EQ stage transparent.
+    void setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb);
+
+    // Phase γ (2026-05-29): decoupled per-band linear gain trim that sits
+    // AFTER PostTankEQ and BEFORE the dry/wet mix matrix. Independent of
+    // the FDN loop damping — lets a preset sculpt EDT band-shape + late
+    // bass boom without warping in-loop coefficients (which couple decay
+    // AND transient response). Realized as a cascade of 3 high-shelves
+    // (sum-flat at unity gain) over 4 fixed crossover regions:
+    //   region 0 = Sub        ≤ fLow
+    //   region 1 = Low-Mid    [fLow, fMid]
+    //   region 2 = Mid-High   [fMid, fHi]
+    //   region 3 = Air        ≥ fHi
+    // All 4 region gains default 0 dB → bit-identical bypass.
+    void setPostTankBandTrimGainDb (int region, float gainDb);
+    void setPostTankBandTrimCrossovers (float fLow, float fMid, float fHi);
+
+    // Phase δ (2026-05-29): per-band attack-ramp envelope shaping post-tank.
+    // 4 regions (Sub / LowMid / MidHi / Air) split via 1-pole crossovers
+    // (constant coefficients, sum-flat by construction). Each region has
+    // an onset-triggered AttackRamp that JUMPS by attackDb at signal-rise
+    // and exponentially returns to 0 dB over tauMs. Default attackDb = 0
+    // → unity gain on every region → bit-identical bypass.
+    void setPerBandEDTShape (int region, float attackDb, float tauMs);
+    void setPerBandEDTCrossovers (float fLow, float fMid, float fHi);
+
     void setWidth     (float width);
     void setGainTrim  (float dB);
     void setMonoBelow (float hz);             // 20 = bypass; up = sums lows to mono
@@ -127,6 +166,30 @@ public:
     // RandomWalk = legacy independent per-line LFOs (default).
     // CoherentLoop = single master sine + per-line phase-paired offsets.
     void setModulationTopology (DspUtils::ModulationTopology t);
+
+    // Phase α: per-line frequency-indexed decay scaling on the FDN engine.
+    // No-op for non-FDN engines. Defaults 1.0 / 1.0 = backward identical.
+    void setPerLineDecayTilt (float shortLineScale, float longLineScale);
+
+    // Phase β (2026-05-29): per-preset FDN base delays. Lets each preset
+    // choose a 16-int delay-line set tuned to match a specific anchor's
+    // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
+    // No-op for non-FDN engines. Pass nullptr to retain the engine default.
+    void setFDNBaseDelays (const int* delays);
+
+    // Phase ε (2026-05-29): in-loop narrow-Q peaking band on the FDN per-
+    // line feedback path. Designed to reinforce a specific frequency inside
+    // the loop so steady-state input at that frequency builds extra gain
+    // (e.g. closes sine1k cold by boosting the 1 kHz mode). gainDb = 0 →
+    // unity coefficients → bit-identical bypass on the damping output. No-
+    // op for non-FDN engines.
+    void setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb);
+
+    // Phase η (2026-05-29): per-line dual-time-constant bass shelf. Both
+    // gains 0 dB → bit-identical bypass. No-op for non-FDN engines.
+    void setFDNDualBassShelf (float fastFc, float slowFc,
+                               float fastGainDb, float slowGainDb,
+                               float transitionMs);
 
     // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
     // sixAPTank_ regardless of currentEngine_ — they're only audible when the
@@ -185,6 +248,7 @@ private:
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
+    DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -270,6 +334,26 @@ private:
 
     Biquad loCutFilter_;
     Biquad hiCutFilter_;
+
+    // Post-tank parametric EQ (4 bands, series). Sits between Hi Cut Shelf
+    // and the mono-below + Width + Gain Trim output chain. Default state is
+    // all bands at 0 dB gain → unity coefficients → bit-identical bypass
+    // for any preset that doesn't opt in.
+    DspUtils::PostTankEQ postTankEQ_;
+
+    // Phase γ (2026-05-29): decoupled per-band linear gain trim. Cascade of
+    // 3 high-shelves spanning 4 regions (Sub/LowMid/MidHi/Air). Sits AFTER
+    // postTankEQ_ and BEFORE the mono-below + Width + Gain Trim chain. All
+    // 4 region gains default 0 dB → unity coefficients → bit-identical
+    // bypass on legacy presets.
+    DspUtils::PostTankBandTrim postTankBandTrim_;
+
+    // Phase δ (2026-05-29): per-band attack-ramp envelope shaper. 4 regions
+    // split via 1-pole low-pass cascade (constant coefficients, sum-flat
+    // by construction). Sits AFTER postTankBandTrim_, BEFORE the mono +
+    // Width + Gain Trim chain. All 4 region attackDb default 0 → AttackRamp
+    // gains stay at unity → bit-identical bypass.
+    DspUtils::PerBandEDTShape perBandEDT_;
     // High-shelf attenuation depth feeding into updateHiCutCoeffs(). Stored
     // here (not just smoothed in real time) because it's per-preset, not
     // exposed in APVTS, and only changes when the Processor loads a preset.
