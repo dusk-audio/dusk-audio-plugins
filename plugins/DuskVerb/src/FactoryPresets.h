@@ -538,15 +538,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
         // = Cathedral, ModDepth 75 %, HighShelf at 6 kHz, HighCut ~7 kHz).
         //
-        // v1 (2026-05-27): staged_tuner.py autonomous --category Halls.
-        // 1300 trials. Stage 1 2.73 / Stage 2 60.08 / Stage 3 20.21.
-        // 14 / 40 gates fail. Hi Cut settled at 4439 Hz (utilizing the
-        // Halls-profile widened floor) — the cathedral-dark character.
+        // Locked 2026-05-30: direct-scoreboard + warm-start FDN sweep,
+        // 33 → 27 gate fails vs VVV "CathedralLargeHall" anchor (verified via
+        // --program). Ripple + bloom fully green. Residual 27 hits the SAME
+        // structural wall as Vocal Plate — HF T60 overshoot the single
+        // trebleMult can't bend (8k wants 1.79s, FDN gives 3.13s, +75%) + sub
+        // energy/decay deficit. The FDN structural refactor targets exactly
+        // this. See memory duskverb_tuning_method.
         { "Cathedral Large Hall", "Halls",
           4,  0.45f, false, 20.88f, 0,
-          3.59f, 0.70f, 0.18f, 0.95f, 0.93f, 1.13f,  418.0f,
-          0.26f, 0.48f, 0.36f,  22.0f,  4261.0f, 0.89f, false, -7.65f,
-          /* mono */ 20.0f, /* mid */ 0.73f, /* highX */ 7773.0f, /* sat */ 0.35f,
+          4.91f, 0.94f, 0.12f, 1.44f, 1.10f, 0.92f,  193.0f,
+          0.75f, 0.48f, 0.36f,  64.0f,  3720.0f, 1.03f, false, -7.32f,
+          /* mono */ 20.0f, /* mid */ 0.69f, /* highX */ 5960.0f, /* sat */ 0.36f,
           /* hiCutShelfGainDb */ -14.5f },
         // ── Blade Runner 224 ─────────────────────────────────────────────────
         // Anchor: Vangelis on the late-1970s digital hall hardware (Hall A / Constellation) —
