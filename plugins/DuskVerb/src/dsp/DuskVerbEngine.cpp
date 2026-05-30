@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace
@@ -24,6 +25,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     nonLinear_.prepare (sampleRate, maxBlockSize);
     shimmer_.prepare (sampleRate, maxBlockSize);
     dattorroVintage_.prepare (sampleRate, maxBlockSize);
+    vintageTank_.prepare (sampleRate, maxBlockSize);
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
@@ -77,6 +79,13 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     monoLPStateL_     = 0.0f;
     monoLPStateR_     = 0.0f;
 
+    // Post-tank parametric EQ. Default state is all bands at gainDb=0 →
+    // unity coefficients → bit-identical bypass. Per-preset overrides
+    // come in via setPostTankEQBand() after the preset loads.
+    postTankEQ_.prepare (static_cast<float> (sampleRate));
+    postTankBandTrim_.prepare (static_cast<float> (sampleRate));
+    perBandEDT_.prepare (static_cast<float> (sampleRate));
+
     // Force-apply algorithm 0 on first prepare (don't bypass via early-return).
     currentAlgorithm_ = -1;
     setAlgorithm (0);
@@ -92,6 +101,7 @@ void DuskVerbEngine::clearAllBuffers()
     nonLinear_.clearBuffers();
     shimmer_  .clearBuffers();
     dattorroVintage_.clearBuffers();
+    vintageTank_.clearBuffers();
 
     // Pre-tank input diffuser and early reflections — both retain
     // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
@@ -106,6 +116,9 @@ void DuskVerbEngine::clearAllBuffers()
 
     loCutFilter_.reset();
     hiCutFilter_.reset();
+    postTankEQ_.reset();
+    postTankBandTrim_.reset();
+    perBandEDT_.reset();
 
     monoLPStateL_ = 0.0f;
     monoLPStateR_ = 0.0f;
@@ -162,6 +175,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     nonLinear_.clearBuffers();
     shimmer_.clearBuffers();
     dattorroVintage_.clearBuffers();
+    vintageTank_.clearBuffers();
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -195,6 +209,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     nonLinear_.setDecayTime (seconds);
     shimmer_.setDecayTime (seconds);
     dattorroVintage_.setDecayTime (seconds);
+    vintageTank_.setDecayTime (seconds);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -213,6 +228,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     nonLinear_.setSize (size);
     shimmer_.setSize (size);
     dattorroVintage_.setSize (size);
+    vintageTank_.setSize (size);
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
@@ -225,6 +241,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     nonLinear_.setBassMultiply (mult);
     shimmer_.setBassMultiply (mult);
     dattorroVintage_.setBassMultiply (mult);
+    vintageTank_.setBassMultiply (mult);
 }
 
 void DuskVerbEngine::setMidMultiply (float mult)
@@ -237,6 +254,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
     nonLinear_.setMidMultiply (mult);
     shimmer_.setMidMultiply (mult);
     dattorroVintage_.setMidMultiply (mult);
+    vintageTank_.setMidMultiply (mult);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -249,6 +267,17 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     nonLinear_.setTrebleMultiply (mult);
     shimmer_.setTrebleMultiply (mult);
     dattorroVintage_.setTrebleMultiply (mult);
+    vintageTank_.setTrebleMultiply (mult);
+}
+
+void DuskVerbEngine::setAirTrebleMultiply (float mult)
+{
+    // FDN-specific bug-fix: feed the same damping value into the FDN's
+    // airTrebleMultiply_ member that computeDecayCoefficients actually
+    // reads. Without this, the APVTS damping knob is dead-code on the
+    // FDN engine path because fdn_.setTrebleMultiply writes to a member
+    // that is never consumed inside the per-line decay calc.
+    fdn_.setAirTrebleMultiply (mult);
 }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
@@ -261,6 +290,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     nonLinear_.setCrossoverFreq (hz);
     shimmer_.setCrossoverFreq (hz);
     dattorroVintage_.setCrossoverFreq (hz);
+    vintageTank_.setLowCrossover (hz);
 }
 
 void DuskVerbEngine::setHighCrossoverFreq (float hz)
@@ -303,6 +333,9 @@ void DuskVerbEngine::setModDepth (float depth)
     nonLinear_.setModDepth (depth);
     shimmer_.setModDepth (depth);   // hijacked → PITCH (0..1 → 0..24 semitones)
     dattorroVintage_.setModDepth (depth);
+    // VintageTank: depth knob ∈ [0, 1] → mod excursion in samples (~0..16
+    // sample sweep range, the Lex/Griesinger lush-mode default).
+    vintageTank_.setModDepth (depth * 16.0f);
 }
 
 void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
@@ -312,6 +345,38 @@ void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
     // modulators — DPV's structured tank, Shimmer's pitch loop, etc.).
     fdn_.setModulationTopology (t);
     quad_.setModulationTopology (t);
+}
+
+void DuskVerbEngine::setPerLineDecayTilt (float shortLineScale, float longLineScale)
+{
+    // Phase α: only FDN has the per-line decay-tilt path. QuadTank uses
+    // 4 cross-coupled tanks (different topology), Dattorro is a single
+    // structured tank — neither has a per-line rank to tilt against.
+    fdn_.setPerLineDecayTilt (shortLineScale, longLineScale);
+}
+
+void DuskVerbEngine::setFDNBaseDelays (const int* delays)
+{
+    // Phase β: per-preset FDN base-delay set. Only the FDN engine has a
+    // 16-line tank; other engines ignore. Pass nullptr → preserve engine
+    // default (kDefaultDelays — log-spaced primes 1151..6451 samples).
+    if (delays == nullptr) return;
+    fdn_.setBaseDelays (delays);
+}
+
+void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
+{
+    // Phase ε: only FDN has in-loop per-line peaking infrastructure.
+    fdn_.setInLoopPeaking (freqHz, qFactor, gainDb);
+}
+
+void DuskVerbEngine::setFDNDualBassShelf (float fastFc, float slowFc,
+                                            float fastGainDb, float slowGainDb,
+                                            float transitionMs)
+{
+    // Phase η: only FDN has the per-line dual-time-constant bass shelf
+    // infrastructure.
+    fdn_.setDualBassShelf (fastFc, slowFc, fastGainDb, slowGainDb, transitionMs);
 }
 
 void DuskVerbEngine::setModRate (float hz)
@@ -324,6 +389,7 @@ void DuskVerbEngine::setModRate (float hz)
     nonLinear_.setModRate (hz);
     shimmer_.setModRate (hz);       // hijacked → FEEDBACK (0.1..10 Hz → 0..0.95 cascade gain)
     dattorroVintage_.setModRate (hz);
+    vintageTank_.setModRate (hz);
 }
 
 void DuskVerbEngine::setDiffusion (float amount)
@@ -345,6 +411,10 @@ void DuskVerbEngine::setDiffusion (float amount)
     nonLinear_.setTankDiffusion   (amount);
     shimmer_.setTankDiffusion     (amount);   // no-op (FDN's mix IS the diffusion)
     dattorroVintage_.setTankDiffusion (amount);
+    // VintageTank: route APVTS "Diffusion" knob to the input-AP coefficient
+    // (per user spec). Tank-loop AP coefficient stays at preset default to
+    // preserve the lush figure-8 modal density.
+    vintageTank_.setInputDiffusion (amount);
 }
 
 void DuskVerbEngine::setBassChokeHz (float hz)
@@ -382,6 +452,33 @@ void DuskVerbEngine::setLoCut (float hz)
 void DuskVerbEngine::setHiCut (float hz)
 {
     hiCutSmoother_.setTarget (std::clamp (hz, 1000.0f, 20000.0f));
+    // VintageTank's in-loop 3-band damper high-shelf corner sits here too.
+    vintageTank_.setHiCut (std::clamp (hz, 1000.0f, 20000.0f));
+}
+
+void DuskVerbEngine::setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb)
+{
+    postTankEQ_.setBand (index, freqHz, qFactor, gainDb);
+}
+
+void DuskVerbEngine::setPostTankBandTrimGainDb (int region, float gainDb)
+{
+    postTankBandTrim_.setRegionGainDb (region, gainDb);
+}
+
+void DuskVerbEngine::setPostTankBandTrimCrossovers (float fLow, float fMid, float fHi)
+{
+    postTankBandTrim_.setCrossovers (fLow, fMid, fHi);
+}
+
+void DuskVerbEngine::setPerBandEDTShape (int region, float attackDb, float tauMs)
+{
+    perBandEDT_.setRegionShape (region, attackDb, tauMs);
+}
+
+void DuskVerbEngine::setPerBandEDTCrossovers (float fLow, float fMid, float fHi)
+{
+    perBandEDT_.setCrossovers (fLow, fMid, fHi);
 }
 
 void DuskVerbEngine::setHiCutShelfGainDb (float dB)
@@ -393,6 +490,14 @@ void DuskVerbEngine::setHiCutShelfGainDb (float dB)
     // Force coefficient recompute at the current corner — the per-block
     // smoother won't re-run updateHiCutCoeffs unless the FREQUENCY moves.
     updateHiCutCoeffs (hiCutSmoother_.current);
+
+    // VintageTank routes the Hi-Cut-Shelf knob into its in-loop damping LP
+    // cutoff (per user spec). dB ∈ [-24, 0] mapped logarithmically to
+    // [1500 Hz, 18000 Hz] — fully open = ~18 kHz (no damping), max cut =
+    // ~1.5 kHz (dark, vintage-plate-like tail).
+    const float t = (clamped + 24.0f) / 24.0f;             // 0 (full cut) .. 1 (no cut)
+    const float dampHz = std::pow (1500.0f, 1.0f - t) * std::pow (18000.0f, t);
+    vintageTank_.setLoopDamping (dampHz);
 }
 
 void DuskVerbEngine::setWidth (float width)
@@ -602,6 +707,25 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             dattorroVintage_.process (tankInL_.data(), tankInR_.data(),
                                        tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
+        case EngineType::VintageTank:
+        {
+            // Stage the pre-tank input into a temporary stereo juce::AudioBuffer
+            // so the new VintageTankEngine's juce::AudioBuffer<float>& process()
+            // overload can run it through the figure-8 loop in place. Then
+            // copy the tank output back into tankOutL_ / tankOutR_ so the
+            // downstream sum-and-shell stage handles it identically to the
+            // legacy tanks. No allocation on the audio thread — the staging
+            // buffer is an alias of the pre-allocated tankOut storage.
+            float* outPtrs[2] = { tankOutL_.data(), tankOutR_.data() };
+            juce::AudioBuffer<float> alias (outPtrs, 2, numSamples);
+            // Copy input → out, then process in place.
+            std::memcpy (tankOutL_.data(), tankInL_.data(),
+                         sizeof (float) * static_cast<size_t> (numSamples));
+            std::memcpy (tankOutR_.data(), tankInR_.data(),
+                         sizeof (float) * static_cast<size_t> (numSamples));
+            vintageTank_.process (alias);
+            break;
+        }
     }
 
     // ---- 5) Sum + Shell ----
@@ -632,6 +756,26 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         wetR = loCutFilter_.processR (wetR);
         wetL = hiCutFilter_.processL (wetL);
         wetR = hiCutFilter_.processR (wetR);
+
+        // Post-tank parametric EQ — sits AFTER the Hi Cut Shelf and BEFORE
+        // the mono / width / gain-trim chain. All-zero-dB default → unity
+        // coefficients → bit-identical bypass for presets that don't
+        // configure it.
+        wetL = postTankEQ_.processL (wetL);
+        wetR = postTankEQ_.processR (wetR);
+
+        // Phase γ: decoupled per-band linear gain trim. 3 cascaded high-
+        // shelves over 4 regions (Sub/LowMid/MidHi/Air). All region gains
+        // 0 dB → bit-identical bypass. Independent of FDN damping coeffs.
+        wetL = postTankBandTrim_.processL (wetL);
+        wetR = postTankBandTrim_.processR (wetR);
+
+        // Phase δ: per-band attack-ramp envelope shaper. 1-pole crossover
+        // split + onset-triggered exponential ramp per region. attackDb=0
+        // → AttackRamp returns 1.0 → exact sum-flat bypass (LP + HP = x
+        // by construction).
+        wetL = perBandEDT_.processL (wetL);
+        wetR = perBandEDT_.processR (wetR);
 
         // Mono Maker — sums L+R below the cutoff to mono before width
         // processing. 1st-order matched-phase complementary split: HP = input

@@ -43,6 +43,26 @@ public:
                         const float* ls, const float* rs);
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
+
+    // Phase ε (2026-05-29): in-loop narrow-Q peaking band on the per-line
+    // feedback signal (after damping, before write-back to delay lines).
+    // Reinforces a specific frequency inside the FDN loop so steady-state
+    // input at that frequency builds extra gain — closes sine1k cold by
+    // injecting a narrow ±N dB mode boost near 1 kHz.
+    //
+    // gainDb = 0 designs unity coefficients (designUnity in ParametricBand)
+    // → bit-identical bypass on the per-line damping output → legacy presets
+    // see no change.
+    void setInLoopPeaking (float freqHz, float qFactor, float gainDb);
+
+    // Phase η (2026-05-29): per-line dual-time-constant bass shelf with
+    // envelope-aware fast/slow mix. Decouples early bass attenuation
+    // (active input) from late-tail bass sustain (decay phase). Both gains
+    // 0 dB → bit-identical bypass; legacy presets unaffected.
+    void setDualBassShelf (float fastFc, float slowFc,
+                            float fastGainDb, float slowGainDb,
+                            float transitionMs);
+
     void setInlineDiffusion (float coeff);
     // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
     // Linear map to inline-AP coefficient: knob 0 → off (Hadamard-only density,
@@ -71,6 +91,26 @@ public:
     void setModulationTopology (DspUtils::ModulationTopology t);
     void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
+
+    // Phase α (Path α): per-line frequency-indexed decay scaling. Tilts
+    // RT60 per delay line by sorting lines by length and assigning a per-
+    // line decay-time multiplier across [shortLineScale .. longLineScale].
+    // Longer lines (low-band-dominant content) get longLineScale; shorter
+    // lines (high-band-dominant) get shortLineScale.
+    //
+    // shortLineScale = longLineScale = 1.0 → backward identical (default).
+    // Setting longLineScale > 1.0 + shortLineScale < 1.0 extends bass RT60
+    // while shortening high-band RT60 — exactly what VVV Concert Hall
+    // delivers structurally and what 3-band damping multiplexing alone
+    // cannot reach (FDN modal mixing redistributes per-band gains into
+    // an averaged shape).
+    //
+    // Applied at line 1304 of updateLiveParams as
+    //   channelRT60 = decayTime_ * perLineRT60Scale_[i].
+    // Per-sample cost: ZERO (folds into existing per-channel design pass
+    // run at preset-apply time, not the audio thread).
+    void setPerLineDecayTilt (float shortLineScale, float longLineScale);
+
     void clearBuffers();
 
 private:
@@ -267,7 +307,56 @@ private:
     // move in coordinated, phase-paired motion (line ch and ch+8 are
     // 180° apart). Per-sample cost vs RandomWalk: identical (1× sin).
     DspUtils::CoherentSineLFO coherentLfo_;
+
+    // Phase ε (2026-05-29): per-line in-loop peaking band. One independent
+    // ParametricBand per line (each carries its own L+R state — though FDN
+    // lines are mono internally, the class uses processL for the single
+    // channel). gainDb = 0 → designUnity → bit-identical bypass on the
+    // damping output path. Coefficient design happens off-thread in
+    // setInLoopPeaking; the audio loop only runs the 5-mul biquad.
+    DspUtils::ParametricBand inLoopPeak_[N];
+    bool inLoopPeakActive_ = false;     // true iff |gainDb| > 1e-6
+
+    // Phase η (2026-05-29): per-line dual-time-constant bass shelf. Applied
+    // AFTER ThreeBandDamping → BEFORE structHF/LF stage. Default both gains
+    // 0 dB → bit-identical bypass (anyActive_ guard inside class skips
+    // processing entirely).
+    DspUtils::DualTimeConstantBassShelf dualBassShelf_[N];
+    bool dualBassShelfActive_ = false;
     DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
+
+    // Phase 3: ModulatedDamping topology — slow master quadrature LFO modulates
+    // the per-line ThreeBandDamping coefficients (no line-length mod). Pre-
+    // computed "dark" + "bright" Coeffs sets at preset-apply time; per-sample
+    // lerp between them via masterDampingLfoPhase_. Zero transcendentals on
+    // the hot path. masterDampingLfoIncr_ is the per-sample phase advance
+    // (rad/sample) for the configured rate. The cos/sin pair gives a 90°
+    // quadrature option for future "stereo wander" extension.
+    float masterDampingLfoPhase_ = 0.0f;
+    float masterDampingLfoIncr_  = 0.0f;   // rad/sample, set in updateLFORates()
+    static constexpr float kDampingModRateHz = 0.30f;  // very slow drift
+    // Phase α post-fix: replaced raw-coefficient lerp (dampingDark_ ↔
+    // dampingBright_) with a 32-step lookup table of pre-designed, stability-
+    // validated Coeffs. Per-sample work is now O(1) integer-index lookup +
+    // struct copy. Each table slot is a complete RBJ shelf design from a
+    // scalar gain interpolation (gHigh_dark → gHigh_bright); linearly
+    // lerping the SCALAR before design keeps the resulting coefficients
+    // inside the biquad stability triangle. Eliminates the "garbage / mud /
+    // noise" artefact caused by the prior raw-coefficient lerp briefly
+    // pulling (a1, a2) outside the stability region twice per LFO cycle.
+    static constexpr int kDampingSteps = 32;
+    ThreeBandDamping::Coeffs dampingModTable_[N][kDampingSteps] {};
+    bool dampingModActive_ = false;        // true only when topology == ModulatedDamping
+                                            // AND designCoeffs has populated the table
+
+    // Phase α: per-line RT60 multiplier indexed by delay-line rank.
+    // Rank 0 = shortest line (gets shortLineScale_), rank 15 = longest
+    // (gets longLineScale_). Default 1.0 / 1.0 = backward-identical.
+    // Recomputed inside updateLiveParams using current delayLength[] —
+    // robust to setSize / sizeScale changes.
+    float shortLineScale_ = 1.0f;
+    float longLineScale_  = 1.0f;
+    float perLineRT60Scale_[N] {};   // 0.0f means "not yet computed; fall back to 1.0"
 
     // Per-channel structural/anti-alias/DC-blocker FILTER STATE
     float structHFState_[N] {};

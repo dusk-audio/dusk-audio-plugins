@@ -2,7 +2,9 @@
 #include "DspUtils.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -203,6 +205,11 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         delayLines_[i].writePos = 0;
         delayLines_[i].mask = bufSize - 1;
         dampFilter_[i].prepare (static_cast<float> (sampleRate));
+        // Phase ε: in-loop peaking band — designUnity by default → bypass.
+        inLoopPeak_[i].prepare (static_cast<float> (sampleRate));
+        // Phase η: per-line dual-time-constant bass shelf — both gains
+        // default 0 dB → anyActive_ guard skips processing → bypass.
+        dualBassShelf_[i].prepare (static_cast<float> (sampleRate));
         dampFilter_[i].reset();
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
@@ -336,6 +343,15 @@ void FDNReverb::process (const float* inputL, const float* inputR,
     const bool useCoherent =
         (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
         && ! frozen;
+    // Phase 3: ModulatedDamping disables line-length mod entirely (Doppler-
+    // free) and instead lerps each line's damping coefficients between dark
+    // and bright endpoints via a slow master LFO. Only fires when the
+    // designCoeffs pass populated the dark/bright tables AND the engine
+    // isn't frozen.
+    const bool useDampingMod =
+        (modulationTopology_ == DspUtils::ModulationTopology::ModulatedDamping)
+        && dampingModActive_ && ! frozen;
+
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -349,6 +365,19 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         if (useCoherent)
             coherentLfo_.advance();
 
+        // Phase 3: advance the slow ModulatedDamping master LFO; per-line
+        // mod factor t = 0.5 + 0.5 * sin(phase) ∈ [0, 1] used below in the
+        // damping coefficient lerp. RandomWalk + CoherentLoop never touch
+        // this — branch predictor keeps it free for those topologies.
+        float dampingModT = 0.0f;
+        if (useDampingMod)
+        {
+            masterDampingLfoPhase_ += masterDampingLfoIncr_;
+            if (masterDampingLfoPhase_ >= 6.283185307179586f)
+                masterDampingLfoPhase_ -= 6.283185307179586f;
+            dampingModT = 0.5f + 0.5f * std::sin (masterDampingLfoPhase_);
+        }
+
         float delayOut[N];
         for (int ch = 0; ch < N; ++ch)
         {
@@ -356,6 +385,13 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             float mod;
             if (frozen)
             {
+                mod = 0.0f;
+            }
+            else if (useDampingMod)
+            {
+                // ModulatedDamping: STATIC delay lines. Zero Doppler, no
+                // pitch warble, no harmonic stacking. All mod character
+                // comes from the damping coefficient lerp downstream.
                 mod = 0.0f;
             }
             else if (useCoherent)
@@ -402,6 +438,21 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             for (int ch = 0; ch < N; ++ch)
                 delayOut[ch] = inlineAP3_[ch].process (delayOut[ch], lp.inlineDiffCoeff3);
+        }
+
+        // Phase ζ (2026-05-29): in-loop narrow-Q peaking PRE-Hadamard.
+        // Each line's signal gets the same coherent peaking boost BEFORE
+        // the feedback summer collides channels. Hadamard mixing is
+        // orthonormal — magnitudes at any frequency pass through
+        // unchanged — so the coherent +Xdb at the peak frequency survives
+        // the mix and reinforces in the feedback loop steady state.
+        // (Phase ε put this AFTER damping + AFTER per-line cascade, where
+        // Hadamard had already redistributed the energy and the boost
+        // was dissipated — verified via sine1k unchanged at +9dB peak.)
+        if (inLoopPeakActive_ && ! frozen)
+        {
+            for (int ch = 0; ch < N; ++ch)
+                delayOut[ch] = inLoopPeak_[ch].processL (delayOut[ch]);
         }
 
         // --- 2) Feedback mixing ---
@@ -484,8 +535,42 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
             // Snapshot-path damping: coeffs come from lp.damping[ch] by const
             // ref; filter state (z1/z2) lives in dampFilter_[ch]. Zero-tear.
-            float filtered = frozen ? feedback[ch]
-                                    : dampFilter_[ch].process (feedback[ch], lp.damping[ch]);
+            //
+            // Phase 3 ModulatedDamping: lerp 11 floats between dark/bright
+            // endpoints using the slow master LFO factor (computed once
+            // per sample above). No transcendentals — straight lerp. The
+            // stack-local lerpedCoeffs is passed by const-ref to process()
+            // so the snapshot contract holds.
+            float filtered;
+            if (frozen)
+            {
+                filtered = feedback[ch];
+            }
+            else if (useDampingMod)
+            {
+                // Phase α post-fix: O(1) allocation-free lookup. dampingModT
+                // ∈ [0, 1] from the slow LFO. Quantize to a stable, pre-
+                // designed RBJ Coeffs slot. Replaces the 11-multiply raw
+                // coefficient lerp that briefly produced unstable biquads
+                // twice per LFO cycle (textbook (a1, a2) pole excursion
+                // outside the stability triangle).
+                const int idx = std::clamp (static_cast<int> (dampingModT
+                                              * static_cast<float> (kDampingSteps)),
+                                            0, kDampingSteps - 1);
+                const auto& cm = dampingModTable_[ch][idx];
+                filtered = dampFilter_[ch].process (feedback[ch], cm);
+            }
+            else
+            {
+                filtered = dampFilter_[ch].process (feedback[ch], lp.damping[ch]);
+            }
+
+            // Phase η: per-line dual-time-constant bass shelf. Sits AFTER
+            // ThreeBandDamping → BEFORE structHF/LF + DC chain. Bypass-
+            // guarded inside class (anyActive_) so legacy presets with
+            // both gains 0 dB pay no audio-thread cost.
+            if (dualBassShelfActive_ && ! frozen)
+                filtered = dualBassShelf_[ch].processL (filtered);
 
             if (lp.structHFEnabled && ! frozen)
             {
@@ -513,6 +598,10 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 dcY1_[ch] = dcOut;
                 filtered = dcOut;
             }
+
+            // Phase ζ: in-loop peaking moved PRE-Hadamard (see above) so
+            // coherent boost survives the orthonormal feedback mix. This
+            // site (post-damping, per-line cascade) no longer applies it.
 
             float inputGain = frozen ? 0.0f : 0.25f * lp.inputGainScale[ch];
             float polarity  = (ch & 1) ? -1.0f : 1.0f;
@@ -678,6 +767,28 @@ void FDNReverb::setFreeze (bool frozen)
         }
     }
     publishPending();
+}
+
+void FDNReverb::setInLoopPeaking (float freqHz, float qFactor, float gainDb)
+{
+    // Design the same peaking biquad on every line so the modal boost is
+    // coherent across the Hadamard mix. Per-line variation would smear
+    // the resonance; coherent design keeps the loop resonance sharp.
+    inLoopPeakActive_ = std::fabs (gainDb) > 1.0e-6f;
+    for (int i = 0; i < N; ++i)
+        inLoopPeak_[i].setBand (freqHz, qFactor, gainDb);
+}
+
+void FDNReverb::setDualBassShelf (float fastFc, float slowFc,
+                                   float fastGainDb, float slowGainDb,
+                                   float transitionMs)
+{
+    // Both gains 0 dB → DualTimeConstantBassShelf's anyActive_ guard skips
+    // the channel; cheap bypass on every preset that doesn't opt in.
+    dualBassShelfActive_ = std::fabs (fastGainDb) > 1.0e-6f
+                        || std::fabs (slowGainDb) > 1.0e-6f;
+    for (int i = 0; i < N; ++i)
+        dualBassShelf_[i].setShape (fastFc, slowFc, fastGainDb, slowGainDb, transitionMs);
 }
 
 void FDNReverb::setBaseDelays (const int* delays)
@@ -1114,6 +1225,17 @@ void FDNReverb::setModulationTopology (DspUtils::ModulationTopology t)
     // (1 sample at 1 Hz = 0.02° phase step).
     if (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
         coherentLfo_.setRate (modRateHz_);
+
+    // Entering ModulatedDamping: dark/bright endpoint tables and the
+    // dampingModActive_ flag are only populated inside computeDecayCoefficients
+    // when topology == ModulatedDamping. Recompute + publish so the snapshot
+    // (and dampingModActive_) reflect the new topology immediately.
+    if (modulationTopology_ == DspUtils::ModulationTopology::ModulatedDamping
+        && prepared_)
+    {
+        computeDecayCoefficients (pending());
+        publishPending();
+    }
 }
 
 void FDNReverb::setCrossoverModDepth (float depth)
@@ -1128,6 +1250,18 @@ void FDNReverb::setCrossoverModDepth (float depth)
 void FDNReverb::setDecayBoost (float boost)
 {
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
+}
+
+void FDNReverb::setPerLineDecayTilt (float shortLineScale, float longLineScale)
+{
+    // Range bounds: 0.3..3.0× the base decay. Outside this range the
+    // per-band ratio gets so extreme that per-line RT60 hits the
+    // gBase clamp (0.001 / 0.9999) and the tilt stops linearizing.
+    shortLineScale_ = std::clamp (shortLineScale, 0.3f, 3.0f);
+    longLineScale_  = std::clamp (longLineScale,  0.3f, 3.0f);
     if (! prepared_) return;
     computeDecayCoefficients (pending());
     publishPending();
@@ -1149,6 +1283,10 @@ void FDNReverb::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
+        // Phase ζ: clear in-loop peaking biquad state (coefficients retained).
+        inLoopPeak_[i].reset();
+        // Phase η: clear dual-time-constant bass shelf state.
+        dualBassShelf_[i].reset();
     }
     constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
     for (int i = 0; i < N; ++i)
@@ -1227,11 +1365,43 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
 
     const int dualSlopeFastCount = p.dualSlopeFastCount;
 
+    // Phase α: precompute per-line decay scale from current delayLength[]
+    // distribution. Only fires when tilt is non-unity (compile-time fast
+    // path for default presets).
+    const bool tiltActive =
+        (std::fabs (shortLineScale_ - 1.0f) > 1.0e-6f) ||
+        (std::fabs (longLineScale_  - 1.0f) > 1.0e-6f);
+    if (tiltActive)
+    {
+        // Rank delay lines by length: ascending index = shortest first.
+        // We don't full-sort — we compute each line's normalized rank in
+        // a single O(N²) pass (N=16, cheap and allocation-free).
+        for (int i = 0; i < N; ++i)
+        {
+            int rank = 0;
+            for (int j = 0; j < N; ++j)
+                if (p.delayLength[j] < p.delayLength[i]) ++rank;
+            const float t = (N > 1) ? static_cast<float> (rank)
+                                         / static_cast<float> (N - 1)
+                                     : 0.0f;
+            perLineRT60Scale_[i] = shortLineScale_ * (1.0f - t)
+                                  + longLineScale_  *           t;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < N; ++i) perLineRT60Scale_[i] = 1.0f;
+    }
+
     for (int i = 0; i < N; ++i)
     {
-        float channelRT60 = decayTime_;
+        // Phase α: per-line decay multiplier indexed by line length rank.
+        // Long lines (low-band-dominant) extended, short lines (high-band-
+        // dominant) shortened. Folds into existing gBase = pow(10, -3·L /
+        // (RT60·sr)) formula — no audio-thread cost.
+        float channelRT60 = decayTime_ * perLineRT60Scale_[i];
         if (dualSlopeFastCount > 0 && i < dualSlopeFastCount && dualSlopeRatio_ > 0.0f)
-            channelRT60 = std::max (decayTime_ * dualSlopeRatio_, 0.2f);
+            channelRT60 = std::max (decayTime_ * dualSlopeRatio_ * perLineRT60Scale_[i], 0.2f);
 
         float effectiveLength = p.delayLength[i];
         if (p.inlineDiffCoeff > 0.0f)
@@ -1257,7 +1427,46 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
                                                        lowCrossoverCoeff,
                                                        highCrossoverCoeff,
                                                        sr);
+
+        // Phase 3 ModulatedDamping: precompute dark/bright coefficient
+        // endpoints for the per-sample lerp. Dark = treble band more damped
+        // (gHigh × 0.6 → less HF survival), Bright = treble less damped
+        // (gHigh × 1.0). The master slow LFO walks t ∈ [0, 1] between them.
+        // Cost is two designCoeffs calls per preset-apply, ZERO runtime cost
+        // when topology != ModulatedDamping (the lerp branch never executes).
+        if (modulationTopology_ == DspUtils::ModulationTopology::ModulatedDamping)
+        {
+            // Phase α post-fix: build a 32-step lookup table of pre-designed,
+            // stability-validated Coeffs. Per-step work: scalar-interp the
+            // treble feedback gain gHigh between dark (× 0.6) and bright
+            // endpoints, then run the full RBJ shelf design. This keeps
+            // every slot inside the biquad stability triangle because each
+            // is a real design output, not a linear blend of two coeffs.
+            const float gHighDark   = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_ * 0.60f, 0.01f));
+            const float gHighBright = gHigh;
+            for (int s = 0; s < kDampingSteps; ++s)
+            {
+                const float t = static_cast<float> (s) / static_cast<float> (kDampingSteps - 1);
+                const float gHighStep = (1.0f - t) * gHighDark + t * gHighBright;
+                const auto coeffs = ThreeBandDamping::designCoeffs (gLow, gMid, gHighStep,
+                                                                      lowCrossoverCoeff,
+                                                                      highCrossoverCoeff, sr);
+                // Defensive stability assert. Each table slot must be a
+                // stable biquad; if any step ever fails this guard, the RBJ
+                // design path is producing edge-case coefficients we need
+                // to clamp before they hit the audio thread.
+                // Stability assert via standard <cassert>. If either pole
+                // pair drifts to the stability boundary the table fill is
+                // producing an edge-case RBJ design that must be clamped
+                // BEFORE it reaches the audio thread.
+                assert (std::fabs (coeffs.lowA2)  < 0.999f);
+                assert (std::fabs (coeffs.highA2) < 0.999f);
+                dampingModTable_[i][s] = coeffs;
+            }
+        }
     }
+    dampingModActive_ =
+        (modulationTopology_ == DspUtils::ModulationTopology::ModulatedDamping);
 }
 
 void FDNReverb::updateModDepth()
@@ -1286,4 +1495,11 @@ void FDNReverb::updateLFORates()
     // Phase 2 master sine LFO uses the BASE rate (no per-line spread —
     // intra-half spread comes from phase offset, not detune).
     coherentLfo_.setRate (modRateHz_);
+    // Phase 3 ModulatedDamping master LFO advances at a SLOW fixed rate
+    // (kDampingModRateHz, default 0.30 Hz) regardless of modRateHz_. The
+    // user-facing Mod Rate knob still controls line-length mod when the
+    // topology is RandomWalk or CoherentLoop; ModulatedDamping is a
+    // distinct character that always uses the slow tank-style drift.
+    const float twoPi = 6.283185307179586f;
+    masterDampingLfoIncr_ = (twoPi * kDampingModRateHz) / static_cast<float> (sampleRate_);
 }
