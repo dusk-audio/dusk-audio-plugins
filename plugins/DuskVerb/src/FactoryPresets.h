@@ -99,6 +99,17 @@ struct FactoryPreset
     float dpvBassShelfGainDb   = 0.0f;
     float dpvBassShelfFreqHz   = 180.0f;
 
+    // FiveBandDamping (Phase 2, FDN/algo-4 only). Sentinel defaults of -1 for
+    // the multipliers mean "inherit" (sub → bassMult, hi-mid → Treble/damping)
+    // so every existing brace-init preset row — none of which reach these
+    // trailing fields — stays bit-for-bit transparent (collapses to the legacy
+    // 3-band). crossoverSub/Air default to boundaries that sit between
+    // equal-gain bands at the inherited mults. Non-FDN engines ignore all four.
+    float subMult      = -1.0f;   // <0 → inherit bassMult (transparent)
+    float hiMidMult    = -1.0f;   // <0 → inherit Treble Multiply (transparent)
+    float crossoverSub = 120.0f;  // sub ↔ low-mid boundary (Hz)
+    float crossoverAir = 8000.0f; // hi-mid ↔ air boundary (Hz)
+
     // Phase γ (2026-05-29): per-preset post-tank band-trim region gains —
     // NOT struct fields (would break aggregate-init of every existing
     // brace-init preset row). Per-preset overrides live in PluginProcessor.cpp::
@@ -137,6 +148,12 @@ struct FactoryPreset
         setIfExists ("mid_mult",  midMult);
         setIfExists ("crossover", crossover);
         setIfExists ("high_crossover", highCrossover);
+        // FiveBandDamping (Phase 2): sentinel -1 inherits the legacy band so
+        // unspecified presets stay transparent (sub→bass, hi-mid→treble).
+        setIfExists ("sub_mult",      subMult   >= 0.0f ? subMult   : bassMult);
+        setIfExists ("hi_mid_mult",   hiMidMult >= 0.0f ? hiMidMult : damping);
+        setIfExists ("crossover_sub", crossoverSub);
+        setIfExists ("crossover_air", crossoverAir);
         setIfExists ("saturation", saturation);
         setIfExists ("diffusion", diffusion);
         setIfExists ("er_level",  erLevel);

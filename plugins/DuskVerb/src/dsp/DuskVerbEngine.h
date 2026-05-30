@@ -101,6 +101,12 @@ public:
     // member is unread inside the loop. Push to this method alongside so
     // damping edits actually choke HF feedback in the FDN engine.
     void setAirTrebleMultiply (float mult);
+    // FDN-only FiveBandDamping (Phase 2): sub + hi-mid decay plateaus + their
+    // crossovers. Forward only to fdn_; other engines have no five-band path.
+    void setSubMultiply (float mult);
+    void setHiMidMultiply (float mult);
+    void setSubCrossoverFreq (float hz);
+    void setAirCrossoverFreq (float hz);
     void setCrossoverFreq (float hz);              // bass↔mid (legacy "crossover")
     void setHighCrossoverFreq (float hz);          // mid↔high (3-band)
     void setSaturation    (float amount);          // 0..1 drive-style softClip

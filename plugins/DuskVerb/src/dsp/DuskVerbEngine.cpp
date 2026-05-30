@@ -280,6 +280,12 @@ void DuskVerbEngine::setAirTrebleMultiply (float mult)
     fdn_.setAirTrebleMultiply (mult);
 }
 
+// FiveBandDamping (Phase 2) — FDN-only; other engines have no five-band path.
+void DuskVerbEngine::setSubMultiply     (float mult) { fdn_.setSubMultiply (mult); }
+void DuskVerbEngine::setHiMidMultiply   (float mult) { fdn_.setHiMidMultiply (mult); }
+void DuskVerbEngine::setSubCrossoverFreq (float hz)  { fdn_.setSubCrossoverFreq (hz); }
+void DuskVerbEngine::setAirCrossoverFreq (float hz)  { fdn_.setAirCrossoverFreq (hz); }
+
 void DuskVerbEngine::setCrossoverFreq (float hz)
 {
     dattorro_.setCrossoverFreq (hz);

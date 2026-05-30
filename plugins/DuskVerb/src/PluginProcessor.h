@@ -163,6 +163,10 @@ private:
     std::atomic<float>* dampingParam_       = nullptr;
     std::atomic<float>* bassMultParam_      = nullptr;
     std::atomic<float>* midMultParam_       = nullptr;
+    std::atomic<float>* subMultParam_       = nullptr;
+    std::atomic<float>* hiMidMultParam_     = nullptr;
+    std::atomic<float>* crossoverSubParam_  = nullptr;
+    std::atomic<float>* crossoverAirParam_  = nullptr;
     std::atomic<float>* crossoverParam_     = nullptr;
     std::atomic<float>* highCrossoverParam_ = nullptr;
     std::atomic<float>* bassChokeParam_     = nullptr;
@@ -283,6 +287,10 @@ private:
     float lastDpvBassShelfDb_   = 9999.0f;
     float lastDpvBassShelfHz_   = 9999.0f;
     float lastMidMult_     = -1.0f;
+    float lastSubMult_     = -1.0f;
+    float lastHiMidMult_   = -1.0f;
+    float lastCrossoverSub_ = -1.0f;
+    float lastCrossoverAir_ = -1.0f;
     float lastCrossover_   = -1.0f;
     float lastHighCrossover_ = -1.0f;
     float lastBassChoke_     = -1.0f;

@@ -711,6 +711,38 @@ void FDNReverb::setTrebleMultiply (float mult)
     publishPending();
 }
 
+void FDNReverb::setSubMultiply (float mult)
+{
+    subMultiply_ = std::clamp (mult, 0.1f, 2.5f);
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
+}
+
+void FDNReverb::setHiMidMultiply (float mult)
+{
+    hiMidMultiply_ = std::clamp (mult, 0.1f, 2.5f);
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
+}
+
+void FDNReverb::setSubCrossoverFreq (float hz)
+{
+    subCrossoverFreq_ = std::clamp (hz, 20.0f, 400.0f);
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
+}
+
+void FDNReverb::setAirCrossoverFreq (float hz)
+{
+    airCrossoverFreq_ = std::clamp (hz, 2000.0f, 20000.0f);
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
+}
+
 void FDNReverb::setCrossoverFreq (float hz)
 {
     crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f);
@@ -1359,6 +1391,8 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
 
     float lowCrossoverCoeff  = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
+    float subCrossoverCoeff  = std::exp (-kTwoPi * subCrossoverFreq_ / sr);
+    float airCrossoverCoeff  = std::exp (-kTwoPi * airCrossoverFreq_ / sr);
 
     baseLowCrossoverCoeff_  = lowCrossoverCoeff;
     baseHighCrossoverCoeff_ = highCrossoverCoeff;
@@ -1423,23 +1457,26 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
         float gMid  = std::pow (gBase, 1.0f / midMultiply_);
         float gHigh = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_, 0.01f));
 
-        // Phase 1 (2026-05-30): FiveBandDamping with TRANSPARENT defaults —
-        // gSub=gLow, gLoMid=gHiMid=gMid, gAir=gHigh, crossovers at the legacy
-        // low/high boundaries. Behaviourally identical to the prior 3-band
-        // (two middle shelves collapse to bit-exact identity; reduces to the
-        // legacy low+high shelf pair, matches to FP epsilon). Phase 2 exposes
-        // sub / lo-mid / hi-mid / air as independent optimizer axes; until
-        // then this is a no-op refactor that only adds the degrees of freedom.
-        const float gSub   = gLow;
-        const float gLoMid = gMid;
-        const float gHiMid = gMid;
+        // Phase 2 (2026-05-30): five independent decay plateaus.
+        //   sub     <subX        : subMultiply_
+        //   low-mid subX..lowX   : bassMultiply_       (reuses gLow)
+        //   mid     lowX..highX  : midMultiply_
+        //   hi-mid  highX..airX  : hiMidMultiply_
+        //   air     >airX        : airTrebleMultiply_  (reuses gHigh)
+        // Transparent (= legacy 3-band) when subMult==bassMult AND
+        // hiMidMult==trebleMult: the new sub/air boundaries then sit between
+        // equal-gain neighbours, so they are inaudible and the response
+        // collapses to [<lowX gLow | lowX..highX gMid | >highX gHigh].
+        const float gSub   = std::pow (gBase, 1.0f / std::max (subMultiply_,   0.01f));
+        const float gLoMid = gLow;
+        const float gHiMid = std::pow (gBase, 1.0f / std::max (hiMidMultiply_, 0.01f));
         const float gAir   = gHigh;
         p.damping[i] = FiveBandDamping::designCoeffs (
             gSub, gLoMid, gMid, gHiMid, gAir,
-            lowCrossoverCoeff,   /* Xsub  — legacy low boundary  */
-            lowCrossoverCoeff,   /* Xlow  — identity while gLoMid==gMid */
-            highCrossoverCoeff,  /* Xhigh — identity while gHiMid==gMid */
-            highCrossoverCoeff,  /* Xair  — legacy high boundary */
+            subCrossoverCoeff,   /* Xsub  */
+            lowCrossoverCoeff,   /* Xlow  */
+            highCrossoverCoeff,  /* Xhigh */
+            airCrossoverCoeff,   /* Xair  */
             sr);
 
         // Phase 3 ModulatedDamping: precompute dark/bright coefficient
@@ -1464,8 +1501,8 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
                 const float gAirStep = (1.0f - t) * gAirDark + t * gAirBright;
                 const auto coeffs = FiveBandDamping::designCoeffs (
                     gSub, gLoMid, gMid, gHiMid, gAirStep,
-                    lowCrossoverCoeff, lowCrossoverCoeff,
-                    highCrossoverCoeff, highCrossoverCoeff, sr);
+                    subCrossoverCoeff, lowCrossoverCoeff,
+                    highCrossoverCoeff, airCrossoverCoeff, sr);
                 // Defensive stability assert. Each table slot must be a
                 // stable biquad; if any step ever fails this guard, the RBJ
                 // design path is producing edge-case coefficients we need
