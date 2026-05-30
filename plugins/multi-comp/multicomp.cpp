@@ -4414,7 +4414,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     // FET stage's characteristic saturation / transformer colouration.
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "fet_threshold", "Threshold",
-        juce::NormalisableRange<float>(-40.0f, 0.0f, 0.1f), -10.0f));
+        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -10.0f));
 
     // FET All-Buttons mode curve selection (Modern = current algorithm, Measured = hardware-measured)
     layout.add(std::make_unique<juce::AudioParameterChoice>(
