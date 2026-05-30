@@ -176,7 +176,16 @@ def render_trial(
     ]
     for name, value in overrides.items():
         cmd += ["--param", f"{name}={value}"]
-    cmd.append(preset_name)
+    # Canonical render path (2026-05-30): select the plugin's OWN factory
+    # program via --program (applies the shipped FactoryPresets row as the
+    # base), NOT the positional name — which routed through render.cpp's
+    # hand-duplicated getPresetByName/makePreset table and drifted ~2 gates
+    # from what ships (Cathedral: positional 25 vs --program 27). The sweep
+    # now scores EXACTLY the canonical render, retiring the duplicate-table
+    # class of bug. NB: preset_name MUST be an exact plugin PROGRAM name
+    # (e.g. "Cathedral Large Hall"), not a render.cpp alias like "Cathedral".
+    preset_token = "".join(c for c in preset_name if c.isalnum() or c in "+-_'")
+    cmd += ["--slug", preset_token, "--program", preset_name]
 
     try:
         result = subprocess.run(
