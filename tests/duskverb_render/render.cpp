@@ -79,6 +79,20 @@ namespace
         float sixAPOutputTrim      = 1.3f;
     };
 
+    // ── Algorithm choice normalisation ──────────────────────────────────────
+    // DuskVerb's "Algorithm" parameter is a JUCE AudioParameterChoice. A choice
+    // param normalises index i as i / (numChoices - 1). The dropdown exposes 9
+    // engines (getAlgorithmConfig() in AlgorithmConfig.h):
+    //   0 Dattorro · 1 DattorroVintage · 2 SixAPTank · 3 QuadTank · 4 FDN
+    //   5 Spring   · 6 NonLinear        · 7 Shimmer   · 8 VintageTank
+    // This divisor MUST equal numAlgorithms - 1. It was 7 in the 8-engine era;
+    // adding VintageTank (2026-05-30, commit 4362b22) made it 8. A stale divisor
+    // silently misroutes the engine (e.g. FDN index 4 → Spring) — the bug this
+    // branch (87-fix-fdn-quadtank) fixes. Keep kNumAlgorithms in sync with
+    // getNumAlgorithms() whenever an engine is added or removed.
+    static constexpr int   kNumAlgorithms    = 9;
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 8.0f
+
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to
     // ints by the AU wrapper, so we match on display name instead.
@@ -88,7 +102,7 @@ namespace
             "Lush Dark Hall",
             {
                 // Migrated from 6-AP → FDN on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 4 of 0..7)
+                { "Algorithm",       4.0f / kAlgorithmDivisor},     // FDN — Realistic Space (choice 4 of 0..8)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       35.0f },
@@ -123,7 +137,7 @@ namespace
         return {
             "Cathedral",
             {
-                { "Algorithm",       4.0f / 7.0f},
+                { "Algorithm",       4.0f / kAlgorithmDivisor},
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       20.88f },
@@ -162,7 +176,7 @@ namespace
                 // score). Engine swapped from Dattorro (algo 0) to FDN
                 // (algo 4) — Dattorro 2-AP topology can't replicate Random
                 // Hall's multi-tap input + dense diffusion + heavy mod.
-                { "Algorithm",       4.0f / 7.0f },     // 4 = Realistic Space (FDN)
+                { "Algorithm",       4.0f / kAlgorithmDivisor },     // 4 = Realistic Space (FDN)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       25.0f },
@@ -192,7 +206,7 @@ namespace
 
     // Compact preset builder. Field order matches FactoryPresets.h exactly so
     // values can be transcribed 1:1 from the source.  Algorithm choice param
-    // values are the choice INDEX (0..6); we normalise to N/(N-1) below.
+    // values are the choice INDEX (0..8); we normalise to index/(N-1) below.
     PresetParams makePreset (const char* name,
         int algoIdx, float mix, bool bus, float predelay,
         float decay, float size, float modDepth, float modRate,
@@ -205,11 +219,12 @@ namespace
         return {
             juce::String (name),
             {
-                // Divisor must equal (numAlgorithms - 1). With 8 algorithms
+                // Divisor must equal (numAlgorithms - 1). 9 algorithms now
                 // (Dattorro / DattorroVintage / SixAPTank / QuadTank / FDN /
-                // Spring / NonLinear / Shimmer) → divisor = 7. Mismatching
-                // the divisor silently misroutes the algorithm index.
-                { "Algorithm",       static_cast<float> (algoIdx) / 7.0f },
+                // Spring / NonLinear / Shimmer / VintageTank) → divisor = 8.
+                // Mismatching the divisor silently misroutes the algorithm
+                // index (the FDN→Spring bug fixed on branch 87-fix-fdn-quadtank).
+                { "Algorithm",       static_cast<float> (algoIdx) / kAlgorithmDivisor },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
                 { "Pre-Delay",       predelay },
