@@ -1423,10 +1423,24 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
         float gMid  = std::pow (gBase, 1.0f / midMultiply_);
         float gHigh = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_, 0.01f));
 
-        p.damping[i] = ThreeBandDamping::designCoeffs (gLow, gMid, gHigh,
-                                                       lowCrossoverCoeff,
-                                                       highCrossoverCoeff,
-                                                       sr);
+        // Phase 1 (2026-05-30): FiveBandDamping with TRANSPARENT defaults —
+        // gSub=gLow, gLoMid=gHiMid=gMid, gAir=gHigh, crossovers at the legacy
+        // low/high boundaries. Behaviourally identical to the prior 3-band
+        // (two middle shelves collapse to bit-exact identity; reduces to the
+        // legacy low+high shelf pair, matches to FP epsilon). Phase 2 exposes
+        // sub / lo-mid / hi-mid / air as independent optimizer axes; until
+        // then this is a no-op refactor that only adds the degrees of freedom.
+        const float gSub   = gLow;
+        const float gLoMid = gMid;
+        const float gHiMid = gMid;
+        const float gAir   = gHigh;
+        p.damping[i] = FiveBandDamping::designCoeffs (
+            gSub, gLoMid, gMid, gHiMid, gAir,
+            lowCrossoverCoeff,   /* Xsub  — legacy low boundary  */
+            lowCrossoverCoeff,   /* Xlow  — identity while gLoMid==gMid */
+            highCrossoverCoeff,  /* Xhigh — identity while gHiMid==gMid */
+            highCrossoverCoeff,  /* Xair  — legacy high boundary */
+            sr);
 
         // Phase 3 ModulatedDamping: precompute dark/bright coefficient
         // endpoints for the per-sample lerp. Dark = treble band more damped
@@ -1442,15 +1456,16 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
             // endpoints, then run the full RBJ shelf design. This keeps
             // every slot inside the biquad stability triangle because each
             // is a real design output, not a linear blend of two coeffs.
-            const float gHighDark   = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_ * 0.60f, 0.01f));
-            const float gHighBright = gHigh;
+            const float gAirDark   = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_ * 0.60f, 0.01f));
+            const float gAirBright = gAir;
             for (int s = 0; s < kDampingSteps; ++s)
             {
                 const float t = static_cast<float> (s) / static_cast<float> (kDampingSteps - 1);
-                const float gHighStep = (1.0f - t) * gHighDark + t * gHighBright;
-                const auto coeffs = ThreeBandDamping::designCoeffs (gLow, gMid, gHighStep,
-                                                                      lowCrossoverCoeff,
-                                                                      highCrossoverCoeff, sr);
+                const float gAirStep = (1.0f - t) * gAirDark + t * gAirBright;
+                const auto coeffs = FiveBandDamping::designCoeffs (
+                    gSub, gLoMid, gMid, gHiMid, gAirStep,
+                    lowCrossoverCoeff, lowCrossoverCoeff,
+                    highCrossoverCoeff, highCrossoverCoeff, sr);
                 // Defensive stability assert. Each table slot must be a
                 // stable biquad; if any step ever fails this guard, the RBJ
                 // design path is producing edge-case coefficients we need
@@ -1459,8 +1474,10 @@ void FDNReverb::computeDecayCoefficients (LiveParams& p)
                 // pair drifts to the stability boundary the table fill is
                 // producing an edge-case RBJ design that must be clamped
                 // BEFORE it reaches the audio thread.
-                assert (std::fabs (coeffs.lowA2)  < 0.999f);
-                assert (std::fabs (coeffs.highA2) < 0.999f);
+                assert (std::fabs (coeffs.subA2) < 0.999f);
+                assert (std::fabs (coeffs.lowA2) < 0.999f);
+                assert (std::fabs (coeffs.hiA2)  < 0.999f);
+                assert (std::fabs (coeffs.airA2) < 0.999f);
                 dampingModTable_[i][s] = coeffs;
             }
         }
