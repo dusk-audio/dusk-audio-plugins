@@ -206,12 +206,17 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   Stage 2 loss 140.99 (per-band decay tight on plate)
         //   Stage 3 loss 2.13 (cleanest Stage 3 polish to date)
         //
-        // 11 / 40 gates fail.
+        // Locked 2026-05-30: direct-scoreboard + warm-start FDN sweep,
+        // 34 → 24 gate fails vs VVV "Vocal Plate" anchor (verified clean
+        // render). Two sweeps (cold→24, warm+fresh-RNG→can't beat 24)
+        // converge. Residual 24 is structural — HF T60 overshoot the single
+        // trebleMult can't bend (16k wants 0.40s, FDN gives 0.59s) + a sub
+        // energy/decay deficit — not closable by uniform FDN damping.
         { "Vocal Plate",          "Plates",
           4,  0.35f, false, 29.16f, 0,
-          0.65f, 0.79f, 0.25f, 0.26f, 0.80f, 0.70f,  384.0f,
-          0.44f, 0.25f, 0.76f,  27.0f, 17316.0f, 0.78f, false, -3.11f,
-          /* mono */ 20.0f, /* mid */ 0.96f, /* highX */ 8418.0f, /* sat */ 0.18f },
+          1.02f, 0.15f, 0.37f, 1.51f, 0.85f, 0.74f,  401.0f,
+          0.58f, 0.25f, 0.76f,  81.5f, 16667.0f, 1.02f, false, -1.74f,
+          /* mono */ 20.0f, /* mid */ 0.72f, /* highX */ 3817.0f, /* sat */ 0.03f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
         // Anchor: vintage rack-style algorithmic reverb "VintagePlate / Vocal Plate"
