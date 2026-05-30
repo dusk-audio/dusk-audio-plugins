@@ -23,7 +23,7 @@ Usage:
   python3 full_check.py /tmp/vvp_v9b /tmp/anchor_v2 --name VVP
 """
 from __future__ import annotations
-import argparse, sys
+import argparse, json, sys
 from pathlib import Path
 import numpy as np, soundfile as sf
 from scipy.signal import butter, sosfiltfilt, hilbert
@@ -806,8 +806,14 @@ def main():
     ap.add_argument("--category", default="",
                     help="Preset category (e.g. 'Plates'). Triggers engine-"
                          "ceiling bypass for documented architectural limits.")
+    ap.add_argument("--json", action="store_true",
+                    help="After the human-readable sheets, emit one machine-"
+                         "readable 'JSON_RESULT: {...}' line (n_fail + the "
+                         "failed-gate strings) for the optimizer to parse.")
     args = ap.parse_args()
     fails = audit(args.dv_dir, args.lex_dir, args.name, args.category)
+    if args.json:
+        print("JSON_RESULT: " + json.dumps({"n_fail": len(fails), "fails": fails}))
     sys.exit(1 if fails else 0)
 
 
