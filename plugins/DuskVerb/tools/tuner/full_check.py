@@ -88,6 +88,50 @@ GATES = {
     # Catches "DV drops, Lex holds flat" contour mismatch that scalar
     # decay metrics miss. <2 dB is excellent; 5 dB is audibly different.
     'env_shape_l1_dB':      3.0,
+    # Late-window low-band integrated RMS — catches "boomy" tail (DV bass
+    # rings 0.5-2 s past where Lex's structural damping has attenuated it).
+    # spec_L1 averaging is steady-state-spectrum-only and can pass while
+    # the temporal bass envelope is wrong. Verdict 2026-05-29 listening:
+    # VH v14 measured +3.17 dB DV-hot in 500ms-1s × 40-100 Hz — audible boom.
+    'boom_late_low_dB':     2.5,
+    # Per-band tail-envelope ripple std (Hilbert + detrend). Broadband
+    # osc_p2p averaged out VH v14's mid 1-4 kHz wobble: DV ripple std
+    # 4.15 dB vs Lex 0.95 dB (+3.2 hot). Per-band catches per-band wobble.
+    'tail_mod_ripple_dB':   1.5,
+    # HF BLOOM — early-window (50-300 ms post-peak) per-band hot ceiling.
+    # VH v15 audition (2026-05-29): 4-8 kHz +1.6 dB DV-hot during bloom =
+    # audible "brighter than VVV". Asymmetric gate (DV-hot only).
+    'hf_bloom_hot_dB':      1.5,
+    # BODY SUSTAIN — mid-window (300-800 ms post-peak) per-band cold ceiling.
+    # VH v15 audition: 100-2k Hz mean -1.4 dB DV-cold during body window =
+    # audible "VVV fuller / DV thinner". Asymmetric gate (DV-cold only).
+    'body_sustain_cold_dB': 1.5,
+    # PER-BAND RT60 (Schroeder backward integration on noiseburst tail, fit
+    # slope between -5 and -25 dB → ×3 = T60). 9 octave bands 63 Hz–16 kHz.
+    # ±5% = musical JND for reverberation time per ITU-R BS.1116 and classical
+    # hall acoustic literature. Missing this gate was a multi-week blind spot:
+    # the per-band sustained-pink gates above only fire when the harness
+    # renders a sustained-pink stimulus (it doesn't), so per-band RT60 shape
+    # was effectively UNGATED across every VH iteration since v13.
+    't60_band_pct':         5.0,
+    # PER-BAND TAIL MOD PEAK FREQUENCY — Hilbert envelope FFT, dominant peak
+    # in 0.3-8 Hz range per band. VH listening v15: DV bass mod at 3.3 Hz vs
+    # VVV 1.83 Hz, DV mid at 1.5 Hz vs VVV 0.46 Hz — DV mod runs at WRONG
+    # rates per band (per-line LFO harmonic stack vs tank-coupled mod). Gate
+    # ±30% relative — narrow enough to flag rate inversion, wide enough to
+    # tolerate noise-floor jitter.
+    'tail_mod_freq_pct':   30.0,
+    # SINE 1 kHz STEADY-STATE FULL RMS DELTA — exposes mid-presence
+    # coloration that broadband noiseburst RMS averages out. VH listening
+    # v21 (gain-matched): DV +6.15 dB hot on sine1k (1 kHz feedback gain too
+    # high) — heard as "DV brighter / more honky" on vocal material.
+    # Asymmetric tolerance because hot is the audible defect.
+    'sine1k_full_rms_dB':   2.0,
+    # PER-STIMULUS RMS DELTA — broadband level on each stimulus. Single
+    # Gain Trim knob can't match all stimuli simultaneously when the
+    # spectrum diverges, so this is informational + advisory. Gate as
+    # symmetric tolerance per stimulus.
+    'per_stim_rms_dB':      2.0,
 }
 
 
@@ -166,6 +210,137 @@ def osc_envelope_p2p(p):
     sl, ic = np.linalg.lstsq(A, arr, rcond=None)[0]
     res = arr - (sl*tt + ic)
     return float(res.max() - res.min())
+
+
+def _late_low_rms_db(p, t0, t1, lo, hi):
+    """Peak-aligned late-window low-band integrated RMS (dB)."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0 * sr))
+    i1 = min(len(m), peak + int(t1 * sr))
+    if i1 - i0 < 200: return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    rms = float(np.sqrt(np.mean(y ** 2)))
+    return 20.0 * np.log10(max(rms, 1e-12))
+
+
+def _post_peak_band_rms_db(p, t0_ms, t1_ms, lo, hi):
+    """Peak-aligned band-passed integrated RMS in a [t0, t1] ms window."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0_ms * sr / 1000))
+    i1 = min(len(m), peak + int(t1_ms * sr / 1000))
+    if i1 - i0 < 200: return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    rms = float(np.sqrt(np.mean(y ** 2)))
+    return 20.0 * np.log10(max(rms, 1e-12))
+
+
+def _tail_mod_peak_freq (p, t0, t1, lo, hi, env_smooth_ms=30,
+                          f_lo=0.3, f_hi=8.0):
+    """Find dominant envelope-modulation peak frequency in [f_lo, f_hi] Hz
+    for a band-passed tail segment. Hilbert envelope → linear detrend →
+    Hanning window → rFFT → arg max within target range. Returns Hz or None."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0 * sr))
+    i1 = min(len(m), peak + int(t1 * sr))
+    if i1 - i0 < int(sr * 0.5):
+        return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    env = np.abs(hilbert(y))
+    win = max(1, int(sr * env_smooth_ms / 1000.0))
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(np.maximum(env_s, 1.0e-12))
+    t = np.arange(len(env_db)) / sr
+    slope, intercept = np.polyfit(t, env_db, 1)
+    env_ac = env_db - (slope * t + intercept)
+    if len(env_ac) < 64:
+        return None
+    n = len(env_ac)
+    nfft = 1 << int(np.ceil(np.log2(n * 4)))
+    spec = np.abs(np.fft.rfft(env_ac * np.hanning(n), n=nfft))
+    f = np.fft.rfftfreq(nfft, d=1 / sr)
+    mask = (f >= f_lo) & (f <= f_hi)
+    if not np.any(mask):
+        return None
+    idx = int(np.argmax(spec[mask]))
+    return float(f[mask][idx])
+
+
+def _full_rms_db (p):
+    """Integrated RMS dB of entire file (mono mix)."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    return float(20.0 * np.log10(max(np.sqrt(np.mean(m ** 2)), 1.0e-12)))
+
+
+def _t60_band_schroeder (p, lo, hi):
+    """Per-band T60 via Schroeder backward integration on the post-peak
+    noiseburst tail. Bandpass → cumulative reverse energy → log-scale slope
+    fit between -5 and -25 dB → T60 = -60 / slope. Returns seconds or None
+    if the band's decay never crosses -25 dB (noise floor) in the 4 s window."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    nyq = sr * 0.49
+    sos = butter(4, [max(lo, 10.0), min(hi, nyq)], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, m)
+    peak = int(np.argmax(np.abs(y)))
+    tail = y[peak : peak + int(sr * 4.0)]
+    if len(tail) < int(sr * 0.5):
+        return None
+    sq  = tail ** 2
+    edc = np.cumsum(sq[::-1])[::-1]
+    if edc[0] <= 1.0e-30:
+        return None
+    edc_db = 10.0 * np.log10 (np.maximum (edc / edc[0], 1.0e-12))
+    t = np.arange(len(edc_db)) / sr
+    try:
+        i5  = int (np.where (edc_db <= -5.0) [0][0])
+        i25 = int (np.where (edc_db <= -25.0)[0][0])
+    except IndexError:
+        return None
+    if i25 <= i5:
+        return None
+    slope = np.polyfit (t[i5:i25], edc_db[i5:i25], 1)[0]   # dB/sec
+    if slope >= -1.0e-3:
+        return None
+    return -60.0 / slope
+
+
+def _tail_env_ripple_db(p, t0, t1, lo, hi, env_smooth_ms=30):
+    """Detrended dB-envelope std on the tail post-peak (Hilbert + linear-
+    detrend). Lex natural decay ~0.9-1.3 dB; engine mod wobble inflates it."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0 * sr))
+    i1 = min(len(m), peak + int(t1 * sr))
+    if i1 - i0 < int(sr * 0.5): return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    env = np.abs(hilbert(y))
+    win = max(1, int(sr * env_smooth_ms / 1000.0))
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(np.maximum(env_s, 1e-12))
+    t = np.arange(len(env_db)) / sr
+    slope, intercept = np.polyfit(t, env_db, 1)
+    env_db_ac = env_db - (slope * t + intercept)
+    return float(np.std(env_db_ac))
 
 
 def windowed_above_floor(p, t0, t1, floor_dbfs=-80.0):
@@ -452,6 +627,163 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             else:
                 print(line)
                 if p == 'FAIL': fails.append(line.strip())
+
+    # ─── Boom (late-window low-band integrated RMS) ───
+    if dv and lx:
+        print("\n── BOOM (late-window low-band integrated RMS, peak-aligned) ──")
+        boom_gate = GATES['boom_late_low_dB']
+        for (t0, t1, win_lab) in [(0.5, 1.0, '500ms-1s'),
+                                   (1.0, 2.0, '1-2s')]:
+            for (lo, hi, b_lab) in [(40, 100,  'sub 40-100'),
+                                     (80, 200,  'low 80-200'),
+                                     (100, 300, 'low 100-300')]:
+                dv_db = _late_low_rms_db(dv, t0, t1, lo, hi)
+                lx_db = _late_low_rms_db(lx, t0, t1, lo, hi)
+                if dv_db is None or lx_db is None: continue
+                delta = dv_db - lx_db
+                passing = abs(delta) <= boom_gate
+                line = (f"  {f'boom {b_lab} {win_lab}':30s}  "
+                        f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+6.2f}  "
+                        f"gate=±{boom_gate}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+
+    # ─── HF bloom (early-window per-band hot ceiling) ───
+    if dv and lx:
+        print("\n── HF BLOOM (50-300 ms post-peak, per-band hot ceiling) ──")
+        bloom_gate = GATES['hf_bloom_hot_dB']
+        for (lo, hi, b_lab) in [(2000, 4000,  '2-4k'),
+                                 (4000, 8000,  '4-8k'),
+                                 (8000, 12000, '8-12k')]:
+            dv_db = _post_peak_band_rms_db(dv, 50, 300, lo, hi)
+            lx_db = _post_peak_band_rms_db(lx, 50, 300, lo, hi)
+            if dv_db is None or lx_db is None: continue
+            delta = dv_db - lx_db
+            passing = delta <= bloom_gate
+            line = (f"  {f'bloom {b_lab}':30s}  "
+                    f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"gate≤+{bloom_gate}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+    # ─── Body sustain (mid-window per-band cold floor) ───
+    if dv and lx:
+        print("\n── BODY SUSTAIN (300-800 ms post-peak, per-band cold floor) ──")
+        body_gate = GATES['body_sustain_cold_dB']
+        for (lo, hi, b_lab) in [(125, 250,  '125-250'),
+                                 (250, 500,  '250-500'),
+                                 (500, 1000, '500-1k'),
+                                 (1000, 2000, '1-2k')]:
+            dv_db = _post_peak_band_rms_db(dv, 300, 800, lo, hi)
+            lx_db = _post_peak_band_rms_db(lx, 300, 800, lo, hi)
+            if dv_db is None or lx_db is None: continue
+            delta = dv_db - lx_db
+            passing = delta >= -body_gate
+            line = (f"  {f'body {b_lab}':30s}  "
+                    f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"gate≥-{body_gate}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+    # ─── Per-stimulus broadband RMS ─── catches spectrum-dependent level
+    # mismatch a single Gain Trim knob cannot fix simultaneously.
+    if dv_dir and lex_dir:
+        print("\n── PER-STIMULUS FULL RMS (broadband level vs anchor) ──")
+        ps_gate = GATES['per_stim_rms_dB']
+        for stim in ['noiseburst', 'snare', 'sine1k']:
+            dv_f = find_stim(dv_dir, stim); lx_f = find_stim(lex_dir, stim)
+            if not dv_f or not lx_f: continue
+            dv_db = _full_rms_db (dv_f); lx_db = _full_rms_db (lx_f)
+            delta = dv_db - lx_db
+            passing = abs(delta) <= ps_gate
+            line = (f"  {f'full RMS {stim}':30s}  "
+                    f"DV={dv_db:+7.2f}  VVV={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"gate=±{ps_gate}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+    # ─── Sine 1 kHz steady-state delta — exposes mid-presence coloration ───
+    if dv_dir and lex_dir:
+        print("\n── SINE 1 kHz STEADY-STATE (mid coloration probe) ──")
+        s1_gate = GATES['sine1k_full_rms_dB']
+        dv_s = find_stim(dv_dir, 'sine1k'); lx_s = find_stim(lex_dir, 'sine1k')
+        if dv_s and lx_s:
+            dv_db = _full_rms_db (dv_s); lx_db = _full_rms_db (lx_s)
+            delta = dv_db - lx_db
+            passing = abs(delta) <= s1_gate
+            line = (f"  {'sine1k full RMS':30s}  "
+                    f"DV={dv_db:+7.2f}  VVV={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"gate=±{s1_gate}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+    # ─── Per-band tail mod peak FREQUENCY (Hilbert env → FFT peak) ───
+    if dv and lx:
+        print("\n── PER-BAND TAIL MOD PEAK FREQUENCY (Hilbert FFT, 0.3-8 Hz) ──")
+        mf_gate = GATES['tail_mod_freq_pct']
+        for (lo, hi, b_lab) in [(40,    250,   'bass 40-250'),
+                                 (250,   1000,  'lowmid 250-1k'),
+                                 (1000,  4000,  'mid 1-4k'),
+                                 (4000,  12000, 'high 4-12k')]:
+            dv_f = _tail_mod_peak_freq (dv, 1.0, 3.0, lo, hi)
+            lx_f = _tail_mod_peak_freq (lx, 1.0, 3.0, lo, hi)
+            if dv_f is None or lx_f is None or lx_f < 0.4:
+                print(f"  {f'mod {b_lab}':30s}  SKIPPED (peak below 0.4 Hz floor)")
+                continue
+            pct = (dv_f - lx_f) / lx_f * 100.0
+            passing = abs(pct) <= mf_gate
+            line = (f"  {f'mod {b_lab}':30s}  "
+                    f"DV={dv_f:5.2f}Hz  VVV={lx_f:5.2f}Hz  Δ={pct:+6.1f}%  "
+                    f"gate=±{mf_gate}%  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+    # ─── Per-band RT60 (Schroeder backward integration, noiseburst tail) ───
+    if dv and lx:
+        print("\n── PER-BAND RT60 (Schroeder backward int, ±5% JND gate) ──")
+        rt_gate = GATES['t60_band_pct']
+        for (lo, hi, b_lab) in [(44,   88,    '63 Hz'),
+                                 (88,   177,   '125 Hz'),
+                                 (177,  355,   '250 Hz'),
+                                 (355,  710,   '500 Hz'),
+                                 (710,  1420,  '1 kHz'),
+                                 (1420, 2840,  '2 kHz'),
+                                 (2840, 5680,  '4 kHz'),
+                                 (5680, 11360, '8 kHz'),
+                                 (11360, 18000, '16 kHz')]:
+            dv_t = _t60_band_schroeder (dv, lo, hi)
+            lx_t = _t60_band_schroeder (lx, lo, hi)
+            if dv_t is None or lx_t is None or lx_t <= 0.05:
+                print(f"  {f'T60 {b_lab}':30s}  SKIPPED (band below noise floor)")
+                continue
+            pct = (dv_t - lx_t) / lx_t * 100.0
+            passing = abs(pct) <= rt_gate
+            line = (f"  {f'T60 {b_lab}':30s}  "
+                    f"DV={dv_t:5.2f}s  VVV={lx_t:5.2f}s  Δ={pct:+6.1f}%  "
+                    f"gate=±{rt_gate}%  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+    # ─── Tail mod ripple (per-band detrended envelope std) ───
+    if dv and lx:
+        print("\n── TAIL MOD RIPPLE (per-band detrended env std, 0.5-3s) ──")
+        rip_gate = GATES['tail_mod_ripple_dB']
+        for (lo, hi, b_lab) in [(40, 250,   'bass 40-250'),
+                                 (250, 1000, 'lowmid 250-1k'),
+                                 (1000, 4000, 'mid 1-4k'),
+                                 (4000, 12000, 'high 4-12k')]:
+            dv_std = _tail_env_ripple_db(dv, 0.5, 3.0, lo, hi)
+            lx_std = _tail_env_ripple_db(lx, 0.5, 3.0, lo, hi)
+            if dv_std is None or lx_std is None: continue
+            delta = dv_std - lx_std
+            # Asymmetric gate: DV-cooler is fine (DV smoother than Lex);
+            # DV-hotter is what we're catching.
+            passing = delta <= rip_gate
+            line = (f"  {f'ripple {b_lab}':30s}  "
+                    f"DV={dv_std:5.2f}  Lex={lx_std:5.2f}  Δ={delta:+5.2f}  "
+                    f"gate≤+{rip_gate}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
 
     # ─── Summary ───
     print()
