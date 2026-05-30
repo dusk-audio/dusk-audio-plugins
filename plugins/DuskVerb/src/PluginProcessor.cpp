@@ -81,6 +81,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "high_crossover", 1 }, "High Crossover",
         juce::NormalisableRange<float> (1000.0f, 12000.0f, 0.0f, 0.5f), fp0.highCrossover));
 
+    // FiveBandDamping (Phase 2, FDN only) — two extra decay plateaus + their
+    // crossovers. Defaults map to the first preset's bass/treble mults so a
+    // blank instance is transparent; factory presets override via applyTo.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "sub_mult", 1 }, "Sub Multiply",
+        juce::NormalisableRange<float> (0.1f, 2.0f), fp0.bassMult));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "hi_mid_mult", 1 }, "Hi-Mid Multiply",
+        juce::NormalisableRange<float> (0.1f, 2.0f), fp0.damping));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "crossover_sub", 1 }, "Sub Crossover",
+        juce::NormalisableRange<float> (20.0f, 200.0f, 0.0f, 0.5f), 120.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "crossover_air", 1 }, "Air Crossover",
+        juce::NormalisableRange<float> (4000.0f, 20000.0f, 0.0f, 0.5f), 8000.0f));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_choke", 1 }, "Bass Choke",
         juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), fp0.bassChoke));
@@ -287,6 +306,10 @@ DuskVerbProcessor::DuskVerbProcessor()
     dampingParam_       = parameters.getRawParameterValue ("damping");
     bassMultParam_      = parameters.getRawParameterValue ("bass_mult");
     midMultParam_       = parameters.getRawParameterValue ("mid_mult");
+    subMultParam_       = parameters.getRawParameterValue ("sub_mult");
+    hiMidMultParam_     = parameters.getRawParameterValue ("hi_mid_mult");
+    crossoverSubParam_  = parameters.getRawParameterValue ("crossover_sub");
+    crossoverAirParam_  = parameters.getRawParameterValue ("crossover_air");
     crossoverParam_     = parameters.getRawParameterValue ("crossover");
     highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
     bassChokeParam_     = parameters.getRawParameterValue ("bass_choke");
@@ -567,6 +590,10 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     });
     pushIfChanged (lastBassMult_,  bassMultParam_->load(),  [this] (float v) { activeEngine_->setBassMultiply (v); });
     pushIfChanged (lastMidMult_,   midMultParam_->load(),   [this] (float v) { activeEngine_->setMidMultiply (v); });
+    pushIfChanged (lastSubMult_,   subMultParam_->load(),   [this] (float v) { activeEngine_->setSubMultiply (v); });
+    pushIfChanged (lastHiMidMult_, hiMidMultParam_->load(), [this] (float v) { activeEngine_->setHiMidMultiply (v); });
+    pushIfChanged (lastCrossoverSub_, crossoverSubParam_->load(), [this] (float v) { activeEngine_->setSubCrossoverFreq (v); });
+    pushIfChanged (lastCrossoverAir_, crossoverAirParam_->load(), [this] (float v) { activeEngine_->setAirCrossoverFreq (v); });
     pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
     pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
     pushIfChanged (lastBassChoke_,     bassChokeParam_->load(),     [this] (float v) { activeEngine_->setBassChokeHz (v); });
@@ -965,6 +992,10 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setAirTrebleMultiply (dampingParam_->load());
     target->setBassMultiply      (bassMultParam_->load());
     target->setMidMultiply       (midMultParam_->load());
+    target->setSubMultiply       (subMultParam_->load());
+    target->setHiMidMultiply     (hiMidMultParam_->load());
+    target->setSubCrossoverFreq  (crossoverSubParam_->load());
+    target->setAirCrossoverFreq  (crossoverAirParam_->load());
     target->setCrossoverFreq     (crossoverParam_->load());
     target->setHighCrossoverFreq (highCrossoverParam_->load());
     target->setBassChokeHz (bassChokeParam_->load());
@@ -1040,6 +1071,10 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastDamping_       = dampingParam_->load();
     lastBassMult_      = bassMultParam_->load();
     lastMidMult_       = midMultParam_->load();
+    lastSubMult_       = subMultParam_->load();
+    lastHiMidMult_     = hiMidMultParam_->load();
+    lastCrossoverSub_  = crossoverSubParam_->load();
+    lastCrossoverAir_  = crossoverAirParam_->load();
     lastCrossover_     = crossoverParam_->load();
     lastHighCrossover_ = highCrossoverParam_->load();
     lastBassChoke_     = bassChokeParam_->load();

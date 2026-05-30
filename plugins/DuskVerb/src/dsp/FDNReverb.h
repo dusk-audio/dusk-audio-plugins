@@ -79,6 +79,14 @@ public:
     void setUseWeightedGains (bool enable);
     void setHighCrossoverFreq (float hz);
     void setAirTrebleMultiply (float mult);
+    // Phase 2 FiveBandDamping (FDN only): two extra decay plateaus + their
+    // crossovers. sub (<subX) and hi-mid (highX..airX) get independent decay
+    // multipliers. Transparent when subMult==bassMult & hiMidMult==trebleMult
+    // (the new boundaries then sit between equal-gain bands → legacy 3-band).
+    void setSubMultiply (float mult);
+    void setHiMidMultiply (float mult);
+    void setSubCrossoverFreq (float hz);
+    void setAirCrossoverFreq (float hz);
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
@@ -376,6 +384,10 @@ private:
     float airTrebleMultiply_ = 1.0f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 20000.0f;
+    float subMultiply_      = 1.0f;     // FiveBandDamping sub-band decay mult
+    float hiMidMultiply_    = 1.0f;     // FiveBandDamping hi-mid-band decay mult
+    float subCrossoverFreq_ = 120.0f;   // sub ↔ low-mid boundary (Hz)
+    float airCrossoverFreq_ = 8000.0f;  // hi-mid ↔ air boundary (Hz)
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
