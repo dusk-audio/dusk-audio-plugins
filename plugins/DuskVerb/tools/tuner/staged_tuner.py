@@ -78,7 +78,9 @@ from full_check import osc_envelope_p2p
 ALL_PARAMS = {
     # Stage 1 — spatial + envelope
     "Size":             (0.10,   1.00),
-    "Diffusion":        (0.00,   1.00),
+    "Diffusion":        (0.25,   1.00),    # Hardened floor — prevents sampler
+                                            # from dissolving tank density into
+                                            # discrete delays to cheat Stage 3.
     "Width":            (0.50,   1.05),    # mono-compat clamp
     "Mod Depth":        (0.00,   0.60),
     "Mod Rate":         (0.10,   3.00),
@@ -112,6 +114,27 @@ ALL_PARAMS = {
     "DPV Box Cut Freq":    (100.0,  800.0),
     "DPV Bass Shelf Gain": (-6.0,   18.0),
     "DPV Bass Shelf Freq": (60.0,   500.0),
+    # Phase α (2026-05-29): PostTankEQ 4-band GAIN exposed to optimizer via
+    # APVTS. Operates linearly at the engine exit gate AFTER the FDN
+    # feedback loop — immune to gBase compression that buffers high
+    # frequencies during the recursive damping pass. Lets the Stage 3
+    # Polish phase notch out HF overshoot (8 k / 16 k bands on Bright Hall
+    # currently +18 / +39 % hot under the new per-line decay tilt) without
+    # disturbing internal loop dynamics. Tight ±6 dB correction window —
+    # wider ranges risk the optimizer using EQ as a primary tone-shaper
+    # instead of the surgical exit-stage scalpel it's designed to be.
+    "PostTankEQ Band 0 Gain":  (-12.0, 12.0),
+    "PostTankEQ Band 1 Gain":  (-12.0, 12.0),
+    "PostTankEQ Band 2 Gain":  (-12.0, 12.0),
+    "PostTankEQ Band 3 Gain":  (-12.0, 12.0),
+    # Phase γ (2026-05-29): PostTankBandTrim 4-region linear gain trim.
+    # Independent of FDN damping — direct exit-stage scalpel for EDT band-
+    # shape, late bass boom, and per-band steady-state RMS drift. Tight
+    # ±8 dB corrective window per user mandate.
+    "Post Band Sub Gain":      (-8.0,  8.0),
+    "Post Band Low-Mid Gain":  (-8.0,  8.0),
+    "Post Band Mid-High Gain": (-8.0,  8.0),
+    "Post Band Air Gain":      (-8.0,  8.0),
 }
 
 # Defaults applied when a param is "locked flat" for a stage (so its
@@ -127,6 +150,19 @@ STAGE1_FLAT_DEFAULTS = {
     # EQs flat
     "Lo Cut": 20.0, "Hi Cut": 20000.0, "Saturation": 0.0,
     "Gain Trim": 0.0,
+    # Phase α PostTankEQ — 0 dB = unity bypass (designUnity → bit-identical
+    # passthrough). Locking these flat in stages that don't own them keeps
+    # presets without an EQ override sounding identical to pre-Phase-α.
+    "PostTankEQ Band 0 Gain": 0.0,
+    "PostTankEQ Band 1 Gain": 0.0,
+    "PostTankEQ Band 2 Gain": 0.0,
+    "PostTankEQ Band 3 Gain": 0.0,
+    # Phase γ PostTankBandTrim — 0 dB on every region = unity-coeff
+    # high-shelves + 1.0 makeup gain → bit-identical bypass.
+    "Post Band Sub Gain":      0.0,
+    "Post Band Low-Mid Gain":  0.0,
+    "Post Band Mid-High Gain": 0.0,
+    "Post Band Air Gain":      0.0,
     "DPV HF Shelf Gain": 0.0,   "DPV HF Shelf Freq": 8000.0,
     "DPV Struct HF Damp": 18000.0,  # near-off
     "DPV Box Cut Gain": 0.0,    "DPV Box Cut Freq": 400.0,
@@ -345,6 +381,126 @@ def _ss_band_rms_db(p, lo, hi, t0=2.5, t1=4.0):
     return float(20 * np.log10(np.sqrt(np.mean(y[a:b] ** 2)) + 1e-30))
 
 
+def _late_low_rms_db(p, t0, t1, lo, hi):
+    """Peak-aligned late-window low-band integrated RMS (dB). Catches the
+    "boomy" tail signature spec_L1 averaging misses: bass that lingers
+    after the anchor's structural damping has attenuated it."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0 * sr))
+    i1 = min(len(m), peak + int(t1 * sr))
+    if i1 - i0 < 200: return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    rms = float(np.sqrt(np.mean(y ** 2)))
+    return 20.0 * np.log10(max(rms, 1e-12))
+
+
+def _post_peak_band_rms_db(p, t0_ms, t1_ms, lo, hi):
+    """Peak-aligned band-passed integrated RMS in a [t0, t1] ms window.
+    Used for temporal-spectral terms: HF bloom hot (50-300 ms × 4-8k) +
+    body sustain cold (300-800 ms × 100-2k). Captures listener-perceived
+    shape that broadband third-octave averaging misses."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0_ms * sr / 1000))
+    i1 = min(len(m), peak + int(t1_ms * sr / 1000))
+    if i1 - i0 < 200: return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    rms = float(np.sqrt(np.mean(y ** 2)))
+    return 20.0 * np.log10(max(rms, 1e-12))
+
+
+def _t60_band_schroeder (p, lo, hi):
+    """Per-band T60 via Schroeder backward integration on the post-peak
+    noiseburst tail. Bandpass → reverse-cumulative energy → log-scale slope
+    fit between -5 and -25 dB → T60 = -60/slope. Returns seconds or None."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    nyq = sr * 0.49
+    sos = butter(4, [max(lo, 10.0), min(hi, nyq)], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, m)
+    peak = int(np.argmax(np.abs(y)))
+    tail = y[peak : peak + int(sr * 4.0)]
+    if len(tail) < int(sr * 0.5): return None
+    sq  = tail ** 2
+    edc = np.cumsum(sq[::-1])[::-1]
+    if edc[0] <= 1.0e-30: return None
+    edc_db = 10.0 * np.log10 (np.maximum (edc / edc[0], 1.0e-12))
+    t = np.arange(len(edc_db)) / sr
+    try:
+        i5  = int (np.where (edc_db <= -5.0) [0][0])
+        i25 = int (np.where (edc_db <= -25.0)[0][0])
+    except IndexError:
+        return None
+    if i25 <= i5: return None
+    slope = np.polyfit (t[i5:i25], edc_db[i5:i25], 1)[0]
+    if slope >= -1.0e-3: return None
+    return -60.0 / slope
+
+
+def _tail_mod_peak_freq (p, t0, t1, lo, hi, env_smooth_ms=30,
+                          f_lo=0.3, f_hi=8.0):
+    """Per-band dominant envelope-mod peak frequency in [f_lo, f_hi] Hz.
+    Bandpass → Hilbert env → linear detrend → Hanning window → rFFT →
+    arg max within target range. Returns Hz or None."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0 * sr))
+    i1 = min(len(m), peak + int(t1 * sr))
+    if i1 - i0 < int(sr * 0.5): return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    env = np.abs(hilbert(y))
+    win = max(1, int(sr * env_smooth_ms / 1000.0))
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(np.maximum(env_s, 1.0e-12))
+    t = np.arange(len(env_db)) / sr
+    slope, intercept = np.polyfit(t, env_db, 1)
+    env_ac = env_db - (slope * t + intercept)
+    if len(env_ac) < 64: return None
+    n = len(env_ac)
+    nfft = 1 << int(np.ceil(np.log2(n * 4)))
+    spec = np.abs(np.fft.rfft(env_ac * np.hanning(n), n=nfft))
+    f = np.fft.rfftfreq(nfft, d=1 / sr)
+    mask = (f >= f_lo) & (f <= f_hi)
+    if not np.any(mask): return None
+    idx = int(np.argmax(spec[mask]))
+    return float(f[mask][idx])
+
+
+def _tail_envelope_ripple_db(p, t0, t1, lo, hi, env_smooth_ms=30):
+    """Detrended dB-envelope std on the tail (post-peak) in a band. Lex
+    natural decay gives ~1 dB ripple (smooth slope); engine modulation
+    artefacts inflate it. Used as the asymmetric ripple-hot penalty
+    that catches per-band mod wobble the broadband osc_p2p metric misses
+    (VH v14 audition: mid 1-4 kHz ripple std 4.15 dB vs Lex 0.95 dB)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    peak = int(np.argmax(np.abs(m)))
+    i0 = max(0, peak + int(t0 * sr))
+    i1 = min(len(m), peak + int(t1 * sr))
+    if i1 - i0 < int(sr * 0.5): return None
+    seg = m[i0:i1]
+    hi_c = min(hi, sr * 0.49)
+    sos = butter(4, [max(lo, 10.0), hi_c], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, seg)
+    env = np.abs(hilbert(y))
+    win = max(1, int(sr * env_smooth_ms / 1000.0))
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(np.maximum(env_s, 1e-12))
+    # Detrend: remove the linear decay slope so only AC ripple remains.
+    t = np.arange(len(env_db)) / sr
+    slope, intercept = np.polyfit(t, env_db, 1)
+    env_db_ac = env_db - (slope * t + intercept)
+    return float(np.std(env_db_ac))
+
+
 def _anchor_decay_estimate(sustained_wav: Path) -> tuple:
     """Extrapolated tail_t60 from the sustained-pink anchor, mapped to a
     DV Decay Time knob seed. Returns (seed_knob, slope_fit_rmse_db).
@@ -490,6 +646,24 @@ def stage2_loss(dv_files, lex_files):
     try:
         m_dv = compute_metrics(dv_files["noiseburst"])
         m_lx = compute_metrics(lex_files["noiseburst"])
+
+        # Master peak-aligned tail-time penalty. Per-band t30/t60 above can be
+        # satisfied by a longer master decay paired with per-band damping —
+        # the exploit Bright Hall v1 exposed (anchor t60=3.51s, optimizer
+        # picked Decay Time=6.54s → 86% overshoot but per-band weights happy).
+        # Mirror full_check's tail_t30 / tail_t60 measurement so the optimizer
+        # sees the same gate it'll be judged against.
+        for k, weight in (("tail_t30", 4.0), ("tail_t60", 2.0)):
+            dv_t = m_dv.get(k)
+            lx_t = m_lx.get(k)
+            if dv_t is None or lx_t is None or lx_t <= 0.05:
+                continue
+            rel = (dv_t - lx_t) / lx_t
+            # Squared relative error normalized to 25 % (full_check gate width)
+            # so |rel|=25 % contributes 1.0 × weight to the loss surface.
+            loss += weight * (rel / 0.25) ** 2
+            info[f"master_{k}_pct"] = rel * 100
+
         oct_dv = m_dv.get("oct_db_norm")
         oct_lx = m_lx.get("oct_db_norm")
         if hasattr(oct_dv, "__len__") and hasattr(oct_lx, "__len__"):
@@ -498,24 +672,273 @@ def stage2_loss(dv_files, lex_files):
             max_dev = float(np.max(np.abs(diff)))
             loss += 2.0 * (max_dev / 5.0) ** 2     # 5 dB = unit
             info["spec_L1_max_dB"] = max_dev
-            # Asymmetric mud-band penalty: 1/3-oct fc grid is logarithmic
-            # starting at 20 Hz; 200-500 Hz indices are roughly 10-13 on the
-            # standard 30-band grid. Treat any positive diff > 3 dB in this
-            # zone as a real mud excess and penalize heavily.
+            # Bass-clarity asymmetric penalty (100-500 Hz). Catches the
+            # "boomy / muddy / less clear" listening complaint that scalar
+            # spec_L1 averages miss.
+            #
+            # Listening verdict 2026-05-28: 4 of 5 user-audited presets failed
+            # by ear despite gates passing. Bright Hall specifically flagged
+            # as "boomier and less clear" — DV bass-mid region heavier than
+            # VVV. Vocal Hall same family of complaint ("muddy").
+            #
+            # Math:
+            #   For each 1/3-oct bin in 100-500 Hz:
+            #     diff = DV_dB - Lex_dB    (positive = DV hotter = boomy)
+            #     if diff > 0  → CUBIC penalty (heavy non-linear)
+            #     if diff <= 0 → LINEAR penalty (standard gradient)
+            #
+            # Cubic on the hot side punishes 3-6 dB excursions far more than
+            # 1-2 dB ones, forcing the optimizer AWAY from boomy Bass Multiply
+            # / oversized Low Crossover combos. Linear on the cold side keeps
+            # the gradient smooth so DV doesn't overshoot into a thin sound.
             fcs = m_dv.get("oct_centers")
             if hasattr(fcs, "__len__"):
-                mud_excess = 0.0
-                count = 0
+                bass_hot_cubic = 0.0     # cubic penalty for DV > Lex (boomy)
+                bass_cold_sqr  = 0.0     # quadratic for DV < Lex (thin)
+                n_hot  = 0
+                n_cold = 0
+                max_hot_dev = 0.0
                 for i, fc in enumerate(fcs[:n]):
-                    if 200.0 <= fc <= 500.0 and diff[i] > 0:
-                        mud_excess += diff[i] ** 2
-                        count += 1
-                if count > 0:
-                    mud_rms = (mud_excess / count) ** 0.5
-                    loss += 3.0 * (mud_rms / 3.0) ** 2
-                    info["mud_band_rms_dB"] = mud_rms
+                    if 100.0 <= fc <= 500.0:
+                        d = float(diff[i])
+                        if d > 0.0:
+                            # Cubic: small overages cheap, big overages brutal.
+                            # Normalized to 3 dB unit so |d|=3 dB contributes 1.0.
+                            bass_hot_cubic += (d / 3.0) ** 3
+                            n_hot += 1
+                            if d > max_hot_dev: max_hot_dev = d
+                        else:
+                            # Linear-in-energy (quadratic in dB) standard gradient.
+                            bass_cold_sqr += (d / 4.0) ** 2
+                            n_cold += 1
+                if n_hot + n_cold > 0:
+                    # Heavy weight on the hot side (5×), light on cold (1×).
+                    # Asymmetry ratio explicitly tuned to overpower spec_L1
+                    # mean's symmetric pull.
+                    bass_loss = (5.0 * bass_hot_cubic / max(n_hot, 1)
+                               + 1.0 * bass_cold_sqr / max(n_cold, 1))
+                    loss += bass_loss
+                    info["bass_clarity_max_hot_dB"] = max_hot_dev
+                    info["bass_clarity_loss"]       = bass_loss
     except Exception as e:
         sys.stderr.write(f"stage2 spec-peak term raised: {e}\n")
+
+    # ───────────────────────────────────────────────────────────────────────
+    # BOOM term — late-window low-band integrated RMS.
+    # Bass-clarity above measures steady-state spectrum (0-100 ms window in
+    # third-octave magnitude). Boom catches the temporal envelope: bass that
+    # lingers after the anchor's structural damping has attenuated it.
+    #
+    # 2026-05-29 v17 rebalance: windows moved to 1.0-2.5 s + 2.0-3.5 s
+    # (NO overlap with body_sustain 300-800 ms window). v16 broke because
+    # boom 500ms-1s + body 300-800ms both wanted the same Decay axis but
+    # in opposite directions — optimizer crashed Decay to clamp floor.
+    # Separating windows = each term gets its own time-domain axis.
+    try:
+        windows = [(1.0, 2.5), (2.0, 3.5)]
+        bands   = [(40, 100), (80, 200), (100, 300)]
+        boom_hot_cubic = 0.0
+        boom_cold_sqr  = 0.0
+        boom_n_hot = 0
+        boom_n_cold = 0
+        boom_max_hot = 0.0
+        for (t0, t1) in windows:
+            for (lo, hi) in bands:
+                dv_db = _late_low_rms_db(dv_files["noiseburst"], t0, t1, lo, hi)
+                lx_db = _late_low_rms_db(lex_files["noiseburst"], t0, t1, lo, hi)
+                if dv_db is None or lx_db is None:
+                    continue
+                d = dv_db - lx_db
+                if d > 0.0:
+                    boom_hot_cubic += (d / 2.0) ** 3
+                    boom_n_hot += 1
+                    if d > boom_max_hot: boom_max_hot = d
+                else:
+                    boom_cold_sqr += (d / 4.0) ** 2
+                    boom_n_cold += 1
+        if boom_n_hot + boom_n_cold > 0:
+            boom_loss = (6.0 * boom_hot_cubic / max(boom_n_hot, 1)
+                       + 1.0 * boom_cold_sqr  / max(boom_n_cold, 1))
+            loss += boom_loss
+            info["boom_max_hot_dB"] = boom_max_hot
+            info["boom_loss"]       = boom_loss
+    except Exception as e:
+        sys.stderr.write(f"stage2 boom term raised: {e}\n")
+
+    # ───────────────────────────────────────────────────────────────────────
+    # TAIL MOD RIPPLE term — detrended dB-envelope std per band.
+    # Broadband osc_p2p (full_check) is averaged across the spectrum and
+    # missed VH v14's per-band wobble: mid 1-4 kHz ripple std 4.15 dB vs
+    # Lex 0.95 dB (+3.20 dB hot — audible slow swell-and-fade).
+    # Asymmetric: only DV-hotter is penalised (DV smoother than Lex is fine).
+    # Cubic at 1 dB unit + 4× weight on hot side because audibility of
+    # tail tremolo is highly non-linear (1 dB barely audible, 3 dB obvious).
+    try:
+        ripple_bands = [(40, 250, 'bass'),
+                        (250, 1000, 'lowmid'),
+                        (1000, 4000, 'mid'),
+                        (4000, 12000, 'high')]
+        mod_hot_cubic = 0.0
+        mod_cold_sqr  = 0.0
+        mod_n_hot = 0
+        mod_n_cold = 0
+        mod_max_hot = 0.0
+        for (lo, hi, _bname) in ripple_bands:
+            dv_std = _tail_envelope_ripple_db(dv_files["noiseburst"], 0.5, 3.0, lo, hi)
+            lx_std = _tail_envelope_ripple_db(lex_files["noiseburst"], 0.5, 3.0, lo, hi)
+            if dv_std is None or lx_std is None:
+                continue
+            d = dv_std - lx_std
+            if d > 0.0:
+                mod_hot_cubic += d ** 3              # 1 dB unit
+                mod_n_hot += 1
+                if d > mod_max_hot: mod_max_hot = d
+            else:
+                mod_cold_sqr += (d / 2.0) ** 2
+                mod_n_cold += 1
+        if mod_n_hot + mod_n_cold > 0:
+            mod_loss = (4.0 * mod_hot_cubic / max(mod_n_hot, 1)
+                      + 0.5 * mod_cold_sqr  / max(mod_n_cold, 1))
+            loss += mod_loss
+            info["tail_mod_max_hot_dB"] = mod_max_hot
+            info["tail_mod_loss"]       = mod_loss
+    except Exception as e:
+        sys.stderr.write(f"stage2 tail-mod term raised: {e}\n")
+
+    # ───────────────────────────────────────────────────────────────────────
+    # HF BLOOM term — early-window (50-300 ms post-peak) 4-8 kHz hot penalty.
+    # VH v15 listening verdict: DV measured +1.6 dB hot at 4-8 kHz during
+    # bloom — audible as "brighter". Asymmetric cubic on hot side at 1 dB
+    # unit (HF audibility is highly non-linear; 1.5 dB is clearly perceptible).
+    try:
+        bloom_bands = [(2000, 4000), (4000, 8000), (8000, 12000)]
+        bloom_hot_cubic = 0.0
+        bloom_cold_sqr  = 0.0
+        bloom_n_hot = 0
+        bloom_n_cold = 0
+        bloom_max_hot = 0.0
+        for (lo, hi) in bloom_bands:
+            dv_db = _post_peak_band_rms_db(dv_files["noiseburst"], 50, 300, lo, hi)
+            lx_db = _post_peak_band_rms_db(lex_files["noiseburst"], 50, 300, lo, hi)
+            if dv_db is None or lx_db is None: continue
+            d = dv_db - lx_db
+            if d > 0.0:
+                bloom_hot_cubic += d ** 3       # 1 dB unit
+                bloom_n_hot += 1
+                if d > bloom_max_hot: bloom_max_hot = d
+            else:
+                bloom_cold_sqr += (d / 3.0) ** 2
+                bloom_n_cold += 1
+        if bloom_n_hot + bloom_n_cold > 0:
+            bloom_loss = (4.0 * bloom_hot_cubic / max(bloom_n_hot, 1)
+                        + 0.5 * bloom_cold_sqr  / max(bloom_n_cold, 1))
+            loss += bloom_loss
+            info["hf_bloom_max_hot_dB"] = bloom_max_hot
+            info["hf_bloom_loss"]       = bloom_loss
+    except Exception as e:
+        sys.stderr.write(f"stage2 hf-bloom term raised: {e}\n")
+
+    # ───────────────────────────────────────────────────────────────────────
+    # BODY SUSTAIN term — mid-window (300-800 ms post-peak) 100-2000 Hz
+    # cold penalty. VH v15 listening verdict: VVV measured ~1.4 dB warmer
+    # than DV across the body region — audible as "VVV fuller / DV thinner".
+    # ASYMMETRIC INVERTED vs bass_clarity: cold-cubic 5× / hot-quad 1×.
+    # Forces the optimizer to FILL the body region instead of scoop it.
+    try:
+        body_bands = [(125, 250), (250, 500), (500, 1000), (1000, 2000)]
+        body_cold_cubic = 0.0
+        body_hot_sqr    = 0.0
+        body_n_cold = 0
+        body_n_hot  = 0
+        body_max_cold = 0.0
+        for (lo, hi) in body_bands:
+            dv_db = _post_peak_band_rms_db(dv_files["noiseburst"], 300, 800, lo, hi)
+            lx_db = _post_peak_band_rms_db(lex_files["noiseburst"], 300, 800, lo, hi)
+            if dv_db is None or lx_db is None: continue
+            d = dv_db - lx_db
+            if d < 0.0:
+                # DV cold = thin body = "less full". CUBIC penalty.
+                body_cold_cubic += (-d) ** 3    # 1 dB unit
+                body_n_cold += 1
+                if -d > body_max_cold: body_max_cold = -d
+            else:
+                # DV hot in body = OK (means full). Light quadratic for symmetry.
+                body_hot_sqr += (d / 3.0) ** 2
+                body_n_hot += 1
+        if body_n_cold + body_n_hot > 0:
+            # 3× hot weight (was 5×) after v16 over-dominated and forced
+            # Decay floor. Still asymmetric inverted vs boom but less brutal.
+            body_loss = (3.0 * body_cold_cubic / max(body_n_cold, 1)
+                       + 1.0 * body_hot_sqr    / max(body_n_hot, 1))
+            loss += body_loss
+            info["body_max_cold_dB"] = body_max_cold
+            info["body_loss"]        = body_loss
+    except Exception as e:
+        sys.stderr.write(f"stage2 body term raised: {e}\n")
+
+    # ───────────────────────────────────────────────────────────────────────
+    # PER-BAND RT60 (Schroeder backward integration on noiseburst tail).
+    # The blind spot every prior sweep optimised against — per-band tail_t60
+    # / tail_t30 were ungated and the loss surface had no incentive to match
+    # frequency-dependent decay. VH Phase 3 audit revealed DV bass 33% cold,
+    # low-mid 22% cold, air 26% cold despite passing every prior gate.
+    # Squared relative error per band, summed. Bands 63 Hz – 16 kHz.
+    try:
+        rt_bands = [(44,    88), (88,   177), (177,  355), (355,  710),
+                    (710,  1420), (1420, 2840), (2840, 5680),
+                    (5680, 11360), (11360, 18000)]
+        rt60_err_sq = 0.0
+        rt60_n = 0
+        rt60_max_pct = 0.0
+        for (lo, hi) in rt_bands:
+            dv_t = _t60_band_schroeder (dv_files["noiseburst"], lo, hi)
+            lx_t = _t60_band_schroeder (lex_files["noiseburst"], lo, hi)
+            if dv_t is None or lx_t is None or lx_t <= 0.05:
+                continue
+            rel = (dv_t - lx_t) / lx_t
+            rt60_err_sq += (rel / 0.05) ** 2   # normalized to ±5 % JND
+            rt60_n += 1
+            if abs(rel) * 100.0 > rt60_max_pct: rt60_max_pct = abs(rel) * 100.0
+        if rt60_n > 0:
+            # Weight 6.0× per band (hardened from 3.0×). The first un-blinded
+            # BH sweep walked away from a hand-set 0.50/1.75 tilt at 3.0×
+            # weight, scoring easy Stage-3 spectral points instead. Doubling
+            # to 6× makes RT60-band the absolute dominant term in Stage 2 so
+            # the sampler cannot trade per-band decay shape for spec_L1 gains.
+            rt60_loss = 6.0 * rt60_err_sq / max(rt60_n, 1)
+            loss += rt60_loss
+            info["rt60_band_max_pct"] = rt60_max_pct
+            info["rt60_band_loss"]    = rt60_loss
+    except Exception as e:
+        sys.stderr.write(f"stage2 rt60-band term raised: {e}\n")
+
+    # ───────────────────────────────────────────────────────────────────────
+    # PER-BAND TAIL MOD PEAK FREQUENCY — Hilbert env FFT peak in 0.3-8 Hz.
+    # Catches per-band rate inversion (VH v15: DV bass 3.3 Hz vs VVV 1.83 Hz)
+    # that the tail_mod_ripple amplitude std cannot see. Squared relative
+    # error in Hz, summed across 4 bands.
+    try:
+        mf_bands = [(40,   250),
+                    (250,  1000),
+                    (1000, 4000),
+                    (4000, 12000)]
+        mf_err_sq = 0.0
+        mf_n = 0
+        for (lo, hi) in mf_bands:
+            dv_f = _tail_mod_peak_freq (dv_files["noiseburst"], 1.0, 3.0, lo, hi)
+            lx_f = _tail_mod_peak_freq (lex_files["noiseburst"], 1.0, 3.0, lo, hi)
+            if dv_f is None or lx_f is None or lx_f < 0.4:
+                continue
+            rel = (dv_f - lx_f) / lx_f
+            mf_err_sq += (rel / 0.30) ** 2   # normalized to ±30 % gate
+            mf_n += 1
+        if mf_n > 0:
+            mf_loss = 2.0 * mf_err_sq / max(mf_n, 1)
+            loss += mf_loss
+            info["tail_mod_freq_loss"] = mf_loss
+    except Exception as e:
+        sys.stderr.write(f"stage2 tail-mod-freq term raised: {e}\n")
+
     return loss, info
 
 
@@ -662,6 +1085,18 @@ def run_stage(stage_name, active_params, locked_overrides, loss_fn,
         # Record denormalized values so the report shows real units.
         for k, v in sample.items():
             trial.set_user_attr(f"denorm_{k}", float(v))
+        # Live trial breakdown — first 20 trials + every 25th after — so
+        # the bass-clarity penalty's effect on the loss surface is visible
+        # in real time during the sweep.
+        if trial.number < 20 or trial.number % 25 == 0:
+            bc = info.get("bass_clarity_loss", 0.0)
+            bch = info.get("bass_clarity_max_hot_dB", 0.0)
+            sl1 = (info.get("spec_L1_max_dB")
+                   or info.get("spec_l1_db")
+                   or info.get("spec_L1") or 0.0)
+            print(f"  trial {trial.number:04d}  loss={loss:.4f}  "
+                  f"spec={sl1:.3f}  bass_clarity={bc:.4f}  "
+                  f"max_hot_dB={bch:+.2f}", flush=True)
         shutil.rmtree(out, ignore_errors=True)
         return loss
 
@@ -801,12 +1236,25 @@ def main():
     # Stage 2 sigma scaling — when the anchor decay slope-fit is noisy
     # (modulator wobble, mode beating), widen the Decay axis exploration.
     s2_sigma_scale = {"Decay Time": decay_sigma_scale}
+    # Dynamic Decay Time clamp: anchor_decay × [0.85, 1.30].
+    # v17 tightened from [0.7, 1.5] after v16 crashed Decay to clamp floor
+    # to escape contradictory boom + body pushes. Tighter range blocks
+    # that escape — optimizer must balance terms within a narrow band
+    # around the actual anchor decay.
+    s2_range_overrides = {
+        "Decay Time": (max(0.2, anchor_decay * 0.85),
+                       min(12.0, anchor_decay * 1.30)),
+    }
+    print(f"  Decay Time clamp:   [{s2_range_overrides['Decay Time'][0]:.2f}, "
+          f"{s2_range_overrides['Decay Time'][1]:.2f}] s "
+          f"(anchor {anchor_decay:.2f} × [0.85, 1.30])")
     s2_best, _ = run_stage("Stage 2 — Temporal + Decay (Tail)",
                             s2_active, s2_locked, stage2_loss,
                             args.preset, anchor_files, args.vst3,
                             args.s2_trials, args.workers, work / "s2",
                             x0_overrides=s2_x0,
-                            sigma_scale=s2_sigma_scale)
+                            sigma_scale=s2_sigma_scale,
+                            range_overrides=s2_range_overrides)
     final.update(s2_best)
     (work / "stage2_best.json").write_text(json.dumps(s2_best, indent=2))
 
@@ -816,7 +1264,17 @@ def main():
     # Stage 3 is true polish rather than a spectral band-aid (prior
     # architecture allowed Optuna to chase a 12+ dB HF Shelf to compensate
     # for residual temporal error).
-    s3_active = ["Lo Cut", "Hi Cut", "Saturation", "Gain Trim", "Hi Cut Shelf"]
+    # Phase α (2026-05-29): PostTankEQ 4-band gains added to Stage 3 — the
+    # Polish stage is where exit-stage spectral correction belongs (linear
+    # filtering post-tank, immune to gBase compression). Optimizer now has
+    # 9 spectral axes in Stage 3 (5 legacy + 4 PostTankEQ).
+    s3_active = ["Lo Cut", "Hi Cut", "Saturation", "Gain Trim", "Hi Cut Shelf",
+                 "PostTankEQ Band 0 Gain", "PostTankEQ Band 1 Gain",
+                 "PostTankEQ Band 2 Gain", "PostTankEQ Band 3 Gain",
+                 # Phase γ Stage 3 axes — decoupled per-band linear gain
+                 # trim (independent of damping coefficients).
+                 "Post Band Sub Gain", "Post Band Low-Mid Gain",
+                 "Post Band Mid-High Gain", "Post Band Air Gain"]
     # Pull category-profile Stage 3 range overrides (e.g. Halls widen Hi Cut
     # floor to 4000 Hz so the optimizer has room to clamp DV's HF tail).
     s3_range_overrides = dict(profile.get("stage3_ranges", {}))

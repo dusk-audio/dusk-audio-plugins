@@ -1150,6 +1150,18 @@ namespace {
                 {  3.00f,  4.00f,  1.00f,  1.50f },
                 { -5.00f, +3.50f, -3.00f, -4.50f },
             } },
+            // Blade Runner 224 (BR-9 on FDN algo=4, 2026-05-30):
+            //   Band 0 —  600 Hz Q=2.0 -2.0 dB: low-mid steady-state scoop.
+            //   Band 1 — 3000 Hz Q=1.5 -3.5 dB: lower bloom suppressor.
+            //   Band 2 — 6000 Hz Q=1.0 -5.0 dB: bloom 4-8k closed BR-8.
+            //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
+            //                                    to clamp bloom 8-12k (was
+            //                                    0.53 dB over gate).
+            { "Blade Runner 224", {
+                {  600.0f, 3000.0f, 6000.0f, 10000.0f },
+                {   2.00f,   1.50f,   1.00f,    1.20f },
+                {  -2.00f,  -3.50f,  -5.00f,   -6.00f },
+            } },
         };
         return m;
     }

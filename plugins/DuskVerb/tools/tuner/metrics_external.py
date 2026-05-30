@@ -498,6 +498,14 @@ DEFAULT_WEIGHTS = {
     'late_tail': 0.5,        # late-window RMS match
     'treble_ratio': 0.5,     # high-freq energy ratio
     'bass_ratio': 0.5,       # low-freq energy ratio
+    # Asymmetric 100–500 Hz low-mid penalty. Listening verdict on Bright
+    # Hall / Vocal Hall / Ambience flagged "boomier and less clear" tails
+    # that scalar spec_L1 averaging did not penalise — the optimizer was
+    # buying overall EQ-shape fit at the cost of low-mid bloat. Cubic
+    # weighting when DV exceeds VVV in this band (hot = boomy = bad);
+    # quadratic when DV undershoots (cold = thin, recoverable). 5:1
+    # hot:cold ratio matches the staged_tuner.py implementation.
+    'bass_clarity': 1.0,
 }
 
 
@@ -615,6 +623,38 @@ def compare(
     treble_term = (dv['treble_ratio'] - vv['treble_ratio']) ** 2
     bass_term = (dv['bass_ratio'] - vv['bass_ratio']) ** 2
 
+    # Bass-clarity asymmetric penalty (100–500 Hz).
+    #   diff[i] = DV_dB_norm - VVV_dB_norm   (positive = DV hotter = boomy)
+    #   diff > 0  → cubic non-linear penalty (heavy push away from bloat)
+    #   diff <= 0 → quadratic linear-gradient penalty (DV thin, recoverable)
+    # 5:1 hot:cold weighting forces optimizer off boomy bass multipliers and
+    # oversized low-crossover regions even when scalar spec_L1 is flat.
+    bass_clarity_term = 0.0
+    bass_clarity_max_hot_db = 0.0
+    fcs = dv.get('oct_centers')
+    if fcs is not None and dv['oct_db_norm'].shape == vv['oct_db_norm'].shape:
+        diff_oct = dv['oct_db_norm'] - vv['oct_db_norm']
+        hot_acc = 0.0
+        cold_acc = 0.0
+        n_hot = 0
+        n_cold = 0
+        n = min(len(fcs), len(diff_oct))
+        for i in range(n):
+            fc = float(fcs[i])
+            if 100.0 <= fc <= 500.0:
+                d = float(diff_oct[i])
+                if d > 0.0:
+                    hot_acc += (d / 3.0) ** 3
+                    n_hot += 1
+                    if d > bass_clarity_max_hot_db:
+                        bass_clarity_max_hot_db = d
+                else:
+                    cold_acc += (d / 4.0) ** 2
+                    n_cold += 1
+        if n_hot + n_cold > 0:
+            bass_clarity_term = (5.0 * hot_acc / max(n_hot, 1)
+                               + 1.0 * cold_acc / max(n_cold, 1))
+
     loss = (
         w['rt60']         * rt60_term
         + w['tail_shape']   * tail_shape_term
@@ -628,6 +668,7 @@ def compare(
         + w['late_tail']    * late_term
         + w['treble_ratio'] * treble_term
         + w['bass_ratio']   * bass_term
+        + w['bass_clarity'] * bass_clarity_term
     )
 
     breakdown = {
@@ -653,6 +694,8 @@ def compare(
         'cent500_term': cent500_term,
         'stereo_term': stereo_term,
         'env_term': env_term,
+        'bass_clarity_term': bass_clarity_term,
+        'bass_clarity_max_hot_dB': bass_clarity_max_hot_db,
     }
     return loss, breakdown
 

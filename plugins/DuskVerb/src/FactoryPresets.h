@@ -598,11 +598,16 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // input carries HF energy further into the 500-1500 ms window
         // than FDN's modal density allows). Treble Multiply at max (1.50),
         // Hi Cut at max (20 kHz), High Crossover at 4500 Hz.
+        // BR-9 sub-25 push on top of BR-8 (2026-05-30):
+        //   gainTrim -9.40 → -9.50 — snap sine1k +2.08 dB into spec.
+        //   damping/bassMult/midMult KEEP.
+        //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
           4,  0.45f, false, 25.0f, 0,
-          4.99f, 0.48f, 0.35f, 0.64f, 0.93f, 2.08f,  328.0f,
-          0.97f, 0.00f, 0.50f, 47.0f, 19723.0f, 1.10f, false, -11.3f,
-          /* mono */ 20.0f, /* mid */ 1.94f, /* highX */ 1581.0f, /* sat */ 0.39f },
+          4.99f, 0.48f, 0.35f, 0.64f, 1.04f, 1.90f,  328.0f,
+          0.97f, 0.00f, 0.50f, 47.0f, 19723.0f, 1.10f, false, -9.50f,
+          /* mono */ 20.0f, /* mid */ 1.70f, /* highX */ 1581.0f, /* sat */ 0.39f,
+          /* hiCutShelfGainDb */ -11.3f },
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
         // Engine: QuadTank. Anchor: VVV "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
