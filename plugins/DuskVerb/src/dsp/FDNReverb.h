@@ -87,6 +87,13 @@ public:
     void setHiMidMultiply (float mult);
     void setSubCrossoverFreq (float hz);
     void setAirCrossoverFreq (float hz);
+    // Low-Band Transient Shaper (FDN only, Phase A plumbing). Dynamic, signal-
+    // dependent low-band damping: tight early transient → relax to the static
+    // (FiveBandDamping) sustain. depth=0 → bit-exact bypass (block skipped).
+    void setShaperDepth (float depth);     // 0..1, 0 = off
+    void setShaperTimeMs (float ms);       // fast-env release = tight-window length
+    void setShaperXoverHz (float hz);      // low-band split for the shaper
+    void setShaperSens (float sens);       // transient detector sensitivity
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
@@ -217,6 +224,7 @@ private:
     void computeDelayLengths       (LiveParams& p);
     void computeDecayCoefficients  (LiveParams& p);
     void computeModDepth           ();
+    void updateShaperCoeffs        ();   // TPT LPF g + env att/rel from params
 
     // Raw input state (message-thread, feeds the snapshot)
     int   baseDelays_[N];
@@ -388,6 +396,21 @@ private:
     float hiMidMultiply_    = 1.0f;     // FiveBandDamping hi-mid-band decay mult
     float subCrossoverFreq_ = 120.0f;   // sub ↔ low-mid boundary (Hz)
     float airCrossoverFreq_ = 8000.0f;  // hi-mid ↔ air boundary (Hz)
+
+    // Low-Band Transient Shaper (Phase A). Coeffs precomputed on param change;
+    // per-line state below. shaperActive_ gates the whole block → depth 0 is
+    // bit-exact bypass.
+    float shaperDepth_   = 0.0f;        // 0 = off (default → bypass)
+    float shaperTimeMs_  = 120.0f;
+    float shaperXoverHz_ = 250.0f;
+    float shaperSens_    = 1.5f;
+    bool  shaperActive_  = false;       // shaperDepth_ > 0
+    float shaperLpG_     = 0.0f;        // TPT one-pole: g/(1+g), precomputed
+    float shaperAttF_ = 1.0f, shaperRelF_ = 0.0f;   // fast env coeffs
+    float shaperAttS_ = 1.0f, shaperRelS_ = 0.0f;   // slow env coeffs
+    float shaperLp_[N]   {};            // per-line TPT LPF state
+    float shaperEnvF_[N] {};            // per-line fast envelope
+    float shaperEnvS_[N] {};            // per-line slow envelope
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;

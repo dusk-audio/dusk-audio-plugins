@@ -216,7 +216,11 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
+        shaperLp_[i]   = 0.0f;
+        shaperEnvF_[i] = 0.0f;
+        shaperEnvS_[i] = 0.0f;
     }
+    updateShaperCoeffs();   // TPT g + env coeffs from current params
 
     for (int i = 0; i < N; ++i)
     {
@@ -533,6 +537,22 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
+            // --- Low-Band Transient Shaper (Phase A plumbing) ---------------
+            // Split low band (TPT one-pole), apply a dynamic gain to ONLY the
+            // low band, recombine — modifies feedback[ch] BEFORE damping. The
+            // whole block is gated by shaperActive_ so depth 0 is bit-exact
+            // bypass (feedback[ch] is never touched). Phase B fills gDyn from
+            // the envF/envS transient detector; Phase A stubs gDyn = 1.0.
+            if (shaperActive_ && ! frozen)
+            {
+                const float v   = (feedback[ch] - shaperLp_[ch]) * shaperLpG_;
+                const float low = v + shaperLp_[ch];
+                shaperLp_[ch]   = low + v;             // TPT state update
+                const float high = feedback[ch] - low;
+                const float gDyn = 1.0f;               // Phase B: detector → [1-depth, 1]
+                feedback[ch] = high + gDyn * low;
+            }
+
             // Snapshot-path damping: coeffs come from lp.damping[ch] by const
             // ref; filter state (z1/z2) lives in dampFilter_[ch]. Zero-tear.
             //
@@ -741,6 +761,48 @@ void FDNReverb::setAirCrossoverFreq (float hz)
     if (! prepared_) return;
     computeDecayCoefficients (pending());
     publishPending();
+}
+
+// ── Low-Band Transient Shaper (Phase A) ─────────────────────────────────────
+// Plain members (like feedbackModDepth_): written on the message thread, read
+// on the audio thread; aligned float load/store is atomic on the target. The
+// block is gated by shaperActive_ so depth 0 (default) never executes → bypass.
+void FDNReverb::updateShaperCoeffs()
+{
+    const float sr = static_cast<float> (sampleRate_);
+    const float fc = std::clamp (shaperXoverHz_, 20.0f, 0.49f * sr);
+    const float g  = std::tan (kTwoPi * 0.5f * fc / sr);   // tan(π·fc/Fs)
+    shaperLpG_ = g / (1.0f + g);                            // TPT one-pole coeff
+    auto onePole = [sr] (float ms) {
+        return 1.0f - std::exp (-1.0f / (std::max (ms, 0.1f) * 0.001f * sr));
+    };
+    shaperAttF_ = onePole (2.0f);              // fast env attack (2 ms)
+    shaperRelF_ = onePole (shaperTimeMs_);     // fast env release = tight-window
+    shaperAttS_ = onePole (80.0f);             // slow env attack (80 ms)
+    shaperRelS_ = onePole (400.0f);            // slow env release (400 ms)
+}
+
+void FDNReverb::setShaperDepth (float depth)
+{
+    shaperDepth_  = std::clamp (depth, 0.0f, 1.0f);
+    shaperActive_ = shaperDepth_ > 1.0e-6f;
+}
+
+void FDNReverb::setShaperTimeMs (float ms)
+{
+    shaperTimeMs_ = std::clamp (ms, 20.0f, 300.0f);
+    if (prepared_) updateShaperCoeffs();
+}
+
+void FDNReverb::setShaperXoverHz (float hz)
+{
+    shaperXoverHz_ = std::clamp (hz, 120.0f, 500.0f);
+    if (prepared_) updateShaperCoeffs();
+}
+
+void FDNReverb::setShaperSens (float sens)
+{
+    shaperSens_ = std::clamp (sens, 0.5f, 4.0f);
 }
 
 void FDNReverb::setCrossoverFreq (float hz)
