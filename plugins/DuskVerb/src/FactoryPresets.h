@@ -158,7 +158,7 @@ struct FactoryPreset
         // hi-mid→treble). Per-preset NON-transparent values live in a
         // name→map — same pattern as kPostTankEQByName — so the fragile
         // aggregate-init rows (these struct fields sit last) stay untouched.
-        struct FiveBandOverride { float sub, hiMid, xSub, xAir, inSub, inMid; };
+        struct FiveBandOverride { float sub, hiMid, xSub, xAir, inSub, inMid, inLoopDb; };
         static const std::map<juce::String, FiveBandOverride> kFiveBandByName = {
             // Drum Plate (FDN) — direct-scoreboard + warm-start sweep vs VVV
             // anchor, 27→23. FiveBand mults + feed-forward Input Sub +2.02 dB:
@@ -166,7 +166,9 @@ struct FactoryPreset
             // ss-deep-sub / ss-sub). 1 kHz notch + mild sub-hot remain (FDN
             // steady-state limit — see commits 4876359/91da13e for the in-loop
             // peak fix that proved it can't be filled within stability).
-            { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f } },
+            { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f } },
+            // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
+            { "Tiled Room", { 0.868f, 0.404f, 93.29f, 19597.39f, -1.304f, 2.084f, 1.321f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
@@ -174,11 +176,13 @@ struct FactoryPreset
         float fbXAir  = crossoverAir;
         float fbInSub = inputSubGain;
         float fbInMid = inputMidGain;
+        float fbInLoopDb = 0.0f;
         if (auto it = kFiveBandByName.find (juce::String (name)); it != kFiveBandByName.end())
         {
             fbSub  = it->second.sub;   fbHiMid = it->second.hiMid;
             fbXSub = it->second.xSub;  fbXAir  = it->second.xAir;
             fbInSub = it->second.inSub; fbInMid = it->second.inMid;
+            fbInLoopDb = it->second.inLoopDb;
         }
         setIfExists ("sub_mult",      fbSub);
         setIfExists ("hi_mid_mult",   fbHiMid);
@@ -233,9 +237,11 @@ struct FactoryPreset
         // Defensively write APVTS to engine-bypass defaults on every
         // preset apply so a prior preset's user-overridden values don't
         // carry through to the next preset swap.
+        // In-loop peak: per-preset gain via kFiveBandByName (1 kHz / Q 2.5 when
+        // engaged; engine hard-caps +2.0 dB for stability). 0 dB elsewhere.
         setIfExists ("in_loop_peak_hz",    1000.0f);
-        setIfExists ("in_loop_peak_q",        2.0f);
-        setIfExists ("in_loop_peak_db",       0.0f);
+        setIfExists ("in_loop_peak_q",     fbInLoopDb > 0.0f ? 2.5f : 2.0f);
+        setIfExists ("in_loop_peak_db",    fbInLoopDb);
         setIfExists ("bass_shelf_fast_fc",  400.0f);
         setIfExists ("bass_shelf_slow_fc",  200.0f);
         setIfExists ("bass_shelf_fast_db",    0.0f);
@@ -754,14 +760,15 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
         // Chamber, Size 0.107, EarlyDiffusion 0.35, LateDiffusion 0.5).
         //
-        // v1 (2026-05-27): staged_tuner.py autonomous --category Rooms.
-        // 1300 trials. Stage 1 3.79 / Stage 2 578.41 / Stage 3 80.00.
-        // 21 / 40 gates fail.
+        // Locked 2026-05-31: direct-scoreboard + warm-start FDN sweep (full
+        // pipeline — FiveBand + input makeup + in-loop peak), 47→28 vs VVV
+        // "Tiled Room". Extended params (Sub/Hi-Mid mult, crossovers, input
+        // makeup, in-loop +1.32 dB) in kFiveBandByName above.
         { "Tiled Room",           "Rooms",
           4,  0.30f, false,  8.20f, 0,
-          0.73f, 0.48f, 0.21f, 1.39f, 0.82f, 0.94f,  424.0f,
-          0.75f, 0.46f, 0.40f,  20.0f, 10007.0f, 0.85f, false, -2.18f,
-          /* mono */ 20.0f, /* mid */ 1.17f, /* highX */ 6356.0f, /* sat */ 0.27f },
+          3.376f, 0.588f, 0.045f, 2.999f, 1.126f, 1.210f,  407.9f,
+          0.896f, 0.46f, 0.40f,  56.17f, 3527.8f, 0.907f, false, 8.532f,
+          /* mono */ 20.0f, /* mid */ 1.17f, /* highX */ 7245.8f, /* sat */ 0.120f },
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
         // (Reverb Mode = Ambience) @ 100% wet.
