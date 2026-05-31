@@ -131,6 +131,15 @@ DPV_PARAMS = {
     "DPV Bass Shelf Freq",
 }
 
+# FDN-only axes: FiveBandDamping (sub/hi-mid + crossovers), feed-forward input
+# makeup, and the in-loop peak all forward ONLY to the FDN engine — they are
+# no-ops on QuadTank/NonLinear/Shimmer/SixAP/etc. Gate them out (--non-fdn) so
+# non-FDN preset sweeps don't waste trial budget on dead dimensions.
+FDN_ONLY_PARAMS = {
+    "Sub Multiply", "Hi-Mid Multiply", "Sub Crossover", "Air Crossover",
+    "Input Sub Gain", "Input Mid Gain", "In-Loop Peak Gain",
+}
+
 # Locked overrides applied on top of the preset's factory baseline.
 # Forces 100% wet bus rendering with neutral gain trim so the optimizer
 # cannot game volume via Gain Trim or mix.
@@ -336,6 +345,7 @@ def make_objective(
     stimulus: str = "noiseburst",
     prerun_seconds: float = 5.0,
     has_dpv: bool = False,
+    non_fdn: bool = False,
 ):
     """
     Returns an Optuna objective closure that renders one trial via
@@ -356,6 +366,8 @@ def make_objective(
         for name, (lo, hi) in FREE_PARAMS.items():
             if name in DPV_PARAMS and not has_dpv:
                 continue   # inert axis on non-DPV engines — don't waste a dim
+            if name in FDN_ONLY_PARAMS and non_fdn:
+                continue   # FiveBand/makeup/in-loop are FDN-only → skip elsewhere
             overrides[name] = trial.suggest_float(name, lo, hi)
 
         # Per-trial output dir keeps parallel workers from colliding.
@@ -442,6 +454,11 @@ def main():
                          "params. Only meaningful for algo=1 presets; on every "
                          "other engine they are no-ops, so leave OFF to shrink "
                          "the search-space dimensionality.")
+    ap.add_argument("--non-fdn", action="store_true",
+                    help="Gate out the FDN-only axes (FiveBand sub/hi-mid + "
+                         "crossovers, input makeup, in-loop peak). Pass for "
+                         "QuadTank/NonLinear/Shimmer/SixAP presets where they are "
+                         "no-ops, to shrink the search space.")
     ap.add_argument("--enqueue-json", default=None,
                     help="Warm-start: a JSON file path (or inline JSON string) "
                          "holding a param dict, or a list of param dicts, to "
@@ -504,6 +521,7 @@ def main():
         stimulus=args.stimulus,
         prerun_seconds=args.prerun_seconds,
         has_dpv=args.has_dpv,
+        non_fdn=args.non_fdn,
     )
 
     print(f"Starting {args.trials} trials with {args.workers} parallel workers...")
