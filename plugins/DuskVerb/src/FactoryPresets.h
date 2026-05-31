@@ -755,9 +755,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // NL7 wins for this anchor (56 ms tail target).
         { "Small Drum Room",      "Rooms",
           6,  0.25f, false,  1.18f, 0,
-          0.100f, 0.100f, 0.03f, 1.11f, 1.01f, 0.20f,  300.0f,
-          0.38f, 0.80f, 0.57f,  37.0f, 10005.0f, 1.04f, false, +5.90f,
-          /* mono */ 20.0f, /* mid */ 0.84f, /* highX */ 7586.0f, /* sat */ 0.22f,
+          0.3863f, 0.45310f, 0.18850f, 1.27000f, 0.59100f, 1.40300f,  735.00f,
+          0.34270f, 0.80f, 0.57f,  20.910f, 16830.0f, 0.97590f, false, 4.12800f,
+          /* mono */ 20.0f, /* mid */ 0.99740f, /* highX */ 4296.00f, /* sat */ 0.22430f,  // deep-swept post-calibration 27->25 vs vvv-84-small-room (honest Decay 0.39 s)
           /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
