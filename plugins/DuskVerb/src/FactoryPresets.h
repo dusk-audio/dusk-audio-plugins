@@ -930,18 +930,27 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // the density cascade ring denser at later stages (kBloomCeiling
         // 0.85→0.92, steeper stagger). These don't affect other SixAPTank
         // presets because they default to the historical hardcoded values.
+        // Re-engined SixAP→Shimmer (algo 7) 2026-05-31: the anchor is the
+        // Valhalla Shimmer "Black Hole" preset, a true octave-up shimmer (HF
+        // sustaining ~9.6s @ 16k, rising centroid, swelling envelope). SixAP
+        // has no pitch-regeneration path, so ~half its gate fails were
+        // structurally unreachable. Shimmer engine ("8-ch Hadamard FDN + in-loop
+        // granular pitch shifter") supplies the octave feedback. mod_depth 0.5
+        // = +12 st; mod_rate maps to shimmer feedback (longer/darker than
+        // Deep Blue Day for the huge "black hole" space).
+        // Tuned vs valhalla-shimmer-black-hole 2026-05-31 (39→22 fails). Octave
+        // PINNED at +12 (mod_depth 0.5) — letting the optimizer detune it spiked
+        // inharmonic 12.9k content; dense diffusion (0.857) keeps the noiseburst
+        // tail from collapsing. Low mod_rate (0.875 → low shimmer feedback) beat
+        // higher rates: more feedback over-lengthened T60-16k AND worsened the
+        // 12.9k image spike. Remaining fails (cent dark, T60-HF short, sine1k
+        // notch) are the engine's single-image shifter vs Valhalla's broadband
+        // multi-voice shimmer — structural, not tunable on this engine.
         { "Black Hole",           "Ambient",
-          2,  0.50f, false,   0.0f, 0,
-          14.00f, 0.95f, 0.25f, 0.60f, 1.00f, 1.10f,  700.0f,
-          0.85f, 0.05f, 0.70f,  60.0f, 18000.0f, 1.40f, false, -2.0f,
-          /* mono */ 60.0f, /* mid */ 1.10f, /* highX */ 8000.0f, /* sat */ 0.08f,
-          /* hiCutShelfGainDb */ -12.0f,
-          /* gate */ true,
-          /* sixAPDensityBaseline */ 0.72f,
-          /* sixAPBloomCeiling    */ 0.92f,
-          /* sixAPBloomStagger    */ { 0.65f, 0.78f, 0.92f, 1.05f, 1.18f, 1.30f },
-          /* sixAPEarlyMix        */ 0.75f,
-          /* sixAPOutputTrim      */ 1.10f },
+          7,  0.50f, false,   0.0f, 0,
+          10.8728f, 0.56922f, 0.50f, 0.87475f, 1.16880f, 0.53601f,  372.24f,
+          0.85741f, 0.05f, 0.70f,  24.591f, 18926.8f, 1.26041f, false, 0.81969f,
+          /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Cascading Heaven ─────────────────────────────────────────────
         // +24 semitones (two-octave stack) at ~57% feedback. No external reference factory
         // direct equivalent — kept as our differentiator. Lower feedback
