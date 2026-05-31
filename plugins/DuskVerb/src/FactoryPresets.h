@@ -170,6 +170,7 @@ struct FactoryPreset
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
             { "Tiled Room", { 0.868f, 0.404f, 93.29f, 19597.39f, -1.304f, 2.084f, 1.321f } },
             { "Blade Runner 224", { 1.8467f, 0.2059f, 119.28f, 6247.66f, 1.6074f, 3.4473f, 0.1912f } },
+            { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 1.4f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
@@ -615,9 +616,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // this. See memory duskverb_tuning_method.
         { "Cathedral Large Hall", "Halls",
           4,  0.45f, false, 20.88f, 0,
-          4.91f, 0.94f, 0.12f, 1.44f, 1.10f, 0.92f,  193.0f,
-          0.75f, 0.48f, 0.36f,  64.0f,  3720.0f, 1.03f, false, -7.32f,
-          /* mono */ 20.0f, /* mid */ 0.69f, /* highX */ 5960.0f, /* sat */ 0.36f,
+          3.315f, 0.93880f, 0.17490f, 1.08200f, 1.40800f, 1.26900f,  223.90f,
+          0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -7.90200f,
+          /* mono */ 20.0f, /* mid */ 0.64240f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // re-swept w/ FDN FiveBand+input-makeup axes 26->20 vs CathedralLargeHall (Decay->3.3s near ref 2.7)
           /* hiCutShelfGainDb */ -14.5f },
         // ── Blade Runner 224 ─────────────────────────────────────────────────
         // Anchor: Vangelis on the late-1970s digital hall hardware (Hall A / Constellation) —
