@@ -970,11 +970,17 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (45%) keeps the cascade gentle so the long reverb dominates over
         // the pitched recirculation.
         // mod_depth 0.5 = +12 st; mod_rate 4.5 Hz maps to feedback ≈ 0.42.
+        // Tuned vs valhalla-shimmer-deep-blue-day 2026-05-31 (43→29 fails). Same
+        // shimmer recipe as Black Hole: octave PINNED at +12 (mod_depth 0.5),
+        // dense diffusion (0.941), Width capped 1.3 (1.77 went anti-correlated /
+        // phasey). Remaining fails (cent dark, 12.9k image spike, T60-HF short,
+        // ss air, sine1k notch) are the single-image granular shifter vs
+        // Valhalla's broadband multi-voice shimmer — structural on this engine.
         { "Deep Blue Day",        "Shimmer",
           7,  0.38f, false,  25.0f, 0,
-          10.30f, 1.00f, 0.50f, 2.395f, 1.00f, 1.10f,  800.0f,
-          0.85f, 0.20f, 0.50f,  60.0f,  7000.0f, 1.30f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
+          12.8334f, 0.56394f, 0.50f, 1.75655f, 1.43813f, 0.50200f,  735.82f,
+          0.94143f, 0.20f, 0.50f,  24.229f, 12744.8f, 1.30f, false, 0.21577f,
+          /* mono */ 20.0f, /* mid */ 0.61831f, /* highX */ 9351.47f, /* sat */ 0.15849f },
     };
     return presets;
 }
