@@ -95,6 +95,11 @@ FREE_PARAMS = {
     "Hi-Mid Multiply": (0.10,    2.00),    # APVTS [0.1, 2.0]
     "Sub Crossover":   (20.0,  200.0),     # APVTS [20, 200] Hz
     "Air Crossover":   (4000.0, 20000.0),  # APVTS [4000, 20000] Hz
+    # Block 2 feed-forward input energy makeup (2026-05-31). Feed-forward shelves
+    # on the input vector B → outside the loop → BIBO-safe; lifts the static
+    # 1 kHz / sub energy scoops decay multipliers can't reach.
+    "Input Sub Gain":  (-6.0,    6.0),     # APVTS [-6, 6] dB
+    "Input Mid Gain":  (-6.0,    6.0),     # APVTS [-6, 6] dB
     # DattorroPlateVintage corrective EQ + brightness (algo=1 only). Optimizer
     # samples these unconditionally; on non-DPV engines the setters are no-ops
     # via DuskVerbEngine glue, so the values are wasted but harmless.
