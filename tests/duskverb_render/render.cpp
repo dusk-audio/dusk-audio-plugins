@@ -355,9 +355,7 @@ namespace
 
         if (name == "Vocal Plate")
             return makePreset (name.toRawUTF8(), 4, 1.0f, true, 29.16f, 0.65f, 0.79f, 0.25f, 0.26f, 0.80f, 0.70f, 384.0f, 0.44f, 0.25f, 0.76f, 27.0f, 17316.0f, 0.78f, -3.11f, 20.0f, 0.96f, 8418.0f, 0.18f);
-        // PCM 90 — Halls (SixAPTank / FDN):
-        if (name == "Deep Blue")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 10.0f, 3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f, 600.0f, 0.85f, 0.40f, 0.65f, 60.0f, 8500.0f, 1.30f, 9.0f, 20.0f, 1.10f, 4000.0f, 0.10f);
+        // Deep Blue removed 2026-05-31 (redundant SixAP hall; see FactoryPresets.h).
         // Bright Hall — v1 autonomous staged_tuner.py (--category Halls).
         // Mirrors FactoryPresets.h "Bright Hall" row.
         if (name == "Bright Hall")

@@ -455,21 +455,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.58f, 0.37f, 0.55f,  20.0f, 7000.0f, 1.00f, false, +1.50f,
           /* mono */ 20.0f, /* mid */ 1.12f, /* highX */ 8000.0f, /* sat */ 0.03f,
           /* hiCutShelfGainDb */ -6.0f },
-        // ── Deep Blue (vintage rack reverb) ───────────────────────────────────────────────
-        // Engine: SixAPTank. Anchor: vintage rack reverb "Deep Blue" (Bank P0 0.0)
-        // — reference hardware's "impossibly massive" Concert Hall preset, the literal
-        // first preset in their Hall bank. The 6-AP density cascade matches
-        // the PCM's late-tail thickness better than FDN.
-        //   RT60 2.63 s   bass_mult 1.10   treble_mult 0.64 (DARK!)
-        //   centroid 50ms 5.9 kHz (already dark on the transient)
-        //   centroid 1s   3.6 kHz (continues to darken)
-        //   shape: REVERSE — energy builds late (the "swelling cathedral" character)
-        //   predelay 10 ms
-        { "Deep Blue",            "Halls",
-          2,  0.45f, false, 10.0f, 0,
-          3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f,  600.0f,
-          0.85f, 0.40f, 0.65f,  60.0f,  8500.0f, 1.30f, false, 9.0f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
+        // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
+        // The SixAP "massive concert hall" Deep Blue was redundant: the hall
+        // niche is covered by Cathedral Large Hall / Bright Hall / Vocal Hall /
+        // Blade Runner 224, and the shimmer "Deep Blue Day" keeps the name theme.
         // ═══════════ HALLS ═══════════
         // ── Vocal Hall (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: Valhalla Vintage Verb "Vocal Hall" factory
