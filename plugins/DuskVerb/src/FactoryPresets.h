@@ -171,6 +171,12 @@ struct FactoryPreset
         setIfExists ("hi_mid_mult",   fbHiMid);
         setIfExists ("crossover_sub", fbXSub);
         setIfExists ("crossover_air", fbXAir);
+        // Low-Band Transient Shaper — Phase A: every preset bypasses (depth 0).
+        // Phase B will set per-preset depths once the detector is wired.
+        setIfExists ("transient_shaper", 0.0f);
+        setIfExists ("shaper_time",      120.0f);
+        setIfExists ("shaper_xover",     250.0f);
+        setIfExists ("shaper_sens",      1.5f);
         setIfExists ("saturation", saturation);
         setIfExists ("diffusion", diffusion);
         setIfExists ("er_level",  erLevel);
@@ -321,9 +327,11 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //
         // 12 / 40 gates fail.
         // Locked 2026-05-30: direct-scoreboard + warm-start FiveBand FDN sweep
-        // (19-dim), 28→26 vs VVV "Drum Plate". New sub/hi-mid axes contributed
-        // (8k/2k T60 closed). FiveBand mults live in kFiveBandByName above.
-        // Residual 26 is energy-dominated (sine1k cold, ss-sub) + mod ripple.
+        // (19-dim), 28→27 vs VVV "Drum Plate". Listening (2026-05-31) flagged a
+        // muddy/dark low-mid vs VVV; perceptual-weighted re-sweeps only slid the
+        // failures along the FDN's strong↔clear-low Pareto wall. Residual is
+        // structural (low-mid modal ring + per-band energy) → Transient Shaper
+        // (Phase A plumbing in place, depth 0) targets this in Phase B.
         { "Drum Plate",           "Plates",
           4,  0.42f, false, 12.0f, 0,
           2.263f, 0.337f, 0.373f, 0.119f, 1.296f, 0.723f,  98.99f,
