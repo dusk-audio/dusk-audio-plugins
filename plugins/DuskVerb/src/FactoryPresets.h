@@ -880,9 +880,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // against those. Verified: a 250-trial warm-started re-sweep beat 34 by 0.
         { "Reverse Taps",         "Rooms",
           6,  1.00f, false, 30.0f, 0,
-          4.0f, 0.93372f, 0.39555f, 9.70243f, 1.13317f, 2.34885f,  719.23f,  // Decay re-pointed to honest seconds (was 18.83 dishonest) post Decay-calibration 2026-05-31
-          0.93076f, 0.00f, 0.30f,  22.580f, 16982.2f, 1.40533f, false, -9.71349f,
-          /* mono */ 20.0f, /* mid */ 1.02468f, /* highX */ 4582.63f, /* sat */ 0.13371f },
+          4.913f, 0.17200f, 0.53810f, 9.90700f, 1.29800f, 2.32500f,  689.30f,
+          0.87120f, 0.00f, 0.30f,  22.370f, 16260.0f, 1.60500f, false, -10.92000f,
+          /* mono */ 20.0f, /* mid */ 1.13400f, /* highX */ 5872.00f, /* sat */ 0.39080f },  // deep-swept vs confirmed Lexicon Room "Reverse 1" anchor, 36->32 (honest Decay 4.91 s)
         // ── Mobius Pad ───────────────────────────────────────────────────────
         // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
         // see SixAPTankEngine.cpp). Showcases the 6-AP engine's new
