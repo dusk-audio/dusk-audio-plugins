@@ -64,7 +64,7 @@ DEFAULT_VST3 = Path.home() / ".vst3" / "DuskVerb.vst3"
 # the APVTS range wastes trial budget because the setter clamps and many
 # trials produce identical effective values.
 FREE_PARAMS = {
-    "Decay Time":      (0.20,   12.00),    # APVTS [0.2, 30.0] — 12s ceiling matches longest current preset
+    "Decay Time":      (0.20,   30.00),    # APVTS [0.2, 30.0] — ceiling 30 to cover long ambient/shimmer (Black Hole 14s); warm-start+scoreboard keep short presets short
     "Size":            (0.10,    1.00),    # APVTS [0.0, 1.0]
     "Mod Depth":       (0.00,    0.60),    # APVTS [0.0, 1.0] — 0.6 keeps tail from over-modulating
     "Mod Rate":        (0.10,    3.00),    # APVTS [0.10, 10.0]. (NB: Drum Plate ripple/mud is Mod-DEPTH driven, not rate — a 0.5 Hz floor did NOT fix it, reverted 2026-05-30.)
@@ -79,12 +79,12 @@ FREE_PARAMS = {
     # Crossovers — clamped to physically realistic bass/treble band edges.
     # Below ~80 Hz the bass band stops separating from sub; above ~600 Hz it
     # collapses the mid band. High crossover above 10 kHz collapses HF into mid.
-    "Low Crossover":   (80.0,   600.0),    # APVTS [200, 4000] — clamped
+    "Low Crossover":   (80.0,   800.0),    # APVTS [200, 4000] — 800 ceiling for ambient (Black Hole 700)
     "High Crossover":  (3000.0, 10000.0),  # APVTS [1000, 12000] — clamped
     "Diffusion":       (0.00,    1.00),    # APVTS [0.0, 1.0]
     "Lo Cut":          (20.0,    60.0),    # ceiling 60 (was 500): a >60 Hz HPF guts the kick fundamental + sub → audibly weak low end (Drum Plate listening 2026-05-31). APVTS [5, 500]
     "Hi Cut":          (3000.0, 20000.0),  # APVTS [1000, 20000]. Widened down to 3 kHz 2026-05-30 for dark presets (Cathedral HiCut=4261). Safe under the direct-scoreboard objective — the cent_50/bloom gates now police over-darkening, so the old "Optuna kills bright bloom" clamp is obsolete.
-    "Width":           (0.50,    1.05),    # APVTS [0.0, 2.0] — clamped to mono-compatible range; >1.05 with sparse Dattorro taps produces anti-correlated L/R
+    "Width":           (0.50,    2.00),    # APVTS [0.0, 2.0] — full range for wide ambient (Black Hole 1.40); stereo_corr gate polices over-decorrelation on sparse engines
     "Saturation":      (0.00,    0.40),    # APVTS [0.0, 1.0] — 0.4 cap; above is destructive
     # FiveBandDamping (Phase 3, FDN only) — the 4 new T60-shaping axes. Sub
     # decouples <120 Hz decay/energy from the low-mids; Hi-Mid bends the
