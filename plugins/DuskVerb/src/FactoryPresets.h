@@ -451,9 +451,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Net session: BH 25 → 10 fails (-15).
         { "Bright Hall",          "Halls",
           8,  0.40f, false,  0.0f, 0,
-          5.00f, 0.85f, 0.50f, 1.20f, 0.95f, 1.00f,  250.0f,
-          0.58f, 0.37f, 0.55f,  20.0f, 7000.0f, 1.00f, false, +1.50f,
-          /* mono */ 20.0f, /* mid */ 1.12f, /* highX */ 8000.0f, /* sat */ 0.03f,
+          5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
+          0.49932f, 0.37f, 0.55f,  26.856f, 4554.46f, 0.94410f, false, 0.62933f,
+          /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
         // The SixAP "massive concert hall" Deep Blue was redundant: the hall
@@ -700,9 +700,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tilt, comb ripple) is the QuadTank vs Chamber1979 modal-density gap.
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
-          9.32179f, 0.50014f, 0.01922f, 2.70929f, 0.78609f, 0.80409f,  556.48f,
-          0.41089f, 0.20f, 0.44f,  24.692f, 8138.35f, 1.06068f, false, -8.61369f,
-          /* mono */ 20.0f, /* mid */ 0.96974f, /* highX */ 6960.08f, /* sat */ 0.19670f,
+          4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.68062f, 0.94761f,  675.47f,
+          0.52932f, 0.20f, 0.44f,  26.022f, 8437.27f, 1.13556f, false, -7.39142f,
+          /* mono */ 20.0f, /* mid */ 0.56053f, /* highX */ 5417.19f, /* sat */ 0.08377f,  // re-derived post Decay-calibration (honest Decay 4.82 s; was 22->24 fails)
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════
@@ -788,9 +788,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // QuadTank topology vs VVV's Ambience modal character.
         { "Ambience",             "Rooms",
           3,  0.40f, false,  2.91f, 0,
-          1.47318f, 0.30377f, 0.11897f, 1.10161f, 0.73588f, 1.29523f,  220.01f,
-          0.01627f, 0.89f, 0.56f,  46.478f, 15659.0f, 1.82892f, false, 0.33923f,
-          /* mono */ 20.0f, /* mid */ 0.55344f, /* highX */ 6973.00f, /* sat */ 0.10470f },
+          1.3875f, 0.26283f, 0.17870f, 0.17487f, 0.98911f, 0.96938f,  327.98f,
+          0.68861f, 0.89f, 0.56f,  30.214f, 15746.05f, 1.42044f, false, -0.29995f,
+          /* mono */ 20.0f, /* mid */ 0.64948f, /* highX */ 5834.41f, /* sat */ 0.16156f },  // re-derived post Decay-calibration (honest Decay 1.39 s; was 18->20 fails)
         // ── 1981 Gated Snare ─────────────────────────────────────────────────
         // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
         // (attack ramp → flat plateau → mathematical cliff) is baked into
@@ -819,16 +819,17 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   This is the "In The Air Tonight" Phil Collins/Padgham/Townhouse sound:
         //   thick hall bloom for 150 ms then a longer fade to silence.
         //
-        // 2026-05-26 calibration verdict: SHIP AS-IS (engine-ceiling preset).
-        // Anchor (VVV 84 Small Room) uses fundamentally different topology —
-        // a small-room reverb without the time-domain hard cutoff that defines
-        // the 1981 gated character. Spectral / rt60 / env_p2p deltas against
-        // the anchor are intentional — the NonLinear engine's static-FIR cliff
-        // IS the preset. ENGINE_CEILING entries in verify_preset_vs_anchor.py
-        // document this; no further tuning warranted.
+        // DESIGN-LED — NO valid external anchor (confirmed 2026-05-31). This is
+        // an attempt at the Phil Collins "In The Air Tonight" gated-snare sound,
+        // a famous RECORD PRODUCTION, not a reproducible plugin preset. It was
+        // previously mis-anchored to VVV "84 Small Room", which is a tiny bright
+        // NON-gated room (56 ms tail, +10..+28 dB hotter) — matching it would
+        // un-gate the snare and destroy the preset. Do NOT score this against
+        // 84 Small Room. The gate cliff IS the preset; tune by ear only.
+        // (NB: the "In The Air Tonight" preset chases the same sound — overlap.)
         { "1981 Gated Snare",     "Rooms",
           6,  1.00f, false,  0.0f, 0,
-          1.67f, 0.96f, 0.22f, 3.00f, 1.05f, 2.18f, 2197.0f,
+          1.79f, 0.96f, 0.22f, 3.00f, 1.05f, 2.18f, 2197.0f,  // Decay re-pointed 1.67->1.79 to preserve underlying FDN RT60 after NonLinear Decay-calibration (gated; design-led)
           0.83f, 0.00f, 0.00f,  20.0f,  4976.0f, 1.14f, false, -16.6f,
           /* mono */ 100.0f, /* mid */ 0.98f, /* highX */ 5302.0f, /* sat */ 0.34f },
         // ── In The Air Tonight ──────────────────────────────────────────────
@@ -842,7 +843,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   Mix 22 % — light send/return blend, dry-forward.
         { "In The Air Tonight",   "Rooms",
           6,  0.216f, false,  0.0f, 0,
-          2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f,  500.0f,
+          2.25f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f,  500.0f,  // Decay re-pointed 2.608->2.25 to preserve underlying FDN RT60 after NonLinear Decay-calibration (gated; design-led)
           0.50f, 0.00f, 0.30f,  60.0f, 10000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Reverse Taps (vintage rack reverb) ────────────────────────────────────────────
@@ -879,7 +880,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // against those. Verified: a 250-trial warm-started re-sweep beat 34 by 0.
         { "Reverse Taps",         "Rooms",
           6,  1.00f, false, 30.0f, 0,
-          18.8290f, 0.93372f, 0.39555f, 9.70243f, 1.13317f, 2.34885f,  719.23f,
+          4.0f, 0.93372f, 0.39555f, 9.70243f, 1.13317f, 2.34885f,  719.23f,  // Decay re-pointed to honest seconds (was 18.83 dishonest) post Decay-calibration 2026-05-31
           0.93076f, 0.00f, 0.30f,  22.580f, 16982.2f, 1.40533f, false, -9.71349f,
           /* mono */ 20.0f, /* mid */ 1.02468f, /* highX */ 4582.63f, /* sat */ 0.13371f },
         // ── Mobius Pad ───────────────────────────────────────────────────────
@@ -895,7 +896,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (ASCII name — keeps shell + UTF-8 toolchain matching reliable.)
         { "Mobius Pad",           "Ambient",
           2,  0.45f, false, 45.0f, 0,
-          5.50f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f,  500.0f,
+          3.89f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f,  500.0f,  // Decay re-pointed 5.50->3.89 to preserve ~3.9 s sound after SixAP Decay-calibration (no anchor; design-led)
           0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 4.5f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3200.0f, /* sat */ 0.10f },
         // ═══════════ AMBIENT ═══════════
