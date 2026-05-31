@@ -222,6 +222,13 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     }
     updateShaperCoeffs();   // TPT g + env coeffs from current params
 
+    // Re-apply the in-loop peak from stored config — the per-line
+    // inLoopPeak_[i].prepare() above designUnity'd the coeffs, so without this
+    // the peak silently bypasses after every re-prepare (reset/transport stop).
+    for (int i = 0; i < N; ++i)
+        inLoopPeak_[i].setBand (inLoopPeakFreq_, inLoopPeakQ_, inLoopPeakGainDb_);
+    inLoopPeakActive_ = std::fabs (inLoopPeakGainDb_) > 1.0e-6f;
+
     // Block 2 input makeup: prepare + design from current gains (0 dB = unity).
     inputMid_.prepare (static_cast<float> (sampleRate));
     inputSubL_.reset();
@@ -934,6 +941,9 @@ void FDNReverb::setInLoopPeaking (float freqHz, float qFactor, float gainDb)
     // ρ(A) < 1. Cuts (negative) only reduce loop gain → always safe.
     gainDb = std::min (gainDb, 3.5f);
     inLoopPeakActive_ = std::fabs (gainDb) > 1.0e-6f;
+    inLoopPeakFreq_   = freqHz;     // store so prepare() can re-apply
+    inLoopPeakQ_      = qFactor;
+    inLoopPeakGainDb_ = gainDb;
     for (int i = 0; i < N; ++i)
         inLoopPeak_[i].setBand (freqHz, qFactor, gainDb);
 }
