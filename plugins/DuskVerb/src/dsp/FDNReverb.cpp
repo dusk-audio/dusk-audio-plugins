@@ -222,6 +222,18 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     }
     updateShaperCoeffs();   // TPT g + env coeffs from current params
 
+    // Block 2 input makeup: prepare + design from current gains (0 dB = unity).
+    inputMid_.prepare (static_cast<float> (sampleRate));
+    inputSubL_.reset();
+    inputSubR_.reset();
+    {
+        const float g  = std::pow (10.0f, inputSubGainDb_ / 20.0f);
+        const float sr = static_cast<float> (sampleRate);
+        inputSubL_.designLowShelf (g, 120.0f, sr);
+        inputSubR_.designLowShelf (g, 120.0f, sr);
+        inputMid_.setBand (900.0f, 0.8f, inputMidGainDb_);
+    }
+
     for (int i = 0; i < N; ++i)
     {
         int apDelay = static_cast<int> (std::ceil (
@@ -359,8 +371,14 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const float inL = inputL[i];
-        const float inR = inputR[i];
+        float inL = inputL[i];
+        float inR = inputR[i];
+        // Block 2 feed-forward makeup (skipped at 0 dB → bit-exact bypass).
+        if (inputMakeupActive_)
+        {
+            inL = inputMid_.processL (inputSubL_.process (inL));
+            inR = inputMid_.processR (inputSubR_.process (inR));
+        }
 
         // --- 1) Read from all delay lines with LFO-modulated fractional position ---
         // Phase 2: advance the master coherent LFO once per sample (NOT
@@ -545,11 +563,28 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             // the envF/envS transient detector; Phase A stubs gDyn = 1.0.
             if (shaperActive_ && ! frozen)
             {
+                // TPT one-pole low-band split (G precomputed in updateShaperCoeffs)
                 const float v   = (feedback[ch] - shaperLp_[ch]) * shaperLpG_;
                 const float low = v + shaperLp_[ch];
                 shaperLp_[ch]   = low + v;             // TPT state update
                 const float high = feedback[ch] - low;
-                const float gDyn = 1.0f;               // Phase B: detector → [1-depth, 1]
+
+                // Transient detector: fast/slow envelope RATIO (level-independent
+                // → same trigger on a soft rimshot or a loud snare). Onset → e→1.
+                const float a = std::fabs (low);
+                shaperEnvF_[ch] += (a > shaperEnvF_[ch] ? shaperAttF_ : shaperRelF_)
+                                 * (a - shaperEnvF_[ch]);
+                shaperEnvS_[ch] += (a > shaperEnvS_[ch] ? shaperAttS_ : shaperRelS_)
+                                 * (a - shaperEnvS_[ch]);
+                const float invS = 1.0f / (shaperEnvS_[ch] + 1.0e-6f);   // guarded reciprocal
+                const float tr   = std::max (0.0f, shaperEnvF_[ch] * invS - 1.0f);
+                const float xk   = std::clamp (tr * shaperSens_, 0.0f, 1.0f);
+                const float e    = xk * xk * (3.0f - 2.0f * xk);          // smoothstep soft-knee
+
+                // Heavy low-band damping on onset, relaxing to the static
+                // (FiveBandDamping) sustain. gDyn ∈ [1-depth, 1] ≤ 1 → A[n] stays
+                // contractive → BIBO-stable by construction.
+                const float gDyn = 1.0f - shaperDepth_ * e;
                 feedback[ch] = high + gDyn * low;
             }
 
@@ -803,6 +838,31 @@ void FDNReverb::setShaperXoverHz (float hz)
 void FDNReverb::setShaperSens (float sens)
 {
     shaperSens_ = std::clamp (sens, 0.5f, 4.0f);
+}
+
+// ── Block 2: feed-forward input energy makeup ───────────────────────────────
+// Static shelves on the dry input, applied before the delay-line write (scales
+// the input vector B). Outside the feedback loop → ρ(A) untouched → BIBO-safe.
+// Both gains 0 dB → inputMakeupActive_ false → block skipped → bit-exact bypass.
+void FDNReverb::setInputSubGainDb (float db)
+{
+    inputSubGainDb_    = std::clamp (db, -6.0f, 6.0f);
+    inputMakeupActive_ = std::fabs (inputSubGainDb_) > 1.0e-4f
+                      || std::fabs (inputMidGainDb_) > 1.0e-4f;
+    if (! prepared_) return;
+    const float g  = std::pow (10.0f, inputSubGainDb_ / 20.0f);
+    const float sr = static_cast<float> (sampleRate_);
+    inputSubL_.designLowShelf (g, 120.0f, sr);
+    inputSubR_.designLowShelf (g, 120.0f, sr);
+}
+
+void FDNReverb::setInputMidGainDb (float db)
+{
+    inputMidGainDb_    = std::clamp (db, -6.0f, 6.0f);
+    inputMakeupActive_ = std::fabs (inputSubGainDb_) > 1.0e-4f
+                      || std::fabs (inputMidGainDb_) > 1.0e-4f;
+    if (! prepared_) return;
+    inputMid_.setBand (900.0f, 0.8f, inputMidGainDb_);   // mid bell
 }
 
 void FDNReverb::setCrossoverFreq (float hz)
