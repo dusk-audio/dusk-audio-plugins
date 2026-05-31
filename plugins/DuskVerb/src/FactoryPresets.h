@@ -867,18 +867,23 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   GATE: threshold -32 dB (mid 0.75), attack 25 ms (mod_depth 0.49),
         //         hold 500 ms (diffusion 1.0, max), release 1500 ms (mod_rate 7.52)
         //
-        // 2026-05-26 calibration verdict: SHIP AS-IS (engine-ceiling preset).
-        // Anchor (vintage rack reverb "Reverse Taps") uses true backwards-convolved
-        // envelope topology; the NonLinear engine produces a forward-swelling
-        // gate-shaped envelope that captures the perceptual "reverse" character
-        // without bit-exact backwards convolution. Spectral / rt60 / env_p2p
-        // deltas against the anchor are intentional architectural differences.
-        // ENGINE_CEILING entries in verify_preset_vs_anchor.py document this.
+        // Tuned vs lex-reverse-1 2026-05-31 (54→34 fails). The prior "SHIP AS-IS
+        // engine ceiling at 54" verdict was PREMATURE: ~20 of those fails were
+        // the gate closing too early/hard (tail_t60 -86%, body -22dB, boom
+        // window dead-silent, decay bands -80%), all tunable. The fix was a long
+        // gate release — but the optimizer's Mod Rate axis (= NonLinear release)
+        // was capped at 3.0 (a reverb-LFO ceiling); lifting it to the APVTS max
+        // 10.0 let release land 9.70, with longer decay (18.8s) + max hold (0.93
+        // diffusion) extending the tail to match. The remaining 34 ARE structural
+        // to a tap-based gate vs the anchor's smooth backwards-convolution:
+        // env_p2p +60 (hard gate cliff), comb ripple +9..+17 (discrete taps), no
+        // tail chorus (mod-freq -85%), and a low/high T60 tilt that couples
+        // against those. Verified: a 250-trial warm-started re-sweep beat 34 by 0.
         { "Reverse Taps",         "Rooms",
           6,  1.00f, false, 30.0f, 0,
-          0.44f, 0.70f, 0.13f, 2.81f, 1.15f, 1.90f,  203.0f,
-          0.95f, 0.00f, 0.30f,  20.0f, 19158.0f, 1.04f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 0.67f, /* highX */ 7070.0f, /* sat */ 0.02f },
+          18.8290f, 0.93372f, 0.39555f, 9.70243f, 1.13317f, 2.34885f,  719.23f,
+          0.93076f, 0.00f, 0.30f,  22.580f, 16982.2f, 1.40533f, false, -9.71349f,
+          /* mono */ 20.0f, /* mid */ 1.02468f, /* highX */ 4582.63f, /* sat */ 0.13371f },
         // ── Mobius Pad ───────────────────────────────────────────────────────
         // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
         // see SixAPTankEngine.cpp). Showcases the 6-AP engine's new
