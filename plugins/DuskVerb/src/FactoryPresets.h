@@ -773,26 +773,21 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
         // (Reverb Mode = Ambience) @ 100% wet.
         //
-        // v1 (2026-05-27): staged_tuner.py autonomous --category Rooms.
-        // 1300 trials. Anchor t60→knob 1.80 s. Stage 1: 3.28 (high — short
-        // ambient tail makes spatial loss noisy). Stage 2: 85.4. Stage 3: 122.7
-        // (large — VVV's Ambience reverb mode has bright modal character that
-        // QuadTank topology doesn't match exactly).
-        //
-        // 17 / 40 gates fail. QuadTank vs VVV Ambience mode is a wider
-        // architectural gap than FDN vs VVV Concert Hall. Key failures:
-        //   - cent_50 -21 % / cent_500 +72 % (different spectral envelope)
-        //   - deep sub +7.9 dB (QuadTank produces more <50 Hz content)
-        //   - ss air -6 dB (Hi Cut 10.4 kHz; VVV air band extends higher)
-        //   - decay low/low_mid/mid/hi all +30 to +80 % (QuadTank longer)
-        //   - osc P2P -10 dB (QuadTank modulation produces less ripple)
-        //
-        // DV's QuadTank Ambience is its own character — not a VVV clone.
+        // Tuned vs vvv-ambience 2026-05-31 (43→18 fails). CRITICAL: the swept
+        // Decay range had to be CAPPED at 3.0 s — VVV Ambience is very short
+        // (tail_t60 1.14 s) and with the wide [0.2,30] range the optimizer gamed
+        // noiseburst spec_L1 with a 4-6 s wash (31 fails but +200..+577% on every
+        // T60 band — wrong character). Capped, it found the correct short room:
+        // decay 1.47 s (tail_t60 1.05 s, Δ -8%), sparse diffusion 0.016 (pure
+        // early-reflection ambient), Width 1.83 (the anchor itself is anti-
+        // correlated -0.32, so wide PASSES stereo_corr here). Remaining fails
+        // (cent_500 bright, QuadTank comb ripple, T60-low-band tilt) are the
+        // QuadTank topology vs VVV's Ambience modal character.
         { "Ambience",             "Rooms",
           3,  0.40f, false,  2.91f, 0,
-          0.74f, 0.75f, 0.18f, 1.05f, 1.03f, 1.10f,  793.0f,
-          0.70f, 0.89f, 0.56f,  20.0f, 10070.0f, 1.03f, false, 1.28f,
-          /* mono */ 20.0f, /* mid */ 1.12f, /* highX */ 4566.0f, /* sat */ 0.25f },
+          1.47318f, 0.30377f, 0.11897f, 1.10161f, 0.73588f, 1.29523f,  220.01f,
+          0.01627f, 0.89f, 0.56f,  46.478f, 15659.0f, 1.82892f, false, 0.33923f,
+          /* mono */ 20.0f, /* mid */ 0.55344f, /* highX */ 6973.00f, /* sat */ 0.10470f },
         // ── 1981 Gated Snare ─────────────────────────────────────────────────
         // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
         // (attack ramp → flat plateau → mathematical cliff) is baked into
