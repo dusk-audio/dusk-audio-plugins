@@ -169,6 +169,7 @@ struct FactoryPreset
             { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f } },
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
             { "Tiled Room", { 0.868f, 0.404f, 93.29f, 19597.39f, -1.304f, 2.084f, 1.321f } },
+            { "Blade Runner 224", { 1.8467f, 0.2059f, 119.28f, 6247.66f, 1.6074f, 3.4473f, 0.1912f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
@@ -679,10 +680,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
           4,  0.45f, false, 25.0f, 0,
-          4.99f, 0.48f, 0.35f, 0.64f, 1.04f, 1.90f,  328.0f,
-          0.97f, 0.00f, 0.50f, 47.0f, 19723.0f, 1.10f, false, -9.50f,
-          /* mono */ 20.0f, /* mid */ 1.70f, /* highX */ 1581.0f, /* sat */ 0.39f,
-          /* hiCutShelfGainDb */ -11.3f },
+          13.6421f, 0.91981f, 0.33084f, 2.64911f, 0.94710f, 1.05238f,  330.94f,
+          0.84476f, 0.00f, 0.50f, 56.210f, 7860.39f, 1.69717f, false, -3.93657f,
+          /* mono */ 20.0f, /* mid */ 0.73614f, /* highX */ 3980.22f, /* sat */ 0.17579f,
+          /* hiCutShelfGainDb */ -11.3f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark) — the prior lex-rhall-rhall4 anchor was WRONG (57->23 w/ FDN FiveBand+input-makeup axes)
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
         // Engine: QuadTank. Anchor: VVV "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
@@ -982,9 +983,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Valhalla's broadband multi-voice shimmer — structural on this engine.
         { "Deep Blue Day",        "Shimmer",
           7,  0.38f, false,  25.0f, 0,
-          12.8334f, 0.56394f, 0.50f, 1.75655f, 1.43813f, 0.50200f,  735.82f,
-          0.94143f, 0.20f, 0.50f,  24.229f, 12744.8f, 1.30f, false, 0.21577f,
-          /* mono */ 20.0f, /* mid */ 0.61831f, /* highX */ 9351.47f, /* sat */ 0.15849f },
+          9.1423f, 0.59833f, 0.50f, 0.60458f, 1.40394f, 0.56879f,  408.59f,
+          0.80742f, 0.20f, 0.50f,  26.925f, 4521.03f, 1.69030f, false, 0.31973f,
+          /* mono */ 20.0f, /* mid */ 1.18105f, /* highX */ 9800.46f, /* sat */ 0.23195f },  // re-swept DARK 29->27 (ref screenshot: Shimmer DeepBlueDay is high-cut 6770, dark; octave pinned)
     };
     return presets;
 }
