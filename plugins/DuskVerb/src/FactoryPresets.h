@@ -168,7 +168,7 @@ struct FactoryPreset
             // peak fix that proved it can't be filled within stability).
             { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f } },
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
-            { "Tiled Room", { 0.868f, 0.404f, 93.29f, 19597.39f, -1.304f, 2.084f, 1.321f } },
+            { "Tiled Room", { 0.3025f, 0.2119f, 101.5f, 15190.0f, 3.472f, 2.556f, 1.494f } },
             { "Blade Runner 224", { 1.8467f, 0.2059f, 119.28f, 6247.66f, 1.6074f, 3.4473f, 0.1912f } },
             { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 1.4f } },
         };
@@ -771,9 +771,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // makeup, in-loop +1.32 dB) in kFiveBandByName above.
         { "Tiled Room",           "Rooms",
           4,  0.30f, false,  8.20f, 0,
-          3.376f, 0.588f, 0.045f, 2.999f, 1.126f, 1.210f,  407.9f,
-          0.896f, 0.46f, 0.40f,  56.17f, 3527.8f, 0.907f, false, 8.532f,
-          /* mono */ 20.0f, /* mid */ 1.17f, /* highX */ 7245.8f, /* sat */ 0.120f },
+          4.535f, 0.82140f, 0.49110f, 2.02200f, 1.08100f, 1.09000f,  127.50f,
+          0.97670f, 0.46f, 0.40f,  26.900f, 4289.0f, 0.50030f, false, -6.84400f,
+          /* mono */ 20.0f, /* mid */ 1.15900f, /* highX */ 7408.0f, /* sat */ 0.12720f },  // re-swept post-calibration 28->26 vs vvv-tiled-room (FDN makeup axes pushed harder)
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
         // (Reverb Mode = Ambience) @ 100% wet.
