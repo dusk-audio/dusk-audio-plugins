@@ -86,6 +86,15 @@ FREE_PARAMS = {
     "Hi Cut":          (3000.0, 20000.0),  # APVTS [1000, 20000]. Widened down to 3 kHz 2026-05-30 for dark presets (Cathedral HiCut=4261). Safe under the direct-scoreboard objective — the cent_50/bloom gates now police over-darkening, so the old "Optuna kills bright bloom" clamp is obsolete.
     "Width":           (0.50,    1.05),    # APVTS [0.0, 2.0] — clamped to mono-compatible range; >1.05 with sparse Dattorro taps produces anti-correlated L/R
     "Saturation":      (0.00,    0.40),    # APVTS [0.0, 1.0] — 0.4 cap; above is destructive
+    # FiveBandDamping (Phase 3, FDN only) — the 4 new T60-shaping axes. Sub
+    # decouples <120 Hz decay/energy from the low-mids; Hi-Mid bends the
+    # 2k-8k decay slope that the old single mid-plateau forced flat. Transparent
+    # when Sub Mult==bassMult & Hi-Mid Mult==trebleMult (warm-start seeds set
+    # exactly that → trial 0 reproduces the locked floor).
+    "Sub Multiply":    (0.10,    2.00),    # APVTS [0.1, 2.0]
+    "Hi-Mid Multiply": (0.10,    2.00),    # APVTS [0.1, 2.0]
+    "Sub Crossover":   (20.0,  200.0),     # APVTS [20, 200] Hz
+    "Air Crossover":   (4000.0, 20000.0),  # APVTS [4000, 20000] Hz
     # DattorroPlateVintage corrective EQ + brightness (algo=1 only). Optimizer
     # samples these unconditionally; on non-DPV engines the setters are no-ops
     # via DuskVerbEngine glue, so the values are wasted but harmless.
