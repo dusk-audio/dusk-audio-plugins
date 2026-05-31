@@ -346,6 +346,8 @@ def make_objective(
     prerun_seconds: float = 5.0,
     has_dpv: bool = False,
     non_fdn: bool = False,
+    locks: dict | None = None,
+    ranges: dict | None = None,
 ):
     """
     Returns an Optuna objective closure that renders one trial via
@@ -359,15 +361,24 @@ def make_objective(
     """
     target_ir = str(target_ir)
     anchor_dir = str(Path(target_ir).parent)   # full_check compares dir↔dir
+    locks = locks or {}      # name -> fixed value (pinned, removed from sampling)
+    ranges = ranges or {}    # name -> (lo, hi) override of FREE_PARAMS bounds
 
     def objective(trial: optuna.Trial) -> float:
-        # Sample free params.
+        # Sample free params. --lock pins a param to a fixed value (e.g. Mod
+        # Depth=0.5 for a clean +12 octave shimmer — letting TPE detune it
+        # produces inharmonic content); --param-range narrows/widens a single
+        # axis without touching the global FREE_PARAMS table.
         overrides = dict(LOCKED_OVERRIDES)
+        overrides.update(locks)
         for name, (lo, hi) in FREE_PARAMS.items():
+            if name in locks:
+                continue   # pinned via --lock → not a search dimension
             if name in DPV_PARAMS and not has_dpv:
                 continue   # inert axis on non-DPV engines — don't waste a dim
             if name in FDN_ONLY_PARAMS and non_fdn:
                 continue   # FiveBand/makeup/in-loop are FDN-only → skip elsewhere
+            lo, hi = ranges.get(name, (lo, hi))
             overrides[name] = trial.suggest_float(name, lo, hi)
 
         # Per-trial output dir keeps parallel workers from colliding.
@@ -465,7 +476,37 @@ def main():
                          "enqueue as the first trial(s). Use the shipped "
                          "FactoryPresets values so the study starts at the "
                          "baseline and can only improve.")
+    ap.add_argument("--lock", action="append", default=[], metavar="NAME=VAL",
+                    help="Pin a free param to a fixed value, removing it from "
+                         "the search space. Repeatable. E.g. --lock 'Mod Depth=0.5' "
+                         "forces a clean +12 octave shimmer (TPE otherwise detunes "
+                         "it into inharmonic content).")
+    ap.add_argument("--param-range", action="append", default=[], metavar="NAME=LO,HI",
+                    help="Override a single free param's [lo,hi] bounds for this "
+                         "run only (does not touch the global FREE_PARAMS table). "
+                         "Repeatable. E.g. --param-range 'Diffusion=0.75,1.0'.")
     args = ap.parse_args()
+
+    # Parse --lock / --param-range into dicts, validating names against FREE_PARAMS.
+    locks: dict = {}
+    for spec in args.lock:
+        k, _, v = spec.partition("=")
+        k = k.strip()
+        if k not in FREE_PARAMS:
+            sys.exit(f"--lock: unknown param '{k}' (not in FREE_PARAMS)")
+        locks[k] = float(v)
+    ranges: dict = {}
+    for spec in args.param_range:
+        k, _, v = spec.partition("=")
+        k = k.strip()
+        if k not in FREE_PARAMS:
+            sys.exit(f"--param-range: unknown param '{k}' (not in FREE_PARAMS)")
+        lo, hi = (float(x) for x in v.split(","))
+        ranges[k] = (lo, hi)
+    if locks:
+        print(f"Locked (pinned) params: {locks}")
+    if ranges:
+        print(f"Range overrides: {ranges}")
 
     target_ir = Path(args.target_ir)
     if not target_ir.is_file():
@@ -510,7 +551,8 @@ def main():
             seeds = [seeds]
         for seed in seeds:
             study.enqueue_trial({k: v for k, v in seed.items()
-                                 if k in FREE_PARAMS}, skip_if_exists=True)
+                                 if k in FREE_PARAMS and k not in locks},
+                                skip_if_exists=True)
         print(f"Warm-start: enqueued {len(seeds)} seed config(s).")
 
     objective = make_objective(
@@ -522,6 +564,8 @@ def main():
         prerun_seconds=args.prerun_seconds,
         has_dpv=args.has_dpv,
         non_fdn=args.non_fdn,
+        locks=locks,
+        ranges=ranges,
     )
 
     print(f"Starting {args.trials} trials with {args.workers} parallel workers...")
