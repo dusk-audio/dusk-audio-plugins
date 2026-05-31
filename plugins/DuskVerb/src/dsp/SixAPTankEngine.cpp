@@ -155,7 +155,12 @@ void SixAPTankEngine::clearBuffers()
 
 void SixAPTankEngine::setDecayTime (float seconds)
 {
-    decayTime_ = std::max (0.05f, seconds);
+    // Knob-honesty calibration (2026-05-31). Raw figure-8 decay law is sub-unity
+    // and nonlinear: measured mid-band RT60 ≈ 0.9799·T^0.8087 at nominal size.
+    // Invert it so the displayed Decay knob reads true RT60 seconds across the
+    // musical range. internal = (R/C)^(1/P) feeds the existing coefficient math.
+    const float honest = std::max (0.05f, seconds);
+    decayTime_ = std::clamp (std::pow (honest / 0.9799f, 1.0f / 0.8087f), 0.05f, 60.0f);
     if (prepared_)
         updateDecayCoefficients();
 }

@@ -194,16 +194,24 @@ void QuadTank::process (const float* inputL, const float* inputR,
         for (int t = 0; t < kNumTanks; ++t)
             cf[t] = tanks_[t].crossFeedState;
 
-        // Process each tank with bidirectional attenuated cross-coupling.
-        // Previous single-direction ring 0→1→2→3→0 with unity cross-feed
-        // concentrated energy into a deterministic 4-tank rotation, audible
-        // as a periodic modal pattern at sr/(4·L_pertank). Mixing the
-        // previous AND next tank's output (forward-weighted) breaks that
-        // ring; total cross-feed gain < 1 keeps cascade stability margin
-        // above 6 dB across all damping settings. The reduced loop gain
-        // is compensated downstream in updateDecayCoefficients().
-        constexpr float kCrossFeedFwd  = 0.55f;
-        constexpr float kCrossFeedBack = 0.20f;
+        // Process each tank with bidirectional cross-coupling. Previous
+        // single-direction ring 0→1→2→3→0 concentrated energy into a
+        // deterministic 4-tank rotation (periodic modal pattern). Mixing the
+        // previous AND next tank's output (forward-weighted) breaks that ring.
+        //
+        // CALIBRATION FIX 2026-05-31: these weights are NORMALIZED so the
+        // coupling matrix's dominant (DC) eigenvalue = kFwd + kBack = 1.0
+        // (lossless), preserving the old 0.55:0.20 forward:back RATIO
+        // (0.73333:0.26667). The old un-normalized 0.55+0.20 = 0.75 made the
+        // coupling lose 25%/cycle, capping RT60 at ~4.3 s regardless of the
+        // Decay knob — updateDecayCoefficients then divided gBase by 0.75 to
+        // compensate, which saturated gBase at its 1.0 clamp (the knob lied:
+        // 9.32 s → 4.3 s). With ρ=1 the per-line gBase alone sets the decay,
+        // so the Decay knob reads honest RT60 across the full range. Stability
+        // now rests on gBase<1 (enforced in updateDecayCoefficients) + the
+        // crossFeedState softClip, exactly as a standard lossless-matrix FDN.
+        constexpr float kCrossFeedFwd  = 0.73333f;
+        constexpr float kCrossFeedBack = 0.26667f;
         for (int t = 0; t < kNumTanks; ++t)
         {
             auto& tank = tanks_[t];
@@ -353,7 +361,18 @@ float QuadTank::readOutputTap (const OutputTap& tap) const
 // -----------------------------------------------------------------------
 void QuadTank::setDecayTime (float seconds)
 {
-    decayTime_ = std::max (seconds, 0.1f);
+    // Knob-honesty calibration (2026-05-31). After the cross-feed normalization
+    // (ρ=1) removed the 4.3 s saturation ceiling, the raw knob→RT60 law is still
+    // sub-unity and nonlinear: measured mid-band RT60 ≈ 0.9373·T^0.7247 at
+    // nominal size (level-dependent crossFeedState softClip + non-exponential
+    // tail shape). Invert that law so the DISPLAYED Decay knob reads true RT60
+    // seconds across the usable range. internal = (R / C)^(1/P) is the decay-
+    // time target fed to the RT60 formula; clamped to the engine's stable range.
+    static constexpr float kDecayCalC = 0.9373f;
+    static constexpr float kDecayCalP = 0.7247f;
+    const float honest   = std::max (seconds, 0.1f);
+    const float internal = std::pow (honest / kDecayCalC, 1.0f / kDecayCalP);
+    decayTime_ = std::clamp (internal, 0.1f, 60.0f);
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -611,13 +630,16 @@ void QuadTank::updateDecayCoefficients()
             densityLen += static_cast<float> (tank.densityAP[i].delaySamples);
         loopLength += densityLen * storageFactor;
 
-        // Bidirectional cross-feed attenuation (process() line ~180) reduces
-        // per-cycle loop gain to g_damping × kCrossFeedTotal. Solve for the
-        // damping gain that yields the target g_eff after RT60 seconds.
+        // Cross-feed matrix dominant eigenvalue (process() kCrossFeedFwd+Back).
+        // NORMALIZED to 1.0 (2026-05-31 calibration fix), so the coupling is
+        // lossless and the per-line damping gain gBase alone sets RT60:
+        //   gEffTarget = g_damping^cycles → solve g_damping = gEffTarget.
+        // The old value 0.75 forced gBaseRaw = gEffTarget/0.75, which exceeded
+        // the 1.0 clamp for RT60 above ~4.3 s and saturated (dishonest knob).
         // Keep in sync with kCrossFeedFwd + kCrossFeedBack in process().
-        constexpr float kCrossFeedTotal = 0.55f + 0.20f;
+        constexpr float kCrossFeedTotal = 0.73333f + 0.26667f;  // = 1.0
         const float gEffTarget = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
-        const float gBaseRaw   = gEffTarget / kCrossFeedTotal;
+        const float gBaseRaw   = gEffTarget / kCrossFeedTotal;  // = gEffTarget
         float gBase = std::clamp (std::pow (gBaseRaw, decayBoost_), 0.001f, 0.9999f);
         float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         // True 3-band: mid band uses midMultiply_ (default 1.0 = natural rate).
