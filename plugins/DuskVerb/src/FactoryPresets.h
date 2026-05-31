@@ -319,21 +319,29 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Gain Trim = 6.7 (user's ear-calibrated value, preserved over
         // optimizer's 9.49 — the +2.79 dB difference is the math-vs-perception
         // gap the snare-RMS gate caught on prior calibrations).
+        // Tuned vs lex-vintage-vocal-plate 2026-05-31 (45→21 fails). DPV engine
+        // (algo 1); Decay capped 3.0 s (Lexicon Vintage Plate "Vocal Plate" is a
+        // short plate, tail ~1.05 s). NOTE: the win is from the 15 CORE params
+        // only — the render harness does not expose the 7 DPV corrective-EQ
+        // params as --param overrides, so --has-dpv sampled dead axes and those
+        // row fields below are LEFT AT THEIR staged_tuner values. 350-trial +
+        // 300-trial warm-started re-sweep both floor at 21. Remaining (cent -29%
+        // dark, sine1k +5 dB hot, small T60 tilt, 12.9k spike) is DPV-vs-Lexicon.
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
-          0.74f, 0.41f, 0.20f, 0.81f, 0.84f, 1.10f,  436.0f,
-          0.37f, 0.00f, 0.30f,  25.7f, 13357.0f, 0.75f, false, 6.7f,
-          /* mono */ 20.0f, /* mid */ 1.06f, /* highX */ 7342.0f, /* sat */ 0.20f,
+          0.80466f, 0.80357f, 0.29369f, 1.64421f, 1.36640f, 1.38104f,  522.55f,
+          0.24230f, 0.00f, 0.30f,  42.811f, 7366.44f, 0.81121f, false, 9.01827f,
+          /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
           /* hiCutShelfGainDb */ -12.0f,
           /* gate */ true,
           /* sixAPDensityBaseline */ 0.62f, /* sixAPBloomCeiling */ 0.85f,
           /* sixAPBloomStagger    */ { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f },
           /* sixAPEarlyMix        */ 0.5f,  /* sixAPOutputTrim    */ 1.3f,
           /* bassChoke            */ 20.0f,
-          /* dpvHfShelfGainDb     */ 3.25f,       // staged_tuner v9 — Stage 3 polish only
-          /* dpvHfShelfFreqHz     */ 4049.0f,
-          /* dpvStructHfDampHz    */ 6605.0f,     // moved to Stage 2 — couples to per-band decay
-          /* dpvBoxCutGainDb      */ -1.52f,
+          /* dpvHfShelfGainDb     */ 3.25f,       // DPV corrective EQ unchanged — the render
+          /* dpvHfShelfFreqHz     */ 4049.0f,     // harness does NOT expose these as --param,
+          /* dpvStructHfDampHz    */ 6605.0f,     // so the sweep's --has-dpv axes were no-ops;
+          /* dpvBoxCutGainDb      */ -1.52f,      // the 45→21 win is from the CORE params only.
           /* dpvBoxCutFreqHz      */ 704.0f,
           /* dpvBassShelfGainDb   */ 0.82f,
           /* dpvBassShelfFreqHz   */ 89.7f },
