@@ -67,7 +67,7 @@ FREE_PARAMS = {
     "Decay Time":      (0.20,   12.00),    # APVTS [0.2, 30.0] — 12s ceiling matches longest current preset
     "Size":            (0.10,    1.00),    # APVTS [0.0, 1.0]
     "Mod Depth":       (0.00,    0.60),    # APVTS [0.0, 1.0] — 0.6 keeps tail from over-modulating
-    "Mod Rate":        (0.10,    3.00),    # APVTS [0.10, 10.0]
+    "Mod Rate":        (0.10,    3.00),    # APVTS [0.10, 10.0]. (NB: Drum Plate ripple/mud is Mod-DEPTH driven, not rate — a 0.5 Hz floor did NOT fix it, reverted 2026-05-30.)
     # Decay multipliers — clamped to gentle contouring range. Wider ranges
     # let Optuna abuse them as massive spectral gap-fillers (e.g. Bass Mult
     # 1.97 + Low Crossover 3740 forced the bass band to cover most of the
@@ -82,7 +82,7 @@ FREE_PARAMS = {
     "Low Crossover":   (80.0,   600.0),    # APVTS [200, 4000] — clamped
     "High Crossover":  (3000.0, 10000.0),  # APVTS [1000, 12000] — clamped
     "Diffusion":       (0.00,    1.00),    # APVTS [0.0, 1.0]
-    "Lo Cut":          (20.0,   500.0),    # APVTS [5, 500] — 20Hz practical floor
+    "Lo Cut":          (20.0,    60.0),    # ceiling 60 (was 500): a >60 Hz HPF guts the kick fundamental + sub → audibly weak low end (Drum Plate listening 2026-05-31). APVTS [5, 500]
     "Hi Cut":          (3000.0, 20000.0),  # APVTS [1000, 20000]. Widened down to 3 kHz 2026-05-30 for dark presets (Cathedral HiCut=4261). Safe under the direct-scoreboard objective — the cent_50/bloom gates now police over-darkening, so the old "Optuna kills bright bloom" clamp is obsolete.
     "Width":           (0.50,    1.05),    # APVTS [0.0, 2.0] — clamped to mono-compatible range; >1.05 with sparse Dattorro taps produces anti-correlated L/R
     "Saturation":      (0.00,    0.40),    # APVTS [0.0, 1.0] — 0.4 cap; above is destructive
@@ -253,28 +253,48 @@ def _parse_full_check_json(stdout: str):
         payload = json.loads(line)
     except Exception:
         return None, None
+    # ── Perceptual Weighting Overrule (2026-05-30, Drum Plate listening) ──
+    # The count-minimizer farms easy statistical gates while sacrificing the
+    # ones the ear actually flags (kick-masking low decay, low-mid mod mud,
+    # dull HF tail). Multiply those specific gates' margin contribution so a
+    # config that closes/approaches them is strongly preferred. NB: this
+    # biases the tiebreaker — at equal n_fail the audible-correct config wins,
+    # and closing a weighted gate (−1 fail AND a big margin term removed) is
+    # the strongest loss drop available.
+    PERCEPTUAL_WEIGHTS = (
+        ("edt low 100-250",      5.0),   # transient recovery → kick clarity
+        ("ripple lowmid 250-1k", 4.0),   # low-mid mod mud → drive Mod Depth down
+        ("T60 16",               3.0),   # HF air extension → brighter tail
+        # Low-end BODY (2026-05-31): the clarity weights above let the optimizer
+        # "clean up" by high-passing the whole low end (Lo Cut→144) → audibly
+        # weak sub. Weight the sub-energy gates so body is protected alongside
+        # clarity (paired with the Lo Cut≤60 clamp).
+        ("sub-bass <100",        4.0),   # broadband sub energy
+        ("ss deep sub 20-50",    3.0),   # steady-state deep sub
+        ("ss sub 50-100",        3.0),   # steady-state sub
+    )
+
+    def _weight (s):
+        for key, w in PERCEPTUAL_WEIGHTS:
+            if key in s:
+                return w
+        return 1.0
+
     n_fail = int(payload.get("n_fail", 0))
     margin = 0.0
     for s in payload.get("fails", []):
+        contrib = 0.5   # fallback for unparseable fails
         m = re.search(r"Δ=\s*([-+]?[0-9.]+)\s*%.*gate=±\s*([0-9.]+)\s*%", s)
         if m:
             d = abs(float(m.group(1))); tol = float(m.group(2))
-            if tol > 0:
-                margin += max(0.0, d / tol - 1.0)
-            continue
-        m = re.search(r"Δ=\s*([-+]?[0-9.]+).*gate=±\s*([0-9.]+)", s)
-        if m:
+            contrib = max(0.0, d / tol - 1.0) if tol > 0 else 0.0
+        elif (m := re.search(r"Δ=\s*([-+]?[0-9.]+).*gate=±\s*([0-9.]+)", s)):
             d = abs(float(m.group(1))); tol = float(m.group(2))
-            if tol > 0:
-                margin += max(0.0, d / tol - 1.0)
-            continue
-        m = re.search(r"Δ=\s*([-+]?[0-9.]+).*gate([≤≥])\s*([-+]?[0-9.]+)", s)
-        if m:
+            contrib = max(0.0, d / tol - 1.0) if tol > 0 else 0.0
+        elif (m := re.search(r"Δ=\s*([-+]?[0-9.]+).*gate([≤≥])\s*([-+]?[0-9.]+)", s)):
             d = float(m.group(1)); op = m.group(2); bound = float(m.group(3))
-            excess = (d - bound) if op == "≤" else (bound - d)
-            margin += max(0.0, excess)
-            continue
-        margin += 0.5   # unparseable fail — still counts toward the tiebreaker
+            contrib = max(0.0, (d - bound) if op == "≤" else (bound - d))
+        margin += contrib * _weight (s)
     return n_fail, margin
 
 
@@ -283,7 +303,11 @@ def make_objective(
     preset_name: str,
     vst3_path: Path,
     trial_root: Path,
-    fail_loss: float = 1000.0,
+    fail_loss: float = 1.0e9,   # must exceed any real loss (n_fail*1000+margin,
+                                # ~26k–60k) so an errored/timed-out trial is
+                                # ranked WORST, not best. Was 1000 (a latent bug
+                                # under the direct-scoreboard objective: a failed
+                                # render scored below every real config and won).
     stimulus: str = "noiseburst",
     prerun_seconds: float = 5.0,
     has_dpv: bool = False,
