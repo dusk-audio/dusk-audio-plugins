@@ -158,19 +158,27 @@ struct FactoryPreset
         // hi-mid→treble). Per-preset NON-transparent values live in a
         // name→map — same pattern as kPostTankEQByName — so the fragile
         // aggregate-init rows (these struct fields sit last) stay untouched.
-        struct FiveBandOverride { float sub, hiMid, xSub, xAir; };
+        struct FiveBandOverride { float sub, hiMid, xSub, xAir, inSub, inMid; };
         static const std::map<juce::String, FiveBandOverride> kFiveBandByName = {
-            // Drum Plate (FDN) — direct-scoreboard sweep, 28→26 vs VVV anchor.
-            { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f } },
+            // Drum Plate (FDN) — direct-scoreboard + warm-start sweep vs VVV
+            // anchor, 27→23. FiveBand mults + feed-forward Input Sub +2.02 dB:
+            // restores the low-end body that read "weak" by ear (closes
+            // ss-deep-sub / ss-sub). 1 kHz notch + mild sub-hot remain (FDN
+            // steady-state limit — see commits 4876359/91da13e for the in-loop
+            // peak fix that proved it can't be filled within stability).
+            { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
         float fbXSub  = crossoverSub;
         float fbXAir  = crossoverAir;
+        float fbInSub = inputSubGain;
+        float fbInMid = inputMidGain;
         if (auto it = kFiveBandByName.find (juce::String (name)); it != kFiveBandByName.end())
         {
             fbSub  = it->second.sub;   fbHiMid = it->second.hiMid;
             fbXSub = it->second.xSub;  fbXAir  = it->second.xAir;
+            fbInSub = it->second.inSub; fbInMid = it->second.inMid;
         }
         setIfExists ("sub_mult",      fbSub);
         setIfExists ("hi_mid_mult",   fbHiMid);
@@ -182,9 +190,9 @@ struct FactoryPreset
         setIfExists ("shaper_time",      120.0f);
         setIfExists ("shaper_xover",     250.0f);
         setIfExists ("shaper_sens",      1.5f);
-        // Block 2 input makeup — 0 dB bypass until per-preset tuning sets it.
-        setIfExists ("input_sub_gain",   inputSubGain);
-        setIfExists ("input_mid_gain",   inputMidGain);
+        // Block 2 input makeup — per-preset via kFiveBandByName (0 dB elsewhere).
+        setIfExists ("input_sub_gain",   fbInSub);
+        setIfExists ("input_mid_gain",   fbInMid);
         setIfExists ("saturation", saturation);
         setIfExists ("diffusion", diffusion);
         setIfExists ("er_level",  erLevel);
@@ -334,12 +342,14 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   Stage 3 loss 8.33  (clean polish)
         //
         // 12 / 40 gates fail.
-        // Locked 2026-05-30: direct-scoreboard + warm-start FiveBand FDN sweep
-        // (19-dim), 28→27 vs VVV "Drum Plate". Listening (2026-05-31) flagged a
-        // muddy/dark low-mid vs VVV; perceptual-weighted re-sweeps only slid the
-        // failures along the FDN's strong↔clear-low Pareto wall. Residual is
-        // structural (low-mid modal ring + per-band energy) → Transient Shaper
-        // (Phase A plumbing in place, depth 0) targets this in Phase B.
+        // Locked 2026-05-31 at the 23-fail floor vs VVV "Drum Plate" (from 27).
+        // The win is feed-forward Input Sub +2.02 dB (in kFiveBandByName above):
+        // it restored the low-end BODY that read "weak" by ear (ss-deep-sub/
+        // ss-sub now pass). Residual 23 is the FDN steady-state limit — a
+        // −5.86 dB 1 kHz null (un-fillable within loop stability: in-loop boost
+        // capped +2.0, broad input bell disturbs broadband) + mild sub-hot
+        // (+3.1, the cost of the +2.02 makeup). Row params unchanged from the
+        // 27 baseline; the +2.02 makeup is the only delta.
         { "Drum Plate",           "Plates",
           4,  0.42f, false, 12.0f, 0,
           2.263f, 0.337f, 0.373f, 0.119f, 1.296f, 0.723f,  98.99f,
