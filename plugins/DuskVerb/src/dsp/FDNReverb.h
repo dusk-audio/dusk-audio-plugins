@@ -337,6 +337,12 @@ private:
     // setInLoopPeaking; the audio loop only runs the 5-mul biquad.
     DspUtils::ParametricBand inLoopPeak_[N];
     bool inLoopPeakActive_ = false;     // true iff |gainDb| > 1e-6
+    // Stored config so prepare() can RE-APPLY the band — ParametricBand::prepare
+    // designUnity's the coeffs, so without this the in-loop peak silently dies
+    // on every engine re-prepare (DAW transport reset, harness reset()).
+    float inLoopPeakFreq_   = 1000.0f;
+    float inLoopPeakQ_      = 2.0f;
+    float inLoopPeakGainDb_ = 0.0f;
 
     // Phase η (2026-05-29): per-line dual-time-constant bass shelf. Applied
     // AFTER ThreeBandDamping → BEFORE structHF/LF stage. Default both gains
