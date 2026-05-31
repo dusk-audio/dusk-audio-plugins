@@ -368,6 +368,16 @@ void VintageTankEngine::processBlock (float* L, float* R, int numSamples)
 
 void VintageTankEngine::setDecay (float decaySeconds)
 {
+    // Knob-honesty calibration (2026-05-31). The round-trip formula below
+    // (incl. kGroupDelayCompensation) produced a strongly WARPED map — measured
+    // mid-band RT60 ≈ 1.9724·T^0.4331 at nominal size (2.9× too long at 0.5 s,
+    // 0.47× at 12 s; the single-point kGroupDelayCompensation tuning only held
+    // near 3 s). Invert that measured law UP FRONT so the displayed Decay knob
+    // reads true RT60 across the range; the existing formula then maps the
+    // pre-inverted value. internal = (R/C)^(1/P).
+    decaySeconds = std::clamp (std::pow (std::max (0.05f, decaySeconds) / 1.9724f,
+                                         1.0f / 0.4331f), 0.05f, 120.0f);
+
     // Total round-trip path for a signal in the figure-8 tank:
     //   L branch primary + L secondary + 1-sample cross-coupling
     // → R branch primary + R secondary + 1-sample cross-coupling
