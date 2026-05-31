@@ -100,6 +100,9 @@ FREE_PARAMS = {
     # 1 kHz / sub energy scoops decay multipliers can't reach.
     "Input Sub Gain":  (-6.0,    6.0),     # APVTS [-6, 6] dB
     "Input Mid Gain":  (-6.0,    6.0),     # APVTS [-6, 6] dB
+    # Block 2b: in-loop narrow peak GAIN at 1 kHz (freq/Q locked above). Fills
+    # the modal null. Capped at +3.5 dB (engine also hard-clamps for stability).
+    "In-Loop Peak Gain": (0.0,   3.5),     # APVTS [-12, 12] dB — swept [0, 3.5]
     # DattorroPlateVintage corrective EQ + brightness (algo=1 only). Optimizer
     # samples these unconditionally; on non-DPV engines the setters are no-ops
     # via DuskVerbEngine glue, so the values are wasted but harmless.
@@ -135,6 +138,12 @@ LOCKED_OVERRIDES = {
     "Dry/Wet": 1.0,
     "Bus Mode": 1,
     "Freeze": 0,
+    # Block 2b (Drum Plate 1 kHz modal null): fix the EXISTING in-loop peaking
+    # filter at 1 kHz / Q 2.5 and sweep only its gain (below) — a narrow boost
+    # fills the notch without disturbing the broadband mid (which a wide input
+    # bell could not). NB: preset-targeted; revisit if sweeping other presets.
+    "In-Loop Peak Freq": 1000.0,
+    "In-Loop Peak Q":    2.5,
     # Gain Trim was previously locked at 0 (post-sweep level-match handled it).
     # Now it's in FREE_PARAMS so Optuna optimizes loudness jointly with spectrum.
     # Post-sweep auto-trim is no longer needed and would re-introduce the
@@ -300,6 +309,17 @@ def _parse_full_check_json(stdout: str):
             d = float(m.group(1)); op = m.group(2); bound = float(m.group(3))
             contrib = max(0.0, (d - bound) if op == "≤" else (bound - d))
         margin += contrib * _weight (s)
+
+        # Sub-bass OVERSHOOT guard (2026-05-31): the input makeup loves to bloom
+        # the sub hot (+5.3 dB). Punish sub-energy gates that climb >+0.5 dB
+        # above the anchor, squared × 2.0, so the optimizer pins sub ~flat
+        # rather than farming the deep-sub gates by over-boosting.
+        if any (k in s for k in ("sub-bass <100", "ss deep sub", "ss sub 50-100")):
+            mo = re.search(r"Δ=\s*([-+]?[0-9.]+).*gate=±\s*([0-9.]+)", s)
+            if mo:
+                dv_delta = float(mo.group(1)); tol = float(mo.group(2))
+                if dv_delta > 0.5 and tol > 0:
+                    margin += 2.0 * (max(0.0, (dv_delta - 0.5) / tol)) ** 2
     return n_fail, margin
 
 
