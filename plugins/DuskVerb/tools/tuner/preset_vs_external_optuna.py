@@ -102,7 +102,7 @@ FREE_PARAMS = {
     "Input Mid Gain":  (-6.0,    6.0),     # APVTS [-6, 6] dB
     # Block 2b: in-loop narrow peak GAIN at 1 kHz (freq/Q locked above). Fills
     # the modal null. Capped at +3.5 dB (engine also hard-clamps for stability).
-    "In-Loop Peak Gain": (0.0,   3.5),     # APVTS [-12, 12] dB — swept [0, 3.5]
+    "In-Loop Peak Gain": (0.0,   2.0),     # APVTS [-12, 12] dB — swept [0, 2.0] (engine hard-caps +2.0: >+2 rings the 1kHz mode away on long-decay loops)
     # DattorroPlateVintage corrective EQ + brightness (algo=1 only). Optimizer
     # samples these unconditionally; on non-DPV engines the setters are no-ops
     # via DuskVerbEngine glue, so the values are wasted but harmless.

@@ -939,7 +939,12 @@ void FDNReverb::setInLoopPeaking (float freqHz, float qFactor, float gainDb)
     // the loop gain at resonance; a high-Q +4 dB boost can push a long-decay
     // line's pole pair toward the unit circle. Capping the positive side keeps
     // ρ(A) < 1. Cuts (negative) only reduce loop gain → always safe.
-    gainDb = std::min (gainDb, 3.5f);
+    // +2.0 dB hard cap (lowered from 3.5 on 2026-05-31): probing showed a
+    // stability CLIFF between +2 and +3.5 — a narrow in-loop boost adds to the
+    // ~0.95 feedback gain of a long-decay plate, and >+2 dB rings the 1 kHz
+    // mode up catastrophically (+48 dB) under sustained input. +2 is the safe
+    // ceiling that still lifts the notch ~+2.4 dB.
+    gainDb = std::min (gainDb, 2.0f);
     inLoopPeakActive_ = std::fabs (gainDb) > 1.0e-6f;
     inLoopPeakFreq_   = freqHz;     // store so prepare() can re-apply
     inLoopPeakQ_      = qFactor;
