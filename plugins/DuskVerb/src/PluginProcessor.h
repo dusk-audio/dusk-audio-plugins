@@ -167,6 +167,10 @@ private:
     std::atomic<float>* hiMidMultParam_     = nullptr;
     std::atomic<float>* crossoverSubParam_  = nullptr;
     std::atomic<float>* crossoverAirParam_  = nullptr;
+    std::atomic<float>* shaperDepthParam_   = nullptr;
+    std::atomic<float>* shaperTimeParam_    = nullptr;
+    std::atomic<float>* shaperXoverParam_   = nullptr;
+    std::atomic<float>* shaperSensParam_    = nullptr;
     std::atomic<float>* crossoverParam_     = nullptr;
     std::atomic<float>* highCrossoverParam_ = nullptr;
     std::atomic<float>* bassChokeParam_     = nullptr;
@@ -291,6 +295,10 @@ private:
     float lastHiMidMult_   = -1.0f;
     float lastCrossoverSub_ = -1.0f;
     float lastCrossoverAir_ = -1.0f;
+    float lastShaperDepth_ = -1.0f;
+    float lastShaperTime_  = -1.0f;
+    float lastShaperXover_ = -1.0f;
+    float lastShaperSens_  = -1.0f;
     float lastCrossover_   = -1.0f;
     float lastHighCrossover_ = -1.0f;
     float lastBassChoke_     = -1.0f;

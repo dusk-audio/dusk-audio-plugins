@@ -107,6 +107,11 @@ public:
     void setHiMidMultiply (float mult);
     void setSubCrossoverFreq (float hz);
     void setAirCrossoverFreq (float hz);
+    // Low-Band Transient Shaper (FDN only, Phase A).
+    void setShaperDepth (float depth);
+    void setShaperTimeMs (float ms);
+    void setShaperXoverHz (float hz);
+    void setShaperSens (float sens);
     void setCrossoverFreq (float hz);              // bass↔mid (legacy "crossover")
     void setHighCrossoverFreq (float hz);          // mid↔high (3-band)
     void setSaturation    (float amount);          // 0..1 drive-style softClip

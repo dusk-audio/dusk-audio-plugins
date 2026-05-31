@@ -285,6 +285,10 @@ void DuskVerbEngine::setSubMultiply     (float mult) { fdn_.setSubMultiply (mult
 void DuskVerbEngine::setHiMidMultiply   (float mult) { fdn_.setHiMidMultiply (mult); }
 void DuskVerbEngine::setSubCrossoverFreq (float hz)  { fdn_.setSubCrossoverFreq (hz); }
 void DuskVerbEngine::setAirCrossoverFreq (float hz)  { fdn_.setAirCrossoverFreq (hz); }
+void DuskVerbEngine::setShaperDepth     (float d)    { fdn_.setShaperDepth (d); }
+void DuskVerbEngine::setShaperTimeMs    (float ms)   { fdn_.setShaperTimeMs (ms); }
+void DuskVerbEngine::setShaperXoverHz   (float hz)   { fdn_.setShaperXoverHz (hz); }
+void DuskVerbEngine::setShaperSens      (float s)    { fdn_.setShaperSens (s); }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
 {
