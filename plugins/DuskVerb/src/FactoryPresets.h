@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
+#include <map>
 #include "dsp/DspUtils.h"
 
 // Forward declaration — applyEngineConfig() needs to call SixAPTank-specific
@@ -148,12 +149,28 @@ struct FactoryPreset
         setIfExists ("mid_mult",  midMult);
         setIfExists ("crossover", crossover);
         setIfExists ("high_crossover", highCrossover);
-        // FiveBandDamping (Phase 2): sentinel -1 inherits the legacy band so
-        // unspecified presets stay transparent (sub→bass, hi-mid→treble).
-        setIfExists ("sub_mult",      subMult   >= 0.0f ? subMult   : bassMult);
-        setIfExists ("hi_mid_mult",   hiMidMult >= 0.0f ? hiMidMult : damping);
-        setIfExists ("crossover_sub", crossoverSub);
-        setIfExists ("crossover_air", crossoverAir);
+        // FiveBandDamping. Base = sentinel-inherit (transparent: sub→bass,
+        // hi-mid→treble). Per-preset NON-transparent values live in a
+        // name→map — same pattern as kPostTankEQByName — so the fragile
+        // aggregate-init rows (these struct fields sit last) stay untouched.
+        struct FiveBandOverride { float sub, hiMid, xSub, xAir; };
+        static const std::map<juce::String, FiveBandOverride> kFiveBandByName = {
+            // Drum Plate (FDN) — direct-scoreboard sweep, 28→26 vs VVV anchor.
+            { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f } },
+        };
+        float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
+        float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
+        float fbXSub  = crossoverSub;
+        float fbXAir  = crossoverAir;
+        if (auto it = kFiveBandByName.find (juce::String (name)); it != kFiveBandByName.end())
+        {
+            fbSub  = it->second.sub;   fbHiMid = it->second.hiMid;
+            fbXSub = it->second.xSub;  fbXAir  = it->second.xAir;
+        }
+        setIfExists ("sub_mult",      fbSub);
+        setIfExists ("hi_mid_mult",   fbHiMid);
+        setIfExists ("crossover_sub", fbXSub);
+        setIfExists ("crossover_air", fbXAir);
         setIfExists ("saturation", saturation);
         setIfExists ("diffusion", diffusion);
         setIfExists ("er_level",  erLevel);
@@ -303,11 +320,15 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   Stage 3 loss 8.33  (clean polish)
         //
         // 12 / 40 gates fail.
+        // Locked 2026-05-30: direct-scoreboard + warm-start FiveBand FDN sweep
+        // (19-dim), 28→26 vs VVV "Drum Plate". New sub/hi-mid axes contributed
+        // (8k/2k T60 closed). FiveBand mults live in kFiveBandByName above.
+        // Residual 26 is energy-dominated (sine1k cold, ss-sub) + mod ripple.
         { "Drum Plate",           "Plates",
           4,  0.42f, false, 12.0f, 0,
-          2.02f, 0.22f, 0.54f, 0.98f, 1.00f, 0.76f,  481.0f,
-          0.41f, 0.30f, 0.55f,  24.0f, 10038.0f, 0.92f, false, -3.85f,
-          /* mono */ 20.0f, /* mid */ 0.61f, /* highX */ 7265.0f, /* sat */ 0.20f },
+          2.263f, 0.337f, 0.373f, 0.119f, 1.296f, 0.723f,  98.99f,
+          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 0.934f, false, -5.15f,
+          /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
         // ═══════════ SPRINGS ═══════════
         // ── Surf '63 Spring ──────────────────────────────────────────────────
         // Engine: SpringEngine (algo 4). Reference: Fender 6G15 outboard
