@@ -289,6 +289,8 @@ void DuskVerbEngine::setShaperDepth     (float d)    { fdn_.setShaperDepth (d); 
 void DuskVerbEngine::setShaperTimeMs    (float ms)   { fdn_.setShaperTimeMs (ms); }
 void DuskVerbEngine::setShaperXoverHz   (float hz)   { fdn_.setShaperXoverHz (hz); }
 void DuskVerbEngine::setShaperSens      (float s)    { fdn_.setShaperSens (s); }
+void DuskVerbEngine::setInputSubGainDb  (float db)   { fdn_.setInputSubGainDb (db); }
+void DuskVerbEngine::setInputMidGainDb  (float db)   { fdn_.setInputMidGainDb (db); }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
 {

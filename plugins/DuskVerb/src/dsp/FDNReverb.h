@@ -94,6 +94,11 @@ public:
     void setShaperTimeMs (float ms);       // fast-env release = tight-window length
     void setShaperXoverHz (float hz);      // low-band split for the shaper
     void setShaperSens (float sens);       // transient detector sensitivity
+    // Block 2: feed-forward input energy makeup. Shapes the dry input BEFORE
+    // it is written into the delay lines (scales B) → outside the feedback
+    // matrix → BIBO-stable, no pole excursion. Both 0 dB → bit-exact bypass.
+    void setInputSubGainDb (float db);     // sub low-shelf on input (~120 Hz)
+    void setInputMidGainDb (float db);     // mid bell on input (~900 Hz)
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
@@ -411,6 +416,13 @@ private:
     float shaperLp_[N]   {};            // per-line TPT LPF state
     float shaperEnvF_[N] {};            // per-line fast envelope
     float shaperEnvS_[N] {};            // per-line slow envelope
+
+    // Block 2: feed-forward input makeup (pre-delay-write, outside the loop).
+    float inputSubGainDb_   = 0.0f;
+    float inputMidGainDb_   = 0.0f;
+    bool  inputMakeupActive_ = false;   // either gain != 0 → block runs
+    ShelfBiquad inputSubL_, inputSubR_; // sub low-shelf, per-channel state
+    DspUtils::ParametricBand inputMid_; // mid bell (processL/processR)
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;

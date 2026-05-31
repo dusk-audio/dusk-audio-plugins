@@ -111,6 +111,11 @@ struct FactoryPreset
     float crossoverSub = 120.0f;  // sub ↔ low-mid boundary (Hz)
     float crossoverAir = 8000.0f; // hi-mid ↔ air boundary (Hz)
 
+    // Block 2 feed-forward input energy makeup (dB). 0 = bypass; trailing
+    // fields → existing brace-init rows default to bypass, zero edits.
+    float inputSubGain = 0.0f;
+    float inputMidGain = 0.0f;
+
     // Phase γ (2026-05-29): per-preset post-tank band-trim region gains —
     // NOT struct fields (would break aggregate-init of every existing
     // brace-init preset row). Per-preset overrides live in PluginProcessor.cpp::
@@ -177,6 +182,9 @@ struct FactoryPreset
         setIfExists ("shaper_time",      120.0f);
         setIfExists ("shaper_xover",     250.0f);
         setIfExists ("shaper_sens",      1.5f);
+        // Block 2 input makeup — 0 dB bypass until per-preset tuning sets it.
+        setIfExists ("input_sub_gain",   inputSubGain);
+        setIfExists ("input_mid_gain",   inputMidGain);
         setIfExists ("saturation", saturation);
         setIfExists ("diffusion", diffusion);
         setIfExists ("er_level",  erLevel);
