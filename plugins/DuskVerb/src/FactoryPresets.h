@@ -690,16 +690,22 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Engine: QuadTank. Anchor: VVV "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
         //
-        // v1 (2026-05-27): staged_tuner.py autonomous --category Chambers.
-        // 1300 trials. Stage 1 loss 1.38. Stage 2 loss 754.07 (HIGH — VVV's
-        // Chamber1979 mode has dense modal character QuadTank can't match
-        // exactly). Stage 3 loss 278.13. 22 / 40 gates fail — widest
-        // architectural gap in the queue so far. DV is its own chamber.
+        // Tuned vs vvv-79vc 2026-05-31 (39→22 fails). Chamber1979 is a DARK
+        // vocal chamber (air -72 dB, near-silent top) with a medium-long tail
+        // (T60 ~3.5-5 s) — three axes had to be constrained or the optimizer
+        // distorted the character: (1) an unconstrained bright local min hit 22
+        // too but with cent_50 +53% / +25 dB air (a wrong, glassy chamber); (2)
+        // forcing dark via Treble≤1.0 + HiCut≤9k restored cent_50 (✓ +8%) but
+        // over-wide Width (1.97) went phasey (stereo_corr fail) and over-narrow
+        // (0.55) lost decorrelation gates. Width [0.85,1.25] hit the anchor's
+        // near-mono +0.07 correlation. Result: dark character + correct stereo +
+        // tail (tail_t60 -7%) at 22. Remaining (cent_500/air still bright, T60
+        // tilt, comb ripple) is the QuadTank vs Chamber1979 modal-density gap.
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
-          5.05f, 0.44f, 0.20f, 0.50f, 0.56f, 0.71f,  324.0f,
-          0.42f, 0.20f, 0.44f,  26.0f, 10060.0f, 0.96f, false, -8.55f,
-          /* mono */ 20.0f, /* mid */ 1.14f, /* highX */ 5957.0f, /* sat */ 0.26f,
+          9.32179f, 0.50014f, 0.01922f, 2.70929f, 0.78609f, 0.80409f,  556.48f,
+          0.41089f, 0.20f, 0.44f,  24.692f, 8138.35f, 1.06068f, false, -8.61369f,
+          /* mono */ 20.0f, /* mid */ 0.96974f, /* highX */ 6960.08f, /* sat */ 0.19670f,
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════
