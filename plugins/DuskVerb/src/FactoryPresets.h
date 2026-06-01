@@ -985,8 +985,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Deep Blue Day",        "Shimmer",
           7,  0.38f, false,  25.0f, 0,
           9.1423f, 0.59833f, 0.50f, 0.60458f, 1.40394f, 0.56879f,  408.59f,
-          0.80742f, 0.20f, 0.50f,  26.925f, 4521.03f, 1.69030f, false, 0.31973f,
-          /* mono */ 20.0f, /* mid */ 1.18105f, /* highX */ 9800.46f, /* sat */ 0.23195f },  // re-swept DARK 29->27 (ref screenshot: Shimmer DeepBlueDay is high-cut 6770, dark; octave pinned)
+          0.80742f, 0.20f, 0.50f,  26.925f, 11000.0f, 1.69030f, false, 0.31973f,
+          /* mono */ 20.0f, /* mid */ 1.18105f, /* highX */ 9800.46f, /* sat */ 0.23195f },  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
     };
     return presets;
 }

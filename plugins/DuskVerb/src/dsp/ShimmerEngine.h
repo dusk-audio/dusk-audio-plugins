@@ -144,6 +144,19 @@ private:
     // Pitch shifters — one per channel for natural stereo independence.
     GranularPitchShifter pitchL_, pitchR_;
 
+    // SECOND pitch voice — an octave ABOVE voice 1 (2026-05-31). A single
+    // granular voice + its anti-alias filter (cutoff = nyquist/ratio ≈ 12 kHz
+    // for the +12 octave) is band-limited: the top octave (10-20 kHz) is
+    // starved vs Valhalla Shimmer's broadband octave (Deep Blue Day: ss-air
+    // -19 dB short, spec_L1 max +36 dB at 12.9 kHz). Voice 2 pitches the same
+    // feedback up a FURTHER octave (ratio ×2, AA cutoff ~6 kHz → output to
+    // 24 kHz), filling 12-24 kHz so the shimmer reads broadband. Lower mix —
+    // it is the "air" layer over voice 1. Bypassed at unity pitch.
+    GranularPitchShifter pitch2L_, pitch2R_;
+    static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
+    static constexpr float kVoice1Mix       = 0.78f;
+    static constexpr float kVoice2Mix       = 0.34f;
+
     // Hall reverb — reuses the existing FDNReverb (same engine that
     // powers the "Realistic Space" / FDN algorithm). Configured in
     // prepare() for a "long lush hall" baseline; per-preset setters
