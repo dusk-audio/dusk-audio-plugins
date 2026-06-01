@@ -82,7 +82,7 @@ private:
 
     // "Reverse" signature (tuned to lex-reverse-1). rampMs_ is the onset rise
     // duration; slope_ is the Tap Slope (gain ~ (t/ramp)^slope_).
-    float rampMs_    = 45.0f;   // onset rise duration (peak ~70ms after FDN smear)
+    float rampMs_    = 45.0f;   // onset RISE duration (the "reverse" swell to the peak)
     float slope_     = 1.6f;    // Tap Slope (gain ~ (t/ramp)^slope)
     float floorGain_ = 0.45f;   // earliest-tap gain floor: onset rises from ~-7dB
                                 // (not digital silence, which gave an infinite
