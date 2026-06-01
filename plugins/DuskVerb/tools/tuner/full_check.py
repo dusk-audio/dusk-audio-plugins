@@ -409,6 +409,12 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
     # Find files (any matching slug stem)
     def find_stim(d, stim):
         c = sorted(d.glob(f"*_{stim}.wav"))
+        # Fail loud on ambiguity rather than silently picking the first match —
+        # a shared folder with multiple anchors/renders would otherwise score
+        # the wrong file. Callers must keep one preset's renders per directory.
+        if len(c) > 1:
+            raise SystemExit(f"find_stim: {len(c)} '*_{stim}.wav' matches in {d} "
+                             f"(ambiguous): {[x.name for x in c]}")
         return str(c[0]) if c else None
 
     fails = []

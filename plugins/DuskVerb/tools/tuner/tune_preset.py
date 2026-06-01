@@ -101,7 +101,10 @@ def render_with(preset, params, vst3, out_dir, prerun=5.0, extra=None):
     if extra:
         for k, v in extra.items():
             cmd += ["--param", f"{k}={v}"]
-    cmd.append(preset)
+    # Canonical program path (setCurrentProgram/applyFactoryPreset), NOT the
+    # positional arg — the positional routes through the harness's legacy
+    # duplicate preset table and drifts from what the plugin ships.
+    cmd += ["--program", preset]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
         sys.exit(f"render failed: {r.stderr[-400:]}")

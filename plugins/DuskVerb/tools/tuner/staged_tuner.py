@@ -1032,11 +1032,14 @@ def run_stage(stage_name, active_params, locked_overrides, loss_fn,
     print(f"  Locked params: {len(locked_overrides)} fixed values")
     sigma0 = 0.2
     if sigma_scale:
-        s = max(sigma_scale.values())
+        # CmaEsSampler takes a single global sigma0 (anisotropic per-axis sigma
+        # is unsupported), so widen from the DECAY scale specifically — using
+        # max() over all axes would unintentionally widen every parameter.
+        s = sigma_scale.get('decay', 1.0)
         if s > 1.01:
             sigma0 = min(0.5, 0.2 * s)
-            print(f"  Sigma scaled:  {sigma0:.3f} (×{s:.2f} from base 0.2 — "
-                  f"widens decay axis when anchor slope-fit noisy)")
+            print(f"  Sigma scaled:  {sigma0:.3f} (global sigma0 from decay ×{s:.2f}; "
+                  f"CMA-ES has no per-axis sigma)")
     print()
 
     # Sample in normalized [0,1] for every active param. x0 at midpoint (0.5)
