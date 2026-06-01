@@ -616,7 +616,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // this. See memory duskverb_tuning_method.
         { "Cathedral Large Hall", "Halls",
           4,  0.45f, false, 20.88f, 0,
-          3.315f, 0.93880f, 0.17490f, 1.08200f, 1.40800f, 1.26900f,  223.90f,
+          3.315f, 0.93880f, 0.38010f, 1.18680f, 1.40800f, 1.24610f,  223.90f,  // ModDepth/Rate + BassMult re-tuned vs honest (sustained) mod+boom gate: 23->22
           0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -7.90200f,
           /* mono */ 20.0f, /* mid */ 0.64240f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // re-swept w/ FDN FiveBand+input-makeup axes 26->20 vs CathedralLargeHall (Decay->3.3s near ref 2.7)
           /* hiCutShelfGainDb */ -14.5f },
@@ -969,7 +969,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // multi-voice shimmer — structural, not tunable on this engine.
         { "Black Hole",           "Ambient",
           7,  0.50f, false,   0.0f, 0,
-          10.8728f, 0.56922f, 0.50f, 0.87475f, 1.16880f, 0.53601f,  372.24f,
+          10.8728f, 0.56922f, 0.50890f, 1.43860f, 1.16880f, 0.53601f,  372.24f,  // ModDepth/Rate re-tuned vs honest (sustained) mod gate: 25->21
           0.85741f, 0.05f, 0.70f,  24.591f, 18926.8f, 1.26041f, false, 0.81969f,
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Cascading Heaven ─────────────────────────────────────────────
