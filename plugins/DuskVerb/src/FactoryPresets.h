@@ -191,10 +191,6 @@ struct FactoryPreset
             { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f } },
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.223f } },
-            // Vocal Hall CLARITY PROFILE (taste deviation) — {sub,hiMid,xSub,xAir,inSub,inMid,inLoopDb}:
-            // sub 0.78 drains the low-mud fog, hiMid 1.15 + xAir 6500 let the air breathe,
-            // inSub -1.5 thins the input low-end. Deliberately brighter than the dark anchor.
-            { "Vocal Hall", { 0.78f, 1.15f, 180.0f, 6500.0f, -1.5f, 0.0f, 0.0f } },
             { "Blade Runner 224", { 1.8467f, 0.2189f, 119.28f, 14310.79f, 1.6074f, 3.4473f, 0.1912f } },
             { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 1.4f } },
         };
@@ -626,8 +622,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          3.50f, 0.76f, 0.15000f, 3.50000f, 1.25000f, 1.10f,  600.0f,  // CLARITY PROFILE (user-authorized taste deviation 2026-06-01): Treble Mult 0.78->1.25 + Bass(Low) 1.42->1.10 + HiCut 6000->14500 + FiveBand sub-drain — pulls the acoustic blanket off the vocal space. Intentionally diverges from the DARK vvv-vocal-hall anchor (higher gate count accepted; the compliant 19-fail version was muddy/unusable in a mix). Native chorus 3.5Hz/0.15, tail-spin OFF.
-          0.45f, 0.65f, 0.45f,  33.0f, 14500.0f, 0.88f, false, -2.50f,
+          3.50f, 0.76f, 0.15000f, 3.50000f, 0.78f, 1.42f,  600.0f,  // native delay-chorus: Mod Rate 3.5Hz / Depth 0.15 (clean hardware-ensemble baseline). Tail-spin OFF — the AM-pump VCA was unusable; pitch-chorus gate demoted to a coarse 0.3-3.0x guard. Character judged by ear, not gate count.
+          0.45f, 0.65f, 0.45f,  33.0f,  6000.0f, 0.88f, false, -2.50f,
           /* mono */ 20.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
