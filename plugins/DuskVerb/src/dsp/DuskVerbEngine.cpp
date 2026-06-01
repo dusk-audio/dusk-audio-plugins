@@ -26,6 +26,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     shimmer_.prepare (sampleRate, maxBlockSize);
     dattorroVintage_.prepare (sampleRate, maxBlockSize);
     vintageTank_.prepare (sampleRate, maxBlockSize);
+    reverseRoom_.prepare (sampleRate, maxBlockSize);
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
@@ -102,6 +103,7 @@ void DuskVerbEngine::clearAllBuffers()
     shimmer_  .clearBuffers();
     dattorroVintage_.clearBuffers();
     vintageTank_.clearBuffers();
+    reverseRoom_.clearBuffers();
 
     // Pre-tank input diffuser and early reflections — both retain
     // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
@@ -176,6 +178,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     shimmer_.clearBuffers();
     dattorroVintage_.clearBuffers();
     vintageTank_.clearBuffers();
+    reverseRoom_.clearBuffers();
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -191,6 +194,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     nonLinear_.setFreeze (frozen);
     shimmer_.setFreeze (frozen);
     dattorroVintage_.setFreeze (frozen);
+    reverseRoom_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -210,6 +214,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     shimmer_.setDecayTime (seconds);
     dattorroVintage_.setDecayTime (seconds);
     vintageTank_.setDecayTime (seconds);
+    reverseRoom_.setDecayTime (seconds);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -229,6 +234,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     shimmer_.setSize (size);
     dattorroVintage_.setSize (size);
     vintageTank_.setSize (size);
+    reverseRoom_.setSize (size);
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
@@ -242,6 +248,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     shimmer_.setBassMultiply (mult);
     dattorroVintage_.setBassMultiply (mult);
     vintageTank_.setBassMultiply (mult);
+    reverseRoom_.setBassMultiply (mult);
 }
 
 void DuskVerbEngine::setMidMultiply (float mult)
@@ -255,6 +262,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
     shimmer_.setMidMultiply (mult);
     dattorroVintage_.setMidMultiply (mult);
     vintageTank_.setMidMultiply (mult);
+    reverseRoom_.setMidMultiply (mult);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -268,6 +276,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     shimmer_.setTrebleMultiply (mult);
     dattorroVintage_.setTrebleMultiply (mult);
     vintageTank_.setTrebleMultiply (mult);
+    reverseRoom_.setTrebleMultiply (mult);
 }
 
 void DuskVerbEngine::setAirTrebleMultiply (float mult)
@@ -303,6 +312,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     shimmer_.setCrossoverFreq (hz);
     dattorroVintage_.setCrossoverFreq (hz);
     vintageTank_.setLowCrossover (hz);
+    reverseRoom_.setCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setHighCrossoverFreq (float hz)
@@ -315,6 +325,7 @@ void DuskVerbEngine::setHighCrossoverFreq (float hz)
     nonLinear_.setHighCrossoverFreq (hz);
     shimmer_.setHighCrossoverFreq (hz);
     dattorroVintage_.setHighCrossoverFreq (hz);
+    reverseRoom_.setHighCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setSaturation (float amount)
@@ -327,6 +338,7 @@ void DuskVerbEngine::setSaturation (float amount)
     nonLinear_.setSaturation (amount);
     shimmer_.setSaturation (amount);
     dattorroVintage_.setSaturation (amount);
+    reverseRoom_.setSaturation (amount);
 }
 
 void DuskVerbEngine::setModDepth (float depth)
@@ -348,6 +360,7 @@ void DuskVerbEngine::setModDepth (float depth)
     // VintageTank: depth knob ∈ [0, 1] → mod excursion in samples (~0..16
     // sample sweep range, the Lex/Griesinger lush-mode default).
     vintageTank_.setModDepth (depth * 16.0f);
+    reverseRoom_.setModDepth (depth);
 }
 
 void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
@@ -402,6 +415,7 @@ void DuskVerbEngine::setModRate (float hz)
     shimmer_.setModRate (hz);       // hijacked → FEEDBACK (0.1..10 Hz → 0..0.95 cascade gain)
     dattorroVintage_.setModRate (hz);
     vintageTank_.setModRate (hz);
+    reverseRoom_.setModRate (hz);
 }
 
 void DuskVerbEngine::setDiffusion (float amount)
@@ -427,6 +441,7 @@ void DuskVerbEngine::setDiffusion (float amount)
     // (per user spec). Tank-loop AP coefficient stays at preset default to
     // preserve the lush figure-8 modal density.
     vintageTank_.setInputDiffusion (amount);
+    reverseRoom_.setTankDiffusion (amount);
 }
 
 void DuskVerbEngine::setBassChokeHz (float hz)
@@ -681,7 +696,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     if (currentEngine_ != EngineType::SixAPTank
         && currentEngine_ != EngineType::Spring
         && currentEngine_ != EngineType::NonLinear
-        && currentEngine_ != EngineType::DattorroVintage)
+        && currentEngine_ != EngineType::DattorroVintage
+        && currentEngine_ != EngineType::ReverseRoom)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
 
     // ---- 4) Selected late tank ----
@@ -738,6 +754,10 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             vintageTank_.process (alias);
             break;
         }
+        case EngineType::ReverseRoom:
+            reverseRoom_.process (tankInL_.data(), tankInR_.data(),
+                                  tankOutL_.data(), tankOutR_.data(), numSamples);
+            break;
     }
 
     // ---- 5) Sum + Shell ----

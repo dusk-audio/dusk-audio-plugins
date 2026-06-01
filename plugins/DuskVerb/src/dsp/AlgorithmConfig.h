@@ -26,6 +26,10 @@ enum class EngineType : int
                             // unitary Hadamard scatter with a recirculating tank that builds
                             // modal density + lateral bloom over time. Reference architecture
                             // for vintage hardware reverbs.
+    ReverseRoom       = 9,  // Causal rising-gain early-reflection onset + dark modulated FDN
+                            // tail. Replicates the Lexicon PCM Room "Reverse 1" (NOT
+                            // backwards-convolution — the reference is causal, impulse peaks
+                            // ~70ms then decays). The rising-ER "Tap Slope" is the reverse.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -35,7 +39,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 9; }
+inline int getNumAlgorithms() { return 10; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -49,8 +53,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Non-Linear (RMX16)",       EngineType::NonLinear       },
         { "Shimmer (Eno FDN)",        EngineType::Shimmer         },
         { "Vintage Tank (Figure-8)",  EngineType::VintageTank     },
+        { "Reverse Room (Lexicon)",   EngineType::ReverseRoom     },
     };
-    if (index < 0 || index >= 9)
+    if (index < 0 || index >= 10)
         index = 0;
     return kEngines[index];
 }

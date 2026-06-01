@@ -28,6 +28,8 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::NonLinear:       return juce::Colour (0xffe85a3a);  // red-orange — gated drum punch
         case EngineType::Shimmer:         return juce::Colour (0xffd47de8);  // lavender-pink — ethereal cascade
         case EngineType::DattorroVintage: return juce::Colour (0xff00d9ff); // cyan — dense plate
+        case EngineType::VintageTank:     return juce::Colour (0xff7da8e8);  // steel blue — vintage tank
+        case EngineType::ReverseRoom:     return juce::Colour (0xff9b6dff);  // violet — reverse room
     }
     return juce::Colour (0xffff7a3d);
 }
