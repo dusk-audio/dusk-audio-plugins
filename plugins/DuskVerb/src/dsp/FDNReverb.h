@@ -38,6 +38,16 @@ public:
     void setSize (float size);
     void setFreeze (bool frozen);
 
+    // Phase θ (2026-06-01): post-loop "Tail Spin/Wander" — a 16-tap amplitude
+    // VCA on the OUTPUT taps (post-summation of the feedback matrix, so it
+    // never touches loop decay/stability). One master sine read at per-line
+    // phase offsets creates measurable ENVELOPE AM (vs the delay-line PHASE
+    // mod above, which reads as a flat macro-envelope). depth 0 → gains rest
+    // at exactly 1.0f → IEEE754-exact ×1.0 bypass + the LFO/interp work is
+    // skipped (tailSpinActive_). Default 0 → every legacy preset bit-identical.
+    void setTailSpinDepth (float depth);   // 0..1, modulation depth
+    void setTailSpinRate  (float hz);      // base rate of the master spin LFO
+
     void setBaseDelays (const int* delays);
     void setOutputTaps (const int* lt, const int* rt,
                         const float* ls, const float* rs);
@@ -351,6 +361,22 @@ private:
     DspUtils::DualTimeConstantBassShelf dualBassShelf_[N];
     bool dualBassShelfActive_ = false;
     DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
+
+    // Phase θ: post-loop Tail Spin/Wander output VCA. Dedicated master sine
+    // (separate rate from coherentLfo_) read at the same per-line pair/spread
+    // phase offsets as the delay mod. Gains computed at control rate (every
+    // kTailSpinBlock samples — a <10 Hz LFO is wildly oversampled at audio
+    // rate) and linearly interpolated per sample, so only 1/kTailSpinBlock of
+    // the 16 std::sin calls run. Applied at output-tap summation, indexed by
+    // delay-line channel. tailSpinCur_ rests at 1.0f → ×1.0 bypass is bit-exact.
+    static constexpr int kTailSpinBlock = 32;
+    DspUtils::CoherentSineLFO tailSpinLfo_;
+    float tailSpinDepth_   = 0.0f;        // 0 → bypass (default)
+    float tailSpinRateHz_  = 1.0f;
+    bool  tailSpinActive_  = false;       // tailSpinDepth_ > 1e-6
+    int   tailSpinCounter_ = 0;           // control-rate block countdown
+    float tailSpinCur_ [N];               // per-line gain (init 1.0f in prepare)
+    float tailSpinStep_[N] {};            // per-sample interp increment
 
     // Phase 3: ModulatedDamping topology — slow master quadrature LFO modulates
     // the per-line ThreeBandDamping coefficients (no line-length mod). Pre-

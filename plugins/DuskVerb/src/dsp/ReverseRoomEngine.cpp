@@ -158,6 +158,8 @@ void ReverseRoomEngine::setHighCrossoverFreq (float hz){ fdn_.setHighCrossoverFr
 void ReverseRoomEngine::setSaturation (float amount)   { fdn_.setSaturation (amount); }
 void ReverseRoomEngine::setModDepth (float depth)      { fdn_.setModDepth (depth); }
 void ReverseRoomEngine::setModRate (float hz)          { fdn_.setModRate (hz); }
+void ReverseRoomEngine::setTailSpinDepth (float depth) { fdn_.setTailSpinDepth (depth); }
+void ReverseRoomEngine::setTailSpinRate (float hz)     { fdn_.setTailSpinRate (hz); }
 void ReverseRoomEngine::setFreeze (bool frozen)        { fdn_.setFreeze (frozen); }
 
 void ReverseRoomEngine::setSize (float size)

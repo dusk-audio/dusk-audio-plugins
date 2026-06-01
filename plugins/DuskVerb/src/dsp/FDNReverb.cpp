@@ -301,6 +301,13 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         // phase doesn't track the random-walk seeds.
         coherentLfo_.prepare (static_cast<float> (sampleRate), 0xC0FFEE1Fu);
         coherentLfo_.setRate (modRateHz_);
+
+        // Phase θ: Tail Spin/Wander master LFO — its own seed + rate so it
+        // doesn't track the delay-mod LFO. Output gains reset to unity.
+        tailSpinLfo_.prepare (static_cast<float> (sampleRate), 0x5B19DEADu);
+        tailSpinLfo_.setRate (tailSpinRateHz_);
+        tailSpinCounter_ = 0;
+        for (int i = 0; i < N; ++i) { tailSpinCur_[i] = 1.0f; tailSpinStep_[i] = 0.0f; }
     }
 
     // -----------------------------------------------------------------------
@@ -405,6 +412,32 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             if (masterDampingLfoPhase_ >= 6.283185307179586f)
                 masterDampingLfoPhase_ -= 6.283185307179586f;
             dampingModT = 0.5f + 0.5f * std::sin (masterDampingLfoPhase_);
+        }
+
+        // Phase θ: Tail Spin/Wander — control-rate gain compute + per-sample
+        // interp. Advance the master phase every sample (cheap add); recompute
+        // the 16 target gains (the 16 sins) only every kTailSpinBlock samples.
+        // Gains are applied at output-tap summation below. Skipped entirely
+        // when inactive → tailSpinCur_ rests at 1.0f → bit-exact bypass.
+        if (tailSpinActive_)
+        {
+            tailSpinLfo_.advance();
+            if (--tailSpinCounter_ <= 0)
+            {
+                tailSpinCounter_ = kTailSpinBlock;
+                const float inv = 1.0f / static_cast<float> (kTailSpinBlock);
+                for (int ch = 0; ch < N; ++ch)
+                {
+                    // Same per-line decorrelation as the delay mod: pair-mate
+                    // (ch, ch+8) opposed by π, intra-half spread fans the rest.
+                    const float pairBase = (ch < N / 2) ? 0.0f : kPi;
+                    const float spread   = static_cast<float> (ch % (N / 2)) * kHalfSpreadStep;
+                    const float tgt = 1.0f + tailSpinDepth_ * tailSpinLfo_.read (pairBase + spread);
+                    tailSpinStep_[ch] = (tgt - tailSpinCur_[ch]) * inv;
+                }
+            }
+            for (int ch = 0; ch < N; ++ch)
+                tailSpinCur_[ch] += tailSpinStep_[ch];
         }
 
         float delayOut[N];
@@ -690,7 +723,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 const int   intIdx    = static_cast<int> (std::floor (readPos));
                 const float frac      = readPos - static_cast<float> (intIdx);
                 outL += DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac)
-                        * tap.sign;
+                        * tap.sign * tailSpinCur_[tap.channelIndex];
             }
             for (int t = 0; t < lp.numMultiTapsR; ++t)
             {
@@ -701,7 +734,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 const int   intIdx    = static_cast<int> (std::floor (readPos));
                 const float frac      = readPos - static_cast<float> (intIdx);
                 outR += DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac)
-                        * tap.sign;
+                        * tap.sign * tailSpinCur_[tap.channelIndex];
             }
             outL /= static_cast<float> (lp.numMultiTapsL);
             outR /= static_cast<float> (lp.numMultiTapsR);
@@ -712,10 +745,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             {
                 outL += delayOut[lp.leftTaps[t]]  * lp.leftSigns[t]
                       * lp.outputTapGain[lp.leftTaps[t]]
-                      * lp.outputGainScale[lp.leftTaps[t]];
+                      * lp.outputGainScale[lp.leftTaps[t]]
+                      * tailSpinCur_[lp.leftTaps[t]];
                 outR += delayOut[lp.rightTaps[t]] * lp.rightSigns[t]
                       * lp.outputTapGain[lp.rightTaps[t]]
-                      * lp.outputGainScale[lp.rightTaps[t]];
+                      * lp.outputGainScale[lp.rightTaps[t]]
+                      * tailSpinCur_[lp.rightTaps[t]];
             }
         }
 
@@ -894,6 +929,27 @@ void FDNReverb::setModRate (float hz)
     modRateHz_ = std::max (hz, 0.01f);
     if (prepared_)
         updateLFORates();
+}
+
+void FDNReverb::setTailSpinDepth (float depth)
+{
+    tailSpinDepth_  = std::clamp (depth, 0.0f, 1.0f);
+    const bool active = tailSpinDepth_ > 1.0e-6f;
+    // When switching OFF, snap gains back to unity so the next ×gain is a
+    // bit-exact ×1.0 (and any in-flight interp step is cancelled).
+    if (! active && tailSpinActive_)
+    {
+        for (int i = 0; i < N; ++i) { tailSpinCur_[i] = 1.0f; tailSpinStep_[i] = 0.0f; }
+        tailSpinCounter_ = 0;
+    }
+    tailSpinActive_ = active;
+}
+
+void FDNReverb::setTailSpinRate (float hz)
+{
+    tailSpinRateHz_ = std::clamp (hz, 0.1f, 10.0f);
+    if (prepared_)
+        tailSpinLfo_.setRate (tailSpinRateHz_);
 }
 
 void FDNReverb::setSize (float size)
