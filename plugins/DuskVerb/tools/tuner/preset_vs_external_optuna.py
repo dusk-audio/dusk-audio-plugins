@@ -598,13 +598,14 @@ def main():
 
     ua = best.user_attrs
     if ua:
-        print("\nBest metrics vs target:")
-        print(f"  RT60         DV={ua.get('rt60_dv', 0):.3f}s   VVV={ua.get('rt60_vvv', 0):.3f}s    Δ={((ua.get('rt60_dv', 0) - ua.get('rt60_vvv', 0)) / max(ua.get('rt60_vvv', 1), 1e-6) * 100):+.1f}%")
-        print(f"  Cent 50ms    DV={ua.get('cent50_dv', 0):.0f}Hz  VVV={ua.get('cent50_vvv', 0):.0f}Hz   Δ={((ua.get('cent50_dv', 0) - ua.get('cent50_vvv', 0)) / max(ua.get('cent50_vvv', 1), 1e-6) * 100):+.1f}%")
-        print(f"  Cent 500ms   DV={ua.get('cent500_dv', 0):.0f}Hz  VVV={ua.get('cent500_vvv', 0):.0f}Hz   Δ={((ua.get('cent500_dv', 0) - ua.get('cent500_vvv', 0)) / max(ua.get('cent500_vvv', 1), 1e-6) * 100):+.1f}%")
-        print(f"  Stereo r     DV={ua.get('stereo_dv', 0):+.3f}    VVV={ua.get('stereo_vvv', 0):+.3f}    Δ={(ua.get('stereo_dv', 0) - ua.get('stereo_vvv', 0)):+.3f}")
-        print(f"  Env P2P      DV={ua.get('envP2P_dv', 0):.2f}dB  VVV={ua.get('envP2P_vvv', 0):.2f}dB  Δ={(ua.get('envP2P_dv', 0) - ua.get('envP2P_vvv', 0)):+.2f}dB")
-        print(f"  Spec L1      = {ua.get('spec_l1_db', 0):.3f} dB")
+        # Print only the metrics the objective actually records. The old block
+        # printed rt60_*/cent*_*/stereo_*/envP2P_* which are NEVER set (only
+        # n_fail/margin_sum/params are) — so it dumped a wall of misleading
+        # "DV=0.000" zeros. full_check (run on the locked render) is the place
+        # to see per-metric deltas.
+        print("\nBest metrics:")
+        print(f"  gate fails   = {ua.get('n_fail', '?')}")
+        print(f"  margin sum   = {ua.get('margin_sum', 0):.3f}")
 
     # Dump the best params as JSON for downstream tooling.
     best_json = trial_root / "best.json"

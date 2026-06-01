@@ -85,7 +85,9 @@ def render(preset, vst3):
         "--vst3", str(vst3),
         "--output-dir", str(OUTPUT_DIR),
         "--param", "Dry/Wet=1.0", "--param", "Bus Mode=1",
-        preset
+        # --program drives setCurrentProgram()/applyEngineConfig(); the
+        # positional arg bypasses that canonical path (legacy preset table).
+        "--program", preset
     ], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(

@@ -43,7 +43,7 @@ def render(preset, params, vst3, out_dir, prerun=5.0):
            "--prerun-seconds", str(prerun)]
     for k, v in params.items():
         cmd += ["--param", f"{k}={v}"]
-    cmd.append(preset)
+    cmd += ["--program", preset]   # canonical path, not the legacy positional table
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
         sys.exit(f"render failed: {r.stderr[-400:]}")
@@ -76,8 +76,13 @@ def peak_aligned_thirdoct(p, t0=0.05, t1=1.0):
 def report(preset, params, vst3, anchor):
     dv_dir = Path("/tmp/eval_best")
     render(preset, params, vst3, dv_dir)
-    dv_p = dv_dir / "VintageVocalPlate_noiseburst.wav"
-    dv_s = dv_dir / "VintageVocalPlate_snare.wav"
+    # Derive the rendered files from the dir (the harness slug follows the
+    # preset name), not a hardcoded "VintageVocalPlate_*" — that mislabelled
+    # every other preset's evaluation.
+    dv_p = next(iter(sorted(dv_dir.glob("*_noiseburst.wav"))), None)
+    dv_s = next(iter(sorted(dv_dir.glob("*_snare.wav"))), None)
+    if dv_p is None or dv_s is None:
+        sys.exit(f"report: no rendered wavs in {dv_dir}")
     lx_p = Path(anchor)
     lx_s = lx_p.with_name(lx_p.name.replace("_noiseburst", "_snare"))
 
