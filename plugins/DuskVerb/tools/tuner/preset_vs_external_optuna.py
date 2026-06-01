@@ -119,6 +119,13 @@ FREE_PARAMS = {
     # adjustment happened AFTER the band loss was evaluated). Free range
     # [-12, +24] covers all observed snare-match offsets.
     "Gain Trim":            (-12.0, 24.0),     # APVTS [-48, 48] dB — clamped
+    # Phase θ Tail Spin/Wander (FDN + ReverseRoom only — post-loop output AM).
+    # Depth 0 = bit-exact bypass. Rate window tightened around the verified
+    # ~5 Hz sweet spot where the 16-line golden-ratio rate-skew lifts ALL four
+    # envelope-AM bands off the 0.37 Hz floor. Inert (no-op setter) on other
+    # engines, so harmless if sampled on a non-FDN sweep.
+    "Tail Spin Depth":      (0.00,    1.00),    # APVTS [0, 1]
+    "Tail Spin Rate":       (1.00,    8.00),    # APVTS [0.1, 10] Hz — narrowed
 }
 
 # DPV (DattorroPlateVintage, algo=1) corrective-EQ params. Inert on every

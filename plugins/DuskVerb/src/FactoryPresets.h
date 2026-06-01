@@ -155,8 +155,21 @@ struct FactoryPreset
         setIfExists ("size",      size);
         setIfExists ("mod_depth", modDepth);
         setIfExists ("mod_rate",  modRate);
-        setIfExists ("tail_spin_depth", tailSpinDepth);
-        setIfExists ("tail_spin_rate",  tailSpinRate);
+        // Tail Spin/Wander — per-preset via name→map (struct fields are trailing,
+        // so positional rows can't set them; same trap as kFiveBandByName).
+        // Default depth 0 = bit-exact bypass everywhere not listed here.
+        struct TailSpinOverride { float depth, rate; };
+        static const std::map<juce::String, TailSpinOverride> kTailSpinByName = {
+            // Vocal Hall (FDN) — post-loop tail-spin closes the lowmid+high
+            // envelope-AM bands (single base rate can't also reach bass 2.11 /
+            // mid 2.66): 21→13 vs VVV Vocal Hall.
+            { "Vocal Hall", { 0.5373f, 5.2326f } },
+        };
+        float tsDepth = tailSpinDepth, tsRate = tailSpinRate;
+        if (auto it = kTailSpinByName.find (juce::String (name)); it != kTailSpinByName.end())
+        { tsDepth = it->second.depth; tsRate = it->second.rate; }
+        setIfExists ("tail_spin_depth", tsDepth);
+        setIfExists ("tail_spin_rate",  tsRate);
         setIfExists ("damping",   damping);
         setIfExists ("bass_mult", bassMult);
         setIfExists ("mid_mult",  midMult);
