@@ -31,8 +31,8 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     fdn_.setModDepth          (0.20f);   // the ~2.7 Hz Spin
     fdn_.setModRate           (2.7f);
 
-    // ER ring buffers: must hold the longest tap delay. Max onset window =
-    // rampMs_ at the largest size scale (~2x) -> size generously to pow2.
+    // ER ring buffers: must hold the longest tap delay (= rampMs_ at the
+    // largest size scale ~1.6x) -> size generously to pow2.
     const int maxRampSamp = static_cast<int> (rampMs_ * 0.001 * sampleRate * 2.5) + 64;
     const int ringSize    = DspUtils::nextPowerOf2 (std::max (maxRampSamp, 1024));
     erL_.ring.assign (static_cast<size_t> (ringSize), 0.0f);
@@ -62,7 +62,7 @@ void ReverseRoomEngine::clearBuffers()
 void ReverseRoomEngine::rebuildTaps()
 {
     const float sr       = static_cast<float> (sampleRate_);
-    const int   rampSamp = std::max (8, static_cast<int> (rampMs_ * 0.001f * sr * sizeScale_));
+    const int   rampSamp = std::max (8, static_cast<int> (rampMs_ * 0.001f * sr * sizeScale_));   // rise duration
     const int   minTap   = std::max (1, static_cast<int> (0.002f * sr));   // 2 ms floor
     // density 0 -> 16 taps (sparse "Concrete Stairs"), 1 -> kMaxTaps (dense).
     const int   n        = std::clamp (16 + static_cast<int> (density_ * (kMaxTaps - 16)),
@@ -88,9 +88,13 @@ void ReverseRoomEngine::rebuildTaps()
             e.pos[k] = p;
 
             // RISING gain from a floor: g = floor + (1-floor)*(t/ramp)^slope.
-            // The floor keeps the onset from starting at digital silence (which
-            // produced an infinite env_p2p swell); the reference rises from a
-            // finite -86dB-ish floor, giving env_p2p ~+24.6, not a cliff.
+            // The floor keeps the onset off digital silence (which made an
+            // infinite env_p2p cliff); the rising ramp IS the "reverse" swell.
+            // (A bimodal dip-then-bump was tried to chase the reference's
+            // env_p2p +24.6 secondary swell, but it broke env_shape_l1 for <1dB
+            // of env_p2p — the reference's value comes from its mod+tap-comb
+            // interaction, not a clean ER bloom. Kept the clean rising ramp:
+            // the +60->+15 cliff fix is the win; +15 vs +24.6 is a smooth tail.)
             const float rel = std::clamp (static_cast<float> (p) / static_cast<float> (rampSamp), 0.0f, 1.0f);
             e.gain[k] = floorGain_ + (1.0f - floorGain_) * std::pow (rel, slope_);
         }
