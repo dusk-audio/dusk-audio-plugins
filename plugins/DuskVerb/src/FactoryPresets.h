@@ -809,7 +809,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Tiled Room",           "Rooms",
           4,  0.30f, false,  8.20f, 0,
           0.5684f, 0.47940f, 0.43350f, 2.39800f, 0.68070f, 1.31900f,  173.10f,
-          0.54980f, 0.46f, 0.40f,  34.100f, 6427.0f, 1.31500f, false, -0.39990f,
+          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 0.53460f, false, -0.39990f,  // constrained-width sweep (Width [0.35,0.60]) 20->17: fixes the out-of-phase stereo flip (corr -0.34 -> +0.50, mono-safe)
           /* mono */ 20.0f, /* mid */ 1.33500f, /* highX */ 4276.0f, /* sat */ 0.15320f },  // RE-TUNED vs CORRECTED anchor -> 21. The prior vvv-tiled-room anchor was BROKEN (dry-only render, no reverb) so the old "25" was gate-gamed degenerate (clipped, no tail). Real anchor = VVV Tiled Room (Chamber mode ~0.8s); sane makeup, honest 21.
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
