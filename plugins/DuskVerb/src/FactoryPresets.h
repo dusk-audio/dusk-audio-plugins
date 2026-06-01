@@ -191,7 +191,7 @@ struct FactoryPreset
             { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f } },
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.223f } },
-            { "Blade Runner 224", { 1.8467f, 0.2059f, 119.28f, 6247.66f, 1.6074f, 3.4473f, 0.1912f } },
+            { "Blade Runner 224", { 1.8467f, 0.2189f, 119.28f, 14310.79f, 1.6074f, 3.4473f, 0.1912f } },
             { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 1.4f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
@@ -703,8 +703,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
           4,  0.45f, false, 25.0f, 0,
-          13.6421f, 0.91981f, 0.33084f, 2.64911f, 0.94710f, 1.05238f,  330.94f,
-          0.84476f, 0.00f, 0.50f, 56.210f, 7860.39f, 1.69717f, false, -3.93657f,
+          13.6421f, 0.91981f, 0.33084f, 2.64911f, 0.86140f, 1.05238f,  330.94f,
+          0.84476f, 0.00f, 0.50f, 56.210f, 14429.68f, 1.69717f, false, -3.93657f,  // HF damping re-swept (Treble/HiCut/FiveBand-HF): curb metallic 8k/16k ring, 21->19
           /* mono */ 20.0f, /* mid */ 0.73614f, /* highX */ 3980.22f, /* sat */ 0.17579f,
           /* hiCutShelfGainDb */ -11.3f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark) — the prior lex-rhall-rhall4 anchor was WRONG (57->23 w/ FDN FiveBand+input-makeup axes)
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
@@ -724,8 +724,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tilt, comb ripple) is the QuadTank vs Chamber1979 modal-density gap.
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
-          4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.68062f, 0.94761f,  675.47f,
-          0.52932f, 0.20f, 0.44f,  26.022f, 8437.27f, 1.13556f, false, -7.39142f,
+          4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.50150f, 0.94761f,  675.47f,
+          0.52932f, 0.20f, 0.44f,  26.022f, 8021.01f, 1.13556f, false, -7.39142f,  // HF damping re-swept (Treble/HiCut; QuadTank has no FiveBand): curb bright HF tail, 23->21
           /* mono */ 20.0f, /* mid */ 0.56053f, /* highX */ 5417.19f, /* sat */ 0.08377f,  // re-derived post Decay-calibration (honest Decay 4.82 s; was 22->24 fails)
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
