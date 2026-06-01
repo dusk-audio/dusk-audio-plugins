@@ -747,6 +747,17 @@ void DattorroTank::clearBuffers()
 
     clearTank (leftTank_, 0x12345678u);
     clearTank (rightTank_, 0x87654321u);
+    // Reseed the density-AP jitter LFOs with the SAME per-channel seeds used in
+    // prepare() (the lambda's tank seed differs), so density modulation also
+    // restarts deterministically across resets/engine swaps instead of leaking
+    // phase. clear() above only zeros the AP buffer, not the LFO phase.
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        leftTank_ .densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate_),
+                                                   0xBADBEEFu + static_cast<std::uint32_t> (i * 31337));
+        rightTank_.densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate_),
+                                                   0xC0FFEEu  + static_cast<std::uint32_t> (i * 27449));
+    }
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;

@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 
 namespace
@@ -786,7 +785,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // an audible 5-10 ms ER bleed on every processBlock attack while it
     // ramped down to the preset's er_level=0 target — heard as a tonal
     // shift on transients. Bypass keeps the engine's output pristine.
-    const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage);
+    // DattorroVintage and ReverseRoom both synthesise their own early
+    // reflections (ReverseRoom's rising-onset FIR IS its ER), so adding the
+    // shared ER bus on top would double-count the onset. Exclude both.
+    const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage
+                           && currentEngine_ != EngineType::ReverseRoom);
     for (int i = 0; i < numSamples; ++i)
     {
         const float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;

@@ -119,7 +119,11 @@ void VintageTankEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         {  908.0f, 2656.0f },
     };
 
-    const int maxExc = static_cast<int> (std::ceil (modDepthSamples_ * scale)) + 4;
+    // Reserve headroom for the MAXIMUM supported mod depth (setModDepth clamps
+    // to 64 samples), not the current value — otherwise raising Mod Depth at
+    // runtime past the prepared depth would read beyond the modAP buffer.
+    constexpr float kMaxModDepthSamples = 64.0f;
+    const int maxExc = static_cast<int> (std::ceil (kMaxModDepthSamples * scale)) + 4;
 
     for (int c = 0; c < kNumChannels; ++c)
     {
@@ -212,6 +216,12 @@ void VintageTankEngine::clearBuffers()
         br.dampingLP.z = 0.0f;
         br.damper.reset();
     }
+
+    // Reset LFO phase to prepare()'s deterministic π/2 stagger so modulation
+    // restarts cleanly across resets/engine swaps instead of leaking phase
+    // (clearBuffers can be called standalone, not only at the tail of prepare).
+    for (int i = 0; i < kNumLFOs; ++i)
+        lfo_[i].phase = static_cast<float> (i) * 1.5707963f;
 
     lastBranchOut_[0] = 0.0f;
     lastBranchOut_[1] = 0.0f;

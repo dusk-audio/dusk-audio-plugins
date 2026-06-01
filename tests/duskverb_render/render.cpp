@@ -29,6 +29,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -90,8 +91,12 @@ namespace
     // silently misroutes the engine (e.g. FDN index 4 → Spring) — the bug this
     // branch (87-fix-fdn-quadtank) fixes. Keep kNumAlgorithms in sync with
     // getNumAlgorithms() whenever an engine is added or removed.
-    static constexpr int   kNumAlgorithms    = 9;
-    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 8.0f
+    // MUST equal AlgorithmConfig::getNumAlgorithms() (the harness is standalone
+    // and cannot link the plugin enum, so bump this by hand when an engine is
+    // added). Was a stale 9 after ReverseRoom became the 10th engine — that
+    // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
+    static constexpr int   kNumAlgorithms    = 10;   // 0..9: + 9 ReverseRoom
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 9.0f
 
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to
@@ -756,6 +761,23 @@ namespace
             // legitimately gets normalised = 0).
             if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                 normalised = raw;
+            // The "Algorithm" choice exposes engine NAMES, not indices, and is
+            // wrapped as a generic AudioProcessorParameter whose getNumSteps()
+            // doesn't report the choice count — so getValueForText("3") returns
+            // 0 and every index used to route to engine 0. Special-case it:
+            // map the engine index to normalised by the same divisor the preset
+            // table uses (kAlgorithmDivisor = numAlgorithms-1).
+            else if (name == "Algorithm" && raw >= 0.0f)
+                normalised = raw / kAlgorithmDivisor;
+            // Reject NaN/inf and hard-clamp to [0,1] before notifying the host
+            // (mirror applyVpresetXml's guard) so out-of-range text never feeds
+            // a garbage normalised value into the parameter.
+            if (! std::isfinite (normalised))
+            {
+                std::cout << "  " << name << " SKIPPED (non-finite value)\n";
+                continue;
+            }
+            normalised = juce::jlimit (0.0f, 1.0f, normalised);
             p->setValueNotifyingHost (normalised);
             const float readBack = p->getValue();
             const juce::String readBackText = p->getText (readBack, 50);
@@ -1125,6 +1147,19 @@ int main (int argc, char** argv)
             float normalised = p->getValueForText (valueStr);
             if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                 normalised = raw;       // treat as already-normalised
+            // The "Algorithm" choice exposes engine NAMES (not indices) and is
+            // wrapped as a generic param whose getNumSteps() doesn't report the
+            // choice count, so getValueForText("4") returns 0 and every index
+            // used to route to engine 0. Special-case it: map index→normalised
+            // by the divisor the preset table uses (numAlgorithms-1).
+            else if (name == "Algorithm" && raw >= 0.0f)
+                normalised = raw / kAlgorithmDivisor;
+            if (! std::isfinite (normalised))
+            {
+                std::cerr << "  ! --param " << name << ": non-finite, skipped" << std::endl;
+                continue;
+            }
+            normalised = juce::jlimit (0.0f, 1.0f, normalised);
             p->setValueNotifyingHost (normalised);
             std::cout << "  --param " << name << " set='" << valueStr
                       << "' norm=" << normalised
