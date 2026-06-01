@@ -104,6 +104,9 @@ def main():
            str(final_dir), str(anchor_n.parent), "--name", args.preset]
     if args.category:
         cmd += ["--category", args.category]
+    # NB: full_check exits 1 whenever ANY gate fails (the normal state for these
+    # presets), so we intentionally DO NOT use check=True here — we want the
+    # report printed regardless; a non-zero exit means "gates failed", not "crash".
     subprocess.call(cmd)
 
 

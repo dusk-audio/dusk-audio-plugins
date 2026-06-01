@@ -1552,7 +1552,15 @@ void EngineGlyph::paint (juce::Graphics& g)
             break;
         }
         default:
-            break;   // VintageTank / ReverseRoom — no bespoke glyph
+        {
+            // Generic engine cue for engines without a bespoke glyph
+            // (VintageTank / ReverseRoom) — a centred ring so the header still
+            // shows an icon instead of empty space.
+            const float r = std::min (w, h) * 0.30f;
+            g.drawEllipse (inner.getCentreX() - r, inner.getCentreY() - r,
+                           r * 2.0f, r * 2.0f, 1.5f);
+            break;
+        }
     }
 }
 
