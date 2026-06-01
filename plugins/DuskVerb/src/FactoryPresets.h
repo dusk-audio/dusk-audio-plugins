@@ -168,7 +168,7 @@ struct FactoryPreset
             // peak fix that proved it can't be filled within stability).
             { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f } },
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
-            { "Tiled Room", { 0.3025f, 0.2119f, 101.5f, 15190.0f, 3.472f, 2.556f, 1.494f } },
+            { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.223f } },
             { "Blade Runner 224", { 1.8467f, 0.2059f, 119.28f, 6247.66f, 1.6074f, 3.4473f, 0.1912f } },
             { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 1.4f } },
         };
@@ -757,9 +757,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // NL7 wins for this anchor (56 ms tail target).
         { "Small Drum Room",      "Rooms",
           6,  0.25f, false,  1.18f, 0,
-          0.3863f, 0.45310f, 0.18850f, 1.27000f, 0.59100f, 1.40300f,  735.00f,
-          0.34270f, 0.80f, 0.57f,  20.910f, 16830.0f, 0.97590f, false, 4.12800f,
-          /* mono */ 20.0f, /* mid */ 0.99740f, /* highX */ 4296.00f, /* sat */ 0.22430f,  // deep-swept post-calibration 27->25 vs vvv-84-small-room (honest Decay 0.39 s)
+          1.185f, 0.58720f, 0.50020f, 1.24300f, 0.58480f, 1.43500f,  471.10f,
+          0.35520f, 0.80f, 0.57f,  35.010f, 5604.0f, 0.50170f, false, 1.32700f,
+          /* mono */ 20.0f, /* mid */ 1.39800f, /* highX */ 5251.0f, /* sat */ 0.28200f,  // RE-TUNED vs CORRECTED anchor -> 35. Prior vvv-84-small-room anchor was BROKEN (dry-only) so the old "25" was meaningless. Real anchor = VVV 84 Small Room (Hall1984 ~0.5s); 35 is the honest NonLinear-gated floor.
           /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
@@ -771,9 +771,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // makeup, in-loop +1.32 dB) in kFiveBandByName above.
         { "Tiled Room",           "Rooms",
           4,  0.30f, false,  8.20f, 0,
-          4.535f, 0.82140f, 0.49110f, 2.02200f, 1.08100f, 1.09000f,  127.50f,
-          0.97670f, 0.46f, 0.40f,  26.900f, 4289.0f, 0.50030f, false, -6.84400f,
-          /* mono */ 20.0f, /* mid */ 1.15900f, /* highX */ 7408.0f, /* sat */ 0.12720f },  // re-swept post-calibration 28->26 vs vvv-tiled-room (FDN makeup axes pushed harder)
+          0.5684f, 0.47940f, 0.43350f, 2.39800f, 0.68070f, 1.31900f,  173.10f,
+          0.54980f, 0.46f, 0.40f,  34.100f, 6427.0f, 1.31500f, false, -0.39990f,
+          /* mono */ 20.0f, /* mid */ 1.33500f, /* highX */ 4276.0f, /* sat */ 0.15320f },  // RE-TUNED vs CORRECTED anchor -> 21. The prior vvv-tiled-room anchor was BROKEN (dry-only render, no reverb) so the old "25" was gate-gamed degenerate (clipped, no tail). Real anchor = VVV Tiled Room (Chamber mode ~0.8s); sane makeup, honest 21.
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
         // (Reverb Mode = Ambience) @ 100% wet.
