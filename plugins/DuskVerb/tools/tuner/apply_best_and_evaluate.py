@@ -32,7 +32,14 @@ def parse_best_from_runlog(log_path):
 
 def parse_best_json(p):
     raw = json.loads(Path(p).read_text())
-    return raw if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+    # preset_vs_external_optuna.py wraps the params: {preset, target_ir,
+    # best_params, best_metrics, ...}. Return ONLY the tuned param map, else
+    # the Optuna metadata keys would be passed as bogus --param overrides.
+    if "best_params" in raw:
+        return raw["best_params"]
+    return raw   # staged_tuner.py already writes a flat param dict
 
 
 def render(preset, params, vst3, out_dir, prerun=5.0):
