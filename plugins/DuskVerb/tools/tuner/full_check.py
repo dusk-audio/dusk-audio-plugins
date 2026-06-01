@@ -120,7 +120,10 @@ GATES = {
     # rates per band (per-line LFO harmonic stack vs tank-coupled mod). Gate
     # ±30% relative — narrow enough to flag rate inversion, wide enough to
     # tolerate noise-floor jitter.
-    'tail_mod_freq_pct':   30.0,
+    'tail_mod_freq_pct':   30.0,   # DEPRECATED: per-band envelope-AM rate. Rewarded
+                                   # a tremolo pump (mono-sum hid it). Replaced by
+                                   # tail_pitch_chorus_pct (pitch, not amplitude).
+    'tail_pitch_chorus_pct': 30.0, # smooth-IF pitch-drift std vs anchor (sine stimulus)
     # SINE 1 kHz STEADY-STATE FULL RMS DELTA — exposes mid-presence
     # coloration that broadband noiseburst RMS averages out. VH listening
     # v21 (gain-matched): DV +6.15 dB hot on sine1k (1 kHz feedback gain too
@@ -278,6 +281,35 @@ def _tail_mod_peak_freq (p, t0, t1, lo, hi, env_smooth_ms=30,
         return None
     idx = int(np.argmax(spec[mask]))
     return float(f[mask][idx])
+
+
+def _true_pitch_chorus_hz (p, t0=0.8, t1=1.9, fc=1000.0, bw=600.0):
+    """Pitch-chorus depth of the tail (Hz), from a steady sine-Nk stimulus.
+    Lush hall tails come from PITCH/delay modulation (smooth chorus/detune),
+    NOT amplitude modulation. An envelope/AM detector can't tell a smooth
+    chorus from a tremolo pump, so it rewarded a catastrophic 16-tap AM VCA.
+    This instead tracks the carrier's INSTANTANEOUS FREQUENCY and low-pass
+    filters it (<12 Hz) to isolate the slow LFO pitch-drift while discarding
+    the high-freq modal-beating of dense colliding taps. Returns the std (Hz)
+    of that smooth IF drift — higher = more chorus. (A deep AM pump also
+    inflates this via amplitude-null phase instability, so it correctly
+    penalises the tremolo too.)"""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    i0, i1 = int(t0 * sr), min(int(t1 * sr), len(m))
+    if i1 - i0 < int(sr * 0.4):
+        return None
+    seg = m[i0:i1]
+    y = sosfiltfilt(butter(4, [fc - bw, fc + bw], 'band', fs=sr, output='sos'), seg)
+    a = hilbert(y); env = np.abs(a)
+    inst = np.diff(np.unwrap(np.angle(a))) / (2.0 * np.pi) * sr
+    w = env[1:]; thr = np.median(w) * 0.3
+    inst = inst[w > thr]
+    inst = inst[(inst > fc - bw) & (inst < fc + bw)]
+    if len(inst) < 100:
+        return None
+    smooth = sosfiltfilt(butter(2, 12.0, 'low', fs=sr, output='sos'), inst - fc)
+    return float(np.std(smooth))
 
 
 def _full_rms_db (p):
@@ -727,37 +759,28 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             print(line)
             if not passing: fails.append(line.strip())
 
-    # ─── Per-band tail mod peak FREQUENCY (Hilbert env → FFT peak) ───
-    # Measured on the SUSTAINED-pink render. The noiseburst tail is digital
-    # silence past ~0.5s for short-decay presets (a 0.4s room reads -118dB at
-    # 1-3s), so an FFT there scores the dither floor — that is how a 0.4s room
-    # got a spurious "2.3Hz spin" and every engine read 0.37Hz against it.
-    # Steady-state pink gives real signal in the window. Fall back to
-    # noiseburst only when no sustained render exists (legacy anchors), and
-    # skip entirely when even the chosen anchor window is below the floor.
-    mod_dv = sus_dv if sus_dv else dv
-    mod_lx = sus_lx if sus_lx else lx
-    if mod_dv and mod_lx:
-        print("\n── PER-BAND TAIL MOD PEAK FREQUENCY (Hilbert FFT, 0.3-8 Hz) ──")
-        mf_gate = GATES['tail_mod_freq_pct']
-        mod_active = windowed_above_floor(mod_lx, 1.0, 3.0)
-        for (lo, hi, b_lab) in [(40,    250,   'bass 40-250'),
-                                 (250,   1000,  'lowmid 250-1k'),
-                                 (1000,  4000,  'mid 1-4k'),
-                                 (4000,  12000, 'high 4-12k')]:
-            if not mod_active:
-                print(f"  {f'mod {b_lab}':30s}  SKIPPED (anchor window below noise floor)")
-                continue
-            dv_f = _tail_mod_peak_freq (mod_dv, 1.0, 3.0, lo, hi)
-            lx_f = _tail_mod_peak_freq (mod_lx, 1.0, 3.0, lo, hi)
-            if dv_f is None or lx_f is None or lx_f < 0.4:
-                print(f"  {f'mod {b_lab}':30s}  SKIPPED (peak below 0.4 Hz floor)")
-                continue
-            pct = (dv_f - lx_f) / lx_f * 100.0
-            passing = abs(pct) <= mf_gate
-            line = (f"  {f'mod {b_lab}':30s}  "
-                    f"DV={dv_f:5.2f}Hz  VVV={lx_f:5.2f}Hz  Δ={pct:+6.1f}%  "
-                    f"gate=±{mf_gate}%  {'✓' if passing else '✗'}")
+    # ─── Tail PITCH-CHORUS (smooth instantaneous-frequency drift) ───
+    # Replaces the per-band envelope-AM rate gate, which measured AMPLITUDE
+    # modulation and so rewarded a tremolo pump (a 16-tap AM VCA at depth 0.537
+    # phase-cancelled in the mono sum to fake a "match" while pumping audibly
+    # in stereo). Lush hall tails are PITCH modulation (chorus/detune); this
+    # tracks the sine-carrier's instantaneous frequency, low-passes it <12 Hz
+    # to isolate the slow LFO drift from dense-tap modal beating, and compares
+    # the drift std (Hz) to the anchor. Uses the steady sine1k stimulus.
+    pc_dv = find_stim(dv_dir, 'sine1k'); pc_lx = find_stim(lex_dir, 'sine1k')
+    if pc_dv and pc_lx:
+        print("\n── TAIL PITCH-CHORUS (LP-filtered IF drift, sine1k) ──")
+        pc_gate = GATES['tail_pitch_chorus_pct']
+        dv_c = _true_pitch_chorus_hz (pc_dv)
+        lx_c = _true_pitch_chorus_hz (pc_lx)
+        if dv_c is None or lx_c is None or lx_c < 0.5:
+            print("  tail pitch-chorus            SKIPPED (carrier below floor)")
+        else:
+            pct = (dv_c - lx_c) / lx_c * 100.0
+            passing = abs(pct) <= pc_gate
+            line = (f"  {'tail pitch-chorus (Hz)':30s}  "
+                    f"DV={dv_c:5.2f}  VVV={lx_c:5.2f}  Δ={pct:+6.1f}%  "
+                    f"gate=±{pc_gate}%  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
 

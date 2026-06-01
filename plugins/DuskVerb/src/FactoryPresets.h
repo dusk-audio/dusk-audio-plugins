@@ -160,10 +160,11 @@ struct FactoryPreset
         // Default depth 0 = bit-exact bypass everywhere not listed here.
         struct TailSpinOverride { float depth, rate; };
         static const std::map<juce::String, TailSpinOverride> kTailSpinByName = {
-            // Vocal Hall (FDN) — post-loop tail-spin closes the lowmid+high
-            // envelope-AM bands (single base rate can't also reach bass 2.11 /
-            // mid 2.66): 21→13 vs VVV Vocal Hall.
-            { "Vocal Hall", { 0.5373f, 5.2326f } },
+            // (Vocal Hall override REMOVED 2026-06-01: the depth-0.537 tail-spin
+            //  scored 13 by satisfying the old envelope-AM rate gate, but it was
+            //  a +-54% tremolo pump — audibly unusable in stereo. Reverted to
+            //  depth 0 (smooth native delay-chorus); re-tuned via Mod Depth/Rate
+            //  against the new pitch-chorus gate. Tail-spin stays dormant infra.)
         };
         float tsDepth = tailSpinDepth, tsRate = tailSpinRate;
         if (auto it = kTailSpinByName.find (juce::String (name)); it != kTailSpinByName.end())
@@ -621,7 +622,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          3.50f, 0.76f, 0.123f, 0.54f, 0.78f, 1.42f,  600.0f,
+          3.50f, 0.76f, 0.14580f, 4.38180f, 0.78f, 1.42f,  600.0f,  // native delay-chorus Mod Rate 0.54->4.38 (smooth pitch-mod matched to VVV; tail-spin OFF — the AM pump was unusable). 13(pump)->17(smooth) vs pitch-chorus gate.
           0.45f, 0.65f, 0.45f,  33.0f,  6000.0f, 0.88f, false, -2.50f,
           /* mono */ 20.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
