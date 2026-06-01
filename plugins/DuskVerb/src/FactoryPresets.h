@@ -881,10 +881,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tail chorus (mod-freq -85%), and a low/high T60 tilt that couples
         // against those. Verified: a 250-trial warm-started re-sweep beat 34 by 0.
         { "Reverse Taps",         "Rooms",
-          6,  1.00f, false, 30.0f, 0,
-          4.913f, 0.17200f, 0.53810f, 9.90700f, 1.29800f, 2.32500f,  689.30f,
-          0.87120f, 0.00f, 0.30f,  22.370f, 16260.0f, 1.60500f, false, -10.92000f,
-          /* mono */ 20.0f, /* mid */ 1.13400f, /* highX */ 5872.00f, /* sat */ 0.39080f },  // deep-swept vs confirmed Lexicon Room "Reverse 1" anchor, 36->32 (honest Decay 4.91 s)
+          9,  1.00f, false, 38.0f, 0,           // engine 9 = ReverseRoom; predelay 38ms (measured)
+          6.9912f, 0.16498f, 0.13950f, 2.28741f, 0.79816f, 1.14756f,  566.85f,
+          0.18188f, 0.00f, 0.30f,  40.596f, 5367.38f, 1.17197f, false, 0.89119f,
+          /* mono */ 20.0f, /* mid */ 0.51963f, /* highX */ 8201.39f, /* sat */ 0.25533f },  // RE-ENGINED NonLinear->ReverseRoom: causal rising-ER replicates Lexicon Room "Reverse 1" (reverse-engineered from data). 32->20 fails; env_p2p cliff +60->+15 (smooth swell); tail_t60/cent/env_shape/osc now MATCH the reference
         // ── Mobius Pad ───────────────────────────────────────────────────────
         // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
         // see SixAPTankEngine.cpp). Showcases the 6-AP engine's new

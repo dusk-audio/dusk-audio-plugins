@@ -1551,6 +1551,8 @@ void EngineGlyph::paint (juce::Graphics& g)
             }
             break;
         }
+        default:
+            break;   // VintageTank / ReverseRoom — no bespoke glyph
     }
 }
 

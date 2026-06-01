@@ -83,6 +83,7 @@ target_sources(DuskVerb
         src/dsp/ShimmerEngine.cpp
         src/dsp/DattorroPlateVintage.cpp
         src/dsp/VintageTankEngine.cpp
+        src/dsp/ReverseRoomEngine.cpp
         ../shared/LEDMeter.cpp
 )
 
