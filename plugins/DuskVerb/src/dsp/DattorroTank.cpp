@@ -753,10 +753,14 @@ void DattorroTank::clearBuffers()
     // phase. clear() above only zeros the AP buffer, not the LFO phase.
     for (int i = 0; i < kNumDensityAPs; ++i)
     {
-        leftTank_ .densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate_),
-                                                   0xBADBEEFu + static_cast<std::uint32_t> (i * 31337));
-        rightTank_.densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate_),
-                                                   0xC0FFEEu  + static_cast<std::uint32_t> (i * 27449));
+        const float sr = static_cast<float> (sampleRate_);
+        leftTank_ .densityAP[i].jitterLFO.prepare (sr, 0xBADBEEFu + static_cast<std::uint32_t> (i * 31337));
+        rightTank_.densityAP[i].jitterLFO.prepare (sr, 0xC0FFEEu  + static_cast<std::uint32_t> (i * 27449));
+        // prepare() only sets phase; restore rate/depth too (clearBuffers does
+        // NOT call updateDelayLengths/updateJitterDepth afterwards) so density
+        // jitter isn't left disabled until the next size change.
+        leftTank_ .densityAP[i].updateJitterDepth (sr);
+        rightTank_.densityAP[i].updateJitterDepth (sr);
     }
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
