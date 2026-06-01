@@ -302,11 +302,26 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         coherentLfo_.prepare (static_cast<float> (sampleRate), 0xC0FFEE1Fu);
         coherentLfo_.setRate (modRateHz_);
 
-        // Phase θ: Tail Spin/Wander master LFO — its own seed + rate so it
-        // doesn't track the delay-mod LFO. Output gains reset to unity.
-        tailSpinLfo_.prepare (static_cast<float> (sampleRate), 0x5B19DEADu);
-        tailSpinLfo_.setRate (tailSpinRateHz_);
+        // Phase θ/Phase 2: Tail Spin/Wander 16-phase sine bank. Build the fixed
+        // non-harmonic rate spread γ_c ∈ [0.85, 1.15) from the golden-ratio
+        // fractional sequence (deterministic, irrational → no two lines share a
+        // rational period → rich emergent AM). Seed each phase from the same
+        // pair/spread offset scheme as the delay mod for stereo decorrelation.
+        {
+            constexpr float kPhi = 1.6180339887498949f;
+            constexpr float kPi2 = 6.283185307179586f;
+            for (int ch = 0; ch < N; ++ch)
+            {
+                const float frac = (static_cast<float> (ch) * kPhi)
+                                 - std::floor (static_cast<float> (ch) * kPhi);
+                tailSpinRateMul_[ch] = 0.85f + 0.30f * frac;        // γ_c
+                const float pairBase = (ch < N / 2) ? 0.0f : 3.14159265358979f;
+                const float spread   = static_cast<float> (ch % (N / 2)) * (3.14159265358979f / 8.0f);
+                tailSpinPhase_[ch] = std::fmod (pairBase + spread, kPi2);
+            }
+        }
         tailSpinCounter_ = 0;
+        updateTailSpinIncs();
         for (int i = 0; i < N; ++i) { tailSpinCur_[i] = 1.0f; tailSpinStep_[i] = 0.0f; }
     }
 
@@ -421,18 +436,19 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // when inactive → tailSpinCur_ rests at 1.0f → bit-exact bypass.
         if (tailSpinActive_)
         {
-            tailSpinLfo_.advance();
             if (--tailSpinCounter_ <= 0)
             {
                 tailSpinCounter_ = kTailSpinBlock;
                 const float inv = 1.0f / static_cast<float> (kTailSpinBlock);
+                const float blk = static_cast<float> (kTailSpinBlock);
                 for (int ch = 0; ch < N; ++ch)
                 {
-                    // Same per-line decorrelation as the delay mod: pair-mate
-                    // (ch, ch+8) opposed by π, intra-half spread fans the rest.
-                    const float pairBase = (ch < N / 2) ? 0.0f : kPi;
-                    const float spread   = static_cast<float> (ch % (N / 2)) * kHalfSpreadStep;
-                    const float tgt = 1.0f + tailSpinDepth_ * tailSpinLfo_.read (pairBase + spread);
+                    // Advance this line's phase by one control block, wrap, read.
+                    // Per-line increments differ (base × γ_c) so the 16 taps run
+                    // at distinct rates → summed output carries multiple AM peaks.
+                    tailSpinPhase_[ch] += tailSpinInc_[ch] * blk;
+                    if (tailSpinPhase_[ch] >= 2.0f * kPi) tailSpinPhase_[ch] -= 2.0f * kPi;
+                    const float tgt = 1.0f + tailSpinDepth_ * std::sin (tailSpinPhase_[ch]);
                     tailSpinStep_[ch] = (tgt - tailSpinCur_[ch]) * inv;
                 }
             }
@@ -949,7 +965,18 @@ void FDNReverb::setTailSpinRate (float hz)
 {
     tailSpinRateHz_ = std::clamp (hz, 0.1f, 10.0f);
     if (prepared_)
-        tailSpinLfo_.setRate (tailSpinRateHz_);
+        updateTailSpinIncs();
+}
+
+// Per-line phase increment = 2π · (base rate · γ_c) / sampleRate. The γ_c
+// spread gives each delay line its own LFO frequency, so the summed output
+// carries multiple distinct AM components instead of one shared rate.
+void FDNReverb::updateTailSpinIncs()
+{
+    constexpr float kPi2 = 6.283185307179586f;
+    const float sr = static_cast<float> (sampleRate_);
+    for (int ch = 0; ch < N; ++ch)
+        tailSpinInc_[ch] = kPi2 * (tailSpinRateHz_ * tailSpinRateMul_[ch]) / sr;
 }
 
 void FDNReverb::setSize (float size)

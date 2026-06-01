@@ -362,15 +362,22 @@ private:
     bool dualBassShelfActive_ = false;
     DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
 
-    // Phase θ: post-loop Tail Spin/Wander output VCA. Dedicated master sine
-    // (separate rate from coherentLfo_) read at the same per-line pair/spread
-    // phase offsets as the delay mod. Gains computed at control rate (every
-    // kTailSpinBlock samples — a <10 Hz LFO is wildly oversampled at audio
-    // rate) and linearly interpolated per sample, so only 1/kTailSpinBlock of
-    // the 16 std::sin calls run. Applied at output-tap summation, indexed by
-    // delay-line channel. tailSpinCur_ rests at 1.0f → ×1.0 bypass is bit-exact.
+    // Phase θ/Phase 2: post-loop Tail Spin/Wander output VCA. A 16-phase sine
+    // bank — one accumulator per delay line, each advancing at base rate ×
+    // per-line multiplier kTailSpinRateMul[ch] (a fixed non-harmonic golden-
+    // ratio spread ~0.85..1.15×). DISTINCT per-line frequencies (not just phase
+    // offsets) are mandatory: 16 same-frequency LFOs sum to a single AM rate,
+    // so only rate divergence surfaces the per-band-distinct AM the gates want.
+    // Dedicated array (NOT the delay-mod spread): tail-spin AM rates must stay
+    // decoupled from delay-mod retuning. Gains computed at control rate (every
+    // kTailSpinBlock samples — a <10 Hz LFO is wildly oversampled) + per-sample
+    // linear interp, so only 1/kTailSpinBlock of the 16 std::sin calls run.
+    // Applied at output-tap summation; tailSpinCur_ rests at 1.0f → bit-exact
+    // ×1.0 bypass. Phases seeded deterministically (reproducible renders).
     static constexpr int kTailSpinBlock = 32;
-    DspUtils::CoherentSineLFO tailSpinLfo_;
+    float tailSpinPhase_[N] {};           // per-line phase accumulator (rad)
+    float tailSpinInc_  [N] {};           // per-line phase advance (rad/sample) = base×γ_c
+    float tailSpinRateMul_[N] {};         // γ_c, filled deterministically in prepare()
     float tailSpinDepth_   = 0.0f;        // 0 → bypass (default)
     float tailSpinRateHz_  = 1.0f;
     bool  tailSpinActive_  = false;       // tailSpinDepth_ > 1e-6
@@ -476,6 +483,7 @@ private:
 
     void updateLFORates();
     void updateModDepth();
+    void updateTailSpinIncs();   // recompute per-line phase increments = 2π·base·γ_c/sr
 
     // Per-instance Householder reflector vectors. Seeded once at construction
     // from a process-wide atomic counter so two FDN instances on the same bus
