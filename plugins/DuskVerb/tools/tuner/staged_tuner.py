@@ -329,7 +329,7 @@ def render(preset, overrides, vst3, out_dir, prerun=5.0, sustained=4.0):
         if k in HARNESS_OVERRIDES:
             continue
         cmd += ["--param", f"{k}={v}"]
-    cmd.append(preset)
+    cmd += ["--program", preset]   # canonical path, not the legacy positional table
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
         return None
@@ -912,32 +912,13 @@ def stage2_loss(dv_files, lex_files):
     except Exception as e:
         sys.stderr.write(f"stage2 rt60-band term raised: {e}\n")
 
-    # ───────────────────────────────────────────────────────────────────────
-    # PER-BAND TAIL MOD PEAK FREQUENCY — Hilbert env FFT peak in 0.3-8 Hz.
-    # Catches per-band rate inversion (VH v15: DV bass 3.3 Hz vs VVV 1.83 Hz)
-    # that the tail_mod_ripple amplitude std cannot see. Squared relative
-    # error in Hz, summed across 4 bands.
-    try:
-        mf_bands = [(40,   250),
-                    (250,  1000),
-                    (1000, 4000),
-                    (4000, 12000)]
-        mf_err_sq = 0.0
-        mf_n = 0
-        for (lo, hi) in mf_bands:
-            dv_f = _tail_mod_peak_freq (dv_files["noiseburst"], 1.0, 3.0, lo, hi)
-            lx_f = _tail_mod_peak_freq (lex_files["noiseburst"], 1.0, 3.0, lo, hi)
-            if dv_f is None or lx_f is None or lx_f < 0.4:
-                continue
-            rel = (dv_f - lx_f) / lx_f
-            mf_err_sq += (rel / 0.30) ** 2   # normalized to ±30 % gate
-            mf_n += 1
-        if mf_n > 0:
-            mf_loss = 2.0 * mf_err_sq / max(mf_n, 1)
-            loss += mf_loss
-            info["tail_mod_freq_loss"] = mf_loss
-    except Exception as e:
-        sys.stderr.write(f"stage2 tail-mod-freq term raised: {e}\n")
+    # PER-BAND TAIL MOD PEAK FREQUENCY loss — DISABLED. This measured envelope-
+    # AM rate (Hilbert FFT) on the NOISEBURST tail at 1-3s, which is digital
+    # silence for short-decay presets (scored the dither floor), and rewarded a
+    # tremolo pump that was audibly unusable. The metric is deprecated; tail
+    # CHARACTER is now judged by full_check's coarse pitch-chorus guard + the
+    # ear, not optimized here. (Was: a 4-band squared-rel-error term added to
+    # the CMA-ES loss.)
 
     return loss, info
 
@@ -1035,7 +1016,7 @@ def run_stage(stage_name, active_params, locked_overrides, loss_fn,
         # CmaEsSampler takes a single global sigma0 (anisotropic per-axis sigma
         # is unsupported), so widen from the DECAY scale specifically — using
         # max() over all axes would unintentionally widen every parameter.
-        s = sigma_scale.get('decay', 1.0)
+        s = sigma_scale.get('Decay Time', 1.0)   # key main() passes ({"Decay Time": ...})
         if s > 1.01:
             sigma0 = min(0.5, 0.2 * s)
             print(f"  Sigma scaled:  {sigma0:.3f} (global sigma0 from decay ×{s:.2f}; "
