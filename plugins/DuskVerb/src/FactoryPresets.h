@@ -755,11 +755,26 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Engine swap audit + 8-gen autosweep across NL/Dat:
         //   QuadTank floor: 42 | NL7: 27 | Dat4: 35.
         // NL7 wins for this anchor (56 ms tail target).
+        // SDR-DATTORRO re-engine (2026-06-01): NonLinear(6) -> Dattorro(0), 35 -> 23.
+        // The old NonLinear pick (and the QuadTank/Dat audit before it) was made
+        // against the BROKEN dry-only anchor. Re-auditing ALL engines vs the
+        // corrected anchor showed every engine walls ~29-36 on the SAME 8 gates
+        // (mod x4 + ripple x4) — but those gates were measuring the NOISEBURST
+        // tail at 0.5-3s / 1-3s, which is digital silence (-118 dB) for a 0.4s
+        // room: an FFT/std on the dither floor, not modulation. full_check now
+        // measures ripple/mod on the SUSTAINED render (real steady-state) and
+        // floor-skips boom windows below -90 dB (commit alongside this). On the
+        // corrected gates Dattorro's dense allpass tail matches the anchor's
+        // ripple/mod and lands at 23 (decay 0.40s, tail_t60 0.46s vs 0.41,
+        // env_p2p +66 vs +68, peak 0.44 — honest, not gate-gamed). Residual 23
+        // is T60-tilt (Dattorro's 3-band damping can't flatten the Lexicon
+        // hall's even decay across 8 bands) + edt onset + air. Dattorro is
+        // non-FDN, so no kFiveBandByName entry (FiveBand/makeup are no-ops).
         { "Small Drum Room",      "Rooms",
-          6,  0.25f, false,  1.18f, 0,
-          1.185f, 0.58720f, 0.50020f, 1.24300f, 0.58480f, 1.43500f,  471.10f,
-          0.35520f, 0.80f, 0.57f,  35.010f, 5604.0f, 0.50170f, false, 1.32700f,
-          /* mono */ 20.0f, /* mid */ 1.39800f, /* highX */ 5251.0f, /* sat */ 0.28200f,  // RE-TUNED vs CORRECTED anchor -> 35. Prior vvv-84-small-room anchor was BROKEN (dry-only) so the old "25" was meaningless. Real anchor = VVV 84 Small Room (Hall1984 ~0.5s); 35 is the honest NonLinear-gated floor.
+          0,  0.25f, false,  1.18f, 0,
+          0.40083f, 0.32752f, 0.00430f, 0.23945f, 1.13952f, 1.12685f,  516.73f,
+          0.84013f, 0.80f, 0.57f,  22.132f, 4799.3f, 1.12468f, false, 11.53915f,
+          /* mono */ 20.0f, /* mid */ 1.21799f, /* highX */ 8771.6f, /* sat */ 0.06325f,  // Dattorro re-engine vs CORRECTED anchor (sustained-gate full_check) -> 23.
           /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
