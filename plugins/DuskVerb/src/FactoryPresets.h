@@ -989,6 +989,13 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // 12.9k image spike. Remaining fails (cent dark, T60-HF short, sine1k
         // notch) are the engine's single-image shifter vs Valhalla's broadband
         // multi-voice shimmer — structural, not tunable on this engine.
+        // STRUCTURAL CEILING (2026-06-01): cent_50/500, T60 8k/16k and ss-air can
+        // NOT be matched here. The GranularPitchShifter anti-aliases the octave-up
+        // voice at fc = nyquist/pitchRatio = 12 kHz @48k (ShimmerEngine.cpp:56), so
+        // ZERO shimmer energy reaches the 16 kHz band — centroid sticks ~3400 Hz
+        // (anchor 6464) and T60-16k caps ~4 s (anchor 9.6 s) even with Treble/HiCut
+        // maxed. Locked at the honest floor (20); the brightness gap needs an engine
+        // fix (oversample the shifter / dedicated HF voice), not tuning. See memory.
         { "Black Hole",           "Ambient",
           7,  0.50f, false,   0.0f, 0,
           10.8728f, 0.56922f, 0.50890f, 1.43860f, 1.16880f, 0.53601f,  372.24f,  // ModDepth/Rate re-tuned vs honest (sustained) mod gate: 25->21
@@ -1019,6 +1026,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // phasey). Remaining fails (cent dark, 12.9k image spike, T60-HF short,
         // ss air, sine1k notch) are the single-image granular shifter vs
         // Valhalla's broadband multi-voice shimmer — structural on this engine.
+        // STRUCTURAL CEILING (2026-06-01): same 12 kHz shifter AA cap as Black Hole
+        // (ShimmerEngine.cpp:56, fc = nyquist/pitchRatio). cent ~3380 vs 6464, T60-16k
+        // ~4.8 s vs 9.6 s — unmatchable by Hi Cut/Treble/HighX (a 120-trial sweep
+        // confirmed flat). Locked at the honest floor (23); needs an engine fix.
         { "Deep Blue Day",        "Shimmer",
           7,  0.38f, false,  25.0f, 0,
           9.1423f, 0.59833f, 0.50f, 0.60458f, 1.40394f, 0.56879f,  408.59f,
