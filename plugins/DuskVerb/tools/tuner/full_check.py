@@ -640,6 +640,16 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
                 dv_db = _late_low_rms_db(dv, t0, t1, lo, hi)
                 lx_db = _late_low_rms_db(lx, t0, t1, lo, hi)
                 if dv_db is None or lx_db is None: continue
+                # Floor-skip: if the anchor band is below -90 dB in this window
+                # it carries no real low-end energy (a short-decay room is dead
+                # by 500ms-1s; its noiseburst sub at 1-2s is -126..-132 dB =
+                # digital silence). Comparing DV's floor to that scores noise,
+                # not boom. Long-decay presets keep real energy here and still
+                # gate normally. Same principle as the ripple/mod sustained fix.
+                if lx_db < -90.0:
+                    print(f"  {f'boom {b_lab} {win_lab}':30s}  "
+                          f"SKIPPED (anchor band below -90 dB floor)")
+                    continue
                 delta = dv_db - lx_db
                 passing = abs(delta) <= boom_gate
                 line = (f"  {f'boom {b_lab} {win_lab}':30s}  "
@@ -718,15 +728,28 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             if not passing: fails.append(line.strip())
 
     # ─── Per-band tail mod peak FREQUENCY (Hilbert env → FFT peak) ───
-    if dv and lx:
+    # Measured on the SUSTAINED-pink render. The noiseburst tail is digital
+    # silence past ~0.5s for short-decay presets (a 0.4s room reads -118dB at
+    # 1-3s), so an FFT there scores the dither floor — that is how a 0.4s room
+    # got a spurious "2.3Hz spin" and every engine read 0.37Hz against it.
+    # Steady-state pink gives real signal in the window. Fall back to
+    # noiseburst only when no sustained render exists (legacy anchors), and
+    # skip entirely when even the chosen anchor window is below the floor.
+    mod_dv = sus_dv if sus_dv else dv
+    mod_lx = sus_lx if sus_lx else lx
+    if mod_dv and mod_lx:
         print("\n── PER-BAND TAIL MOD PEAK FREQUENCY (Hilbert FFT, 0.3-8 Hz) ──")
         mf_gate = GATES['tail_mod_freq_pct']
+        mod_active = windowed_above_floor(mod_lx, 1.0, 3.0)
         for (lo, hi, b_lab) in [(40,    250,   'bass 40-250'),
                                  (250,   1000,  'lowmid 250-1k'),
                                  (1000,  4000,  'mid 1-4k'),
                                  (4000,  12000, 'high 4-12k')]:
-            dv_f = _tail_mod_peak_freq (dv, 1.0, 3.0, lo, hi)
-            lx_f = _tail_mod_peak_freq (lx, 1.0, 3.0, lo, hi)
+            if not mod_active:
+                print(f"  {f'mod {b_lab}':30s}  SKIPPED (anchor window below noise floor)")
+                continue
+            dv_f = _tail_mod_peak_freq (mod_dv, 1.0, 3.0, lo, hi)
+            lx_f = _tail_mod_peak_freq (mod_lx, 1.0, 3.0, lo, hi)
             if dv_f is None or lx_f is None or lx_f < 0.4:
                 print(f"  {f'mod {b_lab}':30s}  SKIPPED (peak below 0.4 Hz floor)")
                 continue
@@ -765,15 +788,26 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             if not passing: fails.append(line.strip())
 
     # ─── Tail mod ripple (per-band detrended envelope std) ───
-    if dv and lx:
+    # Same stimulus rule as the mod-freq gate: measure on sustained pink, not
+    # the noiseburst's post-decay silence (where every diffuse engine's modal
+    # residue reads ripple ~18 vs the anchor's -118dB dither floor ~3-6 — a
+    # noise-vs-noise comparison, not modulation). Fall back to noiseburst when
+    # no sustained render exists; skip when the anchor window is below floor.
+    rip_dv = sus_dv if sus_dv else dv
+    rip_lx = sus_lx if sus_lx else lx
+    if rip_dv and rip_lx:
         print("\n── TAIL MOD RIPPLE (per-band detrended env std, 0.5-3s) ──")
         rip_gate = GATES['tail_mod_ripple_dB']
+        rip_active = windowed_above_floor(rip_lx, 0.5, 3.0)
         for (lo, hi, b_lab) in [(40, 250,   'bass 40-250'),
                                  (250, 1000, 'lowmid 250-1k'),
                                  (1000, 4000, 'mid 1-4k'),
                                  (4000, 12000, 'high 4-12k')]:
-            dv_std = _tail_env_ripple_db(dv, 0.5, 3.0, lo, hi)
-            lx_std = _tail_env_ripple_db(lx, 0.5, 3.0, lo, hi)
+            if not rip_active:
+                print(f"  {f'ripple {b_lab}':30s}  SKIPPED (anchor window below noise floor)")
+                continue
+            dv_std = _tail_env_ripple_db(rip_dv, 0.5, 3.0, lo, hi)
+            lx_std = _tail_env_ripple_db(rip_lx, 0.5, 3.0, lo, hi)
             if dv_std is None or lx_std is None: continue
             delta = dv_std - lx_std
             # Asymmetric gate: DV-cooler is fine (DV smoother than Lex);
