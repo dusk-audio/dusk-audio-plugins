@@ -95,4 +95,8 @@ private:
     double sampleRate_ = 48000.0;
     int    maxBlock_   = 0;
     bool   prepared_   = false;
+    bool   baselineApplied_ = false;   // apply the dark "Reverse 1" baseline to
+                                       // fdn_ only ONCE; later prepares (sample-
+                                       // rate / block changes) must NOT clobber
+                                       // preset values the setters pushed into fdn_.
 };
