@@ -160,6 +160,8 @@ private:
     std::atomic<float>* sizeParam_          = nullptr;
     std::atomic<float>* modDepthParam_      = nullptr;
     std::atomic<float>* modRateParam_       = nullptr;
+    std::atomic<float>* tailSpinDepthParam_ = nullptr;
+    std::atomic<float>* tailSpinRateParam_  = nullptr;
     std::atomic<float>* dampingParam_       = nullptr;
     std::atomic<float>* bassMultParam_      = nullptr;
     std::atomic<float>* midMultParam_       = nullptr;
@@ -310,6 +312,8 @@ private:
     float lastDiffusion_   = -1.0f;
     float lastModDepth_    = -1.0f;
     float lastModRate_     = -1.0f;
+    float lastTailSpinDepth_ = -1.0f;
+    float lastTailSpinRate_  = -1.0f;
     float lastERSize_      = -1.0f;
     float lastERLevel_     = -2.0f;
     float lastPreDelayMs_  = -1.0f;

@@ -121,6 +121,8 @@ public:
     void setSaturation    (float amount);          // 0..1 drive-style softClip
     void setModDepth      (float depth);
     void setModRate       (float hz);
+    void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
+    void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);
 
     // Early reflections.

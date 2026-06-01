@@ -418,6 +418,21 @@ void DuskVerbEngine::setModRate (float hz)
     reverseRoom_.setModRate (hz);
 }
 
+// Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
+// Forward to the FDN tank and to ReverseRoom (which owns an FDN for its tail);
+// the other engines have no such stage.
+void DuskVerbEngine::setTailSpinDepth (float depth)
+{
+    fdn_.setTailSpinDepth (depth);
+    reverseRoom_.setTailSpinDepth (depth);
+}
+
+void DuskVerbEngine::setTailSpinRate (float hz)
+{
+    fdn_.setTailSpinRate (hz);
+    reverseRoom_.setTailSpinRate (hz);
+}
+
 void DuskVerbEngine::setDiffusion (float amount)
 {
     // Two-stage routing:
