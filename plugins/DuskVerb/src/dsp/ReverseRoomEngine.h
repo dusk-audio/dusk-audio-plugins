@@ -54,6 +54,8 @@ public:
     void setSaturation        (float amount);
     void setModDepth          (float depth);
     void setModRate           (float hz);
+    void setTailSpinDepth     (float depth);   // → fdn_ post-loop output AM
+    void setTailSpinRate      (float hz);
     void setTankDiffusion     (float amount);   // -> ER tap density (+ FDN diffusion)
     void setFreeze            (bool frozen);
 

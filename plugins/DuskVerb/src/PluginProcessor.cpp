@@ -62,6 +62,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::NormalisableRange<float> (0.10f, 10.0f, 0.0f, 0.5f), fp0.modRate));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "tail_spin_depth", 1 }, "Tail Spin Depth",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), fp0.tailSpinDepth));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "tail_spin_rate", 1 }, "Tail Spin Rate",
+        juce::NormalisableRange<float> (0.10f, 10.0f, 0.0f, 0.5f), fp0.tailSpinRate));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_mult", 1 }, "Bass Multiply",
         juce::NormalisableRange<float> (0.3f, 2.5f), fp0.bassMult));
 
@@ -325,6 +333,8 @@ DuskVerbProcessor::DuskVerbProcessor()
     sizeParam_          = parameters.getRawParameterValue ("size");
     modDepthParam_      = parameters.getRawParameterValue ("mod_depth");
     modRateParam_       = parameters.getRawParameterValue ("mod_rate");
+    tailSpinDepthParam_ = parameters.getRawParameterValue ("tail_spin_depth");
+    tailSpinRateParam_  = parameters.getRawParameterValue ("tail_spin_rate");
     dampingParam_       = parameters.getRawParameterValue ("damping");
     bassMultParam_      = parameters.getRawParameterValue ("bass_mult");
     midMultParam_       = parameters.getRawParameterValue ("mid_mult");
@@ -635,6 +645,8 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastDiffusion_, diffusionParam_->load(), [this] (float v) { activeEngine_->setDiffusion (v); });
     pushIfChanged (lastModDepth_,  modDepthParam_->load(),  [this] (float v) { activeEngine_->setModDepth (v); });
     pushIfChanged (lastModRate_,   modRateParam_->load(),   [this] (float v) { activeEngine_->setModRate (v); });
+    pushIfChanged (lastTailSpinDepth_, tailSpinDepthParam_->load(), [this] (float v) { activeEngine_->setTailSpinDepth (v); });
+    pushIfChanged (lastTailSpinRate_,  tailSpinRateParam_->load(),  [this] (float v) { activeEngine_->setTailSpinRate (v); });
     pushIfChanged (lastERSize_,    erSizeParam_->load(),    [this] (float v) { activeEngine_->setERSize (v); });
     pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
     pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
@@ -1043,6 +1055,8 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setDiffusion         (diffusionParam_->load());
     target->setModDepth          (modDepthParam_->load());
     target->setModRate           (modRateParam_->load());
+    target->setTailSpinDepth     (tailSpinDepthParam_->load());
+    target->setTailSpinRate      (tailSpinRateParam_->load());
     target->setERSize            (erSizeParam_->load());
     target->setERLevel           (erLevelParam_->load());
     target->setLoCut             (loCutParam_->load());
@@ -1128,6 +1142,8 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastDiffusion_     = diffusionParam_->load();
     lastModDepth_      = modDepthParam_->load();
     lastModRate_       = modRateParam_->load();
+    lastTailSpinDepth_ = tailSpinDepthParam_->load();
+    lastTailSpinRate_  = tailSpinRateParam_->load();
     lastERSize_        = erSizeParam_->load();
     lastERLevel_       = erLevelParam_->load();
     lastLoCut_         = loCutParam_->load();

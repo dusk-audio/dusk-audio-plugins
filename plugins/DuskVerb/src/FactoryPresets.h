@@ -116,6 +116,12 @@ struct FactoryPreset
     float inputSubGain = 0.0f;
     float inputMidGain = 0.0f;
 
+    // Phase θ (2026-06-01): post-loop Tail Spin/Wander (FDN / ReverseRoom only).
+    // Trailing fields → existing brace-init rows omit them → default depth 0 =
+    // bit-exact bypass, every legacy preset unaffected.
+    float tailSpinDepth = 0.0f;   // 0..1 modulation depth
+    float tailSpinRate  = 1.0f;   // Hz, base spin rate
+
     // Phase γ (2026-05-29): per-preset post-tank band-trim region gains —
     // NOT struct fields (would break aggregate-init of every existing
     // brace-init preset row). Per-preset overrides live in PluginProcessor.cpp::
@@ -149,6 +155,8 @@ struct FactoryPreset
         setIfExists ("size",      size);
         setIfExists ("mod_depth", modDepth);
         setIfExists ("mod_rate",  modRate);
+        setIfExists ("tail_spin_depth", tailSpinDepth);
+        setIfExists ("tail_spin_rate",  tailSpinRate);
         setIfExists ("damping",   damping);
         setIfExists ("bass_mult", bassMult);
         setIfExists ("mid_mult",  midMult);
