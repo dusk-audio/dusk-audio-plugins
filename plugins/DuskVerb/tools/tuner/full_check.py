@@ -759,28 +759,29 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             print(line)
             if not passing: fails.append(line.strip())
 
-    # ─── Tail PITCH-CHORUS (smooth instantaneous-frequency drift) ───
+    # ─── Tail PITCH-CHORUS (COARSE sanity guard) ───
     # Replaces the per-band envelope-AM rate gate, which measured AMPLITUDE
     # modulation and so rewarded a tremolo pump (a 16-tap AM VCA at depth 0.537
-    # phase-cancelled in the mono sum to fake a "match" while pumping audibly
-    # in stereo). Lush hall tails are PITCH modulation (chorus/detune); this
-    # tracks the sine-carrier's instantaneous frequency, low-passes it <12 Hz
-    # to isolate the slow LFO drift from dense-tap modal beating, and compares
-    # the drift std (Hz) to the anchor. Uses the steady sine1k stimulus.
+    # phase-cancelled in the mono sum to fake a "match" while pumping audibly).
+    # This estimator (sine1k carrier IF, LP-filtered <12 Hz) is NOT robust enough
+    # for a tight match — std is spike-dominated by beat-null phase-wraps, so the
+    # absolute value swings 100-1000x across estimator variants. It IS reliable
+    # at catching GROSS defects (dead LFO ≈ 0, or a violent pump reading far high).
+    # So it's a COARSE guard: pass if DV sits within a 0.3x..3.0x window of the
+    # anchor. Fine tail-CHARACTER matching is done by ear, not this gate.
     pc_dv = find_stim(dv_dir, 'sine1k'); pc_lx = find_stim(lex_dir, 'sine1k')
     if pc_dv and pc_lx:
-        print("\n── TAIL PITCH-CHORUS (LP-filtered IF drift, sine1k) ──")
-        pc_gate = GATES['tail_pitch_chorus_pct']
+        print("\n── TAIL PITCH-CHORUS (coarse guard, 0.3x-3.0x, sine1k) ──")
         dv_c = _true_pitch_chorus_hz (pc_dv)
         lx_c = _true_pitch_chorus_hz (pc_lx)
         if dv_c is None or lx_c is None or lx_c < 0.5:
             print("  tail pitch-chorus            SKIPPED (carrier below floor)")
         else:
-            pct = (dv_c - lx_c) / lx_c * 100.0
-            passing = abs(pct) <= pc_gate
+            ratio = dv_c / lx_c
+            passing = 0.3 <= ratio <= 3.0
             line = (f"  {'tail pitch-chorus (Hz)':30s}  "
-                    f"DV={dv_c:5.2f}  VVV={lx_c:5.2f}  Δ={pct:+6.1f}%  "
-                    f"gate=±{pc_gate}%  {'✓' if passing else '✗'}")
+                    f"DV={dv_c:5.2f}  VVV={lx_c:5.2f}  ratio={ratio:4.2f}x  "
+                    f"gate=0.3-3.0x  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
 

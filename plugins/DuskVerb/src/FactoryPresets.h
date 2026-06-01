@@ -622,7 +622,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          3.50f, 0.76f, 0.14580f, 4.38180f, 0.78f, 1.42f,  600.0f,  // native delay-chorus Mod Rate 0.54->4.38 (smooth pitch-mod matched to VVV; tail-spin OFF — the AM pump was unusable). 13(pump)->17(smooth) vs pitch-chorus gate.
+          3.50f, 0.76f, 0.15000f, 3.50000f, 0.78f, 1.42f,  600.0f,  // native delay-chorus: Mod Rate 3.5Hz / Depth 0.15 (clean hardware-ensemble baseline). Tail-spin OFF — the AM-pump VCA was unusable; pitch-chorus gate demoted to a coarse 0.3-3.0x guard. Character judged by ear, not gate count.
           0.45f, 0.65f, 0.45f,  33.0f,  6000.0f, 0.88f, false, -2.50f,
           /* mono */ 20.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
