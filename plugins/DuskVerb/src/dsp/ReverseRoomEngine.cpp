@@ -16,20 +16,27 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     sampleRate_ = sampleRate;
     maxBlock_   = maxBlockSize;
 
-    // Dark, dense, modulated diffuse tail baseline (the "Reverse 1" room).
-    // Per-preset setters override these via the universal API below.
     fdn_.prepare (sampleRate, maxBlockSize);
-    fdn_.setDecayTime         (2.0f);
-    fdn_.setSize              (0.85f);
-    fdn_.setBassMultiply      (1.20f);
-    fdn_.setMidMultiply       (1.05f);
-    fdn_.setTrebleMultiply    (0.55f);   // heavy HF damping (9.8k -> 3k centroid)
-    fdn_.setCrossoverFreq     (275.0f);  // Bass XOver from the reference
-    fdn_.setHighCrossoverFreq (3000.0f);
-    fdn_.setSaturation        (0.0f);
-    fdn_.setTankDiffusion     (0.85f);
-    fdn_.setModDepth          (0.20f);   // the ~2.7 Hz Spin
-    fdn_.setModRate           (2.7f);
+    // Dark, dense, modulated diffuse tail baseline (the "Reverse 1" room) —
+    // applied ONCE. fdn_ retains its parameter members across its own
+    // fdn_.prepare(), so on later prepares (sample-rate / block-size changes)
+    // we must NOT re-stamp these literals, or we'd wipe whatever the preset's
+    // setters pushed into fdn_ (the setters forward live, before/after prepare).
+    if (! baselineApplied_)
+    {
+        fdn_.setDecayTime         (2.0f);
+        fdn_.setSize              (0.85f);
+        fdn_.setBassMultiply      (1.20f);
+        fdn_.setMidMultiply       (1.05f);
+        fdn_.setTrebleMultiply    (0.55f);   // heavy HF damping (9.8k -> 3k centroid)
+        fdn_.setCrossoverFreq     (275.0f);  // Bass XOver from the reference
+        fdn_.setHighCrossoverFreq (3000.0f);
+        fdn_.setSaturation        (0.0f);
+        fdn_.setTankDiffusion     (0.85f);
+        fdn_.setModDepth          (0.20f);   // the ~2.7 Hz Spin
+        fdn_.setModRate           (2.7f);
+        baselineApplied_ = true;
+    }
 
     // ER ring buffers: must hold the longest tap delay (= rampMs_ at the
     // largest size scale ~1.6x) -> size generously to pow2.

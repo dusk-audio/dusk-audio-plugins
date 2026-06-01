@@ -572,6 +572,10 @@ void QuadTank::clearBuffers()
             tanks_[t].densityAP[i].updateJitterDepth (sr);
         }
     }
+    // Master coherent LFO (CoherentLoop mode) — reseed its phase too, same seed
+    // as prepare(), so its modulation also restarts deterministically across
+    // resets/preset swaps (was leaking phase; rate is restored by updateLFORates).
+    coherentLfo_.prepare (sr, 0xC0FFEE2Cu);
     // updateLFORates() needs to run after re-prepare to set per-tap rates.
     updateLFORates();
 }
