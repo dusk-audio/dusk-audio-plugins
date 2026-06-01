@@ -498,11 +498,24 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
         if p == 'FAIL': fails.append(line.strip())
 
         # ─── 1/3-oct RMS-normalized L1 ───
+        # Floor-guard: skip bands where the ANCHOR is below -55 dB (RMS-norm) —
+        # it carries no real signal there (the dark VVV/Lex anchors roll off to
+        # the dither floor above ~10 kHz at -100+ dB). Without this, comparing
+        # DV's normal top-octave HF to the anchor's floor blew the normalized-dB
+        # L1 up to +71 dB at 12902 Hz — a measurement ghost, not real energy
+        # (verified: no HF resonance in the audio). Same silence-gate principle
+        # as the ripple/mod/boom fix. Bands where the anchor HAS energy (incl.
+        # a real DV HF deficit vs a bright anchor) are still scored.
+        FLOOR_NORM_DB = -55.0
         centers = m_dv['oct_centers']; dvn = m_dv['oct_db_norm']; lxn = m_lx['oct_db_norm']
-        abs_d = [abs(float(lx-dv)) for dv,lx in zip(dvn,lxn)]
+        scored = [(float(c), abs(float(lx-dv)))
+                  for c, dv, lx in zip(centers, dvn, lxn) if float(lx) > FLOOR_NORM_DB]
+        if not scored:
+            scored = [(float(centers[0]), 0.0)]   # degenerate guard
+        abs_d   = [ad for _, ad in scored]
         mean_l1 = sum(abs_d) / len(abs_d)
-        max_l1 = max(abs_d)
-        max_fc = [float(c) for c, ad in zip(centers, abs_d) if ad == max_l1][0]
+        max_l1  = max(abs_d)
+        max_fc  = [c for c, ad in scored if ad == max_l1][0]
         print("\n── EQ SHAPE (RMS-normalized 1/3-oct L1) ──")
         passing = mean_l1 <= GATES['spec_L1_mean_dB']
         line = f"  {'spec_L1 mean':30s}  {mean_l1:.2f} dB  gate=±{GATES['spec_L1_mean_dB']}  {'✓' if passing else '✗'}"
