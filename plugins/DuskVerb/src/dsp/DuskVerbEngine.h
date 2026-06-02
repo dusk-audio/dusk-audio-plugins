@@ -188,6 +188,7 @@ public:
     void setWidth     (float width);
     void setGainTrim  (float dB);
     void setMonoBelow (float hz);             // 20 = bypass; up = sums lows to mono
+    void setMonoBelowDepth (float depth);     // 1.0 = full mono (legacy); <1 partial
 
     // DattorroVintage-specific: in-loop bass choke HPF cutoff. Other
     // engines ignore this call. Forwarded from APVTS so it shows up in
@@ -348,6 +349,7 @@ private:
     // satisfies perfect reconstruction).
     bool  monoMakerEnabled_ = false;
     float monoLPCoeff_      = 0.0f;
+    float monoBelowDepth_   = 1.0f;   // 1.0 = full mono (legacy); <1 partial
     float monoLPStateL_     = 0.0f;
     float monoLPStateR_     = 0.0f;
 

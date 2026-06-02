@@ -617,6 +617,11 @@ void DuskVerbEngine::setMonoBelow (float hz)
     monoBelowSmoother_.setTarget (std::clamp (hz, 20.0f, 300.0f));
 }
 
+void DuskVerbEngine::setMonoBelowDepth (float depth)
+{
+    monoBelowDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
 // ── Per-preset SixAPTank brightness/density tunables ────────────────────────
 // These forward unconditionally to sixAPTank_; they only become audible when
 // SixAPTank is the active engine, but applying them at preset-load time is
@@ -910,8 +915,14 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             const float monoLow = 0.5f * (monoLPStateL_ + monoLPStateR_);
             const float highL   = wetL - monoLPStateL_;
             const float highR   = wetR - monoLPStateR_;
-            wetL = monoLow + highL;
-            wetR = monoLow + highR;
+            // Partial mono: blend the per-channel low toward the summed mono by
+            // monoBelowDepth_. 1.0 = full mono (legacy, bit-identical); <1 leaves
+            // the lows PARTIALLY decorrelated — VVV's lows sit ~-0.03 corr, not
+            // mono, so full mono over-correlated the broadband stereo image.
+            const float lowL = monoBelowDepth_ * monoLow + (1.0f - monoBelowDepth_) * monoLPStateL_;
+            const float lowR = monoBelowDepth_ * monoLow + (1.0f - monoBelowDepth_) * monoLPStateR_;
+            wetL = lowL + highL;
+            wetR = lowR + highR;
         }
 
         const float width = widthSmoother_.next();

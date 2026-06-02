@@ -295,6 +295,10 @@ struct FactoryPreset
         setIfExists ("width",     width);
         setIfExists ("gain_trim", gainTrim);
         setIfExists ("mono_below", monoBelow);
+        // Partial mono-below: 1.0 = full mono (legacy). Vocal Hall uses 0.45 so
+        // the lows match VVV's gentle decorrelation instead of full-mono (which
+        // over-correlated broadband stereo_corr). Others stay full-mono.
+        setIfExists ("mono_below_depth", juce::String (name) == "Vocal Hall" ? 0.45f : 1.0f);
         // DPV corrective EQ + brightness — only audible when algorithm=1
         // routes through DattorroPlateVintage. Other engines forward to
         // no-op setters; safe to set unconditionally.
@@ -689,7 +693,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           4,  0.35f, false, 22.0f, 0,
           3.50f, 0.76f, 0.50390f, 0.78820f, 0.78f, 1.42f,  600.0f,  // Phase 4 (2026-06-02): rising-onset parallel ER closes attack (44->12ms) + onset_slope to JND. vh3 8-axis sweep: ModDepth 0.504 / ModRate 0.788, Diffusion 0.779, ER Level 0.608 / Size 0.449 / Boost 7.07 / Rise 31.6ms (boost+rise in maps below). n_fail 26->18. Residual edt/T60/width/diffusion are FDN-tank + ER-density structural limits.
           0.77940f, 0.60800f, 0.44870f,  33.0f,  6000.0f, 1.05040f, false, -2.50f,  // Change 2 (2026-06-02): Width 0.974->1.050
-          /* mono */ 110.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },  // MonoBelow 20->110: correlates the hot-ER anti-phase lows (low-band width -0.27->-0.03, matches VVV). HF cross-talk (xtalk map) closes mid/hi width. All 3 per-band width bands now within JND; n_fail 18->17.
+          /* mono */ 150.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },  // MonoBelow 150 + depth 0.45 (PARTIAL mono via applyTo): correlates the hot-ER anti-phase lows to VVV's gentle ~-0.03 (full mono over-correlated broadband stereo_corr to +0.13). All 3 width bands within JND; stereo_corr +0.13->+0.087.
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
         // = Cathedral, ModDepth 75 %, HighShelf at 6 kHz, HighCut ~7 kHz).
