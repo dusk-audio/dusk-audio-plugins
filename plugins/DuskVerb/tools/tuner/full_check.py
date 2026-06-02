@@ -59,10 +59,26 @@ GATES = {
     'cent_50_pct':          15.0,
     'cent_500_pct':         15.0,
     'env_p2p_dB':           5.0,
-    # stereo_corr relaxed 2026-05-27 to ±0.30: DPV's figure-8 dual-tank with
-    # Width clamped to [0.5, 1.05] (for mono-compat) structurally cannot match
-    # Lex VVP's anti-correlated stereo (r ≈ -0.19). Engine-architectural ceiling.
-    'stereo_corr':          0.30,
+    # stereo_corr TIGHTENED 2026-06-02 from ±0.30 → ±0.05. The loose gate passed
+    # an audibly-narrower DV (DV +0.19 vs VVV +0.04, Δ0.15 < 0.30). Width is a
+    # primary perceptual cue; the per-band spatial_width_band gate below adds the
+    # L/R-decorrelation detail this broadband number averages away. (DPV's
+    # mono-compat width clamp may now fail this — that is the intended exposure,
+    # not a regression: track it as an engine ceiling if a sweep can't close it.)
+    'stereo_corr':          0.05,
+    # ── ONSET / SPATIAL / DIFFUSION (2026-06-02 perceptual gates, impulse) ──
+    'attack_time_ms_abs':   5.0,    # onset→peak buildup time, absolute ms ...
+    'attack_time_pct':     10.0,    # ... OR within ±10% (pass if EITHER holds)
+    'onset_slope_pct':     30.0,    # rising-swell slope dB/ms (noisy → wider gate)
+    'spatial_width_band':   0.06,   # per-band L/R corr abs-diff (low/mid/high)
+    'diffusion_flux':       1.50,   # kurtosis-trajectory L1 over first 150 ms
+    # ── ADVISORY (2026-06-02): printed + ✓/✗ shown, NOT counted in n_fail until
+    # ear-validated. Thresholds calibrated from anchor-vs-anchor (≈0) + observed
+    # DV-vs-anchor spread; |Δ| vs anchor unless noted. ──
+    'spectral_flux_variance': 0.15,  # |Δ| late-tail flux-var (modal ring/boing)
+    'decay_curvature_r1':     0.08,  # |Δ| EDT/T30 ratio (early-decay curvature)
+    'decay_curvature_r2':     0.08,  # |Δ| T30/T60 ratio (late-decay curvature)
+    'bark_masking_l1':        1.50,  # mean-L1 Bark masked-loudness trajectory
     'osc_p2p_dB':           4.0,    # detrended envelope ripple
     # Sustained-pink steady-state per-band absolute energy. User-perceptual
     # bass-weight / brightness on musical content depends on these.
@@ -386,6 +402,207 @@ def windowed_above_floor(p, t0, t1, floor_dbfs=-80.0):
     return rms > floor_dbfs
 
 
+# ─────────────── PERCEPTUAL ONSET / SPATIAL / DIFFUSION (2026-06-02) ───────────
+# Listening tests exposed two blind spots the optimizer was gaming:
+#   1. ATTACK/BUILDUP. env_shape_l1 peak-ALIGNS before comparing, so it deletes
+#      onset-to-peak time. The VVV anchor blooms in ~24 ms; DV's FDN halls take
+#      70-172 ms — the single most salient "sounds like Lexicon, not VVV" cue,
+#      and totally ungated until now.
+#   2. STEREO WIDTH. The old stereo_corr ±0.30 gate passed an audibly narrower DV
+#      (DV +0.19 vs VVV +0.04). Tightened to ±0.05 + a per-band L/R correlation.
+# Plus echo-density (diffusion flux) so grainy/fluttery tails can't pass as smooth.
+# These run on the IMPULSE response — the only stimulus that isolates pure reverb
+# buildup (the snare/noiseburst envelope peak is confounded by the stimulus's own
+# body envelope: on the snare VVV actually peaks LATER than DV, on the impulse it
+# peaks far earlier — the impulse is the truth).
+
+def _onset_index(env_db, pk, drop_db=40.0):
+    """Stimulus onset = FIRST sample whose envelope crosses within drop_db of the
+    peak (scanning forward from t0). This is the arrival of the response; the
+    span onset→peak is then the full buildup/swell the ear hears as 'attack'.
+    (A backward 'last dip before peak' definition collapses to the final few ms
+    of approach and hides the gross VVV-24ms vs DV-70ms buildup difference.)"""
+    thr = env_db[pk] - drop_db
+    post = np.where(env_db[:pk + 1] >= thr)[0]
+    return int(post[0]) if len(post) else 0
+
+
+def attack_profile(p, drop_db=40.0):
+    """(attack_time_ms, onset_slope_dB_per_ms) of the 2 ms-smoothed Hilbert
+    energy envelope, measured onset->peak. attack_time = reverb buildup speed;
+    onset_slope = linear-regression rise (dB/ms) capturing the swell character."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    win = max(int(0.002 * sr), 1)
+    env = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(env + 1e-30)
+    pk = int(np.argmax(env_db))
+    on = _onset_index(env_db, pk, drop_db)
+    attack_ms = (pk - on) / sr * 1000.0
+    if pk - on < 4:
+        return float(attack_ms), None
+    seg = env_db[on:pk + 1]
+    t_ms = np.arange(len(seg)) / sr * 1000.0
+    A = np.vstack([t_ms, np.ones_like(t_ms)]).T
+    slope = float(np.linalg.lstsq(A, seg, rcond=None)[0][0])
+    return float(attack_ms), slope
+
+
+def spatial_width_bands(p, t_ms=500.0):
+    """Per-band L/R Pearson correlation over the first t_ms post-onset. 3 bands
+    via 4th-order (LR4-equivalent, zero-phase) crossovers at 300 Hz / 5 kHz.
+    Lower r = wider / more decorrelated. Returns (low, mid, high); None where a
+    band is silent or the file is mono."""
+    x, sr = sf.read(p)
+    if x.ndim < 2:
+        return (None, None, None)
+    L = x[:, 0]; R = x[:, 1]
+    env = np.abs(hilbert((L + R) * 0.5))
+    win = max(int(0.002 * sr), 1)
+    env_db = 20.0 * np.log10(np.convolve(env, np.ones(win) / win, 'same') + 1e-30)
+    pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk)
+    i1 = min(len(L), on + int(t_ms / 1000.0 * sr))
+    if i1 - on < int(0.05 * sr):
+        return (None, None, None)
+    nyq = sr * 0.49
+    bands = [(None, 300.0), (300.0, 5000.0), (5000.0, None)]
+    out = []
+    for lo, hi in bands:
+        if lo is None:
+            sos = butter(4, min(hi, nyq), 'low', fs=sr, output='sos')
+        elif hi is None:
+            sos = butter(4, lo, 'high', fs=sr, output='sos')
+        else:
+            sos = butter(4, [lo, min(hi, nyq)], 'band', fs=sr, output='sos')
+        lb = sosfiltfilt(sos, L)[on:i1]; rb = sosfiltfilt(sos, R)[on:i1]
+        if np.std(lb) < 1e-9 or np.std(rb) < 1e-9:
+            out.append(None)
+        else:
+            out.append(float(np.corrcoef(lb, rb)[0, 1]))
+    return tuple(out)
+
+
+def diffusion_flux_curve(p, span_ms=150.0, win_ms=10.0):
+    """Sliding excess-kurtosis (Pearson, Gaussian = 3.0) of the waveform over a
+    10 ms moving window across the first span_ms post-onset. A dense, well-
+    diffused field relaxes toward 3.0; a sparse/fluttery one stays spiky. Returns
+    the per-hop kurtosis curve (compared trajectory-vs-trajectory against the
+    anchor)."""
+    from scipy.stats import kurtosis
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    win = max(int(0.002 * sr), 1)
+    env_db = 20.0 * np.log10(np.convolve(env, np.ones(win) / win, 'same') + 1e-30)
+    pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk)
+    w = max(int(win_ms / 1000.0 * sr), 8); hop = max(w // 2, 1)
+    end = min(len(m), on + int(span_ms / 1000.0 * sr))
+    curve = []
+    for s in range(on, end - w, hop):
+        curve.append(float(kurtosis(m[s:s + w], fisher=False)))   # 3.0 = Gaussian
+    return np.array(curve)
+
+
+# ─── ADVISORY perceptual metrics (2026-06-02) — modal ring / decay curvature /
+# Bark masking. Corrected from the provided drafts before integration:
+#   • r2 (T30/T60) is REAL — the draft hardcoded `return r1, 1.0` (always-pass).
+#   • Schroeder backward-integrated decay — raw-envelope dB crossings are noise
+#     (same reason the existing T60 gate uses EDC, not instantaneous crossings).
+#   • Flux window is FLOOR-GUARDED — 1.5-3 s is dither on short tails; STFT-var
+#     of −90 dBFS noise is the silence-gate bug, already burned us once.
+#   • Bark masking spread sign fixed — the draft's +25 dB/bark lower slope is a
+#     316× GAIN away from the masker; masking ATTENUATES with bark distance.
+#   • Bark made a true per-window TRAJECTORY (the draft took one FFT of the
+#     whole segment despite the name).
+# Wired ADVISORY: printed + pass/fail shown, but NOT counted in n_fail until a
+# listening test confirms each tracks an audible defect (the bar attack/width
+# cleared). All compared DV-vs-anchor.
+
+def adv_spectral_flux_var(p, t0=0.5, t1=2.5):
+    """Late-tail STFT spectral-flux variance — modal-ring / 'boing' detector.
+    Post-peak window, FLOOR-GUARDED (None if < −80 dBFS = decayed to dither).
+    Per-frame energy-normalized → measures spectral-SHAPE motion, not level.
+    Low var = static metallic ring lockup; high = choppy modal beating."""
+    from scipy.signal import stft
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    a, b = pk + int(t0 * sr), min(pk + int(t1 * sr), len(m))
+    if b - a < int(0.3 * sr): return None
+    if 20.0 * np.log10(np.sqrt(np.mean(m[a:b] ** 2)) + 1e-30) < -80.0: return None
+    nper = max(int(0.04 * sr), 64)
+    _, _, Z = stft(m[a:b], fs=sr, nperseg=nper, noverlap=int(nper * 0.75))
+    mag = np.abs(Z)
+    if mag.shape[1] < 4: return None
+    magn = mag / (np.sum(mag, axis=0, keepdims=True) + 1e-9)
+    flux = np.sum(np.diff(magn, axis=1) ** 2, axis=0)
+    return float(np.var(flux) * 1e4)
+
+
+def adv_decay_curvature(p, lo=710.0, hi=1420.0):
+    """(r1, r2) log-decay curvature ratios from the Schroeder EDC of a ~1 kHz
+    band. r1 = EDT·6 / T30·2 ; r2 = T30·2 / T60. Exponential (linear-dB) decay
+    → 1.0; deviation = sagging / hooked non-linear tail. r2 is REAL (draft
+    stubbed it). None entries where a span can't be measured."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    sos = butter(4, [lo, min(hi, sr * 0.49)], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, m)
+    pk = int(np.argmax(np.abs(y)))
+    tail = y[pk: pk + int(sr * 6.0)]
+    if len(tail) < int(sr * 0.5): return (None, None)
+    edc = np.cumsum((tail ** 2)[::-1])[::-1]
+    if edc[0] <= 1e-30: return (None, None)
+    db = 10.0 * np.log10(np.maximum(edc / edc[0], 1e-12))
+    t = np.arange(len(db)) / sr
+    def cross(d):
+        i = np.where(db <= d)[0]
+        return float(t[i[0]]) if len(i) else None
+    e0, e1 = cross(-1.0), cross(-11.0)     # EDT span (10 dB)
+    c5, t1 = cross(-5.0), cross(-35.0)     # T30 span (30 dB)
+    s65 = cross(-65.0)                      # T60 endpoint
+    r1 = r2 = None
+    if None not in (e0, e1, c5, t1) and (t1 - c5) > 0:
+        edt = (e1 - e0) * 6.0; t30 = (t1 - c5) * 2.0
+        if t30 > 0:
+            r1 = edt / t30
+            if s65 is not None and (s65 - c5) > 0:
+                t60 = (s65 - c5)            # −5..−65 = 60 dB already
+                if t60 > 0: r2 = t30 / t60
+    return (r1, r2)
+
+
+def adv_bark_masking_traj(p, t0=0.2, t1=1.5, win_ms=50.0):
+    """Per-window 24-Bark masked-loudness trajectory. Each window: power → 24
+    Bark bands → simultaneous-masking spread (upper −10 dB/bark, lower −25 dB/
+    bark — BOTH attenuate away from the masker; the draft's +25 was a 316× gain
+    sign error) → sone (^0.23) → shape-normalized. Flattened; compared DV-vs-
+    anchor by mean-L1. FLOOR-GUARDED. Returns vector or None."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    a, b = pk + int(t0 * sr), min(pk + int(t1 * sr), len(m))
+    if b - a < int(0.1 * sr): return None
+    if 20.0 * np.log10(np.sqrt(np.mean(m[a:b] ** 2)) + 1e-30) < -80.0: return None
+    w = max(int(win_ms / 1000.0 * sr), 64); hop = w // 2
+    spread = np.empty((24, 24))
+    for bi in range(24):
+        for mi in range(24):
+            dx = bi - mi
+            sl = -25.0 if dx < 0 else -10.0
+            spread[bi, mi] = 10.0 ** ((sl * abs(dx)) / 10.0)
+    traj = []
+    for s in range(a, b - w, hop):
+        seg = m[s:s + w] * np.hanning(w)
+        mag = np.abs(np.fft.rfft(seg)); fr = np.fft.rfftfreq(w, 1.0 / sr)
+        bk = 13.0 * np.arctan(0.00076 * fr) + 3.5 * np.arctan((fr / 7500.0) ** 2)
+        be = np.zeros(24)
+        for bb in range(24):
+            mm = (bk >= bb) & (bk < bb + 1)
+            if mm.any(): be[bb] = np.sum(mag[mm] ** 2)
+        sone = np.maximum(spread @ be, 1e-12) ** 0.23
+        sone /= (np.sum(sone) + 1e-12)
+        traj.append(sone)
+    if len(traj) < 2: return None
+    return np.array(traj).ravel()
+
+
 def check(label, dv_val, lex_val, gate, kind='abs'):
     """Returns (delta, pass/fail, formatted string)."""
     if dv_val is None or lex_val is None or (isinstance(dv_val, float) and dv_val != dv_val):
@@ -496,6 +713,48 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             print(f"  {'env_p2p (dB)':30s}  SKIPPED (Lex tail below noise floor)")
         d, p, line = check('stereo_corr', m_dv.get('stereo_corr'), m_lx.get('stereo_corr'), GATES['stereo_corr']); print(line)
         if p == 'FAIL': fails.append(line.strip())
+
+        # ─── ONSET / SPATIAL / DIFFUSION (impulse buildup) ───
+        # These run on the IMPULSE — the only stimulus that isolates pure reverb
+        # buildup. See the helper-block header for why snare/noiseburst can't.
+        imp_dv = find_stim(dv_dir, 'impulse'); imp_lx = find_stim(lex_dir, 'impulse')
+        if imp_dv and imp_lx:
+            print("\n── ONSET / SPATIAL / DIFFUSION (impulse) ──")
+            # Attack/buildup time — onset→peak. Pass if within ±5 ms OR ±10%.
+            a_dv, s_dv = attack_profile(imp_dv); a_lx, s_lx = attack_profile(imp_lx)
+            if a_dv is not None and a_lx is not None:
+                dms = a_dv - a_lx
+                passing = (abs(dms) <= GATES['attack_time_ms_abs']) or \
+                          (a_lx > 0 and abs(dms) / a_lx * 100.0 <= GATES['attack_time_pct'])
+                line = (f"  {'attack_time (ms)':30s}  DV={a_dv:7.1f}  Lex={a_lx:7.1f}  "
+                        f"Δ={dms:+6.1f}ms  gate=±{GATES['attack_time_ms_abs']}ms/"
+                        f"±{GATES['attack_time_pct']}%  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            # Onset slope (swell character) dB/ms.
+            if s_dv is not None and s_lx is not None:
+                d, p, line = check('onset_slope (dB/ms)', s_dv, s_lx, GATES['onset_slope_pct'], 'pct')
+                print(line)
+                if p == 'FAIL': fails.append(line.strip())
+            # Per-band stereo width (L/R corr over 0-500 ms post-onset).
+            w_dv = spatial_width_bands(imp_dv); w_lx = spatial_width_bands(imp_lx)
+            for bi, bn in enumerate(('width low <300', 'width mid .3-5k', 'width hi >5k')):
+                cd, cl = w_dv[bi], w_lx[bi]
+                if cd is None or cl is None:
+                    print(f"  {bn:30s}  SKIPPED (mono/silent band)"); continue
+                d, p, line = check(bn, cd, cl, GATES['spatial_width_band'])
+                print(line)
+                if p == 'FAIL': fails.append(line.strip())
+            # Diffusion flux — kurtosis-trajectory match over first 150 ms.
+            k_dv = diffusion_flux_curve(imp_dv); k_lx = diffusion_flux_curve(imp_lx)
+            n = min(len(k_dv), len(k_lx))
+            if n >= 4:
+                flux = float(np.mean(np.abs(k_dv[:n] - k_lx[:n])))
+                passing = flux <= GATES['diffusion_flux']
+                line = (f"  {'diffusion_flux (kurt L1)':30s}  Δ={flux:6.2f}  "
+                        f"gate=≤{GATES['diffusion_flux']}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
 
         # ─── 1/3-oct RMS-normalized L1 ───
         # Floor-guard: skip bands where the ANCHOR is below -55 dB (RMS-norm) —
@@ -861,6 +1120,38 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
                     f"gate≤+{rip_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
+
+    # ─── ADVISORY perceptual metrics (NOT counted in n_fail) ───
+    # Instrumentation only until ear-validated. Computed on the noiseburst tail
+    # (dv/lx). Prints ✓/✗ vs the calibrated thresholds but never touches `fails`.
+    if dv and lx:
+        print("\n── ADVISORY (perceptual, NOT gated — ear-validation pending) ──")
+        fv_dv = adv_spectral_flux_var(dv); fv_lx = adv_spectral_flux_var(lx)
+        if fv_dv is None or fv_lx is None:
+            print(f"  {'spectral_flux_var':30s}  SKIPPED (tail below floor)")
+        else:
+            dd = abs(fv_dv - fv_lx); ok = dd <= GATES['spectral_flux_variance']
+            print(f"  {'spectral_flux_var':30s}  DV={fv_dv:6.3f}  VVV={fv_lx:6.3f}  "
+                  f"|Δ|={dd:6.3f}  gate≤{GATES['spectral_flux_variance']}  "
+                  f"{'✓' if ok else '✗'}  [ADVISORY]")
+        r_dv = adv_decay_curvature(dv); r_lx = adv_decay_curvature(lx)
+        for ri, rn, gk in ((0, 'decay_curv_r1 (EDT/T30)', 'decay_curvature_r1'),
+                           (1, 'decay_curv_r2 (T30/T60)', 'decay_curvature_r2')):
+            av, bv = r_dv[ri], r_lx[ri]
+            if av is None or bv is None:
+                print(f"  {rn:30s}  SKIPPED (span unmeasurable)"); continue
+            dd = abs(av - bv); ok = dd <= GATES[gk]
+            print(f"  {rn:30s}  DV={av:5.3f}  VVV={bv:5.3f}  |Δ|={dd:5.3f}  "
+                  f"gate≤{GATES[gk]}  {'✓' if ok else '✗'}  [ADVISORY]")
+        bk_dv = adv_bark_masking_traj(dv); bk_lx = adv_bark_masking_traj(lx)
+        if bk_dv is None or bk_lx is None:
+            print(f"  {'bark_masking_l1':30s}  SKIPPED (tail below floor)")
+        else:
+            n = min(len(bk_dv), len(bk_lx))
+            l1 = float(np.mean(np.abs(bk_dv[:n] - bk_lx[:n]))) * 1e3
+            ok = l1 <= GATES['bark_masking_l1']
+            print(f"  {'bark_masking_l1 (x1e3)':30s}  L1={l1:6.3f}  "
+                  f"gate≤{GATES['bark_masking_l1']}  {'✓' if ok else '✗'}  [ADVISORY]")
 
     # ─── Summary ───
     print()

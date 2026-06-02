@@ -171,6 +171,29 @@ struct FactoryPreset
         { tsDepth = it->second.depth; tsRate = it->second.rate; }
         setIfExists ("tail_spin_depth", tsDepth);
         setIfExists ("tail_spin_rate",  tsRate);
+        // Phase 4 (option 2): early-field ER boost. Per-preset via name→map;
+        // 1.0 (unlisted) → ×1.0 exact → bit-identical. >1 lets the parallel ER
+        // own the 0-26 ms attack the FDN tank structurally can't supply.
+        struct ERBoostOverride { float boost; };
+        static const std::map<juce::String, ERBoostOverride> kERBoostByName = {
+            // Calibrated by the gate-driven attack sweep (2026-06-02).
+            { "Vocal Hall", { 7.0747f } },
+        };
+        float erBoost = 1.0f;
+        if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
+            erBoost = it->second.boost;
+        setIfExists ("er_boost", erBoost);
+        // Rising-onset ER peak time (ms). 0 (unlisted) → legacy first-tap
+        // rolloff → bit-identical. Paired with er_boost to set the early field.
+        struct ERRiseOverride { float ms; };
+        static const std::map<juce::String, ERRiseOverride> kERRiseByName = {
+            // Calibrated by the gate-driven attack sweep (2026-06-02).
+            { "Vocal Hall", { 31.6367f } },
+        };
+        float erRise = 0.0f;
+        if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
+            erRise = it->second.ms;
+        setIfExists ("er_rise", erRise);
         setIfExists ("damping",   damping);
         setIfExists ("bass_mult", bassMult);
         setIfExists ("mid_mult",  midMult);
@@ -622,8 +645,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          3.50f, 0.76f, 0.15000f, 3.50000f, 0.78f, 1.42f,  600.0f,  // native delay-chorus: Mod Rate 3.5Hz / Depth 0.15 (clean hardware-ensemble baseline). Tail-spin OFF — the AM-pump VCA was unusable; pitch-chorus gate demoted to a coarse 0.3-3.0x guard. Character judged by ear, not gate count.
-          0.45f, 0.65f, 0.45f,  33.0f,  6000.0f, 0.88f, false, -2.50f,
+          3.50f, 0.76f, 0.50390f, 0.78820f, 0.78f, 1.42f,  600.0f,  // Phase 4 (2026-06-02): rising-onset parallel ER closes attack (44->12ms) + onset_slope to JND. vh3 8-axis sweep: ModDepth 0.504 / ModRate 0.788, Diffusion 0.779, ER Level 0.608 / Size 0.449 / Boost 7.07 / Rise 31.6ms (boost+rise in maps below). n_fail 26->18. Residual edt/T60/width/diffusion are FDN-tank + ER-density structural limits.
+          0.77940f, 0.60800f, 0.44870f,  33.0f,  6000.0f, 0.97350f, false, -2.50f,
           /* mono */ 20.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
