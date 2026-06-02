@@ -172,6 +172,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "xtalk", 1 }, "HF Cross-Talk",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
+    // Phase 5 (T60 fix): parallel-multiband FDN. mb_enable 0 = single legacy
+    // tank = bit-identical. The 3 per-band decays (<=0 = inherit full-band) let
+    // a preset set Low/Mid/High RT60 independently once enabled.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "mb_enable", 1 }, "Multiband", false));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mb_low_decay", 1 }, "MB Low Decay",
+        juce::NormalisableRange<float> (0.0f, 12.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mb_mid_decay", 1 }, "MB Mid Decay",
+        juce::NormalisableRange<float> (0.0f, 12.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mb_high_decay", 1 }, "MB High Decay",
+        juce::NormalisableRange<float> (0.0f, 12.0f), 0.0f));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "lo_cut", 1 }, "Lo Cut",
         juce::NormalisableRange<float> (5.0f, 500.0f, 0.0f, 0.3f), fp0.loCut));
@@ -380,6 +395,10 @@ DuskVerbProcessor::DuskVerbProcessor()
     erBoostParam_       = parameters.getRawParameterValue ("er_boost");
     erRiseParam_        = parameters.getRawParameterValue ("er_rise");
     xtalkParam_         = parameters.getRawParameterValue ("xtalk");
+    mbEnableParam_      = parameters.getRawParameterValue ("mb_enable");
+    mbLowDecayParam_    = parameters.getRawParameterValue ("mb_low_decay");
+    mbMidDecayParam_    = parameters.getRawParameterValue ("mb_mid_decay");
+    mbHighDecayParam_   = parameters.getRawParameterValue ("mb_high_decay");
     loCutParam_         = parameters.getRawParameterValue ("lo_cut");
     hiCutParam_         = parameters.getRawParameterValue ("hi_cut");
     hiCutShelfDbParam_  = parameters.getRawParameterValue ("hi_cut_shelf_db");
@@ -494,6 +513,8 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastERBoost_ = -1.0f;
         lastERRise_  = -1.0f;
         lastXTalk_   = -1.0f;
+        lastMbEnable_ = false;
+        lastMbLow_ = lastMbMid_ = lastMbHigh_ = -1.0f;
         lastGainTrim_ = -999.0f;
         lastHiCutShelfDb_ = 999.0f;   // out-of-range sentinel forces push
         haveLastFreeze_ = false;
@@ -680,6 +701,19 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastERBoost_,   erBoostParam_->load(),   [this] (float v) { activeEngine_->setEREarlyBoost (v); });
     pushIfChanged (lastERRise_,    erRiseParam_->load(),    [this] (float v) { activeEngine_->setEROnsetRiseMs (v); });
     pushIfChanged (lastXTalk_,     xtalkParam_->load(),     [this] (float v) { activeEngine_->setOutputCrossTalk (v); });
+    // Phase 5 multiband: enable flag + the 3 per-band decays (combined setter).
+    {
+        const bool  mbEn = mbEnableParam_->load() >= 0.5f;
+        const float mbLo = mbLowDecayParam_->load();
+        const float mbMi = mbMidDecayParam_->load();
+        const float mbHi = mbHighDecayParam_->load();
+        if (mbEn != lastMbEnable_) { lastMbEnable_ = mbEn; activeEngine_->setMultibandEnabled (mbEn); }
+        if (mbLo != lastMbLow_ || mbMi != lastMbMid_ || mbHi != lastMbHigh_)
+        {
+            lastMbLow_ = mbLo; lastMbMid_ = mbMi; lastMbHigh_ = mbHi;
+            activeEngine_->setMultibandDecays (mbLo, mbMi, mbHi);
+        }
+    }
     pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
     pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { activeEngine_->setHiCut (v); });
     pushIfChanged (lastHiCutShelfDb_, hiCutShelfDbParam_->load(),
@@ -1093,6 +1127,8 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setEREarlyBoost      (erBoostParam_->load());
     target->setEROnsetRiseMs     (erRiseParam_->load());
     target->setOutputCrossTalk   (xtalkParam_->load());
+    target->setMultibandEnabled  (mbEnableParam_->load() >= 0.5f);
+    target->setMultibandDecays   (mbLowDecayParam_->load(), mbMidDecayParam_->load(), mbHighDecayParam_->load());
     target->setLoCut             (loCutParam_->load());
     target->setHiCut             (hiCutParam_->load());
     target->setHiCutShelfGainDb  (hiCutShelfDbParam_->load());
@@ -1183,6 +1219,10 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastERBoost_       = erBoostParam_->load();
     lastERRise_        = erRiseParam_->load();
     lastXTalk_         = xtalkParam_->load();
+    lastMbEnable_      = mbEnableParam_->load() >= 0.5f;
+    lastMbLow_         = mbLowDecayParam_->load();
+    lastMbMid_         = mbMidDecayParam_->load();
+    lastMbHigh_        = mbHighDecayParam_->load();
     lastLoCut_         = loCutParam_->load();
     lastHiCut_         = hiCutParam_->load();
     lastHiCutShelfDb_  = hiCutShelfDbParam_->load();
