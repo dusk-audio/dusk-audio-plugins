@@ -218,6 +218,24 @@ struct FactoryPreset
         setIfExists ("mb_low_decay",  mbLo);
         setIfExists ("mb_mid_decay",  mbMi);
         setIfExists ("mb_high_decay", mbHi);
+        // Per-band early-decay (edt) shaper — the dormant PerBandEDTShape, now
+        // energy-conserving (boosts the band tail while cutting sustain so edt
+        // lengthens with no spec cost). +attack = hold (longer edt), - = shorter.
+        // All 0 (unlisted) → AttackRamp returns 1.0 → bit-identical bypass.
+        struct EDTOverride { float subA, subT, lmA, lmT, mhA, mhT, airA, airT; };
+        static const std::map<juce::String, EDTOverride> kEDTByName = {
+            // Vocal Hall — manual tune vs VVV: closes edt low/low_mid "hold".
+            // sub<100 (follower can't track <100 Hz) + hi 2-8k (saturates) stay
+            // open — FDN early-decay structural residual. n_fail 17->16.
+            { "Vocal Hall", { 18.0f, 120.0f, 11.0f, 130.0f, -10.0f, 150.0f, -12.0f, 150.0f } },
+        };
+        float esA=0,esT=120,elA=0,elT=120,emA=0,emT=120,eaA=0,eaT=120;
+        if (auto it = kEDTByName.find (juce::String (name)); it != kEDTByName.end())
+        { const auto& e=it->second; esA=e.subA;esT=e.subT;elA=e.lmA;elT=e.lmT;emA=e.mhA;emT=e.mhT;eaA=e.airA;eaT=e.airT; }
+        setIfExists ("edt_sub_attack_db", esA);     setIfExists ("edt_sub_tau_ms", esT);
+        setIfExists ("edt_lowmid_attack_db", elA);  setIfExists ("edt_lowmid_tau_ms", elT);
+        setIfExists ("edt_midhi_attack_db", emA);   setIfExists ("edt_midhi_tau_ms", emT);
+        setIfExists ("edt_air_attack_db", eaA);     setIfExists ("edt_air_tau_ms", eaT);
         setIfExists ("damping",   damping);
         setIfExists ("bass_mult", bassMult);
         setIfExists ("mid_mult",  midMult);

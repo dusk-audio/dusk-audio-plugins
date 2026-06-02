@@ -718,6 +718,9 @@ struct AttackRamp
 
         // Fast attack, moderate release envelope follower over the band
         // signal magnitude. Gives the trackingPeak something to track.
+        // (Slowing this to track the sub-band envelope broke the working
+        // low/low_mid bands — the fast follower is required there. Sub <100 Hz
+        // edt stays immovable by this shaper: a known limit.)
         const float att = 0.05f;
         const float rel = 0.005f;
         if (absLR > envFollower_)
@@ -739,7 +742,14 @@ struct AttackRamp
         // Fractional decay: 0 = at peak, 1 = fully decayed (envelope == 0).
         float dec = 1.0f - envFollower_ / trackingPeak_;
         dec = std::clamp (dec, 0.0f, 1.0f);
-        const float gainDb = attackDb_ * dec;
+        // Energy-conserving offset: CUT at/near the sustain peak (dec < kPivot)
+        // and BOOST as the band decays (dec > kPivot). A pure +attackDb boost
+        // of the decayed tail raised that band's steady-state energy → broke
+        // spec_L1/ss; pivoting around kPivot trades sustain level for tail hold
+        // so edt lengthens without inflating total band energy. attackDb_ == 0
+        // → gainDb == 0 regardless of dec → bit-identical bypass preserved.
+        constexpr float kPivot = 0.40f;
+        const float gainDb = attackDb_ * (dec - kPivot);
         return std::pow (10.0f, gainDb / 20.0f);
     }
 
