@@ -326,6 +326,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "mono_below", 1 }, "Mono Below",
         juce::NormalisableRange<float> (20.0f, 300.0f, 0.0f, 0.5f), fp0.monoBelow));
 
+    // Partial mono-below blend. 1.0 = full mono (legacy, bit-identical); <1
+    // leaves the lows partially decorrelated (VVV lows ~-0.03 corr, not mono).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mono_below_depth", 1 }, "Mono Below Depth",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+
     // DattorroPlateVintage (algo 1) corrective EQ + brightness controls.
     // Exposed as APVTS so Optuna can sweep them via --param overrides and
     // the host can automate them. Active only when algorithm=1; ignored
@@ -434,6 +440,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     gateEnabledParam_   = parameters.getRawParameterValue ("gate_enabled");
     gainTrimParam_      = parameters.getRawParameterValue ("gain_trim");
     monoBelowParam_     = parameters.getRawParameterValue ("mono_below");
+    monoBelowDepthParam_= parameters.getRawParameterValue ("mono_below_depth");
 
     dpvHfShelfDbParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_db");
     dpvHfShelfHzParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_hz");
@@ -508,7 +515,7 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastDecaySec_ = lastSize_ = lastDamping_ = lastBassMult_ = lastMidMult_ =
         lastCrossover_ = lastHighCrossover_ = lastSaturation_ =
         lastDiffusion_ = lastModDepth_ = lastModRate_ = lastERSize_ = lastPreDelayMs_ =
-        lastMix_ = lastLoCut_ = lastHiCut_ = lastWidth_ = lastMonoBelow_ = -1.0f;
+        lastMix_ = lastLoCut_ = lastHiCut_ = lastWidth_ = lastMonoBelow_ = lastMonoBelowDepth_ = -1.0f;
         lastERLevel_ = -2.0f;
         lastERBoost_ = -1.0f;
         lastERRise_  = -1.0f;
@@ -803,6 +810,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastWidth_,     widthParam_->load(),     [this] (float v) { activeEngine_->setWidth (v); });
     pushIfChanged (lastGainTrim_,  gainTrimParam_->load(),  [this] (float v) { activeEngine_->setGainTrim (v); });
     pushIfChanged (lastMonoBelow_, monoBelowParam_->load(), [this] (float v) { activeEngine_->setMonoBelow (v); });
+    pushIfChanged (lastMonoBelowDepth_, monoBelowDepthParam_->load(), [this] (float v) { activeEngine_->setMonoBelowDepth (v); });
 
     // DPV EQ + brightness — only the DattorroPlateVintage engine listens;
     // others forward to no-op setters via DuskVerbEngine glue.
@@ -1163,6 +1171,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setWidth             (widthParam_->load());
     target->setGainTrim          (gainTrimParam_->load());
     target->setMonoBelow         (monoBelowParam_->load());
+    target->setMonoBelowDepth    (monoBelowDepthParam_->load());
 
     // Mix lives on the processor — not pushed to the engine. The
     // processor's mixSmoother target is updated in performPresetSwap so
@@ -1229,6 +1238,7 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastWidth_         = widthParam_->load();
     lastGainTrim_      = gainTrimParam_->load();
     lastMonoBelow_     = monoBelowParam_->load();
+    lastMonoBelowDepth_= monoBelowDepthParam_->load();
     lastDpvHfShelfDb_    = dpvHfShelfDbParam_->load();
     lastDpvHfShelfHz_    = dpvHfShelfHzParam_->load();
     lastDpvStructHfDamp_ = dpvStructHfDampHzParam_->load();
@@ -1299,7 +1309,7 @@ namespace {
             { "Vocal Hall", {
                 {  70.0f, 1000.0f, 2560.0f,  8000.0f },
                 {   1.2f,    2.5f,    2.5f,     1.2f },
-                {  -2.5f,   -3.0f,   -3.0f,    -2.5f },
+                {  -2.5f,   -0.3f,   -3.0f,    -2.5f },   // 1k notch -3->-0.3: Phase-4 re-tune left sine1k -4.5 cold; minimal raise closes it (Δ~-1.8) w/o pushing spec_L1
             } },
             // Bright Hall (BH-6 on VintageTank algo=8, 2026-05-30):
             //   Band 0 —  60 Hz Q=1.0 -3.0 dB: BH-2 tight sub-bass scoop.

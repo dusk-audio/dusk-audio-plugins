@@ -198,6 +198,7 @@ private:
     std::atomic<float>* gateEnabledParam_   = nullptr;
     std::atomic<float>* gainTrimParam_      = nullptr;
     std::atomic<float>* monoBelowParam_     = nullptr;
+    std::atomic<float>* monoBelowDepthParam_= nullptr;
 
     // Phase α: PostTankEQ 4-band GAIN APVTS-driven. Freq + Q live in the
     // per-preset kPostTankEQByName map (engine-config only). Optimizer
@@ -338,6 +339,7 @@ private:
     float lastWidth_       = -1.0f;
     float lastGainTrim_    = -999.0f;
     float lastMonoBelow_   = -1.0f;
+    float lastMonoBelowDepth_ = -1.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;
