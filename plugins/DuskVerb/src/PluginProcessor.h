@@ -184,6 +184,7 @@ private:
     std::atomic<float>* erSizeParam_        = nullptr;
     std::atomic<float>* erBoostParam_       = nullptr;
     std::atomic<float>* erRiseParam_        = nullptr;
+    std::atomic<float>* xtalkParam_         = nullptr;
     std::atomic<float>* loCutParam_         = nullptr;
     std::atomic<float>* hiCutParam_         = nullptr;
     // Phase 1 post-tank shelf depth — sweepable per preset.
@@ -320,6 +321,7 @@ private:
     float lastERLevel_     = -2.0f;
     float lastERBoost_     = -1.0f;
     float lastERRise_      = -1.0f;
+    float lastXTalk_       = -1.0f;
     float lastPreDelayMs_  = -1.0f;
     float lastMix_         = -1.0f;
     float lastLoCut_       = -1.0f;

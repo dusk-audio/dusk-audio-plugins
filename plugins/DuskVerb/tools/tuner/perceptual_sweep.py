@@ -38,20 +38,11 @@ from full_check import attack_profile, spatial_width_bands, diffusion_flux_curve
 # lesson). er_boost is the new [1,8] APVTS "Early Ref Boost".
 AXES = {
     "Vocal Hall": [
-        # Early field (hold the won attack/slope)
-        ("Early Ref Level",  0.40, 0.90),
-        ("Early Ref Size",   0.25, 0.70),
-        ("Early Ref Boost",  5.00, 8.00),
-        ("Early Ref Rise",   24.00, 34.00),
-        ("Diffusion",        0.30, 0.95),
-        ("Width",            0.60, 1.60),
-        # Tank decay levers — target the remaining edt / T60 / ss / sine1k gaps
-        ("Decay Time",       2.50, 5.00),
-        ("Treble Multiply",  0.30, 1.40),
-        ("Bass Multiply",    0.80, 2.00),
-        ("Mid Multiply",     0.50, 1.50),
-        ("Mod Depth",        0.00, 0.60),
-        ("Mod Rate",         0.20, 4.00),
+        # Change-2 focused sweep: free ONLY the new HF cross-talk + Width over
+        # the BAKED vh3 preset (all other params come from --program). Targets
+        # the per-band width gates without disturbing the locked attack.
+        ("HF Cross-Talk",    0.00, 0.40),
+        ("Width",            0.60, 1.40),
     ],
     "Tiled Room": [
         ("Early Ref Level",  0.20, 1.00),

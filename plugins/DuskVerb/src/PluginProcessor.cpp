@@ -165,6 +165,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "er_rise", 1 }, "Early Ref Rise",
         juce::NormalisableRange<float> (0.0f, 40.0f), 0.0f));
 
+    // Phase 4 (Change 2): output HF cross-talk decorrelation depth. 0 = no
+    // cross-feed → bit-identical. Dedicated param (not coupled to Width) so the
+    // whole fleet stays bit-exact; per-preset via kXTalkByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "xtalk", 1 }, "HF Cross-Talk",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "lo_cut", 1 }, "Lo Cut",
         juce::NormalisableRange<float> (5.0f, 500.0f, 0.0f, 0.3f), fp0.loCut));
@@ -372,6 +379,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     erSizeParam_        = parameters.getRawParameterValue ("er_size");
     erBoostParam_       = parameters.getRawParameterValue ("er_boost");
     erRiseParam_        = parameters.getRawParameterValue ("er_rise");
+    xtalkParam_         = parameters.getRawParameterValue ("xtalk");
     loCutParam_         = parameters.getRawParameterValue ("lo_cut");
     hiCutParam_         = parameters.getRawParameterValue ("hi_cut");
     hiCutShelfDbParam_  = parameters.getRawParameterValue ("hi_cut_shelf_db");
@@ -485,6 +493,7 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastERLevel_ = -2.0f;
         lastERBoost_ = -1.0f;
         lastERRise_  = -1.0f;
+        lastXTalk_   = -1.0f;
         lastGainTrim_ = -999.0f;
         lastHiCutShelfDb_ = 999.0f;   // out-of-range sentinel forces push
         haveLastFreeze_ = false;
@@ -670,6 +679,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
     pushIfChanged (lastERBoost_,   erBoostParam_->load(),   [this] (float v) { activeEngine_->setEREarlyBoost (v); });
     pushIfChanged (lastERRise_,    erRiseParam_->load(),    [this] (float v) { activeEngine_->setEROnsetRiseMs (v); });
+    pushIfChanged (lastXTalk_,     xtalkParam_->load(),     [this] (float v) { activeEngine_->setOutputCrossTalk (v); });
     pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
     pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { activeEngine_->setHiCut (v); });
     pushIfChanged (lastHiCutShelfDb_, hiCutShelfDbParam_->load(),
@@ -1082,6 +1092,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setERLevel           (erLevelParam_->load());
     target->setEREarlyBoost      (erBoostParam_->load());
     target->setEROnsetRiseMs     (erRiseParam_->load());
+    target->setOutputCrossTalk   (xtalkParam_->load());
     target->setLoCut             (loCutParam_->load());
     target->setHiCut             (hiCutParam_->load());
     target->setHiCutShelfGainDb  (hiCutShelfDbParam_->load());
@@ -1171,6 +1182,7 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastERLevel_       = erLevelParam_->load();
     lastERBoost_       = erBoostParam_->load();
     lastERRise_        = erRiseParam_->load();
+    lastXTalk_         = xtalkParam_->load();
     lastLoCut_         = loCutParam_->load();
     lastHiCut_         = hiCutParam_->load();
     lastHiCutShelfDb_  = hiCutShelfDbParam_->load();
