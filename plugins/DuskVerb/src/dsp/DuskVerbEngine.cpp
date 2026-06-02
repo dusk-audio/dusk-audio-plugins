@@ -79,6 +79,11 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     monoLPStateL_     = 0.0f;
     monoLPStateR_     = 0.0f;
 
+    // Phase 4 (Change 2): cross-talk HF split — 1st-order LP coeff at 1.5 kHz.
+    xtalkHpCoeff_ = std::exp (-kTwoPi * 1500.0f / static_cast<float> (sampleRate));
+    xtalkLpL_     = 0.0f;
+    xtalkLpR_     = 0.0f;
+
     // Post-tank parametric EQ. Default state is all bands at gainDb=0 →
     // unity coefficients → bit-identical bypass. Per-preset overrides
     // come in via setPostTankEQBand() after the preset loads.
@@ -123,6 +128,8 @@ void DuskVerbEngine::clearAllBuffers()
 
     monoLPStateL_ = 0.0f;
     monoLPStateR_ = 0.0f;
+    xtalkLpL_     = 0.0f;
+    xtalkLpR_     = 0.0f;
 }
 
 void DuskVerbEngine::snapSmoothersToTargets()
@@ -485,6 +492,12 @@ void DuskVerbEngine::setEREarlyBoost (float boost)
 void DuskVerbEngine::setEROnsetRiseMs (float ms)
 {
     er_.setOnsetRiseMs (ms);
+}
+
+void DuskVerbEngine::setOutputCrossTalk (float depth)
+{
+    xtalkDepth_  = std::clamp (depth, 0.0f, 1.0f);
+    xtalkActive_ = xtalkDepth_ > 1.0e-6f;
 }
 
 void DuskVerbEngine::setPreDelay (float milliseconds)
@@ -862,6 +875,24 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         const float side  = 0.5f * (wetL - wetR);
         wetL = mid + side * width;
         wetR = mid - side * width;
+
+        // Phase 4 (Change 2): output cross-talk shelving matrix. Splits each
+        // channel at 1.5 kHz (1st-order complementary HP = x − LP), then cross-
+        // bleeds the OTHER channel's HF with a 180° inversion scaled by
+        // xtalkDepth_. Decorrelates the top-end air per band WITHOUT the global
+        // anti-phase overshoot the macro Width knob causes (LF is left fully
+        // intact → mono-safe, center-image stable). xtalkActive_ false → wetL/R
+        // untouched → bit-identical; post-tank (non-recursive) so no codegen
+        // bit-null risk.
+        if (xtalkActive_)
+        {
+            xtalkLpL_ = (1.0f - xtalkHpCoeff_) * wetL + xtalkHpCoeff_ * xtalkLpL_;
+            xtalkLpR_ = (1.0f - xtalkHpCoeff_) * wetR + xtalkHpCoeff_ * xtalkLpR_;
+            const float hiL = wetL - xtalkLpL_;
+            const float hiR = wetR - xtalkLpR_;
+            wetL -= xtalkDepth_ * hiR;     // R's HF, inverted, into L
+            wetR -= xtalkDepth_ * hiL;     // L's HF, inverted, into R
+        }
 
         // gain_trim is a WET-PATH gain — baked into the engine's wet output so
         // each preset's calibrated wet level is preserved through the

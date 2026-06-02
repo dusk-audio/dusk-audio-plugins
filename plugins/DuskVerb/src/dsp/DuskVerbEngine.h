@@ -137,6 +137,11 @@ public:
     // Rising-onset ER envelope: tap gains peak at this many ms (gentle swell)
     // instead of at the first tap. 0 = legacy rolloff = bit-identical.
     void setEROnsetRiseMs (float ms);
+    // Phase 4 (Change 2): output cross-talk shelving matrix. Decorrelates only
+    // the HF air (>1.5 kHz) by cross-bleeding each channel's high band into the
+    // other with a 180° inversion; LF untouched (mono-safe). Dedicated depth
+    // (NOT coupled to Width) so 0 = no cross-feed = bit-identical for the fleet.
+    void setOutputCrossTalk (float depth);
 
     // Shell parameters (smoothed in process()).
     void setPreDelay  (float milliseconds);
@@ -303,6 +308,12 @@ private:
     // across the preset crossfade); engine outputs wet-only.
     OnePoleSmoother widthSmoother_;
     float erEarlyBoost_ = 1.0f;   // Phase 4 (option 2): ER early-field boost (1.0 = bypass)
+    // Phase 4 (Change 2): output HF cross-talk decorrelation. depth 0 = bypass.
+    float xtalkDepth_   = 0.0f;
+    bool  xtalkActive_  = false;
+    float xtalkHpCoeff_ = 0.0f;   // 1st-order LP coeff for the 1.5 kHz HF split
+    float xtalkLpL_     = 0.0f;
+    float xtalkLpR_     = 0.0f;
     OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother gainTrimSmoother_;
 
