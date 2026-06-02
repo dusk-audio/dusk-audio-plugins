@@ -353,8 +353,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // dark, sine1k +5 dB hot, small T60 tilt, 12.9k spike) is DPV-vs-Lexicon.
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   true,  10.0f, 0,
-          0.80466f, 0.80357f, 0.29369f, 1.64421f, 1.36640f, 1.38104f,  522.55f,
-          0.24230f, 0.00f, 0.30f,  42.811f, 7366.44f, 0.81121f, false, 9.01827f,
+          0.80466f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,
+          0.24230f, 0.00f, 0.30f,  42.811f, 15000.0f, 0.81121f, false, 9.01827f,  // ACCURACY: Treble 1.366->1.30 + HiCut 7366->15000 brightens to the bright Lex anchor (cent -29%->-11%)
           /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
           /* hiCutShelfGainDb */ -12.0f,
           /* gate */ true,
@@ -475,8 +475,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Net session: BH 25 → 10 fails (-15).
         { "Bright Hall",          "Halls",
           8,  0.40f, false,  0.0f, 0,
-          5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
-          0.49932f, 0.37f, 0.55f,  26.856f, 4554.46f, 0.94410f, false, 0.62933f,
+          5.0580f, 0.93236f, 0.04761f, 1.45608f, 1.10000f, 0.93713f,  170.39f,
+          0.49932f, 0.37f, 0.55f,  26.856f, 10000.0f, 0.94410f, false, 0.62933f,  // ACCURACY: Treble 0.779->1.10 + HiCut 4554->10000 matches the brighter anchor centroid (cent -17%->-1.6%)
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
@@ -638,7 +638,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // this. See memory duskverb_tuning_method.
         { "Cathedral Large Hall", "Halls",
           4,  0.45f, false, 20.88f, 0,
-          3.315f, 0.93880f, 0.38010f, 1.18680f, 1.40800f, 1.24610f,  223.90f,  // ModDepth/Rate + BassMult re-tuned vs honest (sustained) mod+boom gate: 23->22
+          3.00000f, 0.93880f, 0.38010f, 1.18680f, 1.40800f, 1.24610f,  223.90f,  // ACCURACY: Decay 3.315->3.00 matches anchor tail length (tail_t60 +26% -> ~0). ModDepth/Rate+BassMult prior.
           0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -7.90200f,
           /* mono */ 20.0f, /* mid */ 0.64240f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // re-swept w/ FDN FiveBand+input-makeup axes 26->20 vs CathedralLargeHall (Decay->3.3s near ref 2.7)
           /* hiCutShelfGainDb */ -14.5f },
