@@ -17,6 +17,11 @@ public:
     void setSize (float size);
     void setTimeScale (float scale);
     void setGainExponent (float exponent);
+    // Rising-onset envelope: tap gains ramp UP to a peak at onsetRiseMs then
+    // decay (vs the default inverse-distance rolloff that peaks at the first
+    // tap). Reproduces VVV's gentle ~15 ms attack swell instead of an
+    // instantaneous first-tap spike. 0 = off → legacy rolloff → bit-identical.
+    void setOnsetRiseMs (float ms);
     void setAirAbsorptionFloor (float hz);
     void setAirAbsorptionCeiling (float hz);
     void setDecorrCoeff (float coeff);
@@ -151,6 +156,7 @@ private:
     float erSize_ = 1.0f;
     float timeScale_ = 1.0f;
     float gainExponent_ = 1.0f;
+    float onsetRiseMs_ = 0.0f;   // 0 = legacy rolloff; >0 = rising-onset peak
     float airAbsorptionFloorHz_ = 2000.0f;
     float airAbsorptionCeilingHz_ = 12000.0f;
     double sampleRate_ = 44100.0;

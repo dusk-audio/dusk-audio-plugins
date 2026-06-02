@@ -128,6 +128,15 @@ public:
     // Early reflections.
     void setERLevel (float level);
     void setERSize  (float size);
+    // Phase 4 (option 2): early-field ER boost. Multiplies the parallel-ER
+    // contribution in the post-tank combine so it can run hotter than the
+    // [0,1] er_level cap and own the 0-26 ms attack the FDN tank can't reach.
+    // 1.0 = ×1.0 exact = bit-identical bypass. FDN-relevant (other engines that
+    // use smooth-ER also honor it; DattorroVintage/ReverseRoom zero the ER anyway).
+    void setEREarlyBoost (float boost);
+    // Rising-onset ER envelope: tap gains peak at this many ms (gentle swell)
+    // instead of at the first tap. 0 = legacy rolloff = bit-identical.
+    void setEROnsetRiseMs (float ms);
 
     // Shell parameters (smoothed in process()).
     void setPreDelay  (float milliseconds);
@@ -293,6 +302,7 @@ private:
     // mixSmoother lives on the processor (so the dry signal stays correlated
     // across the preset crossfade); engine outputs wet-only.
     OnePoleSmoother widthSmoother_;
+    float erEarlyBoost_ = 1.0f;   // Phase 4 (option 2): ER early-field boost (1.0 = bypass)
     OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother gainTrimSmoother_;
 

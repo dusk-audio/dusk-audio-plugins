@@ -150,6 +150,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "er_size", 1 }, "Early Ref Size",
         juce::NormalisableRange<float> (0.0f, 1.0f), fp0.erSize));
 
+    // Phase 4 (option 2): early-field ER boost. Default 1.0 → ×1.0 exact →
+    // bit-identical for every existing preset/state (old states without this
+    // param fall back to the 1.0 default). >1 lets the parallel ER own the
+    // 0-26 ms attack the FDN tank can't reach. Per-preset via kERBoostByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_boost", 1 }, "Early Ref Boost",
+        juce::NormalisableRange<float> (1.0f, 8.0f), 1.0f));
+
+    // Phase 4 (option 2): rising-onset ER envelope peak time. 0 = legacy
+    // first-tap rolloff → bit-identical. >0 swells the ER to a peak at this ms,
+    // matching VVV's gentle attack instead of an instantaneous spike.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_rise", 1 }, "Early Ref Rise",
+        juce::NormalisableRange<float> (0.0f, 40.0f), 0.0f));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "lo_cut", 1 }, "Lo Cut",
         juce::NormalisableRange<float> (5.0f, 500.0f, 0.0f, 0.3f), fp0.loCut));
@@ -355,6 +370,8 @@ DuskVerbProcessor::DuskVerbProcessor()
     diffusionParam_     = parameters.getRawParameterValue ("diffusion");
     erLevelParam_       = parameters.getRawParameterValue ("er_level");
     erSizeParam_        = parameters.getRawParameterValue ("er_size");
+    erBoostParam_       = parameters.getRawParameterValue ("er_boost");
+    erRiseParam_        = parameters.getRawParameterValue ("er_rise");
     loCutParam_         = parameters.getRawParameterValue ("lo_cut");
     hiCutParam_         = parameters.getRawParameterValue ("hi_cut");
     hiCutShelfDbParam_  = parameters.getRawParameterValue ("hi_cut_shelf_db");
@@ -466,6 +483,8 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastDiffusion_ = lastModDepth_ = lastModRate_ = lastERSize_ = lastPreDelayMs_ =
         lastMix_ = lastLoCut_ = lastHiCut_ = lastWidth_ = lastMonoBelow_ = -1.0f;
         lastERLevel_ = -2.0f;
+        lastERBoost_ = -1.0f;
+        lastERRise_  = -1.0f;
         lastGainTrim_ = -999.0f;
         lastHiCutShelfDb_ = 999.0f;   // out-of-range sentinel forces push
         haveLastFreeze_ = false;
@@ -649,6 +668,8 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastTailSpinRate_,  tailSpinRateParam_->load(),  [this] (float v) { activeEngine_->setTailSpinRate (v); });
     pushIfChanged (lastERSize_,    erSizeParam_->load(),    [this] (float v) { activeEngine_->setERSize (v); });
     pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
+    pushIfChanged (lastERBoost_,   erBoostParam_->load(),   [this] (float v) { activeEngine_->setEREarlyBoost (v); });
+    pushIfChanged (lastERRise_,    erRiseParam_->load(),    [this] (float v) { activeEngine_->setEROnsetRiseMs (v); });
     pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
     pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { activeEngine_->setHiCut (v); });
     pushIfChanged (lastHiCutShelfDb_, hiCutShelfDbParam_->load(),
@@ -1059,6 +1080,8 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setTailSpinRate      (tailSpinRateParam_->load());
     target->setERSize            (erSizeParam_->load());
     target->setERLevel           (erLevelParam_->load());
+    target->setEREarlyBoost      (erBoostParam_->load());
+    target->setEROnsetRiseMs     (erRiseParam_->load());
     target->setLoCut             (loCutParam_->load());
     target->setHiCut             (hiCutParam_->load());
     target->setHiCutShelfGainDb  (hiCutShelfDbParam_->load());
@@ -1146,6 +1169,8 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastTailSpinRate_  = tailSpinRateParam_->load();
     lastERSize_        = erSizeParam_->load();
     lastERLevel_       = erLevelParam_->load();
+    lastERBoost_       = erBoostParam_->load();
+    lastERRise_        = erRiseParam_->load();
     lastLoCut_         = loCutParam_->load();
     lastHiCut_         = hiCutParam_->load();
     lastHiCutShelfDb_  = hiCutShelfDbParam_->load();

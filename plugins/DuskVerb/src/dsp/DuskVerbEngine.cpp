@@ -477,6 +477,16 @@ void DuskVerbEngine::setERSize (float size)
     er_.setSize (size);
 }
 
+void DuskVerbEngine::setEREarlyBoost (float boost)
+{
+    erEarlyBoost_ = std::clamp (boost, 1.0f, 8.0f);
+}
+
+void DuskVerbEngine::setEROnsetRiseMs (float ms)
+{
+    er_.setOnsetRiseMs (ms);
+}
+
 void DuskVerbEngine::setPreDelay (float milliseconds)
 {
     float clamped = std::clamp (milliseconds, 0.0f, 250.0f);
@@ -799,8 +809,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
 
         const float erLevel = erLevelSmoother_.next();
 
-        float wetL = erL * erLevel + lateL;
-        float wetR = erR * erLevel + lateR;
+        // Phase 4 (option 2): early-field ER boost. erEarlyBoost_ default 1.0f →
+        // ×1.0 exact → bit-identical. >1 lets the parallel ER run hot enough to
+        // own the 0-26 ms transient (which the FDN tank, floored at ~26 ms by
+        // its shortest delay line, structurally cannot supply). Post-tank linear
+        // combine, NOT in the recursive loop → no feedback-codegen bit-null risk.
+        float wetL = erL * erLevel * erEarlyBoost_ + lateL;
+        float wetR = erR * erLevel * erEarlyBoost_ + lateR;
 
         wetL = loCutFilter_.processL (wetL);
         wetR = loCutFilter_.processR (wetR);
