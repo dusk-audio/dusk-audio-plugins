@@ -20,6 +20,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sixAPTank_.prepare (sampleRate, maxBlockSize);
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize);
+    multibandFdn_.prepare (sampleRate, maxBlockSize);
+    multibandFdn_.setCrossovers (300.0f, 5000.0f);
     spring_.prepare (sampleRate, maxBlockSize);
     nonLinear_.prepare (sampleRate, maxBlockSize);
     shimmer_.prepare (sampleRate, maxBlockSize);
@@ -102,6 +104,7 @@ void DuskVerbEngine::clearAllBuffers()
     sixAPTank_.clearBuffers();
     quad_     .clearBuffers();
     fdn_      .clearBuffers();
+    multibandFdn_.clearBuffers();
     spring_   .clearBuffers();
     nonLinear_.clearBuffers();
     shimmer_  .clearBuffers();
@@ -179,6 +182,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
     fdn_.clearBuffers();
+    multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
     shimmer_.clearBuffers();
@@ -196,6 +200,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     sixAPTank_.setFreeze (frozen);
     quad_.setFreeze (frozen);
     fdn_.setFreeze (frozen);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setFreeze (frozen); });
     spring_.setFreeze (frozen);
     nonLinear_.setFreeze (frozen);
     shimmer_.setFreeze (frozen);
@@ -215,6 +220,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     sixAPTank_.setDecayTime (seconds);
     quad_.setDecayTime (seconds);
     fdn_.setDecayTime (seconds);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setDecayTime (seconds); });
     spring_.setDecayTime (seconds);
     nonLinear_.setDecayTime (seconds);
     shimmer_.setDecayTime (seconds);
@@ -235,6 +241,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     sixAPTank_.setSize (size);
     quad_.setSize (size);
     fdn_.setSize (size);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setSize (size); });
     spring_.setSize (size);
     nonLinear_.setSize (size);
     shimmer_.setSize (size);
@@ -249,6 +256,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     sixAPTank_.setBassMultiply (mult);
     quad_.setBassMultiply (mult);
     fdn_.setBassMultiply (mult);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setBassMultiply (mult); });
     spring_.setBassMultiply (mult);
     nonLinear_.setBassMultiply (mult);
     shimmer_.setBassMultiply (mult);
@@ -263,6 +271,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
     sixAPTank_.setMidMultiply (mult);
     quad_.setMidMultiply (mult);
     fdn_.setMidMultiply (mult);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setMidMultiply (mult); });
     spring_.setMidMultiply (mult);
     nonLinear_.setMidMultiply (mult);
     shimmer_.setMidMultiply (mult);
@@ -277,6 +286,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     sixAPTank_.setTrebleMultiply (mult);
     quad_.setTrebleMultiply (mult);
     fdn_.setTrebleMultiply (mult);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setTrebleMultiply (mult); });
     spring_.setTrebleMultiply (mult);
     nonLinear_.setTrebleMultiply (mult);
     shimmer_.setTrebleMultiply (mult);
@@ -293,6 +303,7 @@ void DuskVerbEngine::setAirTrebleMultiply (float mult)
     // FDN engine path because fdn_.setTrebleMultiply writes to a member
     // that is never consumed inside the per-line decay calc.
     fdn_.setAirTrebleMultiply (mult);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setAirTrebleMultiply (mult); });
 }
 
 // FiveBandDamping (Phase 2) — FDN-only; other engines have no five-band path.
@@ -313,6 +324,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     sixAPTank_.setCrossoverFreq (hz);
     quad_.setCrossoverFreq (hz);
     fdn_.setCrossoverFreq (hz);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setCrossoverFreq (hz); });
     spring_.setCrossoverFreq (hz);
     nonLinear_.setCrossoverFreq (hz);
     shimmer_.setCrossoverFreq (hz);
@@ -327,6 +339,7 @@ void DuskVerbEngine::setHighCrossoverFreq (float hz)
     sixAPTank_.setHighCrossoverFreq (hz);
     quad_.setHighCrossoverFreq (hz);
     fdn_.setHighCrossoverFreq (hz);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setHighCrossoverFreq (hz); });
     spring_.setHighCrossoverFreq (hz);
     nonLinear_.setHighCrossoverFreq (hz);
     shimmer_.setHighCrossoverFreq (hz);
@@ -340,6 +353,7 @@ void DuskVerbEngine::setSaturation (float amount)
     sixAPTank_.setSaturation (amount);
     quad_.setSaturation (amount);
     fdn_.setSaturation (amount);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setSaturation (amount); });
     spring_.setSaturation (amount);
     nonLinear_.setSaturation (amount);
     shimmer_.setSaturation (amount);
@@ -359,6 +373,7 @@ void DuskVerbEngine::setModDepth (float depth)
     sixAPTank_.setModDepth (depth);
     quad_.setModDepth (depth);
     fdn_.setModDepth (depth);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setModDepth (depth); });
     spring_.setModDepth (depth);
     nonLinear_.setModDepth (depth);
     shimmer_.setModDepth (depth);   // hijacked → PITCH (0..1 → 0..24 semitones)
@@ -375,6 +390,7 @@ void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
     // for now. Other engines silently ignore (they use their own bespoke
     // modulators — DPV's structured tank, Shimmer's pitch loop, etc.).
     fdn_.setModulationTopology (t);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setModulationTopology (t); });
     quad_.setModulationTopology (t);
 }
 
@@ -384,6 +400,7 @@ void DuskVerbEngine::setPerLineDecayTilt (float shortLineScale, float longLineSc
     // 4 cross-coupled tanks (different topology), Dattorro is a single
     // structured tank — neither has a per-line rank to tilt against.
     fdn_.setPerLineDecayTilt (shortLineScale, longLineScale);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setPerLineDecayTilt (shortLineScale, longLineScale); });
 }
 
 void DuskVerbEngine::setFDNBaseDelays (const int* delays)
@@ -393,12 +410,26 @@ void DuskVerbEngine::setFDNBaseDelays (const int* delays)
     // default (kDefaultDelays — log-spaced primes 1151..6451 samples).
     if (delays == nullptr) return;
     fdn_.setBaseDelays (delays);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setBaseDelays (delays); });
 }
 
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
 {
     // Phase ε: only FDN has in-loop per-line peaking infrastructure.
     fdn_.setInLoopPeaking (freqHz, qFactor, gainDb);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setInLoopPeaking (freqHz, qFactor, gainDb); });
+}
+
+void DuskVerbEngine::setMultibandEnabled (bool enabled)
+{
+    multibandActive_ = enabled;
+}
+
+void DuskVerbEngine::setMultibandDecays (float lowSec, float midSec, float highSec)
+{
+    if (lowSec  > 0.0f) multibandFdn_.lowTank() .setDecayTime (lowSec);
+    if (midSec  > 0.0f) multibandFdn_.midTank() .setDecayTime (midSec);
+    if (highSec > 0.0f) multibandFdn_.highTank().setDecayTime (highSec);
 }
 
 void DuskVerbEngine::setFDNDualBassShelf (float fastFc, float slowFc,
@@ -408,6 +439,7 @@ void DuskVerbEngine::setFDNDualBassShelf (float fastFc, float slowFc,
     // Phase η: only FDN has the per-line dual-time-constant bass shelf
     // infrastructure.
     fdn_.setDualBassShelf (fastFc, slowFc, fastGainDb, slowGainDb, transitionMs);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setDualBassShelf (fastFc, slowFc, fastGainDb, slowGainDb, transitionMs); });
 }
 
 void DuskVerbEngine::setModRate (float hz)
@@ -416,6 +448,7 @@ void DuskVerbEngine::setModRate (float hz)
     sixAPTank_.setModRate (hz);
     quad_.setModRate (hz);
     fdn_.setModRate (hz);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setModRate (hz); });
     spring_.setModRate (hz);
     nonLinear_.setModRate (hz);
     shimmer_.setModRate (hz);       // hijacked → FEEDBACK (0.1..10 Hz → 0..0.95 cascade gain)
@@ -430,12 +463,14 @@ void DuskVerbEngine::setModRate (float hz)
 void DuskVerbEngine::setTailSpinDepth (float depth)
 {
     fdn_.setTailSpinDepth (depth);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setTailSpinDepth (depth); });
     reverseRoom_.setTailSpinDepth (depth);
 }
 
 void DuskVerbEngine::setTailSpinRate (float hz)
 {
     fdn_.setTailSpinRate (hz);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setTailSpinRate (hz); });
     reverseRoom_.setTailSpinRate (hz);
 }
 
@@ -454,6 +489,7 @@ void DuskVerbEngine::setDiffusion (float amount)
     sixAPTank_.setTankDiffusion (amount);
     quad_.setTankDiffusion        (amount);
     fdn_.setTankDiffusion         (amount);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setTankDiffusion (amount); });
     spring_.setTankDiffusion      (amount);
     nonLinear_.setTankDiffusion   (amount);
     shimmer_.setTankDiffusion     (amount);   // no-op (FDN's mix IS the diffusion)
@@ -753,8 +789,16 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                            tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
         case EngineType::FDN:
-            fdn_.process (tankInL_.data(), tankInR_.data(),
-                          tankOutL_.data(), tankOutR_.data(), numSamples);
+            // Opt-in: parallel-multiband (3 band-isolated tanks) when enabled,
+            // else the single legacy tank (bit-identical). Both consume the same
+            // diffused tankIn and write tankOut, so the downstream ER/shell
+            // chain is unchanged either way.
+            if (multibandActive_)
+                multibandFdn_.process (tankInL_.data(), tankInR_.data(),
+                                       tankOutL_.data(), tankOutR_.data(), numSamples);
+            else
+                fdn_.process (tankInL_.data(), tankInR_.data(),
+                              tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
         case EngineType::Spring:
             spring_.process (tankInL_.data(), tankInR_.data(),

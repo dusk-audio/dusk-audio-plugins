@@ -6,6 +6,7 @@
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
+#include "MultibandFDN.h"
 #include "SixAPTankEngine.h"
 #include "NonLinearEngine.h"
 #include "QuadTank.h"
@@ -215,6 +216,12 @@ public:
     // unity coefficients → bit-identical bypass on the damping output. No-
     // op for non-FDN engines.
     void setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb);
+    // Parallel-multiband FDN opt-in. false (default) = single legacy tank =
+    // bit-identical. true = 3 band-isolated tanks (decouples per-band T60).
+    void setMultibandEnabled (bool enabled);
+    // Per-band decay override (seconds) for the 3 multiband tanks — only when
+    // multiband is enabled. Lets the optimizer set Low/Mid/High RT60 apart.
+    void setMultibandDecays (float lowSec, float midSec, float highSec);
 
     // Phase η (2026-05-29): per-line dual-time-constant bass shelf. Both
     // gains 0 dB → bit-identical bypass. No-op for non-FDN engines.
@@ -275,6 +282,11 @@ private:
     SixAPTankEngine    sixAPTank_;
     QuadTank           quad_;
     FDNReverb          fdn_;
+    // Parallel-multiband FDN (3 band-isolated tanks). Opt-in per preset; when
+    // off, the single fdn_ above runs untouched → bit-identical for the fleet.
+    // Decouples per-band T60 from steady-state level (see MultibandFDN.h).
+    MultibandFDN       multibandFdn_;
+    bool               multibandActive_ = false;
     SpringEngine       spring_;
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
