@@ -475,8 +475,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // Net session: BH 25 → 10 fails (-15).
         { "Bright Hall",          "Halls",
           8,  0.40f, false,  0.0f, 0,
-          5.0580f, 0.93236f, 0.04761f, 1.45608f, 1.10000f, 0.93713f,  170.39f,
-          0.49932f, 0.37f, 0.55f,  26.856f, 10000.0f, 0.94410f, false, 0.62933f,  // ACCURACY: Treble 0.779->1.10 + HiCut 4554->10000 matches the brighter anchor centroid (cent -17%->-1.6%)
+          5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
+          0.49932f, 0.37f, 0.55f,  26.856f, 4554.46f, 0.94410f, false, 0.62933f,
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
