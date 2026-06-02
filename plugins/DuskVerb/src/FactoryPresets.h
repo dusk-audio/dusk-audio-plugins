@@ -205,6 +205,19 @@ struct FactoryPreset
         if (auto it = kXTalkByName.find (juce::String (name)); it != kXTalkByName.end())
             xtalk = it->second.depth;
         setIfExists ("xtalk", xtalk);
+        // Phase 5 multiband: enable + per-band decays, per-preset. Default off /
+        // 0 → single legacy tank → bit-identical. Populated post-sweep.
+        struct MultibandOverride { bool enable; float lowSec, midSec, highSec; };
+        static const std::map<juce::String, MultibandOverride> kMultibandByName = {
+            // Calibrated by the per-band decay sweep (2026-06-02).
+        };
+        bool  mbEnable = false; float mbLo = 0.0f, mbMi = 0.0f, mbHi = 0.0f;
+        if (auto it = kMultibandByName.find (juce::String (name)); it != kMultibandByName.end())
+        { mbEnable = it->second.enable; mbLo = it->second.lowSec; mbMi = it->second.midSec; mbHi = it->second.highSec; }
+        if (auto* p = apvts.getParameter ("mb_enable")) p->setValueNotifyingHost (mbEnable ? 1.0f : 0.0f);
+        setIfExists ("mb_low_decay",  mbLo);
+        setIfExists ("mb_mid_decay",  mbMi);
+        setIfExists ("mb_high_decay", mbHi);
         setIfExists ("damping",   damping);
         setIfExists ("bass_mult", bassMult);
         setIfExists ("mid_mult",  midMult);
