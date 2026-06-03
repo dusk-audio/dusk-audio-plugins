@@ -123,8 +123,7 @@ public:
     void clearBuffers()
     {
         low_.clearBuffers(); mid_.clearBuffers(); high_.clearBuffers();
-        lpLowL_.reset(); lpLowR_.reset(); hpLowL_.reset(); hpLowR_.reset();
-        lpHighL_.reset(); lpHighR_.reset(); hpHighL_.reset(); hpHighR_.reset();
+        lpLow_.reset(); hpLow_.reset(); lpHigh_.reset(); hpHigh_.reset();
     }
 
     void setFreeze (bool f) { low_.setFreeze (f); mid_.setFreeze (f); high_.setFreeze (f); }
@@ -140,15 +139,15 @@ public:
         {
             const float xl = inL[i], xr = inR[i];
             // low = LP(x, lowX); rest = HP(x, lowX)
-            const float loLv = lpLowL_.processL (xl);
-            const float loRv = lpLowR_.processR (xr);
-            const float reLv = hpLowL_.processL (xl);
-            const float reRv = hpLowR_.processR (xr);
+            const float loLv = lpLow_.processL (xl);
+            const float loRv = lpLow_.processR (xr);
+            const float reLv = hpLow_.processL (xl);
+            const float reRv = hpLow_.processR (xr);
             // mid = LP(rest, highX); high = HP(rest, highX)
-            const float miLv = lpHighL_.processL (reLv);
-            const float miRv = lpHighR_.processR (reRv);
-            const float hiLv = hpHighL_.processL (reLv);
-            const float hiRv = hpHighR_.processR (reRv);
+            const float miLv = lpHigh_.processL (reLv);
+            const float miRv = lpHigh_.processR (reRv);
+            const float hiLv = hpHigh_.processL (reLv);
+            const float hiRv = hpHigh_.processR (reRv);
 
             loL_[(size_t) i] = loLv; loR_[(size_t) i] = loRv;
             miL_[(size_t) i] = miLv; miR_[(size_t) i] = miRv;
@@ -168,10 +167,10 @@ private:
     void designCrossovers()
     {
         const float sr = static_cast<float> (sampleRate_);
-        lpLowL_.designLowpass  (lowXover_,  sr);  lpLowR_.designLowpass  (lowXover_,  sr);
-        hpLowL_.designHighpass (lowXover_,  sr);  hpLowR_.designHighpass (lowXover_,  sr);
-        lpHighL_.designLowpass (highXover_, sr);  lpHighR_.designLowpass (highXover_, sr);
-        hpHighL_.designHighpass(highXover_, sr);  hpHighR_.designHighpass(highXover_, sr);
+        lpLow_.designLowpass  (lowXover_,  sr);
+        hpLow_.designHighpass (lowXover_,  sr);
+        lpHigh_.designLowpass (highXover_, sr);
+        hpHigh_.designHighpass(highXover_, sr);
     }
 
     double sampleRate_ = 0.0;
@@ -180,10 +179,10 @@ private:
 
     FDNReverb low_, mid_, high_;
 
-    // Per-channel LR4 sections share coeffs but keep their own L/R state inside
-    // the LR4 struct, so one instance per split edge handles both channels.
-    LR4 lpLowL_, lpLowR_, hpLowL_, hpLowR_;
-    LR4 lpHighL_, lpHighR_, hpHighL_, hpHighR_;
+    // One LR4 per split edge; each LR4 carries independent L and R state, so a
+    // single instance handles both channels via processL/processR.
+    LR4 lpLow_, hpLow_;     // low-crossover edge (LP + complementary HP)
+    LR4 lpHigh_, hpHigh_;   // high-crossover edge
 
     std::vector<float> loL_, loR_, miL_, miR_, hiL_, hiR_, oL_, oR_;
 };

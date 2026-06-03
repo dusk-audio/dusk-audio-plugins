@@ -38,20 +38,29 @@ from full_check import attack_profile, spatial_width_bands, diffusion_flux_curve
 # lesson). er_boost is the new [1,8] APVTS "Early Ref Boost".
 AXES = {
     "Vocal Hall": [
-        # Change-2 focused sweep: free ONLY the new HF cross-talk + Width over
-        # the BAKED vh3 preset (all other params come from --program). Targets
-        # the per-band width gates without disturbing the locked attack.
-        ("HF Cross-Talk",    0.00, 0.40),
-        ("Width",            0.60, 1.40),
+        # edt fix via the dormant post-tank PerBandEDTShape (RT60-decoupled).
+        # +attack = hold (longer edt), -attack = shorter. tau = window. Lows
+        # need hold, hi needs shorten. Attack/width/T60 untouched (no FDN loop).
+        ("EDT Sub Attack",      0.0, 16.0),
+        ("EDT Sub Tau",        50.0, 200.0),
+        ("EDT Low-Mid Attack",  0.0, 14.0),
+        ("EDT Low-Mid Tau",    60.0, 220.0),
+        ("EDT Mid-High Attack", -14.0, 4.0),
+        ("EDT Mid-High Tau",   60.0, 260.0),
+        ("EDT Air Attack",     -12.0, 6.0),
+        ("EDT Air Tau",        60.0, 260.0),
     ],
     "Tiled Room": [
-        ("Early Ref Level",  0.20, 1.00),
-        ("Early Ref Size",   0.05, 0.90),
-        ("Early Ref Boost",  1.00, 5.00),
-        ("Width",            0.60, 2.00),
-        ("Diffusion",        0.05, 0.95),
-        ("Mod Depth",        0.00, 0.60),
-        ("Mod Rate",         0.20, 4.00),
+        # VH-playbook: attack (er_boost/rise), width (Width + HF cross-talk),
+        # edt (per-band shaper). Tiled is over-correlated (opposite of VH) so it
+        # widens via Width; xtalk trims the HF band.
+        ("Early Ref Boost",  3.00, 7.00),
+        ("Early Ref Rise",   6.00, 16.00),
+        ("Width",            0.90, 1.30),
+        ("HF Cross-Talk",    0.00, 0.10),
+        ("EDT Sub Attack",   0.0, 16.0),
+        ("EDT Low-Mid Attack", -14.0, 14.0),
+        ("EDT Mid-High Attack", -14.0, 4.0),
     ],
 }
 BASELINE_NFAIL = {"Vocal Hall": 26, "Tiled Room": 23}
@@ -146,6 +155,10 @@ def main():
         finally:
             for f in od.glob("*.wav"):
                 f.unlink()
+            try:
+                od.rmdir()          # drop the now-empty trial dir (avoid /tmp buildup)
+            except OSError:
+                pass
         # Now that attack is closed, minimize TOTAL n_fail (drive toward all-
         # within-JND) while the guard keeps the onset win locked. Small pd term
         # keeps a gradient on width/diffusion.
