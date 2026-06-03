@@ -4,6 +4,7 @@ Round-4 BH mini-sweep, parallel 8-worker.
 Lock from round-3: m=1.06, t=0.85, hc=7000, gt=0.5, lc=30.
 Adds PostBandTrim 4-band post-tank EQ axes.
 """
+import json
 import subprocess, sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -54,15 +55,16 @@ def trial(idx, sub, lm, mh, air):
     try:
         r = subprocess.run(
             [sys.executable, str(REPO / "plugins/DuskVerb/tools/tuner/full_check.py"),
-             str(out_dir), str(ANCHOR), "--name", "BH", "--category", "Halls"],
+             str(out_dir), str(ANCHOR), "--name", "BH", "--category", "Halls", "--json"],
             capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
         return (999, idx, sub, lm, mh, air, out_dir)
+    # Parse the structured JSON_RESULT line (robust vs the human-readable sheet).
     fails = 999
     for line in r.stdout.splitlines():
-        if "GATE(S) FAILED" in line:
+        if line.startswith("JSON_RESULT:"):
             try:
-                fails = int(line.split("✗")[1].strip().split()[0])
+                fails = json.loads(line[len("JSON_RESULT:"):])["n_fail"]
             except Exception:
                 pass
             break
