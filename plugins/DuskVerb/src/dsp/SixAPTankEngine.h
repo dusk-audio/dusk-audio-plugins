@@ -126,7 +126,7 @@ private:
         int writePos = 0;
         int mask = 0;
         int delaySamples = 0;
-        // Lexicon-style "spin and wander". The jitter on the read position
+        // vintage-hardware-style "spin and wander". The jitter on the read position
         // breaks the perfect periodicity of the cascaded allpasses that
         // otherwise leak each AP's delay period into the tail as an audible
         // discrete echo (verified by render-tool autocorrelation).
@@ -269,7 +269,7 @@ private:
     // densityDiffCoeff baseline was 0.18 — far too low to act as proper
     // diffusion; each AP just rang at its delay period (3.6-13.9 ms across
     // the 6-AP cascade at hall sizes), producing audible discrete repetitions
-    // in the tail. 0.55 matches Lexicon hall density-AP convention and
+    // in the tail. 0.55 matches reference hardware hall density-AP convention and
     // smears the signal across the cascade rather than ringing per-stage.
     // Loop stability is guaranteed by the 0.98 band-gain ceiling in
     // updateDecayCoefficients(). setTankDiffusion() scales around this.

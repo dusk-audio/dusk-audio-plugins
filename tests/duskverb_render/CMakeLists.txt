@@ -75,6 +75,7 @@ if(APPLE)
     target_link_libraries(duskverb_render PRIVATE
         "-framework AudioUnit"
         "-framework CoreAudio"
+        "-framework CoreAudioKit"
         "-framework CoreMIDI"
         "-framework AudioToolbox"
     )

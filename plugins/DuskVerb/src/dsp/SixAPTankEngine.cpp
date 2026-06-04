@@ -155,7 +155,12 @@ void SixAPTankEngine::clearBuffers()
 
 void SixAPTankEngine::setDecayTime (float seconds)
 {
-    decayTime_ = std::max (0.05f, seconds);
+    // Knob-honesty calibration (2026-05-31). Raw figure-8 decay law is sub-unity
+    // and nonlinear: measured mid-band RT60 ≈ 0.9799·T^0.8087 at nominal size.
+    // Invert it so the displayed Decay knob reads true RT60 seconds across the
+    // musical range. internal = (R/C)^(1/P) feeds the existing coefficient math.
+    const float honest = std::max (0.05f, seconds);
+    decayTime_ = std::clamp (std::pow (honest / 0.9799f, 1.0f / 0.8087f), 0.05f, 60.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -399,11 +404,11 @@ void SixAPTankEngine::updateDecayCoefficients()
 
 void SixAPTankEngine::updateLFORates()
 {
-    // Slight L/R detune (1.13× on the right tank) so the two random walks
-    // never settle into a beating pattern even if their seeds happen to align
-    // briefly.
-    leftTank_.lfo.setRate  (modRateHz_);
-    rightTank_.lfo.setRate (modRateHz_ * 1.13f);
+    // Tightly clustered L/R spread (0.98×/1.02×). Previous 1.0/1.13×
+    // (13 %) trimmed to match the global engine-wide de-chorus policy.
+    // Distinct PRNG seeds keep per-sample variance to avoid phase-lock.
+    leftTank_.lfo.setRate  (modRateHz_ * 0.98f);
+    rightTank_.lfo.setRate (modRateHz_ * 1.02f);
 }
 
 void SixAPTankEngine::process (const float* inputL, const float* inputR,

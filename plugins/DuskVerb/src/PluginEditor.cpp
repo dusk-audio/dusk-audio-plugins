@@ -293,8 +293,16 @@ namespace
 // DuskVerbEditor
 // =============================================================================
 
-static constexpr int kBaseWidth  = 1400;  // 1250→1400: more breathing room for the 5-knob damping group + bottom row
-static constexpr int kBaseHeight = 640;   // 600→640 for the slightly taller damping group
+// Tightened 2026-05-24: previous 1400×640 left ~30% empty whitespace inside
+// every panel column (knobs vertically over-centred). Pass 2 cuts height
+// to 470 + bumps knob diameters (62/78 → 76/92). Pass 3 nudges height
+// back to 510 so the DECAY hero (limited by knob-area H) can grow to ~135 px.
+// Pass 4 pushes further (510 → 560) and bumps knobMed 76 → 84 so the hero
+// grows to ~159 px (vs MIX at 92) while the secondary-tier knobs eat more of
+// their column yPad. Pass 5 keeps the FREEZE strip at 22 px (was briefly
+// shrunk to 16) so FREEZE / BUS / GATE all render at the same visual height.
+static constexpr int kBaseWidth  = 1240;
+static constexpr int kBaseHeight = 560;
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -555,11 +563,17 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     outputMeter_.setRefreshRate (15.0f);
     addAndMakeVisible (outputMeter_);
 
+    // uiVersion 4: pre-v4 builds shipped layouts at 1400×640 (v0), 1240×540
+    // (v1), 1240×470 (v2), 1240×510 (v3). ScalableEditorHelper now resets
+    // the persisted size to the new defaults whenever the stored uiVersion
+    // is older than the value passed here — no more maintaining an explicit
+    // list of prior defaults inside this file. Bump this when a future
+    // layout pass should auto-reset existing sessions.
     scaler_.initialize (this, &p, kBaseWidth, kBaseHeight,
                         static_cast<int> (kBaseWidth * 0.7f),
                         static_cast<int> (kBaseHeight * 0.7f),
                         kBaseWidth * 2, kBaseHeight * 2,
-                        true);
+                        true, /* uiVersion */ 4);
 
     setSize (scaler_.getStoredWidth(), scaler_.getStoredHeight());
     startTimerHz (15);
@@ -628,7 +642,7 @@ void DuskVerbEditor::paint (juce::Graphics& g)
 
     // Brand wordmark — large, bold, slightly compressed for visual character.
     // The plugin name is the brand; no need to explain "Algorithmic Reverb"
-    // (Valhalla, Crystalline, Blackhole all skip the explanatory subtitle).
+    // (external reference, Crystalline, Blackhole all skip the explanatory subtitle).
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kText));
     juce::Font titleFont (juce::FontOptions (32.0f * sf, juce::Font::bold));
     titleFont.setHorizontalScale (0.95f);
@@ -642,24 +656,21 @@ void DuskVerbEditor::paint (juce::Graphics& g)
                           static_cast<float> (contentX),
                           static_cast<float> (contentX + contentW));
 
-    int topY       = scaler_.scaled (152);
+    int topY       = scaler_.scaled (128);
     int gap        = scaler_.scaled (8);   // MUST match resized()
-    int titleBandH = scaler_.scaled (20);
+    int titleBandH = scaler_.scaled (16);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.45f);
+    int topRowH = juce::roundToInt (availH * 0.48f);
     int bottomH = availH - topRowH;
     int bottomY = topY + topRowH + gap;
 
     // Group panel widths MUST match resized() exactly — knobs are placed in
-    // resized() using these same percentages. Previously paint() used a
-    // 25/30/45 split while resized() used 30/36/34, so DAMPING's drawn box
-    // overshot its knob columns by ~11 % and INPUT's knobs spilled past the
-    // INPUT box edge.
-    // 2026-04-26: TIME 36 → 28, DAMPING auto-grows 34 → 42 to give the
-    // 5-knob damping group breathing room (was visibly cramped).
+    // resized() using these same percentages.
+    // INPUT 26 / TIME 28 / DAMPING 46 — INPUT narrowed (only 2 knobs + SYNC
+    // combo) so DAMPING's 5-knob row gets its full breathing room.
     int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.30f);
+    int inputW     = static_cast<int> (topUsable * 0.26f);
     int timeW      = static_cast<int> (topUsable * 0.28f);
     int characterW = topUsable - inputW - timeW;
 
@@ -798,20 +809,20 @@ void DuskVerbEditor::resized()
     // width of the group panels below it (no width cap) so it reads as the
     // visual roof of the layout rather than a centred badge.
     {
-        const int meterY = scaler_.scaled (88);
-        const int meterH = scaler_.scaled (36);
+        const int meterY = scaler_.scaled (80);
+        const int meterH = scaler_.scaled (28);
         tailMeter_.setBounds (contentX, meterY, contentW, meterH);
     }
 
-    // Group rows start below the tail meter (ends y=124) plus a 16 px band
-    // for the brighter IN / OUT labels (y=128–144) plus a small gap.
-    int topY       = scaler_.scaled (152);
+    // Group rows start below the tail meter (ends y=108) plus the IN / OUT
+    // label band (y=112-124) plus a small gap.
+    int topY       = scaler_.scaled (128);
     int gap        = scaler_.scaled (8);
-    int titleBandH = scaler_.scaled (20);
-    int topPad     = titleBandH + scaler_.scaled (4);
+    int titleBandH = scaler_.scaled (16);
+    int topPad     = titleBandH + scaler_.scaled (2);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.45f);
+    int topRowH = juce::roundToInt (availH * 0.48f);
     int bottomH = availH - topRowH;
     int bottomY = topY + topRowH + gap;
 
@@ -819,12 +830,11 @@ void DuskVerbEditor::resized()
     inputMeter_.setBounds  (margin,                       topY, meterW, availH + gap);
     outputMeter_.setBounds (getWidth() - margin - meterW, topY, meterW, availH + gap);
 
-    // 30 / 28 / 42 split — TIME shrunk and DAMPING widened so the 5 damping
-    // knobs (BASS / MID / TREBLE / LOW XOVER / HIGH XOVER) get breathing
-    // room. MUST stay in lock-step with paint() — see the comment block
-    // there for the original alignment-bug history.
+    // 26 / 28 / 46 split — INPUT narrowed (only 2 knobs + SYNC combo) so
+    // DAMPING's 5-knob row gets its full breathing room. MUST stay in
+    // lock-step with paint().
     int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.30f);
+    int inputW     = static_cast<int> (topUsable * 0.26f);
     int timeW      = static_cast<int> (topUsable * 0.28f);
     int characterW = topUsable - inputW - timeW;
 
@@ -832,13 +842,13 @@ void DuskVerbEditor::resized()
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    // Two-tier knob hierarchy — primary (DECAY, SIZE, MIX) reads as the
-    // hero of each row; everything else sits at one consistent secondary
-    // size. The previous three-tier layout fragmented visually.
-    // Sizes bumped (70→78, 56→62) after widening to 1400 px so the knobs
-    // fill the new column widths instead of looking lost.
-    int knobBig = juce::roundToInt (78.0f * sf);
-    int knobMed = juce::roundToInt (62.0f * sf);
+    // Two-tier knob hierarchy — primary (MIX) is knobBig; secondary
+    // (everything else except the DECAY hero) is knobMed. DECAY's
+    // concentric-ring rendering uses heroSize (computed below) which
+    // dominates at ~165 px diameter. Pass 4 bumped knobMed 76 → 84
+    // to soak up the remaining column yPad in non-hero panels.
+    int knobBig = juce::roundToInt (92.0f * sf);
+    int knobMed = juce::roundToInt (84.0f * sf);
 
     // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
     // The two knobs sit adjacent so the row reads as a coherent pair, and
@@ -870,7 +880,9 @@ void DuskVerbEditor::resized()
     {
         auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
         timeArea.removeFromTop (topPad);
-        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (28));
+        // FREEZE strip 22 px — matches BUS and GATE strip heights so all
+        // three toggle buttons read as the same visual element.
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
 
         // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
         // The hero is the visual centrepiece of the entire plugin — its
@@ -881,13 +893,16 @@ void DuskVerbEditor::resized()
         const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
         decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
 
-        // SIZE remains a standard rotary at the secondary tier (knobBig = 70).
-        placeKnob (size_, knobArea, knobBig, sf);
+        // SIZE renders at the secondary tier (knobMed) so DECAY's
+        // concentric-ring hero is the unambiguously largest knob on the UI.
+        // Previously SIZE shared knobBig with MIX; visually it competed with
+        // the hero for top-row dominance.
+        placeKnob (size_, knobArea, knobMed, sf);
 
-        // FREEZE spans the full bottom strip of the TIME group (back to
-        // its original layout — GATE button moved to the MODULATION/GATE
-        // group below where it sits next to ATTACK/RELEASE).
-        freezeButton_.setBounds (timeArea.reduced (8, 4));
+        // FREEZE spans the full bottom strip of the TIME group. (8, 2) inset
+        // matches the BUS and GATE buttons so all three toggles render at the
+        // same visual height.
+        freezeButton_.setBounds (timeArea.reduced (8, 2));
     }
 
     // DAMPING: full 3-band (BASS/MID/TREBLE multipliers + LOW/HIGH crossovers).
@@ -917,15 +932,24 @@ void DuskVerbEditor::resized()
 
     {
         // Reserve a bottom strip in the MODULATION/GATE group for the GATE
-        // toggle button. Knobs lay out in the upper portion; the button
-        // sits underneath next to where the ATTACK/RELEASE values are
-        // displayed on the NonLinear engine.
-        const int gateButtonH = scaler_.scaled (24);
+        // toggle button ONLY when the GATE button is visible (NonLinear
+        // engine). On every other engine the GATE button is hidden and the
+        // strip carve wasted vertical space. Now the knob area takes the
+        // full panel height when GATE is hidden.
         juce::Rectangle<int> modPanel { modX, bottomY, modW, bottomH };
-        auto modKnobArea = modPanel.removeFromTop (modPanel.getHeight() - gateButtonH);
-        layoutKnobsInGroup (modKnobArea, topPad,
-                            { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
-        gateButton_.setBounds (modPanel.reduced (8, 2));
+        if (gateButton_.isVisible())
+        {
+            const int gateButtonH = scaler_.scaled (22);
+            auto modKnobArea = modPanel.removeFromTop (modPanel.getHeight() - gateButtonH);
+            layoutKnobsInGroup (modKnobArea, topPad,
+                                { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+            gateButton_.setBounds (modPanel.reduced (8, 2));
+        }
+        else
+        {
+            layoutKnobsInGroup (modPanel, topPad,
+                                { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+        }
     }
 
     layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
@@ -939,7 +963,7 @@ void DuskVerbEditor::resized()
     {
         auto outArea = juce::Rectangle<int> (outputX, bottomY, outputW, bottomH).reduced (4, 0);
         outArea.removeFromTop (topPad);
-        int knobAreaH = outArea.getHeight() - scaler_.scaled (28);
+        int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
         auto knobArea = outArea.removeFromTop (knobAreaH);
         // MIX is primary (peer of DECAY/SIZE in TIME); WIDTH and TRIM sit
         // at the secondary tier.
@@ -948,8 +972,7 @@ void DuskVerbEditor::resized()
         placeKnob (mix_,      knobArea.removeFromLeft (mixCol),  knobBig, sf);
         placeKnob (width_,    knobArea.removeFromLeft (restCol), knobMed, sf);
         placeKnob (gainTrim_, knobArea,                          knobMed, sf);
-        // BUS spans the full bottom strip (locks were removed).
-        busModeButton_.setBounds (outArea.reduced (8, 4));
+        busModeButton_.setBounds (outArea.reduced (8, 2));
     }
 
     titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };
@@ -1328,6 +1351,22 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
     // just DEPTH/RATE knobs and no button below them).
     gateButton_.setVisible (isNonLinear);
 
+    // The MOD-panel layout in resized() now carves a strip for the GATE
+    // button only when it is visible. setVisible() does not re-fire
+    // resized(), so we trigger one here to keep the panel bounds + the
+    // gate button's own bounds in sync with the new visibility state.
+    // Without this, switching to NonLinear leaves the GATE button at its
+    // previous (often invisible) bounds, and switching away from
+    // NonLinear leaves the MOD knobs sized to the smaller gate-strip
+    // layout.
+    //
+    // Guard against the ctor's pre-setSize() invocation: resized() with
+    // getWidth() == 0 would walk every child with a degenerate rectangle.
+    // The ctor's setSize() (after this returns) fires the authoritative
+    // layout pass anyway.
+    if (getWidth() > 0 && getHeight() > 0)
+        resized();
+
     repaint();   // catches FREEZE / BUS toggle redraw via LookAndFeel
 }
 
@@ -1510,6 +1549,16 @@ void EngineGlyph::paint (juce::Graphics& g)
                 const float dy = y0 + (gridH * row) / 3.0f;
                 g.fillEllipse (dx - dotR, dy - dotR, dotR * 2.0f, dotR * 2.0f);
             }
+            break;
+        }
+        default:
+        {
+            // Generic engine cue for engines without a bespoke glyph
+            // (VintageTank / ReverseRoom) — a centred ring so the header still
+            // shows an icon instead of empty space.
+            const float r = std::min (w, h) * 0.30f;
+            g.drawEllipse (inner.getCentreX() - r, inner.getCentreY() - r,
+                           r * 2.0f, r * 2.0f, 1.5f);
             break;
         }
     }

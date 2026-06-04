@@ -1,25 +1,35 @@
 // DuskVerb render tool.
 //
-// Loads the built DuskVerb AU bundle via juce::AudioPluginFormatManager
-// (the same path used by AudioUnit-hosting DAWs like Logic), applies a named
-// factory preset's parameter values, and renders a series of test signals
-// through it. Output WAVs go to tests/duskverb_render/output/.
+// Loads a plugin via juce::AudioPluginFormatManager (the same path hosting
+// DAWs use), applies a named factory preset's parameter values, and renders
+// test signals through it. Output WAVs go to tests/duskverb_render/output/
+// (or --output-dir).
+//
+// Supported plugin formats (auto-detected by file extension):
+//   .component  → AudioUnit  (macOS, requires JUCE_PLUGINHOST_AU=1)
+//   .vst3       → VST3       (cross-platform, JUCE_PLUGINHOST_VST3=1)
+//   .so / .dll  → VST2       (Linux/Windows, requires JUCE_PLUGINHOST_VST=1
+//                              + VST2_SDK_DIR at build time; supports
+//                              yabridge-bridged Windows VST2s on Linux)
 //
 // Why hosted (not Processor-link)? An engine-standalone or Processor-link
 // test can drift from what the user hears in the DAW because the plugin
 // wrapper layer (parameter scaling, channel layout, automation timing) is
-// part of the audio result. Hosting via the actual AU bundle eliminates
+// part of the audio result. Hosting via the actual plugin bundle eliminates
 // that whole class of false negatives.
 //
 // Usage:
-//   duskverb_render <preset_name>
+//   duskverb_render <preset_name>                              # default DuskVerb
 //   duskverb_render "Lush Dark Hall"
+//   duskverb_render --vst3 ~/.vst3/DuskVerb.vst3 "Vintage Vocal Plate"
+//   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so --program "Concert Hall"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -27,19 +37,29 @@
 namespace
 {
     constexpr double kSampleRate   = 48000.0;
-    constexpr int    kBlockSize    = 256;
+    // 2048 samples ≈ 43 ms blocks. 4096 triggered Wine-side stack overflows
+    // inside Lex VST2 plugins after a full vpreset apply (yabridge handles
+    // every Wine exception on a finite thread stack; deep call stacks
+    // from plugin-internal FPU/SSE handling crashed at 4096). 256 is
+    // historical default but hits yabridge IPC overhead. 2048 is the
+    // measured sweet spot: 8× fewer round-trips than 256, no stack issue.
+    constexpr int    kBlockSize    = 2048;
     constexpr int    kRenderSec    = 6;
     constexpr int    kTotalSamples = static_cast<int> (kSampleRate * kRenderSec);
 
-    // Default AU path: per-user Components folder under $HOME — matches
-    // `cmake --build ... --target DuskVerb_AU`'s install destination on
-    // macOS and works for any developer (no hard-coded username). The
-    // `--au <path>` CLI flag overrides this when the AU lives elsewhere
-    // (e.g. /Library/Audio/Plug-Ins/Components for a system install).
-    const juce::String kAUPath =
+    // Default DuskVerb plugin path: per-user install location for the
+    // platform's native format. Overridable via --au / --vst3 / --vst2.
+   #if JUCE_MAC
+    const juce::String kDefaultPluginPath =
         juce::File::getSpecialLocation (juce::File::userHomeDirectory)
             .getChildFile ("Library/Audio/Plug-Ins/Components/DuskVerb.component")
             .getFullPathName();
+   #else
+    const juce::String kDefaultPluginPath =
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory)
+            .getChildFile (".vst3/DuskVerb.vst3")
+            .getFullPathName();
+   #endif
 
     // Factory preset definitions — mirror FactoryPresets.h (we don't link
     // against the plugin's source, so we duplicate just the values we need).
@@ -60,6 +80,24 @@ namespace
         float sixAPOutputTrim      = 1.3f;
     };
 
+    // ── Algorithm choice normalisation ──────────────────────────────────────
+    // DuskVerb's "Algorithm" parameter is a JUCE AudioParameterChoice. A choice
+    // param normalises index i as i / (numChoices - 1). The dropdown exposes 9
+    // engines (getAlgorithmConfig() in AlgorithmConfig.h):
+    //   0 Dattorro · 1 DattorroVintage · 2 SixAPTank · 3 QuadTank · 4 FDN
+    //   5 Spring   · 6 NonLinear        · 7 Shimmer   · 8 VintageTank
+    // This divisor MUST equal numAlgorithms - 1. It was 7 in the 8-engine era;
+    // adding VintageTank (2026-05-30, commit 4362b22) made it 8. A stale divisor
+    // silently misroutes the engine (e.g. FDN index 4 → Spring) — the bug this
+    // branch (87-fix-fdn-quadtank) fixes. Keep kNumAlgorithms in sync with
+    // getNumAlgorithms() whenever an engine is added or removed.
+    // MUST equal AlgorithmConfig::getNumAlgorithms() (the harness is standalone
+    // and cannot link the plugin enum, so bump this by hand when an engine is
+    // added). Was a stale 9 after ReverseRoom became the 10th engine — that
+    // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
+    static constexpr int   kNumAlgorithms    = 10;   // 0..9: + 9 ReverseRoom
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 9.0f
+
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to
     // ints by the AU wrapper, so we match on display name instead.
@@ -68,8 +106,8 @@ namespace
         return {
             "Lush Dark Hall",
             {
-                // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                // Migrated from 6-AP → FDN on 2026-04-26.
+                { "Algorithm",       4.0f / kAlgorithmDivisor},     // FDN — Realistic Space (choice 4 of 0..8)
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
                 { "Pre-Delay",       35.0f },
@@ -81,7 +119,7 @@ namespace
                 { "Treble Multiply", 0.35f },     // 0.55 → 0.35 (darker)
                 { "Bass Multiply",   1.40f },
                 { "Mid Multiply",    1.10f },
-                { "Low Crossover",   550.0f },
+                { "Low Crossover",   328.0f },
                 { "High Crossover",  2700.0f },   // 3500 → 2700 (damp upper mids)
                 { "Saturation",      0.20f },
                 { "Diffusion",       0.75f },
@@ -99,34 +137,36 @@ namespace
 
     PresetParams getCathedral()
     {
+        // v2 Phase 2 — CoherentLoop modulation topology + autonomous tuner
+        // (--category Halls). Mirrors FactoryPresets.h "Cathedral" row.
         return {
             "Cathedral",
             {
-                // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26.
-                { "Algorithm",       4.0f / 7.0f},     // FDN — Realistic Space (choice 3 of 0..6)
+                { "Algorithm",       4.0f / kAlgorithmDivisor},
                 { "Dry/Wet",         1.0f },
                 { "Bus Mode",        1.0f },
-                { "Pre-Delay",       30.0f },
+                { "Pre-Delay",       20.88f },
                 { "Pre-Delay Sync",  0.0f },
-                { "Decay Time",      6.50f },
-                { "Size",            0.95f },
-                { "Mod Depth",       0.15f },     // 0.20 → 0.15 (FDN smooth)
-                { "Mod Rate",        0.45f },
-                { "Treble Multiply", 0.40f },     // 0.55 → 0.40 (darker)
-                { "Bass Multiply",   1.30f },
-                { "Mid Multiply",    1.20f },
-                { "Low Crossover",   750.0f },
-                { "High Crossover",  2400.0f },   // 3000 → 2400 (cathedral darkness)
-                { "Saturation",      0.15f },
-                { "Diffusion",       0.78f },
-                { "Early Ref Level", 0.30f },
-                { "Early Ref Size",  0.85f },
-                { "Lo Cut",          60.0f },
-                { "Hi Cut",          8500.0f },   // 10000 → 8500 (224-era cap)
-                { "Width",           1.50f },     // 1.35 → 1.50 (max stereo)
+                { "Decay Time",      3.59f },
+                { "Size",            0.70f },
+                { "Mod Depth",       0.18f },
+                { "Mod Rate",        0.95f },
+                { "Treble Multiply", 0.93f },
+                { "Bass Multiply",   1.13f },
+                { "Mid Multiply",    0.73f },
+                { "Low Crossover",   418.0f },
+                { "High Crossover", 7773.0f },
+                { "Saturation",      0.35f },
+                { "Diffusion",       0.26f },
+                { "Early Ref Level", 0.48f },
+                { "Early Ref Size",  0.36f },
+                { "Lo Cut",          22.0f },
+                { "Hi Cut",         4261.0f },
+                { "Width",           0.89f },
                 { "Freeze",          0.0f },
-                { "Gain Trim",      -3.5f },      // 1 kHz sine calibration round 1
+                { "Gain Trim",      -7.65f },
                 { "Mono Below",      20.0f },
+                { "Hi Cut Shelf",   -14.5f },
             }
         };
     }
@@ -136,71 +176,34 @@ namespace
         return {
             "Blade Runner 224",
             {
-                // Migrated to algorithm 0 (Dattorro figure-8) on 2026-04-26
-                // — historically more accurate to the Lexicon 224's actual
-                // 2-AP cross-coupled topology than SixAPTank's 6-AP cascade.
-                // Validated against Arturia Rev LX-24 BladeRunner preset on
-                // 2026-04-27 — second pass after discovering the prior
-                // setStateInformation path silently dropped the .aupreset's
-                // values, so our "Arturia target" was actually defaults.
-                // True target (per AudioUnitSetParameter overrides):
-                //   RT60 9.73 s, initial 12 kHz/-15.7 dB, LR mean ~0,
-                //   LR stddev 0.028, mid-tail centroid 1700-2700 Hz, hot tail
-                //   (-76 dB at 5 s, vs our -99 dB).
-                //
-                // From the previous (wrong-target) round we keep:
-                //   • Width 1.00          — kills the static phasiness
-                //   • Mod Depth 0.03      — target stddev is even tighter
-                //   • Mod Rate 0.45       — slow drift
-                //   • Hi Cut 10 kHz       — preserve bright initial transient
-                //   • Early Ref Level 1.0 — max brightness on ER burst
-                //   • High Crossover 5kHz — push damping band higher
-                //   • Bus Mode 0          — insert mode so dry mixes in
-                //   • Dry/Wet 0.412       — matches Arturia's mix
-                //
-                // Reverting the changes that chased the wrong (defaults)
-                // target:
-                //   • Decay 4.0 → 9.0 s   — target RT60 9.7 s; bass mult 1.30
-                //                              extends the loop ~13 s but the
-                //                              tank's loop length and damping
-                //                              produce ~10 s measured
-                //   • Diffusion 0.50 → 0.85 — smooth sustained tail (like
-                //                              Arturia's Lexicon Hall) vs the
-                //                              spikier 0.50 we'd dialled in
-                { "Algorithm",       0.0f / 7.0f },     // 0 = Vintage Plate (Dattorro)
-                { "Dry/Wet",         0.412f },
-                { "Bus Mode",        0.0f },
-                { "Pre-Delay",       24.0f },     // Lexicon 224 hardware spec for Vangelis cues
+                // 2026-05-25 re-anchor to Lex Large RHall 4 (the actual
+                // 224 Random Hall algorithm used on the 1982 Blade Runner
+                // score). Engine swapped from Dattorro (algo 0) to FDN
+                // (algo 4) — Dattorro 2-AP topology can't replicate Random
+                // Hall's multi-tap input + dense diffusion + heavy mod.
+                { "Algorithm",       4.0f / kAlgorithmDivisor },     // 4 = Realistic Space (FDN)
+                { "Dry/Wet",         1.0f },
+                { "Bus Mode",        1.0f },
+                { "Pre-Delay",       25.0f },
                 { "Pre-Delay Sync",  0.0f },
-                { "Decay Time",      9.00f },
-                { "Size",            1.00f },     // max size for fullest low-end body
-                { "Mod Depth",       0.03f },
-                { "Mod Rate",        0.45f },
-                { "Treble Multiply", 0.50f },     // 0.35 was too aggressive — treble decayed
-                                                  // 4 dB darker than Arturia by 500 ms.
-                                                  // 0.50 keeps the dark mid-tail without
-                                                  // killing late-tail HF residue.
-                { "Bass Multiply",   2.00f },     // 1.70 → 2.00, more bass dominance
-                { "Mid Multiply",    1.00f },
-                { "Low Crossover",   800.0f },
-                { "High Crossover",  5000.0f },
-                { "Saturation",      0.00f },     // Inactive at this preset's signal levels —
-                                                  // our soft-clip is on the cross-feed bus with
-                                                  // threshold 1.0 - sat*0.6; the bus signal here
-                                                  // never reaches the knee even at sat=0.35.
-                                                  // Setting to 0 to be honest. To match Arturia's
-                                                  // Drive=0.38 audibly we need input-side
-                                                  // saturation — a separate DSP task.
-                { "Diffusion",       0.85f },
-                { "Early Ref Level", 1.00f },
-                { "Early Ref Size",  1.00f },
-                { "Lo Cut",          60.0f },
-                { "Hi Cut",          6500.0f },   // middle ground between 10000 (too bright)
-                                                  // and 5000 (too dark) — preserves the 5-6.5 kHz
-                                                  // air that Arturia keeps in its mid-tail
-                { "Width",           1.00f },     // pure pass-through — kills phasiness
+                { "Decay Time",      4.99f },
+                { "Size",            0.48f },
+                { "Mod Depth",       0.35f },     // heavy mod — Random Hall signature
+                { "Mod Rate",        0.64f },
+                { "Treble Multiply", 0.93f },
+                { "Bass Multiply",   2.08f },     // extended bass — Lex 1.5× BassRT
+                { "Mid Multiply",    1.94f },
+                { "Low Crossover",   550.0f },
+                { "High Crossover",  1581.0f },
+                { "Saturation",      0.39f },
+                { "Diffusion",       0.97f },
+                { "Early Ref Level", 0.00f },
+                { "Early Ref Size",  0.50f },
+                { "Lo Cut",          47.0f },
+                { "Hi Cut",          19723.0f },
+                { "Width",           1.10f },
                 { "Freeze",          0.0f },
-                { "Gain Trim",       7.0f },      // wet-only trim fix recalibration
+                { "Gain Trim",      -11.3f },     // level-matched to Lex Random Hall RHall 4
                 { "Mono Below",      20.0f },
             }
         };
@@ -208,7 +211,7 @@ namespace
 
     // Compact preset builder. Field order matches FactoryPresets.h exactly so
     // values can be transcribed 1:1 from the source.  Algorithm choice param
-    // values are the choice INDEX (0..6); we normalise to N/(N-1) below.
+    // values are the choice INDEX (0..8); we normalise to index/(N-1) below.
     PresetParams makePreset (const char* name,
         int algoIdx, float mix, bool bus, float predelay,
         float decay, float size, float modDepth, float modRate,
@@ -221,13 +224,12 @@ namespace
         return {
             juce::String (name),
             {
-                // Divisor must equal (numAlgorithms - 1). With 7 algorithms
-                // (Dattorro / 6-AP / QuadTank / FDN / Spring / NonLinear /
-                // Shimmer) → divisor = 6. Mismatching the divisor silently
-                // misroutes the algorithm index (e.g. /5 with 7 algos sends
-                // algoIdx 4 → 4/5=0.8 → Shimmer (idx 6 in 0..6) instead of
-                // Spring).
-                { "Algorithm",       static_cast<float> (algoIdx) / 7.0f },
+                // Divisor must equal (numAlgorithms - 1). 9 algorithms now
+                // (Dattorro / DattorroVintage / SixAPTank / QuadTank / FDN /
+                // Spring / NonLinear / Shimmer / VintageTank) → divisor = 8.
+                // Mismatching the divisor silently misroutes the algorithm
+                // index (the FDN→Spring bug fixed on branch 87-fix-fdn-quadtank).
+                { "Algorithm",       static_cast<float> (algoIdx) / kAlgorithmDivisor },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
                 { "Pre-Delay",       predelay },
@@ -264,50 +266,73 @@ namespace
         if (name == "Blade Runner 224")   return getBladeRunner224();
         // Plates — all rendered at 100 % wet for fair comparison via Bus Mode.
         // Trailing args: (mono, midMult, highCrossover, saturation) — mirror FactoryPresets.h retunes.
-        // Vintage Vocal Plate — algo 1 (DattorroPlateVintage). Tuned values
-        // mirror FactoryPresets.h "Vintage Vocal Plate" row post-reorder.
+        // Vintage Vocal Plate — algo 1 (DattorroPlateVintage). Optuna-locked
+        // 2026-05-27 (v5 final pipeline). Best trial, loss 3.35, full_check
+        // 14/14 PASS after engine-ceiling tail_t30 gate relaxation. See
+        // FactoryPresets.h "Vintage Vocal Plate" comment block for the full
+        // measurement table.
+        // Vintage Vocal Plate — algo 1 (DattorroPlateVintage). v8 FINAL.
+        // All 8 sustained-pink steady-state band gates PASS within ±1.5 dB.
+        // Gain Trim manually overridden 11.48 → 6.7 per drum-loop A/B.
         if (name == "Vintage Vocal Plate" || name == "Vocal Plate (Vintage)")
-            return makePreset (name.toRawUTF8(), 1, 1.0f, true, 10.0f,
-                /* decay  */ 1.30f, /* size    */ 0.45f, /* modD   */ 0.30f, /* modR   */ 0.60f,
-                /* damp   */ 0.72f, /* bassMlt */ 0.65f, /* xover  */ 400.0f,
-                /* diff   */ 0.55f, /* erLvl   */ 0.00f, /* erSz   */ 0.30f,
-                /* loCut  */ 80.0f, /* hiCut   */ 8000.0f, /* width */ 1.10f,
-                /* trim   */ 10.0f,
-                /* mono   */ 20.0f, /* midMlt  */ 0.85f, /* highX  */ 4500.0f, /* sat    */ 0.10f);
-        if (name == "Modulated Plate")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f, 0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, 0.5f, 20.0f, 1.10f, 4500.0f, 0.25f);
-        if (name == "Fat Pop Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 18.0f, 2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f, 480.0f, 0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, 13.0f, 20.0f, 1.20f, 4500.0f, 0.30f);
+        {
+            // v9 (2026-05-27): staged_tuner.py 3-stage CMA-ES, 1300 trials.
+            // Mirrors FactoryPresets.h "Vintage Vocal Plate" row exactly so
+            // the render harness produces the same IR as the shipped factory
+            // preset. Gain Trim 6.7 = user's ear-calibrated value (v9 optimizer
+            // returned 9.49; we keep 6.7 per the listening-test override).
+            auto p = makePreset (name.toRawUTF8(), 1, 1.0f, true, 10.0f,
+                /* decay  */ 0.74f,  /* size    */ 0.41f,  /* modD   */ 0.20f, /* modR  */ 0.81f,
+                /* damp   */ 0.84f,  /* bassMlt */ 1.10f,  /* xover  */ 436.0f,
+                /* diff   */ 0.37f,  /* erLvl   */ 0.00f,  /* erSz   */ 0.30f,
+                /* loCut  */ 25.7f,  /* hiCut   */ 13357.0f, /* width */ 0.75f,
+                /* trim   */ 6.7f,
+                /* mono   */ 20.0f,  /* midMlt  */ 1.06f,  /* highX  */ 7342.0f, /* sat */ 0.20f);
+            p.values["DPV HF Shelf Gain"]   = 3.25f;
+            p.values["DPV HF Shelf Freq"]   = 4049.0f;
+            p.values["DPV Struct HF Damp"]  = 6605.0f;
+            p.values["DPV Box Cut Gain"]    = -1.52f;
+            p.values["DPV Box Cut Freq"]    = 704.0f;
+            p.values["DPV Bass Shelf Gain"] = 0.82f;
+            p.values["DPV Bass Shelf Freq"] = 89.7f;
+            return p;
+        }
         // Other halls
-        if (name == "Smooth Concert Hall")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 28.0f, 2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f, 900.0f, 0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, -0.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
+        // Smooth Concert Hall — algo=3 (QuadTank) per FactoryPresets.h post-reorder.
+        // Stress-test rendering: BUS=true, Mix=1.0 to expose any FDN/QuadTank
+        // residual artifacts. Factory bus/mix/predelay otherwise preserved.
+        // Rich Plate — algo=4 (FDN). Bright + diffuse Lexicon PCM-90 plate
+        // anchor. Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.40 bus=false).
+        // Vocal Booth — algo=4 (FDN). Sub-second tight close-mic room.
+        // Stress-rendered at BUS=true Mix=1.0 (factory is mix=0.30 bus=false).
+        // Vocal Hall — v13 autonomous staged_tuner.py sweep (--category Halls,
+        // post-listening Stage 2 mud-band + spec_L1_max loss fix).
+        // Mirrors FactoryPresets.h "Vocal Hall" row.
         if (name == "Vocal Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f, 0.78f, 0.45f, 0.55f, 100.0f, 9000.0f, 1.15f, -1.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 22.0f, 2.04f, 0.76f, 0.123f, 0.54f, 0.86f, 1.50f, 396.0f, 0.12f, 0.45f, 0.55f, 33.0f, 5884.0f, 0.88f, -1.52f, 20.0f, 1.13f, 8042.0f, 0.32f);
         // Chambers
-        if (name == "Wood Chamber")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 18.0f, 2.30f, 0.40f, 0.18f, 0.60f, 0.65f, 1.20f, 850.0f, 0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, 0.5f, 20.0f, 1.10f, 4000.0f, 0.20f);
         if (name == "Realistic Chamber")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 14.0f, 1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f, 0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, 2.0f, 20.0f, 1.00f, 5000.0f, 0.05f);
+        {
+            auto p = makePreset (name.toRawUTF8(), 3, 1.0f, true, 8.39f, 5.05f, 0.44f, 0.20f, 0.50f, 0.56f, 0.71f, 324.0f, 0.42f, 0.20f, 0.44f, 26.0f, 10060.0f, 0.96f, -8.55f, 20.0f, 1.14f, 5957.0f, 0.26f);
+            p.values["Hi Cut Shelf"] = -23.5f;
+            return p;
+        }
         // Rooms
         if (name == "Tight Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 4.0f, 0.50f, 0.20f, 0.25f, 0.60f, 0.95f, 0.95f, 1500.0f, 0.85f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.10f);
-        if (name == "Studio Room")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.0f, 0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f, 0.85f, 0.60f, 0.40f, 80.0f, 9000.0f, 1.05f, 4.5f, 20.0f, 1.00f, 5000.0f, 0.05f);
-        if (name == "80s Non-Lin Drum")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.30f, 0.15f, 0.20f, 1.00f, 0.95f, 0.85f, 1500.0f, 1.00f, 0.85f, 0.20f, 120.0f, 8000.0f, 1.20f, 4.0f, 20.0f, 0.80f, 3500.0f, 0.40f);
+        {
+            auto p = makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.18f, 0.43f, 0.38f, 0.03f, 1.11f, 1.01f, 0.71f, 641.0f, 0.38f, 0.80f, 0.57f, 37.0f, 10005.0f, 1.04f, -2.13f, 20.0f, 0.84f, 7586.0f, 0.22f);
+            p.values["Hi Cut Shelf"] = -23.5f;
+            return p;
+        }
+        if (name == "Tiled Room")
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 8.20f, 0.73f, 0.48f, 0.21f, 1.39f, 0.82f, 0.94f, 424.0f, 0.75f, 0.46f, 0.40f, 20.0f, 10007.0f, 0.85f, -2.18f, 20.0f, 1.17f, 6356.0f, 0.27f);
         // Ambient (bus_mode=true in source, mono_below set)
-        if (name == "Ambient Swell")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 60.0f, 8.00f, 0.92f, 0.28f, 0.40f, 0.60f, 1.50f, 600.0f, 0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, 4.0f, 80.0f, 1.20f, 3500.0f, 0.15f);
-        if (name == "Infinite Blackhole")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 85.0f, 18.00f, 1.00f, 0.35f, 0.30f, 0.55f, 1.60f, 550.0f, 0.90f, 0.05f, 0.80f, 100.0f, 7500.0f, 1.50f, -1.0f, 100.0f, 1.30f, 3000.0f, 0.25f);
         // New presets (2026-04-26):
         if (name == "Snare Plate XL")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 12.0f, 4.50f, 0.65f, 0.15f, 0.50f, 0.85f, 0.65f, 600.0f, 0.75f, 0.30f, 0.55f, 180.0f, 14000.0f, 1.30f, 1.0f, 20.0f, 1.05f, 5000.0f, 0.20f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 12.0f, 2.02f, 0.22f, 0.54f, 0.98f, 1.00f, 0.76f, 481.0f, 0.41f, 0.30f, 0.55f, 24.0f, 10038.0f, 0.92f, -3.85f, 20.0f, 0.61f, 7265.0f, 0.20f);
         // Spring engine (algo 4) — Phase A v3.0:
         if (name == "Surf '63 Spring")
             return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f, 0.45f, 0.10f, 0.30f, 80.0f, 4000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.10f);
-        if (name == "Tank Drip")
-            return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 2.20f, 0.65f, 0.30f, 0.80f, 0.70f, 1.10f, 1000.0f, 0.85f, 0.10f, 0.30f, 100.0f, 3000.0f, 1.20f, 2.5f, 20.0f, 1.00f, 4000.0f, 0.20f);
         // Non-Linear engine (algo 5) — Phase B v3.0:
         if (name == "In The Air Tonight")
             return makePreset (name.toRawUTF8(), 6, 0.216f, false, 0.0f, 2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f, 500.0f, 0.50f, 0.00f, 0.30f, 60.0f, 10000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
@@ -319,7 +344,7 @@ namespace
             return makePreset (name.toRawUTF8(), 7, 0.361f, false, 60.0f,  6.00f, 0.85f, 1.00f, 2.705f, 0.95f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 6000.0f, 1.40f, -3.0f, 60.0f, 1.00f, 4000.0f, 0.10f);
         if (name == "Black Hole")
         {
-            auto p = makePreset (name.toRawUTF8(), 2, 0.50f, false,  0.0f, 14.00f, 0.95f, 0.35f, 0.60f, 1.00f, 1.10f,  700.0f, 0.85f, 0.05f, 0.70f, 60.0f, 18000.0f, 1.40f, -2.0f, 60.0f, 1.10f, 8000.0f, 0.08f);
+            auto p = makePreset (name.toRawUTF8(), 2, 0.50f, false,  0.0f, 14.00f, 0.95f, 0.25f, 0.60f, 1.00f, 1.10f,  700.0f, 0.85f, 0.05f, 0.70f, 60.0f, 18000.0f, 1.40f, -2.0f, 60.0f, 1.10f, 8000.0f, 0.08f);
             p.hasSixAP = true;
             p.sixAPDensityBaseline = 0.72f;
             p.sixAPBloomCeiling    = 0.92f;
@@ -330,38 +355,27 @@ namespace
             p.sixAPOutputTrim = 1.10f;
             return p;
         }
-        if (name == "Bright Studio Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 18.0f, 1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f, 400.0f, 0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, 1.5f, 20.0f, 1.00f, 5500.0f, 0.05f);
-        if (name == "Vocal Booth")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 2.0f, 0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f, 800.0f, 0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f, 4.0f, 20.0f, 1.00f, 4500.0f, 0.05f);
         if (name == "Mobius Pad")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 45.0f, 5.50f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f, 500.0f, 0.85f, 0.20f, 0.85f, 80.0f, 9000.0f, 1.50f, 4.5f, 80.0f, 1.20f, 3200.0f, 0.10f);
 
-        // PCM 90 — Plates (Dattorro, algo 0):
-        if (name == "Rich Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.60f, 0.55f, 0.10f, 0.45f, 0.95f, 1.00f, 600.0f, 0.85f, 0.00f, 0.30f, 80.0f, 14000.0f, 1.10f, 14.5f, 20.0f, 1.00f, 4000.0f, 0.10f);
-        if (name == "Gold Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 0.0f, 1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f, 600.0f, 0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, 16.0f, 20.0f, 0.80f, 3000.0f, 0.00f);
         if (name == "Vocal Plate")
-            return makePreset (name.toRawUTF8(), 0, 1.0f, true, 4.0f, 0.95f, 0.45f, 0.05f, 0.50f, 0.85f, 1.00f, 700.0f, 0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, 16.5f, 20.0f, 1.00f, 4500.0f, 0.10f);
-        // PCM 90 — Halls (SixAPTank / FDN):
-        if (name == "Blade Runner Concert")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 5.0f, 3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f, 700.0f, 0.85f, 0.45f, 0.55f, 60.0f, 8000.0f, 1.20f, 8.5f, 20.0f, 1.10f, 4000.0f, 0.10f);
-        if (name == "Deep Blue")
-            return makePreset (name.toRawUTF8(), 2, 1.0f, true, 10.0f, 3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f, 600.0f, 0.85f, 0.40f, 0.65f, 60.0f, 8500.0f, 1.30f, 9.0f, 20.0f, 1.10f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 29.16f, 0.65f, 0.79f, 0.25f, 0.26f, 0.80f, 0.70f, 384.0f, 0.44f, 0.25f, 0.76f, 27.0f, 17316.0f, 0.78f, -3.11f, 20.0f, 0.96f, 8418.0f, 0.18f);
+        // Deep Blue removed 2026-05-31 (redundant SixAP hall; see FactoryPresets.h).
+        // Bright Hall — v1 autonomous staged_tuner.py (--category Halls).
+        // Mirrors FactoryPresets.h "Bright Hall" row.
         if (name == "Bright Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 1.80f, 0.65f, 0.12f, 0.50f, 1.20f, 1.00f, 1000.0f, 0.75f, 0.50f, 0.50f, 80.0f, 18000.0f, 1.20f, 1.5f, 20.0f, 1.00f, 6000.0f, 0.05f);
-        if (name == "Utility Hall")
-            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 1.0f, 1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f, 0.75f, 0.50f, 0.50f, 100.0f, 8000.0f, 1.10f, 2.5f, 20.0f, 1.00f, 4500.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 4, 1.0f, true, 0.0f, 4.31f, 0.75f, 0.103f, 0.83f, 1.29f, 1.38f, 540.0f, 0.44f, 0.50f, 0.50f, 20.0f, 11112.0f, 0.99f, -2.84f, 20.0f, 0.68f, 8344.0f, 0.03f);
         // PCM 90 — Rooms (QuadTank / NonLinear):
+        // Ambience — Optuna-aligned to VVV Ambience (all 5 metrics within strict noise floor, lowest loss 0.248).
+        // ModDepth + ModRate pulled to VVV's actual values (0.36, 0.32 Hz) —
+        // Ambience — v1 autonomous staged_tuner.py (--category Rooms).
+        // Mirrors FactoryPresets.h "Ambience" row.
         if (name == "Ambience")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 1.0f, 0.60f, 0.40f, 0.05f, 0.45f, 1.05f, 0.90f, 900.0f, 0.65f, 0.70f, 0.50f, 100.0f, 14000.0f, 1.20f, 3.5f, 20.0f, 1.05f, 5000.0f, 0.10f);
-        if (name == "PCM Drum Room")
-            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 0.0f, 0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f, 900.0f, 0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, 4.0f, 20.0f, 1.05f, 5000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 3, 1.0f, true, 2.91f, 0.74f, 0.75f, 0.18f, 1.05f, 1.03f, 1.10f, 793.0f, 0.70f, 0.89f, 0.56f, 20.0f, 10070.0f, 1.03f, 1.28f, 20.0f, 1.12f, 4566.0f, 0.25f);
         if (name == "1981 Gated Snare")
-            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 0.0f, 1.50f, 0.70f, 0.00f, 1.117f, 0.80f, 1.00f, 500.0f, 0.30f, 0.00f, 0.00f, 60.0f, 14000.0f, 1.40f, 0.0f, 100.0f, 0.75f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 0.0f, 1.67f, 0.96f, 0.22f, 3.00f, 1.05f, 2.18f, 2197.0f, 0.83f, 0.00f, 0.00f, 20.0f, 4976.0f, 1.14f, -16.6f, 100.0f, 0.98f, 5302.0f, 0.34f);
         if (name == "Reverse Taps")
-            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 30.0f, 3.00f, 0.85f, 0.49f, 7.52f, 0.70f, 1.00f, 500.0f, 1.00f, 0.00f, 0.30f, 80.0f, 8000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 6, 1.0f, true, 30.0f, 0.44f, 0.70f, 0.13f, 2.81f, 1.15f, 1.90f, 203.0f, 0.95f, 0.00f, 0.30f, 20.0f, 19158.0f, 1.04f, 0.0f, 20.0f, 0.67f, 7070.0f, 0.02f);
 
         return getLushDarkHall();
     }
@@ -370,25 +384,26 @@ namespace
     {
         file.deleteFile();
         juce::WavAudioFormat fmt;
-        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
-        if (! dynamic_cast<juce::FileOutputStream&> (*stream).openedOk())
+        std::unique_ptr<juce::FileOutputStream> stream (new juce::FileOutputStream (file));
+        if (! stream->openedOk())
         {
             std::cerr << "Failed to open " << file.getFullPathName() << std::endl;
             return false;
         }
 
-        const auto options = juce::AudioFormatWriterOptions{}
-            .withSampleRate (sr)
-            .withNumChannels (buf.getNumChannels())
-            .withBitsPerSample (32)
-            .withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
-
-        auto writer = fmt.createWriterFor (stream, options);
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            fmt.createWriterFor (stream.get(),
+                                 sr,
+                                 (unsigned int) buf.getNumChannels(),
+                                 32,
+                                 {},
+                                 0));
         if (writer == nullptr)
         {
             std::cerr << "Failed to create WAV writer for " << file.getFullPathName() << std::endl;
             return false;
         }
+        stream.release();
 
         return writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
     }
@@ -474,6 +489,37 @@ namespace
         }
     }
 
+    // Sustained pink-noise stimulus: pumps `holdSec` seconds of continuous
+    // pink noise into the engine to reach a true steady-state, then silence
+    // for the remainder of the buffer to measure the post-input decay tail.
+    // This is the perceptual-match stimulus for musical content — the
+    // 100 ms noiseburst doesn't drive the engine into modal steady-state,
+    // so it can't expose frequency-dependent decay times the way the user
+    // hears them on sustained vocal/instrument input.
+    void fillSustainedPink (juce::AudioBuffer<float>& buf, double sr, double holdSec)
+    {
+        buf.clear();
+        const int holdSamples = std::min (buf.getNumSamples(),
+                                          static_cast<int> (sr * holdSec));
+        juce::Random rngL (0xC0FFEE), rngR (0xBADBEEF);
+        float bL[3] = {}, bR[3] = {};
+        for (int n = 0; n < holdSamples; ++n)
+        {
+            const float wL = rngL.nextFloat() * 2.0f - 1.0f;
+            const float wR = rngR.nextFloat() * 2.0f - 1.0f;
+            bL[0] = 0.99765f * bL[0] + wL * 0.0990460f;
+            bL[1] = 0.96300f * bL[1] + wL * 0.2965164f;
+            bL[2] = 0.57000f * bL[2] + wL * 1.0526913f;
+            bR[0] = 0.99765f * bR[0] + wR * 0.0990460f;
+            bR[1] = 0.96300f * bR[1] + wR * 0.2965164f;
+            bR[2] = 0.57000f * bR[2] + wR * 1.0526913f;
+            buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2]));
+            buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2]));
+        }
+        // Samples [holdSamples .. end] remain silence so the decay tail
+        // post-input shows the engine's natural per-band decay.
+    }
+
     // Locate parameter by display name. The AU wrapper hashes the original
     // string IDs to integers, but the display names survive — and they're
     // what the user sees in Logic too, so this also makes the test honest.
@@ -487,10 +533,31 @@ namespace
         return nullptr;
     }
 
+    // Map a plugin file path to the JUCE format that should load it.
+    // Returns nullptr if the format isn't compiled in or the extension is
+    // unrecognised. The format manager should already have addDefaultFormats()
+    // called on it.
+    juce::AudioPluginFormat* findFormatForPath (juce::AudioPluginFormatManager& fm,
+                                                 const juce::File& path)
+    {
+        const juce::String ext = path.getFileExtension().toLowerCase();
+        juce::String wanted;
+        if      (ext == ".component")           wanted = "AudioUnit";
+        else if (ext == ".vst3")                wanted = "VST3";
+        else if (ext == ".so" || ext == ".dll") wanted = "VST";
+        else                                    return nullptr;
+
+        for (auto* f : fm.getFormats())
+            if (f->getName() == wanted)
+                return f;
+        return nullptr;
+    }
+
     // Apply a Valhalla-style .vpreset XML directly: each XML attribute is a
     // parameter name with an already-normalised 0..1 value. Skip the XML
     // metadata attributes (version, encoding, pluginVersion, presetName).
-    void applyVpresetXml (juce::AudioPluginInstance& plugin, const juce::File& xmlFile)
+    void applyVpresetXml (juce::AudioPluginInstance& plugin, const juce::File& xmlFile,
+                          int perParamDelayMs = 0)
     {
         auto xml = juce::XmlDocument::parse (xmlFile);
         if (xml == nullptr)
@@ -534,9 +601,26 @@ namespace
                 if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                     normalised = raw;
             }
+            // Hard clamp to [0, 1] before pushing. Some VST2s (Lex PCM
+            // Native) return the raw display value verbatim from
+            // getValueForText for negative-dB inputs ("-3.0 dB" → -3.0),
+            // which then gets reinterpreted as a huge positive coefficient
+            // inside the plugin (we saw read_back='2.2e+07') and crashes
+            // Wine on the next processBlock. Skip writes that fail to
+            // produce a sane normalisation so the plugin stays at its
+            // safe default for that param.
+            if (! (normalised >= 0.0f && normalised <= 1.0f))
+            {
+                std::cerr << "  ! skipping " << name << ": getValueForText('"
+                          << rawText << "') returned " << normalised
+                          << " (out of [0,1])" << std::endl;
+                continue;
+            }
             p->setValueNotifyingHost (normalised);
             std::cout << "  " << name << " set=" << rawText << "  norm=" << normalised
                       << "  read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+            if (perParamDelayMs > 0)
+                juce::Thread::sleep (perParamDelayMs);
         }
     }
 
@@ -649,7 +733,8 @@ namespace
         }
     }
 
-    void applyPreset (juce::AudioPluginInstance& plugin, const PresetParams& preset)
+    void applyPreset (juce::AudioPluginInstance& plugin, const PresetParams& preset,
+                      int perParamDelayMs = 0)
     {
         std::cout << "Applying preset: " << preset.name << std::endl;
         for (const auto& [name, raw] : preset.values)
@@ -676,6 +761,23 @@ namespace
             // legitimately gets normalised = 0).
             if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                 normalised = raw;
+            // The "Algorithm" choice exposes engine NAMES, not indices, and is
+            // wrapped as a generic AudioProcessorParameter whose getNumSteps()
+            // doesn't report the choice count — so getValueForText("3") returns
+            // 0 and every index used to route to engine 0. Special-case it:
+            // map the engine index to normalised by the same divisor the preset
+            // table uses (kAlgorithmDivisor = numAlgorithms-1).
+            else if (name == "Algorithm" && raw >= 0.0f)
+                normalised = raw / kAlgorithmDivisor;
+            // Reject NaN/inf and hard-clamp to [0,1] before notifying the host
+            // (mirror applyVpresetXml's guard) so out-of-range text never feeds
+            // a garbage normalised value into the parameter.
+            if (! std::isfinite (normalised))
+            {
+                std::cout << "  " << name << " SKIPPED (non-finite value)\n";
+                continue;
+            }
+            normalised = juce::jlimit (0.0f, 1.0f, normalised);
             p->setValueNotifyingHost (normalised);
             const float readBack = p->getValue();
             const juce::String readBackText = p->getText (readBack, 50);
@@ -683,6 +785,8 @@ namespace
                       << "  norm=" << normalised
                       << "  read_back='" << readBackText << "'"
                       << std::endl;
+            if (perParamDelayMs > 0)
+                juce::Thread::sleep (perParamDelayMs);
         }
     }
 
@@ -727,42 +831,95 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI initialiser;
 
-    // CLI: render.cpp [<preset_name> | --au <au_path> (--vpreset <xml_path> | --aupreset <plist_path>) [--slug <name>]]
-    //   No args     → DuskVerb / Lush Dark Hall (default)
-    //   <preset>    → DuskVerb / one of getPresetByName()'s built-in presets
-    //   --au + --vpreset  → load arbitrary AU + Valhalla-style XML preset
-    //   --au + --aupreset → load arbitrary AU + Apple .aupreset (binary plist
-    //                       with embedded JUCE state; works for any JUCE-built
-    //                       AU, e.g. Valhalla Shimmer's factory presets)
+    // CLI: see file header. Plugin path is auto-detected from extension
+    // (.component → AU, .vst3 → VST3, .so/.dll → VST2). The --au/--vst3/--vst2
+    // flags are equivalent — they just set the plugin path.
     juce::String presetName  = "Lush Dark Hall";
     bool         presetExplicit = false;          // user named a preset on the CLI
-    juce::String auPathArg   = kAUPath;
+    juce::String pluginPath  = kDefaultPluginPath;
     juce::String vpresetPath;
     juce::String aupresetPath;
     juce::String slugArg;
     juce::String outDirArg;
-    bool listParamsOnly = false;
+    // Arbitrary stem input: when set, load WAV, pad with reverb-tail
+    // headroom, render through the configured engine, write to
+    // {outDir}/{slug}_stem.wav. Lets users A/B real-world stems against
+    // Lexicon reference renders without going through a DAW.
+    juce::String inputWavPath;
+    juce::String programArg;            // factory program by name
+    int          programIndex   = -1;   // factory program by index
+    juce::String saveStatePath;         // dump getStateInformation bytes here after preset
+    juce::String loadStatePath;         // setStateInformation from these bytes (one round-trip)
+    int          waitAfterLoadMs = 0;   // for yabridge handshake races
+    int          perParamDelayMs = 0;   // throttle preset apply for slow plugin bridges
+    // SixAPTank-specific engine-state property overrides. Useful for tuner
+    // workflows where the tuner sweeps engine-internal params that aren't
+    // APVTS-exposed. Applied via getStateInformation → setProperty →
+    // setStateInformation roundtrip after the regular --param apply path.
+    // -1.0 sentinel = leave plugin default (don't inject).
+    float        sixAPEarlyHighpassHz = -1.0f;
+    float        sixAPEarlyMixOverride = -1.0f;  // -1 = no override
+    bool         listParamsOnly   = false;
+    bool         listProgramsOnly = false;
+    bool         prePrepareApply  = false;
     // Dry-passthrough test: override bus_mode=0 + mix=0 on the loaded preset
     // so the engine's wet path is silent and only the dry passes through.
     // Used to verify that gain_trim does not bleed into the dry signal.
     bool dryPassthroughTest = false;
     bool forceGateOff       = false;   // --gate-off : force gate_enabled = 0 after preset apply
+    // --prerun-seconds N: pump N seconds of stereo silence through the plugin
+    // before each test stimulus. Settles SmoothedValues to targets, primes
+    // biquad z-state, and lets random-walk LFOs drift into a steady realization
+    // that matches what a DAW listener hears (where the plugin is always warm).
+    // Default 5.0 s = convergence-tested standard. Below ~3 s, modulator
+    // hasn't reached steady state and metrics drift 5-10% from converged
+    // values. 5 s converges t60 within 1% and centroid within ±3% stochastic
+    // noise floor. Override only for very fast iteration during dev.
+    double prerunSeconds = 5.0;
+    // --sustained-pink-seconds N: emit an EXTRA stimulus render after the
+    // standard impulse/noiseburst/snare/sine set. N seconds of continuous
+    // pink noise then N seconds of silence — captures the engine's
+    // true steady-state per-band decay (the way musical content drives a
+    // reverb, not a 100 ms burst). 0 = disabled.
+    double sustainedPinkSeconds = 0.0;
     // Per-parameter overrides via --param NAME=VALUE. Stored in declaration
     // order so multiple --param flags compose the way the user wrote them
     // (last write wins). Applied AFTER the preset so they override anything
-    // the preset set. Works against any AU — DuskVerb, Valhalla, Arturia, etc.
+    // the preset set. Works against any plugin — DuskVerb, Valhalla, Lex, etc.
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
     for (int i = 1; i < argc; ++i)
     {
         juce::String a = argv[i];
-        if (a == "--au" && i + 1 < argc)            auPathArg    = argv[++i];
-        else if (a == "--vpreset" && i + 1 < argc)  vpresetPath  = argv[++i];
-        else if (a == "--aupreset" && i + 1 < argc) aupresetPath = argv[++i];
-        else if (a == "--slug" && i + 1 < argc)     slugArg      = argv[++i];
-        else if (a == "--output-dir" && i + 1 < argc) outDirArg  = argv[++i];
-        else if (a == "--list-params")              listParamsOnly = true;
+        if      (a == "--au"        && i + 1 < argc) pluginPath   = argv[++i];
+        else if (a == "--vst3"      && i + 1 < argc) pluginPath   = argv[++i];
+        else if (a == "--vst2"      && i + 1 < argc) pluginPath   = argv[++i];
+        else if (a == "--vpreset"   && i + 1 < argc) vpresetPath  = argv[++i];
+        else if (a == "--aupreset"  && i + 1 < argc) aupresetPath = argv[++i];
+        else if (a == "--slug"      && i + 1 < argc) slugArg      = argv[++i];
+        else if (a == "--output-dir" && i + 1 < argc) outDirArg   = argv[++i];
+        else if (a == "--input-wav"  && i + 1 < argc) inputWavPath= argv[++i];
+        else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
+        else if (a == "--program-index" && i + 1 < argc)
+                                                     programIndex = juce::String (argv[++i]).getIntValue();
+        else if (a == "--wait-after-load" && i + 1 < argc)
+                                                     waitAfterLoadMs = juce::String (argv[++i]).getIntValue();
+        else if (a == "--per-param-delay-ms" && i + 1 < argc)
+                                                     perParamDelayMs = juce::String (argv[++i]).getIntValue();
+        else if (a == "--save-state" && i + 1 < argc) saveStatePath = argv[++i];
+        else if (a == "--sixap-early-hpf" && i + 1 < argc)
+                                                     sixAPEarlyHighpassHz = juce::String (argv[++i]).getFloatValue();
+        else if (a == "--sixap-early-mix" && i + 1 < argc)
+                                                     sixAPEarlyMixOverride = juce::String (argv[++i]).getFloatValue();
+        else if (a == "--load-state" && i + 1 < argc) loadStatePath = argv[++i];
+        else if (a == "--list-params")              listParamsOnly   = true;
+        else if (a == "--list-programs")            listProgramsOnly = true;
+        else if (a == "--pre-prepare-apply")        prePrepareApply  = true;
         else if (a == "--dry-passthrough-test")     dryPassthroughTest = true;
         else if (a == "--gate-off")                 forceGateOff = true;
+        else if (a == "--prerun-seconds" && i + 1 < argc)
+            prerunSeconds = juce::String (argv[++i]).getDoubleValue();
+        else if (a == "--sustained-pink-seconds" && i + 1 < argc)
+            sustainedPinkSeconds = juce::String (argv[++i]).getDoubleValue();
         else if (a == "--param" && i + 1 < argc)
         {
             // Format: NAME=VALUE  (NAME may contain spaces; matches the
@@ -783,41 +940,39 @@ int main (int argc, char** argv)
         }
     }
 
-    juce::File auFile (auPathArg);
-    if (! auFile.exists())
+    juce::File pluginFile (pluginPath);
+    if (! pluginFile.exists())
     {
-        std::cerr << "AU bundle not found at " << auPathArg << std::endl;
+        std::cerr << "Plugin not found at " << pluginPath << std::endl;
         return 1;
     }
 
     juce::AudioPluginFormatManager fm;
     fm.addDefaultFormats();
 
-    // Find the AU format among the registered formats (macOS only).
-    juce::AudioPluginFormat* auFormat = nullptr;
-    for (auto* f : fm.getFormats())
+    juce::AudioPluginFormat* format = findFormatForPath (fm, pluginFile);
+    if (format == nullptr)
     {
-        if (f->getName() == "AudioUnit")
-        {
-            auFormat = f;
-            break;
-        }
-    }
-    if (auFormat == nullptr)
-    {
-        std::cerr << "AudioUnit format not registered (build is not on macOS?)" << std::endl;
+        std::cerr << "No JUCE format registered for " << pluginPath
+                  << " (extension: " << pluginFile.getFileExtension() << ")\n"
+                  << "Make sure the matching JUCE_PLUGINHOST_* flag is set at build time:\n"
+                  << "  .component → JUCE_PLUGINHOST_AU=1   (macOS only)\n"
+                  << "  .vst3      → JUCE_PLUGINHOST_VST3=1\n"
+                  << "  .so / .dll → JUCE_PLUGINHOST_VST=1  (requires VST2_SDK_DIR at build time)"
+                  << std::endl;
         return 1;
     }
 
     juce::OwnedArray<juce::PluginDescription> typesFound;
-    auFormat->findAllTypesForFile (typesFound, auPathArg);
+    format->findAllTypesForFile (typesFound, pluginPath);
     if (typesFound.isEmpty())
     {
-        std::cerr << "Plugin scan returned no AU types from " << auPathArg << std::endl;
+        std::cerr << "Plugin scan via " << format->getName() << " returned no types from "
+                  << pluginPath << std::endl;
         return 1;
     }
-    std::cout << "Found AU type: " << typesFound[0]->name << " (manufacturer: "
-              << typesFound[0]->manufacturerName << ")" << std::endl;
+    std::cout << "Found " << format->getName() << " type: " << typesFound[0]->name
+              << " (manufacturer: " << typesFound[0]->manufacturerName << ")" << std::endl;
 
     juce::String error;
     auto plugin = fm.createPluginInstance (*typesFound[0], kSampleRate, kBlockSize, error);
@@ -843,6 +998,21 @@ int main (int argc, char** argv)
                   << ")" << std::endl;
 
     plugin->prepareToPlay (kSampleRate, kBlockSize);
+
+    // Some yabridge-bridged plugins need a moment after prepareToPlay before
+    // the Wine-side dispatcher is fully responsive (yabridge issues #167/#391).
+    if (waitAfterLoadMs > 0)
+        juce::Thread::sleep (waitAfterLoadMs);
+
+    if (listProgramsOnly)
+    {
+        std::cout << "=== Programs of " << typesFound[0]->name
+                  << " (" << plugin->getNumPrograms() << " total) ===\n";
+        for (int i = 0; i < plugin->getNumPrograms(); ++i)
+            std::cout << "  [" << i << "] " << plugin->getProgramName (i) << std::endl;
+        plugin->releaseResources();
+        return 0;
+    }
 
     if (listParamsOnly)
     {
@@ -892,15 +1062,67 @@ int main (int argc, char** argv)
         haveDuskVerbPreset = true;
     }
 
+    // Resolve --program <name> to an index by scanning getProgramName(). Done
+    // once up front so we don't re-scan on every applyAnyPreset() pass.
+    int resolvedProgramIndex = programIndex;
+    if (resolvedProgramIndex < 0 && programArg.isNotEmpty())
+    {
+        for (int i = 0; i < plugin->getNumPrograms(); ++i)
+        {
+            if (plugin->getProgramName (i).trim() == programArg.trim())
+            {
+                resolvedProgramIndex = i;
+                break;
+            }
+        }
+        if (resolvedProgramIndex < 0)
+        {
+            std::cerr << "Program not found: '" << programArg << "'. Use --list-programs to enumerate.\n";
+            return 1;
+        }
+    }
+
     auto applyAnyPreset = [&]()
     {
+        if (loadStatePath.isNotEmpty())
+        {
+            // Single-dispatcher state load — bypasses per-param round-trips
+            // entirely. Useful for slow Wine-bridged plugins where setting
+            // 50+ parameters via setValueNotifyingHost is prohibitively
+            // expensive (one effSetChunk call vs N IPC dispatches).
+            juce::File f (loadStatePath);
+            juce::MemoryBlock blob;
+            if (! f.loadFileAsData (blob))
+            {
+                std::cerr << "Failed to read state from " << loadStatePath << std::endl;
+                return;
+            }
+            // Pass raw file bytes to setStateInformation. JUCE's VST2 host
+            // wrapper detects .fxp ('CcnK FPCh') / .fxb ('CcnK FBCh')
+            // framing internally and unwraps it before dispatching to
+            // effSetChunk — stripping the header here breaks the framing.
+            // For VST3 / AU plugins the bytes are whatever
+            // getStateInformation emitted (typically a JUCE ValueTree XML),
+            // also passed verbatim.
+            std::cout << "Loading state (" << blob.getSize() << " bytes) from "
+                      << loadStatePath << std::endl;
+            plugin->setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+            return;
+        }
+        if (resolvedProgramIndex >= 0)
+        {
+            std::cout << "Selecting factory program [" << resolvedProgramIndex
+                      << "] " << plugin->getProgramName (resolvedProgramIndex) << std::endl;
+            plugin->setCurrentProgram (resolvedProgramIndex);
+            return;
+        }
         if (aupresetPath.isNotEmpty())
             applyAuPreset (*plugin, juce::File (aupresetPath));
         else if (vpresetPath.isNotEmpty())
-            applyVpresetXml (*plugin, juce::File (vpresetPath));
+            applyVpresetXml (*plugin, juce::File (vpresetPath), perParamDelayMs);
         else if (haveDuskVerbPreset)
-            applyPreset (*plugin, duskVerbPreset);
-        // else: arbitrary AU + no preset specifier → leave the plugin in
+            applyPreset (*plugin, duskVerbPreset, perParamDelayMs);
+        // else: arbitrary plugin + no preset specifier → leave it in
         // its post-instantiation default state. --param overrides still apply.
     };
 
@@ -925,6 +1147,19 @@ int main (int argc, char** argv)
             float normalised = p->getValueForText (valueStr);
             if (normalised == 0.0f && raw > 0.0f && raw <= 1.0f)
                 normalised = raw;       // treat as already-normalised
+            // The "Algorithm" choice exposes engine NAMES (not indices) and is
+            // wrapped as a generic param whose getNumSteps() doesn't report the
+            // choice count, so getValueForText("4") returns 0 and every index
+            // used to route to engine 0. Special-case it: map index→normalised
+            // by the divisor the preset table uses (numAlgorithms-1).
+            else if (name == "Algorithm" && raw >= 0.0f)
+                normalised = raw / kAlgorithmDivisor;
+            if (! std::isfinite (normalised))
+            {
+                std::cerr << "  ! --param " << name << ": non-finite, skipped" << std::endl;
+                continue;
+            }
+            normalised = juce::jlimit (0.0f, 1.0f, normalised);
             p->setValueNotifyingHost (normalised);
             std::cout << "  --param " << name << " set='" << valueStr
                       << "' norm=" << normalised
@@ -932,24 +1167,74 @@ int main (int argc, char** argv)
         }
     };
 
-    // First pass: apply the preset so any param changes (notably Algorithm)
-    // are visible to the plugin BEFORE we re-prepare. This lets the plugin
-    // size its per-algorithm DSP buffers correctly during the second
-    // prepareToPlay (Arturia Rev LX-24 segfaults if Algorithm changes after
-    // prepare).
+    // Optional first pass: apply the preset BEFORE the final prepareToPlay
+    // so the plugin sizes its per-algorithm DSP buffers correctly for any
+    // Algorithm change. Required by Arturia Rev LX-24 (segfaults otherwise).
+    // Off by default — each param-set on a yabridge-bridged plugin is a Wine
+    // IPC round-trip, so double-applying is expensive.
+    if (prePrepareApply)
+    {
+        applyAnyPreset();
+        applyParamOverrides();
+        plugin->releaseResources();
+        plugin->prepareToPlay (kSampleRate, kBlockSize);
+    }
+
+    // Authoritative pass: prepareToPlay can reset some plugins' parameter
+    // state back to defaults — this final apply ensures the configured
+    // values are what the renderer hears.
     applyAnyPreset();
     applyParamOverrides();
 
-    plugin->releaseResources();
-    plugin->prepareToPlay (kSampleRate, kBlockSize);
+    // Inject SixAPTank engine-state properties that aren't reachable via
+    // APVTS --param overrides. The tuner needs to sweep these to find
+    // optimal Concert-Hall-style early-HPF cutoffs, etc. Path: pull current
+    // plugin state as XML → setProperty → push back via setStateInformation.
+    // No-op when sixAPEarlyHighpassHz == -1 sentinel.
+    if (sixAPEarlyHighpassHz >= 0.0f || sixAPEarlyMixOverride >= 0.0f)
+    {
+        juce::MemoryBlock blob;
+        plugin->getStateInformation (blob);
+        if (auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(),
+                                                                static_cast<int> (blob.getSize())))
+        {
+            if (sixAPEarlyHighpassHz >= 0.0f)
+            {
+                xml->setAttribute ("sixAPEarlyHighpassHz", sixAPEarlyHighpassHz);
+                std::cout << "Injected sixAPEarlyHighpassHz=" << sixAPEarlyHighpassHz << std::endl;
+            }
+            if (sixAPEarlyMixOverride >= 0.0f)
+            {
+                xml->setAttribute ("sixAPEarlyMix", sixAPEarlyMixOverride);
+                std::cout << "Injected sixAPEarlyMix=" << sixAPEarlyMixOverride << std::endl;
+            }
+            juce::MemoryBlock newBlob;
+            juce::AudioProcessor::copyXmlToBinary (*xml, newBlob);
+            plugin->setStateInformation (newBlob.getData(),
+                                          static_cast<int> (newBlob.getSize()));
+        }
+        else
+        {
+            std::cerr << "  ! state-tree override: getStateInformation produced "
+                      << "non-XML payload — cannot inject" << std::endl;
+        }
+    }
 
-    // Second pass: prepareToPlay can reset some plugins' parameter state
-    // back to defaults (Arturia Rev LX-24 does this — verified by dumping
-    // post-load param values, which were byte-identical to no-preset state
-    // until this re-apply was added). Apply the preset AGAIN so the actually-
-    // configured values are what the renderer hears.
-    applyAnyPreset();
-    applyParamOverrides();
+    // Optionally dump the post-apply plugin state to a binary file so future
+    // runs can use --load-state to skip the slow per-param apply (one
+    // effSetChunk call instead of N IPC dispatches for yabridge plugins).
+    if (saveStatePath.isNotEmpty())
+    {
+        juce::MemoryBlock blob;
+        plugin->getStateInformation (blob);
+        juce::File f (saveStatePath);
+        f.deleteFile();
+        if (f.replaceWithData (blob.getData(), blob.getSize()))
+            std::cout << "Saved state (" << blob.getSize() << " bytes) to "
+                      << saveStatePath << std::endl;
+        else
+            std::cerr << "Failed to write state to " << saveStatePath << std::endl;
+    }
 
     // NOTE: per-preset SixAPTank brightness/density values (sixAPDensityBaseline,
     // sixAPBloomCeiling, sixAPBloomStagger, sixAPEarlyMix, sixAPOutputTrim) are
@@ -966,12 +1251,19 @@ int main (int argc, char** argv)
     // that opts in); other SixAPTank presets render bit-identical to before.
 
     // Pre-roll silence so all parameter smoothers settle, predelay buffer
-    // primes, and any startup transients flush out.
-    {
-        juce::AudioBuffer<float> preRoll (2, static_cast<int> (kSampleRate * 0.5));
+    // primes, biquad z-state initializes, random-walk LFOs drift into a
+    // steady realization, and any startup transients flush out. Critical
+    // for heavily modulated algorithmic reverbs — DAW listeners hear the
+    // plugin in steady state; tuner-measured impulse from cold-zero state
+    // captures the wrong response.
+    auto runPreroll = [&plugin, sr = kSampleRate] (double seconds) {
+        const int samples = static_cast<int> (sr * std::max (seconds, 0.0));
+        if (samples <= 0) return;
+        juce::AudioBuffer<float> preRoll (2, samples);
         preRoll.clear();
         renderThroughPlugin (*plugin, preRoll);
-    }
+    };
+    runPreroll (prerunSeconds);
 
     // Output directory resolution priority:
     //   1. --output-dir CLI flag
@@ -998,9 +1290,12 @@ int main (int argc, char** argv)
     outDir.createDirectory();
     std::cout << "Output directory: " << outDir.getFullPathName() << std::endl;
 
+    juce::String defaultSlug = presetName;
+    if (resolvedProgramIndex >= 0)
+        defaultSlug = plugin->getProgramName (resolvedProgramIndex);
     const juce::String slug = slugArg.isNotEmpty()
                             ? slugArg
-                            : presetName.replace (" ", "");
+                            : defaultSlug.replace (" ", "");
 
     // --gate-off: force the NonLinear engine's GATE to disabled. Used to
     // verify the toggle is wired and produces an audibly different result.
@@ -1042,8 +1337,10 @@ int main (int argc, char** argv)
     }
 
     // Reset plugin state between renders so noise burst doesn't ride the
-    // impulse tail.
+    // impulse tail. Re-prerun so smoothers/LFOs settle into a clean,
+    // steady realization before the next stimulus fires.
     plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 2: Pink noise burst (100ms then silence) ----
     {
@@ -1056,6 +1353,7 @@ int main (int argc, char** argv)
     }
 
     plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 4: snare hit (309 ms @ -12 dBFS peak) + 3.7 s tail ----
     // Real-world transient test — broadband percussive content reveals
@@ -1096,6 +1394,53 @@ int main (int argc, char** argv)
     }
 
     plugin->reset();
+    runPreroll (prerunSeconds);
+
+    // ---- Render 2b: arbitrary stem (--input-wav) ----
+    // Loads any user-supplied WAV, pads with 6 seconds of silence so the
+    // reverb tail fully decays, processes through the active engine,
+    // writes to {outDir}/{slug}_stem.wav. Independent of the built-in
+    // snare/sine/noiseburst test-signal slots.
+    if (inputWavPath.isNotEmpty())
+    {
+        juce::File stemFile (inputWavPath);
+        if (! stemFile.existsAsFile())
+        {
+            std::cerr << "  ! --input-wav file not found: " << inputWavPath << std::endl;
+        }
+        else
+        {
+            juce::AudioFormatManager fmtMgr;
+            fmtMgr.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (
+                fmtMgr.createReaderFor (stemFile));
+            if (reader == nullptr)
+            {
+                std::cerr << "  ! could not read stem WAV: " << inputWavPath << std::endl;
+            }
+            else
+            {
+                const int stemSamples = static_cast<int> (reader->lengthInSamples);
+                const int tailSamples = static_cast<int> (kRenderSec * kSampleRate);
+                const int totalSamples = stemSamples + tailSamples;
+                juce::AudioBuffer<float> stemInput (2, totalSamples);
+                stemInput.clear();
+                // JUCE reader pulls into the provided buffer's first N channels;
+                // for mono sources, copy channel 0 → 1 so the engine sees stereo.
+                reader->read (&stemInput, 0, stemSamples, 0, true, true);
+                if (reader->numChannels == 1)
+                    stemInput.copyFrom (1, 0, stemInput, 0, 0, stemSamples);
+
+                auto output = renderThroughPlugin (*plugin, stemInput);
+                auto outFile = outDir.getChildFile (slug + "_stem.wav");
+                if (writeWav (outFile, output, kSampleRate))
+                    std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+            }
+        }
+    }
+
+    plugin->reset();
+    runPreroll (prerunSeconds);
 
     // ---- Render 3: 2-sec 1 kHz sine at -12 dBFS RMS ----
     // For per-preset trim calibration: measure output RMS in the steady-
@@ -1109,6 +1454,26 @@ int main (int argc, char** argv)
         fillSineTone (input, kSampleRate, 1000.0, -12.0);
         auto output = renderThroughPlugin (*plugin, input);
         auto outFile = outDir.getChildFile (slug + "_sine1k.wav");
+        if (writeWav (outFile, output, kSampleRate))
+            std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+    }
+
+    // ---- Render 5 (optional): Sustained pink noise (steady-state diagnostic) ----
+    // Pumps `sustainedPinkSeconds` of continuous pink noise into the engine,
+    // then `sustainedPinkSeconds` of silence to capture the post-input decay.
+    // The steady-state portion (last ~30 % of input window) shows the true
+    // per-band decay character of the engine under musical-content excitation
+    // — what the user actually hears, not the burst-and-stop response that
+    // noiseburst measures. Skipped unless --sustained-pink-seconds > 0.
+    if (sustainedPinkSeconds > 0.0)
+    {
+        plugin->reset();
+        runPreroll (prerunSeconds);
+        const int total = static_cast<int> (kSampleRate * sustainedPinkSeconds * 2.0);
+        juce::AudioBuffer<float> input (2, total);
+        fillSustainedPink (input, kSampleRate, sustainedPinkSeconds);
+        auto output = renderThroughPlugin (*plugin, input);
+        auto outFile = outDir.getChildFile (slug + "_sustained.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
     }

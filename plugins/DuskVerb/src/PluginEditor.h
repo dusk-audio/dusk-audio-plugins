@@ -23,11 +23,13 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::Dattorro:        return juce::Colour (0xffffb84d);  // warm gold — vintage plate
         case EngineType::SixAPTank:  return juce::Colour (0xffd950c0);  // deep magenta — lush halls
         case EngineType::QuadTank:        return juce::Colour (0xff4dd99e);  // emerald — natural rooms
-        case EngineType::FDN:             return juce::Colour (0xffff7a3d);  // orange — realistic / Bricasti-like
+        case EngineType::FDN:             return juce::Colour (0xffff7a3d);  // orange — realistic / modern boutique-like
         case EngineType::Spring:          return juce::Colour (0xff4dd9b8);  // teal — springy mechanical character
         case EngineType::NonLinear:       return juce::Colour (0xffe85a3a);  // red-orange — gated drum punch
         case EngineType::Shimmer:         return juce::Colour (0xffd47de8);  // lavender-pink — ethereal cascade
         case EngineType::DattorroVintage: return juce::Colour (0xff00d9ff); // cyan — dense plate
+        case EngineType::VintageTank:     return juce::Colour (0xff7da8e8);  // steel blue — vintage tank
+        case EngineType::ReverseRoom:     return juce::Colour (0xff9b6dff);  // violet — reverse room
     }
     return juce::Colour (0xffff7a3d);
 }
@@ -123,7 +125,7 @@ public:
 // HeroDecay — oversized DECAY visualisation: concentric rings whose
 // count + radius reflect the decay value, value text below, name above.
 // Replaces the standard rotary knob for the single most-used control.
-// Style cue: Valhalla VintageVerb's hero-Decay visualisation.
+// Style cue: external reference VintageVerb's hero-Decay visualisation.
 // =====================================================================
 class HeroDecay : public juce::Component
 {

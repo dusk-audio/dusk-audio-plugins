@@ -7,7 +7,7 @@
 #include <cmath>
 #include <vector>
 
-// ShimmerEngine v9 — Valhalla-style topology: pitch shifter sits in the
+// ShimmerEngine v9 — external reference-style topology: pitch shifter sits in the
 // FEEDBACK loop only, not on the forward path. The reverb sees the dry
 // input directly, so the first wet hit is a natural reverb tail at the
 // original pitch. Pitched reverb is added on top of that natural tail
@@ -30,7 +30,7 @@
 //   mix (Eno's actual use case), but as a "shimmer reverb" plugin where
 //   mix=80% means dry sits at -10 dB while wet dominates, the listener
 //   hears only pitched-cascade-of-pitched-cascade and no real tail.
-//   v9 mirrors what Valhalla Shimmer / Eventide H7600 / modern shimmer
+//   v9 mirrors what external reference Shimmer / modern multi-FX hardware / modern shimmer
 //   plugins do: dry input goes straight through the reverb (natural
 //   tail), and the pitch shifter is in the feedback loop only, adding
 //   the shimmer harmonics on top. At PITCH=0, the engine collapses to
@@ -144,6 +144,19 @@ private:
     // Pitch shifters — one per channel for natural stereo independence.
     GranularPitchShifter pitchL_, pitchR_;
 
+    // SECOND pitch voice — an octave ABOVE voice 1 (2026-05-31). A single
+    // granular voice + its anti-alias filter (cutoff = nyquist/ratio ≈ 12 kHz
+    // for the +12 octave) is band-limited: the top octave (10-20 kHz) is
+    // starved vs Valhalla Shimmer's broadband octave (Deep Blue Day: ss-air
+    // -19 dB short, spec_L1 max +36 dB at 12.9 kHz). Voice 2 pitches the same
+    // feedback up a FURTHER octave (ratio ×2, AA cutoff ~6 kHz → output to
+    // 24 kHz), filling 12-24 kHz so the shimmer reads broadband. Lower mix —
+    // it is the "air" layer over voice 1. Bypassed at unity pitch.
+    GranularPitchShifter pitch2L_, pitch2R_;
+    static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
+    static constexpr float kVoice1Mix       = 0.78f;
+    static constexpr float kVoice2Mix       = 0.34f;
+
     // Hall reverb — reuses the existing FDNReverb (same engine that
     // powers the "Realistic Space" / FDN algorithm). Configured in
     // prepare() for a "long lush hall" baseline; per-preset setters
@@ -219,13 +232,13 @@ private:
     // fundamental (≈12 Hz at 4096-sample grains / 48 kHz) and its first
     // few odd harmonics (~36, 60 Hz), while preserving natural-reverb
     // low-frequency content above 60 Hz. Earlier iteration at 120 Hz was
-    // over-aggressive and removed musical bass that VS clearly retains.
+    // over-aggressive and removed musical bass that external reference clearly retains.
     static constexpr float kFeedbackHpfHz = 60.0f;
     // LPF at 1.5 kHz — aggressive HF attenuation in the feedback path.
     // Each cascade cycle pitches up by N semitones (×2 at +12), so a
     // 200 Hz snare component migrates 200→400→800→1600→3200 Hz over 4
     // cycles, accumulating as a "metallic" peak at 1-3 kHz that's the
-    // clearest audible artifact differentiating us from VS Shimmer.
+    // clearest audible artifact differentiating us from external reference shimmer.
     // 1.5 kHz drops the migrated content by ~−3 dB at 1.5 kHz and ~−6 dB
     // at 3 kHz per cycle, so by 3-4 cycles the high-end energy is
     // exhausted before it can recirculate further.
@@ -256,14 +269,14 @@ private:
     // As the cascade grows, the softClip compresses the feedback,
     // dropping effective loop gain below unity. The cascade settles into
     // a stable fixed point — the "self-limiting" behavior heard in
-    // Valhalla Shimmer's impulse response (cascade builds then plateaus
+    // external reference Shimmer's impulse response (cascade builds then plateaus
     // around -52 dB before decaying).
     static constexpr float kFeedbackSoftClipKnee = 0.5f;
     static constexpr float kFeedbackSoftClipCeil = 1.5f;
 
     // Fixed per-cycle feedback attenuation. Combined with the softClip
     // above, sets the unity-loop-gain operating point. Empirically tuned
-    // against VS reference renders so that low-signal loop gain is just
+    // against external reference reference renders so that low-signal loop gain is just
     // above 1.0 (cascade buildup on impulse-like inputs) and high-signal
     // loop gain is below 1.0 (bounded steady-state, no runaway). The
     // user's FEEDBACK knob still scales the cascade strength linearly
@@ -271,8 +284,8 @@ private:
     static constexpr float kFeedbackLoopAttn = 0.92f;
 
     // Internal wet-output attenuation. Tuned by direct A/B comparison to
-    // Valhalla Shimmer reference renders (VS_EnoChoir_*, VS_CascadingHeaven_*)
-    // — at -20 dB the snare/noise peaks land within ~1 dB of the VS engine
+    // external reference Shimmer reference renders (VS_EnoChoir_*, VS_CascadingHeaven_*)
+    // — at -20 dB the snare/noise peaks land within ~1 dB of the external reference engine
     // at the same preset settings. The wrapper's gain_trim is reserved for
     // per-preset fine-tuning, not blanket level normalization.
     static constexpr float kWetOutputGain = 0.40f;   // -8 dB
