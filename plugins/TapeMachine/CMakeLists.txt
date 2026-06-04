@@ -121,3 +121,9 @@ endif()
 set_target_properties(TapeMachine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# Opt-in unity-contract harness for GH issue #92 (autoComp undercompensation).
+option(BUILD_TAPEMACHINE_TESTS "Build TapeMachine standalone test harness" OFF)
+if(BUILD_TAPEMACHINE_TESTS)
+    add_subdirectory(tests)
+endif()
