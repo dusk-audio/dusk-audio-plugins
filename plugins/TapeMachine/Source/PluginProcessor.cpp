@@ -626,24 +626,28 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     if (autoCompEnabled)
     {
-        // VTM-style: Output compensates for input + tape compression
-        // The tape emulation has nonlinear level-dependent behavior:
-        //   - At -12dB to 0dB: ~0.5dB loss (0.95 calibration factor)
-        //   - At +6dB: ~3.5dB loss (moderate compression)
-        //   - At +12dB: ~7dB loss (heavy compression)
-        // Use piecewise compensation: constant for negative, quadratic for positive
+        // VTM-style: Output compensates for input + tape compression.
+        // compressionCompensation is the negation of the tape's own (input-gain-
+        // removed) transfer, so applying -inputGainDB + comp drives net output to
+        // ~unity. Coefficients re-derived from the measured raw transfer curve
+        // (autoComp OFF, -6 dBFS / 1 kHz sine, 48k/512, OS=4x). The tape-alone
+        // gain delta at each drive point is:
+        //   -12dB -> +0.19   -6dB -> -0.20   0dB -> -2.45   +6dB -> -5.03   +12dB -> -11.09
+        // comp(d) = -tapeAlone(d), fitted as two quadratics meeting at d=0 (c=2.45):
+        //   d <= 0: through (-12,-0.19) (-6,+0.20) (0,+2.45)
+        //   d >  0: through (0,+2.45)  (+6,+5.03) (+12,+11.09)
         float compressionCompensation;
         if (inputGainDB <= 0.0f)
         {
-            // Low input: minimal compression, just compensate for 0.95 factor
-            compressionCompensation = 0.5f;
+            compressionCompensation = 0.025833f * inputGainDB * inputGainDB
+                                    + 0.53f     * inputGainDB
+                                    + 2.45f;
         }
         else
         {
-            // High input: compression increases quadratically
-            // At +12dB we need ~7dB compensation, at 0dB we need ~0.5dB
-            float normalizedInput = inputGainDB / 12.0f;  // 0 to 1
-            compressionCompensation = 0.5f + 6.5f * normalizedInput * normalizedInput;
+            compressionCompensation = 0.048333f * inputGainDB * inputGainDB
+                                    + 0.14f     * inputGainDB
+                                    + 2.45f;
         }
         targetOutputGain = juce::Decibels::decibelsToGain(-inputGainDB + compressionCompensation);
     }
