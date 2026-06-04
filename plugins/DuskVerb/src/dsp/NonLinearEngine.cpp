@@ -73,9 +73,14 @@ void NonLinearEngine::clearBuffers()
 
 void NonLinearEngine::setDecayTime (float seconds)
 {
-    // Hall RT60. The plan calls for a long decay range (0.5 - 6 s) for
-    // "big hall"; we trust the FDN's internal clamping.
-    fdn_.setDecayTime (seconds);
+    // Hall RT60 → internal FDN. Knob-honesty calibration (2026-05-31): this
+    // FDN instance's delay-line config caps mid-band RT60 ~4 s and reads
+    // ≈1.38·T^0.51 (verified gate-open, so it's the FDN config, not the gate).
+    // Invert so the knob is honest in the usable (≤~3.5 s) range; above the
+    // ~4 s ceiling the knob necessarily reads optimistic (a gated engine —
+    // its presets live short). internal = (R/C)^(1/P).
+    const float honest = std::max (0.05f, seconds);
+    fdn_.setDecayTime (std::clamp (std::pow (honest / 1.38f, 1.0f / 0.51f), 0.05f, 30.0f));
 }
 
 void NonLinearEngine::setSize         (float size) { fdn_.setSize (size); }

@@ -15,13 +15,21 @@
 enum class EngineType : int
 {
     Dattorro          = 0,  // 2-AP cross-coupled plate (Dattorro 1997).
-    DattorroVintage   = 1,  // Dattorro tank + fixed post-EQ for vintage-Lex character (DattorroPlateVintage wrapper).
+    DattorroVintage   = 1,  // Dattorro tank + fixed post-EQ for vintage-hardware character (DattorroPlateVintage wrapper).
     SixAPTank         = 2,  // 6-AP density cascade tank (lush halls, dense ambience).
     QuadTank          = 3,  // 4 cross-coupled tanks, 48 taps, no modulation.
     FDN               = 4,  // 16-channel Hadamard feedback delay network.
     Spring            = 5,  // Fender 6G15-style 3-spring tank with dispersion-AP chirp.
     NonLinear         = 6,  // RMX16-NonLin2-style 64-tap feed-forward TDL with envelope shapes.
     Shimmer           = 7,  // 8-channel Hadamard FDN with in-loop granular pitch shifter.
+    VintageTank       = 8,  // Griesinger/Lexicon figure-8 modulated AP loop — replaces FDN's
+                            // unitary Hadamard scatter with a recirculating tank that builds
+                            // modal density + lateral bloom over time. Reference architecture
+                            // for vintage hardware reverbs.
+    ReverseRoom       = 9,  // Causal rising-gain early-reflection onset + dark modulated FDN
+                            // tail. Replicates the Lexicon PCM Room "Reverse 1" (NOT
+                            // backwards-convolution — the reference is causal, impulse peaks
+                            // ~70ms then decays). The rising-ER "Tap Slope" is the reverse.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -31,7 +39,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 8; }
+inline int getNumAlgorithms() { return 10; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -44,8 +52,10 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Spring Tank (6G15)",       EngineType::Spring          },
         { "Non-Linear (RMX16)",       EngineType::NonLinear       },
         { "Shimmer (Eno FDN)",        EngineType::Shimmer         },
+        { "Vintage Tank (Figure-8)",  EngineType::VintageTank     },
+        { "Reverse Room (Lexicon)",   EngineType::ReverseRoom     },
     };
-    if (index < 0 || index >= 8)
+    if (index < 0 || index >= 10)
         index = 0;
     return kEngines[index];
 }

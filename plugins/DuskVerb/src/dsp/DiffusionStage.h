@@ -8,7 +8,7 @@
 // Uses the Schroeder allpass topology: H(z) = (z^-D - g) / (1 - g*z^-D)
 //
 // In addition to the existing sine LFO modulation, this AP also supports a
-// Lexicon-style spin-and-wander jitter on the read position. Rationale: the
+// vintage-hardware-style spin-and-wander jitter on the read position. Rationale: the
 // LFO is too slow (~0.3-0.8 Hz, ±1 sample) to break the AP's modal
 // phase-locking when the delay is long. The jitter operates in a faster
 // band (auto-set so its period ≈ 2× delay) so it disrupts ring coherence

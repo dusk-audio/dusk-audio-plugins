@@ -1,22 +1,37 @@
 #include "DattorroPlateVintage.h"
 
+#include <algorithm>
+
 void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
 {
     tank_.prepare (sampleRate, maxBlockSize);
 
-    const float sr = static_cast<float> (sampleRate);
-    // Box-cut: 320 Hz, Q=2.0, -3.5 dB. Initial -6 dB Q=1.4 over-cut
-    // 250-500 Hz steady-state by 4-6 dB (per measurement); narrower Q
-    // + gentler gain hits the box peak without scooping the entire
-    // low-mid region. -3 dB-points sit at ~270 Hz and ~380 Hz so the
-    // hump is flattened while 200 Hz and 500 Hz stay close to flat.
-    boxCut_.design     (320.0f, 2.0f, -3.5f, sr);
-    // Low-mid trim disabled — the broad shelf was double-cutting low
-    // mids on top of the box-cut, pulling 200 Hz down 1 dB further
-    // than Lex. Set to 0 dB (no-op) until measurement justifies it.
-    lowMidTrim_.design (200.0f, 0.7f,  0.0f, sr);
+    sampleRate_ = static_cast<float> (sampleRate);
+    // Post-tank corrective notch (configurable per-preset). Defaults
+    // match the original VVP calibration (320 Hz, Q=2.0, -3.5 dB) which
+    // flattens the Dattorro tank's intrinsic 200-500 Hz hump.
+    boxCut_.design     (boxCutFreqHz_, 2.0f, boxCutGainDb_, sampleRate_);
+    lowMidTrim_.design (200.0f, 0.7f,  0.0f, sampleRate_);
+    // Pre-tank low-shelf — re-injects bass energy that the post-tank
+    // boxCut otherwise removes. Gain defaults to 0 dB (no-op); dark
+    // plates with -100% bass deficits enable this via setBassShelfGainDb.
+    bassLift_.designLowShelf (bassShelfFreqHz_, 0.7f, bassShelfGainDb_, sampleRate_);
+    // HF shelf — PRE-tank pre-emphasis. Boosts HF energy entering the
+    // tank so early reflections come out bright; the in-loop structural
+    // HF damping attenuates the boost over each modal pass, so the late
+    // tail darkens naturally. Shelf gain / freq + struct HF damp Hz are
+    // per-preset (set via setHf* APIs). Defaults match the original
+    // Vintage Vocal Plate calibration; dark plates configure their own.
+    hfLift_.designHighShelf (hfShelfFreqHz_, 0.7f, hfShelfGainDb_, sampleRate_);
     boxCut_.reset();
     lowMidTrim_.reset();
+    bassLift_.reset();
+    hfLift_.reset();
+
+    preTankL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    preTankR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+
+    tank_.setStructuralHFDamping (structHfDampHz_);
 
     prepared_ = true;
 }
@@ -26,13 +41,37 @@ void DattorroPlateVintage::clearBuffers()
     tank_.clearBuffers();
     boxCut_.reset();
     lowMidTrim_.reset();
+    bassLift_.reset();
+    hfLift_.reset();
 }
 
 void DattorroPlateVintage::process (const float* inputL, const float* inputR,
                                     float* outputL, float* outputR, int numSamples)
 {
     if (! prepared_) return;
-    tank_.process (inputL, inputR, outputL, outputR, numSamples);
+    if (static_cast<size_t> (numSamples) > preTankL_.size())
+    {
+        // Host violated prepare()'s maxBlockSize. Zero output rather than
+        // leaving caller buffers untouched (stale tail leak otherwise).
+        std::fill_n (outputL, numSamples, 0.0f);
+        std::fill_n (outputR, numSamples, 0.0f);
+        return;
+    }
+
+    // Pre-tank EQ chain: bassLift_ (low-shelf bass injection) → hfLift_
+    // (HF pre-emphasis). bassLift_ runs first so the structural HF damper
+    // inside the tank attenuates only the boosted top end, leaving the
+    // bass injection untouched by the tank's HF damping path.
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const float bl = bassLift_.processL (inputL[n]);
+        const float br = bassLift_.processR (inputR[n]);
+        preTankL_[static_cast<size_t> (n)] = hfLift_.processL (bl);
+        preTankR_[static_cast<size_t> (n)] = hfLift_.processR (br);
+    }
+
+    tank_.process (preTankL_.data(), preTankR_.data(), outputL, outputR, numSamples);
+
     for (int n = 0; n < numSamples; ++n)
     {
         float l = outputL[n];
@@ -58,3 +97,52 @@ void DattorroPlateVintage::setModDepth          (float v) { tank_.setModDepth   
 void DattorroPlateVintage::setModRate           (float v) { tank_.setModRate           (v); }
 void DattorroPlateVintage::setTankDiffusion     (float v) { tank_.setTankDiffusion     (v); }
 void DattorroPlateVintage::setFreeze            (bool  v) { tank_.setFreeze            (v); }
+
+void DattorroPlateVintage::setHfShelfGainDb (float gainDb)
+{
+    hfShelfGainDb_ = gainDb;
+    if (prepared_)
+        hfLift_.designHighShelf (hfShelfFreqHz_, 0.7f, hfShelfGainDb_, sampleRate_);
+}
+
+void DattorroPlateVintage::setHfShelfFreqHz (float fcHz)
+{
+    hfShelfFreqHz_ = fcHz;
+    if (prepared_)
+        hfLift_.designHighShelf (hfShelfFreqHz_, 0.7f, hfShelfGainDb_, sampleRate_);
+}
+
+void DattorroPlateVintage::setStructHfDampHz (float hz)
+{
+    structHfDampHz_ = hz;
+    if (prepared_)
+        tank_.setStructuralHFDamping (structHfDampHz_);
+}
+
+void DattorroPlateVintage::setBoxCutGainDb (float gainDb)
+{
+    boxCutGainDb_ = gainDb;
+    if (prepared_)
+        boxCut_.design (boxCutFreqHz_, 2.0f, boxCutGainDb_, sampleRate_);
+}
+
+void DattorroPlateVintage::setBoxCutFreqHz (float fcHz)
+{
+    boxCutFreqHz_ = fcHz;
+    if (prepared_)
+        boxCut_.design (boxCutFreqHz_, 2.0f, boxCutGainDb_, sampleRate_);
+}
+
+void DattorroPlateVintage::setBassShelfGainDb (float gainDb)
+{
+    bassShelfGainDb_ = gainDb;
+    if (prepared_)
+        bassLift_.designLowShelf (bassShelfFreqHz_, 0.7f, bassShelfGainDb_, sampleRate_);
+}
+
+void DattorroPlateVintage::setBassShelfFreqHz (float fcHz)
+{
+    bassShelfFreqHz_ = fcHz;
+    if (prepared_)
+        bassLift_.designLowShelf (bassShelfFreqHz_, 0.7f, bassShelfGainDb_, sampleRate_);
+}
