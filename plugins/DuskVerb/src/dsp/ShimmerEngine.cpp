@@ -149,7 +149,7 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     // 200 Hz fundamental migrates octave-by-octave through the loop.
     // Modulation smears those peaks across narrow bands so they blend with
     // the rest of the cascade tail (the "subdued" character the user
-    // observed in Valhalla Shimmer).
+    // observed in external reference Shimmer).
     const float effectiveRatio = ratioModEnabled_
         ? pitchRatio_ * (1.0f + ratioModDepth_ * ratioMod_.next())
         : pitchRatio_;
@@ -190,9 +190,13 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     // flutter from tape and tube modulators in the loop.
     pitchL_.setModulation (5.7f, 0.015f, 0xC0FFEEu);
     pitchR_.setModulation (7.3f, 0.015f, 0xBADC0DEu);
+    pitch2L_.prepare (sampleRate);
+    pitch2R_.prepare (sampleRate);
+    pitch2L_.setModulation (4.9f, 0.020f, 0x5EED01u);
+    pitch2R_.setModulation (6.7f, 0.020f, 0x5EED02u);
 
     // Hall reverb baseline: long, lush, slightly dark (period-correct
-    // for the Lexicon 224 character that the original Eno/Lanois rig used).
+    // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
     reverb_.prepare (sampleRate, maxBlockSize);
     reverb_.setDecayTime         (4.0f);
     reverb_.setSize              (0.75f);
@@ -235,6 +239,8 @@ void ShimmerEngine::clearBuffers()
 {
     pitchL_.clear();
     pitchR_.clear();
+    pitch2L_.clear();
+    pitch2R_.clear();
     reverb_.clearBuffers();
     std::fill (reverbInL_.begin(), reverbInL_.end(), 0.0f);
     std::fill (reverbInR_.begin(), reverbInR_.end(), 0.0f);
@@ -302,6 +308,8 @@ void ShimmerEngine::updatePitchRatio()
     const float ratio = std::pow (2.0f, pitchSemitones_ / 12.0f);
     pitchL_.setPitchRatio (ratio);
     pitchR_.setPitchRatio (ratio);
+    pitch2L_.setPitchRatio (ratio * kVoice2OctaveMul);   // octave above -> fills the top band
+    pitch2R_.setPitchRatio (ratio * kVoice2OctaveMul);
 }
 
 // ============================================================================
@@ -348,8 +356,12 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // Pitch-shift the delayed wet directly. At PITCH=0 the shifter
         // bypasses to a filtered passthrough, collapsing the engine to a
         // feedback-extended reverb.
-        const float pitchedFbL = pitchL_.process (fbDelayLineL_[static_cast<size_t> (readPos)]);
-        const float pitchedFbR = pitchR_.process (fbDelayLineR_[static_cast<size_t> (readPos)]);
+        const float fbSrcL = fbDelayLineL_[static_cast<size_t> (readPos)];
+        const float fbSrcR = fbDelayLineR_[static_cast<size_t> (readPos)];
+        const float pitchedFbL = kVoice1Mix * pitchL_.process (fbSrcL)
+                               + kVoice2Mix * pitch2L_.process (fbSrcL);
+        const float pitchedFbR = kVoice1Mix * pitchR_.process (fbSrcR)
+                               + kVoice2Mix * pitch2R_.process (fbSrcR);
 
         // Band-pass the pitch-shifted feedback: HPF removes grain-rate
         // sub-harmonics that would otherwise rumble up over time; LPF
