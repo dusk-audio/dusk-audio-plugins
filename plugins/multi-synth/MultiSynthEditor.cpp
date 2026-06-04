@@ -661,7 +661,7 @@ void MultiSynthEditor::paintOracle(juce::Graphics& g)
         int badgeY = b.getY() + scaled(kSectionTitleH) - 1;
         g.setColour(juce::Colour(0x50AA8040));
         g.drawHorizontalLine(badgeY, static_cast<float>(b.getX() + scaled(4)),
-                             static_cast<float>(b.getX() + scaled(4) + juce::Font(juce::FontOptions(10.0f * sf)).getStringWidthFloat(t) + scaled(8)));
+                             static_cast<float>(b.getX() + scaled(4) + juce::GlyphArrangement::getStringWidth(juce::Font(juce::FontOptions(10.0f * sf)), t) + scaled(8)));
     };
 
     psWithBadge(sections.oscillators, "POLY-MOD / OSC A / OSC B / MIXER");
