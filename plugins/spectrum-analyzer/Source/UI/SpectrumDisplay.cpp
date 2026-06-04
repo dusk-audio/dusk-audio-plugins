@@ -187,7 +187,7 @@ void SpectrumDisplay::drawHoverInfo(juce::Graphics& g)
 
     // Draw info box
     g.setFont(13.0f);
-    int textWidth = g.getCurrentFont().getStringWidth(infoStr) + 10;
+    int textWidth = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), infoStr) + 10;
 
     float boxX = hoverPosition.x + 10;
     float boxY = hoverPosition.y - 25;
