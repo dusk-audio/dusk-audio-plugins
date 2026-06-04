@@ -275,8 +275,8 @@ void QuadTank::process (const float* inputL, const float* inputR,
                     dense = tank.densityAP[d].process (dense, densityDiffCoeff_);
             }
 
-            // --- Two-band damping ---
-            float damped = frozen_ ? dense : tank.damping.process (dense);
+            // --- 5-band shelving damping (snapshot coeffs, per-tank state) ---
+            float damped = frozen_ ? dense : tank.damping.process (dense, tank.dampingCoeffs);
 
             // --- Structural HF damping ---
             if (structHFCoeff_ > 0.0f && ! frozen_)
@@ -396,6 +396,20 @@ void QuadTank::setSaturation (float amount)
 void QuadTank::setTrebleMultiply (float mult)
 {
     trebleMultiply_ = std::max (mult, 0.1f);
+    if (prepared_) updateDecayCoefficients();
+}
+
+void QuadTank::setHiMidMultiply (float mult)
+{
+    // Negative passes through as the inherit sentinel (transparent 3-band);
+    // positive values are clamped to the same floor as the other rates.
+    hiMidMultiply_ = (mult < 0.0f) ? -1.0f : std::max (mult, 0.1f);
+    if (prepared_) updateDecayCoefficients();
+}
+
+void QuadTank::setAirMultiply (float mult)
+{
+    airMultiply_ = (mult < 0.0f) ? -1.0f : std::max (mult, 0.1f);
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -612,8 +626,10 @@ void QuadTank::updateDelayLengths()
 void QuadTank::updateDecayCoefficients()
 {
     float sr = static_cast<float> (sampleRate_);
-    float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    float lowCrossoverCoeff  = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
+    float subCrossoverCoeff  = std::exp (-kTwoPi * subCrossoverFreq_ / sr);
+    float airCrossoverCoeff  = std::exp (-kTwoPi * airCrossoverFreq_ / sr);
 
     // Size-dependent AP energy-storage factor (mirrors SixAPTank + Dattorro).
     // Linear interp: 2.65 at sizeParam=0.5, 1.55 at 1.0. Compensates for the
@@ -652,7 +668,21 @@ void QuadTank::updateDecayCoefficients()
         // Pre-computed product trebleMultiply_ * 0.70f.
         float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * 0.70f)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
+        // 5-band: split the old <1k into sub|lo-mid and >4k into hi-mid|air.
+        // Sentinel <0 follows the neighbouring legacy band so the default
+        // response reduces exactly to the 3-band (gSub=gLoMid=gLow, gHiMid=gAir
+        // =gHigh) — see FiveBandDamping transparent-fallback contract.
+        float gSub   = gLow;
+        float gLoMid = (loMidMultiply_ < 0.0f) ? gLow
+                     : std::clamp (std::pow (gBase, 1.0f / loMidMultiply_), 0.001f, 0.9999f);
+        float gHiMid = (hiMidMultiply_ < 0.0f) ? gHigh
+                     : std::clamp (std::pow (gBase, 1.0f / hiMidMultiply_), 0.001f, 0.9999f);
+        float gAir   = (airMultiply_ < 0.0f) ? gHigh
+                     : std::clamp (std::pow (gBase, 1.0f / airMultiply_), 0.001f, 0.9999f);
+
+        tank.dampingCoeffs = FiveBandDamping::designCoeffs (
+            gSub, gLoMid, gMid, gHiMid, gAir,
+            subCrossoverCoeff, lowCrossoverCoeff, highCrossoverCoeff, airCrossoverCoeff, sr);
     }
 }
 

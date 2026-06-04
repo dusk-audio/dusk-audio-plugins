@@ -242,6 +242,21 @@ struct FactoryPreset
         setIfExists ("edt_lowmid_attack_db", elA);  setIfExists ("edt_lowmid_tau_ms", elT);
         setIfExists ("edt_midhi_attack_db", emA);   setIfExists ("edt_midhi_tau_ms", emT);
         setIfExists ("edt_air_attack_db", eaA);     setIfExists ("edt_air_tau_ms", eaT);
+        // QuadTank 5-band damping split (hi-mid 4-8k / air >8k). -1 (unlisted)
+        // → inherit the legacy treble rate → bit-identical 3-band. Lets QuadTank
+        // presets shorten the 8 k / 16 k tails independently of the centroid.
+        struct QuadBandOverride { float hiMid, air; };
+        static const std::map<juce::String, QuadBandOverride> kQuadBandByName = {
+            // 79 Vocal Chamber (QuadTank) vs VVV — hi-mid+air split closes
+            // cent_500 and pulls the 4-8 k tail in without darkening the mids
+            // (the 3-band gHigh couldn't). 23->21.
+            { "79 Vocal Chamber", { 0.18f, 0.5f } },
+        };
+        float qtHiMid = -1.0f, qtAir = -1.0f;
+        if (auto it = kQuadBandByName.find (juce::String (name)); it != kQuadBandByName.end())
+        { qtHiMid = it->second.hiMid; qtAir = it->second.air; }
+        setIfExists ("qt_himid_mult", qtHiMid);
+        setIfExists ("qt_air_mult",   qtAir);
         setIfExists ("damping",   damping);
         setIfExists ("bass_mult", bassMult);
         setIfExists ("mid_mult",  midMult);

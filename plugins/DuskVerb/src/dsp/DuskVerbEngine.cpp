@@ -312,6 +312,10 @@ void DuskVerbEngine::setAirTrebleMultiply (float mult)
 // of silently running these axes at their defaults.
 void DuskVerbEngine::setSubMultiply     (float mult) { fdn_.setSubMultiply (mult);      multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setSubMultiply (mult); }); }
 void DuskVerbEngine::setHiMidMultiply   (float mult) { fdn_.setHiMidMultiply (mult);    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setHiMidMultiply (mult); }); }
+// QuadTank 5-band split (hi-mid 4-8k / air >8k). Separate from the FDN path:
+// QuadTank's transparency sentinel is -1, distinct from the FDN convention.
+void DuskVerbEngine::setQuadHiMidMultiply (float mult) { quad_.setHiMidMultiply (mult); }
+void DuskVerbEngine::setQuadAirMultiply   (float mult) { quad_.setAirMultiply (mult); }
 void DuskVerbEngine::setSubCrossoverFreq (float hz)  { fdn_.setSubCrossoverFreq (hz);   multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setSubCrossoverFreq (hz); }); }
 void DuskVerbEngine::setAirCrossoverFreq (float hz)  { fdn_.setAirCrossoverFreq (hz);   multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setAirCrossoverFreq (hz); }); }
 void DuskVerbEngine::setShaperDepth     (float d)    { fdn_.setShaperDepth (d);         multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setShaperDepth (d); }); }
