@@ -518,12 +518,17 @@ void DattorroTank::setModDepth (float depth)
     leftTank_.lfo.setDepth  (modDepthSamples_);
     rightTank_.lfo.setDepth (modDepthSamples_);
 
-    // Delay-tap modulation depth. Half of the AP1 LFO depth so the long
-    // delay reads don't pitch-warp on sustained content (a 100 ms delay
-    // wandering ±8 samples at 0.85 Hz is ~5 cents peak detune, well below
-    // detection threshold), while still moving the read tap enough to
-    // disrupt modal resonances on long decays.
-    delayModDepthSamples_ = clampedDepth * 8.0f * rateRatio;
+    // Delay-tap modulation depth. SQUARED mapping (depth² × 8) so the per-
+    // delay-line wander is essentially silent at low Mod Depth knob values
+    // (modD=0.1 → 0.08 samples peak; effectively zero) while preserving
+    // the full ±8-sample wander at modD=1.0 to disrupt modal resonances on
+    // long decays. Linear mapping (commit 140017f) was inadvertently
+    // stacking 3 LFOs at audible depths even when Mod Depth was dialed
+    // low — short/medium plates picked up a chorus character that wasn't
+    // there before. Squared curve restores the pre-140017f tail clarity
+    // at conservative depths without losing the anti-modal benefit at
+    // max depth.
+    delayModDepthSamples_ = clampedDepth * clampedDepth * 8.0f * rateRatio;
     leftTank_.delay1Lfo .setDepth (delayModDepthSamples_);
     leftTank_.delay2Lfo .setDepth (delayModDepthSamples_);
     rightTank_.delay1Lfo.setDepth (delayModDepthSamples_);
@@ -733,15 +738,30 @@ void DattorroTank::clearBuffers()
         // deterministically rather than carrying stale LFO phase from a
         // previous use.
         tank.delay1Lfo.prepare (static_cast<float> (sampleRate_), seed ^ 0xA5A5A5A5u);
-        tank.delay1Lfo.setRate (modRateHz_ * 0.83f);
+        tank.delay1Lfo.setRate (modRateHz_ * 0.95f);
         tank.delay1Lfo.setDepth (delayModDepthSamples_);
         tank.delay2Lfo.prepare (static_cast<float> (sampleRate_), seed ^ 0x5A5A5A5Au);
-        tank.delay2Lfo.setRate (modRateHz_ * 1.27f);
+        tank.delay2Lfo.setRate (modRateHz_ * 1.05f);
         tank.delay2Lfo.setDepth (delayModDepthSamples_);
     };
 
     clearTank (leftTank_, 0x12345678u);
     clearTank (rightTank_, 0x87654321u);
+    // Reseed the density-AP jitter LFOs with the SAME per-channel seeds used in
+    // prepare() (the lambda's tank seed differs), so density modulation also
+    // restarts deterministically across resets/engine swaps instead of leaking
+    // phase. clear() above only zeros the AP buffer, not the LFO phase.
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        const float sr = static_cast<float> (sampleRate_);
+        leftTank_ .densityAP[i].jitterLFO.prepare (sr, 0xBADBEEFu + static_cast<std::uint32_t> (i * 31337));
+        rightTank_.densityAP[i].jitterLFO.prepare (sr, 0xC0FFEEu  + static_cast<std::uint32_t> (i * 27449));
+        // prepare() only sets phase; restore rate/depth too (clearBuffers does
+        // NOT call updateDelayLengths/updateJitterDepth afterwards) so density
+        // jitter isn't left disabled until the next size change.
+        leftTank_ .densityAP[i].updateJitterDepth (sr);
+        rightTank_.densityAP[i].updateJitterDepth (sr);
+    }
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
@@ -838,13 +858,13 @@ void DattorroTank::updateLFORates()
     leftTank_.lfo.setRate  (modRateHz_);
     rightTank_.lfo.setRate (modRateHz_);
 
-    // Detune the delay-tap LFOs from the AP1 rate. Slightly slower on
-    // delay1, slightly faster on delay2 — the three modulators in each
-    // tank then trace incommensurable paths and don't beat against each
-    // other periodically (the source of perceptible "warble" on long
-    // tails).
-    constexpr float kDelay1RateScale = 0.83f;
-    constexpr float kDelay2RateScale = 1.27f;
+    // Tightly clustered delay-tap LFO spread (0.95×/1.05×). Previous
+    // 0.83×/1.27× spread (44 %) produced audible beating between the AP1
+    // and delay-tap modulators on long tails — the same chorus-in-tail
+    // pathology as FDN's 70 % spread. Tight cluster keeps incommensurate
+    // paths to avoid mechanical phase-lock without producing chorus.
+    constexpr float kDelay1RateScale = 0.95f;
+    constexpr float kDelay2RateScale = 1.05f;
     leftTank_.delay1Lfo .setRate (modRateHz_ * kDelay1RateScale);
     leftTank_.delay2Lfo .setRate (modRateHz_ * kDelay2RateScale);
     rightTank_.delay1Lfo.setRate (modRateHz_ * kDelay1RateScale);

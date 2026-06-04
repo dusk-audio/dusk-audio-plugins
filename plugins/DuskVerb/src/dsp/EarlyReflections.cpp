@@ -103,6 +103,13 @@ void EarlyReflections::setGainExponent (float exponent)
         tapsNeedUpdate_.store (true, std::memory_order_release);
 }
 
+void EarlyReflections::setOnsetRiseMs (float ms)
+{
+    onsetRiseMs_ = std::clamp (ms, 0.0f, 60.0f);
+    if (prepared_)
+        tapsNeedUpdate_.store (true, std::memory_order_release);
+}
+
 void EarlyReflections::setAirAbsorptionFloor (float hz)
 {
     airAbsorptionFloorHz_ = std::clamp (hz, 1000.0f, 12000.0f);
@@ -141,12 +148,41 @@ void EarlyReflections::updateTaps()
         tapsL_[i].delaySamples = std::max (1, static_cast<int> (timeMsL * 0.001f * sr));
         tapsR_[i].delaySamples = std::max (1, static_cast<int> (timeMsR * 0.001f * sr));
 
-        float normL = timeMsL / kMinTimeMs;
-        float normR = timeMsR / kMinTimeMs;
-        float attenL = (gainExponent_ > 0.0f) ? std::pow (normL, gainExponent_) : 1.0f;
-        float attenR = (gainExponent_ > 0.0f) ? std::pow (normR, gainExponent_) : 1.0f;
-        tapsL_[i].gain = kSignsL[i] / attenL;
-        tapsR_[i].gain = kSignsR[i] / attenR;
+        if (onsetRiseMs_ > 0.0f)
+        {
+            // Rising-onset envelope: gain ramps 0→1 up to a peak at onsetRiseMs_
+            // (smoothstep for a soft swell), then inverse-distance rolloff after.
+            // Output envelope therefore peaks at ~onsetRiseMs_ instead of at the
+            // first tap → matches VVV's gentle attack swell, not a spike.
+            auto riseEnv = [this] (float timeMs) {
+                // Peak-normalized: rise (smoothstep, clamped at the peak) ×
+                // rolloff (clamped at the peak). For taps before onsetRiseMs_
+                // the rolloff factor is 1.0 so they scale purely by the rise,
+                // i.e. relative to the guaranteed peak at onsetRiseMs_ — even
+                // when every tap occurs before the requested peak time.
+                const float r        = timeMs / onsetRiseMs_;
+                const float rClamped = std::min (r, 1.0f);
+                const float rise     = rClamped * rClamped * (3.0f - 2.0f * rClamped);
+                // Steep post-peak rolloff (≥2.5) so the er_boost only lifts the
+                // 0..onsetRiseMs_ attack window: late ER taps (r≫1) drop fast and
+                // don't over-energize the steady state (verified: a gentle 1/r
+                // rolloff at boost 7 polluted snare/sine1k/T60; ex=2.5 recovers them).
+                const float ex       = std::max (gainExponent_, 2.5f);
+                const float rolloff  = std::pow (1.0f / std::max (r, 1.0f), ex);
+                return rise * rolloff;
+            };
+            tapsL_[i].gain = kSignsL[i] * riseEnv (timeMsL);
+            tapsR_[i].gain = kSignsR[i] * riseEnv (timeMsR);
+        }
+        else
+        {
+            float normL = timeMsL / kMinTimeMs;
+            float normR = timeMsR / kMinTimeMs;
+            float attenL = (gainExponent_ > 0.0f) ? std::pow (normL, gainExponent_) : 1.0f;
+            float attenR = (gainExponent_ > 0.0f) ? std::pow (normR, gainExponent_) : 1.0f;
+            tapsL_[i].gain = kSignsL[i] / attenL;
+            tapsR_[i].gain = kSignsR[i] / attenR;
+        }
 
         float cutoffL = airAbsorptionCeilingHz_ * std::pow (airAbsorptionFloorHz_ / airAbsorptionCeilingHz_, tL);
         float cutoffR = airAbsorptionCeilingHz_ * std::pow (airAbsorptionFloorHz_ / airAbsorptionCeilingHz_, tR);

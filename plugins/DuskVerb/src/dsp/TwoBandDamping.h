@@ -130,12 +130,29 @@ private:
 class ThreeBandDamping
 {
 public:
+    // POD coefficient block. Used by the snapshot path: filter state stays
+    // inside the filter object; coefficients live in the snapshot and are
+    // passed by const-ref to process() each sample. Zero-tear: the snapshot
+    // pointer swap is atomic, so the RT thread never sees half-written
+    // biquad coefficients.
+    struct Coeffs
+    {
+        // Low-shelf biquad
+        float lowB0 = 1.0f, lowB1 = 0.0f, lowB2 = 0.0f, lowA1 = 0.0f, lowA2 = 0.0f;
+        // High-shelf biquad
+        float highB0 = 1.0f, highB1 = 0.0f, highB2 = 0.0f, highA1 = 0.0f, highA2 = 0.0f;
+        float broadbandGain = 1.0f;
+    };
+
     void prepare (float sampleRate)
     {
         sampleRate_ = sampleRate;
         reset();
     }
 
+    // Legacy API: writes coefficients into the internal ShelfBiquad objects.
+    // Kept for engines (Dattorro, QuadTank, SixAPTank) not yet migrated to
+    // the snapshot path.
     void setCoefficients (float gLow, float gMid, float gHigh,
                           float lowCrossoverCoeff, float highCrossoverCoeff)
     {
@@ -166,12 +183,53 @@ public:
         highShelf_.designHighShelf (lastHighShelfGain_, lastHighFcHz_, sampleRate_);
     }
 
+    // Snapshot-path coefficient design: pure function of inputs, returns a
+    // Coeffs POD by value. Caller stores into LiveParams; no filter state
+    // mutation. Mirrors the cascade order of the legacy path.
+    static Coeffs designCoeffs (float gLow, float gMid, float gHigh,
+                                float lowCrossoverCoeff, float highCrossoverCoeff,
+                                float sampleRate)
+    {
+        const float lowCoeff  = std::clamp (lowCrossoverCoeff,  1.0e-6f, 1.0f - 1.0e-6f);
+        const float highCoeff = std::clamp (highCrossoverCoeff, 1.0e-6f, 1.0f - 1.0e-6f);
+        const float lowFc  = -std::log (lowCoeff)  * sampleRate * (1.0f / 6.283185307179586f);
+        const float highFc = -std::log (highCoeff) * sampleRate * (1.0f / 6.283185307179586f);
+        const float lowShelfGain  = gLow  / std::max (gMid, 1.0e-12f);
+        const float highShelfGain = gHigh / std::max (gMid, 1.0e-12f);
+
+        ShelfBiquad lowBq, highBq;
+        lowBq .designLowShelf  (lowShelfGain,  lowFc,  sampleRate);
+        highBq.designHighShelf (highShelfGain, highFc, sampleRate);
+
+        Coeffs c;
+        c.lowB0 = lowBq.b0;   c.lowB1 = lowBq.b1;   c.lowB2 = lowBq.b2;
+        c.lowA1 = lowBq.a1;   c.lowA2 = lowBq.a2;
+        c.highB0 = highBq.b0; c.highB1 = highBq.b1; c.highB2 = highBq.b2;
+        c.highA1 = highBq.a1; c.highA2 = highBq.a2;
+        c.broadbandGain = gMid;
+        return c;
+    }
+
+    // Legacy process: reads coefficients from internal biquads.
     float process (float input)
     {
-        // Cascade order doesn't affect magnitude response; pick high-shelf
-        // first so the low-shelf operates on a slightly pre-shaped spectrum
-        // (matches Lexicon-style serial topology).
         return broadbandGain_ * lowShelf_.process (highShelf_.process (input));
+    }
+
+    // Snapshot process: coefficients come by const-ref each sample.
+    // Filter state (z1/z2 inside each shelf) stays on the RT side.
+    // Cascade order matches the legacy path (high-shelf, then low-shelf).
+    float process (float input, const Coeffs& c)
+    {
+        // High-shelf
+        const float yHigh = c.highB0 * input + highShelf_.z1;
+        highShelf_.z1 = c.highB1 * input - c.highA1 * yHigh + highShelf_.z2;
+        highShelf_.z2 = c.highB2 * input - c.highA2 * yHigh;
+        // Low-shelf
+        const float yLow  = c.lowB0 * yHigh + lowShelf_.z1;
+        lowShelf_.z1  = c.lowB1 * yHigh - c.lowA1 * yLow + lowShelf_.z2;
+        lowShelf_.z2  = c.lowB2 * yHigh - c.lowA2 * yLow;
+        return c.broadbandGain * yLow;
     }
 
     void reset()
@@ -189,4 +247,116 @@ private:
     float       lastHighFcHz_       = 4000.0f;
     ShelfBiquad lowShelf_;
     ShelfBiquad highShelf_;
+};
+
+// =====================================================================
+// FiveBandDamping — feedback-loop damping with FIVE decay plateaus
+// (sub | low-mid | mid | hi-mid | air) via a cascade of four 2nd-order
+// RBJ shelving biquads. Gives the FDN the per-band T60-shaping freedom the
+// 3-band lacked: 1k / 2k / 4k / 8k can decay independently to track a
+// vintage plate's steep HF rolloff, and the sub band decouples from the
+// low-mids. Mid passes at the broadband gain; each shelf sets one band's
+// asymptote RELATIVE TO ITS NEIGHBOUR (adjacent-ratio form) so the
+// plateaus compose without overlap-multiplication:
+//
+//   <Xsub : gSub | Xsub..Xlow : gLoMid | Xlow..Xhigh : gMid
+//                | Xhigh..Xair : gHiMid | >Xair : gAir
+//
+//     LowShelf (Xsub)  ratio = gSub   / gLoMid
+//     LowShelf (Xlow)  ratio = gLoMid / gMid
+//     HighShelf(Xhigh) ratio = gHiMid / gMid
+//     HighShelf(Xair)  ratio = gAir   / gHiMid
+//     broadband        = gMid
+//
+// Cascade order: LowShelf(Xsub) -> LowShelf(Xlow) -> HighShelf(Xhigh)
+//              -> HighShelf(Xair) -> * broadband.
+//
+// Transparent fallback (gSub=gLow, gLoMid=gHiMid=gMid, gAir=gHigh,
+// Xsub=lowX, Xair=highX) makes the two middle shelves identity (ratio 1.0
+// → b1=a1, b2=a2 → H(z)≡1, state stays 0 → bit-exact passthrough) and
+// reduces to the legacy ThreeBandDamping pair (low-shelf @ lowX gLow/gMid,
+// high-shelf @ highX gHigh/gMid). Existing presets are behaviourally
+// unchanged — identical to FP epsilon (the active shelves run low→high
+// here vs high→low in ThreeBandDamping; LTI-equivalent, ~-140 dB residual).
+//
+// Snapshot path only (FDN). Coeffs POD passed by const-ref each sample;
+// biquad state (z1/z2) stays RT-side. Allocation-free.
+// =====================================================================
+class FiveBandDamping
+{
+public:
+    struct Coeffs
+    {
+        float subB0 = 1.0f, subB1 = 0.0f, subB2 = 0.0f, subA1 = 0.0f, subA2 = 0.0f;
+        float lowB0 = 1.0f, lowB1 = 0.0f, lowB2 = 0.0f, lowA1 = 0.0f, lowA2 = 0.0f;
+        float hiB0  = 1.0f, hiB1  = 0.0f, hiB2  = 0.0f, hiA1  = 0.0f, hiA2  = 0.0f;
+        float airB0 = 1.0f, airB1 = 0.0f, airB2 = 0.0f, airA1 = 0.0f, airA2 = 0.0f;
+        float broadbandGain = 1.0f;
+    };
+
+    void prepare (float sampleRate) { sampleRate_ = sampleRate; reset(); }
+    void reset() { subS_.reset(); lowS_.reset(); hiS_.reset(); airS_.reset(); }
+
+    // Pure design function. gMid is the broadband (mid-band) gain; the other
+    // four gains are absolute band targets, converted to adjacent ratios so
+    // the cascade yields independent plateaus. Crossover args are the
+    // historical exp(-2π·fc/sr) coefficients; fc recovered for the design.
+    static Coeffs designCoeffs (float gSub, float gLoMid, float gMid,
+                                float gHiMid, float gAir,
+                                float subCoeff, float lowCoeff,
+                                float highCoeff, float airCoeff,
+                                float sampleRate)
+    {
+        auto fc = [sampleRate] (float coeff)
+        {
+            const float c = std::clamp (coeff, 1.0e-6f, 1.0f - 1.0e-6f);
+            return -std::log (c) * sampleRate * (1.0f / 6.283185307179586f);
+        };
+        const float gMidSafe   = std::max (gMid,   1.0e-12f);
+        const float gLoMidSafe = std::max (gLoMid, 1.0e-12f);
+        const float gHiMidSafe = std::max (gHiMid, 1.0e-12f);
+
+        ShelfBiquad subBq, lowBq, hiBq, airBq;
+        subBq.designLowShelf  (gSub   / gLoMidSafe, fc (subCoeff),  sampleRate);
+        lowBq.designLowShelf  (gLoMid / gMidSafe,   fc (lowCoeff),  sampleRate);
+        hiBq .designHighShelf (gHiMid / gMidSafe,   fc (highCoeff), sampleRate);
+        airBq.designHighShelf (gAir   / gHiMidSafe, fc (airCoeff),  sampleRate);
+
+        Coeffs c;
+        c.subB0 = subBq.b0; c.subB1 = subBq.b1; c.subB2 = subBq.b2; c.subA1 = subBq.a1; c.subA2 = subBq.a2;
+        c.lowB0 = lowBq.b0; c.lowB1 = lowBq.b1; c.lowB2 = lowBq.b2; c.lowA1 = lowBq.a1; c.lowA2 = lowBq.a2;
+        c.hiB0  = hiBq.b0;  c.hiB1  = hiBq.b1;  c.hiB2  = hiBq.b2;  c.hiA1  = hiBq.a1;  c.hiA2  = hiBq.a2;
+        c.airB0 = airBq.b0; c.airB1 = airBq.b1; c.airB2 = airBq.b2; c.airA1 = airBq.a1; c.airA2 = airBq.a2;
+        c.broadbandGain = gMid;
+        return c;
+    }
+
+    // Snapshot process: four DF1 shelving biquads in series, then broadband.
+    float process (float input, const Coeffs& c)
+    {
+        // LowShelf (Xsub)
+        float y = c.subB0 * input + subS_.z1;
+        subS_.z1 = c.subB1 * input - c.subA1 * y + subS_.z2;
+        subS_.z2 = c.subB2 * input - c.subA2 * y;
+        // LowShelf (Xlow)
+        float x = y;
+        y = c.lowB0 * x + lowS_.z1;
+        lowS_.z1 = c.lowB1 * x - c.lowA1 * y + lowS_.z2;
+        lowS_.z2 = c.lowB2 * x - c.lowA2 * y;
+        // HighShelf (Xhigh)
+        x = y;
+        y = c.hiB0 * x + hiS_.z1;
+        hiS_.z1 = c.hiB1 * x - c.hiA1 * y + hiS_.z2;
+        hiS_.z2 = c.hiB2 * x - c.hiA2 * y;
+        // HighShelf (Xair)
+        x = y;
+        y = c.airB0 * x + airS_.z1;
+        airS_.z1 = c.airB1 * x - c.airA1 * y + airS_.z2;
+        airS_.z2 = c.airB2 * x - c.airA2 * y;
+        return c.broadbandGain * y;
+    }
+
+private:
+    float       sampleRate_ = 44100.0f;
+    ShelfBiquad subS_, lowS_, hiS_, airS_;   // hold z1/z2 state only
 };

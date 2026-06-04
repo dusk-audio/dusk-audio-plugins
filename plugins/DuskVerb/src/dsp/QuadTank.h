@@ -21,7 +21,7 @@
 // bumps in the delay buffers) — unlike the FDN where 16 parallel delay lines
 // each produce visible recirculation peaks.
 //
-// Target: match Valhalla VintageVerb's ~20 early peaks (0-200ms) for
+// Target: match external reference VintageVerb's ~20 early peaks (0-200ms) for
 // Hall presets, vs FDN's ~130 peaks that no output processing can eliminate.
 class QuadTank
 {
@@ -106,7 +106,7 @@ private:
         float readInterpolated (float delaySamples) const;
     };
 
-    // Schroeder allpass with optional Lexicon-style "spin and wander" jitter
+    // Schroeder allpass with optional vintage-hardware-style "spin and wander" jitter
     // (see SixAPTankEngine::Allpass for full rationale). Default
     // jitterDepthFraction = 0 = static AP (back-compat).
     struct Allpass
@@ -287,16 +287,29 @@ private:
     float decayDiff2_ = 0.50f;
     // Density cascade coefficient. Old default 0.10 was far too low to act as
     // proper diffusion — each AP rang at its delay period instead of smearing,
-    // producing audible discrete tap echoes in the tail. 0.50 matches Lexicon
+    // producing audible discrete tap echoes in the tail. 0.50 matches reference hardware
     // hall-density convention. setTankDiffusion() scales around this baseline.
     static constexpr float kDensityDiffBaseline_ = 0.50f;
     float densityDiffCoeff_ = kDensityDiffBaseline_;
     float delayModDepthSamples_ = 4.0f;       // Per-tap delay LFO depth (samples). Set by setModDepth.
     float lastStructHFRawHz_ = 0.0f;          // Raw caller value for replay after sample-rate change
 
+    // Phase 2 coherent modulation. Single master sine sampled at 4 quadrature
+    // phases (one per tank) — tanks 0 and 2 move opposite (180° apart), tanks
+    // 1 and 3 likewise but offset by 90° from the (0,2) pair. Creates a
+    // coherent rotating modulation that pumps the stereo field instead of
+    // smearing independently. Drives the AP1 read mod ONLY; delay1/delay2
+    // jitter remains random-walk to keep their decorrelation purpose intact.
+    DspUtils::CoherentSineLFO coherentLfo_;
+    DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
+
     void updateDelayLengths();
     void updateDecayCoefficients();
     void updateLFORates();
+
+public:
+    void setModulationTopology (DspUtils::ModulationTopology t);
+private:
 
     float readOutputTap (const OutputTap& tap) const;
 };
