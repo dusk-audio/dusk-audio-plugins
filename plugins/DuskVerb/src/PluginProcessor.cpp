@@ -158,6 +158,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "er_boost", 1 }, "Early Ref Boost",
         juce::NormalisableRange<float> (1.0f, 8.0f), 1.0f));
 
+    // QuadTank 5-band damping split (hi-mid 4-8k / air >8k). -1 = inherit the
+    // legacy treble rate → bit-identical 3-band response (every preset except
+    // those listed in kQuadBandByName). Lets QuadTank presets shorten the 8 kHz
+    // and 16 kHz tails independently — the FDN-only FiveBand path doesn't cover
+    // QuadTank. Per-preset via kQuadBandByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "qt_himid_mult", 1 }, "QT Hi-Mid Multiply",
+        juce::NormalisableRange<float> (-1.0f, 2.0f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "qt_air_mult", 1 }, "QT Air Multiply",
+        juce::NormalisableRange<float> (-1.0f, 2.0f), -1.0f));
+
     // Phase 4 (option 2): rising-onset ER envelope peak time. 0 = legacy
     // first-tap rolloff → bit-identical. >0 swells the ER to a peak at this ms,
     // matching VVV's gentle attack instead of an instantaneous spike.
@@ -399,6 +411,8 @@ DuskVerbProcessor::DuskVerbProcessor()
     erLevelParam_       = parameters.getRawParameterValue ("er_level");
     erSizeParam_        = parameters.getRawParameterValue ("er_size");
     erBoostParam_       = parameters.getRawParameterValue ("er_boost");
+    qtHiMidMultParam_   = parameters.getRawParameterValue ("qt_himid_mult");
+    qtAirMultParam_     = parameters.getRawParameterValue ("qt_air_mult");
     erRiseParam_        = parameters.getRawParameterValue ("er_rise");
     xtalkParam_         = parameters.getRawParameterValue ("xtalk");
     mbEnableParam_      = parameters.getRawParameterValue ("mb_enable");
@@ -706,6 +720,8 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastERSize_,    erSizeParam_->load(),    [this] (float v) { activeEngine_->setERSize (v); });
     pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
     pushIfChanged (lastERBoost_,   erBoostParam_->load(),   [this] (float v) { activeEngine_->setEREarlyBoost (v); });
+    pushIfChanged (lastQtHiMidMult_, qtHiMidMultParam_->load(), [this] (float v) { activeEngine_->setQuadHiMidMultiply (v); });
+    pushIfChanged (lastQtAirMult_,   qtAirMultParam_->load(),   [this] (float v) { activeEngine_->setQuadAirMultiply (v); });
     pushIfChanged (lastERRise_,    erRiseParam_->load(),    [this] (float v) { activeEngine_->setEROnsetRiseMs (v); });
     pushIfChanged (lastXTalk_,     xtalkParam_->load(),     [this] (float v) { activeEngine_->setOutputCrossTalk (v); });
     // Phase 5 multiband: enable flag + the 3 per-band decays (combined setter).
@@ -1182,6 +1198,8 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setERSize            (erSizeParam_->load());
     target->setERLevel           (erLevelParam_->load());
     target->setEREarlyBoost      (erBoostParam_->load());
+    target->setQuadHiMidMultiply (qtHiMidMultParam_->load());
+    target->setQuadAirMultiply   (qtAirMultParam_->load());
     target->setEROnsetRiseMs     (erRiseParam_->load());
     target->setOutputCrossTalk   (xtalkParam_->load());
     target->setMultibandEnabled  (mbEnableParam_->load() >= 0.5f);
@@ -1275,6 +1293,8 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastERSize_        = erSizeParam_->load();
     lastERLevel_       = erLevelParam_->load();
     lastERBoost_       = erBoostParam_->load();
+    lastQtHiMidMult_   = qtHiMidMultParam_->load();
+    lastQtAirMult_     = qtAirMultParam_->load();
     lastERRise_        = erRiseParam_->load();
     lastXTalk_         = xtalkParam_->load();
     lastMbEnable_      = mbEnableParam_->load() >= 0.5f;

@@ -183,6 +183,8 @@ private:
     std::atomic<float>* erLevelParam_       = nullptr;
     std::atomic<float>* erSizeParam_        = nullptr;
     std::atomic<float>* erBoostParam_       = nullptr;
+    std::atomic<float>* qtHiMidMultParam_   = nullptr;
+    std::atomic<float>* qtAirMultParam_     = nullptr;
     std::atomic<float>* erRiseParam_        = nullptr;
     std::atomic<float>* xtalkParam_         = nullptr;
     std::atomic<float>* mbEnableParam_      = nullptr;
@@ -325,6 +327,8 @@ private:
     float lastERSize_      = -1.0f;
     float lastERLevel_     = -2.0f;
     float lastERBoost_     = -1.0f;
+    float lastQtHiMidMult_ = -99.0f;
+    float lastQtAirMult_   = -99.0f;
     float lastERRise_      = -1.0f;
     float lastXTalk_       = -1.0f;
     bool  lastMbEnable_    = false;

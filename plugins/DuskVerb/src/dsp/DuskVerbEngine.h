@@ -109,6 +109,9 @@ public:
     void setHiMidMultiply (float mult);
     void setSubCrossoverFreq (float hz);
     void setAirCrossoverFreq (float hz);
+    // QuadTank 5-band split (separate sentinel convention from the FDN above).
+    void setQuadHiMidMultiply (float mult);
+    void setQuadAirMultiply (float mult);
     // Low-Band Transient Shaper (FDN only, Phase A).
     void setShaperDepth (float depth);
     void setShaperTimeMs (float ms);
