@@ -41,6 +41,10 @@ def main():
     args = ap.parse_args()
 
     anchor_n = Path(args.anchor_rendered)
+    if "_noiseburst" not in anchor_n.name:
+        ap.error("--anchor-rendered must point at a '*_noiseburst*' WAV so the "
+                 "sustained and snare variants can be derived by substring "
+                 f"replacement (got '{anchor_n.name}').")
     anchor_s = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_sustained"))
     anchor_snare = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_snare"))
     anchor_files = {"noiseburst": str(anchor_n), "sustained": str(anchor_s),

@@ -224,11 +224,12 @@ namespace
         return {
             juce::String (name),
             {
-                // Divisor must equal (numAlgorithms - 1). 9 algorithms now
-                // (Dattorro / DattorroVintage / SixAPTank / QuadTank / FDN /
-                // Spring / NonLinear / Shimmer / VintageTank) → divisor = 8.
-                // Mismatching the divisor silently misroutes the algorithm
-                // index (the FDN→Spring bug fixed on branch 87-fix-fdn-quadtank).
+                // Divisor must equal (numAlgorithms - 1) = kAlgorithmDivisor.
+                // 10 algorithms now (Dattorro / DattorroVintage / SixAPTank /
+                // QuadTank / FDN / Spring / NonLinear / Shimmer / VintageTank /
+                // ReverseRoom) → divisor = 9. Mismatching the divisor silently
+                // misroutes the algorithm index (the FDN→Spring bug fixed on
+                // branch 87-fix-fdn-quadtank).
                 { "Algorithm",       static_cast<float> (algoIdx) / kAlgorithmDivisor },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
