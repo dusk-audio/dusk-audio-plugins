@@ -42,24 +42,32 @@ RENDER_BIN = REPO_ROOT / "build" / "tests" / "duskverb_render" / "duskverb_rende
 OUTPUT_DIR = REPO_ROOT / "tests" / "duskverb_render" / "output"
 DEFAULT_VST3 = Path.home() / ".vst3" / "DuskVerb.vst3"
 
+# Directory holding the externally-captured anchor IR renders. Machine-specific
+# by nature (typically a scratch dir), so it's overridable via the
+# ANCHOR_RENDER_DIR env var; defaults to the historical /tmp location so
+# existing local workflows keep working. CI / other developers can point this
+# anywhere without editing the file.
+ANCHOR_DIR = os.environ.get("ANCHOR_RENDER_DIR", "/tmp/anchor_renders")
+
 sys.path.insert(0, str(REPO_ROOT / "plugins" / "DuskVerb" / "tools" / "tuner"))
 from metrics_external import compute_metrics
 
-# (preset_name, anchor_ir_path, slug, render_dir_relative_to_repo)
+# (preset_name, anchor_ir_path, slug). Anchor paths are either repo-relative
+# (committed VVV renders) or built from ANCHOR_DIR (external captures).
 PRESETS = [
-    ("Vocal Plate",         "/tmp/anchor_renders/vvv_vocal_plate_fresh_impulse.wav",   "VocalPlate"),
-    ("Vintage Vocal Plate", "/tmp/anchor_renders/lex_vintage_vocal_plate_impulse.wav", "VintageVocalPlate"),
+    ("Vocal Plate",         os.path.join(ANCHOR_DIR, "vvv_vocal_plate_fresh_impulse.wav"),   "VocalPlate"),
+    ("Vintage Vocal Plate", os.path.join(ANCHOR_DIR, "lex_vintage_vocal_plate_impulse.wav"), "VintageVocalPlate"),
     ("Snare Plate XL",      "tests/duskverb_render/output/vvv/vvv_Drum_Plate_impulse.wav",  "SnarePlateXL"),
     ("Vocal Hall",          "tests/duskverb_render/output/vvv/vvv_Vocal_Hall_impulse.wav",  "VocalHall"),
     ("Bright Hall",         "tests/duskverb_render/output/vvv/vvv_Bright_Hall_impulse.wav", "BrightHall"),
-    ("Cathedral",           "/tmp/anchor_renders/lex_cathedral_impulse.wav",          "Cathedral"),
-    ("Blade Runner 224",    "/tmp/anchor_renders/lex_blade_runner_224_impulse.wav",   "BladeRunner224"),
-    ("Tiled Room",          "/tmp/anchor_renders/vvv_tiled_room_impulse.wav",          "TiledRoom"),
-    ("Tight Drum Room",     "/tmp/anchor_renders/vvv_fat_snare_room_impulse.wav",      "TightDrumRoom"),
+    ("Cathedral",           os.path.join(ANCHOR_DIR, "lex_cathedral_impulse.wav"),          "Cathedral"),
+    ("Blade Runner 224",    os.path.join(ANCHOR_DIR, "lex_blade_runner_224_impulse.wav"),   "BladeRunner224"),
+    ("Tiled Room",          os.path.join(ANCHOR_DIR, "vvv_tiled_room_impulse.wav"),          "TiledRoom"),
+    ("Tight Drum Room",     os.path.join(ANCHOR_DIR, "vvv_fat_snare_room_impulse.wav"),      "TightDrumRoom"),
     ("Ambience",            "tests/duskverb_render/output/vvv/vvv_Ambience_impulse.wav",    "Ambience"),
-    ("Realistic Chamber",   "/tmp/anchor_renders/lex_chamber_large_impulse.wav",       "RealisticChamber"),
-    ("1981 Gated Snare",    "/tmp/anchor_renders/vvv_84_small_room_impulse.wav",       "1981GatedSnare"),
-    ("Reverse Taps",        "/tmp/anchor_renders/lex_reverse_1_impulse.wav",           "ReverseTaps"),
+    ("Realistic Chamber",   os.path.join(ANCHOR_DIR, "lex_chamber_large_impulse.wav"),       "RealisticChamber"),
+    ("1981 Gated Snare",    os.path.join(ANCHOR_DIR, "vvv_84_small_room_impulse.wav"),       "1981GatedSnare"),
+    ("Reverse Taps",        os.path.join(ANCHOR_DIR, "lex_reverse_1_impulse.wav"),           "ReverseTaps"),
 ]
 
 # Anchor paths may be absolute (e.g. /tmp captures) or repo-relative; normalize

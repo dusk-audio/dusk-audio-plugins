@@ -125,11 +125,10 @@ def auto_level_match(preset, params, vst3, anchor_dir, dv_dir):
     """Deprecated 2026-05-27: Gain Trim is now a free Optuna parameter so
     loudness is optimized jointly with everything else. Post-sweep trim
     adjustment re-introduced absolute-band-energy mismatch (bands hot by
-    same dB as the trim bump). This function now just renders + returns
-    params unchanged so the lock-in pipeline still produces a final WAV
-    for full_check.
+    same dB as the trim bump). This function now just returns the params
+    unchanged — the single final render is performed by render_lockin()
+    immediately after, so rendering here would be a redundant duplicate.
     """
-    render_with(preset, params, vst3, dv_dir)
     return params
 
 
