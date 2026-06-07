@@ -1439,6 +1439,16 @@ void DuskVerbProcessor::performPresetSwap()
         // default freq/Q so the processBlock gain edge-detect stays consistent.
         newActive->reapplyNeutralEngineConfig();
         resolvePteqFreqQ ("", pteqBandFreq_, pteqBandQ_);
+        // reapplyNeutralEngineConfig() flattened the PostTankEQ, but the restored
+        // session still carries its own pteq_band*_gain_db in APVTS. Re-install
+        // those gains now (at the default freq/Q) — otherwise syncParameterCache-
+        // ToCurrent() below caches them as already-applied and the processBlock
+        // edge-detect (pushIfChanged) never fires, leaving the bands stuck flat
+        // despite non-zero restored gains.
+        newActive->setPostTankEQBand (0, pteqBandFreq_[0], pteqBandQ_[0], pteqBand0GainParam_->load());
+        newActive->setPostTankEQBand (1, pteqBandFreq_[1], pteqBandQ_[1], pteqBand1GainParam_->load());
+        newActive->setPostTankEQBand (2, pteqBandFreq_[2], pteqBandQ_[2], pteqBand2GainParam_->load());
+        newActive->setPostTankEQBand (3, pteqBandFreq_[3], pteqBandQ_[3], pteqBand3GainParam_->load());
     }
 
 
