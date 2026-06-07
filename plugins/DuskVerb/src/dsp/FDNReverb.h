@@ -49,6 +49,7 @@ public:
     void setTailSpinRate  (float hz);      // base rate of the master spin LFO
 
     void setBaseDelays (const int* delays);
+    void resetBaseDelays();   // restore the default log-spaced-prime table
     void setOutputTaps (const int* lt, const int* rt,
                         const float* ls, const float* rs);
     void setLateGainScale (float scale);

@@ -416,6 +416,20 @@ void DuskVerbEngine::setFDNBaseDelays (const int* delays)
     multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setBaseDelays (delays); });
 }
 
+void DuskVerbEngine::reapplyNeutralEngineConfig()
+{
+    // PostTankEQ → all 4 bands flat (gain 0 → unity coefficients).
+    for (int b = 0; b < DspUtils::PostTankEQ::kNumBands; ++b)
+        postTankEQ_.setBand (b, 1000.0f, 1.0f, 0.0f);
+    // Modulation topology → legacy RandomWalk default.
+    setModulationTopology (DspUtils::ModulationTopology::RandomWalk);
+    // Per-line decay tilt → flat (1.0 / 1.0 = no tilt).
+    setPerLineDecayTilt (1.0f, 1.0f);
+    // FDN base delays → engine default log-spaced primes.
+    fdn_.resetBaseDelays();
+    multibandFdn_.forEachTank ([](FDNReverb& tk){ tk.resetBaseDelays(); });
+}
+
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
 {
     // Phase ε: only FDN has in-loop per-line peaking infrastructure.
