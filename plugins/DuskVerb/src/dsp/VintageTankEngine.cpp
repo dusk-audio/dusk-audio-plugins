@@ -378,6 +378,10 @@ void VintageTankEngine::processBlock (float* L, float* R, int numSamples)
 
 void VintageTankEngine::setDecay (float decaySeconds)
 {
+    // Remember the raw knob value so setSize() can recompute decayGain_ when
+    // the room size (and thus the round-trip path length) changes.
+    lastDecaySeconds_ = decaySeconds;
+
     // Knob-honesty calibration (2026-05-31). The round-trip formula below
     // (incl. kGroupDelayCompensation) produced a strongly WARPED map — measured
     // mid-band RT60 ≈ 1.9724·T^0.4331 at nominal size (2.9× too long at 0.5 s,
@@ -492,6 +496,10 @@ void VintageTankEngine::setSize (float normalized)
     // 0..1 input → 0.25..1.00 effective room size. Buffers stay full
     // length so the change is allocation-free and audio-thread safe.
     sizeScale_ = 0.25f + 0.75f * std::clamp (normalized, 0.0f, 1.0f);
+    // decayGain_ is derived from the round-trip path length, which scales with
+    // sizeScale_. Recompute it now so RT60 tracks the new size immediately
+    // instead of drifting until the next setDecay() call.
+    setDecay (lastDecaySeconds_);
 }
 
 // ─── 3-band damping setters ──────────────────────────────────────────────────

@@ -262,6 +262,8 @@ private:
     // ─── Voicing state ───────────────────────────────────────────────────────
     float sampleRate_     = 48000.0f;
     float decayGain_      = 0.70f;
+    float lastDecaySeconds_ = 2.0f;   // raw setDecay() input, so setSize() can
+                                       // recompute decayGain_ for the new size
     float dampingHz_      = 6000.0f;
     float modRateBaseHz_  = 1.0f;
     float modDepthSamples_= 8.0f;
