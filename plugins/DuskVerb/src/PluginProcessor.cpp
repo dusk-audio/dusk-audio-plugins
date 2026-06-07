@@ -129,6 +129,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "input_mid_gain", 1 }, "Input Mid Gain",
         juce::NormalisableRange<float> (-6.0f, 6.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "input_high_gain", 1 }, "Input High Gain",
+        juce::NormalisableRange<float> (-6.0f, 6.0f), 0.0f));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_choke", 1 }, "Bass Choke",
@@ -403,6 +406,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     shaperSensParam_    = parameters.getRawParameterValue ("shaper_sens");
     inputSubGainParam_  = parameters.getRawParameterValue ("input_sub_gain");
     inputMidGainParam_  = parameters.getRawParameterValue ("input_mid_gain");
+    inputHighGainParam_ = parameters.getRawParameterValue ("input_high_gain");
     crossoverParam_     = parameters.getRawParameterValue ("crossover");
     highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
     bassChokeParam_     = parameters.getRawParameterValue ("bass_choke");
@@ -708,6 +712,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastShaperSens_,  shaperSensParam_->load(),  [this] (float v) { activeEngine_->setShaperSens (v); });
     pushIfChanged (lastInputSubGain_, inputSubGainParam_->load(), [this] (float v) { activeEngine_->setInputSubGainDb (v); });
     pushIfChanged (lastInputMidGain_, inputMidGainParam_->load(), [this] (float v) { activeEngine_->setInputMidGainDb (v); });
+    pushIfChanged (lastInputHighGain_, inputHighGainParam_->load(), [this] (float v) { activeEngine_->setInputHighGainDb (v); });
     pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
     pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
     pushIfChanged (lastBassChoke_,     bassChokeParam_->load(),     [this] (float v) { activeEngine_->setBassChokeHz (v); });
@@ -1186,6 +1191,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setShaperSens        (shaperSensParam_->load());
     target->setInputSubGainDb    (inputSubGainParam_->load());
     target->setInputMidGainDb    (inputMidGainParam_->load());
+    target->setInputHighGainDb   (inputHighGainParam_->load());
     target->setCrossoverFreq     (crossoverParam_->load());
     target->setHighCrossoverFreq (highCrossoverParam_->load());
     target->setBassChokeHz (bassChokeParam_->load());
@@ -1281,6 +1287,7 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastShaperSens_    = shaperSensParam_->load();
     lastInputSubGain_  = inputSubGainParam_->load();
     lastInputMidGain_  = inputMidGainParam_->load();
+    lastInputHighGain_ = inputHighGainParam_->load();
     lastCrossover_     = crossoverParam_->load();
     lastHighCrossover_ = highCrossoverParam_->load();
     lastBassChoke_     = bassChokeParam_->load();

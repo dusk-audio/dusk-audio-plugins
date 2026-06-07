@@ -110,6 +110,10 @@ public:
     // matrix → BIBO-stable, no pole excursion. Both 0 dB → bit-exact bypass.
     void setInputSubGainDb (float db);     // sub low-shelf on input (~120 Hz)
     void setInputMidGainDb (float db);     // mid bell on input (~900 Hz)
+    void setInputHighGainDb (float db);    // air high-shelf on input (~5 kHz) —
+                                           // completes the 3-band pre-emphasis so
+                                           // per-band T60 (in-loop) decouples from
+                                           // per-band level (this pre-gain ⊥ poles)
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
@@ -468,9 +472,11 @@ private:
     // Block 2: feed-forward input makeup (pre-delay-write, outside the loop).
     float inputSubGainDb_   = 0.0f;
     float inputMidGainDb_   = 0.0f;
-    bool  inputMakeupActive_ = false;   // either gain != 0 → block runs
+    float inputHighGainDb_  = 0.0f;
+    bool  inputMakeupActive_ = false;   // any gain != 0 → block runs
     ShelfBiquad inputSubL_, inputSubR_; // sub low-shelf, per-channel state
     DspUtils::ParametricBand inputMid_; // mid bell (processL/processR)
+    ShelfBiquad inputHighL_, inputHighR_; // air high-shelf, per-channel state
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;

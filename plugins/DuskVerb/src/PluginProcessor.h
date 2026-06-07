@@ -175,6 +175,7 @@ private:
     std::atomic<float>* shaperSensParam_    = nullptr;
     std::atomic<float>* inputSubGainParam_  = nullptr;
     std::atomic<float>* inputMidGainParam_  = nullptr;
+    std::atomic<float>* inputHighGainParam_ = nullptr;
     std::atomic<float>* crossoverParam_     = nullptr;
     std::atomic<float>* highCrossoverParam_ = nullptr;
     std::atomic<float>* bassChokeParam_     = nullptr;
@@ -315,6 +316,7 @@ private:
     float lastShaperSens_  = -1.0f;
     float lastInputSubGain_ = -999.0f;
     float lastInputMidGain_ = -999.0f;
+    float lastInputHighGain_ = -999.0f;
     float lastCrossover_   = -1.0f;
     float lastHighCrossover_ = -1.0f;
     float lastBassChoke_     = -1.0f;

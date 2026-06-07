@@ -209,12 +209,6 @@ private:
     void setupToggle(juce::ToggleButton& button, const juce::String& paramId, const juce::String& text);
     void updateModeVisibility();
 
-    // Per-mode layout (called from resized)
-    void layoutCosmos();   // Jupiter-8: vertical faders, orange header
-    void layoutOracle();   // Prophet-5: rotary knobs, wood cheeks
-    void layoutMono();     // SH-2: mix of knobs and faders, metal panel
-    void layoutModular();  // ARP 2600: knobs + faders, patch points
-
     // Per-mode painting (called from paint)
     void paintCosmos(juce::Graphics& g);
     void paintOracle(juce::Graphics& g);
@@ -224,7 +218,6 @@ private:
     // Helpers for per-mode layouts
     void setAllSlidersToKnobs();
     void setSliderAsFader(DuskSlider& s);
-    void layoutSharedLowerStrip(); // arp, scope, meters — shared across modes
 
     // Knob labels (one per slider, explicitly positioned in resized())
     juce::Label osc1LevelLbl, osc1DetuneLbl, osc1PWLbl;
