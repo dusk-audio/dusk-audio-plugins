@@ -605,8 +605,13 @@ def adv_bark_masking_traj(p, t0=0.2, t1=1.5, win_ms=50.0):
 
 def check(label, dv_val, lex_val, gate, kind='abs'):
     """Returns (delta, pass/fail, formatted string)."""
-    if dv_val is None or lex_val is None or (isinstance(dv_val, float) and dv_val != dv_val):
+    if dv_val is None or lex_val is None:
         return None, 'SKIP', f"  {label:30s}  none"
+    # Treat any non-finite value (NaN or ±Inf, incl. numpy scalars) as SKIP —
+    # the old `dv_val != dv_val` test only caught NaN on dv_val and let an Inf
+    # metric fall through to a spurious FAIL.
+    if not (np.isfinite(dv_val) and np.isfinite(lex_val)):
+        return None, 'SKIP', f"  {label:30s}  non-finite"
     if kind == 'pct':
         if lex_val == 0:
             return None, 'SKIP', f"  {label:30s}  divide-by-zero"
@@ -621,7 +626,7 @@ def check(label, dv_val, lex_val, gate, kind='abs'):
                f"  {label:30s}  DV={dv_val:+7.3f}  Lex={lex_val:+7.3f}  Δ={delta:+6.2f}  gate=±{gate}  {'✓' if passing else '✗'}"
 
 
-def audit(dv_dir, lex_dir, name='preset', category=''):
+def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.0):
     dv_dir = Path(dv_dir); lex_dir = Path(lex_dir)
     # Find files (any matching slug stem)
     def find_stim(d, stim):
@@ -792,7 +797,10 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
     sus_lx = find_stim(lex_dir, 'sustained')
     if sus_dv and sus_lx:
         from scipy.signal import butter as _bts, sosfiltfilt as _ss
-        def _band_rms_db(p, lo, hi, t0=2.5, t1=4.0):
+        # t1 (steady-state window end) + the tail offsets below must match the
+        # sustained-pink hold length the harness rendered with (render.cpp's
+        # --sustained-pink-seconds); a hardcoded 4.0 mis-scores any other hold.
+        def _band_rms_db(p, lo, hi, t0=2.5, t1=sustained_pink_seconds):
             x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim>1 else x
             a, b = int(t0*sr), min(int(t1*sr), len(m))
             hi_c = min(hi, sr*0.49)
@@ -804,7 +812,7 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             return float(20*np.log10(np.sqrt(np.mean(y[a:b]**2))+1e-30))
         def _band_t30(p, lo, hi):
             x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim>1 else x
-            off = int(4.0 * sr)
+            off = int(sustained_pink_seconds * sr)
             if off >= len(m): return None
             tail = m[off:]
             hi_c = min(hi, sr*0.49)
@@ -824,7 +832,7 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
             below = np.where((np.arange(len(sm)) > pidx) & (sm < thr))[0]
             return (int(below[0]) - pidx) / sr if len(below) else None
 
-        print("\n── SUSTAINED-PINK STEADY-STATE PER-BAND ENERGY (window 2.5-4.0s) ──")
+        print(f"\n── SUSTAINED-PINK STEADY-STATE PER-BAND ENERGY (window 2.5-{sustained_pink_seconds:g}s) ──")
         for lab, lo, hi, gate_key in [
             ('ss deep sub 20-50',    20,    50, 'ss_deep_sub_dB'),
             ('ss sub 50-100',        50,   100, 'ss_sub_dB'),
@@ -848,7 +856,7 @@ def audit(dv_dir, lex_dir, name='preset', category=''):
         # t30 measurement helper closes over band-filter on input-off tail.
         def _band_decay_t(p, lo, hi, target_db):
             x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim>1 else x
-            off = int(4.0 * sr)
+            off = int(sustained_pink_seconds * sr)
             if off >= len(m): return None
             tail = m[off:]
             hi_c = min(hi, sr*0.49)
@@ -1178,8 +1186,13 @@ def main():
                     help="After the human-readable sheets, emit one machine-"
                          "readable 'JSON_RESULT: {...}' line (n_fail + the "
                          "failed-gate strings) for the optimizer to parse.")
+    ap.add_argument("--sustained-pink-seconds", type=float, default=4.0,
+                    help="Sustained-pink hold length the render used (must match "
+                         "render.cpp's --sustained-pink-seconds). Sets the "
+                         "steady-state scoring window end + tail-decay offset.")
     args = ap.parse_args()
-    fails = audit(args.dv_dir, args.lex_dir, args.name, args.category)
+    fails = audit(args.dv_dir, args.lex_dir, args.name, args.category,
+                  args.sustained_pink_seconds)
     if args.json:
         print("JSON_RESULT: " + json.dumps({"n_fail": len(fails), "fails": fails}))
     sys.exit(1 if fails else 0)

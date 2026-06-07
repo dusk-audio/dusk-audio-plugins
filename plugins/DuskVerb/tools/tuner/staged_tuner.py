@@ -330,7 +330,11 @@ def render(preset, overrides, vst3, out_dir, prerun=5.0, sustained=4.0):
             continue
         cmd += ["--param", f"{k}={v}"]
     cmd += ["--program", preset]   # canonical path, not the legacy positional table
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        # A hung render must fail just this trial, not abort the whole sweep.
+        return None
     if r.returncode != 0:
         return None
     preset_token = "".join(c for c in preset if c.isalnum() or c in "+-_'")
@@ -1304,7 +1308,9 @@ def main():
            str(final_dir), str(anchor_n.parent), "--name", args.preset]
     if args.category:
         cmd += ["--category", args.category]
-    subprocess.call(cmd)
+    # Propagate full_check's exit status so a gate failure fails this script too
+    # (CI / callers can detect it instead of seeing a spurious success).
+    sys.exit(subprocess.call(cmd))
 
 
 if __name__ == "__main__":
