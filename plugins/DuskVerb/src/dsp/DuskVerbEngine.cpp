@@ -324,6 +324,7 @@ void DuskVerbEngine::setShaperXoverHz   (float hz)   { fdn_.setShaperXoverHz (hz
 void DuskVerbEngine::setShaperSens      (float s)    { fdn_.setShaperSens (s);          multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setShaperSens (s); }); }
 void DuskVerbEngine::setInputSubGainDb  (float db)   { fdn_.setInputSubGainDb (db);     multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setInputSubGainDb (db); }); }
 void DuskVerbEngine::setInputMidGainDb  (float db)   { fdn_.setInputMidGainDb (db);     multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setInputMidGainDb (db); }); }
+void DuskVerbEngine::setInputHighGainDb (float db)   { fdn_.setInputHighGainDb (db);    multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setInputHighGainDb (db); }); }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
 {

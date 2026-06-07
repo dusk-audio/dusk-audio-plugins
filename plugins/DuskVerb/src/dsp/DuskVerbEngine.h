@@ -120,6 +120,7 @@ public:
     // Block 2 feed-forward input makeup (FDN only).
     void setInputSubGainDb (float db);
     void setInputMidGainDb (float db);
+    void setInputHighGainDb (float db);
     void setCrossoverFreq (float hz);              // bass↔mid (legacy "crossover")
     void setHighCrossoverFreq (float hz);          // mid↔high (3-band)
     void setSaturation    (float amount);          // 0..1 drive-style softClip

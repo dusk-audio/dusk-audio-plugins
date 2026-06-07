@@ -151,6 +151,14 @@ GATES = {
     # spectrum diverges, so this is informational + advisory. Gate as
     # symmetric tolerance per stimulus.
     'per_stim_rms_dB':      2.0,
+    # SINE 1 kHz HARMONIC DISTORTION — % THD (h2..h7 vs fundamental) on the
+    # steady-state sine1k tail. A linear reverb of a pure tone makes NO new
+    # harmonics, so this catches nonlinear defects (audio-rate AM, soft-clip
+    # overdrive, runaway feedback). Gated as DV-excess over the anchor: a clean
+    # render sits ~0.01-0.05%; the Vocal Hall AttackRamp AM bug read 2.1%.
+    # 0.5% absolute excess over the anchor is well below audibility yet flags
+    # any gross nonlinearity. Asymmetric (DV-hot only — quieter THD is fine).
+    'sine1k_thd_excess_pct': 0.5,
 }
 
 
@@ -181,6 +189,16 @@ ENGINE_CEILINGS = {
     # that gives Stage 3 the headroom to clamp HF properly.
     'Halls': {'tail_t60_pct'},
 }
+
+
+# Shimmer-engine (algo 7) presets. The Shimmer engine pitch-shifts the input up
+# by octaves (+12 / +24), so a pure 1 kHz tone produces strong 2 kHz / 4 kHz
+# content BY DESIGN — landing on the harmonic bins the sine1k THD gate reads.
+# That intended pitch-shift is NOT distortion (verified: h4/octave-dominant, not
+# the h3 odd-harmonic clip signature), so the THD gate is meaningless here and is
+# skipped. Name-based, not category: "Black Hole" is category "Ambient" but still
+# Shimmer. The other distortion checks still apply.
+SHIMMER_PRESETS = {'Black Hole', 'Cascading Heaven', 'Deep Blue Day'}
 
 
 def _is_ceiling(gate_id: str, category: str) -> bool:
@@ -333,6 +351,36 @@ def _full_rms_db (p):
     import soundfile as sf
     x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
     return float(20.0 * np.log10(max(np.sqrt(np.mean(m ** 2)), 1.0e-12)))
+
+
+def _sine1k_thd_pct (p, f0=1000.0):
+    """Total harmonic distortion (%) of the sine1k render. A LINEAR reverb of a
+    pure tone outputs only the fundamental (+ slow modulation sidebands near f0);
+    any energy at the 2nd-7th harmonics is NONLINEAR distortion. Measured on the
+    steady-state middle third (skips the onset transient, whose broadband content
+    legitimately rings harmless modal energy). Returns sqrt(Σ hk²)/f0 × 100, or
+    None if the fundamental is below the noise floor.
+
+    Caught the Vocal Hall AttackRamp audio-rate-AM bug (2.1% vs anchor 0.01%):
+    full_check previously had no distortion gate, so a 200x-too-distorted preset
+    scored best in the fleet."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    if len(m) < sr // 2:
+        return None
+    seg = m[len(m) // 3 : 2 * len(m) // 3]
+    if len(seg) < 1024:
+        return None
+    X = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1.0 / sr)
+    def peak(fc, bw=25.0):
+        mask = (f > fc - bw) & (f < fc + bw)
+        return X[mask].max() if mask.any() else 0.0
+    fund = peak(f0)
+    if fund < 1.0e-9:
+        return None
+    harm = np.sqrt(sum(peak(k * f0) ** 2 for k in range(2, 8)))
+    return float(100.0 * harm / fund)
 
 
 def _t60_band_schroeder (p, lo, hi):
@@ -1044,6 +1092,27 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     f"gate=±{s1_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
+
+    # ─── Sine 1 kHz HARMONIC DISTORTION — nonlinearity detector ───
+    if dv_dir and lex_dir and name in SHIMMER_PRESETS:
+        print("\n── SINE 1 kHz THD ── SKIPPED (Shimmer engine: octave pitch-shift "
+              "reads as harmonics by design)")
+    elif dv_dir and lex_dir:
+        print("\n── SINE 1 kHz THD (nonlinearity detector, DV-excess over anchor) ──")
+        thd_gate = GATES['sine1k_thd_excess_pct']
+        dv_s = find_stim(dv_dir, 'sine1k'); lx_s = find_stim(lex_dir, 'sine1k')
+        if dv_s and lx_s:
+            dv_thd = _sine1k_thd_pct(dv_s); lx_thd = _sine1k_thd_pct(lx_s)
+            if dv_thd is None or lx_thd is None:
+                print("  sine1k THD                   SKIPPED (fundamental below floor)")
+            else:
+                excess = dv_thd - lx_thd
+                passing = excess <= thd_gate
+                line = (f"  {'sine1k THD (%)':30s}  "
+                        f"DV={dv_thd:5.2f}  VVV={lx_thd:5.2f}  Δ={excess:+5.2f}  "
+                        f"gate≤+{thd_gate}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
 
     # ─── Tail PITCH-CHORUS (COARSE sanity guard) ───
     # Replaces the per-band envelope-AM rate gate, which measured AMPLITUDE

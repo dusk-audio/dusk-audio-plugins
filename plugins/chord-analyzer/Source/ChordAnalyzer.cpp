@@ -539,7 +539,7 @@ HarmonicFunction ChordAnalyzer::getHarmonicFunction(int chordRoot, ChordQuality 
         case 6:  // vi
             return HarmonicFunction::Tonic;
         case 3:  // iii
-            return minorKey ? HarmonicFunction::Tonic : HarmonicFunction::Tonic;
+            return HarmonicFunction::Tonic;
         case 2:  // ii
         case 4:  // IV
             return HarmonicFunction::Subdominant;

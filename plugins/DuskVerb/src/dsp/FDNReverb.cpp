@@ -242,12 +242,17 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     inputMid_.prepare (static_cast<float> (sampleRate));
     inputSubL_.reset();
     inputSubR_.reset();
+    inputHighL_.reset();
+    inputHighR_.reset();
     {
         const float g  = std::pow (10.0f, inputSubGainDb_ / 20.0f);
         const float sr = static_cast<float> (sampleRate);
         inputSubL_.designLowShelf (g, 120.0f, sr);
         inputSubR_.designLowShelf (g, 120.0f, sr);
         inputMid_.setBand (900.0f, 0.8f, inputMidGainDb_);
+        const float gHi = std::pow (10.0f, inputHighGainDb_ / 20.0f);
+        inputHighL_.designHighShelf (gHi, 5000.0f, sr);
+        inputHighR_.designHighShelf (gHi, 5000.0f, sr);
     }
 
     for (int i = 0; i < N; ++i)
@@ -414,8 +419,8 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // Block 2 feed-forward makeup (skipped at 0 dB → bit-exact bypass).
         if (inputMakeupActive_)
         {
-            inL = inputMid_.processL (inputSubL_.process (inL));
-            inR = inputMid_.processR (inputSubR_.process (inR));
+            inL = inputHighL_.process (inputMid_.processL (inputSubL_.process (inL)));
+            inR = inputHighR_.process (inputMid_.processR (inputSubR_.process (inR)));
         }
 
         // --- 1) Read from all delay lines with LFO-modulated fractional position ---
@@ -917,8 +922,9 @@ void FDNReverb::setShaperSens (float sens)
 void FDNReverb::setInputSubGainDb (float db)
 {
     inputSubGainDb_    = std::clamp (db, -6.0f, 6.0f);
-    inputMakeupActive_ = std::fabs (inputSubGainDb_) > 1.0e-4f
-                      || std::fabs (inputMidGainDb_) > 1.0e-4f;
+    inputMakeupActive_ = std::fabs (inputSubGainDb_)  > 1.0e-4f
+                      || std::fabs (inputMidGainDb_)  > 1.0e-4f
+                      || std::fabs (inputHighGainDb_) > 1.0e-4f;
     if (! prepared_) return;
     const float g  = std::pow (10.0f, inputSubGainDb_ / 20.0f);
     const float sr = static_cast<float> (sampleRate_);
@@ -929,10 +935,28 @@ void FDNReverb::setInputSubGainDb (float db)
 void FDNReverb::setInputMidGainDb (float db)
 {
     inputMidGainDb_    = std::clamp (db, -6.0f, 6.0f);
-    inputMakeupActive_ = std::fabs (inputSubGainDb_) > 1.0e-4f
-                      || std::fabs (inputMidGainDb_) > 1.0e-4f;
+    inputMakeupActive_ = std::fabs (inputSubGainDb_)  > 1.0e-4f
+                      || std::fabs (inputMidGainDb_)  > 1.0e-4f
+                      || std::fabs (inputHighGainDb_) > 1.0e-4f;
     if (! prepared_) return;
     inputMid_.setBand (900.0f, 0.8f, inputMidGainDb_);   // mid bell
+}
+
+// Air high-shelf (~5 kHz) on the input vector B. Outside the feedback loop →
+// pre-gain ⊥ pole locations → restores a band's level (incl. the 500ms+ tail
+// that sets cent_500) WITHOUT changing its in-loop T60. Completes the 3-band
+// pre-emphasis so per-band damping decouples from per-band level. 0 dB → bypass.
+void FDNReverb::setInputHighGainDb (float db)
+{
+    inputHighGainDb_   = std::clamp (db, -6.0f, 6.0f);
+    inputMakeupActive_ = std::fabs (inputSubGainDb_)  > 1.0e-4f
+                      || std::fabs (inputMidGainDb_)  > 1.0e-4f
+                      || std::fabs (inputHighGainDb_) > 1.0e-4f;
+    if (! prepared_) return;
+    const float g  = std::pow (10.0f, inputHighGainDb_ / 20.0f);
+    const float sr = static_cast<float> (sampleRate_);
+    inputHighL_.designHighShelf (g, 5000.0f, sr);
+    inputHighR_.designHighShelf (g, 5000.0f, sr);
 }
 
 void FDNReverb::setCrossoverFreq (float hz)

@@ -1225,8 +1225,6 @@ void MultiSynthEditor::setSliderAsFader(DuskSlider& s)
     s.setSliderStyle(juce::Slider::LinearVertical);
 }
 
-void MultiSynthEditor::layoutSharedLowerStrip() {}
-
 //==============================================================================
 // Preset management
 
@@ -1324,36 +1322,6 @@ void MultiSynthEditor::deleteUserPreset()
 
     userPresetManager->deleteUserPreset(name);
     refreshPresetList();
-}
-
-// Per-mode layout refinements — called after the shared layout positions all controls.
-// These adjust section titles in paint() via the section names used there,
-// and ensure mode-specific controls are positioned correctly.
-
-void MultiSynthEditor::layoutCosmos()
-{
-    // Cosmos: Juno-60 style — faders for osc/filter/env
-    // The shared layout already handles fader bounds via placeControl()
-    // Nothing additional needed — the paintCosmos() handles the orange header
-}
-
-void MultiSynthEditor::layoutOracle()
-{
-    // Oracle: Prophet-5 style — all rotary knobs, wood cheeks
-    // Inset the oscillator and output sections to leave room for wood cheeks
-    // (the painting handles the wood, but we could inset controls here)
-}
-
-void MultiSynthEditor::layoutMono()
-{
-    // Mono: SH-2 style — mix of knobs and faders
-    // The shared layout handles this via the style switching
-}
-
-void MultiSynthEditor::layoutModular()
-{
-    // Modular: ARP 2600 style — knobs + patch points
-    // The patch points are decorative only (painted in paintModular)
 }
 
 //==============================================================================
