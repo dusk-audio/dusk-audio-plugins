@@ -11,11 +11,17 @@
 class DuskVerbEngine;
 
 // Factory presets — 16 hardware-anchored voicings.
-// `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
-//   0 = Vintage Plate (Dattorro)
-//   1 = High Density  (6-AP)
-//   2 = Quad Room     (QuadTank, no modulation)
-//   3 = Realistic Space (FDN)
+// `algorithm` is the engine index (0..9) per AlgorithmConfig.h getAlgorithmConfig():
+//   0 = Plate (Dattorro)
+//   1 = Plate (Dattorro Vintage)
+//   2 = High Density (6-AP / SixAPTank)
+//   3 = Quad Room (QuadTank)
+//   4 = Realistic Space (FDN)
+//   5 = Spring Tank (6G15)
+//   6 = Non-Linear (RMX16)
+//   7 = Shimmer (Eno FDN)
+//   8 = Vintage Tank (Figure-8)
+//   9 = Reverse Room (Lexicon)
 //
 // IMPORTANT: presets are grouped CONTIGUOUSLY by category — the editor's
 // dropdown adds a section heading whenever the category changes, so any

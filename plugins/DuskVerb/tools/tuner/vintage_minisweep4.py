@@ -22,7 +22,7 @@ def trial(idx, sub, lm, mh, air):
         str(RENDER), "--vst3", str(VST3),
         "--program", "Bright Hall",
         "--param", "Dry/Wet=1.0",
-        "--param", "Bus Mode=On",
+        "--param", "Bus Mode=1",
         # Round-3 best locked:
         "--param", "Mid Multiply=1.06",
         "--param", "Damping=0.85",

@@ -229,6 +229,15 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inLoopPeak_[i].setBand (inLoopPeakFreq_, inLoopPeakQ_, inLoopPeakGainDb_);
     inLoopPeakActive_ = std::fabs (inLoopPeakGainDb_) > 1.0e-6f;
 
+    // Re-apply the dual-time-constant bass shelf from stored config — like the
+    // peak above, dualBassShelf_[i].prepare() designed back to unity, so without
+    // this replay the shelf silently bypasses after every re-prepare even though
+    // dualBassShelfActive_ stays true.
+    for (int i = 0; i < N; ++i)
+        dualBassShelf_[i].setShape (dualBassFastFc_, dualBassSlowFc_,
+                                    dualBassFastGainDb_, dualBassSlowGainDb_,
+                                    dualBassTransitionMs_);
+
     // Block 2 input makeup: prepare + design from current gains (0 dB = unity).
     inputMid_.prepare (static_cast<float> (sampleRate));
     inputSubL_.reset();
@@ -434,7 +443,10 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // the 16 target gains (the 16 sins) only every kTailSpinBlock samples.
         // Gains are applied at output-tap summation below. Skipped entirely
         // when inactive → tailSpinCur_ rests at 1.0f → bit-exact bypass.
-        if (tailSpinActive_)
+        // Also skipped while frozen so a held tank stays at its steady-state
+        // output instead of continuing to wobble (tailSpinCur_/Step_/Phase_
+        // are left untouched and resume on un-freeze).
+        if (tailSpinActive_ && ! frozen)
         {
             if (--tailSpinCounter_ <= 0)
             {
@@ -1044,6 +1056,12 @@ void FDNReverb::setDualBassShelf (float fastFc, float slowFc,
     // the channel; cheap bypass on every preset that doesn't opt in.
     dualBassShelfActive_ = std::fabs (fastGainDb) > 1.0e-6f
                         || std::fabs (slowGainDb) > 1.0e-6f;
+    // Persist so prepare() can replay after a re-prepare resets the shelves.
+    dualBassFastFc_       = fastFc;
+    dualBassSlowFc_       = slowFc;
+    dualBassFastGainDb_   = fastGainDb;
+    dualBassSlowGainDb_   = slowGainDb;
+    dualBassTransitionMs_ = transitionMs;
     for (int i = 0; i < N; ++i)
         dualBassShelf_[i].setShape (fastFc, slowFc, fastGainDb, slowGainDb, transitionMs);
 }
