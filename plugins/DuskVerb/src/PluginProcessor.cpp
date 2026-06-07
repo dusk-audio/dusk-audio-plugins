@@ -1097,9 +1097,8 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
     // the user's saved APVTS values, which must not be overwritten with the
     // preset's defaults. The same lastAppliedPreset_ pointer also feeds the
     // prepareToPlay() re-install path, so engine config is correct whether the
-    // host calls prepareToPlay before or after setStateInformation. Sessions
-    // without the property (older saves, or no preset applied) leave
-    // lastAppliedPreset_ untouched, preserving prior behavior.
+    // host calls prepareToPlay before or after setStateInformation.
+    bool matchedPreset = false;
     if (tree.hasProperty ("lastPresetName"))
     {
         const auto savedName = tree.getProperty ("lastPresetName").toString();
@@ -1109,9 +1108,23 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
             {
                 lastAppliedPreset_.store (&preset, std::memory_order_release);
                 pendingPresetSwap_.store (true, std::memory_order_release);
+                matchedPreset = true;
                 break;
             }
         }
+    }
+    if (! matchedPreset)
+    {
+        // No persisted identity (older save / no preset applied at save) or the
+        // saved name no longer maps to a factory preset (renamed/removed).
+        // Clear any stale pointer left from a preset previously applied to THIS
+        // reused instance, otherwise prepareToPlay()/performPresetSwap() would
+        // reapply that unrelated session's engine config (PostTankEQ bands,
+        // modulation topology, FDN base delays) on top of the just-restored
+        // APVTS values. Cleared → the engine falls back to its defaults, which
+        // is the correct "no known preset" state.
+        lastAppliedPreset_.store (nullptr, std::memory_order_release);
+        pendingPresetSwap_.store (false, std::memory_order_release);
     }
 }
 

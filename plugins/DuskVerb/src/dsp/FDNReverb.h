@@ -360,6 +360,14 @@ private:
     // processing entirely).
     DspUtils::DualTimeConstantBassShelf dualBassShelf_[N];
     bool dualBassShelfActive_ = false;
+    // Stored shape so prepare() can re-apply it — DualTimeConstantBassShelf::
+    // prepare() designs back to unity, so without replay the shelf silently
+    // bypasses after every re-prepare (mirror of the inLoopPeak_ restore).
+    float dualBassFastFc_       = 400.0f;
+    float dualBassSlowFc_       = 200.0f;
+    float dualBassFastGainDb_   = 0.0f;
+    float dualBassSlowGainDb_   = 0.0f;
+    float dualBassTransitionMs_ = 100.0f;
     DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
 
     // Phase θ/Phase 2: post-loop Tail Spin/Wander output VCA. A 16-phase sine
