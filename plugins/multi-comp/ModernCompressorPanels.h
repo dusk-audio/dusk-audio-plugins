@@ -699,6 +699,19 @@ public:
         globalOutput.setAlpha(alpha);
     }
 
+    // Force the visible controls to re-read the current parameter values.
+    // The band knob row only syncs when selectBand() runs (construction or a
+    // user band-click), so a host/programmatic parameter change (e.g. loading a
+    // preset by writing the APVTS) leaves the knobs and crossover faders stale.
+    // Call this after such a change to refresh them.
+    void refreshFromParameters()
+    {
+        updateEnableButtonStates();
+        selectBand(currentBand);              // recreates attachments -> initial sync
+        updateCrossoverFaderPositions();
+        repaint();
+    }
+
     // Called from timer to update GR meters with smooth ballistics
     void setBandGainReduction(int band, float grDb)
     {
