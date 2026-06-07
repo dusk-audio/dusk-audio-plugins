@@ -313,7 +313,8 @@ def audit_compare(dv_path, lex_path):
     else:
         max_abs = max(abs_d)
         print(f"\n  mean |Δ|:  {sum(abs_d)/len(abs_d):.2f} dB")
-        print(f"  max  |Δ|:  {max_abs:.2f} dB @ {[r[0] for r in rows if abs(r[3])==max_abs][0]:.1f} Hz")
+        peak_fc = next((r[0] for r in rows if abs(r[3]) == max_abs), None)
+        print(f"  max  |Δ|:  {max_abs:.2f} dB @ {peak_fc:.1f} Hz")
 
 
 def main():

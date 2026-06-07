@@ -90,13 +90,14 @@ def main():
     t0_lx, t1_lx = args.t0, args.t1
     if stem != "sustained":
         def _peak_window(path):
-            x, sr = sf.read(path); m = x.mean(axis=1) if x.ndim > 1 else x
+            x, sr = sf.read(path)
+            m = x.mean(axis=1) if x.ndim > 1 else x
             pk = int(np.argmax(np.abs(m)))
             return pk / sr + 0.05, pk / sr + 1.0
         t0_dv, t1_dv = _peak_window(dv)
         t0_lx, t1_lx = _peak_window(lx)
 
-    print(f"\n══ EQ-MATCH DELTA CURVE ══")
+    print("\n══ EQ-MATCH DELTA CURVE ══")
     print(f"  DV:  {dv}")
     print(f"  Lex: {lx}")
     print(f"  Stimulus: {stem}   DV window: [{t0_dv:.2f}, {t1_dv:.2f}]s   "
