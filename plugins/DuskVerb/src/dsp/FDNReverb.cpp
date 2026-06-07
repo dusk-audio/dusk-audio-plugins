@@ -1078,6 +1078,19 @@ void FDNReverb::setBaseDelays (const int* delays)
     publishPending();
 }
 
+void FDNReverb::resetBaseDelays()
+{
+    // Restore the engine default (log-spaced primes) — used when a session is
+    // loaded with no/unknown preset identity so a prior preset's per-preset
+    // base-delay override (Phase β) doesn't leak onto the new session.
+    std::memcpy (baseDelays_, kDefaultDelays, sizeof (baseDelays_));
+    if (! prepared_) return;
+    LiveParams& p = pending();
+    computeDelayLengths (p);
+    computeDecayCoefficients (p);
+    publishPending();
+}
+
 void FDNReverb::setOutputTaps (const int* lt, const int* rt,
                                 const float* ls, const float* rs)
 {

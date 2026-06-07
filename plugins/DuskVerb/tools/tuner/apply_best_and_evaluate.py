@@ -153,7 +153,8 @@ def report(preset, params, vst3, anchor):
     else:
         max_abs = max(abs_d)
         print(f"\n  mean |Δ|: {sum(abs_d)/len(abs_d):.2f} dB")
-        print(f"  max  |Δ|: {max_abs:.2f} dB @ {[fc for fc,d in rows if abs(d)==max_abs][0]:.0f} Hz")
+        peak_fc = next((fc for fc, d in rows if abs(d) == max_abs), None)
+        print(f"  max  |Δ|: {max_abs:.2f} dB @ {peak_fc:.0f} Hz")
     # Sub-bass region focus (user's gate)
     sub = [(fc, d) for fc, d in rows if 80 <= fc <= 250]
     if sub:
