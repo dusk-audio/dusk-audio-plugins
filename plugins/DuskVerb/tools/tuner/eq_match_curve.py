@@ -81,24 +81,42 @@ def main():
     if not dv or not lx:
         sys.exit(f"missing {stem} render in dv_dir or lex_dir")
 
-    # For non-sustained stimuli, the steady-state window is meaningless;
-    # use post-peak windows instead.
+    # Window per file. For sustained pink both use the same steady-state window.
+    # For transient stimuli the peak can sit at different sample offsets in the
+    # DV vs Lex render, so each file gets its OWN peak-aligned [pk+50ms, pk+1.0s]
+    # window — reusing the DV-derived window for Lex would measure a misaligned
+    # slice of the anchor.
+    t0_dv, t1_dv = args.t0, args.t1
+    t0_lx, t1_lx = args.t0, args.t1
     if stem != "sustained":
-        # Reset to post-peak windows: use peak-aligned [50ms, 1.0s].
-        x_dv, sr_dv = sf.read(dv); m_dv = x_dv.mean(axis=1) if x_dv.ndim>1 else x_dv
-        pk = int(np.argmax(np.abs(m_dv)))
-        args.t0 = pk / sr_dv + 0.05
-        args.t1 = pk / sr_dv + 1.0
+        def _peak_window(path):
+            x, sr = sf.read(path); m = x.mean(axis=1) if x.ndim > 1 else x
+            pk = int(np.argmax(np.abs(m)))
+            return pk / sr + 0.05, pk / sr + 1.0
+        t0_dv, t1_dv = _peak_window(dv)
+        t0_lx, t1_lx = _peak_window(lx)
 
     print(f"\n══ EQ-MATCH DELTA CURVE ══")
     print(f"  DV:  {dv}")
     print(f"  Lex: {lx}")
-    print(f"  Stimulus: {stem}   Window: [{args.t0:.2f}, {args.t1:.2f}]s")
+    print(f"  Stimulus: {stem}   DV window: [{t0_dv:.2f}, {t1_dv:.2f}]s   "
+          f"Lex window: [{t0_lx:.2f}, {t1_lx:.2f}]s")
     print(f"  Resolution: 1/{args.bands_per_oct}-octave")
     print()
 
-    dv_b = fine_band_power_db(dv, args.t0, args.t1, args.bands_per_oct)
-    lx_b = fine_band_power_db(lx, args.t0, args.t1, args.bands_per_oct)
+    dv_b = fine_band_power_db(dv, t0_dv, t1_dv, args.bands_per_oct)
+    lx_b = fine_band_power_db(lx, t0_lx, t1_lx, args.bands_per_oct)
+    # zip() below silently truncates to the shorter list; band counts can differ
+    # if the two renders have different sample rates (band centers are filtered
+    # against sr*0.45). Warn loudly with which side is shorter and the top band
+    # that gets dropped, so a truncated comparison isn't mistaken for a match.
+    if len(dv_b) != len(lx_b):
+        longer, which = (dv_b, "DV") if len(dv_b) > len(lx_b) else (lx_b, "Lex")
+        top_fc = longer[-1][0]
+        print(f"  WARNING: band-count mismatch — DV has {len(dv_b)}, Lex has {len(lx_b)}; "
+              f"{which} is longer. zip() drops its bands above {min(len(dv_b), len(lx_b))} "
+              f"(highest dropped center ~{top_fc:.0f} Hz). Check sample-rate parity.",
+              file=sys.stderr)
     rows = []
     for (fc_d, dv_v), (_, lx_v) in zip(dv_b, lx_b):
         d = lx_v - dv_v   # positive = ADD dB to DV to match Lex

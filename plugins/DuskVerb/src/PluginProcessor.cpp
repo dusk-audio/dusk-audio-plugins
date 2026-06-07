@@ -983,6 +983,16 @@ void DuskVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("dpvBoxCutFreqHz",     dpvBoxCutHzParam_->load(),       nullptr);
     state.setProperty ("dpvBassShelfGainDb",  dpvBassShelfDbParam_->load(),    nullptr);
     state.setProperty ("dpvBassShelfFreqHz",  dpvBassShelfHzParam_->load(),    nullptr);
+    // Preset identity. The name-keyed engine config (PostTankEQ bands,
+    // modulation topology, FDN base-delay overrides, post-band trims) lives
+    // OUTSIDE APVTS and is reconstructed by FactoryPreset::applyEngineConfig()
+    // via name lookup. Persist the name so a reloaded session reapplies the
+    // correct engine config instead of falling back to the engine defaults
+    // (RandomWalk topology + flat PostTankEQ + default base delays). Additive
+    // property — old binaries ignore it, and sessions saved before this (or
+    // with no preset applied) simply omit it and keep prior behavior.
+    if (auto* preset = lastAppliedPreset_.load (std::memory_order_acquire))
+        state.setProperty ("lastPresetName", juce::String (preset->name), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -1079,6 +1089,43 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
     pushSixAPBrightnessTo (engineA_);
     pushSixAPBrightnessTo (engineB_);
 
+    // Reconstruct the name-keyed engine config (see getStateInformation):
+    // match the saved preset by name and arm a swap so the audio thread
+    // reapplies its PostTankEQ bands / modulation topology / FDN base delays /
+    // post-band trims via performPresetSwap() -> applyEngineConfig(). We
+    // deliberately do NOT call applyTo() here — replaceState() already restored
+    // the user's saved APVTS values, which must not be overwritten with the
+    // preset's defaults. The same lastAppliedPreset_ pointer also feeds the
+    // prepareToPlay() re-install path, so engine config is correct whether the
+    // host calls prepareToPlay before or after setStateInformation.
+    bool matchedPreset = false;
+    if (tree.hasProperty ("lastPresetName"))
+    {
+        const auto savedName = tree.getProperty ("lastPresetName").toString();
+        for (const auto& preset : getFactoryPresets())
+        {
+            if (savedName == juce::String (preset.name))
+            {
+                lastAppliedPreset_.store (&preset, std::memory_order_release);
+                pendingPresetSwap_.store (true, std::memory_order_release);
+                matchedPreset = true;
+                break;
+            }
+        }
+    }
+    if (! matchedPreset)
+    {
+        // No persisted identity (older save / no preset applied at save) or the
+        // saved name no longer maps to a factory preset (renamed/removed).
+        // Clear any stale pointer left from a preset previously applied to THIS
+        // reused instance, otherwise prepareToPlay()/performPresetSwap() would
+        // reapply that unrelated session's engine config (PostTankEQ bands,
+        // modulation topology, FDN base delays) on top of the just-restored
+        // APVTS values. Cleared → the engine falls back to its defaults, which
+        // is the correct "no known preset" state.
+        lastAppliedPreset_.store (nullptr, std::memory_order_release);
+        pendingPresetSwap_.store (false, std::memory_order_release);
+    }
 }
 
 void DuskVerbProcessor::pushSixAPBrightnessTo (DuskVerbEngine& target)
