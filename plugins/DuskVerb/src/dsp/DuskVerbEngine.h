@@ -210,6 +210,13 @@ public:
     // No-op for non-FDN engines. Pass nullptr to retain the engine default.
     void setFDNBaseDelays (const int* delays);
 
+    // Reset the name-keyed engine config (PostTankEQ bands, modulation topology,
+    // per-line decay tilt, FDN base delays) — the parts NOT carried by APVTS /
+    // forcePushAllParametersTo — back to engine defaults. Called when a session
+    // is loaded with no/unknown preset identity so a prior preset's config does
+    // not leak onto the restored session.
+    void reapplyNeutralEngineConfig();
+
     // Phase ε (2026-05-29): in-loop narrow-Q peaking band on the FDN per-
     // line feedback path. Designed to reinforce a specific frequency inside
     // the loop so steady-state input at that frequency builds extra gain
