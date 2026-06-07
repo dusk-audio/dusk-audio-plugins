@@ -76,7 +76,15 @@ inline float softClip (float x, float threshold = 1.0f, float ceiling = 2.0f)
     const float sign  = (x < 0.0f) ? -1.0f : 1.0f;
     const float range = std::max (ceiling - threshold, 1.0e-6f);
     const float over  = (ax - threshold) / range;
-    return sign * (threshold + range * fastTanh (over));
+    // fastTanh is a rational approximation that only saturates near |over| <= 3
+    // (fastTanh(3) == 1 exactly) and DIVERGES past that — for large drive it
+    // grows ~over/9, so the raw result would push output beyond `ceiling`.
+    // Clamp the drive to [0,1] so the output can never exceed threshold + range
+    // (== ceiling); the clamp only engages for over > 3 (inputs already well
+    // above ceiling), leaving the in-knee curve unchanged.
+    float drive = fastTanh (over);
+    drive = std::min (std::max (drive, 0.0f), 1.0f);
+    return sign * (threshold + range * drive);
 }
 
 // Phase 2 modulation topology selector. Engines can be in legacy random-
