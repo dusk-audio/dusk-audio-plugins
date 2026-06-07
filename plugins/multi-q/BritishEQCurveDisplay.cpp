@@ -114,7 +114,7 @@ void BritishEQCurveDisplay::paint(juce::Graphics& g)
         juce::String frozenText = "FROZEN (F)";
         auto font = juce::FontOptions(11.0f, juce::Font::bold);
         g.setFont(font);
-        float textWidth = g.getCurrentFont().getStringWidth(frozenText) + 12.0f;
+        float textWidth = juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), frozenText) + 12.0f;
         float textHeight = 18.0f;
         float badgeX = graphArea.getX() + 6.0f;
         float badgeY = graphArea.getY() + 6.0f;
