@@ -729,12 +729,12 @@ struct AttackRamp
         // (Slowing this to track the sub-band envelope broke the working
         // low/low_mid bands — the fast follower is required there. Sub <100 Hz
         // edt stays immovable by this shaper: a known limit.)
-        const float att = 0.05f;
-        const float rel = 0.005f;
+        // Coeffs are sample-rate-corrected (recomputeCoeffs) so the follower
+        // tracks at the same wall-clock speed at any host rate.
         if (absLR > envFollower_)
-            envFollower_ += att * (absLR - envFollower_);
+            envFollower_ += envAttCoeff_ * (absLR - envFollower_);
         else
-            envFollower_ += rel * (absLR - envFollower_);
+            envFollower_ += envRelCoeff_ * (absLR - envFollower_);
 
         // Slow-release peak tracker. Captures the recent loudness peak;
         // decays per sample so the gain modulator re-arms after each burst.
@@ -765,12 +765,23 @@ private:
     void recomputeCoeffs() noexcept
     {
         peakDecayPerSamp_ = std::exp (-1.0f / std::max (tauMs_ * 0.001f * sampleRate_, 1.0f));
+        // Envelope-follower attack/release as sample-rate-independent time
+        // constants. The ms values are chosen to reproduce the legacy fixed
+        // per-sample steps (0.05 attack / 0.005 release) at 48 kHz — the preset
+        // calibration rate — so 48 k renders are bit-identical and only other
+        // host rates change (correctly, toward SR-independence).
+        constexpr float kEnvAttackMs  = 0.4062f;   // → 0.05 step at 48 kHz
+        constexpr float kEnvReleaseMs = 4.156f;    // → 0.005 step at 48 kHz
+        envAttCoeff_ = 1.0f - std::exp (-1.0f / std::max (kEnvAttackMs  * 0.001f * sampleRate_, 1.0f));
+        envRelCoeff_ = 1.0f - std::exp (-1.0f / std::max (kEnvReleaseMs * 0.001f * sampleRate_, 1.0f));
     }
 
     float sampleRate_       = 44100.0f;
     float attackDb_         = 0.0f;
     float tauMs_            = 100.0f;
     float peakDecayPerSamp_ = 0.99979f;
+    float envAttCoeff_      = 0.05f;
+    float envRelCoeff_      = 0.005f;
     float envFollower_      = 0.0f;
     float trackingPeak_     = 0.0f;
 };
@@ -801,7 +812,8 @@ public:
     void prepare (float sampleRate) noexcept
     {
         sampleRate_ = std::max (sampleRate, 8000.0f);
-        for (auto& r : ramps_) r.prepare (sampleRate_);
+        for (auto& r : rampsL_) r.prepare (sampleRate_);
+        for (auto& r : rampsR_) r.prepare (sampleRate_);
         recomputeSplitCoeffs();
         reset();
     }
@@ -810,7 +822,8 @@ public:
     {
         lpStateL_[0] = lpStateL_[1] = lpStateL_[2] = 0.0f;
         lpStateR_[0] = lpStateR_[1] = lpStateR_[2] = 0.0f;
-        for (auto& r : ramps_) r.reset();
+        for (auto& r : rampsL_) r.reset();
+        for (auto& r : rampsR_) r.reset();
     }
 
     void setCrossovers (float fLow, float fMid, float fHi) noexcept
@@ -824,7 +837,8 @@ public:
     void setRegionShape (int region, float attackDb, float tauMs) noexcept
     {
         if (region < 0 || region >= kNumRegions) return;
-        ramps_[region].setShape (attackDb, tauMs);
+        rampsL_[region].setShape (attackDb, tauMs);
+        rampsR_[region].setShape (attackDb, tauMs);
         regionAttackDb_[region] = attackDb;
         anyActive_ = false;
         for (auto v : regionAttackDb_)
@@ -834,17 +848,18 @@ public:
     inline float processL (float x) noexcept
     {
         if (! anyActive_) return x;     // exact bit-identical bypass
-        return processChannel (x, lpStateL_);
+        return processChannel (x, lpStateL_, rampsL_);
     }
 
     inline float processR (float x) noexcept
     {
         if (! anyActive_) return x;     // exact bit-identical bypass
-        return processChannel (x, lpStateR_);
+        return processChannel (x, lpStateR_, rampsR_);
     }
 
 private:
-    inline float processChannel (float x, float (&state)[3]) noexcept
+    inline float processChannel (float x, float (&state)[3],
+                                 AttackRamp (&ramps)[kNumRegions]) noexcept
     {
         // 3 cascaded 1-pole LPs split the input into 4 contiguous bands.
         // Each band is the difference between consecutive LP outputs:
@@ -878,11 +893,14 @@ private:
         const float bandAir    = hp_after_lp2 - lp3_midhi;
 
         // Per-region time-varying gain (1.0 when all attackDb==0 → bypass).
-        const float absX = std::fabs (x);
-        const float gSub    = ramps_[0].tickGain (absX);
-        const float gLowMid = ramps_[1].tickGain (absX);
-        const float gMidHi  = ramps_[2].tickGain (absX);
-        const float gAir    = ramps_[3].tickGain (absX);
+        // Drive each AttackRamp with ITS OWN band magnitude (it is documented
+        // to track "the band's signal envelope"); feeding the full-band |x| to
+        // all four coupled the regions — a loud sub transient would re-arm the
+        // air-band ramp and vice-versa.
+        const float gSub    = ramps[0].tickGain (std::fabs (bandSub));
+        const float gLowMid = ramps[1].tickGain (std::fabs (bandLowMid));
+        const float gMidHi  = ramps[2].tickGain (std::fabs (bandMidHi));
+        const float gAir    = ramps[3].tickGain (std::fabs (bandAir));
 
         return bandSub * gSub + bandLowMid * gLowMid
              + bandMidHi * gMidHi + bandAir * gAir;
@@ -905,7 +923,11 @@ private:
     float lpStateR_[3] {0.0f, 0.0f, 0.0f};
     float regionAttackDb_[kNumRegions] {0.0f, 0.0f, 0.0f, 0.0f};
     bool  anyActive_ = false;
-    AttackRamp ramps_[kNumRegions];
+    // Per-channel ramp state — the AttackRamp envelope/peak followers are
+    // mutated in tickGain(), so L and R must not share them or processing one
+    // channel would corrupt the other's gain (order-dependent stereo output).
+    AttackRamp rampsL_[kNumRegions];
+    AttackRamp rampsR_[kNumRegions];
 };
 
 // =============================================================================
@@ -942,7 +964,8 @@ struct DualTimeConstantBassShelf
 
     void reset() noexcept
     {
-        envFollower_  = 0.0f;
+        envFollowerL_ = 0.0f;
+        envFollowerR_ = 0.0f;
         fastStateL_   = 0.0f;
         fastStateR_   = 0.0f;
         slowStateL_   = 0.0f;
@@ -973,13 +996,13 @@ struct DualTimeConstantBassShelf
     inline float processL (float x) noexcept
     {
         if (! anyActive_) return x;
-        return processChannel (x, fastStateL_, slowStateL_);
+        return processChannel (x, fastStateL_, slowStateL_, envFollowerL_);
     }
 
     inline float processR (float x) noexcept
     {
         if (! anyActive_) return x;
-        return processChannel (x, fastStateR_, slowStateR_);
+        return processChannel (x, fastStateR_, slowStateR_, envFollowerR_);
     }
 
 private:
@@ -992,14 +1015,16 @@ private:
     //   At gain=0 dB, the bass_band × 1.0 + (x − bass_band) = x → bit-
     //   identical bypass. At gain=−6 dB, bass_band scaled by 0.5 → 6 dB
     //   shelf attenuation below fc.
-    inline float processChannel (float x, float& fastState, float& slowState) noexcept
+    inline float processChannel (float x, float& fastState, float& slowState,
+                                 float& env) noexcept
     {
         // Envelope follower on the band signal — fast attack, slow release.
+        // Per-channel (env passed by ref) so L and R don't share/corrupt it.
         const float absX = std::fabs (x);
-        if (absX > envFollower_)
-            envFollower_ += envAttCoeff_ * (absX - envFollower_);
+        if (absX > env)
+            env += envAttCoeff_ * (absX - env);
         else
-            envFollower_ += envRelCoeff_ * (absX - envFollower_);
+            env += envRelCoeff_ * (absX - env);
 
         // mix: 0 when envelope is high (use fast shelf), 1 when low (use slow).
         // env normalized against a slow-decaying peak tracker would give true
@@ -1007,7 +1032,7 @@ private:
         // against a fixed threshold — onset-followed signals stay near fast,
         // input-off tails drift toward slow.
         const float thr = envThreshold_;
-        const float ratio = (thr > 1.0e-6f) ? (envFollower_ / thr) : 0.0f;
+        const float ratio = (thr > 1.0e-6f) ? (env / thr) : 0.0f;
         const float mix = std::clamp (1.0f - ratio, 0.0f, 1.0f);
 
         // Fast band LP
@@ -1051,7 +1076,8 @@ private:
     float fastGainLin_  = 1.0f;
     float slowGainLin_  = 1.0f;
 
-    float envFollower_  = 0.0f;
+    float envFollowerL_ = 0.0f;
+    float envFollowerR_ = 0.0f;
     float envAttCoeff_  = 0.0f;
     float envRelCoeff_  = 0.0f;
     float envThreshold_ = 0.05f;     // ~-26 dBFS — typical band-signal level
