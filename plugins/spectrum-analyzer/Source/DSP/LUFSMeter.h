@@ -5,7 +5,6 @@
 #include <deque>
 #include <cmath>
 #include <algorithm>
-#include <numeric>
 
 //==============================================================================
 /**

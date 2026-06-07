@@ -358,7 +358,8 @@ void IRWaveformDisplay::paint(juce::Graphics& g)
         g.setFont(juce::Font(9.0f, juce::Font::bold));
         auto filterLabelBounds = juce::Rectangle<float>(waveformBounds.getX(), waveformBounds.getY(), 50, 15);
         g.drawText("FILTER", filterLabelBounds,
-                   juce::Justification::topLeft);    }
+                   juce::Justification::topLeft);
+    }
 
     // Draw playback position indicator
     if (playbackPosition > 0.0f)
