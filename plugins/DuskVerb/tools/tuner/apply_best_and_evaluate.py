@@ -148,8 +148,12 @@ def report(preset, params, vst3, anchor):
         print(f"  {fc:8.1f}  {dv:+8.2f}  {lx:+8.2f}  {d:+9.2f}  {bar}{flag}")
         rows.append((fc, d))
     abs_d = [abs(d) for _, d in rows]
-    print(f"\n  mean |Δ|: {sum(abs_d)/len(abs_d):.2f} dB")
-    print(f"  max  |Δ|: {max(abs_d):.2f} dB @ {[fc for fc,d in rows if abs(d)==max(abs_d)][0]:.0f} Hz")
+    if not abs_d:
+        print("\n  (no overlapping 1/3-oct bands — skipping mean/max |Δ|)")
+    else:
+        max_abs = max(abs_d)
+        print(f"\n  mean |Δ|: {sum(abs_d)/len(abs_d):.2f} dB")
+        print(f"  max  |Δ|: {max_abs:.2f} dB @ {[fc for fc,d in rows if abs(d)==max_abs][0]:.0f} Hz")
     # Sub-bass region focus (user's gate)
     sub = [(fc, d) for fc, d in rows if 80 <= fc <= 250]
     if sub:

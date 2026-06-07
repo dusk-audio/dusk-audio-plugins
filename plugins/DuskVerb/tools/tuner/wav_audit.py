@@ -308,8 +308,12 @@ def audit_compare(dv_path, lex_path):
         print(f"  {fc1:8.1f}  {dv:+10.2f}  {lx:+10.2f}  {delta:+9.2f}  {bar}{flag}")
         rows.append((fc1, dv, lx, delta))
     abs_d = [abs(r[3]) for r in rows]
-    print(f"\n  mean |Δ|:  {sum(abs_d)/len(abs_d):.2f} dB")
-    print(f"  max  |Δ|:  {max(abs_d):.2f} dB @ {[r[0] for r in rows if abs(r[3])==max(abs_d)][0]:.1f} Hz")
+    if not rows or not abs_d:
+        print("\n  (no valid bands — both renders below floor in every band)")
+    else:
+        max_abs = max(abs_d)
+        print(f"\n  mean |Δ|:  {sum(abs_d)/len(abs_d):.2f} dB")
+        print(f"  max  |Δ|:  {max_abs:.2f} dB @ {[r[0] for r in rows if abs(r[3])==max_abs][0]:.1f} Hz")
 
 
 def main():
