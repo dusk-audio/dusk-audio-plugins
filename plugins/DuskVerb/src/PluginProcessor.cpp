@@ -1117,14 +1117,16 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         // No persisted identity (older save / no preset applied at save) or the
         // saved name no longer maps to a factory preset (renamed/removed).
-        // Clear any stale pointer left from a preset previously applied to THIS
-        // reused instance, otherwise prepareToPlay()/performPresetSwap() would
-        // reapply that unrelated session's engine config (PostTankEQ bands,
-        // modulation topology, FDN base delays) on top of the just-restored
-        // APVTS values. Cleared → the engine falls back to its defaults, which
-        // is the correct "no known preset" state.
+        // Clear the pointer so prepareToPlay()/performPresetSwap() don't reapply
+        // an unrelated preset's config, AND arm a swap. Clearing alone is not
+        // enough: a reused instance's engine still holds the PREVIOUS preset's
+        // name-keyed config (PostTankEQ bands, modulation topology, FDN base
+        // delays — none of which forcePushAllParametersTo touches). The armed
+        // swap runs performPresetSwap()'s null branch → reapplyNeutralEngineConfig(),
+        // resetting those to defaults on the audio thread (so no message-thread
+        // biquad-coefficient write races process()).
         lastAppliedPreset_.store (nullptr, std::memory_order_release);
-        pendingPresetSwap_.store (false, std::memory_order_release);
+        pendingPresetSwap_.store (true, std::memory_order_release);
     }
 }
 
@@ -1427,6 +1429,26 @@ void DuskVerbProcessor::performPresetSwap()
         // detects in processBlock can re-issue setPostTankEQBand without
         // re-consulting the kPostTankEQByName map. Single source of truth.
         resolvePteqFreqQ (preset->name, pteqBandFreq_, pteqBandQ_);
+    }
+    else
+    {
+        // No known preset (session loaded with no/unknown identity). Reset the
+        // name-keyed engine config to defaults so a preset previously applied
+        // to this reused instance can't leak its PostTankEQ / topology / base
+        // delays onto the restored session. resolvePteqFreqQ("") yields the
+        // default freq/Q so the processBlock gain edge-detect stays consistent.
+        newActive->reapplyNeutralEngineConfig();
+        resolvePteqFreqQ ("", pteqBandFreq_, pteqBandQ_);
+        // reapplyNeutralEngineConfig() flattened the PostTankEQ, but the restored
+        // session still carries its own pteq_band*_gain_db in APVTS. Re-install
+        // those gains now (at the default freq/Q) — otherwise syncParameterCache-
+        // ToCurrent() below caches them as already-applied and the processBlock
+        // edge-detect (pushIfChanged) never fires, leaving the bands stuck flat
+        // despite non-zero restored gains.
+        newActive->setPostTankEQBand (0, pteqBandFreq_[0], pteqBandQ_[0], pteqBand0GainParam_->load());
+        newActive->setPostTankEQBand (1, pteqBandFreq_[1], pteqBandQ_[1], pteqBand1GainParam_->load());
+        newActive->setPostTankEQBand (2, pteqBandFreq_[2], pteqBandQ_[2], pteqBand2GainParam_->load());
+        newActive->setPostTankEQBand (3, pteqBandFreq_[3], pteqBandQ_[3], pteqBand3GainParam_->load());
     }
 
 
