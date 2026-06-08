@@ -316,6 +316,11 @@ struct FactoryPreset
             // shipped. No input makeup / in-loop peak. Pairs w/ row Treble 1.091
             // + pteq level comp to decouple level from the decay retune. 17->10.
             { "Vocal Hall", { 1.615f, 0.577f, 120.0f, 8000.0f, 0.0f, 0.0f, 0.0f, 0.0f } },
+            // Vocal Plate (FDN) — T60 decay tune 2026-06-08. PINS Hi-Mid 0.85 so the air
+            // band (4k/8k) does NOT inherit the row Treble (0.60): without this entry the
+            // sentinel sets fbHiMid=damping=0.60 → double HF damping → 4k/8k T60 -10%. Sub
+            // 0.74 = the prior bass-inherit value (unchanged). xSub/xAir as shipped.
+            { "Vocal Plate", { 0.74f, 0.85f, 120.0f, 8000.0f, 0.0f, 0.0f, 0.0f, 0.0f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
@@ -430,8 +435,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // energy/decay deficit — not closable by uniform FDN damping.
         { "Vocal Plate",          "Plates",
           4,  0.35f, false, 29.16f, 0,
-          1.02f, 0.15f, 0.37f, 1.51f, 0.85f, 0.74f,  401.0f,
-          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -1.74f,  // Lo Cut 81.5->30 (2026-06-07): 81.5 HPF starved 20-100Hz -> ss-deep-sub -11/sub-bass -8; opening it restores anchor low-end. 22->20.
+          0.90f, 0.15f, 0.37f, 1.51f, 0.60f, 0.74f,  401.0f,  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match VVV, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
+          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -1.00f,  // GainTrim -1.74->-1.0 (re-gain-matched to anchor noiseburst after the decay cut). Lo Cut 30: restores 20-100Hz low-end.
           /* mono */ 20.0f, /* mid */ 0.72f, /* highX */ 3817.0f, /* sat */ 0.03f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
