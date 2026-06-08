@@ -238,6 +238,16 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
                                     dualBassFastGainDb_, dualBassSlowGainDb_,
                                     dualBassTransitionMs_);
 
+    // Phase 3 (VH->0): prepare + re-apply the time-varying hi-damp shelf. Single
+    // instance, N internal trackers. prepare() resets coeffs to bit-identical
+    // default, so re-design from stored config (mirror of the peak/shelf restores
+    // above). tvHiActive_ stays false (bypass) unless a preset opts in.
+    tvDampHi_.prepare (static_cast<float> (sampleRate), N);
+    tvDampHi_.setEnvelopeReleaseSec (tvHiReleaseSec_);
+    tvDampHi_.setRefLevel (tvHiRefLevel_);
+    tvDampHi_.designCoeffs ({ tvHiEarlyMult_, tvHiLateMult_, tvHiCrossover_ });
+    tvHiActive_ = std::fabs (tvHiEarlyMult_ - tvHiLateMult_) > 1.0e-6f;
+
     // Block 2 input makeup: prepare + design from current gains (0 dB = unity).
     inputMid_.prepare (static_cast<float> (sampleRate));
     inputSubL_.reset();
@@ -693,6 +703,16 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 filtered = dampFilter_[ch].process (feedback[ch], lp.damping[ch]);
             }
 
+            // Phase 3 (VH->0): per-line energy-following hi-shelf. When a line's
+            // circulating energy is fresh (early decay) HF is cut (earlyMult<1) →
+            // faster EARLY hi decay (shortens edt hi); as it decays the shelf
+            // relaxes to lateMult, preserving late T60. Skipped entirely (bit-
+            // identical) unless a preset opts in (tvHiActive_). Tracks `filtered`
+            // (this filter's INPUT post-damping), not its own output → estimator
+            // stable. In-loop edit — bit-null verified empirically on Drum Plate.
+            if (tvHiActive_ && ! frozen)
+                filtered = tvDampHi_.process (ch, filtered);
+
             // Phase η: per-line dual-time-constant bass shelf. Sits AFTER
             // ThreeBandDamping → BEFORE structHF/LF + DC chain. Bypass-
             // guarded inside class (anyActive_) so legacy presets with
@@ -1070,6 +1090,22 @@ void FDNReverb::setInLoopPeaking (float freqHz, float qFactor, float gainDb)
     inLoopPeakGainDb_ = gainDb;
     for (int i = 0; i < N; ++i)
         inLoopPeak_[i].setBand (freqHz, qFactor, gainDb);
+}
+
+void FDNReverb::setTimeVaryingHiDamp (float earlyMult, float lateMult,
+                                      float crossoverHz, float releaseSec,
+                                      float refLevel)
+{
+    tvHiEarlyMult_  = earlyMult;
+    tvHiLateMult_   = lateMult;
+    tvHiCrossover_  = crossoverHz;
+    tvHiReleaseSec_ = std::max (releaseSec, 0.05f);
+    tvHiRefLevel_   = std::max (refLevel, 1.0e-4f);
+    tvDampHi_.setEnvelopeReleaseSec (tvHiReleaseSec_);
+    tvDampHi_.setRefLevel (tvHiRefLevel_);
+    tvDampHi_.designCoeffs ({ earlyMult, lateMult, crossoverHz });
+    // Bypass (skip the in-loop call) when flat → bit-identical for non-opt-in.
+    tvHiActive_ = std::fabs (earlyMult - lateMult) > 1.0e-6f;
 }
 
 void FDNReverb::setDualBassShelf (float fastFc, float slowFc,

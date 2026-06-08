@@ -129,6 +129,13 @@ void EarlyReflections::setDecorrCoeff (float coeff)
     decorrCoeff_.store (std::clamp (coeff, 0.0f, 0.7f), std::memory_order_release);
 }
 
+void EarlyReflections::setStereoNeutral (bool enabled)
+{
+    stereoNeutral_ = enabled;
+    if (prepared_)
+        tapsNeedUpdate_.store (true, std::memory_order_release);
+}
+
 void EarlyReflections::updateTaps()
 {
     static_assert (kNumTaps > 1, "kNumTaps must be > 1 to avoid division by zero");
@@ -202,4 +209,46 @@ void EarlyReflections::updateTaps()
     if (sumR > 0.0f)
         for (int i = 0; i < kNumTaps; ++i)
             tapsR_[i].gain /= sumR;
+
+    // ── Stereo-neutral override (Phase 2) ──────────────────────────────────
+    // Runs ONLY when opted in, AFTER the legacy computation above is fully
+    // done — so the default path is byte-for-byte the original (verified
+    // bit-exact on the fleet). Recomputes the R channel with an independent
+    // sign pattern + per-tap delay jitter so L/R decorrelate by timing AND
+    // sign independence (uniform corr ≈ 0, VVV-like) instead of the legacy
+    // opposed-sign anti-phase. L channel is left exactly as computed above.
+    if (stereoNeutral_)
+    {
+        for (int i = 0; i < kNumTaps; ++i)
+        {
+            float tR = std::clamp ((static_cast<float> (i) + 0.5f + kRJitter[i])
+                                   / static_cast<float> (kNumTaps - 1), 0.0f, 1.0f);
+            float timeMsR = kMinTimeMs * std::pow (timeRatio, tR) * sizeScale;
+            tapsR_[i].delaySamples = std::max (1, static_cast<int> (timeMsR * 0.001f * sr));
+
+            if (onsetRiseMs_ > 0.0f)
+            {
+                const float r        = timeMsR / onsetRiseMs_;
+                const float rClamped = std::min (r, 1.0f);
+                const float rise     = rClamped * rClamped * (3.0f - 2.0f * rClamped);
+                const float ex       = std::max (gainExponent_, 2.5f);
+                const float rolloff  = std::pow (1.0f / std::max (r, 1.0f), ex);
+                tapsR_[i].gain = kSignsRNeutral[i] * rise * rolloff;
+            }
+            else
+            {
+                float normR  = timeMsR / kMinTimeMs;
+                float attenR = (gainExponent_ > 0.0f) ? std::pow (normR, gainExponent_) : 1.0f;
+                tapsR_[i].gain = kSignsRNeutral[i] / attenR;
+            }
+
+            float cutoffR = airAbsorptionCeilingHz_
+                          * std::pow (airAbsorptionFloorHz_ / airAbsorptionCeilingHz_, tR);
+            tapsR_[i].lpCoeff = std::exp (-kTwoPi * cutoffR / sr);
+        }
+        float sumRn = 0.0f;
+        for (int i = 0; i < kNumTaps; ++i) sumRn += std::abs (tapsR_[i].gain);
+        if (sumRn > 0.0f)
+            for (int i = 0; i < kNumTaps; ++i) tapsR_[i].gain /= sumRn;
+    }
 }
