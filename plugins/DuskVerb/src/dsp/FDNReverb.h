@@ -2,6 +2,7 @@
 
 #include "DspUtils.h"
 #include "TwoBandDamping.h"
+#include "TimeVaryingDamping.h"
 
 #include <array>
 #include <atomic>
@@ -119,6 +120,13 @@ public:
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
     void setFeedbackModDepth (float depth);
+    // Phase 3 (VH->0): per-line energy-following high-shelf (TimeVaryingDamping).
+    // earlyMult applies to HF above crossoverHz when a line's circulating energy
+    // is fresh (early decay), lateMult when decayed. earlyMult<lateMult => faster
+    // EARLY hi decay (shortens edt hi) while preserving late T60. earlyMult==
+    // lateMult => bit-identical bypass (call skipped via tvHiActive_).
+    void setTimeVaryingHiDamp (float earlyMult, float lateMult, float crossoverHz,
+                               float releaseSec, float refLevel);
 
     // Phase 2: switch modulation topology. RandomWalk = legacy per-line
     // independent random walks. CoherentLoop = single master sine, phase-
@@ -373,6 +381,19 @@ private:
     float dualBassFastGainDb_   = 0.0f;
     float dualBassSlowGainDb_   = 0.0f;
     float dualBassTransitionMs_ = 100.0f;
+
+    // Phase 3 (VH->0): per-line energy-following high-shelf. Single instance,
+    // 16 internal channel trackers. tvHiActive_ false => process() skipped in the
+    // loop => bit-identical. Stored config re-applied in prepare() (designCoeffs
+    // resets on re-prepare, mirror of inLoopPeak_/dualBassShelf_ restore).
+    DspUtils::TimeVaryingDamping tvDampHi_;
+    bool  tvHiActive_     = false;
+    float tvHiEarlyMult_  = 1.0f;
+    float tvHiLateMult_   = 1.0f;
+    float tvHiCrossover_  = 2500.0f;
+    float tvHiReleaseSec_ = 0.30f;
+    float tvHiRefLevel_   = 0.50f;
+
     DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
 
     // Phase θ/Phase 2: post-loop Tail Spin/Wander output VCA. A 16-phase sine

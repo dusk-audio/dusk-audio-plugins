@@ -93,6 +93,10 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     postTankBandTrim_.prepare (static_cast<float> (sampleRate));
     perBandEDT_.prepare (static_cast<float> (sampleRate));
 
+    // ER-bus spectral-correction shelves. Default 0 dB → unity → bit-identical.
+    erBusLowShelf_.prepare (static_cast<float> (sampleRate));
+    erBusHighShelf_.prepare (static_cast<float> (sampleRate));
+
     // Force-apply algorithm 0 on first prepare (don't bypass via early-return).
     currentAlgorithm_ = -1;
     setAlgorithm (0);
@@ -126,6 +130,9 @@ void DuskVerbEngine::clearAllBuffers()
     loCutFilter_.reset();
     hiCutFilter_.reset();
     postTankEQ_.reset();
+    erBusLowShelf_.reset();
+    erBusHighShelf_.reset();
+    tankSplitLpL_ = tankSplitLpR_ = 0.0f;
     postTankBandTrim_.reset();
     perBandEDT_.reset();
 
@@ -442,6 +449,16 @@ void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gai
     multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setInLoopPeaking (freqHz, qFactor, gainDb); });
 }
 
+void DuskVerbEngine::setFDNTimeVaryingHiDamp (float earlyMult, float lateMult,
+                                              float crossoverHz, float releaseSec,
+                                              float refLevel)
+{
+    // Phase 3 (VH->0): FDN-only per-line energy-following hi-shelf.
+    fdn_.setTimeVaryingHiDamp (earlyMult, lateMult, crossoverHz, releaseSec, refLevel);
+    multibandFdn_.forEachTank ([&](FDNReverb& tk){
+        tk.setTimeVaryingHiDamp (earlyMult, lateMult, crossoverHz, releaseSec, refLevel); });
+}
+
 void DuskVerbEngine::setMultibandEnabled (bool enabled)
 {
     multibandActive_ = enabled;
@@ -552,6 +569,16 @@ void DuskVerbEngine::setEROnsetRiseMs (float ms)
     er_.setOnsetRiseMs (ms);
 }
 
+void DuskVerbEngine::setERStereoNeutral (bool enabled)
+{
+    er_.setStereoNeutral (enabled);
+}
+
+void DuskVerbEngine::setERDecorr (float coeff)
+{
+    er_.setDecorrCoeff (coeff);
+}
+
 void DuskVerbEngine::setOutputCrossTalk (float depth)
 {
     xtalkDepth_  = std::clamp (depth, 0.0f, 1.0f);
@@ -581,6 +608,32 @@ void DuskVerbEngine::setHiCut (float hz)
 void DuskVerbEngine::setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb)
 {
     postTankEQ_.setBand (index, freqHz, qFactor, gainDb);
+}
+
+void DuskVerbEngine::setERBusShelves (float lowGainDb, float highGainDb)
+{
+    // Fixed corners chosen from the measured ER tilt: low-shelf lifts the weak
+    // sub/low-mid (ER is −9..−11 dB there vs its 500-1k peak); high-shelf lifts
+    // the rolled-off top (−8..−16 dB). 0 dB → unity → bit-identical bypass.
+    erBusLowShelf_.setShelf  (400.0f,  lowGainDb);
+    erBusHighShelf_.setShelf (3000.0f, highGainDb);
+}
+
+void DuskVerbEngine::setTankOutputLevel (float level)
+{
+    tankOutLevel_ = std::clamp (level, 0.0f, 2.0f);
+}
+
+void DuskVerbEngine::setTankSplitHz (float hz)
+{
+    tankSplitHz_ = std::max (0.0f, hz);
+    if (tankSplitHz_ > 0.0f)
+    {
+        const float fc = std::clamp (tankSplitHz_, 20.0f, 0.49f * static_cast<float> (sampleRate_));
+        tankSplitCoeff_ = 1.0f - std::exp (-6.283185307179586f * fc / static_cast<float> (sampleRate_));
+    }
+    else
+        tankSplitCoeff_ = 0.0f;
 }
 
 void DuskVerbEngine::setPostTankBandTrimGainDb (int region, float gainDb)
@@ -886,8 +939,15 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                            && currentEngine_ != EngineType::ReverseRoom);
     for (int i = 0; i < numSamples; ++i)
     {
-        const float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;
-        const float erR   = useSmoothER ? erOutR_[static_cast<size_t> (i)] : 0.0f;
+        float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;
+        float erR   = useSmoothER ? erOutR_[static_cast<size_t> (i)] : 0.0f;
+
+        // ER-bus spectral correction. Default 0 dB shelves design unity
+        // coefficients → bit-identical passthrough (verified bit-null on Drum
+        // Plate). Lives on the ER bus only; the tank output is untouched.
+        erL = erBusLowShelf_.processL (erL);  erL = erBusHighShelf_.processL (erL);
+        erR = erBusLowShelf_.processR (erR);  erR = erBusHighShelf_.processR (erR);
+
         const float lateL = tankOutL_[static_cast<size_t> (i)];
         const float lateR = tankOutR_[static_cast<size_t> (i)];
 
@@ -898,8 +958,26 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // own the 0-26 ms transient (which the FDN tank, floored at ~26 ms by
         // its shortest delay line, structurally cannot supply). Post-tank linear
         // combine, NOT in the recursive loop → no feedback-codegen bit-null risk.
-        float wetL = erL * erLevel * erEarlyBoost_ + lateL;
-        float wetR = erR * erLevel * erEarlyBoost_ + lateR;
+        // tankOutLevel_ defaults 1.0 → ×1.0 exact → bit-identical. <1 rebalances
+        // energy from the late tank to the early ER without changing decay RATE.
+        // Phase 3: when tankSplitHz_>0, only the MID/HIGH of the tank is scaled
+        // (low stays unity → keeps the correlated low + body). splitHz=0 →
+        // broadband path below, byte-identical for every non-opting preset.
+        float scaledLateL, scaledLateR;
+        if (tankSplitHz_ > 0.0f)
+        {
+            tankSplitLpL_ += tankSplitCoeff_ * (lateL - tankSplitLpL_);
+            tankSplitLpR_ += tankSplitCoeff_ * (lateR - tankSplitLpR_);
+            scaledLateL = tankSplitLpL_ + (lateL - tankSplitLpL_) * tankOutLevel_;
+            scaledLateR = tankSplitLpR_ + (lateR - tankSplitLpR_) * tankOutLevel_;
+        }
+        else
+        {
+            scaledLateL = lateL * tankOutLevel_;
+            scaledLateR = lateR * tankOutLevel_;
+        }
+        float wetL = erL * erLevel * erEarlyBoost_ + scaledLateL;
+        float wetR = erR * erLevel * erEarlyBoost_ + scaledLateR;
 
         wetL = loCutFilter_.processL (wetL);
         wetR = loCutFilter_.processR (wetR);

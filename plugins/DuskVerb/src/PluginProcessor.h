@@ -187,6 +187,12 @@ private:
     std::atomic<float>* qtHiMidMultParam_   = nullptr;
     std::atomic<float>* qtAirMultParam_     = nullptr;
     std::atomic<float>* erRiseParam_        = nullptr;
+    std::atomic<float>* erBusLowGainParam_  = nullptr;
+    std::atomic<float>* erBusHighGainParam_ = nullptr;
+    std::atomic<float>* tankLevelParam_     = nullptr;
+    std::atomic<float>* tankSplitHzParam_   = nullptr;
+    std::atomic<float>* erStereoNeutralParam_ = nullptr;
+    std::atomic<float>* erDecorrParam_      = nullptr;
     std::atomic<float>* xtalkParam_         = nullptr;
     std::atomic<float>* mbEnableParam_      = nullptr;
     std::atomic<float>* mbLowDecayParam_    = nullptr;
@@ -332,6 +338,12 @@ private:
     float lastQtHiMidMult_ = -99.0f;
     float lastQtAirMult_   = -99.0f;
     float lastERRise_      = -1.0f;
+    float lastERBusLow_    = -99.0f;
+    float lastERBusHigh_   = -99.0f;
+    float lastTankLevel_   = -1.0f;
+    float lastTankSplitHz_ = -1.0f;
+    float lastERStereoNeutral_ = -1.0f;
+    float lastERDecorr_    = -1.0f;
     float lastXTalk_       = -1.0f;
     bool  lastMbEnable_    = false;
     float lastMbLow_       = -1.0f;
