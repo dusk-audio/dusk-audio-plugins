@@ -1146,6 +1146,19 @@ int main (int argc, char** argv)
         {
             std::cout << "Selecting factory program [" << resolvedProgramIndex
                       << "] " << plugin->getProgramName (resolvedProgramIndex) << std::endl;
+            // JUCE's host wrapper NO-OPS setCurrentProgram(idx) when idx already
+            // equals the plugin's current program — which it is for program 0
+            // (the default). That silently skips applyFactoryPreset() → the
+            // preset's name-keyed map overrides (FiveBand, PostTankEQ, …) never
+            // install and the render measures only APVTS defaults. ONLY program
+            // 0 needs this (it's the default → no-op); non-zero targets already
+            // register as a change. Toggle off the default first for index 0 so
+            // the target applies. A decoy for non-zero targets would double-apply
+            // and perturb the rendered tail, so guard it to index 0. (The plugin
+            // editor applies presets via applyFactoryPreset() directly, so the
+            // DAW is unaffected; this is a harness-only fix.)
+            if (resolvedProgramIndex == 0 && plugin->getNumPrograms() > 1)
+                plugin->setCurrentProgram (1);
             plugin->setCurrentProgram (resolvedProgramIndex);
             return;
         }
