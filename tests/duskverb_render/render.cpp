@@ -862,6 +862,9 @@ int main (int argc, char** argv)
     float        sixAPEarlyMixOverride = -1.0f;  // -1 = no override
     bool         listParamsOnly   = false;
     bool         listProgramsOnly = false;
+    bool         dumpParams       = false;   // --dump-params: emit baked program
+                                             // params as JSON (Optuna warm-start
+                                             // seed), then exit before rendering.
     bool         prePrepareApply  = false;
     // Dry-passthrough test: override bus_mode=0 + mix=0 on the loaded preset
     // so the engine's wet path is silent and only the dry passes through.
@@ -914,6 +917,7 @@ int main (int argc, char** argv)
         else if (a == "--load-state" && i + 1 < argc) loadStatePath = argv[++i];
         else if (a == "--list-params")              listParamsOnly   = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
+        else if (a == "--dump-params")              dumpParams       = true;
         else if (a == "--pre-prepare-apply")        prePrepareApply  = true;
         else if (a == "--dry-passthrough-test")     dryPassthroughTest = true;
         else if (a == "--gate-off")                 forceGateOff = true;
@@ -1066,6 +1070,34 @@ int main (int argc, char** argv)
     // Resolve --program <name> to an index by scanning getProgramName(). Done
     // once up front so we don't re-scan on every applyAnyPreset() pass.
     int resolvedProgramIndex = programIndex;
+
+    // SINGLE SOURCE OF TRUTH (2026-06-08): for DuskVerb itself, a `--preset
+    // <name>` that matches a real factory PROGRAM is routed through
+    // setCurrentProgram — i.e. the plugin's own FactoryPresets.h config — NOT
+    // the hand-transcribed makePreset() mirror in this file. The mirror drifts
+    // stale (it once shipped Saturation 0.32 / Decay 2.04 for "Vocal Hall"
+    // while the real preset had Sat 0.0 / Decay 3.5), so every --preset render
+    // measured a phantom config no shipped plugin uses. Resolving to the
+    // program kills that footgun: --preset now == what the DAW loads. The
+    // mirror is kept ONLY as a fallback for names with no matching program
+    // (e.g. external Lex/Valhalla A/B definitions). --param overrides (Dry/Wet,
+    // Bus Mode) still apply on top, exactly as before.
+    if (isDuskVerb && resolvedProgramIndex < 0 && programArg.isEmpty()
+        && presetExplicit && loadStatePath.isEmpty())
+    {
+        for (int i = 0; i < plugin->getNumPrograms(); ++i)
+        {
+            if (plugin->getProgramName (i).trim().equalsIgnoreCase (presetName.trim()))
+            {
+                resolvedProgramIndex = i;
+                haveDuskVerbPreset   = false;   // prefer the real program over the mirror
+                std::cout << "  --preset '" << presetName << "' resolved to factory program ["
+                          << i << "] (real FactoryPresets.h config, not the mirror)\n";
+                break;
+            }
+        }
+    }
+
     if (resolvedProgramIndex < 0 && programArg.isNotEmpty())
     {
         for (int i = 0; i < plugin->getNumPrograms(); ++i)
@@ -1186,6 +1218,38 @@ int main (int argc, char** argv)
     // values are what the renderer hears.
     applyAnyPreset();
     applyParamOverrides();
+
+    // --dump-params: emit the post-apply parameter values as a JSON dict in
+    // DENORMALISED (display) units — exactly what --param NAME=VALUE consumes,
+    // so the output round-trips as an Optuna warm-start seed. Choice/discrete
+    // params (e.g. Algorithm) are skipped: their text isn't a clean float and
+    // the optimizer never sweeps them. Emitted after applyAnyPreset +
+    // applyParamOverrides so it captures the baked program (plus any overrides).
+    if (dumpParams)
+    {
+        // Hosted VST3/AU params are host-wrapper proxies, NOT the plugin's
+        // RangedAudioParameter subclasses, so dynamic_cast fails. Use the base
+        // API: getText() yields the display string; its leading float is the
+        // denormalised value --param consumes (getValueForText inverts it).
+        // Discrete/choice params (Algorithm, Bus Mode, Freeze, Gate) carry
+        // non-numeric text → leading float is junk, but Optuna's seed loader
+        // filters to FREE_PARAMS keys, so the extra entries are harmless.
+        std::cout << "{";
+        bool first = true;
+        for (auto* p : plugin->getParameters())
+        {
+            const juce::String name = p->getName (100);
+            if (name.isEmpty())                continue;
+            const juce::String text = p->getText (p->getValue(), 100);
+            const float raw = text.getFloatValue();   // leading float, 0 if none
+            if (! std::isfinite (raw))         continue;
+            std::cout << (first ? "" : ", ") << "\"" << name << "\": " << raw;
+            first = false;
+        }
+        std::cout << "}" << std::endl;
+        plugin->releaseResources();
+        return 0;
+    }
 
     // Inject SixAPTank engine-state properties that aren't reachable via
     // APVTS --param overrides. The tuner needs to sweep these to find
@@ -1391,6 +1455,62 @@ int main (int argc, char** argv)
             auto outFile = outDir.getChildFile (slug + "_snare.wav");
             if (writeWav (outFile, output, kSampleRate))
                 std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+        }
+    }
+
+    plugin->reset();
+    runPreroll (prerunSeconds);
+
+    // ---- Render 4b: session stem (complex musical material, always on) ----
+    // Real dry mix bounce (vocal + instruments, 48k stereo, 2.5 s). Reveals
+    // nonlinear / clarity artifacts synthetic stimuli miss — the "trashy
+    // highs" the snare and noiseburst don't surface. Auto-resolved like the
+    // snare (no flag needed); writes {outDir}/{slug}_session.wav. Padded with
+    // a full tail so the decay is captured for residual/distortion analysis.
+    {
+        const juce::File exeDir = juce::File::getSpecialLocation (
+                                      juce::File::currentExecutableFile).getParentDirectory();
+        const juce::File sessionWav = [&exeDir]
+        {
+            const juce::Array<juce::File> candidates = {
+                exeDir.getChildFile ("test_signals/session.wav"),
+                exeDir.getParentDirectory().getParentDirectory().getParentDirectory()
+                      .getChildFile ("tests/duskverb_render/test_signals/session.wav"),
+                juce::File::getCurrentWorkingDirectory()
+                      .getChildFile ("tests/duskverb_render/test_signals/session.wav"),
+            };
+            for (const auto& f : candidates)
+                if (f.existsAsFile()) return f;
+            return juce::File();
+        }();
+
+        if (sessionWav.existsAsFile())
+        {
+            juce::AudioFormatManager fmtMgr;
+            fmtMgr.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (
+                fmtMgr.createReaderFor (sessionWav));
+            if (reader != nullptr)
+            {
+                const int stemSamples  = static_cast<int> (reader->lengthInSamples);
+                const int tailSamples  = static_cast<int> (kRenderSec * kSampleRate);
+                const int totalSamples = stemSamples + tailSamples;
+                juce::AudioBuffer<float> sessionInput (2, totalSamples);
+                sessionInput.clear();
+                reader->read (&sessionInput, 0, stemSamples, 0, true, true);
+                if (reader->numChannels == 1)
+                    sessionInput.copyFrom (1, 0, sessionInput, 0, 0, stemSamples);
+
+                auto output = renderThroughPlugin (*plugin, sessionInput);
+                auto outFile = outDir.getChildFile (slug + "_session.wav");
+                if (writeWav (outFile, output, kSampleRate))
+                    std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+            }
+        }
+        else
+        {
+            std::cerr << "  ! session.wav stimulus not found (test_signals/session.wav)"
+                      << std::endl;
         }
     }
 

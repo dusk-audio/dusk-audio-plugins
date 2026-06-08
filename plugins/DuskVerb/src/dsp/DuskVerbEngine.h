@@ -142,6 +142,12 @@ public:
     // Rising-onset ER envelope: tap gains peak at this many ms (gentle swell)
     // instead of at the first tap. 0 = legacy rolloff = bit-identical.
     void setEROnsetRiseMs (float ms);
+    // Stereo-neutral early-field mode (Phase 2): independent R taps → uniform
+    // ~0 L/R correlation (VVV-like), no anti-phase low. false → bit-identical.
+    void setERStereoNeutral (bool enabled);
+    // ER decorrelation allpass depth (0 = bypassed → bit-identical). Different
+    // prime delays per channel → pushes L/R correlation toward 0 (VVV-like).
+    void setERDecorr (float coeff);
     // Phase 4 (Change 2): output cross-talk shelving matrix. Decorrelates only
     // the HF air (>1.5 kHz) by cross-bleeding each channel's high band into the
     // other with a 180° inversion; LF untouched (mono-safe). Dedicated depth
@@ -165,6 +171,35 @@ public:
     // Default state for all bands is gainDb=0, so presets that don't
     // call this leave the EQ stage transparent.
     void setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb);
+
+    // ER-bus spectral correction (2026-06-08, energy-arrival campaign). The
+    // parallel ER field is a 500 Hz-2 kHz midrange bump (measured: −11.5 dB @
+    // 250-500, −9 @ sub, −16 @ 8-16k relative to its 500-1k peak). Boosting it
+    // to front-load energy therefore dumps a mid hump and adds no low/HF, so a
+    // flat Gain-Trim compensation craters the low end. Two shelves on the ER
+    // bus ONLY (low-shelf ~400 Hz, high-shelf ~3 kHz) flatten the ER to match
+    // the tank's full spectrum so a boosted ER front-loads cleanly. Applied to
+    // erOutL_/erOutR_ before the ER+tank sum; both gains 0 dB → unity → the ER
+    // bus is bit-identical, so every non-opting preset is byte-for-byte
+    // unchanged. Per-preset via kERBusEQByName.
+    void setERBusShelves (float lowGainDb, float highGainDb);
+
+    // Tank-output level scalar (2026-06-08, energy-arrival campaign). Multiplies
+    // the late (FDN tank) contribution at the ER+tank sum, OUTSIDE the recursive
+    // loop, so the decay RATE (RT60) is untouched — only the tank's LEVEL moves.
+    // Lets a preset REBALANCE energy early→late: raise ER (front-load) while
+    // lowering the tank, keeping total wet energy (and ss-band levels) constant.
+    // Adding ER alone inflates steady-state; rebalancing does not. Default 1.0 →
+    // exact ×1.0 → bit-identical. Per-preset via kTankLevelByName.
+    void setTankOutputLevel (float level);
+
+    // Tank-level crossover (Phase 3). tankOutLevel_ applied BROADBAND by default
+    // (splitHz = 0 → current behavior, bit-identical). When splitHz > 0, the
+    // tank's LOW band (below splitHz) stays at unity while only MID/HIGH is
+    // scaled by tankOutLevel_ — so front-loading the washy mid/high bloom does
+    // NOT sacrifice the tank's correlated low (body + VVV-matched low image).
+    // One-pole split on the tank output, OUTSIDE the recursive loop → bit-safe.
+    void setTankSplitHz (float hz);
 
     // Phase γ (2026-05-29): decoupled per-band linear gain trim that sits
     // AFTER PostTankEQ and BEFORE the dry/wet mix matrix. Independent of
@@ -228,6 +263,8 @@ public:
     // unity coefficients → bit-identical bypass on the damping output. No-
     // op for non-FDN engines.
     void setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb);
+    void setFDNTimeVaryingHiDamp (float earlyMult, float lateMult, float crossoverHz,
+                                  float releaseSec, float refLevel);
     // Parallel-multiband FDN opt-in. false (default) = single legacy tank =
     // bit-identical. true = 3 band-isolated tanks (decouples per-band T60).
     void setMultibandEnabled (bool enabled);
@@ -404,6 +441,21 @@ private:
     // all bands at 0 dB gain → unity coefficients → bit-identical bypass
     // for any preset that doesn't opt in.
     DspUtils::PostTankEQ postTankEQ_;
+
+    // ER-bus spectral-correction shelves (energy-arrival campaign). Applied to
+    // the parallel ER output ONLY, before the ER+tank sum. Both gains default
+    // 0 dB → unity coefficients → ER bus bit-identical → whole fleet unchanged.
+    DspUtils::LowShelfBand  erBusLowShelf_;
+    DspUtils::HighShelfBand erBusHighShelf_;
+
+    // Tank-output level scalar (energy-arrival rebalance). 1.0 → bit-identical.
+    float tankOutLevel_ = 1.0f;
+    // Tank-level crossover (Phase 3). 0 → broadband (bit-identical). >0 → one-
+    // pole split: low band unity, mid/high × tankOutLevel_. State per channel.
+    float tankSplitHz_   = 0.0f;
+    float tankSplitCoeff_ = 0.0f;
+    float tankSplitLpL_  = 0.0f;
+    float tankSplitLpR_  = 0.0f;
 
     // Phase γ (2026-05-29): decoupled per-band linear gain trim. Cascade of
     // 3 high-shelves spanning 4 regions (Sub/LowMid/MidHi/Air). Sits AFTER

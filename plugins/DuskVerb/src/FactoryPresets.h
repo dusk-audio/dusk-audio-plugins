@@ -182,8 +182,10 @@ struct FactoryPreset
         // own the 0-26 ms attack the FDN tank structurally can't supply.
         struct ERBoostOverride { float boost; };
         static const std::map<juce::String, ERBoostOverride> kERBoostByName = {
-            // Calibrated by the gate-driven attack sweep (2026-06-02).
-            { "Vocal Hall", { 7.0747f } },
+            // Vocal Hall: front-load campaign (2026-06-08). er_boost 7.07→3.0
+            // paired with the tank-rebalance (tank_level 0.42) — the energy
+            // front-load now comes from the tank/ER BALANCE, not raw ER boost.
+            { "Vocal Hall", { 3.0f } },
         };
         float erBoost = 1.0f;
         if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
@@ -193,13 +195,36 @@ struct FactoryPreset
         // rolloff → bit-identical. Paired with er_boost to set the early field.
         struct ERRiseOverride { float ms; };
         static const std::map<juce::String, ERRiseOverride> kERRiseByName = {
-            // Calibrated by the gate-driven attack sweep (2026-06-02).
-            { "Vocal Hall", { 31.6367f } },
+            // Vocal Hall: 31.6→15 (front-load campaign) — closes attack_time +
+            // onset_slope with the rebalanced early field.
+            { "Vocal Hall", { 15.0f } },
         };
         float erRise = 0.0f;
         if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
             erRise = it->second.ms;
         setIfExists ("er_rise", erRise);
+
+        // ── Energy-arrival front-load campaign (2026-06-08) ─────────────────
+        // Per-preset front-load + stereo-image levers. Unlisted presets get the
+        // bit-identical defaults (tank 1.0, decorr 0, shelves 0, neutral off,
+        // split 0). Vocal Hall: tank-rebalance (0.42) front-loads energy to
+        // match VVV (t50/first50 gates pass); er_decorr 0.6 + the ER-bus shelves
+        // restore a VVV-like uniform stereo image (kills the anti-phase low the
+        // tank cut would otherwise expose); er_level 0.79 sets the early deck.
+        // See memory duskverb_energy_arrival_gate_and_wall.
+        // tank_level, er_bus shelves, er_decorr have NO row field → set here.
+        // er_level + mono_below ARE row fields (0.79 / 20 for VH) → set by the row.
+        struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr; };
+        static const std::map<juce::String, FrontLoadOverride> kFrontLoadByName = {
+            { "Vocal Hall", { 0.42f, 5.0f, 2.6f, 0.60f } },  // er_bus_low 2.8->5.0: warm the cold low (front-load cut left it thin); low 100-250 + ss-low now match VVV. ER-bus low = EARLY low → no late boom-sub-hot (unlike a tank/PostBandTrim lift).
+        };
+        if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
+        {
+            setIfExists ("tank_level",       it->second.tankLevel);
+            setIfExists ("er_bus_low_gain",  it->second.erBusLow);
+            setIfExists ("er_bus_high_gain", it->second.erBusHigh);
+            setIfExists ("er_decorr",        it->second.erDecorr);
+        }
         // Phase 4 (Change 2): HF cross-talk decorrelation depth. 0 (unlisted) →
         // no cross-feed → bit-identical. Per-preset from the cross-talk sweep.
         struct XTalkOverride { float depth; };
@@ -286,6 +311,11 @@ struct FactoryPreset
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.223f } },
             { "Blade Runner 224", { 1.8467f, 0.2189f, 119.28f, 14310.79f, 1.6074f, 3.4473f, 0.0f, 0.1912f } },
             { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 0.0f, 1.4f } },
+            // Vocal Hall (FDN) — 2026-06-07 co-tune. Sub 1.615 (lengthen T60 63),
+            // Hi-Mid 0.577 (shorten T60 8k + decay-hi). xSub 120 / xAir 8000 as
+            // shipped. No input makeup / in-loop peak. Pairs w/ row Treble 1.091
+            // + pteq level comp to decouple level from the decay retune. 17->10.
+            { "Vocal Hall", { 1.615f, 0.577f, 120.0f, 8000.0f, 0.0f, 0.0f, 0.0f, 0.0f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
@@ -401,7 +431,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Plate",          "Plates",
           4,  0.35f, false, 29.16f, 0,
           1.02f, 0.15f, 0.37f, 1.51f, 0.85f, 0.74f,  401.0f,
-          0.58f, 0.25f, 0.76f,  81.5f, 16667.0f, 1.02f, false, -1.74f,
+          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -1.74f,  // Lo Cut 81.5->30 (2026-06-07): 81.5 HPF starved 20-100Hz -> ss-deep-sub -11/sub-bass -8; opening it restores anchor low-end. 22->20.
           /* mono */ 20.0f, /* mid */ 0.72f, /* highX */ 3817.0f, /* sat */ 0.03f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
@@ -576,7 +606,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Bright Hall",          "Halls",
           8,  0.40f, false,  0.0f, 0,
           5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
-          0.49932f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, 0.62933f,  // Width 0.944->1.00: closes residual global stereo_corr (21->20).
+          0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, 0.62933f,  // Diffusion 0.499->0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring (spec_L1 max 8.06->6.44), fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x; n_fail 20->18. Width 0.944->1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
@@ -722,9 +752,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           4,  0.35f, false, 22.0f, 0,
-          3.50f, 0.76f, 0.50390f, 0.78820f, 0.78f, 1.42f,  600.0f,  // Phase 4 (2026-06-02): rising-onset parallel ER closes attack (44->12ms) + onset_slope to JND. vh3 8-axis sweep: ModDepth 0.504 / ModRate 0.788, Diffusion 0.779, ER Level 0.608 / Size 0.449 / Boost 7.07 / Rise 31.6ms (boost+rise in maps below). n_fail 26->18. Residual edt/T60/width/diffusion are FDN-tank + ER-density structural limits.
-          0.77940f, 0.60800f, 0.44870f,  33.0f,  6000.0f, 1.05040f, false, -2.50f,  // Change 2 (2026-06-02): Width 0.974->1.050
-          /* mono */ 150.0f, /* mid */ 0.82f, /* highX */ 6000.0f, /* sat */ 0.32f },  // MonoBelow 150 + depth 0.45 (PARTIAL mono via applyTo): correlates the hot-ER anti-phase lows to VVV's gentle ~-0.03 (full mono over-correlated broadband stereo_corr to +0.13). All 3 width bands within JND; stereo_corr +0.13->+0.087.
+          3.50f, 0.76f, 0.50390f, 0.78820f, 1.0840f, 1.3570f,  850.0f,  // FRONT-LOAD CAMPAIGN 2026-06-08: Treble 1.091->1.084, Bass 1.3042->1.357 (co-tuned with tank-rebalance). Decay/ModDepth/LowX unchanged. er_level + mono now set by kFrontLoadByName (0.79 / 20).
+          0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, 2.00f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
+          /* mono */ 20.0f, /* mid */ 0.7530f, /* highX */ 6000.0f, /* sat */ 0.0f },  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
         // = Cathedral, ModDepth 75 %, HighShelf at 6 kHz, HighCut ~7 kHz).
