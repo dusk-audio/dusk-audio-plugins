@@ -751,7 +751,10 @@ struct AttackRamp
 
         // Avoid division by zero — when there's no signal yet, gain = 0 dB.
         if (trackingPeak_ < 1.0e-6f)
+        {
+            gainSmooth_ = 1.0f;   // prime so the first onset doesn't slew from a stale gain
             return 1.0f;
+        }
 
         // Fractional decay: 0 = at peak, 1 = fully decayed (envelope == 0).
         float dec = 1.0f - envFollower_ / trackingPeak_;
