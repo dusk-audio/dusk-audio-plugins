@@ -38,6 +38,7 @@ ANCHORS = {
     "Tiled Room":           f"{ANCH}/vvv-tiled-room/vvv-tiled-room_noiseburst.wav",
     "79 Vocal Chamber":     f"{ANCH}/vvv-79vc/vvv-79vc_noiseburst.wav",
     "Ambience":             f"{ANCH}/vvv-ambience/vvv-ambience_noiseburst.wav",
+    "Bright Hall":          f"{ANCH}/vvv-bright-hall/vvv-bright-hall_noiseburst.wav",
 }
 
 

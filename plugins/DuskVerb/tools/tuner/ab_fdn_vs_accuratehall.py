@@ -26,6 +26,7 @@ PRESETS = {
     "Tiled Room":           (f"{ANCH}/vvv-tiled-room", "vvv-tiled-room"),
     "79 Vocal Chamber":     (f"{ANCH}/vvv-79vc",       "vvv-79vc"),
     "Ambience":             (f"{ANCH}/vvv-ambience",   "vvv-ambience"),
+    "Bright Hall":          (f"{ANCH}/vvv-bright-hall","vvv-bright-hall"),
 }
 
 
