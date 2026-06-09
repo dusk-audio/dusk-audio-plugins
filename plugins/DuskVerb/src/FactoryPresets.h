@@ -434,7 +434,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // trebleMult can't bend (16k wants 0.40s, FDN gives 0.59s) + a sub
         // energy/decay deficit — not closable by uniform FDN damping.
         { "Vocal Plate",          "Plates",
-          4,  0.35f, false, 29.16f, 0,
+          10, 0.35f, false, 29.16f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 6/9->9/9, gain-matched full_check 25->14 vs FDN. Octave targets in kAccurateHallT60ByName.
           0.90f, 0.15f, 0.37f, 1.51f, 0.60f, 0.74f,  401.0f,  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match VVV, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
           0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -1.00f,  // GainTrim -1.74->-1.0 (re-gain-matched to anchor noiseburst after the decay cut). Lo Cut 30: restores 20-100Hz low-end.
           /* mono */ 20.0f, /* mid */ 0.72f, /* highX */ 3817.0f, /* sat */ 0.03f },
@@ -756,7 +756,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   erSize        0.55 → 0.45 — redistributes early-tap timeline
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
-          4,  0.35f, false, 22.0f, 0,
+          10, 0.35f, false, 22.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 9/9, gain-matched full_check 22->20 vs FDN. Front-load levers carry over (post-tank, engine-agnostic).
           3.50f, 0.76f, 0.50390f, 0.78820f, 1.0840f, 1.3570f,  850.0f,  // FRONT-LOAD CAMPAIGN 2026-06-08: Treble 1.091->1.084, Bass 1.3042->1.357 (co-tuned with tank-rebalance). Decay/ModDepth/LowX unchanged. er_level + mono now set by kFrontLoadByName (0.79 / 20).
           0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, 2.00f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
           /* mono */ 20.0f, /* mid */ 0.7530f, /* highX */ 6000.0f, /* sat */ 0.0f },  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
@@ -837,7 +837,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   damping/bassMult/midMult KEEP.
         //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
-          4,  0.45f, false, 25.0f, 0,
+          10, 0.45f, false, 25.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 8/9, gain-matched full_check 20->15 vs FDN. Extreme per-octave spread (9.8s low -> 1.3s 16k).
           13.6421f, 0.91981f, 0.33084f, 2.64911f, 0.86140f, 1.05238f,  330.94f,
           0.84476f, 0.00f, 0.50f, 56.210f, 14429.68f, 1.10000f, false, -3.93657f,  // HF damping re-swept (Treble/HiCut/FiveBand-HF): curb metallic 8k/16k ring, 21->19. Width 1.697->1.10: was over-wide/anti-phase (corr -0.37 vs anchor -0.149); 1.10 closes 3 width-band gates (26->23). Residual global stereo_corr is anchor's freq-dependent decorrelation, global Width can't match.
           /* mono */ 20.0f, /* mid */ 0.73614f, /* highX */ 3980.22f, /* sat */ 0.17579f,

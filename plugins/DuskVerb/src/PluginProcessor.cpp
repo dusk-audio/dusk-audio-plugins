@@ -1700,10 +1700,23 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     {
         struct OctaveT60Override { float t60[9]; };
         static const std::map<std::string_view, OctaveT60Override> kAccurateHallT60ByName = {
-            // Vocal Plate (AccurateHall A/B) — VVV vocal-plate anchor per-octave
-            // T60 (Schroeder backward-int on the noiseburst tail). The 9-vs-5
-            // coupling wall the FDN floored on (6/9); the octave GEQ sets each.
-            { "Vocal Plate", {{ 0.7174f, 0.7157f, 0.7519f, 0.7268f, 0.7237f, 0.8072f, 0.7973f, 0.7890f, 0.8843f }} },
+            // Per-octave T60 targets (63 Hz..16 kHz), shelf-interaction-corrected
+            // to land each octave within ±5% of the VVV anchor (Schroeder
+            // backward-int on the noiseburst tail). The 9-vs-5 coupling wall the
+            // FDN FiveBandDamping floored on; the octave GEQ sets each directly.
+            // Only the three MIGRATED AccurateHall presets (algo 10). Targets are
+            // shelf-interaction-corrected, NOT raw anchor T60 — the GEQ cascade
+            // loses gain (esp. HF vs structural/AA damping), so the target is
+            // inflated to land the MEASURED octave T60 on the anchor. SR-invariant
+            // (sr cancels in g=10^(-3·L/(T·sr)) since L∝sr). Drum Plate + Cathedral
+            // were evaluated and KEPT ON FDN — anchor T60 exceeds the GEQ ceiling
+            // (targets diverged >40 s, did not beat FDN). Tiled Room: T60 9/9 but
+            // traded into tonal gates (net wash) — kept on FDN.
+            // BEGIN_OCTAVE_T60_MAP (maintained by tools/tuner/calibrate_octave_t60.py)
+            { "Vocal Plate", {{ 0.7031f, 0.7489f, 0.7307f, 0.7363f, 0.7162f, 0.8189f, 0.7902f, 0.7798f, 0.9499f }} },
+            { "Vocal Hall", {{ 6.2734f, 5.9864f, 4.3580f, 5.0546f, 3.1917f, 2.6694f, 2.6226f, 2.3275f, 5.9068f }} },
+            { "Blade Runner 224", {{ 15.4166f, 12.0619f, 19.6892f, 10.9104f, 7.5872f, 8.2379f, 5.9153f, 2.6138f, 1.8789f }} },
+            // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
         for (int b = 0; b < 9; ++b)
