@@ -36,6 +36,8 @@ ANCHORS = {
     "Cathedral Large Hall": f"{ANCH}/vvv-cathedral/vvv-cathedral_noiseburst.wav",
     "Blade Runner 224":     f"{ANCH}/vvv-blade-runner/vvv-blade-runner_noiseburst.wav",
     "Tiled Room":           f"{ANCH}/vvv-tiled-room/vvv-tiled-room_noiseburst.wav",
+    "79 Vocal Chamber":     f"{ANCH}/vvv-79vc/vvv-79vc_noiseburst.wav",
+    "Ambience":             f"{ANCH}/vvv-ambience/vvv-ambience_noiseburst.wav",
 }
 
 
@@ -89,8 +91,11 @@ def measure(dv, anchor):
 
 def main():
     iters = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    # Optional preset-name filter (args after the iter count) so a run can
+    # calibrate only NEW presets without drifting already-shipped ones.
+    only = set(sys.argv[2:])
     targets = read_map()
-    names = [n for n in targets if n in ANCHORS]
+    names = [n for n in targets if n in ANCHORS and (not only or n in only)]
     for it in range(iters):
         write_map(targets); build()
         print(f"\n===== ITERATION {it+1}/{iters} =====")

@@ -24,6 +24,8 @@ PRESETS = {
     "Cathedral Large Hall": (f"{ANCH}/vvv-cathedral",  "vvv-cathedral"),
     "Blade Runner 224":     (f"{ANCH}/vvv-blade-runner","vvv-blade-runner"),
     "Tiled Room":           (f"{ANCH}/vvv-tiled-room", "vvv-tiled-room"),
+    "79 Vocal Chamber":     (f"{ANCH}/vvv-79vc",       "vvv-79vc"),
+    "Ambience":             (f"{ANCH}/vvv-ambience",   "vvv-ambience"),
 }
 
 
@@ -71,8 +73,11 @@ def gset(d): return {f.split("  ")[0].strip() for f in d["fails"]}
 
 
 def main():
-    print(f"{'preset':22s} {'FDN':>4} {'AH':>4}  delta   notes")
+    only = set(sys.argv[1:])
+    print(f"{'preset':22s} {'base':>4} {'AH':>4}  delta   notes")
     for name, (adir, prefix) in PRESETS.items():
+        if only and name not in only:
+            continue
         anb = f"{adir}/{prefix}_noiseburst.wav"
         fdir, adir2 = f"/tmp/ab_{prefix}_fdn", f"/tmp/ab_{prefix}_ah"
         ldir = f"/tmp/ab_{prefix}_lex"
