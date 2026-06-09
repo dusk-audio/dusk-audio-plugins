@@ -86,9 +86,13 @@ def render(name):
     for f in glob.glob(f"{OUTD}/*_noiseburst.wav"):
         try: os.remove(f)
         except OSError: pass
-    subprocess.run([REND,"--program",name,*WET], cwd=REPO, capture_output=True)
+    r = subprocess.run([REND,"--program",name,*WET], cwd=REPO, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"render failed for {name!r} (rc={r.returncode})\n{r.stderr[-2000:]}")
     c = sorted(glob.glob(f"{OUTD}/*_noiseburst.wav"))
-    return c[0] if c else None
+    if not c:
+        raise RuntimeError(f"render produced no noiseburst WAV for {name!r}")
+    return c[0]
 
 
 def measure(dv, anchor):

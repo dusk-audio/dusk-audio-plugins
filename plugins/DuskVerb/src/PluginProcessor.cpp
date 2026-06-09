@@ -1946,6 +1946,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     auto bdIt = kBaseDelaysByName.find (std::string_view (name));
     if (bdIt != kBaseDelaysByName.end())
         engine.setFDNBaseDelays (bdIt->second.delays);
+    else
+        engine.resetFDNBaseDelays();   // no custom set → restore default so a prior preset's custom delays don't leak (setFDNBaseDelays(nullptr) only PRESERVES, never resets)
 
     // ─── Phase ζ + η: per-preset in-loop peaking + dual-time-constant bass shelf ──
     // Both default to bypass (0 dB) when no per-preset entry exists. VH/BH

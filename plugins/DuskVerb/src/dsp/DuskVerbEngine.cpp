@@ -108,6 +108,7 @@ void DuskVerbEngine::clearAllBuffers()
     sixAPTank_.clearBuffers();
     quad_     .clearBuffers();
     fdn_      .clearBuffers();
+    accurateHall_.clearBuffers();   // FDNReverbT<true> — was missing here (setAlgorithm clears it, but that early-returns when the algo is unchanged → AccurateHall state could leak across same-algo preset swaps).
     multibandFdn_.clearBuffers();
     spring_   .clearBuffers();
     nonLinear_.clearBuffers();
@@ -435,6 +436,12 @@ void DuskVerbEngine::setFDNBaseDelays (const int* delays)
     multibandFdn_.forEachTank ([&](FDNReverb& tk){ tk.setBaseDelays (delays); });
 }
 
+void DuskVerbEngine::resetFDNBaseDelays()
+{
+    fdn_.resetBaseDelays(); accurateHall_.resetBaseDelays();
+    multibandFdn_.forEachTank ([](FDNReverb& tk){ tk.resetBaseDelays(); });
+}
+
 void DuskVerbEngine::reapplyNeutralEngineConfig()
 {
     // PostTankEQ → all 4 bands flat (gain 0 → unity coefficients).
@@ -445,8 +452,7 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     // Per-line decay tilt → flat (1.0 / 1.0 = no tilt).
     setPerLineDecayTilt (1.0f, 1.0f);
     // FDN base delays → engine default log-spaced primes.
-    fdn_.resetBaseDelays(); accurateHall_.resetBaseDelays ();
-    multibandFdn_.forEachTank ([](FDNReverb& tk){ tk.resetBaseDelays(); });
+    resetFDNBaseDelays();
 }
 
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
