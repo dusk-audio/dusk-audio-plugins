@@ -6,6 +6,7 @@
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
+#include "SparseEarlyField.h"
 #include "MultibandFDN.h"
 #include "SixAPTankEngine.h"
 #include "NonLinearEngine.h"
@@ -349,6 +350,7 @@ private:
     DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
+    SparseEarlyField   sparseField_;     // algo 11 (2026-06-09): front-loaded sparse early-reflection field (P0 de-risk: ALONE, no FDN tail). Targets the energy-arrival/front-load/diffusion wall.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -370,6 +372,8 @@ private:
     std::vector<float> tankInL_, tankInR_;
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
+    std::vector<float> sparseOutL_, sparseOutR_;   // SparseField engine: early field scratch
+    float sparseTailGain_ = 0.45f;                 // FDN-tail level under the sparse early field
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated
