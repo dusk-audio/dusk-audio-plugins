@@ -1716,6 +1716,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Vocal Plate", {{ 0.7031f, 0.7489f, 0.7307f, 0.7363f, 0.7162f, 0.8189f, 0.7902f, 0.7798f, 0.9499f }} },
             { "Vocal Hall", {{ 6.2734f, 5.9864f, 4.3580f, 5.0546f, 3.1917f, 2.6694f, 2.6226f, 2.3275f, 5.9068f }} },
             { "Blade Runner 224", {{ 15.4166f, 12.0619f, 19.6892f, 10.9104f, 7.5872f, 8.2379f, 5.9153f, 2.6138f, 1.8789f }} },
+            { "Ambience", {{ 1.5016f, 1.6369f, 1.3395f, 0.6205f, 0.8263f, 0.7844f, 0.7676f, 0.9303f, 0.9500f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
