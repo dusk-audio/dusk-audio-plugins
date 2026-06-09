@@ -25,8 +25,13 @@ VVV  = os.path.join(REPO, "tests/duskverb_render/output/vvv")
 
 BANDS = [(44,88),(88,177),(177,355),(355,710),(710,1420),
          (1420,2840),(2840,5680),(5680,11360),(11360,18000)]
-WET = ["--param","Dry/Wet=1.0","--param","Bus Mode=1","--param","Freeze=0",
-       "--param","Algorithm=1.0"]
+# NB: NO "--param Algorithm=..." — render on the preset's NATIVE algo via
+# --program. Forcing a normalized Algorithm value is divisor-dependent and broke
+# when engine count changed (1.0 = highest index, which moved 10→11 when
+# SparseField was added). The octave T60 setter routes to the GEQ tail engine,
+# which is active iff the preset's native algo selects it (AccurateHall algo 10
+# or SparseField algo 11). Calibrate presets on the algo they actually ship on.
+WET = ["--param","Dry/Wet=1.0","--param","Bus Mode=1","--param","Freeze=0"]
 
 # preset name -> anchor noiseburst path
 ANCHORS = {
@@ -66,8 +71,13 @@ def write_map(targets):
 
 
 def build():
+    # CCACHE_DISABLE: ccache served STALE FactoryPresets/PluginProcessor objects
+    # across iterations (the map edits weren't recompiled) → bogus per-octave T60
+    # readings (reported 9/9 while a clean build measured 5/9). Disable the cache
+    # so every iteration links the actual edited map. (memory: ccache staleness.)
+    env = dict(os.environ, CCACHE_DISABLE="1")
     r = subprocess.run(["cmake","--build","build","--target","DuskVerb_VST3","duskverb_render",
-                        f"-j{os.cpu_count()}"], cwd=REPO, capture_output=True, text=True)
+                        f"-j{os.cpu_count()}"], cwd=REPO, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         print(r.stdout[-3000:]); print(r.stderr[-3000:]); sys.exit("BUILD FAILED")
 
