@@ -236,6 +236,11 @@ struct FactoryPreset
             setIfExists ("er_bus_high_gain", 0.0f);
             setIfExists ("er_decorr",        0.0f);
         }
+        // Companion front-load levers — every preset (including Vocal Hall)
+        // ships these neutral, so write them unconditionally on each load;
+        // otherwise a user tweak latches across preset changes.
+        setIfExists ("tank_split_hz",    0.0f);
+        setIfExists ("er_stereo_neutral", 0.0f);
         // Phase 4 (Change 2): HF cross-talk decorrelation depth. 0 (unlisted) →
         // no cross-feed → bit-identical. Per-preset from the cross-talk sweep.
         struct XTalkOverride { float depth; };
