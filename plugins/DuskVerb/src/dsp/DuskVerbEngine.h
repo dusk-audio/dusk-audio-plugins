@@ -243,6 +243,12 @@ public:
     // No-op for non-FDN engines. Defaults 1.0 / 1.0 = backward identical.
     void setPerLineDecayTilt (float shortLineScale, float longLineScale);
 
+    // AccurateHall (algo 10) only: per-octave T60 target (band 0..8 = 63 Hz..
+    // 16 kHz). Routes to accurateHall_.setOctaveT60. No-op on every other
+    // engine (the GEQ is compiled only into FDNReverbT<true>). seconds<=0 →
+    // that octave inherits the broadband Decay Time.
+    void setAccurateHallOctaveT60 (int band, float seconds);
+
     // Phase β (2026-05-29): per-preset FDN base delays. Lets each preset
     // choose a 16-int delay-line set tuned to match a specific anchor's
     // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
@@ -342,6 +348,7 @@ private:
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
     DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
+    FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
