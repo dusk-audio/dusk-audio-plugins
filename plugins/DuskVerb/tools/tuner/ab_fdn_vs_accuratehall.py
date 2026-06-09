@@ -41,9 +41,15 @@ def render(name, algo10, dst):
         except OSError: pass
     args = [REND, "--program", name, *WET]
     if algo10: args += ["--param", "Algorithm=1.0"]
-    subprocess.run(args, cwd=REPO, capture_output=True)
-    os.makedirs(dst, exist_ok=True)
-    for f in glob.glob(f"{OUTD}/*.wav"): shutil.copy(f, dst)
+    r = subprocess.run(args, cwd=REPO, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"render failed for {name!r} (rc={r.returncode})\n{r.stderr[-2000:]}")
+    # Recreate dst empty so a partial/short render can't leave stale WAVs behind.
+    shutil.rmtree(dst, ignore_errors=True); os.makedirs(dst, exist_ok=True)
+    out = glob.glob(f"{OUTD}/*.wav")
+    if not out:
+        raise RuntimeError(f"render produced no WAVs for {name!r}")
+    for f in out: shutil.copy(f, dst)
 
 
 def gain_match(dvdir, anchor_nb):
@@ -67,7 +73,11 @@ def run_fc(dvdir, lex, name):
     for line in r.stdout.splitlines():
         if line.startswith("JSON_RESULT:"):
             return json.loads(line.split("JSON_RESULT: ")[1])
-    return {"n_fail": -1, "fails": []}
+    # No JSON line = full_check errored. Bubble up rather than returning a
+    # synthetic n_fail=-1 that silently corrupts the A/B slate.
+    raise RuntimeError(
+        f"full_check produced no JSON_RESULT (rc={r.returncode})\n"
+        f"  FC={FC} dv={dvdir} lex={lex}\n  stdout(tail)={r.stdout[-1500:]}\n  stderr(tail)={r.stderr[-1500:]}")
 
 
 def gset(d): return {f.split("  ")[0].strip() for f in d["fails"]}

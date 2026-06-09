@@ -254,6 +254,11 @@ public:
     // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
     // No-op for non-FDN engines. Pass nullptr to retain the engine default.
     void setFDNBaseDelays (const int* delays);
+    // Restore the engine-default log-spaced-prime base-delay table. Used by the
+    // preset-swap path so a preset with NO custom delay set does not inherit the
+    // previous preset's custom delays (setFDNBaseDelays(nullptr) only PRESERVES,
+    // it does not reset).
+    void resetFDNBaseDelays();
 
     // Reset the name-keyed engine config (PostTankEQ bands, modulation topology,
     // per-line decay tilt, FDN base delays) — the parts NOT carried by APVTS /
