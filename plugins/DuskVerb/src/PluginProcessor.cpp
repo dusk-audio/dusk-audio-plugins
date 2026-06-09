@@ -1688,6 +1688,29 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             engine.setPostTankEQBand (b, fSrc[b], qSrc[b], gSrc[b]);
     }
 
+    // ─── AccurateHall (algo 10) per-OCTAVE T60 — Jot/Schlecht accurate-RT ──
+    // Nine octave T60 targets (63 Hz..16 kHz) routed to FDNReverbT<true> via a
+    // direct engine call (no APVTS param → no edge-detect desync, like the
+    // TimeVaryingHiDamp call above). This is the per-octave decay control the
+    // FiveBandDamping FDN could not give (9 octave T60 gates vs 5 damping
+    // bands). Presets not in the map reset ALL octaves flat (<=0 → that octave
+    // inherits the broadband Decay Time), which both makes AccurateHall ≡ FDN
+    // and clears any stale octave config left by a previously-loaded preset.
+    // No-op on every other engine — the GEQ exists only in accurateHall_.
+    {
+        struct OctaveT60Override { float t60[9]; };
+        static const std::map<std::string_view, OctaveT60Override> kAccurateHallT60ByName = {
+            // Vocal Plate (AccurateHall A/B) — VVV vocal-plate anchor per-octave
+            // T60 (Schroeder backward-int on the noiseburst tail). The 9-vs-5
+            // coupling wall the FDN floored on (6/9); the octave GEQ sets each.
+            { "Vocal Plate", {{ 0.7174f, 0.7157f, 0.7519f, 0.7268f, 0.7237f, 0.8072f, 0.7973f, 0.7890f, 0.8843f }} },
+        };
+        auto it = kAccurateHallT60ByName.find (std::string_view (name));
+        for (int b = 0; b < 9; ++b)
+            engine.setAccurateHallOctaveT60 (
+                b, it != kAccurateHallT60ByName.end() ? it->second.t60[b] : 0.0f);
+    }
+
     // Phase 3 (VH->0): per-line energy-following hi-shelf (TimeVaryingDamping).
     // VH only; every other preset gets a FLAT shelf (earlyMult==lateMult==1) →
     // tvHiActive_ false → call skipped in the loop → bit-identical. Direct engine
