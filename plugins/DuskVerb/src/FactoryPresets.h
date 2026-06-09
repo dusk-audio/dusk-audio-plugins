@@ -225,6 +225,17 @@ struct FactoryPreset
             setIfExists ("er_bus_high_gain", it->second.erBusHigh);
             setIfExists ("er_decorr",        it->second.erDecorr);
         }
+        else
+        {
+            // Reset to neutral so these don't latch across preset loads (only
+            // Vocal Hall sets them; the other name-keyed maps below already
+            // default-reset the same way). tank_level neutral is 1.0 (×1.0
+            // bypass) — NOT 0.0, which would mute the late tank.
+            setIfExists ("tank_level",       1.0f);
+            setIfExists ("er_bus_low_gain",  0.0f);
+            setIfExists ("er_bus_high_gain", 0.0f);
+            setIfExists ("er_decorr",        0.0f);
+        }
         // Phase 4 (Change 2): HF cross-talk decorrelation depth. 0 (unlisted) →
         // no cross-feed → bit-identical. Per-preset from the cross-talk sweep.
         struct XTalkOverride { float depth; };

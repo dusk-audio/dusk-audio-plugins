@@ -717,13 +717,18 @@ struct AttackRamp
     {
         attackDb_ = std::clamp (attackDb, -24.0f, 24.0f);
         tauMs_    = std::clamp (tauMs, 5.0f, 2000.0f);
+        if (std::fabs (attackDb_) < 1.0e-6f)
+            gainSmooth_ = 1.0f;   // bypass-equivalent shape → prime the smoothed gain
         recomputeCoeffs();
     }
 
     inline float tickGain (float absLR) noexcept
     {
         if (std::fabs (attackDb_) < 1.0e-6f)
-            return 1.0f;        // bypass
+        {
+            gainSmooth_ = 1.0f;   // prime so a later re-enable doesn't slew from a stale gain
+            return 1.0f;          // bypass
+        }
 
         // Fast attack, moderate release envelope follower over the band
         // signal magnitude. Gives the trackingPeak something to track.

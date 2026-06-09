@@ -1110,6 +1110,7 @@ void FDNReverbT<WithOctaveGEQ>::setFreeze (bool frozen)
             dcX1_[i] = 0.0f;
             dcY1_[i] = 0.0f;
         }
+        tvDampHi_.reset();   // single object, N internal channels — clear envelope state on freeze-release too
     }
     publishPending();
 }
@@ -1711,6 +1712,11 @@ void FDNReverbT<WithOctaveGEQ>::clearBuffers()
         // Phase η: clear dual-time-constant bass shelf state.
         dualBassShelf_[i].reset();
     }
+    // Phase 3 (VH->0): per-line energy-following hi-shelf — single object with N
+    // internal channel trackers. Reset its envelope state too so stale HF energy
+    // doesn't leak into the first samples after a preset swap / unfreeze (dormant
+    // for shipped presets since tvHiActive_ is false, but reset for correctness).
+    tvDampHi_.reset();
     constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
     for (int i = 0; i < N; ++i)
     {
