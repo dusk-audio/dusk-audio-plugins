@@ -33,9 +33,6 @@ enum class EngineType : int
     AccurateHall      = 10, // FDN + per-OCTAVE attenuation GEQ in the feedback loop (Jot/
                             // Schlecht accurate-RT control). Independent per-octave T60 — closes
                             // the 9-octave-vs-5-band damping wall the standard FDN can't.
-    SparseField       = 11, // Front-loaded sparse early-reflection field (velvet-noise taps to
-                            // ~200ms, two-burst, wide, broadband) + reduced FDN tail. Targets the
-                            // early-field/front-load wall (energy-arrival/attack/diffusion). WIP.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -45,7 +42,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 12; }
+inline int getNumAlgorithms() { return 11; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -61,9 +58,8 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Vintage Tank (Figure-8)",  EngineType::VintageTank     },
         { "Reverse Room (Lexicon)",   EngineType::ReverseRoom     },
         { "Accurate Hall (FDN-GEQ)",  EngineType::AccurateHall    },
-        { "Sparse Field (Early)",     EngineType::SparseField     },
     };
-    if (index < 0 || index >= 12)
+    if (index < 0 || index >= 11)
         index = 0;
     return kEngines[index];
 }
