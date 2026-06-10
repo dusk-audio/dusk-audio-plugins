@@ -20,8 +20,13 @@ REND = os.path.join(REPO, "build/tests/duskverb_render/duskverb_render")
 VVV  = os.path.join(REPO, "tests/duskverb_render/output/vvv")
 ANCH = os.path.expanduser("~/projects/dusk-audio-tools/tuner_runs/anchors")
 FC   = os.path.join(os.path.dirname(__file__), "full_check.py")
-WET  = ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1", "--param", "Freeze=0"]
-STIM = ["impulse", "noiseburst", "snare", "sine1k"]
+# --sustained-pink-seconds: the tail-mod-ripple + mod-freq gates measure on
+# the SUSTAINED render (full_check falls back to noiseburst otherwise, which
+# its own authors flag as an unreliable noise-vs-noise comparison). Render it
+# so presets whose anchors have a sustained capture get the intended gate.
+WET  = ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1", "--param", "Freeze=0",
+        "--sustained-pink-seconds", "4.0"]
+STIM = ["impulse", "noiseburst", "snare", "sine1k", "sustained"]
 
 # preset -> (anchor_dir, anchor_prefix)
 PRESETS = {
