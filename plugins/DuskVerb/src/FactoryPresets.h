@@ -216,7 +216,8 @@ struct FactoryPreset
         // er_level + mono_below ARE row fields (0.79 / 20 for VH) → set by the row.
         struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr; };
         static const std::map<juce::String, FrontLoadOverride> kFrontLoadByName = {
-            { "Vocal Hall", { 0.42f, 5.0f, 2.6f, 0.60f } },  // er_bus_low 2.8->5.0: warm the cold low (front-load cut left it thin); low 100-250 + ss-low now match VVV. ER-bus low = EARLY low → no late boom-sub-hot (unlike a tank/PostBandTrim lift).
+            { "Vocal Hall", { 0.42f, 5.0f, 2.6f, 0.60f } },
+            { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f } },  // er_bus_low 2.8->5.0: warm the cold low (front-load cut left it thin); low 100-250 + ss-low now match VVV. ER-bus low = EARLY low → no late boom-sub-hot (unlike a tank/PostBandTrim lift).
         };
         if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
         {
@@ -326,7 +327,11 @@ struct FactoryPreset
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.223f } },
             { "Blade Runner 224", { 1.8467f, 0.2189f, 119.28f, 14310.79f, 1.6074f, 3.4473f, 0.0f, 0.1912f } },
-            { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 0.0f, 1.4f } },
+            // Cathedral (AccurateHall since 2026-06-09): in-loop peak 1.4 -> 0.
+            // Under the octave GEQ, in-loop gain at 1 kHz distorts that band's
+            // accurate-RT decay (the calibrator oscillated +228/-56% at 1k).
+            // Input makeup (pre-loop, level-only) kept.
+            { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 0.0f, 0.0f } },
             // Vocal Hall (FDN) — 2026-06-07 co-tune. Sub 1.615 (lengthen T60 63),
             // Hi-Mid 0.577 (shorten T60 8k + decay-hi). xSub 120 / xAir 8000 as
             // shipped. No input makeup / in-loop peak. Pairs w/ row Treble 1.091
@@ -787,8 +792,11 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // trebleMult can't bend (8k wants 1.79s, FDN gives 3.13s, +75%) + sub
         // energy/decay deficit. The FDN structural refactor targets exactly
         // this. See memory duskverb_tuning_method.
+        // Migrated FDN(4) -> AccurateHall(10) 2026-06-09: the composite-exact
+        // octave GEQ sets all nine octave T60s directly (kAccurateHallT60ByName),
+        // closing the 9-vs-5 decay-coupling block the comment above describes.
         { "Cathedral Large Hall", "Halls",
-          4,  0.45f, false, 20.88f, 0,
+          10, 0.45f, false, 20.88f, 0,
           3.00000f, 0.93880f, 0.38010f, 1.18680f, 1.40800f, 1.24610f,  223.90f,  // ACCURACY: Decay 3.315->3.00 matches anchor tail length (tail_t60 +26% -> ~0). ModDepth/Rate+BassMult prior.
           0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -7.90200f,
           /* mono */ 20.0f, /* mid */ 0.64240f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // re-swept w/ FDN FiveBand+input-makeup axes 26->20 vs CathedralLargeHall (Decay->3.3s near ref 2.7)

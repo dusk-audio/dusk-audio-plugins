@@ -1933,12 +1933,32 @@ void FDNReverbT<WithOctaveGEQ>::computeDecayCoefficients (LiveParams& p)
             // is a real design output, not a linear blend of two coeffs.
             const float gAirDark   = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_ * 0.60f, 0.01f));
             const float gAirBright = gAir;
+            float tblSub = gSub, tblLoMid = gLoMid, tblMid = gMid, tblHiMid = gHiMid;
+            float tblAirDark = gAirDark, tblAirBright = gAirBright;
+            if constexpr (WithOctaveGEQ)
+            {
+                if (octaveGEQActive_)
+                {
+                    // ModulatedDamping × octave GEQ co-occurrence: the GEQ owns
+                    // ALL static decay (lp.damping is flattened to identity
+                    // above), but the per-sample ModulatedDamping path uses
+                    // THIS table INSTEAD of lp.damping — so the table must be
+                    // flat too, or the FiveBand decay double-applies on top of
+                    // the GEQ (measured ~-50% T60 broadband on Cathedral).
+                    // Keep only the dark/bright air-band breathing RATIO,
+                    // re-centred on unity, so the topology's slow HF
+                    // modulation character survives without static damping.
+                    tblSub = tblLoMid = tblMid = tblHiMid = 1.0f;
+                    tblAirBright = 1.0f;
+                    tblAirDark   = gAirDark / std::max (gAirBright, 1.0e-12f);
+                }
+            }
             for (int s = 0; s < kDampingSteps; ++s)
             {
                 const float t = static_cast<float> (s) / static_cast<float> (kDampingSteps - 1);
-                const float gAirStep = (1.0f - t) * gAirDark + t * gAirBright;
+                const float gAirStep = (1.0f - t) * tblAirDark + t * tblAirBright;
                 const auto coeffs = FiveBandDamping::designCoeffs (
-                    gSub, gLoMid, gMid, gHiMid, gAirStep,
+                    tblSub, tblLoMid, tblMid, tblHiMid, gAirStep,
                     subCrossoverCoeff, lowCrossoverCoeff,
                     highCrossoverCoeff, airCrossoverCoeff, sr);
                 // Defensive stability assert. Each table slot must be a
