@@ -1121,6 +1121,29 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     parameters.replaceState (tree);
 
+    // Snap every parameter object to its restored tree value. JUCE's discrete
+    // parameters (AudioParameterBool/Choice) store the RAW normalized value
+    // from setValue() but the APVTS tree records the QUANTIZED denormalized
+    // value. If a host parked a discrete param at a fractional normalized
+    // value (pluginval's randomized state-restore test does exactly this),
+    // the restored tree value can EQUAL the tree's current record, so
+    // replaceState's ValueTree no-op suppression skips the parameter callback
+    // and the parameter object keeps the stale fractional value — "Bus Mode
+    // not restored on setStateInformation" at strictness 7+. Message thread,
+    // once per state load; the no-change guard keeps normal loads silent.
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+    {
+        const auto child = tree.getChild (i);
+        if (! child.hasProperty ("id") || ! child.hasProperty ("value"))
+            continue;
+        if (auto* rp = parameters.getParameter (child.getProperty ("id").toString()))
+        {
+            const float norm = rp->convertTo0to1 (static_cast<float> (child.getProperty ("value")));
+            if (std::fabs (rp->getValue() - norm) > 1.0e-6f)
+                rp->setValueNotifyingHost (norm);
+        }
+    }
+
     // Reset SixAPTank brightness state to engine defaults BEFORE reading the
     // optional v2+ properties. Without this reset, loading a v1 state file
     // (no sixAP properties) AFTER having loaded a preset that sets brighter
