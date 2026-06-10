@@ -15,8 +15,8 @@ Never use pedalboard (BANNED). Renders MUST be 100% wet: `--param "Dry/Wet=1.0"
 
 ## State on entry (branch 87-fix-fdn-quadtank)
 - Commits NOT yet pushed (held for CodeRabbit free-tier cooldown — ask user before push):
-  - `fb3f19b` 79 Vocal Chamber Width 1.14->0.97 (26->23)
-  - `16f34a2` QuadTank 3-band -> 5-band damping (79VC 23->21)
+  - `bf8977d` 79 Vocal Chamber Width 1.14->0.97 (26->23)
+  - `8ca38ec` QuadTank 3-band -> 5-band damping (79VC 23->21)
 - QuadTank engine now has 5-band damping (FiveBandDamping in QuadTank.cpp/.h),
   per-preset via params `qt_himid_mult` / `qt_air_mult` (default -1 = transparent
   = bit-identical 3-band). Only 79 Vocal Chamber overrides them (kQuadBandByName).
