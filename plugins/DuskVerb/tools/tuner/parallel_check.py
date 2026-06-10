@@ -34,6 +34,7 @@ PRESETS = {
     "79 Vocal Chamber":     (f"{ANCH}/vvv-79vc",        "vvv-79vc"),
     "Ambience":             (f"{ANCH}/vvv-ambience",    "vvv-ambience"),
     "Bright Hall":          (f"{ANCH}/vvv-bright-hall", "vvv-bright-hall"),
+    "Medium Drum Room":     (f"{ANCH}/vvv-fat-snare-room", "vvv-fat-snare-room"),
 }
 
 

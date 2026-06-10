@@ -1513,6 +1513,14 @@ namespace {
             //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
             //                                    to clamp bloom 8-12k (was
             //                                    0.53 dB over gate).
+            // Medium Drum Room (AccurateHall, 2026-06-10): dark tilt — the FDN
+            // tail runs far brighter than the eighties-color anchor (blooms
+            // +5..+12 dB, cent_500 +124%); 1 kHz tames the hot sine1k.
+            { "Medium Drum Room", {
+                { 1000.0f, 3500.0f, 10000.0f,  150.0f },
+                {   2.50f,   0.70f,    1.00f,    1.00f },
+                {  -3.50f,  -5.50f,   -8.00f,    0.00f },
+            } },
             // Vocal Plate (AccurateHall, 2026-06-10): HF tilt for the bright
             // late field (cent_500 +72%) — closes mid/bloom/snare via the
             // renorm. A 1 kHz +6 lift for sine1k -12.4 was probed and is
@@ -1770,6 +1778,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
             { "Drum Plate", {{ 1.4801f, 1.4044f, 1.7830f, 1.7079f, 1.8507f, 1.7023f, 1.7860f, 1.8388f, 5.6775f }} },
             { "Tiled Room", {{ 0.6205f, 0.8945f, 0.7593f, 0.7463f, 0.7543f, 0.7503f, 0.6429f, 0.5625f, 0.4257f }} },
+            { "Medium Drum Room", {{ 0.6662f, 0.9294f, 0.8642f, 0.9537f, 0.8041f, 0.7135f, 0.7917f, 0.7769f, 0.9501f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
