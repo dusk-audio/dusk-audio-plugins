@@ -1513,6 +1513,15 @@ namespace {
             //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
             //                                    to clamp bloom 8-12k (was
             //                                    0.53 dB over gate).
+            // Drum Plate (AccurateHall migration 2026-06-10): 1 kHz steady-
+            // state lift — DV renders sine1k far below the anchor's plate
+            // resonance (-13 dB rel.); post-tank boost lifts it without
+            // touching the calibrated decay.
+            { "Drum Plate", {
+                {  150.0f, 1000.0f, 3000.0f,  8000.0f },
+                {   0.80f,   2.50f,   1.50f,    1.00f },
+                {  +3.50f,   +8.00f,   0.00f,    0.00f },
+            } },
             { "Blade Runner 224", {
                 {  350.0f, 3000.0f, 6000.0f, 10000.0f },
                 {   1.20f,   1.50f,   1.00f,    1.20f },
@@ -1741,6 +1750,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Ambience", {{ 1.5195f, 1.5053f, 1.1346f, 0.7328f, 0.7831f, 0.7861f, 0.7947f, 0.9030f, 0.9535f }} },
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
             { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
+            { "Drum Plate", {{ 1.4801f, 1.4044f, 1.7830f, 1.7079f, 1.8507f, 1.7023f, 1.7860f, 1.8388f, 5.6775f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
