@@ -545,8 +545,11 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // capped +2.0, broad input bell disturbs broadband) + mild sub-hot
         // (+3.1, the cost of the +2.02 makeup). Row params unchanged from the
         // 27 baseline; the +2.02 makeup is the only delta.
+        // Migrated FDN(4) -> AccurateHall(10) 2026-06-10: composite-exact octave
+        // GEQ sets all nine octave T60s directly (kAccurateHallT60ByName) — the
+        // old "T60-ceiling" verdict was an artifact of the leaky shelf cascade.
         { "Drum Plate",           "Plates",
-          4,  0.42f, false, 12.0f, 0,
+          10, 0.42f, false, 12.0f, 0,
           2.263f, 0.337f, 0.373f, 0.119f, 1.296f, 0.723f,  98.99f,
           0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -5.15f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
           /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
