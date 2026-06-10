@@ -65,8 +65,10 @@ def write_map(targets):
         v = ", ".join(f"{x:.4f}f" for x in vals)
         lines.append(f'            {{ "{name}", {{{{ {v} }}}} }},')
     lines.append("            // END_OCTAVE_T60_MAP")
-    new = re.sub(r"\s*// BEGIN_OCTAVE_T60_MAP.*?// END_OCTAVE_T60_MAP",
-                 "\n" + "\n".join(lines), src, flags=re.S)
+    new, n = re.subn(r"\s*// BEGIN_OCTAVE_T60_MAP.*?// END_OCTAVE_T60_MAP",
+                     "\n" + "\n".join(lines), src, flags=re.S)
+    if n != 1:
+        sys.exit(f"write_map: expected exactly 1 OCTAVE_T60_MAP block in {PROC}, found {n} — aborting (no write)")
     open(PROC, "w").write(new)
 
 
