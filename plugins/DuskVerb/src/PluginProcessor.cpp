@@ -1513,13 +1513,13 @@ namespace {
             //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
             //                                    to clamp bloom 8-12k (was
             //                                    0.53 dB over gate).
-            // Medium Drum Room (AccurateHall, 2026-06-10): dark tilt — the FDN
-            // tail runs far brighter than the eighties-color anchor (blooms
-            // +5..+12 dB, cent_500 +124%); 1 kHz tames the hot sine1k.
+            // Medium Drum Room (AccurateHall, 2026-06-10): dark tilt — the
+            // tank tail runs far brighter than the eighties-color anchor
+            // (blooms +5..+12 dB, cent_500 +124%); 1 kHz tames the hot sine1k.
             { "Medium Drum Room", {
-                { 1000.0f, 3500.0f, 10000.0f,  150.0f },
-                {   2.50f,   0.70f,    1.00f,    1.00f },
-                {  -3.50f,  -5.50f,   -8.00f,    0.00f },
+                {  150.0f, 1000.0f, 3500.0f, 10000.0f },
+                {   1.00f,   2.50f,   0.70f,    1.00f },
+                {   0.00f,  -3.50f,  -5.50f,   -8.00f },
             } },
             // Vocal Plate (AccurateHall, 2026-06-10): HF tilt for the bright
             // late field (cent_500 +72%) — closes mid/bloom/snare via the
@@ -1535,9 +1535,9 @@ namespace {
             // the calibrated octave T60s fixed decay but the tail LEVEL runs
             // bright (cent_500 +215%, blooms 2-12k +2..+4.4).
             { "Tiled Room", {
-                {  150.0f, 3500.0f, 9000.0f,  1000.0f },
-                {   1.00f,   0.70f,   1.00f,    1.00f },
-                {   0.00f,   -5.00f,  -2.50f,    0.00f },
+                {  150.0f, 1000.0f, 3500.0f,  9000.0f },
+                {   1.00f,   1.00f,   0.70f,    1.00f },
+                {   0.00f,    0.00f,  -5.00f,   -2.50f },
             } },
             // Drum Plate (AccurateHall migration 2026-06-10): 1 kHz steady-
             // state lift — DV renders sine1k far below the anchor's plate

@@ -1235,6 +1235,13 @@ int main (int argc, char** argv)
                 std::cerr << "  ! --nparam: parameter '" << name << "' not found" << std::endl;
                 continue;
             }
+            if (! valueStr.containsOnly ("0123456789.+-eE")
+                || valueStr.trim().isEmpty())
+            {
+                std::cerr << "  ! --nparam " << name << ": value '" << valueStr
+                          << "' is not a number, skipped" << std::endl;
+                continue;
+            }
             const float normalised = juce::jlimit (0.0f, 1.0f, valueStr.getFloatValue());
             p->setValueNotifyingHost (normalised);
             std::cout << "  --nparam " << name << " norm=" << normalised
