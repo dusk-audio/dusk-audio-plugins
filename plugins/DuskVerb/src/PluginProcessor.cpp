@@ -1728,6 +1728,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Vocal Hall", {{ 6.1854f, 5.6522f, 4.6678f, 4.4460f, 3.2748f, 2.7689f, 2.5910f, 2.5712f, 6.2021f }} },
             { "Blade Runner 224", {{ 16.0236f, 12.3625f, 27.0000f, 9.6761f, 8.1305f, 7.4944f, 4.9930f, 2.7399f, 1.9333f }} },
             { "Ambience", {{ 1.5195f, 1.5053f, 1.1346f, 0.7328f, 0.7831f, 0.7861f, 0.7947f, 0.9030f, 0.9535f }} },
+            { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
