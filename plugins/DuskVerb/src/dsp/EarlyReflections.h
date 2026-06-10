@@ -25,6 +25,10 @@ public:
     void setAirAbsorptionFloor (float hz);
     void setAirAbsorptionCeiling (float hz);
     void setDecorrCoeff (float coeff);
+    // Stereo-neutral early-field mode. false (default) → legacy opposed-sign R
+    // taps → bit-identical. true → independent R signs + delay jitter → uniform
+    // ~0 L/R correlation (VVV-like), no anti-phase low. Per-preset opt-in.
+    void setStereoNeutral (bool enabled);
 
     // Zero the multi-tap delay buffers, per-tap lowpass states, and the
     // decorrelating allpass buffers. Tap geometry (delay, gain, lpCoeff) is
@@ -93,6 +97,32 @@ private:
          1, -1, -1,  1, -1,  1,  1, -1
     };
 
+    // ── Stereo-neutral mode (energy-arrival campaign, Phase 2) ──────────────
+    // The legacy kSignsR is the systematic NEGATION-ish of kSignsL over nearly
+    // identical delays (tR is only a +0.37 index offset from tL), so L and R are
+    // strongly ANTI-correlated — worst at low freq where the tiny delay offset
+    // is negligible. With a full tank that's masked; once the tank is cut to
+    // front-load energy, the ER's anti-phase low dominates (width-low gate goes
+    // to -0.5). VVV's early field is uniformly ~0 (decorrelated, NOT anti-phase).
+    //
+    // Stereo-neutral mode (opt-in, default OFF → bit-identical) gives R an
+    // INDEPENDENT sign pattern (a different balanced 12+/12-, NOT -kSignsL) plus
+    // a per-tap delay JITTER, so L and R decorrelate by timing+sign independence
+    // → uniform corr ≈ 0 across bands, matching VVV, with no anti-phase.
+    static constexpr float kSignsRNeutral[kNumTaps] = {
+         1,  1, -1, -1,  1, -1, -1,  1,
+        -1, -1,  1,  1, -1,  1,  1, -1,
+         1, -1,  1, -1, -1,  1, -1,  1
+    };
+    // Fixed per-tap fractional delay jitter for R (index-space, spans the same
+    // 8-80 ms range but breaks the L/R delay lockstep). Sum ≈ 0 so the overall
+    // R time distribution still spans the range.
+    static constexpr float kRJitter[kNumTaps] = {
+         0.6f, -0.4f,  0.9f, -0.7f,  0.3f, -0.9f,  0.5f, -0.2f,
+         0.8f, -0.6f,  0.2f, -0.8f,  0.7f, -0.3f,  0.9f, -0.5f,
+         0.4f, -0.9f,  0.6f, -0.4f,  0.8f, -0.7f,  0.3f, -0.6f
+    };
+
     struct Tap
     {
         int delaySamples = 0;
@@ -157,6 +187,7 @@ private:
     float timeScale_ = 1.0f;
     float gainExponent_ = 1.0f;
     float onsetRiseMs_ = 0.0f;   // 0 = legacy rolloff; >0 = rising-onset peak
+    bool  stereoNeutral_ = false; // false = legacy opposed-sign R → bit-identical
     float airAbsorptionFloorHz_ = 2000.0f;
     float airAbsorptionCeilingHz_ = 12000.0f;
     double sampleRate_ = 44100.0;

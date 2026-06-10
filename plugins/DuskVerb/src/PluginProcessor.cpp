@@ -129,6 +129,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "input_mid_gain", 1 }, "Input Mid Gain",
         juce::NormalisableRange<float> (-6.0f, 6.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "input_high_gain", 1 }, "Input High Gain",
+        juce::NormalisableRange<float> (-6.0f, 6.0f), 0.0f));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_choke", 1 }, "Bass Choke",
@@ -158,12 +161,66 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "er_boost", 1 }, "Early Ref Boost",
         juce::NormalisableRange<float> (1.0f, 8.0f), 1.0f));
 
+    // QuadTank 5-band damping split (hi-mid 4-8k / air >8k). -1 = inherit the
+    // legacy treble rate → bit-identical 3-band response (every preset except
+    // those listed in kQuadBandByName). Lets QuadTank presets shorten the 8 kHz
+    // and 16 kHz tails independently — the FDN-only FiveBand path doesn't cover
+    // QuadTank. Per-preset via kQuadBandByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "qt_himid_mult", 1 }, "QT Hi-Mid Multiply",
+        juce::NormalisableRange<float> (-1.0f, 2.0f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "qt_air_mult", 1 }, "QT Air Multiply",
+        juce::NormalisableRange<float> (-1.0f, 2.0f), -1.0f));
+
     // Phase 4 (option 2): rising-onset ER envelope peak time. 0 = legacy
     // first-tap rolloff → bit-identical. >0 swells the ER to a peak at this ms,
     // matching VVV's gentle attack instead of an instantaneous spike.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "er_rise", 1 }, "Early Ref Rise",
         juce::NormalisableRange<float> (0.0f, 40.0f), 0.0f));
+
+    // Energy-arrival campaign (2026-06-08): ER-bus spectral correction shelves.
+    // The parallel ER is a 500 Hz-2 kHz midrange bump; boosting it to front-
+    // load energy dumps a mid hump and adds no low/HF. These two shelves (low
+    // ~400 Hz, high ~3 kHz) flatten the ER bus to the tank's full spectrum so a
+    // boosted ER front-loads CLEANLY. 0 dB → unity → ER bus bit-identical →
+    // every non-opting preset byte-for-byte unchanged. Per-preset via kERBusEQByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_bus_low_gain", 1 }, "ER Bus Low Gain",
+        juce::NormalisableRange<float> (-12.0f, 18.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_bus_high_gain", 1 }, "ER Bus High Gain",
+        juce::NormalisableRange<float> (-12.0f, 18.0f), 0.0f));
+
+    // Tank-output level (energy-arrival rebalance). 1.0 → bit-identical. <1
+    // lowers the late FDN tank so a raised ER front-loads at constant total
+    // energy (RT60 decay rate unchanged). Per-preset via kTankLevelByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "tank_level", 1 }, "Tank Level",
+        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+
+    // Tank-level crossover (Phase 3). 0 = broadband (bit-identical). >0 = low
+    // band (below this Hz) stays unity, mid/high scaled by Tank Level. Keeps the
+    // correlated low while front-loading the mid/high bloom. Per-preset.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "tank_split_hz", 1 }, "Tank Split Hz",
+        juce::NormalisableRange<float> (0.0f, 1000.0f), 0.0f));
+
+    // ER stereo-neutral mode (Phase 2). 0 = legacy opposed-sign R taps → bit-
+    // identical. 1 = independent R taps → uniform ~0 L/R corr (VVV-like), no
+    // anti-phase low. Needed so the front-load tank-rebalance keeps a clean
+    // stereo image. Per-preset via kERStereoNeutralByName.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_stereo_neutral", 1 }, "ER Stereo Neutral",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    // ER decorrelation allpass depth (Phase 2). 0 = bypassed → bit-identical.
+    // Different prime delays per channel push L/R correlation toward 0 (VVV's
+    // uniform-neutral image) without the anti-phase of sign-opposition.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_decorr", 1 }, "ER Decorr",
+        juce::NormalisableRange<float> (0.0f, 0.7f), 0.0f));
 
     // Phase 4 (Change 2): output HF cross-talk decorrelation depth. 0 = no
     // cross-feed → bit-identical. Dedicated param (not coupled to Width) so the
@@ -391,6 +448,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     shaperSensParam_    = parameters.getRawParameterValue ("shaper_sens");
     inputSubGainParam_  = parameters.getRawParameterValue ("input_sub_gain");
     inputMidGainParam_  = parameters.getRawParameterValue ("input_mid_gain");
+    inputHighGainParam_ = parameters.getRawParameterValue ("input_high_gain");
     crossoverParam_     = parameters.getRawParameterValue ("crossover");
     highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
     bassChokeParam_     = parameters.getRawParameterValue ("bass_choke");
@@ -399,7 +457,15 @@ DuskVerbProcessor::DuskVerbProcessor()
     erLevelParam_       = parameters.getRawParameterValue ("er_level");
     erSizeParam_        = parameters.getRawParameterValue ("er_size");
     erBoostParam_       = parameters.getRawParameterValue ("er_boost");
+    qtHiMidMultParam_   = parameters.getRawParameterValue ("qt_himid_mult");
+    qtAirMultParam_     = parameters.getRawParameterValue ("qt_air_mult");
     erRiseParam_        = parameters.getRawParameterValue ("er_rise");
+    erBusLowGainParam_  = parameters.getRawParameterValue ("er_bus_low_gain");
+    erBusHighGainParam_ = parameters.getRawParameterValue ("er_bus_high_gain");
+    tankLevelParam_     = parameters.getRawParameterValue ("tank_level");
+    tankSplitHzParam_   = parameters.getRawParameterValue ("tank_split_hz");
+    erStereoNeutralParam_ = parameters.getRawParameterValue ("er_stereo_neutral");
+    erDecorrParam_      = parameters.getRawParameterValue ("er_decorr");
     xtalkParam_         = parameters.getRawParameterValue ("xtalk");
     mbEnableParam_      = parameters.getRawParameterValue ("mb_enable");
     mbLowDecayParam_    = parameters.getRawParameterValue ("mb_low_decay");
@@ -519,6 +585,11 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastERLevel_ = -2.0f;
         lastERBoost_ = -1.0f;
         lastERRise_  = -1.0f;
+        lastERBusLow_ = lastERBusHigh_ = -99.0f;
+        lastTankLevel_ = -1.0f;
+        lastTankSplitHz_ = -1.0f;
+        lastERStereoNeutral_ = -1.0f;
+        lastERDecorr_ = -1.0f;
         lastXTalk_   = -1.0f;
         lastMbEnable_ = false;
         lastMbLow_ = lastMbMid_ = lastMbHigh_ = -1.0f;
@@ -694,6 +765,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastShaperSens_,  shaperSensParam_->load(),  [this] (float v) { activeEngine_->setShaperSens (v); });
     pushIfChanged (lastInputSubGain_, inputSubGainParam_->load(), [this] (float v) { activeEngine_->setInputSubGainDb (v); });
     pushIfChanged (lastInputMidGain_, inputMidGainParam_->load(), [this] (float v) { activeEngine_->setInputMidGainDb (v); });
+    pushIfChanged (lastInputHighGain_, inputHighGainParam_->load(), [this] (float v) { activeEngine_->setInputHighGainDb (v); });
     pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
     pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
     pushIfChanged (lastBassChoke_,     bassChokeParam_->load(),     [this] (float v) { activeEngine_->setBassChokeHz (v); });
@@ -706,7 +778,22 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastERSize_,    erSizeParam_->load(),    [this] (float v) { activeEngine_->setERSize (v); });
     pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
     pushIfChanged (lastERBoost_,   erBoostParam_->load(),   [this] (float v) { activeEngine_->setEREarlyBoost (v); });
+    pushIfChanged (lastQtHiMidMult_, qtHiMidMultParam_->load(), [this] (float v) { activeEngine_->setQuadHiMidMultiply (v); });
+    pushIfChanged (lastQtAirMult_,   qtAirMultParam_->load(),   [this] (float v) { activeEngine_->setQuadAirMultiply (v); });
     pushIfChanged (lastERRise_,    erRiseParam_->load(),    [this] (float v) { activeEngine_->setEROnsetRiseMs (v); });
+    // ER-bus shelves take both gains at once; push if EITHER changed.
+    {
+        const float lo = erBusLowGainParam_->load(), hi = erBusHighGainParam_->load();
+        if (lo != lastERBusLow_ || hi != lastERBusHigh_)
+        {
+            lastERBusLow_ = lo; lastERBusHigh_ = hi;
+            activeEngine_->setERBusShelves (lo, hi);
+        }
+    }
+    pushIfChanged (lastTankLevel_, tankLevelParam_->load(), [this] (float v) { activeEngine_->setTankOutputLevel (v); });
+    pushIfChanged (lastTankSplitHz_, tankSplitHzParam_->load(), [this] (float v) { activeEngine_->setTankSplitHz (v); });
+    pushIfChanged (lastERStereoNeutral_, erStereoNeutralParam_->load(), [this] (float v) { activeEngine_->setERStereoNeutral (v >= 0.5f); });
+    pushIfChanged (lastERDecorr_, erDecorrParam_->load(), [this] (float v) { activeEngine_->setERDecorr (v); });
     pushIfChanged (lastXTalk_,     xtalkParam_->load(),     [this] (float v) { activeEngine_->setOutputCrossTalk (v); });
     // Phase 5 multiband: enable flag + the 3 per-band decays (combined setter).
     {
@@ -1170,6 +1257,7 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setShaperSens        (shaperSensParam_->load());
     target->setInputSubGainDb    (inputSubGainParam_->load());
     target->setInputMidGainDb    (inputMidGainParam_->load());
+    target->setInputHighGainDb   (inputHighGainParam_->load());
     target->setCrossoverFreq     (crossoverParam_->load());
     target->setHighCrossoverFreq (highCrossoverParam_->load());
     target->setBassChokeHz (bassChokeParam_->load());
@@ -1182,7 +1270,14 @@ void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
     target->setERSize            (erSizeParam_->load());
     target->setERLevel           (erLevelParam_->load());
     target->setEREarlyBoost      (erBoostParam_->load());
+    target->setQuadHiMidMultiply (qtHiMidMultParam_->load());
+    target->setQuadAirMultiply   (qtAirMultParam_->load());
     target->setEROnsetRiseMs     (erRiseParam_->load());
+    target->setERBusShelves      (erBusLowGainParam_->load(), erBusHighGainParam_->load());
+    target->setTankOutputLevel   (tankLevelParam_->load());
+    target->setTankSplitHz       (tankSplitHzParam_->load());
+    target->setERStereoNeutral   (erStereoNeutralParam_->load() >= 0.5f);
+    target->setERDecorr          (erDecorrParam_->load());
     target->setOutputCrossTalk   (xtalkParam_->load());
     target->setMultibandEnabled  (mbEnableParam_->load() >= 0.5f);
     target->setMultibandDecays   (mbLowDecayParam_->load(), mbMidDecayParam_->load(), mbHighDecayParam_->load());
@@ -1263,6 +1358,7 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastShaperSens_    = shaperSensParam_->load();
     lastInputSubGain_  = inputSubGainParam_->load();
     lastInputMidGain_  = inputMidGainParam_->load();
+    lastInputHighGain_ = inputHighGainParam_->load();
     lastCrossover_     = crossoverParam_->load();
     lastHighCrossover_ = highCrossoverParam_->load();
     lastBassChoke_     = bassChokeParam_->load();
@@ -1275,7 +1371,15 @@ void DuskVerbProcessor::syncParameterCacheToCurrent()
     lastERSize_        = erSizeParam_->load();
     lastERLevel_       = erLevelParam_->load();
     lastERBoost_       = erBoostParam_->load();
+    lastQtHiMidMult_   = qtHiMidMultParam_->load();
+    lastQtAirMult_     = qtAirMultParam_->load();
     lastERRise_        = erRiseParam_->load();
+    lastERBusLow_      = erBusLowGainParam_->load();
+    lastERBusHigh_     = erBusHighGainParam_->load();
+    lastTankLevel_     = tankLevelParam_->load();
+    lastTankSplitHz_   = tankSplitHzParam_->load();
+    lastERStereoNeutral_ = erStereoNeutralParam_->load();
+    lastERDecorr_      = erDecorrParam_->load();
     lastXTalk_         = xtalkParam_->load();
     lastMbEnable_      = mbEnableParam_->load() >= 0.5f;
     lastMbLow_         = mbLowDecayParam_->load();
@@ -1357,8 +1461,8 @@ namespace {
             //                                   without disturbing 1 kHz.
             { "Vocal Hall", {
                 {  70.0f, 1000.0f, 2560.0f,  8000.0f },
-                {   1.2f,    2.5f,    2.5f,     1.2f },
-                {  -2.5f,   -0.3f,   -3.0f,    -2.5f },   // 1k notch -3->-0.3: Phase-4 re-tune left sine1k -4.5 cold; minimal raise closes it (Δ~-1.8) w/o pushing spec_L1
+                {   1.2f,    1.0f,    2.5f,     1.2f },
+                {  -4.5f,   -1.5f,   -3.0f,    +1.0f },   // Front-load re-tune (2026-06-08): 70Hz -2.5->-4.5 (deeper boom cut for the boosted early field), 1kHz Q 2.5->1.0 gain -0.3->-1.5 (the front-load config ran sine1k +4.24 hot; wider post-tank cut, NOT in-loop, tames it without touching decay), 8kHz -2.5->+1.0 (restore air the tank cut dulled). 2560 modal notch unchanged.
             } },
             // Bright Hall (BH-6 on VintageTank algo=8, 2026-05-30):
             //   Band 0 —  60 Hz Q=1.0 -3.0 dB: BH-2 tight sub-bass scoop.
@@ -1584,6 +1688,58 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             engine.setPostTankEQBand (b, fSrc[b], qSrc[b], gSrc[b]);
     }
 
+    // ─── AccurateHall (algo 10) per-OCTAVE T60 — Jot/Schlecht accurate-RT ──
+    // Nine octave T60 targets (63 Hz..16 kHz) routed to FDNReverbT<true> via a
+    // direct engine call (no APVTS param → no edge-detect desync, like the
+    // TimeVaryingHiDamp call above). This is the per-octave decay control the
+    // FiveBandDamping FDN could not give (9 octave T60 gates vs 5 damping
+    // bands). Presets not in the map reset ALL octaves flat (<=0 → that octave
+    // inherits the broadband Decay Time), which both makes AccurateHall ≡ FDN
+    // and clears any stale octave config left by a previously-loaded preset.
+    // No-op on every other engine — the GEQ exists only in accurateHall_.
+    {
+        struct OctaveT60Override { float t60[9]; };
+        static const std::map<std::string_view, OctaveT60Override> kAccurateHallT60ByName = {
+            // Per-octave T60 targets (63 Hz..16 kHz), shelf-interaction-corrected
+            // to land each octave within ±5% of the VVV anchor (Schroeder
+            // backward-int on the noiseburst tail). The 9-vs-5 coupling wall the
+            // FDN FiveBandDamping floored on; the octave GEQ sets each directly.
+            // Only the three MIGRATED AccurateHall presets (algo 10). Targets are
+            // shelf-interaction-corrected, NOT raw anchor T60 — the GEQ cascade
+            // loses gain (esp. HF vs structural/AA damping), so the target is
+            // inflated to land the MEASURED octave T60 on the anchor. SR-invariant
+            // (sr cancels in g=10^(-3·L/(T·sr)) since L∝sr). Drum Plate + Cathedral
+            // were evaluated and KEPT ON FDN — anchor T60 exceeds the GEQ ceiling
+            // (targets diverged >40 s, did not beat FDN). Tiled Room: T60 9/9 but
+            // traded into tonal gates (net wash) — kept on FDN.
+            // BEGIN_OCTAVE_T60_MAP (maintained by tools/tuner/calibrate_octave_t60.py)
+            { "Vocal Plate", {{ 0.7031f, 0.7489f, 0.7307f, 0.7363f, 0.7162f, 0.8189f, 0.7902f, 0.7798f, 0.9499f }} },
+            { "Vocal Hall", {{ 6.2734f, 5.9864f, 4.3580f, 5.0546f, 3.1917f, 2.6694f, 2.6226f, 2.3275f, 5.9068f }} },
+            { "Blade Runner 224", {{ 15.4166f, 12.0619f, 19.6892f, 10.9104f, 7.5872f, 8.2379f, 5.9153f, 2.6138f, 1.8789f }} },
+            { "Ambience", {{ 1.5016f, 1.6369f, 1.3395f, 0.6205f, 0.8263f, 0.7844f, 0.7676f, 0.9303f, 0.9500f }} },
+            // END_OCTAVE_T60_MAP
+        };
+        auto it = kAccurateHallT60ByName.find (std::string_view (name));
+        for (int b = 0; b < 9; ++b)
+            engine.setAccurateHallOctaveT60 (
+                b, it != kAccurateHallT60ByName.end() ? it->second.t60[b] : 0.0f);
+    }
+
+    // Phase 3 (VH->0): per-line energy-following hi-shelf (TimeVaryingDamping).
+    // VH only; every other preset gets a FLAT shelf (earlyMult==lateMult==1) →
+    // tvHiActive_ false → call skipped in the loop → bit-identical. Direct engine
+    // call (no APVTS param) so there is no edge-detect desync (cf. PostTankEQ).
+    // earlyMult 0.5 cuts HF -6 dB while a line's energy is fresh → faster EARLY
+    // hi decay (targets edt hi +78%); relaxes to flat as energy decays → late
+    // T60 16k preserved. release 0.30 s shapes the early-tail window.
+    // VH edt hi (+78%) does NOT close via this in-loop high-shelf: edt is a
+    // decay-SLOPE (t10) metric governed by the same band energy as T60 2-8k, so
+    // every cut that shortens edt hi also shortens T60 4k/8k/16k (within-band
+    // edt-vs-T60 coupling; best achieved edt hi ~56%, n_fail 9 > baseline 8).
+    // Left FLAT (bypass) for all presets — infra retained, bit-null-verified,
+    // available for edt low_mid (low-shelf) or other presets. (2026-06-07)
+    engine.setFDNTimeVaryingHiDamp (1.0f, 1.0f, 2000.0f, 0.45f, 3.0f);
+
     // hi_cut_shelf_db now flows through APVTS (set in FactoryPreset::applyTo),
     // so no explicit engine setter call here.
 
@@ -1726,7 +1882,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // already pushed via forcePushAllParametersTo at swap time).
     struct PostBandTrimConfig { float sub, lowMid, midHi, air; };
     static const std::unordered_map<std::string_view, PostBandTrimConfig> kPostBandTrimByName = {
-        // Vocal Hall post-band trim override removed on 2026-05-29 v15
+        // Vocal Hall (front-load campaign 2026-06-08): PostTankBandTrim sub/low
+        // lift TRIED to refill the cold sustained low left by the tank_level 0.42
+        // front-load cut, but a flat region lift pushes boom-sub + snare level
+        // HOT (ss-sub steady wants lift; boom-sub late + broadband don't) → net
+        // WORSE (13-18 vs 11). Left at unity. The cold low is the front-load
+        // tradeoff; see memory duskverb_energy_arrival_gate_and_wall.
+        // (Prior) Vocal Hall post-band trim override removed on 2026-05-29 v15
         // revert. The +1/+2/-1 dB lift was a v18-manual presence rescue;
         // v15 baseline does not need it.
         // Bright Hall (VintageTank V2.0): PostBandTrim disabled — the round-4
@@ -1784,6 +1946,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     auto bdIt = kBaseDelaysByName.find (std::string_view (name));
     if (bdIt != kBaseDelaysByName.end())
         engine.setFDNBaseDelays (bdIt->second.delays);
+    else
+        engine.resetFDNBaseDelays();   // no custom set → restore default so a prior preset's custom delays don't leak (setFDNBaseDelays(nullptr) only PRESERVES, never resets)
 
     // ─── Phase ζ + η: per-preset in-loop peaking + dual-time-constant bass shelf ──
     // Both default to bypass (0 dB) when no per-preset entry exists. VH/BH

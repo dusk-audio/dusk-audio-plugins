@@ -69,6 +69,18 @@ GATES = {
     # ── ONSET / SPATIAL / DIFFUSION (2026-06-02 perceptual gates, impulse) ──
     'attack_time_ms_abs':   5.0,    # onset→peak buildup time, absolute ms ...
     'attack_time_pct':     10.0,    # ... OR within ±10% (pass if EITHER holds)
+    # ── TEMPORAL ENERGY ARRIVAL (2026-06-08) — the gate full_check was missing.
+    # attack_time reads the early-reflection TICK and passes even when the bulk
+    # of energy is a late FDN bloom. This measures WHERE the energy sits in time
+    # on the impulse. VVV Vocal Hall front-loads (56% energy in first 50 ms,
+    # 50% reached by 41 ms); DV back-loaded (14% / 164 ms) — heard as 'distant /
+    # washy / smeared / less clear', and INVISIBLE to every prior gate. Expect
+    # this to fail fleet-wide on FDN presets (late washy bloom is the FDN
+    # signature) — that is correct exposure, and the loss term Optuna needs to
+    # front-load the early field. Gate 1 = time-to-50%-energy abs ms; Gate 2 =
+    # early-energy fraction (% in first 50 ms) abs percentage-points.
+    'energy_t50_ms_abs':   30.0,    # Gate 1 (core): |Δ time-to-50%-energy| vs anchor
+    'energy_first50_pct':  10.0,    # Gate 2 (companion): |Δ % energy in first 50 ms| vs anchor
     'onset_slope_pct':     30.0,    # rising-swell slope dB/ms (noisy → wider gate)
     'spatial_width_band':   0.06,   # per-band L/R corr abs-diff (low/mid/high)
     'diffusion_flux':       1.50,   # kurtosis-trajectory L1 over first 150 ms
@@ -151,6 +163,14 @@ GATES = {
     # spectrum diverges, so this is informational + advisory. Gate as
     # symmetric tolerance per stimulus.
     'per_stim_rms_dB':      2.0,
+    # SINE 1 kHz HARMONIC DISTORTION — % THD (h2..h7 vs fundamental) on the
+    # steady-state sine1k tail. A linear reverb of a pure tone makes NO new
+    # harmonics, so this catches nonlinear defects (audio-rate AM, soft-clip
+    # overdrive, runaway feedback). Gated as DV-excess over the anchor: a clean
+    # render sits ~0.01-0.05%; the Vocal Hall AttackRamp AM bug read 2.1%.
+    # 0.5% absolute excess over the anchor is well below audibility yet flags
+    # any gross nonlinearity. Asymmetric (DV-hot only — quieter THD is fine).
+    'sine1k_thd_excess_pct': 0.5,
 }
 
 
@@ -181,6 +201,16 @@ ENGINE_CEILINGS = {
     # that gives Stage 3 the headroom to clamp HF properly.
     'Halls': {'tail_t60_pct'},
 }
+
+
+# Shimmer-engine (algo 7) presets. The Shimmer engine pitch-shifts the input up
+# by octaves (+12 / +24), so a pure 1 kHz tone produces strong 2 kHz / 4 kHz
+# content BY DESIGN — landing on the harmonic bins the sine1k THD gate reads.
+# That intended pitch-shift is NOT distortion (verified: h4/octave-dominant, not
+# the h3 odd-harmonic clip signature), so the THD gate is meaningless here and is
+# skipped. Name-based, not category: "Black Hole" is category "Ambient" but still
+# Shimmer. The other distortion checks still apply.
+SHIMMER_PRESETS = {'Black Hole', 'Cascading Heaven', 'Deep Blue Day'}
 
 
 def _is_ceiling(gate_id: str, category: str) -> bool:
@@ -335,6 +365,36 @@ def _full_rms_db (p):
     return float(20.0 * np.log10(max(np.sqrt(np.mean(m ** 2)), 1.0e-12)))
 
 
+def _sine1k_thd_pct (p, f0=1000.0):
+    """Total harmonic distortion (%) of the sine1k render. A LINEAR reverb of a
+    pure tone outputs only the fundamental (+ slow modulation sidebands near f0);
+    any energy at the 2nd-7th harmonics is NONLINEAR distortion. Measured on the
+    steady-state middle third (skips the onset transient, whose broadband content
+    legitimately rings harmless modal energy). Returns sqrt(Σ hk²)/f0 × 100, or
+    None if the fundamental is below the noise floor.
+
+    Caught the Vocal Hall AttackRamp audio-rate-AM bug (2.1% vs anchor 0.01%):
+    full_check previously had no distortion gate, so a 200x-too-distorted preset
+    scored best in the fleet."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    if len(m) < sr // 2:
+        return None
+    seg = m[len(m) // 3 : 2 * len(m) // 3]
+    if len(seg) < 1024:
+        return None
+    X = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1.0 / sr)
+    def peak(fc, bw=25.0):
+        mask = (f > fc - bw) & (f < fc + bw)
+        return X[mask].max() if mask.any() else 0.0
+    fund = peak(f0)
+    if fund < 1.0e-9:
+        return None
+    harm = np.sqrt(sum(peak(k * f0) ** 2 for k in range(2, 8)))
+    return float(100.0 * harm / fund)
+
+
 def _t60_band_schroeder (p, lo, hi):
     """Per-band T60 via Schroeder backward integration on the post-peak
     noiseburst tail. Bandpass → cumulative reverse energy → log-scale slope
@@ -446,6 +506,41 @@ def attack_profile(p, drop_db=40.0):
     A = np.vstack([t_ms, np.ones_like(t_ms)]).T
     slope = float(np.linalg.lstsq(A, seg, rcond=None)[0][0])
     return float(attack_ms), slope
+
+
+def energy_arrival(p, drop_db=40.0, window_ms=2000.0):
+    """Temporal energy distribution of an impulse response — WHERE the energy
+    sits in time, which attack_time (onset->first-peak) is blind to.
+
+    full_check's attack gate reads the early-reflection TICK and passes even
+    when the bulk of the energy is a late FDN bloom. VVV front-loads (56% of
+    energy in the first 50 ms, 50% reached by 41 ms); DV back-loads (14% / 164 ms)
+    — audible as 'distant / washy / smeared / less clear'.
+
+    Measured on the instantaneous power envelope, onset-relative, over the first
+    `window_ms` (long enough to span the buildup + early decay, short enough that
+    an infinite tail doesn't dominate). Returns:
+      t50_ms       — time from onset to 50% of cumulative energy
+      pct_first50  — % of window energy in the first 50 ms post-onset
+      pct_first150 — % in the first 150 ms (diagnostic, not gated)
+      centroid_ms  — energy center-of-mass (diagnostic)
+    """
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    win = max(int(0.002 * sr), 1)
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(env_s + 1e-30)
+    pk = int(np.argmax(env_db))
+    on = _onset_index(env_db, pk, drop_db)
+    w = (env_s[on:on + int(window_ms / 1000.0 * sr)]) ** 2
+    tot = float(w.sum()) + 1e-30
+    ce = np.cumsum(w)
+    t50 = float(np.searchsorted(ce, 0.5 * tot)) / sr * 1000.0
+    pct50 = float(w[:int(0.05 * sr)].sum()) / tot * 100.0
+    pct150 = float(w[:int(0.15 * sr)].sum()) / tot * 100.0
+    t = np.arange(len(w)) / sr * 1000.0
+    centroid = float((t * w).sum() / tot)
+    return t50, pct50, pct150, centroid
 
 
 def spatial_width_bands(p, t_ms=500.0):
@@ -761,6 +856,27 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 print(line)
                 if not passing: fails.append(line.strip())
 
+            # ── TEMPORAL ENERGY ARRIVAL (where the energy sits in time) ──
+            t50_dv, p50_dv, p150_dv, cen_dv = energy_arrival(imp_dv)
+            t50_lx, p50_lx, p150_lx, cen_lx = energy_arrival(imp_lx)
+            # Gate 1 (core): time-to-50%-energy, absolute ms vs anchor.
+            dt = t50_dv - t50_lx
+            passing = abs(dt) <= GATES['energy_t50_ms_abs']
+            line = (f"  {'energy t50 (ms to 50%E)':30s}  DV={t50_dv:7.1f}  Lex={t50_lx:7.1f}  "
+                    f"Δ={dt:+6.1f}ms  gate=±{GATES['energy_t50_ms_abs']}ms  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+            # Gate 2 (companion): early-energy fraction, % in first 50 ms.
+            dp = p50_dv - p50_lx
+            passing = abs(dp) <= GATES['energy_first50_pct']
+            line = (f"  {'energy first50ms (%)':30s}  DV={p50_dv:7.1f}  Lex={p50_lx:7.1f}  "
+                    f"Δ={dp:+6.1f}pp  gate=±{GATES['energy_first50_pct']}pp  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+            # Diagnostic (not gated): first-150ms fraction + energy centroid.
+            print(f"  {'energy first150ms / centroid':30s}  DV={p150_dv:5.1f}%/{cen_dv:.0f}ms  "
+                  f"Lex={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
+
         # ─── 1/3-oct RMS-normalized L1 ───
         # Floor-guard: skip bands where the ANCHOR is below -55 dB (RMS-norm) —
         # it carries no real signal there (the dark VVV/Lex anchors roll off to
@@ -866,7 +982,12 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 sos = _bts(4, [lo, hi_c], 'band', fs=sr, output='sos')
             y = _ss(sos, tail)
             pwr = y ** 2
-            win = max(int(0.01*sr), 1)
+            # Band-scaled smoothing window (2026-06-07): a fixed 10 ms window is
+            # comparable to the band PERIOD below ~500 Hz, so the measured time
+            # is dominated by filter group-delay, not decay (edt low swung 90x
+            # across 5-40 ms windows). Scale to ~3 periods of the band low edge
+            # so resolution tracks the band; floor at 10 ms.
+            win = max(int(3.0 / max(lo, 20.0) * sr), int(0.01*sr))
             sm = np.convolve(pwr, np.ones(win)/win, mode='same')
             peak = float(np.max(sm))
             if peak < 1e-12: return None
@@ -885,6 +1006,13 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
 
         print("\n── SUSTAINED-PINK PER-BAND EDT (t10 = early decay, perceived 'hold') ──")
         for lab, lo, hi in band_list:
+            # Skip EDT (t10) below 250 Hz: the early-decay time there is
+            # window-noise, not signal (edt low swung 7->629 ms across 5-40 ms
+            # windows — 90x). The t30 per-band DECAY loop below keeps all bands
+            # (longer -30 dB span is robust). (2026-06-07)
+            if lo < 250:
+                print(f"  {('edt ' + lab):30s}  SKIPPED (lo<250: t10 window-noise)")
+                continue
             d_dv = _band_decay_t(sus_dv, lo, hi, 10)
             d_lx = _band_decay_t(sus_lx, lo, hi, 10)
             if d_dv is None or d_lx is None:
@@ -1018,7 +1146,10 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     if dv_dir and lex_dir:
         print("\n── PER-STIMULUS FULL RMS (broadband level vs anchor) ──")
         ps_gate = GATES['per_stim_rms_dB']
-        for stim in ['noiseburst', 'snare', 'sine1k']:
+        # 'sine1k' dropped from this loop 2026-06-07: it duplicates the
+        # dedicated sine1k_full_rms gate below (same _full_rms_db on the same
+        # WAV), double-counting one defect as two fails.
+        for stim in ['noiseburst', 'snare']:
             dv_f = find_stim(dv_dir, stim); lx_f = find_stim(lex_dir, stim)
             if not dv_f or not lx_f: continue
             dv_db = _full_rms_db (dv_f); lx_db = _full_rms_db (lx_f)
@@ -1044,6 +1175,27 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     f"gate=±{s1_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
+
+    # ─── Sine 1 kHz HARMONIC DISTORTION — nonlinearity detector ───
+    if dv_dir and lex_dir and name in SHIMMER_PRESETS:
+        print("\n── SINE 1 kHz THD ── SKIPPED (Shimmer engine: octave pitch-shift "
+              "reads as harmonics by design)")
+    elif dv_dir and lex_dir:
+        print("\n── SINE 1 kHz THD (nonlinearity detector, DV-excess over anchor) ──")
+        thd_gate = GATES['sine1k_thd_excess_pct']
+        dv_s = find_stim(dv_dir, 'sine1k'); lx_s = find_stim(lex_dir, 'sine1k')
+        if dv_s and lx_s:
+            dv_thd = _sine1k_thd_pct(dv_s); lx_thd = _sine1k_thd_pct(lx_s)
+            if dv_thd is None or lx_thd is None:
+                print("  sine1k THD                   SKIPPED (fundamental below floor)")
+            else:
+                excess = dv_thd - lx_thd
+                passing = excess <= thd_gate
+                line = (f"  {'sine1k THD (%)':30s}  "
+                        f"DV={dv_thd:5.2f}  VVV={lx_thd:5.2f}  Δ={excess:+5.2f}  "
+                        f"gate≤+{thd_gate}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
 
     # ─── Tail PITCH-CHORUS (COARSE sanity guard) ───
     # Replaces the per-band envelope-AM rate gate, which measured AMPLITUDE

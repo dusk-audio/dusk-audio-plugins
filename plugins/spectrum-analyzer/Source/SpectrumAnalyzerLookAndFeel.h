@@ -19,10 +19,8 @@ public:
         static constexpr juce::uint32 textPrimary = 0xffffffff;
         static constexpr juce::uint32 textSecondary = 0xff888888;
         static constexpr juce::uint32 accent = 0xff00aaff;
-        static constexpr juce::uint32 accentDim = 0xff006699;
 
         // Spectrum colors
-        static constexpr juce::uint32 spectrumFill = 0xff00aaff;
         static constexpr juce::uint32 peakHold = 0xffffaa00;
 
         // Meter colors

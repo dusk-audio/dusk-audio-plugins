@@ -126,6 +126,16 @@ FREE_PARAMS = {
     # engines, so harmless if sampled on a non-FDN sweep.
     "Tail Spin Depth":      (0.00,    1.00),    # APVTS [0, 1]
     "Tail Spin Rate":       (1.00,    8.00),    # APVTS [0.1, 10] Hz — narrowed
+    # NB (2026-06-07): "Post Band Sub/Low-Mid/Mid-High/Air Gain" deliberately
+    # NOT exposed. The PostTankBandTrim (and PostTankEQ) post-tank chain is
+    # DEAD in the current build — an edge-detect cache desync in PluginProcessor
+    # (lastPostBand*/lastPteq* omitted from the force-re-push block) lets
+    # applyEngineConfig's direct-engine zeroing win, so the param never reaches
+    # the DSP. Sweeping it = a wasted dead axis (this is why Phase B's 785
+    # Post-Band trials all floored at baseline). Re-expose ONLY after the cache
+    # bug is fixed AND the 4 affected presets (79VC/BrightHall/Cathedral/Drum
+    # Plate, which carry stale never-heard PostTankEQ map values) are
+    # re-validated. See memory duskverb_posttank_chain_dead.
 }
 
 # DPV (DattorroPlateVintage, algo=1) corrective-EQ params. Inert on every

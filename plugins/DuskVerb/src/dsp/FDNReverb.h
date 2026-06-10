@@ -2,6 +2,7 @@
 
 #include "DspUtils.h"
 #include "TwoBandDamping.h"
+#include "TimeVaryingDamping.h"
 
 #include <array>
 #include <atomic>
@@ -18,10 +19,18 @@ struct FDNOutputTap
     float sign;            // ±1.0 for stereo decorrelation
 };
 
-class FDNReverb
+// Templated on WithOctaveGEQ so the per-octave GEQ (AccurateHall) is compiled
+// ONLY for the <true> instantiation via `if constexpr`. The <false> path
+// compiles with ZERO GEQ code → provably byte-identical to the pre-template
+// engine (memory: duskverb_bitnull_codegen_limit — a runtime `if` guard in the
+// recursive feedback loop can't guarantee bit-null; compile-time elimination
+// can). See the `using FDNReverb = FDNReverbT<false>;` alias below — every
+// existing consumer keeps using the GEQ-free engine unchanged.
+template <bool WithOctaveGEQ = false>
+class FDNReverbT
 {
 public:
-    FDNReverb();
+    FDNReverbT();
 
     void prepare (double sampleRate, int maxBlockSize);
     void process (const float* inputL, const float* inputR,
@@ -110,11 +119,22 @@ public:
     // matrix → BIBO-stable, no pole excursion. Both 0 dB → bit-exact bypass.
     void setInputSubGainDb (float db);     // sub low-shelf on input (~120 Hz)
     void setInputMidGainDb (float db);     // mid bell on input (~900 Hz)
+    void setInputHighGainDb (float db);    // air high-shelf on input (~5 kHz) —
+                                           // completes the 3-band pre-emphasis so
+                                           // per-band T60 (in-loop) decouples from
+                                           // per-band level (this pre-gain ⊥ poles)
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
     void setFeedbackModDepth (float depth);
+    // Phase 3 (VH->0): per-line energy-following high-shelf (TimeVaryingDamping).
+    // earlyMult applies to HF above crossoverHz when a line's circulating energy
+    // is fresh (early decay), lateMult when decayed. earlyMult<lateMult => faster
+    // EARLY hi decay (shortens edt hi) while preserving late T60. earlyMult==
+    // lateMult => bit-identical bypass (call skipped via tvHiActive_).
+    void setTimeVaryingHiDamp (float earlyMult, float lateMult, float crossoverHz,
+                               float releaseSec, float refLevel);
 
     // Phase 2: switch modulation topology. RandomWalk = legacy per-line
     // independent random walks. CoherentLoop = single master sine, phase-
@@ -141,6 +161,15 @@ public:
     // Per-sample cost: ZERO (folds into existing per-channel design pass
     // run at preset-apply time, not the audio thread).
     void setPerLineDecayTilt (float shortLineScale, float longLineScale);
+
+    // AccurateHall (FDNReverbT<true> only): per-OCTAVE loop attenuation GEQ for
+    // independent per-octave T60 (Jot/Schlecht "accurate reverberation-time
+    // control"). band 0..kNumOctaveBands-1 spans 62.5 Hz..16 kHz. seconds<=0 →
+    // that octave flat (inherits the broadband decay). On the <false>
+    // instantiation the GEQ is `if constexpr`-elided, so this setter just stores
+    // the target and never affects audio. Default all-flat → AccurateHall ≡ FDN.
+    static constexpr int kNumOctaveBands = 9;   // ISO octaves 63 Hz..16 kHz
+    void setOctaveT60 (int band, float seconds);
 
     void clearBuffers();
 
@@ -214,6 +243,14 @@ private:
 
         // Damping coefficients (zero-tear: passed by const-ref each sample)
         FiveBandDamping::Coeffs damping[N] {};
+
+        // AccurateHall (FDNReverbT<true>) per-octave GEQ coefficients. Only
+        // populated + read when octaveActive — otherwise this is dead storage
+        // (the <false> instantiation never touches it). When active the
+        // FiveBandDamping above is flattened to identity and this carries the
+        // full per-octave decay.
+        OctaveBandDamping::Coeffs octaveCoeffs[N] {};
+        bool octaveActive = false;
 
         // Structural / anti-alias / DC-blocker coefficients
         float structHFCoeff      = 0.0f;
@@ -333,6 +370,7 @@ private:
     InlineAllpass inlineAP3_[N];
     InlineAllpass inlineAPShort_[N];
     FiveBandDamping dampFilter_[N];      // holds biquad state only; coeffs come from lp.damping[]
+    OctaveBandDamping octaveDamp_[N];    // AccurateHall per-octave GEQ state (8 shelves/line); coeffs from lp.octaveCoeffs[]. Idle (zero cost) unless octaveActive.
     DspUtils::RandomWalkLFO lfos_[N];
     // Phase 2: single master sine LFO for CoherentLoop topology. All 16
     // delay lines tap THIS one LFO at per-line phase offsets so they
@@ -369,6 +407,19 @@ private:
     float dualBassFastGainDb_   = 0.0f;
     float dualBassSlowGainDb_   = 0.0f;
     float dualBassTransitionMs_ = 100.0f;
+
+    // Phase 3 (VH->0): per-line energy-following high-shelf. Single instance,
+    // 16 internal channel trackers. tvHiActive_ false => process() skipped in the
+    // loop => bit-identical. Stored config re-applied in prepare() (designCoeffs
+    // resets on re-prepare, mirror of inLoopPeak_/dualBassShelf_ restore).
+    DspUtils::TimeVaryingDamping tvDampHi_;
+    bool  tvHiActive_     = false;
+    float tvHiEarlyMult_  = 1.0f;
+    float tvHiLateMult_   = 1.0f;
+    float tvHiCrossover_  = 2500.0f;
+    float tvHiReleaseSec_ = 0.30f;
+    float tvHiRefLevel_   = 0.50f;
+
     DspUtils::ModulationTopology modulationTopology_ = DspUtils::ModulationTopology::RandomWalk;
 
     // Phase θ/Phase 2: post-loop Tail Spin/Wander output VCA. A 16-phase sine
@@ -468,9 +519,11 @@ private:
     // Block 2: feed-forward input makeup (pre-delay-write, outside the loop).
     float inputSubGainDb_   = 0.0f;
     float inputMidGainDb_   = 0.0f;
-    bool  inputMakeupActive_ = false;   // either gain != 0 → block runs
+    float inputHighGainDb_  = 0.0f;
+    bool  inputMakeupActive_ = false;   // any gain != 0 → block runs
     ShelfBiquad inputSubL_, inputSubR_; // sub low-shelf, per-channel state
     DspUtils::ParametricBand inputMid_; // mid bell (processL/processR)
+    ShelfBiquad inputHighL_, inputHighR_; // air high-shelf, per-channel state
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
@@ -502,4 +555,16 @@ private:
     float householderV16_[N] {};
     float householderV8_[N / 2] {};
     void seedHouseholderVectors (uint32_t seed);
+
+    // AccurateHall per-octave GEQ targets (FDNReverbT<true>). <=0 → octave flat.
+    // octaveGEQActive_ gates the (P3) if-constexpr GEQ block; all-flat → no-op.
+    float octaveT60_[kNumOctaveBands] {};
+    bool  octaveGEQActive_ = false;
 };
+
+// Backward-compatible alias. Every existing consumer (DuskVerbEngine::fdn_,
+// ShimmerEngine, NonLinearEngine, ReverseRoomEngine, MultibandFDN tanks) uses
+// the GEQ-free engine — they reference `FDNReverb` and need no edit. AccurateHall
+// declares FDNReverbT<true>. Single source of truth; bit-null isolation is by
+// compile-time GEQ elimination, not duplication.
+using FDNReverb = FDNReverbT<false>;
