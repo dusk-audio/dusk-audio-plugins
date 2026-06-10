@@ -14,6 +14,7 @@
 #include "SpringEngine.h"
 #include "VintageTankEngine.h"
 #include "ReverseRoomEngine.h"
+#include "SparseEarlyField.h"
 
 #include <algorithm>
 #include <cmath>
@@ -249,6 +250,14 @@ public:
     // that octave inherits the broadband Decay Time.
     void setAccurateHallOctaveT60 (int band, float seconds);
 
+    // SparseField (algo 11) only: the velvet-noise early-field generator dials
+    // + the reduced-tail level. No-op routing on every other engine.
+    void setSparseFieldSize       (float sizeScale);
+    void setSparseFieldOnsetMs    (float ms);
+    void setSparseFieldDecayMs    (float ms);
+    void setSparseFieldBurst2Ms   (float ms);
+    void setSparseFieldTailGain   (float gain);
+
     // Phase β (2026-05-29): per-preset FDN base delays. Lets each preset
     // choose a 16-int delay-line set tuned to match a specific anchor's
     // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
@@ -354,6 +363,7 @@ private:
     DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
+    SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -375,6 +385,11 @@ private:
     std::vector<float> tankInL_, tankInR_;
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
+    std::vector<float> sparseOutL_, sparseOutR_;   // algo 11: sparse early-field scratch
+
+    // algo 11 SparseField: level of the reduced accurateHall_ tail under the
+    // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
+    float sparseTailGain_ = 0.45f;
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated

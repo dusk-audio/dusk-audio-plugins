@@ -20,6 +20,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sixAPTank_.prepare (sampleRate, maxBlockSize);
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize); accurateHall_.prepare (sampleRate, maxBlockSize);
+    sparseField_.prepare (sampleRate, maxBlockSize);
     multibandFdn_.prepare (sampleRate, maxBlockSize);
     multibandFdn_.setCrossovers (300.0f, 5000.0f);
     spring_.prepare (sampleRate, maxBlockSize);
@@ -48,6 +49,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     tankOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutL_.assign   (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutR_.assign   (static_cast<size_t> (maxBlockSize), 0.0f);
+    sparseOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    sparseOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
     // Per-sample smoothers — short time constants, advance once per sample.
     constexpr float kPerSampleSmoothMs = 2.0f;
@@ -109,6 +112,7 @@ void DuskVerbEngine::clearAllBuffers()
     quad_     .clearBuffers();
     fdn_      .clearBuffers();
     accurateHall_.clearBuffers();   // FDNReverbT<true> — was missing here (setAlgorithm clears it, but that early-returns when the algo is unchanged → AccurateHall state could leak across same-algo preset swaps).
+    sparseField_.clear();           // algo 11 early-field tap buffers
     multibandFdn_.clearBuffers();
     spring_   .clearBuffers();
     nonLinear_.clearBuffers();
@@ -189,7 +193,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorro_.clearBuffers();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
-    fdn_.clearBuffers(); accurateHall_.clearBuffers ();
+    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -425,6 +429,15 @@ void DuskVerbEngine::setAccurateHallOctaveT60 (int band, float seconds)
     // FDNReverbT<true> (accurateHall_). All other engines have no octave T60.
     accurateHall_.setOctaveT60 (band, seconds);
 }
+
+// ── SparseField (algo 11) early-field generator + tail level ──────────────
+// buildTaps() runs inside these setters (message thread, preset-apply); the
+// audio-thread process() stays allocation-free.
+void DuskVerbEngine::setSparseFieldSize     (float s)    { sparseField_.setSizeScale (s); }
+void DuskVerbEngine::setSparseFieldOnsetMs  (float ms)   { sparseField_.setOnsetPeakMs (ms); }
+void DuskVerbEngine::setSparseFieldDecayMs  (float ms)   { sparseField_.setDecayMs (ms); }
+void DuskVerbEngine::setSparseFieldBurst2Ms (float ms)   { sparseField_.setBurst2Ms (ms); }
+void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
 
 void DuskVerbEngine::setFDNBaseDelays (const int* delays)
 {
@@ -937,6 +950,26 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             accurateHall_.process (tankInL_.data(), tankInR_.data(),
                                    tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
+        case EngineType::SparseField:
+            // Sparse front-loaded early field (owns 0-~150ms) + reduced
+            // AccurateHall octave-GEQ tail (late body only). The tail runs the
+            // preset's full config; sparseTailGain_ pulls its level down so the
+            // sparse field dominates early while the tail supplies decay/body.
+            // The early field and tail are independent, sidestepping the FDN's
+            // inseparable early-wash/late-body. Summed here; SparseField makes
+            // its own early field, so it's excluded from the smooth-ER bus below.
+            accurateHall_.process (tankInL_.data(), tankInR_.data(),
+                                   tankOutL_.data(), tankOutR_.data(), numSamples);
+            sparseField_.process (tankInL_.data(), tankInR_.data(),
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                tankOutL_[static_cast<size_t> (i)] =
+                    tankOutL_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutL_[static_cast<size_t> (i)];
+                tankOutR_[static_cast<size_t> (i)] =
+                    tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)];
+            }
+            break;
     }
 
     // ---- 5) Sum + Shell ----
@@ -954,7 +987,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // reflections (ReverseRoom's rising-onset FIR IS its ER), so adding the
     // shared ER bus on top would double-count the onset. Exclude both.
     const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage
-                           && currentEngine_ != EngineType::ReverseRoom);
+                           && currentEngine_ != EngineType::ReverseRoom
+                           && currentEngine_ != EngineType::SparseField);
     for (int i = 0; i < numSamples; ++i)
     {
         float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;
