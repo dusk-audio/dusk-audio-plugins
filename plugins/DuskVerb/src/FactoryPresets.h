@@ -898,6 +898,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // near-mono +0.07 correlation. Result: dark character + correct stereo +
         // tail (tail_t60 -7%) at 22. Remaining (cent_500/air still bright, T60
         // tilt, comb ripple) is the QuadTank vs Chamber1979 modal-density gap.
+        // AccurateHall trial 2026-06-10 REJECTED: algo 10 + calibrated octave
+        // map scored 23 vs QuadTank's 10 — the FDN's late-heavy energy field
+        // (boom +4..+7.6 dB hot, t50 +98 ms) wrecks this tight near-mono
+        // chamber; 3 HF T60 gates aren't worth 13 regressions. QuadTank kept.
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
           4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.50150f, 0.94761f,  675.47f,
