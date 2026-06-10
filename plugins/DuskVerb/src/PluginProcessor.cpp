@@ -1513,6 +1513,14 @@ namespace {
             //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
             //                                    to clamp bloom 8-12k (was
             //                                    0.53 dB over gate).
+            // Tiled Room (AccurateHall trial 2026-06-10): dark post-tank tilt —
+            // the calibrated octave T60s fixed decay but the tail LEVEL runs
+            // bright (cent_500 +215%, blooms 2-12k +2..+4.4).
+            { "Tiled Room", {
+                {  150.0f, 3500.0f, 9000.0f,  1000.0f },
+                {   1.00f,   0.70f,   1.00f,    1.00f },
+                {   0.00f,   -5.00f,  -2.50f,    0.00f },
+            } },
             // Drum Plate (AccurateHall migration 2026-06-10): 1 kHz steady-
             // state lift — DV renders sine1k far below the anchor's plate
             // resonance (-13 dB rel.); post-tank boost lifts it without
@@ -1751,6 +1759,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
             { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
             { "Drum Plate", {{ 1.4801f, 1.4044f, 1.7830f, 1.7079f, 1.8507f, 1.7023f, 1.7860f, 1.8388f, 5.6775f }} },
+            { "Tiled Room", {{ 0.6205f, 0.8945f, 0.7593f, 0.7463f, 0.7543f, 0.7503f, 0.6429f, 0.5625f, 0.4257f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
