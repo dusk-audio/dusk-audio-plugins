@@ -90,7 +90,7 @@ def main():
         g=anchor_nb_rms/ (np.sqrt(np.mean((sf.read(glob.glob(f"{d}/*_noiseburst.wav")[0])[0]).mean(axis=1)**2))+1e-12)
         from scipy.signal import butter as _bt, sosfiltfilt as _sf
         i0=int(2.5*sr); i1=min(len(m), int(4.0*sr)); seg=m[i0:i1]*g
-        for (lo,hi),e0 in ss_ref.items():
+        for (lo,hi),e0 in (ss_ref.items() if use_sus else []):
             sos=_bt(4,[lo,min(hi,sr*0.49)],'band',fs=sr,output='sos')
             e=20*np.log10(np.sqrt(np.mean(_sf(sos,seg)**2))+1e-12)
             pen += 0.5*max(0.0, abs(e-e0)-1.6)
