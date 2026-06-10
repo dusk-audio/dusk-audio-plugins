@@ -1506,9 +1506,9 @@ namespace {
             //                                   tilt is post-tank. Closes
             //                                   cent_50/cent_500/hi/spec.
             { "Bright Hall", {
-                {  60.0f, 1000.0f, 3500.0f, 10000.0f },
-                {   1.0f,    6.0f,    2.0f,     0.8f },
-                { -3.0f,   +2.0f,   -2.0f,    +2.0f },
+                {  60.0f, 1000.0f, 5000.0f, 10000.0f },
+                {   1.0f,    6.0f,    1.2f,     0.8f },
+                { -3.0f,   +2.0f,   +3.0f,    +4.0f },
             } },
             // Small Drum Room (SDR-NL3 on NonLinear algo=6, 2026-05-30):
             //   Band 0/1/3 — defaults / reserved.
