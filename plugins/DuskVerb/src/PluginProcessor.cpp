@@ -1513,6 +1513,16 @@ namespace {
             //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
             //                                    to clamp bloom 8-12k (was
             //                                    0.53 dB over gate).
+            // Vocal Plate (AccurateHall, 2026-06-10): HF tilt for the bright
+            // late field (cent_500 +72%) — closes mid/bloom/snare via the
+            // renorm. A 1 kHz +6 lift for sine1k -12.4 was probed and is
+            // POISON here (15/19 vs 13) — VP's post-tank 1 kHz response is
+            // inconsistent (also documented in the FDN era); leave Band 1 flat.
+            { "Vocal Plate", {
+                {  150.0f, 1000.0f, 5000.0f, 10000.0f },
+                {   1.00f,   2.50f,   0.80f,    1.00f },
+                {   0.00f,    0.00f,  -3.50f,    0.00f },
+            } },
             // Tiled Room (AccurateHall trial 2026-06-10): dark post-tank tilt —
             // the calibrated octave T60s fixed decay but the tail LEVEL runs
             // bright (cent_500 +215%, blooms 2-12k +2..+4.4).
