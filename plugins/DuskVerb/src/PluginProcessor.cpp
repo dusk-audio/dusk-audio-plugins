@@ -1796,12 +1796,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Vocal Plate", {{ 0.7117f, 0.7373f, 0.7335f, 0.7337f, 0.7365f, 0.7926f, 0.7923f, 0.8018f, 0.9431f }} },
             { "Vocal Hall", {{ 6.1854f, 5.6522f, 4.6678f, 4.4460f, 3.2748f, 2.7689f, 2.5910f, 2.5712f, 6.2021f }} },
             { "Blade Runner 224", {{ 16.0236f, 12.3625f, 27.0000f, 9.6761f, 8.1305f, 7.4944f, 4.9930f, 2.7399f, 1.9333f }} },
-            { "Ambience", {{ 1.5195f, 1.5053f, 1.1346f, 0.7328f, 0.7831f, 0.7861f, 0.7947f, 0.9030f, 0.9535f }} },
+            { "Ambience", {{ 1.3581f, 1.5841f, 1.1106f, 0.7022f, 0.8357f, 0.8101f, 0.8043f, 0.8688f, 0.9877f }} },
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
             { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
             { "Drum Plate", {{ 1.4801f, 1.4044f, 1.7830f, 1.7079f, 1.8507f, 1.7023f, 1.7860f, 1.8388f, 5.6775f }} },
             { "Tiled Room", {{ 0.6205f, 0.8945f, 0.7593f, 0.7463f, 0.7543f, 0.7503f, 0.6429f, 0.5625f, 0.4257f }} },
-            { "Medium Drum Room", {{ 0.6662f, 0.9294f, 0.8642f, 0.9537f, 0.8041f, 0.7135f, 0.7917f, 0.7769f, 0.9501f }} },
+            { "Medium Drum Room", {{ 0.7283f, 1.0271f, 0.7906f, 1.0167f, 0.7691f, 0.7298f, 0.7645f, 0.7753f, 1.0098f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
@@ -1964,6 +1964,15 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // All 4 mod gates pass ±30%.
         { "Bright Hall", { { 707, 814, 1594, 1613, 1791, 2767, 3212, 3692,
                               4030, 4268, 4579, 4866, 5319, 5659, 5889, 5912 } } },
+        // Ambience / Medium Drum Room (2026-06-10 ripple_delay_sweep): the
+        // default log-spaced primes pushed the per-band envelope beats to
+        // 4-8 Hz (high tail-mod-ripple std); these sets align the beats to
+        // each anchor's slow rate, closing the ripple gate (Ambience high
+        // +1.58->-0.04; MDR bass +2.56->-0.01) with all four bands passing.
+        { "Ambience", { { 792, 970, 986, 1394, 1474, 2066, 2630, 2735,
+                          3245, 3881, 4084, 4771, 4802, 5151, 6083, 6164 } } },
+        { "Medium Drum Room", { { 967, 1110, 1195, 1226, 2190, 2376, 2945, 3198,
+                                 3515, 3624, 4893, 5131, 5333, 5802, 6177, 6402 } } },
     };
 
     // ─── Phase γ: per-preset post-tank band-trim region gains ────────────
