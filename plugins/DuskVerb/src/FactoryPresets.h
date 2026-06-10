@@ -186,6 +186,10 @@ struct FactoryPreset
             // paired with the tank-rebalance (tank_level 0.42) — the energy
             // front-load now comes from the tank/ER BALANCE, not raw ER boost.
             { "Vocal Hall", { 3.0f } },
+            // Medium Drum Room: anchor is a front-loaded room (first50 45%,
+            // attack 22 ms); the parallel ER supplies the early energy the
+            // FDN tank can't.
+            { "Medium Drum Room", { 7.0f } },
         };
         float erBoost = 1.0f;
         if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
@@ -198,6 +202,10 @@ struct FactoryPreset
             // Vocal Hall: 31.6→15 (front-load campaign) — closes attack_time +
             // onset_slope with the rebalanced early field.
             { "Vocal Hall", { 15.0f } },
+            // Medium Drum Room: ER peak alone fires at ~7 ms, the tank at
+            // ~68 ms — the anchor's 22 ms attack sits between the regimes;
+            // an 18 ms ER rise lands the combined peak on it.
+            { "Medium Drum Room", { 33.0f } },
         };
         float erRise = 0.0f;
         if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
@@ -227,6 +235,9 @@ struct FactoryPreset
             { "Vocal Hall", { 0.50f, 5.0f, 2.6f, 0.60f, 0.0f } },
             { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f, 0.0f } },
             { "Bright Hall", { 1.0f, 0.0f, 5.0f, 0.50f, 0.0f } },
+            // MDR: er_bus_low -6 — the 7x ER boost dumps decorrelated LOW
+            // energy (width-low -0.59, low/boom hot); cut it at the ER bus.
+            { "Medium Drum Room", { 1.0f, -6.0f, 0.0f, 0.0f, 0.0f } },
         };
         if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
         {
@@ -977,6 +988,19 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.40083f, 0.32752f, 0.00430f, 0.23945f, 1.13952f, 1.12685f,  516.73f,
           0.84013f, 0.80f, 0.57f,  22.132f, 4799.3f, 1.00000f, false, 11.53915f,  // Width 1.125->1.00: was over-wide (bands -0.135 vs anchor ~0); 1.00 is local min (28->26).
           /* mono */ 20.0f, /* mid */ 1.21799f, /* highX */ 8771.6f, /* sat */ 0.06325f,  // Dattorro re-engine vs CORRECTED anchor (sustained-gate full_check) -> 23.
+          /* hiCutShelfGainDb */ -4.50f },
+        // ── Medium Drum Room (VVV anchor) ──────────────────────────────────
+        // Engine: Dattorro (algo 0, Small Drum Room sibling). Anchor: VVV
+        // "Fat Snare Room" (Room mode, eighties color, Decay 0.70 s, PreDelay
+        // 9 ms, Size 38.8%, HighCut 4.5 kHz) — re-captured 2026-06-10 via the
+        // saved .vstpreset XML replayed through --nparam (the May-30 render
+        // was the dry-only broken capture). Anchor profile: T60 0.66-0.99 s
+        // near-flat, t50 50 ms, first50 51% (front-loaded medium room).
+        { "Medium Drum Room",     "Rooms",
+          10, 0.30f, false,  9.00f, 0,
+          0.85000f, 0.45000f, 0.00500f, 0.30000f, 0.90000f, 1.10000f,  400.00f,
+          0.80000f, 0.70f, 0.50f,  25.000f, 4500.0f, 1.00000f, false, 0.00000f,  // hand row beats the capped Optuna winner on full_check (24 vs 27 — proxy-loss divergence again); Optuna best kept in /tmp/dv_optuna_3vd7jng7
+          /* mono */ 120.0f, /* mid */ 1.00000f, /* highX */ 8000.0f, /* sat */ 0.05000f,
           /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
