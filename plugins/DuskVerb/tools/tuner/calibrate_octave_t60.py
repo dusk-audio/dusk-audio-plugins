@@ -127,7 +127,17 @@ def main():
                     continue
                 pct = (d - a) / a * 100
                 ok = abs(pct) <= 5; npass += ok
-                new[k] = round(targets[name][k] * (a / d), 4)
+                # Divergence guard: with the composite-exact GEQ the fixed
+                # point converges fast wherever the band is reachable. A
+                # target inflating past 8x the anchor means an in-loop loss
+                # CEILING (e.g. the always-on 17 kHz anti-alias one-pole caps
+                # 16k T60 at ~3-4 s) — cap and flag instead of running away.
+                proposed = targets[name][k] * (a / d)
+                if proposed > 8.0 * a:
+                    new[k] = round(8.0 * a, 4)
+                    cells.append(f"{['63','125','250','500','1k','2k','4k','8k','16k'][k]}:{pct:+.0f}%CEIL")
+                    continue
+                new[k] = round(proposed, 4)
                 cells.append(f"{['63','125','250','500','1k','2k','4k','8k','16k'][k]}:{pct:+.0f}%")
             print(f"  {name:22s} {npass}/9  " + " ".join(cells))
             targets[name] = new

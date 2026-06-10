@@ -1487,17 +1487,25 @@ namespace {
                 {  3.00f,  4.00f,  1.00f,  1.50f },
                 { -5.00f, +3.50f, -3.00f, -4.50f },
             } },
-            // Blade Runner 224 (BR-9 on FDN algo=4, 2026-05-30):
-            //   Band 0 —  600 Hz Q=2.0 -2.0 dB: low-mid steady-state scoop.
+            // Blade Runner 224 (BR-9 2026-05-30; Band 0 re-tuned 2026-06-09
+            // with the composite-exact octave GEQ re-calibration):
+            //   Band 0 —  350 Hz Q=1.2 -3.0 dB: late low-mid decouple. The
+            //                                    accurate 250 Hz T60 target
+            //                                    (gain==decay==level coupling)
+            //                                    left 100-700 Hz late energy
+            //                                    ~+2.5 dB hot; this post-tank
+            //                                    cut closes sub-bass/boom-low/
+            //                                    spec_L1/mid without touching
+            //                                    decay. (Was 600 Hz Q=2 -2.0.)
             //   Band 1 — 3000 Hz Q=1.5 -3.5 dB: lower bloom suppressor.
             //   Band 2 — 6000 Hz Q=1.0 -5.0 dB: bloom 4-8k closed BR-8.
             //   Band 3 —10000 Hz Q=1.2 -6.0 dB: BR-9 deepens -5.0 → -6.0
             //                                    to clamp bloom 8-12k (was
             //                                    0.53 dB over gate).
             { "Blade Runner 224", {
-                {  600.0f, 3000.0f, 6000.0f, 10000.0f },
-                {   2.00f,   1.50f,   1.00f,    1.20f },
-                {  -2.00f,  -3.50f,  -5.00f,   -6.00f },
+                {  350.0f, 3000.0f, 6000.0f, 10000.0f },
+                {   1.20f,   1.50f,   1.00f,    1.20f },
+                {  -3.00f,  -3.50f,  -5.00f,   -6.00f },
             } },
         };
         return m;
@@ -1700,23 +1708,26 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     {
         struct OctaveT60Override { float t60[9]; };
         static const std::map<std::string_view, OctaveT60Override> kAccurateHallT60ByName = {
-            // Per-octave T60 targets (63 Hz..16 kHz), shelf-interaction-corrected
-            // to land each octave within ±5% of the VVV anchor (Schroeder
-            // backward-int on the noiseburst tail). The 9-vs-5 coupling wall the
-            // FDN FiveBandDamping floored on; the octave GEQ sets each directly.
-            // Only the three MIGRATED AccurateHall presets (algo 10). Targets are
-            // shelf-interaction-corrected, NOT raw anchor T60 — the GEQ cascade
-            // loses gain (esp. HF vs structural/AA damping), so the target is
-            // inflated to land the MEASURED octave T60 on the anchor. SR-invariant
-            // (sr cancels in g=10^(-3·L/(T·sr)) since L∝sr). Drum Plate + Cathedral
-            // were evaluated and KEPT ON FDN — anchor T60 exceeds the GEQ ceiling
-            // (targets diverged >40 s, did not beat FDN). Tiled Room: T60 9/9 but
-            // traded into tonal gates (net wash) — kept on FDN.
+            // Per-octave T60 targets (63 Hz..16 kHz), calibrated to land each
+            // octave within ±5% of the VVV anchor (Schroeder backward-int on
+            // the noiseburst tail). The 9-vs-5 coupling wall the FDN
+            // FiveBandDamping floored on; the octave GEQ sets each directly.
+            // Since the composite-exact GEQ design (OctaveGEQDesign.cpp) the
+            // shelf cascade realizes its commanded gains AT the octave centres,
+            // so these targets are close to raw anchor T60 — the small residual
+            // compensates other in-loop losses (structural/AA HF damping,
+            // mod-interpolation). Mostly SR-invariant (sr cancels in
+            // g=10^(-3·L/(T·sr)) since L∝sr); the AA-loss share is not.
+            // Blade Runner 250 Hz is pinned at 27 s: measured T60 walls at
+            // ~8.8 s (anchor 9.7) regardless of target — per-line decay tilt
+            // blends fast lines into that band; higher targets only raise
+            // sine1k THD. Its late-250 level excess is decoupled by the
+            // 350 Hz PostTankEQ cut instead.
             // BEGIN_OCTAVE_T60_MAP (maintained by tools/tuner/calibrate_octave_t60.py)
-            { "Vocal Plate", {{ 0.7031f, 0.7489f, 0.7307f, 0.7363f, 0.7162f, 0.8189f, 0.7902f, 0.7798f, 0.9499f }} },
-            { "Vocal Hall", {{ 6.2734f, 5.9864f, 4.3580f, 5.0546f, 3.1917f, 2.6694f, 2.6226f, 2.3275f, 5.9068f }} },
-            { "Blade Runner 224", {{ 15.4166f, 12.0619f, 19.6892f, 10.9104f, 7.5872f, 8.2379f, 5.9153f, 2.6138f, 1.8789f }} },
-            { "Ambience", {{ 1.5016f, 1.6369f, 1.3395f, 0.6205f, 0.8263f, 0.7844f, 0.7676f, 0.9303f, 0.9500f }} },
+            { "Vocal Plate", {{ 0.7117f, 0.7373f, 0.7335f, 0.7337f, 0.7365f, 0.7926f, 0.7923f, 0.8018f, 0.9431f }} },
+            { "Vocal Hall", {{ 6.1854f, 5.6522f, 4.6678f, 4.4460f, 3.2748f, 2.7689f, 2.5910f, 2.5712f, 6.2021f }} },
+            { "Blade Runner 224", {{ 16.0236f, 12.3625f, 27.0000f, 9.6761f, 8.1305f, 7.4944f, 4.9930f, 2.7399f, 1.9333f }} },
+            { "Ambience", {{ 1.5195f, 1.5053f, 1.1346f, 0.7328f, 0.7831f, 0.7861f, 0.7947f, 0.9030f, 0.9535f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
