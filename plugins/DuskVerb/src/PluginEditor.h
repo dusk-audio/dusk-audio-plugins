@@ -31,6 +31,7 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::VintageTank:     return juce::Colour (0xff7da8e8);  // steel blue — vintage tank
         case EngineType::ReverseRoom:     return juce::Colour (0xff9b6dff);  // violet — reverse room
         case EngineType::AccurateHall:    return juce::Colour (0xffa8e84d);  // lime — accurate per-octave halls
+        case EngineType::SparseField:     return juce::Colour (0xff4de8d9);  // aqua — sparse early field
     }
     return juce::Colour (0xffff7a3d);
 }
@@ -279,10 +280,10 @@ private:
     KnobWithLabel modRate_;
     KnobWithLabel damping_;
     KnobWithLabel bassMult_;
-    KnobWithLabel midMult_;            // NEW: 3-band mid multiplier
+    KnobWithLabel midMult_;            // 3-band mid multiplier
     KnobWithLabel crossover_;
-    KnobWithLabel highCrossover_;      // NEW: 3-band high crossover
-    KnobWithLabel saturation_;         // NEW: drive softClip
+    KnobWithLabel highCrossover_;      // 3-band high crossover
+    KnobWithLabel saturation_;         // drive softClip
     KnobWithLabel diffusion_;
     KnobWithLabel erLevel_;
     KnobWithLabel erSize_;
