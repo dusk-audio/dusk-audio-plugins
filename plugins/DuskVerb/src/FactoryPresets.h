@@ -1011,7 +1011,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Ambience",             "Rooms",
           10, 0.40f, false,  2.91f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. QuadTank floored 33 (8/9 T60 fail); AccurateHall closes all T60 → gain-matched full_check 33->21. QuadTank+GEQ (AccurateChamber) was tested + rejected (tone-wrecked). Octave targets in kAccurateHallT60ByName.
           1.3875f, 0.26283f, 0.17870f, 0.17487f, 0.98911f, 0.96938f,  327.98f,
-          0.68861f, 0.89f, 0.56f,  30.214f, 15746.05f, 1.42044f, false, -0.29995f,
+          0.68861f, 0.89f, 0.56f,  30.214f, 15746.05f, 1.05000f, false, -0.29995f,
           /* mono */ 20.0f, /* mid */ 0.64948f, /* highX */ 5834.41f, /* sat */ 0.16156f },  // re-derived post Decay-calibration (honest Decay 1.39 s; was 18->20 fails)
         // ── 1981 Gated Snare ─────────────────────────────────────────────────
         // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
