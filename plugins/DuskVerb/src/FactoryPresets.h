@@ -335,7 +335,7 @@ struct FactoryPreset
             // peak fix that proved it can't be filled within stability).
             { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f, 0.0f } },
             // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
-            { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.223f } },
+            { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.0f } },
             { "Blade Runner 224", { 1.8467f, 0.2189f, 119.28f, 14310.79f, 1.6074f, 3.4473f, 0.0f, 0.1912f } },
             // Cathedral (AccurateHall since 2026-06-09): in-loop peak 1.4 -> 0.
             // Under the octave GEQ, in-loop gain at 1 kHz distorts that band's
@@ -982,8 +982,11 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // pipeline — FiveBand + input makeup + in-loop peak), 47→28 vs VVV
         // "Tiled Room". Extended params (Sub/Hi-Mid mult, crossovers, input
         // makeup, in-loop +1.32 dB) in kFiveBandByName above.
+        // AccurateHall trial 2026-06-10: algo 4 -> 10, calibrated octave map;
+        // in-loop peak 0.223 zeroed (distorts accurate-RT decay — Cathedral
+        // lesson). A/B'd vs the FDN baseline (18).
         { "Tiled Room",           "Rooms",
-          4,  0.30f, false,  8.20f, 0,
+          10, 0.30f, false,  8.20f, 0,
           0.5684f, 0.47940f, 0.43350f, 2.39800f, 0.68070f, 1.31900f,  173.10f,
           0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, -0.39990f,  // Width 0.535->1.00: the prior [0.35,0.60] sweep OVERSHOT corr -0.34 -> +0.50 (now anchor is +0.007, DV was too narrow/correlated). 1.00 closes width mid+hi (23->21). Residual corr/width-low is global-vs-per-band mismatch.
           /* mono */ 20.0f, /* mid */ 1.33500f, /* highX */ 4276.0f, /* sat */ 0.15320f },  // RE-TUNED vs CORRECTED anchor -> 21. The prior vvv-tiled-room anchor was BROKEN (dry-only render, no reverb) so the old "25" was gate-gamed degenerate (clipped, no tail). Real anchor = VVV Tiled Room (Chamber mode ~0.8s); sane makeup, honest 21.
