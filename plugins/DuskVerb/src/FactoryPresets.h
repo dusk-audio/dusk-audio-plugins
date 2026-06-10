@@ -478,7 +478,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Plate",          "Plates",
           10, 0.35f, false, 29.16f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 6/9->9/9, gain-matched full_check 25->14 vs FDN. Octave targets in kAccurateHallT60ByName.
           0.90f, 0.15f, 0.37f, 1.51f, 0.60f, 0.74f,  401.0f,  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match VVV, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
-          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -1.00f,  // GainTrim -1.74->-1.0 (re-gain-matched to anchor noiseburst after the decay cut). Lo Cut 30: restores 20-100Hz low-end.
+          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -7.05f,  // GainTrim -1.74->-1.0 (re-gain-matched to anchor noiseburst after the decay cut). Lo Cut 30: restores 20-100Hz low-end.
           /* mono */ 20.0f, /* mid */ 0.72f, /* highX */ 3817.0f, /* sat */ 0.03f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
@@ -571,7 +571,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Drum Plate",           "Plates",
           10, 0.42f, false, 12.0f, 0,
           2.263f, 0.337f, 0.373f, 0.119f, 1.296f, 0.723f,  98.99f,
-          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -5.15f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
+          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -12.22f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
           /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
         // ═══════════ SPRINGS ═══════════
         // ── Surf '63 Spring ──────────────────────────────────────────────────
@@ -660,7 +660,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Bright Hall",          "Halls",
           10, 0.40f, false,  0.0f, 0,
           5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
-          0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, 0.62933f,  // Diffusion 0.499->0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring (spec_L1 max 8.06->6.44), fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x; n_fail 20->18. Width 0.944->1.00: closes residual global stereo_corr.
+          0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, -1.7407f,  // Diffusion 0.499->0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring (spec_L1 max 8.06->6.44), fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x; n_fail 20->18. Width 0.944->1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },  // AccurateHall trial: -2 brightened LATE HF level too (bloom 8-12k +6 dB, gain==decay==level) — kept at -6; early-HF dark is compensated post-tank (pteq 10 kHz boost).
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
@@ -807,7 +807,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Hall",           "Halls",
           10, 0.35f, false, 22.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 9/9, gain-matched full_check 22->20 vs FDN. Front-load levers carry over (post-tank, engine-agnostic).
           3.50f, 0.76f, 0.50390f, 0.78820f, 1.0840f, 1.3570f,  850.0f,  // FRONT-LOAD CAMPAIGN 2026-06-08: Treble 1.091->1.084, Bass 1.3042->1.357 (co-tuned with tank-rebalance). Decay/ModDepth/LowX unchanged. er_level + mono now set by kFrontLoadByName (0.79 / 20).
-          0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, 2.00f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
+          0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, -2.84f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
           /* mono */ 20.0f, /* mid */ 0.7530f, /* highX */ 6000.0f, /* sat */ 0.0f },  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
@@ -826,7 +826,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Cathedral Large Hall", "Halls",
           10, 0.45f, false, 20.88f, 0,
           3.00000f, 0.93880f, 0.38010f, 1.18680f, 1.40800f, 1.24610f,  223.90f,  // ACCURACY: Decay 3.315->3.00 matches anchor tail length (tail_t60 +26% -> ~0). ModDepth/Rate+BassMult prior.
-          0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -7.90200f,
+          0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -6.232f,
           /* mono */ 20.0f, /* mid */ 0.64240f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // re-swept w/ FDN FiveBand+input-makeup axes 26->20 vs CathedralLargeHall (Decay->3.3s near ref 2.7)
           /* hiCutShelfGainDb */ -14.5f },
         // ── Blade Runner 224 ─────────────────────────────────────────────────
@@ -891,7 +891,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Blade Runner 224",     "Halls",
           10, 0.45f, false, 25.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 8/9, gain-matched full_check 20->15 vs FDN. Extreme per-octave spread (9.8s low -> 1.3s 16k).
           13.6421f, 0.91981f, 0.33084f, 2.64911f, 0.86140f, 1.05238f,  330.94f,
-          0.84476f, 0.00f, 0.50f, 56.210f, 14429.68f, 1.10000f, false, -3.93657f,  // HF damping re-swept (Treble/HiCut/FiveBand-HF): curb metallic 8k/16k ring, 21->19. Width 1.697->1.10: was over-wide/anti-phase (corr -0.37 vs anchor -0.149); 1.10 closes 3 width-band gates (26->23). Residual global stereo_corr is anchor's freq-dependent decorrelation, global Width can't match.
+          0.84476f, 0.00f, 0.50f, 56.210f, 14429.68f, 1.10000f, false, -1.6866f,  // HF damping re-swept (Treble/HiCut/FiveBand-HF): curb metallic 8k/16k ring, 21->19. Width 1.697->1.10: was over-wide/anti-phase (corr -0.37 vs anchor -0.149); 1.10 closes 3 width-band gates (26->23). Residual global stereo_corr is anchor's freq-dependent decorrelation, global Width can't match.
           /* mono */ 20.0f, /* mid */ 0.73614f, /* highX */ 3980.22f, /* sat */ 0.17579f,
           /* hiCutShelfGainDb */ -11.3f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark) — the prior lex-rhall-rhall4 anchor was WRONG (57->23 w/ FDN FiveBand+input-makeup axes)
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
@@ -916,7 +916,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
           4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.50150f, 0.94761f,  675.47f,
-          0.52932f, 0.20f, 0.44f,  26.022f, 8021.01f, 0.97000f, false, -7.39142f,  // Width 1.136->0.97: baked value went anti-phase (stereo_corr -0.11); 0.97 lands anchor's near-mono +0.07 across all 3 width bands, 26->23
+          0.52932f, 0.20f, 0.44f,  26.022f, 8021.01f, 0.97000f, false, -6.3314f,  // Width 1.136->0.97: baked value went anti-phase (stereo_corr -0.11); 0.97 lands anchor's near-mono +0.07 across all 3 width bands, 26->23
           /* mono */ 20.0f, /* mid */ 0.56053f, /* highX */ 5417.19f, /* sat */ 0.08377f,  // re-derived post Decay-calibration (honest Decay 4.82 s; was 22->24 fails)
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
@@ -999,7 +999,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Medium Drum Room",     "Rooms",
           10, 0.30f, false,  9.00f, 0,
           0.85000f, 0.45000f, 0.00500f, 0.30000f, 0.90000f, 1.10000f,  400.00f,
-          0.80000f, 0.70f, 0.50f,  25.000f, 4500.0f, 1.00000f, false, 0.00000f,  // hand row beats the capped Optuna winner on full_check (24 vs 27 — proxy-loss divergence again); Optuna best kept in /tmp/dv_optuna_3vd7jng7
+          0.80000f, 0.70f, 0.50f,  25.000f, 4500.0f, 1.00000f, false, -0.81f,  // hand row beats the capped Optuna winner on full_check (24 vs 27 — proxy-loss divergence again); Optuna best kept in /tmp/dv_optuna_3vd7jng7
           /* mono */ 120.0f, /* mid */ 1.00000f, /* highX */ 8000.0f, /* sat */ 0.05000f,
           /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
@@ -1017,7 +1017,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Tiled Room",           "Rooms",
           10, 0.30f, false,  8.20f, 0,
           0.5684f, 0.47940f, 0.43350f, 2.39800f, 0.68070f, 1.31900f,  173.10f,
-          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, -0.39990f,  // Width 0.535->1.00: the prior [0.35,0.60] sweep OVERSHOT corr -0.34 -> +0.50 (now anchor is +0.007, DV was too narrow/correlated). 1.00 closes width mid+hi (23->21). Residual corr/width-low is global-vs-per-band mismatch.
+          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, 0.7701f,  // Width 0.535->1.00: the prior [0.35,0.60] sweep OVERSHOT corr -0.34 -> +0.50 (now anchor is +0.007, DV was too narrow/correlated). 1.00 closes width mid+hi (23->21). Residual corr/width-low is global-vs-per-band mismatch.
           /* mono */ 20.0f, /* mid */ 1.33500f, /* highX */ 4276.0f, /* sat */ 0.15320f },  // RE-TUNED vs CORRECTED anchor -> 21. The prior vvv-tiled-room anchor was BROKEN (dry-only render, no reverb) so the old "25" was gate-gamed degenerate (clipped, no tail). Real anchor = VVV Tiled Room (Chamber mode ~0.8s); sane makeup, honest 21.
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
@@ -1128,7 +1128,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Reverse Taps",         "Rooms",
           9,  1.00f, false, 38.0f, 0,           // engine 9 = ReverseRoom; predelay 38ms (measured)
           6.9912f, 0.16498f, 0.13950f, 2.28741f, 0.79816f, 1.14756f,  566.85f,
-          0.18188f, 0.00f, 0.30f,  40.596f, 5367.38f, 1.17197f, false, 0.89119f,
+          0.18188f, 0.00f, 0.30f,  40.596f, 5367.38f, 1.17197f, false, 0.3712f,
           /* mono */ 20.0f, /* mid */ 0.51963f, /* highX */ 8201.39f, /* sat */ 0.25533f },  // RE-ENGINED NonLinear->ReverseRoom: causal rising-ER replicates Lexicon Room "Reverse 1" (reverse-engineered from data). 32->20 fails; env_p2p cliff +60->+15 (smooth swell); tail_t60/cent/env_shape/osc now MATCH the reference
         // ── Mobius Pad ───────────────────────────────────────────────────────
         // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
@@ -1207,7 +1207,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Black Hole",           "Ambient",
           7,  0.50f, false,   0.0f, 0,
           10.8728f, 0.56922f, 0.50890f, 1.43860f, 1.16880f, 0.53601f,  372.24f,  // ModDepth/Rate re-tuned vs honest (sustained) mod gate: 25->21
-          0.85741f, 0.05f, 0.70f,  24.591f, 18926.8f, 1.26041f, false, 0.81969f,
+          0.85741f, 0.05f, 0.70f,  24.591f, 18926.8f, 1.26041f, false, 1.4597f,
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Cascading Heaven ─────────────────────────────────────────────
         // +24 semitones (two-octave stack) at ~57% feedback. No external reference factory
@@ -1241,7 +1241,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Deep Blue Day",        "Shimmer",
           7,  0.38f, false,  25.0f, 0,
           9.1423f, 0.59833f, 0.50f, 0.60458f, 1.40394f, 0.56879f,  408.59f,
-          0.80742f, 0.20f, 0.50f,  26.925f, 11000.0f, 1.69030f, false, 0.31973f,
+          0.80742f, 0.20f, 0.50f,  26.925f, 11000.0f, 1.69030f, false, 1.8697f,
           /* mono */ 20.0f, /* mid */ 1.18105f, /* highX */ 9800.46f, /* sat */ 0.23195f },  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
     };
     return presets;
