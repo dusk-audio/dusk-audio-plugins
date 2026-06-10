@@ -1010,9 +1010,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // pipeline — FiveBand + input makeup + in-loop peak), 47→28 vs VVV
         // "Tiled Room". Extended params (Sub/Hi-Mid mult, crossovers, input
         // makeup, in-loop +1.32 dB) in kFiveBandByName above.
-        // AccurateHall trial 2026-06-10: algo 4 -> 10, calibrated octave map;
-        // in-loop peak 0.223 zeroed (distorts accurate-RT decay — Cathedral
-        // lesson). A/B'd vs the FDN baseline (18).
+        // AccurateHall (SHIPPED 2026-06-10): algo 4 -> 10, calibrated octave
+        // map; in-loop peak 0.223 zeroed (distorts accurate-RT decay —
+        // Cathedral lesson). Won the A/B vs the FDN baseline 18 -> 17 plus
+        // 9/9 octave decay accuracy.
         { "Tiled Room",           "Rooms",
           10, 0.30f, false,  8.20f, 0,
           0.5684f, 0.47940f, 0.43350f, 2.39800f, 0.68070f, 1.31900f,  173.10f,

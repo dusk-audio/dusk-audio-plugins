@@ -45,6 +45,15 @@ def rms(p):
 
 
 def check_one(name):
+    # Contain ALL worker exceptions: one bad render/read must not kill the
+    # whole sweep (ThreadPoolExecutor.map re-raises at iteration otherwise).
+    try:
+        return _check_one(name)
+    except Exception as e:  # noqa: BLE001 — report-and-continue tool
+        return name, None, f"exception: {e}"
+
+
+def _check_one(name):
     adir, apref = PRESETS[name]
     slug = name.lower().replace(" ", "_")
     dv, lex = f"/tmp/pcheck_{slug}", f"/tmp/pcheck_{slug}_lex"
