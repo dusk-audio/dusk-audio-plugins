@@ -1799,7 +1799,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Ambience", {{ 1.3581f, 1.5841f, 1.1106f, 0.7022f, 0.8357f, 0.8101f, 0.8043f, 0.8688f, 0.9877f }} },
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
             { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
-            { "Drum Plate", {{ 1.4801f, 1.4044f, 1.7830f, 1.7079f, 1.8507f, 1.7023f, 1.7860f, 1.8388f, 5.6775f }} },
+            { "Drum Plate", {{ 1.4806f, 1.7512f, 1.7059f, 1.8501f, 1.8154f, 1.6800f, 1.7348f, 1.8968f, 4.9167f }} },
             { "Tiled Room", {{ 0.6205f, 0.8945f, 0.7593f, 0.7463f, 0.7543f, 0.7503f, 0.6429f, 0.5625f, 0.4257f }} },
             { "Medium Drum Room", {{ 0.7283f, 1.0271f, 0.7906f, 1.0167f, 0.7691f, 0.7298f, 0.7645f, 0.7753f, 1.0098f }} },
             // END_OCTAVE_T60_MAP
@@ -1973,6 +1973,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                           3245, 3881, 4084, 4771, 4802, 5151, 6083, 6164 } } },
         { "Medium Drum Room", { { 967, 1110, 1195, 1226, 2190, 2376, 2945, 3198,
                                  3515, 3624, 4893, 5131, 5333, 5802, 6177, 6402 } } },
+        // Drum Plate (2026-06-10 ripple_delay_sweep, ss term off — no sustained
+        // anchor, ss_ref would be noiseburst noise floor): closes lowmid +2.68
+        // and high +3.57 (the failing bands) while holding bass/mid + octave T60.
+        { "Drum Plate", { { 813, 1147, 1447, 1476, 2306, 2392, 2638, 3313,
+                           4055, 4594, 5184, 5202, 5808, 6246, 6423, 6678 } } },
     };
 
     // ─── Phase γ: per-preset post-tank band-trim region gains ────────────
