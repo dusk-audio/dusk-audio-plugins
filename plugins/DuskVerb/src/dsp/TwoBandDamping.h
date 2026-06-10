@@ -360,3 +360,99 @@ private:
     float       sampleRate_ = 44100.0f;
     ShelfBiquad subS_, lowS_, hiS_, airS_;   // hold z1/z2 state only
 };
+
+// =====================================================================
+// OctaveBandDamping — feedback-loop damping with NINE decay plateaus, one
+// per ISO octave centre (63 | 125 | 250 | 500 | 1k | 2k | 4k | 8k | 16k Hz).
+// The Jot/Schlecht "accurate reverberation-time control": a per-OCTAVE
+// proportional GEQ inside the FDN loop so each octave's T60 is set
+// independently — the 9-vs-5 coupling wall the FiveBandDamping cannot pass
+// (5 bands can't satisfy 9 octave T60 gates without adjacent octaves
+// dragging each other).
+//
+// Same adjacent-ratio shelf cascade as FiveBandDamping, generalised: with
+// the 1 kHz band (index 4) as the broadband mid, the four octaves below it
+// are set by four low-shelves at the inter-octave crossovers and the four
+// above by four high-shelves. Each shelf carries the ADJACENT ratio
+// g[k]/g[k+1] (low side) or g[k+1]/g[k] (high side) so the plateaus compose
+// without overlap-multiplication — identical algebra to FiveBandDamping,
+// verified there:
+//
+//   low  shelves k=0..3 : lowShelf  @ X[k], ratio g[k]   / g[k+1]
+//   high shelves k=4..7 : highShelf @ X[k], ratio g[k+1] / g[k]
+//   broadband           = g[4]
+//
+// g[k] are ABSOLUTE per-round-trip loop gains at octave k (10^(-3·L/(T60_k·sr))),
+// so this filter alone carries the FULL per-octave decay — the FiveBandDamping
+// stage is flattened to identity when AccurateHall runs the octave GEQ.
+//
+// Snapshot path only (FDN/AccurateHall). Coeffs POD by const-ref each sample;
+// biquad state stays RT-side. Allocation-free. EIGHT DF1 biquads per line.
+// =====================================================================
+class OctaveBandDamping
+{
+public:
+    static constexpr int kNumBands   = 9;
+    static constexpr int kNumShelves = 8;
+    static constexpr int kMidBand    = 4;   // 1 kHz = broadband
+
+    struct Coeffs
+    {
+        // [shelf][b0,b1,b2,a1,a2]
+        float b0[kNumShelves]; float b1[kNumShelves]; float b2[kNumShelves];
+        float a1[kNumShelves]; float a2[kNumShelves];
+        float broadbandGain = 1.0f;
+        Coeffs()
+        {
+            for (int s = 0; s < kNumShelves; ++s)
+            { b0[s] = 1.0f; b1[s] = b2[s] = a1[s] = a2[s] = 0.0f; }
+        }
+    };
+
+    void prepare (float sampleRate) { sampleRate_ = sampleRate; reset(); }
+    void reset() { for (auto& s : shelf_) s.reset(); }
+
+    // gBand[0..8] = absolute per-round-trip loop gain at each octave centre.
+    // xoverHz[0..7] = inter-octave crossover frequencies (geometric means of
+    // adjacent centres = the full_check T60-gate band edges).
+    static Coeffs designCoeffs (const float* gBand, const float* xoverHz,
+                                float sampleRate)
+    {
+        Coeffs c;
+        ShelfBiquad bq;
+        // Low side: octaves 0..3 below the 1 kHz mid.
+        for (int k = 0; k < kMidBand; ++k)
+        {
+            const float ratio = gBand[k] / std::max (gBand[k + 1], 1.0e-12f);
+            bq.designLowShelf (ratio, xoverHz[k], sampleRate);
+            c.b0[k] = bq.b0; c.b1[k] = bq.b1; c.b2[k] = bq.b2; c.a1[k] = bq.a1; c.a2[k] = bq.a2;
+        }
+        // High side: octaves 5..8 above the mid.
+        for (int k = kMidBand; k < kNumShelves; ++k)
+        {
+            const float ratio = gBand[k + 1] / std::max (gBand[k], 1.0e-12f);
+            bq.designHighShelf (ratio, xoverHz[k], sampleRate);
+            c.b0[k] = bq.b0; c.b1[k] = bq.b1; c.b2[k] = bq.b2; c.a1[k] = bq.a1; c.a2[k] = bq.a2;
+        }
+        c.broadbandGain = gBand[kMidBand];
+        return c;
+    }
+
+    // Eight DF1 shelving biquads in series, then broadband gain.
+    float process (float input, const Coeffs& c)
+    {
+        float x = input;
+        for (int s = 0; s < kNumShelves; ++s)
+        {
+            const float y = c.b0[s] * x + shelf_[s].z1;
+            shelf_[s].z1 = c.b1[s] * x - c.a1[s] * y + shelf_[s].z2;
+            shelf_[s].z2 = c.b2[s] * x - c.a2[s] * y;
+            x = y;
+        }
+        return c.broadbandGain * x;
+    }
+
+private:
+    float       sampleRate_ = 44100.0f;
+    ShelfBiquad shelf_[kNumShelves];   // z1/z2 state only
+};

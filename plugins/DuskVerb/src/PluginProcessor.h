@@ -175,6 +175,7 @@ private:
     std::atomic<float>* shaperSensParam_    = nullptr;
     std::atomic<float>* inputSubGainParam_  = nullptr;
     std::atomic<float>* inputMidGainParam_  = nullptr;
+    std::atomic<float>* inputHighGainParam_ = nullptr;
     std::atomic<float>* crossoverParam_     = nullptr;
     std::atomic<float>* highCrossoverParam_ = nullptr;
     std::atomic<float>* bassChokeParam_     = nullptr;
@@ -183,7 +184,15 @@ private:
     std::atomic<float>* erLevelParam_       = nullptr;
     std::atomic<float>* erSizeParam_        = nullptr;
     std::atomic<float>* erBoostParam_       = nullptr;
+    std::atomic<float>* qtHiMidMultParam_   = nullptr;
+    std::atomic<float>* qtAirMultParam_     = nullptr;
     std::atomic<float>* erRiseParam_        = nullptr;
+    std::atomic<float>* erBusLowGainParam_  = nullptr;
+    std::atomic<float>* erBusHighGainParam_ = nullptr;
+    std::atomic<float>* tankLevelParam_     = nullptr;
+    std::atomic<float>* tankSplitHzParam_   = nullptr;
+    std::atomic<float>* erStereoNeutralParam_ = nullptr;
+    std::atomic<float>* erDecorrParam_      = nullptr;
     std::atomic<float>* xtalkParam_         = nullptr;
     std::atomic<float>* mbEnableParam_      = nullptr;
     std::atomic<float>* mbLowDecayParam_    = nullptr;
@@ -313,6 +322,7 @@ private:
     float lastShaperSens_  = -1.0f;
     float lastInputSubGain_ = -999.0f;
     float lastInputMidGain_ = -999.0f;
+    float lastInputHighGain_ = -999.0f;
     float lastCrossover_   = -1.0f;
     float lastHighCrossover_ = -1.0f;
     float lastBassChoke_     = -1.0f;
@@ -325,7 +335,15 @@ private:
     float lastERSize_      = -1.0f;
     float lastERLevel_     = -2.0f;
     float lastERBoost_     = -1.0f;
+    float lastQtHiMidMult_ = -99.0f;
+    float lastQtAirMult_   = -99.0f;
     float lastERRise_      = -1.0f;
+    float lastERBusLow_    = -99.0f;
+    float lastERBusHigh_   = -99.0f;
+    float lastTankLevel_   = -1.0f;
+    float lastTankSplitHz_ = -1.0f;
+    float lastERStereoNeutral_ = -1.0f;
+    float lastERDecorr_    = -1.0f;
     float lastXTalk_       = -1.0f;
     bool  lastMbEnable_    = false;
     float lastMbLow_       = -1.0f;

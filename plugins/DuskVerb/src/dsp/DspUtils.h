@@ -710,19 +710,25 @@ struct AttackRamp
     {
         envFollower_  = 0.0f;
         trackingPeak_ = 0.0f;
+        gainSmooth_   = 1.0f;
     }
 
     void setShape (float attackDb, float tauMs) noexcept
     {
         attackDb_ = std::clamp (attackDb, -24.0f, 24.0f);
         tauMs_    = std::clamp (tauMs, 5.0f, 2000.0f);
+        if (std::fabs (attackDb_) < 1.0e-6f)
+            gainSmooth_ = 1.0f;   // bypass-equivalent shape → prime the smoothed gain
         recomputeCoeffs();
     }
 
     inline float tickGain (float absLR) noexcept
     {
         if (std::fabs (attackDb_) < 1.0e-6f)
-            return 1.0f;        // bypass
+        {
+            gainSmooth_ = 1.0f;   // prime so a later re-enable doesn't slew from a stale gain
+            return 1.0f;          // bypass
+        }
 
         // Fast attack, moderate release envelope follower over the band
         // signal magnitude. Gives the trackingPeak something to track.
@@ -745,7 +751,10 @@ struct AttackRamp
 
         // Avoid division by zero — when there's no signal yet, gain = 0 dB.
         if (trackingPeak_ < 1.0e-6f)
+        {
+            gainSmooth_ = 1.0f;   // prime so the first onset doesn't slew from a stale gain
             return 1.0f;
+        }
 
         // Fractional decay: 0 = at peak, 1 = fully decayed (envelope == 0).
         float dec = 1.0f - envFollower_ / trackingPeak_;
@@ -758,7 +767,19 @@ struct AttackRamp
         // → gainDb == 0 regardless of dec → bit-identical bypass preserved.
         constexpr float kPivot = 0.40f;
         const float gainDb = attackDb_ * (dec - kPivot);
-        return std::pow (10.0f, gainDb / 20.0f);
+        const float gainTarget = std::pow (10.0f, gainDb / 20.0f);
+
+        // Slew-limit the gain. `dec` ripples at the carrier's 2× rate (the fast
+        // envelope follower needed for low-band EDT tracks per-cycle |signal|),
+        // so applying gainTarget directly amplitude-modulates the audio →
+        // 3rd-harmonic distortion (a sustained 1 kHz tone with a large attackDb
+        // produced ~2 % THD — audible grit on Vocal Hall). EDT shaping is a SLOW
+        // process (tau 100-300 ms), so a ~10 ms one-pole on the gain rejects the
+        // audio-rate ripple (~-40 dB at 2 kHz) while passing the intended slow
+        // envelope intact. gainSmooth_ rests at 1.0; the attackDb==0 early-return
+        // above never reaches here, so bit-identical bypass is preserved.
+        gainSmooth_ += gainSlew_ * (gainTarget - gainSmooth_);
+        return gainSmooth_;
     }
 
 private:
@@ -774,6 +795,13 @@ private:
         constexpr float kEnvReleaseMs = 4.156f;    // → 0.005 step at 48 kHz
         envAttCoeff_ = 1.0f - std::exp (-1.0f / std::max (kEnvAttackMs  * 0.001f * sampleRate_, 1.0f));
         envRelCoeff_ = 1.0f - std::exp (-1.0f / std::max (kEnvReleaseMs * 0.001f * sampleRate_, 1.0f));
+        // ~3 ms gain slew (cutoff ~53 Hz): rejects the 2 kHz carrier-rate AM
+        // ripple (~-32 dB → kills the 3rd-harmonic distortion) while staying
+        // well inside the EDT shaping window (tau 100-300 ms) so the early-decay
+        // sculpt is preserved. Swept: 10 ms over-smoothed (neutralized shaping,
+        // n_fail 16); 2 ms too fast (n_fail 17); 3 ms is the optimum (n_fail 15,
+        // THD 0.13 % vs the 2.10 % bug — well under the 0.5 % distortion gate).
+        gainSlew_ = 1.0f - std::exp (-1.0f / std::max (0.003f * sampleRate_, 1.0f));
     }
 
     float sampleRate_       = 44100.0f;
@@ -784,6 +812,8 @@ private:
     float envRelCoeff_      = 0.005f;
     float envFollower_      = 0.0f;
     float trackingPeak_     = 0.0f;
+    float gainSmooth_       = 1.0f;
+    float gainSlew_         = 0.0f;     // set by recomputeCoeffs() in prepare()
 };
 
 

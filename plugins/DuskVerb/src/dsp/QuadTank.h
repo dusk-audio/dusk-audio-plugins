@@ -51,6 +51,10 @@ public:
     void setSizeRange (float min, float max);
     void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
+    // 5-band damping: split the legacy >4k band into hi-mid (4-8k) and air
+    // (>8k). Negative = inherit the legacy treble rate (transparent 3-band).
+    void setHiMidMultiply (float mult);
+    void setAirMultiply (float mult);
     void clearBuffers();
 
 private:
@@ -175,7 +179,8 @@ private:
         Allpass densityAP[3];
         int densityAPBase[3] = {};
 
-        ThreeBandDamping damping;
+        FiveBandDamping damping;
+        FiveBandDamping::Coeffs dampingCoeffs;   // per-tank (gBase varies by loop length)
 
         Allpass ap2;
         int ap2BaseDelay = 0;
@@ -266,6 +271,15 @@ private:
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 4000.0f;
+    // 5-band damping: two extra plateaus split the old <1k (sub|lo-mid) and
+    // >4k (hi-mid|air) bands. Defaults reduce to the legacy 3-band response:
+    // loMid follows bass, hiMid follows treble (sentinel <0 = "follow"), and
+    // the sub/air corners flank the existing low/high corners.
+    float loMidMultiply_ = -1.0f;         // <0 = follow bassMultiply_
+    float hiMidMultiply_ = -1.0f;         // <0 = follow trebleMultiply_*0.70
+    float airMultiply_   = -1.0f;         // <0 = follow trebleMultiply_*0.70
+    float subCrossoverFreq_ = 250.0f;     // sub | lo-mid split
+    float airCrossoverFreq_ = 8000.0f;    // hi-mid | air split
     float saturationAmount_ = 0.0f;       // 0..1 drive (NEW)
     float modDepthSamples_ = 8.0f;
     float lastModDepthRaw_ = 0.5f;
