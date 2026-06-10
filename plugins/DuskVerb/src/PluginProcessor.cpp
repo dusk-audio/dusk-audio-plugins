@@ -1462,7 +1462,7 @@ namespace {
             { "Vocal Hall", {
                 {  70.0f, 1000.0f, 2560.0f,  8000.0f },
                 {   1.2f,    1.0f,    2.5f,     1.2f },
-                {  -4.5f,   -1.5f,   -3.0f,    +1.0f },   // Front-load re-tune (2026-06-08): 70Hz -2.5->-4.5 (deeper boom cut for the boosted early field), 1kHz Q 2.5->1.0 gain -0.3->-1.5 (the front-load config ran sine1k +4.24 hot; wider post-tank cut, NOT in-loop, tames it without touching decay), 8kHz -2.5->+1.0 (restore air the tank cut dulled). 2560 modal notch unchanged.
+                {  -2.0f,   -1.5f,   -3.0f,    +1.0f },   // 70Hz -4.5->-2.0 (2026-06-10): the deep boom cut was tuned for tank_level 0.42; at the rebalanced 0.55 it starved boom/body 80-500. 1kHz Q1.0 -1.5 (sine1k tame), 8kHz +1.0 (air restore), 2560 modal notch unchanged.
             } },
             // Bright Hall (BH-6 on VintageTank 2026-05-30; Bands 1+3 re-tuned
             // 2026-06-10 for the AccurateHall migration):

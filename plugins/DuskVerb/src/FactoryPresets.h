@@ -214,11 +214,19 @@ struct FactoryPreset
         // See memory duskverb_energy_arrival_gate_and_wall.
         // tank_level, er_bus shelves, er_decorr have NO row field → set here.
         // er_level + mono_below ARE row fields (0.79 / 20 for VH) → set by the row.
-        struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr; };
+        struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr, splitHz; };
         static const std::map<juce::String, FrontLoadOverride> kFrontLoadByName = {
-            { "Vocal Hall", { 0.42f, 5.0f, 2.6f, 0.60f } },
-            { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f } },
-            { "Bright Hall", { 1.0f, 0.0f, 5.0f, 0.50f } },  // er_bus_low 2.8->5.0: warm the cold low (front-load cut left it thin); low 100-250 + ss-low now match VVV. ER-bus low = EARLY low → no late boom-sub-hot (unlike a tank/PostBandTrim lift).
+            // VH split 300: the tank cut starved the LATE lows (boom/body 8
+            // gates quiet) — below 300 Hz the tank stays unity, mid/high keep
+            // the 0.42 front-load (attack/t50/first50 unaffected).
+            // VH tank 0.42->0.50 (2026-06-10) paired with the softened pteq
+            // 70 Hz cut: refills the boom/body late lows the deeper front-load
+            // starved, 20 -> 16. split_hz probed (300/250: lows-exempt tank cut
+            // over-corrects +7.5 dB and flips the tail dark via gain renorm —
+            // 26/22, reverted to broadband 0).
+            { "Vocal Hall", { 0.50f, 5.0f, 2.6f, 0.60f, 0.0f } },
+            { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f, 0.0f } },
+            { "Bright Hall", { 1.0f, 0.0f, 5.0f, 0.50f, 0.0f } },
         };
         if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
         {
@@ -226,22 +234,23 @@ struct FactoryPreset
             setIfExists ("er_bus_low_gain",  it->second.erBusLow);
             setIfExists ("er_bus_high_gain", it->second.erBusHigh);
             setIfExists ("er_decorr",        it->second.erDecorr);
+            setIfExists ("tank_split_hz",    it->second.splitHz);
         }
         else
         {
             // Reset to neutral so these don't latch across preset loads (only
-            // Vocal Hall sets them; the other name-keyed maps below already
-            // default-reset the same way). tank_level neutral is 1.0 (×1.0
-            // bypass) — NOT 0.0, which would mute the late tank.
+            // the mapped presets set them; the other name-keyed maps below
+            // already default-reset the same way). tank_level neutral is 1.0
+            // (×1.0 bypass) — NOT 0.0, which would mute the late tank.
             setIfExists ("tank_level",       1.0f);
             setIfExists ("er_bus_low_gain",  0.0f);
             setIfExists ("er_bus_high_gain", 0.0f);
             setIfExists ("er_decorr",        0.0f);
+            setIfExists ("tank_split_hz",    0.0f);
         }
-        // Companion front-load levers — every preset (including Vocal Hall)
-        // ships these neutral, so write them unconditionally on each load;
-        // otherwise a user tweak latches across preset changes.
-        setIfExists ("tank_split_hz",    0.0f);
+        // Companion front-load lever — every preset ships this neutral, so
+        // write it unconditionally on each load; otherwise a user tweak
+        // latches across preset changes.
         setIfExists ("er_stereo_neutral", 0.0f);
         // Phase 4 (Change 2): HF cross-talk decorrelation depth. 0 (unlisted) →
         // no cross-feed → bit-identical. Per-preset from the cross-talk sweep.
