@@ -217,7 +217,8 @@ struct FactoryPreset
         struct FrontLoadOverride { float tankLevel, erBusLow, erBusHigh, erDecorr; };
         static const std::map<juce::String, FrontLoadOverride> kFrontLoadByName = {
             { "Vocal Hall", { 0.42f, 5.0f, 2.6f, 0.60f } },
-            { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f } },  // er_bus_low 2.8->5.0: warm the cold low (front-load cut left it thin); low 100-250 + ss-low now match VVV. ER-bus low = EARLY low → no late boom-sub-hot (unlike a tank/PostBandTrim lift).
+            { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f } },
+            { "Bright Hall", { 1.0f, 0.0f, 5.0f, 0.50f } },  // er_bus_low 2.8->5.0: warm the cold low (front-load cut left it thin); low 100-250 + ss-low now match VVV. ER-bus low = EARLY low → no late boom-sub-hot (unlike a tank/PostBandTrim lift).
         };
         if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
         {
@@ -629,12 +630,16 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   would push sine1k over gate (zero-sum boundary).
         //
         // Net session: BH 25 → 10 fails (-15).
+        // AccurateHall trial 2026-06-10 (P3): algo 8 -> 10 with a calibrated
+        // nine-octave T60 map; composite-exact GEQ made the 7.3 s anchor lows
+        // reachable (the old leaky cascade diverged >190 s). A/B'd against
+        // the VintageTank baseline (18) — ship the winner.
         { "Bright Hall",          "Halls",
-          8,  0.40f, false,  0.0f, 0,
+          10, 0.40f, false,  0.0f, 0,
           5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
           0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, 0.62933f,  // Diffusion 0.499->0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring (spec_L1 max 8.06->6.44), fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x; n_fail 20->18. Width 0.944->1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
-          /* hiCutShelfGainDb */ -6.0f },
+          /* hiCutShelfGainDb */ -6.0f },  // AccurateHall trial: -2 brightened LATE HF level too (bloom 8-12k +6 dB, gain==decay==level) — kept at -6; early-HF dark is compensated post-tank (pteq 10 kHz boost).
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
         // The SixAP "massive concert hall" Deep Blue was redundant: the hall
         // niche is covered by Cathedral Large Hall / Bright Hall / Vocal Hall /
