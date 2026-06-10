@@ -55,7 +55,10 @@ def render(name, algo10, dst):
 def gain_match(dvdir, anchor_nb):
     a = full_rms(anchor_nb)
     cur = glob.glob(f"{dvdir}/*_noiseburst.wav")[0]
-    g = a / full_rms(cur)
+    r = full_rms(cur)
+    if r < 1e-12:
+        raise RuntimeError(f"silent noiseburst render in {dvdir} — cannot gain-match")
+    g = a / r
     for f in glob.glob(f"{dvdir}/*.wav"):
         x, sr = sf.read(f); sf.write(f, x * g, sr)
 
