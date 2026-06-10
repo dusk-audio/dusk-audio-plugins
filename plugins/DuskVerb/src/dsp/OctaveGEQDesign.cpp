@@ -18,8 +18,11 @@
 double OctaveBandDamping::magnitudeAt (const Coeffs& c, double fHz,
                                        double sampleRate)
 {
+    // Clamp at TRUE Nyquist (0.5*sr, z = -1) — the stability sweep probes
+    // there explicitly; clamping lower would silently skip the one frequency
+    // the top shelf's asymptote peaks at.
     const double w  = 2.0 * 3.141592653589793
-                    * std::min (fHz, 0.49 * sampleRate) / sampleRate;
+                    * std::min (fHz, 0.5 * sampleRate) / sampleRate;
     const double cr = std::cos (w),  ci = -std::sin (w);        // z^-1
     const double c2r = cr * cr - ci * ci, c2i = 2.0 * cr * ci;  // z^-2
     double mag = static_cast<double> (c.broadbandGain);
