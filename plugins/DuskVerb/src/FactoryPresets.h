@@ -529,7 +529,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // 300-trial warm-started re-sweep both floor at 21. Remaining (cent -29%
         // dark, sine1k +5 dB hot, small T60 tilt, 12.9k spike) is DPV-vs-Lexicon.
         { "Vintage Vocal Plate",  "Plates",
-          1,  0.5f,   true,  10.0f, 0,
+          1,  0.5f,   false, 10.0f, 0,  // busMode true->false (2026-06-10): calibration leftover — Mix 0.5 was dead under bus mode, and every other preset ships insert-friendly. Calibration renders force Bus Mode=1 via the harness, so gates are unaffected.
           0.80466f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,
           0.24230f, 0.00f, 0.30f,  42.811f, 15000.0f, 0.81121f, false, 9.01827f,  // ACCURACY: Treble 1.366->1.30 + HiCut 7366->15000 brightens to the bright Lex anchor (cent -29%->-11%)
           /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
