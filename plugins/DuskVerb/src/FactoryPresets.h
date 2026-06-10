@@ -570,7 +570,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // old "T60-ceiling" verdict was an artifact of the leaky shelf cascade.
         { "Drum Plate",           "Plates",
           10, 0.42f, false, 12.0f, 0,
-          2.263f, 0.337f, 0.373f, 0.119f, 1.296f, 0.723f,  98.99f,
+          2.263f, 0.337f, 0.600f, 1.000f, 1.296f, 0.723f,  98.99f,
           0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -12.22f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
           /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
         // ═══════════ SPRINGS ═══════════

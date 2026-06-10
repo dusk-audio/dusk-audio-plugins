@@ -1508,7 +1508,7 @@ namespace {
             { "Bright Hall", {
                 {  60.0f, 1000.0f, 3500.0f, 10000.0f },
                 {   1.0f,    6.0f,    2.0f,     0.8f },
-                {  -3.0f,   +2.0f,   -2.0f,    +9.0f },
+                { -3.0f,   +2.0f,   -2.0f,    +2.0f },
             } },
             // Small Drum Room (SDR-NL3 on NonLinear algo=6, 2026-05-30):
             //   Band 0/1/3 — defaults / reserved.
@@ -1569,7 +1569,7 @@ namespace {
             { "Drum Plate", {
                 {  150.0f, 1000.0f, 3000.0f,  8000.0f },
                 {   0.80f,   2.50f,   1.50f,    1.00f },
-                {  +3.50f,   +8.00f,   0.00f,    0.00f },
+                {  +3.50f,   +2.00f,   0.00f,   +4.00f },
             } },
             { "Blade Runner 224", {
                 {  350.0f, 3000.0f, 6000.0f, 10000.0f },
@@ -1870,7 +1870,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // extension only per-line decay scaling can deliver.
         { "Bright Hall",          DspUtils::ModulationTopology::ModulatedDamping },
         { "Cathedral Large Hall", DspUtils::ModulationTopology::ModulatedDamping },
-        { "Drum Plate",           DspUtils::ModulationTopology::ModulatedDamping },
+        // Drum Plate -> RandomWalk (2026-06-10, tail-cleanliness review): under
+        // ModulatedDamping the Mod Rate/Depth knobs are inert (fixed slow
+        // drift), so the tail could not smear its comb modes — ripple +3..+3.8
+        // dB rougher than the anchor and pitch wander 4.3 Hz vs the anchor
+        // plate's 16.5 Hz. RandomWalk enables real line modulation; depth/rate
+        // tuned to match the anchor's chorused-smooth tail.
+        { "Drum Plate",           DspUtils::ModulationTopology::RandomWalk },
         // Vocal Hall — REVERTED to RandomWalk default on 2026-05-29 with
         // the v15 preset-row rollback. ModulatedDamping was added as a
         // Phase 3 anti-Doppler fix layered on top of v18-manual params;
