@@ -1464,17 +1464,28 @@ namespace {
                 {   1.2f,    1.0f,    2.5f,     1.2f },
                 {  -4.5f,   -1.5f,   -3.0f,    +1.0f },   // Front-load re-tune (2026-06-08): 70Hz -2.5->-4.5 (deeper boom cut for the boosted early field), 1kHz Q 2.5->1.0 gain -0.3->-1.5 (the front-load config ran sine1k +4.24 hot; wider post-tank cut, NOT in-loop, tames it without touching decay), 8kHz -2.5->+1.0 (restore air the tank cut dulled). 2560 modal notch unchanged.
             } },
-            // Bright Hall (BH-6 on VintageTank algo=8, 2026-05-30):
-            //   Band 0 —  60 Hz Q=1.0 -3.0 dB: BH-2 tight sub-bass scoop.
-            //   Band 1 — 1000 Hz Q=6.0 -5.5 dB: BH-4 hyper-narrow notch.
-            //   Band 2 — 3500 Hz Q=2.0 -2.0 dB: BH-6 deepens -1.5 → -2.0 dB
-            //                                   to push spec_L1 mean
-            //                                   off the 2.00 gate boundary.
-            //   Band 3 — 10000 Hz Q=0.8 0 dB:   unity, reserved.
+            // Bright Hall (BH-6 on VintageTank 2026-05-30; Bands 1+3 re-tuned
+            // 2026-06-10 for the AccurateHall migration):
+            //   Band 0 —  60 Hz Q=1.0 -3.0 dB: BH-2 tight sub-bass scoop
+            //                                   (still load-bearing on FDN —
+            //                                   removing it opened 5 boom
+            //                                   gates).
+            //   Band 1 — 1000 Hz Q=6.0 +2.0 dB: was -5.5 (VintageTank modal
+            //                                   ring, gone on FDN); +2 lifts
+            //                                   sine1k toward the anchor.
+            //   Band 2 — 3500 Hz Q=2.0 -2.0 dB: BH-6 spec_L1 mean trim.
+            //   Band 3 — 10000 Hz Q=0.8 +9.0 dB: post-tank early-HF restore.
+            //                                   The FDN loop (hiCutShelf -6)
+            //                                   runs darker than VintageTank;
+            //                                   brightening the LOOP lifted
+            //                                   late bloom 8-12k instead
+            //                                   (gain==decay==level), so the
+            //                                   tilt is post-tank. Closes
+            //                                   cent_50/cent_500/hi/spec.
             { "Bright Hall", {
                 {  60.0f, 1000.0f, 3500.0f, 10000.0f },
                 {   1.0f,    6.0f,    2.0f,     0.8f },
-                {  -3.0f,   -5.5f,   -2.0f,     0.0f },
+                {  -3.0f,   +2.0f,   -2.0f,    +9.0f },
             } },
             // Small Drum Room (SDR-NL3 on NonLinear algo=6, 2026-05-30):
             //   Band 0/1/3 — defaults / reserved.
@@ -1729,6 +1740,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Blade Runner 224", {{ 16.0236f, 12.3625f, 27.0000f, 9.6761f, 8.1305f, 7.4944f, 4.9930f, 2.7399f, 1.9333f }} },
             { "Ambience", {{ 1.5195f, 1.5053f, 1.1346f, 0.7328f, 0.7831f, 0.7861f, 0.7947f, 0.9030f, 0.9535f }} },
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
+            { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));

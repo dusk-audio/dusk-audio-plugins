@@ -98,12 +98,15 @@ def render(name):
 
 
 def measure(dv, anchor):
-    out = []
-    for lo, hi in BANDS:
-        d = _t60_band_schroeder(dv, lo, hi)
-        a = _t60_band_schroeder(anchor, lo, hi)
-        out.append((d, a))
-    return out
+    # Parallel band measurement: 18 independent sosfiltfilt+Schroeder fits.
+    # Threads (not processes) — scipy releases the GIL in the filter kernels
+    # and shared arrays avoid the copy blow-up that OOM'd past process pools
+    # (memory: duskverb_tuner_workers). ~4x on the measure step.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        dvs = [ex.submit(_t60_band_schroeder, dv, lo, hi) for lo, hi in BANDS]
+        anc = [ex.submit(_t60_band_schroeder, anchor, lo, hi) for lo, hi in BANDS]
+        return [(d.result(), a.result()) for d, a in zip(dvs, anc)]
 
 
 def main():
