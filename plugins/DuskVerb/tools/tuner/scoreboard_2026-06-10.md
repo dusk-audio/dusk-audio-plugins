@@ -6,7 +6,7 @@ Composite-exact octave GEQ era (commit 9d00545): every old leaky-cascade
 
 | Preset | Engine | n_fail | prev | Δ | Notes |
 |---|---|---:|---:|---:|---|
-| Bright Hall | AccurateHall | 9 | 18 | -9 | migrated off VintageTank 2026-06-10 |
+| Bright Hall | AccurateHall32 | 13 | 16 | -3 | 32-line dense FDN (algo 12) 2026-06-11; tail kurtosis ~18->14.9 (the metal). NB prior "9" was STALE (pre-sustained-fix); algo-10 sustained-correct baseline = 16 |
 | 79 Vocal Chamber | QuadTank | 10 | 10 | 0 | AccurateHall trial REJECTED (23 — late-heavy field wrong for tight chamber) |
 | Blade Runner 224 | AccurateHall | 11 | 15 | -4 | recal + 250 Hz decouple (350 Hz pteq) |
 | Vocal Plate | AccurateHall | 13 | 14 | -1 | 5 kHz post-tank tilt; 1 kHz pteq is POISON on VP |

@@ -735,20 +735,20 @@ def main():
     lex_crest = spectral_crest_db(lex_nb[int(0.1 * sr):], sr)
     dv_crest = spectral_crest_db(dv_nb[int(0.1 * sr):], sr)
 
-    # NEW: D50 (50 ms clarity), stereo correlation, time-domain crest
+    # D50 (50 ms clarity), stereo correlation, time-domain crest
     lex_d50 = d50(lex_ir_t, sr)
     dv_d50 = d50(dv_ir_t, sr)
     lex_stereo = stereo_correlation(lex_nb_path)
     dv_stereo  = stereo_correlation(dv_nb_path)
     lex_tdc = time_domain_crest(lex_nb, sr)
     dv_tdc  = time_domain_crest(dv_nb, sr)
-    # NEW: K-weighted LUFS (perceived loudness on music-like content)
+    # K-weighted LUFS (perceived loudness on music-like content)
     lex_lufs = k_weighted_lufs(lex_nb, sr)
     dv_lufs  = k_weighted_lufs(dv_nb, sr)
-    # NEW: momentary LUFS max (peak loudness over any 400 ms window)
+    # momentary LUFS max (peak loudness over any 400 ms window)
     lex_mlufs = momentary_lufs_max(lex_nb, sr)
     dv_mlufs  = momentary_lufs_max(dv_nb,  sr)
-    # NEW: boxiness (200-500 Hz peak vs flanks)
+    # boxiness (200-500 Hz peak vs flanks)
     lex_box = box_ratio_db(lex_nb, sr)
     dv_box  = box_ratio_db(dv_nb, sr)
 
