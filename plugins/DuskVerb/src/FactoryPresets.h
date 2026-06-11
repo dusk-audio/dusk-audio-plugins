@@ -1006,10 +1006,19 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // saved .vstpreset XML replayed through --nparam (the May-30 render
         // was the dry-only broken capture). Anchor profile: T60 0.66-0.99 s
         // near-flat, t50 50 ms, first50 51% (front-loaded medium room).
+        // Medium Drum Room: kept on the FDN (algo 10). Two structural attempts
+        // 2026-06-11 — (1) composite ER + FDN tail, (2) "UltraRoom" decouple (ER +
+        // octave-GEQ decay + post-loop PostTankBandTrim level) — both FALSIFIED:
+        // best n_fail 24 vs FDN 25 (-1, noise-level). MDR is not behind one coupling
+        // wall but a STACK: decay-TIME (octave-GEQ-vs-band-gate mismatch + T60-gate
+        // coupling), within-band level/boom/body coupling (a static post trim can't
+        // separate), modulation (osc P2P / tail pitch-chorus), diffusion_flux, and
+        // spectral. No single lever (or ER+level-decouple together) reaches the low
+        // teens. Reverted; composite/decouple infra retained for Tiled Room.
         { "Medium Drum Room",     "Rooms",
           10, 0.30f, false,  9.00f, 0,
           0.85000f, 0.45000f, 0.00500f, 0.30000f, 0.90000f, 1.10000f,  400.00f,
-          0.80000f, 0.70f, 0.50f,  25.000f, 4500.0f, 1.00000f, false, -0.81f,  // hand row beats the capped Optuna winner on full_check (24 vs 27 — proxy-loss divergence again); Optuna best kept in /tmp/dv_optuna_3vd7jng7
+          0.80000f, 0.70f, 0.50f,  25.000f, 4500.0f, 1.00000f, false, -0.81f,  // FDN algo 10 baseline (n_fail 25).
           /* mono */ 120.0f, /* mid */ 1.00000f, /* highX */ 8000.0f, /* sat */ 0.05000f,
           /* hiCutShelfGainDb */ -4.50f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
@@ -1024,10 +1033,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // map; in-loop peak 0.223 zeroed (distorts accurate-RT decay —
         // Cathedral lesson). Won the A/B vs the FDN baseline 18 -> 17 plus
         // 9/9 octave decay accuracy.
+        // Tiled Room: migrated to the dedicated TiledRoomEngine (algo 13) 2026-06-11.
+        // A single-tank FDN (algo 10) structurally back-loaded + recirculated bright
+        // energy (n_fail 26: energy_first50 12.7% vs anchor 69%, cent_500 +196%, slow
+        // attack, over-modulation). Algo 13 welds a sparse tapped-delay ER front-end
+        // (front-loads the first ~50 ms) to a short frozen low-pass-terminated tail
+        // (~1.1 kHz dark loop). The FDN decay/size/damping/mod fields below are inert
+        // on this engine (it is self-contained, fixed-voiced); Dry/Wet, Pre-Delay,
+        // Width still apply (handled outside the tank).
         { "Tiled Room",           "Rooms",
-          10, 0.30f, false,  8.20f, 0,
-          0.5684f, 0.47940f, 0.43350f, 2.39800f, 0.68070f, 1.31900f,  173.10f,
-          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, 0.7701f,  // Width 0.535->1.00: the prior [0.35,0.60] sweep OVERSHOT corr -0.34 -> +0.50 (now anchor is +0.007, DV was too narrow/correlated). 1.00 closes width mid+hi (23->21). Residual corr/width-low is global-vs-per-band mismatch.
+          13, 0.30f, false,  8.20f, 0,
+          0.5684f, 0.47940f, 0.00000f, 2.39800f, 0.68070f, 1.31900f,  173.10f,   // modDepth 0.4335->0: frozen tail (composite engine; kills pitch wobble / osc P2P)
+          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, 2.2780f,  // gainTrim 0.7701->2.278 (2026-06-11): re-matched 100%-wet noiseburst RMS to the anchor after the algo-13 composite migration (+1.51 dB). Width 1.00 retained.
           /* mono */ 20.0f, /* mid */ 1.33500f, /* highX */ 4276.0f, /* sat */ 0.15320f },  // RE-TUNED vs CORRECTED anchor -> 21. The prior vvv-tiled-room anchor was BROKEN (dry-only render, no reverb) so the old "25" was gate-gamed degenerate (clipped, no tail). Real anchor = VVV Tiled Room (Chamber mode ~0.8s); sane makeup, honest 21.
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
