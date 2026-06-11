@@ -52,6 +52,20 @@ public:
                            bool shouldDrawButtonAsHighlighted,
                            bool shouldDrawButtonAsDown) override;
 
+    // Custom dark dropdown popup — replaces JUCE's default V4 grey popup for the
+    // preset / algorithm / sync menus with the plugin palette + live engine accent
+    // (highlight + selected-tick). Applies to every PopupMenu shown under lnf_.
+    void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
+    void drawPopupMenuItem (juce::Graphics&, const juce::Rectangle<int>& area,
+                            bool isSeparator, bool isActive, bool isHighlighted,
+                            bool isTicked, bool hasSubMenu, const juce::String& text,
+                            const juce::String& shortcutKeyText,
+                            const juce::Drawable* icon, const juce::Colour* textColour) override;
+    juce::Font getPopupMenuFont() override;
+    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
+                                    int standardMenuItemHeight,
+                                    int& idealWidth, int& idealHeight) override;
+
     // Live-mutable accent so we can recolour the entire UI when the user
     // switches engines. Defaults to the legacy orange so first paint matches.
     void          setCurrentAccent (juce::Colour c) { currentAccent_ = c; }

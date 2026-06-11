@@ -53,20 +53,26 @@ inline int getNumAlgorithms() { return 13; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
+    // User-facing engine names. Standardized 2026-06-11: clean musician-facing
+    // labels, no internal-algorithm jargon and no trademark references (was
+    // Lexicon / RMX16 / Eno / 6G15 / Figure-8 / Dattorro). ENUM ORDER IS FIXED —
+    // AudioParameterChoice stores the index, presets store the algorithm index,
+    // so these strings are display-only and must NOT be reordered or removed
+    // (that would shift indices and break saved state). Rename freely.
     static constexpr AlgorithmConfig kEngines[] = {
-        { "Plate (Dattorro)",         EngineType::Dattorro        },
-        { "Plate (Dattorro Vintage)", EngineType::DattorroVintage },
-        { "High Density (6-AP)",      EngineType::SixAPTank       },
-        { "Quad Room (QuadTank)",     EngineType::QuadTank        },
-        { "Realistic Space (FDN)",    EngineType::FDN             },
-        { "Spring Tank (6G15)",       EngineType::Spring          },
-        { "Non-Linear (RMX16)",       EngineType::NonLinear       },
-        { "Shimmer (Eno FDN)",        EngineType::Shimmer         },
-        { "Vintage Tank (Figure-8)",  EngineType::VintageTank     },
-        { "Reverse Room (Lexicon)",   EngineType::ReverseRoom     },
-        { "Accurate Hall (FDN-GEQ)",  EngineType::AccurateHall    },
-        { "Sparse Field (Early)",     EngineType::SparseField     },
-        { "Accurate Hall 32 (Dense)", EngineType::AccurateHall32  },
+        { "Plate",         EngineType::Dattorro        },
+        { "Vintage Plate", EngineType::DattorroVintage },
+        { "Smooth Plate",  EngineType::SixAPTank       },
+        { "Room",          EngineType::QuadTank        },
+        { "Studio",        EngineType::FDN             },
+        { "Spring",        EngineType::Spring          },
+        { "Gated",         EngineType::NonLinear       },
+        { "Shimmer",       EngineType::Shimmer         },
+        { "Vintage Hall",  EngineType::VintageTank     },
+        { "Reverse",       EngineType::ReverseRoom     },
+        { "Hall",          EngineType::AccurateHall    },
+        { "Sparse",        EngineType::SparseField     },
+        { "Concert Hall",  EngineType::AccurateHall32  },
     };
     if (index < 0 || index >= 13)
         index = 0;

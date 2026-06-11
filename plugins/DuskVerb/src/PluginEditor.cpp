@@ -245,6 +245,101 @@ void DuskVerbLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButto
 }
 
 // =============================================================================
+// Custom dark dropdown popup (preset / algorithm / sync menus). Replaces the
+// default LookAndFeel_V4 grey popup so every dropdown matches the plugin: dark
+// panel + border, rounded hover fill in the live engine accent, accent dot for
+// the selected item, slim submenu arrow.
+// =============================================================================
+
+juce::Font DuskVerbLookAndFeel::getPopupMenuFont()
+{
+    return juce::Font (juce::FontOptions (15.0f));
+}
+
+void DuskVerbLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)
+{
+    auto bounds = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height);
+    g.setColour (juce::Colour (kBackground));
+    g.fillRoundedRectangle (bounds, 6.0f);
+    g.setColour (juce::Colour (kBorder));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, 1.0f);
+}
+
+void DuskVerbLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
+                                                     int standardMenuItemHeight,
+                                                     int& idealWidth, int& idealHeight)
+{
+    if (isSeparator)
+    {
+        idealWidth  = 60;
+        idealHeight = 8;
+        return;
+    }
+
+    const auto font = getPopupMenuFont();
+    juce::GlyphArrangement ga;
+    ga.addLineOfText (font, text, 0.0f, 0.0f);
+    const int textW = (int) std::ceil (ga.getBoundingBox (0, -1, true).getWidth());
+
+    idealHeight = standardMenuItemHeight > 0 ? juce::jmax (standardMenuItemHeight, 28) : 28;
+    idealWidth  = textW + 52;   // left tick gutter + right submenu-arrow padding
+}
+
+void DuskVerbLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area,
+                                             bool isSeparator, bool isActive, bool isHighlighted,
+                                             bool isTicked, bool hasSubMenu, const juce::String& text,
+                                             const juce::String& /*shortcutKeyText*/,
+                                             const juce::Drawable* /*icon*/, const juce::Colour* textColour)
+{
+    if (isSeparator)
+    {
+        auto line = area.toFloat().reduced (10.0f, 0.0f).withHeight (1.0f)
+                        .withY ((float) area.getCentreY());
+        g.setColour (juce::Colour (kSeparator));
+        g.fillRect (line);
+        return;
+    }
+
+    auto r = area.reduced (4, 1);
+    const auto accent = getCurrentAccent();
+
+    if (isHighlighted && isActive)
+    {
+        g.setColour (accent.withAlpha (0.22f));
+        g.fillRoundedRectangle (r.toFloat(), 4.0f);
+    }
+
+    juce::Colour col = isActive ? juce::Colour (kText) : juce::Colour (kDimText);
+    if (textColour != nullptr)        col = *textColour;
+    if (isHighlighted && isActive)    col = juce::Colour (kValueText);
+
+    auto content = r.reduced (10, 0);
+
+    if (isTicked)
+    {
+        const float d = 5.0f;
+        g.setColour (accent);
+        g.fillEllipse ((float) content.getX(), (float) content.getCentreY() - d * 0.5f, d, d);
+    }
+    content.removeFromLeft (16);   // tick gutter
+
+    g.setColour (col);
+    g.setFont (getPopupMenuFont());
+    g.drawFittedText (text, content, juce::Justification::centredLeft, 1);
+
+    if (hasSubMenu)
+    {
+        const float h = (float) r.getHeight() * 0.26f;
+        const float x = (float) r.getRight() - 12.0f;
+        const float yc = (float) r.getCentreY();
+        juce::Path arrow;
+        arrow.addTriangle (x, yc - h, x, yc + h, x + h, yc);
+        g.setColour (col.withAlpha (0.75f));
+        g.fillPath (arrow);
+    }
+}
+
+// =============================================================================
 // Value formatting (used by the timer to refresh the value label under each knob)
 // =============================================================================
 
@@ -1028,6 +1123,7 @@ void DuskVerbEditor::refreshPresetList()
 juce::PopupMenu DuskVerbEditor::buildPresetMenu()
 {
     juce::PopupMenu menu;
+    menu.setLookAndFeel (&lnf_);   // render the popup + submenus with our dark dropdown L&F
     const auto& presets = getFactoryPresets();
     const int currentId = presetBox_.getSelectedId();
 
