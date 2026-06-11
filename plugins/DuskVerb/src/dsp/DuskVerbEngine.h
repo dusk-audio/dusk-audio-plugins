@@ -15,6 +15,7 @@
 #include "VintageTankEngine.h"
 #include "ReverseRoomEngine.h"
 #include "SparseEarlyField.h"
+#include "OutputDiffusion.h"
 
 #include <algorithm>
 #include <cmath>
@@ -258,6 +259,12 @@ public:
     void setSparseFieldBurst2Ms   (float ms);
     void setSparseFieldTailGain   (float gain);
 
+    // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
+    // enable=false → bypassed (bit-null on every other preset). amount maps to
+    // the allpass coefficient, lfoScale tames the built-in wobble, delayScale
+    // spreads the allpass delays for denser HF smearing.
+    void setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale);
+
     // Phase β (2026-05-29): per-preset FDN base delays. Lets each preset
     // choose a 16-int delay-line set tuned to match a specific anchor's
     // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
@@ -364,12 +371,20 @@ private:
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
+    FDNReverbT<true, 32> accurateHall32_; // algo 12 (2026-06-10): 32-line AccurateHall (double lines + order-32 Hadamard) for HF modal density — Bright Hall metallic-ring fix. Gets every accurateHall_ setter forwarded alongside.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
     // arriving as discrete clicks.
     DiffusionStage diffuser_;
     EarlyReflections er_;
+
+    // Post-tank OUTPUT diffuser — per-preset (Bright Hall). Smears the FDN's
+    // sparse HF tail modes into a dense wash (kills the metallic ring). OFF by
+    // default: when outDiffActive_ is false the process() call is skipped
+    // entirely → every other preset is bit-null. Set via setOutputDiffusion().
+    OutputDiffusion outputDiffusion_;
+    bool outDiffActive_ = false;
 
     EngineType currentEngine_ = EngineType::Dattorro;
     int currentAlgorithm_ = 0;

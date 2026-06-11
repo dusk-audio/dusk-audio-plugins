@@ -37,6 +37,9 @@ enum class EngineType : int
                             // with a reduced AccurateHall octave-GEQ tail. Closes the early-
                             // arrival wall (energy_t50/first50/attack/onset/diffusion_flux) the
                             // back-loading FDN/tank topologies structurally cannot.
+    AccurateHall32    = 12, // 32-line variant of AccurateHall (double the feedback lines +
+                            // order-32 Hadamard) for high-frequency modal density — kills the
+                            // metallic ring of the 16-line FDN. Bright Hall only.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -46,7 +49,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 12; }
+inline int getNumAlgorithms() { return 13; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -63,8 +66,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Reverse Room (Lexicon)",   EngineType::ReverseRoom     },
         { "Accurate Hall (FDN-GEQ)",  EngineType::AccurateHall    },
         { "Sparse Field (Early)",     EngineType::SparseField     },
+        { "Accurate Hall 32 (Dense)", EngineType::AccurateHall32  },
     };
-    if (index < 0 || index >= 12)
+    if (index < 0 || index >= 13)
         index = 0;
     return kEngines[index];
 }

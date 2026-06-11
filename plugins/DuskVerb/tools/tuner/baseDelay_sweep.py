@@ -31,7 +31,7 @@ RENDER = REPO / "build" / "tests" / "duskverb_render" / "duskverb_render"
 VST3 = Path.home() / ".vst3" / "DuskVerb.vst3"
 
 K_MIN = 700           # ~16ms @ 48kHz lower bound
-K_MAX = 6700          # FDNReverb::kMaxBaseDelay
+K_MAX = 6700          # MUST match FDNReverb::kMaxBaseDelay (engine clamps above this)
 N_LINES = 16
 
 # Per-band Hilbert targets in Hz. Bands match full_check.py band edges.

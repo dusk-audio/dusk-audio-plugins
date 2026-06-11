@@ -32,6 +32,7 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::ReverseRoom:     return juce::Colour (0xff9b6dff);  // violet — reverse room
         case EngineType::AccurateHall:    return juce::Colour (0xffa8e84d);  // lime — accurate per-octave halls
         case EngineType::SparseField:     return juce::Colour (0xff4de8d9);  // aqua — sparse early field
+        case EngineType::AccurateHall32:  return juce::Colour (0xff6ee87a);  // green — dense 32-line hall
     }
     return juce::Colour (0xffff7a3d);
 }

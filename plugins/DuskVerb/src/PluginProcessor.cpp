@@ -1798,7 +1798,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Blade Runner 224", {{ 16.0236f, 12.3625f, 27.0000f, 9.6761f, 8.1305f, 7.4944f, 4.9930f, 2.7399f, 1.9333f }} },
             { "Ambience", {{ 1.3581f, 1.5841f, 1.1106f, 0.7022f, 0.8357f, 0.8101f, 0.8043f, 0.8688f, 0.9877f }} },
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
-            { "Bright Hall", {{ 7.8074f, 7.0818f, 6.0995f, 5.6386f, 4.6386f, 4.2369f, 3.5919f, 3.0193f, 2.3286f }} },
+            { "Bright Hall", {{ 8.2160f, 6.6804f, 6.4622f, 5.8494f, 4.6598f, 4.2287f, 3.5663f, 2.8808f, 2.3479f }} },
             { "Drum Plate", {{ 1.4806f, 1.7512f, 1.7059f, 1.8501f, 1.8154f, 1.6800f, 1.7348f, 1.8968f, 4.9167f }} },
             { "Tiled Room", {{ 0.6205f, 0.8945f, 0.7593f, 0.7463f, 0.7543f, 0.7503f, 0.6429f, 0.5625f, 0.4257f }} },
             { "Medium Drum Room", {{ 0.7283f, 1.0271f, 0.7906f, 1.0167f, 0.7691f, 0.7298f, 0.7645f, 0.7753f, 1.0098f }} },
@@ -1808,6 +1808,39 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         for (int b = 0; b < 9; ++b)
             engine.setAccurateHallOctaveT60 (
                 b, it != kAccurateHallT60ByName.end() ? it->second.t60[b] : 0.0f);
+    }
+
+    // ─── Per-preset post-tank OUTPUT diffusion (Bright Hall metallic-ring) ──
+    // The 16-line FDN leaves sparse, isolated HF tail modes above 4 kHz (tail
+    // spectral kurtosis ~19 vs the dense anchor ~12) that read as a metallic
+    // ring on a bright, long-HF preset. A 4-stage allpass cascade on the wet
+    // tail smears them into a denser wash. Unlisted presets → disabled (the
+    // process() call is skipped → bit-null). amount / lfoScale / delayScale
+    // tuned by tools/tuner/outdiff_kurtosis_sweep.py.
+    {
+        struct OutDiffConfig { float amount, lfoScale, delayScale; };
+        static const std::map<std::string_view, OutDiffConfig> kOutputDiffusionByName = {
+            // BEGIN_OUTDIFF_MAP (maintained by outdiff_kurtosis_sweep.py)
+            // END_OUTDIFF_MAP
+        };
+        // Sweep override: DUSKVERB_OUTDIFF="amount,lfoScale,delayScale" forces
+        // the diffuser ON for the preset being rendered (the kurtosis sweep
+        // drives it without a rebuild, like DUSKVERB_FDN_DELAYS).
+        if (const char* env = std::getenv ("DUSKVERB_OUTDIFF"); env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() == 3)
+                engine.setOutputDiffusion (true, t[0].getFloatValue(),
+                                           t[1].getFloatValue(), t[2].getFloatValue());
+            else
+                engine.setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);
+        }
+        else if (auto od = kOutputDiffusionByName.find (std::string_view (name));
+                 od != kOutputDiffusionByName.end())
+            engine.setOutputDiffusion (true, od->second.amount,
+                                       od->second.lfoScale, od->second.delayScale);
+        else
+            engine.setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);   // bypass → bit-null
     }
 
     // Phase 3 (VH->0): per-line energy-following hi-shelf (TimeVaryingDamping).
@@ -1942,7 +1975,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     //
     // Presets not in this map keep the engine default (log-spaced primes
     // 1151..6451 samples) — bit-identical to pre-Phase β behavior.
-    struct BaseDelaySet { int delays[16]; };
+    // 32 entries: the 16-line engines (fdn_/accurateHall_) read [0..15]; the
+    // 32-line accurateHall32_ reads all 32. setFDNBaseDelays forwards ONE pointer
+    // to every engine, so accurateHall32_.setBaseDelays always reads 32 — every
+    // entry MUST define all 32 (else OOB). 16-line presets pad [16..31] with the
+    // engine default tail primes (dormant: their active engine never reads them).
+    struct BaseDelaySet { int delays[32]; };
     static const std::unordered_map<std::string_view, BaseDelaySet> kBaseDelaysByName = {
         // Vocal Hall (Step 2 on v15 baseline, 2026-05-30): restored Phase β
         // sweep result. Without this override the engine's default log-
@@ -1956,28 +1994,41 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         //   lowmid 1.37 Hz (target 1.56, 12% err)
         //   high 2.56 Hz (target 2.47, 3.8% err)
         { "Vocal Hall", { { 1005, 1007, 1050, 1256, 1440, 1921, 2357, 2694,
-                            3069, 3253, 3588, 4086, 4178, 5043, 6014, 6414 } } },
-        // Bright Hall (Phase β sweep, 2026-05-29, 500 trials TPE):
-        // trial 27 — per-band Hilbert peaks bass 3.20Hz (target 3.02,
-        // 6.1% err), lowmid 1.74Hz (target 2.01, 13.5% err), mid 4.30Hz
-        // (target 4.76, 9.6% err), high 6.59Hz (target 7.23, 8.8% err).
-        // All 4 mod gates pass ±30%.
-        { "Bright Hall", { { 707, 814, 1594, 1613, 1791, 2767, 3212, 3692,
-                              4030, 4268, 4579, 4866, 5319, 5659, 5889, 5912 } } },
+                            3069, 3253, 3588, 4086, 4178, 5043, 6014, 6414,
+                            // [16..31] dormant (Vocal Hall is 16-line algo 10):
+                            1213, 1361, 1531, 1721, 1933, 2153, 2417, 2713,
+                            3041, 3413, 3833, 4297, 4817, 5417, 6079, 6469 } } },
+        // Bright Hall (AccurateHall32 algo 12, joint_dense32_sweep.py trial 76,
+        // 2026-06-11): 32 prime delays, mean 3128 ~ the 16-line baseline mean 3121
+        // (T60 held). Joint objective minimized full_check n_fail with a kurtosis
+        // hold; after per-set octave-T60 recalibration this set scores n_fail 13
+        // (baseline 16) AND tail 2-14k spectral kurtosis ~18 -> 14.9 (anchor 12.0,
+        // the metallic ring) — a strict improvement on both axes. All 32 lines
+        // active (AccurateHall32 reads all 32). Octave T60 in kAccurateHallT60ByName.
+        { "Bright Hall", { { 1103, 1249, 1327, 1361, 1531, 1543, 1549, 1637,
+                             1861, 1879, 2053, 2137, 2251, 2371, 2531, 2609,
+                             2741, 3109, 3163, 3371, 3659, 3761, 3943, 4153,
+                             4397, 4721, 4861, 5297, 5431, 5839, 6151, 6521 } } },
         // Ambience / Medium Drum Room (2026-06-10 ripple_delay_sweep): the
         // default log-spaced primes pushed the per-band envelope beats to
         // 4-8 Hz (high tail-mod-ripple std); these sets align the beats to
         // each anchor's slow rate, closing the ripple gate (Ambience high
         // +1.58->-0.04; MDR bass +2.56->-0.01) with all four bands passing.
         { "Ambience", { { 792, 970, 986, 1394, 1474, 2066, 2630, 2735,
-                          3245, 3881, 4084, 4771, 4802, 5151, 6083, 6164 } } },
+                          3245, 3881, 4084, 4771, 4802, 5151, 6083, 6164,
+                          1213, 1361, 1531, 1721, 1933, 2153, 2417, 2713,
+                          3041, 3413, 3833, 4297, 4817, 5417, 6079, 6469 } } },
         { "Medium Drum Room", { { 967, 1110, 1195, 1226, 2190, 2376, 2945, 3198,
-                                 3515, 3624, 4893, 5131, 5333, 5802, 6177, 6402 } } },
+                                 3515, 3624, 4893, 5131, 5333, 5802, 6177, 6402,
+                                 1213, 1361, 1531, 1721, 1933, 2153, 2417, 2713,
+                                 3041, 3413, 3833, 4297, 4817, 5417, 6079, 6469 } } },
         // Drum Plate (2026-06-10 ripple_delay_sweep, ss term off — no sustained
         // anchor, ss_ref would be noiseburst noise floor): closes lowmid +2.68
         // and high +3.57 (the failing bands) while holding bass/mid + octave T60.
         { "Drum Plate", { { 813, 1147, 1447, 1476, 2306, 2392, 2638, 3313,
-                           4055, 4594, 5184, 5202, 5808, 6246, 6423, 6678 } } },
+                           4055, 4594, 5184, 5202, 5808, 6246, 6423, 6678,
+                           1213, 1361, 1531, 1721, 1933, 2153, 2417, 2713,
+                           3041, 3413, 3833, 4297, 4817, 5417, 6079, 6469 } } },
     };
 
     // ─── Phase γ: per-preset post-tank band-trim region gains ────────────
@@ -2026,16 +2077,21 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // copyXmlToBinary drops root-XML attributes added after createXml — so
     // setAttribute injection from a host doesn't survive the deserialization
     // path inside setStateInformation).
+    // CSV of 16 (16-line engines) OR 32 (AccurateHall32) positive ints in
+    // samples. setFDNBaseDelays forwards to every engine; each copies its own
+    // line count (fdn_/accurateHall_ read the first 16, accurateHall32_ reads
+    // all 32). Zero-padded so a 16-token override leaves the 32-line tail
+    // defined (it is not the render target in that case).
     const char* envCsv = std::getenv ("DUSKVERB_FDN_DELAYS");
     if (envCsv != nullptr && envCsv[0] != '\0')
     {
         juce::StringArray tokens;
         tokens.addTokens (juce::String (envCsv), ",", "");
-        if (tokens.size() == 16)
+        if (tokens.size() == 16 || tokens.size() == 32)
         {
-            int parsed[16];
+            int parsed[32] = {};
             bool ok = true;
-            for (int i = 0; i < 16; ++i)
+            for (int i = 0; i < tokens.size(); ++i)
             {
                 const int v = tokens[i].trim().getIntValue();
                 if (v <= 0) { ok = false; break; }

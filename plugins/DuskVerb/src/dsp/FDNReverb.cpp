@@ -82,6 +82,44 @@ void hadamardInPlace8 (float* data)
     }
 }
 
+// In-place fast Walsh-Hadamard transform for N=32 (Sylvester order-32 = the
+// 16x16 butterfly + one more stage; lossless/orthonormal). Drives the dense
+// 32-line AccurateHall32 path. Same structure as hadamardInPlace16 with
+// kLog2N=5 and 1/sqrt(32) normalization folded into the last stage.
+void hadamardInPlace32 (float* data)
+{
+    constexpr int n = 32;
+    constexpr int kLog2N = 5;
+
+    for (int stage = 0; stage < kLog2N - 1; ++stage)
+    {
+        int len = 1 << stage;
+        for (int i = 0; i < n; i += 2 * len)
+        {
+            for (int j = 0; j < len; ++j)
+            {
+                float a = data[i + j];
+                float b = data[i + j + len];
+                data[i + j]       = a + b;
+                data[i + j + len] = a - b;
+            }
+        }
+    }
+
+    constexpr float kNorm = 0.176776695f; // 1/sqrt(32)
+    constexpr int lastLen = 1 << (kLog2N - 1); // 16
+    for (int i = 0; i < n; i += 2 * lastLen)
+    {
+        for (int j = 0; j < lastLen; ++j)
+        {
+            float a = data[i + j];
+            float b = data[i + j + lastLen];
+            data[i + j]            = (a + b) * kNorm;
+            data[i + j + lastLen]  = (a - b) * kNorm;
+        }
+    }
+}
+
 // In-place Householder reflection H = I - 2·v·vᵀ with a per-instance,
 // randomized unit vector v. Replaces the degenerate v = 1/√N form, which had
 // eigenvalue −1 only along the all-ones axis — output[i] = input[i] − 2·mean,
@@ -114,9 +152,15 @@ inline void householderInPlace8 (float* data, const float* v)
 // spaced primes spanning ~2.49 octaves (6451/1151 = 5.605). All primes →
 // mutually coprime → no shared modal alignment. Fits inside kMaxBaseDelay.
 namespace {
-    constexpr int   kDefaultDelays[16] = {
+    // [32]: first 16 = the original log-spaced primes (16-line engines read an
+    // identical first half → bit-null). Lines 16-31 INTERLEAVE 16 more coprime
+    // primes between the originals, doubling the modal density (the 32-line
+    // AccurateHall32 path — Bright Hall metallic-ring fix). All < kMaxBaseDelay.
+    constexpr int   kDefaultDelays[32] = {
         1151, 1289, 1447, 1619, 1823, 2039, 2287, 2579,
-        2887, 3229, 3631, 4073, 4567, 5119, 5749, 6451
+        2887, 3229, 3631, 4073, 4567, 5119, 5749, 6451,
+        1213, 1361, 1531, 1721, 1933, 2153, 2417, 2713,
+        3041, 3413, 3833, 4297, 4817, 5417, 6079, 6469
     };
     constexpr int   kDefaultLeftTaps[8]  = { 0, 3, 5, 7, 8, 10, 12, 15 };
     constexpr int   kDefaultRightTaps[8] = { 1, 2, 4, 6, 9, 11, 13, 14 };
@@ -124,8 +168,8 @@ namespace {
     constexpr float kDefaultRightSigns[8] = { -1, 1, -1, 1, -1, 1, -1, 1 };
 }
 
-template <bool WithOctaveGEQ>
-FDNReverbT<WithOctaveGEQ>::FDNReverbT()
+template <bool WithOctaveGEQ, int N>
+FDNReverbT<WithOctaveGEQ, N>::FDNReverbT()
 {
     std::memcpy (baseDelays_,   kDefaultDelays,    sizeof (baseDelays_));
     std::memcpy (leftTapsIn_,   kDefaultLeftTaps,  sizeof (leftTapsIn_));
@@ -152,8 +196,8 @@ FDNReverbT<WithOctaveGEQ>::FDNReverbT()
     seedHouseholderVectors (seed);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::seedHouseholderVectors (uint32_t seed)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::seedHouseholderVectors (uint32_t seed)
 {
     auto next01 = [&seed]() {
         seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
@@ -172,8 +216,8 @@ void FDNReverbT<WithOctaveGEQ>::seedHouseholderVectors (uint32_t seed)
 }
 
 // ---------------------------------------------------------------------------
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::publishPending()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::publishPending()
 {
     // Pointer swap is the atomic publish. Slot pointer is the only thing the
     // RT thread ever loads — biquad coefficients, perturb matrix, multi-tap
@@ -188,8 +232,8 @@ void FDNReverbT<WithOctaveGEQ>::publishPending()
 }
 
 // ---------------------------------------------------------------------------
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::prepare (double sampleRate, int /*maxBlockSize*/)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
 
@@ -393,8 +437,8 @@ void FDNReverbT<WithOctaveGEQ>::prepare (double sampleRate, int /*maxBlockSize*/
 }
 
 // ---------------------------------------------------------------------------
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::process (const float* inputL, const float* inputR,
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* inputR,
                          float* outputL, float* outputR, int numSamples)
 {
     if (! prepared_)
@@ -637,7 +681,14 @@ void FDNReverbT<WithOctaveGEQ>::process (const float* inputL, const float* input
         else
         {
             std::memcpy (feedback, delayOut, sizeof (feedback));
-            hadamardInPlace16 (feedback);
+            // N-select the full Walsh-Hadamard mix. if constexpr keeps the
+            // N==16 path calling the UNCHANGED hadamardInPlace16 (byte-identical
+            // → fleet bit-null); the 32-line AccurateHall32 path uses the
+            // order-32 transform.
+            if constexpr (N == 32)
+                hadamardInPlace32 (feedback);
+            else
+                hadamardInPlace16 (feedback);
         }
 
         // --- 3) Three-band damping + input injection -> write to delay lines ---
@@ -841,8 +892,8 @@ void FDNReverbT<WithOctaveGEQ>::process (const float* inputL, const float* input
 // ===========================================================================
 // Setters — write raw → compute into pending() → publish.
 // ===========================================================================
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setDecayTime (float seconds)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setDecayTime (float seconds)
 {
     decayTime_ = std::clamp (seconds, 0.2f, 600.0f);
     if (! prepared_) return;
@@ -850,8 +901,8 @@ void FDNReverbT<WithOctaveGEQ>::setDecayTime (float seconds)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setBassMultiply (float mult)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setBassMultiply (float mult)
 {
     bassMultiply_ = std::clamp (mult, 0.5f, 2.5f);
     if (! prepared_) return;
@@ -859,8 +910,8 @@ void FDNReverbT<WithOctaveGEQ>::setBassMultiply (float mult)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setMidMultiply (float mult)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setMidMultiply (float mult)
 {
     midMultiply_ = std::clamp (mult, 0.1f, 4.0f);
     if (! prepared_) return;
@@ -868,16 +919,16 @@ void FDNReverbT<WithOctaveGEQ>::setMidMultiply (float mult)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setSaturation (float amount)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSaturation (float amount)
 {
     pending().saturationAmount = std::clamp (amount, 0.0f, 1.0f);
     if (! prepared_) return;
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setTrebleMultiply (float mult)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setTrebleMultiply (float mult)
 {
     trebleMultiply_ = std::clamp (mult, 0.1f, 1.5f);
     if (! prepared_) return;
@@ -885,8 +936,8 @@ void FDNReverbT<WithOctaveGEQ>::setTrebleMultiply (float mult)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setSubMultiply (float mult)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSubMultiply (float mult)
 {
     subMultiply_ = std::clamp (mult, 0.1f, 2.5f);
     if (! prepared_) return;
@@ -894,8 +945,8 @@ void FDNReverbT<WithOctaveGEQ>::setSubMultiply (float mult)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setHiMidMultiply (float mult)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setHiMidMultiply (float mult)
 {
     hiMidMultiply_ = std::clamp (mult, 0.1f, 2.5f);
     if (! prepared_) return;
@@ -903,8 +954,8 @@ void FDNReverbT<WithOctaveGEQ>::setHiMidMultiply (float mult)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setSubCrossoverFreq (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSubCrossoverFreq (float hz)
 {
     subCrossoverFreq_ = std::clamp (hz, 20.0f, 400.0f);
     if (! prepared_) return;
@@ -912,8 +963,8 @@ void FDNReverbT<WithOctaveGEQ>::setSubCrossoverFreq (float hz)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setAirCrossoverFreq (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setAirCrossoverFreq (float hz)
 {
     airCrossoverFreq_ = std::clamp (hz, 2000.0f, 20000.0f);
     if (! prepared_) return;
@@ -925,8 +976,8 @@ void FDNReverbT<WithOctaveGEQ>::setAirCrossoverFreq (float hz)
 // Plain members (like feedbackModDepth_): written on the message thread, read
 // on the audio thread; aligned float load/store is atomic on the target. The
 // block is gated by shaperActive_ so depth 0 (default) never executes → bypass.
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::updateShaperCoeffs()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::updateShaperCoeffs()
 {
     const float sr = static_cast<float> (sampleRate_);
     const float fc = std::clamp (shaperXoverHz_, 20.0f, 0.49f * sr);
@@ -941,29 +992,29 @@ void FDNReverbT<WithOctaveGEQ>::updateShaperCoeffs()
     shaperRelS_ = onePole (400.0f);            // slow env release (400 ms)
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setShaperDepth (float depth)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setShaperDepth (float depth)
 {
     shaperDepth_  = std::clamp (depth, 0.0f, 1.0f);
     shaperActive_ = shaperDepth_ > 1.0e-6f;
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setShaperTimeMs (float ms)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setShaperTimeMs (float ms)
 {
     shaperTimeMs_ = std::clamp (ms, 20.0f, 300.0f);
     if (prepared_) updateShaperCoeffs();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setShaperXoverHz (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setShaperXoverHz (float hz)
 {
     shaperXoverHz_ = std::clamp (hz, 120.0f, 500.0f);
     if (prepared_) updateShaperCoeffs();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setShaperSens (float sens)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setShaperSens (float sens)
 {
     shaperSens_ = std::clamp (sens, 0.5f, 4.0f);
 }
@@ -972,8 +1023,8 @@ void FDNReverbT<WithOctaveGEQ>::setShaperSens (float sens)
 // Static shelves on the dry input, applied before the delay-line write (scales
 // the input vector B). Outside the feedback loop → ρ(A) untouched → BIBO-safe.
 // Both gains 0 dB → inputMakeupActive_ false → block skipped → bit-exact bypass.
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setInputSubGainDb (float db)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setInputSubGainDb (float db)
 {
     inputSubGainDb_    = std::clamp (db, -6.0f, 6.0f);
     inputMakeupActive_ = std::fabs (inputSubGainDb_)  > 1.0e-4f
@@ -986,8 +1037,8 @@ void FDNReverbT<WithOctaveGEQ>::setInputSubGainDb (float db)
     inputSubR_.designLowShelf (g, 120.0f, sr);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setInputMidGainDb (float db)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setInputMidGainDb (float db)
 {
     inputMidGainDb_    = std::clamp (db, -6.0f, 6.0f);
     inputMakeupActive_ = std::fabs (inputSubGainDb_)  > 1.0e-4f
@@ -1001,8 +1052,8 @@ void FDNReverbT<WithOctaveGEQ>::setInputMidGainDb (float db)
 // pre-gain ⊥ pole locations → restores a band's level (incl. the 500ms+ tail
 // that sets cent_500) WITHOUT changing its in-loop T60. Completes the 3-band
 // pre-emphasis so per-band damping decouples from per-band level. 0 dB → bypass.
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setInputHighGainDb (float db)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setInputHighGainDb (float db)
 {
     inputHighGainDb_   = std::clamp (db, -6.0f, 6.0f);
     inputMakeupActive_ = std::fabs (inputSubGainDb_)  > 1.0e-4f
@@ -1015,8 +1066,8 @@ void FDNReverbT<WithOctaveGEQ>::setInputHighGainDb (float db)
     inputHighR_.designHighShelf (g, 5000.0f, sr);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setCrossoverFreq (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setCrossoverFreq (float hz)
 {
     crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f);
     if (crossoverFreq_ > highCrossoverFreq_)
@@ -1026,24 +1077,24 @@ void FDNReverbT<WithOctaveGEQ>::setCrossoverFreq (float hz)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setModDepth (float depth)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setModDepth (float depth)
 {
     modDepth_ = std::clamp (depth, 0.0f, 2.0f);
     if (prepared_)
         updateModDepth();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setModRate (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setModRate (float hz)
 {
     modRateHz_ = std::max (hz, 0.01f);
     if (prepared_)
         updateLFORates();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setTailSpinDepth (float depth)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setTailSpinDepth (float depth)
 {
     tailSpinDepth_  = std::clamp (depth, 0.0f, 1.0f);
     const bool active = tailSpinDepth_ > 1.0e-6f;
@@ -1057,8 +1108,8 @@ void FDNReverbT<WithOctaveGEQ>::setTailSpinDepth (float depth)
     tailSpinActive_ = active;
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setTailSpinRate (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setTailSpinRate (float hz)
 {
     tailSpinRateHz_ = std::clamp (hz, 0.1f, 10.0f);
     if (prepared_)
@@ -1068,8 +1119,8 @@ void FDNReverbT<WithOctaveGEQ>::setTailSpinRate (float hz)
 // Per-line phase increment = 2π · (base rate · γ_c) / sampleRate. The γ_c
 // spread gives each delay line its own LFO frequency, so the summed output
 // carries multiple distinct AM components instead of one shared rate.
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::updateTailSpinIncs()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::updateTailSpinIncs()
 {
     constexpr float kPi2 = 6.283185307179586f;
     const float sr = static_cast<float> (sampleRate_);
@@ -1077,8 +1128,8 @@ void FDNReverbT<WithOctaveGEQ>::updateTailSpinIncs()
         tailSpinInc_[ch] = kPi2 * (tailSpinRateHz_ * tailSpinRateMul_[ch]) / sr;
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setSize (float size)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSize (float size)
 {
     sizeParam_ = std::clamp (size, 0.0f, 1.0f);
     if (! prepared_) return;
@@ -1088,8 +1139,8 @@ void FDNReverbT<WithOctaveGEQ>::setSize (float size)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setFreeze (bool frozen)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setFreeze (bool frozen)
 {
     const bool wasTransition = (frozen != pending().frozen);
     pending().frozen = frozen;
@@ -1115,8 +1166,8 @@ void FDNReverbT<WithOctaveGEQ>::setFreeze (bool frozen)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setInLoopPeaking (float freqHz, float qFactor, float gainDb)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setInLoopPeaking (float freqHz, float qFactor, float gainDb)
 {
     // Design the same peaking biquad on every line so the modal boost is
     // coherent across the Hadamard mix. Per-line variation would smear
@@ -1139,8 +1190,8 @@ void FDNReverbT<WithOctaveGEQ>::setInLoopPeaking (float freqHz, float qFactor, f
         inLoopPeak_[i].setBand (freqHz, qFactor, gainDb);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setTimeVaryingHiDamp (float earlyMult, float lateMult,
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setTimeVaryingHiDamp (float earlyMult, float lateMult,
                                       float crossoverHz, float releaseSec,
                                       float refLevel)
 {
@@ -1156,8 +1207,8 @@ void FDNReverbT<WithOctaveGEQ>::setTimeVaryingHiDamp (float earlyMult, float lat
     tvHiActive_ = std::fabs (earlyMult - lateMult) > 1.0e-6f;
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setDualBassShelf (float fastFc, float slowFc,
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setDualBassShelf (float fastFc, float slowFc,
                                    float fastGainDb, float slowGainDb,
                                    float transitionMs)
 {
@@ -1175,8 +1226,8 @@ void FDNReverbT<WithOctaveGEQ>::setDualBassShelf (float fastFc, float slowFc,
         dualBassShelf_[i].setShape (fastFc, slowFc, fastGainDb, slowGainDb, transitionMs);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setBaseDelays (const int* delays)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setBaseDelays (const int* delays)
 {
     if (delays == nullptr) return;
     for (int i = 0; i < N; ++i)
@@ -1188,8 +1239,8 @@ void FDNReverbT<WithOctaveGEQ>::setBaseDelays (const int* delays)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::resetBaseDelays()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::resetBaseDelays()
 {
     // Restore the engine default (log-spaced primes) — used when a session is
     // loaded with no/unknown preset identity so a prior preset's per-preset
@@ -1202,8 +1253,8 @@ void FDNReverbT<WithOctaveGEQ>::resetBaseDelays()
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setOutputTaps (const int* lt, const int* rt,
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setOutputTaps (const int* lt, const int* rt,
                                 const float* ls, const float* rs)
 {
     if (lt == nullptr || rt == nullptr || ls == nullptr || rs == nullptr)
@@ -1225,15 +1276,15 @@ void FDNReverbT<WithOctaveGEQ>::setOutputTaps (const int* lt, const int* rt,
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setLateGainScale (float scale)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setLateGainScale (float scale)
 {
     pending().lateGainScale = std::max (scale, 0.0f);
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setSizeRange (float min, float max)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSizeRange (float min, float max)
 {
     float newMin = std::max (min, 0.0f);
     float newMax = std::max (max, newMin);
@@ -1251,8 +1302,8 @@ void FDNReverbT<WithOctaveGEQ>::setSizeRange (float min, float max)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setInlineDiffusion (float coeff)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setInlineDiffusion (float coeff)
 {
     LiveParams& p = pending();
     p.inlineDiffCoeff  = std::clamp (coeff, 0.0f, 0.75f);
@@ -1261,22 +1312,22 @@ void FDNReverbT<WithOctaveGEQ>::setInlineDiffusion (float coeff)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setTankDiffusion (float amount)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setTankDiffusion (float amount)
 {
     float a = std::clamp (amount, 0.0f, 1.0f);
     setInlineDiffusion (a * 0.55f);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setUseShortInlineAP (bool use)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setUseShortInlineAP (bool use)
 {
     pending().useShortInlineAP = use;
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setMultiPointOutput (const FDNOutputTap* left, int numL,
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setMultiPointOutput (const FDNOutputTap* left, int numL,
                                      const FDNOutputTap* right, int numR)
 {
     if (left == nullptr || numL <= 0 || right == nullptr || numR <= 0)
@@ -1337,8 +1388,8 @@ void FDNReverbT<WithOctaveGEQ>::setMultiPointOutput (const FDNOutputTap* left, i
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setMultiPointDensity (int tapsPerChannel)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setMultiPointDensity (int tapsPerChannel)
 {
     int totalTaps = tapsPerChannel * N;
     if (totalTaps <= 0 || totalTaps > kMaxMultiTaps)
@@ -1384,8 +1435,8 @@ void FDNReverbT<WithOctaveGEQ>::setMultiPointDensity (int tapsPerChannel)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setHadamardPerturbation (float amount)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setHadamardPerturbation (float amount)
 {
     if (amount <= 0.0f)
     {
@@ -1512,15 +1563,15 @@ void FDNReverbT<WithOctaveGEQ>::setHadamardPerturbation (float amount)
     }
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setUseHouseholder (bool enable)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setUseHouseholder (bool enable)
 {
     pending().useHouseholder = enable;
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setUseWeightedGains (bool enable)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setUseWeightedGains (bool enable)
 {
     useWeightedGains_ = enable;
     if (! prepared_) return;
@@ -1529,8 +1580,8 @@ void FDNReverbT<WithOctaveGEQ>::setUseWeightedGains (bool enable)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setDualSlope (float ratio, int fastCount, float fastGain)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setDualSlope (float ratio, int fastCount, float fastGain)
 {
     dualSlopeRatio_ = std::max (ratio, 0.0f);
     int fastCnt = (fastCount >= 8) ? 8 : 0;
@@ -1545,8 +1596,8 @@ void FDNReverbT<WithOctaveGEQ>::setDualSlope (float ratio, int fastCount, float 
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setStereoCoupling (float amount)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setStereoCoupling (float amount)
 {
     LiveParams& p = pending();
     if (amount < 0.0f)
@@ -1562,8 +1613,8 @@ void FDNReverbT<WithOctaveGEQ>::setStereoCoupling (float amount)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setModDepthFloor (float floor)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setModDepthFloor (float floor)
 {
     modDepthFloor_ = std::clamp (floor, 0.0f, 1.0f);
     if (! prepared_) return;
@@ -1572,8 +1623,8 @@ void FDNReverbT<WithOctaveGEQ>::setModDepthFloor (float floor)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setHighCrossoverFreq (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setHighCrossoverFreq (float hz)
 {
     highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f);
     if (highCrossoverFreq_ < crossoverFreq_)
@@ -1583,8 +1634,8 @@ void FDNReverbT<WithOctaveGEQ>::setHighCrossoverFreq (float hz)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setAirTrebleMultiply (float mult)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setAirTrebleMultiply (float mult)
 {
     airTrebleMultiply_ = std::clamp (mult, 0.1f, 1.5f);
     if (! prepared_) return;
@@ -1592,8 +1643,8 @@ void FDNReverbT<WithOctaveGEQ>::setAirTrebleMultiply (float mult)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
 {
     structHFBaseFreq_ = baseFreqHz;
     LiveParams& p = pending();
@@ -1610,8 +1661,8 @@ void FDNReverbT<WithOctaveGEQ>::setStructuralHFDamping (float baseFreqHz, float 
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setStructuralLFDamping (float hz)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setStructuralLFDamping (float hz)
 {
     LiveParams& p = pending();
     if (hz <= 0.0f)
@@ -1626,14 +1677,14 @@ void FDNReverbT<WithOctaveGEQ>::setStructuralLFDamping (float hz)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setFeedbackModDepth (float depth)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setFeedbackModDepth (float depth)
 {
     feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setModulationTopology (DspUtils::ModulationTopology t)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setModulationTopology (DspUtils::ModulationTopology t)
 {
     if (t == modulationTopology_)
         return;
@@ -1657,8 +1708,8 @@ void FDNReverbT<WithOctaveGEQ>::setModulationTopology (DspUtils::ModulationTopol
     }
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setCrossoverModDepth (float depth)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setCrossoverModDepth (float depth)
 {
     // The previous behaviour pushed the base coefficient back into the
     // legacy setLowCrossoverCoeff path. With the snapshot now owning the
@@ -1667,8 +1718,8 @@ void FDNReverbT<WithOctaveGEQ>::setCrossoverModDepth (float depth)
     crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setDecayBoost (float boost)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setDecayBoost (float boost)
 {
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
     if (! prepared_) return;
@@ -1676,8 +1727,8 @@ void FDNReverbT<WithOctaveGEQ>::setDecayBoost (float boost)
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setPerLineDecayTilt (float shortLineScale, float longLineScale)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setPerLineDecayTilt (float shortLineScale, float longLineScale)
 {
     // Range bounds: 0.3..3.0× the base decay. Outside this range the
     // per-band ratio gets so extreme that per-line RT60 hits the
@@ -1689,8 +1740,8 @@ void FDNReverbT<WithOctaveGEQ>::setPerLineDecayTilt (float shortLineScale, float
     publishPending();
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::clearBuffers()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::clearBuffers()
 {
     for (int i = 0; i < N; ++i)
     {
@@ -1730,8 +1781,8 @@ void FDNReverbT<WithOctaveGEQ>::clearBuffers()
 // ===========================================================================
 // Snapshot derivation
 // ===========================================================================
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::computeDelayLengths (LiveParams& p)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::computeDelayLengths (LiveParams& p)
 {
     float sizeScale = sizeRangeMin_ + (sizeRangeMax_ - sizeRangeMin_) * sizeParam_;
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
@@ -1783,8 +1834,8 @@ void FDNReverbT<WithOctaveGEQ>::computeDelayLengths (LiveParams& p)
     }
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::computeDecayCoefficients (LiveParams& p)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::computeDecayCoefficients (LiveParams& p)
 {
     const float sr = static_cast<float> (sampleRate_);
 
@@ -1984,8 +2035,8 @@ void FDNReverbT<WithOctaveGEQ>::computeDecayCoefficients (LiveParams& p)
         p.octaveActive = octaveGEQActive_;
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::updateModDepth()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::updateModDepth()
 {
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
@@ -1993,8 +2044,8 @@ void FDNReverbT<WithOctaveGEQ>::updateModDepth()
         lfos_[i].setDepth (modDepthSamples_);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::updateLFORates()
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::updateLFORates()
 {
     // Tightly clustered LFO rate spread (0.95×–1.05×) so 16 delay-line
     // modulators breathe together as a unified slow mass rather than
@@ -2003,9 +2054,13 @@ void FDNReverbT<WithOctaveGEQ>::updateLFORates()
     // Previous spread was 0.80×–1.36× (70 %), which produced audible
     // sideband beating and chorus-in-the-tail across every long-decay
     // FDN preset — the dominant complaint on the hall tails.
-    static constexpr float kRateFactors[N] = {
+    // [32]: first 16 unchanged (16-line path bit-null); lines 16-31 interleave
+    // the same 0.95×–1.05× cluster so all 32 modulators breathe together.
+    static constexpr float kRateFactors[32] = {
         0.950f, 0.957f, 0.964f, 0.971f, 0.978f, 0.985f, 0.992f, 0.998f,
-        1.002f, 1.008f, 1.015f, 1.022f, 1.029f, 1.036f, 1.043f, 1.050f
+        1.002f, 1.008f, 1.015f, 1.022f, 1.029f, 1.036f, 1.043f, 1.050f,
+        0.953f, 0.960f, 0.967f, 0.974f, 0.981f, 0.988f, 0.995f, 1.000f,
+        1.005f, 1.011f, 1.018f, 1.025f, 1.032f, 1.039f, 1.046f, 1.048f
     };
     for (int i = 0; i < N; ++i)
         lfos_[i].setRate (modRateHz_ * kRateFactors[i]);
@@ -2021,8 +2076,8 @@ void FDNReverbT<WithOctaveGEQ>::updateLFORates()
     masterDampingLfoIncr_ = (twoPi * kDampingModRateHz) / static_cast<float> (sampleRate_);
 }
 
-template <bool WithOctaveGEQ>
-void FDNReverbT<WithOctaveGEQ>::setOctaveT60 (int band, float seconds)
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setOctaveT60 (int band, float seconds)
 {
     if (band < 0 || band >= kNumOctaveBands)
         return;
@@ -2040,5 +2095,6 @@ void FDNReverbT<WithOctaveGEQ>::setOctaveT60 (int band, float seconds)
 
 // Explicit instantiations: <false> = the legacy GEQ-free engine (the whole
 // fleet + Shimmer/NonLinear/ReverseRoom/Multiband); <true> = AccurateHall.
-template class FDNReverbT<false>;
-template class FDNReverbT<true>;
+template class FDNReverbT<false, 16>;   // fdn_ — algos 4/8/9 etc., 16-line (bit-null baseline)
+template class FDNReverbT<true, 16>;    // accurateHall_ — algo 10, 16-line (7 migrated presets)
+template class FDNReverbT<true, 32>;    // accurateHall32_ — algo 12, 32-line (Bright Hall metallic fix)

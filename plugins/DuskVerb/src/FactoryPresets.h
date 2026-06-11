@@ -657,8 +657,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // nine-octave T60 map; composite-exact GEQ made the 7.3 s anchor lows
         // reachable (the old leaky cascade diverged >190 s). A/B'd against
         // the VintageTank baseline (18) — ship the winner.
+        // AccurateHall32 (algo 12) migration 2026-06-11: 32-line dense mode-spread
+        // cuts the metallic tail and IMPROVES the gates. A joint n_fail+kurtosis
+        // sweep (joint_dense32_sweep.py, 90 trials, SQLite Pareto front) found a
+        // 32-delay set that, after per-set octave-T60 recalibration, scores
+        // full_check n_fail 13 vs the algo-10 baseline 16 (sustained-correct
+        // harness) AND drops the tail 2-14 kHz spectral kurtosis ~18 -> 14.9
+        // (anchor 12.0; the metallic ring). Worst sub-bands 4-6k 11.7->7.3,
+        // 6-9k 11.6->9.5. The earlier kurtosis-ONLY set (kurt 14.3) was rejected:
+        // it ignored the gates and cost n_fail 20. Delays in kBaseDelaysByName;
+        // octave T60 recalibrated for these delays in kAccurateHallT60ByName.
         { "Bright Hall",          "Halls",
-          10, 0.40f, false,  0.0f, 0,
+          12, 0.40f, false,  0.0f, 0,
           5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
           0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, -1.7407f,  // Diffusion 0.499->0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring (spec_L1 max 8.06->6.44), fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x; n_fail 20->18. Width 0.944->1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
