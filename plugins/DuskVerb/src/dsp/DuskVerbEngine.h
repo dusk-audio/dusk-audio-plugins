@@ -258,6 +258,7 @@ public:
     void setSparseFieldDecayMs    (float ms);
     void setSparseFieldBurst2Ms   (float ms);
     void setSparseFieldTailGain   (float gain);
+    void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
 
     // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
     // enable=false → bypassed (bit-null on every other preset). amount maps to
@@ -275,6 +276,14 @@ public:
     // previous preset's custom delays (setFDNBaseDelays(nullptr) only PRESERVES,
     // it does not reset).
     void resetFDNBaseDelays();
+
+    // TiledRoom (algo 13) COMPOSITE voicing — configures the sparse ER front-end
+    // + the ER/tail mix (the 16-line AccurateHall tail is configured via the
+    // preset octave-T60 map + decay/mod). Used by the DUSKVERB_TILEDROOM env
+    // override (tuning sweep) and the per-preset bake. Params:
+    // erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, (spare).
+    void setTiledRoomVoicing (float erSize, float onsetMs, float erDecayMs,
+                              float burst2Ms, float sparseTailGain, float spare);
 
     // Reset the name-keyed engine config (PostTankEQ bands, modulation topology,
     // per-line decay tilt, FDN base delays) — the parts NOT carried by APVTS /
@@ -372,6 +381,10 @@ private:
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
     FDNReverbT<true, 32> accurateHall32_; // algo 12 (2026-06-10): 32-line AccurateHall (double lines + order-32 Hadamard) for HF modal density — Bright Hall metallic-ring fix. Gets every accurateHall_ setter forwarded alongside.
+    // algo 13 (TiledRoom) is a COMPOSITE in the process() switch: sparseField_ ER
+    // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
+    // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
+    // superseded by this composite. setTiledRoomVoicing() configures sparseField_.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -405,6 +418,10 @@ private:
     // algo 11 SparseField: level of the reduced accurateHall_ tail under the
     // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
     float sparseTailGain_ = 0.45f;
+    // algo 13 composite: ER front-end level in the mix (1.0 = full ER). Lets a
+    // less-front-loaded room (Medium Drum Room, anchor first50 44.8%) back off the
+    // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
+    float sparseERGain_ = 1.0f;
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated

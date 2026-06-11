@@ -442,6 +442,7 @@ void DuskVerbEngine::setSparseFieldOnsetMs  (float ms)   { sparseField_.setOnset
 void DuskVerbEngine::setSparseFieldDecayMs  (float ms)   { sparseField_.setDecayMs (ms); }
 void DuskVerbEngine::setSparseFieldBurst2Ms (float ms)   { sparseField_.setBurst2Ms (ms); }
 void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
+void DuskVerbEngine::setSparseERGain        (float gain) { sparseERGain_   = std::clamp (gain, 0.0f, 2.0f); }
 
 void DuskVerbEngine::setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale)
 {
@@ -468,6 +469,21 @@ void DuskVerbEngine::resetFDNBaseDelays()
 {
     fdn_.resetBaseDelays(); accurateHall_.resetBaseDelays();
     multibandFdn_.forEachTank ([](FDNReverb& tk){ tk.resetBaseDelays(); });
+}
+
+void DuskVerbEngine::setTiledRoomVoicing (float erSize, float onsetMs, float erDecayMs,
+                                          float burst2Ms, float sparseTailGain, float erGain)
+{
+    // Composite voicing: sparse ER front-end + the ER/tail mix. The 16-line
+    // AccurateHall tail is configured separately via the preset's octave-T60 map
+    // + decay/mod (frozen). erGain backs off the ER level for less-front-loaded
+    // rooms (Tiled Room = 1.0; Medium Drum Room < 1.0 to hit first50 44.8%).
+    setSparseFieldSize     (erSize);
+    setSparseFieldOnsetMs  (onsetMs);
+    setSparseFieldDecayMs  (erDecayMs);
+    setSparseFieldBurst2Ms (burst2Ms);
+    setSparseFieldTailGain (sparseTailGain);
+    setSparseERGain        (erGain);
 }
 
 void DuskVerbEngine::reapplyNeutralEngineConfig()
@@ -972,13 +988,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                                      tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
         case EngineType::SparseField:
-            // Sparse front-loaded early field (owns 0-~150ms) + reduced
-            // AccurateHall octave-GEQ tail (late body only). The tail runs the
-            // preset's full config; sparseTailGain_ pulls its level down so the
-            // sparse field dominates early while the tail supplies decay/body.
-            // The early field and tail are independent, sidestepping the FDN's
-            // inseparable early-wash/late-body. Summed here; SparseField makes
-            // its own early field, so it's excluded from the smooth-ER bus below.
+        case EngineType::TiledRoom:
+            // COMPOSITE: sparse tapped-delay ER front-end (owns the front-loaded
+            // first ~50 ms) + the mature 16-line AccurateHall octave-GEQ tail
+            // (dense -> no flutter; per-octave GEQ -> correct bright-early/dark-
+            // late). sparseTailGain_ sets the tail/ER balance. The two stages are
+            // independent, sidestepping the FDN's inseparable early-wash/late-body.
+            //   - SparseField (algo 11): hall-voiced ER.
+            //   - TiledRoom  (algo 13): tight-room ER + dark, frozen tail (the
+            //     4-line hand-rolled tail was a kill-test: it conquered the front-
+            //     load but a sparse tail flutters [osc P2P +39] + inverts the
+            //     spectrum [cent] -> 39 fails. The 16-line FDN tail fixes both).
+            // Both make their own early field -> excluded from the smooth-ER bus.
             accurateHall_.process (tankInL_.data(), tankInR_.data(),
                                    tankOutL_.data(), tankOutR_.data(), numSamples);
             sparseField_.process (tankInL_.data(), tankInR_.data(),
@@ -986,9 +1007,9 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             for (int i = 0; i < numSamples; ++i)
             {
                 tankOutL_[static_cast<size_t> (i)] =
-                    tankOutL_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutL_[static_cast<size_t> (i)];
+                    tankOutL_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
                 tankOutR_[static_cast<size_t> (i)] =
-                    tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)];
+                    tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
             }
             break;
     }
@@ -1016,7 +1037,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // shared ER bus on top would double-count the onset. Exclude both.
     const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage
                            && currentEngine_ != EngineType::ReverseRoom
-                           && currentEngine_ != EngineType::SparseField);
+                           && currentEngine_ != EngineType::SparseField
+                           && currentEngine_ != EngineType::TiledRoom);
     for (int i = 0; i < numSamples; ++i)
     {
         float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;

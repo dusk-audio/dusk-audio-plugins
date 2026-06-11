@@ -40,6 +40,11 @@ enum class EngineType : int
     AccurateHall32    = 12, // 32-line variant of AccurateHall (double the feedback lines +
                             // order-32 Hadamard) for high-frequency modal density — kills the
                             // metallic ring of the 16-line FDN. Bright Hall only.
+    TiledRoom         = 13, // Sparse tapped-delay ER front-end (front-loads ~69% of energy in
+                            // the first 50 ms) welded to a SHORT, frozen, low-pass-terminated
+                            // 4-line FDN tail (~1.1 kHz loop -> dark late field). Tight ceramic
+                            // tiled room — the front-load + instant-dark character a single-tank
+                            // FDN structurally cannot express. Tiled Room only.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -49,7 +54,7 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 13; }
+inline int getNumAlgorithms() { return 14; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -73,8 +78,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Hall",          EngineType::AccurateHall    },
         { "Sparse",        EngineType::SparseField     },
         { "Concert Hall",  EngineType::AccurateHall32  },
+        { "Tiled Room",    EngineType::TiledRoom       },
     };
-    if (index < 0 || index >= 13)
+    if (index < 0 || index >= 14)
         index = 0;
     return kEngines[index];
 }

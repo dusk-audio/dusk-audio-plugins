@@ -1800,7 +1800,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
             { "Bright Hall", {{ 8.2160f, 6.6804f, 6.4622f, 5.8494f, 4.6598f, 4.2287f, 3.5663f, 2.8808f, 2.3479f }} },
             { "Drum Plate", {{ 1.4806f, 1.7512f, 1.7059f, 1.8501f, 1.8154f, 1.6800f, 1.7348f, 1.8968f, 4.9167f }} },
-            { "Tiled Room", {{ 0.6205f, 0.8945f, 0.7593f, 0.7463f, 0.7543f, 0.7503f, 0.6429f, 0.5625f, 0.4257f }} },
+            { "Tiled Room", {{ 0.6370f, 0.5615f, 0.6482f, 0.7510f, 0.6489f, 0.6736f, 0.6699f, 0.4520f, 0.1680f }} },
             { "Medium Drum Room", {{ 0.7283f, 1.0271f, 0.7906f, 1.0167f, 0.7691f, 0.7298f, 0.7645f, 0.7753f, 1.0098f }} },
             // END_OCTAVE_T60_MAP
         };
@@ -2052,24 +2052,28 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // helped. Under the new VintageTank row (baked round-3 axes), the
         // same cuts dropped 13 additional gates net. Leaving PostBandTrim
         // at unity (no map entry) gives the cleanest current result.
+        // (Medium Drum Room UltraRoom decouple FALSIFIED — the static post-loop
+        // trim couples to boom/body within-band; best 24 vs FDN 25. Reverted.)
     };
+    PostBandTrimConfig pbt { 0.0f, 0.0f, 0.0f, 0.0f };
     auto pbtIt = kPostBandTrimByName.find (std::string_view (name));
     if (pbtIt != kPostBandTrimByName.end())
+        pbt = pbtIt->second;
+    // Sweep override: DUSKVERB_BANDTRIM = "sub,lowMid,midHi,air" dB (the UltraRoom
+    // decouple level lever). Rebuild-free; only the listed preset opts in.
+    const char* envBt = std::getenv ("DUSKVERB_BANDTRIM");
+    if (envBt != nullptr && envBt[0] != '\0' && pbtIt != kPostBandTrimByName.end())
     {
-        engine.setPostTankBandTrimGainDb (0, pbtIt->second.sub);
-        engine.setPostTankBandTrimGainDb (1, pbtIt->second.lowMid);
-        engine.setPostTankBandTrimGainDb (2, pbtIt->second.midHi);
-        engine.setPostTankBandTrimGainDb (3, pbtIt->second.air);
+        juce::StringArray t; t.addTokens (juce::String (envBt), ",", "");
+        if (t.size() == 4)
+            pbt = { t[0].getFloatValue(), t[1].getFloatValue(),
+                    t[2].getFloatValue(), t[3].getFloatValue() };
     }
-    else
-    {
-        // Defensively zero — applyEngineConfig may run after APVTS has set
-        // non-zero post-band trims from a prior preset that opted in. Without
-        // this reset, switching from VH (opt-in) to e.g. Vocal Plate (no
-        // opt-in) would inherit VH's trim values.
-        for (int r = 0; r < 4; ++r)
-            engine.setPostTankBandTrimGainDb (r, 0.0f);
-    }
+    // Always set (defensive: don't inherit a prior opt-in preset's trims).
+    engine.setPostTankBandTrimGainDb (0, pbt.sub);
+    engine.setPostTankBandTrimGainDb (1, pbt.lowMid);
+    engine.setPostTankBandTrimGainDb (2, pbt.midHi);
+    engine.setPostTankBandTrimGainDb (3, pbt.air);
 
     // Sweep override: DUSKVERB_FDN_DELAYS env var wins over the map. CSV of
     // 16 positive ints in samples. Set by the sweep harness per trial; absent
@@ -2104,6 +2108,42 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             }
         }
     }
+
+    // Algo-13 COMPOSITE voicing (sparse ER front-end + 16-line AccurateHall tail).
+    // Per-preset ER config — only the ER + mix here; the tail (accurateHall_) is
+    // configured by the preset's octave-T60 map + frozen mod. DUSKVERB_TILEDROOM
+    // env (6 floats: erSize,onsetMs,erDecayMs,burst2Ms,sparseTailGain,spare)
+    // overrides for the rebuild-free tuning sweep (applies to whichever composite
+    // preset is loading).
+    // 6th field erGain: ER level in the mix (1.0 = full). Backs off the ER for a
+    // less-front-loaded room so it doesn't overshoot energy_first50.
+    struct CompositeER { float erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, erGain; };
+    static const std::unordered_map<std::string_view, CompositeER> kCompositeERByName = {
+        // Tiled Room: tiledroom_voicing_sweep.py best (n_fail 26->16). Tight ER,
+        // fast onset, short discharge, micro-burst ~18 ms, ER/tail mix 0.49, full ER.
+        { "Tiled Room",       { 0.3248f, 1.4567f, 17.1838f, 17.749f, 0.4928f, 1.0000f } },
+        // (Medium Drum Room composite/decouple FALSIFIED — best 24 vs FDN 25;
+        // reverted to the FDN. See the FactoryPresets MDR comment.)
+    };
+    auto erIt = kCompositeERByName.find (std::string_view (name));
+    if (erIt != kCompositeERByName.end())
+    {
+        CompositeER c = erIt->second;
+        const char* envTr = std::getenv ("DUSKVERB_TILEDROOM");
+        if (envTr != nullptr && envTr[0] != '\0')
+        {
+            juce::StringArray t;
+            t.addTokens (juce::String (envTr), ",", "");
+            if (t.size() == 6)
+            {
+                c.erSize = t[0].getFloatValue(); c.onsetMs = t[1].getFloatValue();
+                c.erDecayMs = t[2].getFloatValue(); c.burst2Ms = t[3].getFloatValue();
+                c.sparseTailGain = t[4].getFloatValue(); c.erGain = t[5].getFloatValue();
+            }
+        }
+        engine.setTiledRoomVoicing (c.erSize, c.onsetMs, c.erDecayMs, c.burst2Ms, c.sparseTailGain, c.erGain);
+    }
+
     auto bdIt = kBaseDelaysByName.find (std::string_view (name));
     if (bdIt != kBaseDelaysByName.end())
         engine.setFDNBaseDelays (bdIt->second.delays);
