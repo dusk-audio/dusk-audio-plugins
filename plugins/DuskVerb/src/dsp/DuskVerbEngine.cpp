@@ -15,6 +15,13 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sampleRate_ = sampleRate;
     maxBlockSize_ = maxBlockSize;
 
+    // SR-dependent shell coeffs are derived from stored corner freqs — recompute
+    // here so a sample-rate change can't leave them stale even if the caller
+    // doesn't re-install the preset config afterward (the sub-engines below
+    // already recompute their own coeffs in prepare()).
+    recomputeTankFeedCoeffs();
+    setTankSplitHz (tankSplitHz_);
+
     // All engines stay prepared so setAlgorithm() never has to allocate.
     dattorro_.prepare (sampleRate, maxBlockSize);
     sixAPTank_.prepare (sampleRate, maxBlockSize);
@@ -476,7 +483,7 @@ void DuskVerbEngine::setFDNBaseDelays (const int* delays)
 
 void DuskVerbEngine::resetFDNBaseDelays()
 {
-    fdn_.resetBaseDelays(); accurateHall_.resetBaseDelays();
+    fdn_.resetBaseDelays(); accurateHall_.resetBaseDelays(); accurateHall32_.resetBaseDelays();
     multibandFdn_.forEachTank ([](FDNReverb& tk){ tk.resetBaseDelays(); });
 }
 
@@ -510,6 +517,10 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setTankFeedEQ (200.0f, 0.0f, 2500.0f, 0.0f);
     // Dattorro density-AP jitter → engine default (0.02).
     setDattorroDensityJitter (0.02f);
+    // Output diffusion → disabled. applyEngineConfig's else-branch covers the
+    // with-preset path, but the null-preset swap calls THIS alone — without it,
+    // a prior preset's post-tank diffusion (e.g. Bright Hall) would leak.
+    setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);
 }
 
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
@@ -691,12 +702,20 @@ void DuskVerbEngine::setTankFeedEQ (float lowFc, float lowGainDb, float highFc, 
     tankFeedHighFc_   = std::clamp (highFc, 500.0f, 16000.0f);
     tankFeedLowGain_  = std::pow (10.0f, std::clamp (lowGainDb,  -24.0f, 6.0f) / 20.0f);
     tankFeedHighGain_ = std::pow (10.0f, std::clamp (highGainDb, -24.0f, 6.0f) / 20.0f);
-    const float sr = static_cast<float> (sampleRate_);
-    tankFeedLowCoeff_  = std::exp (-2.0f * 3.14159265f * tankFeedLowFc_  / sr);
-    tankFeedHighCoeff_ = std::exp (-2.0f * 3.14159265f * tankFeedHighFc_ / sr);
+    recomputeTankFeedCoeffs();
     tankFeedActive_ = std::abs (lowGainDb) > 0.01f || std::abs (highGainDb) > 0.01f;
     if (! tankFeedActive_)
         tfLowStateL_ = tfLowStateR_ = tfHighStateL_ = tfHighStateR_ = 0.0f;
+}
+
+// One-pole shelf coeffs from the stored corner freqs at the current sampleRate_.
+// Called by setTankFeedEQ and by prepare() so an SR change can't leave them
+// stale (single source of truth — no duplicated formula).
+void DuskVerbEngine::recomputeTankFeedCoeffs()
+{
+    const float sr = static_cast<float> (sampleRate_);
+    tankFeedLowCoeff_  = std::exp (-2.0f * 3.14159265f * tankFeedLowFc_  / sr);
+    tankFeedHighCoeff_ = std::exp (-2.0f * 3.14159265f * tankFeedHighFc_ / sr);
 }
 
 void DuskVerbEngine::setERBusShelves (float lowGainDb, float highGainDb)

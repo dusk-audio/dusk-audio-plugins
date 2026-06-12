@@ -211,7 +211,7 @@ private:
         float modDepthScale     [N] {};
         float inputGainScale    [N] {};
         float outputGainScale   [N] {};
-        float outputTapGain     [N] { 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1 };  // first 16 = 1 (16-line bit-null); computeDecayCoefficients overwrites all N
+        float outputTapGain     [N] { 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1 };  // brace inits first 16 only; the ctor fills all N to 1.0 (computeDecayCoefficients does NOT write this — only setDualSlope does)
 
         // Tap routing (standard 8-tap path)
         int   leftTaps          [kNumOutputTaps] { 0,3,5,7,8,10,12,15 };

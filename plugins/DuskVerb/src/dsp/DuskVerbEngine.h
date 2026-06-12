@@ -564,4 +564,5 @@ private:
 
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
+    void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
 };

@@ -185,6 +185,13 @@ FDNReverbT<WithOctaveGEQ, N>::FDNReverbT()
     std::memcpy (paramSlots_[0].rightTaps,  kDefaultRightTaps,  sizeof (kDefaultRightTaps));
     std::memcpy (paramSlots_[0].leftSigns,  kDefaultLeftSigns,  sizeof (kDefaultLeftSigns));
     std::memcpy (paramSlots_[0].rightSigns, kDefaultRightSigns, sizeof (kDefaultRightSigns));
+    // outputTapGain: the brace-initializer only sets the first 16 (bit-null for
+    // the 16-line default). For N>16 (AccurateHall32) the tail slots default to
+    // 0, and computeDecayCoefficients does NOT write outputTapGain (only
+    // setDualSlope does) — so a tap indexing >=16 would read a muted 0 until a
+    // dual-slope call happens to run. Fill all N to unity at construction so the
+    // first published snapshot is valid regardless of later setter order.
+    for (int i = 0; i < N; ++i) paramSlots_[0].outputTapGain[i] = 1.0f;
     paramSlots_[1] = paramSlots_[0];
 
     // Per-instance Householder reflector seed. Each FDNReverb gets a distinct
