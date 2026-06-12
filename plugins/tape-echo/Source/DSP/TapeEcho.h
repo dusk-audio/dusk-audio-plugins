@@ -135,7 +135,7 @@ public:
 
         updateDelayTimes();
 
-        prepared.store(true, std::memory_order_release);  // Now ready for processing
+        prepared.store(true, std::memory_order_release);
     }
 
     bool isPrepared() const { return prepared.load(std::memory_order_acquire); }

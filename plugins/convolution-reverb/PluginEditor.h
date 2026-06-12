@@ -126,7 +126,7 @@ private:
     // Latency toggle
     std::unique_ptr<juce::ToggleButton> zeroLatencyButton;
 
-    // New controls - IR Offset
+    // IR Offset controls
     std::unique_ptr<juce::Slider> irOffsetSlider;
     std::unique_ptr<juce::Label> irOffsetLabel;
     std::unique_ptr<juce::Label> irOffsetValueLabel;
@@ -200,7 +200,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> eqHighGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> zeroLatencyAttachment;
 
-    // New parameter attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> irOffsetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> qualityAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> volumeCompAttachment;

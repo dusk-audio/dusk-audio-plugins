@@ -131,6 +131,7 @@ void DuskVerbEngine::clearAllBuffers()
     // into the new preset's tail when an idle engine is reused.
     diffuser_.clear();
     er_.clear();
+    tfLowStateL_ = tfLowStateR_ = tfHighStateL_ = tfHighStateR_ = 0.0f;
 
     std::fill (preDelayBufL_.begin(), preDelayBufL_.end(), 0.0f);
     std::fill (preDelayBufR_.begin(), preDelayBufR_.end(), 0.0f);
@@ -184,6 +185,14 @@ void DuskVerbEngine::copyInputHistoryFrom (const DuskVerbEngine& other)
     }
     er_.copySignalStateFrom (other.er_);
     diffuser_.copyStateFrom (other.diffuser_);
+    // Tank-feed shelf integrator state (post-diffuser, pre-tank). Coeffs/params
+    // are NOT copied — applyEngineConfig already set this engine's tank-feed
+    // config for the new preset; only the one-pole state needs continuity to
+    // avoid a transient pop when swapping into a tankFeedActive_ preset.
+    tfLowStateL_  = other.tfLowStateL_;
+    tfLowStateR_  = other.tfLowStateR_;
+    tfHighStateL_ = other.tfHighStateL_;
+    tfHighStateR_ = other.tfHighStateR_;
 }
 
 void DuskVerbEngine::setAlgorithm (int index)
@@ -497,6 +506,10 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setPerLineDecayTilt (1.0f, 1.0f);
     // FDN base delays → engine default log-spaced primes.
     resetFDNBaseDelays();
+    // Tank-feed EQ → neutral shelves (0 dB → branch skipped → bit-identical).
+    setTankFeedEQ (200.0f, 0.0f, 2500.0f, 0.0f);
+    // Dattorro density-AP jitter → engine default (0.02).
+    setDattorroDensityJitter (0.02f);
 }
 
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
@@ -665,6 +678,25 @@ void DuskVerbEngine::setHiCut (float hz)
 void DuskVerbEngine::setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb)
 {
     postTankEQ_.setBand (index, freqHz, qFactor, gainDb);
+}
+
+void DuskVerbEngine::setDattorroDensityJitter (float fraction)
+{
+    dattorro_.setDensityJitter (fraction);
+}
+
+void DuskVerbEngine::setTankFeedEQ (float lowFc, float lowGainDb, float highFc, float highGainDb)
+{
+    tankFeedLowFc_    = std::clamp (lowFc,  20.0f, 2000.0f);
+    tankFeedHighFc_   = std::clamp (highFc, 500.0f, 16000.0f);
+    tankFeedLowGain_  = std::pow (10.0f, std::clamp (lowGainDb,  -24.0f, 6.0f) / 20.0f);
+    tankFeedHighGain_ = std::pow (10.0f, std::clamp (highGainDb, -24.0f, 6.0f) / 20.0f);
+    const float sr = static_cast<float> (sampleRate_);
+    tankFeedLowCoeff_  = std::exp (-2.0f * 3.14159265f * tankFeedLowFc_  / sr);
+    tankFeedHighCoeff_ = std::exp (-2.0f * 3.14159265f * tankFeedHighFc_ / sr);
+    tankFeedActive_ = std::abs (lowGainDb) > 0.01f || std::abs (highGainDb) > 0.01f;
+    if (! tankFeedActive_)
+        tfLowStateL_ = tfLowStateR_ = tfHighStateL_ = tfHighStateR_ = 0.0f;
 }
 
 void DuskVerbEngine::setERBusShelves (float lowGainDb, float highGainDb)
@@ -909,6 +941,34 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         && currentEngine_ != EngineType::DattorroVintage
         && currentEngine_ != EngineType::ReverseRoom)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
+
+    // ---- 3b) Tank-feed EQ (Progenitor inputdamp) ----
+    // Tilts ONLY the tank feed (the ER branch tapped the signal at step 2).
+    // Feed-forward: loop poles / per-band T60 untouched; the recirculating
+    // field is darker from its first pass. Skipped at 0 dB → bit-identical.
+    if (tankFeedActive_)
+    {
+        const float gL = tankFeedLowGain_  - 1.0f;   // shelf deltas
+        const float gH = tankFeedHighGain_ - 1.0f;
+        const float cL = tankFeedLowCoeff_, cH = tankFeedHighCoeff_;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float xl = tankInL_[static_cast<size_t> (i)];
+            float xr = tankInR_[static_cast<size_t> (i)];
+            // Low shelf: y = x + (g-1)·LP(x)
+            tfLowStateL_ = (1.0f - cL) * xl + cL * tfLowStateL_;
+            tfLowStateR_ = (1.0f - cL) * xr + cL * tfLowStateR_;
+            xl += gL * tfLowStateL_;
+            xr += gL * tfLowStateR_;
+            // High shelf: y = x + (g-1)·(x - LP(x))
+            tfHighStateL_ = (1.0f - cH) * xl + cH * tfHighStateL_;
+            tfHighStateR_ = (1.0f - cH) * xr + cH * tfHighStateR_;
+            xl += gH * (xl - tfHighStateL_);
+            xr += gH * (xr - tfHighStateR_);
+            tankInL_[static_cast<size_t> (i)] = xl;
+            tankInR_[static_cast<size_t> (i)] = xr;
+        }
+    }
 
     // ---- 4) Selected late tank ----
     switch (currentEngine_)

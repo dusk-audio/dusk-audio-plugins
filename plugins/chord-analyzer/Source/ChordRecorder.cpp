@@ -27,8 +27,8 @@ void ChordRecorder::stopRecording(double currentTimeSec)
 {
     if (!recording) return;
 
-    // End any active chord at the actual stop moment. Previously this
-    // used getRecordingDuration() which reads the last completed event's
+    // End any active chord at the actual stop moment. Don't use
+    // getRecordingDuration() here: it reads the last completed event's
     // endpoint — for the still-active chord that's effectively its own
     // start time, giving duration = 0 and dropping it via the < 0.05s
     // guard in endCurrentChord(). Convert the absolute plugin time the
