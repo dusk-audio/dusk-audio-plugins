@@ -34,11 +34,11 @@ public:
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
-    void setMidMultiply (float mult);              // NEW: 3-band mid (default 1.0)
+    void setMidMultiply (float mult);              // 3-band mid (default 1.0)
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
     void setHighCrossoverFreq (float hz);
-    void setSaturation (float amount);             // NEW: 0..1 drive softClip
+    void setSaturation (float amount);             // 0..1 drive softClip
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);

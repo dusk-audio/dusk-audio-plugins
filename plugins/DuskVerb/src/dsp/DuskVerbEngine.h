@@ -14,6 +14,8 @@
 #include "SpringEngine.h"
 #include "VintageTankEngine.h"
 #include "ReverseRoomEngine.h"
+#include "SparseEarlyField.h"
+#include "OutputDiffusion.h"
 
 #include <algorithm>
 #include <cmath>
@@ -172,6 +174,24 @@ public:
     // call this leave the EQ stage transparent.
     void setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb);
 
+    // Tank-feed EQ (Progenitor-style 'inputdamp', 2026-06-11). First-order
+    // low + high shelves applied to the TANK FEED (post-diffuser, pre-tank),
+    // NOT the wet sum — the parallel ER branch taps the signal earlier and
+    // stays bright. Feed-forward into the loop: the loop poles (per-band T60)
+    // are untouched; only the recirculating field's spectrum is tilted. This
+    // is the decoupled lever for the bright-attack -> dark-tail temporal
+    // signature (anchor cent 2214 -> 1346 Hz over 50 -> 500 ms) that in-loop
+    // damping (pole-coupled) and post-sum trims (time-uniform) both failed
+    // to express. 0 dB gains -> branch skipped -> bit-identical.
+    void setTankFeedEQ (float lowFc, float lowGainDb, float highFc, float highGainDb);
+
+    // Dattorro density-AP wander depth (see DattorroTank::setDensityJitter).
+    // The in-loop time-varying wander FM-scatters tail energy broadband each
+    // pass — the source of the late-window HF plateau + pitch-chorus on dark
+    // rooms. 0.02 (engine default) = bit-identical; forwarded to the Dattorro
+    // tank only.
+    void setDattorroDensityJitter (float fraction);
+
     // ER-bus spectral correction (2026-06-08, energy-arrival campaign). The
     // parallel ER field is a 500 Hz-2 kHz midrange bump (measured: −11.5 dB @
     // 250-500, −9 @ sub, −16 @ 8-16k relative to its 500-1k peak). Boosting it
@@ -249,6 +269,21 @@ public:
     // that octave inherits the broadband Decay Time.
     void setAccurateHallOctaveT60 (int band, float seconds);
 
+    // SparseField (algo 11) only: the velvet-noise early-field generator dials
+    // + the reduced-tail level. No-op routing on every other engine.
+    void setSparseFieldSize       (float sizeScale);
+    void setSparseFieldOnsetMs    (float ms);
+    void setSparseFieldDecayMs    (float ms);
+    void setSparseFieldBurst2Ms   (float ms);
+    void setSparseFieldTailGain   (float gain);
+    void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
+
+    // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
+    // enable=false → bypassed (bit-null on every other preset). amount maps to
+    // the allpass coefficient, lfoScale tames the built-in wobble, delayScale
+    // spreads the allpass delays for denser HF smearing.
+    void setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale);
+
     // Phase β (2026-05-29): per-preset FDN base delays. Lets each preset
     // choose a 16-int delay-line set tuned to match a specific anchor's
     // per-band modal-beat pattern (Hilbert-FFT envelope peak frequency).
@@ -259,6 +294,14 @@ public:
     // previous preset's custom delays (setFDNBaseDelays(nullptr) only PRESERVES,
     // it does not reset).
     void resetFDNBaseDelays();
+
+    // TiledRoom (algo 13) COMPOSITE voicing — configures the sparse ER front-end
+    // + the ER/tail mix (the 16-line AccurateHall tail is configured via the
+    // preset octave-T60 map + decay/mod). Used by the DUSKVERB_TILEDROOM env
+    // override (tuning sweep) and the per-preset bake. Params:
+    // erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, (spare).
+    void setTiledRoomVoicing (float erSize, float onsetMs, float erDecayMs,
+                              float burst2Ms, float sparseTailGain, float spare);
 
     // Reset the name-keyed engine config (PostTankEQ bands, modulation topology,
     // per-line decay tilt, FDN base delays) — the parts NOT carried by APVTS /
@@ -354,12 +397,35 @@ private:
     DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
+    SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
+    FDNReverbT<true, 32> accurateHall32_; // algo 12 (2026-06-10): 32-line AccurateHall (double lines + order-32 Hadamard) for HF modal density — Bright Hall metallic-ring fix. Gets every accurateHall_ setter forwarded alongside.
+    // algo 13 (TiledRoom) is a COMPOSITE in the process() switch: sparseField_ ER
+    // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
+    // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
+    // superseded by this composite. setTiledRoomVoicing() configures sparseField_.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
     // arriving as discrete clicks.
     DiffusionStage diffuser_;
+
+    // Tank-feed EQ state (Progenitor inputdamp). One-pole LP cores; shelves
+    // realized as y = x + (g-1)*LP(x) (low) and y = x + (g-1)*(x - LP(x))
+    // (high) — exact unity bypass at g=1. Stereo state per shelf.
+    bool  tankFeedActive_   = false;
+    float tankFeedLowFc_    = 200.0f,  tankFeedLowGain_  = 1.0f;   // linear g
+    float tankFeedHighFc_   = 2500.0f, tankFeedHighGain_ = 1.0f;
+    float tankFeedLowCoeff_ = 0.0f,    tankFeedHighCoeff_ = 0.0f;  // LP coeffs
+    float tfLowStateL_ = 0.0f, tfLowStateR_ = 0.0f;
+    float tfHighStateL_ = 0.0f, tfHighStateR_ = 0.0f;
     EarlyReflections er_;
+
+    // Post-tank OUTPUT diffuser — per-preset (Bright Hall). Smears the FDN's
+    // sparse HF tail modes into a dense wash (kills the metallic ring). OFF by
+    // default: when outDiffActive_ is false the process() call is skipped
+    // entirely → every other preset is bit-null. Set via setOutputDiffusion().
+    OutputDiffusion outputDiffusion_;
+    bool outDiffActive_ = false;
 
     EngineType currentEngine_ = EngineType::Dattorro;
     int currentAlgorithm_ = 0;
@@ -375,6 +441,15 @@ private:
     std::vector<float> tankInL_, tankInR_;
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
+    std::vector<float> sparseOutL_, sparseOutR_;   // algo 11: sparse early-field scratch
+
+    // algo 11 SparseField: level of the reduced accurateHall_ tail under the
+    // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
+    float sparseTailGain_ = 0.45f;
+    // algo 13 composite: ER front-end level in the mix (1.0 = full ER). Lets a
+    // less-front-loaded room (Medium Drum Room, anchor first50 44.8%) back off the
+    // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
+    float sparseERGain_ = 1.0f;
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated
@@ -489,4 +564,5 @@ private:
 
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
+    void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
 };

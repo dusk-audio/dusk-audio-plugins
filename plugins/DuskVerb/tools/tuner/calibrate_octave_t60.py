@@ -44,6 +44,7 @@ ANCHORS = {
     "79 Vocal Chamber":     f"{ANCH}/vvv-79vc/vvv-79vc_noiseburst.wav",
     "Ambience":             f"{ANCH}/vvv-ambience/vvv-ambience_noiseburst.wav",
     "Bright Hall":          f"{ANCH}/vvv-bright-hall/vvv-bright-hall_noiseburst.wav",
+    "Medium Drum Room":     f"{ANCH}/vvv-fat-snare-room/vvv-fat-snare-room_noiseburst.wav",
 }
 
 
@@ -98,12 +99,15 @@ def render(name):
 
 
 def measure(dv, anchor):
-    out = []
-    for lo, hi in BANDS:
-        d = _t60_band_schroeder(dv, lo, hi)
-        a = _t60_band_schroeder(anchor, lo, hi)
-        out.append((d, a))
-    return out
+    # Parallel band measurement: 18 independent sosfiltfilt+Schroeder fits.
+    # Threads (not processes) — scipy releases the GIL in the filter kernels
+    # and shared arrays avoid the copy blow-up that OOM'd past process pools
+    # (memory: duskverb_tuner_workers). ~4x on the measure step.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        dvs = [ex.submit(_t60_band_schroeder, dv, lo, hi) for lo, hi in BANDS]
+        anc = [ex.submit(_t60_band_schroeder, anchor, lo, hi) for lo, hi in BANDS]
+        return [(d.result(), a.result()) for d, a in zip(dvs, anc)]
 
 
 def main():
@@ -127,7 +131,17 @@ def main():
                     continue
                 pct = (d - a) / a * 100
                 ok = abs(pct) <= 5; npass += ok
-                new[k] = round(targets[name][k] * (a / d), 4)
+                # Divergence guard: with the composite-exact GEQ the fixed
+                # point converges fast wherever the band is reachable. A
+                # target inflating past 8x the anchor means an in-loop loss
+                # CEILING (e.g. the always-on 17 kHz anti-alias one-pole caps
+                # 16k T60 at ~3-4 s) — cap and flag instead of running away.
+                proposed = targets[name][k] * (a / d)
+                if proposed > 8.0 * a:
+                    new[k] = round(8.0 * a, 4)
+                    cells.append(f"{['63','125','250','500','1k','2k','4k','8k','16k'][k]}:{pct:+.0f}%CEIL")
+                    continue
+                new[k] = round(proposed, 4)
                 cells.append(f"{['63','125','250','500','1k','2k','4k','8k','16k'][k]}:{pct:+.0f}%")
             print(f"  {name:22s} {npass}/9  " + " ".join(cells))
             targets[name] = new

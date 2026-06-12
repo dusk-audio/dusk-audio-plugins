@@ -71,6 +71,7 @@ target_sources(DuskVerb
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
         src/dsp/FDNReverb.cpp
+        src/dsp/OctaveGEQDesign.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/QuadTank.cpp
         src/dsp/SixAPTankEngine.cpp
