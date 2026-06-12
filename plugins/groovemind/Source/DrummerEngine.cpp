@@ -154,7 +154,8 @@ bool DrummerEngine::loadStyleClassifier(const juce::File& modelFile)
 void DrummerEngine::selectPatternWithML()
 {
     // Implements ML-based pattern selection with query-based fallback.
-    // Duplicates selectNewPattern() logic as a separate entry point for explicit ML selection.    if (!styleClassifier.loaded())
+    // Duplicates selectNewPattern() logic as a separate entry point for explicit ML selection.
+    if (!styleClassifier.loaded())
     {
         // Use query-based fallback directly to avoid recursion
         auto query = buildQuery();

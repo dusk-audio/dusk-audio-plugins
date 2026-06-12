@@ -72,8 +72,12 @@ def main():
     # final scoreboard
     d = "/tmp/odk_best"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
     env = dict(os.environ, DUSKVERB_OUTDIFF=f"{bp['amount']},{bp['lfoScale']},{bp['delayScale']}")
-    subprocess.run([str(REND),"--program","Bright Hall","--output-dir",d,*WET], capture_output=True, env=env)
-    nb = glob.glob(f"{d}/*_noiseburst.wav")[0]
+    proc = subprocess.run([str(REND),"--program","Bright Hall","--output-dir",d,*WET], capture_output=True, env=env)
+    hits = glob.glob(f"{d}/*_noiseburst.wav")
+    if proc.returncode != 0 or not hits:
+        print(f"\n[final render failed rc={proc.returncode}; best params above]")
+        return
+    nb = hits[0]
     print(f"\n{'band':10s} {'baseline':>9s} {'diffused':>9s} {'anchor':>8s}")
     base_dir = "/tmp/pcheck_bright_hall"
     bnb = glob.glob(f"{base_dir}/*_noiseburst.wav")

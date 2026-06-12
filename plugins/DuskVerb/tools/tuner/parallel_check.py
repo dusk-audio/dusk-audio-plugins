@@ -62,8 +62,8 @@ def _check_one(name):
     adir, apref = PRESETS[name]
     slug = name.lower().replace(" ", "_")
     dv, lex = f"/tmp/pcheck_{slug}", f"/tmp/pcheck_{slug}_lex"
-    shutil.rmtree(dv, ignore_errors=True)
-    os.makedirs(dv); os.makedirs(lex, exist_ok=True)
+    shutil.rmtree(dv, ignore_errors=True); shutil.rmtree(lex, ignore_errors=True)
+    os.makedirs(dv); os.makedirs(lex)
     r = subprocess.run([REND, "--program", name, "--output-dir", dv, *WET],
                        cwd=REPO, capture_output=True, text=True)
     if r.returncode != 0:
