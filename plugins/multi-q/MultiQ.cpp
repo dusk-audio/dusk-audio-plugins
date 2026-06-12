@@ -705,9 +705,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         eqTypeCrossfade.setCurrentAndTargetValue(0.0f);
         eqTypeCrossfade.setTargetValue(1.0f);
 
-        // Note: previously this block enforced minimum 2x OS for British/Tube when OS=Off.
-        // Now Off is removed — minimum is always 2x — so no EQ-type-driven sample-rate
-        // adjustment is needed here.
+        // Oversampling (hqEnabled) can be Off, 2x, or 4x and is chosen by the user,
+        // not by EQ type, so no EQ-type-driven sample-rate adjustment is needed here.
 
         previousEQType = eqType;
 

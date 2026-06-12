@@ -176,7 +176,7 @@ void TapeEchoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     currentSampleRate = sampleRate;
 
-    // Initialize oversampling (2x) - but don't use it for now to debug
+    // Initialize oversampling (2x) - not currently used for processing
     oversampling = std::make_unique<juce::dsp::Oversampling<float>>(
         2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
     oversampling->initProcessing(static_cast<size_t>(samplesPerBlock));
@@ -204,7 +204,6 @@ void TapeEchoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     originalLatencySamples_ = static_cast<int>(oversampling->getLatencyInSamples());
     setLatencySamples(originalLatencySamples_);
 
-    // Now ready to process
     readyToProcess.store(true, std::memory_order_release);
 }
 

@@ -36,11 +36,11 @@ public:
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
-    void setMidMultiply (float mult);                  // NEW: 3-band mid mult (default 1.0)
+    void setMidMultiply (float mult);                  // 3-band mid mult (default 1.0)
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
     void setHighCrossoverFreq (float hz);
-    void setSaturation (float amount);                 // NEW: 0..1 drive-style softClip
+    void setSaturation (float amount);                 // 0..1 drive-style softClip
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -73,6 +73,16 @@ public:
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
     void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
+    // Density-AP random-walk jitter depth (fraction of each AP's delay).
+    // Engine default 0.02 (the #87 anti-ring wander). The in-loop wander is
+    // a time-VARYING element: every pass FM-scatters tail energy broadband,
+    // which builds a flat late-window HF plateau (~35 dB above a dark
+    // anchor's floor) that NO static filter — feed, in-loop, or post — can
+    // remove, and drives the tail pitch-chorus metric. Dark/short room
+    // presets can trade the (mild, short-decay) comb risk for a clean dark
+    // tail. Clamped to [0, 0.02]: the AP buffers allocate headroom for
+    // exactly 2 % wander. 0.02 = bit-identical legacy.
+    void setDensityJitter (float fraction);
     void clearBuffers();
 
 private:
@@ -191,6 +201,12 @@ private:
     // Multiplies echo density ~8× per loop pass (each AP doubles mode count).
     // Delays are prime and coprime to all other elements.
     static constexpr int kNumDensityAPs = 3;
+
+    // Density-AP wander cap. The density-AP buffers allocate EXACTLY this much
+    // read-offset headroom (see prepare()), and setDensityJitter() clamps to it
+    // — one invariant, one constant, so the two can never drift out of sync and
+    // expose an out-of-bounds interpolated read.
+    static constexpr float kMaxDensityJitterFraction = 0.02f;
 
     // Left tank density AP delays (at 44100 Hz)
     static constexpr int kLeftDensityAPBase[kNumDensityAPs] = { 137, 199, 281 };
@@ -350,6 +366,9 @@ private:
     // earlier per-sample white-noise jitter; the smooth wander breaks modal
     // resonances without producing audible FM sidebands.
     float delayModDepthSamples_ = 4.0f;
+
+    // Density-AP wander depth fraction (see setDensityJitter). 0.02 = legacy.
+    float densityJitterFraction_ = 0.02f;
 
     void updateDelayLengths();
     void updateDecayCoefficients();
