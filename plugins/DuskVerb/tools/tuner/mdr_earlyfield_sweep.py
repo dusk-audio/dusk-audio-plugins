@@ -23,7 +23,7 @@ WET  = ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1", "--param", "Freeze=0"
 STIM = ["impulse", "noiseburst", "snare", "sine1k", "sustained"]
 NAME = "Medium Drum Room"
 ADIR, APREF = f"{ANCH}/vvv-fat-snare-room", "vvv-fat-snare-room"
-WORK = "/tmp/dattorro_sweep"
+WORK = "/tmp/mdr_earlyfield_sweep"   # distinct per script — no cross-study /tmp collision
 os.makedirs(WORK, exist_ok=True)
 
 # (display_name, lo, hi). Ranges seeded from this session's probes: Decay 0.65
