@@ -95,3 +95,131 @@ measure it.
    no-convolution positioning)? → picks A vs (C+B).
 2. Scope: full ground-up (A, multi-week) vs the cheaper T60-focused FDN+GEQ evolution (C) first?
 3. Target: match VVV specifically, or a general VVV-class hall? (affects how hard P3 is pushed.)
+
+---
+
+# 2026-06-11 — GATE-DRIVEN REVERSE-ENGINEERING SCOPE (room category)
+
+## Reframe (per user): don't R&D blind — reverse-engineer to KNOWN target values
+We have the anchor's exact measured gate values. The engine is not an open search; it is a
+spec: build each stage to PRODUCE the known number, verify against it, move on. The full_check
+harness already prints DV-vs-anchor per gate, so every stage has a closed-loop target.
+
+## What already ships (reuse, don't rebuild)
+- T60 9-vs-5 wall → **AccurateHall** (algo 10/12): FDN + per-octave in-loop GEQ. Reuse the GEQ.
+- Early-field/front-load wall → **composite ER** (algo 13): `SparseEarlyField` + tail. Reuse it.
+- Remaining blocker = the **smooth dense late field**: `diffusion_flux`, `osc P2P`,
+  `tail pitch-chorus` — the Hadamard FDN's fixed beating. This is the ONLY novel piece to build.
+
+## The reverse-engineering target table (Medium Drum Room anchor = vvv-fat-snare-room)
+Every value below is MEASURED from the anchor (the full_check `Lex=`/`VVV=` column). The new
+engine must reproduce each; the right column is the stage + design that produces it by construction.
+
+| Gate (anchor target) | Engine stage → design that hits it |
+|---|---|
+| `diffusion_flux` (anchor's kurtosis-vs-time shape; gate ≤1.5 L1) | **late-field density trajectory** — velvet tap-density envelope (A) OR allpass-mesh depth (B), tuned to the anchor's two-burst shape. THE novel core. |
+| `osc P2P` +20.5 dB | late-field **modal smoothness** — independent dense taps (velvet, corr≈0) or deep allpass → low envelope ripple. Set density high enough to hit ~20.5. |
+| `tail pitch-chorus` 3.67 Hz | **no intrinsic delay modulation** (velvet taps are static positions; allpass mesh unmodulated) + a slow explicit chorus tuned to 3.67. |
+| per-octave `T60` (≈0.73-1.03 s, the MDR calibrated map) | **per-band decay** — parallel band branches with independent density/gain envelopes = arbitrary per-band T60 (reuse the octave-GEQ target table). |
+| `decay low_mid` 0.262 s, `decay mid` 0.345 s, `edt` 0.068/0.097/0.100 | per-band envelope SHAPE (edt≠T60): convex early-decay knee per band. |
+| `ss` per band (low-mid −31.98, air −50.88, sub/low) | per-band **steady-state level** = per-band tap-gain (independent of decay, since density sets energy and envelope sets decay). |
+| `energy_first50` 44.8%, `t50` 60 ms, `attack` 21.9 ms, `onset` 1.148 | **composite ER front-end** (already built) — tune its density/gain to these. |
+| `cent_50` 2214 Hz, `cent_500` 1346 Hz | per-band tap-gain spectral tilt (early vs late windows). |
+| `stereo_corr` +0.151, `width` | **independent L/R** tap sequences scaled to the target corr (not 0, not anti-phase). |
+| `boom` (−73…−76), `bloom 8-12k` −61.5, `env_shape` | late-low-band gain + HF-band envelope; falls out of the per-band level/decay handles. |
+
+## De-risked plan — the hard target FIRST (go/no-go in days)
+- **P0 — SMOOTHNESS KILL-TEST.** Prototype ONLY the bare late field (velvet or allpass-mesh),
+  mono, single-band, isolated. Measure `diffusion_flux`, `osc P2P`, `tail pitch-chorus` vs the
+  anchor. **GO only if it reaches (or clearly trends to) the anchor's values** — diffusion ≤~1.5,
+  osc P2P ≈20.5, pitch-chorus tunable to 3.67. If a velvet/allpass tail can't beat the FDN's
+  fixed beating here, the engine is falsified cheaply — STOP. This is the entire gamble.
+- **P1** per-band decay branches → hit the per-octave T60 + decay/edt targets.
+- **P2** weld the built composite ER → hit the early-field targets.
+- **P3** independent L/R + slow chorus → hit stereo_corr + pitch-chorus.
+- **P4** per-band level tilt → hit ss + cent + boom + bloom; migrate the room category
+  (MDR/Ambience/79VC/Cathedral), each beats its FDN n_fail, ear-confirmed, fleet bit-null.
+
+## Effort / risk / reward
+- **P0 = days, decides everything.** P1-P4 = multi-week if P0 passes.
+- **Risk concentrated in P0** (smooth dense tail to gate level is the research bit). Reverse-
+  engineering helps: we tune to a KNOWN number, not search blind. Medium confidence velvet/allpass
+  beats Hadamard on the 3 smoothness gates; the per-band stages (P1-P4) are well-understood once
+  P0 lands.
+- **Reward:** cracks the whole room/hall category, not just MDR. New `EngineType` slot; existing
+  fleet bit-null by construction.
+- **Decision still open:** velvet (A) needs the "is procedurally-generated noise algorithmic?"
+  call; if no, the allpass-scattering mesh (B) is the unambiguously-algorithmic fallback for P0.
+
+## Recommendation
+Greenlight **P0 only** (the smoothness kill-test, days). It reverse-engineers the one uncertain
+piece against its known anchor value and tells us — cheaply — whether the multi-week engine is
+worth building. Everything else (ER, GEQ damping, per-band, slot integration) is already proven.
+
+---
+
+## RESOLUTION (2026-06-11, post-falsification)
+
+**P0 velvet kill-test: RUN TWICE, FALSIFIED TWICE** in the real full_check harness
+(diffusion_flux ~16 vs FDN 14 — worse). Root cause of the bad GO above: the prototype
+metrics did not match full_check's diffusion_flux_curve (window/onset mismatch read
+anchor peak kurt 32 vs the true 93), and the DuskVerb shell (Hi-Cut shelf chain)
+smears discrete velvet spikes to Gaussian kurt ~3 before measurement. The scoping
+table above is RETAINED for its gate→stage mapping but its GO is void.
+
+**What actually happened instead:** the cent_500/ss/decay walls this doc targeted
+turned out to be (a) the FDN-vs-dark-room mismatch — solved by migrating MDR to the
+Dattorro allpass tank (algo 0), and (b) a HARNESS BUG — the gain-match step
+requantized float renders to 16-bit PCM, faking cent_500 +141% (true value passed).
+See scoreboard_2026-06-11.md and memory duskverb-harness-pcm16-requantization.
+MDR honest n_fail 21 (Dattorro r3) + early-field r4 sweep in progress. The remaining
+early-field cluster (attack/onset/first50/osc-P2P/diffusion_flux) = discrete-
+reflection texture — IF a future engine attacks it, the shell-smear constraint above
+still applies to any spike-based design (measure THROUGH the shell, in full_check,
+from day one).
+
+---
+
+## MDR SPARSE-ER COMPOSITE WELD — pipe laid 2026-06-11 (execute next session)
+
+**Why (data-grounded, not theory):** fleet scan proved diffusion_flux + pitch-chorus
+are NOT universal walls — Ambience clears diffusion_flux at 1.51 and 4/5 presets pass
+pitch-chorus, all through the same shell. MDR's diffusion_flux=16 is a LOCAL mismatch:
+its anchor is a spiky discrete-reflection room (kurt peak ~93) vs DV's smooth Dattorro
+wash. The fix is a discrete early field matched to that profile — exactly what Tiled
+Room's sparse-ER front does (cut ITS diffusion_flux to 6.28). Bonus: the same discrete
+early structure attacks the early-field cluster (attack/onset/first50) — same root.
+
+**Design = mirror the Tiled Room composite (DuskVerbEngine.cpp:1039), Dattorro tail
+instead of AccurateHall:**
+
+  new EngineType::RoomComposite = 14   (slot 14 is free post multi-stage revert)
+  dispatch:
+    dattorro_.process   (tankIn -> tankOut, n);       // mature dense tail (no flutter)
+    sparseField_.process(tankIn -> sparseOut, n);      // discrete spiky ER front
+    for i: tankOut[i] = tankOut[i]*sparseTailGain_ + sparseOut[i]*sparseERGain_;
+
+**Exact code points (all additive, fleet bit-null by new-slot construction):**
+- AlgorithmConfig.h: enum RoomComposite=14; kEngines += { "Drum Room", RoomComposite };
+  getNumAlgorithms 14->15; bounds index>=15.
+- render.cpp:98 kNumAlgorithms 14->15 (+ comment).
+- DuskVerbEngine.cpp: dispatch case (above) + add RoomComposite to the useSmoothER
+  EXCLUSION (~line 1089, like TiledRoom — it makes its own early field) + clearAllBuffers
+  already clears sparseField_/dattorro_. prepare already prepares both.
+- PluginEditor.h getEngineAccent: add a case (else -Wswitch).
+- reuse: sparseTailGain_/sparseERGain_, setSparseField{Size,OnsetMs,DecayMs,Burst2Ms},
+  setSparseERGain/TailGain — all already wired for TiledRoom.
+
+**Migration + tuning (the real work — needs the anti-beating sweep result for the tail
+voicing first):**
+- FactoryPresets MDR row algo 0->14; carry the baked Dattorro tail voicing (the
+  anti-beating sweep winner) as the tail; add a kRoomCompositeByName voicing map
+  (sparseField size/onset/decay/burst2 + er/tail gains) tuned to MDR's anchor.
+- TUNE sparseField tap density/onset to MDR's kurt-93 early profile (drive diffusion_flux
+  16->toward gate) + er/tail balance for attack/onset/first50. Joint sweep, honest harness.
+
+**Honest risk (why this is scoped, not blind-built tonight):** an ER+FDN composite on MDR
+was falsified at 24 EARLIER THIS SESSION — but (a) that was under the contaminated PCM16
+harness (cent_500 was fake), (b) FDN tail not Dattorro (Dattorro already killed the ring +
+got honest 20), (c) it didn't target diffusion_flux/kurtosis specifically. Re-justified,
+but bring eyes: bake ONLY if it beats the anti-beating baseline (never-worse), ear-confirm.

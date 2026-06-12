@@ -174,6 +174,24 @@ public:
     // call this leave the EQ stage transparent.
     void setPostTankEQBand (int index, float freqHz, float qFactor, float gainDb);
 
+    // Tank-feed EQ (Progenitor-style 'inputdamp', 2026-06-11). First-order
+    // low + high shelves applied to the TANK FEED (post-diffuser, pre-tank),
+    // NOT the wet sum — the parallel ER branch taps the signal earlier and
+    // stays bright. Feed-forward into the loop: the loop poles (per-band T60)
+    // are untouched; only the recirculating field's spectrum is tilted. This
+    // is the decoupled lever for the bright-attack -> dark-tail temporal
+    // signature (anchor cent 2214 -> 1346 Hz over 50 -> 500 ms) that in-loop
+    // damping (pole-coupled) and post-sum trims (time-uniform) both failed
+    // to express. 0 dB gains -> branch skipped -> bit-identical.
+    void setTankFeedEQ (float lowFc, float lowGainDb, float highFc, float highGainDb);
+
+    // Dattorro density-AP wander depth (see DattorroTank::setDensityJitter).
+    // The in-loop time-varying wander FM-scatters tail energy broadband each
+    // pass — the source of the late-window HF plateau + pitch-chorus on dark
+    // rooms. 0.02 (engine default) = bit-identical; forwarded to the Dattorro
+    // tank only.
+    void setDattorroDensityJitter (float fraction);
+
     // ER-bus spectral correction (2026-06-08, energy-arrival campaign). The
     // parallel ER field is a 500 Hz-2 kHz midrange bump (measured: −11.5 dB @
     // 250-500, −9 @ sub, −16 @ 8-16k relative to its 500-1k peak). Boosting it
@@ -390,6 +408,16 @@ private:
     // before they hit the tank so onsets bloom into the tail rather than
     // arriving as discrete clicks.
     DiffusionStage diffuser_;
+
+    // Tank-feed EQ state (Progenitor inputdamp). One-pole LP cores; shelves
+    // realized as y = x + (g-1)*LP(x) (low) and y = x + (g-1)*(x - LP(x))
+    // (high) — exact unity bypass at g=1. Stereo state per shelf.
+    bool  tankFeedActive_   = false;
+    float tankFeedLowFc_    = 200.0f,  tankFeedLowGain_  = 1.0f;   // linear g
+    float tankFeedHighFc_   = 2500.0f, tankFeedHighGain_ = 1.0f;
+    float tankFeedLowCoeff_ = 0.0f,    tankFeedHighCoeff_ = 0.0f;  // LP coeffs
+    float tfLowStateL_ = 0.0f, tfLowStateR_ = 0.0f;
+    float tfHighStateL_ = 0.0f, tfHighStateR_ = 0.0f;
     EarlyReflections er_;
 
     // Post-tank OUTPUT diffuser — per-preset (Bright Hall). Smears the FDN's

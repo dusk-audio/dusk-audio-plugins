@@ -189,7 +189,10 @@ struct FactoryPreset
             // Medium Drum Room: anchor is a front-loaded room (first50 45%,
             // attack 22 ms); the parallel ER supplies the early energy the
             // FDN tank can't.
-            { "Medium Drum Room", { 7.0f } },
+            { "Medium Drum Room", { 1.77390f } },
+            { "Ambience", { 3.09241f } },   // partial front-load (FDN back-load is structural)
+            { "Blade Runner 224", { 1.28774f } },   // ER on (was OFF) -> 107ms attack
+            { "Cathedral Large Hall", { 4.96275f } },   // strong ER for the 2.3ms attack
         };
         float erBoost = 1.0f;
         if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
@@ -205,7 +208,10 @@ struct FactoryPreset
             // Medium Drum Room: ER peak alone fires at ~7 ms, the tank at
             // ~68 ms — the anchor's 22 ms attack sits between the regimes;
             // an 18 ms ER rise lands the combined peak on it.
-            { "Medium Drum Room", { 33.0f } },
+            { "Medium Drum Room", { 24.38402f } },
+            { "Ambience", { 11.05449f } },
+            { "Blade Runner 224", { 28.35710f } },
+            { "Cathedral Large Hall", { 1.53405f } },
         };
         float erRise = 0.0f;
         if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
@@ -233,11 +239,16 @@ struct FactoryPreset
             // over-corrects +7.5 dB and flips the tail dark via gain renorm —
             // 26/22, reverted to broadband 0).
             { "Vocal Hall", { 0.50f, 5.0f, 2.6f, 0.60f, 0.0f } },
-            { "Cathedral Large Hall", { 1.0f, 0.0f, 0.0f, 0.60f, 0.0f } },
+            { "Cathedral Large Hall", { 0.90445f, 0.0f, 0.0f, 0.08057f, 0.0f } },  // tank rebalance + er_decorr (sweep 2026-06-11)
             { "Bright Hall", { 1.0f, 0.0f, 5.0f, 0.50f, 0.0f } },
             // MDR: er_bus_low -6 — the 7x ER boost dumps decorrelated LOW
             // energy (width-low -0.59, low/boom hot); cut it at the ER bus.
-            { "Medium Drum Room", { 1.0f, -6.0f, 0.0f, 0.0f, 0.0f } },
+            // MDR (r4 early-field sweep 2026-06-11): tank 0.556 front-load
+            // rebalance + ER-bus cuts — ER carries the attack, tank the tail.
+            { "Medium Drum Room", { 0.55587f, -7.99373f, -2.41836f, 0.0f, 0.0f } },
+            // Ambience: tank 0.633 front-load rebalance + er_decorr 0.323 (stereo).
+            { "Ambience", { 0.63322f, 0.0f, 0.0f, 0.32322f, 0.0f } },
+            { "Blade Runner 224", { 0.95209f, 0.0f, 0.0f, 0.57512f, 0.0f } },
         };
         if (auto it = kFrontLoadByName.find (juce::String (name)); it != kFrontLoadByName.end())
         {
@@ -279,6 +290,13 @@ struct FactoryPreset
         struct MultibandOverride { bool enable; float lowSec, midSec, highSec; };
         static const std::map<juce::String, MultibandOverride> kMultibandByName = {
             // Calibrated by the per-band decay sweep (2026-06-02).
+            // MDR multiband trial (2026-06-11) FALSIFIED: algo 4 + 3-band decays
+            // scored 29 vs the algo-10 AccurateHall baseline 25. The anchor's
+            // per-octave T60 is non-monotonic (63=0.75, 125=0.99, 500=0.93, 2k=0.73,
+            // 16k=0.66) — 3 decay knobs cannot fit a 6-octave curve, and algo 4
+            // loses AccurateHall's 9-octave GEQ darkening (cent_500 +81%) while the
+            // 3-tank sum worsens modal beating (osc P2P +12). Multiband is COARSER
+            // than the GEQ already in use. Reverted.
         };
         bool  mbEnable = false; float mbLo = 0.0f, mbMi = 0.0f, mbHi = 0.0f;
         if (auto it = kMultibandByName.find (juce::String (name)); it != kMultibandByName.end())
@@ -834,11 +852,11 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // octave GEQ sets all nine octave T60s directly (kAccurateHallT60ByName),
         // closing the 9-vs-5 decay-coupling block the comment above describes.
         { "Cathedral Large Hall", "Halls",
-          10, 0.45f, false, 20.88f, 0,
-          3.00000f, 0.93880f, 0.38010f, 1.18680f, 1.40800f, 1.24610f,  223.90f,  // ACCURACY: Decay 3.315->3.00 matches anchor tail length (tail_t60 +26% -> ~0). ModDepth/Rate+BassMult prior.
-          0.70090f, 0.48f, 0.36f,  40.730f, 4834.0f, 1.02400f, false, -6.232f,
-          /* mono */ 20.0f, /* mid */ 0.64240f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // re-swept w/ FDN FiveBand+input-makeup axes 26->20 vs CathedralLargeHall (Decay->3.3s near ref 2.7)
-          /* hiCutShelfGainDb */ -14.5f },
+          10, 0.45f, false, 2.484f, 0,
+          3.44391f, 0.93880f, 0.38010f, 1.18680f, 1.28203f, 1.01074f,  223.90f,  // early-field+spectral sweep 2026-06-11: 19 -> 15.
+          0.74244f, 0.35840f, 0.44666f,  40.730f, 4834.0f, 1.00257f, false, -2.091f,  // PreDelay 20.88->2.48 + strong-fast ER (boost 4.96/rise 1.53 in maps) cracks the 147ms->2.3ms attack wall. gainTrim -2.09 = 100%-wet RMS match.
+          /* mono */ 20.0f, /* mid */ 0.51434f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // edt+498% residual is octave-T60-locked (GEQ recal = next pass)
+          /* hiCutShelfGainDb */ -13.83844f },
         // ── Blade Runner 224 ─────────────────────────────────────────────────
         // Anchor: Vangelis on the late-1970s digital hall hardware (Hall A / Constellation) —
         // "Tears in Rain" / "Memories of Green". Validated against the
@@ -900,10 +918,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
           10, 0.45f, false, 25.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 8/9, gain-matched full_check 20->15 vs FDN. Extreme per-octave spread (9.8s low -> 1.3s 16k).
-          13.6421f, 0.91981f, 0.33084f, 2.64911f, 0.86140f, 1.05238f,  330.94f,
-          0.84476f, 0.00f, 0.50f, 56.210f, 14429.68f, 1.10000f, false, -1.6866f,  // HF damping re-swept (Treble/HiCut/FiveBand-HF): curb metallic 8k/16k ring, 21->19. Width 1.697->1.10: was over-wide/anti-phase (corr -0.37 vs anchor -0.149); 1.10 closes 3 width-band gates (26->23). Residual global stereo_corr is anchor's freq-dependent decorrelation, global Width can't match.
-          /* mono */ 20.0f, /* mid */ 0.73614f, /* highX */ 3980.22f, /* sat */ 0.17579f,
-          /* hiCutShelfGainDb */ -11.3f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark) — the prior lex-rhall-rhall4 anchor was WRONG (57->23 w/ FDN FiveBand+input-makeup axes)
+          11.07845f, 0.91981f, 0.33084f, 2.64911f, 0.98367f, 1.23893f,  330.94f,
+          0.72216f, 0.44324f, 0.84883f, 56.210f, 14429.68f, 1.03215f, false, -0.123f,  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
+          /* mono */ 20.0f, /* mid */ 0.79737f, /* highX */ 3980.22f, /* sat */ 0.17579f,
+          /* hiCutShelfGainDb */ -9.63168f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark)
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
         // Engine: QuadTank. Anchor: VVV "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
@@ -1002,25 +1020,28 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // ── Medium Drum Room (VVV anchor) ──────────────────────────────────
         // Engine: Dattorro (algo 0, Small Drum Room sibling). Anchor: VVV
         // "Fat Snare Room" (Room mode, eighties color, Decay 0.70 s, PreDelay
-        // 9 ms, Size 38.8%, HighCut 4.5 kHz) — re-captured 2026-06-10 via the
-        // saved .vstpreset XML replayed through --nparam (the May-30 render
-        // was the dry-only broken capture). Anchor profile: T60 0.66-0.99 s
+        // 9 ms, Size 38.8%, HighCut 4.5 kHz). Anchor profile: T60 0.66-0.99 s
         // near-flat, t50 50 ms, first50 51% (front-loaded medium room).
-        // Medium Drum Room: kept on the FDN (algo 10). Two structural attempts
-        // 2026-06-11 — (1) composite ER + FDN tail, (2) "UltraRoom" decouple (ER +
-        // octave-GEQ decay + post-loop PostTankBandTrim level) — both FALSIFIED:
-        // best n_fail 24 vs FDN 25 (-1, noise-level). MDR is not behind one coupling
-        // wall but a STACK: decay-TIME (octave-GEQ-vs-band-gate mismatch + T60-gate
-        // coupling), within-band level/boom/body coupling (a static post trim can't
-        // separate), modulation (osc P2P / tail pitch-chorus), diffusion_flux, and
-        // spectral. No single lever (or ER+level-decouple together) reaches the low
-        // teens. Reverted; composite/decouple infra retained for Tiled Room.
+        // MIGRATED FDN(10) -> Dattorro(0) 2026-06-11 (cold-start Optuna sweep,
+        // --param-driven, full_check n_fail objective, 2 rounds): 25 -> 20. The FDN
+        // family structurally COULD NOT match this DARK room — multiband (3-band, 29)
+        // and AccurateHall32 (32-line, 32) both FAILED because ANY FDN recirculates
+        // input HF, leaving a 12.9 kHz metallic modal ring (spec_L1 max 7 dB @ 12902).
+        // The Dattorro allpass tank damps HF OUT of the loop: ring GONE (spec_L1 max
+        // resolved), cent_50 / decay low_mid+mid (+54/+22%) / osc P2P all CLOSED.
+        // Topology confirmed by RoomReverb/Freeverb3 (Moorer ER + Dattorro Progenitor
+        // = the textbook dark-room design). Residual 20 is coupling-walled (cent_500
+        // +130% <-> T60 <-> decay: cannot darken the mid-tail without cratering HF T60;
+        // Dattorro 3-band damping too coarse for the 9-octave anchor curve) + Phase-2
+        // features the tank lacks (pitch-chorus 6.2x -> aperiodic noise-mod; stereo_corr
+        // -> crossfeed). Voicing in the row + kERBoost/kERRise (ER front). gainTrim
+        // +12.77 (dark voicing runs quiet; sibling Small Drum Room is +11.54).
         { "Medium Drum Room",     "Rooms",
-          10, 0.30f, false,  9.00f, 0,
-          0.85000f, 0.45000f, 0.00500f, 0.30000f, 0.90000f, 1.10000f,  400.00f,
-          0.80000f, 0.70f, 0.50f,  25.000f, 4500.0f, 1.00000f, false, -0.81f,  // FDN algo 10 baseline (n_fail 25).
-          /* mono */ 120.0f, /* mid */ 1.00000f, /* highX */ 8000.0f, /* sat */ 0.05000f,
-          /* hiCutShelfGainDb */ -4.50f },
+          0, 0.30f, false,  12.71f, 0,
+          0.94601f, 0.40165f, 0.03176f, 0.62647f, 0.65776f, 0.84324f,  400.00f,
+          0.67800f, 0.27052f, 0.41204f,  25.000f, 4949.32f, 0.99109f, false, 18.01f,  // Dattorro algo 0; r3 tank + r4 early-field + anti-beating sweep (modal geometry to drop pitch-chorus 8.2x->3.65x): honest n_fail 18. gainTrim +18.01 = 100%-wet noiseburst RMS match.
+          /* mono */ 120.0f, /* mid */ 0.79808f, /* highX */ 4859.93f, /* sat */ 0.02480f,
+          /* hiCutShelfGainDb */ -3.77129f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
         // Chamber, Size 0.107, EarlyDiffusion 0.35, LateDiffusion 0.5).
@@ -1062,9 +1083,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // QuadTank topology vs VVV's Ambience modal character.
         { "Ambience",             "Rooms",
           10, 0.40f, false,  2.91f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. QuadTank floored 33 (8/9 T60 fail); AccurateHall closes all T60 → gain-matched full_check 33->21. QuadTank+GEQ (AccurateChamber) was tested + rejected (tone-wrecked). Octave targets in kAccurateHallT60ByName.
-          1.3875f, 0.26283f, 0.17870f, 0.17487f, 0.98911f, 0.96938f,  327.98f,
-          0.68861f, 0.89f, 0.56f,  30.214f, 15746.05f, 1.05000f, false, -0.29995f,
-          /* mono */ 20.0f, /* mid */ 0.64948f, /* highX */ 5834.41f, /* sat */ 0.16156f },  // re-derived post Decay-calibration (honest Decay 1.39 s; was 18->20 fails)
+          1.51574f, 0.26283f, 0.17870f, 0.17487f, 0.64252f, 0.62992f,  327.98f,
+          0.49320f, 0.86847f, 0.56f,  30.214f, 15746.05f, 1.07315f, false, 3.277f,  // tunable-cluster sweep 2026-06-11: 23 -> 16 (bass-damp+bandtrim boom/640, partial front-load, edt). gainTrim +3.28 = 100%-wet noiseburst RMS match.
+          /* mono */ 20.0f, /* mid */ 0.70170f, /* highX */ 5834.41f, /* sat */ 0.16156f, /* hiCutShelfGainDb */ -5.41295f },
         // ── 1981 Gated Snare ─────────────────────────────────────────────────
         // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
         // (attack ramp → flat plateau → mathematical cliff) is baked into

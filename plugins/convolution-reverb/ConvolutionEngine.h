@@ -388,7 +388,6 @@ private:
     bool reversed = false;
     bool useZeroLatency = true;
 
-    // New features
     float irOffset = 0.0f;                    // IR start offset (0-0.5)
     Quality quality = Quality::Medium;        // Sample rate quality
     StereoMode stereoMode = StereoMode::TrueStereo;  // Stereo processing mode

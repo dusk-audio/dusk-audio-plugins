@@ -153,7 +153,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
             // samples for cubic Hermite (reads intIdx-1 .. intIdx+2) plus
             // a safety margin. Without this, a worst-case jitter sample
             // could read into not-yet-written buffer positions.
-            const int extraSamples = static_cast<int> (std::ceil (baseMax * 0.02f));
+            const int extraSamples = static_cast<int> (std::ceil (baseMax * kMaxDensityJitterFraction));
             const int dapMax = static_cast<int> (std::ceil (baseMax))
                              + extraSamples + 4;
             tank.densityAP[i].allocate (dapMax);
@@ -169,7 +169,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
             // 28-30 ms comb teeth on the worst-case plates while keeping
             // the residual pitch wobble inaudible on sustained content
             // (3 % was perceptible as chorus on Rich Plate).
-            tank.densityAP[i].jitterDepthFraction = 0.02f;
+            tank.densityAP[i].jitterDepthFraction = densityJitterFraction_;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));
@@ -699,6 +699,20 @@ void DattorroTank::setDecayBoost (float boost)
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
     if (prepared_)
         updateDecayCoefficients();
+}
+
+void DattorroTank::setDensityJitter (float fraction)
+{
+    // Clamp to the 2 % the density-AP buffers allocate read headroom for.
+    densityJitterFraction_ = std::clamp (fraction, 0.0f, kMaxDensityJitterFraction);
+    const float sr = static_cast<float> (sampleRate_);
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        leftTank_ .densityAP[i].jitterDepthFraction = densityJitterFraction_;
+        rightTank_.densityAP[i].jitterDepthFraction = densityJitterFraction_;
+        leftTank_ .densityAP[i].updateJitterDepth (sr);
+        rightTank_.densityAP[i].updateJitterDepth (sr);
+    }
 }
 
 void DattorroTank::setStructuralHFDamping (float hz)

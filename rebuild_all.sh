@@ -287,7 +287,7 @@ echo
 
 # Final status
 if [ ${#FAILED_PLUGINS[@]} -eq 0 ]; then
-    print_success "All plugins built and installed successfully! 🎉"
+    print_success "All plugins built and installed successfully!"
 
     # Show cache stats if using ccache
     if [ "$USE_FAST" = true ] && command_exists ccache; then
