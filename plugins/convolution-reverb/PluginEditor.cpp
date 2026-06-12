@@ -269,7 +269,6 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     zeroLatencyAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         params, "zero_latency", *zeroLatencyButton);
 
-    // New parameter attachments
     irOffsetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         params, "ir_offset", *irOffsetSlider);
     qualityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(

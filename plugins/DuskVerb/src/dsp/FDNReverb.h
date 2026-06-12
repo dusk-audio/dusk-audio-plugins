@@ -26,7 +26,11 @@ struct FDNOutputTap
 // recursive feedback loop can't guarantee bit-null; compile-time elimination
 // can). See the `using FDNReverb = FDNReverbT<false>;` alias below — every
 // existing consumer keeps using the GEQ-free engine unchanged.
-template <bool WithOctaveGEQ = false>
+// N = feedback-line count (16 default; 32 for the dense AccurateHall32 path
+// used by Bright Hall — more HF modal density to kill the metallic ring). N
+// MUST be a power of two (the fast Walsh-Hadamard mix). Templating on N keeps
+// every existing 16-line instantiation byte-identical (separate codegen).
+template <bool WithOctaveGEQ = false, int N = 16>
 class FDNReverbT
 {
 public:
@@ -38,10 +42,10 @@ public:
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
-    void setMidMultiply (float mult);              // NEW: 3-band mid (default 1.0)
+    void setMidMultiply (float mult);              // 3-band mid (default 1.0)
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
-    void setSaturation (float amount);             // NEW: 0..1 drive softClip
+    void setSaturation (float amount);             // 0..1 drive softClip
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -174,7 +178,6 @@ public:
     void clearBuffers();
 
 private:
-    static constexpr int N = 16;
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr float kOutputLevel = 1.121f;     // 1/sqrt(8) * 2.0 * 1.585 — consolidated output scaling
@@ -208,7 +211,7 @@ private:
         float modDepthScale     [N] {};
         float inputGainScale    [N] {};
         float outputGainScale   [N] {};
-        float outputTapGain     [N] { 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1 };
+        float outputTapGain     [N] { 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1 };  // brace inits first 16 only; the ctor fills all N to 1.0 (computeDecayCoefficients does NOT write this — only setDualSlope does)
 
         // Tap routing (standard 8-tap path)
         int   leftTaps          [kNumOutputTaps] { 0,3,5,7,8,10,12,15 };
@@ -339,29 +342,40 @@ private:
 
     // 16 prime delay lengths for inline allpasses (at 44.1kHz base rate).
     // All prime and coprime to the main delay lengths to avoid modal alignment.
-    static constexpr int kInlineAPDelays[N] = {
+    // Fixed [32]: lines 0-15 = the original 16-line values (so every 16-line
+    // instantiation reads an identical table → bit-null); lines 16-31 add 16
+    // more coprime primes for the 32-line AccurateHall32 path.
+    static constexpr int kInlineAPDelays[32] = {
         41, 47, 53, 59, 67, 71, 79, 83,
-        89, 97, 101, 107, 109, 113, 127, 131
+        89, 97, 101, 107, 109, 113, 127, 131,
+        137, 139, 149, 353, 359, 367, 373, 379,
+        383, 389, 397, 401, 409, 419, 421, 431
     };
 
     // Second cascade: longer primes for additional density multiplication.
     // Two cascaded allpasses give ~4x echo density per feedback cycle (vs ~2x with one).
-    static constexpr int kInlineAPDelays2[N] = {
+    static constexpr int kInlineAPDelays2[32] = {
         151, 157, 163, 167, 173, 179, 181, 191,
-        193, 197, 199, 211, 223, 227, 229, 233
+        193, 197, 199, 211, 223, 227, 229, 233,
+        433, 439, 443, 449, 457, 461, 463, 467,
+        479, 487, 491, 499, 503, 509, 521, 541
     };
 
     // Third cascade: even longer primes for maximum density multiplication.
     // Three cascaded allpasses give ~8x echo density per feedback cycle.
-    static constexpr int kInlineAPDelays3[N] = {
+    static constexpr int kInlineAPDelays3[32] = {
         251, 257, 263, 269, 271, 277, 281, 283,
-        293, 307, 311, 313, 317, 331, 337, 347
+        293, 307, 311, 313, 317, 331, 337, 347,
+        547, 557, 563, 569, 571, 577, 587, 593,
+        599, 601, 607, 613, 619, 631, 641, 643
     };
 
     // Short inline allpass delays (7-47 samples at 44.1kHz) for Hall.
-    static constexpr int kInlineAPDelaysShort[N] = {
+    static constexpr int kInlineAPDelaysShort[32] = {
         7, 11, 13, 17, 19, 23, 29, 31,
-        37, 41, 43, 47, 7, 11, 13, 17
+        37, 41, 43, 47, 7, 11, 13, 17,
+        53, 59, 61, 67, 71, 73, 79, 83,
+        89, 97, 101, 103, 107, 109, 113, 127
     };
 
     DelayLine delayLines_[N];
@@ -567,4 +581,4 @@ private:
 // the GEQ-free engine — they reference `FDNReverb` and need no edit. AccurateHall
 // declares FDNReverbT<true>. Single source of truth; bit-null isolation is by
 // compile-time GEQ elimination, not duplication.
-using FDNReverb = FDNReverbT<false>;
+using FDNReverb = FDNReverbT<false, 16>;

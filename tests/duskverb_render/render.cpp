@@ -95,8 +95,8 @@ namespace
     // and cannot link the plugin enum, so bump this by hand when an engine is
     // added). Was a stale 9 after ReverseRoom became the 10th engine — that
     // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
-    static constexpr int   kNumAlgorithms    = 11;   // 0..10: + 10 AccurateHall (FDN-GEQ)
-    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 10.0f
+    static constexpr int   kNumAlgorithms    = 14;   // 0..13: + 13 TiledRoom
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 13.0f
 
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to
@@ -891,6 +891,7 @@ int main (int argc, char** argv)
     // (last write wins). Applied AFTER the preset so they override anything
     // the preset set. Works against any plugin — DuskVerb, Valhalla, Lex, etc.
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
+    std::vector<std::pair<juce::String, juce::String>> nparamOverrides;
     for (int i = 1; i < argc; ++i)
     {
         juce::String a = argv[i];
@@ -937,6 +938,21 @@ int main (int argc, char** argv)
                                              spec.substring (eq + 1).trim());
             else
                 std::cerr << "  ! ignoring malformed --param '" << spec << "' (expected NAME=VALUE)" << std::endl;
+        }
+        else if (a == "--nparam" && i + 1 < argc)
+        {
+            // Format: NAME=NORMVALUE — sets the parameter's NORMALISED value
+            // directly, bypassing getValueForText. Needed when replaying a
+            // plugin's own saved state (e.g. a Valhalla .vstpreset XML, whose
+            // attributes are normalised 0..1 floats): the text parser would
+            // misread "0.2299" as 0.23 seconds/percent/etc.
+            const juce::String spec = argv[++i];
+            const int eq = spec.indexOfChar ('=');
+            if (eq > 0 && eq < spec.length() - 1)
+                nparamOverrides.emplace_back (spec.substring (0, eq).trim(),
+                                              spec.substring (eq + 1).trim());
+            else
+                std::cerr << "  ! ignoring malformed --nparam '" << spec << "' (expected NAME=NORMVALUE)" << std::endl;
         }
         else if (! a.startsWith ("--"))
         {
@@ -1179,7 +1195,7 @@ int main (int argc, char** argv)
     // normalised" for small 0..1 floats when getValueForText returns 0.
     auto applyParamOverrides = [&]()
     {
-        if (paramOverrides.empty())
+        if (paramOverrides.empty() && nparamOverrides.empty())
             return;
         for (const auto& [name, valueStr] : paramOverrides)
         {
@@ -1209,6 +1225,26 @@ int main (int argc, char** argv)
             p->setValueNotifyingHost (normalised);
             std::cout << "  --param " << name << " set='" << valueStr
                       << "' norm=" << normalised
+                      << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
+        }
+        for (const auto& [name, valueStr] : nparamOverrides)
+        {
+            auto* p = findParam (*plugin, name);
+            if (p == nullptr)
+            {
+                std::cerr << "  ! --nparam: parameter '" << name << "' not found" << std::endl;
+                continue;
+            }
+            if (! valueStr.containsOnly ("0123456789.+-eE")
+                || valueStr.trim().isEmpty())
+            {
+                std::cerr << "  ! --nparam " << name << ": value '" << valueStr
+                          << "' is not a number, skipped" << std::endl;
+                continue;
+            }
+            const float normalised = juce::jlimit (0.0f, 1.0f, valueStr.getFloatValue());
+            p->setValueNotifyingHost (normalised);
+            std::cout << "  --nparam " << name << " norm=" << normalised
                       << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
         }
     };

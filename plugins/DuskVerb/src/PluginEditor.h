@@ -31,6 +31,9 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::VintageTank:     return juce::Colour (0xff7da8e8);  // steel blue — vintage tank
         case EngineType::ReverseRoom:     return juce::Colour (0xff9b6dff);  // violet — reverse room
         case EngineType::AccurateHall:    return juce::Colour (0xffa8e84d);  // lime — accurate per-octave halls
+        case EngineType::SparseField:     return juce::Colour (0xff4de8d9);  // aqua — sparse early field
+        case EngineType::AccurateHall32:  return juce::Colour (0xff6ee87a);  // green — dense 32-line hall
+        case EngineType::TiledRoom:       return juce::Colour (0xffe8c44d);  // amber — tight ceramic tiled room
     }
     return juce::Colour (0xffff7a3d);
 }
@@ -49,6 +52,20 @@ public:
     void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
                            bool shouldDrawButtonAsHighlighted,
                            bool shouldDrawButtonAsDown) override;
+
+    // Custom dark dropdown popup — replaces JUCE's default V4 grey popup for the
+    // preset / algorithm / sync menus with the plugin palette + live engine accent
+    // (highlight + selected-tick). Applies to every PopupMenu shown under lnf_.
+    void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
+    void drawPopupMenuItem (juce::Graphics&, const juce::Rectangle<int>& area,
+                            bool isSeparator, bool isActive, bool isHighlighted,
+                            bool isTicked, bool hasSubMenu, const juce::String& text,
+                            const juce::String& shortcutKeyText,
+                            const juce::Drawable* icon, const juce::Colour* textColour) override;
+    juce::Font getPopupMenuFont() override;
+    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator,
+                                    int standardMenuItemHeight,
+                                    int& idealWidth, int& idealHeight) override;
 
     // Live-mutable accent so we can recolour the entire UI when the user
     // switches engines. Defaults to the legacy orange so first paint matches.
@@ -279,10 +296,10 @@ private:
     KnobWithLabel modRate_;
     KnobWithLabel damping_;
     KnobWithLabel bassMult_;
-    KnobWithLabel midMult_;            // NEW: 3-band mid multiplier
+    KnobWithLabel midMult_;            // 3-band mid multiplier
     KnobWithLabel crossover_;
-    KnobWithLabel highCrossover_;      // NEW: 3-band high crossover
-    KnobWithLabel saturation_;         // NEW: drive softClip
+    KnobWithLabel highCrossover_;      // 3-band high crossover
+    KnobWithLabel saturation_;         // drive softClip
     KnobWithLabel diffusion_;
     KnobWithLabel erLevel_;
     KnobWithLabel erSize_;

@@ -412,31 +412,36 @@ public:
     void prepare (float sampleRate) { sampleRate_ = sampleRate; reset(); }
     void reset() { for (auto& s : shelf_) s.reset(); }
 
+    // Composite |H| of the float-quantized cascade at one frequency, in
+    // double precision. Evaluating the FLOAT coefficients (not an idealized
+    // double design) is essential: the realized in-loop filter IS the float
+    // cascade, so coefficient quantization error gets absorbed by the
+    // correction loop in designCoeffs. Message-thread / design-time only.
+    //
+    // NOTE: the design-time bodies (magnitudeAt / designCoeffs /
+    // buildCascade) live in OctaveGEQDesign.cpp, NOT inline here — inline
+    // bodies in this header measurably perturbed the FP codegen of the plain
+    // FDNReverbT<false> hot loop in the same TU (~4e-6 render drift; see
+    // memory duskverb_bitnull_codegen_limit). Keep them out-of-line.
+    static double magnitudeAt (const Coeffs& c, double fHz, double sampleRate);
+
     // gBand[0..8] = absolute per-round-trip loop gain at each octave centre.
     // xoverHz[0..7] = inter-octave crossover frequencies (geometric means of
     // adjacent centres = the full_check T60-gate band edges).
+    //
+    // Composite-exact design: the adjacent-ratio shelf cascade alone does NOT
+    // realize gBand[k] at the octave centres — 2nd-order RBJ transition
+    // slopes leak across the 1-octave spacing, and at long T60 (g → 0.99+) a
+    // ~0.1 dB composite error is a huge T60 error (this leakage is what made
+    // the external render-based octave-T60 calibrator diverge on steep/long
+    // profiles: Bright Hall >190 s, Cathedral >40 s). So iterate the
+    // COMMANDED gains in log domain (damped fixed point, λ=0.7, keep-best,
+    // λ-halving on stall) until the measured composite hits the targets at
+    // all nine ISO centres, then guard loop stability with an analytic
+    // between-centre sweep. Design-time only (message thread, ≤25 redesigns,
+    // allocation-free); the audio-thread process() is unchanged.
     static Coeffs designCoeffs (const float* gBand, const float* xoverHz,
-                                float sampleRate)
-    {
-        Coeffs c;
-        ShelfBiquad bq;
-        // Low side: octaves 0..3 below the 1 kHz mid.
-        for (int k = 0; k < kMidBand; ++k)
-        {
-            const float ratio = gBand[k] / std::max (gBand[k + 1], 1.0e-12f);
-            bq.designLowShelf (ratio, xoverHz[k], sampleRate);
-            c.b0[k] = bq.b0; c.b1[k] = bq.b1; c.b2[k] = bq.b2; c.a1[k] = bq.a1; c.a2[k] = bq.a2;
-        }
-        // High side: octaves 5..8 above the mid.
-        for (int k = kMidBand; k < kNumShelves; ++k)
-        {
-            const float ratio = gBand[k + 1] / std::max (gBand[k], 1.0e-12f);
-            bq.designHighShelf (ratio, xoverHz[k], sampleRate);
-            c.b0[k] = bq.b0; c.b1[k] = bq.b1; c.b2[k] = bq.b2; c.a1[k] = bq.a1; c.a2[k] = bq.a2;
-        }
-        c.broadbandGain = gBand[kMidBand];
-        return c;
-    }
+                                float sampleRate);
 
     // Eight DF1 shelving biquads in series, then broadband gain.
     float process (float input, const Coeffs& c)
@@ -453,6 +458,14 @@ public:
     }
 
 private:
+    // The raw adjacent-ratio cascade (pre-correction): low shelves encode
+    // gBand[k]/gBand[k+1] below the mid, high shelves gBand[k+1]/gBand[k]
+    // above it, broadband = gBand[4]. Exact only for brick-wall shelves;
+    // designCoeffs iterates commanded gains against magnitudeAt to make the
+    // realized composite exact at the centres.
+    static Coeffs buildCascade (const float* gBand, const float* xoverHz,
+                                float sampleRate);
+
     float       sampleRate_ = 44100.0f;
     ShelfBiquad shelf_[kNumShelves];   // z1/z2 state only
 };

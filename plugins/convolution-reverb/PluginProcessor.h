@@ -146,7 +146,6 @@ private:
     std::atomic<float>* eqHighGainParam = nullptr;
     std::atomic<float>* zeroLatencyParam = nullptr;
 
-    // New parameters
     std::atomic<float>* irOffsetParam = nullptr;        // IR start offset (0-1)
     std::atomic<float>* qualityParam = nullptr;         // Quality/sample rate (0=Lo-Fi, 1=Low, 2=Medium, 3=High)
     std::atomic<float>* volumeCompParam = nullptr;      // Volume compensation on/off
