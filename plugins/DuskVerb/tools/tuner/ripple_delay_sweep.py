@@ -58,7 +58,7 @@ def main():
         ss_ref[(lo,hi)]=20*np.log10(np.sqrt(np.mean(_sf0(sos,_seg)**2))+1e-12)
     def obj(trial):
         ds=sorted(trial.suggest_int(f"d{i}",700,6700) for i in range(16))
-        d=f"/tmp/rds_{slug}_t{trial.number}"; shutil.rmtree(d,ignore_errors=True); os.makedirs(d)
+        d=f"/tmp/rds_{slug}_{os.getpid()}_t{trial.number}"; shutil.rmtree(d,ignore_errors=True); os.makedirs(d)
         env=dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(map(str,ds)))
         r=subprocess.run([str(REND),"--program",a.preset,"--output-dir",d,"--param","Dry/Wet=1.0",
                           "--param","Bus Mode=1","--param","Freeze=0","--sustained-pink-seconds","4.0"],
@@ -80,7 +80,7 @@ def main():
         # (3) octave-T60 match on the trial noiseburst (hold anchor decay so no recal)
         nbf=glob.glob(f"{d}/*_noiseburst.wav")
         if nbf:
-            for (lo,hi),at in zip(OCT,anchor_t60):
+            for (lo,hi),at in zip(OCT,anchor_t60,strict=True):
                 if at is None or at<=0.05: continue
                 mt=_t60_band_schroeder(nbf[0],lo,hi)
                 if mt is None: pen+=2.0; continue

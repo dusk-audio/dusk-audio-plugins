@@ -108,14 +108,17 @@ def build_delays(offsets):
 
 
 def render_kurts(delays, tag):
-    d = f"/tmp/d32_{tag}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
-    env = dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(str(x) for x in delays))
-    r = subprocess.run([str(REND), *WET, "--output-dir", d], capture_output=True, env=env)
-    nb = glob.glob(f"{d}/*_noiseburst.wav")
-    if r.returncode != 0 or not nb: return None, None
-    agg = tail_kurt(nb[0], 2000, 14000)
-    sub = {b: tail_kurt(nb[0], *b) for b in SUB}
-    return agg, sub
+    d = f"/tmp/d32_{tag}_{os.getpid()}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    try:
+        env = dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(str(x) for x in delays))
+        r = subprocess.run([str(REND), *WET, "--output-dir", d], capture_output=True, env=env)
+        nb = glob.glob(f"{d}/*_noiseburst.wav")
+        if r.returncode != 0 or not nb: return None, None
+        agg = tail_kurt(nb[0], 2000, 14000)
+        sub = {b: tail_kurt(nb[0], *b) for b in SUB}
+        return agg, sub
+    finally:
+        shutil.rmtree(d, ignore_errors=True)   # don't retain per-trial renders
 
 
 def main():
