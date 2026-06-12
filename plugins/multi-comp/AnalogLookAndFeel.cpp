@@ -833,7 +833,7 @@ void GRHistoryGraph::updateHistory(const UniversalCompressor& processor)
 {
     // Note: Both updateHistory and paint run on the message thread (timer callback
     // and paint are both message-thread operations in JUCE), so no synchronization
-    // is needed within this component. The processor's grHistory array now uses
+    // is needed within this component. The processor's grHistory array uses
     // atomic<float> elements for thread-safe reads from the audio thread.
 
     // Copy from processor's atomic array to local array

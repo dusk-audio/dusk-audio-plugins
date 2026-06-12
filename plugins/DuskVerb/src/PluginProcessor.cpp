@@ -9,6 +9,41 @@
 #include <string_view>
 #include <unordered_map>
 
+namespace
+{
+// Tuning-sweep env overrides (DUSKVERB_*) let the offline render harness drive
+// params without a rebuild. They are STATIC for the process lifetime (the sweep
+// exports them before the host loads the plugin), so read each EXACTLY ONCE and
+// cache the pointer. CRITICAL: FactoryPreset::applyEngineConfig() — which consumes
+// these — runs on the AUDIO THREAD (performPresetSwap), and std::getenv() is not
+// real-time-safe (reads the environ global, unguarded vs setenv). The cache is
+// primed from the processor constructor (message thread); applyEngineConfig only
+// ever reads the already-initialized pointers (a plain load).
+struct TuningEnv
+{
+    const char* pteq;
+    const char* outdiff;
+    const char* bandtrim;
+    const char* tankfeed;
+    const char* densjit;
+    const char* fdnDelays;
+    const char* tiledRoom;
+    TuningEnv()
+        : pteq      (std::getenv ("DUSKVERB_PTEQ")),
+          outdiff   (std::getenv ("DUSKVERB_OUTDIFF")),
+          bandtrim  (std::getenv ("DUSKVERB_BANDTRIM")),
+          tankfeed  (std::getenv ("DUSKVERB_TANKFEED")),
+          densjit   (std::getenv ("DUSKVERB_DENSJIT")),
+          fdnDelays (std::getenv ("DUSKVERB_FDN_DELAYS")),
+          tiledRoom (std::getenv ("DUSKVERB_TILEDROOM")) {}
+};
+const TuningEnv& tuningEnv()
+{
+    static const TuningEnv cache;   // C++11 thread-safe, one-time init
+    return cache;
+}
+} // namespace
+
 juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -424,6 +459,11 @@ DuskVerbProcessor::DuskVerbProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, juce::Identifier ("DuskVerb"), createParameterLayout())
 {
+    // Prime the tuning-env cache on the message thread (this ctor) so the
+    // one-time std::getenv() reads never land on the audio thread, where
+    // applyEngineConfig() later consumes the cached pointers.
+    tuningEnv();
+
     algorithmParam_     = parameters.getRawParameterValue ("algorithm");
     mixParam_           = parameters.getRawParameterValue ("mix");
     busModeParam_       = parameters.getRawParameterValue ("bus_mode");
@@ -1581,6 +1621,20 @@ namespace {
     }
     inline void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4])
     {
+        // Env sweep override (DUSKVERB_PTEQ = 12 CSV floats f,q,g per band x4)
+        // takes precedence — must match the freq/Q that applyEngineConfig()
+        // pushes to the engine, else performPresetSwap()/the pteq gain
+        // edge-detect would revert the bands to the preset/default centres.
+        if (const char* envPq = tuningEnv().pteq; envPq != nullptr && envPq[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (envPq), ",", "");
+            if (t.size() == 12)
+            {
+                for (int b = 0; b < 4; ++b)
+                { fOut[b] = t[b * 3].getFloatValue(); qOut[b] = t[b * 3 + 1].getFloatValue(); }
+                return;
+            }
+        }
         auto& m = pteqByName();
         auto it = m.find (std::string_view (name));
         const float* fSrc = (it != m.end()) ? it->second.freq : kPteqDefaultFreq;
@@ -1761,6 +1815,21 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         const float* fSrc = (it != m.end()) ? it->second.freq : kPteqDefaultFreq;
         const float* qSrc = (it != m.end()) ? it->second.q    : kPteqDefaultQ;
         const float* gSrc = (it != m.end()) ? it->second.gain : kPteqZeroGain;
+        // Sweep override: DUSKVERB_PTEQ = 12 CSV floats (f,q,g per band x4).
+        // Direct-call path (same as the map), so it bypasses the APVTS desync
+        // that blinds --param pteq edits. Absent in normal sessions.
+        if (const char* envPq = tuningEnv().pteq; envPq != nullptr && envPq[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (envPq), ",", "");
+            if (t.size() == 12)
+            {
+                for (int b = 0; b < 4; ++b)
+                    engine.setPostTankEQBand (b, t[b * 3].getFloatValue(),
+                                              t[b * 3 + 1].getFloatValue(),
+                                              t[b * 3 + 2].getFloatValue());
+            }
+        }
+        else
         for (int b = 0; b < 4; ++b)
             engine.setPostTankEQBand (b, fSrc[b], qSrc[b], gSrc[b]);
     }
@@ -1826,7 +1895,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Sweep override: DUSKVERB_OUTDIFF="amount,lfoScale,delayScale" forces
         // the diffuser ON for the preset being rendered (the kurtosis sweep
         // drives it without a rebuild, like DUSKVERB_FDN_DELAYS).
-        if (const char* env = std::getenv ("DUSKVERB_OUTDIFF"); env != nullptr && env[0] != '\0')
+        if (const char* env = tuningEnv().outdiff; env != nullptr && env[0] != '\0')
         {
             juce::StringArray t; t.addTokens (juce::String (env), ",", "");
             if (t.size() == 3)
@@ -2054,6 +2123,16 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // at unity (no map entry) gives the cleanest current result.
         // (Medium Drum Room UltraRoom decouple FALSIFIED — the static post-loop
         // trim couples to boom/body within-band; best 24 vs FDN 25. Reverted.)
+        // Medium Drum Room (Dattorro re-engine, 2026-06-11): zeros = bit-null
+        // placeholder that OPTS the preset into the DUSKVERB_BANDTRIM sweep
+        // hook (the env override is gated on map membership). The post-loop
+        // trim is the orthogonal level lever vs the in-loop coupling wall.
+        { "Medium Drum Room", { 0.0f, 0.0f, 0.0f, 0.0f } },
+        // Ambience (2026-06-11): zeros = bit-null placeholder unlocking the
+        // DUSKVERB_BANDTRIM sweep hook for the boom-low post-loop cut.
+        { "Ambience",         { 0.27389f, -4.81217f, -0.51326f, -2.40095f } },  // boom-low cut + 640 (lowMid -4.8) + air
+        { "Blade Runner 224", { -1.05804f, -0.69518f, -1.16656f, -0.68592f } },  // mild broadband post-trim (sweep)
+        { "Cathedral Large Hall", { -3.42900f, -7.91777f, -0.35222f, -4.19473f } },  // ss low-mid/air cut (sweep)
     };
     PostBandTrimConfig pbt { 0.0f, 0.0f, 0.0f, 0.0f };
     auto pbtIt = kPostBandTrimByName.find (std::string_view (name));
@@ -2061,7 +2140,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         pbt = pbtIt->second;
     // Sweep override: DUSKVERB_BANDTRIM = "sub,lowMid,midHi,air" dB (the UltraRoom
     // decouple level lever). Rebuild-free; only the listed preset opts in.
-    const char* envBt = std::getenv ("DUSKVERB_BANDTRIM");
+    const char* envBt = tuningEnv().bandtrim;
     if (envBt != nullptr && envBt[0] != '\0' && pbtIt != kPostBandTrimByName.end())
     {
         juce::StringArray t; t.addTokens (juce::String (envBt), ",", "");
@@ -2075,6 +2154,55 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     engine.setPostTankBandTrimGainDb (2, pbt.midHi);
     engine.setPostTankBandTrimGainDb (3, pbt.air);
 
+    // ─── Tank-feed EQ (Progenitor 'inputdamp', 2026-06-11) ────────────────
+    // Low+high shelves on the TANK FEED only (post-diffuser; the parallel ER
+    // taps earlier and stays bright). Feed-forward → per-band T60 untouched;
+    // moves the late-field spectrum the in-loop/post-sum levers couldn't.
+    // 0 dB gains (unlisted presets) → engine skips the branch → bit-identical.
+    // Direct engine call (no APVTS → no edge-detect desync). Sweep override:
+    // DUSKVERB_TANKFEED = "lowFc,lowDb,highFc,highDb".
+    {
+        struct TankFeedConfig { float lowFc, lowDb, highFc, highDb; };
+        static const std::unordered_map<std::string_view, TankFeedConfig> kTankFeedEQByName = {
+            // BEGIN_TANKFEED_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
+            { "Medium Drum Room", { 250.0f, -0.16244f, 3736.08f, -0.84836f } },
+            // END_TANKFEED_MAP
+        };
+        TankFeedConfig tf { 200.0f, 0.0f, 2500.0f, 0.0f };
+        if (auto it = kTankFeedEQByName.find (std::string_view (name)); it != kTankFeedEQByName.end())
+            tf = it->second;
+        if (const char* envTf = tuningEnv().tankfeed; envTf != nullptr && envTf[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (envTf), ",", "");
+            if (t.size() == 4)
+                tf = { t[0].getFloatValue(), t[1].getFloatValue(),
+                       t[2].getFloatValue(), t[3].getFloatValue() };
+        }
+        engine.setTankFeedEQ (tf.lowFc, tf.lowDb, tf.highFc, tf.highDb);
+    }
+
+    // ─── Dattorro density-AP jitter (per-preset, 2026-06-11) ──────────────
+    // The hardcoded 0.02 anti-ring wander is a time-varying in-loop element:
+    // it FM-scatters tail energy broadband every pass, creating a flat late-
+    // window HF plateau (~35 dB above a dark anchor's floor) that no static
+    // EQ can remove + driving tail pitch-chorus. Dark short rooms can reduce
+    // it. Unlisted presets keep 0.02 → bit-identical. Sweep override:
+    // DUSKVERB_DENSJIT = "<fraction>".
+    {
+        struct DensityJitterConfig { float fraction; };
+        static const std::unordered_map<std::string_view, DensityJitterConfig> kDensityJitterByName = {
+            // BEGIN_DENSJIT_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
+            { "Medium Drum Room", { 0.00474f } },
+            // END_DENSJIT_MAP
+        };
+        float dj = 0.02f;
+        if (auto it = kDensityJitterByName.find (std::string_view (name)); it != kDensityJitterByName.end())
+            dj = it->second.fraction;
+        if (const char* envDj = tuningEnv().densjit; envDj != nullptr && envDj[0] != '\0')
+            dj = juce::String (envDj).getFloatValue();
+        engine.setDattorroDensityJitter (dj);
+    }
+
     // Sweep override: DUSKVERB_FDN_DELAYS env var wins over the map. CSV of
     // 16 positive ints in samples. Set by the sweep harness per trial; absent
     // in normal sessions. Bypasses state-blob roundtrip entirely (JUCE's
@@ -2086,7 +2214,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // line count (fdn_/accurateHall_ read the first 16, accurateHall32_ reads
     // all 32). Zero-padded so a 16-token override leaves the 32-line tail
     // defined (it is not the render target in that case).
-    const char* envCsv = std::getenv ("DUSKVERB_FDN_DELAYS");
+    const char* envCsv = tuningEnv().fdnDelays;
     if (envCsv != nullptr && envCsv[0] != '\0')
     {
         juce::StringArray tokens;
@@ -2129,7 +2257,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     if (erIt != kCompositeERByName.end())
     {
         CompositeER c = erIt->second;
-        const char* envTr = std::getenv ("DUSKVERB_TILEDROOM");
+        const char* envTr = tuningEnv().tiledRoom;
         if (envTr != nullptr && envTr[0] != '\0')
         {
             juce::StringArray t;

@@ -75,12 +75,6 @@ Algorithmic reverb with 53 factory presets:
 - Size, pre-delay, damping, modulation, and mix controls
 - Early reflections with configurable patterns
 
-### DuskAmp - IN DEVELOPMENT
-Guitar amp simulator:
-- Wave Digital Filter (WDF) circuit-modeled amp stages
-- Neural Amp Modeler (NAM) integration for loading community amp profiles
-- Procedural cabinet simulation
-
 ### Spectrum Analyzer - IN DEVELOPMENT
 Professional FFT spectrum analyzer with metering:
 - Real-time FFT spectrum display

@@ -38,7 +38,6 @@ ConvolutionReverbProcessor::ConvolutionReverbProcessor()
     eqHighGainParam = parameters.getRawParameterValue("eq_high_gain");
     zeroLatencyParam = parameters.getRawParameterValue("zero_latency");
 
-    // New parameters
     irOffsetParam = parameters.getRawParameterValue("ir_offset");
     qualityParam = parameters.getRawParameterValue("quality");
     volumeCompParam = parameters.getRawParameterValue("volume_comp");

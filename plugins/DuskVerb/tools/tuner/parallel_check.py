@@ -81,7 +81,11 @@ def _check_one(name):
         return name, None, "silent render"
     g = a / d
     for f in glob.glob(f"{dv}/*.wav"):
-        x, sr = sf.read(f); sf.write(f, x * g, sr)
+        # subtype='FLOAT': the default WAV subtype is PCM_16, which silently
+        # REQUANTIZES the float render — the added -96 dBFS dither floor
+        # dominates quiet late windows (cent_500 read 3253 Hz vs the true
+        # 1374 on MDR) and penalized every preset's late-window gates.
+        x, sr = sf.read(f); sf.write(f, x * g, sr, subtype="FLOAT")
     r = subprocess.run([sys.executable, FC, dv, lex, "--name", name, "--json"],
                        capture_output=True, text=True)
     for line in r.stdout.splitlines():
