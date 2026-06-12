@@ -35,7 +35,7 @@ def rms(p):
 
 
 def eval_voicing(cfg, tag, bt=None):
-    dv = f"/tmp/trv_{tag}"; lex = f"/tmp/trv_{tag}_lex"
+    dv = f"/tmp/trv_{tag}_{os.getpid()}"; lex = f"/tmp/trv_{tag}_{os.getpid()}_lex"
     try:
         shutil.rmtree(dv, ignore_errors=True); shutil.rmtree(lex, ignore_errors=True)
         os.makedirs(dv, exist_ok=True); os.makedirs(lex, exist_ok=True)

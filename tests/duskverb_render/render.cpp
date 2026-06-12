@@ -1236,7 +1236,8 @@ int main (int argc, char** argv)
                 continue;
             }
             if (! valueStr.containsOnly ("0123456789.+-eE")
-                || valueStr.trim().isEmpty())
+                || valueStr.trim().isEmpty()
+                || ! valueStr.containsAnyOf ("0123456789"))   // require >=1 digit: reject "+", "-", ".", "e", "+-"
             {
                 std::cerr << "  ! --nparam " << name << ": value '" << valueStr
                           << "' is not a number, skipped" << std::endl;
