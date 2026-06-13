@@ -34,6 +34,7 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::SparseField:     return juce::Colour (0xff4de8d9);  // aqua — sparse early field
         case EngineType::AccurateHall32:  return juce::Colour (0xff6ee87a);  // green — dense 32-line hall
         case EngineType::TiledRoom:       return juce::Colour (0xffe8c44d);  // amber — tight ceramic tiled room
+        case EngineType::DenseHall:       return juce::Colour (0xff8ad9ff);  // sky blue — dense diffused hall
     }
     return juce::Colour (0xffff7a3d);
 }

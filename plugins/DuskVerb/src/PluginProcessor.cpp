@@ -1916,11 +1916,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         static const std::map<std::string_view, OutDiffConfig> kOutputDiffusionByName = {
             // BEGIN_OUTDIFF_MAP (maintained by outdiff_kurtosis_sweep.py)
             // END_OUTDIFF_MAP
-            // 2026-06-13: smooth Cathedral's metallic tail. delayScale 3 lengthens
-            // the 8-stage allpass delays to reach the 2-3 kHz ring band (2-3k tail
-            // kurtosis 7.1->6.0); lfoScale 0 = no added pitch wobble. delayScale 5
-            // overshoots (comb resonance). Modest but clean structural smoothing.
-            { "Cathedral Large Hall", { 0.6f, 0.0f, 3.0f } },
+            // (Cathedral's FDN-era output-diffuser entry removed 2026-06-13 — it
+            // migrated to the DenseHall engine, which is already dense; the
+            // post-tank diffuser would over-smear it.)
         };
         // Sweep override: DUSKVERB_OUTDIFF="amount,lfoScale,delayScale" forces
         // the diffuser ON for the preset being rendered (the kurtosis sweep
@@ -2283,6 +2281,17 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         { "Tiled Room",       { 0.3248f, 1.4567f, 17.1838f, 17.749f, 0.4928f, 1.0000f } },
         // (Medium Drum Room composite/decouple FALSIFIED — best 24 vs FDN 25;
         // reverted to the FDN. See the FactoryPresets MDR comment.)
+        // Cathedral (DenseHall, 2026-06-13): subtle SPARSE discrete-ER front over
+        // the already-dense tank. erGain 0.35 (the dense tail is primary; ER adds
+        // the few distinct early reflections a cathedral has). Wide hall ER size,
+        // ~8 ms onset, long discharge. sparseTailGain unused by the DenseHall case.
+        { "Cathedral Large Hall", { 0.55f, 8.0f, 45.0f, 28.0f, 0.50f, 0.35f } },
+        // Other halls migrated to DenseHall 2026-06-13. Sparse discrete-ER fronts
+        // over the dense tank, voiced by character: Vocal Hall smoother/less ER,
+        // Blade Runner bigger/wider, Bright Hall moderate. erGain = ER level.
+        { "Vocal Hall",       { 0.45f, 6.0f, 35.0f, 20.0f, 0.50f, 0.25f } },
+        { "Bright Hall",      { 0.50f, 7.0f, 40.0f, 24.0f, 0.50f, 0.30f } },
+        { "Blade Runner 224", { 0.65f, 12.0f, 55.0f, 34.0f, 0.50f, 0.40f } },
     };
     auto erIt = kCompositeERByName.find (std::string_view (name));
     if (erIt != kCompositeERByName.end())
