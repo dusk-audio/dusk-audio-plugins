@@ -28,6 +28,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize); accurateHall_.prepare (sampleRate, maxBlockSize); accurateHall32_.prepare (sampleRate, maxBlockSize);
     sparseField_.prepare (sampleRate, maxBlockSize);
+    denseHall_.prepare (sampleRate, maxBlockSize);
     accurateHall32_.prepare (sampleRate, maxBlockSize);
     outputDiffusion_.prepare (sampleRate, maxBlockSize);
     multibandFdn_.prepare (sampleRate, maxBlockSize);
@@ -122,6 +123,7 @@ void DuskVerbEngine::clearAllBuffers()
     fdn_      .clearBuffers();
     accurateHall_.clearBuffers();   // FDNReverbT<true> — was missing here (setAlgorithm clears it, but that early-returns when the algo is unchanged → AccurateHall state could leak across same-algo preset swaps).
     sparseField_.clear();           // algo 11 early-field tap buffers
+    denseHall_.clear();             // algo 14 dense hall tank state
     accurateHall32_.clearBuffers(); // algo 12 (32-line)
     outputDiffusion_.clear();       // per-preset post-tank diffuser (BH)
     multibandFdn_.clearBuffers();
@@ -213,7 +215,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorro_.clearBuffers();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
-    fdn_.clearBuffers(); accurateHall_.clearBuffers (); accurateHall32_.clearBuffers (); accurateHall32_.clearBuffers(); sparseField_.clear(); outputDiffusion_.clear();
+    fdn_.clearBuffers(); accurateHall_.clearBuffers (); accurateHall32_.clearBuffers (); accurateHall32_.clearBuffers(); sparseField_.clear(); outputDiffusion_.clear(); denseHall_.clear();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -238,6 +240,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     shimmer_.setFreeze (frozen);
     dattorroVintage_.setFreeze (frozen);
     reverseRoom_.setFreeze (frozen);
+    denseHall_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -259,6 +262,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     dattorroVintage_.setDecayTime (seconds);
     vintageTank_.setDecayTime (seconds);
     reverseRoom_.setDecayTime (seconds);
+    denseHall_.setDecayTime (seconds);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -280,6 +284,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
     dattorroVintage_.setSize (size);
     vintageTank_.setSize (size);
     reverseRoom_.setSize (size);
+    denseHall_.setSize (size);
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
@@ -295,6 +300,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     dattorroVintage_.setBassMultiply (mult);
     vintageTank_.setBassMultiply (mult);
     reverseRoom_.setBassMultiply (mult);
+    denseHall_.setBassMultiply (mult);
 }
 
 void DuskVerbEngine::setMidMultiply (float mult)
@@ -310,6 +316,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
     dattorroVintage_.setMidMultiply (mult);
     vintageTank_.setMidMultiply (mult);
     reverseRoom_.setMidMultiply (mult);
+    denseHall_.setMidMultiply (mult);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -325,6 +332,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     dattorroVintage_.setTrebleMultiply (mult);
     vintageTank_.setTrebleMultiply (mult);
     reverseRoom_.setTrebleMultiply (mult);
+    denseHall_.setTrebleMultiply (mult);
 }
 
 void DuskVerbEngine::setAirTrebleMultiply (float mult)
@@ -422,6 +430,7 @@ void DuskVerbEngine::setModDepth (float depth)
     // sample sweep range, the Lex/Griesinger lush-mode default).
     vintageTank_.setModDepth (depth * 16.0f);
     reverseRoom_.setModDepth (depth);
+    denseHall_.setModDepth (depth);
 }
 
 void DuskVerbEngine::setModulationTopology (DspUtils::ModulationTopology t)
@@ -580,6 +589,7 @@ void DuskVerbEngine::setModRate (float hz)
     dattorroVintage_.setModRate (hz);
     vintageTank_.setModRate (hz);
     reverseRoom_.setModRate (hz);
+    denseHall_.setModRate (hz);
 }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
@@ -959,11 +969,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     //   • NonLinear — feed-forward TDL with abrupt envelope edges; pre-
     //              smearing the input would round off the gate cliff
     //   • DattorroVintage — owns its own 6-stage lossless AP front-end
+    //   • DenseHall — owns its own 10-stage input allpass diffusion per channel
     if (currentEngine_ != EngineType::SixAPTank
         && currentEngine_ != EngineType::Spring
         && currentEngine_ != EngineType::NonLinear
         && currentEngine_ != EngineType::DattorroVintage
-        && currentEngine_ != EngineType::ReverseRoom)
+        && currentEngine_ != EngineType::ReverseRoom
+        && currentEngine_ != EngineType::DenseHall)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
 
     // ---- 3b) Tank-feed EQ (Progenitor inputdamp) ----
@@ -1096,6 +1108,23 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                     tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
             }
             break;
+
+        case EngineType::DenseHall:
+            // COMPOSITE: DuskVerb's diffused-FDN dense hall tail (primary) + the
+            // sparse discrete-ER front (additive). The dense tank already builds
+            // its own density/smoothness; sparseField_ supplies the early discrete
+            // reflections the anchor halls have. sparseERGain_ sets the ER level
+            // (0 -> pure tail). Makes its own early field -> off the smooth-ER bus.
+            denseHall_.process (tankInL_.data(), tankInR_.data(),
+                                tankOutL_.data(), tankOutR_.data(), numSamples);
+            sparseField_.process (tankInL_.data(), tankInR_.data(),
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
+                tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
+            }
+            break;
     }
 
     // ---- 4b) Per-preset post-tank OUTPUT diffusion (Bright Hall) ----
@@ -1122,7 +1151,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage
                            && currentEngine_ != EngineType::ReverseRoom
                            && currentEngine_ != EngineType::SparseField
-                           && currentEngine_ != EngineType::TiledRoom);
+                           && currentEngine_ != EngineType::TiledRoom
+                           && currentEngine_ != EngineType::DenseHall);
     for (int i = 0; i < numSamples; ++i)
     {
         float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;

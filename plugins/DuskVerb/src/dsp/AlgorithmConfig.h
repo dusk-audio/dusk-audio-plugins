@@ -45,6 +45,11 @@ enum class EngineType : int
                             // 4-line FDN tail (~1.1 kHz loop -> dark late field). Tight ceramic
                             // tiled room — the front-load + instant-dark character a single-tank
                             // FDN structurally cannot express. Tiled Room only.
+    DenseHall         = 14, // Diffused-FDN dense hall (DenseHallReverb): 8-line FDN with heavy
+                            // allpass diffusion at every stage + modulation everywhere → a dense,
+                            // smooth tail (flatness ~0.16 vs the 16-line FDN's sparse 0.044). The
+                            // late field the AccurateHall FDN structurally cannot reach. Welded to
+                            // a sparse discrete-ER front for the early field. DuskVerb's own code.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -63,7 +68,7 @@ struct AlgorithmConfig
     bool        visible;
 };
 
-inline int getNumAlgorithms() { return 14; }
+inline int getNumAlgorithms() { return 15; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -88,8 +93,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Sparse",        EngineType::SparseField,     false }, // hidden: no preset; folded into Hall/composite
         { "Concert Hall",  EngineType::AccurateHall32,  true  },
         { "Tiled Room",    EngineType::TiledRoom,       true  },
+        { "Dense Hall",    EngineType::DenseHall,       true  },
     };
-    if (index < 0 || index >= 14)
+    if (index < 0 || index >= 15)
         index = 0;
     return kEngines[index];
 }

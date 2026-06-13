@@ -16,6 +16,7 @@
 #include "ReverseRoomEngine.h"
 #include "SparseEarlyField.h"
 #include "OutputDiffusion.h"
+#include "DenseHallReverb.h"
 
 #include <algorithm>
 #include <cmath>
@@ -408,6 +409,9 @@ private:
     // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
     // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
     // superseded by this composite. setTiledRoomVoicing() configures sparseField_.
+    DenseHallReverb    denseHall_;       // algo 14 (2026-06-13): diffused-FDN dense hall — the
+                                         // smooth dense late field the 16-line FDN can't reach.
+                                         // COMPOSITE: sparseField_ ER + denseHall_ tail in the switch.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
