@@ -1694,10 +1694,11 @@ void EngineGlyph::paint (juce::Graphics& g)
             }
             break;
         }
+        case EngineType::DenseHall:
         default:
         {
             // Generic engine cue for engines without a bespoke glyph
-            // (VintageTank / ReverseRoom / AccurateHall / SparseField) — a
+            // (VintageTank / ReverseRoom / AccurateHall / SparseField / DenseHall) — a
             // centred ring so the header still shows an icon instead of empty space.
             const float r = std::min (w, h) * 0.30f;
             g.drawEllipse (inner.getCentreX() - r, inner.getCentreY() - r,
