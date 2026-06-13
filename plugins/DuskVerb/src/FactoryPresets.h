@@ -957,6 +957,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.52932f, 0.20f, 0.44f,  26.022f, 8021.01f, 0.97000f, false, -6.61f,  // Width 1.136->0.97: baked value went anti-phase (stereo_corr -0.11); 0.97 lands anchor's near-mono +0.07 across all 3 width bands, 26->23
           /* mono */ 20.0f, /* mid */ 0.56053f, /* highX */ 5417.19f, /* sat */ 0.08377f,  // re-derived post Decay-calibration (honest Decay 4.82 s; was 22->24 fails)
           /* hiCutShelfGainDb */ -23.5f },
+        // ── Large Chamber ──────────────────────────────────────────────────
+        // 2026-06-13: 2nd chamber on the DenseHall engine (the 79 Vocal Chamber
+        // is QuadTank, with coupling limits + a long 5.3 s tail). Voiced toward
+        // the Lexicon "Chamber Large" reference: RT60 ~3.7 s, centroid ~2330 Hz,
+        // dense (kurtosis ~10). Modern, smooth, bright chamber to complement the
+        // dark vintage QuadTank one. ER via kCompositeERByName.
+        { "Large Chamber",        "Chambers",
+          14, 0.35f, false, 14.0f, 0,
+          3.00f, 0.55f, 0.30f, 1.00f, 1.60f, 1.00f,  400.0f,   // decay 3.0 -> RT60 ~3.7s; treble 1.6 + hiCut 10k brighten toward the Lex chamber centroid
+          0.60f, 0.30f, 0.45f,  40.0f, 10000.0f, 1.00f, false, 6.30f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.05f,
+          /* hiCutShelfGainDb */ -7.0f },
         // ═══════════ CHAMBERS ═══════════
         // ═══════════ ROOMS ═══════════
         // ── Small Drum Room (VVV anchor) ───────────────────────────────────
