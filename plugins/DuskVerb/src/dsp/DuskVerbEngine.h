@@ -12,7 +12,6 @@
 #include "QuadTank.h"
 #include "ShimmerEngine.h"
 #include "SpringEngine.h"
-#include "VintageTankEngine.h"
 #include "ReverseRoomEngine.h"
 #include "SparseEarlyField.h"
 #include "OutputDiffusion.h"
@@ -390,21 +389,19 @@ private:
     DattorroTank       dattorro_;
     SixAPTankEngine    sixAPTank_;
     QuadTank           quad_;
-    FDNReverb          fdn_;
-    // Parallel-multiband FDN (3 band-isolated tanks). Opt-in per preset; when
-    // off, the single fdn_ above runs untouched → bit-identical for the fleet.
-    // Decouples per-band T60 from steady-state level (see MultibandFDN.h).
-    MultibandFDN       multibandFdn_;
+    FDNReverb          fdn_;             // algo 4 (Studio) — hidden, no preset; FiveBand/multiband params still forward here.
+    MultibandFDN       multibandFdn_;    // opt-in multiband (mb_* params); no preset enables it.
     bool               multibandActive_ = false;
     SpringEngine       spring_;
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
-    DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
-    FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
+    FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
-    FDNReverbT<true, 32> accurateHall32_; // algo 12 (2026-06-10): 32-line AccurateHall (double lines + order-32 Hadamard) for HF modal density — Bright Hall metallic-ring fix. Gets every accurateHall_ setter forwarded alongside.
+    // Removed 2026-06-13 (no factory preset; biggest dead RAM): VintageTankEngine
+    // vintageTank_ (algo 8) + FDNReverbT<true,32> accurateHall32_ (algo 12). Those
+    // enum values fall back to accurateHall_.
     // algo 13 (TiledRoom) is a COMPOSITE in the process() switch: sparseField_ ER
     // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
     // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
