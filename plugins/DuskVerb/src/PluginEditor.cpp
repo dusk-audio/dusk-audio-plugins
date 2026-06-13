@@ -472,6 +472,11 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     addAndMakeVisible (algorithmBox_);
     {
         const int curIdx = static_cast<int> (p.parameters.getRawParameterValue ("algorithm")->load());
+        // A hidden engine loaded from saved state isn't in the curated list —
+        // add it so the box isn't blank and the selection stays recoverable.
+        if (curIdx >= 0 && curIdx < getNumAlgorithms()
+            && algorithmBox_.indexOfItemId (curIdx + 1) < 0)
+            algorithmBox_.addItem (getAlgorithmConfig (curIdx).name, curIdx + 1);
         algorithmBox_.setSelectedId (curIdx + 1, juce::dontSendNotification);
     }
 
@@ -738,6 +743,10 @@ void DuskVerbEditor::timerCallback()
         const int algoIdx = static_cast<int> (processorRef.parameters.getRawParameterValue ("algorithm")->load());
         if (algoIdx >= 0 && algoIdx < getNumAlgorithms())
         {
+            // Hidden engine selected externally (saved state / automation):
+            // add it on the fly so the box never shows blank.
+            if (algorithmBox_.indexOfItemId (algoIdx + 1) < 0)
+                algorithmBox_.addItem (getAlgorithmConfig (algoIdx).name, algoIdx + 1);
             if (algorithmBox_.getSelectedId() != algoIdx + 1)
                 algorithmBox_.setSelectedId (algoIdx + 1, juce::dontSendNotification);
 
