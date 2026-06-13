@@ -458,6 +458,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "duck", 1 }, "Duck",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
+    // ── Macro / morph layer (ChromaVerb-style global shapers) ──────────────
+    // Layer on TOP of each preset's baked values (effective = base x macro), so
+    // one knob reshapes every space. Defaults are no-ops -> existing presets
+    // render bit-identical. Appended last (host param indices stable).
+    //   Tone:      spectral tilt, -1 dark .. +1 bright (Treble Mult + HiCut).
+    //   Character: movement/grit, 0 .. 1 (Mod Depth + Saturation).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "tone", 1 }, "Tone",
+        juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "character", 1 }, "Character",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
     return layout;
 }
 
@@ -556,6 +569,8 @@ DuskVerbProcessor::DuskVerbProcessor()
     monoBelowParam_     = parameters.getRawParameterValue ("mono_below");
     monoBelowDepthParam_= parameters.getRawParameterValue ("mono_below_depth");
     duckParam_          = parameters.getRawParameterValue ("duck");
+    toneParam_          = parameters.getRawParameterValue ("tone");
+    characterParam_     = parameters.getRawParameterValue ("character");
 
     dpvHfShelfDbParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_db");
     dpvHfShelfHzParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_hz");
@@ -795,9 +810,18 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (current != last) { last = current; setter (current); }
     };
 
+    // ── Macro / morph layer ── folded into the base param values below so they
+    // layer on every space. Tone = spectral tilt (treble x2^tone, hicut shift);
+    // Character = movement/grit (additive mod depth + saturation). Defaults
+    // (tone 0, character 0) -> factor 1.0 / +0.0 -> effective == base -> bit-null.
+    const float tone = toneParam_ ? toneParam_->load() : 0.0f;
+    const float chr  = characterParam_ ? characterParam_->load() : 0.0f;
+    const float toneTreble = std::pow (2.0f, tone);         // -1 -> 0.5x, +1 -> 2x
+    const float toneHiCut  = std::pow (2.0f, tone * 0.6f);  // shift hicut with tone
+
     pushIfChanged (lastDecaySec_,  decayParam_->load(),     [this] (float v) { activeEngine_->setDecayTime (v); });
     pushIfChanged (lastSize_,      sizeParam_->load(),      [this] (float v) { activeEngine_->setSize (v); });
-    pushIfChanged (lastDamping_,   dampingParam_->load(),   [this] (float v) {
+    pushIfChanged (lastDamping_,   dampingParam_->load() * toneTreble, [this] (float v) {
         activeEngine_->setTrebleMultiply (v);
         // Bug-fix 2026-05-30: setTrebleMultiply writes to FDNReverb::trebleMultiply_
         // which is never read in the loop. Push to setAirTrebleMultiply too so
@@ -820,9 +844,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
     pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
     pushIfChanged (lastBassChoke_,     bassChokeParam_->load(),     [this] (float v) { activeEngine_->setBassChokeHz (v); });
-    pushIfChanged (lastSaturation_,    saturationParam_->load(),    [this] (float v) { activeEngine_->setSaturation (v); });
+    pushIfChanged (lastSaturation_,    std::clamp (saturationParam_->load() + chr * 0.35f, 0.0f, 1.0f), [this] (float v) { activeEngine_->setSaturation (v); });
     pushIfChanged (lastDiffusion_, diffusionParam_->load(), [this] (float v) { activeEngine_->setDiffusion (v); });
-    pushIfChanged (lastModDepth_,  modDepthParam_->load(),  [this] (float v) { activeEngine_->setModDepth (v); });
+    pushIfChanged (lastModDepth_,  std::clamp (modDepthParam_->load() + chr * 0.5f, 0.0f, 1.0f), [this] (float v) { activeEngine_->setModDepth (v); });
     pushIfChanged (lastModRate_,   modRateParam_->load(),   [this] (float v) { activeEngine_->setModRate (v); });
     pushIfChanged (lastTailSpinDepth_, tailSpinDepthParam_->load(), [this] (float v) { activeEngine_->setTailSpinDepth (v); });
     pushIfChanged (lastTailSpinRate_,  tailSpinRateParam_->load(),  [this] (float v) { activeEngine_->setTailSpinRate (v); });
@@ -860,7 +884,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
     pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
-    pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { activeEngine_->setHiCut (v); });
+    pushIfChanged (lastHiCut_,     std::clamp (hiCutParam_->load() * toneHiCut, 200.0f, 20000.0f), [this] (float v) { activeEngine_->setHiCut (v); });
     pushIfChanged (lastHiCutShelfDb_, hiCutShelfDbParam_->load(),
                    [this] (float v) { activeEngine_->setHiCutShelfGainDb (v); });
 
