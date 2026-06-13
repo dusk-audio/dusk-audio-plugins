@@ -192,7 +192,7 @@ struct FactoryPreset
             { "Medium Drum Room", { 1.77390f } },
             { "Ambience", { 3.09241f } },   // partial front-load (FDN back-load is structural)
             { "Blade Runner 224", { 1.28774f } },   // ER on (was OFF) -> 107ms attack
-            { "Cathedral Large Hall", { 4.96275f } },   // strong ER for the 2.3ms attack
+            { "Cathedral Large Hall", { 2.0f } },   // 2026-06-13: 4.96->2.0 — the big ER spike emphasized the post-transient energy hole (perceived ducking). Smaller spike + longer rise (below) bridges into the tail.
         };
         float erBoost = 1.0f;
         if (auto it = kERBoostByName.find (juce::String (name)); it != kERBoostByName.end())
@@ -211,7 +211,7 @@ struct FactoryPreset
             { "Medium Drum Room", { 24.38402f } },
             { "Ambience", { 11.05449f } },
             { "Blade Runner 224", { 28.35710f } },
-            { "Cathedral Large Hall", { 1.53405f } },
+            { "Cathedral Large Hall", { 25.0f } },   // 2026-06-13: 1.53->25 ms — spread the ER so it builds + decays across the FDN buildup gap (fills the hole behind the transient) instead of an instant spike.
         };
         float erRise = 0.0f;
         if (auto it = kERRiseByName.find (juce::String (name)); it != kERRiseByName.end())
@@ -496,7 +496,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Plate",          "Plates",
           10, 0.35f, false, 29.16f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 6/9->9/9, gain-matched full_check 25->14 vs FDN. Octave targets in kAccurateHallT60ByName.
           0.90f, 0.15f, 0.37f, 1.51f, 0.60f, 0.74f,  401.0f,  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match VVV, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
-          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, -7.05f,  // GainTrim -1.74->-1.0 (re-gain-matched to anchor noiseburst after the decay cut). Lo Cut 30: restores 20-100Hz low-end.
+          0.58f, 0.25f, 0.76f,  30.0f, 16667.0f, 1.02f, false, 0.43f,  // GainTrim -1.74->-1.0 (re-gain-matched to anchor noiseburst after the decay cut). Lo Cut 30: restores 20-100Hz low-end.
           /* mono */ 20.0f, /* mid */ 0.72f, /* highX */ 3817.0f, /* sat */ 0.03f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
@@ -549,7 +549,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   false, 10.0f, 0,  // busMode true->false (2026-06-10): calibration leftover — Mix 0.5 was dead under bus mode, and every other preset ships insert-friendly. Calibration renders force Bus Mode=1 via the harness, so gates are unaffected.
           0.80466f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,
-          0.24230f, 0.00f, 0.30f,  42.811f, 15000.0f, 0.81121f, false, 9.01827f,  // ACCURACY: Treble 1.366->1.30 + HiCut 7366->15000 brightens to the bright Lex anchor (cent -29%->-11%)
+          0.24230f, 0.00f, 0.30f,  42.811f, 15000.0f, 0.81121f, false, 12.42f,  // ACCURACY: Treble 1.366->1.30 + HiCut 7366->15000 brightens to the bright Lex anchor (cent -29%->-11%)
           /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
           /* hiCutShelfGainDb */ -12.0f,
           /* gate */ true,
@@ -589,8 +589,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Drum Plate",           "Plates",
           10, 0.42f, false, 12.0f, 0,
           2.263f, 0.337f, 0.600f, 1.000f, 1.296f, 0.723f,  98.99f,
-          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -12.22f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
+          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -4.76f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
           /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
+        // ── Studio Plate (clean modern plate) ─────────────────────────────────
+        // Engine: Plate (Dattorro algo 0). Added 2026-06-13 — the Plate space had
+        // no showcase preset (the engine only backed drum rooms). Bright, dense,
+        // medium-decay studio plate for vocals + snare. Voiced by ear (no anchor);
+        // gainTrim is a starting guess, level-check by ear.
+        { "Studio Plate",         "Plates",
+          0,  0.30f, false,  8.0f, 0,
+          1.80f, 0.45f, 0.00f, 1.00f, 0.90f, 0.85f,  400.0f,  // size 0.45 (dense, not pitched) + modDepth 0 (no tank LFO chorus); density jitter zeroed via kDensityJitterByName
+          0.85f, 0.30f, 0.45f,  80.0f, 16000.0f, 1.05f, false, 10.79f,  // gainTrim 4.0->7.4: gain-matched to Vintage Vocal Plate noiseburst RMS (was 3.4 dB low)
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 8000.0f, /* sat */ 0.05f },
         // ═══════════ SPRINGS ═══════════
         // ── Surf '63 Spring ──────────────────────────────────────────────────
         // Engine: SpringEngine (algo 4). Reference: Fender 6G15 outboard
@@ -602,7 +612,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Surf '63 Spring",      "Springs",
           5,  0.35f, false,  0.0f, 0,
           1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f,
-          0.45f, 0.10f, 0.30f,  80.0f,  4000.0f, 1.10f, false, 2.5f,
+          0.45f, 0.10f, 0.30f,  80.0f,  4000.0f, 1.10f, false, -0.3f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Bright Hall (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: Valhalla Vintage Verb "Bright Hall" factory
@@ -688,7 +698,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Bright Hall",          "Halls",
           12, 0.40f, false,  0.0f, 0,
           5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
-          0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, -2.4947f,  // gainTrim -1.7407->-2.4947 (2026-06-11): re-matched 100%-wet noiseburst RMS to the VVV anchor after the AccurateHall32 migration shifted output level +0.754 dB. Diffusion 0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring, fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x. Width 1.00: closes residual global stereo_corr.
+          0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, -6.97f,  // gainTrim -1.7407->-2.4947 (2026-06-11): re-matched 100%-wet noiseburst RMS to the VVV anchor after the AccurateHall32 migration shifted output level +0.754 dB. Diffusion 0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring, fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x. Width 1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },  // AccurateHall trial: -2 brightened LATE HF level too (bloom 8-12k +6 dB, gain==decay==level) — kept at -6; early-HF dark is compensated post-tank (pteq 10 kHz boost).
         // ── Deep Blue REMOVED 2026-05-31 ──────────────────────────────────────
@@ -835,7 +845,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Hall",           "Halls",
           10, 0.35f, false, 22.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 9/9, gain-matched full_check 22->20 vs FDN. Front-load levers carry over (post-tank, engine-agnostic).
           3.50f, 0.76f, 0.50390f, 0.78820f, 1.0840f, 1.3570f,  850.0f,  // FRONT-LOAD CAMPAIGN 2026-06-08: Treble 1.091->1.084, Bass 1.3042->1.357 (co-tuned with tank-rebalance). Decay/ModDepth/LowX unchanged. er_level + mono now set by kFrontLoadByName (0.79 / 20).
-          0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, -2.84f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
+          0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, -0.79f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
           /* mono */ 20.0f, /* mid */ 0.7530f, /* highX */ 6000.0f, /* sat */ 0.0f },  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
@@ -854,9 +864,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Cathedral Large Hall", "Halls",
           10, 0.45f, false, 2.484f, 0,
           3.44391f, 0.93880f, 0.38010f, 1.18680f, 1.28203f, 1.01074f,  223.90f,  // early-field+spectral sweep 2026-06-11: 19 -> 15.
-          0.74244f, 0.35840f, 0.44666f,  40.730f, 4834.0f, 1.00257f, false, -2.091f,  // PreDelay 20.88->2.48 + strong-fast ER (boost 4.96/rise 1.53 in maps) cracks the 147ms->2.3ms attack wall. gainTrim -2.09 = 100%-wet RMS match.
+          0.74244f, 0.35840f, 0.44666f,  40.730f, 8000.0f, 1.00257f, false, -2.28f,  // 2026-06-13: HiCut 4834->10000 — was chopping the 5-16k air VVV keeps (ours -40.6 vs VVV -34 dB at 8-16k = dull). PreDelay 2.48 + strong ER (boost 4.96/rise 1.53 in maps).
           /* mono */ 20.0f, /* mid */ 0.51434f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // edt+498% residual is octave-T60-locked (GEQ recal = next pass)
-          /* hiCutShelfGainDb */ -13.83844f },
+          /* hiCutShelfGainDb */ -9.0f },   // 2026-06-13: 4834/-13.8 (dull) -> 8000/-9 (airy, not harsh) toward VVV
         // ── Blade Runner 224 ─────────────────────────────────────────────────
         // Anchor: Vangelis on the late-1970s digital hall hardware (Hall A / Constellation) —
         // "Tears in Rain" / "Memories of Green". Validated against the
@@ -919,7 +929,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Blade Runner 224",     "Halls",
           10, 0.45f, false, 25.0f, 0,    // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 8/9, gain-matched full_check 20->15 vs FDN. Extreme per-octave spread (9.8s low -> 1.3s 16k).
           11.07845f, 0.91981f, 0.33084f, 2.64911f, 0.98367f, 1.23893f,  330.94f,
-          0.72216f, 0.44324f, 0.84883f, 56.210f, 14429.68f, 1.03215f, false, -0.123f,  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
+          0.72216f, 0.44324f, 0.84883f, 56.210f, 14429.68f, 1.03215f, false, -7.69f,  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
           /* mono */ 20.0f, /* mid */ 0.79737f, /* highX */ 3980.22f, /* sat */ 0.17579f,
           /* hiCutShelfGainDb */ -9.63168f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark)
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
@@ -944,7 +954,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  8.39f, 0,
           4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.50150f, 0.94761f,  675.47f,
-          0.52932f, 0.20f, 0.44f,  26.022f, 8021.01f, 0.97000f, false, -6.3314f,  // Width 1.136->0.97: baked value went anti-phase (stereo_corr -0.11); 0.97 lands anchor's near-mono +0.07 across all 3 width bands, 26->23
+          0.52932f, 0.20f, 0.44f,  26.022f, 8021.01f, 0.97000f, false, -6.61f,  // Width 1.136->0.97: baked value went anti-phase (stereo_corr -0.11); 0.97 lands anchor's near-mono +0.07 across all 3 width bands, 26->23
           /* mono */ 20.0f, /* mid */ 0.56053f, /* highX */ 5417.19f, /* sat */ 0.08377f,  // re-derived post Decay-calibration (honest Decay 4.82 s; was 22->24 fails)
           /* hiCutShelfGainDb */ -23.5f },
         // ═══════════ CHAMBERS ═══════════
@@ -1014,7 +1024,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Small Drum Room",      "Rooms",
           0,  0.25f, false,  9.00f, 0,   // 2026-06-12 anti-wash re-voice: predelay 1.18->9 ms (dry/tail separation for slap definition)
           0.40083f, 0.32752f, 0.00430f, 0.23945f, 1.13952f, 1.12685f,  516.73f,
-          0.58f, 0.80f, 0.57f,  22.132f, 4799.3f, 1.00000f, false, 11.53915f,  // diffusion 0.84->0.58: distinct early reflections instead of a smeared wash.
+          0.58f, 0.80f, 0.57f,  22.132f, 4799.3f, 1.00000f, false, 11.54f,  // diffusion 0.84->0.58: distinct early reflections instead of a smeared wash.
           /* mono */ 20.0f, /* mid */ 1.21799f, /* highX */ 8771.6f, /* sat */ 0.06325f,  // Dattorro re-engine vs CORRECTED anchor (sustained-gate full_check) -> 23.
           /* hiCutShelfGainDb */ -4.50f },
         // ── Medium Drum Room (VVV anchor) ──────────────────────────────────
@@ -1039,9 +1049,25 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Medium Drum Room",     "Rooms",
           0, 0.30f, false,  18.00f, 0,   // 2026-06-12 anti-wash: predelay 12.71->18 ms for clearer dry/tail gap
           0.94601f, 0.40165f, 0.03176f, 0.62647f, 0.65776f, 0.84324f,  400.00f,
-          0.60000f, 0.45000f, 0.41204f,  25.000f, 4949.32f, 0.99109f, false, 18.01f,  // diffusion 0.678->0.60, erLevel 0.27->0.45: stronger discrete early field, less smear.
+          0.60000f, 0.45000f, 0.41204f,  25.000f, 4949.32f, 0.99109f, false, 16.16f,  // diffusion 0.678->0.60, erLevel 0.27->0.45: stronger discrete early field, less smear.
           /* mono */ 120.0f, /* mid */ 0.79808f, /* highX */ 4859.93f, /* sat */ 0.02480f,
           /* hiCutShelfGainDb */ -3.77129f },
+        // ── Live Room (general-purpose medium room) ───────────────────────────
+        // Engine: Plate (Dattorro algo 0). Added 2026-06-13 — a neutral room for
+        // guitars / keys / vocals; the everyday room the drum-specific presets
+        // didn't cover. Defined early field (anti-wash recipe: real predelay,
+        // controlled diffusion, present ER), natural tone. Voiced by ear;
+        // gainTrim a starting guess (sibling drum rooms run +11..+18), level-check.
+        // Live-room voicing (research 2026-06-13, SoundOnSound/ValhallaRoom drum-room
+        // guidance): Dattorro (algo 0) is the right engine — proven dense room core,
+        // earliest echo density (the drum rooms use it). predelay 20ms + decay 0.85s
+        // (0.3-1s range) + higher diffusion 0.72 (thick, not washy) + hi_cut 8k
+        // (bright room). General-purpose: guitars / keys / vocals / room mics.
+        { "Live Room",            "Rooms",
+          0,  0.28f, false,  20.0f, 0,
+          0.85f, 0.45f, 0.10f, 0.80f, 0.75f, 0.95f,  450.0f,
+          0.72f, 0.50f, 0.55f,  40.0f, 8000.0f, 1.00f, false, 11.77f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.08f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "Tiled Room" preset (Reverb Mode =
         // Chamber, Size 0.107, EarlyDiffusion 0.35, LateDiffusion 0.5).
@@ -1065,7 +1091,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Tiled Room",           "Rooms",
           13, 0.30f, false,  8.20f, 0,
           0.5684f, 0.47940f, 0.00000f, 2.39800f, 0.68070f, 1.31900f,  173.10f,   // modDepth 0.4335->0: frozen tail (composite engine; kills pitch wobble / osc P2P)
-          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, 2.2780f,  // gainTrim 0.7701->2.278 (2026-06-11): re-matched 100%-wet noiseburst RMS to the anchor after the algo-13 composite migration (+1.51 dB). Width 1.00 retained.
+          0.41390f, 0.46f, 0.40f,  34.100f, 7090.39f, 1.00000f, false, 2.44f,  // gainTrim 0.7701->2.278 (2026-06-11): re-matched 100%-wet noiseburst RMS to the anchor after the algo-13 composite migration (+1.51 dB). Width 1.00 retained.
           /* mono */ 20.0f, /* mid */ 1.33500f, /* highX */ 4276.0f, /* sat */ 0.15320f },  // RE-TUNED vs CORRECTED anchor -> 21. The prior vvv-tiled-room anchor was BROKEN (dry-only render, no reverb) so the old "25" was gate-gamed degenerate (clipped, no tail). Real anchor = VVV Tiled Room (Chamber mode ~0.8s); sane makeup, honest 21.
         // ── Ambience (VVV anchor) ──────────────────────────────────────────
         // Engine: QuadTank. Anchor: Valhalla Vintage Verb "Ambience" preset
@@ -1084,7 +1110,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Ambience",             "Rooms",
           10, 0.40f, false,  8.00f, 0,   // 2026-06-12 anti-wash: predelay 2.91->8 ms for early-reflection separation (algo 10 AccurateHall)
           1.51574f, 0.26283f, 0.17870f, 0.17487f, 0.64252f, 0.62992f,  327.98f,
-          0.49320f, 0.86847f, 0.56f,  30.214f, 15746.05f, 1.07315f, false, 3.277f,  // tunable-cluster sweep 2026-06-11: 23 -> 16 (bass-damp+bandtrim boom/640, partial front-load, edt). gainTrim +3.28 = 100%-wet noiseburst RMS match.
+          0.49320f, 0.86847f, 0.56f,  30.214f, 15746.05f, 1.07315f, false, 1.61f,  // tunable-cluster sweep 2026-06-11: 23 -> 16 (bass-damp+bandtrim boom/640, partial front-load, edt). gainTrim +3.28 = 100%-wet noiseburst RMS match.
           /* mono */ 20.0f, /* mid */ 0.70170f, /* highX */ 5834.41f, /* sat */ 0.16156f, /* hiCutShelfGainDb */ -5.41295f },
         // ── 1981 Gated Snare ─────────────────────────────────────────────────
         // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
@@ -1122,25 +1148,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // un-gate the snare and destroy the preset. Do NOT score this against
         // 84 Small Room. The gate cliff IS the preset; tune by ear only.
         // (NB: the "In The Air Tonight" preset chases the same sound — overlap.)
+        // Phil Collins / Padgham recreation (research-voiced 2026-06-13): a BRIGHT,
+        // long, dense reverb chopped by a tight gate. Gate knob mapping (NonLinear
+        // algo 6): mod_depth=attack (0.04→3ms snap), mod_rate=release (0.60→~110ms),
+        // diffusion=hold (0.30→150ms), mid=threshold (0.72→~-32dB). Reverb brightened
+        // (hi_cut 4976→9000, EMT-244 plate character) and bass pulled back (2.18→1.30)
+        // so the snare splashes instead of booms. Long decay 2.5s = dense tail inside
+        // the gate window; the gate makes the 80s chop.
         { "1981 Gated Snare",     "Rooms",
           6,  1.00f, false,  0.0f, 0,
-          1.79f, 0.96f, 0.22f, 3.00f, 1.05f, 2.18f, 2197.0f,  // Decay re-pointed 1.67->1.79 to preserve underlying FDN RT60 after NonLinear Decay-calibration (gated; design-led)
-          0.83f, 0.00f, 0.00f,  20.0f,  4976.0f, 1.14f, false, -16.6f,
-          /* mono */ 100.0f, /* mid */ 0.98f, /* highX */ 5302.0f, /* sat */ 0.34f },
-        // ── In The Air Tonight ──────────────────────────────────────────────
-        // Engine: NonLinearEngine v7 (algo 5). Reference: Hugh Padgham's
-        // Townhouse Studios technique on Phil Collins's "In The Air Tonight"
-        // (1981) — the iconic gated snare sound. Big hall + sidechain
-        // noise gate. Tuned by ear:
-        //   HALL: decay 2.61 s, size 0.80, bass 1.10, treble 0.75 (slight darkness)
-        //   GATE: enabled, threshold via mid (0.75), attack 8 ms (mod_depth 0.092),
-        //         hold 250 ms (diffusion 0.50), release 150 ms (mod_rate 0.794)
-        //   Mix 22 % — light send/return blend, dry-forward.
-        { "In The Air Tonight",   "Rooms",
-          6,  0.216f, false,  0.0f, 0,
-          2.25f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f,  500.0f,  // Decay re-pointed 2.608->2.25 to preserve underlying FDN RT60 after NonLinear Decay-calibration (gated; design-led)
-          0.50f, 0.00f, 0.30f,  60.0f, 10000.0f, 1.30f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
+          2.50f, 0.96f, 0.04f, 0.60f, 1.10f, 1.30f, 2197.0f,  // decay 2.5 / attack 3ms / release ~110ms / treble 1.10 bright / bass 1.30
+          0.30f, 0.00f, 0.00f,  20.0f,  9000.0f, 1.14f, false, -3.6f,  // diffusion 0.30 = 150ms hold; hi_cut 9000 = bright EMT plate
+          /* mono */ 100.0f, /* mid */ 0.72f, /* highX */ 7000.0f, /* sat */ 0.34f },  // mid 0.72 = ~-32dB threshold; sat 0.34 = the heavy 80s compression grit
         // ── Reverse Taps (vintage rack reverb) ────────────────────────────────────────────
         // Engine: NonLinear (algo 5) in REVERSE mode (diffusion 0.33-0.66
         // selects the reverse envelope). Anchor: vintage rack reverb "Reverse Taps"
@@ -1176,7 +1195,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Reverse Taps",         "Rooms",
           9,  1.00f, false, 38.0f, 0,           // engine 9 = ReverseRoom; predelay 38ms (measured)
           6.9912f, 0.16498f, 0.13950f, 2.28741f, 0.79816f, 1.14756f,  566.85f,
-          0.18188f, 0.00f, 0.30f,  40.596f, 5367.38f, 1.17197f, false, 0.3712f,
+          0.18188f, 0.00f, 0.30f,  40.596f, 5367.38f, 1.17197f, false, 2.74f,
           /* mono */ 20.0f, /* mid */ 0.51963f, /* highX */ 8201.39f, /* sat */ 0.25533f },  // RE-ENGINED NonLinear->ReverseRoom: causal rising-ER replicates Lexicon Room "Reverse 1" (reverse-engineered from data). 32->20 fails; env_p2p cliff +60->+15 (smooth swell); tail_t60/cent/env_shape/osc now MATCH the reference
         // ── Mobius Pad ───────────────────────────────────────────────────────
         // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
@@ -1192,7 +1211,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Mobius Pad",           "Ambient",
           2,  0.45f, false, 45.0f, 0,
           3.89f, 0.90f, 0.25f, 0.35f, 0.45f, 1.50f,  500.0f,  // Decay re-pointed 5.50->3.89 to preserve ~3.9 s sound after SixAP Decay-calibration (no anchor; design-led)
-          0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 4.5f,
+          0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 0.62f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3200.0f, /* sat */ 0.10f },
         // ═══════════ AMBIENT ═══════════
         // ── Black Hole ───────────────────────────────────────────────────────
@@ -1255,7 +1274,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Black Hole",           "Ambient",
           7,  0.50f, false,   0.0f, 0,
           10.8728f, 0.56922f, 0.50890f, 1.43860f, 1.16880f, 0.53601f,  372.24f,  // ModDepth/Rate re-tuned vs honest (sustained) mod gate: 25->21
-          0.85741f, 0.05f, 0.70f,  24.591f, 18926.8f, 1.26041f, false, 1.4597f,
+          0.85741f, 0.05f, 0.70f,  24.591f, 18926.8f, 1.26041f, false, -1.13f,
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Cascading Heaven ─────────────────────────────────────────────
         // +24 semitones (two-octave stack) at ~57% feedback. No external reference factory
@@ -1266,7 +1285,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Cascading Heaven",     "Shimmer",
           7,  0.361f, false,  60.0f, 0,
           6.00f, 0.85f, 1.00f, 2.705f, 0.95f, 1.10f,  800.0f,
-          0.85f, 0.20f, 0.50f,  60.0f,  6000.0f, 1.40f, false, -3.0f,
+          0.85f, 0.20f, 0.50f,  60.0f,  6000.0f, 1.40f, false, 1.48f,
           /* mono */ 60.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Deep Blue Day ────────────────────────────────────────────────
         // Reference: external reference Shimmer "DeepBlueDay" preset (named after the
@@ -1289,7 +1308,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Deep Blue Day",        "Shimmer",
           7,  0.38f, false,  25.0f, 0,
           9.1423f, 0.59833f, 0.50f, 0.60458f, 1.40394f, 0.56879f,  408.59f,
-          0.80742f, 0.20f, 0.50f,  26.925f, 11000.0f, 1.69030f, false, 1.8697f,
+          0.80742f, 0.20f, 0.50f,  26.925f, 11000.0f, 1.69030f, false, -0.7f,
           /* mono */ 20.0f, /* mid */ 1.18105f, /* highX */ 9800.46f, /* sat */ 0.23195f },  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
     };
     return presets;
