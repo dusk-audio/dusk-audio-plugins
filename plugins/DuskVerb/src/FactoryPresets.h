@@ -697,7 +697,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // octave T60 recalibrated for these delays in kAccurateHallT60ByName.
         { "Bright Hall",          "Halls",
           14, 0.40f, false,  0.0f, 0,    // 2026-06-13: migrated AccurateHall32(12) -> DenseHall(14); dense diffused tail (kurtosis 10.0 -> 7.0).
-          5.0580f, 0.93236f, 0.04761f, 1.45608f, 0.77929f, 0.93713f,  170.39f,
+          5.0580f, 0.93236f, 0.04761f, 1.45608f, 1.60000f, 0.93713f,  170.39f,  // Treble 0.78->1.60: brighten to anchor (centroid 2000->~2250, anchor 2393).
           0.90000f, 0.37f, 0.55f,  26.856f, 4554.46f, 1.00000f, false, 4.73f,  // gainTrim -1.7407->-2.4947 (2026-06-11): re-matched 100%-wet noiseburst RMS to the VVV anchor after the AccurateHall32 migration shifted output level +0.754 dB. Diffusion 0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring, fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x. Width 1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.80743f, /* highX */ 6389.40f, /* sat */ 0.13963f,  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -6.0f },  // AccurateHall trial: -2 brightened LATE HF level too (bloom 8-12k +6 dB, gain==decay==level) — kept at -6; early-HF dark is compensated post-tank (pteq 10 kHz boost).
@@ -844,8 +844,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           14, 0.35f, false, 22.0f, 0,    // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail (kurtosis 12.6 -> 6.2).
-          3.50f, 0.76f, 0.50390f, 0.78820f, 1.0840f, 1.3570f,  850.0f,  // FRONT-LOAD CAMPAIGN 2026-06-08: Treble 1.091->1.084, Bass 1.3042->1.357 (co-tuned with tank-rebalance). Decay/ModDepth/LowX unchanged. er_level + mono now set by kFrontLoadByName (0.79 / 20).
-          0.77940f, 0.79000f, 0.44870f,  33.0f,  6000.0f, 0.96000f, false, 12.11f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
+          3.50f, 0.76f, 0.50390f, 0.78820f, 1.6000f, 1.3570f,  850.0f,  // Treble 1.084->1.60: brighten to anchor (centroid 1585->~1700; HiCut 6k->10k below adds the rest).
+          0.77940f, 0.79000f, 0.44870f,  33.0f,  10000.0f, 0.96000f, false, 12.11f,  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
           /* mono */ 20.0f, /* mid */ 0.7530f, /* highX */ 6000.0f, /* sat */ 0.0f },  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
@@ -863,7 +863,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // closing the 9-vs-5 decay-coupling block the comment above describes.
         { "Cathedral Large Hall", "Halls",
           14, 0.45f, false, 2.484f, 0,   // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail kills the metallic ring (tail kurtosis 14.6 -> 7.2)
-          3.44391f, 0.93880f, 0.38010f, 1.18680f, 1.28203f, 1.01074f,  223.90f,  // early-field+spectral sweep 2026-06-11: 19 -> 15.
+          3.44391f, 0.93880f, 0.38010f, 1.18680f, 0.50000f, 1.01074f,  223.90f,  // Treble 1.28->0.50: darken to anchor brightness (centroid 1987->1545, anchor 1551).
           0.74244f, 0.35840f, 0.44666f,  40.730f, 8000.0f, 1.00257f, false, 8.90f,  // HiCut 8k/-9 air; gainTrim re-matched -2.28->8.9 after DenseHall migration (engine runs ~11 dB quieter than the FDN).
           /* mono */ 20.0f, /* mid */ 0.51434f, /* highX */ 5442.0f, /* sat */ 0.00126f,  // edt+498% residual is octave-T60-locked (GEQ recal = next pass)
           /* hiCutShelfGainDb */ -9.0f },   // 2026-06-13: 4834/-13.8 (dull) -> 8000/-9 (airy, not harsh) toward VVV
@@ -928,7 +928,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
           14, 0.45f, false, 25.0f, 0,    // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail (kurtosis 16.4 -> 7.3).
-          11.07845f, 0.91981f, 0.33084f, 2.64911f, 0.98367f, 1.23893f,  330.94f,
+          11.07845f, 0.91981f, 0.33084f, 2.64911f, 0.40000f, 1.23893f,  330.94f,  // Treble 0.98->0.40: darken to anchor (centroid 1662->1484, anchor 1415).
           0.72216f, 0.44324f, 0.84883f, 56.210f, 14429.68f, 1.03215f, false, 2.71f,  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
           /* mono */ 20.0f, /* mid */ 0.79737f, /* highX */ 3980.22f, /* sat */ 0.17579f,
           /* hiCutShelfGainDb */ -9.63168f },  // RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark)
