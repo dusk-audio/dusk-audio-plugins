@@ -396,8 +396,8 @@ namespace
 // grows to ~159 px (vs MIX at 92) while the secondary-tier knobs eat more of
 // their column yPad. Pass 5 keeps the FREEZE strip at 22 px (was briefly
 // shrunk to 16) so FREEZE / BUS / GATE all render at the same visual height.
-static constexpr int kBaseWidth  = 1400;   // widened 1240->1400 to fit OUTPUT's 4 full-size knobs (MIX/WIDTH/TRIM/DUCK)
-static constexpr int kBaseHeight = 560;
+static constexpr int kBaseWidth  = 1400;   // widened 1240->1400 for the bottom-row knobs
+static constexpr int kBaseHeight = 720;    // 560->720: added a 3rd row (MACRO: Tone/Character/Duck)
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -453,6 +453,12 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     duck_     .init (*this, p.parameters, "duck",      "DUCK",        "%",
         "Ducks the wet tail while the dry input is loud, then lets it swell "
         "back as the source decays. 0 = off. Keeps vocals/drums up front.");
+    tone_     .init (*this, p.parameters, "tone",      "TONE",        "",
+        "Global spectral tilt over any space: left = darker, centre = preset "
+        "as-voiced, right = brighter. Layers on top of the preset's voicing.");
+    character_.init (*this, p.parameters, "character", "CHARACTER",   "%",
+        "Adds movement + grit: more modulation/chorus and saturation as you turn "
+        "it up. 0 = the preset as-voiced.");
 
     // ---- Algorithm selector + topology glyph ----
     // The glyph reads the current algorithm and renders a tiny topology icon
@@ -734,7 +740,7 @@ void DuskVerbEditor::timerCallback()
     update (highCrossover_); update (saturation_); update (diffusion_);
     update (erLevel_);   update (erSize_);    update (mix_);       update (loCut_);
     update (hiCut_);     update (monoBelow_); update (width_);     update (gainTrim_);
-    update (duck_);
+    update (duck_);      update (tone_);      update (character_);
 
     // Manual algorithm-dropdown sync (no ComboBoxAttachment): reflect external
     // changes to the choice param (preset load, automation, host) into the box
@@ -798,9 +804,14 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int titleBandH = scaler_.scaled (16);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.48f);
-    int bottomH = availH - topRowH;
+    // Three rows: top (INPUT/TIME/DAMPING), mid (MOD/ER/FILTER/OUTPUT), and a
+    // compact MACRO row (Tone/Character/Duck) at the bottom.
+    int macroRowH = juce::roundToInt (availH * 0.22f);
+    int knobAreaH = availH - macroRowH - gap;
+    int topRowH = juce::roundToInt ((knobAreaH - gap) * 0.5f);
+    int bottomH = (knobAreaH - gap) - topRowH;
     int bottomY = topY + topRowH + gap;
+    int macroY  = bottomY + bottomH + gap;
 
     // Group panel widths MUST match resized() exactly — knobs are placed in
     // resized() using these same percentages.
@@ -845,6 +856,7 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     drawGroupBox (g, { erX,     bottomY, erW,     bottomH }, "EARLY REFLECTIONS", titleBandH);
     drawGroupBox (g, { eqX,     bottomY, eqW,     bottomH }, "FILTER",            titleBandH);
     drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT",            titleBandH);
+    drawGroupBox (g, { contentX, macroY, contentW, macroRowH }, "MACRO",          titleBandH);
 
     // IN / OUT labels — bigger and brighter, sitting just above the meters
     // and clear of the tail-meter ribbon above. Wider than the meter column
@@ -962,9 +974,14 @@ void DuskVerbEditor::resized()
     int topPad     = titleBandH + scaler_.scaled (2);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.48f);
-    int bottomH = availH - topRowH;
+    // Three rows: top (INPUT/TIME/DAMPING), mid (MOD/ER/FILTER/OUTPUT), and a
+    // compact MACRO row (Tone/Character/Duck) at the bottom.
+    int macroRowH = juce::roundToInt (availH * 0.22f);
+    int knobAreaH = availH - macroRowH - gap;
+    int topRowH = juce::roundToInt ((knobAreaH - gap) * 0.5f);
+    int bottomH = (knobAreaH - gap) - topRowH;
     int bottomY = topY + topRowH + gap;
+    int macroY  = bottomY + bottomH + gap;
 
     // Meters span the full content area.
     inputMeter_.setBounds  (margin,                       topY, meterW, availH + gap);
@@ -1107,15 +1124,18 @@ void DuskVerbEditor::resized()
         outArea.removeFromTop (topPad);
         int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
         auto knobArea = outArea.removeFromTop (knobAreaH);
-        // 4 even columns: MIX / WIDTH / TRIM / DUCK at full size (OUTPUT panel
-        // widened to ~0.36 of the bottom row to fit them).
-        const int outCol = knobArea.getWidth() / 4;
+        // 3 even columns: MIX / WIDTH / TRIM (DUCK moved to the MACRO row).
+        const int outCol = knobArea.getWidth() / 3;
         placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobMed, sf);
         placeKnob (width_,    knobArea.removeFromLeft (outCol), knobMed, sf);
-        placeKnob (gainTrim_, knobArea.removeFromLeft (outCol), knobMed, sf);
-        placeKnob (duck_,     knobArea,                         knobMed, sf);
+        placeKnob (gainTrim_, knobArea,                         knobMed, sf);
         busModeButton_.setBounds (outArea.reduced (8, 2));
     }
+
+    // MACRO row (full content width): TONE / CHARACTER / DUCK — global morphers
+    // that layer on top of every preset.
+    layoutKnobsInGroup ({ contentX, macroY, contentW, macroRowH }, topPad,
+                        { { &tone_, knobMed }, { &character_, knobMed }, { &duck_, knobMed } }, sf);
 
     titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };
 
@@ -1367,7 +1387,7 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                      &damping_,  &bassMult_,  &midMult_,       &crossover_,
                      &highCrossover_, &saturation_, &diffusion_,
                      &erLevel_, &erSize_, &mix_, &loCut_, &hiCut_,
-                     &monoBelow_, &width_, &gainTrim_, &duck_ })
+                     &monoBelow_, &width_, &gainTrim_, &duck_, &tone_, &character_ })
         k->setAccent (accent);
 
     // 3) Components that paint their own accent regions.
