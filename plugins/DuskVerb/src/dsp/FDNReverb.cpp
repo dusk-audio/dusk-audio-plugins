@@ -1950,10 +1950,17 @@ void FDNReverbT<WithOctaveGEQ, N>::computeDecayCoefficients (LiveParams& p)
                 static constexpr float kOctaveXoverHz[OctaveBandDamping::kNumShelves] = {
                     88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f, 11313.7f
                 };
+                // Decay-knob coupling: scale the whole octave T60 curve by the
+                // live broadband decay relative to the preset's baked reference,
+                // so the Decay knob lengthens/shortens an AccurateHall preset
+                // (ref<=0 → scale 1.0 = legacy pinned behaviour).
+                const float octaveScale = (octaveDecayRef_ > 0.05f)
+                    ? std::clamp (decayTime_ / octaveDecayRef_, 0.1f, 8.0f)
+                    : 1.0f;
                 float gOct[OctaveBandDamping::kNumBands];
                 for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
                 {
-                    const float Tk = octaveT60_[k];
+                    const float Tk = octaveT60_[k] * octaveScale;
                     if (Tk > 0.0f)
                     {
                         float gk = std::pow (10.0f, -3.0f * effectiveLength / (Tk * sr));
@@ -2098,6 +2105,15 @@ void FDNReverbT<WithOctaveGEQ, N>::setOctaveT60 (int band, float seconds)
         computeDecayCoefficients (pending());
         publishPending();
     }
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setOctaveDecayRef (float seconds)
+{
+    octaveDecayRef_ = seconds;   // <=0 → scale 1.0 in computeDecayCoefficients
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
 }
 
 // Explicit instantiations: <false> = the legacy GEQ-free engine (the whole

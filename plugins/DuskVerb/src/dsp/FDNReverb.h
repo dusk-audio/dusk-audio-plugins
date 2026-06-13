@@ -175,6 +175,14 @@ public:
     static constexpr int kNumOctaveBands = 9;   // ISO octaves 63 Hz..16 kHz
     void setOctaveT60 (int band, float seconds);
 
+    // Decay-knob coupling for the octave-GEQ path. The per-octave T60 targets
+    // define the decay SHAPE; this reference is the broadband decay at which
+    // that shape is realized 1:1 (= the preset's baked Decay). The live Decay
+    // knob then scales the whole octave curve by decayTime_/ref, so the knob is
+    // never dead on an AccurateHall preset. ref<=0 → scale 1.0 (legacy: knob
+    // inert when octaves are pinned). No-op on the <false> instantiation.
+    void setOctaveDecayRef (float seconds);
+
     void clearBuffers();
 
 private:
@@ -574,6 +582,7 @@ private:
     // octaveGEQActive_ gates the (P3) if-constexpr GEQ block; all-flat → no-op.
     float octaveT60_[kNumOctaveBands] {};
     bool  octaveGEQActive_ = false;
+    float octaveDecayRef_ = 0.0f;   // <=0 → octave scale 1.0 (legacy)
 };
 
 // Backward-compatible alias. Every existing consumer (DuskVerbEngine::fdn_,
