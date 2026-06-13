@@ -587,9 +587,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // GEQ sets all nine octave T60s directly (kAccurateHallT60ByName) — the
         // old "T60-ceiling" verdict was an artifact of the leaky shelf cascade.
         { "Drum Plate",           "Plates",
-          10, 0.42f, false, 12.0f, 0,
+          0, 0.42f, false, 12.0f, 0,    // 2026-06-13: FDN(10) -> Dattorro(0), the proper plate engine. Best anchor fit: RT60 1.67 vs 1.68, centroid + tonal density closest vs the FDN's over-smooth tail.
           2.263f, 0.337f, 0.600f, 1.000f, 1.296f, 0.723f,  98.99f,
-          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, -4.76f,  // Width 0.934->1.10: was too correlated (corr +0.107 vs anchor -0.097); 1.10 closes all 4 width/corr gates (27->23).
+          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, 8.54f,  // gainTrim re-matched -4.76->8.54 after FDN->Dattorro migration (Dattorro runs ~13 dB quieter at this trim).
           /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
         // ── Studio Plate (clean modern plate) ─────────────────────────────────
         // Engine: Plate (Dattorro algo 0). Added 2026-06-13 — the Plate space had
