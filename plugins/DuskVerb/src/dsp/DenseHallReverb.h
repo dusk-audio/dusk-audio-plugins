@@ -202,12 +202,14 @@ private:
     float lineRead (int i, float inject, float mod)
     {
         float v = line_[i].getlast (mod) + inject;
-        // high-shelf (treble decay): one-pole; hsf_ state holds the LP part.
-        hsf_[i] = hsf_[i] + hCoeff_ * (v - hsf_[i]);
-        v = hShelfG_ * hsf_[i] + hMidG_ * (v - hsf_[i]);   // blend LP(bass-keep) vs HP(treble)
-        // low-shelf (bass decay)
-        lsf_[i] = lsf_[i] + lCoeff_ * (v - lsf_[i]);
-        v = lShelfG_ * lsf_[i] + midG_ * (v - lsf_[i]);
+        // Per-band decay TILT (unity at mid) — shelves shape only the relative
+        // bass/treble decay; the broadband loop gain (midG_) is applied ONCE
+        // below so the RT60 knob reads true.
+        lsf_[i] = lsf_[i] + lCoeff_ * (v - lsf_[i]);          // low band (< ~250 Hz)
+        v = lTilt_ * lsf_[i] + (v - lsf_[i]);                 // bass tilt vs mid
+        hsf_[i] = hsf_[i] + hCoeff_ * (v - hsf_[i]);          // low-pass (< ~3.5 kHz)
+        v = hsf_[i] + hTilt_ * (v - hsf_[i]);                 // treble tilt vs mid
+        v *= midG_;                                           // broadband loop gain (once)
         // per-line loop allpass diffuser (modulated) — the in-loop density.
         v = loopAP_[i].process (v, mod);
         return v;
@@ -252,10 +254,13 @@ private:
         const float loopSec = meanLen / sr_;
         const float gMid = frozen_ ? 1.0f : std::pow (10.0f, -3.0f * loopSec / rt60_);
         midG_   = std::clamp (gMid, 0.0f, 0.999f);
-        // Band RT60 multipliers -> shelf target gains relative to mid.
-        lShelfG_ = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, bassMul_)), 0.0f, 0.9995f);  // bass decay
-        hShelfG_ = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);   // treble decay
-        hMidG_   = midG_;
+        // Band per-pass gains from RT60 multipliers, then expressed as TILT
+        // relative to mid (unity at default mults) so midG_ is the only
+        // broadband loss — keeps the Decay knob honest.
+        const float gLow  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, bassMul_)), 0.0f, 0.9995f);
+        const float gHigh = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);
+        lTilt_ = std::clamp (gLow  / std::max (1e-4f, midG_), 0.1f, 4.0f);
+        hTilt_ = std::clamp (gHigh / std::max (1e-4f, midG_), 0.1f, 4.0f);
         // Crossover one-pole coeffs: low ~250 Hz, high ~3.5 kHz.
         lCoeff_ = 1.0f - std::exp (-6.2831853f * 250.0f  / sr_);
         hCoeff_ = 1.0f - std::exp (-6.2831853f * 3500.0f / sr_);
@@ -264,7 +269,7 @@ private:
     }
 
     float sr_ = 44100.0f, size_ = 1.0f, rt60_ = 2.5f, bassMul_ = 1.0f, trebMul_ = 1.0f, modDepth_ = 0.4f;
-    float norm_ = 0.354f, midG_ = 0.0f, lShelfG_ = 0.0f, hShelfG_ = 0.0f, hMidG_ = 0.0f;
+    float norm_ = 0.354f, midG_ = 0.0f, lTilt_ = 1.0f, hTilt_ = 1.0f;
     float lCoeff_ = 0.03f, hCoeff_ = 0.4f;
     bool  frozen_ = false, prepared_ = false;
 
