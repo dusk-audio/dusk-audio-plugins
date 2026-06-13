@@ -588,8 +588,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // old "T60-ceiling" verdict was an artifact of the leaky shelf cascade.
         { "Drum Plate",           "Plates",
           0, 0.42f, false, 12.0f, 0,    // 2026-06-13: FDN(10) -> Dattorro(0), the proper plate engine. Best anchor fit: RT60 1.67 vs 1.68, centroid + tonal density closest vs the FDN's over-smooth tail.
-          2.263f, 0.337f, 0.600f, 1.000f, 1.296f, 0.723f,  98.99f,
-          0.441f, 0.30f, 0.55f,  20.68f, 10078.6f, 1.100f, false, 8.54f,  // gainTrim re-matched -4.76->8.54 after FDN->Dattorro migration (Dattorro runs ~13 dB quieter at this trim).
+          2.263f, 0.337f, 0.600f, 1.000f, 0.700f, 0.620f,  98.99f,  // 2026-06-13 tuned to vvv-drum-plate: Treble 1.296->0.70 (centroid to anchor), Bass 0.723->0.62 (de-boom sub).
+          0.441f, 0.30f, 0.55f,  20.68f, 8000.0f, 1.100f, false, 9.64f,  // HiCut 10078->8000 (roll the top toward the anchor's darker hi/air); gainTrim re-matched to -39.1 dBFS after the tune.
           /* mono */ 20.0f, /* mid */ 0.690f, /* highX */ 7762.3f, /* sat */ 0.214f },
         // ── Studio Plate (clean modern plate) ─────────────────────────────────
         // Engine: Plate (Dattorro algo 0). Added 2026-06-13 — the Plate space had
