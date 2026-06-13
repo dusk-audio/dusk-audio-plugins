@@ -45,9 +45,11 @@ public:
             inAPR_[i].alloc ((int) std::round (inR[i] * rr), kInExc);
         }
         // 8 FDN line delays + per-line loop allpass diffusers (prime-ish, hall
-        // scale ~ 60..120 ms base; size scales them). Reserve at max size.
-        rebuild();
-        for (int i = 0; i < kN; ++i) { loopAP_[i].alloc (loopAPLen (i, 1.6f), kLoopExc); }
+        // scale ~ 60..120 ms base; size scales them). Reserve buffers at MAX size
+        // ONCE here (allocation is message-thread only); setSize just moves len.
+        for (int i = 0; i < kN; ++i) line_[i].alloc (lineLen (i, 1.6f), kDelExc);
+        for (int i = 0; i < kN; ++i) loopAP_[i].alloc (loopAPLen (i, 1.6f), kLoopExc);
+        rebuild();   // sets line_[i].len at the current size (no allocation)
 
         // Smooth modulation LFOs (sine), detuned per side; spin LFO slower.
         lfo1_.prepare (sr_, 0.7f, 0x111u);
@@ -74,7 +76,7 @@ public:
     void setTrebleMultiply (float m) { trebMul_ = std::clamp (m, 0.05f, 2.0f); if (prepared_) update(); }   // high-band RT60 factor
     void setMidMultiply (float)      {}
     void setModDepth (float d)       { modDepth_ = std::clamp (d, 0.0f, 1.0f); }       // scales allpass/delay excursion
-    void setModRate (float hz)       { float r=std::clamp(hz,0.05f,3.0f); lfo1_.setRate(r); lfo2_.setRate(r*1.19f); if(prepared_) {} }
+    void setModRate (float hz)       { float r=std::clamp(hz,0.05f,3.0f); lfo1_.setRate(r); lfo2_.setRate(r*1.19f); }
     void setFreeze (bool f)          { frozen_ = f; if (prepared_) update(); }
 
     // ── Process ───────────────────────────────────────────────────────────────
@@ -238,10 +240,13 @@ private:
         return std::max (1, (int) std::round (baseMs[i] * 0.001f * sr_ * size));
     }
 
+    // RT-safe: only re-points the delay length within the already-reserved
+    // buffer (no allocation, no buffer clear) — safe to call from setSize on the
+    // audio thread. Buffers are alloc'd once in prepare().
     void rebuild()
     {
-        for (int i = 0; i < kN; ++i) line_[i].alloc (lineLen (i, 1.6f), kDelExc);  // reserve max size
-        for (int i = 0; i < kN; ++i) line_[i].len = std::min (lineLen (i, size_), line_[i].mask - kDelExc - 4);
+        for (int i = 0; i < kN; ++i)
+            line_[i].len = std::min (lineLen (i, size_), line_[i].mask - kDelExc - 4);
     }
 
     void update()
