@@ -2316,6 +2316,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         { "Vocal Hall",       { 0.45f, 6.0f, 35.0f, 20.0f, 0.50f, 0.25f } },
         { "Bright Hall",      { 0.50f, 7.0f, 40.0f, 24.0f, 0.50f, 0.30f } },
         { "Blade Runner 224", { 0.65f, 12.0f, 55.0f, 34.0f, 0.50f, 0.40f } },
+        { "Large Chamber",    { 0.45f, 7.0f, 38.0f, 22.0f, 0.50f, 0.30f } },  // chamber: moderate discrete ER over the dense tank
     };
     auto erIt = kCompositeERByName.find (std::string_view (name));
     if (erIt != kCompositeERByName.end())
