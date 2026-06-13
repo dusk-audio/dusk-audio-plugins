@@ -450,6 +450,11 @@ void DuskVerbEngine::setAccurateHallOctaveT60 (int band, float seconds)
     accurateHall_.setOctaveT60 (band, seconds); accurateHall32_.setOctaveT60 (band, seconds);
 }
 
+void DuskVerbEngine::setAccurateHallOctaveDecayRef (float seconds)
+{
+    accurateHall_.setOctaveDecayRef (seconds); accurateHall32_.setOctaveDecayRef (seconds);
+}
+
 // ── SparseField (algo 11) early-field generator + tail level ──────────────
 // buildTaps() runs inside these setters (message thread, preset-apply); the
 // audio-thread process() stays allocation-free.

@@ -309,6 +309,7 @@ private:
     KnobWithLabel monoBelow_;
     KnobWithLabel width_;
     KnobWithLabel gainTrim_;
+    KnobWithLabel duck_;
 
     juce::ToggleButton freezeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment_;

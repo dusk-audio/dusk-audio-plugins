@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/DuskVerbEngine.h"
+#include "dsp/ReverbDucker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -108,6 +109,11 @@ private:
     std::vector<float> dryBufL_, dryBufR_;
     OnePoleSmoother mixSmoother_;
 
+    // ChromaVerb-style wet ducking, sidechained off the dry input. Applied to
+    // the wet output after the engine/crossfade, before the dry/wet mix. Depth
+    // 0 (default) → pass-through, so legacy presets are bit-identical.
+    ReverbDucker ducker_;
+
     // Cached SixAPTank brightness/density state. Per-preset values that
     // travel with the project (persisted in get/setStateInformation as
     // properties on the state ValueTree, not as APVTS parameters since
@@ -208,6 +214,7 @@ private:
     std::atomic<float>* gainTrimParam_      = nullptr;
     std::atomic<float>* monoBelowParam_     = nullptr;
     std::atomic<float>* monoBelowDepthParam_= nullptr;
+    std::atomic<float>* duckParam_          = nullptr;   // wet ducking depth (0 = off)
 
     // Phase α: PostTankEQ 4-band GAIN APVTS-driven. Freq + Q live in the
     // per-preset kPostTankEQByName map (engine-config only). Optimizer
@@ -358,6 +365,7 @@ private:
     float lastGainTrim_    = -999.0f;
     float lastMonoBelow_   = -1.0f;
     float lastMonoBelowDepth_ = -1.0f;
+    float lastDuck_        = -1.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
     bool  lastGateEnabled_     = true;

@@ -269,6 +269,11 @@ public:
     // that octave inherits the broadband Decay Time.
     void setAccurateHallOctaveT60 (int band, float seconds);
 
+    // AccurateHall (algo 10/12): reference broadband decay at which the octave
+    // T60 curve is realized 1:1 (= the preset's baked Decay). The live Decay
+    // knob scales the curve by decayTime_/ref so the knob is never dead.
+    void setAccurateHallOctaveDecayRef (float seconds);
+
     // SparseField (algo 11) only: the velvet-noise early-field generator dials
     // + the reduced-tail level. No-op routing on every other engine.
     void setSparseFieldSize       (float sizeScale);
