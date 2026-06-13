@@ -215,6 +215,8 @@ private:
     std::atomic<float>* monoBelowParam_     = nullptr;
     std::atomic<float>* monoBelowDepthParam_= nullptr;
     std::atomic<float>* duckParam_          = nullptr;   // wet ducking depth (0 = off)
+    std::atomic<float>* toneParam_          = nullptr;   // macro: spectral tilt (-1 dark..+1 bright)
+    std::atomic<float>* characterParam_     = nullptr;   // macro: movement/grit (0..1)
 
     // Phase α: PostTankEQ 4-band GAIN APVTS-driven. Freq + Q live in the
     // per-preset kPostTankEQByName map (engine-config only). Optimizer
