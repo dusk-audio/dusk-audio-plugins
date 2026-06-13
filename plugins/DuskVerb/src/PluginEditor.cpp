@@ -396,7 +396,7 @@ namespace
 // grows to ~159 px (vs MIX at 92) while the secondary-tier knobs eat more of
 // their column yPad. Pass 5 keeps the FREEZE strip at 22 px (was briefly
 // shrunk to 16) so FREEZE / BUS / GATE all render at the same visual height.
-static constexpr int kBaseWidth  = 1240;
+static constexpr int kBaseWidth  = 1400;   // widened 1240->1400 to fit OUTPUT's 4 full-size knobs (MIX/WIDTH/TRIM/DUCK)
 static constexpr int kBaseHeight = 560;
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
@@ -823,10 +823,13 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
     // the largest share for its 3 knobs + bus button.
     int bottomUsable = contentW - gap * 3;
-    int modW    = static_cast<int> (bottomUsable * 0.18f);
-    int erW     = static_cast<int> (bottomUsable * 0.26f);
-    int eqW     = static_cast<int> (bottomUsable * 0.28f);
-    int outputW = bottomUsable - modW - erW - eqW;
+    // Section widths proportional to knob count (MOD 2 / ER 3 / FILTER 3 /
+    // OUTPUT 4 = 12) so the per-knob column width — and therefore the knob
+    // padding — is uniform across the whole bottom row.
+    int modW    = static_cast<int> (bottomUsable * (2.0f / 12.0f));
+    int erW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
+    int eqW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
+    int outputW = bottomUsable - modW - erW - eqW;   // 4/12 — uniform per-knob width
 
     int modX    = contentX;
     int erX     = modX + modW + gap;
@@ -979,16 +982,12 @@ void DuskVerbEditor::resized()
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    // Two-tier knob hierarchy — primary (MIX) is knobBig; secondary
-    // (everything else except the DECAY hero) is knobMed. DECAY's
-    // concentric-ring rendering uses heroSize (computed below) which
-    // dominates at ~165 px diameter. Pass 4 bumped knobMed 76 → 84
-    // to soak up the remaining column yPad in non-hero panels.
-    int knobBig = juce::roundToInt (92.0f * sf);
+    // Single secondary tier — every knob except the DECAY hero is knobMed
+    // (incl. the OUTPUT row, now widened to fit 4 at full size). DECAY's
+    // concentric-ring rendering uses heroSize (computed below) which dominates
+    // at ~165 px diameter. Pass 4 bumped knobMed 76 → 84 to soak up the
+    // remaining column yPad in non-hero panels.
     int knobMed = juce::roundToInt (84.0f * sf);
-    // Compact size for the 4-across OUTPUT row (MIX / WIDTH / TRIM / DUCK) —
-    // knobMed would overlap at 4 columns in the OUTPUT panel's width.
-    int knobSm  = juce::roundToInt (62.0f * sf);
 
     // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
     // The two knobs sit adjacent so the row reads as a coherent pair, and
@@ -1060,10 +1059,13 @@ void DuskVerbEditor::resized()
     // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
     // the largest share for its 3 knobs + bus button.
     int bottomUsable = contentW - gap * 3;
-    int modW    = static_cast<int> (bottomUsable * 0.18f);
-    int erW     = static_cast<int> (bottomUsable * 0.26f);
-    int eqW     = static_cast<int> (bottomUsable * 0.28f);
-    int outputW = bottomUsable - modW - erW - eqW;
+    // Section widths proportional to knob count (MOD 2 / ER 3 / FILTER 3 /
+    // OUTPUT 4 = 12) so the per-knob column width — and therefore the knob
+    // padding — is uniform across the whole bottom row.
+    int modW    = static_cast<int> (bottomUsable * (2.0f / 12.0f));
+    int erW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
+    int eqW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
+    int outputW = bottomUsable - modW - erW - eqW;   // 4/12 — uniform per-knob width
 
     int modX    = contentX;
     int erX     = modX + modW + gap;
@@ -1105,13 +1107,13 @@ void DuskVerbEditor::resized()
         outArea.removeFromTop (topPad);
         int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
         auto knobArea = outArea.removeFromTop (knobAreaH);
-        // 4 even columns: MIX / WIDTH / TRIM / DUCK at the compact tier so the
-        // row doesn't overflow the OUTPUT panel.
+        // 4 even columns: MIX / WIDTH / TRIM / DUCK at full size (OUTPUT panel
+        // widened to ~0.36 of the bottom row to fit them).
         const int outCol = knobArea.getWidth() / 4;
-        placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobSm, sf);
-        placeKnob (width_,    knobArea.removeFromLeft (outCol), knobSm, sf);
-        placeKnob (gainTrim_, knobArea.removeFromLeft (outCol), knobSm, sf);
-        placeKnob (duck_,     knobArea,                         knobSm, sf);
+        placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobMed, sf);
+        placeKnob (width_,    knobArea.removeFromLeft (outCol), knobMed, sf);
+        placeKnob (gainTrim_, knobArea.removeFromLeft (outCol), knobMed, sf);
+        placeKnob (duck_,     knobArea,                         knobMed, sf);
         busModeButton_.setBounds (outArea.reduced (8, 2));
     }
 

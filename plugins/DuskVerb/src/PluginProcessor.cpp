@@ -1916,6 +1916,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         static const std::map<std::string_view, OutDiffConfig> kOutputDiffusionByName = {
             // BEGIN_OUTDIFF_MAP (maintained by outdiff_kurtosis_sweep.py)
             // END_OUTDIFF_MAP
+            // 2026-06-13: smooth Cathedral's metallic tail. delayScale 3 lengthens
+            // the 8-stage allpass delays to reach the 2-3 kHz ring band (2-3k tail
+            // kurtosis 7.1->6.0); lfoScale 0 = no added pitch wobble. delayScale 5
+            // overshoots (comb resonance). Modest but clean structural smoothing.
+            { "Cathedral Large Hall", { 0.6f, 0.0f, 3.0f } },
         };
         // Sweep override: DUSKVERB_OUTDIFF="amount,lfoScale,delayScale" forces
         // the diffuser ON for the preset being rendered (the kurtosis sweep
@@ -2157,7 +2162,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // DUSKVERB_BANDTRIM sweep hook for the boom-low post-loop cut.
         { "Ambience",         { 0.27389f, -4.81217f, -0.51326f, -2.40095f } },  // boom-low cut + 640 (lowMid -4.8) + air
         { "Blade Runner 224", { -1.05804f, -0.69518f, -1.16656f, -0.68592f } },  // mild broadband post-trim (sweep)
-        { "Cathedral Large Hall", { -3.42900f, -7.91777f, -0.35222f, -4.19473f } },  // ss low-mid/air cut (sweep)
+        { "Cathedral Large Hall", { -3.42900f, -3.50000f, -0.35222f, -4.19473f } },  // 2026-06-13: low-mid cut -7.9->-3.5 — the deep scoop hollowed the body + deepened the post-transient energy hole (pumping)
     };
     PostBandTrimConfig pbt { 0.0f, 0.0f, 0.0f, 0.0f };
     auto pbtIt = kPostBandTrimByName.find (std::string_view (name));
@@ -2219,6 +2224,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // BEGIN_DENSJIT_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
             { "Medium Drum Room", { 0.00474f } },
             // END_DENSJIT_MAP
+            { "Studio Plate", { 0.0f } },   // 2026-06-13: kill the 2% density wander — it was the audible tail chorus
         };
         float dj = 0.02f;
         if (auto it = kDensityJitterByName.find (std::string_view (name)); it != kDensityJitterByName.end())
