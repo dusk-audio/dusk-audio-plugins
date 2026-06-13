@@ -1012,9 +1012,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // hall's even decay across 8 bands) + edt onset + air. Dattorro is
         // non-FDN, so no kFiveBandByName entry (FiveBand/makeup are no-ops).
         { "Small Drum Room",      "Rooms",
-          0,  0.25f, false,  1.18f, 0,
+          0,  0.25f, false,  9.00f, 0,   // 2026-06-12 anti-wash re-voice: predelay 1.18->9 ms (dry/tail separation for slap definition)
           0.40083f, 0.32752f, 0.00430f, 0.23945f, 1.13952f, 1.12685f,  516.73f,
-          0.84013f, 0.80f, 0.57f,  22.132f, 4799.3f, 1.00000f, false, 11.53915f,  // Width 1.125->1.00: was over-wide (bands -0.135 vs anchor ~0); 1.00 is local min (28->26).
+          0.58f, 0.80f, 0.57f,  22.132f, 4799.3f, 1.00000f, false, 11.53915f,  // diffusion 0.84->0.58: distinct early reflections instead of a smeared wash.
           /* mono */ 20.0f, /* mid */ 1.21799f, /* highX */ 8771.6f, /* sat */ 0.06325f,  // Dattorro re-engine vs CORRECTED anchor (sustained-gate full_check) -> 23.
           /* hiCutShelfGainDb */ -4.50f },
         // ── Medium Drum Room (VVV anchor) ──────────────────────────────────
@@ -1037,9 +1037,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // -> crossfeed). Voicing in the row + kERBoost/kERRise (ER front). gainTrim
         // +12.77 (dark voicing runs quiet; sibling Small Drum Room is +11.54).
         { "Medium Drum Room",     "Rooms",
-          0, 0.30f, false,  12.71f, 0,
+          0, 0.30f, false,  18.00f, 0,   // 2026-06-12 anti-wash: predelay 12.71->18 ms for clearer dry/tail gap
           0.94601f, 0.40165f, 0.03176f, 0.62647f, 0.65776f, 0.84324f,  400.00f,
-          0.67800f, 0.27052f, 0.41204f,  25.000f, 4949.32f, 0.99109f, false, 18.01f,  // Dattorro algo 0; r3 tank + r4 early-field + anti-beating sweep (modal geometry to drop pitch-chorus 8.2x->3.65x): honest n_fail 18. gainTrim +18.01 = 100%-wet noiseburst RMS match.
+          0.60000f, 0.45000f, 0.41204f,  25.000f, 4949.32f, 0.99109f, false, 18.01f,  // diffusion 0.678->0.60, erLevel 0.27->0.45: stronger discrete early field, less smear.
           /* mono */ 120.0f, /* mid */ 0.79808f, /* highX */ 4859.93f, /* sat */ 0.02480f,
           /* hiCutShelfGainDb */ -3.77129f },
         // ── Tiled Room (VVV anchor) ────────────────────────────────────────
@@ -1082,7 +1082,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (cent_500 bright, QuadTank comb ripple, T60-low-band tilt) are the
         // QuadTank topology vs VVV's Ambience modal character.
         { "Ambience",             "Rooms",
-          10, 0.40f, false,  2.91f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. QuadTank floored 33 (8/9 T60 fail); AccurateHall closes all T60 → gain-matched full_check 33->21. QuadTank+GEQ (AccurateChamber) was tested + rejected (tone-wrecked). Octave targets in kAccurateHallT60ByName.
+          10, 0.40f, false,  8.00f, 0,   // 2026-06-12 anti-wash: predelay 2.91->8 ms for early-reflection separation (algo 10 AccurateHall)
           1.51574f, 0.26283f, 0.17870f, 0.17487f, 0.64252f, 0.62992f,  327.98f,
           0.49320f, 0.86847f, 0.56f,  30.214f, 15746.05f, 1.07315f, false, 3.277f,  // tunable-cluster sweep 2026-06-11: 23 -> 16 (bass-damp+bandtrim boom/640, partial front-load, edt). gainTrim +3.28 = 100%-wet noiseburst RMS match.
           /* mono */ 20.0f, /* mid */ 0.70170f, /* highX */ 5834.41f, /* sat */ 0.16156f, /* hiCutShelfGainDb */ -5.41295f },

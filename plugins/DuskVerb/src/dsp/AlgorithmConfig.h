@@ -48,10 +48,19 @@ enum class EngineType : int
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
+//
+// `visible` curates the dropdown (2026-06-12): the four engines no factory
+// preset uses (QuadTank, FDN, VintageTank, SparseField — redundant variants of
+// the Dattorro-tank / Hadamard-FDN cores) are hidden so the roster reads as an
+// intentional palette of distinct "spaces". The enum, the 14-wide `algorithm`
+// choice param, and every factory preset's stored algorithm index are LEFT
+// UNCHANGED — hidden engines still load from saved state and still run in the
+// DSP switch; they are merely not offered in the editor dropdown.
 struct AlgorithmConfig
 {
     const char* name;
     EngineType  engine;
+    bool        visible;
 };
 
 inline int getNumAlgorithms() { return 14; }
@@ -65,20 +74,20 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
     // so these strings are display-only and must NOT be reordered or removed
     // (that would shift indices and break saved state). Rename freely.
     static constexpr AlgorithmConfig kEngines[] = {
-        { "Plate",         EngineType::Dattorro        },
-        { "Vintage Plate", EngineType::DattorroVintage },
-        { "Smooth Plate",  EngineType::SixAPTank       },
-        { "Room",          EngineType::QuadTank        },
-        { "Studio",        EngineType::FDN             },
-        { "Spring",        EngineType::Spring          },
-        { "Gated",         EngineType::NonLinear       },
-        { "Shimmer",       EngineType::Shimmer         },
-        { "Vintage Hall",  EngineType::VintageTank     },
-        { "Reverse",       EngineType::ReverseRoom     },
-        { "Hall",          EngineType::AccurateHall    },
-        { "Sparse",        EngineType::SparseField     },
-        { "Concert Hall",  EngineType::AccurateHall32  },
-        { "Tiled Room",    EngineType::TiledRoom       },
+        { "Plate",         EngineType::Dattorro,        true  },
+        { "Vintage Plate", EngineType::DattorroVintage, true  },
+        { "Smooth Plate",  EngineType::SixAPTank,       true  },
+        { "Chamber",       EngineType::QuadTank,        true  }, // used by 79 Vocal Chamber
+        { "Studio",        EngineType::FDN,             false }, // hidden: no preset; plain Hadamard superseded by Hall
+        { "Spring",        EngineType::Spring,          true  },
+        { "Gated",         EngineType::NonLinear,       true  },
+        { "Shimmer",       EngineType::Shimmer,         true  },
+        { "Vintage Hall",  EngineType::VintageTank,     false }, // hidden: no preset; redundant tank
+        { "Reverse",       EngineType::ReverseRoom,     true  },
+        { "Hall",          EngineType::AccurateHall,    true  },
+        { "Sparse",        EngineType::SparseField,     false }, // hidden: no preset; folded into Hall/composite
+        { "Concert Hall",  EngineType::AccurateHall32,  true  },
+        { "Tiled Room",    EngineType::TiledRoom,       true  },
     };
     if (index < 0 || index >= 14)
         index = 0;

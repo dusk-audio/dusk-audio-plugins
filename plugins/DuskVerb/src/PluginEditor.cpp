@@ -450,6 +450,9 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         "Stereo width of the wet signal");
     gainTrim_ .init (*this, p.parameters, "gain_trim", "TRIM",        " dB",
         "Output gain offset applied after the dry/wet mix");
+    duck_     .init (*this, p.parameters, "duck",      "DUCK",        "%",
+        "Ducks the wet tail while the dry input is loud, then lets it swell "
+        "back as the source decays. 0 = off. Keeps vocals/drums up front.");
 
     // ---- Algorithm selector + topology glyph ----
     // The glyph reads the current algorithm and renders a tiny topology icon
@@ -457,13 +460,20 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     // active at a glance, not just its name. It updates whenever the
     // dropdown changes.
     algorithmBox_.setJustificationType (juce::Justification::centred);
-    algorithmBox_.setTooltip ("Engine architecture (Dattorro / 6-AP / QuadTank / FDN). "
-                              "Switching here changes the DSP without overwriting your knob values.");
+    algorithmBox_.setTooltip ("Reverb space. Switching here changes the DSP without "
+                              "overwriting your knob values.");
+    // Curated palette: only the engines flagged `visible` are offered (the
+    // dead/redundant slots are hidden). Item IDs stay engineIndex+1 so they map
+    // directly onto the 14-wide `algorithm` choice param — we sync manually
+    // (a ComboBoxAttachment is position-based and can't handle a sparse list).
     for (int i = 0; i < getNumAlgorithms(); ++i)
-        algorithmBox_.addItem (getAlgorithmConfig (i).name, i + 1);
+        if (getAlgorithmConfig (i).visible)
+            algorithmBox_.addItem (getAlgorithmConfig (i).name, i + 1);
     addAndMakeVisible (algorithmBox_);
-    algorithmAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-        p.parameters, "algorithm", algorithmBox_);
+    {
+        const int curIdx = static_cast<int> (p.parameters.getRawParameterValue ("algorithm")->load());
+        algorithmBox_.setSelectedId (curIdx + 1, juce::dontSendNotification);
+    }
 
     addAndMakeVisible (engineGlyph_);
     {
@@ -477,11 +487,14 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         const int idx = algorithmBox_.getSelectedId() - 1;
         if (idx >= 0 && idx < getNumAlgorithms())
         {
+            // Manual sync (no attachment): write the 14-wide choice param by index.
+            if (auto* ap = p.parameters.getParameter ("algorithm"))
+                ap->setValueNotifyingHost (ap->convertTo0to1 ((float) idx));
+
             const auto e = getAlgorithmConfig (idx).engine;
             engineGlyph_.setEngine (e);
             applyEngineAccent (e);   // recolour all knobs / value labels / tail meter
         }
-        juce::ignoreUnused (p);
     };
 
 
@@ -716,6 +729,26 @@ void DuskVerbEditor::timerCallback()
     update (highCrossover_); update (saturation_); update (diffusion_);
     update (erLevel_);   update (erSize_);    update (mix_);       update (loCut_);
     update (hiCut_);     update (monoBelow_); update (width_);     update (gainTrim_);
+    update (duck_);
+
+    // Manual algorithm-dropdown sync (no ComboBoxAttachment): reflect external
+    // changes to the choice param (preset load, automation, host) into the box
+    // selection + engine accent.
+    {
+        const int algoIdx = static_cast<int> (processorRef.parameters.getRawParameterValue ("algorithm")->load());
+        if (algoIdx >= 0 && algoIdx < getNumAlgorithms())
+        {
+            if (algorithmBox_.getSelectedId() != algoIdx + 1)
+                algorithmBox_.setSelectedId (algoIdx + 1, juce::dontSendNotification);
+
+            const auto e = getAlgorithmConfig (algoIdx).engine;
+            if (e != currentEngine_)
+            {
+                engineGlyph_.setEngine (e);
+                applyEngineAccent (e);
+            }
+        }
+    }
 
     inputMeter_.setStereoLevels  (processorRef.getInputLevelL(),  processorRef.getInputLevelR());
     outputMeter_.setStereoLevels (processorRef.getOutputLevelL(), processorRef.getOutputLevelR());
@@ -944,6 +977,9 @@ void DuskVerbEditor::resized()
     // to soak up the remaining column yPad in non-hero panels.
     int knobBig = juce::roundToInt (92.0f * sf);
     int knobMed = juce::roundToInt (84.0f * sf);
+    // Compact size for the 4-across OUTPUT row (MIX / WIDTH / TRIM / DUCK) —
+    // knobMed would overlap at 4 columns in the OUTPUT panel's width.
+    int knobSm  = juce::roundToInt (62.0f * sf);
 
     // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
     // The two knobs sit adjacent so the row reads as a coherent pair, and
@@ -1060,13 +1096,13 @@ void DuskVerbEditor::resized()
         outArea.removeFromTop (topPad);
         int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
         auto knobArea = outArea.removeFromTop (knobAreaH);
-        // MIX is primary (peer of DECAY/SIZE in TIME); WIDTH and TRIM sit
-        // at the secondary tier.
-        int mixCol  = juce::roundToInt (knobArea.getWidth() * 0.42f);
-        int restCol = (knobArea.getWidth() - mixCol) / 2;
-        placeKnob (mix_,      knobArea.removeFromLeft (mixCol),  knobBig, sf);
-        placeKnob (width_,    knobArea.removeFromLeft (restCol), knobMed, sf);
-        placeKnob (gainTrim_, knobArea,                          knobMed, sf);
+        // 4 even columns: MIX / WIDTH / TRIM / DUCK at the compact tier so the
+        // row doesn't overflow the OUTPUT panel.
+        const int outCol = knobArea.getWidth() / 4;
+        placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobSm, sf);
+        placeKnob (width_,    knobArea.removeFromLeft (outCol), knobSm, sf);
+        placeKnob (gainTrim_, knobArea.removeFromLeft (outCol), knobSm, sf);
+        placeKnob (duck_,     knobArea,                         knobSm, sf);
         busModeButton_.setBounds (outArea.reduced (8, 2));
     }
 
@@ -1320,7 +1356,7 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                      &damping_,  &bassMult_,  &midMult_,       &crossover_,
                      &highCrossover_, &saturation_, &diffusion_,
                      &erLevel_, &erSize_, &mix_, &loCut_, &hiCut_,
-                     &monoBelow_, &width_, &gainTrim_ })
+                     &monoBelow_, &width_, &gainTrim_, &duck_ })
         k->setAccent (accent);
 
     // 3) Components that paint their own accent regions.

@@ -450,6 +450,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "dpv_bass_shelf_hz", 1 }, "DPV Bass Shelf Freq",
         juce::NormalisableRange<float> (60.0f, 500.0f, 1.0f, 0.5f), fp0.dpvBassShelfFreqHz));
 
+    // Wet ducking depth (ChromaVerb-style). Sidechained off the dry input;
+    // pushes the tail down on transients so the source stays clear, then the
+    // tail swells back as the dry decays. 0 = off (default, bit-identical).
+    // Appended last so existing host-stored parameter indices are unaffected.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "duck", 1 }, "Duck",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
     return layout;
 }
 
@@ -547,6 +555,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     gainTrimParam_      = parameters.getRawParameterValue ("gain_trim");
     monoBelowParam_     = parameters.getRawParameterValue ("mono_below");
     monoBelowDepthParam_= parameters.getRawParameterValue ("mono_below_depth");
+    duckParam_          = parameters.getRawParameterValue ("duck");
 
     dpvHfShelfDbParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_db");
     dpvHfShelfHzParam_       = parameters.getRawParameterValue ("dpv_hf_shelf_hz");
@@ -609,6 +618,8 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         const float initialMix = busMode ? 1.0f
                                          : (mixParam_ ? mixParam_->load() : 1.0f);
         mixSmoother_.reset (initialMix);
+
+        ducker_.prepare (sampleRate);
 
         // Cancel any in-flight fade — both engines are reset, no tail to
         // continue.
@@ -1031,6 +1042,15 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         // Samples past samplesToCrossfade in this block are pure activeEngine_
         // wet output (already in left/right) — leave them alone.
+    }
+
+    // ---- Wet ducking (ChromaVerb-style) ----
+    // Sidechained off the dry snapshot (dryBuf*). Depth 0 → ReverbDucker early-
+    // outs and the wet is untouched, so non-ducked presets stay bit-identical.
+    {
+        const float duck = duckParam_ ? duckParam_->load() : 0.0f;
+        ducker_.setDepth (duck);
+        ducker_.process (dryBufL_.data(), dryBufR_.data(), left, right, numSamples);
     }
 
     // ---- Dry/wet mix ----
@@ -1877,6 +1897,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         for (int b = 0; b < 9; ++b)
             engine.setAccurateHallOctaveT60 (
                 b, it != kAccurateHallT60ByName.end() ? it->second.t60[b] : 0.0f);
+        // Couple the Decay knob to the octave curve: reference = this preset's
+        // baked Decay, so loading reproduces the calibrated curve exactly while
+        // the live knob scales it. Unmapped presets clear the ref (scale 1.0).
+        engine.setAccurateHallOctaveDecayRef (
+            it != kAccurateHallT60ByName.end() ? decay : 0.0f);
     }
 
     // ─── Per-preset post-tank OUTPUT diffusion (Bright Hall metallic-ring) ──
