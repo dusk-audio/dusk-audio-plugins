@@ -386,10 +386,18 @@ public:
         double logFreq = std::log(clampedFreq);
         float normalizedPos = static_cast<float>((logFreq - logMin) / (logMax - logMin));
 
-        // Invert: higher frequency = higher position (lower Y)
-        float thumbY = trackBottom - normalizedPos * trackHeight;        // Draw thumb/handle
+        // Draw thumb/handle
         float thumbWidth = 26.0f;
         float thumbHeight = 18.0f;
+        // Inset the travel by half the thumb at each end so the handle stays
+        // fully inside the fader bounds at the frequency extremes. Without
+        // this, max-freq puts the thumb centre at trackTop and its top half
+        // clips under the band header above the meters.
+        float thumbHalf = thumbHeight * 0.5f;
+        float travelTop = trackTop + thumbHalf;
+        float travelBottom = trackBottom - thumbHalf;
+        // Invert: higher frequency = higher position (lower Y)
+        float thumbY = travelBottom - normalizedPos * (travelBottom - travelTop);
         float thumbX = centreX - thumbWidth / 2;
         float thumbYCentered = thumbY - thumbHeight / 2;
 
@@ -435,7 +443,7 @@ public:
 
         // Frequency label at the bottom of the component (below the GR meter values)
         g.setColour((isHovered || isDragging) ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.9f));
-        g.setFont(juce::FontOptions(10.0f).withStyle("Bold"));
+        g.setFont(juce::FontOptions(12.0f).withStyle("Bold"));
         juce::String freqText = formatFrequency(static_cast<float>(freq));
         g.drawText(freqText, 0, static_cast<int>(bounds.getBottom() - 18), static_cast<int>(bounds.getWidth()), 16,
                    juce::Justification::centred);
@@ -764,8 +772,10 @@ public:
         const int knobSectionHeight = labelHeight + knobSize + static_cast<int>(25 * scaleFactor);
         auto knobSection = area.removeFromBottom(knobSectionHeight);
 
-        // Reserve space for the band indicator at the bottom
-        area.removeFromBottom(static_cast<int>(28 * scaleFactor));
+        // Reserve a strip for the "<band> Band" indicator BETWEEN the meters and
+        // the knob row (drawBandIndicator draws here). Must not overlap the knob
+        // value-text below, which the old absolute-bottom placement did.
+        bandIndicatorBounds = area.removeFromBottom(static_cast<int>(28 * scaleFactor));
 
         // === TOP SECTION: Band visualization with GR meters ===
         auto topSection = area;
@@ -894,9 +904,10 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        // Background with subtle gradient
-        juce::ColourGradient bgGradient(juce::Colour(0xff1a1a1e), 0, 0,
-                                         juce::Colour(0xff141418), 0, static_cast<float>(getHeight()), false);
+        // Background with subtle gradient — raised panel surface, a tier above
+        // the recessed meter wells so the section reads with depth.
+        juce::ColourGradient bgGradient(juce::Colour(0xff24242e), 0, 0,
+                                         juce::Colour(0xff1a1a22), 0, static_cast<float>(getHeight()), false);
         g.setGradientFill(bgGradient);
         g.fillAll();
 
@@ -960,6 +971,7 @@ private:
     juce::Rectangle<int> bandGRBounds[4];
     juce::Rectangle<int> dbScaleBounds;
     juce::Rectangle<int> meterSectionBounds;
+    juce::Rectangle<int> bandIndicatorBounds;
 
     // Crossover handle positioning info
     int crossoverAreaLeft = 0;
@@ -1101,7 +1113,10 @@ private:
         if (numEnabled >= 2)
         {
             const int slotWidth = meterSectionBounds.getWidth() / numEnabled;
-            const int faderWidth = static_cast<int>(40 * scaleFactor);
+            // 56 (not 40) so the bold 12 pt frequency label ("2.0 kHz") fits
+            // the component width without truncating; the 8 px track + 26 px
+            // thumb stay centred, so only the label gains room.
+            const int faderWidth = static_cast<int>(56 * scaleFactor);
             const int faderHeight = crossoverHandleHeight + static_cast<int>(22 * scaleFactor);
 
             for (int slot = 0; slot < numEnabled - 1; ++slot)
@@ -1282,10 +1297,11 @@ private:
             }
             else
             {
-                // Unlit segment - subtle dark with slight bevel
-                g.setColour(juce::Colour(0xff1c1c1c));
+                // Unlit segment - subtle dark with slight bevel (lifted a touch
+                // so the meter reads as a row of LEDs even at rest).
+                g.setColour(juce::Colour(0xff242429));
                 g.fillRoundedRectangle(segRect, 2.0f);
-                g.setColour(juce::Colour(0xff252525));
+                g.setColour(juce::Colour(0xff303036));
                 g.fillRect(segRect.getX() + 2, segRect.getY() + 1, segRect.getWidth() - 4, 1.0f);
             }
         }
@@ -1322,10 +1338,16 @@ private:
     {
         juce::Colour bandCol = juce::Colour(bandColors[currentBand]);
 
-        auto labelHeight = static_cast<int>(26 * scaleFactor);
-        auto labelY = getHeight() - labelHeight - static_cast<int>(3 * scaleFactor);
+        // Draw in the strip reserved by resized() between the meters and the
+        // knob row, centred — NOT at the absolute bottom (which overlapped the
+        // Release knob's value text).
+        auto strip = bandIndicatorBounds.isEmpty()
+                       ? juce::Rectangle<int> (getWidth() / 2 - 70, getHeight() - 29, 140, 26)
+                       : bandIndicatorBounds;
+        auto labelHeight = juce::jmin(static_cast<int>(24 * scaleFactor), strip.getHeight());
         auto labelWidth = static_cast<int>(140 * scaleFactor);
-        auto labelX = getWidth() / 2 - labelWidth / 2;
+        auto labelX = strip.getCentreX() - labelWidth / 2;
+        auto labelY = strip.getCentreY() - labelHeight / 2;
         auto cornerRadius = 5.0f * scaleFactor;
 
         // Drop shadow
