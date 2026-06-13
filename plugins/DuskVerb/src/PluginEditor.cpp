@@ -1715,6 +1715,8 @@ void EngineGlyph::paint (juce::Graphics& g)
             break;
         }
         case EngineType::DenseHall:
+        case EngineType::VintageTank:
+        case EngineType::AccurateHall32:
         default:
         {
             // Generic engine cue for engines without a bespoke glyph
