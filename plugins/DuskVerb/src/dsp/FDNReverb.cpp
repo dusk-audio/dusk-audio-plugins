@@ -261,7 +261,11 @@ void FDNReverbT<WithOctaveGEQ, N>::prepare (double sampleRate, int /*maxBlockSiz
         delayLines_[i].mask = bufSize - 1;
         dampFilter_[i].prepare (static_cast<float> (sampleRate));
         if constexpr (WithOctaveGEQ)
+        {
             octaveDamp_[i].prepare (static_cast<float> (sampleRate));
+            if (i == 0) { tonalCorrL_.prepare (static_cast<float> (sampleRate));
+                          tonalCorrR_.prepare (static_cast<float> (sampleRate)); }
+        }
         // Phase ε: in-loop peaking band — designUnity by default → bypass.
         inLoopPeak_[i].prepare (static_cast<float> (sampleRate));
         // Phase η: per-line dual-time-constant bass shelf — both gains
@@ -884,6 +888,16 @@ void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* in
             }
         }
 
+        // Jot tonal correction (AccurateHall opt-in): stereo output GEQ that
+        // flattens per-band energy so decay and tone are decoupled. Identity
+        // (skipped) unless tonalCorrActive → bit-null otherwise.
+        if constexpr (WithOctaveGEQ)
+            if (lp.tonalCorrActive)
+            {
+                outL = tonalCorrL_.process (outL, lp.tonalCorrCoeffs);
+                outR = tonalCorrR_.process (outR, lp.tonalCorrCoeffs);
+            }
+
         // Fold lateGainScale before clipping; softClip linear below 1.0
         // (no THD on tail), tanh-shaped above; hard clamp catches anything
         // beyond the soft-clip ceiling.
@@ -1161,7 +1175,7 @@ void FDNReverbT<WithOctaveGEQ, N>::setFreeze (bool frozen)
             inlineAP3_[i].clear();
             inlineAPShort_[i].clear();
             dampFilter_[i].reset();
-            if constexpr (WithOctaveGEQ) octaveDamp_[i].reset();
+            if constexpr (WithOctaveGEQ) { octaveDamp_[i].reset(); if (i == 0) { tonalCorrL_.reset(); tonalCorrR_.reset(); } }
             structHFState_[i] = 0.0f;
             structLFState_[i] = 0.0f;
             antiAliasState_[i] = 0.0f;
@@ -1759,7 +1773,7 @@ void FDNReverbT<WithOctaveGEQ, N>::clearBuffers()
         inlineAP3_[i].clear();
         inlineAPShort_[i].clear();
         dampFilter_[i].reset();
-        if constexpr (WithOctaveGEQ) octaveDamp_[i].reset();
+        if constexpr (WithOctaveGEQ) { octaveDamp_[i].reset(); if (i == 0) { tonalCorrL_.reset(); tonalCorrR_.reset(); } }
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
         antiAliasState_[i] = 0.0f;
@@ -2046,7 +2060,34 @@ void FDNReverbT<WithOctaveGEQ, N>::computeDecayCoefficients (LiveParams& p)
         (modulationTopology_ == DspUtils::ModulationTopology::ModulatedDamping);
 
     if constexpr (WithOctaveGEQ)
+    {
         p.octaveActive = octaveGEQActive_;
+        // Jot tonal correction: flatten per-band steady-state ENERGY. corr_b =
+        // minT60 / T60_b (pure loss, shortest-decay octave = unity → longer-decay
+        // octaves level-trimmed to equal energy). Output filter, no loop-stability
+        // constraint. Identity unless the preset opts in. Decouples decay from tone.
+        p.tonalCorrActive = octaveGEQActive_ && tonalCorrEnabled_;
+        if (p.tonalCorrActive)
+        {
+            static constexpr float kOctaveXoverHz[OctaveBandDamping::kNumShelves] = {
+                88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f, 11313.7f };
+            const float octaveScale = (octaveDecayRef_ > 0.05f)
+                ? std::clamp (decayTime_ / octaveDecayRef_, 0.1f, 8.0f) : 1.0f;
+            float Tb[OctaveBandDamping::kNumBands]; float Tmin = 1.0e9f;
+            for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
+            {
+                Tb[k] = (octaveT60_[k] > 0.0f) ? octaveT60_[k] * octaveScale
+                                               : std::max (decayTime_, 1.0e-3f);
+                Tmin = std::min (Tmin, Tb[k]);
+            }
+            float corr[OctaveBandDamping::kNumBands];
+            for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
+                // Tmin/Tb is an ENERGY ratio; the GEQ applies a linear AMPLITUDE
+                // gain (energy ∝ gain²), so sqrt it to flatten band energy.
+                corr[k] = std::sqrt (std::clamp (Tmin / std::max (Tb[k], 1.0e-3f), 0.05f, 1.0f));
+            p.tonalCorrCoeffs = OctaveBandDamping::designCoeffs (corr, kOctaveXoverHz, sr);
+        }
+    }
 }
 
 template <bool WithOctaveGEQ, int N>
@@ -2111,6 +2152,15 @@ template <bool WithOctaveGEQ, int N>
 void FDNReverbT<WithOctaveGEQ, N>::setOctaveDecayRef (float seconds)
 {
     octaveDecayRef_ = seconds;   // <=0 → scale 1.0 in computeDecayCoefficients
+    if (! prepared_) return;
+    computeDecayCoefficients (pending());
+    publishPending();
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setTonalCorrection (bool enabled)
+{
+    tonalCorrEnabled_ = enabled;   // gated by WithOctaveGEQ && octaveGEQActive_ in computeDecayCoefficients
     if (! prepared_) return;
     computeDecayCoefficients (pending());
     publishPending();

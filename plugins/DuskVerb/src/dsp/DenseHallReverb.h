@@ -49,6 +49,12 @@ public:
         // ONCE here (allocation is message-thread only); setSize just moves len.
         for (int i = 0; i < kN; ++i) line_[i].alloc (lineLen (i, 1.6f), kDelExc);
         for (int i = 0; i < kN; ++i) loopAP_[i].alloc (loopAPLen (i, 1.6f), kLoopExc);
+        for (int i = 0; i < kN; ++i) loopAP2_[i].alloc (loopAP2Len (i, 1.6f), kLoopExc);
+        for (int i = 0; i < kN; ++i) loopAP3_[i].alloc (loopAP3Len (i, 1.6f), kLoopExc);
+        // Spin combs — alloc here (sample-rate-dependent length) so a re-prepare
+        // at a new SR reallocates; keeps update() allocation-free (audio-thread).
+        spinL_.alloc ((int)(0.0061f*sr_), (int)(0.0002f*sr_));
+        spinR_.alloc ((int)(0.0049f*sr_), (int)(0.0002f*sr_));
         rebuild();   // sets line_[i].len at the current size (no allocation)
 
         // Smooth modulation LFOs (sine), detuned per side; spin LFO slower.
@@ -65,7 +71,7 @@ public:
     {
         for (auto& a : inAPL_) a.clear();
         for (auto& a : inAPR_) a.clear();
-        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; }
+        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; }
         spinL_.clear(); spinR_.clear();
     }
 
@@ -74,7 +80,9 @@ public:
     void setSize (float s)           { float n = 0.55f + std::clamp (s,0.0f,1.0f)*0.9f; if (std::abs(n-size_)>1e-4f){ size_=n; if(prepared_){ rebuild(); update(); } } }
     void setBassMultiply (float m)   { bassMul_ = std::clamp (m, 0.2f, 3.0f); if (prepared_) update(); }   // low-band RT60 factor
     void setTrebleMultiply (float m) { trebMul_ = std::clamp (m, 0.05f, 2.0f); if (prepared_) update(); }   // high-band RT60 factor
-    void setMidMultiply (float)      {}
+    void setMidMultiply (float m)    { midMul_ = std::clamp (m, 0.2f, 3.0f);    if (prepared_) update(); }   // mid-band RT60 factor (was a no-op; now the 3rd damping band)
+    void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
+    void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
     void setModDepth (float d)       { modDepth_ = std::clamp (d, 0.0f, 1.0f); }       // scales allpass/delay excursion
     void setModRate (float hz)       { float r=std::clamp(hz,0.05f,3.0f); lfo1_.setRate(r); lfo2_.setRate(r*1.19f); }
     void setFreeze (bool f)          { frozen_ = f; if (prepared_) update(); }
@@ -83,7 +91,7 @@ public:
     void process (const float* inLp, const float* inRp, float* outLp, float* outRp, int n)
     {
         if (! prepared_) { std::fill (outLp, outLp+n, 0.0f); std::fill (outRp, outRp+n, 0.0f); return; }
-        const float md = 0.3f + 0.7f * modDepth_;   // modulation scaler (never fully static -> smooth)
+        const float md = 0.05f + 0.95f * modDepth_;   // modulation scaler (tiny floor -> not fully static, but no audible chorus at low depth)
 
         for (int s = 0; s < n; ++s)
         {
@@ -134,7 +142,7 @@ public:
             float oR = 0.25f * (x[4] + x[5] - x[6] - x[7]);
 
             // Spin combs — slow wander on the output for the "living" smear.
-            const float sp = spin_.next() * (0.4f + 0.6f * modDepth_);
+            const float sp = spin_.next() * (0.05f + 0.95f * modDepth_);
             oL = spinL_.process (oL, sp);
             oR = spinR_.process (oR, -sp);
 
@@ -146,9 +154,9 @@ public:
 private:
     static constexpr int kN        = 8;    // FDN lines
     static constexpr int kNumInAP  = 10;   // input diffusers per channel
-    static constexpr int kInExc    = 16;   // input allpass mod excursion (samples)
-    static constexpr int kLoopExc  = 24;   // loop allpass mod excursion
-    static constexpr int kDelExc   = 40;   // delay-line mod excursion
+    static constexpr int kInExc    = 4;    // input allpass mod excursion (samples) — was 16; cut to kill tail chorus
+    static constexpr int kLoopExc  = 6;    // loop allpass mod excursion — was 24
+    static constexpr int kDelExc   = 5;    // delay-line mod excursion — was 40 (the main flange culprit)
 
     // ── Primitives (ours) ──────────────────────────────────────────────────────
     struct DCBlock { float x1=0,y1=0; void reset(){x1=y1=0;}
@@ -195,25 +203,36 @@ private:
             float rp=(float)w-(float)len-exc*mod;
             int i0=(int)std::floor(rp); float fr=rp-i0;
             float d=buf[(size_t)(i0&mask)]*(1.0f-fr)+buf[(size_t)((i0+1)&mask)]*fr;
-            buf[(size_t)w]=x+DspUtils::kDenormalPrevention; w=(w+1)&mask;
-            return 0.6f*x+0.4f*d;
-        } };
+            // Schroeder allpass (flat magnitude -> NO comb notches). Was a
+            // 0.6x+0.4d feed-forward comb at 12 ms = the metallic ring. Allpass
+            // form decorrelates L/R + carries the spin modulation without
+            // coloring the spectrum.
+            float in=x+kSG*d;
+            buf[(size_t)w]=in+DspUtils::kDenormalPrevention; w=(w+1)&mask;
+            return d-kSG*in;
+        }
+        static constexpr float kSG=0.7f; };
 
     // line i: read delayed sample (modulated), high-shelf + low-shelf decay,
     // inject input, run through the per-line loop allpass diffuser.
     float lineRead (int i, float inject, float mod)
     {
         float v = line_[i].getlast (mod) + inject;
-        // Per-band decay TILT (unity at mid) — shelves shape only the relative
-        // bass/treble decay; the broadband loop gain (midG_) is applied ONCE
-        // below so the RT60 knob reads true.
-        lsf_[i] = lsf_[i] + lCoeff_ * (v - lsf_[i]);          // low band (< ~250 Hz)
-        v = lTilt_ * lsf_[i] + (v - lsf_[i]);                 // bass tilt vs mid
-        hsf_[i] = hsf_[i] + hCoeff_ * (v - hsf_[i]);          // low-pass (< ~3.5 kHz)
-        v = hsf_[i] + hTilt_ * (v - hsf_[i]);                 // treble tilt vs mid
-        v *= midG_;                                           // broadband loop gain (once)
-        // per-line loop allpass diffuser (modulated) — the in-loop density.
+        // 3-band damping: split v into low/mid/high via two one-pole lowpasses
+        // (at lowX_, highX_), apply each band's own per-pass gain. Mid is the
+        // RT60 reference (midMul_=1 -> gMidB_=midG_), so the Decay knob reads
+        // true; bass/treble/mid tilt the per-band decay independently.
+        lsf_[i] = lsf_[i] + lCoeff_ * (v - lsf_[i]);          // lowpass < lowX_
+        hsf_[i] = hsf_[i] + hCoeff_ * (v - hsf_[i]);          // lowpass < highX_
+        const float lowB  = lsf_[i];                          // < lowX_
+        const float midB  = hsf_[i] - lsf_[i];                // lowX_ .. highX_
+        const float highB = v - hsf_[i];                      // > highX_
+        v = gLowB_ * lowB + gMidB_ * midB + gHighB_ * highB;
+        // per-line loop allpass diffusers (modulated) — the in-loop density.
+        // Two nested allpasses (opposite mod sign) double the echo density.
         v = loopAP_[i].process (v, mod);
+        v = loopAP2_[i].process (v, -mod);
+        v = loopAP3_[i].process (v, mod);
         return v;
     }
 
@@ -236,7 +255,26 @@ private:
     }
     int loopAPLen (int i, float size) const
     {
-        static const float baseMs[kN] = { 9.7f, 13.1f, 7.3f, 11.9f, 8.5f, 12.4f, 6.8f, 10.6f };
+        // True Schroeder diffuser range (<~5 ms). Were 6.8-13.1 ms, which made
+        // discrete ~12 ms echoes in the feedback loop (metallic comb + sparse
+        // modal beating). Short + mutually-prime -> dense in-loop diffusion.
+        static const float baseMs[kN] = { 4.7f, 3.1f, 5.3f, 2.3f, 4.1f, 1.9f, 3.7f, 1.3f };
+        return std::max (1, (int) std::round (baseMs[i] * 0.001f * sr_ * size));
+    }
+    int loopAP2Len (int i, float size) const
+    {
+        // Second nested diffuser per line (mutually prime vs loopAP) — doubles
+        // in-loop echo density to lift the tail toward the anchors' diffuse
+        // wash (ed_end ~1.0 -> ~1.5+); kills sparse-mode beating ("watery").
+        static const float baseMs[kN] = { 2.9f, 4.3f, 1.7f, 3.7f, 2.1f, 4.9f, 1.5f, 3.3f };
+        return std::max (1, (int) std::round (baseMs[i] * 0.001f * sr_ * size));
+    }
+    int loopAP3Len (int i, float size) const
+    {
+        // Third nested diffuser — lifts the large-hall steady-state density
+        // (long lines recirculate slowly, so 2 nested APs alone don't fill
+        // the tail fast enough). Mutually prime vs loopAP/loopAP2.
+        static const float baseMs[kN] = { 1.1f, 2.7f, 3.9f, 1.5f, 4.5f, 2.5f, 3.1f, 1.9f };
         return std::max (1, (int) std::round (baseMs[i] * 0.001f * sr_ * size));
     }
 
@@ -245,8 +283,18 @@ private:
     // audio thread. Buffers are alloc'd once in prepare().
     void rebuild()
     {
+        // Re-point every size-dependent length within its already-reserved
+        // buffer. The loop allpasses recirculate inside the feedback path, so
+        // their lengths feed update()'s RT60 math (sumLen); leaving them at the
+        // max-size alloc length would desync the actual delay from the decay
+        // gains. Clamp to the buffer span (alloc'd at size 1.6 with +exc+8).
         for (int i = 0; i < kN; ++i)
-            line_[i].len = std::min (lineLen (i, size_), line_[i].mask - kDelExc - 4);
+        {
+            line_[i].len    = std::min (lineLen   (i, size_), line_[i].mask    - kDelExc  - 4);
+            loopAP_[i].len  = std::min (loopAPLen  (i, size_), loopAP_[i].mask  - kLoopExc - 4);
+            loopAP2_[i].len = std::min (loopAP2Len (i, size_), loopAP2_[i].mask - kLoopExc - 4);
+            loopAP3_[i].len = std::min (loopAP3Len (i, size_), loopAP3_[i].mask - kLoopExc - 4);
+        }
     }
 
     void update()
@@ -254,27 +302,32 @@ private:
         norm_ = std::sqrt (1.0f / (float) kN);
         // Per-line broadband decay folded into the mid-band shelf gain:
         // average loop length -> RT60 gain. (Shelf low/high gains add band tilt.)
-        const float meanLen = (lineLen(0,size_)+lineLen(1,size_)+lineLen(2,size_)+lineLen(3,size_)
-                              + lineLen(4,size_)+lineLen(5,size_)+lineLen(6,size_)+lineLen(7,size_)) / 8.0f;
+        // Effective loop length per line = delay + the 3 nested loop allpasses'
+        // delays (they recirculate inside the feedback path, so they lengthen
+        // the real round-trip and must be counted or the Decay knob runs long).
+        float sumLen = 0.0f;
+        for (int i = 0; i < kN; ++i)
+            sumLen += lineLen(i,size_) + loopAPLen(i,size_) + loopAP2Len(i,size_) + loopAP3Len(i,size_);
+        const float meanLen = sumLen / (float) kN;
         const float loopSec = meanLen / sr_;
         const float gMid = frozen_ ? 1.0f : std::pow (10.0f, -3.0f * loopSec / rt60_);
         midG_   = std::clamp (gMid, 0.0f, 0.999f);
-        // Band per-pass gains from RT60 multipliers, then expressed as TILT
-        // relative to mid (unity at default mults) so midG_ is the only
-        // broadband loss — keeps the Decay knob honest.
-        const float gLow  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, bassMul_)), 0.0f, 0.9995f);
-        const float gHigh = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);
-        lTilt_ = std::clamp (gLow  / std::max (1e-4f, midG_), 0.1f, 4.0f);
-        hTilt_ = std::clamp (gHigh / std::max (1e-4f, midG_), 0.1f, 4.0f);
-        // Crossover one-pole coeffs: low ~250 Hz, high ~3.5 kHz.
-        lCoeff_ = 1.0f - std::exp (-6.2831853f * 250.0f  / sr_);
-        hCoeff_ = 1.0f - std::exp (-6.2831853f * 3500.0f / sr_);
-        // spin combs
-        if (spinL_.buf.empty()) { spinL_.alloc ((int)(0.012f*sr_), (int)(0.004f*sr_)); spinR_.alloc ((int)(0.0131f*sr_), (int)(0.004f*sr_)); }
+        // Per-band per-pass gains from the RT60 multipliers. Mid is the
+        // broadband reference (midMul_=1 -> gMidB_=midG_); bass/treble tilt
+        // relative to it. Each band's gain sets BOTH its decay and steady
+        // level (feedback-damping coupling — inherent to a single-tap loop).
+        gMidB_  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, midMul_)),  0.0f, 0.999f);
+        gLowB_  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, bassMul_)), 0.0f, 0.9995f);
+        gHighB_ = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);
+        // Tunable crossover one-pole coeffs (defaults 250 Hz / 3.5 kHz).
+        lCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (lowX_,  sr_ * 0.45f) / sr_);
+        hCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (highX_, sr_ * 0.45f) / sr_);
+        // (spin combs allocated in prepare() — SR-dependent, audio-thread-safe here)
     }
 
-    float sr_ = 44100.0f, size_ = 1.0f, rt60_ = 2.5f, bassMul_ = 1.0f, trebMul_ = 1.0f, modDepth_ = 0.4f;
-    float norm_ = 0.354f, midG_ = 0.0f, lTilt_ = 1.0f, hTilt_ = 1.0f;
+    float sr_ = 44100.0f, size_ = 1.0f, rt60_ = 2.5f, bassMul_ = 1.0f, midMul_ = 1.0f, trebMul_ = 1.0f, modDepth_ = 0.4f;
+    float lowX_ = 250.0f, highX_ = 3500.0f;
+    float norm_ = 0.354f, midG_ = 0.0f, gLowB_ = 0.0f, gMidB_ = 0.0f, gHighB_ = 0.0f;
     float lCoeff_ = 0.03f, hCoeff_ = 0.4f;
     bool  frozen_ = false, prepared_ = false;
 
@@ -282,6 +335,8 @@ private:
     ModAP   inAPL_[kNumInAP], inAPR_[kNumInAP];
     Line    line_[kN];
     ModAP   loopAP_[kN];
+    ModAP   loopAP2_[kN];
+    ModAP   loopAP3_[kN];
     float   lsf_[kN] {}, hsf_[kN] {};
     SineLFO lfo1_, lfo2_, spin_;
     SpinComb spinL_, spinR_;
