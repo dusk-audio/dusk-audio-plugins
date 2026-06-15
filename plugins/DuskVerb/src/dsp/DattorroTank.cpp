@@ -174,11 +174,30 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
         tank.damping.prepare (static_cast<float> (sampleRate));
         tank.damping.reset();
+        tank.octaveDamping.prepare (static_cast<float> (sampleRate));
+        tank.octaveDamping.reset();
         tank.crossFeedState = 0.0f;
     };
 
     prepareTank (leftTank_);
     prepareTank (rightTank_);
+
+    // Static output tonal-correction GEQ (stereo). Coeffs re-designed below.
+    tonalCorrL_.prepare (static_cast<float> (sampleRate));
+    tonalCorrR_.prepare (static_cast<float> (sampleRate));
+
+    // Input diffusion cascade (mono, fixed length — scaled by sample rate only,
+    // NOT by size/delayScale, so the initial smear time is constant). Static
+    // allpasses: no jitter LFO, no size-dependent re-derivation in
+    // updateDelayLengths(). delaySamples is set once here.
+    for (int k = 0; k < kNumInputDiffusers; ++k)
+    {
+        const int d = std::max (1, static_cast<int> (
+            std::ceil (kInputDiffuserBase[k] * rateRatio)));
+        inputDiffuser_[k].allocate (d + 4);   // +4 safety; integer read, no interp
+        inputDiffuser_[k].delaySamples       = d;
+        inputDiffuser_[k].jitterDepthFraction = 0.0f;   // STATIC — initial diffusion is still
+    }
 
     // Initialize LFOs with different seeds per tank and per delay tap so
     // every modulator wanders along an independent path. The two delay-tap
@@ -222,6 +241,15 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     if (softOnsetMs_ > 0.0f)
         setSoftOnsetMs (softOnsetMs_);
 
+    // Recompute bloom coeffs for the new sample rate + reset its envelope.
+    setBloomAttackMs (bloomAttackMs_);
+    bloomEnv_     = bloomActive_ ? 0.0f : 1.0f;
+    bloomRampPos_ = bloomActive_ ? 0.0f : 1.0f;
+    bloomQuietSamples_ = bloomRearmSamples_;  // armed: first onset triggers the swell
+
+    // Re-design the static tonal-correction GEQ for the new sample rate.
+    updateTonalCorr();
+
     // Clear stateful trackers. Without this, a host re-prepare would start
     // with empty delay buffers but retain the previous run's tracker state
     // (structural HF filter, AP1 mod source, soft-onset ramp, limiter
@@ -258,6 +286,42 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         if (frozen_)
             input = 0.0f;
 
+        // Slow-attack bloom: follow input onset (raw, pre-diffusion), drive a
+        // one-pole swell gain that opens over bloomAttackMs_ then holds (the
+        // input-peak follower's slow release keeps the target latched through
+        // the tail). Applied to the wet output below. Bypassed when inactive.
+        if (bloomActive_ && ! frozen_)
+        {
+            const float a = std::abs (input);
+            if (a < 1.0e-4f)
+            {
+                if (bloomQuietSamples_ < (1 << 30)) ++bloomQuietSamples_;
+            }
+            else
+            {
+                // Onset after enough silence → (re)trigger the swell ramp.
+                if (bloomQuietSamples_ >= bloomRearmSamples_) bloomRampPos_ = 0.0f;
+                bloomQuietSamples_ = 0;
+            }
+            if (bloomRampPos_ < 1.0f)
+                bloomRampPos_ = std::min (1.0f, bloomRampPos_ + bloomRampInc_);
+            bloomEnv_ = (bloomRampPos_ >= 1.0f) ? 1.0f
+                                                : std::pow (bloomRampPos_, bloomExp_);
+        }
+
+        // ------------------------------------------------------------------
+        // Input diffusion: smear the impulse into a dense burst BEFORE it
+        // enters the tank, so the first ~60 ms of the response is already a
+        // dense diffuse field (low kurtosis) instead of a sparse spray of
+        // discrete tap arrivals. Feed-forward static allpass chain → no RT60
+        // change. Bypassed when inactive → bit-identical legacy.
+        if (inputDiffusionActive_ && ! frozen_)
+        {
+            for (int k = 0; k < kNumInputDiffusers; ++k)
+                input = inputDiffuser_[k].process (
+                    input, std::clamp (kInputDiffuserCoeff[k] * inputDiffCoeffScale_, 0.0f, 0.85f));
+        }
+
         // ------------------------------------------------------------------
         // Process both tanks. Each receives the other's cross-feed state.
         // Order: left first, then right. The one-sample delay in cross-feed
@@ -277,7 +341,7 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float currentMod = frozen_ ? tank.savedAP1Mod : tank.lfo.next();
             if (! frozen_)
                 tank.savedAP1Mod = currentMod;
-            float ap1ReadDelay = tank.ap1DelaySamples + currentMod;
+            float ap1ReadDelay = tank.ap1DelaySamples + currentMod * modReduction_;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
             float ap1Delayed = tank.ap1Buffer.readInterpolated (ap1ReadDelay);
@@ -294,21 +358,24 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             // rate FM sidebands (the "tape hiss" that per-sample white-noise
             // jitter generated).
             float jitter1 = frozen_ ? 0.0f : tank.delay1Lfo.next();
-            float del1Read = tank.delay1Samples + jitter1;
+            float del1Read = tank.delay1Samples + jitter1 * modReduction_;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
             tank.delay1.write (ap1Out);
 
-            // --- Density cascade: 3 allpasses to multiply echo density ---
+            // --- Density cascade: numActiveDensityAPs_ allpasses (3 legacy / 6 dense) ---
             float dense = del1Out;
             if (! frozen_)
             {
-                for (int d = 0; d < kNumDensityAPs; ++d)
-                    dense = tank.densityAP[d].process (dense, densityDiffCoeff_);
+                const float dcoeff = std::clamp (densityDiffCoeff_ * densityCoeffBoost_, 0.0f, 0.85f);
+                for (int d = 0; d < numActiveDensityAPs_; ++d)
+                    dense = tank.densityAP[d].process (dense, dcoeff);
             }
 
-            // --- Two-band damping ---
-            float damped = frozen_ ? dense : tank.damping.process (dense);
+            // --- Damping: per-octave GEQ (9 T60 plateaus) or legacy 3-band ---
+            float damped = frozen_ ? dense
+                         : (octaveActive_ ? tank.octaveDamping.process (dense, tank.octaveCoeffs)
+                                          : tank.damping.process (dense));
 
             // --- Structural HF damping ---
             if (structHFCoeff_ > 0.0f && ! frozen_)
@@ -324,7 +391,7 @@ void DattorroTank::process (const float* inputL, const float* inputR,
 
             // --- Delay 2 (with smooth random-walk modulation) ---
             float jitter2 = frozen_ ? 0.0f : tank.delay2Lfo.next();
-            float del2Read = tank.delay2Samples + jitter2;
+            float del2Read = tank.delay2Samples + jitter2 * modReduction_;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
             // Denormal prevention: tiny alternating bias
@@ -371,6 +438,21 @@ void DattorroTank::process (const float* inputL, const float* inputR,
 
         float scaledL = outL * outputGain;
         float scaledR = outR * outputGain;
+
+        // Static tonal-correction GEQ on the wet output (steady-state spectral
+        // shaping decoupled from decay). Identity when inactive → bit-null.
+        if (tonalCorrActive_)
+        {
+            scaledL = tonalCorrL_.process (scaledL, tonalCorrCoeffs_);
+            scaledR = tonalCorrR_.process (scaledR, tonalCorrCoeffs_);
+        }
+
+        // Slow-attack bloom swell (input-onset-driven). Pinned 1.0 when inactive.
+        if (bloomActive_)
+        {
+            scaledL *= bloomEnv_;
+            scaledR *= bloomEnv_;
+        }
 
         // Soft output onset ramp: smooths the initial transient spike from early taps.
         // Ramps from 0→1 linearly over softOnsetMs_ after reset/preset change.
@@ -715,6 +797,90 @@ void DattorroTank::setDensityJitter (float fraction)
     }
 }
 
+void DattorroTank::setDensityDepth (float depth01)
+{
+    const float d = std::clamp (depth01, 0.0f, 1.0f);
+    // 0 -> legacy 3 APs, no boost (byte-identical). >0 -> all 6 density APs +
+    // a small coefficient lift (denser, smoother tail without modulation).
+    numActiveDensityAPs_ = (d > 0.001f) ? kNumDensityAPs : 3;
+    densityCoeffBoost_   = 1.0f + d * 0.25f;   // clamped <0.85 at the process site
+    // numActiveDensityAPs_ feeds the loop-length sum in updateDecayCoefficients()
+    // (only active density APs recirculate). Re-derive the decay gains so they
+    // stay matched to the new density-AP count instead of the prior loop length.
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setOctaveT60 (int band, float seconds)
+{
+    if (band < 0 || band >= 9) return;
+    octaveT60_[band] = std::max (0.0f, seconds);
+    // Active when ANY octave carries a target; all-zero → legacy 3-band (bit-null).
+    octaveActive_ = false;
+    for (int k = 0; k < 9; ++k)
+        if (octaveT60_[k] > 0.001f) { octaveActive_ = true; break; }
+    if (prepared_) updateDecayCoefficients();   // re-derive octave coeffs
+}
+
+void DattorroTank::setOctaveDecayRef (float seconds)
+{
+    octaveDecayRef_ = std::max (0.0f, seconds);
+    if (prepared_) updateDecayCoefficients();
+}
+
+void DattorroTank::setTonalCorrDb (int band, float dB)
+{
+    if (band < 0 || band >= 9) return;
+    // Cut-only (≤0 dB): designCoeffs' stability guard caps |H|<1, so boosts get
+    // clamped away — shape the spectrum with cuts + a Gain-Trim makeup instead.
+    tonalCorrGain_[band] = std::pow (10.0f, std::clamp (dB, -24.0f, 0.0f) / 20.0f);
+    if (prepared_) updateTonalCorr();
+}
+
+void DattorroTank::updateTonalCorr()
+{
+    tonalCorrActive_ = false;
+    for (int k = 0; k < 9; ++k)
+        if (std::abs (tonalCorrGain_[k] - 1.0f) > 1.0e-4f) { tonalCorrActive_ = true; break; }
+    if (tonalCorrActive_)
+        tonalCorrCoeffs_ = OctaveBandDamping::designCoeffs (
+            tonalCorrGain_, kOctaveXoverHz, static_cast<float> (sampleRate_));
+}
+
+void DattorroTank::setBloomAttackMs (float ms)
+{
+    bloomAttackMs_ = std::max (0.0f, ms);
+    bloomActive_   = bloomAttackMs_ > 0.01f;
+    const float sr = static_cast<float> (sampleRate_);
+    // Ramp reaches rampPos=1 (env=1) in bloomAttackMs_; the power curve shifts
+    // the IR's energy peak toward that time.
+    bloomRampInc_     = (bloomActive_ && sr > 0.0f)
+        ? 1.0f / std::max (1.0f, bloomAttackMs_ * 0.001f * sr) : 1.0f;
+    bloomRearmSamples_ = (sr > 0.0f) ? static_cast<int> (0.15f * sr) : 6615; // 150 ms silence re-arms
+    if (! bloomActive_) { bloomEnv_ = 1.0f; bloomRampPos_ = 1.0f; }           // pinned open = bit-null
+}
+
+void DattorroTank::setBloomExp (float e)
+{
+    bloomExp_ = std::clamp (e, 1.0f, 8.0f);
+}
+
+void DattorroTank::setInputDiffusionScale (float scale01)
+{
+    // Input diffusion is DECOUPLED from the in-loop density APs: it targets the
+    // first-60ms kurtosis (the in-loop APs densify the late tail). scale 0 =
+    // bypassed = bit-identical legacy; >0 engages the cascade at that coeff
+    // scale. Cap so the strongest coeff (0.65) stays well under the 0.85 ceiling.
+    inputDiffCoeffScale_  = std::clamp (scale01, 0.0f, 1.13f);
+    inputDiffusionActive_ = (scale01 > 0.001f);
+}
+
+void DattorroTank::setModReduction (float reduction01)
+{
+    // 1.0 = legacy modulation; <1.0 pulls AP1 + delay1/2 modulation toward still.
+    modReduction_ = std::clamp (reduction01, 0.0f, 1.0f);
+}
+
 void DattorroTank::setStructuralHFDamping (float hz)
 {
     lastStructHFHz_ = hz;
@@ -739,6 +905,7 @@ void DattorroTank::clearBuffers()
         tank.ap2.clear();
         tank.delay2.clear();
         tank.damping.reset();
+        tank.octaveDamping.reset();
         tank.crossFeedState = 0.0f;
         tank.savedAP1Mod = 0.0f;  // keep from the code-review fix
         tank.lfo.prepare (static_cast<float> (sampleRate_), seed);
@@ -761,6 +928,12 @@ void DattorroTank::clearBuffers()
 
     clearTank (leftTank_, 0x12345678u);
     clearTank (rightTank_, 0x87654321u);
+    tonalCorrL_.reset();
+    tonalCorrR_.reset();
+    // Input diffusion cascade — zero the static-allpass buffers (delaySamples is
+    // set in prepare() and survives a clear, so no re-derivation needed here).
+    for (int k = 0; k < kNumInputDiffusers; ++k)
+        inputDiffuser_[k].clear();
     // Reseed the density-AP jitter LFOs with the SAME per-channel seeds used in
     // prepare() (the lambda's tank seed differs), so density modulation also
     // restarts deterministically across resets/engine swaps instead of leaking
@@ -781,6 +954,9 @@ void DattorroTank::clearBuffers()
     limiterEnv_ = 0.0f;
     structHFStateL_ = 0.0f;
     structHFStateR_ = 0.0f;
+    bloomEnv_     = bloomActive_ ? 0.0f : 1.0f;
+    bloomRampPos_ = bloomActive_ ? 0.0f : 1.0f;
+    bloomQuietSamples_ = bloomRearmSamples_;  // armed: first onset triggers the swell
 }
 
 // -----------------------------------------------------------------------
@@ -837,7 +1013,10 @@ void DattorroTank::updateDecayCoefficients()
                          + tank.delay1Samples
                          + static_cast<float> (tank.ap2.delaySamples)
                          + tank.delay2Samples;
-        for (int i = 0; i < kNumDensityAPs; ++i)
+        // Only the ACTIVE density APs are in the recirculating path — counting the
+        // (allocated-but-unprocessed) extra stages would mis-derive the decay gain
+        // and break bit-null at the legacy 3-AP default.
+        for (int i = 0; i < numActiveDensityAPs_; ++i)
             loopLength += static_cast<float> (tank.densityAP[i].delaySamples);
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
@@ -848,6 +1027,36 @@ void DattorroTank::updateDecayCoefficients()
         float gHi  = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHi, lowXoverCoeff, highXoverCoeff);
+
+        // Per-octave GEQ path (active only when a preset sets octave T60s).
+        // gOct[k] = 10^(-3·loopLength / (T60_k · scale · sr)) — same Sabine
+        // round-trip-gain math as the 3-band gBase, per ISO octave. The Decay
+        // knob scales the whole curve via octaveDecayRef_ so it stays live.
+        // designCoeffs() is the message-thread composite-exact solver (this
+        // function only runs off the audio thread, from the param setters).
+        if (octaveActive_)
+        {
+            const float scale = (octaveDecayRef_ > 0.05f)
+                              ? std::clamp (decayTime_ / octaveDecayRef_, 0.1f, 8.0f) : 1.0f;
+            float gOct[9];
+            for (int k = 0; k < 9; ++k)
+            {
+                // Unset (zero) octaves inherit the broadband gBase instead of
+                // the clamped 0.01 s minimum, which would otherwise force a
+                // dead band. Mirrors the AccurateHall path (FDNReverb.cpp).
+                const float Tk = octaveT60_[k] * scale;
+                if (Tk > 0.0f)
+                {
+                    float gk = std::pow (10.0f, -3.0f * loopLength / (Tk * sr));
+                    gOct[k] = std::clamp (std::pow (gk, decayBoost_), 0.001f, 0.9999f);
+                }
+                else
+                {
+                    gOct[k] = gBase;   // flat octave → broadband decay
+                }
+            }
+            tank.octaveCoeffs = OctaveBandDamping::designCoeffs (gOct, kOctaveXoverHz, sr);
+        }
     };
 
     updateTankDamping (leftTank_);

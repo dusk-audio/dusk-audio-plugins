@@ -84,6 +84,16 @@ GATES = {
     'onset_slope_pct':     30.0,    # rising-swell slope dB/ms (noisy → wider gate)
     'spatial_width_band':   0.06,   # per-band L/R corr abs-diff (low/mid/high)
     'diffusion_flux':       1.50,   # kurtosis-trajectory L1 over first 150 ms
+    # Tail-resonance prominence (the "boing"/springy pitched-mode detector the
+    # ear caught on Drum Plate but every prior gate missed): dominant spectral
+    # peak in 200-2k of the late tail, prominence (peak/median, dB) vs the anchor.
+    # ONE-DIRECTIONAL — DV ringing MORE than the anchor is the defect; smoother
+    # is fine. Drum DV 19.5 dB @359 Hz vs VVV 14 dB @1076 Hz → +5.5 over.
+    'tail_resonance_dB':    3.0,
+    # Impulse-response RMS match — the TRANSIENT/hit loudness. The existing RMS
+    # gates use sustained-pink/noiseburst (steady-state), which can match while
+    # the impulse (a drum hit) is +2.7 dB hot. Catches "DV louder on the hit".
+    'impulse_rms_dB':       2.0,
     # ── ADVISORY (2026-06-02): printed + ✓/✗ shown, NOT counted in n_fail until
     # ear-validated. Thresholds calibrated from anchor-vs-anchor (≈0) + observed
     # DV-vs-anchor spread; |Δ| vs anchor unless noted. ──
@@ -591,10 +601,43 @@ def diffusion_flux_curve(p, span_ms=150.0, win_ms=10.0):
     pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk)
     w = max(int(win_ms / 1000.0 * sr), 8); hop = max(w // 2, 1)
     end = min(len(m), on + int(span_ms / 1000.0 * sr))
-    curve = []
+    curve = []; rms_db = []
     for s in range(on, end - w, hop):
-        curve.append(float(kurtosis(m[s:s + w], fisher=False)))   # 3.0 = Gaussian
-    return np.array(curve)
+        seg = m[s:s + w]
+        curve.append(float(kurtosis(seg, fisher=False)))   # 3.0 = Gaussian
+        rms_db.append(20.0 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-30))
+    # Per-window RMS (dB) returned alongside so the gate can FLOOR-GUARD: the
+    # kurtosis of a near-silent window is dither/quantization garbage (an
+    # anchor's pre-onset −127 dB windows score kurtosis 400+), which must be
+    # excluded from the trajectory comparison.
+    return np.array(curve), np.array(rms_db)
+
+
+def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
+    """Prominence (dB) of the dominant spectral peak in [lo,hi] of the late tail
+    — the pitched 'boing'/springy-mode detector. Windowed FFT from onset+200 ms;
+    prominence = peak / median(band). A diffuse tail → low prominence; a single
+    ringing mode → high. Returns (prominence_dB, peak_hz)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env)); t0 = pk + int(0.2 * sr)
+    tail = m[t0:t0 + int(tail_s * sr)]
+    if len(tail) < 2048:
+        return 0.0, 0.0
+    T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
+    f = np.fft.rfftfreq(len(tail), 1.0 / sr)
+    band = (f >= lo) & (f < hi)
+    Tb = T[band]
+    if Tb.size == 0 or np.max(Tb) <= 0:
+        return 0.0, 0.0
+    prom = 20.0 * np.log10(np.max(Tb) / (np.median(Tb) + 1e-30) + 1e-30)
+    return float(prom), float(f[band][int(np.argmax(Tb))])
+
+
+def impulse_rms_db(p):
+    """Broadband RMS (dB) of the impulse response — the transient/hit loudness
+    (sustained-pink RMS can match while the impulse is hot)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    return 20.0 * np.log10(np.sqrt(np.mean(m ** 2)) + 1e-30)
 
 
 # ─── ADVISORY perceptual metrics (2026-06-02) — modal ring / decay curvature /
@@ -845,16 +888,55 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 d, p, line = check(bn, cd, cl, GATES['spatial_width_band'])
                 print(line)
                 if p == 'FAIL': fails.append(line.strip())
-            # Diffusion flux — kurtosis-trajectory match over first 150 ms.
-            k_dv = diffusion_flux_curve(imp_dv); k_lx = diffusion_flux_curve(imp_lx)
+            # Diffusion flux — kurtosis-trajectory over first 150 ms. The defect
+            # this catches is DV being SPARSE/GRAINY: a sparse field stays spiky
+            # (high kurtosis) where a dense one relaxes toward 3.0. So:
+            #   • FLOOR-GUARD: skip windows where EITHER signal is >60 dB below
+            #     its own loudest window — near-silent windows yield garbage
+            #     kurtosis (an anchor's silent pre-onset windows scored 400+,
+            #     which is what made this gate fire backwards on short / late-
+            #     onset plates).
+            #   • ONE-DIRECTIONAL: penalise only DV being SPIKIER than the anchor
+            #     (max(0, dv−lx)). DV SMOOTHER (denser) than a spiky/sparse anchor
+            #     is the goal, not a defect — don't punish it. (The Drum-Plate
+            #     case that motivated this gate — DV kurt 7-27 vs a smooth 3-6
+            #     anchor — still fires correctly.)
+            k_dv, r_dv = diffusion_flux_curve(imp_dv)
+            k_lx, r_lx = diffusion_flux_curve(imp_lx)
             n = min(len(k_dv), len(k_lx))
             if n >= 4:
-                flux = float(np.mean(np.abs(k_dv[:n] - k_lx[:n])))
+                dv_floor = r_dv[:n].max() - 60.0
+                lx_floor = r_lx[:n].max() - 60.0
+                keep = (r_dv[:n] > dv_floor) & (r_lx[:n] > lx_floor)
+                if int(keep.sum()) >= 4:
+                    excess = np.maximum(0.0, k_dv[:n] - k_lx[:n])[keep]
+                    flux = float(np.mean(excess))
+                else:
+                    flux = 0.0
                 passing = flux <= GATES['diffusion_flux']
                 line = (f"  {'diffusion_flux (kurt L1)':30s}  Δ={flux:6.2f}  "
                         f"gate=≤{GATES['diffusion_flux']}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
+
+            # ── TAIL RESONANCE ('boing'/springy pitched-mode) — one-directional ──
+            tr_dv, trf_dv = tail_resonance_prominence(imp_dv)
+            tr_lx, trf_lx = tail_resonance_prominence(imp_lx)
+            tr_excess = tr_dv - tr_lx                 # DV ringing MORE than anchor = defect
+            passing = tr_excess <= GATES['tail_resonance_dB']
+            line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
+                    f"Lex={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
+                    f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+            # ── IMPULSE RMS (transient/hit loudness — sustained gates miss it) ──
+            ir_dv = impulse_rms_db(imp_dv); ir_lx = impulse_rms_db(imp_lx)
+            passing = abs(ir_dv - ir_lx) <= GATES['impulse_rms_dB']
+            line = (f"  {'impulse RMS (hit loudness)':30s}  DV={ir_dv:6.1f}  Lex={ir_lx:6.1f}  "
+                    f"Δ={ir_dv - ir_lx:+5.1f}  gate=±{GATES['impulse_rms_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
 
             # ── TEMPORAL ENERGY ARRIVAL (where the energy sits in time) ──
             t50_dv, p50_dv, p150_dv, cen_dv = energy_arrival(imp_dv)

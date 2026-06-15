@@ -96,6 +96,15 @@ void DattorroPlateVintage::setSaturation        (float v) { tank_.setSaturation 
 void DattorroPlateVintage::setModDepth          (float v) { tank_.setModDepth          (v); }
 void DattorroPlateVintage::setModRate           (float v) { tank_.setModRate           (v); }
 void DattorroPlateVintage::setTankDiffusion     (float v) { tank_.setTankDiffusion     (v); }
+void DattorroPlateVintage::setDensityDepth      (float v) { tank_.setDensityDepth      (v); }
+void DattorroPlateVintage::setModReduction      (float v) { tank_.setModReduction      (v); }
+void DattorroPlateVintage::setInputDiffusionScale (float v) { tank_.setInputDiffusionScale (v); }
+void DattorroPlateVintage::setSoftOnsetMs       (float v) { tank_.setSoftOnsetMs       (v); }
+void DattorroPlateVintage::setOctaveT60      (int b, float v) { tank_.setOctaveT60 (b, v); }
+void DattorroPlateVintage::setOctaveDecayRef    (float v) { tank_.setOctaveDecayRef    (v); }
+void DattorroPlateVintage::setTonalCorrDb     (int b, float v) { tank_.setTonalCorrDb (b, v); }
+void DattorroPlateVintage::setBloomAttackMs     (float v) { tank_.setBloomAttackMs     (v); }
+void DattorroPlateVintage::setBloomExp          (float v) { tank_.setBloomExp          (v); }
 void DattorroPlateVintage::setFreeze            (bool  v) { tank_.setFreeze            (v); }
 
 void DattorroPlateVintage::setHfShelfGainDb (float gainDb)

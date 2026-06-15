@@ -96,7 +96,8 @@ def perceptual_distance(outdir, anchor):
         return 10.0
     a_dv, s_dv = attack_profile(str(imp_dv)); a_lx, s_lx = attack_profile(str(imp_lx))
     w_dv = spatial_width_bands(str(imp_dv)); w_lx = spatial_width_bands(str(imp_lx))
-    k_dv = diffusion_flux_curve(str(imp_dv)); k_lx = diffusion_flux_curve(str(imp_lx))
+    k_dv, r_dv = diffusion_flux_curve(str(imp_dv))
+    k_lx, r_lx = diffusion_flux_curve(str(imp_lx))
     d = 0.0
     if a_dv is not None and a_lx and a_lx > 0:
         d += min(abs(a_dv - a_lx) / GATES["attack_time_ms_abs"],
@@ -108,7 +109,11 @@ def perceptual_distance(outdir, anchor):
             d += abs(cd - cl) / GATES["spatial_width_band"]
     n = min(len(k_dv), len(k_lx))
     if n >= 4:
-        d += float(np.mean(np.abs(k_dv[:n] - k_lx[:n]))) / GATES["diffusion_flux"]
+        # Mirror full_check's fixed gate: floor-guard silent windows + penalise
+        # only DV being SPIKIER than the anchor (sparse/grainy), not smoother.
+        keep = (r_dv[:n] > r_dv[:n].max() - 60.0) & (r_lx[:n] > r_lx[:n].max() - 60.0)
+        if int(keep.sum()) >= 4:
+            d += float(np.mean(np.maximum(0.0, k_dv[:n] - k_lx[:n])[keep])) / GATES["diffusion_flux"]
     return d
 
 

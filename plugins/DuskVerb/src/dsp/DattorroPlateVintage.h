@@ -57,6 +57,15 @@ public:
     void setModDepth          (float depth);
     void setModRate           (float hz);
     void setTankDiffusion     (float amount);
+    void setDensityDepth      (float depth01);
+    void setModReduction      (float reduction01);
+    void setInputDiffusionScale (float scale01);
+    void setSoftOnsetMs       (float ms);
+    void setOctaveT60         (int band, float seconds);
+    void setOctaveDecayRef    (float seconds);
+    void setTonalCorrDb       (int band, float dB);
+    void setBloomAttackMs     (float ms);
+    void setBloomExp          (float e);
     void setFreeze            (bool frozen);
 
     // HDP-compat no-ops. The Dattorro architecture has no in-loop bass

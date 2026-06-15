@@ -191,6 +191,16 @@ public:
     // rooms. 0.02 (engine default) = bit-identical; forwarded to the Dattorro
     // tank only.
     void setDattorroDensityJitter (float fraction);
+    // Plate density rework (algo 0 + algo 1). depth 0 / reduction 1.0 = legacy.
+    void setDattorroDensity (float depth01);          // 0 legacy 3 APs -> >0 dense 6 APs
+    void setDattorroModReduction (float reduction01); // 1.0 legacy mod -> <1.0 stiller tail
+    void setDattorroInputDiffusion (float scale01);   // input-diffuser coeff scale (1.0=canonical)
+    void setDattorroSoftOnsetMs (float ms);           // tank output soft-onset ramp (ms; 0=instant)
+    void setDattorroOctaveT60 (int band, float seconds); // per-octave T60 GEQ (0..8 = 63..16k Hz)
+    void setDattorroOctaveDecayRef (float seconds);   // Decay-knob reference for the octave curve
+    void setDattorroTonalCorrDb (int band, float dB); // static output per-octave level trim (cut-only)
+    void setDattorroBloomAttackMs (float ms);
+    void setDattorroBloomExp (float e);         // input-onset slow-attack swell (0=off)
 
     // ER-bus spectral correction (2026-06-08, energy-arrival campaign). The
     // parallel ER field is a 500 Hz-2 kHz midrange bump (measured: −11.5 dB @
@@ -273,6 +283,20 @@ public:
     // T60 curve is realized 1:1 (= the preset's baked Decay). The live Decay
     // knob scales the curve by decayTime_/ref so the knob is never dead.
     void setAccurateHallOctaveDecayRef (float seconds);
+
+    // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
+    // energy so decay and tone are decoupled. Default off = bit-null.
+    void setTonalCorrection (bool enabled);
+
+    // Phase 3 output match-EQ: shape the wet steady-state envelope toward the
+    // anchor. corrLinear[0..8] = per-octave (63 Hz..16 kHz) output gains in
+    // [1e-3,1] (cut-only; normalize the anchor/DV ratio to max=1 offline, then
+    // re-gain-match). All ~1.0 → identity → bit-null. Engine-agnostic.
+    void setOutputMatchEQ (const float* corrLinear9);
+
+    // Phase A early-field: delay the late tail by `ms` relative to the ER so the
+    // ER defines the early window. 0 = off = bit-null. DenseHall path (Phase A).
+    void setTankOnsetMs (float ms);
 
     // SparseField (algo 11) only: the velvet-noise early-field generator dials
     // + the reduced-tail level. No-op routing on every other engine.
@@ -433,6 +457,29 @@ private:
     OutputDiffusion outputDiffusion_;
     bool outDiffActive_ = false;
 
+    // Phase 3 output match-EQ: a static per-octave (9-band) GEQ on the wet output
+    // that shapes DV's steady-state spectral envelope toward the anchor's measured
+    // octave balance (closes the ss-energy gates — engine-agnostic, post-tank,
+    // pre-mix). Per-preset gain table via setOutputMatchEQ(); identity / skipped
+    // when inactive → bit-null. Stereo state (L/R), shared coeffs.
+    OctaveBandDamping matchEQL_, matchEQR_;
+    OctaveBandDamping::Coeffs matchCoeffs_ {};
+    bool matchEQActive_ = false;
+    // Sanitized per-octave gains (last set via setOutputMatchEQ) — retained so
+    // prepare() can redesign matchCoeffs_ at a new sample rate. Identity default.
+    float matchCorr_[OctaveBandDamping::kNumBands] =
+        { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+
+    // Phase A (early-field engine): tank-onset delay. Pushes the late DenseHall
+    // tail back by tankOnsetSamples_ RELATIVE to the undelayed sparse ER, so the
+    // ER owns the early window (controls energy_t50 / first50 / attack — the
+    // front-load the FDN-fast-fill tank can't). 0 = off = bit-null. DenseHall path
+    // only for Phase A (the make-or-break proof on Cathedral + Vocal Hall).
+    std::vector<float> tankOnsetBufL_, tankOnsetBufR_;
+    int tankOnsetWrite_   = 0;
+    int tankOnsetSamples_ = 0;
+    float tankOnsetMs_    = 0.0f;   // requested onset (ms); sample count recomputed from this
+
     EngineType currentEngine_ = EngineType::Dattorro;
     int currentAlgorithm_ = 0;
 
@@ -571,4 +618,6 @@ private:
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
+    void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
+    void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
 };
