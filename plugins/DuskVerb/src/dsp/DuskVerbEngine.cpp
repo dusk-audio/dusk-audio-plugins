@@ -31,6 +31,16 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     denseHall_.prepare (sampleRate, maxBlockSize);
 
     outputDiffusion_.prepare (sampleRate, maxBlockSize);
+    matchEQL_.prepare (static_cast<float> (sampleRate));
+    matchEQR_.prepare (static_cast<float> (sampleRate));
+    designMatchEQ();   // redesign match-EQ coeffs from stored gains at the new sample rate
+    {
+        const int maxOnset = static_cast<int> (0.20 * sampleRate) + 8;   // up to 200 ms tail delay
+        tankOnsetBufL_.assign (static_cast<size_t> (maxOnset), 0.0f);
+        tankOnsetBufR_.assign (static_cast<size_t> (maxOnset), 0.0f);
+        tankOnsetWrite_ = 0;
+        recomputeTankOnsetSamples();   // recompute from stored ms at the new sample rate / buffer size
+    }
     multibandFdn_.prepare (sampleRate, maxBlockSize);
     multibandFdn_.setCrossovers (300.0f, 5000.0f);
     spring_.prepare (sampleRate, maxBlockSize);
@@ -145,6 +155,12 @@ void DuskVerbEngine::clearAllBuffers()
     std::fill (preDelayBufL_.begin(), preDelayBufL_.end(), 0.0f);
     std::fill (preDelayBufR_.begin(), preDelayBufR_.end(), 0.0f);
     preDelayWritePos_ = 0;
+
+    // Phase A tank-onset delay ring buffer — retains tail audio; clear so it
+    // can't bleed across preset swaps / unfreeze.
+    std::fill (tankOnsetBufL_.begin(), tankOnsetBufL_.end(), 0.0f);
+    std::fill (tankOnsetBufR_.begin(), tankOnsetBufR_.end(), 0.0f);
+    tankOnsetWrite_ = 0;
 
     loCutFilter_.reset();
     hiCutFilter_.reset();
@@ -377,6 +393,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     nonLinear_.setCrossoverFreq (hz);
     shimmer_.setCrossoverFreq (hz);
     dattorroVintage_.setCrossoverFreq (hz);
+    denseHall_.setCrossoverFreq (hz);
 
     reverseRoom_.setCrossoverFreq (hz);
 }
@@ -392,6 +409,7 @@ void DuskVerbEngine::setHighCrossoverFreq (float hz)
     nonLinear_.setHighCrossoverFreq (hz);
     shimmer_.setHighCrossoverFreq (hz);
     dattorroVintage_.setHighCrossoverFreq (hz);
+    denseHall_.setHighCrossoverFreq (hz);
     reverseRoom_.setHighCrossoverFreq (hz);
 }
 
@@ -462,6 +480,58 @@ void DuskVerbEngine::setAccurateHallOctaveT60 (int band, float seconds)
 void DuskVerbEngine::setAccurateHallOctaveDecayRef (float seconds)
 {
     accurateHall_.setOctaveDecayRef (seconds);
+}
+
+void DuskVerbEngine::setTonalCorrection (bool enabled)
+{
+    accurateHall_.setTonalCorrection (enabled);   // AccurateHall (algo 10) only; other engines have no Jot output GEQ
+}
+
+void DuskVerbEngine::setTankOnsetMs (float ms)
+{
+    // Store the requested ms so the sample count survives being set before
+    // prepare() allocates the buffer, and is recomputed on sample-rate change.
+    tankOnsetMs_ = std::max (0.0f, ms);
+    recomputeTankOnsetSamples();
+}
+
+void DuskVerbEngine::recomputeTankOnsetSamples()
+{
+    const int sz = static_cast<int> (tankOnsetBufL_.size());
+    const int s = static_cast<int> (std::round (tankOnsetMs_ * 0.001f * static_cast<float> (sampleRate_)));
+    tankOnsetSamples_ = (sz > 1) ? std::min (s, sz - 1) : 0;
+}
+
+void DuskVerbEngine::setOutputMatchEQ (const float* corrLinear9)
+{
+    // Sanitize the per-octave gains before they reach designCoeffs: clamp into
+    // the valid cut-only range [1e-3, 1] and replace any non-finite value with
+    // unity. The sanitized copy is stored so prepare() can redesign coeffs at a
+    // new sample rate without the original (possibly out-of-range) input.
+    bool anyCut = false;
+    for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
+    {
+        float g = corrLinear9[k];
+        if (! std::isfinite (g)) g = 1.0f;
+        g = std::clamp (g, 1.0e-3f, 1.0f);
+        matchCorr_[k] = g;
+        if (g < 0.999f) anyCut = true;
+    }
+    matchEQActive_ = anyCut;
+    designMatchEQ();
+}
+
+void DuskVerbEngine::designMatchEQ()
+{
+    // 8 inter-octave crossovers (63 Hz..16 kHz octave centres) — same grid as
+    // the AccurateHall loop GEQ. Identity (all gains ~1) → inactive → bit-null.
+    static constexpr float kXoverHz[OctaveBandDamping::kNumShelves] = {
+        88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f, 11313.7f };
+    if (matchEQActive_)
+        matchCoeffs_ = OctaveBandDamping::designCoeffs (
+            matchCorr_, kXoverHz, static_cast<float> (sampleRate_));
+    matchEQL_.reset();
+    matchEQR_.reset();
 }
 
 // ── SparseField (algo 11) early-field generator + tail level ──────────────
@@ -709,6 +779,60 @@ void DuskVerbEngine::setPostTankEQBand (int index, float freqHz, float qFactor, 
 void DuskVerbEngine::setDattorroDensityJitter (float fraction)
 {
     dattorro_.setDensityJitter (fraction);
+}
+
+void DuskVerbEngine::setDattorroDensity (float depth01)
+{
+    dattorro_.setDensityDepth (depth01);
+    dattorroVintage_.setDensityDepth (depth01);
+}
+
+void DuskVerbEngine::setDattorroModReduction (float reduction01)
+{
+    dattorro_.setModReduction (reduction01);
+    dattorroVintage_.setModReduction (reduction01);
+}
+
+void DuskVerbEngine::setDattorroInputDiffusion (float scale01)
+{
+    dattorro_.setInputDiffusionScale (scale01);
+    dattorroVintage_.setInputDiffusionScale (scale01);
+}
+
+void DuskVerbEngine::setDattorroSoftOnsetMs (float ms)
+{
+    dattorro_.setSoftOnsetMs (ms);
+    dattorroVintage_.setSoftOnsetMs (ms);
+}
+
+void DuskVerbEngine::setDattorroOctaveT60 (int band, float seconds)
+{
+    dattorro_.setOctaveT60 (band, seconds);
+    dattorroVintage_.setOctaveT60 (band, seconds);
+}
+
+void DuskVerbEngine::setDattorroOctaveDecayRef (float seconds)
+{
+    dattorro_.setOctaveDecayRef (seconds);
+    dattorroVintage_.setOctaveDecayRef (seconds);
+}
+
+void DuskVerbEngine::setDattorroTonalCorrDb (int band, float dB)
+{
+    dattorro_.setTonalCorrDb (band, dB);
+    dattorroVintage_.setTonalCorrDb (band, dB);
+}
+
+void DuskVerbEngine::setDattorroBloomAttackMs (float ms)
+{
+    dattorro_.setBloomAttackMs (ms);
+    dattorroVintage_.setBloomAttackMs (ms);
+}
+
+void DuskVerbEngine::setDattorroBloomExp (float e)
+{
+    dattorro_.setBloomExp (e);
+    dattorroVintage_.setBloomExp (e);
 }
 
 void DuskVerbEngine::setTankFeedEQ (float lowFc, float lowGainDb, float highFc, float highGainDb)
@@ -1103,6 +1227,23 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // (0 -> pure tail). Makes its own early field -> off the smooth-ER bus.
             denseHall_.process (tankInL_.data(), tankInR_.data(),
                                 tankOutL_.data(), tankOutR_.data(), numSamples);
+            // Phase A early-field: delay the late tail by tankOnsetSamples_ so the
+            // (undelayed) sparse ER below owns the early window. 0 → skipped → bit-null.
+            if (tankOnsetSamples_ > 0)
+            {
+                const int sz = static_cast<int> (tankOnsetBufL_.size());
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    int rd = tankOnsetWrite_ - tankOnsetSamples_; if (rd < 0) rd += sz;
+                    const float dl = tankOnsetBufL_[static_cast<size_t> (rd)];
+                    const float dr = tankOnsetBufR_[static_cast<size_t> (rd)];
+                    tankOnsetBufL_[static_cast<size_t> (tankOnsetWrite_)] = tankOutL_[static_cast<size_t> (i)];
+                    tankOnsetBufR_[static_cast<size_t> (tankOnsetWrite_)] = tankOutR_[static_cast<size_t> (i)];
+                    tankOutL_[static_cast<size_t> (i)] = dl;
+                    tankOutR_[static_cast<size_t> (i)] = dr;
+                    if (++tankOnsetWrite_ >= sz) tankOnsetWrite_ = 0;
+                }
+            }
             sparseField_.process (tankInL_.data(), tankInR_.data(),
                                   sparseOutL_.data(), sparseOutR_.data(), numSamples);
             for (int i = 0; i < numSamples; ++i)
@@ -1119,6 +1260,16 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // preset's signal path is unchanged (bit-null verified).
     if (outDiffActive_)
         outputDiffusion_.process (tankOutL_.data(), tankOutR_.data(), numSamples);
+
+    // ---- 4c) Phase 3 output match-EQ (per-preset): static per-octave GEQ that
+    // shapes the wet steady-state envelope toward the anchor's measured octave
+    // balance. Post-tank, pre-mix, engine-agnostic. Skipped → bit-null. ----
+    if (matchEQActive_)
+        for (int i = 0; i < numSamples; ++i)
+        {
+            tankOutL_[static_cast<size_t> (i)] = matchEQL_.process (tankOutL_[static_cast<size_t> (i)], matchCoeffs_);
+            tankOutR_[static_cast<size_t> (i)] = matchEQR_.process (tankOutR_[static_cast<size_t> (i)], matchCoeffs_);
+        }
 
     // ---- 5) Sum + Shell ----
     // DattorroVintage runs its own discrete sparse-tap ER generator and

@@ -397,7 +397,7 @@ namespace
 // their column yPad. Pass 5 keeps the FREEZE strip at 22 px (was briefly
 // shrunk to 16) so FREEZE / BUS / GATE all render at the same visual height.
 static constexpr int kBaseWidth  = 1400;   // widened 1240->1400 for the bottom-row knobs
-static constexpr int kBaseHeight = 720;    // 560->720: added a 3rd row (MACRO: Tone/Character/Duck)
+static constexpr int kBaseHeight = 760;    // 560->760: added a 3rd row (MACRO: Tone/Character/Duck), sized so the macro knob+label stack clears the bottom edge
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -804,59 +804,54 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int titleBandH = scaler_.scaled (16);
 
     int availH  = getHeight() - topY - gap - margin;
-    // Three rows: top (INPUT/TIME/DAMPING), mid (MOD/ER/FILTER/OUTPUT), and a
-    // compact MACRO row (Tone/Character/Duck) at the bottom.
-    int macroRowH = juce::roundToInt (availH * 0.22f);
-    int knobAreaH = availH - macroRowH - gap;
-    int topRowH = juce::roundToInt ((knobAreaH - gap) * 0.5f);
-    int bottomH = (knobAreaH - gap) - topRowH;
-    int bottomY = topY + topRowH + gap;
-    int macroY  = bottomY + bottomH + gap;
+    // Three rows. Row 2 is the hero row — TIME (concentric DECAY) centred and
+    // flanked by DAMPING + EARLY REFLECTIONS — so it gets the most height.
+    // Row 1 = signal path (INPUT | FILTER | OUTPUT); row 3 = MODULATION + MACRO.
+    // Geometry MUST match resized() exactly.
+    int row2H = juce::roundToInt (availH * 0.44f);
+    int sideH = availH - row2H - gap * 2;
+    int row1H = juce::roundToInt (sideH * 0.5f);
+    int row3H = sideH - row1H;
+    int row1Y = topY;
+    int row2Y = row1Y + row1H + gap;
+    int row3Y = row2Y + row2H + gap;
 
-    // Group panel widths MUST match resized() exactly — knobs are placed in
-    // resized() using these same percentages.
-    // INPUT 26 / TIME 28 / DAMPING 46 — INPUT narrowed (only 2 knobs + SYNC
-    // combo) so DAMPING's 5-knob row gets its full breathing room.
-    int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.26f);
-    int timeW      = static_cast<int> (topUsable * 0.28f);
-    int characterW = topUsable - inputW - timeW;
+    // ── Row 1: INPUT | FILTER | OUTPUT (reads left-to-right as signal flow) ──
+    int r1Usable  = contentW - gap * 2;
+    int r1InputW  = r1Usable / 3;
+    int r1FilterW = r1Usable / 3;
+    int r1OutputW = r1Usable - r1InputW - r1FilterW;
+    int r1InputX  = contentX;
+    int r1FilterX = r1InputX + r1InputW + gap;
+    int r1OutputX = r1FilterX + r1FilterW + gap;
+    drawGroupBox (g, { r1InputX,  row1Y, r1InputW,  row1H }, "INPUT",  titleBandH);
+    drawGroupBox (g, { r1FilterX, row1Y, r1FilterW, row1H }, "FILTER", titleBandH);
+    drawGroupBox (g, { r1OutputX, row1Y, r1OutputW, row1H }, "OUTPUT", titleBandH);
 
-    int inputX     = contentX;
-    int timeX      = inputX + inputW + gap;
-    int characterX = timeX + timeW + gap;
+    // ── Row 2: DAMPING | TIME (centre hero) | EARLY REFLECTIONS ──
+    int r2Usable = contentW - gap * 2;
+    int r2DampW  = static_cast<int> (r2Usable * 0.40f);
+    int r2TimeW  = static_cast<int> (r2Usable * 0.30f);
+    int r2ErW    = r2Usable - r2DampW - r2TimeW;
+    int r2DampX  = contentX;
+    int r2TimeX  = r2DampX + r2DampW + gap;
+    int r2ErX    = r2TimeX + r2TimeW + gap;
+    drawGroupBox (g, { r2DampX, row2Y, r2DampW, row2H }, "DAMPING",           titleBandH);
+    drawGroupBox (g, { r2TimeX, row2Y, r2TimeW, row2H }, "TIME",              titleBandH);
+    drawGroupBox (g, { r2ErX,   row2Y, r2ErW,   row2H }, "EARLY REFLECTIONS", titleBandH);
 
-    drawGroupBox (g, { inputX,     topY, inputW,     topRowH }, "INPUT",     titleBandH);
-    drawGroupBox (g, { timeX,      topY, timeW,      topRowH }, "TIME",      titleBandH);
-    drawGroupBox (g, { characterX, topY, characterW, topRowH }, "DAMPING",   titleBandH);
-
-    // ER widened to 26% (was 20%) for 3 knobs (added DIFFUSION).
-    // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
-    // the largest share for its 3 knobs + bus button.
-    int bottomUsable = contentW - gap * 3;
-    // Section widths proportional to knob count (MOD 2 / ER 3 / FILTER 3 /
-    // OUTPUT 4 = 12) so the per-knob column width — and therefore the knob
-    // padding — is uniform across the whole bottom row.
-    int modW    = static_cast<int> (bottomUsable * (2.0f / 12.0f));
-    int erW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
-    int eqW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
-    int outputW = bottomUsable - modW - erW - eqW;   // 4/12 — uniform per-knob width
-
-    int modX    = contentX;
-    int erX     = modX + modW + gap;
-    int eqX     = erX + erW + gap;
-    int outputX = eqX + eqW + gap;
-
-    // MODULATION group is re-titled "GATE" on the NonLinear engine since
-    // the knobs in there are mapped to ATTACK/RELEASE/DENSITY (gate
-    // controls), not modulation. Other engines keep "MODULATION".
+    // ── Row 3: MODULATION (moved down from the mid row) | MACRO ──
+    // MODULATION group is re-titled "GATE" on the NonLinear engine since its
+    // knobs map to ATTACK/RELEASE/DENSITY there. Other engines keep "MODULATION".
+    int r3Usable = contentW - gap;
+    int r3ModW   = static_cast<int> (r3Usable * (2.0f / 5.0f));
+    int r3MacroW = r3Usable - r3ModW;
+    int r3ModX   = contentX;
+    int r3MacroX = r3ModX + r3ModW + gap;
     const char* modulationTitle = (currentEngine_ == EngineType::NonLinear)
                                 ? "GATE" : "MODULATION";
-    drawGroupBox (g, { modX,    bottomY, modW,    bottomH }, modulationTitle,     titleBandH);
-    drawGroupBox (g, { erX,     bottomY, erW,     bottomH }, "EARLY REFLECTIONS", titleBandH);
-    drawGroupBox (g, { eqX,     bottomY, eqW,     bottomH }, "FILTER",            titleBandH);
-    drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT",            titleBandH);
-    drawGroupBox (g, { contentX, macroY, contentW, macroRowH }, "MACRO",          titleBandH);
+    drawGroupBox (g, { r3ModX,   row3Y, r3ModW,   row3H }, modulationTitle, titleBandH);
+    drawGroupBox (g, { r3MacroX, row3Y, r3MacroW, row3H }, "MACRO",         titleBandH);
 
     // IN / OUT labels — bigger and brighter, sitting just above the meters
     // and clear of the tail-meter ribbon above. Wider than the meter column
@@ -880,10 +875,17 @@ namespace
         // Putting the value ABOVE the knob makes the readout the dominant
         // element of each control column; the rotary becomes a tactile
         // affordance underneath.
-        const int nameH  = juce::roundToInt (12.0f * scaleFactor);
-        const int valueH = juce::roundToInt (18.0f * scaleFactor);
-        const int gap    = juce::roundToInt (2.0f  * scaleFactor);
-        const int totalH = nameH + gap + valueH + gap + knobSize;
+        const int nameH   = juce::roundToInt (12.0f * scaleFactor);
+        const int valueH  = juce::roundToInt (18.0f * scaleFactor);
+        const int gap     = juce::roundToInt (2.0f  * scaleFactor);   // name -> value
+        const int knobGap = juce::roundToInt (4.0f  * scaleFactor);   // value -> knob (breathing room)
+        const int totalH  = nameH + gap + valueH + knobGap + knobSize;
+
+        // Scale the label fonts with the UI. Their bounds scale via scaleFactor,
+        // so the fonts MUST too — otherwise the fixed-size text overlaps the knob
+        // below 1x (and looks tiny above 1x). Floors keep them legible at min scale.
+        k.nameLabel .setFont (juce::FontOptions (juce::jmax (8.0f, 10.0f * scaleFactor), juce::Font::bold));
+        k.valueLabel.setFont (juce::FontOptions (juce::jmax (9.0f, 12.0f * scaleFactor), juce::Font::bold));
 
         const int yPad = (area.getHeight() - totalH) / 2;
         auto col = area;
@@ -893,7 +895,7 @@ namespace
         col.removeFromTop (gap);
         k.valueLabel.setVisible (true);
         k.valueLabel.setBounds (col.removeFromTop (valueH));
-        col.removeFromTop (gap);
+        col.removeFromTop (knobGap);
         auto knobArea = col.removeFromTop (knobSize);
         k.slider.setBounds (knobArea.withSizeKeepingCentre (knobSize, knobSize));
     }
@@ -974,128 +976,124 @@ void DuskVerbEditor::resized()
     int topPad     = titleBandH + scaler_.scaled (2);
 
     int availH  = getHeight() - topY - gap - margin;
-    // Three rows: top (INPUT/TIME/DAMPING), mid (MOD/ER/FILTER/OUTPUT), and a
-    // compact MACRO row (Tone/Character/Duck) at the bottom.
-    int macroRowH = juce::roundToInt (availH * 0.22f);
-    int knobAreaH = availH - macroRowH - gap;
-    int topRowH = juce::roundToInt ((knobAreaH - gap) * 0.5f);
-    int bottomH = (knobAreaH - gap) - topRowH;
-    int bottomY = topY + topRowH + gap;
-    int macroY  = bottomY + bottomH + gap;
+    // Row geometry — MUST match paint() exactly.
+    int row2H = juce::roundToInt (availH * 0.44f);
+    int sideH = availH - row2H - gap * 2;
+    int row1H = juce::roundToInt (sideH * 0.5f);
+    int row3H = sideH - row1H;
+    int row1Y = topY;
+    int row2Y = row1Y + row1H + gap;
+    int row3Y = row2Y + row2H + gap;
 
     // Meters span the full content area.
     inputMeter_.setBounds  (margin,                       topY, meterW, availH + gap);
     outputMeter_.setBounds (getWidth() - margin - meterW, topY, meterW, availH + gap);
 
-    // 26 / 28 / 46 split — INPUT narrowed (only 2 knobs + SYNC combo) so
-    // DAMPING's 5-knob row gets its full breathing room. MUST stay in
-    // lock-step with paint().
-    int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.26f);
-    int timeW      = static_cast<int> (topUsable * 0.28f);
-    int characterW = topUsable - inputW - timeW;
+    // Single secondary tier — every knob except the DECAY hero is knobMed.
+    int knobMed = juce::roundToInt (74.0f * sf);
 
-    int inputX     = contentX;
-    int timeX      = inputX + inputW + gap;
-    int characterX = timeX + timeW + gap;
+    // ── Row 1: INPUT | FILTER | OUTPUT ──
+    int r1Usable  = contentW - gap * 2;
+    int r1InputW  = r1Usable / 3;
+    int r1FilterW = r1Usable / 3;
+    int r1OutputW = r1Usable - r1InputW - r1FilterW;
+    int r1InputX  = contentX;
+    int r1FilterX = r1InputX + r1InputW + gap;
+    int r1OutputX = r1FilterX + r1FilterW + gap;
 
-    // Single secondary tier — every knob except the DECAY hero is knobMed
-    // (incl. the OUTPUT row, now widened to fit 4 at full size). DECAY's
-    // concentric-ring rendering uses heroSize (computed below) which dominates
-    // at ~165 px diameter. Pass 4 bumped knobMed 76 → 84 to soak up the
-    // remaining column yPad in non-hero panels.
-    int knobMed = juce::roundToInt (84.0f * sf);
-
-    // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
-    // The two knobs sit adjacent so the row reads as a coherent pair, and
-    // the SYNC stack lives at the right edge where its label/combo have
-    // natural breathing room (previously sandwiched between two knobs,
-    // which crowded the combo box width).
+    // INPUT: PRE-DELAY | SATURATION | SYNC label+combo. The SYNC stack lives at
+    // the right edge so its label/combo get natural breathing room.
     {
-        auto inputArea = juce::Rectangle<int> (inputX, topY, inputW, topRowH).reduced (4, 0);
+        auto inputArea = juce::Rectangle<int> (r1InputX, row1Y, r1InputW, row1H).reduced (4, 0);
         inputArea.removeFromTop (topPad);
 
         int colW = inputArea.getWidth() / 3;
-        placeKnob (preDelay_,  inputArea.removeFromLeft (colW), knobMed, sf);
+        placeKnob (preDelay_,   inputArea.removeFromLeft (colW), knobMed, sf);
         placeKnob (saturation_, inputArea.removeFromLeft (colW), knobMed, sf);
 
-        // Right column: SYNC label + combo, vertically centred.
         auto syncCol = inputArea.reduced (4, 0);
         const int labelH = scaler_.scaled (14);
         const int comboH = scaler_.scaled (24);
         const int stackH = labelH + scaler_.scaled (4) + comboH;
         const int yPad = std::max ((syncCol.getHeight() - stackH) / 2, 0);
         syncCol.removeFromTop (yPad);
+        // Scale the SYNC label font with the UI (same fix as the knob labels).
+        predelaySyncLabel_.setFont (juce::FontOptions (juce::jmax (8.0f, 11.0f * sf), juce::Font::bold));
         predelaySyncLabel_.setBounds (syncCol.removeFromTop (labelH));
         syncCol.removeFromTop (scaler_.scaled (4));
         predelaySyncBox_.setBounds (syncCol.removeFromTop (comboH));
     }
 
-    // TIME: decay + size knobs + bottom strip split into [DECAY LOCK | FREEZE].
-    // LOCK sits under DECAY so the visual relationship is unmistakable.
+    // FILTER: LO CUT | HI CUT | MONO<.
+    layoutKnobsInGroup ({ r1FilterX, row1Y, r1FilterW, row1H }, topPad,
+                        { { &loCut_, knobMed }, { &hiCut_, knobMed }, { &monoBelow_, knobMed } }, sf);
+
+    // OUTPUT: MIX | WIDTH | TRIM across the top + BUS strip along the bottom.
     {
-        auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
-        timeArea.removeFromTop (topPad);
-        // FREEZE strip 22 px — matches BUS and GATE strip heights so all
-        // three toggle buttons read as the same visual element.
-        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
-
-        // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
-        // The hero is the visual centrepiece of the entire plugin — its
-        // concentric-ring rendering doesn't fit the standard placeKnob
-        // template, so it's positioned manually and centered in its column.
-        const int heroW = juce::roundToInt (knobArea.getWidth() * 0.70f);
-        auto heroArea  = knobArea.removeFromLeft (heroW);
-        const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
-        decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
-
-        // SIZE renders at the secondary tier (knobMed) so DECAY's
-        // concentric-ring hero is the unambiguously largest knob on the UI.
-        // Previously SIZE shared knobBig with MIX; visually it competed with
-        // the hero for top-row dominance.
-        placeKnob (size_, knobArea, knobMed, sf);
-
-        // FREEZE spans the full bottom strip of the TIME group. (8, 2) inset
-        // matches the BUS and GATE buttons so all three toggles render at the
-        // same visual height.
-        freezeButton_.setBounds (timeArea.reduced (8, 2));
+        auto outArea = juce::Rectangle<int> (r1OutputX, row1Y, r1OutputW, row1H).reduced (4, 0);
+        outArea.removeFromTop (topPad);
+        int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
+        auto knobArea = outArea.removeFromTop (knobAreaH);
+        const int outCol = knobArea.getWidth() / 3;
+        placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobMed, sf);
+        placeKnob (width_,    knobArea.removeFromLeft (outCol), knobMed, sf);
+        placeKnob (gainTrim_, knobArea,                         knobMed, sf);
+        busModeButton_.setBounds (outArea.reduced (8, 2));
     }
 
-    // DAMPING: full 3-band (BASS/MID/TREBLE multipliers + LOW/HIGH crossovers).
-    // Five knobs ordered low→high so the damping curve reads left-to-right.
-    // DIFFUSION moved to the EARLY REFLECTIONS group below — both are early-
-    // density character — to keep DAMPING uncrowded with proper label space.
-    layoutKnobsInGroup ({ characterX, topY, characterW, topRowH }, topPad,
+    // ── Row 2: DAMPING | TIME (centre hero) | EARLY REFLECTIONS ──
+    int r2Usable = contentW - gap * 2;
+    int r2DampW  = static_cast<int> (r2Usable * 0.40f);
+    int r2TimeW  = static_cast<int> (r2Usable * 0.30f);
+    int r2ErW    = r2Usable - r2DampW - r2TimeW;
+    int r2DampX  = contentX;
+    int r2TimeX  = r2DampX + r2DampW + gap;
+    int r2ErX    = r2TimeX + r2TimeW + gap;
+
+    // DAMPING: BASS/MID/TREBLE multipliers + LOW/HIGH crossovers (5 knobs,
+    // ordered low→high so the damping curve reads left-to-right).
+    layoutKnobsInGroup ({ r2DampX, row2Y, r2DampW, row2H }, topPad,
                         { { &bassMult_,      knobMed },
                           { &midMult_,       knobMed },
                           { &damping_,       knobMed },
                           { &crossover_,     knobMed },
                           { &highCrossover_, knobMed } }, sf);
 
-    // ER widened to 26% (was 20%) for 3 knobs (added DIFFUSION).
-    // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
-    // the largest share for its 3 knobs + bus button.
-    int bottomUsable = contentW - gap * 3;
-    // Section widths proportional to knob count (MOD 2 / ER 3 / FILTER 3 /
-    // OUTPUT 4 = 12) so the per-knob column width — and therefore the knob
-    // padding — is uniform across the whole bottom row.
-    int modW    = static_cast<int> (bottomUsable * (2.0f / 12.0f));
-    int erW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
-    int eqW     = static_cast<int> (bottomUsable * (3.0f / 12.0f));
-    int outputW = bottomUsable - modW - erW - eqW;   // 4/12 — uniform per-knob width
-
-    int modX    = contentX;
-    int erX     = modX + modW + gap;
-    int eqX     = erX + erW + gap;
-    int outputX = eqX + eqW + gap;
-
+    // TIME (centre, hero): concentric DECAY + SIZE + FREEZE strip. The taller
+    // mid row lets the hero render large as the visual centrepiece.
     {
-        // Reserve a bottom strip in the MODULATION/GATE group for the GATE
-        // toggle button ONLY when the GATE button is visible (NonLinear
-        // engine). On every other engine the GATE button is hidden and the
-        // strip carve wasted vertical space. Now the knob area takes the
-        // full panel height when GATE is hidden.
-        juce::Rectangle<int> modPanel { modX, bottomY, modW, bottomH };
+        auto timeArea = juce::Rectangle<int> (r2TimeX, row2Y, r2TimeW, row2H).reduced (4, 0);
+        timeArea.removeFromTop (topPad);
+        // FREEZE strip 22 px — matches BUS/GATE strip heights.
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
+
+        // Hero DECAY takes the LEFT ~72% of the row; SIZE the remainder. The
+        // concentric-ring rendering is positioned manually + centred.
+        const int heroW = juce::roundToInt (knobArea.getWidth() * 0.72f);
+        auto heroArea  = knobArea.removeFromLeft (heroW);
+        const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
+        decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
+
+        placeKnob (size_, knobArea, knobMed, sf);
+
+        freezeButton_.setBounds (timeArea.reduced (8, 2));
+    }
+
+    // EARLY REFLECTIONS: ER LEVEL | ER SIZE | DIFFUSION.
+    layoutKnobsInGroup ({ r2ErX, row2Y, r2ErW, row2H }, topPad,
+                        { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
+
+    // ── Row 3: MODULATION | MACRO (TONE/CHARACTER/DUCK) ──
+    int r3Usable = contentW - gap;
+    int r3ModW   = static_cast<int> (r3Usable * (2.0f / 5.0f));
+    int r3MacroW = r3Usable - r3ModW;
+    int r3ModX   = contentX;
+    int r3MacroX = r3ModX + r3ModW + gap;
+
+    // MODULATION: DEPTH | RATE. Reserve a bottom GATE strip only when the GATE
+    // button is visible (NonLinear engine); otherwise knobs take the full panel.
+    {
+        juce::Rectangle<int> modPanel { r3ModX, row3Y, r3ModW, row3H };
         if (gateButton_.isVisible())
         {
             const int gateButtonH = scaler_.scaled (22);
@@ -1111,30 +1109,8 @@ void DuskVerbEditor::resized()
         }
     }
 
-    layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
-                        { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
-
-    layoutKnobsInGroup ({ eqX, bottomY, eqW, bottomH }, topPad,
-                        { { &loCut_, knobMed }, { &hiCut_, knobMed }, { &monoBelow_, knobMed } }, sf);
-
-    // OUTPUT: 3 knobs across top + bottom strip split into [MIX LOCK | BUS].
-    // LOCK sits under MIX (left third) so the visual relationship is clear.
-    {
-        auto outArea = juce::Rectangle<int> (outputX, bottomY, outputW, bottomH).reduced (4, 0);
-        outArea.removeFromTop (topPad);
-        int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
-        auto knobArea = outArea.removeFromTop (knobAreaH);
-        // 3 even columns: MIX / WIDTH / TRIM (DUCK moved to the MACRO row).
-        const int outCol = knobArea.getWidth() / 3;
-        placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobMed, sf);
-        placeKnob (width_,    knobArea.removeFromLeft (outCol), knobMed, sf);
-        placeKnob (gainTrim_, knobArea,                         knobMed, sf);
-        busModeButton_.setBounds (outArea.reduced (8, 2));
-    }
-
-    // MACRO row (full content width): TONE / CHARACTER / DUCK — global morphers
-    // that layer on top of every preset.
-    layoutKnobsInGroup ({ contentX, macroY, contentW, macroRowH }, topPad,
+    // MACRO: TONE | CHARACTER | DUCK — global morphers layered on every preset.
+    layoutKnobsInGroup ({ r3MacroX, row3Y, r3MacroW, row3H }, topPad,
                         { { &tone_, knobMed }, { &character_, knobMed }, { &duck_, knobMed } }, sf);
 
     titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };

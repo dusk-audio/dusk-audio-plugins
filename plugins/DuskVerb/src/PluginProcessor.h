@@ -215,6 +215,7 @@ private:
     std::atomic<float>* monoBelowParam_     = nullptr;
     std::atomic<float>* monoBelowDepthParam_= nullptr;
     std::atomic<float>* duckParam_          = nullptr;   // wet ducking depth (0 = off)
+    std::atomic<float>* tonalCorrParam_     = nullptr;   // Jot tonal correction on/off (AccurateHall)
     std::atomic<float>* toneParam_          = nullptr;   // macro: spectral tilt (-1 dark..+1 bright)
     std::atomic<float>* characterParam_     = nullptr;   // macro: movement/grit (0..1)
 
@@ -337,6 +338,7 @@ private:
     float lastBassChoke_     = -1.0f;
     float lastSaturation_  = -1.0f;
     float lastDiffusion_   = -1.0f;
+    float lastTonalCorr_   = -1.0f;
     float lastModDepth_    = -1.0f;
     float lastModRate_     = -1.0f;
     float lastTailSpinDepth_ = -1.0f;
