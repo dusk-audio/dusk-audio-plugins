@@ -16,16 +16,16 @@ have no anchor). Δ shown only where the gate FAILS.
 | Vocal Plate | 20 | pass | pass | pass |
 | Drum Plate | 20 | **pass** | +4.0 | pass |
 | Bright Hall | 22 | pass | pass | pass |
-| Reverse Taps | 22 | +11.4 | pass | pass |
+| Reverse Taps | ~~22~~ **46** | ~~+11.4~~ pass | pass | pass |  ← was vs BROKEN anchor (dup); re-captured
 | Vocal Hall | 28 | pass | +? | pass |
 | Cathedral Large Hall | 28 | pass | +2.8 | pass |
 | Small Drum Room | 29 | +9.7 | +3.2 | pass |
-| Black Hole | 29 | +7.3 | -3.4 | 1.58 |
+| Black Hole | ~~29~~ **25** | +7.3 | pass | 1.58 |  ← was vs BROKEN anchor; re-captured (wetDry->1.0)
 | Blade Runner 224 | 31 | pass | +3.3 | 6.95 |
 | Large Chamber | 35 | pass | pass | pass |
 | Live Room | 35 | **+20.0** | +2.2 | pass |
 | Vintage Vocal Plate | 36 | pass | +2.6 | pass |
-| Deep Blue Day | 40 | +7.5 | -4.0 | pass |
+| Deep Blue Day | ~~40~~ **49** | +7.7 | pass | pass |  ← was vs BROKEN anchor; re-captured (feedback 0.81)
 | Medium Drum Room | 45 | +10.9 | +3.8 | pass |
 
 **18 presets, mean n_fail = 26.9.**
@@ -44,6 +44,20 @@ have no anchor). Δ shown only where the gate FAILS.
 - Caveats: render non-determinism ±1-2; a few anchors warrant the broken-anchor
   re-validation (esp. valhalla-shimmer Black Hole / Deep Blue — flagged earlier
   as possible duplicates) before trusting their numbers.
+
+## Anchor re-validation (2026-06-15, whole fleet)
+md5-collision + audio-metric sweep over ALL anchor dirs. Broken anchors found —
+all the same bug (fxp/preset never applied at capture → plugin DEFAULT → distinct
+presets byte-identical, which INFLATES the score):
+- gold/vocal/rich plate (f716f04), lex-reverse-1 (71e09e7, ==random_large_rhall1),
+  valhalla-shimmer black-hole==deep-blue-day + 50% dry (ca0969e, re-rendered via
+  ValhallaShimmer --nparam + wetDry->1.0).
+- Effect on scores (broken anchors MASK the true, worse state): Reverse 22->46,
+  Deep Blue 40->49, Black Hole 29->25. Updated above.
+- FALSE alarms (wet, just short-decay): Live Room + vvv vocal-plate/ambience/
+  tiled/84-room. dryspike=1.0 on the shimmer pads is the instant-onset-pad
+  character, not contamination.
+- TODO: floor-guard tail_resonance + diffusion_flux on short anchors.
 
 ## Next (the fleet campaign)
 1. Re-validate suspect anchors (valhalla-shimmer pair) like the lex-vintage
