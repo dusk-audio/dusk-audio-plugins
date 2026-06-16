@@ -1211,41 +1211,10 @@ juce::PopupMenu DuskVerbEditor::buildPresetMenu()
     return menu;
 }
 
-// CategoryComboBox::showPopup — overrides the default flat popup with a
-// categorized one (categories as nested submenus). On selection, route the
-// chosen ID through setSelectedId() so the existing onChange callback fires
-// exactly as if the user had picked from a flat list.
-//
-// hidePopup() in the async callback is ESSENTIAL: ComboBox tracks an
-// internal "menu is showing" flag (set when showPopup runs, cleared by
-// hidePopup). JUCE's default ComboBox::showPopup uses a static
-// popupMenuFinishedCallback that calls hidePopup() on dismiss. Without
-// that call, the second click after a selection finds the flag still set
-// and silently no-ops — the dropdown works once per editor lifetime,
-// then stops responding until the editor is reopened.
-void DuskVerbEditor::CategoryComboBox::showPopup()
-{
-    if (! menuBuilder)
-    {
-        juce::ComboBox::showPopup();
-        return;
-    }
-    auto menu = menuBuilder();
-    juce::Component::SafePointer<CategoryComboBox> safe (this);
-    menu.showMenuAsync (
-        juce::PopupMenu::Options()
-            .withTargetComponent (this)
-            .withMinimumWidth (getWidth()),
-        [safe] (int result)
-        {
-            if (safe != nullptr)
-            {
-                safe->hidePopup();
-                if (result > 0)
-                    safe->setSelectedId (result, juce::sendNotification);
-            }
-        });
-}
+// presetBox_'s categorized popup is now handled by DuskComboBox (shared) — its
+// showPopup() renders the menuBuilder() menu IN-WINDOW (withParentComponent),
+// avoiding the JUCE native-popup-window glitch on Wayland/XWayland. The
+// menuBuilder is wired in the constructor: presetBox_.menuBuilder = buildPresetMenu.
 
 void DuskVerbEditor::saveUserPreset()
 {
