@@ -6,6 +6,7 @@
 #include "ScalableEditorHelper.h"
 #include "UserPresetManager.h"
 #include "SupportersOverlay.h"
+#include "DuskComboBox.h"   // in-window dropdown (fixes JUCE native-popup glitch on Wayland/XWayland)
 
 #include <array>
 #include <functional>
@@ -249,28 +250,19 @@ private:
     EngineType currentEngine_ = EngineType::Dattorro;
 
     // Algorithm dropdown (= engine selector). Mirrors the algorithm APVTS choice.
-    juce::ComboBox algorithmBox_;
+    DuskComboBox algorithmBox_;
     EngineGlyph    engineGlyph_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> algorithmAttachment_;
 
     // Live output-tail histogram, painted under the header dropdowns.
     TailMeter tailMeter_;
 
-    // Preset browser. CategoryComboBox is a thin subclass of juce::ComboBox
-    // that overrides showPopup() to display a categorized PopupMenu
-    // (categories as nested submenus) instead of the default flat popup.
-    // Items are still registered via addItem() so the ComboBox's selected-
-    // text display + setSelectedId() / step navigation continue to work;
-    // the override only changes how the popup is presented.
-    class CategoryComboBox : public juce::ComboBox
-    {
-    public:
-        // Editor sets this to a lambda that returns the popup menu to show.
-        // If unset, falls back to the default flat ComboBox popup.
-        std::function<juce::PopupMenu()> menuBuilder;
-        void showPopup() override;
-    };
-    CategoryComboBox presetBox_;
+    // Preset browser. DuskComboBox renders its popup IN-WINDOW (not a native OS
+    // popup window) to avoid the Wayland/XWayland glitch, and takes a
+    // menuBuilder so the popup shows categories as nested submenus. Items are
+    // still registered via addItem() so the selected-text display +
+    // setSelectedId() / step navigation continue to work.
+    DuskComboBox presetBox_;
     juce::TextButton prevPresetButton_;
     juce::TextButton nextPresetButton_;
     void loadPreset (int index);
@@ -324,7 +316,7 @@ private:
     juce::ToggleButton busModeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> busModeAttachment_;
 
-    juce::ComboBox predelaySyncBox_;
+    DuskComboBox predelaySyncBox_;
     juce::Label    predelaySyncLabel_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> predelaySyncAttachment_;
 
