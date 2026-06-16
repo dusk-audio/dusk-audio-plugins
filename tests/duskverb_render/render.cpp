@@ -851,6 +851,7 @@ int main (int argc, char** argv)
     int          programIndex   = -1;   // factory program by index
     juce::String saveStatePath;         // dump getStateInformation bytes here after preset
     juce::String loadStatePath;         // setStateInformation from these bytes (one round-trip)
+    juce::String screenshotPath;        // --screenshot: open the plugin editor + grab its window to PNG, then exit
     int          waitAfterLoadMs = 0;   // for yabridge handshake races
     int          perParamDelayMs = 0;   // throttle preset apply for slow plugin bridges
     // SixAPTank-specific engine-state property overrides. Useful for tuner
@@ -911,6 +912,7 @@ int main (int argc, char** argv)
         else if (a == "--per-param-delay-ms" && i + 1 < argc)
                                                      perParamDelayMs = juce::String (argv[++i]).getIntValue();
         else if (a == "--save-state" && i + 1 < argc) saveStatePath = argv[++i];
+        else if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
         else if (a == "--sixap-early-hpf" && i + 1 < argc)
                                                      sixAPEarlyHighpassHz = juce::String (argv[++i]).getFloatValue();
         else if (a == "--sixap-early-mix" && i + 1 < argc)
@@ -1268,6 +1270,99 @@ int main (int argc, char** argv)
     // values are what the renderer hears.
     applyAnyPreset();
     applyParamOverrides();
+
+    // --screenshot PATH: open the plugin's editor, let it paint, then grab its
+    // on-screen window region to a PNG and exit. Intended as a reusable way to
+    // read a closed-source plugin's GUI state (e.g. Valhalla mode names the host
+    // API exposes only as raw norms). Runs on the message thread (this console
+    // app owns the MessageManager via ScopedJuceInitialiser_GUI).
+    //
+    // ENVIRONMENT LIMITATION (2026-06-16): this does NOT work on the dev box's
+    // GNOME/Mutter Wayland session. (1) yabridge/Wine VST3 editors don't open a
+    // visible GUI from a headless console host (no Wine window ever maps).
+    // (2) Even a NATIVE JUCE editor's window isn't composited into a capturable
+    // surface: ffmpeg x11grab of the X root is black (rootless XWayland), and
+    // gnome-screenshot captures the desktop but the harness-opened window isn't
+    // present on it. Mechanically correct + should work on a normal rooted-X11
+    // desktop; kept for that + future use. For Valhalla preset capture on THIS
+    // box, use the user's GUI screenshot + the display->norm calibration instead.
+    if (screenshotPath.isNotEmpty())
+    {
+        if (! plugin->hasEditor())
+        {
+            std::cerr << "  ! --screenshot: plugin reports no editor" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        auto* ed = plugin->createEditorIfNeeded();
+        if (ed == nullptr)
+        {
+            std::cerr << "  ! --screenshot: createEditor returned null" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        std::cout << "Editor initial size: " << ed->getWidth() << "x" << ed->getHeight() << std::endl;
+        // Host the editor in a real top-level window (DocumentWindow) so it gets a
+        // proper managed peer for the yabridge/Wine GUI to attach + render into.
+        // A bare addToDesktop on the editor produced a degenerate peer + no Wine GUI.
+        static juce::DocumentWindow* shotWin =
+            new juce::DocumentWindow ("shot", juce::Colours::black,
+                                      juce::DocumentWindow::allButtons);
+        shotWin->setUsingNativeTitleBar (true);
+        shotWin->setContentNonOwned (ed, true);   // sizes window to the editor
+        shotWin->setTopLeftPosition (80, 80);
+        shotWin->setVisible (true);
+        shotWin->toFront (true);
+        const int settleMs = (waitAfterLoadMs > 0 ? waitAfterLoadMs : 8000);
+        // Pump the message loop for settleMs so the editor + bridged Wine GUI
+        // paint, then stop it (runDispatchLoopUntil is gated behind
+        // JUCE_MODAL_LOOPS_PERMITTED here, so drive it with a Timer + stopDispatchLoop).
+        struct LoopStopper : public juce::Timer
+        {
+            void timerCallback() override
+            {
+                stopTimer();
+                juce::MessageManager::getInstance()->stopDispatchLoop();
+            }
+        } stopper;
+        stopper.startTimer (settleMs);
+        juce::MessageManager::getInstance()->runDispatchLoop();
+
+        const auto b = ed->getScreenBounds();
+        std::cout << "Editor window: " << b.getWidth() << "x" << b.getHeight()
+                  << " @ (" << b.getX() << "," << b.getY() << ")" << std::endl;
+        const juce::String geom = juce::String (b.getWidth()) + "x" + juce::String (b.getHeight())
+                                + "+" + juce::String (b.getX()) + "+" + juce::String (b.getY());
+        // Grab the editor's screen region with ffmpeg x11grab (ImageMagick `import`
+        // and `grim` don't work on this XWayland/non-wlroots setup; ffmpeg x11grab
+        // does). Captures :0.0 at the editor's top-left for its WxH, one frame.
+        juce::ignoreUnused (geom);
+        juce::ChildProcess cap;
+        const juce::String vsize = juce::String (b.getWidth()) + "x" + juce::String (b.getHeight());
+        const juce::String input = ":0.0+" + juce::String (b.getX()) + "," + juce::String (b.getY());
+        if (cap.start (juce::StringArray { "ffmpeg", "-hide_banner", "-loglevel", "error",
+                                           "-f", "x11grab", "-video_size", vsize,
+                                           "-i", input, "-frames:v", "1", "-y", screenshotPath }))
+        {
+            const juce::String capOut = cap.readAllProcessOutput();
+            cap.waitForProcessToFinish (20000);
+            if (capOut.isNotEmpty()) std::cout << "import: " << capOut << std::endl;
+        }
+        else
+        {
+            std::cerr << "  ! --screenshot: could not launch `import` (ImageMagick)" << std::endl;
+        }
+        if (juce::File (screenshotPath).existsAsFile())
+            std::cout << "Wrote screenshot " << screenshotPath << std::endl;
+        else
+            std::cerr << "  ! --screenshot: no output file produced (capture failed)" << std::endl;
+
+        shotWin->clearContentComponent();   // detach ed (non-owned) before deleting
+        plugin->editorBeingDeleted (ed);
+        delete ed;
+        plugin->releaseResources();
+        return 0;
+    }
 
     // --dump-params: emit the post-apply parameter values as a JSON dict in
     // DENORMALISED (display) units — exactly what --param NAME=VALUE consumes,
