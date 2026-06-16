@@ -1943,15 +1943,15 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // sine1k THD. Its late-250 level excess is decoupled by the
             // 350 Hz PostTankEQ cut instead.
             // BEGIN_OCTAVE_T60_MAP (maintained by tools/tuner/calibrate_octave_t60.py)
-            { "Vocal Plate", {{ 0.7117f, 0.7373f, 0.7335f, 0.7337f, 0.7365f, 0.7926f, 0.7923f, 0.8018f, 0.9431f }} },
-            { "Vocal Hall", {{ 6.1854f, 5.6522f, 4.6678f, 4.4460f, 3.2748f, 2.7689f, 2.5910f, 2.5712f, 6.2021f }} },
-            { "Blade Runner 224", {{ 16.0236f, 12.3625f, 27.0000f, 9.6761f, 8.1305f, 7.4944f, 4.9930f, 2.7399f, 1.9333f }} },
-            { "Ambience", {{ 1.3581f, 1.5841f, 1.1106f, 0.7022f, 0.8357f, 0.8101f, 0.8043f, 0.8688f, 0.9877f }} },
-            { "Cathedral Large Hall", {{ 4.0341f, 4.2508f, 4.0282f, 3.3828f, 3.3917f, 2.7591f, 2.2539f, 2.1740f, 4.1189f }} },
-            { "Bright Hall", {{ 8.2160f, 6.6804f, 6.4622f, 5.8494f, 4.6598f, 4.2287f, 3.5663f, 2.8808f, 2.3479f }} },
-            { "Drum Plate", {{ 1.9501f, 1.8528f, 1.5426f, 1.7501f, 1.7004f, 1.5519f, 1.6556f, 1.5953f, 2.4042f }} },
-            { "Tiled Room", {{ 0.6370f, 0.5615f, 0.6482f, 0.7510f, 0.6489f, 0.6736f, 0.6699f, 0.4520f, 0.1680f }} },
-            { "Medium Drum Room", {{ 0.7283f, 1.0271f, 0.7906f, 1.0167f, 0.7691f, 0.7298f, 0.7645f, 0.7753f, 1.0098f }} },
+            { "Vocal Plate", {{ 0.6600f, 0.6460f, 0.7250f, 0.6490f, 0.6990f, 0.6700f, 0.6120f, 0.6100f, 0.3900f }} },  // 2026-06-16 re-tuned vs CLEAN screenshot anchor (octave recal, 34->~20). 63 settled to ~0.88. Residual = AccurateHall early-field wall (attack/onset/cent dark) + 12.9k spike + mod = structural.
+            { "Ambience", {{ 1.2590f, 1.5841f, 1.1106f, 0.7390f, 0.7470f, 0.8101f, 0.8043f, 0.8688f, 1.0640f }} },  // 2026-06-16 octave recal vs CORRECTED vvv-ambience anchor (Newton: 63 down, 500/16k up, 1k down). Residual = sparse-comb-vs-modal structural wall.
+            // 2026-06-16: 7 DORMANT entries removed (Vocal Hall / Blade Runner 224 /
+            // Cathedral Large Hall / Bright Hall migrated to DenseHall algo 14; Drum
+            // Plate / Medium Drum Room to Dattorro algo 0; Tiled Room to algo 13).
+            // setAccurateHallOctaveT60() routes ONLY to accurateHall_, so these were
+            // inert config no engine reads - they misled a live diagnosis (the table
+            // "commanded" a T60 the engine never saw). Caught by fleet_audit.py
+            // --verify-tables. Only Vocal Plate + Ambience actually run AccurateHall.
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));

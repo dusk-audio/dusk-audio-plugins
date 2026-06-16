@@ -20,12 +20,12 @@ have no anchor). Δ shown only where the gate FAILS.
 | Vocal Hall | 28 | pass | +? | pass |
 | Cathedral Large Hall | 28 | pass | +2.8 | pass |
 | Small Drum Room | 29 | +9.7 | +3.2 | pass |
-| Black Hole | ~~29~~ **25** | +7.3 | pass | 1.58 |  ← was vs BROKEN anchor; re-captured (wetDry->1.0)
+| Black Hole | ~~29~~~~25~~ **24** | +7.2 @238 | pass | 1.57 |  ← anchor re-captured at NATIVE mix=0.5 (wetDry=1.0 was wrong); DV mix 0.5
 | Blade Runner 224 | 31 | pass | +3.3 | 6.95 |
 | Large Chamber | 35 | pass | pass | pass |
 | Live Room | 35 | **+20.0** | +2.2 | pass |
 | Vintage Vocal Plate | 36 | pass | +2.6 | pass |
-| Deep Blue Day | ~~40~~ **49** | +7.7 | pass | pass |  ← was vs BROKEN anchor; re-captured (feedback 0.81)
+| Deep Blue Day | ~~40~~~~49~~ **37** | +7.6 @203 | pass | pass |  ← anchor re-captured at NATIVE mix=0.5 (wetDry=1.0 inflated to 49); DV mix 0.38→0.50. cent_50 now PASSES
 | Medium Drum Room | 45 | +10.9 | +3.8 | pass |
 
 **18 presets, mean n_fail = 26.9.**
@@ -58,6 +58,25 @@ presets byte-identical, which INFLATES the score):
   tiled/84-room. dryspike=1.0 on the shimmer pads is the instant-onset-pad
   character, not contamination.
 - TODO: floor-guard tail_resonance + diffusion_flux on short anchors.
+
+## Shimmer mix + octave correction (2026-06-15)
+- **The shimmer anchors were captured at the WRONG mix.** All Valhalla Shimmer
+  factory presets ship `wetDry=0.5` (verified from the plugin UI + the .vstpreset
+  `parameter0=0.5`). The ca0969e re-capture forced `wetDry=1.0` (mistook the 50%
+  default for dry-contamination). Re-rendered both anchors at native 0.5 via
+  ValhallaShimmer --nparam (full param replay). DV presets set to match: Deep Blue
+  Day mix 0.38→0.50, Black Hole was already 0.50.
+- **Effect:** Deep Blue Day 49→**37** (the fully-wet anchor was inflating fails;
+  the 50% dry lifts cent_50 into PASS). Black Hole 25→**24** (~same).
+- **Octave generation & the boing gate:** the +12 shimmer octave lands at
+  **3.7–5.1 kHz** (Black Hole tail peaks 80/100/200 + 3780/5160 Hz). The
+  `tail_resonance` (boing) gate measures **200–2000 Hz** — so it does NOT touch the
+  octave (neither false-fires on it nor verifies it). The +7 boing on both is a
+  REAL low ring (BH 238 Hz, DBD 203 Hz) at a different freq than the anchor's
+  modal content — a genuine defect, not the octave. The octave's HF fidelity IS
+  gated (cent_500 / T60-4k/8k/16k) but those are the documented 12 kHz shifter-AA
+  structural ceiling (centroid sticks ~3.5k vs anchor 6.5k, T60-16k 2.5s vs 9.6s).
+  No NEW gate needed for the octave — the boing reading is correct as-is.
 
 ## Next (the fleet campaign)
 1. Re-validate suspect anchors (valhalla-shimmer pair) like the lex-vintage
