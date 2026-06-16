@@ -1271,21 +1271,24 @@ int main (int argc, char** argv)
     applyAnyPreset();
     applyParamOverrides();
 
-    // --screenshot PATH: open the plugin's editor, let it paint, then grab its
-    // on-screen window region to a PNG and exit. Intended as a reusable way to
-    // read a closed-source plugin's GUI state (e.g. Valhalla mode names the host
-    // API exposes only as raw norms). Runs on the message thread (this console
-    // app owns the MessageManager via ScopedJuceInitialiser_GUI).
+    // --screenshot PATH: open the plugin's editor (with --param/--nparam preset
+    // applied so the GUI shows that state), let it paint, then grab the desktop
+    // to a PNG and exit. A reusable way to read a closed-source plugin's GUI
+    // state (e.g. Valhalla mode NAMES the host API exposes only as raw norms),
+    // WITH a chosen preset set. Runs on the message thread (this console app owns
+    // the MessageManager via ScopedJuceInitialiser_GUI).
     //
-    // ENVIRONMENT LIMITATION (2026-06-16): this does NOT work on the dev box's
-    // GNOME/Mutter Wayland session. (1) yabridge/Wine VST3 editors don't open a
-    // visible GUI from a headless console host (no Wine window ever maps).
-    // (2) Even a NATIVE JUCE editor's window isn't composited into a capturable
-    // surface: ffmpeg x11grab of the X root is black (rootless XWayland), and
-    // gnome-screenshot captures the desktop but the harness-opened window isn't
-    // present on it. Mechanically correct + should work on a normal rooted-X11
-    // desktop; kept for that + future use. For Valhalla preset capture on THIS
-    // box, use the user's GUI screenshot + the display->norm calibration instead.
+    // WORKS on the dev box's GNOME/Mutter Wayland session (verified 2026-06-16 on
+    // ValhallaShimmer + DuskVerb). Two things were essential: (1) host the editor
+    // in a DocumentWindow that is setAlwaysOnTop(true) BEFORE setVisible, so the
+    // Wine GUI maps + the window raises above the user's maximised apps; (2)
+    // capture with gnome-screenshot (GNOME Shell Wayland capture composites
+    // everything incl. XWayland/Wine) — ffmpeg x11grab is black under rootless
+    // XWayland, and JUCE's own snapshot can't read the Wine child surface. Do NOT
+    // resize/re-raise the window mid-flight after the editor attaches: that
+    // triggers an X BadWindow on yabridge's embedded child and aborts. The editor
+    // is already correctly sized at createEditorIfNeeded(), so set up once + pump.
+    // Crop the full-desktop PNG to the window (at the printed screen bounds) to read.
     if (screenshotPath.isNotEmpty())
     {
         if (! plugin->hasEditor())
@@ -1302,55 +1305,44 @@ int main (int argc, char** argv)
             return 1;
         }
         std::cout << "Editor initial size: " << ed->getWidth() << "x" << ed->getHeight() << std::endl;
-        // Host the editor in a real top-level window (DocumentWindow) so it gets a
-        // proper managed peer for the yabridge/Wine GUI to attach + render into.
-        // A bare addToDesktop on the editor produced a degenerate peer + no Wine GUI.
+        // Host the editor in a real top-level DocumentWindow, RAISED always-on-top
+        // (so it's above the user's maximised apps -> visible to a full-desktop
+        // screenshot). Capture with gnome-screenshot (GNOME Shell Wayland capture,
+        // composites everything incl. XWayland/Wine); ffmpeg x11grab is black here
+        // (rootless XWayland), and JUCE snapshot can't read the Wine child surface.
         static juce::DocumentWindow* shotWin =
-            new juce::DocumentWindow ("shot", juce::Colours::black,
+            new juce::DocumentWindow ("DuskVerb-screenshot", juce::Colours::black,
                                       juce::DocumentWindow::allButtons);
         shotWin->setUsingNativeTitleBar (true);
-        shotWin->setContentNonOwned (ed, true);   // sizes window to the editor
-        shotWin->setTopLeftPosition (80, 80);
+        shotWin->setAlwaysOnTop (true);           // raise above the user's maximised apps
+        shotWin->setContentNonOwned (ed, true);   // ed is already sized at createEditor
+        shotWin->setTopLeftPosition (60, 60);
         shotWin->setVisible (true);
         shotWin->toFront (true);
-        const int settleMs = (waitAfterLoadMs > 0 ? waitAfterLoadMs : 8000);
-        // Pump the message loop for settleMs so the editor + bridged Wine GUI
-        // paint, then stop it (runDispatchLoopUntil is gated behind
-        // JUCE_MODAL_LOOPS_PERMITTED here, so drive it with a Timer + stopDispatchLoop).
+        // Single pump — no mid-flight resize/re-raise (that triggered an X BadWindow
+        // on yabridge's embedded Wine child). Let the Wine GUI fully paint.
+        const int settleMs = (waitAfterLoadMs > 0 ? waitAfterLoadMs : 12000);
         struct LoopStopper : public juce::Timer
         {
             void timerCallback() override
-            {
-                stopTimer();
-                juce::MessageManager::getInstance()->stopDispatchLoop();
-            }
+            { stopTimer(); juce::MessageManager::getInstance()->stopDispatchLoop(); }
         } stopper;
         stopper.startTimer (settleMs);
         juce::MessageManager::getInstance()->runDispatchLoop();
 
-        const auto b = ed->getScreenBounds();
-        std::cout << "Editor window: " << b.getWidth() << "x" << b.getHeight()
+        const auto b = shotWin->getScreenBounds();
+        std::cout << "Window on screen: " << b.getWidth() << "x" << b.getHeight()
                   << " @ (" << b.getX() << "," << b.getY() << ")" << std::endl;
-        const juce::String geom = juce::String (b.getWidth()) + "x" + juce::String (b.getHeight())
-                                + "+" + juce::String (b.getX()) + "+" + juce::String (b.getY());
-        // Grab the editor's screen region with ffmpeg x11grab (ImageMagick `import`
-        // and `grim` don't work on this XWayland/non-wlroots setup; ffmpeg x11grab
-        // does). Captures :0.0 at the editor's top-left for its WxH, one frame.
-        juce::ignoreUnused (geom);
+        // Window held visible during the capture (we delete it afterwards).
         juce::ChildProcess cap;
-        const juce::String vsize = juce::String (b.getWidth()) + "x" + juce::String (b.getHeight());
-        const juce::String input = ":0.0+" + juce::String (b.getX()) + "," + juce::String (b.getY());
-        if (cap.start (juce::StringArray { "ffmpeg", "-hide_banner", "-loglevel", "error",
-                                           "-f", "x11grab", "-video_size", vsize,
-                                           "-i", input, "-frames:v", "1", "-y", screenshotPath }))
+        if (cap.start (juce::StringArray { "gnome-screenshot", "-f", screenshotPath }))
         {
-            const juce::String capOut = cap.readAllProcessOutput();
-            cap.waitForProcessToFinish (20000);
-            if (capOut.isNotEmpty()) std::cout << "import: " << capOut << std::endl;
+            cap.readAllProcessOutput();
+            cap.waitForProcessToFinish (25000);
         }
         else
         {
-            std::cerr << "  ! --screenshot: could not launch `import` (ImageMagick)" << std::endl;
+            std::cerr << "  ! --screenshot: could not launch gnome-screenshot" << std::endl;
         }
         if (juce::File (screenshotPath).existsAsFile())
             std::cout << "Wrote screenshot " << screenshotPath << std::endl;
