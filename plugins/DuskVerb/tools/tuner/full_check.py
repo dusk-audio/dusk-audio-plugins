@@ -37,11 +37,15 @@ GATES = {
     'snare_rms_dB':         1.5,
     'noiseburst_rms_dB':    2.0,
     'sub_lt_100_dB':        2.0,    # absolute band energy delta
-    'low_100_250_dB':       2.0,
-    'mid_250_1k_dB':        2.0,
-    'mid_1k_4k_dB':         2.0,
+    # JND-CALIBRATED 2026-06-17 (user: gates must measure "outside JND", not lab-
+    # tight). Band-energy loudness JND for complex/broadband tails ≈ 3 dB (was 2.0,
+    # an ideal-tone DL). The genuinely-audible gates (boing, env_p2p, bloom, cent,
+    # onset) are LEFT strict.
+    'low_100_250_dB':       3.0,
+    'mid_250_1k_dB':        3.0,
+    'mid_1k_4k_dB':         3.0,
     'hi_4k_12k_dB':         3.0,
-    'spec_L1_mean_dB':      2.0,    # RMS-normalized 1/3-oct mean
+    'spec_L1_mean_dB':      3.0,    # RMS-normalized 1/3-oct mean (broadband spectral JND ≈ 3 dB)
     'spec_L1_max_dB':       5.0,    # any single band
     # tail_t30 relaxed 2026-05-27 to ±25% (was ±15%) for DPV-family presets.
     # ENGINE CEILING: DattorroPlateVintage's structural HF damping is tightly
@@ -65,7 +69,7 @@ GATES = {
     # L/R-decorrelation detail this broadband number averages away. (DPV's
     # mono-compat width clamp may now fail this — that is the intended exposure,
     # not a regression: track it as an engine ceiling if a sweep can't close it.)
-    'stereo_corr':          0.05,
+    'stereo_corr':          0.10,   # JND-calibrated (was 0.05): correlation DL ≈ 0.1; the 0.05 flagged inaudible Δ
     # ── ONSET / SPATIAL / DIFFUSION (2026-06-02 perceptual gates, impulse) ──
     'attack_time_ms_abs':   5.0,    # onset→peak buildup time, absolute ms ...
     'attack_time_pct':     10.0,    # ... OR within ±10% (pass if EITHER holds)
@@ -82,7 +86,26 @@ GATES = {
     'energy_t50_ms_abs':   30.0,    # Gate 1 (core): |Δ time-to-50%-energy| vs anchor
     'energy_first50_pct':  10.0,    # Gate 2 (companion): |Δ % energy in first 50 ms| vs anchor
     'onset_slope_pct':     30.0,    # rising-swell slope dB/ms (noisy → wider gate)
-    'spatial_width_band':   0.06,   # per-band L/R corr abs-diff (low/mid/high)
+    # DISCRETE EARLY TAP (2026-06-18) — the audible "extra delay tap" the ear catches
+    # on VVV chambers/halls that NO aggregate gate measured. energy_t50/kurtosis see
+    # the energy SPREAD; this measures whether a DISTINCT reflection STANDS OUT.
+    # prominence = the dominant 40-250 ms arrival's peak MINUS the dip preceding it
+    # (dB). A discrete tap = high prominence (peaks above a dip); a smooth swell =
+    # low. Gated only when the anchor HAS a prominent tap (≥ min_prom).
+    # EAR-CALIBRATED target (79 Vocal Chamber, 2026-06-19): DV's tap is a fuller
+    # BLOB, the anchor's a sharp TICK — a blob reads as loud to the ear at a LOWER
+    # prominence number than the tick. At the tick-matching prominence (~anchor−3,
+    # gain 2.0) the user heard "too prominent"; at 14 dB@96 ms (gain 1.2) "much
+    # closer / balanced". So the pass target is the LESSER of (anchor − prom_dB) and
+    # an absolute audible floor — DV must have a clearly-discrete tap at the right
+    # time, NOT match the tick's prominence number. (Over-prominence is ear-judged,
+    # not gated: the fleet failure mode is buried/absent taps.) audible_dB anchored
+    # on 79VC; confirm on Blade/Bright when ear-tuned. See duskverb_early_tap_gate.
+    'early_tap_prom_dB':     3.0,   # DV prominence ≥ anchor − this …
+    'early_tap_audible_dB': 13.0,   # … but capped here (a 13 dB blob is audibly discrete)
+    'early_tap_time_ms':    40.0,   # |Δ tap time| vs anchor
+    'early_tap_min_prom_dB': 5.0,   # anchor must exceed this to gate (else no tap to match)
+    'spatial_width_band':   0.10,   # per-band L/R corr abs-diff (JND-calibrated, was 0.06)
     'diffusion_flux':       1.50,   # kurtosis-trajectory L1 over first 150 ms
     # Tail-resonance prominence (the "boing"/springy pitched-mode detector the
     # ear caught on Drum Plate but every prior gate missed): dominant spectral
@@ -106,13 +129,13 @@ GATES = {
     # bass-weight / brightness on musical content depends on these.
     # Sustained-pink per-band gates — finer split (deep sub vs sub, hi vs air)
     # so user-perceived gaps below 50 Hz and above 10 kHz can't be averaged away.
-    'ss_deep_sub_dB':       2.0,
-    'ss_sub_dB':            2.0,
-    'ss_low_dB':            2.0,
-    'ss_low_mid_dB':        2.0,
-    'ss_mid_dB':            2.0,
-    'ss_umid_dB':           2.0,
-    'ss_hi_dB':             2.0,
+    'ss_deep_sub_dB':       3.0,    # JND-calibrated 2026-06-17 (was 2.0): loudness DL for complex tail ≈ 3 dB
+    'ss_sub_dB':            3.0,
+    'ss_low_dB':            3.0,
+    'ss_low_mid_dB':        3.0,
+    'ss_mid_dB':            3.0,
+    'ss_umid_dB':           3.0,
+    'ss_hi_dB':             3.0,
     'ss_air_dB':            3.0,
     # Sustained-pink per-band tail decay (post input-off at t=4s).
     # Frequency-dependent decay reveals "bass dies fast" type problems.
@@ -151,7 +174,11 @@ GATES = {
     # the per-band sustained-pink gates above only fire when the harness
     # renders a sustained-pink stimulus (it doesn't), so per-band RT60 shape
     # was effectively UNGATED across every VH iteration since v13.
-    't60_band_pct':         5.0,
+    # JND-calibrated 2026-06-17 5.0 → 10.0: ITU-R BS.1116 ±5% is the trained-listener
+    # DL on identical material in ideal conditions; the practical RT60 JND on music /
+    # complex decays is ~10%. ±10% still flags gross per-octave tilt (the campaigns'
+    # +30-270% drifts) while ignoring sub-JND ±5-9% deltas the user can't hear.
+    't60_band_pct':        10.0,
     # PER-BAND TAIL MOD PEAK FREQUENCY — Hilbert envelope FFT, dominant peak
     # in 0.3-8 Hz range per band. VH listening v15: DV bass mod at 3.3 Hz vs
     # VVV 1.83 Hz, DV mid at 1.5 Hz vs VVV 0.46 Hz — DV mod runs at WRONG
@@ -551,6 +578,34 @@ def energy_arrival(p, drop_db=40.0, window_ms=2000.0):
     t = np.arange(len(w)) / sr * 1000.0
     centroid = float((t * w).sum() / tot)
     return t50, pct50, pct150, centroid
+
+
+def early_tap(p, drop_db=40.0, lo_ms=40.0, hi_ms=250.0):
+    """Dominant DISCRETE early reflection (the audible 'extra delay tap') in the
+    lo..hi ms post-onset window. Returns (t_ms, prominence_dB):
+      t_ms       — onset-relative time of the dominant early arrival
+      prominence — how far that arrival peaks ABOVE the dip preceding it (dB). A
+                   discrete reflection stands out (high prominence); a smooth swell
+                   does not. This is the 'duh-DUH' the ear catches but the aggregate
+                   energy_t50 / diffusion kurtosis gates miss.
+    (None, None) if the window is too short to assess."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    win = max(int(0.003 * sr), 1)   # 3 ms — preserve discrete arrivals (vs 2 ms elsewhere)
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(env_s + 1e-30)
+    pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk, drop_db)
+    a = on + int(lo_ms / 1000.0 * sr)
+    b = min(len(env_db), on + int(hi_ms / 1000.0 * sr))
+    if b - a < 10:
+        return None, None
+    rel = env_db[pk]                       # reference: onset peak
+    ti = a + int(np.argmax(env_db[a:b]))   # the tap = dominant arrival in the window
+    t_ms = (ti - on) / sr * 1000.0
+    L = env_db[ti] - rel                   # tap level rel onset peak
+    d0 = on + int(0.020 * sr)              # dip = min between onset+20ms and the tap
+    dip = (float(np.min(env_db[d0:ti])) - rel) if ti > d0 else L
+    return float(t_ms), float(L - dip)
 
 
 def spatial_width_bands(p, t_ms=500.0):
@@ -959,6 +1014,24 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             print(f"  {'energy first150ms / centroid':30s}  DV={p150_dv:5.1f}%/{cen_dv:.0f}ms  "
                   f"Lex={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
 
+            # ── DISCRETE EARLY TAP (the audible 'extra delay tap' — prominence + time) ──
+            tt_dv, pr_dv = early_tap(imp_dv)
+            tt_lx, pr_lx = early_tap(imp_lx)
+            if pr_lx is not None and pr_dv is not None and pr_lx >= GATES['early_tap_min_prom_dB']:
+                # Anchor HAS a prominent discrete tap → DV must have an audibly-discrete
+                # tap (prominence ≥ floor) at the right time. Floor = lesser of
+                # (anchor − prom_dB) and the absolute audible_dB, because DV's blob reads
+                # as loud as the anchor's tick at a lower prominence number (ear-calib).
+                prom_floor = min(pr_lx - GATES['early_tap_prom_dB'], GATES['early_tap_audible_dB'])
+                passing = (pr_dv >= prom_floor) and (abs(tt_dv - tt_lx) <= GATES['early_tap_time_ms'])
+                line = (f"  {'early tap (prom@time)':30s}  DV={pr_dv:4.1f}dB@{tt_dv:.0f}ms  "
+                        f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                        f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            else:
+                print(f"  {'early tap (prom@time)':30s}  SKIPPED (anchor has no prominent discrete tap)")
+
         # ─── 1/3-oct RMS-normalized L1 ───
         # Floor-guard: skip bands where the ANCHOR is below -55 dB (RMS-norm) —
         # it carries no real signal there (the dark VVV/Lex anchors roll off to
@@ -1076,8 +1149,14 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             pidx = int(np.argmax(sm))
             floor = float(np.median(sm[-min(int(0.5*sr), len(sm)):]))
             thr = max(peak * 10**(-target_db/10), floor * 4.0)
-            below = np.where((np.arange(len(sm)) > pidx) & (sm < thr))[0]
-            return (int(below[0]) - pidx) / sr if len(below) else None
+            # LAST sample above threshold, not the first BELOW. On a sustained
+            # pad the cascade keeps BLOOMING after the pink turns off (envelope
+            # rises post-off), so first-below fired on a momentary dip → ~0.01 s
+            # phantom decay. Last-above = the point after which the band stays
+            # below thr = the true decay length. The floor*4 clamp keeps noise
+            # out of the crossing. Monotonic decays: last-above ≡ old first-below.
+            above = np.where((np.arange(len(sm)) > pidx) & (sm >= thr))[0]
+            return (int(above[-1]) - pidx) / sr if len(above) else None
 
         # Bands include low_mid 250-500 — the user-perceived gap band.
         band_list = [('sub <100',      20,  100),
@@ -1215,6 +1294,13 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             dv_db = _post_peak_band_rms_db(dv, 300, 800, lo, hi)
             lx_db = _post_peak_band_rms_db(lx, 300, 800, lo, hi)
             if dv_db is None or lx_db is None: continue
+            # JND-calibrated 2026-06-17: skip when the ANCHOR body window is below
+            # ~-72 dBFS — the band has decayed to inaudible there, so "DV colder"
+            # (e.g. -194 vs -144 on a gated reverse, or -92 vs -81) is a silence-vs-
+            # silence comparison, not an audible "thinner" defect.
+            if lx_db < -72.0:
+                print(f"  {f'body {b_lab}':30s}  SKIPPED (anchor body below -72 dB floor)")
+                continue
             delta = dv_db - lx_db
             passing = delta >= -body_gate
             line = (f"  {f'body {b_lab}':30s}  "

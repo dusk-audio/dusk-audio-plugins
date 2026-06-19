@@ -34,10 +34,15 @@ BANDS = [(44,88),(88,177),(177,355),(355,710),(710,1420),
 WET = ["--param","Dry/Wet=1.0","--param","Bus Mode=1","--param","Freeze=0"]
 
 # preset name -> anchor noiseburst path
+# All anchors point at the TRUSTED, re-rendered set in dusk-audio-tools/tuner_runs/
+# anchors/ (the 2026-06-16 screenshot-method VVV captures + ear-confirmed). The old
+# tests/duskverb_render/output/vvv/*.wav paths were STALE May-24 renders (param-replay
+# of internal values → wrong preset) — calibrating against them re-introduced the very
+# bug the re-render fixed. Single source of truth, same anchors fleet_audit uses.
 ANCHORS = {
-    "Vocal Plate":          f"{VVV}/vvv_vocal_plate_noiseburst.wav",
-    "Drum Plate":           f"{VVV}/vvv_Drum_Plate_noiseburst.wav",
-    "Vocal Hall":           f"{VVV}/vvv_Vocal_Hall_noiseburst.wav",
+    "Vocal Plate":          f"{ANCH}/vvv-vocal-plate/vvv-vocal-plate_noiseburst.wav",
+    "Drum Plate":           f"{ANCH}/vvv-drum-plate/vvv-drum-plate_noiseburst.wav",
+    "Vocal Hall":           f"{ANCH}/vvv-vocal-hall/vvv-vocal-hall_noiseburst.wav",
     "Cathedral Large Hall": f"{ANCH}/vvv-cathedral/vvv-cathedral_noiseburst.wav",
     "Blade Runner 224":     f"{ANCH}/vvv-blade-runner/vvv-blade-runner_noiseburst.wav",
     "Tiled Room":           f"{ANCH}/vvv-tiled-room/vvv-tiled-room_noiseburst.wav",
