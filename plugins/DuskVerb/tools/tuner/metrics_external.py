@@ -148,18 +148,30 @@ def _tail_decay_times(mono: np.ndarray, sr: int) -> dict:
     if peak < 1e-12:
         return {f't{db}': None for db in (10, 20, 30, 40, 60)}
     pidx = int(np.argmax(sm))
-    # Noise floor: median of last 500 ms power.
+    # Schroeder backward-integration EDC (ISO 3382). The old first-sample-below-
+    # threshold returned spurious tiny times on DIP-THEN-BLOOM signals (a sharp
+    # onset/transient followed by a slow reverb SWELL — e.g. a shimmer pad: the
+    # transient's initial dip crossed peak−60 dB at ~0.05 s, long before the
+    # bloom). The EDC is monotonic and dominated by total remaining energy (the
+    # long bloom, not the brief transient), so it measures the TRUE tail decay.
+    # Truncated at the noise floor (Lundeby-lite) so integrated noise can't
+    # inflate t60. On a normal monotonic decay EDC ≡ the old crossing.
     floor_window = sm[-min(int(0.5 * sr), len(sm)):]
     noise = float(np.median(floor_window)) if len(floor_window) > 0 else peak * 1e-9
+    tail = sm[pidx:]
+    aud = np.where(tail > noise * 4.0)[0]
+    if len(aud) > 1:
+        tail = tail[: int(aud[-1]) + 1]
+    if len(tail) < win * 2:
+        return {f't{db}': None for db in (10, 20, 30, 40, 60)}
+    edc = np.cumsum(tail[::-1])[::-1]
+    if edc[0] <= 1.0e-30:
+        return {f't{db}': None for db in (10, 20, 30, 40, 60)}
+    edc_db = 10.0 * np.log10(np.maximum(edc / edc[0], 1.0e-12))
     out = {}
     for db in (10, 20, 30, 40, 60):
-        # Threshold in linear power = peak * 10^(-db/10), clipped to 6 dB
-        # above noise floor so the "decayed below detection" point is
-        # honest, not an extrapolation of slope through noise.
-        thr = max(peak * 10 ** (-db / 10), noise * 4.0)
-        tail = sm[pidx + 1:]
-        below = np.where(tail < thr)[0]
-        out[f't{db}'] = (int(below[0]) + 1) / sr if len(below) else None
+        below = np.where(edc_db <= -float(db))[0]
+        out[f't{db}'] = int(below[0]) / sr if len(below) else None
     return out
 
 

@@ -95,7 +95,12 @@ def commanded_octave_t60():
 # into "re-calibrate Vocal Hall's octave table" when Vocal Hall is DenseHall).
 # The 2026-06-13 DenseHall migration orphaned several of these. map -> allowed algos.
 TABLE_ENGINES = {
-    "kAccurateHallT60ByName": (10, 12),   # consumed only by accurateHall_
+    "kAccurateHallT60ByName": (10, 12, 11, 13),  # accurateHall_ — algos 10/12 AND the
+                                          # SparseField(11)+TiledRoom(13) composites,
+                                          # whose tail IS accurateHall_.process()
+                                          # (DuskVerbEngine case SparseField/TiledRoom).
+                                          # Omitting 11/13 false-flagged Tiled Room's
+                                          # LIVE octave entry as dormant -> wrongly deleted.
     "kDattorroOctaveT60ByName": (0, 1),   # consumed only by dattorro_/dattorroVintage_
 }
 
