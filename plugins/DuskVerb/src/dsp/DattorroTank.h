@@ -91,6 +91,18 @@ public:
     //     toward still (toward the Lex/VVV near-static tail).
     void setDensityDepth (float depth01);
     void setModReduction (float reduction01);
+    // #87 boing fix (short rooms): when true, the 12-AP density cascade loads the
+    // MID-PRIME hall-scale density bases (kLeft/RightDensityAPBaseHall, 307-1303
+    // smp) instead of the short room bases, adding close-spaced coprime modes that
+    // fill the sparse low-mid gap → kills the comb-coincidence resonance. The 4
+    // MAIN delay lines stay at room scale (does NOT call setHallScale → room is not
+    // lengthened). Only takes effect when setDensityDepth(>0) engages the cascade.
+    // false = legacy room density bases = byte-identical.
+    void setDensityRoomFill (bool enable);
+    // Per-line incommensurate detune of the 4 main delay lines (fractional mult on
+    // top of totalScale). Breaks the L<->R harmonic ratios so coincident comb teeth
+    // interleave. {1,1,1,1} identity = bit-null. Factors = [Ldel1,Ldel2,Rdel1,Rdel2].
+    void setMainLineDetune (float lDel1, float lDel2, float rDel1, float rDel2);
     // Input-diffuser coefficient scale (sweep handle). 1.0 = canonical
     // 0.75/0.625; only active when setDensityDepth>0 engages the cascade.
     void setInputDiffusionScale (float scale01);
@@ -462,6 +474,8 @@ private:
     int   numActiveDensityAPs_ = 3;
     float densityCoeffBoost_   = 1.0f;
     float modReduction_        = 1.0f;
+    bool  densityRoomFill_     = false;                       // #87: false = room density bases (bit-null)
+    float mainDetune_[4]       = { 1.0f, 1.0f, 1.0f, 1.0f };  // #87: {Ldel1,Ldel2,Rdel1,Rdel2}; identity = bit-null
 
     // Per-octave GEQ state. octaveActive_ false (all T60 == 0) → legacy 3-band,
     // bit-identical. Inter-octave crossovers = geometric means of the ISO

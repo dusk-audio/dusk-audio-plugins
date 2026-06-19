@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DspUtils.h"
+#include "TwoBandDamping.h"   // OctaveBandDamping (per-octave GEQ, design out-of-line)
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -71,8 +72,9 @@ public:
     {
         for (auto& a : inAPL_) a.clear();
         for (auto& a : inAPR_) a.clear();
-        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; }
+        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; octDamp_[i].reset(); }
         spinL_.clear(); spinR_.clear();
+        tcL_.reset(); tcR_.reset();
     }
 
     // ── Setters (universal surface) ──────────────────────────────────────────
@@ -81,6 +83,28 @@ public:
     void setBassMultiply (float m)   { bassMul_ = std::clamp (m, 0.2f, 3.0f); if (prepared_) update(); }   // low-band RT60 factor
     void setTrebleMultiply (float m) { trebMul_ = std::clamp (m, 0.05f, 2.0f); if (prepared_) update(); }   // high-band RT60 factor
     void setMidMultiply (float m)    { midMul_ = std::clamp (m, 0.2f, 3.0f);    if (prepared_) update(); }   // mid-band RT60 factor (was a no-op; now the 3rd damping band)
+
+    // Per-OCTAVE GEQ damping (FORK #2, 2026-06-16). The 3-band shelf above
+    // (bass/mid/treble) cannot fit an arbitrary anchor's 9-octave T60 curve, and
+    // each band's gain sets BOTH decay AND steady level (the coupling wall →
+    // cent dark + T60-16k dies on the DenseHall presets). This sets each ISO
+    // octave's T60 independently (Jot/Schlecht accurate-RT, same OctaveBandDamping
+    // the AccurateHall FDN uses). band 0..8 = 63 Hz..16 kHz; seconds<=0 → that
+    // octave inherits the broadband Decay. All octaves flat → octaveActive_ false
+    // → the 3-band path runs (bit-identical for any preset not opting in).
+    void setOctaveT60 (int band, float seconds)
+    {
+        if (band < 0 || band >= 9) return;
+        octaveT60_[band] = seconds;
+        octaveActive_ = false;
+        for (int b = 0; b < 9; ++b) if (octaveT60_[b] > 0.0f) { octaveActive_ = true; break; }
+        if (prepared_) update();
+    }
+    // Decay-knob coupling: reference broadband decay at which the octave curve is
+    // realized 1:1; the live Decay knob then scales the whole curve. <=0 → 1.0.
+    void setOctaveDecayRef (float seconds) { octaveDecayRef_ = seconds; if (prepared_) update(); }
+    // FORK B: opt-in per preset. Default off = bit-identical. Needs octaveActive_.
+    void setTonalCorrection (bool enabled) { tonalCorrEnabled_ = enabled; if (prepared_) update(); }
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
     void setModDepth (float d)       { modDepth_ = std::clamp (d, 0.0f, 1.0f); }       // scales allpass/delay excursion
@@ -146,6 +170,17 @@ public:
             oL = spinL_.process (oL, sp);
             oR = spinR_.process (oR, -sp);
 
+            // FORK B — Jot tonal correction (decouple per-band T60 from LEVEL).
+            // Output GEQ (post-tank, non-recursive → no codegen bit-null risk).
+            // Flattens per-band steady-state energy so a band's long T60 no longer
+            // forces a hot level (the ss-hot/cent-dark coupling on the halls).
+            // tcActive_ false → identity → bit-identical. corr = sqrt(Tmin/Tb).
+            if (tcActive_)
+            {
+                oL = tcL_.process (oL, tcCoeffs_);
+                oR = tcR_.process (oR, tcCoeffs_);
+            }
+
             outLp[s] = oL;
             outRp[s] = oR;
         }
@@ -175,7 +210,7 @@ private:
         float process(float x,float mod){
             float rp=(float)w-(float)len-exc*mod;
             int i0=(int)std::floor(rp); float fr=rp-i0;
-            float d=buf[(size_t)(i0&mask)]*(1.0f-fr)+buf[(size_t)((i0+1)&mask)]*fr;
+            float d=DspUtils::cubicHermite(buf.data(), mask, i0, fr);   // HF-lossless (was linear)
             float in=x+kG*d;
             buf[(size_t)w]=in+DspUtils::kDenormalPrevention; w=(w+1)&mask;
             return d-kG*in;
@@ -191,7 +226,10 @@ private:
         float getlast(float mod) const {
             float rp=(float)w-(float)len-exc*mod;
             int i0=(int)std::floor(rp); float fr=rp-i0;
-            return buf[(size_t)(i0&mask)]*(1.0f-fr)+buf[(size_t)((i0+1)&mask)]*fr;
+            // HF-lossless: cubicHermite (4-pt) not linear. Linear is a position-
+            // dependent LP (−6 dB @16k @fr=0.5) read ~5×/line/pass → compounds →
+            // 16k can't sustain. Hermite = the FDN/QuadTank/Dattorro standard.
+            return DspUtils::cubicHermite(buf.data(), mask, i0, fr);
         }
         void write(float x,float /*mod*/){ buf[(size_t)w]=x+DspUtils::kDenormalPrevention; w=(w+1)&mask; }
     };
@@ -202,7 +240,7 @@ private:
         float process(float x,float mod){
             float rp=(float)w-(float)len-exc*mod;
             int i0=(int)std::floor(rp); float fr=rp-i0;
-            float d=buf[(size_t)(i0&mask)]*(1.0f-fr)+buf[(size_t)((i0+1)&mask)]*fr;
+            float d=DspUtils::cubicHermite(buf.data(), mask, i0, fr);   // HF-lossless (was linear)
             // Schroeder allpass (flat magnitude -> NO comb notches). Was a
             // 0.6x+0.4d feed-forward comb at 12 ms = the metallic ring. Allpass
             // form decorrelates L/R + carries the spin modulation without
@@ -218,16 +256,24 @@ private:
     float lineRead (int i, float inject, float mod)
     {
         float v = line_[i].getlast (mod) + inject;
-        // 3-band damping: split v into low/mid/high via two one-pole lowpasses
-        // (at lowX_, highX_), apply each band's own per-pass gain. Mid is the
-        // RT60 reference (midMul_=1 -> gMidB_=midG_), so the Decay knob reads
-        // true; bass/treble/mid tilt the per-band decay independently.
-        lsf_[i] = lsf_[i] + lCoeff_ * (v - lsf_[i]);          // lowpass < lowX_
-        hsf_[i] = hsf_[i] + hCoeff_ * (v - hsf_[i]);          // lowpass < highX_
-        const float lowB  = lsf_[i];                          // < lowX_
-        const float midB  = hsf_[i] - lsf_[i];                // lowX_ .. highX_
-        const float highB = v - hsf_[i];                      // > highX_
-        v = gLowB_ * lowB + gMidB_ * midB + gHighB_ * highB;
+        if (octaveActive_)
+        {
+            // Fork #2: per-octave GEQ damping (9 ISO octaves, independent T60).
+            v = octDamp_[i].process (v, octCoeffs_);
+        }
+        else
+        {
+            // 3-band damping: split v into low/mid/high via two one-pole lowpasses
+            // (at lowX_, highX_), apply each band's own per-pass gain. Mid is the
+            // RT60 reference (midMul_=1 -> gMidB_=midG_), so the Decay knob reads
+            // true; bass/treble/mid tilt the per-band decay independently.
+            lsf_[i] = lsf_[i] + lCoeff_ * (v - lsf_[i]);          // lowpass < lowX_
+            hsf_[i] = hsf_[i] + hCoeff_ * (v - hsf_[i]);          // lowpass < highX_
+            const float lowB  = lsf_[i];                          // < lowX_
+            const float midB  = hsf_[i] - lsf_[i];                // lowX_ .. highX_
+            const float highB = v - hsf_[i];                      // > highX_
+            v = gLowB_ * lowB + gMidB_ * midB + gHighB_ * highB;
+        }
         // per-line loop allpass diffusers (modulated) — the in-loop density.
         // Two nested allpasses (opposite mod sign) double the echo density.
         v = loopAP_[i].process (v, mod);
@@ -322,6 +368,59 @@ private:
         // Tunable crossover one-pole coeffs (defaults 250 Hz / 3.5 kHz).
         lCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (lowX_,  sr_ * 0.45f) / sr_);
         hCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (highX_, sr_ * 0.45f) / sr_);
+
+        // Per-octave GEQ coeffs (fork #2). Each ISO octave's per-pass loop gain
+        // gk = 10^(-3·meanLen/(Tk·sr)) realizes target T60 Tk over the uniform
+        // mean loop length. Decay knob scales the curve via octaveDecayRef_. The
+        // GEQ is attenuation-only (gk≤0.9999); a flat octave inherits the
+        // broadband gMid. designCoeffs runs message-thread (out-of-line, no FDN
+        // codegen drift). Only built when active → the 3-band path stays untouched.
+        if (octaveActive_)
+        {
+            static constexpr float kOctaveXoverHz[OctaveBandDamping::kNumShelves] = {
+                88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f, 11313.7f
+            };
+            const float octaveScale = (octaveDecayRef_ > 0.05f)
+                ? std::clamp (rt60_ / octaveDecayRef_, 0.1f, 8.0f) : 1.0f;
+            float gOct[OctaveBandDamping::kNumBands];
+            for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
+            {
+                const float Tk = octaveT60_[k] * octaveScale;
+                gOct[k] = frozen_
+                    ? midG_   // freeze: hold (near-unity), matches the 3-band path
+                    : (Tk > 0.0f)
+                        ? std::clamp (std::pow (10.0f, -3.0f * meanLen / (Tk * sr_)), 0.001f, 0.9999f)
+                        : midG_;   // flat octave → broadband decay
+            }
+            octCoeffs_ = OctaveBandDamping::designCoeffs (gOct, kOctaveXoverHz, sr_);
+        }
+
+        // FORK B — Jot tonal correction: flatten per-band steady-state ENERGY so a
+        // band's long T60 no longer forces a hot LEVEL (the ss-hot/cent-dark
+        // coupling). corr_b = sqrt(Tmin/Tb): the shortest-decay octave = unity, the
+        // longer (low) octaves get level-trimmed → cuts the hot lows + lifts cent
+        // relative. Output GEQ (applied post-tank in process), no loop-stability
+        // constraint. Identity unless the preset opts in (tonalCorrEnabled_).
+        tcActive_ = octaveActive_ && tonalCorrEnabled_;
+        if (tcActive_)
+        {
+            static constexpr float kXoverHz[OctaveBandDamping::kNumShelves] = {
+                88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f, 11313.7f
+            };
+            const float oScale = (octaveDecayRef_ > 0.05f)
+                ? std::clamp (rt60_ / octaveDecayRef_, 0.1f, 8.0f) : 1.0f;
+            float Tb[OctaveBandDamping::kNumBands]; float Tmin = 1.0e9f;
+            for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
+            {
+                Tb[k] = (octaveT60_[k] > 0.0f) ? octaveT60_[k] * oScale
+                                               : std::max (rt60_, 1.0e-3f);
+                Tmin = std::min (Tmin, Tb[k]);
+            }
+            float corr[OctaveBandDamping::kNumBands];
+            for (int k = 0; k < OctaveBandDamping::kNumBands; ++k)
+                corr[k] = std::sqrt (std::clamp (Tmin / std::max (Tb[k], 1.0e-3f), 0.05f, 1.0f));
+            tcCoeffs_ = OctaveBandDamping::designCoeffs (corr, kXoverHz, sr_);
+        }
         // (spin combs allocated in prepare() — SR-dependent, audio-thread-safe here)
     }
 
@@ -340,4 +439,18 @@ private:
     float   lsf_[kN] {}, hsf_[kN] {};
     SineLFO lfo1_, lfo2_, spin_;
     SpinComb spinL_, spinR_;
+
+    // Per-octave GEQ damping (fork #2). One filter bank per line (shared coeffs,
+    // since DenseHall uses a uniform mean loop length for decay — see update()).
+    OctaveBandDamping        octDamp_[kN];
+    OctaveBandDamping::Coeffs octCoeffs_;
+    float octaveT60_[9] {};
+    float octaveDecayRef_ = 0.0f;
+    bool  octaveActive_   = false;
+
+    // FORK B — Jot output tonal-correction (stereo). Identity unless opted in.
+    OctaveBandDamping        tcL_, tcR_;
+    OctaveBandDamping::Coeffs tcCoeffs_;
+    bool  tcActive_         = false;
+    bool  tonalCorrEnabled_ = false;
 };

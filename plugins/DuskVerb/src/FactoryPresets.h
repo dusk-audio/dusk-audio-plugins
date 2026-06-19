@@ -568,7 +568,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.50000f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,  // 2026-06-15 Decay 0.805->0.50 re-tune vs CORRECTED lex-vintage-vocal-plate anchor (old anchor broken): anchor T60 ~0.7s (short vocal plate), DV was +40-95% too long. n_fail 40->24. Residual = 91ms slow-attack (5 gates, no soft-onset preset lever on DPV) + short-tail diffusion_flux measurement artifact + T60 3-band wall.
           0.24230f, 0.00f, 0.30f, 42.811f, 15000.0f, 1.00000f, false, 11.03f,  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim +11.03 (20->19). Width 1.0.
           /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
-          /* hiCutShelfGainDb */ -12.0f,
+          /* hiCutShelfGainDb */ -6.0f,   // 2026-06-16 EAR: -12->-6 brighten (Lexicon brighter than ours)
           /* gate */ true,
           /* sixAPDensityBaseline */ 0.62f, /* sixAPBloomCeiling */ 0.85f,
           /* sixAPBloomStagger    */ { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f },
@@ -714,7 +714,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // octave T60 recalibrated for these delays in kAccurateHallT60ByName.
         { "Bright Hall",          "Halls",
           14, 0.40f, false,  0.0f, 0,    // 2026-06-13: migrated AccurateHall32(12) -> DenseHall(14); dense diffused tail (kurtosis 10.0 -> 7.0).
-          5.146f, 0.93236f, 0.04761f, 1.45608f, 0.715f, 1.183f,  511.691f,  // 2026-06-14 gain-matched 8-lever sweep (30->21): decay 5.15, Treble 0.715, Bass 1.183, LowXover 512.  // 2026-06-14 anchor-tune sweep (n_fail 30->21): decay 5.91->4.73, Treble 1.60->1.12, Bass 0.94->1.62.
+          7.200f, 0.93236f, 0.04761f, 1.45608f, 0.715f, 1.183f,  511.691f,  // 2026-06-17 EAR: decay 5.15->7.2 = anchor low T60 (7.06s) so the lows sustain (were -27% short = "weak/no low end"); octave GEQ shapes mids/highs back down.  // (Treble param is DEAD-wired for DenseHall — 5-10k brightness cut lives in the match-EQ 8k band, below.)  // 2026-06-14 gain-matched 8-lever sweep (30->21): decay 5.15, Treble 0.715, Bass 1.183, LowXover 512.
           0.90000f, 0.37f, 0.55f,  26.856f, 10646.34f, 1.00000f, false, 5.78f,  // 2026-06-14 Phase-3 match-EQ (s=0.35): gainTrim +5.78 (21->20).  // gainTrim -1.7407->-2.4947 (2026-06-11): re-matched 100%-wet noiseburst RMS to the VVV anchor after the AccurateHall32 migration shifted output level +0.754 dB. Diffusion 0.90 (manual 2026-06-07): scatters the 12.9k metallic modal ring, fixes cent_50 + sine1k loudness, halves pitch-chorus 7.5x->3.14x. Width 1.00: closes residual global stereo_corr.
           /* mono */ 20.0f, /* mid */ 0.885f, /* highX */ 6955.079f, /* sat */ 0.13963f,  // 2026-06-14 sweep: Mid 0.885, HighXover 6955.  // re-derived post Decay-calibration (honest Decay 5.06 s; was 10->17 fails on the recalibrated VintageTank)
           /* hiCutShelfGainDb */ -7.112f },  // 2026-06-14 sweep. (was -6.0; AccurateHall trial: -2 brightened LATE HF level too (bloom 8-12k +6 dB, gain==decay==level) — kept at -6; early-HF dark is compensated post-tank (pteq 10 kHz boost).
@@ -861,9 +861,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
           14, 0.35f, false, 22.0f, 0,    // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail (kurtosis 12.6 -> 6.2).
-          3.043f, 0.76f, 0.50390f, 0.78820f, 1.479f, 1.750f,  621.727f,  // 2026-06-16 re-tune vs corrected anchor: Bass 1.35->1.75 + mid 1.263->0.92 (mids into gate), 27->25  // 2026-06-14 gain-matched 8-lever sweep (31->26): decay 3.04, Treble 1.479, Bass 1.35, LowXover 622.  // decay 3.50->4.04: restore length after honest-decay fold-in (RT60 4.42->~5.1)  // Treble 1.084->1.60: brighten to anchor (centroid 1585->~1700; HiCut 6k->10k below adds the rest).
-          0.77940f, 0.79000f, 0.44870f,  33.0f,  13825.789f, 0.96000f, false, 10.32f,  // 2026-06-14 sweep: HiCut 10k->13826; gainTrim level-matched (+10.32).  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
-          /* mono */ 20.0f, /* mid */ 0.920f, /* highX */ 4603.805f, /* sat */ 0.0f, /* hiCutShelfGainDb */ -10.058f },  // 2026-06-14 sweep: Mid 1.263, HighXover 4604, HiCutShelf -10.06.  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
+          5.600f, 0.76f, 0.50390f, 0.78820f, 1.479f, 1.750f,  621.727f,  // 2026-06-17 EAR: decay 3.04->5.6 = anchor low T60 (5.51s); lows were -45% short = "weak/no low end". Octave GEQ cuts mids/highs back.  // 2026-06-16 re-tune vs corrected anchor: Bass 1.35->1.75 + mid 1.263->0.92 (mids into gate), 27->25  // 2026-06-14 gain-matched 8-lever sweep (31->26): decay 3.04, Treble 1.479, Bass 1.35, LowXover 622.  // decay 3.50->4.04: restore length after honest-decay fold-in (RT60 4.42->~5.1)  // Treble 1.084->1.60: brighten to anchor (centroid 1585->~1700; HiCut 6k->10k below adds the rest).
+          0.77940f, 0.29000f, 0.44870f,  33.0f,   6500.000f, 0.96000f, false,  5.70f,  // 2026-06-17 EAR: HiCut 13826->6500 (shelf now reaches the hot 5-12k: hi/ss_hi/ss_air/bloom/cent_50 were +) + gainTrim 10.3->5.7 (user: too loud).  // 2026-06-16 erLevel 0.79->0.29: DenseHall re-included in discrete-ER bus (the "duh-duh"); 0.79 over-front-loaded (first50 +35pp).2026-06-14 sweep: HiCut 10k->13826; gainTrim level-matched (+10.32).  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
+          /* mono */ 20.0f, /* mid */ 1.060f, /* highX */ 4603.805f, /* sat */ 0.0f, /* hiCutShelfGainDb */ -10.058f },  // 2026-06-17 EAR: Mid 0.92->1.06 — fill the low mid/body (mid 1-4k/body 500-1k/1-2k were -2dB).  // 2026-06-14 sweep: Mid 1.263, HighXover 4604, HiCutShelf -10.06.  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).
         // ── Cathedral (VVV anchor) ─────────────────────────────────────────
         // Engine: FDN. Anchor: VVV "CathedralLargeHall" preset (Reverb Mode
         // = Cathedral, ModDepth 75 %, HighShelf at 6 kHz, HighCut ~7 kHz).
@@ -880,8 +880,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // closing the 9-vs-5 decay-coupling block the comment above describes.
         { "Cathedral Large Hall", "Halls",
           14, 0.45f, false, 2.484f, 0,   // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail kills the metallic ring (tail kurtosis 14.6 -> 7.2)
-          3.099f, 0.93880f, 0.38010f, 1.18680f, 0.750f, 1.557f,  265.871f,  // 2026-06-16 re-tune vs corrected anchor: Treble 1.416->0.75 (T60 2k/4k into gate), 24->22  // 2026-06-14 gain-matched 8-lever sweep (44->29): decay 3.10, Treble 1.416, Bass 1.557, LowXover 266.  // decay 3.44->4.07: restore length after honest-decay fold-in (RT60 3.38->~4.0)  // Treble 1.28->0.50: darken to anchor brightness (centroid 1987->1545, anchor 1551).
-          0.74244f, 0.35840f, 0.44666f,  40.730f, 16050.768f, 1.00257f, false, 6.01f,  // 2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+6.01) after the output match-EQ cut (29->22). HiCut 16051.
+          4.200f, 0.93880f, 0.38010f, 1.18680f, 0.750f, 1.557f,  265.871f,  // 2026-06-17 EAR: decay 3.10->4.2 = anchor low T60 (4.02s) for low sustain.  // 2026-06-16 re-tune vs corrected anchor: Treble 1.416->0.75 (T60 2k/4k into gate), 24->22  // 2026-06-14 gain-matched 8-lever sweep (44->29): decay 3.10, Treble 1.416, Bass 1.557, LowXover 266.  // decay 3.44->4.07: restore length after honest-decay fold-in (RT60 3.38->~4.0)  // Treble 1.28->0.50: darken to anchor brightness (centroid 1987->1545, anchor 1551).
+          0.74244f, 0.05000f, 0.44666f,  40.730f, 16050.768f, 1.00257f, false, 6.01f,  // 2026-06-16 erLevel 0.36->0.05: Cathedral anchor is BACK-loaded (first50 13.6%), wants minimal discrete ER.2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+6.01) after the output match-EQ cut (29->22). HiCut 16051.
           /* mono */ 20.0f, /* mid */ 1.026f, /* highX */ 3071.094f, /* sat */ 0.00126f,  // 2026-06-14 sweep: Mid 1.026, HighXover 3071.  // edt+498% residual is octave-T60-locked (GEQ recal = next pass)
           /* hiCutShelfGainDb */ -6.206f },   // 2026-06-14 sweep (was -9.0).
         // ── Blade Runner 224 ─────────────────────────────────────────────────
@@ -945,10 +945,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   PTEQ Band 3 -5.0 → -6.0 dB in PluginProcessor.cpp.
         { "Blade Runner 224",     "Halls",
           14, 0.45f, false, 25.0f, 0,    // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail (kurtosis 16.4 -> 7.3).
-          8.638f, 0.91981f, 0.33084f, 2.64911f, 1.000f, 1.700f,  632.719f,  // 2026-06-16 re-tune vs corrected anchor: Bass 1.377->1.7, Treble 1.189->1.0 (T60 250/1k/2k/8k + tail_t60), 34->29  // 2026-06-14 gain-matched 8-lever sweep (29->21): decay 8.64, Treble 1.189, Bass 1.377, LowXover 633.  // decay 11.08->12.21: restore length after honest-decay fold-in (RT60 10.62->~11.7)  // Treble 0.98->0.40: darken to anchor (centroid 1662->1484, anchor 1415).
-          0.72216f, 0.44324f, 0.84883f, 56.210f, 11699.854f, 1.03215f, false, 7.67f,  // 2026-06-14 sweep: HiCut 14430->11700; gainTrim level-matched (+7.67).  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
+          9.900f, 0.91981f, 0.33084f, 2.64911f, 1.000f, 1.700f,  632.719f,  // 2026-06-17 EAR: decay 8.64->9.9 = anchor low T60 (9.72s) for low sustain.  // 2026-06-16 re-tune vs corrected anchor: Bass 1.377->1.7, Treble 1.189->1.0 (T60 250/1k/2k/8k + tail_t60), 34->29  // 2026-06-14 gain-matched 8-lever sweep (29->21): decay 8.64, Treble 1.189, Bass 1.377, LowXover 633.  // decay 11.08->12.21: restore length after honest-decay fold-in (RT60 10.62->~11.7)  // Treble 0.98->0.40: darken to anchor (centroid 1662->1484, anchor 1415).
+          0.72216f, 0.20000f, 0.84883f, 56.210f, 11699.854f, 1.03215f, false, 7.67f,  // 2026-06-16 erLevel 0.44->0.20: DenseHall ER re-included; 0.44 made onset too spiky (anchor onset is gentle). 2026-06-14 sweep: HiCut 14430->11700; gainTrim level-matched (+7.67).  // tunable-cluster sweep 2026-06-11: 20 -> 17 (ER on 0->0.44 fixes 107ms attack; decay 13.6->11.1 tail_t60; damping/diffusion/spectral). gainTrim -0.12 = 100%-wet RMS match. edt+254% residual is octave-T60-locked (GEQ recal needed).
           /* mono */ 20.0f, /* mid */ 1.000f, /* highX */ 6948.433f, /* sat */ 0.17579f,  // 2026-06-14 sweep: Mid 1.06, HighXover 6948.
-          /* hiCutShelfGainDb */ -4.522f },  // 2026-06-14 sweep (was -9.63). RE-ANCHORED to VVV "Homestar Blade Runner" (Concert Hall, 10s, dark)
+          /* hiCutShelfGainDb */ -9.000f },  // 2026-06-16 EAR: -4.5->-9 cut the hot air (ss_air +10.85 after HF-fix). 2026-06-14 sweep RE-ANCHORED to VVV "Homestar Blade Runner".
         // ── 79 Vocal Chamber (VVV anchor) ──────────────────────────────────
         // Engine: QuadTank. Anchor: VVV "79 Vocal Chamber" preset (Reverb
         // Mode = Chamber1979) @ 100% wet.
@@ -982,8 +982,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // dark vintage QuadTank one. ER via kCompositeERByName.
         { "Large Chamber",        "Chambers",
           14, 0.35f, false, 14.0f, 0,
-          2.962f, 0.55f, 0.30f, 1.00f, 1.323f, 1.411f,  373.086f,   // 2026-06-14 gain-matched 8-lever sweep (42->29): decay 2.96, Treble 1.323, Bass 1.411, LowXover 373.
-          0.60f, 0.30f, 0.45f,  40.0f, 11939.983f, 1.00f, false, 3.21f,   // 2026-06-14 sweep: HiCut 10k->11940; gainTrim level-matched (+3.21).
+          4.300f, 0.55f, 0.30f, 1.00f, 1.323f, 1.411f,  373.086f,   // 2026-06-17 EAR: decay 2.96->4.3 = anchor low T60 (4.15s) for low sustain.  // 2026-06-14 gain-matched 8-lever sweep (42->29): decay 2.96, Treble 1.323, Bass 1.411, LowXover 373.
+          0.60f, 0.12f, 0.45f,  40.0f, 11939.983f, 1.00f, false, 3.21f,   // 2026-06-16 erLevel 0.30->0.12: DenseHall ER re-included; lower to land first50 near anchor. 2026-06-14 sweep: HiCut 10k->11940; gainTrim level-matched (+3.21).
           /* mono */ 20.0f, /* mid */ 0.707f, /* highX */ 6315.618f, /* sat */ 0.05f,  // 2026-06-14 sweep: Mid 0.707, HighXover 6316.
           /* hiCutShelfGainDb */ -0.119f },  // 2026-06-14 sweep (was -7.0).
         // ═══════════ CHAMBERS ═══════════
@@ -1080,7 +1080,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           0.550f, 0.40165f, 0.03176f, 0.62647f, 1.418f, 1.488f, 471.781f,  // 2026-06-16 re-tune vs CORRECTED anchor: Decay 0.65->0.55 (anchor 0.70s; prior 0.65 was vs bogus anchor). 34->29.
           0.60000f, 0.45000f, 0.41204f, 25.000f, 8152.437f, 0.99109f, false, 16.96f,  // diffusion 0.678->0.60, erLevel 0.27->0.45: stronger discrete early field, less smear.
           /* mono */ 120.0f, /* mid */ 1.155f, /* highX */ 5189.961f, /* sat */ 0.02480f,
-          /* hiCutShelfGainDb */ -0.519f },
+          /* hiCutShelfGainDb */ -9.0f },  // 2026-06-16: -0.5->-9dB post-tank air shelf — attenuate ss_air/bloom 8-12k hot (decoupled from loop T60; test before bake)
         // ── Live Room (general-purpose medium room) ───────────────────────────
         // Engine: Plate (Dattorro algo 0). Added 2026-06-13 — a neutral room for
         // guitars / keys / vocals; the everyday room the drum-specific presets
@@ -1222,10 +1222,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // tail chorus (mod-freq -85%), and a low/high T60 tilt that couples
         // against those. Verified: a 250-trial warm-started re-sweep beat 34 by 0.
         { "Reverse Taps",         "Rooms",
-          9,  1.00f, false, 38.0f, 0,           // engine 9 = ReverseRoom; predelay 38ms (measured)
-          6.9912f, 0.16498f, 0.13950f, 2.28741f, 0.79816f, 1.14756f,  566.85f,
-          0.18188f, 0.00f, 0.30f, 40.596f, 5367.38f, 1.17197f, false, 4.60f,  // 2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+4.60) after the output match-EQ cut (26->22).
-          /* mono */ 20.0f, /* mid */ 0.51963f, /* highX */ 8201.39f, /* sat */ 0.25533f },  // RE-ENGINED NonLinear->ReverseRoom: causal rising-ER replicates Lexicon Room "Reverse 1" (reverse-engineered from data). 32->20 fails; env_p2p cliff +60->+15 (smooth swell); tail_t60/cent/env_shape/osc now MATCH the reference
+          9,  1.00f, false, 102.0f, 0,          // engine 9 = ReverseRoom; predelay 102ms = anchor's pre-onset silence (gated-reverse 2026-06-17)
+          0.247f, 0.59f, 0.13950f, 2.28741f, 1.32f, 0.61f,  451.0f,
+          0.19f, 0.00f, 0.30f, 40.596f, 5367.38f, 1.17f, false, 4.60f,  // 2026-06-17 gated-reverse fork: FDN-tail params Optuna-tuned (full_check obj) vs the new input-keyed gate.
+          /* mono */ 20.0f, /* mid */ 0.785f, /* highX */ 7704.0f, /* sat */ 0.096f },  // GATED REVERSE: engine adds an input-keyed gate (envelope-follow dry -> open/hold 340ms/hard-release) + 470ms concave swell. tail_t60 5.1->0.12s, env_p2p +16->+63, attack 36->288ms. 45->33. Residual = gated nonlinearity (impulse-tail vs sustained per-band T60) + 9-band T60 ±5% on 3-band FDN + HF tilt; broadband gate can't reproduce per-band gating.
         // ═══════════ AMBIENT ═══════════
         // ── Black Hole ───────────────────────────────────────────────────────
         // Reference: external reference Shimmer "BlackHole" factory preset — one of
@@ -1286,7 +1286,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // fix (oversample the shifter / dedicated HF voice), not tuning. See memory.
         { "Black Hole",           "Ambient",
           7,  0.50f, false,   0.0f, 0,
-          10.8728f, 0.56922f, 0.50890f, 1.43860f, 1.16880f, 0.53601f,  372.24f,  // ModDepth/Rate re-tuned vs honest (sustained) mod gate: 25->21
+          10.8728f, 0.56922f, 0.50890f, 0.10000f, 1.16880f, 0.53601f,  372.24f,  // 2026-06-16 EAR: modRate->0.1 = feedback 0 to match Valhalla BlackHole (screenshot feedback 0.000). DV sine 2k was +40dB hot vs anchor = over-shimmer. NOTE: DV pitch is feedback-loop-only → fb0 may kill shimmer (topology check).
           0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 1.26041f, false, 7.64f,  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Deep Blue Day ────────────────────────────────────────────────
@@ -1309,7 +1309,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // confirmed flat). Locked at the honest floor (23); needs an engine fix.
         { "Deep Blue Day",        "Shimmer",
           7,  0.50f, false,  25.0f, 0,  // mix pinned 50% — all Valhalla Shimmer factory presets ship 50% wet (verified from plugin UI 2026-06-15)
-          9.339f, 0.59833f, 0.50f, 0.60458f, 0.999f, 0.659f, 668.755f,
+          9.339f, 0.59833f, 0.50f, 1.30000f, 0.999f, 0.659f, 668.755f,  // 2026-06-16 EAR: modRate 0.605->1.30 = feedback ~0.048->0.115 (user: "closer to 11-12%")
           0.80742f, 0.20f, 0.50f, 26.925f, 19144.104f, 1.69030f, false, 0.37f,
           /* mono */ 20.0f, /* mid */ 0.606f, /* highX */ 2157.808f, /* sat */ 0.23195f, /* hiCutShelfGainDb */ -12.109f },  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
     };

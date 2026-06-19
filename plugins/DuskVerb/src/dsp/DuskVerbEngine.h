@@ -16,6 +16,7 @@
 #include "SparseEarlyField.h"
 #include "OutputDiffusion.h"
 #include "DenseHallReverb.h"
+#include "BuildupDiffuser.h"
 
 #include <algorithm>
 #include <cmath>
@@ -155,6 +156,14 @@ public:
     // other with a 180° inversion; LF untouched (mono-safe). Dedicated depth
     // (NOT coupled to Width) so 0 = no cross-feed = bit-identical for the fleet.
     void setOutputCrossTalk (float depth);
+    // Per-band stereo Width tilt — independent width for the LOW (<300 Hz), MID
+    // (300 Hz-5 kHz) and HIGH (>5 kHz) bands of the SIDE signal (crossovers match
+    // the width_low/mid/hi gates). The global Width scalar is frequency-flat, so
+    // matching one band's L/R correlation to the anchor mis-sets the others
+    // (measured: a flat Width raise traded bands net-negative across the fleet).
+    // 1.0/1.0/1.0 → bandWidthActive_ false → the original side*width path runs
+    // (bit-identical for the fleet). >1 widens that band, <1 narrows it.
+    void setWidthBands (float low, float mid, float hi);
 
     // Shell parameters (smoothed in process()).
     void setPreDelay  (float milliseconds);
@@ -194,6 +203,8 @@ public:
     // Plate density rework (algo 0 + algo 1). depth 0 / reduction 1.0 = legacy.
     void setDattorroDensity (float depth01);          // 0 legacy 3 APs -> >0 dense 6 APs
     void setDattorroModReduction (float reduction01); // 1.0 legacy mod -> <1.0 stiller tail
+    void setDattorroDensityRoomFill (bool enable);    // #87: hall density bases on room lines (boing fix, algo 0)
+    void setDattorroMainLineDetune (float l1, float l2, float r1, float r2); // #87: per-line detune
     void setDattorroInputDiffusion (float scale01);   // input-diffuser coeff scale (1.0=canonical)
     void setDattorroSoftOnsetMs (float ms);           // tank output soft-onset ramp (ms; 0=instant)
     void setDattorroOctaveT60 (int band, float seconds); // per-octave T60 GEQ (0..8 = 63..16k Hz)
@@ -284,6 +295,16 @@ public:
     // knob scales the curve by decayTime_/ref so the knob is never dead.
     void setAccurateHallOctaveDecayRef (float seconds);
 
+    // DenseHall (algo 14) per-octave T60 GEQ — fork #2 (2026-06-16). Decoupled
+    // 9-octave damping replacing the 3-band shelf that floored the DenseHall
+    // presets (cent dark + T60-16k dies). band 0..8 = 63 Hz..16 kHz; seconds<=0
+    // → that octave inherits the broadband Decay. No-op on every other engine.
+    void setDenseHallOctaveT60 (int band, float seconds);
+    void setDenseHallOctaveDecayRef (float seconds);
+    void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
+    // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
+    void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
+
     // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
     // energy so decay and tone are decoupled. Default off = bit-null.
     void setTonalCorrection (bool enabled);
@@ -304,6 +325,8 @@ public:
     void setSparseFieldOnsetMs    (float ms);
     void setSparseFieldDecayMs    (float ms);
     void setSparseFieldBurst2Ms   (float ms);
+    void setSparseFieldBurst2Gain (float g);       // GAIN bump at burst2Ms (the discrete late tap; 0 = bit-null)
+    void setBuildupAmount         (float a);       // DenseHall tail buildup (0 = bypass/bit-null, 1 = full gradual build)
     void setSparseFieldTailGain   (float gain);
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
 
@@ -433,6 +456,10 @@ private:
     DenseHallReverb    denseHall_;       // algo 14 (2026-06-13): diffused-FDN dense hall — the
                                          // smooth dense late field the 16-line FDN can't reach.
                                          // COMPOSITE: sparseField_ ER + denseHall_ tail in the switch.
+    BuildupDiffuser    buildupDiffuser_; // 2026-06-19: long allpass cascade that makes the DenseHall
+                                         // tail BUILD gradually (quiet early → the SparseField ER owns
+                                         // the early window with its dip + burst2 tap). Opt-in (amount
+                                         // 0 → bypassed → composite feeds the tank directly → bit-null).
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -495,6 +522,22 @@ private:
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
     std::vector<float> sparseOutL_, sparseOutR_;   // algo 11: sparse early-field scratch
+    std::vector<float> buildupBufL_, buildupBufR_; // DenseHall buildup: diffused tank-input copy
+
+    // FORK A — discrete EARLY-REFLECTION tap ("duh-duh"). A single delayed dry tap
+    // (~90-110 ms, per-preset) summed to the wet, giving the prominent SECOND
+    // arrival the VVV hall anchors have at that time (DV's tank decays smoothly
+    // through it). NOT the smooth er_ cluster (8-80 ms) and NOT a tank-onset delay
+    // (that left a silence gap — reverted). One discrete reflection + a slightly
+    // offset R tap for width + a gentle LP (a real reflection is darker). reflGain_
+    // 0 → off → bit-identical. Fed from tankIn (post-predelay dry).
+    std::vector<float> reflBuf_;
+    std::vector<float> reflDryMono_;   // clean pre-diffuser dry mono (the tap's CLEAN feed, snapshot in the pre-delay loop)
+    int   reflMask_ = 0, reflWritePos_ = 0;
+    int   reflDelayL_ = 0, reflDelayR_ = 0;   // samples
+    float reflGain_ = 0.0f;                    // 0 = off (bit-null)
+    bool  reflActive_ = false;
+    float reflLpCoeff_ = 0.0f, reflLpStateL_ = 0.0f, reflLpStateR_ = 0.0f;  // reflection HF rolloff
 
     // algo 11 SparseField: level of the reduced accurateHall_ tail under the
     // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
@@ -515,6 +558,16 @@ private:
     float xtalkHpCoeff_ = 0.0f;   // 1st-order LP coeff for the 1.5 kHz HF split
     float xtalkLpL_     = 0.0f;
     float xtalkLpR_     = 0.0f;
+
+    // Per-band Width tilt (setWidthBands). 3-band split of the SIDE signal via two
+    // independent one-pole LPs (300 Hz, 5 kHz) — complementary so low+mid+high
+    // reconstruct side exactly: low=LP300, mid=LP5k−LP300, high=side−LP5k. Each
+    // band scaled independently, then ×global Width. bandWidthActive_ false (all
+    // muls 1.0) → the legacy single-multiply path runs → bit-identical fleet.
+    float widthBandLow_ = 1.0f, widthBandMid_ = 1.0f, widthBandHi_ = 1.0f;
+    bool  bandWidthActive_ = false;
+    float wbLp1Coeff_ = 0.0f, wbLp2Coeff_ = 0.0f;   // 300 Hz / 5 kHz one-pole coeffs
+    float wbLp1State_ = 0.0f, wbLp2State_ = 0.0f;   // filter state (on the side signal)
     OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother gainTrimSmoother_;
 

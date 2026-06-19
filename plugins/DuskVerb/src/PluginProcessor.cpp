@@ -3,11 +3,14 @@
 #include "FactoryPresets.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string_view>
 #include <unordered_map>
+#include <array>
+#include <utility>
 
 namespace
 {
@@ -39,6 +42,13 @@ struct TuningEnv
     const char* bloom;
     const char* tonal;
     const char* bloomexp;
+    const char* widthbands;
+    const char* dhoct;
+    const char* dhtc;
+    const char* dhrefl;
+    const char* roomfill;
+    const char* maindet;
+    const char* buildup;
     TuningEnv()
         : pteq      (std::getenv ("DUSKVERB_PTEQ")),
           outdiff   (std::getenv ("DUSKVERB_OUTDIFF")),
@@ -57,7 +67,14 @@ struct TuningEnv
           octref    (std::getenv ("DUSKVERB_OCTREF")),
           bloom     (std::getenv ("DUSKVERB_BLOOM")),
           tonal     (std::getenv ("DUSKVERB_TONAL")),
-          bloomexp  (std::getenv ("DUSKVERB_BLOOMEXP")) {}
+          bloomexp  (std::getenv ("DUSKVERB_BLOOMEXP")),
+          widthbands (std::getenv ("DUSKVERB_WIDTHBANDS")),
+          dhoct     (std::getenv ("DUSKVERB_DHOCT")),
+          dhtc      (std::getenv ("DUSKVERB_DHTC")),
+          dhrefl    (std::getenv ("DUSKVERB_DHREFL")),
+          roomfill  (std::getenv ("DUSKVERB_ROOMFILL")),
+          maindet   (std::getenv ("DUSKVERB_MAINDET")),
+          buildup   (std::getenv ("DUSKVERB_BUILDUP")) {}
 };
 const TuningEnv& tuningEnv()
 {
@@ -1638,9 +1655,9 @@ namespace {
             //              gainTrim +6.20 in the preset row: wings get
             //              full +6.20 dB lift, mids get ~+2.7 dB net.
             { "Small Drum Room", {
-                {  101.0f, 1000.0f, 1500.0f, 5000.0f },
-                {  3.00f,  4.00f,  1.00f,  1.50f },
-                { -5.00f, +3.50f, -3.00f, -4.50f },
+                {  250.0f, 1000.0f, 1500.0f, 5000.0f },   // 2026-06-16 EAR: Band 0 101->250 Hz — tame the ~250 Hz "boxy" resonance vs Valhalla (gentle, narrow Q)
+                {  3.50f,  4.00f,  1.00f,  1.50f },
+                { -2.50f, +3.50f, -3.00f, -4.50f },
             } },
             // Blade Runner 224 (BR-9 2026-05-30; Band 0 re-tuned 2026-06-09
             // with the composite-exact octave GEQ re-calibration):
@@ -1942,16 +1959,25 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // blends fast lines into that band; higher targets only raise
             // sine1k THD. Its late-250 level excess is decoupled by the
             // 350 Hz PostTankEQ cut instead.
+            // LIVE AccurateHall-tail presets ONLY (read by accurateHall_.setOctaveT60):
+            // Vocal Plate (algo 10), Ambience (algo 10), Tiled Room (algo 13 — its
+            // COMPOSITE tail IS accurateHall_.process(), so this table is live; it was
+            // wrongly deleted as "dormant" 2026-06-16 and restored same day). Any other
+            // name here would be inert. calibrate_octave_t60.py regenerates this block
+            // (wipes inline comments) — durable rationale lives in this header.
+            // Vocal Plate + Ambience recalibrated 2026-06-16 vs the TRUSTED screenshot
+            // anchors → octave 9/9 within ±5% (was Vocal Plate 6/9 / Ambience 16k −37%).
             // BEGIN_OCTAVE_T60_MAP (maintained by tools/tuner/calibrate_octave_t60.py)
             { "Vocal Plate", {{ 0.6600f, 0.6460f, 0.7250f, 0.6490f, 0.6990f, 0.6700f, 0.6120f, 0.6100f, 0.3900f }} },  // 2026-06-16 re-tuned vs CLEAN screenshot anchor (octave recal, 34->~20). 63 settled to ~0.88. Residual = AccurateHall early-field wall (attack/onset/cent dark) + 12.9k spike + mod = structural.
             { "Ambience", {{ 1.2590f, 1.5841f, 1.1106f, 0.7390f, 0.7470f, 0.8101f, 0.8043f, 0.8688f, 1.0640f }} },  // 2026-06-16 octave recal vs CORRECTED vvv-ambience anchor (Newton: 63 down, 500/16k up, 1k down). Residual = sparse-comb-vs-modal structural wall.
-            // 2026-06-16: 7 DORMANT entries removed (Vocal Hall / Blade Runner 224 /
+            { "Tiled Room", {{ 0.6370f, 0.5615f, 0.6482f, 0.7510f, 0.6489f, 0.6736f, 0.6699f, 0.4520f, 0.1680f }} },  // algo-13 composite tail IS accurateHall_ → live (removing it regressed 14→17). 16k 0.168s = the bright tiled-room top.
+            // 2026-06-16: 6 DORMANT entries removed (Vocal Hall / Blade Runner 224 /
             // Cathedral Large Hall / Bright Hall migrated to DenseHall algo 14; Drum
-            // Plate / Medium Drum Room to Dattorro algo 0; Tiled Room to algo 13).
-            // setAccurateHallOctaveT60() routes ONLY to accurateHall_, so these were
-            // inert config no engine reads - they misled a live diagnosis (the table
-            // "commanded" a T60 the engine never saw). Caught by fleet_audit.py
-            // --verify-tables. Only Vocal Plate + Ambience actually run AccurateHall.
+            // Plate / Medium Drum Room to Dattorro algo 0). setAccurateHallOctaveT60()
+            // routes to accurateHall_, so those were inert config no engine reads - they
+            // misled a live diagnosis (the table "commanded" a T60 the engine never saw).
+            // Caught by fleet_audit.py --verify-tables. (Tiled Room's algo-13 composite
+            // DOES call accurateHall_, so its entry stays live — see header.)
             // END_OCTAVE_T60_MAP
         };
         auto it = kAccurateHallT60ByName.find (std::string_view (name));
@@ -1963,6 +1989,69 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // the live knob scales it. Unmapped presets clear the ref (scale 1.0).
         engine.setAccurateHallOctaveDecayRef (
             it != kAccurateHallT60ByName.end() ? decay : 0.0f);
+    }
+
+    // ─── DenseHall (algo 14) per-OCTAVE T60 GEQ — FORK #2 (2026-06-16) ──────
+    // Decoupled 9-octave damping replacing DenseHall's 3-band shelf (cent dark +
+    // T60-16k dies on Vocal Hall / Cathedral / Bright Hall / Blade Runner / Large
+    // Chamber). Env DUSKVERB_DHOCT="t0,..,t8" drives the calibration sweep without
+    // a rebuild; else the per-preset bake; else all-flat (octaves inherit Decay →
+    // the legacy 3-band path runs → bit-identical). No-op on non-DenseHall engines.
+    {
+        // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs
+        // on the AUDIO thread (performPresetSwap); a function-local std::map would
+        // heap-allocate its RB-tree nodes + take the static-init guard lock on the
+        // first preset swap. Same RT-safe pattern as kWidthBandsByName.
+        struct OctaveT60Override { float t60[9]; };
+        static constexpr std::array<std::pair<std::string_view, OctaveT60Override>, 5> kDenseHallOctaveT60ByName = {{
+            // 2026-06-16: 16k UNWALLED by the cubicHermite read fix (DenseHall was on
+            // linear interp — the HF-loss bug). Per-octave T60 now reachable, so these
+            // curves (Newton-calibrated via dh_calib.py vs the trusted anchors) close
+            // cent + the T60 cluster on the dark halls. The high 16k/63 values are the
+            // over-command compensating residual loss (realized lands at the anchor).
+            // 2026-06-17 re-calibrated AFTER raising the preset decays to the anchor
+            // LOW T60 (the lows were decay-walled = "weak/no low end"). Now the low
+            // octaves reach the anchor's long low tail; GEQ still cuts mids/highs down.
+            { "Vocal Hall",           {{ 5.9265f, 5.6973f, 4.9098f, 4.0592f, 3.1336f, 2.6866f, 2.4414f, 2.2168f, 6.1134f }} },
+            { "Cathedral Large Hall", {{ 4.8689f, 4.5163f, 3.8568f, 3.3999f, 3.1294f, 2.6089f, 2.1764f, 1.9856f, 5.2543f }} },
+            { "Bright Hall",          {{ 7.7700f, 7.5129f, 5.8751f, 5.3244f, 4.4570f, 3.9710f, 3.3470f, 2.5017f, 3.3005f }} },
+            { "Blade Runner 224",     {{ 15.6953f, 10.5048f, 13.3874f, 11.0317f, 10.7739f, 6.6164f, 4.4356f, 2.3364f, 2.2943f }} },
+            { "Large Chamber",        {{ 4.7966f, 4.3140f, 3.5555f, 3.1402f, 2.8053f, 2.0729f, 1.6100f, 1.0830f, 1.5257f }} },  // FLOOR 30. Tunable levers exhausted 2026-06-17: octave low-cut flips boom; HF-raise over-brightens sustained but cent_50 (early-transient) stays dark; decay-lower no-op (octave GEQ overrides broadband). Residual structural: dark early transient, ss-hot coupling, inconsistent anchor sub (noiseburst 4.15s vs sustained 1.53s), front-load, sine1k, per-band width.
+        }};
+        float dh[9] = {0,0,0,0,0,0,0,0,0};
+        bool haveDH = false;
+        const char* env = tuningEnv().dhoct;
+        if (env != nullptr && env[0] != '\0')
+        {
+            auto toks = juce::StringArray::fromTokens (juce::String (env), ",", "");
+            if (toks.size() == 9) { for (int b = 0; b < 9; ++b) dh[b] = toks[b].getFloatValue(); haveDH = true; }
+        }
+        else
+        {
+            const std::string_view nv (name);
+            for (const auto& e : kDenseHallOctaveT60ByName)
+                if (e.first == nv) { for (int b = 0; b < 9; ++b) dh[b] = e.second.t60[b]; haveDH = true; break; }
+        }
+        for (int b = 0; b < 9; ++b) engine.setDenseHallOctaveT60 (b, dh[b]);
+        engine.setDenseHallOctaveDecayRef (haveDH ? decay : 0.0f);
+
+        // FORK B — Jot tonal-correction opt-in per DenseHall preset (decouple the
+        // per-octave T60 from steady-state LEVEL → fixes the ss-hot/cent-dark
+        // coupling). Env DUSKVERB_DHTC="1"/"0" forces on/off for the sweep; else
+        // the per-preset set. Default off → bit-identical (also needs octaveActive).
+        {
+            // OPT-IN only where it nets gains. Measured 2026-06-17: Large Chamber
+            // 30→25, Vocal Hall 15→12 — but tonal-correction WRECKS the tilted-anchor
+            // presets (Blade Runner 15→28, Cathedral 17→25, Bright Hall +1), exactly
+            // like the AccurateHall Phase-1 flat-correction hurt Ambience. So only the
+            // two presets whose anchors are near-flat-energy enable it.
+            static constexpr std::array<std::string_view, 2> kDenseHallTCByName = { "Vocal Hall", "Large Chamber" };
+            bool tc = false;
+            { const std::string_view nv (name); for (const auto& e : kDenseHallTCByName) if (e == nv) { tc = haveDH; break; } }
+            const char* tcEnv = tuningEnv().dhtc;
+            if (tcEnv != nullptr && tcEnv[0] != '\0') tc = haveDH && (tcEnv[0] == '1');
+            engine.setDenseHallTonalCorrection (tc);
+        }
     }
 
     // ─── Per-preset post-tank OUTPUT diffusion (Bright Hall metallic-ring) ──
@@ -2001,6 +2090,68 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             engine.setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);   // bypass → bit-null
     }
 
+    // ─── FORK A: discrete early-reflection tap ("duh-duh") ────────────────────
+    // The VVV halls have a prominent SECOND arrival ~90-110 ms post-onset; DV's
+    // smooth tank decays through it (the user A/B: Blade Runner + Bright Hall
+    // "missing the delay sound, two snare hits"). A single delayed dry tap
+    // (R-offset for width, 6 kHz-darkened) summed to the wet restores it. Unlisted
+    // presets → setReflectionTap(0,0) → reflActive_ false → block skipped →
+    // bit-identical. Env DUSKVERB_DHREFL="ms,gain" forces it for tuning; "0"/"off"
+    // disables. gain is linear (0.30 ≈ −10 dB rel the dry hit).
+    {
+        // constexpr std::array (NOT std::map) — audio-thread path; an empty std::map
+        // still trips the static-init guard lock on the first swap, and the first
+        // entry added would silently become an RT heap alloc. std::array can never
+        // heap-allocate on the swap path. Empty today (Fork A is env-only):
+        // Measurement 2026-06-17: a tap ALONE fills DV's late-swelling early field;
+        // the anchors' "duh-DUH" needs a DIP first (front-load + a mild tank-onset,
+        // adjacent to the reverted "literal delay" lever). Left OFF pending the user's
+        // A/B ear test; the tuned combos render via DUSKVERB_TANKONSET + DUSKVERB_DHREFL.
+        struct ReflConfig { std::string_view name; float ms, gain, lpFc = 11000.0f; };
+        // 79 Vocal Chamber 2026-06-18 (ear): a discrete early tap (~100ms, the anchor's
+        // loudest arrival) ON TOP of the front-load composite. NOW the CLEAN+BRIGHT
+        // Fork A (pre-diffuser dry feed + 11kHz LP) — the earlier 6kHz dark/smeared
+        // version was "very hard to hear" + cloudy. Bright tap also lifts the early
+        // field (cent dark −11% → "VVV brighter on top"). gain 0.5 = prominent.
+        static constexpr std::array<ReflConfig, 3> kReflectionByName = {{
+            // 95ms/1.2 (ear 2026-06-18/19): gain 1.2 balanced (2.0 too loud, 0.5 too
+            // quiet). ms 112→95 — the tap "sounded longer than VVV" (DV's fuller blob
+            // reads as a longer delay), so pull it earlier. NOTE: anchor metric prom
+            // 28.5 dB is a SHARP tick; DV's blob sounds louder at lower prom — match
+            // the EAR, not the metric target.
+            { "79 Vocal Chamber", 95.0f, 1.2f },
+            // Bright Hall 2026-06-19: the discrete 2nd-hit, NOW POSSIBLE on top of the
+            // BuildupDiffuser. The tap alone always swallowed the attack (no dip on the
+            // dense-from-zero tank). The buildup carves a deep dip (≈−48 dB @100-130 ms),
+            // so a clean discrete tick AT the anchor's time sits IN the dip without
+            // becoming the attack (the dip is the 40-dB-down reference attack_time works
+            // back to). gain 0.20 → early_tap 18.0 dB@149 ms ≈ anchor 18.8@139, attack
+            // stays 13 ms. The buildup's smooth density peak alone was inaudible (user:
+            // "no duh-DUH, buried"); this clean tick is the audible 2nd hit.
+            // Ear 2026-06-19: ms 139→129 (DV's tap was ~10 ms LATER than VVV — pull it in
+            // to ~139 ms measured); lpFc 3500 (11 k sharp tick → 5.5 k → 3.5 k: ear said
+            // the tap was still "bright/harsher", VVV's is "smoother", so keep rolling the
+            // top off — a real room reflection is darker than the dry snare transient).
+            { "Bright Hall", 129.0f, 0.20f, 3500.0f },
+        }};
+        if (const char* env = tuningEnv().dhrefl; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");   // "ms,gain[,lpFc]"
+            if (t.size() >= 2 && t[1].getFloatValue() > 0.0f)
+                engine.setReflectionTap (t[0].getFloatValue(), t[1].getFloatValue(),
+                                         t.size() >= 3 ? t[2].getFloatValue() : 11000.0f);
+            else
+                engine.setReflectionTap (0.0f, 0.0f);   // "0" / "off" → bit-null
+        }
+        else
+        {
+            const std::string_view nv (name);
+            float ms = 0.0f, gain = 0.0f, lpFc = 11000.0f;   // default off → bit-null for unlisted presets
+            for (const auto& e : kReflectionByName) if (e.name == nv) { ms = e.ms; gain = e.gain; lpFc = e.lpFc; break; }
+            engine.setReflectionTap (ms, gain, lpFc);
+        }
+    }
+
     // Phase 3 output match-EQ: per-octave (9-band, 63 Hz..16 kHz) cut-only output
     // gains shaping the wet steady-state envelope toward the anchor. Env override
     // DUSKVERB_MATCHEQ="g0,..,g8" drives it without a rebuild (offline corr sweep);
@@ -2017,7 +2168,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // strength-iterated (partial s) — gentler tables that rescue presets full strength over-corrected:
             { "Black Hole",           { 0.3911f, 0.4127f, 0.4340f, 0.4046f, 0.3763f, 0.3884f, 0.3867f, 0.4817f, 1.0000f } },
             { "Vintage Vocal Plate",  { 0.7424f, 0.9964f, 1.0000f, 0.9505f, 0.9176f, 0.8638f, 0.6995f, 0.5468f, 0.7873f } },
-            { "Bright Hall",          { 0.9951f, 0.8682f, 0.8703f, 0.8686f, 0.8598f, 0.8872f, 0.8527f, 0.9053f, 1.0000f } },
+            { "Bright Hall",          { 0.9951f, 0.8682f, 0.8703f, 0.8686f, 0.8598f, 0.8872f, 0.5800f, 0.6800f, 1.0000f } },  // 2026-06-19 EAR + tone-match: 4k 0.85->0.58 + 8k 0.91->0.68 — DV ran +3.3dB over VVV at 5-10k; the match-EQ 4k/8k cut (the Treble param is dead-wired on DenseHall) flattens the whole 5-10k to within ±1.1dB of VVV (6.3-8k +2.4->+0.5).
             { "79 Vocal Chamber",     { 0.6672f, 0.5900f, 0.7059f, 0.7068f, 0.7097f, 0.7092f, 0.7763f, 1.0000f, 0.3505f } },
             { "Small Drum Room",      { 0.9079f, 0.9794f, 0.8922f, 0.7830f, 0.7596f, 0.9453f, 1.0000f, 0.6887f, 0.2120f } },
             // END_MATCHEQ_MAP
@@ -2053,6 +2204,52 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         if (env != nullptr && env[0] != '\0') ms = juce::String (env).getFloatValue();
         else if (auto it = kTankOnsetByName.find (std::string_view (name)); it != kTankOnsetByName.end()) ms = it->second;
         engine.setTankOnsetMs (ms);
+    }
+
+    // Per-band Width tilt (setWidthBands): independent low/mid/high stereo width.
+    // The global frequency-flat Width traded bands net-negative on the fleet
+    // (measured 2026-06-16); this sets each band to its anchor's L/R correlation.
+    // Env override DUSKVERB_WIDTHBANDS="low,mid,hi" drives the sweep without a
+    // rebuild; else the per-preset bake; else 1/1/1 (off → bit-null). 3-band gates:
+    // width_low <300, width_mid .3-5k, width_hi >5k.
+    {
+        struct WB { float low, mid, hi; };
+        // constexpr array (not std::map) — applyEngineConfig runs on the AUDIO
+        // THREAD (performPresetSwap); a function-local static std::map would heap-
+        // allocate its nodes on first init. A constexpr std::array has zero runtime
+        // init and the linear scan over 7 entries is trivially cheap.
+        //
+        // 2026-06-16: per-band stereo-width tilt vs trusted anchors. The metric
+        // is L/R CORRELATION (higher = more correlated/narrower); <1 narrows a
+        // band, >1 widens it. These close the width_low/mid/hi + stereo_corr
+        // gates the frequency-flat global Width could not (it traded bands).
+        static constexpr std::array<std::pair<std::string_view, WB>, 7> kWidthBandsByName = {{
+            { "Cathedral Large Hall", { 0.94f, 0.94f, 0.92f } },  // all 4 stereo gates → pass (22→19)
+            { "Small Drum Room",      { 0.92f, 0.92f, 1.35f } },  // narrow lo/mid + WIDEN hi — conflict case (29→27)
+            { "Bright Hall",          { 0.98f, 1.00f, 1.00f } },  // threads width-low vs stereo_corr (19→18)
+            { "Blade Runner 224",     { 0.88f, 1.00f, 1.00f } },  // narrow low → width-low passes (29→28)
+            { "Medium Drum Room",     { 1.12f, 1.12f, 1.00f } },  // WIDEN lo/mid → stereo_corr+width lo/mid (26→24)
+            { "Reverse Taps",         { 0.50f, 0.88f, 0.88f } },  // strong narrow low + lo mid/hi (46→44)
+            { "Vintage Vocal Plate",  { 0.85f, 1.00f, 1.00f } },  // narrow low → width-low passes (36→35)
+            // No clean per-band fix (stereo fails trade / decouple): Drum Plate
+            // (3 bands already match anchor; only broadband stereo_corr off),
+            // Vocal Plate / 79 Vocal Chamber / Tiled Room / Ambience / Large Chamber
+            // / Vintage Gold Plate (every magnitude traded a non-stereo gate).
+        }};
+        float wl = 1.0f, wm = 1.0f, wh = 1.0f;
+        const char* env = tuningEnv().widthbands;
+        if (env != nullptr && env[0] != '\0')
+        {
+            auto toks = juce::StringArray::fromTokens (juce::String (env), ",", "");
+            if (toks.size() == 3) { wl = toks[0].getFloatValue(); wm = toks[1].getFloatValue(); wh = toks[2].getFloatValue(); }
+        }
+        else
+        {
+            const std::string_view nameView (name);
+            for (const auto& e : kWidthBandsByName)
+                if (e.first == nameView) { wl = e.second.low; wm = e.second.mid; wh = e.second.hi; break; }
+        }
+        engine.setWidthBands (wl, wm, wh);
     }
 
     // Phase 3 (VH->0): per-line energy-following hi-shelf (TimeVaryingDamping).
@@ -2276,6 +2473,34 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         { "Ambience",         { 0.27389f, -4.81217f, -0.51326f, -2.40095f } },  // boom-low cut + 640 (lowMid -4.8) + air
         { "Blade Runner 224", { -1.05804f, -0.69518f, -1.16656f, -0.68592f } },  // mild broadband post-trim (sweep)
         { "Cathedral Large Hall", { -3.42900f, -3.50000f, -0.35222f, -4.19473f } },  // 2026-06-13: low-mid cut -7.9->-3.5 — the deep scoop hollowed the body + deepened the post-transient energy hole (pumping)
+        // 79 Vocal Chamber 2026-06-19 (ear: "EQ/tone a little off"): the residual
+        // 1/3-oct curve vs VVV = +5dB@100 (thick low) / −2.7@315 (over-scoop) /
+        // −5dB@5-8k (dull presence). 4-region fix over crossovers 130/3500/9000:
+        // Sub(≤130) −3.5 cuts the 100 bump; LowMid(130-3500) −1.5 keeps the hump tamed
+        // without the 315 over-scoop; MidHi(3500-9000) +2.5 lifts the 5-8k presence;
+        // Air(>9000) 0 (the >10k is the measurement ghost, leave).
+        { "79 Vocal Chamber", { 0.0f, -2.5f, 0.0f, 0.0f } },
+        // Bright Hall 2026-06-19 (AccurateHall32): HF cut TRIED + reverted. ss hi 5-10k
+        // +3.7 (DV tail brighter than VVV) is a normalized-SHAPE excess — the post-band
+        // trim is renorm-compensated (−2.5dB band cut nets only −0.8dB ss hi, the
+        // gain-match scales it back) AND it darkens cent_500 away from the anchor
+        // (tap-only cent −2.6% is the closest match). The 5-10k + spec_L1 @12.9k are the
+        // HF-tilt SHAPE wall (no engine lever). Left at unity (no map entry); only the
+        // reflection tap is baked. See duskverb_fleet_hf_tilt_wall.
+        // 79 Vocal Chamber HF dig 2026-06-18 (NO clean fix): the >10k is hot+long
+        // (ss_air +11, T60-16k +86%) but 5-10k is QUIET (ss_hi -6) — an HF-SHAPE
+        // inversion. The QuadTank air mult (decay+level couple down) and the post-band
+        // Air trim (region spans 5-10k → crushes the quiet band) both move the whole
+        // upper region together; the fix needs an HF DOWN-TILT (+5-10k / ->10k) no
+        // QuadTank lever provides. Left at the shipped air mult 0.5 (gate-best, 11).
+        // HF-TILT campaign 2026-06-18 REVERTED — a static output HF shelf brightens
+        // cent (early window) but DV's HF arrives LATE (early-dark + sustained-hot),
+        // so it pushes the sustained ss bands hot → n_fail rose +2..+6 on every
+        // lifted preset (Vocal Plate 17→23, Live 27→30, LC 19→21, etc.). Net WORSE
+        // for "all gates within JND". The darkness needs an EARLY-FIELD-ONLY HF lift
+        // (brighten the onset, leave the tail) — a real engine add, not a shelf. See
+        // memory duskverb_fleet_hf_tilt_wall. Crossover infra kept (kPostBandCross,
+        // bit-null when unused) for that future early-only lever.
     };
     PostBandTrimConfig pbt { 0.0f, 0.0f, 0.0f, 0.0f };
     auto pbtIt = kPostBandTrimByName.find (std::string_view (name));
@@ -2296,6 +2521,20 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     engine.setPostTankBandTrimGainDb (1, pbt.lowMid);
     engine.setPostTankBandTrimGainDb (2, pbt.midHi);
     engine.setPostTankBandTrimGainDb (3, pbt.air);
+
+    // Per-preset post-band crossovers. Default 200/800/3000 (Air=>3k = the whole HF
+    // block) — but the HF-TILT presets use an HF-split 200/2000/9000 so MidHi isolates
+    // the 2-9k presence and Air isolates >9k, giving an independent presence-vs-air
+    // tilt (the lever the fleet HF deficiency + 79VC's inversion need). Unlisted →
+    // the legacy 200/800/3000, so every existing baked trim is byte-identical.
+    struct PBCross { float fLow, fMid, fHi; };
+    static constexpr std::array<std::pair<std::string_view, PBCross>, 1> kPostBandCrossByName = {{
+        { "79 Vocal Chamber", { 100.0f, 1000.0f, 3000.0f } },  // LowMid=100-1000 isolates the low-mid hump
+    }};
+    float cxLo = 200.0f, cxMid = 800.0f, cxHi = 3000.0f;
+    { const std::string_view nv (name);
+      for (const auto& e : kPostBandCrossByName) if (e.first == nv) { cxLo=e.second.fLow; cxMid=e.second.fMid; cxHi=e.second.fHi; break; } }
+    engine.setPostTankBandTrimCrossovers (cxLo, cxMid, cxHi);
 
     // ─── Tank-feed EQ (Progenitor 'inputdamp', 2026-06-11) ────────────────
     // Low+high shelves on the TANK FEED only (post-diffuser; the parallel ER
@@ -2363,7 +2602,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // vintage vocal plate's ~90ms attack) without touching the tail.
         // bloom: input-onset slow-attack swell (ms; 0 = off). For slow-bloom
         // anchors (Lex vintage vocal plate ~90ms attack-to-peak).
-        struct DensityConfig { float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f; };
+        // #87 boing fix: roomfill loads the hall density bases onto the room-scale
+        // main lines (close-spaced coprime modes → kills the comb resonance); det[4]
+        // = per-line incommensurate detune {Ldel1,Ldel2,Rdel1,Rdel2}. Defaults
+        // (false / identity) = byte-identical for every non-room Dattorro preset.
+        struct DensityConfig { float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f;
+                               bool roomfill = false; float det[4] = { 1.0f, 1.0f, 1.0f, 1.0f }; };
         static const std::unordered_map<std::string_view, DensityConfig> kDattorroDensityByName = {
             // BEGIN_DATTDENS_MAP (offline density/modred/indiff sweep, key on exact row name)
             // Drum Plate: density 1.0 (12 in-loop APs) + Size up (row 0.337->0.8)
@@ -2378,21 +2622,40 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // cascade — more modes = shallower spectral comb (ripple 6.2->~2).
             // Pairs with the octave GEQ (re-calibrated for the longer loop).
             { "Vintage Gold Plate", { 1.0f /*density*/, 1.0f /*modred*/, 0.0f /*indiff*/ } },
+            // #87 boing fix attempt (short rooms) REVERTED 2026-06-17: density 1.0 +
+            // roomfill (hall density bases) DOES kill the boing (Small 10->0dB at long
+            // decay) BUT the 12 hall APs make the loop ~200ms — gBase saturates near
+            // its clamp floor → short-room T60 is uncontrollable (collapses -60% at the
+            // row decay, runs away +200-600% when compensated, non-monotonic). Dead end:
+            // dense low-mid modes need long density APs need a long loop, which a SHORT
+            // room's decay can't sustain. The infra (setDensityRoomFill/setMainLineDetune
+            // + DUSKVERB_ROOMFILL/MAINDET) stays — bit-null when unused — but the rooms
+            // need ENGINE MIGRATION (FDN 16-line / velvet, dense modes w/o a runaway loop)
+            // or accept the boing. See memory duskverb_boing_sparse_modal.
             // END_DATTDENS_MAP
         };
         float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f;
+        bool  roomfill = false; float det[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
         if (auto it = kDattorroDensityByName.find (std::string_view (name)); it != kDattorroDensityByName.end())
-        { density = it->second.density; modred = it->second.modred; indiff = it->second.indiff; softonset = it->second.softonset; bloom = it->second.bloom; }
+        { density = it->second.density; modred = it->second.modred; indiff = it->second.indiff; softonset = it->second.softonset; bloom = it->second.bloom;
+          roomfill = it->second.roomfill; for (int b = 0; b < 4; ++b) det[b] = it->second.det[b]; }
         if (const char* e = tuningEnv().dens;   e != nullptr && e[0] != '\0') density   = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().modred; e != nullptr && e[0] != '\0') modred    = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().indiff; e != nullptr && e[0] != '\0') indiff    = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().softonset; e != nullptr && e[0] != '\0') softonset = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().bloom; e != nullptr && e[0] != '\0') bloom     = juce::String (e).getFloatValue();
+        // #87 env overrides for no-rebuild tuning.
+        if (const char* e = tuningEnv().roomfill; e != nullptr && e[0] != '\0') roomfill = (e[0] == '1');
+        if (const char* e = tuningEnv().maindet; e != nullptr && e[0] != '\0')
+        { juce::StringArray t; t.addTokens (juce::String (e), ",", "");
+          if (t.size() == 4) for (int b = 0; b < 4; ++b) det[b] = t[b].getFloatValue(); }
         engine.setDattorroDensity (density);
         engine.setDattorroModReduction (modred);
         engine.setDattorroInputDiffusion (indiff);
         engine.setDattorroSoftOnsetMs (softonset);
         engine.setDattorroBloomAttackMs (bloom);
+        engine.setDattorroDensityRoomFill (roomfill);
+        engine.setDattorroMainLineDetune (det[0], det[1], det[2], det[3]);
         if (const char* e = tuningEnv().bloomexp; e != nullptr && e[0] != '\0') engine.setDattorroBloomExp (juce::String (e).getFloatValue());
     }
 
@@ -2505,7 +2768,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // preset is loading).
     // 6th field erGain: ER level in the mix (1.0 = full). Backs off the ER for a
     // less-front-loaded room so it doesn't overshoot energy_first50.
-    struct CompositeER { float erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, erGain; };
+    struct CompositeER { float erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, erGain, burst2Gain = 0.0f, buildupAmount = 0.0f; };
     static const std::unordered_map<std::string_view, CompositeER> kCompositeERByName = {
         // Tiled Room: tiledroom_voicing_sweep.py best (n_fail 26->16). Tight ER,
         // fast onset, short discharge, micro-burst ~18 ms, ER/tail mix 0.49, full ER.
@@ -2521,9 +2784,26 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // over the dense tank, voiced by character: Vocal Hall smoother/less ER,
         // Blade Runner bigger/wider, Bright Hall moderate. erGain = ER level.
         { "Vocal Hall",       { 0.45f, 6.0f, 35.0f, 20.0f, 0.50f, 0.25f } },
-        { "Bright Hall",      { 0.50f, 7.0f, 40.0f, 24.0f, 0.50f, 0.30f } },
+        // Bright Hall 2026-06-19: BUILDUP fork (8th field = 1.0) — the long allpass
+        // cascade makes the dense tail BUILD gradually so the early window has a real
+        // dip + a prominent 2nd-hit (the duh-DUH). Cleared the front-load wall the tap
+        // alone couldn't: attack 13ms ✓, energy_t50 208ms ✓ (anchor 204), first50 24% ✓,
+        // early_tap 14.9dB@152ms ✓ (the tail's natural density peak IS the 2nd hit — no
+        // burst2 needed). n_fail 13→11. Residual = HF-tilt wall (spec_L1 12.9k) + marginal
+        // level/decay. erGain 0.30 ER on top for the onset's discrete reflections.
+        { "Bright Hall",      { 0.50f, 7.0f, 40.0f, 24.0f, 0.50f, 0.30f, 0.0f, 1.0f } },
         { "Blade Runner 224", { 0.65f, 12.0f, 55.0f, 34.0f, 0.50f, 0.40f } },
         { "Large Chamber",    { 0.45f, 7.0f, 38.0f, 22.0f, 0.50f, 0.30f } },  // chamber: moderate discrete ER over the dense tank
+        // 79 Vocal Chamber (QuadTank front-load redesign 2026-06-18): the velvet
+        // sparse field front-loads the early arrival the QuadTank's washy swell lacks
+        // (energy_t50 +88ms late → "cloudy snare"). erGain high + sparseTailGain
+        // reduced so the defined early field owns the onset, the tank the late body.
+        // Tuned 2026-06-18: onset 110 / decay 30 / burst2 130 / tail 0.75 / erGain
+        // 0.40 — the velvet energy concentrated ~110-165ms (energy_t50 165 vs anchor
+        // 136, near-match; not the overshot 60ms of the first pass). Fixes the cloud
+        // (edt mid +52%→+2%, edt hi +28%→−18%). erGain 0.40 keeps the QuadTank tail
+        // primary so it's a chamber, not an ER slap.
+        { "79 Vocal Chamber", { 0.40f, 110.0f, 30.0f, 130.0f, 0.75f, 0.40f } },
     };
     auto erIt = kCompositeERByName.find (std::string_view (name));
     if (erIt != kCompositeERByName.end())
@@ -2534,14 +2814,21 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         {
             juce::StringArray t;
             t.addTokens (juce::String (envTr), ",", "");
-            if (t.size() == 6)
+            if (t.size() == 6 || t.size() == 7)   // 7th (optional) = burst2Gain (the discrete late-tap level)
             {
                 c.erSize = t[0].getFloatValue(); c.onsetMs = t[1].getFloatValue();
                 c.erDecayMs = t[2].getFloatValue(); c.burst2Ms = t[3].getFloatValue();
                 c.sparseTailGain = t[4].getFloatValue(); c.erGain = t[5].getFloatValue();
+                if (t.size() == 7) c.burst2Gain = t[6].getFloatValue();
             }
         }
         engine.setTiledRoomVoicing (c.erSize, c.onsetMs, c.erDecayMs, c.burst2Ms, c.sparseTailGain, c.erGain);
+        engine.setSparseFieldBurst2Gain (c.burst2Gain);   // discrete late tap (0 = bit-null for the other composites)
+        // DenseHall tail buildup (0 = bypass/bit-null). Env DUSKVERB_BUILDUP="amount" for the sweep.
+        float buildupAmt = c.buildupAmount;
+        if (const char* envBu = tuningEnv().buildup; envBu != nullptr && envBu[0] != '\0')
+            buildupAmt = juce::String (envBu).getFloatValue();
+        engine.setBuildupAmount (buildupAmt);
     }
 
     auto bdIt = kBaseDelaysByName.find (std::string_view (name));

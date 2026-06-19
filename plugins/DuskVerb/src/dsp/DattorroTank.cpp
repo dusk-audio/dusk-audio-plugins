@@ -114,6 +114,39 @@ void DattorroTank::setHallScale (bool enable)
 }
 
 // -----------------------------------------------------------------------
+// #87 boing fix — load the HALL density bases into the 12-AP cascade while
+// leaving the 4 MAIN lines at room scale. Adds close-spaced coprime modes that
+// fill the sparse low-mid gap (the comb-coincidence resonance). NOT setHallScale
+// (that would lengthen the room). gBase re-derives off the new loopLength so the
+// per-band T60 / level are preserved. Default off → byte-identical.
+void DattorroTank::setDensityRoomFill (bool enable)
+{
+    if (enable == densityRoomFill_) return;
+    densityRoomFill_ = enable;
+    const int* lBases = enable ? kLeftDensityAPBaseHall  : kLeftDensityAPBase;
+    const int* rBases = enable ? kRightDensityAPBaseHall : kRightDensityAPBase;
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        leftTank_.densityAPBase[i]  = lBases[i];
+        rightTank_.densityAPBase[i] = rBases[i];
+    }
+    if (prepared_) { updateDelayLengths(); updateDecayCoefficients(); }
+}
+
+// #87 boing fix — per-line incommensurate detune of the 4 main delay lines.
+// Identity {1,1,1,1} (×1.0f, exact in IEEE-754) = bit-null. Capped ±10% — well
+// inside the prepareTank allocation headroom (sizeRangeAllocatedMax_≥1.5 ×
+// kMaxDelayScale 4.0).
+void DattorroTank::setMainLineDetune (float lDel1, float lDel2, float rDel1, float rDel2)
+{
+    mainDetune_[0] = std::clamp (lDel1, 0.90f, 1.10f);
+    mainDetune_[1] = std::clamp (lDel2, 0.90f, 1.10f);
+    mainDetune_[2] = std::clamp (rDel1, 0.90f, 1.10f);
+    mainDetune_[3] = std::clamp (rDel2, 0.90f, 1.10f);
+    if (prepared_) { updateDelayLengths(); updateDecayCoefficients(); }
+}
+
+// -----------------------------------------------------------------------
 
 void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 {
@@ -146,8 +179,16 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
         // buffer underruns when delayScale_ > 1.
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
+            // #87: prepare() runs the ctor's ROOM bases, but setDensityRoomFill(true)
+            // may later load the larger HALL bases (1303 vs 281). Size every buffer
+            // for the MAX of all four base sets so whichever is selected fits — an
+            // OOB interpolated read into unwritten buffer = garbage/NaN tail.
+            // Over-allocation is harmless + bit-null (write/read indices unchanged).
+            const int baseMaxSamples = std::max (
+                std::max (kLeftDensityAPBase[i], kRightDensityAPBase[i]),
+                std::max (kLeftDensityAPBaseHall[i], kRightDensityAPBaseHall[i]));
             const float baseMax =
-                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale;
+                baseMaxSamples * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale;
             // Jitter depth is 0.02 × delaySamples per the assignment below.
             // Add explicit headroom for the read offset (jitter) plus 4
             // samples for cubic Hermite (reads intIdx-1 .. intIdx+2) plus
@@ -968,11 +1009,12 @@ void DattorroTank::updateDelayLengths()
     float sizeScale = sizeRangeMin_ + (sizeRangeMax_ - sizeRangeMin_) * sizeParam_;
     float totalScale = sizeScale * delayScale_;  // Combined size + per-algorithm delay scaling
 
-    auto updateTank = [&] (Tank& tank)
+    auto updateTank = [&] (Tank& tank, float dDel1, float dDel2)
     {
+        // #87: dDel1/dDel2 = per-line incommensurate detune (identity 1.0 = bit-null).
         tank.ap1DelaySamples = static_cast<float> (tank.ap1BaseDelay) * rateRatio * totalScale;
-        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * totalScale;
-        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * totalScale;
+        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * totalScale * dDel1;
+        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * totalScale * dDel2;
 
         // AP2 delay (integer, used by Allpass::process)
         tank.ap2.delaySamples = std::max (1, static_cast<int> (
@@ -990,8 +1032,8 @@ void DattorroTank::updateDelayLengths()
         }
     };
 
-    updateTank (leftTank_);
-    updateTank (rightTank_);
+    updateTank (leftTank_,  mainDetune_[0], mainDetune_[1]);
+    updateTank (rightTank_, mainDetune_[2], mainDetune_[3]);
 }
 
 void DattorroTank::updateDecayCoefficients()

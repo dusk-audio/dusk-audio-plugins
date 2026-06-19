@@ -155,12 +155,25 @@ private:
     GranularPitchShifter pitch2L_, pitch2R_;
     static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
     static constexpr float kVoice1Mix       = 0.78f;
-    static constexpr float kVoice2Mix       = 0.34f;
+    static constexpr float kVoice2Mix       = 0.60f;   // 2026-06-16: 0.34->0.60 — boost the +24 air voice to fill 12-24k toward the anchor's broadband octave (cent_500/spec_L1@12.9k).
 
     // Hall reverb — reuses the existing FDNReverb (same engine that
     // powers the "Realistic Space" / FDN algorithm). Configured in
     // prepare() for a "long lush hall" baseline; per-preset setters
     // override.
+    //
+    // NOTE (2026-06-16): the octave-up shimmer's defining trait — the pitched HF
+    // tail ringing AT LEAST AS LONG AS the body (anchor T60: Black Hole 16 kHz
+    // 9.6 s, Deep Blue 16 kHz 11.9 s, both RISING with freq) — is structurally
+    // unreachable on this FDN. Proven this session: switching to the per-octave-
+    // GEQ variant (FDNReverbT<true>) fixes the BODY decay (125 Hz–2 kHz land
+    // within JND) but CANNOT lift T60-16k past ~5.3 s. The octave GEQ is
+    // attenuation-only (gains clamped ≤0.9999 + a composite-|H|<1 stability guard,
+    // OctaveGEQDesign.cpp) so it can at best make a band lossless; DV's linear
+    // delay interpolation + diffusion allpasses are HF-lossy per pass, and the GEQ
+    // cannot boost to compensate. Closing it needs an HF-lossless redesign
+    // (Lagrange/allpass interpolation) or a parallel non-recirculating pitched
+    // voice — an engine fork, to be done with ear-validation in the loop.
     FDNReverb reverb_;
 
     // Per-block scratch buffers for the pitch-shifter → reverb stage.
@@ -242,7 +255,7 @@ private:
     // 1.5 kHz drops the migrated content by ~−3 dB at 1.5 kHz and ~−6 dB
     // at 3 kHz per cycle, so by 3-4 cycles the high-end energy is
     // exhausted before it can recirculate further.
-    static constexpr float kFeedbackLpfHz = 6000.0f;
+    static constexpr float kFeedbackLpfHz = 14000.0f;   // 2026-06-16: 6k->14k to brighten the cascade toward the (confirmed) anchor (cent_500 was -42%). (22k experiment gained only +0.5s T60-16k → the FDN hall, not this LPF, caps HF sustain.)
 
     double sampleRate_ = 48000.0;
     int    maxBlockSize_ = 0;
