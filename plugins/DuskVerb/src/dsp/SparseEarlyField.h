@@ -46,6 +46,7 @@ public:
     void setOnsetPeakMs (float m) { onsetPeakMs_ = std::max (0.0f, m); if (prepared_) buildTaps(); }
     void setDecayMs (float m)     { decayMs_    = std::max (10.0f, m); if (prepared_) buildTaps(); }
     void setBurst2Ms (float m)    { burst2Ms_   = std::max (0.0f, m); if (prepared_) buildTaps(); }
+    void setBurst2Gain (float g)  { burst2Gain_ = std::max (0.0f, g); if (prepared_) buildTaps(); }
 
     void process (const float* inL, const float* inR,
                   float* outL, float* outR, int numSamples)
@@ -114,7 +115,20 @@ private:
             ? std::min (1.0f, tMs / onsetPeakMs_)                        // linear ramp to peak
             : 1.0f;
         const float dec  = std::exp (-tMs / decayMs_);
-        return rise * dec;
+        float g = rise * dec;
+        // Discrete GAIN bump at burst2Ms_ — the late "duh-DUH" reflection. The
+        // density envelope alone CLUSTERS taps there, but the monotonic decay leaves
+        // their gain near-silent (gainEnv(139ms) ≈ 0.03 at decayMs 40), so a strong
+        // EARLY onset cannot coexist with a loud LATE tap. This lifts the burst2 taps'
+        // gain independently of the onset decay → onset stays the attack, burst2 is the
+        // prominent secondary reflection (the VVV hall/chamber tap). 0 → bit-null (every
+        // existing composite preset: Tiled/Cathedral/Vocal Hall/Blade/Large Chamber/79VC).
+        if (burst2Gain_ > 0.0f && burst2Ms_ > 0.0f)
+        {
+            const float d = tMs - burst2Ms_;
+            g += burst2Gain_ * std::exp (-(d * d) / (2.0f * 22.0f * 22.0f));   // 22 ms = the density-cluster width
+        }
+        return g;
     }
 
     void buildChannel (uint32_t seed, int* delays, float* gains, int& n, float sr)
@@ -160,4 +174,5 @@ private:
     float onsetPeakMs_ = 14.0f;   // rising-onset peak
     float decayMs_    = 55.0f;    // overall gain decay constant
     float burst2Ms_   = 115.0f;   // second density cluster centre (0 = off)
+    float burst2Gain_ = 0.0f;     // GAIN bump at burst2Ms_ (the discrete late tap; 0 = off, bit-null)
 };

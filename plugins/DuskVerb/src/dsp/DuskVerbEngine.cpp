@@ -29,6 +29,9 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     fdn_.prepare (sampleRate, maxBlockSize); accurateHall_.prepare (sampleRate, maxBlockSize);
     sparseField_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
+    buildupDiffuser_.prepare (sampleRate, maxBlockSize);
+    buildupBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    buildupBufR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
     outputDiffusion_.prepare (sampleRate, maxBlockSize);
     matchEQL_.prepare (static_cast<float> (sampleRate));
@@ -72,6 +75,24 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sparseOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     sparseOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
+    // FORK A reflection tap — buffer sized for ~250 ms max delay (power of two).
+    {
+        const int wantLen = static_cast<int> (0.25 * sampleRate) + 4;
+        int len = 1;
+        while (len < wantLen) len <<= 1;
+        reflBuf_.assign (static_cast<size_t> (len), 0.0f);
+        reflDryMono_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+        reflMask_ = len - 1;
+        reflWritePos_ = 0;
+        reflLpStateL_ = reflLpStateR_ = 0.0f;
+        // one-pole LP ~11 kHz — a SHARP/bright reflection (a real early reflection
+        // rolls off only the very top, not at 6 kHz which read dark/cloudy). Fed the
+        // CLEAN pre-diffuser dry (reflDryMono_) so the tap is a defined discrete
+        // arrival, not a smeared blob.
+        const float fc = 11000.0f;
+        reflLpCoeff_ = 1.0f - std::exp (-kTwoPi * fc / static_cast<float> (sampleRate));
+    }
+
     // Per-sample smoothers — short time constants, advance once per sample.
     constexpr float kPerSampleSmoothMs = 2.0f;
     widthSmoother_   .setSmoothingTime (sampleRate, kPerSampleSmoothMs);
@@ -109,6 +130,12 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     xtalkLpL_     = 0.0f;
     xtalkLpR_     = 0.0f;
 
+    // Per-band Width tilt — one-pole LP coeffs at the 300 Hz / 5 kHz crossovers.
+    wbLp1Coeff_ = std::exp (-kTwoPi *  300.0f / static_cast<float> (sampleRate));
+    wbLp2Coeff_ = std::exp (-kTwoPi * 5000.0f / static_cast<float> (sampleRate));
+    wbLp1State_ = 0.0f;
+    wbLp2State_ = 0.0f;
+
     // Post-tank parametric EQ. Default state is all bands at gainDb=0 →
     // unity coefficients → bit-identical bypass. Per-preset overrides
     // come in via setPostTankEQBand() after the preset loads.
@@ -134,6 +161,7 @@ void DuskVerbEngine::clearAllBuffers()
     accurateHall_.clearBuffers();   // FDNReverbT<true> — was missing here (setAlgorithm clears it, but that early-returns when the algo is unchanged → AccurateHall state could leak across same-algo preset swaps).
     sparseField_.clear();           // algo 11 early-field tap buffers
     denseHall_.clear();             // algo 14 dense hall tank state
+    buildupDiffuser_.clear();       // DenseHall tail-buildup cascade
  // algo 12 (32-line)
     outputDiffusion_.clear();       // per-preset post-tank diffuser (BH)
     multibandFdn_.clearBuffers();
@@ -162,6 +190,12 @@ void DuskVerbEngine::clearAllBuffers()
     std::fill (tankOnsetBufR_.begin(), tankOnsetBufR_.end(), 0.0f);
     tankOnsetWrite_ = 0;
 
+    // FORK A reflection-tap ring + LP state — retains a delayed dry copy; clear so
+    // the "duh-duh" can't bleed across preset swaps / unfreeze.
+    std::fill (reflBuf_.begin(), reflBuf_.end(), 0.0f);
+    reflWritePos_ = 0;
+    reflLpStateL_ = reflLpStateR_ = 0.0f;
+
     loCutFilter_.reset();
     hiCutFilter_.reset();
     postTankEQ_.reset();
@@ -175,6 +209,8 @@ void DuskVerbEngine::clearAllBuffers()
     monoLPStateR_ = 0.0f;
     xtalkLpL_     = 0.0f;
     xtalkLpR_     = 0.0f;
+    wbLp1State_   = 0.0f;
+    wbLp2State_   = 0.0f;
 }
 
 void DuskVerbEngine::snapSmoothersToTargets()
@@ -231,7 +267,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorro_.clearBuffers();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
-    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); outputDiffusion_.clear(); denseHall_.clear();
+    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -482,6 +518,42 @@ void DuskVerbEngine::setAccurateHallOctaveDecayRef (float seconds)
     accurateHall_.setOctaveDecayRef (seconds);
 }
 
+void DuskVerbEngine::setDenseHallOctaveT60 (int band, float seconds)
+{
+    // DenseHall (algo 14) per-octave GEQ — fork #2. No-op on every other engine.
+    denseHall_.setOctaveT60 (band, seconds);
+}
+
+void DuskVerbEngine::setDenseHallOctaveDecayRef (float seconds)
+{
+    denseHall_.setOctaveDecayRef (seconds);
+}
+
+void DuskVerbEngine::setDenseHallTonalCorrection (bool enabled)
+{
+    // FORK B — DenseHall Jot output tonal-correction (decouple T60 from level).
+    denseHall_.setTonalCorrection (enabled);
+}
+
+void DuskVerbEngine::setReflectionTap (float ms, float gain, float lpFc)
+{
+    // FORK A — discrete early-reflection tap ("duh-duh"). Summed to wet in the
+    // per-sample output loop. R offset +9 ms decorrelates the two arrivals so the
+    // reflection has width (not a mono slap). gain 0 → reflActive_ false → the
+    // whole block is skipped → bit-identical for every preset not opting in.
+    // lpFc = the tap's one-pole rolloff: 11 kHz = a sharp/bright tick (79VC);
+    // ~5-6 kHz = a darker, FULLER, softer reflection (Bright Hall — the ear wanted
+    // VVV's "fuller, softer room reflection", not a snappy tick).
+    const float sr = static_cast<float> (sampleRate_);
+    const int   maxD = (reflMask_ > 1) ? reflMask_ - 1 : 1;
+    reflDelayL_ = std::clamp (static_cast<int> (ms * 0.001f * sr), 1, maxD);
+    reflDelayR_ = std::clamp (static_cast<int> ((ms + 9.0f) * 0.001f * sr), 1, maxD);
+    reflGain_   = std::clamp (gain, 0.0f, 4.0f);   // >1 allowed: the anchor tap is LOUDER than the dry (+8.5dB rel onset), needs gain>1 to match the discrete-tap prominence
+    reflActive_ = reflGain_ > 1.0e-6f;
+    const float fc = std::clamp (lpFc, 1000.0f, 20000.0f);
+    reflLpCoeff_ = 1.0f - std::exp (-6.283185307179586f * fc / sr);
+}
+
 void DuskVerbEngine::setTonalCorrection (bool enabled)
 {
     accurateHall_.setTonalCorrection (enabled);   // AccurateHall (algo 10) only; other engines have no Jot output GEQ
@@ -541,6 +613,8 @@ void DuskVerbEngine::setSparseFieldSize     (float s)    { sparseField_.setSizeS
 void DuskVerbEngine::setSparseFieldOnsetMs  (float ms)   { sparseField_.setOnsetPeakMs (ms); }
 void DuskVerbEngine::setSparseFieldDecayMs  (float ms)   { sparseField_.setDecayMs (ms); }
 void DuskVerbEngine::setSparseFieldBurst2Ms (float ms)   { sparseField_.setBurst2Ms (ms); }
+void DuskVerbEngine::setSparseFieldBurst2Gain (float g)  { sparseField_.setBurst2Gain (g); }
+void DuskVerbEngine::setBuildupAmount        (float a)   { buildupDiffuser_.setAmount (a); }
 void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
 void DuskVerbEngine::setSparseERGain        (float gain) { sparseERGain_   = std::clamp (gain, 0.0f, 2.0f); }
 
@@ -751,6 +825,18 @@ void DuskVerbEngine::setOutputCrossTalk (float depth)
     xtalkActive_ = xtalkDepth_ > 1.0e-6f;
 }
 
+void DuskVerbEngine::setWidthBands (float low, float mid, float hi)
+{
+    widthBandLow_ = std::clamp (low, 0.0f, 2.0f);
+    widthBandMid_ = std::clamp (mid, 0.0f, 2.0f);
+    widthBandHi_  = std::clamp (hi,  0.0f, 2.0f);
+    // Active only when at least one band departs from unity — otherwise the
+    // bit-identical legacy side*width path runs (fleet bit-null guarantee).
+    bandWidthActive_ = std::abs (widthBandLow_ - 1.0f) > 1.0e-6f
+                    || std::abs (widthBandMid_ - 1.0f) > 1.0e-6f
+                    || std::abs (widthBandHi_  - 1.0f) > 1.0e-6f;
+}
+
 void DuskVerbEngine::setPreDelay (float milliseconds)
 {
     float clamped = std::clamp (milliseconds, 0.0f, 250.0f);
@@ -791,6 +877,18 @@ void DuskVerbEngine::setDattorroModReduction (float reduction01)
 {
     dattorro_.setModReduction (reduction01);
     dattorroVintage_.setModReduction (reduction01);
+}
+
+// #87 boing fix — DattorroTank (algo 0) only; the short-room rooms are algo 0.
+// dattorroVintage_ (algo 1) is intentionally NOT touched → algo-1 presets bit-null.
+void DuskVerbEngine::setDattorroDensityRoomFill (bool enable)
+{
+    dattorro_.setDensityRoomFill (enable);
+}
+
+void DuskVerbEngine::setDattorroMainLineDetune (float l1, float l2, float r1, float r2)
+{
+    dattorro_.setMainLineDetune (l1, l2, r1, r2);
 }
 
 void DuskVerbEngine::setDattorroInputDiffusion (float scale01)
@@ -1070,6 +1168,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         tankInL_[static_cast<size_t> (i)] = preDelayBufL_[static_cast<size_t> (readPos)];
         tankInR_[static_cast<size_t> (i)] = preDelayBufR_[static_cast<size_t> (readPos)];
 
+        // FORK A — snapshot the CLEAN post-predelay dry mono here, BEFORE the input
+        // diffuser / tank-feed EQ mutate tankIn. The reflection tap reads this so it's
+        // a clean discrete arrival, not the smeared/diffused tank input.
+        reflDryMono_[static_cast<size_t> (i)] = 0.5f * (tankInL_[static_cast<size_t> (i)] + tankInR_[static_cast<size_t> (i)]);
+
         preDelayWritePos_ = (preDelayWritePos_ + 1) & preDelayMask_;
     }
 
@@ -1144,6 +1247,22 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         case EngineType::QuadTank:
             quad_.process (tankInL_.data(), tankInR_.data(),
                            tankOutL_.data(), tankOutR_.data(), numSamples);
+            // FRONT-LOAD REDESIGN (2026-06-18): sparse velvet ER front-end + reduced
+            // tank — the same composite as algo 11/13/14, which front-loads the early
+            // field (the defined early arrival the FDN/QuadTank washy swell lacks →
+            // "cloudy snare"). 79 Vocal Chamber is the LONE QuadTank preset; voiced
+            // via kCompositeERByName + setTiledRoomVoicing (which sets sparseTailGain/
+            // sparseERGain + the sparse field). The velvet field is the DEFINED early
+            // arrival; the QuadTank tank is the late body (sparseTailGain × it).
+            sparseField_.process (tankInL_.data(), tankInR_.data(),
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                tankOutL_[static_cast<size_t> (i)] =
+                    tankOutL_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
+                tankOutR_[static_cast<size_t> (i)] =
+                    tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
+            }
             break;
         case EngineType::FDN:
             // Opt-in multiband (3 band-isolated tanks) when enabled, else the
@@ -1225,6 +1344,19 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // its own density/smoothness; sparseField_ supplies the early discrete
             // reflections the anchor halls have. sparseERGain_ sets the ER level
             // (0 -> pure tail). Makes its own early field -> off the smooth-ER bus.
+            // Optional BUILDUP: pre-diffuse the tank input through a long allpass
+            // cascade so the dense tail BUILDS gradually (quiet early) instead of
+            // being dense from sample 0 — lets the sparse ER own the early window
+            // with its dip + burst2 tap (the hall duh-DUH). Bypassed → bit-null.
+            if (buildupDiffuser_.active())
+            {
+                std::copy (tankInL_.begin(), tankInL_.begin() + numSamples, buildupBufL_.begin());
+                std::copy (tankInR_.begin(), tankInR_.begin() + numSamples, buildupBufR_.begin());
+                buildupDiffuser_.process (buildupBufL_.data(), buildupBufR_.data(), numSamples);
+                denseHall_.process (buildupBufL_.data(), buildupBufR_.data(),
+                                    tankOutL_.data(), tankOutR_.data(), numSamples);
+            }
+            else
             denseHall_.process (tankInL_.data(), tankInR_.data(),
                                 tankOutL_.data(), tankOutR_.data(), numSamples);
             // Phase A early-field: delay the late tail by tankOnsetSamples_ so the
@@ -1285,11 +1417,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // DattorroVintage and ReverseRoom both synthesise their own early
     // reflections (ReverseRoom's rising-onset FIR IS its ER), so adding the
     // shared ER bus on top would double-count the onset. Exclude both.
+    // DenseHall RE-INCLUDED 2026-06-16: its 10-stage input allpass is a SMEAR,
+    // not discrete reflections — the shared er_ supplies the parallel DISCRETE
+    // early taps (the "duh-duh" the anchor halls produce, which the user heard
+    // missing on Bright Hall + Blade Runner). The 2026-06-13 DenseHall migration
+    // dropped these presets' (already-set) erLevel by excluding them here. The two
+    // are complementary (discrete ER + diffuse tail = the anchor's early field),
+    // NOT double-ER. Per-preset erLevel re-tuned after this change.
     const bool useSmoothER = (currentEngine_ != EngineType::DattorroVintage
                            && currentEngine_ != EngineType::ReverseRoom
                            && currentEngine_ != EngineType::SparseField
                            && currentEngine_ != EngineType::TiledRoom
-                           && currentEngine_ != EngineType::DenseHall);
+                           && currentEngine_ != EngineType::QuadTank);  // 79VC: owns the sparse front-end now
     for (int i = 0; i < numSamples; ++i)
     {
         float erL   = useSmoothER ? erOutL_[static_cast<size_t> (i)] : 0.0f;
@@ -1331,6 +1470,27 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
         float wetL = erL * erLevel * erEarlyBoost_ + scaledLateL;
         float wetR = erR * erLevel * erEarlyBoost_ + scaledLateR;
+
+        // FORK A — discrete early reflection ("duh-duh"). Reads the CLEAN pre-diffuser
+        // dry (reflDryMono_, snapshot in the pre-delay loop) delayed ~90-110 ms (R
+        // offset for width), gently rolled off at 11 kHz, summed to wet — a sharp,
+        // bright, defined discrete arrival (NOT the old dark/smeared post-diffuser
+        // blob). Whole block gated on reflActive_ (gain 0 → skipped → bit-identical;
+        // kReflectionByName is empty/env-only today). Out of the recursive tank → no
+        // codegen drift. (Note: a tap can't fix a late-energy/front-load clarity
+        // problem — it's a small arrival vs the whole tail; it's for a discrete slap.)
+        if (reflActive_)
+        {
+            const float dryMono = reflDryMono_[static_cast<size_t> (i)];   // CLEAN pre-diffuser dry (snapshot above)
+            reflBuf_[static_cast<size_t> (reflWritePos_)] = dryMono;
+            const float tapL = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayL_) & reflMask_)];
+            const float tapR = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayR_) & reflMask_)];
+            reflWritePos_ = (reflWritePos_ + 1) & reflMask_;
+            reflLpStateL_ += reflLpCoeff_ * (tapL - reflLpStateL_);
+            reflLpStateR_ += reflLpCoeff_ * (tapR - reflLpStateR_);
+            wetL += reflGain_ * reflLpStateL_;
+            wetR += reflGain_ * reflLpStateR_;
+        }
 
         wetL = loCutFilter_.processL (wetL);
         wetR = loCutFilter_.processR (wetR);
@@ -1381,8 +1541,23 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         const float width = widthSmoother_.next();
         const float mid   = 0.5f * (wetL + wetR);
         const float side  = 0.5f * (wetL - wetR);
-        wetL = mid + side * width;
-        wetR = mid - side * width;
+        float effSide;
+        if (! bandWidthActive_)
+        {
+            effSide = side * width;   // legacy single-multiply path — bit-identical
+        }
+        else
+        {
+            // Complementary one-pole split of the side signal → low+mid+high == side.
+            wbLp1State_ = (1.0f - wbLp1Coeff_) * side + wbLp1Coeff_ * wbLp1State_;  // LP 300
+            wbLp2State_ = (1.0f - wbLp2Coeff_) * side + wbLp2Coeff_ * wbLp2State_;  // LP 5k
+            const float lowB = wbLp1State_;
+            const float midB = wbLp2State_ - wbLp1State_;
+            const float hiB  = side - wbLp2State_;
+            effSide = width * (lowB * widthBandLow_ + midB * widthBandMid_ + hiB * widthBandHi_);
+        }
+        wetL = mid + effSide;
+        wetR = mid - effSide;
 
         // Phase 4 (Change 2): output cross-talk shelving matrix. Splits each
         // channel at 1.5 kHz (1st-order complementary HP = x − LP), then cross-
