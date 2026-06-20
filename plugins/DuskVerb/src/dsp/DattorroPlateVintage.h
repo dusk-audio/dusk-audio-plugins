@@ -95,6 +95,19 @@ public:
     void setBassShelfGainDb   (float gainDb);     // pre-tank low-shelf gain (dB)
     void setBassShelfFreqHz   (float fcHz);       // pre-tank low-shelf corner (Hz)
 
+    // Front-load early-reflection network (2026-06-19). The Dattorro tank is
+    // dense-from-onset (~44% of the energy in the first 50 ms); the Lexicon
+    // Vintage Plate BUILDS over ~90 ms to a prominent reflection then tails
+    // (~11% first-50 ms, peak/tap @ ~92 ms). This injects a sparse, lightly-
+    // diffused, band-limited early field (0..~tapMs, building) AND pre-delays
+    // the tank input so its dense field arrives AFTER the early build — the
+    // delayed tank onset becomes the prominent arrival. Gives the slow-build
+    // envelope + discrete early tap WITHOUT bloom's envelope smoothing (which
+    // collapsed env_p2p) or a raw dry tap's spectral spike (which wrecked the
+    // band balance). erGain 0 = network bypassed, tank runs un-delayed = the
+    // pre-network engine byte-for-byte.
+    void setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz);
+
 private:
     DattorroTank tank_;
 
@@ -192,6 +205,39 @@ private:
     // written here, then fed to tank_.process. Sized in prepare().
     std::vector<float> preTankL_;
     std::vector<float> preTankR_;
+
+    // ── Front-load early-reflection network (see setFrontLoad) ──
+    // Power-of-2 ring delay (single-write, fractional-free integer taps).
+    struct RingDelay
+    {
+        std::vector<float> buf; int mask = 0, w = 0;
+        void prepare (int maxSamples)
+        {
+            int n = 1; while (n < std::max (2, maxSamples)) n <<= 1;
+            buf.assign (static_cast<size_t> (n), 0.0f); mask = n - 1; w = 0;
+        }
+        void clear() { std::fill (buf.begin(), buf.end(), 0.0f); w = 0; }
+        inline void  write (float x)   { buf[static_cast<size_t> (w)] = x; w = (w + 1) & mask; }
+        inline float readAgo (int d) const { return buf[static_cast<size_t> ((w - d) & mask)]; }
+    };
+    RingDelay erDelayL_, erDelayR_;             // early-field tap source (band-limited pre-tank signal)
+    RingDelay tankPreL_, tankPreR_;             // pre-delays the tank INPUT so it fills in after the build
+    std::vector<float> earlyL_, earlyR_;        // early-field scratch (summed post-tank)
+    float erLpZL_ = 0.0f, erLpZR_ = 0.0f;       // 1-pole LP state (band-limit the early field)
+    float erLpCoeff_ = 1.0f;
+    float frontErGain_      = 0.0f;             // 0 = network bypassed (bit-null)
+    float frontPredelayMs_  = 60.0f;
+    int   frontPredelaySamp_ = 0;
+    float frontTapMs_       = 80.0f;
+    float frontLpHz_        = 7000.0f;
+    // Early-field tap pattern: a FEW well-separated DISCRETE taps (NOT diffused —
+    // diffusion fills the envelope dips and collapses env_p2p, the anchor's defining
+    // dynamic). Fractions of frontTapMs_ + building gains; silence between taps =
+    // the envelope ripple the Lexicon plate has. The delayed-tank onset supplies the
+    // final peak. R taps offset a hair for L/R decorrelation (stereo_corr).
+    static constexpr int   kErTaps = 3;
+    static constexpr float kErTapFrac[kErTaps] = { 0.30f, 0.60f, 0.92f };
+    static constexpr float kErTapGain[kErTaps] = { 0.50f, 0.72f, 1.00f };
     // Per-preset EQ state — cached so individual setter calls re-design
     // the affected filter without losing the other axis's setting. Defaults
     // match the original Vintage Vocal Plate calibration.

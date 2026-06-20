@@ -72,6 +72,7 @@ public:
     void setModDepth          (float depth);   // hijacked: PITCH (0..1 → 0..24 semitones)
     void setModRate           (float hz);      // hijacked: FEEDBACK (0.1..10 → 0..0.95)
     void setTankDiffusion     (float amount);
+    void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low Valhalla Shimmer has, DV's up-only voices lacked
     void setFreeze            (bool frozen);
 
 private:
@@ -156,6 +157,21 @@ private:
     static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
     static constexpr float kVoice1Mix       = 0.78f;
     static constexpr float kVoice2Mix       = 0.60f;   // 2026-06-16: 0.34->0.60 — boost the +24 air voice to fill 12-24k toward the anchor's broadband octave (cent_500/spec_L1@12.9k).
+
+    // DOWN voice (2026-06-19) — pitches the feedback DOWN one octave (×0.5) IN THE
+    // FEEDBACK LOOP, alongside the up voices. The loop regenerates a descending ladder
+    // (500, 250, 125 Hz from a 1 kHz input) — the WARM LOW that Valhalla Shimmer's
+    // DeepBlueDay has and DV's up-only voices lacked (measured: Shimmer 500 Hz = 64 dB,
+    // DV = 0 dB from a pure 1 kHz sine). Crucially it shares the SAME loop as the up
+    // shimmer, so the low octave builds with IDENTICAL timing — no late "kick-in" (the
+    // output-side self-feeding ladder had a per-rung grain latency → audibly late). A
+    // softClip bounds the per-grain peaks; the 60 Hz feedback HPF caps the runaway sub;
+    // a MODERATE downMix_ keeps the loop gain < 1 so it stays bounded (the clip was
+    // over-cranking the mix). downMix_ 0 → voice skipped → bit-null (Black Hole + every
+    // non-shimmer preset untouched).
+    GranularPitchShifter pitchDownL_, pitchDownR_;    // −1 oct (×0.5 → 500 Hz)
+    static constexpr float kVoiceDownRatio  = 0.5f;   // −12 st
+    float downMix_ = 0.0f;                            // per-preset; 0 = off (bit-null)
 
     // Hall reverb — reuses the existing FDNReverb (same engine that
     // powers the "Realistic Space" / FDN algorithm). Configured in

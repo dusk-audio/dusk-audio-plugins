@@ -129,6 +129,7 @@ public:
     void setSaturation    (float amount);          // 0..1 drive-style softClip
     void setModDepth      (float depth);
     void setModRate       (float hz);
+    void setShimmerDownOctaveMix (float mix);   // Shimmer warm-low voice (octave down); 0 = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);
@@ -327,6 +328,8 @@ public:
     void setSparseFieldBurst2Ms   (float ms);
     void setSparseFieldBurst2Gain (float g);       // GAIN bump at burst2Ms (the discrete late tap; 0 = bit-null)
     void setBuildupAmount         (float a);       // DenseHall tail buildup (0 = bypass/bit-null, 1 = full gradual build)
+    void setBuildupTimeScale      (float s);       // buildup build-time = hall size (scales the cascade; 1.0 = ~84ms)
+    void setBuildupPostTank       (bool b);        // true = diffuse tank OUTPUT (builds onset, tail/T60 intact); false = INPUT (Bright Hall)
     void setSparseFieldTailGain   (float gain);
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
 
@@ -411,6 +414,10 @@ public:
     void setDpvBassShelfGainDb   (float v);
     void setDpvBassShelfFreqHz   (float v);
 
+    // DattorroPlateVintage front-load early-reflection network (algo 1 only).
+    // erGain 0 = bypassed (byte-identical). See DattorroPlateVintage::setFrontLoad.
+    void setDpvFrontLoad         (float erGain, float predelayMs, float tapMs, float lpHz);
+
     // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
     // to silence. Used by the processor to bring an idle engine to a clean
     // start before a preset crossfade swaps it in.
@@ -460,6 +467,8 @@ private:
                                          // tail BUILD gradually (quiet early → the SparseField ER owns
                                          // the early window with its dip + burst2 tap). Opt-in (amount
                                          // 0 → bypassed → composite feeds the tank directly → bit-null).
+    bool               buildupPostTank_ = false;  // diffuse tank OUTPUT (Blade: builds onset, leaves the
+                                                   // recirculation → T60/decay/spectral intact) vs INPUT.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
