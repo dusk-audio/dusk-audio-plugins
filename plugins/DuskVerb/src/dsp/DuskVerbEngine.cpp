@@ -615,6 +615,8 @@ void DuskVerbEngine::setSparseFieldDecayMs  (float ms)   { sparseField_.setDecay
 void DuskVerbEngine::setSparseFieldBurst2Ms (float ms)   { sparseField_.setBurst2Ms (ms); }
 void DuskVerbEngine::setSparseFieldBurst2Gain (float g)  { sparseField_.setBurst2Gain (g); }
 void DuskVerbEngine::setBuildupAmount        (float a)   { buildupDiffuser_.setAmount (a); }
+void DuskVerbEngine::setBuildupTimeScale     (float s)   { buildupDiffuser_.setTimeScale (s); }
+void DuskVerbEngine::setBuildupPostTank      (bool b)    { buildupPostTank_ = b; }
 void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
 void DuskVerbEngine::setSparseERGain        (float gain) { sparseERGain_   = std::clamp (gain, 0.0f, 2.0f); }
 
@@ -735,6 +737,9 @@ void DuskVerbEngine::setModRate (float hz)
     reverseRoom_.setModRate (hz);
     denseHall_.setModRate (hz);
 }
+
+// Shimmer octave-DOWN voice level (the warm low). Shimmer engine only; 0 = bit-null.
+void DuskVerbEngine::setShimmerDownOctaveMix (float mix) { shimmer_.setDownOctaveMix (mix); }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
 // Forward to the FDN tank and to ReverseRoom (which owns an FDN for its tail);
@@ -1063,6 +1068,10 @@ void DuskVerbEngine::setDpvBoxCutGainDb     (float v) { dattorroVintage_.setBoxC
 void DuskVerbEngine::setDpvBoxCutFreqHz     (float v) { dattorroVintage_.setBoxCutFreqHz     (v); }
 void DuskVerbEngine::setDpvBassShelfGainDb  (float v) { dattorroVintage_.setBassShelfGainDb  (v); }
 void DuskVerbEngine::setDpvBassShelfFreqHz  (float v) { dattorroVintage_.setBassShelfFreqHz  (v); }
+void DuskVerbEngine::setDpvFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz)
+{
+    dattorroVintage_.setFrontLoad (erGain, predelayMs, tapMs, lpHz);
+}
 
 void DuskVerbEngine::updateLoCutCoeffs (float hz)
 {
@@ -1344,11 +1353,16 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // its own density/smoothness; sparseField_ supplies the early discrete
             // reflections the anchor halls have. sparseERGain_ sets the ER level
             // (0 -> pure tail). Makes its own early field -> off the smooth-ER bus.
-            // Optional BUILDUP: pre-diffuse the tank input through a long allpass
-            // cascade so the dense tail BUILDS gradually (quiet early) instead of
-            // being dense from sample 0 — lets the sparse ER own the early window
-            // with its dip + burst2 tap (the hall duh-DUH). Bypassed → bit-null.
-            if (buildupDiffuser_.active())
+            // Optional BUILDUP: a long allpass cascade makes the dense tail BUILD
+            // gradually (quiet early) instead of dense from sample 0 — lets the sparse
+            // ER own the early window with its dip + tap (the hall duh-DUH). Two modes:
+            //  • PRE-tank (Bright Hall): diffuse the tank INPUT. Strongest build, but it
+            //    alters the recirculating signal — fine for a smaller hall.
+            //  • POST-tank (Blade Runner): diffuse the tank OUTPUT. Builds the onset
+            //    while leaving the recirculation untouched, so T60/decay/spectral stay
+            //    intact — needed for a huge hall where the input smear wrecks the tail.
+            // Bypassed (amount 0) → tank fed/read directly → bit-null.
+            if (buildupDiffuser_.active() && ! buildupPostTank_)
             {
                 std::copy (tankInL_.begin(), tankInL_.begin() + numSamples, buildupBufL_.begin());
                 std::copy (tankInR_.begin(), tankInR_.begin() + numSamples, buildupBufR_.begin());
@@ -1357,8 +1371,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                                     tankOutL_.data(), tankOutR_.data(), numSamples);
             }
             else
-            denseHall_.process (tankInL_.data(), tankInR_.data(),
-                                tankOutL_.data(), tankOutR_.data(), numSamples);
+            {
+                denseHall_.process (tankInL_.data(), tankInR_.data(),
+                                    tankOutL_.data(), tankOutR_.data(), numSamples);
+                if (buildupDiffuser_.active())   // post-tank: build the OUTPUT (tail/T60 intact)
+                    buildupDiffuser_.process (tankOutL_.data(), tankOutR_.data(), numSamples);
+            }
             // Phase A early-field: delay the late tail by tankOnsetSamples_ so the
             // (undelayed) sparse ER below owns the early window. 0 → skipped → bit-null.
             if (tankOnsetSamples_ > 0)
