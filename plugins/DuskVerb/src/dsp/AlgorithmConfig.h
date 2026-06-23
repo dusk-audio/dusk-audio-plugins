@@ -54,13 +54,15 @@ enum class EngineType : int
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
 //
-// `visible` curates the dropdown (2026-06-12): the four engines no factory
-// preset uses (QuadTank, FDN, VintageTank, SparseField — redundant variants of
-// the Dattorro-tank / Hadamard-FDN cores) are hidden so the roster reads as an
-// intentional palette of distinct "spaces". The enum, the 14-wide `algorithm`
-// choice param, and every factory preset's stored algorithm index are LEFT
-// UNCHANGED — hidden engines still load from saved state and still run in the
-// DSP switch; they are merely not offered in the editor dropdown.
+// `visible` curates the dropdown: the engines no factory preset uses (FDN/"Studio",
+// VintageTank/"Vintage Hall", SparseField/"Sparse", AccurateHall32/"Concert Hall" —
+// redundant variants of the Dattorro-tank / Hadamard-FDN cores, or folded into the
+// composite Hall) are hidden so the roster reads as an intentional palette of distinct
+// "spaces". (QuadTank/"Chamber" IS visible — 79 Vocal Chamber uses it.) The enum, the
+// 15-wide `algorithm` choice param, and every factory preset's stored algorithm index
+// are LEFT UNCHANGED — hidden engines still load from saved state and still run in the
+// DSP switch; merely not offered in the dropdown. (kEngines below is the source of
+// truth for the count + visible flags.)
 struct AlgorithmConfig
 {
     const char* name;

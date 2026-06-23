@@ -1344,7 +1344,8 @@ int main (int argc, char** argv)
         {
             std::cerr << "  ! --screenshot: could not launch gnome-screenshot" << std::endl;
         }
-        if (juce::File (screenshotPath).existsAsFile())
+        const bool shotOk = juce::File (screenshotPath).existsAsFile();
+        if (shotOk)
             std::cout << "Wrote screenshot " << screenshotPath << std::endl;
         else
             std::cerr << "  ! --screenshot: no output file produced (capture failed)" << std::endl;
@@ -1353,7 +1354,7 @@ int main (int argc, char** argv)
         plugin->editorBeingDeleted (ed);
         delete ed;
         plugin->releaseResources();
-        return 0;
+        return shotOk ? 0 : 1;   // non-zero on capture failure so scripts can detect it
     }
 
     // --dump-params: emit the post-apply parameter values as a JSON dict in

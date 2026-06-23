@@ -1,7 +1,10 @@
 #pragma once
 
 #include "DiffusionStage.h"   // ModulatedAllpass (Schroeder AP + spin-and-wander jitter)
+#include "DspUtils.h"         // DspUtils::nextPowerOf2 (self-contained, not transitive)
 
+#include <algorithm>          // std::clamp
+#include <cmath>              // std::abs
 #include <cstdint>
 
 // BuildupDiffuser — a LONG cascaded-allpass front-end that spreads a transient's
