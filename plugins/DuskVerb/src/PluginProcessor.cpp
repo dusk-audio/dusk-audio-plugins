@@ -1609,6 +1609,15 @@ namespace {
     pteqByName()
     {
         static const std::unordered_map<std::string_view, PostTankEQConfig> m = {
+            // Drum Plate (2026-06-23 workflow): gentle post-tank shape — 3.5kHz Q1.2
+            // -1.5dB tames bloom 2-4k/4-8k; 12kHz Q0.8 +2.0dB fills the HF-top the
+            // 8kHz Hi Cut creates (the win driver). 17->12. Post-tank + gentle (unlike
+            // the heavy MATCHEQ cut+makeup removed earlier) but EAR-CHECK the tail grain.
+            { "Drum Plate", {
+                {   80.0f,  500.0f, 3500.0f, 12000.0f },
+                {    1.00f,   1.00f,   1.20f,    0.80f },
+                {    0.00f,   0.00f,  -1.50f,    2.00f },
+            } },
             // Vocal Hall (Steps 3 + 5 + 13 + 14 on v15 baseline, 2026-05-30):
             //   Band 0 —  70 Hz Q=1.2 -2.5 dB: Step 13 post-tank sub-bass
             //                                   scoop. Vents muddy 40-100 Hz
@@ -2167,13 +2176,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Drum Plate + Vintage Gold Plate REMOVED 2026-06-15 (ear: heavy cut + big
             // makeup unmasked the Dattorro tail grain vs the smooth anchor — gates win,
             // sound loss). Dattorro plates keep their natural tail.
-            { "Cathedral Large Hall", { 0.8778f, 0.9426f, 0.8631f, 1.0000f, 0.7319f, 0.5983f, 0.5841f, 0.5902f, 0.3603f } },
+            { "Cathedral Large Hall", { 0.8778f, 0.9426f, 0.8631f, 1.0000f, 0.7319f, 0.5983f, 0.4500f, 0.4500f, 0.3603f } },  // 2026-06-23 workflow: 4k/8k 0.58/0.59->0.45 (with BUILDUP) tames bloom 4-8k/8-12k
             { "Reverse Taps",         { 0.6750f, 0.8359f, 0.9478f, 0.4589f, 0.5152f, 0.4544f, 0.4819f, 0.7776f, 1.0000f } },
             // strength-iterated (partial s) — gentler tables that rescue presets full strength over-corrected:
             { "Black Hole",           { 0.3911f, 0.4127f, 0.4340f, 0.4046f, 0.3763f, 0.3884f, 0.3867f, 0.4817f, 1.0000f } },
             { "Vintage Vocal Plate",  { 0.7424f, 0.9964f, 1.0000f, 0.9505f, 0.9176f, 0.8638f, 0.6995f, 0.5468f, 0.7873f } },
             { "Bright Hall",          { 0.9951f, 0.8682f, 0.8703f, 0.8686f, 0.8598f, 0.8872f, 0.5800f, 0.6800f, 1.0000f } },  // 2026-06-19 EAR + tone-match: 4k 0.85->0.58 + 8k 0.91->0.68 — DV ran +3.3dB over VVV at 5-10k; the match-EQ 4k/8k cut (the Treble param is dead-wired on DenseHall) flattens the whole 5-10k to within ±1.1dB of VVV (6.3-8k +2.4->+0.5).
-            { "79 Vocal Chamber",     { 0.6672f, 0.5900f, 0.7059f, 0.7068f, 0.7097f, 0.7092f, 0.7763f, 1.0000f, 0.3505f } },
+            { "79 Vocal Chamber",     { 0.6672f, 0.6200f, 0.7059f, 0.7068f, 0.7097f, 0.7092f, 0.7763f, 0.5500f, 0.3505f } },  // 2026-06-23 workflow: 8k 1.0->0.55 (spec_L1 + tail-chorus, 18->16) + 125Hz 0.59->0.62 (body 125-250, 16->15)
             { "Small Drum Room",      { 0.9079f, 0.9794f, 0.8922f, 0.7830f, 0.7596f, 0.9453f, 1.0000f, 0.6887f, 0.2120f } },
             // END_MATCHEQ_MAP
         };
@@ -2227,7 +2236,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // is L/R CORRELATION (higher = more correlated/narrower); <1 narrows a
         // band, >1 widens it. These close the width_low/mid/hi + stereo_corr
         // gates the frequency-flat global Width could not (it traded bands).
-        static constexpr std::array<std::pair<std::string_view, WB>, 7> kWidthBandsByName = {{
+        static constexpr std::array<std::pair<std::string_view, WB>, 9> kWidthBandsByName = {{
             { "Cathedral Large Hall", { 0.94f, 0.94f, 0.92f } },  // all 4 stereo gates → pass (22→19)
             { "Small Drum Room",      { 0.92f, 0.92f, 1.35f } },  // narrow lo/mid + WIDEN hi — conflict case (29→27)
             { "Bright Hall",          { 0.98f, 1.00f, 1.00f } },  // threads width-low vs stereo_corr (19→18)
@@ -2235,10 +2244,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Medium Drum Room",     { 1.12f, 1.12f, 1.00f } },  // WIDEN lo/mid → stereo_corr+width lo/mid (26→24)
             { "Reverse Taps",         { 0.50f, 0.88f, 0.88f } },  // strong narrow low + lo mid/hi (46→44)
             { "Vintage Vocal Plate",  { 0.85f, 1.00f, 1.00f } },  // narrow low → width-low passes (36→35)
+            { "Vintage Gold Plate",   { 0.80f, 0.90f, 1.00f } },  // 2026-06-23 workflow: narrow low+mid → stereo_corr + width-low pass (14→12)
+            { "Tiled Room",           { 0.88f, 1.00f, 1.00f } },  // 2026-06-23 workflow: narrow low → width-low pass, stereo_corr held (14→13)
             // No clean per-band fix (stereo fails trade / decouple): Drum Plate
             // (3 bands already match anchor; only broadband stereo_corr off),
-            // Vocal Plate / 79 Vocal Chamber / Tiled Room / Ambience / Large Chamber
-            // / Vintage Gold Plate (every magnitude traded a non-stereo gate).
+            // Vocal Plate / 79 Vocal Chamber / Ambience / Large Chamber.
         }};
         float wl = 1.0f, wm = 1.0f, wh = 1.0f;
         const char* env = tuningEnv().widthbands;
@@ -2845,7 +2855,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // the already-dense tank. erGain 0.35 (the dense tail is primary; ER adds
         // the few distinct early reflections a cathedral has). Wide hall ER size,
         // ~8 ms onset, long discharge. sparseTailGain unused by the DenseHall case.
-        { "Cathedral Large Hall", { 0.55f, 8.0f, 45.0f, 28.0f, 0.50f, 0.35f } },
+        { "Cathedral Large Hall", { 0.55f, 8.0f, 45.0f, 28.0f, 0.50f, 0.35f, 0.0f, 1.0f, 1.5f } },  // 2026-06-23 workflow: buildupAmount 1.0 + timeScale 1.5 — gradual tail build closes energy_t50/first50ms + bloom 2-4k/4-8k/8-12k + ss hi/air (15->9)
         // Other halls migrated to DenseHall 2026-06-13. Sparse discrete-ER fronts
         // over the dense tank, voiced by character: Vocal Hall smoother/less ER,
         // Blade Runner bigger/wider, Bright Hall moderate. erGain = ER level.
@@ -2859,7 +2869,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // level/decay. erGain 0.30 ER on top for the onset's discrete reflections.
         { "Bright Hall",      { 0.50f, 7.0f, 40.0f, 24.0f, 0.50f, 0.30f, 0.0f, 1.0f } },
         { "Blade Runner 224", { 0.65f, 12.0f, 55.0f, 34.0f, 0.50f, 0.40f } },
-        { "Large Chamber",    { 0.45f, 7.0f, 38.0f, 22.0f, 0.50f, 0.30f } },  // chamber: moderate discrete ER over the dense tank
+        { "Large Chamber",    { 0.45f, 7.0f, 38.0f, 22.0f, 0.50f, 0.30f, 0.0f, 1.0f, 1.7f } },  // 2026-06-23 workflow: BUILDUP 1.0 + timeScale 1.7 — gradual tank build closes mid 1-4k/hi 4-12k/energy_t50/bloom 2-4k/4-8k/env_shape (20->17; trades T60-16k/noiseburst — EAR-CHECK)
         // 79 Vocal Chamber (QuadTank front-load redesign 2026-06-18): the velvet
         // sparse field front-loads the early arrival the QuadTank's washy swell lacks
         // (energy_t50 +88ms late → "cloudy snare"). erGain high + sparseTailGain
