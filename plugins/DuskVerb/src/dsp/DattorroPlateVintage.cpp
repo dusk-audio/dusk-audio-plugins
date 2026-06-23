@@ -98,6 +98,10 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
             tapL[k] = std::max (1, static_cast<int> (kErTapFrac[k] * frontTapMs_ * 0.001f * sampleRate_));
             // R offset ~0.7 ms → L/R decorrelation (stereo_corr) without smearing.
             tapR[k] = std::max (1, tapL[k] + static_cast<int> (0.0007f * sampleRate_));
+            // Upper-clamp to ring capacity (avoid (w-d)&mask wrap-aliasing on an
+            // oversized tapMs). 2026-06-23 review fix; latent at current tunings.
+            tapL[k] = std::min (tapL[k], erDelayL_.mask);
+            tapR[k] = std::min (tapR[k], erDelayR_.mask);
         }
         for (int n = 0; n < numSamples; ++n)
         {
@@ -175,6 +179,10 @@ void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float t
     if (prepared_)
     {
         frontPredelaySamp_ = std::max (1, static_cast<int> (frontPredelayMs_ * 0.001f * sampleRate_));
+        // Upper-clamp to the ring capacity: an oversized predelay would wrap via
+        // (w-d)&mask and silently alias to a SHORTER delay. Saturate to the longest
+        // representable instead. (2026-06-23 review fix; latent — current callers stay small.)
+        frontPredelaySamp_ = std::min (frontPredelaySamp_, tankPreL_.mask);
         erLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (frontLpHz_, 0.45f * sampleRate_) / sampleRate_);
     }
 }

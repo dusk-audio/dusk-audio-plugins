@@ -1169,7 +1169,7 @@ void DuskVerbEditor::refreshPresetList()
 
     // Items are still added flat so ComboBox knows the ID-to-text mapping for
     // setSelectedId() and step navigation. The categorized presentation lives
-    // in buildPresetMenu() / CategoryComboBox::showPopup() — section headings
+    // in buildPresetMenu() / DuskComboBox::showPopup() — section headings
     // are NOT added here because the ComboBox's auto-built popup is bypassed.
     for (size_t i = 0; i < presets.size(); ++i)
         presetBox_.addItem (presets[i].name, static_cast<int> (i) + 2);
