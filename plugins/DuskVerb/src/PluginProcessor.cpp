@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <string_view>
 #include <unordered_map>
-#include <array>
 #include <utility>
 
 namespace
@@ -2595,6 +2594,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         float dj = 0.02f;
         if (auto it = kDensityJitterByName.find (std::string_view (name)); it != kDensityJitterByName.end())
             dj = it->second.fraction;
+        // NB: the DUSKVERB_* env-override checks throughout applyEngineConfig (densjit,
+        // dens, maindet, matcheq, octt60, …) exist ONLY for the offline rebuild-free
+        // tuning sweeps. In a normal/shipping session every getenv() returns null so
+        // these branches are skipped entirely — the juce::StringArray::addTokens heap
+        // allocations they perform are never reached at runtime (acceptable: dev-only).
         if (const char* envDj = tuningEnv().densjit; envDj != nullptr && envDj[0] != '\0')
             dj = juce::String (envDj).getFloatValue();
         engine.setDattorroDensityJitter (dj);

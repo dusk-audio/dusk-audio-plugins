@@ -108,7 +108,9 @@ def build_delays(offsets):
 
 
 def render_kurts(delays, tag):
-    d = f"/tmp/d32_{tag}_{os.getpid()}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    d = f"/tmp/d32_{tag}_{os.getpid()}"
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
     try:
         env = dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(str(x) for x in delays))
         r = subprocess.run([str(REND), *WET, "--output-dir", d], capture_output=True, env=env)

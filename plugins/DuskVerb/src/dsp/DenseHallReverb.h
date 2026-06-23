@@ -135,8 +135,11 @@ public:
             }
 
             // FDN injection: lines 0-3 fed by L, 4-7 by R (sign pattern + - per pair).
+            // Freeze mutes input injection so the lossless (g=1.0 when frozen) tank
+            // HOLDS the existing tail instead of accumulating live input — the UI
+            // freeze contract (matches FDNReverb's inputGain=0 when frozen).
             float x[kN];
-            const float il = l, ir = r;
+            const float il = frozen_ ? 0.0f : l, ir = frozen_ ? 0.0f : r;
             x[0] = lineRead (0, +il, m1);
             x[1] = lineRead (1, +il, -m1);
             x[2] = lineRead (2, -il, m1);

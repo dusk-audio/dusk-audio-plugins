@@ -275,6 +275,16 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorroVintage_.clearBuffers();
 
     reverseRoom_.clearBuffers();
+
+    // Top-level tank-onset + reflection-tap rings: the direct Algorithm-knob path
+    // calls setAlgorithm WITHOUT clearAllBuffers (only the preset-swap path clears),
+    // so clear them here too or stale delayed audio from the prior algorithm leaks.
+    std::fill (tankOnsetBufL_.begin(), tankOnsetBufL_.end(), 0.0f);
+    std::fill (tankOnsetBufR_.begin(), tankOnsetBufR_.end(), 0.0f);
+    tankOnsetWrite_ = 0;
+    std::fill (reflBuf_.begin(), reflBuf_.end(), 0.0f);
+    reflWritePos_ = 0;
+    reflLpStateL_ = reflLpStateR_ = 0.0f;
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
