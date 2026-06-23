@@ -65,6 +65,10 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     holdMaxSamps_   = std::max (holdSamples_, static_cast<int> (holdMaxMs_ * 0.001 * sampleRate));
 
     rebuildTaps();
+    clearBuffers();   // reset gate state + velvet running/biquad state across a
+                      // re-prepare (sample-rate / block-size change) — prepare()
+                      // alone left gateState_/gateGain_/envFollow_ + velvet crossover
+                      // history stale (only clearBuffers() resets them).
     prepared_ = true;
 }
 

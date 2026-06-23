@@ -250,7 +250,10 @@ private:
             float v[10];
             int k = std::sscanf (ov, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
                 &v[0],&v[1],&v[2],&v[3],&v[4],&v[5],&v[6],&v[7],&v[8],&v[9]);
-            if (k >= 5) { bandT60_[0]=v[0]; band125T60_=v[1]; bandT60_[1]=v[2]; bandT60_[2]=v[3]; bandT60_[3]=v[4]; }
+            // Clamp like the setters (a 0/negative env T60 -> tau<=0 -> NaN/inf tap
+            // gains; the NaN survives the gainEnv break-guard since NaN<x is false).
+            if (k >= 5) { bandT60_[0]=std::clamp(v[0],0.02f,3.0f); band125T60_=std::clamp(v[1],0.05f,3.0f);
+                          bandT60_[1]=std::clamp(v[2],0.02f,3.0f); bandT60_[2]=std::clamp(v[3],0.02f,3.0f); bandT60_[3]=std::clamp(v[4],0.02f,3.0f); }
             if (k >= 9) { bandLevelLin_[0]=std::pow(10.0f,v[5]/20.0f); bandLevelLin_[1]=std::pow(10.0f,v[6]/20.0f);
                           bandLevelLin_[2]=std::pow(10.0f,v[7]/20.0f); bandLevelLin_[3]=std::pow(10.0f,v[8]/20.0f); }
             if (k >= 10) flipFrac_ = std::clamp (v[9], 0.0f, 0.6f);
