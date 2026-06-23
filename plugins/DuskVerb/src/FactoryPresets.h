@@ -11,17 +11,12 @@
 class DuskVerbEngine;
 
 // Factory presets — 16 hardware-anchored voicings.
-// `algorithm` is the engine index (0..9) per AlgorithmConfig.h getAlgorithmConfig():
-//   0 = Plate (Dattorro)
-//   1 = Plate (Dattorro Vintage)
-//   2 = High Density (6-AP / SixAPTank)
-//   3 = Quad Room (QuadTank)
-//   4 = Realistic Space (FDN)
-//   5 = Spring Tank (6G15)
-//   6 = Non-Linear (RMX16)
-//   7 = Shimmer (Eno FDN)
-//   8 = Vintage Tank (Figure-8)
-//   9 = Reverse Room (Lexicon)
+// `algorithm` is the engine index (0..14) — AlgorithmConfig.h getAlgorithmConfig() /
+// kEngines[] is the single source of truth (this list drifts; the table does not).
+// Current engines (2026): 0 Plate (Dattorro), 1 Vintage Plate (DattorroPlateVintage),
+// 2 SixAPTank, 3 QuadTank, 4 FDN, 5 Spring, 6 NonLinear, 7 Shimmer, 8 VintageTank,
+// 9 Reverse Room (VelvetTail), 10 AccurateHall, 11 SparseField, 12 (hidden),
+// 13 Tiled Room (composite), 14 DenseHall. Some indices are hidden (visible=false).
 //
 // IMPORTANT: presets are grouped CONTIGUOUSLY by category — the editor's
 // dropdown adds a section heading whenever the category changes, so any

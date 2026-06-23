@@ -681,6 +681,27 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     // with-preset path, but the null-preset swap calls THIS alone — without it,
     // a prior preset's post-tank diffusion (e.g. Bright Hall) would leak.
     setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);
+
+    // ── Name-keyed engine stages (2026-06-23 review fix). applyEngineConfig
+    //    self-neutralizes these on the WITH-preset path (fall-through defaults /
+    //    map-miss), but the null/unknown-preset swap reaches them ONLY here. Without
+    //    these resets, restoring a no-identity session (old/renamed preset) onto a
+    //    REUSED engine instance leaks the prior preset's voicing/decay (e.g. Bright
+    //    Hall's match-EQ + octave-T60 + tail buildup applied to the restored session). ──
+    { const float flat9[9] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+      setOutputMatchEQ (flat9); }                                  // output match-EQ → flat
+    for (int b = 0; b < 9; ++b)                                    // per-octave T60 GEQ → inactive (legacy 3-band)
+    { setDattorroOctaveT60 (b, 0.0f); setDenseHallOctaveT60 (b, 0.0f); setAccurateHallOctaveT60 (b, 0.0f);
+      setDattorroTonalCorrDb (b, 0.0f); }                          // per-octave tonal-corr → 0 dB (identity)
+    setDattorroOctaveDecayRef (0.0f); setDenseHallOctaveDecayRef (0.0f); setAccurateHallOctaveDecayRef (0.0f);
+    setDenseHallTonalCorrection (false);                           // DenseHall Jot decouple → off
+    setDattorroDensity (0.0f); setDattorroModReduction (1.0f); setDattorroInputDiffusion (0.0f);
+    setDattorroDensityRoomFill (false); setDattorroMainLineDetune (1.0f, 1.0f, 1.0f, 1.0f);
+    setDattorroSoftOnsetMs (0.0f); setDattorroBloomAttackMs (0.0f);
+    setReflectionTap (0.0f, 0.0f); setTankOnsetMs (0.0f);          // discrete tap + tank-onset → off
+    setTiledRoomVoicing (1.0f, 14.0f, 55.0f, 115.0f, 0.45f, 1.0f); // SparseEarlyField voicing → engine defaults
+    setSparseFieldBurst2Gain (0.0f);
+    setBuildupAmount (0.0f); setBuildupTimeScale (1.0f); setBuildupPostTank (false);  // DenseHall tail buildup → bypass
 }
 
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)

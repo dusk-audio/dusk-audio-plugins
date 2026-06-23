@@ -53,8 +53,12 @@ public:
     // kMaxTaps capacity, so .assign reuses storage), but it runs ~2k exp/rng ops, so
     // every rebuild-triggering setter CHANGE-GUARDS: setGlobalDecayScale/setSizeScale
     // are driven from the live Decay/Size knobs via pushIfChanged on the AUDIO thread,
-    // so a no-op call must not rebuild. (No heap/lock → RT-safe; the guard removes the
-    // redundant per-block rebuilds during automation.)
+    // so a no-op call must not rebuild. RT-safe (no heap/lock — Field vectors keep
+    // kMaxTaps capacity so .assign reuses storage). CAVEAT: under ACTIVE Decay/Size
+    // automation the value changes every block, so buildTaps() (a few thousand
+    // std::exp/sqrt) runs per-block — an RT CPU cost, not a correctness bug, and only
+    // on the single algo-9 (Reverse) preset. If a future preset automates these hard,
+    // defer the rebuild off-thread (double-buffer fieldL_/fieldR_, publish atomically).
     void setBandT60 (int b, float seconds)   { if (b>=0&&b<kBands){ const float v=std::clamp(seconds,0.02f,3.0f); if(std::abs(v-bandT60_[b])<=1e-5f)return; bandT60_[b]=v; if(prepared_)buildTaps(); } }
     void setBand125T60 (float seconds)       { const float v=std::clamp(seconds,0.05f,3.0f); if(std::abs(v-band125T60_)<=1e-5f)return; band125T60_=v; if(prepared_)buildTaps(); }
     void setBandLevelDb (int b, float db)    { if(b>=0&&b<kBands){ const float v=std::pow(10.0f,db/20.0f); if(std::abs(v-bandLevelLin_[b])<=1e-5f)return; bandLevelLin_[b]=v; if(prepared_)buildTaps(); } }
