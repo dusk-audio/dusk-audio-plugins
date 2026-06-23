@@ -2914,6 +2914,18 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setBuildupTimeScale (buildupTime);
         engine.setBuildupPostTank (buildupPost);
     }
+    else
+    {
+        // 2026-06-23 review fix: unmapped algo-13/14 presets must reset the composite
+        // voicing + buildup to engine defaults, else they latch the previously-loaded
+        // composite preset's ER/buildup across an A/B swap (cross-preset bleed). All
+        // current presets are mapped, so this is a latent guard for future presets.
+        engine.setTiledRoomVoicing (1.0f, 14.0f, 55.0f, 115.0f, 0.45f, 1.0f);
+        engine.setSparseFieldBurst2Gain (0.0f);
+        engine.setBuildupAmount (0.0f);
+        engine.setBuildupTimeScale (1.0f);
+        engine.setBuildupPostTank (false);
+    }
 
     // Shimmer octave-DOWN voice (the warm low Valhalla Shimmer's DeepBlueDay has via a
     // down-pitched voice — DV's up-only voices produced 0 dB at 500 Hz from a 1 kHz sine).

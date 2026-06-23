@@ -252,7 +252,8 @@ private:
     // Algorithm dropdown (= engine selector). Mirrors the algorithm APVTS choice.
     DuskComboBox algorithmBox_;
     EngineGlyph    engineGlyph_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> algorithmAttachment_;
+    // (algorithmBox_ syncs via its manual onChange + timerCallback, not a
+    // position-based ComboBoxAttachment — the preset/engine list is sparse.)
 
     // Live output-tail histogram, painted under the header dropdowns.
     TailMeter tailMeter_;
@@ -269,7 +270,7 @@ private:
     void refreshPresetList();
     void stepFactoryPreset (int delta);
     // Builds a PopupMenu that mirrors the current preset list with categories
-    // as nested submenus. Used by CategoryComboBox::showPopup.
+    // as nested submenus. Used by DuskComboBox::showPopup() via presetBox_.menuBuilder.
     juce::PopupMenu buildPresetMenu();
 
     // User preset management
