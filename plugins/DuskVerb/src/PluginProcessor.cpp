@@ -2695,13 +2695,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // listed — its short uniform decay is better served by the 3-band path
             // (octave disrupted its decay-rate/boom gates: 24->27); Vocal uses
             // Decay 0.50 (row) + input diffusion (kDattorroDensityByName) instead.
-            { "Vintage Gold Plate",  { { 1.4928f, 2.0271f, 1.5359f, 1.5653f, 1.5761f, 1.5187f, 1.4181f, 1.3007f, 1.2370f }, 1.15f } },
+            { "Vintage Gold Plate",  { { 1.4928f, 2.0271f, 1.5359f, 1.5653f, 1.5761f, 1.5187f, 1.4181f, 1.3007f, 1.2370f }, 1.961f } },
             // Drum Plate: octave GEQ fixes per-octave T60 (the low-band decay/boom
             // the user heard as "too much bass" = hot-but-short low band, the
             // coupling wall the 3-band couldn't fix). 8/9 bands within JND; 16k
             // capped by Hi Cut 8kHz (anchor 1.39s @16k is near-floor). decayRef =
             // Drum row decay 2.263.
-            { "Drum Plate",          { { 1.4647f, 1.8203f, 1.4117f, 1.6577f, 1.5226f, 1.4977f, 1.5204f, 1.6865f, 6.4223f }, 2.263f } },  // recal for Size 0.8 + 12-AP loop
+            { "Drum Plate",          { { 1.4647f, 1.8203f, 1.4117f, 1.6577f, 1.5226f, 1.4977f, 1.5204f, 1.6865f, 6.4223f }, 1.691f } },  // recal for Size 0.8 + 12-AP loop
             // Vintage Vocal Plate 2026-06-19: octave GEQ ON (was 3-band — the prior
             // "octave regressed 24->27" used RAW anchor T60s; these are Newton-corrected,
             // realized within JND). Decouples the T60 coupling wall: 3-band ran the LOW
