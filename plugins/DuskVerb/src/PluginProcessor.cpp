@@ -50,6 +50,7 @@ struct TuningEnv
     const char* buildup;
     const char* shimmerdown;
     const char* frontload;
+    const char* airshelf;
     TuningEnv()
         : pteq      (std::getenv ("DUSKVERB_PTEQ")),
           outdiff   (std::getenv ("DUSKVERB_OUTDIFF")),
@@ -77,7 +78,8 @@ struct TuningEnv
           maindet   (std::getenv ("DUSKVERB_MAINDET")),
           buildup   (std::getenv ("DUSKVERB_BUILDUP")),
           shimmerdown (std::getenv ("DUSKVERB_SHIMMERDOWN")),
-          frontload (std::getenv ("DUSKVERB_FRONTLOAD")) {}
+          frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
+          airshelf  (std::getenv ("DUSKVERB_AIRSHELF")) {}
 };
 const TuningEnv& tuningEnv()
 {
@@ -2196,6 +2198,30 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             engine.setOutputMatchEQ (me->second.data());
         else
             engine.setOutputMatchEQ (flat);   // bit-null
+    }
+
+    // Output air-shelf — per-preset HF voicing BOOST (the only HF up-tilt lever;
+    // the match-EQ above is cut-only). Post-tank feed-forward so boost is stable.
+    // Env DUSKVERB_AIRSHELF="freqHz,gainDb" drives the rebuild-free sweep; else the
+    // per-preset bake; else 0 dB → inactive → bit-null. Lifts the HF-deficient
+    // plates/halls toward the bright references (cent_50 / cent_500 fleet audit).
+    {
+        struct AirShelf { float freqHz, gainDb; };
+        static const std::map<std::string_view, AirShelf> kOutputAirShelfByName = {
+            // BEGIN_AIRSHELF_MAP (per-preset HF air-shelf, 2026-06-24 fleet cent match)
+            // END_AIRSHELF_MAP
+        };
+        const char* env = tuningEnv().airshelf;
+        if (env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() == 2) engine.setOutputAirShelf (t[0].getFloatValue(), t[1].getFloatValue());
+            else               engine.setOutputAirShelf (8000.0f, 0.0f);
+        }
+        else if (auto as = kOutputAirShelfByName.find (std::string_view (name)); as != kOutputAirShelfByName.end())
+            engine.setOutputAirShelf (as->second.freqHz, as->second.gainDb);
+        else
+            engine.setOutputAirShelf (8000.0f, 0.0f);   // bit-null
     }
 
     // Phase A early-field: tank-onset delay (DenseHall path). Env override

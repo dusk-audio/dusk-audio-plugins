@@ -176,6 +176,8 @@ public:
     // is attenuated by this much instead of decapitated. Per-preset on
     // FactoryPreset. Default -12 dB.
     void setHiCutShelfGainDb (float dB);
+    // Post-tank HF air-shelf (boost or cut). 0 dB → inactive (bit-null bypass).
+    void setOutputAirShelf (float freqHz, float gainDb);
 
     // Post-tank parametric EQ (4-band). Each band is freq + Q + gainDb.
     // Lives AFTER the Hi Cut Shelf and BEFORE the dry/wet mix matrix.
@@ -637,6 +639,18 @@ private:
 
     Biquad loCutFilter_;
     Biquad hiCutFilter_;
+
+    // Output air-shelf (HF voicing): a post-tank RBJ high-shelf that can BOOST
+    // — unlike hiCutFilter_ (cut-only) and the cut-only output match-EQ — to
+    // lift the HF-deficient fleet toward the bright references (the documented
+    // HF-tilt wall: no engine had an HF up-tilt lever). Per-preset freq + gain
+    // dB; 0 dB → inactive → bit-identical bypass. Feed-forward (not in any
+    // feedback loop), so |H|>1 boost is unconditionally stable.
+    Biquad airShelfFilter_;
+    float  airShelfFreqHz_ = 8000.0f;
+    float  airShelfGainDb_ = 0.0f;
+    bool   airShelfActive_ = false;
+    void   updateAirShelfCoeffs();
 
     // Post-tank parametric EQ (4 bands, series). Sits between Hi Cut Shelf
     // and the mono-below + Width + Gain Trim output chain. Default state is
