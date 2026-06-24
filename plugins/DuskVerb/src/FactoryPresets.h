@@ -350,7 +350,12 @@ struct FactoryPreset
             // 79 Vocal Chamber (QuadTank) vs VVV — hi-mid+air split closes
             // cent_500 and pulls the 4-8 k tail in without darkening the mids
             // (the 3-band gHigh couldn't). 23->21.
-            { "79 Vocal Chamber", { 0.18f, 0.5f } },
+            // 2026-06-24: air_mult 0.5->0.13 — the air band (>8k) was decaying SLOWER
+            // than hi-mid (0.18), an inversion (gAir=gBase^2.0 vs gHiMid=gBase^5.56) that
+            // gave T60-16k +80% and pulled cent_500 +27% bright in the late tail. Air is
+            // the top band -> must damp FASTEST. Fixes the late-centroid tilt in-loop
+            // (cent_50 untouched, unlike the static air-shelf).
+            { "79 Vocal Chamber", { 0.18f, 0.22f } },
         };
         float qtHiMid = -1.0f, qtAir = -1.0f;
         if (auto it = kQuadBandByName.find (juce::String (name)); it != kQuadBandByName.end())

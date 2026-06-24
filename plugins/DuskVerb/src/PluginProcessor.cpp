@@ -2210,18 +2210,20 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         static const std::map<std::string_view, AirShelf> kOutputAirShelfByName = {
             // BEGIN_AIRSHELF_MAP (per-preset HF air-shelf, 2026-06-24 fleet cent match
             // vs anchors; env-swept DUSKVERB_AIRSHELF, then baked. {freqHz, gainDb})
-            // — both centroid gates CLOSE:
+            // The air-shelf is an HF-LEVEL lever — it only belongs where the deficit is
+            // a genuine HF LEVEL gap (present-but-quiet HF, reachable, decay-neutral).
+            // These 4 close BOTH centroid gates cleanly at moderate gain:
             { "Bright Hall",          { 4000.0f,   7.0f } },   // cent_50 -30.7->-7.9, cent_500 -18.1->+7.6
             { "Vintage Gold Plate",   { 5000.0f,   7.5f } },   // cent_50 -30.5->-5.4, cent_500 -19.5->+5.9
             { "Deep Blue Day",        { 3000.0f,   6.0f } },   // cent_50 -14.4->+7.0, cent_500 -29.1->-9.5
             { "Ambience",             { 3000.0f,  -5.0f } },   // bright-late: cent_500 +45.3->+5.1, cent_50 +12.5->-11.7
-            // — partial (one band residual is STRUCTURAL; big boosts are EAR-CHECK for over-brightness):
-            { "Vocal Plate",          { 4500.0f,  10.5f } },   // cent_50 -25.7->+13.0 (in-gate); cent_500 -49.4->-27.1 floor (late-HF deficit)
-            { "Live Room",            { 3000.0f,  12.0f } },   // cent_50 -40.7->+11.8 (in-gate); cent_500 -68.4->-20.8 (dark tail, no late-HF source)
-            { "Black Hole",           { 3000.0f,  12.0f } },   // cent_50 -19.7->+13.9 (in-gate); cent_500 -45.1->-16.9 (12kHz shimmer AA ceiling)
-            { "79 Vocal Chamber",     { 6000.0f,  -3.0f } },   // cent_50 -6.8->-12.2 (in-gate); cent_500 +26.7->+21.5 (tilt wall: late centre 1212Hz < early 2217Hz)
-            // Large Chamber: NO air-shelf — shelf only moves cent_50 -45->-39 (still fails) while
-            // adding HF the anchor lacks; the defect is early-transient dark (structural floor), not level.
+            { "Black Hole",           { 3000.0f,  12.0f } },   // cent_50 -19.7->+13.9 (closes early); cent_500 -16.9 residual = structural FDN HF-decay wall (skipped per ear call)
+            // NOT here (cent_500 is a LATE-tail per-band-DECAY / low-mid-LEVEL problem the
+            // air-shelf can't fix; fixed at the proper in-loop lever instead):
+            //   Vocal Plate     -> AccurateHall low-mid LEVEL cut (pteqByName) — 63/250Hz +10dB hot
+            //   Live Room       -> Dattorro per-octave HF-T60 (kDattorroOctaveT60ByName) — mids/HF decay 8-12dB too fast
+            //   79 Vocal Chamber-> QuadTank qt_air_mult (was 0.5, inverted: air decayed slower than hi-mid)
+            //   Large Chamber   -> early-transient dark (structural floor), shelf can't fix
             // END_AIRSHELF_MAP
         };
         const char* env = tuningEnv().airshelf;
