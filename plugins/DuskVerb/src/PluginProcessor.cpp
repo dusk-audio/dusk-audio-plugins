@@ -2722,7 +2722,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // the anchor's BROADBAND decay (0.93s) exceeds its own max per-band (0.80s),
             // so per-band-match and audible-broadband-match are mutually exclusive here;
             // the user hears broadband → ear over the per-band gates.
-            { "Vintage Vocal Plate", { { 0.650f, 0.640f, 0.620f, 0.666f, 0.744f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.43f } },
+            { "Vintage Vocal Plate", { { 0.650f, 0.640f, 0.620f, 0.666f, 0.744f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.703f } },  // 2026-06-24 decayRef tuned so the Decay knob (0.90) reads ~= the realized RT60 (~0.90s): decayRef 0.724 gave realized 0.874 @ knob 0.90 (3% low); 0.703 lifts scale 1.24->1.28 -> realized ~0.90 = honest knob.
         };
         float t60[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         float ref = 0.0f;
