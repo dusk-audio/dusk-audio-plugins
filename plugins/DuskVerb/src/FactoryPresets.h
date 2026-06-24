@@ -560,7 +560,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // dark, sine1k +5 dB hot, small T60 tilt, 12.9k spike) is DPV-vs-Lexicon.
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   false, 10.0f, 0,  // 2026-06-15 DPV(1). AccurateHall(10) migration TESTED+reverted: FDN slow-bloom suited the 91ms attack + killed boing, but washy early field regressed it (33 vs 21). busMode false.
-          0.50000f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,  // 2026-06-15 Decay 0.805->0.50 re-tune vs CORRECTED lex-vintage-vocal-plate anchor (old anchor broken): anchor T60 ~0.7s (short vocal plate), DV was +40-95% too long. n_fail 40->24. Residual = 91ms slow-attack (5 gates, no soft-onset preset lever on DPV) + short-tail diffusion_flux measurement artifact + T60 3-band wall.
+          0.90000f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,  // 2026-06-24 Decay knob 0.50->0.90 + octave decayRef 0.40->0.724 (= the octave curve's natural scale-1.0 broadband): now the DISPLAYED Decay Time ~= the REALIZED RT60 (~0.90s, toward Lex 0.93) instead of the old misleading 0.5s knob / 0.876s actual. (Prior: 0.50 knob re-tune vs corrected anchor.)
           0.24230f, 0.00f, 0.30f, 42.811f, 15000.0f, 1.00000f, false, 11.03f,  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim +11.03 (20->19). Width 1.0.
           /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
           /* hiCutShelfGainDb */ -6.0f,   // 2026-06-16 EAR: -12->-6 brighten (Lexicon brighter than ours)
@@ -569,9 +569,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* sixAPBloomStagger    */ { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f },
           /* sixAPEarlyMix        */ 0.5f,  /* sixAPOutputTrim    */ 1.3f,
           /* bassChoke            */ 20.0f,
-          /* dpvHfShelfGainDb     */ 3.25f,       // DPV corrective EQ unchanged — the render
-          /* dpvHfShelfFreqHz     */ 4049.0f,     // harness does NOT expose these as --param,
-          /* dpvStructHfDampHz    */ 6605.0f,     // so the sweep's --has-dpv axes were no-ops;
+          /* dpvHfShelfGainDb     */ 8.50f,       // 2026-06-24 EAR "Lex brighter": shelf 3.25->8.5 lifts the
+          /* dpvHfShelfFreqHz     */ 4049.0f,     // EARLY field to ~Lex cent_50 5191; struct-damp 6605->4000
+          /* dpvStructHfDampHz    */ 4000.0f,     // keeps the LATE tail dark (cent_500 ~Lex 1688). Bright-early/dark-late; residual bloom 4-8k/8-12k is the Dattorro HF-density coupling the real Lex avoids (EAR-CHECK).
           /* dpvBoxCutGainDb      */ -1.52f,      // 2026-06-19: confirmed via bake-sweep the DPV EQ is LIVE but
           /* dpvBoxCutFreqHz      */ 704.0f,      // every lever is coupled to a structural wall — HF shelf brightens
           /* dpvBassShelfGainDb   */ 0.82f,       // cent_50 but blooms the tank HF (29->33); box/bass cut fixes sub/mid
