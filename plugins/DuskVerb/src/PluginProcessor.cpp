@@ -52,6 +52,7 @@ struct TuningEnv
     const char* frontload;
     const char* airshelf;
     const char* lowshelf;
+    const char* differ;
     TuningEnv()
         : pteq      (std::getenv ("DUSKVERB_PTEQ")),
           outdiff   (std::getenv ("DUSKVERB_OUTDIFF")),
@@ -81,7 +82,8 @@ struct TuningEnv
           shimmerdown (std::getenv ("DUSKVERB_SHIMMERDOWN")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           airshelf  (std::getenv ("DUSKVERB_AIRSHELF")),
-          lowshelf  (std::getenv ("DUSKVERB_LOWSHELF")) {}
+          lowshelf  (std::getenv ("DUSKVERB_LOWSHELF")),
+          differ    (std::getenv ("DUSKVERB_DIFFER")) {}
 };
 const TuningEnv& tuningEnv()
 {
@@ -2270,6 +2272,55 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             engine.setOutputLowShelf (ls->second.freqHz, ls->second.gainDb);
         else
             engine.setOutputLowShelf (60.0f, 0.0f);   // bit-null
+    }
+
+    // Diffused discrete early reflections (DenseHall clarity / un-masking / two-taps):
+    // a per-preset reflection comb (diffuse-then-tap → discrete-but-smooth). Env
+    // DUSKVERB_DIFFER="diffusion,busGain,t1,g1,t2,g2,..." (ms,linear) drives the
+    // rebuild-free sweep; else the per-preset bake; else empty → inactive → bit-null.
+    // Caught by the early_refl_count + transient_def full_check gates.
+    {
+        struct DiffER { float diffusion, busGain; int n; float t[24]; float g[24]; };
+        // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs on
+        // the AUDIO thread; same RT-safe pattern as kDenseHallOctaveT60ByName.
+        static constexpr std::array<std::pair<std::string_view, DiffER>, 1> kDiffuseERByName = {{
+            // BEGIN_DIFFER_MAP (per-preset discrete-ER comb, 2026-06-25; matched to anchor reflections)
+            // Cathedral: VVV's discrete early-reflection comb (the "two distinct taps" /
+            // clarity / un-masking). Closes early_refl_count (DV 1->9) + transient_def
+            // (-3.2->+0.2), not metallic (HF kurtosis 13.7). COST: energy_first50/t50
+            // open (+4 n_fail) — diffused bursts carry more energy than the anchor's
+            // sharp reflections (front-load wall). EAR-CHECK: clarity vs energy balance.
+            { "Cathedral Large Hall", { 0.6f, 0.3f, 9,
+              { 16.0f, 31.0f, 40.0f, 56.0f, 70.0f, 81.0f, 101.0f, 117.0f, 126.0f },
+              { 0.7f, 0.8f, 1.0f, 0.6f, 0.9f, 0.5f, 0.5f, 0.4f, 0.35f } } },
+            // END_DIFFER_MAP
+        }};
+        float times[24] {}, gains[24] {}; int n = 0; float diffusion = 0.6f, busGain = 1.0f; bool have = false;
+        const char* env = tuningEnv().differ;
+        if (env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() >= 4)
+            {
+                diffusion = t[0].getFloatValue(); busGain = t[1].getFloatValue();
+                for (int k = 2; k + 1 < t.size() && n < 24; k += 2)
+                { times[n] = t[k].getFloatValue(); gains[n] = t[k + 1].getFloatValue(); ++n; }
+                have = n > 0;
+            }
+        }
+        else
+        {
+            const std::string_view nv (name);
+            for (const auto& e : kDiffuseERByName)
+                if (e.first == nv)
+                {
+                    const auto& d = e.second; diffusion = d.diffusion; busGain = d.busGain; n = d.n;
+                    for (int i = 0; i < n && i < 24; ++i) { times[i] = d.t[i]; gains[i] = d.g[i]; }
+                    have = n > 0; break;
+                }
+        }
+        if (have) engine.setDiffuseER (times, gains, n, diffusion, busGain);
+        else      engine.setDiffuseER (nullptr, nullptr, 0, 0.6f, 1.0f);   // bit-null
     }
 
     // Phase A early-field: tank-onset delay (DenseHall path). Env override

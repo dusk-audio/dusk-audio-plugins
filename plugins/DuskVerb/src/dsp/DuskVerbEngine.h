@@ -14,6 +14,7 @@
 #include "SpringEngine.h"
 #include "ReverseRoomEngine.h"
 #include "SparseEarlyField.h"
+#include "DiffusedEarlyReflections.h"
 #include "OutputDiffusion.h"
 #include "DenseHallReverb.h"
 #include "BuildupDiffuser.h"
@@ -336,6 +337,8 @@ public:
     void setBuildupPostTank       (bool b);        // true = diffuse tank OUTPUT (builds onset, tail/T60 intact); false = INPUT (Bright Hall)
     void setSparseFieldTailGain   (float gain);
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
+    // Diffused discrete early reflections (DenseHall clarity/un-masking comb).
+    void setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain);
 
     // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
     // enable=false → bypassed (bit-null on every other preset). amount maps to
@@ -457,6 +460,7 @@ private:
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
+    DiffusedEarlyReflections diffuseER_; // 2026-06-25: DISCRETE-but-smooth early reflections (diffuse-then-tap) — the clarity/un-masking comb the velvet field can't do without going metallic. DenseHall additive bus; bit-null when no reflections set.
     // Removed 2026-06-13 (no factory preset; biggest dead RAM): VintageTankEngine
     // vintageTank_ (algo 8) + FDNReverbT<true,32> accurateHall32_ (algo 12). Those
     // enum values fall back to accurateHall_.
@@ -559,6 +563,7 @@ private:
     // less-front-loaded room (Medium Drum Room, anchor first50 44.8%) back off the
     // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
     float sparseERGain_ = 1.0f;
+    float diffuseERGain_ = 1.0f;   // DiffusedEarlyReflections bus level (DenseHall)
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated
