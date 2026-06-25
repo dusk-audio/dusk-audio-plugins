@@ -28,6 +28,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize); accurateHall_.prepare (sampleRate, maxBlockSize);
     sparseField_.prepare (sampleRate, maxBlockSize);
+    diffuseER_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
     buildupDiffuser_.prepare (sampleRate, maxBlockSize);
     buildupBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -160,6 +161,7 @@ void DuskVerbEngine::clearAllBuffers()
     fdn_      .clearBuffers();
     accurateHall_.clearBuffers();   // FDNReverbT<true> — was missing here (setAlgorithm clears it, but that early-returns when the algo is unchanged → AccurateHall state could leak across same-algo preset swaps).
     sparseField_.clear();           // algo 11 early-field tap buffers
+    diffuseER_.clear();             // diffused discrete-ER bus (DenseHall)
     denseHall_.clear();             // algo 14 dense hall tank state
     buildupDiffuser_.clear();       // DenseHall tail-buildup cascade
  // algo 12 (32-line)
@@ -269,7 +271,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorro_.clearBuffers();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
-    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear();
+    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -631,6 +633,12 @@ void DuskVerbEngine::setBuildupTimeScale     (float s)   { buildupDiffuser_.setT
 void DuskVerbEngine::setBuildupPostTank      (bool b)    { buildupPostTank_ = b; }
 void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
 void DuskVerbEngine::setSparseERGain        (float gain) { sparseERGain_   = std::clamp (gain, 0.0f, 2.0f); }
+void DuskVerbEngine::setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain)
+{
+    diffuseER_.setReflections (timesMs, gains, n);
+    diffuseER_.setDiffusion (diffusion);
+    diffuseERGain_ = std::clamp (busGain, 0.0f, 2.0f);
+}
 
 void DuskVerbEngine::setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale)
 {
@@ -715,6 +723,7 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setReflectionTap (0.0f, 0.0f); setTankOnsetMs (0.0f);          // discrete tap + tank-onset → off
     setTiledRoomVoicing (1.0f, 14.0f, 55.0f, 115.0f, 0.45f, 1.0f); // SparseEarlyField voicing → engine defaults
     setSparseFieldBurst2Gain (0.0f);
+    setDiffuseER (nullptr, nullptr, 0, 0.6f, 1.0f);   // diffused discrete-ER → inactive (bit-null)
     setBuildupAmount (0.0f); setBuildupTimeScale (1.0f); setBuildupPostTank (false);  // DenseHall tail buildup → bypass
 }
 
@@ -1522,6 +1531,19 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             {
                 tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
                 tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
+            }
+            // Diffused discrete-ER bus (clarity/un-masking comb): diffuse-then-tap
+            // the tank INPUT into discrete smooth reflections, summed on top. Reuses
+            // the sparse scratch. Skipped (no reflections) → bit-null.
+            if (diffuseER_.active())
+            {
+                diffuseER_.process (tankInL_.data(), tankInR_.data(),
+                                    sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * diffuseERGain_;
+                    tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * diffuseERGain_;
+                }
             }
             break;
     }
