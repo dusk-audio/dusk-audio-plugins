@@ -86,12 +86,12 @@ private:
 
 public:
 
-    static constexpr juce::uint32 kValueText    = 0xfff0f0f0;
-    static constexpr juce::uint32 kLabelText    = 0xffb0b0b8;
-    static constexpr juce::uint32 kGroupText    = 0xff9898a0;
+    static constexpr juce::uint32 kValueText    = 0xfff6f6f8;   // 2026-06-25 brighter (eye-strain)
+    static constexpr juce::uint32 kLabelText    = 0xffd8d8de;   // 2026-06-25 b0->d8: section headers more readable
+    static constexpr juce::uint32 kGroupText    = 0xffcacad0;   // 2026-06-25 98->ca: param names brighter/whiter
     static constexpr juce::uint32 kDimText      = 0xff555555;
 
-    static constexpr juce::uint32 kText         = 0xffe0e0e0;
+    static constexpr juce::uint32 kText         = 0xfff2f2f5;   // 2026-06-25 e0->f2: title/combo near-white
     static constexpr juce::uint32 kSubtleText   = 0xff888888;
 };
 
