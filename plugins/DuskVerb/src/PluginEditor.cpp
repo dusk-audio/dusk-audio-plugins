@@ -716,6 +716,13 @@ DuskVerbEditor::~DuskVerbEditor()
 
 void DuskVerbEditor::timerCallback()
 {
+    // Pause all 15 Hz repaint/meter work while a value-editor TextEditor is open.
+    // The periodic full-editor repaint races the in-window TextEditor's per-
+    // keystroke paint/focus handling and livelocks the UI on Linux ("froze while
+    // typing"). The labels/meters resume the instant the edit commits or cancels.
+    if (ValueEditor::anyOpen (*this))
+        return;
+
     auto update = [] (KnobWithLabel& k)
     {
         // If a per-engine value override is installed (NonLinear gate

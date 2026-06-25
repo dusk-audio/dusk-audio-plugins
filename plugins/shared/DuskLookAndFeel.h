@@ -394,6 +394,26 @@ public:
         editor->onEscapeKey = cleanup;
     }
 
+    // True while a value editor is live anywhere under `ref`'s top-level window.
+    // Self-correcting (scans for the live editor's tag rather than a counter, so
+    // a parent-destroyed editor can't leak the state). A host editor uses this to
+    // PAUSE its repaint timer while the user types: a periodic full-editor repaint
+    // races the in-window TextEditor's keystroke/focus handling on Linux and can
+    // livelock the message thread (same race that crashes Logic — see above).
+    static bool anyOpen (juce::Component& ref)
+    {
+        auto* top = ref.getTopLevelComponent();
+        if (top == nullptr)
+            return false;
+        for (int i = 0; i < top->getNumChildComponents(); ++i)
+        {
+            auto* c = top->getChildComponent (i);
+            if (c != nullptr && c->getProperties().contains ("dusk_valeditor_for"))
+                return true;
+        }
+        return false;
+    }
+
 private:
     // Parse text like "1.5k", "500hz", "-3.5dB", "85%", "60ms" into a numeric
     // value in the slider's native units. Heuristics:

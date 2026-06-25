@@ -54,7 +54,15 @@ public:
         juce::Component::SafePointer<DuskComboBox> safe (this);
         auto options = juce::PopupMenu::Options()
                            .withTargetComponent (this)
-                           .withMinimumWidth (getWidth());
+                           .withMinimumWidth (getWidth())
+                           // Force a SINGLE scrolling column. A tall categorized list
+                           // (section headers + items) otherwise lets JUCE auto-split
+                           // into multiple columns when it exceeds the parent height —
+                           // which detaches a category header from its items (the
+                           // "Chambers" header landed bottom-left while its presets
+                           // wrapped to the top-right column). One column + scroll
+                           // arrows keeps every header glued to its items.
+                           .withMaximumNumColumns (1);
 
         // Render in-window. Parent to the top-level editor so the menu lives in
         // the existing plugin surface (no native popup window). If we are not
