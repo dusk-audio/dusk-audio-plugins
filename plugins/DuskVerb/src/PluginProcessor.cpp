@@ -51,6 +51,7 @@ struct TuningEnv
     const char* shimmerdown;
     const char* frontload;
     const char* airshelf;
+    const char* lowshelf;
     TuningEnv()
         : pteq      (std::getenv ("DUSKVERB_PTEQ")),
           outdiff   (std::getenv ("DUSKVERB_OUTDIFF")),
@@ -79,7 +80,8 @@ struct TuningEnv
           buildup   (std::getenv ("DUSKVERB_BUILDUP")),
           shimmerdown (std::getenv ("DUSKVERB_SHIMMERDOWN")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
-          airshelf  (std::getenv ("DUSKVERB_AIRSHELF")) {}
+          airshelf  (std::getenv ("DUSKVERB_AIRSHELF")),
+          lowshelf  (std::getenv ("DUSKVERB_LOWSHELF")) {}
 };
 const TuningEnv& tuningEnv()
 {
@@ -2026,7 +2028,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // 2026-06-17 re-calibrated AFTER raising the preset decays to the anchor
             // LOW T60 (the lows were decay-walled = "weak/no low end"). Now the low
             // octaves reach the anchor's long low tail; GEQ still cuts mids/highs down.
-            { "Vocal Hall",           {{ 5.9265f, 5.6973f, 4.9098f, 4.0592f, 3.1336f, 2.6866f, 2.4414f, 2.2168f, 6.1134f }} },
+            { "Vocal Hall",           {{ 5.9265f, 5.6973f, 4.9098f, 4.0592f, 3.1336f, 2.6866f, 2.4414f, 2.2168f, 16.0000f }} },  // 2026-06-24 16k cmd 6.11->16.0: realized T60-16k 1.51->1.66s (anchor 1.71, was -11.7% short) = more top-octave tail sparkle (user: "decay sounds too short" = dark top). AA loss bounds it; 8k/edt/tail unchanged.
             { "Cathedral Large Hall", {{ 4.8689f, 4.5163f, 3.8568f, 3.3999f, 3.1294f, 2.6089f, 2.1764f, 1.9856f, 5.2543f }} },
             { "Bright Hall",          {{ 7.7700f, 7.5129f, 5.8751f, 5.3244f, 4.4570f, 3.9710f, 3.3470f, 2.5017f, 3.3005f }} },
             { "Blade Runner 224",     {{ 15.6953f, 10.5048f, 13.3874f, 11.0317f, 10.7739f, 6.6164f, 4.4356f, 2.3364f, 2.2943f }} },
@@ -2213,7 +2215,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // The air-shelf is an HF-LEVEL lever — it only belongs where the deficit is
             // a genuine HF LEVEL gap (present-but-quiet HF, reachable, decay-neutral).
             // These 4 close BOTH centroid gates cleanly at moderate gain:
-            { "Bright Hall",          { 4000.0f,   7.0f } },   // cent_50 -30.7->-7.9, cent_500 -18.1->+7.6
+            { "Bright Hall",          { 4000.0f,   2.0f } },   // 2026-06-24 +7->+2: ear "too bright" + snare-tail tilt (anchor +0.83 dB/oct vs DV+7 +2.02) + VVV panel is DARK (HighShelf -24dB@6k, HiCut 8k). +7 over-tilted the tail; +2 keeps a touch of early lift. (was cent_50 -30.7->-7.9)
             { "Vintage Gold Plate",   { 5000.0f,   7.5f } },   // cent_50 -30.5->-5.4, cent_500 -19.5->+5.9
             { "Deep Blue Day",        { 3000.0f,   6.0f } },   // cent_50 -14.4->+7.0, cent_500 -29.1->-9.5
             { "Ambience",             { 3000.0f,  -5.0f } },   // bright-late: cent_500 +45.3->+5.1, cent_50 +12.5->-11.7
@@ -2237,6 +2239,37 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             engine.setOutputAirShelf (as->second.freqHz, as->second.gainDb);
         else
             engine.setOutputAirShelf (8000.0f, 0.0f);   // bit-null
+    }
+
+    // Output low-shelf — per-preset deep-sub "fullness" BOOST (the LF counterpart of
+    // the air-shelf; the boom gates start at 40Hz, leaving 20-40Hz uncovered, and a
+    // preset's Lo Cut strips the deep weight the references keep). Post-tank feed-
+    // forward so boost is stable. Env DUSKVERB_LOWSHELF="freqHz,gainDb" rebuild-free;
+    // else the per-preset bake; else 0 dB → inactive → bit-null. Caught by the
+    // deep-sub 20-40Hz full_check gate.
+    {
+        struct LowShelf { float freqHz, gainDb; };
+        static const std::map<std::string_view, LowShelf> kOutputLowShelfByName = {
+            // BEGIN_LOWSHELF_MAP (per-preset deep-sub low-shelf, 2026-06-25. {freqHz, gainDb})
+            // Restores the 20-40Hz deep-sub "fullness" the references keep but DV's Lo Cut
+            // strips. Closes the deep-sub gate cleanly (no boom regression):
+            { "Bright Hall",          { 35.0f,  5.0f } },   // deep-sub -3.0 -> -0.9 (user: "fuller"); 35Hz corner keeps boost off the 40-100 boom -> no boom regression
+            { "Cathedral Large Hall", { 45.0f,  8.0f } },   // deep-sub -6.5 -> -1.9, no boom
+            // Blade Runner 224: NO low-shelf — its deep-sub deficit (-9.9dB) is too deep; any
+            // boost big enough to close it over-booms 40-100Hz (coupled). Structural residual.
+            // END_LOWSHELF_MAP
+        };
+        const char* env = tuningEnv().lowshelf;
+        if (env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() == 2) engine.setOutputLowShelf (t[0].getFloatValue(), t[1].getFloatValue());
+            else               engine.setOutputLowShelf (60.0f, 0.0f);
+        }
+        else if (auto ls = kOutputLowShelfByName.find (std::string_view (name)); ls != kOutputLowShelfByName.end())
+            engine.setOutputLowShelf (ls->second.freqHz, ls->second.gainDb);
+        else
+            engine.setOutputLowShelf (60.0f, 0.0f);   // bit-null
     }
 
     // Phase A early-field: tank-onset delay (DenseHall path). Env override

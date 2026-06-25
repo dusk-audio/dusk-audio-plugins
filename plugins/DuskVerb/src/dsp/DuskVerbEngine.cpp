@@ -199,6 +199,7 @@ void DuskVerbEngine::clearAllBuffers()
     loCutFilter_.reset();
     hiCutFilter_.reset();
     airShelfFilter_.reset();
+    lowShelfFilter_.reset();
     postTankEQ_.reset();
     erBusLowShelf_.reset();
     erBusHighShelf_.reset();
@@ -702,6 +703,7 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     { const float flat9[9] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
       setOutputMatchEQ (flat9); }                                  // output match-EQ → flat
     setOutputAirShelf (8000.0f, 0.0f);                             // output air-shelf → inactive (bit-null)
+    setOutputLowShelf (60.0f, 0.0f);                               // output low-shelf → inactive (bit-null)
     for (int b = 0; b < 9; ++b)                                    // per-octave T60 GEQ → inactive (legacy 3-band)
     { setDattorroOctaveT60 (b, 0.0f); setDenseHallOctaveT60 (b, 0.0f); setAccurateHallOctaveT60 (b, 0.0f);
       setDattorroTonalCorrDb (b, 0.0f); }                          // per-octave tonal-corr → 0 dB (identity)
@@ -1202,6 +1204,47 @@ void DuskVerbEngine::updateAirShelfCoeffs()
     airShelfFilter_.a2 =        (Aplus1 - Aminus1 * cosw - twoSqrtAalpha) / a0;
 }
 
+void DuskVerbEngine::setOutputLowShelf (float freqHz, float gainDb)
+{
+    const float f  = std::clamp (freqHz, 20.0f, 500.0f);
+    const float dB = std::clamp (gainDb, -18.0f, 18.0f);
+    if (f == lowShelfFreqHz_ && dB == lowShelfGainDb_)
+        return;
+    lowShelfFreqHz_ = f;
+    lowShelfGainDb_ = dB;
+    lowShelfActive_ = std::abs (dB) > 0.01f;
+    updateLowShelfCoeffs();
+}
+
+void DuskVerbEngine::updateLowShelfCoeffs()
+{
+    // RBJ 2nd-order low-SHELF at Q = 1/√2 — the deep-sub counterpart of the air-
+    // shelf. Positive dB BOOSTS the 20-60Hz octave. Post-tank / feed-forward, so a
+    // boost shelf is unconditionally stable. Inactive (0 dB) → unity coeffs + clear.
+    if (! lowShelfActive_)
+    {
+        lowShelfFilter_ = Biquad{};
+        return;
+    }
+    const float fs    = static_cast<float> (sampleRate_);
+    const float A     = std::pow (10.0f, lowShelfGainDb_ / 40.0f);
+    const float sqrtA = std::sqrt (A);
+    const float w0    = kTwoPi * lowShelfFreqHz_ / fs;
+    const float cosw  = std::cos (w0);
+    const float sinw  = std::sin (w0);
+    const float alpha = sinw / (2.0f * 0.7071067811865475f);
+    const float twoSqrtAalpha = 2.0f * sqrtA * alpha;
+    const float Aplus1  = A + 1.0f;
+    const float Aminus1 = A - 1.0f;
+    const float a0      = Aplus1 + Aminus1 * cosw + twoSqrtAalpha;
+
+    lowShelfFilter_.b0 =  A * (Aplus1 - Aminus1 * cosw + twoSqrtAalpha) / a0;
+    lowShelfFilter_.b1 =  2.0f * A * (Aminus1 - Aplus1 * cosw)          / a0;
+    lowShelfFilter_.b2 =  A * (Aplus1 - Aminus1 * cosw - twoSqrtAalpha) / a0;
+    lowShelfFilter_.a1 = -2.0f * (Aminus1 + Aplus1 * cosw)              / a0;
+    lowShelfFilter_.a2 =        (Aplus1 + Aminus1 * cosw - twoSqrtAalpha) / a0;
+}
+
 void DuskVerbEngine::process (float* left, float* right, int numSamples)
 {
     if (numSamples <= 0)
@@ -1601,6 +1644,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         {
             wetL = airShelfFilter_.processL (wetL);
             wetR = airShelfFilter_.processR (wetR);
+        }
+        // Output low-shelf (LF "fullness" boost/cut). Guarded → bit-null when 0 dB.
+        if (lowShelfActive_)
+        {
+            wetL = lowShelfFilter_.processL (wetL);
+            wetR = lowShelfFilter_.processR (wetR);
         }
 
         // Post-tank parametric EQ — sits AFTER the Hi Cut Shelf and BEFORE

@@ -178,6 +178,8 @@ public:
     void setHiCutShelfGainDb (float dB);
     // Post-tank HF air-shelf (boost or cut). 0 dB → inactive (bit-null bypass).
     void setOutputAirShelf (float freqHz, float gainDb);
+    // Post-tank LF low-shelf (deep-sub boost or cut). 0 dB → inactive (bit-null).
+    void setOutputLowShelf (float freqHz, float gainDb);
 
     // Post-tank parametric EQ (4-band). Each band is freq + Q + gainDb.
     // Lives AFTER the Hi Cut Shelf and BEFORE the dry/wet mix matrix.
@@ -651,6 +653,17 @@ private:
     float  airShelfGainDb_ = 0.0f;
     bool   airShelfActive_ = false;
     void   updateAirShelfCoeffs();
+
+    // Output low-shelf (LF "fullness" voicing): the deep-sub counterpart of the
+    // air-shelf — a post-tank RBJ low-shelf that can BOOST the 20-60Hz deep-sub
+    // octave the boom gates (40Hz+) and the cut-only EQs don't cover, restoring the
+    // weight a preset's Lo Cut strips vs the references. Per-preset freq + gain dB;
+    // 0 dB → inactive → bit-identical bypass. Feed-forward → boost is stable.
+    Biquad lowShelfFilter_;
+    float  lowShelfFreqHz_ = 60.0f;
+    float  lowShelfGainDb_ = 0.0f;
+    bool   lowShelfActive_ = false;
+    void   updateLowShelfCoeffs();
 
     // Post-tank parametric EQ (4 bands, series). Sits between Hi Cut Shelf
     // and the mono-below + Width + Gain Trim output chain. Default state is
