@@ -1732,6 +1732,17 @@ namespace {
                 {   1.20f,   1.50f,   1.00f,    1.20f },
                 {  -3.00f,  -3.50f,  -5.00f,   -6.00f },
             } },
+            // 79 Vocal Chamber (2026-06-25 ear: "dull vs VVV"): the QuadTank's 5-10k
+            // inversion + the earlier qt_air damp left ss-hi 5-10k -5.3dB. A 6.5kHz
+            // Q1.2 +4.5dB peak lifts the dull region (ss-hi -5.3 -> ~-1.8) without
+            // touching the hot >10k. COST: re-brightens the late tail (cent_500 fails)
+            // — the coupling wall (anchor's 5-10k is present early then decays; a static
+            // peak brightens early+late). EAR-CHECK: un-dull vs cent_500. Revertable.
+            { "79 Vocal Chamber", {
+                { 6500.0f,  500.0f, 1000.0f, 16000.0f },
+                {    1.20f,   1.00f,   1.00f,     1.00f },
+                {    4.50f,   0.00f,   0.00f,     0.00f },
+            } },
         };
         return m;
     }
