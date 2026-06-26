@@ -91,7 +91,13 @@ namespace Constants {
     // T4B Optical Cell — CdS photoresistor + electroluminescent panel
     constexpr float T4B_ATTACK_TIME = 0.002f;             // 2ms CdS fast charge
     constexpr float T4B_FAST_RELEASE_TIME = 0.060f;       // 60ms CdS base discharge
-    constexpr float T4B_PHOSPHOR_BASE_DECAY = 1.5f;       // 1.5s phosphor decay (real T4B measured 1.5-2s)
+    constexpr float T4B_PHOSPHOR_BASE_DECAY = 1.5f;       // 1.5s fast phosphor decay (real T4B measured 1.5-2s)
+    // Real T4B phosphor has a secondary slow afterglow that persists
+    // 4-6 s under sustained illumination. Modelled as a parallel decay
+    // with its own TC and a small residual coupling into the cell.
+    constexpr float T4B_PHOSPHOR_AFTERGLOW_DECAY = 5.0f;  // 5s base afterglow decay
+    constexpr float T4B_PHOSPHOR_AFTERGLOW_ATTACK_RATIO = 0.25f; // afterglow attack vs decay
+    constexpr float T4B_PHOSPHOR_AFTERGLOW_COUPLING = 0.12f;     // residual sustain compression
     constexpr float T4B_PHOSPHOR_ATTACK_RATIO = 0.3f;     // Phosphor attack relative to decay
     constexpr float T4B_GAMMA = 0.7f;                     // CdS power law exponent (real CdS ~0.5-1.0)
     constexpr float T4B_CONDUCTANCE_K = 3.0f;             // Conductance scaling (re-tuned for gamma=0.7)
@@ -127,6 +133,7 @@ namespace Constants {
     constexpr float BUS_SIDECHAIN_HP_FREQ = 60.0f; // Hz
     constexpr float BUS_MAX_REDUCTION_DB = 20.0f;
     constexpr float BUS_OVEREASY_KNEE_WIDTH = 10.0f; // dB
+    constexpr float BUS_RMS_TIME = 0.005f;           // 5ms RMS averaging (SSL-style smooth sidechain)
 
     // Studio FET constants - cleaner than Vintage FET
     constexpr float STUDIO_FET_THRESHOLD_DB = -10.0f;
@@ -1182,6 +1189,7 @@ public:
             det.elPanelLevel = 0.0f;
             det.cellCharge = 0.0f;
             det.phosphorGlow = 0.0f;
+            det.phosphorAfterglow = 0.0f;
             det.accumulatedCharge = 0.0f;
             det.smoothedConductance = 0.0f;
             det.t4bGain = 1.0f;
@@ -1417,6 +1425,7 @@ private:
         float elPanelLevel = 0.0f;        // EL panel thermal response (smoothed sidechain drive)
         float cellCharge = 0.0f;          // CdS fast component (~10ms attack, ~60ms release)
         float phosphorGlow = 0.0f;        // EL panel slow persistence (1-5s decay)
+        float phosphorAfterglow = 0.0f;   // EL panel very-slow afterglow (4-6s, sustained material)
         float accumulatedCharge = 0.0f;    // Long-term charge for program dependency (0-1)
         float smoothedConductance = 0.0f; // Bandwidth-limited CdS conductance
         float t4bGain = 1.0f;             // Current gain from T4B cell (IS the envelope)
@@ -1471,6 +1480,29 @@ private:
             det.phosphorGlow = lightLevel + (det.phosphorGlow - lightLevel) * phosphorReleaseCoeff;
         }
 
+        // Secondary phosphor afterglow (M1 — dual-decay T4B): a parallel
+        // decay with a much longer TC (4-6 s under sustained material)
+        // tracks the same illumination but releases much slower. Its
+        // residual coupling into cellResponse keeps a hint of compression
+        // alive long after the fast components have cleared, matching the
+        // "red afterglow" persistence observed on real T4B cells.
+        if (lightLevel > det.phosphorAfterglow)
+        {
+            float afterglowAttackCoeff = std::pow(
+                std::exp(-1.0f / (Constants::T4B_PHOSPHOR_AFTERGLOW_DECAY * static_cast<float>(sampleRate))),
+                Constants::T4B_PHOSPHOR_AFTERGLOW_ATTACK_RATIO);
+            det.phosphorAfterglow = lightLevel
+                + (det.phosphorAfterglow - lightLevel) * afterglowAttackCoeff;
+        }
+        else
+        {
+            float afterglowDecayTime = Constants::T4B_PHOSPHOR_AFTERGLOW_DECAY
+                + det.accumulatedCharge * Constants::T4B_PROG_DEP_PHOSPHOR_SCALE;
+            float afterglowReleaseCoeff = std::exp(-invSampleRate / afterglowDecayTime);
+            det.phosphorAfterglow = lightLevel
+                + (det.phosphorAfterglow - lightLevel) * afterglowReleaseCoeff;
+        }
+
         // Program-dependent charge accumulation
         // CdS cells exhibit "memory" — sustained illumination creates deep
         // charge states that take longer to dissipate
@@ -1478,8 +1510,12 @@ private:
             - det.accumulatedCharge * Constants::T4B_PROG_DEP_DISCHARGE_RATE * invSampleRate;
         det.accumulatedCharge = juce::jlimit(0.0f, 1.0f, det.accumulatedCharge);
 
-        // CdS resistance-to-gain mapping
-        float cellResponse = det.cellCharge + det.phosphorGlow * Constants::T4B_PHOSPHOR_COUPLING;
+        // CdS resistance-to-gain mapping. Sum fast cell + slow phosphor +
+        // very-slow afterglow so sustained material keeps a residual
+        // gain reduction long after the input quietens (dual-decay T4B).
+        float cellResponse = det.cellCharge
+                            + det.phosphorGlow * Constants::T4B_PHOSPHOR_COUPLING
+                            + det.phosphorAfterglow * Constants::T4B_PHOSPHOR_AFTERGLOW_COUPLING;
         cellResponse = juce::jlimit(0.0f, 1.0f, cellResponse);
         float conductance = (cellResponse > 0.0f)
             ? std::min(Constants::T4B_CONDUCTANCE_K * std::pow(cellResponse, Constants::T4B_GAMMA),
@@ -1620,6 +1656,7 @@ public:
             detector.sagCounter = 0;
             detector.hfChokeState = 0.0f;
             detector.tiltState = 0.0f;
+            detector.subBassHpState = 0.0f;
         }
 
         // 1176 sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
@@ -1695,9 +1732,12 @@ public:
         float inputGainLin = juce::Decibels::decibelsToGain(inputGainDb);
         float amplifiedInput = transformedInput * inputGainLin;
 
-        // Ratio mapping: 4:1, 8:1, 12:1, 20:1, all-buttons mode
-        // All-buttons mode: effective ratio 12:1–20:1 (uses non-linear curve, not this value)
-        std::array<float, 5> ratios = {4.0f, 8.0f, 12.0f, 20.0f, 20.0f};
+        // Ratio mapping: measured Rev D 1176 ratios (not the nominal panel
+        // markings). JFET square-law conduction drifts the effective slope
+        // off the integer label by ~5-10 %. All-buttons mode follows its
+        // own non-linear curve below, so the table entry there only matters
+        // when the curve clamps.
+        std::array<float, 5> ratios = {3.85f, 7.40f, 12.50f, 21.50f, 21.50f};
         float ratio = ratios[juce::jlimit(0, 4, ratioIndex)];
 
         // FEEDBACK TOPOLOGY for authentic FET behavior
@@ -1725,9 +1765,12 @@ public:
             }
             else
             {
-                // Normal ratios: FET coloring (~0.3-0.5% THD target)
-                k2 = 0.032f;
-                k3 = 0.006f;
+                // Normal ratios: FET coloring scales with gain reduction, like a
+                // real 1176 — nearly clean when barely working, grittier when
+                // driven hard. Calibrated so ~6 dB GR matches the previous fixed
+                // 0.032 / 0.006 values, with less color below and more above.
+                k2 = 0.024f + grNorm * 0.026f;   // 2nd harmonic: 0.024 (clean) → 0.050 (driven)
+                k3 = 0.004f + grNorm * 0.008f;   // 3rd harmonic: 0.004 → 0.012
             }
 
             float x = saturated;
@@ -1998,6 +2041,24 @@ public:
         // Apply voltage sag before makeup gain
         output *= sagGain;
 
+        // Sub-bass tightening: GR-driven 1-pole HPF. Cutoff sweeps from
+        // 20 Hz (effectively off) at 0 dB GR up to 80 Hz at 20 dB GR.
+        // Emulates the 1176's coupling-capacitor saturation that tightens
+        // the low end under heavy compression. Per-channel state lives on
+        // `detector.subBassHpState`. Implementation: LPF state tracks the
+        // low-end content, then we subtract it from the signal to get
+        // the HPF output (single-pole topology, no allocation, no log/exp
+        // beyond what's already in this hot path).
+        {
+            float grDbHpf = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+            float grScaleHpf = juce::jlimit(0.0f, 1.0f, grDbHpf / 20.0f);
+            float hpfCutoffHz = 20.0f + grScaleHpf * 60.0f;
+            float alpha = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi
+                                          * hpfCutoffHz / sr);
+            detector.subBassHpState += alpha * (output - detector.subBassHpState);
+            output -= detector.subBassHpState;
+        }
+
         float outputGainLin = juce::Decibels::decibelsToGain(outputGainDb);
         float finalOutput = output * outputGainLin;
 
@@ -2029,6 +2090,7 @@ private:
         int sagCounter = 0;          // Samples sustained above 15dB GR
         float hfChokeState = 0.0f;   // 1-pole LPF state for HF choke in feedback
         float tiltState = 0.0f;      // 1176 sidechain tilt filter state
+        float subBassHpState = 0.0f; // 1-pole LPF state for GR-driven sub-bass HPF (output side)
     };
 
     std::vector<Detector> detectors;
@@ -2104,6 +2166,11 @@ private:
 class UniversalCompressor::VCACompressor
 {
 public:
+    // M3: when true, use a fixed 10 ms RMS time constant (dbx 160 spec)
+    // instead of the level-adaptive 35 ms → 5 ms curve. Caller sets this
+    // once per block from the "vca_detector_mode" APVTS choice param.
+    void setDetectorClassic(bool classic) noexcept { detectorClassic = classic; }
+
     void prepare(double sampleRate, int numChannels)
     {
         this->sampleRate = sampleRate;
@@ -2154,10 +2221,21 @@ public:
         // dbx 160: Level-dependent RMS time constant
         // Real dbx 202XT VCA junction impedance decreases with level
         // Small-signal: ~35ms; loud signals: ~5ms
-        float levelDb = juce::Decibels::gainToDecibels(juce::jmax(detectionLevel, 0.0001f));
-        float levelAboveRef = juce::jlimit(0.0f, 30.0f, levelDb + 20.0f); // 0-30dB above -20dBFS
-        float levelFactor = levelAboveRef / 30.0f; // 0 = quiet, 1 = loud
-        float rmsTimeMs = 0.005f + 0.030f * std::exp(-3.0f * levelFactor);
+        // M3: "Classic" mode forces a fixed 10 ms TC for dbx 160 authenticity
+        // (no level adaptation). Default "Adaptive" preserves the donor's
+        // prior behaviour.
+        float rmsTimeMs;
+        if (detectorClassic)
+        {
+            rmsTimeMs = 0.010f;
+        }
+        else
+        {
+            float levelDb = juce::Decibels::gainToDecibels(juce::jmax(detectionLevel, 0.0001f));
+            float levelAboveRef = juce::jlimit(0.0f, 30.0f, levelDb + 20.0f); // 0-30dB above -20dBFS
+            float levelFactor = levelAboveRef / 30.0f; // 0 = quiet, 1 = loud
+            rmsTimeMs = 0.005f + 0.030f * std::exp(-3.0f * levelFactor);
+        }
         const float rmsAlpha = std::exp(-1.0f / (juce::jmax(0.0001f, rmsTimeMs) * static_cast<float>(sampleRate)));
         detector.rmsBuffer = detector.rmsBuffer * rmsAlpha + detectionLevel * detectionLevel * (1.0f - rmsAlpha);
         float rmsLevel = std::sqrt(detector.rmsBuffer);
@@ -2437,6 +2515,7 @@ private:
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
+    bool detectorClassic = false;  // M3: dbx 160 fixed 10 ms RMS TC when true
 
 public:
     void updateSampleRate(double newSampleRate)
@@ -2509,6 +2588,56 @@ public:
         calibrateHardwareGain();
     }
 
+    // ---- Shared bus DSP (used by process() and processStereoLinked) ----
+private:
+    struct Detector;   // defined below; forward-declared for the helper signatures
+
+    // Feedback sidechain: 60Hz 2-pole HPF on the previous compressed output, rectified.
+    float busHpRectify (Detector& d)
+    {
+        const float fb = d.prevCompressed;
+        const float sr = static_cast<float> (sampleRate);
+        const float alpha = 1.0f / (1.0f + 6.2831853f * 60.0f / sr);
+        d.hpState   = alpha * (d.hpState + fb - d.prevInput);
+        d.prevInput = fb;
+        const float firstPole = d.hpState;
+        d.hpState2   = alpha * (d.hpState2 + firstPole - d.prevInput2);
+        d.prevInput2 = firstPole;
+        return std::abs (d.hpState2);
+    }
+
+    // RMS averaging of the rectified sidechain — the SSL bus detector averages
+    // (RMS), it is not a peak follower; this is what gives the smooth "glue".
+    float busRms (Detector& d, float rectified)
+    {
+        const float sr = static_cast<float> (sampleRate);
+        const float rmsCoeff = std::exp (-1.0f / juce::jmax (1.0f, Constants::BUS_RMS_TIME * sr));
+        d.rms = rmsCoeff * d.rms + (1.0f - rmsCoeff) * rectified * rectified;
+        return std::sqrt (juce::jmax (0.0f, d.rms));
+    }
+
+    // Over-easy (soft-knee) gain computer over BUS_OVEREASY_KNEE_WIDTH dB — the
+    // SSL bus knee, replacing the old hard knee.
+    float busReduction (float detectionLevel, float thresholdLin, float ratio)
+    {
+        const float overThreshDb = juce::Decibels::gainToDecibels (
+            juce::jmax (detectionLevel, 1.0e-9f) / thresholdLin);
+        const float reductionRatio = 1.0f - 1.0f / ratio;
+        const float knee = Constants::BUS_OVEREASY_KNEE_WIDTH;
+        float reduction;
+        if (overThreshDb <= -knee * 0.5f)
+            reduction = 0.0f;
+        else if (overThreshDb >= knee * 0.5f)
+            reduction = overThreshDb * reductionRatio;
+        else
+        {
+            const float x = overThreshDb + knee * 0.5f;   // 0..knee inside the knee
+            reduction = reductionRatio * (x * x) / (2.0f * knee);
+        }
+        return juce::jmin (reduction, Constants::BUS_MAX_REDUCTION_DB);
+    }
+
+public:
     float process(float input, int channel, float threshold, float ratio,
                   int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
@@ -2528,49 +2657,20 @@ public:
         // Bus Compressor quad VCA topology
         // Uses parallel detection path with feedback design (sidechain taps compressed output)
 
-        // Determine detection signal: use external sidechain if active, otherwise internal filter
-        float detectionLevel;
-        if (useExternalSidechain)
-        {
-            // Use external sidechain for detection
-            detectionLevel = std::abs(sidechainSignal);
-        }
-        else
-        {
-            // Feedback topology: detect from previous sample's compressed output
-            float sidechainInput = detector.prevCompressed;
-            // 60Hz 2nd-order (12dB/oct) Butterworth HPF for sidechain (prevents LF pumping)
-            {
-                float sr = static_cast<float>(sampleRate);
-                float alpha = 1.0f / (1.0f + 6.2831853f * 60.0f / sr);
-                // First pole
-                detector.hpState = alpha * (detector.hpState + sidechainInput - detector.prevInput);
-                detector.prevInput = sidechainInput;
-                // Second pole (12dB/oct total)
-                float firstPoleOut = detector.hpState;
-                detector.hpState2 = alpha * (detector.hpState2 + firstPoleOut - detector.prevInput2);
-                detector.prevInput2 = firstPoleOut;
-                sidechainInput = detector.hpState2;
-            }
-            detectionLevel = std::abs(sidechainInput);
-        }
-        
+        // Sidechain detection: external or feedback (HP-filtered previous output),
+        // RMS-averaged for the SSL-style smooth/averaging response.
+        const float rectified = useExternalSidechain ? std::abs (sidechainSignal)
+                                                      : busHpRectify (detector);
+        float detectionLevel = busRms (detector, rectified);
+
         // Bus Compressor specific ratios: 2:1, 4:1, 10:1
         // ratio parameter already contains the actual ratio value (2.0, 4.0, or 10.0)
         float actualRatio = ratio;
-        
+
         float thresholdLin = juce::Decibels::decibelsToGain(threshold);
-        
-        float reduction = 0.0f;
-        if (detectionLevel > thresholdLin)
-        {
-            float overThreshDb = juce::Decibels::gainToDecibels(detectionLevel / thresholdLin);
-            
-            // Bus Compressor compression curve - relatively linear/hard knee
-            reduction = overThreshDb * (1.0f - 1.0f / actualRatio);
-            // Bus compressor typically used for gentle compression (max ~20dB GR)
-            reduction = juce::jmin(reduction, Constants::BUS_MAX_REDUCTION_DB);
-        }
+
+        // Over-easy (soft-knee) gain computer — the SSL "glue" knee.
+        float reduction = busReduction (detectionLevel, thresholdLin, actualRatio);
         
         // Bus Compressor attack and release times
         std::array<float, 6> attackTimes = {0.1f, 0.3f, 1.0f, 3.0f, 10.0f, 30.0f}; // ms
@@ -2672,7 +2772,101 @@ public:
         // Final output limiting
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
-    
+
+    // Stereo-linked bus processing — true SSL G-bus behaviour: the sidechain is
+    // shared across the L/R pair so an asymmetric stereo signal never pulls the
+    // image. The per-channel process() above runs in a channel-outer loop and so
+    // can't share feedback state; this processes the L/R pair in lockstep.
+    // Each channel's detection is blended toward the pair's max by
+    // stereoLinkAmount: 100% = both see the max → identical gain (full SSL link),
+    // less = the channels partially diverge (matching the continuous link knob
+    // the other modes honour). Feedback topology is preserved.
+    void processStereoLinked (float* dataL, float* dataR, int numSamples,
+                              float threshold, float ratio,
+                              int attackIndex, int releaseIndex,
+                              float makeupGain, float postGain, float stereoLinkAmount,
+                              const float* extScL, const float* extScR,
+                              bool useExternalSidechain)
+    {
+        if (detectors.size() < 2 || sampleRate <= 0.0)
+            return;
+
+        auto& dL = detectors[(size_t) 0];
+        auto& dR = detectors[(size_t) 1];
+        const float sr = static_cast<float> (sampleRate);
+        const float thresholdLin = juce::Decibels::decibelsToGain (threshold);
+        const float linkAmt = juce::jlimit (0.0f, 1.0f, stereoLinkAmount);
+        const std::array<float, 6> attackTimes  = { 0.1f, 0.3f, 1.0f, 3.0f, 10.0f, 30.0f };
+        const std::array<float, 5> releaseTimes = { 100.0f, 300.0f, 600.0f, 1200.0f, -1.0f };
+        const float attackTime  = attackTimes[(size_t) juce::jlimit (0, 5, attackIndex)] * 0.001f;
+        const float baseRelease = releaseTimes[(size_t) juce::jlimit (0, 4, releaseIndex)] * 0.001f;
+        constexpr float k2 = 0.004f, k3 = 0.003f;
+
+        // Output stage (console harmonics + transformer + IR + makeup), per channel.
+        auto outStage = [this] (float compressed, int ch, float makeup)
+        {
+            float p = compressed;
+            const float x2 = p * p, x3 = x2 * p;
+            p = p + k2 * x2 + k3 * x3;
+            p = outputTransformer.processSample (p, ch);
+            p = convolution.processSample (p, ch);
+            p *= hardwareGainCompensation;
+            const float out = p * juce::Decibels::decibelsToGain (makeup);
+            return juce::jlimit (-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, out);
+        };
+
+        // Advance one channel's envelope from its (link-blended) detection and
+        // return the gain. At link=100% both channels get the same detection and
+        // converge to identical gain (true SSL link); below they partially diverge.
+        auto advance = [&] (Detector& d, float detUsed) -> float
+        {
+            const float reduction = busReduction (detUsed, thresholdLin, ratio);
+            float releaseTime = baseRelease;
+            if (releaseTime < 0.0f)   // Auto: program-dependent 150-450ms, per channel
+            {
+                const float signalDelta = std::abs (detUsed - d.previousLevel);
+                d.previousLevel = d.previousLevel * 0.95f + detUsed * 0.05f;
+                const float transientDensity  = juce::jlimit (0.0f, 1.0f, signalDelta * 20.0f);
+                const float compressionFactor = juce::jlimit (0.0f, 1.0f, reduction / 12.0f);
+                releaseTime = 0.15f + (1.0f - transientDensity) * compressionFactor * (0.45f - 0.15f);
+            }
+            const float targetGain = juce::Decibels::decibelsToGain (-reduction);
+            float& env = d.envelope;
+            if (targetGain < env)
+                env = targetGain + (env - targetGain) * std::exp (-1.0f / juce::jmax (1.0f, attackTime  * sr));
+            else
+                env = targetGain + (env - targetGain) * std::exp (-1.0f / juce::jmax (1.0f, releaseTime * sr));
+            if (std::isnan (env) || std::isinf (env))
+                env = 1.0f;
+            return env;
+        };
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float tL = inputTransformer.processSample (dataL[i], 0);
+            const float tR = inputTransformer.processSample (dataR[i], 1);
+
+            // Per-channel RMS detection (external or HP-filtered feedback), each
+            // blended toward the pair's max by the link amount.
+            const float detL = busRms (dL, useExternalSidechain ? std::abs (extScL[i]) : busHpRectify (dL));
+            const float detR = busRms (dR, useExternalSidechain ? std::abs (extScR[i]) : busHpRectify (dR));
+            const float linked = juce::jmax (detL, detR);
+            const float useL = detL * (1.0f - linkAmt) + linked * linkAmt;
+            const float useR = detR * (1.0f - linkAmt) + linked * linkAmt;
+
+            const float envL = advance (dL, useL);
+            const float envR = advance (dR, useR);
+
+            const float cL = tL * envL;
+            const float cR = tR * envR;
+            dL.prevCompressed = cL;   // feedback taps
+            dR.prevCompressed = cR;
+
+            dataL[i] = outStage (cL, 0, makeupGain) * postGain;
+            dataR[i] = outStage (cR, 1, makeupGain) * postGain;
+        }
+    }
+
     float getGainReduction(int channel) const
     {
         if (channel >= static_cast<int>(detectors.size()))
@@ -4446,6 +4640,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "vca_output", "Output", 
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>("vca_overeasy", "Over Easy", false));
+
+    // VCA detector mode: "Adaptive" matches the donor's prior behaviour
+    // (level-dependent RMS TC, 35 ms → 5 ms). "Classic" forces a fixed
+    // 10 ms RMS TC for dbx 160 authenticity. Default Adaptive so existing
+    // sessions / DAW projects keep their sound.
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "vca_detector_mode", "VCA Detector",
+        juce::StringArray{"Adaptive", "Classic"}, 0));
     
     // Bus parameters (Bus Compressor style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -5492,6 +5694,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 // When auto-makeup is enabled, force output to 0dB (unity)
                 cachedParams[4] = autoMakeup ? 0.0f : p5->load();
                 cachedParams[5] = p6->load(); // Store OverEasy state
+                // M3: push detector mode onto vcaCompressor itself so the
+                // process() signature stays unchanged. Choice index 1 ==
+                // "Classic" (fixed 10 ms RMS); 0 == "Adaptive" (default).
+                if (auto* p7 = parameters.getRawParameterValue("vca_detector_mode"))
+                    if (vcaCompressor != nullptr)
+                        vcaCompressor->setDetectorClassic(p7->load() > 0.5f);
             } else validParams = false;
             break;
         }
@@ -6205,8 +6413,28 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, true, scData[i], hasExternalSidechain);
                     break;
                 case CompressorMode::Bus:
-                    for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i], hasExternalSidechain);
+                    if (useStereoLink && osNumChannels >= 2 && channel == 0)
+                    {
+                        // True SSL stereo link (oversampled path): shared sidechain
+                        // drives both VCAs. No compensationGain here (postGain=1).
+                        busCompressor->processStereoLinked(
+                            oversampledBlock.getChannelPointer(static_cast<size_t>(0)), oversampledBlock.getChannelPointer(static_cast<size_t>(1)), osNumSamples,
+                            cachedParams[0], cachedParams[1],
+                            static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]),
+                            cachedParams[4], 1.0f, stereoLinkAmount,
+                            interpolatedSidechain.getReadPointer(0),
+                            interpolatedSidechain.getReadPointer(juce::jmin(1, interpolatedSidechain.getNumChannels() - 1)),
+                            hasExternalSidechain);
+                    }
+                    else if (useStereoLink && osNumChannels >= 2 && channel == 1)
+                    {
+                        // Already processed by the channel==0 lockstep call.
+                    }
+                    else
+                    {
+                        for (int i = 0; i < osNumSamples; ++i)
+                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i], hasExternalSidechain);
+                    }
                     break;
                 case CompressorMode::StudioFET:
                     // Optimized: use pre-interpolated sidechain with direct pointer access
@@ -6316,14 +6544,34 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     }
                     break;
                 case CompressorMode::Bus:
-                    for (int i = 0; i < numSamples; ++i)
+                    if (useStereoLink && numChannels >= 2 && channel == 0)
                     {
-                        float scSignal;
-                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
-                            scSignal = linkedSidechain.getSample(channel, i);
-                        else
-                            scSignal = filteredSidechain.getSample(channel, i);
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal, hasExternalSidechain) * compensationGain;
+                        // True SSL stereo link: one shared sidechain drives both
+                        // VCAs (processes L+R together; the channel==1 pass below
+                        // is a no-op). compensationGain applied inside as postGain.
+                        busCompressor->processStereoLinked(
+                            buffer.getWritePointer(0), buffer.getWritePointer(1), numSamples,
+                            cachedParams[0], cachedParams[1],
+                            static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]),
+                            cachedParams[4], compensationGain, stereoLinkAmount,
+                            linkedSidechain.getReadPointer(0), linkedSidechain.getReadPointer(1),
+                            hasExternalSidechain);
+                    }
+                    else if (useStereoLink && numChannels >= 2 && channel == 1)
+                    {
+                        // Already processed by the channel==0 lockstep call.
+                    }
+                    else
+                    {
+                        for (int i = 0; i < numSamples; ++i)
+                        {
+                            float scSignal;
+                            if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
+                                scSignal = linkedSidechain.getSample(channel, i);
+                            else
+                                scSignal = filteredSidechain.getSample(channel, i);
+                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal, hasExternalSidechain) * compensationGain;
+                        }
                     }
                     break;
                 case CompressorMode::StudioFET:
