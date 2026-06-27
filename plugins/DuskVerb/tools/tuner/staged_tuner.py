@@ -150,6 +150,9 @@ STAGE1_FLAT_DEFAULTS = {
     # EQs flat
     "Lo Cut": 20.0, "Hi Cut": 20000.0, "Saturation": 0.0,
     "Gain Trim": 0.0,
+    # Hi Cut Shelf neutral (0 dB = no shelf). Stage 3 owns it (s3_active); without
+    # this default Stage 1/2 inherit the factory shelf instead of staying flat.
+    "Hi Cut Shelf": 0.0,
     # Phase α PostTankEQ — 0 dB = unity bypass (designUnity → bit-identical
     # passthrough). Locking these flat in stages that don't own them keeps
     # presets without an EQ override sounding identical to pre-Phase-α.
@@ -1059,34 +1062,38 @@ def run_stage(stage_name, active_params, locked_overrides, loss_fn,
             sample[name] = lo + u * (hi - lo)
         overrides = {**locked_overrides, **sample}
         out = scratch / f"{stage_slug}_{trial.number:04d}"
-        files = render(preset, overrides, vst3, out)
-        if files is None:
-            return 1e6
+        # finally guarantees the per-trial output dir is removed even when
+        # render() returns None or loss_fn raises — otherwise those paths leak.
         try:
-            loss, info = loss_fn(files, anchor_files)
-        except Exception as e:
-            sys.stderr.write(f"stage loss raised: {e}\n")
-            return 1e6
-        for k, v in info.items():
-            if isinstance(v, (int, float)) and v == v:
-                trial.set_user_attr(k, float(v))
-        # Record denormalized values so the report shows real units.
-        for k, v in sample.items():
-            trial.set_user_attr(f"denorm_{k}", float(v))
-        # Live trial breakdown — first 20 trials + every 25th after — so
-        # the bass-clarity penalty's effect on the loss surface is visible
-        # in real time during the sweep.
-        if trial.number < 20 or trial.number % 25 == 0:
-            bc = info.get("bass_clarity_loss", 0.0)
-            bch = info.get("bass_clarity_max_hot_dB", 0.0)
-            sl1 = (info.get("spec_L1_max_dB")
-                   or info.get("spec_l1_db")
-                   or info.get("spec_L1") or 0.0)
-            print(f"  trial {trial.number:04d}  loss={loss:.4f}  "
-                  f"spec={sl1:.3f}  bass_clarity={bc:.4f}  "
-                  f"max_hot_dB={bch:+.2f}", flush=True)
-        shutil.rmtree(out, ignore_errors=True)
-        return loss
+            files = render(preset, overrides, vst3, out)
+            if files is None:
+                return 1e6
+            try:
+                loss, info = loss_fn(files, anchor_files)
+            except Exception as e:
+                sys.stderr.write(f"stage loss raised: {e}\n")
+                return 1e6
+            for k, v in info.items():
+                if isinstance(v, (int, float)) and v == v:
+                    trial.set_user_attr(k, float(v))
+            # Record denormalized values so the report shows real units.
+            for k, v in sample.items():
+                trial.set_user_attr(f"denorm_{k}", float(v))
+            # Live trial breakdown — first 20 trials + every 25th after — so
+            # the bass-clarity penalty's effect on the loss surface is visible
+            # in real time during the sweep.
+            if trial.number < 20 or trial.number % 25 == 0:
+                bc = info.get("bass_clarity_loss", 0.0)
+                bch = info.get("bass_clarity_max_hot_dB", 0.0)
+                sl1 = (info.get("spec_L1_max_dB")
+                       or info.get("spec_l1_db")
+                       or info.get("spec_L1") or 0.0)
+                print(f"  trial {trial.number:04d}  loss={loss:.4f}  "
+                      f"spec={sl1:.3f}  bass_clarity={bc:.4f}  "
+                      f"max_hot_dB={bch:+.2f}", flush=True)
+            return loss
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
 
     t0 = time.time()
     study.optimize(objective, n_trials=n_trials, n_jobs=workers, show_progress_bar=False)
@@ -1143,6 +1150,12 @@ def main():
           f"{len(profile['stage1_ranges'])} stage-1 clamps")
 
     anchor_n = Path(args.anchor_rendered)
+    # The sustained/snare paths are derived by substituting "_noiseburst"; if the
+    # basename doesn't contain it, .replace() is a no-op → anchor_s/snare alias the
+    # noiseburst file and the tuner silently scores the wrong stimuli. Fail fast.
+    if "_noiseburst" not in anchor_n.name:
+        sys.exit(f"--anchor-rendered must point at the *_noiseburst*.wav anchor "
+                 f"(got '{anchor_n.name}'); sustained/snare paths derive from it)")
     anchor_s = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_sustained"))
     anchor_snare = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_snare"))
     for p in (anchor_n, anchor_s, anchor_snare):
@@ -1152,11 +1165,12 @@ def main():
                     "sustained": str(anchor_s),
                     "snare": str(anchor_snare)}
 
+    # Unique per-run work dir (tempfile.mkdtemp) so a concurrent / prior run of the
+    # SAME preset isn't wiped — the old `rmtree(work_dir/slug)` could erase another
+    # run's artifacts mid-flight.
     slug = "".join(c for c in args.preset if c.isalnum() or c in "+-_'")
-    work = Path(args.work_dir) / slug
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
+    Path(args.work_dir).mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f"{slug}_", dir=args.work_dir))
 
     # ─── Automated anchor profiling ────────────────────────────────────────
     # Slope-fit tail_t60 on the sustained-pink anchor post input-off, convert

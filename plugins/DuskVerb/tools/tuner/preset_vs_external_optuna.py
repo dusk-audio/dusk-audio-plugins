@@ -79,7 +79,7 @@ FREE_PARAMS = {
     # Crossovers — clamped to physically realistic bass/treble band edges.
     # Below ~80 Hz the bass band stops separating from sub; above ~600 Hz it
     # collapses the mid band. High crossover above 10 kHz collapses HF into mid.
-    "Low Crossover":   (80.0,   800.0),    # APVTS [200, 4000] — 800 ceiling for ambient (Black Hole 700)
+    "Low Crossover":   (200.0,  800.0),    # APVTS [200, 4000] — 800 ceiling for ambient (Black Hole 700)
     "High Crossover":  (3000.0, 10000.0),  # APVTS [1000, 12000] — clamped
     "Diffusion":       (0.00,    1.00),    # APVTS [0.0, 1.0]
     "Lo Cut":          (20.0,    60.0),    # ceiling 60 (was 500): a >60 Hz HPF guts the kick fundamental + sub → audibly weak low end (Drum Plate listening 2026-05-31). APVTS [5, 500]
@@ -409,6 +409,7 @@ def make_objective(
             prerun_seconds=prerun_seconds,
         )
         if impulse is None:
+            shutil.rmtree(out_dir, ignore_errors=True)
             return fail_loss
 
         # ── DIRECT SCOREBOARD OPTIMIZATION (Option A, 2026-05-30) ──────────
@@ -619,11 +620,15 @@ def main():
 
     # Dump the best params as JSON for downstream tooling.
     best_json = trial_root / "best.json"
+    try:
+        best_overrides = json.loads(best.user_attrs.get('params', '')) if best.user_attrs.get('params') else dict(best.params)
+    except Exception:
+        best_overrides = dict(best.params)
     payload = {
         "preset": args.dv_preset,
         "target_ir": str(target_ir),
         "best_loss": best.value,
-        "best_params": best.params,
+        "best_params": best_overrides,
         "best_metrics": {k: v for k, v in best.user_attrs.items()},
         "n_trials": args.trials,
         "elapsed_sec": elapsed,

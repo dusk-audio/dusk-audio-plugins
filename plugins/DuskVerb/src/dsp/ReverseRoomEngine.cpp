@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 
 // ============================================================================
 // ReverseRoomEngine — causal rising-ER onset + dark modulated FDN tail.
@@ -16,27 +18,28 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     sampleRate_ = sampleRate;
     maxBlock_   = maxBlockSize;
 
-    fdn_.prepare (sampleRate, maxBlockSize);
-    // Dark, dense, modulated diffuse tail baseline (the "Reverse 1" room) —
-    // applied ONCE. fdn_ retains its parameter members across its own
-    // fdn_.prepare(), so on later prepares (sample-rate / block-size changes)
-    // we must NOT re-stamp these literals, or we'd wipe whatever the preset's
-    // setters pushed into fdn_ (the setters forward live, before/after prepare).
-    if (! baselineApplied_)
+    // Tuning sweep override (init thread only — NEVER in process()). No-op when
+    // unset → shipping renders use the hard-coded defaults (bit-null/determinism
+    // preserved). Format: "rampMs,slope,floorGain,threshDB,holdMs,closeTauMs".
+    if (const char* ov = std::getenv ("DUSKVERB_REVERSE"))
     {
-        fdn_.setDecayTime         (2.0f);
-        fdn_.setSize              (0.85f);
-        fdn_.setBassMultiply      (1.20f);
-        fdn_.setMidMultiply       (1.05f);
-        fdn_.setTrebleMultiply    (0.55f);   // heavy HF damping (9.8k -> 3k centroid)
-        fdn_.setCrossoverFreq     (275.0f);  // Bass XOver from the reference
-        fdn_.setHighCrossoverFreq (3000.0f);
-        fdn_.setSaturation        (0.0f);
-        fdn_.setTankDiffusion     (0.85f);
-        fdn_.setModDepth          (0.20f);   // the ~2.7 Hz Spin
-        fdn_.setModRate           (2.7f);
-        baselineApplied_ = true;
+        float rm = rampMs_, sl = slope_, fg = floorGain_, thDb = -60.0f,
+              hm = holdMs_, ct = closeTauMs_;
+        if (std::sscanf (ov, "%f,%f,%f,%f,%f,%f", &rm, &sl, &fg, &thDb, &hm, &ct) >= 1)
+        {
+            rampMs_     = std::clamp (rm, 5.0f, 1000.0f);
+            slope_      = std::clamp (sl, 0.1f, 4.0f);
+            floorGain_  = std::clamp (fg, 0.0f, 1.0f);
+            threshLin_  = std::pow (10.0f, std::clamp (thDb, -120.0f, 0.0f) / 20.0f);
+            holdMs_     = std::clamp (hm, 0.0f, 4000.0f);
+            closeTauMs_ = std::clamp (ct, 0.5f, 200.0f);
+        }
     }
+
+    // Velvet-noise FIR tail (replaces the FDN — see VelvetTail.h). Baked defaults
+    // = the lex-reverse-1 per-band T60 / level / stereo; DUSKVERB_VELVET overrides
+    // for hand-tuning without a rebuild. Feed-forward → no FDN mid-decay floor.
+    velvet_.prepare (sampleRate, maxBlockSize);
 
     // ER ring buffers: must hold the longest tap delay (= rampMs_ at the
     // largest size scale ~1.6x) -> size generously to pow2.
@@ -50,18 +53,40 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     erBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     erBufR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
+    // Gate coeffs — recomputed every prepare (track sample-rate changes).
+    // One-pole: y += coeff*(target-y), coeff = 1 - exp(-1/(tau*sr)).
+    auto onePole = [sr = sampleRate] (double tauSec) -> float
+        { return static_cast<float> (1.0 - std::exp (-1.0 / (tauSec * sr))); };
+    envAtkCoeff_    = onePole (0.0015);              // 1.5 ms attack (track body)
+    envRelCoeff_    = onePole (0.080);               // 80 ms release (< holdMs, no chatter)
+    gateOpenCoeff_  = onePole (0.006);               // ~6 ms open (doesn't reshape the FIR swell)
+    gateCloseCoeff_ = onePole (closeTauMs_ * 0.001); // close tau → hard cliff, continuous gain
+    holdSamples_    = std::max (1, static_cast<int> (holdMs_ * 0.001 * sampleRate));
+    holdMaxSamps_   = std::max (holdSamples_, static_cast<int> (holdMaxMs_ * 0.001 * sampleRate));
+
     rebuildTaps();
+    clearBuffers();   // reset gate state + velvet running/biquad state across a
+                      // re-prepare (sample-rate / block-size change) — prepare()
+                      // alone left gateState_/gateGain_/envFollow_ + velvet crossover
+                      // history stale (only clearBuffers() resets them).
     prepared_ = true;
 }
 
 void ReverseRoomEngine::clearBuffers()
 {
-    fdn_.clearBuffers();
+    velvet_.clear();
     std::fill (erL_.ring.begin(), erL_.ring.end(), 0.0f);
     std::fill (erR_.ring.begin(), erR_.ring.end(), 0.0f);
     erL_.writePos = erR_.writePos = 0;
     std::fill (erBufL_.begin(), erBufL_.end(), 0.0f);
     std::fill (erBufR_.begin(), erBufR_.end(), 0.0f);
+
+    // Gate starts CLOSED (pre-onset silence) — reset across preset swap / unfreeze.
+    gateState_        = GateState::Idle;
+    envFollow_        = 0.0f;
+    gateGain_         = 0.0f;
+    holdCounter_      = 0;
+    inputActiveSamps_ = 0;
 }
 
 // Build the rising-gain early-reflection tap sets. Deterministic (fixed seed)
@@ -124,7 +149,19 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
     }
 
     if (numSamples > maxBlock_)
-        numSamples = maxBlock_;
+    {
+        // Host exceeded prepare()'s maxBlockSize. Process in maxBlock_-sized chunks
+        // (sequential → gate / velvet / ER state stays continuous) rather than
+        // truncating to maxBlock_ and dropping the rest of the host block.
+        int off = 0;
+        while (off < numSamples)
+        {
+            const int n = std::min (maxBlock_, numSamples - off);
+            process (inL + off, inR + off, outL + off, outR + off, n);
+            off += n;
+        }
+        return;
+    }
 
     // ── 1) Rising-ER FIR: shape dry input into a swelling early-reflection
     //        burst (the "reverse" onset). Per channel, allocation-free. ──
@@ -150,28 +187,90 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
         e.writePos = wp;
     }
 
-    // ── 2) Dark modulated diffuse tail. Feeding the FDN in SERIES makes the
-    //        tail inherit the swell -> whole response rises then decays. ──
-    fdn_.process (erBufL_.data(), erBufR_.data(), outL, outR, numSamples);
+    // ── 2) Velvet-noise FIR tail (feed-forward) fed the swelling ER output, so
+    //        the tail inherits the swell. Per-band exp-decay envelopes set the
+    //        per-band T60 with NO recirculation → no FDN mid-decay floor. ──
+    velvet_.process (erBufL_.data(), erBufR_.data(), outL, outR, numSamples);
+
+    // ── 3) Input-keyed hard gate (the GATED-reverse signature). Keyed off the
+    //        DRY input (inL/inR), applied as ONE smoothed scalar to both output
+    //        channels: produces the pre-onset silence, the hold-while-input-present
+    //        plateau, and the post-peak hard cliff to ~-90 dBFS that collapses the
+    //        FDN tail (t60 5.1s -> ~0.06s). `g` is always SLEWED (never assigned)
+    //        so both edges are continuous-valued -> no click. Deterministic
+    //        post-multiply -> bit-null for the fleet (algo 9 = this 1 preset). ──
+    const float atk    = envAtkCoeff_;
+    const float rel    = envRelCoeff_;
+    const float thr    = threshLin_;
+    const float floorL = gateFloorLin_;
+    const float openC  = gateOpenCoeff_;
+    const float closeC = gateCloseCoeff_;
+
+    float     env     = envFollow_;
+    float     g       = gateGain_;
+    GateState st      = gateState_;
+    int       hc      = holdCounter_;
+    int       iActive = inputActiveSamps_;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        // Dry-input peak-envelope follower (fast attack / slow release).
+        const float x = std::fabs (inL[i]) + std::fabs (inR[i]);
+        env += ((x > env) ? atk : rel) * (x - env);
+        const bool present = (env > thr);
+
+        if (present && iActive < holdMaxSamps_ * 16) ++iActive;   // burst-duration accumulator (capped)
+        // Duration-dependent hold: base + holdPerSec per second of input presence,
+        // capped. Impulse → ≈base (fast tail); sustained → ceiling (bands ring).
+        const int effHold = std::min (holdMaxSamps_,
+                                      holdSamples_ + static_cast<int> (holdPerSec_ * 0.001f * iActive));
+
+        // Retriggerable hold state machine.
+        switch (st)
+        {
+            case GateState::Idle:    if (present) { st = GateState::Open; iActive = 1; } break;
+            case GateState::Open:    if (! present) { st = GateState::Hold; hc = effHold; } break;
+            case GateState::Hold:    if (present) st = GateState::Open;            // retrigger
+                                     else if (--hc <= 0) st = GateState::Closing; break;
+            case GateState::Closing: if (present) { st = GateState::Open; iActive = 1; } break;  // retrigger
+        }
+
+        const float target = (st == GateState::Open || st == GateState::Hold) ? 1.0f : floorL;
+        g += ((target > g) ? openC : closeC) * (target - g);   // always slewed → continuous
+
+        outL[i] *= g;
+        outR[i] *= g;
+    }
+
+    envFollow_        = env;
+    gateGain_         = g;
+    gateState_        = st;
+    holdCounter_      = hc;
+    inputActiveSamps_ = iActive;
 }
 
 // ── Universal setters ──────────────────────────────────────────────────────
-void ReverseRoomEngine::setDecayTime (float seconds)   { fdn_.setDecayTime (seconds); }
-void ReverseRoomEngine::setBassMultiply (float mult)   { fdn_.setBassMultiply (mult); }
-void ReverseRoomEngine::setMidMultiply (float mult)    { fdn_.setMidMultiply (mult); }
-void ReverseRoomEngine::setTrebleMultiply (float mult) { fdn_.setTrebleMultiply (mult); }
-void ReverseRoomEngine::setCrossoverFreq (float hz)    { fdn_.setCrossoverFreq (hz); }
-void ReverseRoomEngine::setHighCrossoverFreq (float hz){ fdn_.setHighCrossoverFreq (hz); }
-void ReverseRoomEngine::setSaturation (float amount)   { fdn_.setSaturation (amount); }
-void ReverseRoomEngine::setModDepth (float depth)      { fdn_.setModDepth (depth); }
-void ReverseRoomEngine::setModRate (float hz)          { fdn_.setModRate (hz); }
-void ReverseRoomEngine::setTailSpinDepth (float depth) { fdn_.setTailSpinDepth (depth); }
-void ReverseRoomEngine::setTailSpinRate (float hz)     { fdn_.setTailSpinRate (hz); }
-void ReverseRoomEngine::setFreeze (bool frozen)        { fdn_.setFreeze (frozen); }
+// The velvet tail has no broadband tone/mod/saturation/loop, and the per-band
+// tail tone is the engine's baked "Reverse" signature (tuned via the velvet
+// defaults + DUSKVERB_VELVET). So the tone/mod setters are NO-OPS — the single
+// algo-9 preset never disturbs the calibrated tail through them. Decay maps to a
+// global tail-length scale so the Decay knob still does something musical.
+void ReverseRoomEngine::setDecayTime (float seconds)   { velvet_.setGlobalDecayScale (std::max (0.05f, seconds) / 0.21f); }
+void ReverseRoomEngine::setBassMultiply (float)        {}
+void ReverseRoomEngine::setMidMultiply (float)         {}
+void ReverseRoomEngine::setTrebleMultiply (float)      {}
+void ReverseRoomEngine::setCrossoverFreq (float)       {}
+void ReverseRoomEngine::setHighCrossoverFreq (float)   {}
+void ReverseRoomEngine::setSaturation (float)          {}
+void ReverseRoomEngine::setModDepth (float)            {}
+void ReverseRoomEngine::setModRate (float)             {}
+void ReverseRoomEngine::setTailSpinDepth (float)       {}
+void ReverseRoomEngine::setTailSpinRate (float)        {}
+void ReverseRoomEngine::setFreeze (bool)               {}
 
 void ReverseRoomEngine::setSize (float size)
 {
-    fdn_.setSize (size);
+    velvet_.setSizeScale (0.6f + 1.0f * std::clamp (size, 0.0f, 1.0f));
     // 0..1 size -> 0.6..1.6x ER onset span (longer onset on bigger rooms).
     const float newScale = 0.6f + 1.0f * std::clamp (size, 0.0f, 1.0f);
     if (std::abs (newScale - sizeScale_) > 1.0e-4f)
@@ -183,7 +282,6 @@ void ReverseRoomEngine::setSize (float size)
 
 void ReverseRoomEngine::setTankDiffusion (float amount)
 {
-    fdn_.setTankDiffusion (amount);
     const float a = std::clamp (amount, 0.0f, 1.0f);
     if (std::abs (a - density_) > 1.0e-4f)
     {

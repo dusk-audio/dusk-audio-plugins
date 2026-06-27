@@ -72,6 +72,7 @@ public:
     void setModDepth          (float depth);   // hijacked: PITCH (0..1 → 0..24 semitones)
     void setModRate           (float hz);      // hijacked: FEEDBACK (0.1..10 → 0..0.95)
     void setTankDiffusion     (float amount);
+    void setDownOctaveMix     (float mix);     // octave-DOWN voice level (0 = off/bit-null) — the warm low Valhalla Shimmer has, DV's up-only voices lacked
     void setFreeze            (bool frozen);
 
 private:
@@ -155,12 +156,40 @@ private:
     GranularPitchShifter pitch2L_, pitch2R_;
     static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
     static constexpr float kVoice1Mix       = 0.78f;
-    static constexpr float kVoice2Mix       = 0.34f;
+    static constexpr float kVoice2Mix       = 0.60f;   // 2026-06-16: 0.34->0.60 — boost the +24 air voice to fill 12-24k toward the anchor's broadband octave (cent_500/spec_L1@12.9k).
+
+    // DOWN voice (2026-06-19) — pitches the feedback DOWN one octave (×0.5) IN THE
+    // FEEDBACK LOOP, alongside the up voices. The loop regenerates a descending ladder
+    // (500, 250, 125 Hz from a 1 kHz input) — the WARM LOW that Valhalla Shimmer's
+    // DeepBlueDay has and DV's up-only voices lacked (measured: Shimmer 500 Hz = 64 dB,
+    // DV = 0 dB from a pure 1 kHz sine). Crucially it shares the SAME loop as the up
+    // shimmer, so the low octave builds with IDENTICAL timing — no late "kick-in" (the
+    // output-side self-feeding ladder had a per-rung grain latency → audibly late). A
+    // softClip bounds the per-grain peaks; the 60 Hz feedback HPF caps the runaway sub;
+    // a MODERATE downMix_ keeps the loop gain < 1 so it stays bounded (the clip was
+    // over-cranking the mix). downMix_ 0 → voice skipped → bit-null (Black Hole + every
+    // non-shimmer preset untouched).
+    GranularPitchShifter pitchDownL_, pitchDownR_;    // −1 oct (×0.5 → 500 Hz)
+    static constexpr float kVoiceDownRatio  = 0.5f;   // −12 st
+    float downMix_ = 0.0f;                            // per-preset; 0 = off (bit-null)
 
     // Hall reverb — reuses the existing FDNReverb (same engine that
     // powers the "Realistic Space" / FDN algorithm). Configured in
     // prepare() for a "long lush hall" baseline; per-preset setters
     // override.
+    //
+    // NOTE (2026-06-16): the octave-up shimmer's defining trait — the pitched HF
+    // tail ringing AT LEAST AS LONG AS the body (anchor T60: Black Hole 16 kHz
+    // 9.6 s, Deep Blue 16 kHz 11.9 s, both RISING with freq) — is structurally
+    // unreachable on this FDN. Proven this session: switching to the per-octave-
+    // GEQ variant (FDNReverbT<true>) fixes the BODY decay (125 Hz–2 kHz land
+    // within JND) but CANNOT lift T60-16k past ~5.3 s. The octave GEQ is
+    // attenuation-only (gains clamped ≤0.9999 + a composite-|H|<1 stability guard,
+    // OctaveGEQDesign.cpp) so it can at best make a band lossless; DV's linear
+    // delay interpolation + diffusion allpasses are HF-lossy per pass, and the GEQ
+    // cannot boost to compensate. Closing it needs an HF-lossless redesign
+    // (Lagrange/allpass interpolation) or a parallel non-recirculating pitched
+    // voice — an engine fork, to be done with ear-validation in the loop.
     FDNReverb reverb_;
 
     // Per-block scratch buffers for the pitch-shifter → reverb stage.
@@ -234,15 +263,14 @@ private:
     // low-frequency content above 60 Hz. Earlier iteration at 120 Hz was
     // over-aggressive and removed musical bass that external reference clearly retains.
     static constexpr float kFeedbackHpfHz = 60.0f;
-    // LPF at 1.5 kHz — aggressive HF attenuation in the feedback path.
-    // Each cascade cycle pitches up by N semitones (×2 at +12), so a
-    // 200 Hz snare component migrates 200→400→800→1600→3200 Hz over 4
-    // cycles, accumulating as a "metallic" peak at 1-3 kHz that's the
-    // clearest audible artifact differentiating us from external reference shimmer.
-    // 1.5 kHz drops the migrated content by ~−3 dB at 1.5 kHz and ~−6 dB
-    // at 3 kHz per cycle, so by 3-4 cycles the high-end energy is
-    // exhausted before it can recirculate further.
-    static constexpr float kFeedbackLpfHz = 6000.0f;
+    // LPF at 14 kHz — a gentle ceiling on the feedback path. Each cascade cycle
+    // pitches up by N semitones (×2 at +12), so without any cap the migrated
+    // content piles up against the AA-filter wall as a metallic 1-3 kHz peak.
+    // Earlier iterations cut hard (1.5 kHz, then 6 kHz) but ran too dark vs the
+    // anchor (cent_500 was -42%). 14 kHz keeps the cascade bright while still
+    // trimming the very top before it recirculates. (A 22 kHz experiment gained
+    // only +0.5 s T60-16k → the FDN hall, not this LPF, caps HF sustain.)
+    static constexpr float kFeedbackLpfHz = 14000.0f;   // 2026-06-16: 6k->14k brighten toward anchor
 
     double sampleRate_ = 48000.0;
     int    maxBlockSize_ = 0;

@@ -65,7 +65,7 @@ def _check_one(name):
     shutil.rmtree(dv, ignore_errors=True); shutil.rmtree(lex, ignore_errors=True)
     os.makedirs(dv); os.makedirs(lex)
     r = subprocess.run([REND, "--program", name, "--output-dir", dv, *WET],
-                       cwd=REPO, capture_output=True, text=True)
+                       cwd=REPO, capture_output=True, text=True, timeout=420)
     if r.returncode != 0:
         return name, None, f"render rc={r.returncode}: {r.stderr[-300:]}"
     nb = glob.glob(f"{dv}/*_noiseburst.wav")
@@ -75,6 +75,10 @@ def _check_one(name):
         src = f"{adir}/{apref}_{s}.wav"
         if os.path.exists(src):
             shutil.copy(src, f"{lex}/anchor_{s}.wav")
+    if not os.path.exists(f"{lex}/anchor_noiseburst.wav"):
+        return (name, None,
+                f"missing anchor noiseburst capture for {name} "
+                f"(no {apref}_noiseburst.wav in {adir})")
     a = rms(f"{lex}/anchor_noiseburst.wav")
     d = rms(nb[0])
     if d < 1e-12:
@@ -87,7 +91,7 @@ def _check_one(name):
         # 1374 on MDR) and penalized every preset's late-window gates.
         x, sr = sf.read(f); sf.write(f, x * g, sr, subtype="FLOAT")
     r = subprocess.run([sys.executable, FC, dv, lex, "--name", name, "--json"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=200)
     for line in r.stdout.splitlines():
         if line.startswith("JSON_RESULT:"):
             res = json.loads(line.split("JSON_RESULT: ")[1])
@@ -98,7 +102,10 @@ def _check_one(name):
 def main():
     args = [a for a in sys.argv[1:] if a != "--fails"]
     show_fails = "--fails" in sys.argv
-    names = args if args else list(PRESETS)
+    # Dedupe (order-preserving): each preset maps to a fixed /tmp/pcheck_<slug>
+    # dir, so a duplicated name would have two workers racing the same workspace
+    # (one rmtree's the other's render mid-run).
+    names = list(dict.fromkeys(args)) if args else list(PRESETS)
     bad = [n for n in names if n not in PRESETS]
     if bad:
         sys.exit(f"unknown preset(s): {bad}; known: {list(PRESETS)}")

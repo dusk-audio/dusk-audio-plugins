@@ -194,6 +194,12 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     pitch2R_.prepare (sampleRate);
     pitch2L_.setModulation (4.9f, 0.020f, 0x5EED01u);
     pitch2R_.setModulation (6.7f, 0.020f, 0x5EED02u);
+    pitchDownL_.prepare (sampleRate);
+    pitchDownR_.prepare (sampleRate);
+    pitchDownL_.setModulation (5.3f, 0.018f, 0xD0117Au);
+    pitchDownR_.setModulation (6.1f, 0.018f, 0xD0117Bu);
+    pitchDownL_.setPitchRatio (kVoiceDownRatio);   // −1 oct (×0.5 → 500 Hz)
+    pitchDownR_.setPitchRatio (kVoiceDownRatio);
 
     // Hall reverb baseline: long, lush, slightly dark (period-correct
     // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
@@ -241,6 +247,8 @@ void ShimmerEngine::clearBuffers()
     pitchR_.clear();
     pitch2L_.clear();
     pitch2R_.clear();
+    pitchDownL_.clear();
+    pitchDownR_.clear();
     reverb_.clearBuffers();
     std::fill (reverbInL_.begin(), reverbInL_.end(), 0.0f);
     std::fill (reverbInR_.begin(), reverbInR_.end(), 0.0f);
@@ -271,6 +279,7 @@ void ShimmerEngine::setTrebleMultiply (float mult) { reverb_.setTrebleMultiply (
 void ShimmerEngine::setCrossoverFreq  (float hz)   { reverb_.setCrossoverFreq  (hz); }
 void ShimmerEngine::setHighCrossoverFreq (float hz){ reverb_.setHighCrossoverFreq (hz); }
 void ShimmerEngine::setTankDiffusion (float amount){ reverb_.setTankDiffusion (amount); }
+void ShimmerEngine::setDownOctaveMix (float mix)   { downMix_ = std::clamp (mix, 0.0f, 4.0f); }
 
 void ShimmerEngine::setSaturation (float amount)
 {
@@ -358,10 +367,23 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // feedback-extended reverb.
         const float fbSrcL = fbDelayLineL_[static_cast<size_t> (readPos)];
         const float fbSrcR = fbDelayLineR_[static_cast<size_t> (readPos)];
-        const float pitchedFbL = kVoice1Mix * pitchL_.process (fbSrcL)
-                               + kVoice2Mix * pitch2L_.process (fbSrcL);
-        const float pitchedFbR = kVoice1Mix * pitchR_.process (fbSrcR)
-                               + kVoice2Mix * pitch2R_.process (fbSrcR);
+        float pitchedFbL = kVoice1Mix * pitchL_.process (fbSrcL)
+                         + kVoice2Mix * pitch2L_.process (fbSrcL);
+        float pitchedFbR = kVoice1Mix * pitchR_.process (fbSrcR)
+                         + kVoice2Mix * pitch2R_.process (fbSrcR);
+        // Octave-DOWN voice IN THE FEEDBACK: pitch the feedback down −1 oct + add back.
+        // The loop regenerates the descending ladder (500→250→125 Hz) GRADUALLY over
+        // its 50 ms passes → loud deep low that builds SMOOTHLY (no abrupt "kick-in"
+        // like a self-feeding output ladder). softClip bounds the per-grain peaks; the
+        // 60 Hz HPF below caps the sub; a MODERATE downMix_ keeps the loop gain < 1 so
+        // it stays bounded (the clip was over-cranking to 3.5). 0 → skipped → bit-null.
+        if (downMix_ > 0.0f)
+        {
+            pitchedFbL += downMix_ * DspUtils::softClip (pitchDownL_.process (fbSrcL),
+                                                         kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
+            pitchedFbR += downMix_ * DspUtils::softClip (pitchDownR_.process (fbSrcR),
+                                                         kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
+        }
 
         // Band-pass the pitch-shifted feedback: HPF removes grain-rate
         // sub-harmonics that would otherwise rumble up over time; LPF
@@ -397,6 +419,9 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         const float wL = wetL_[static_cast<size_t> (n)];
         const float wR = wetR_[static_cast<size_t> (n)];
 
+        // wet (with up + down pitched feedback already folded in by the loop) →
+        // delay line. The down octave regenerates through the SAME loop as the up
+        // shimmer → both octaves build with identical timing (no late "kick-in").
         fbDelayLineL_[static_cast<size_t> (fbDelayWritePos_)] = wL;
         fbDelayLineR_[static_cast<size_t> (fbDelayWritePos_)] = wR;
         if (++fbDelayWritePos_ >= fbDelaySamples_) fbDelayWritePos_ = 0;

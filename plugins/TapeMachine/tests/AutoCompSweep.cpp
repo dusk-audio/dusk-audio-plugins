@@ -31,8 +31,16 @@ constexpr double kTolDb        = 0.5;
 // Set an APVTS parameter by its 0..1 normalised value.
 void setNorm(juce::AudioProcessorValueTreeState& apvts, const char* id, float norm)
 {
-    if (auto* p = apvts.getParameter(id))
-        p->setValueNotifyingHost(norm);
+    auto* p = apvts.getParameter(id);
+    if (p == nullptr)
+    {
+        // Fail fast: a missing parameter id would otherwise silently leave the
+        // default value in place, letting the sweep "pass" without exercising
+        // autoComp / oversampling / inputGain at all.
+        std::fprintf(stderr, "FATAL: setNorm: parameter id '%s' not found\n", id);
+        std::abort();
+    }
+    p->setValueNotifyingHost(norm);
 }
 
 // Normalised value for a choice param: index / (numChoices - 1).

@@ -12,17 +12,22 @@ This runs an independent numpy FFT on the raw rendered noiseburst tail and
 reports ABSOLUTE band power (dB) for DV vs anchor at 12902 Hz + neighbours,
 plus the raw-bin shape around 12.9 kHz (sharp narrow peak => Case B).
 """
-import sys, glob
+import os, sys, glob
 import numpy as np
 import soundfile as sf
 
+# Anchor base is user-specific — resolve from DUSKVERB_ANCHORS or the per-user
+# default (NOT a hardcoded /home/<dev> path), so this runs on any machine/CI.
+ANCH_BASE = os.environ.get(
+    "DUSKVERB_ANCHORS",
+    os.path.expanduser("~/projects/dusk-audio-tools/tuner_runs/anchors"))
 PAIRS = [
     ("79 Vocal Chamber",
      "/tmp/cg_79_Vocal_Chamber/L_noiseburst.wav",
-     "/home/marc/projects/dusk-audio-tools/tuner_runs/anchors/vvv-79vc"),
+     f"{ANCH_BASE}/vvv-79vc"),
     ("Vocal Plate",
      "/tmp/cg_Vocal_Plate/L_noiseburst.wav",
-     "/home/marc/projects/dusk-audio-tools/tuner_runs/anchors/vvv-vocal-plate"),
+     f"{ANCH_BASE}/vvv-vocal-plate"),
 ]
 FC = 12902.0
 BANDS = [10238.0, FC, 16255.0]          # neighbours around the suspect band

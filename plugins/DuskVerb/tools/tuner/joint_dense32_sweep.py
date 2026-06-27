@@ -69,7 +69,7 @@ def eval_delays(delays, tag):
         os.makedirs(dv, exist_ok=True); os.makedirs(lex, exist_ok=True)
         env = dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(str(x) for x in delays))
         r = subprocess.run([REND, "--program", "Bright Hall", "--output-dir", dv, *WET],
-                           cwd=str(REPO), capture_output=True, text=True, env=env)
+                           cwd=str(REPO), capture_output=True, text=True, env=env, timeout=180)
         nb = glob.glob(f"{dv}/*_noiseburst.wav")
         if r.returncode != 0 or not nb:
             return None, None
@@ -82,7 +82,7 @@ def eval_delays(delays, tag):
         for f in glob.glob(f"{dv}/*.wav"):
             x, sr = sf.read(f); sf.write(f, x * g, sr)
         r = subprocess.run([sys.executable, FC, dv, lex, "--name", "Bright Hall", "--json"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=200)
         nfail = None
         for line in r.stdout.splitlines():
             if line.startswith("JSON_RESULT:"):
@@ -104,7 +104,8 @@ def main():
     a = ap.parse_args()
 
     nf0, k0 = eval_delays(CENTER, "warm")
-    print(f"warm-start (kurtosis-optimal set): n_fail={nf0}  kurt2-14k={k0:.1f}  "
+    k0s = f"{k0:.1f}" if k0 is not None else "n/a"
+    print(f"warm-start (kurtosis-optimal set): n_fail={nf0}  kurt2-14k={k0s}  "
           f"(baseline algo-10 = {BASELINE_NFAIL})\n")
 
     def obj(trial):
@@ -113,11 +114,12 @@ def main():
         nf, kurt = eval_delays(delays, str(trial.number))
         if nf is None: return 1e3
         loss = float(nf)
-        loss += 0.5 * max(0.0, kurt - KURT_CEIL)             # hold the metal win
+        if kurt is not None:
+            loss += 0.5 * max(0.0, kurt - KURT_CEIL)         # hold the metal win
         loss += 0.01 * abs(float(np.mean(delays)) - BASE_MEAN)  # hold T60
         trial.set_user_attr("delays", delays)
         trial.set_user_attr("nfail", nf)
-        trial.set_user_attr("kurt", round(kurt, 1))
+        trial.set_user_attr("kurt", round(kurt, 1) if kurt is not None else None)
         return loss
 
     # SQLite storage: in-memory studies vanish on crash (an ENOSPC mid-run lost a
@@ -134,10 +136,15 @@ def main():
     study.optimize(obj, n_trials=a.trials, n_jobs=a.workers)
 
     bt = study.best_trial
+    if "delays" not in bt.user_attrs:
+        # Every trial hit the 1e3 sentinel (no successful render) → best_trial carries
+        # no user_attrs. Report cleanly instead of crashing on the KeyError.
+        print(f"\nAll {a.trials} trials failed (no successful render); nothing to report.")
+        return
     best = bt.user_attrs["delays"]
     print(f"\nBEST  loss={study.best_value:.2f}  n_fail={bt.user_attrs['nfail']}  "
           f"kurt2-14k={bt.user_attrs['kurt']}  mean={np.mean(best):.0f}")
-    print(f"  vs baseline algo-10 n_fail {BASELINE_NFAIL} | warm-start n_fail {nf0} kurt {k0:.1f}")
+    print(f"  vs baseline algo-10 n_fail {BASELINE_NFAIL} | warm-start n_fail {nf0} kurt {k0s}")
     print("\nstatic constexpr int kBrightHall32Delays[32] = {")
     for r in range(0, 32, 8):
         print("    " + ", ".join(f"{v:4d}" for v in best[r:r + 8]) + ",")

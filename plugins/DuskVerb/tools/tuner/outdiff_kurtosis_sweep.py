@@ -48,21 +48,27 @@ def main():
         amt = trial.suggest_float("amount", 0.3, 1.0)
         lfo = trial.suggest_float("lfoScale", 0.0, 1.0)
         dsc = trial.suggest_float("delayScale", 0.5, 4.0)
-        d = f"/tmp/odk_{trial.number}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
-        env = dict(os.environ, DUSKVERB_OUTDIFF=f"{amt},{lfo},{dsc}")
-        r = subprocess.run([str(REND),"--program","Bright Hall","--output-dir",d,*WET],
-                           capture_output=True, env=env)
-        nb = glob.glob(f"{d}/*_noiseburst.wav")
-        if r.returncode != 0 or not nb: return 1e3
-        ov = tail_kurt(nb[0], 2000, 14000)
-        if ov is None: return 1e3
-        pen = abs(ov - a_overall)                          # overall toward anchor
-        for b in SUB[1:]:                                  # 4-6/6-9/9-14k toward ~5
-            s = tail_kurt(nb[0], *b)
-            if s is None: return 1e3
-            pen += 0.6*max(0.0, s - max(a_sub[b], 5.0))
-        pen += 0.5*max(0.0, a_hf - hf_level(nb[0]) - 1.0)  # don't dull >1 dB below anchor HF
-        return pen
+        d = f"/tmp/odk_{os.getpid()}_{trial.number}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+        try:
+            env = dict(os.environ, DUSKVERB_OUTDIFF=f"{amt},{lfo},{dsc}")
+            try:
+                r = subprocess.run([str(REND),"--program","Bright Hall","--output-dir",d,*WET],
+                                   capture_output=True, env=env, timeout=180)
+            except subprocess.TimeoutExpired:
+                return 1e3
+            nb = glob.glob(f"{d}/*_noiseburst.wav")
+            if r.returncode != 0 or not nb: return 1e3
+            ov = tail_kurt(nb[0], 2000, 14000)
+            if ov is None: return 1e3
+            pen = abs(ov - a_overall)                          # overall toward anchor
+            for b in SUB[1:]:                                  # 4-6/6-9/9-14k toward ~5
+                s = tail_kurt(nb[0], *b)
+                if s is None: return 1e3
+                pen += 0.6*max(0.0, s - max(a_sub[b], 5.0))
+            pen += 0.5*max(0.0, a_hf - hf_level(nb[0]) - 1.0)  # don't dull >1 dB below anchor HF
+            return pen
+        finally:
+            shutil.rmtree(d, ignore_errors=True)               # always free the per-trial render
 
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42))
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -70,7 +76,7 @@ def main():
     bp = study.best_params
     print(f"\nBEST  amount={bp['amount']:.3f} lfoScale={bp['lfoScale']:.3f} delayScale={bp['delayScale']:.3f}  pen={study.best_value:.2f}")
     # final scoreboard
-    d = "/tmp/odk_best"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    d = f"/tmp/odk_best_{os.getpid()}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
     env = dict(os.environ, DUSKVERB_OUTDIFF=f"{bp['amount']},{bp['lfoScale']},{bp['delayScale']}")
     proc = subprocess.run([str(REND),"--program","Bright Hall","--output-dir",d,*WET], capture_output=True, env=env)
     hits = glob.glob(f"{d}/*_noiseburst.wav")
@@ -85,6 +91,9 @@ def main():
     for lab,(lo,hi) in [("2-14k",(2000,14000)),("4-6k",(4000,6000)),("6-9k",(6000,9000)),("9-14k",(9000,14000))]:
         bk = tail_kurt(bnb, lo, hi) if bnb else float('nan')
         dk = tail_kurt(nb, lo, hi); ak = tail_kurt(anb, lo, hi)
+        bk = bk if bk is not None else float('nan')
+        dk = dk if dk is not None else float('nan')
+        ak = ak if ak is not None else float('nan')
         print(f"{lab:10s} {bk:9.1f} {dk:9.1f} {ak:8.1f}")
     print(f"\nbaked line: {{ \"Bright Hall\", {{ {bp['amount']:.3f}f, {bp['lfoScale']:.3f}f, {bp['delayScale']:.3f}f }} }},")
 

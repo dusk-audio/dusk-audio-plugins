@@ -31,7 +31,11 @@ PRESETS = {
 
 
 def full_rms(p):
-    x, _ = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    # Mono-mix BEFORE RMS (matches the whole tuner suite + full_check's mono-domain
+    # gates). Raw whole-array RMS diverges ~3 dB for decorrelated stereo, mis-leveling
+    # the gain-match that full_check then reads.
+    x, _ = sf.read(p)
+    m = x.mean(axis=1) if x.ndim > 1 else x
     return float(np.sqrt(np.mean(m**2)))
 
 
@@ -40,8 +44,8 @@ def render(name, algo10, dst):
         try: os.remove(f)
         except OSError: pass
     args = [REND, "--program", name, *WET]
-    if algo10: args += ["--param", "Algorithm=1.0"]
-    r = subprocess.run(args, cwd=REPO, capture_output=True, text=True)
+    if algo10: args += ["--param", "Algorithm=10"]
+    r = subprocess.run(args, cwd=REPO, capture_output=True, text=True, timeout=420)
     if r.returncode != 0:
         raise RuntimeError(f"render failed for {name!r} (rc={r.returncode})\n{r.stderr[-2000:]}")
     # Recreate dst empty so a partial/short render can't leave stale WAVs behind.
@@ -60,19 +64,23 @@ def gain_match(dvdir, anchor_nb):
         raise RuntimeError(f"silent noiseburst render in {dvdir} — cannot gain-match")
     g = a / r
     for f in glob.glob(f"{dvdir}/*.wav"):
-        x, sr = sf.read(f); sf.write(f, x * g, sr)
+        x, sr = sf.read(f); sf.write(f, x * g, sr, subtype="FLOAT")
 
 
 def lexdir(adir, prefix, dst):
-    os.makedirs(dst, exist_ok=True)
+    shutil.rmtree(dst, ignore_errors=True); os.makedirs(dst, exist_ok=True)
     for s in STIM:
         src = f"{adir}/{prefix}_{s}.wav"
-        if os.path.exists(src): shutil.copy(src, f"{dst}/anchor_{s}.wav")
+        # Fail fast: a missing stimulus would silently shrink the comparison set,
+        # so full_check would A/B on an incomplete anchor and report misleading deltas.
+        if not os.path.exists(src):
+            raise RuntimeError(f"missing anchor stimulus {src!r} — refusing to run full_check on a partial set")
+        shutil.copy(src, f"{dst}/anchor_{s}.wav")
 
 
 def run_fc(dvdir, lex, name):
     r = subprocess.run([sys.executable, FC, dvdir, lex, "--name", name, "--json"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=200)
     for line in r.stdout.splitlines():
         if line.startswith("JSON_RESULT:"):
             return json.loads(line.split("JSON_RESULT: ")[1])

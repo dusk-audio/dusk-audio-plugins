@@ -34,16 +34,8 @@ void SpringEngine::Spring::clear()
 
 float SpringEngine::Spring::process (float input, float lfoOffset) noexcept
 {
-    // 1) Dispersion cascade — feed the input through 24 1st-order all-passes.
-    //    Each AP rotates phase frequency-dependently; cascading them builds a
-    //    quadratic-ish group-delay curve (the chirp).
-    float disp = input;
-    for (auto& ap : dispersionAPs)
-        disp = ap.process (disp, dispersionA);
-
-    // 2) Read from delay line at the modulated position. lfoOffset is in
-    //    samples (signed); we use linear interpolation between two reads
-    //    for sub-sample positioning.
+    // 1) Read from delay line at the modulated position. lfoOffset is in
+    //    samples (signed); linear interpolation for sub-sample positioning.
     const float readPosF = static_cast<float> (writePos)
                          - static_cast<float> (delaySamples)
                          - lfoOffset;
@@ -54,16 +46,27 @@ float SpringEngine::Spring::process (float input, float lfoOffset) noexcept
     const float read = delayBuf[static_cast<size_t> (idx0)] * (1.0f - frac)
                      + delayBuf[static_cast<size_t> (idx1)] *         frac;
 
-    // 3) Write input + feedback × read into the buffer (Karplus-Strong style).
-    //    Feedback gain scales per-spring so all springs hit the same RT60.
-    const float bufIn = disp + feedback * read;
+    // 2) HF damping IN THE LOOP — 1-pole LP on the recirculating signal so the
+    //    tail progressively darkens with every bounce (a real Fender 6G15 spring
+    //    rolls off more HF on each pass, not just once at the output).
+    dampState = (1.0f - dampCoeff) * read + dampCoeff * dampState;
+
+    // 3) Dispersion cascade IN THE LOOP — 24 1st-order all-passes on the
+    //    recirculating signal. Each pass adds more frequency-dependent group
+    //    delay, so the chirp COMPOUNDS over the tail (the iconic spring
+    //    "boinggg…boing…boing" train) instead of only the first reflection.
+    float disp = dampState;
+    for (auto& ap : dispersionAPs)
+        disp = ap.process (disp, dispersionA);
+
+    // 4) Write fresh input + the recirculated (damped + dispersed) energy
+    //    (Karplus-Strong style). Feedback gain scales per-spring for matched RT60.
+    const float bufIn = input + feedback * disp;
     delayBuf[static_cast<size_t> (writePos)] = bufIn + DspUtils::kDenormalPrevention;
     writePos = (writePos + 1) & mask;
 
-    // 4) HF damping — 1-pole LP on the read path emulates the spring's high-
-    //    frequency roll-off (real Fender 6G15 dies above ~4-5 kHz).
-    dampState = (1.0f - dampCoeff) * read + dampCoeff * dampState;
-    return dampState;
+    // The spring's voice is the damped + dispersed recirculating signal.
+    return disp;
 }
 
 void SpringEngine::prepare (double sampleRate, int /*maxBlockSize*/)

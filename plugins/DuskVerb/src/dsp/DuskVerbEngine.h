@@ -12,10 +12,12 @@
 #include "QuadTank.h"
 #include "ShimmerEngine.h"
 #include "SpringEngine.h"
-#include "VintageTankEngine.h"
 #include "ReverseRoomEngine.h"
 #include "SparseEarlyField.h"
+#include "DiffusedEarlyReflections.h"
 #include "OutputDiffusion.h"
+#include "DenseHallReverb.h"
+#include "BuildupDiffuser.h"
 
 #include <algorithm>
 #include <cmath>
@@ -128,6 +130,7 @@ public:
     void setSaturation    (float amount);          // 0..1 drive-style softClip
     void setModDepth      (float depth);
     void setModRate       (float hz);
+    void setShimmerDownOctaveMix (float mix);   // Shimmer warm-low voice (octave down); 0 = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);
@@ -155,6 +158,14 @@ public:
     // other with a 180° inversion; LF untouched (mono-safe). Dedicated depth
     // (NOT coupled to Width) so 0 = no cross-feed = bit-identical for the fleet.
     void setOutputCrossTalk (float depth);
+    // Per-band stereo Width tilt — independent width for the LOW (<300 Hz), MID
+    // (300 Hz-5 kHz) and HIGH (>5 kHz) bands of the SIDE signal (crossovers match
+    // the width_low/mid/hi gates). The global Width scalar is frequency-flat, so
+    // matching one band's L/R correlation to the anchor mis-sets the others
+    // (measured: a flat Width raise traded bands net-negative across the fleet).
+    // 1.0/1.0/1.0 → bandWidthActive_ false → the original side*width path runs
+    // (bit-identical for the fleet). >1 widens that band, <1 narrows it.
+    void setWidthBands (float low, float mid, float hi);
 
     // Shell parameters (smoothed in process()).
     void setPreDelay  (float milliseconds);
@@ -166,6 +177,10 @@ public:
     // is attenuated by this much instead of decapitated. Per-preset on
     // FactoryPreset. Default -12 dB.
     void setHiCutShelfGainDb (float dB);
+    // Post-tank HF air-shelf (boost or cut). 0 dB → inactive (bit-null bypass).
+    void setOutputAirShelf (float freqHz, float gainDb);
+    // Post-tank LF low-shelf (deep-sub boost or cut). 0 dB → inactive (bit-null).
+    void setOutputLowShelf (float freqHz, float gainDb);
 
     // Post-tank parametric EQ (4-band). Each band is freq + Q + gainDb.
     // Lives AFTER the Hi Cut Shelf and BEFORE the dry/wet mix matrix.
@@ -191,6 +206,18 @@ public:
     // rooms. 0.02 (engine default) = bit-identical; forwarded to the Dattorro
     // tank only.
     void setDattorroDensityJitter (float fraction);
+    // Plate density rework (algo 0 + algo 1). depth 0 / reduction 1.0 = legacy.
+    void setDattorroDensity (float depth01);          // 0 legacy 3 APs -> >0 dense 6 APs
+    void setDattorroModReduction (float reduction01); // 1.0 legacy mod -> <1.0 stiller tail
+    void setDattorroDensityRoomFill (bool enable);    // #87: hall density bases on room lines (boing fix, algo 0)
+    void setDattorroMainLineDetune (float l1, float l2, float r1, float r2); // #87: per-line detune
+    void setDattorroInputDiffusion (float scale01);   // input-diffuser coeff scale (1.0=canonical)
+    void setDattorroSoftOnsetMs (float ms);           // tank output soft-onset ramp (ms; 0=instant)
+    void setDattorroOctaveT60 (int band, float seconds); // per-octave T60 GEQ (0..8 = 63..16k Hz)
+    void setDattorroOctaveDecayRef (float seconds);   // Decay-knob reference for the octave curve
+    void setDattorroTonalCorrDb (int band, float dB); // static output per-octave level trim (cut-only)
+    void setDattorroBloomAttackMs (float ms);
+    void setDattorroBloomExp (float e);         // input-onset slow-attack swell (0=off)
 
     // ER-bus spectral correction (2026-06-08, energy-arrival campaign). The
     // parallel ER field is a 500 Hz-2 kHz midrange bump (measured: −11.5 dB @
@@ -269,14 +296,49 @@ public:
     // that octave inherits the broadband Decay Time.
     void setAccurateHallOctaveT60 (int band, float seconds);
 
+    // AccurateHall (algo 10/12): reference broadband decay at which the octave
+    // T60 curve is realized 1:1 (= the preset's baked Decay). The live Decay
+    // knob scales the curve by decayTime_/ref so the knob is never dead.
+    void setAccurateHallOctaveDecayRef (float seconds);
+
+    // DenseHall (algo 14) per-octave T60 GEQ — fork #2 (2026-06-16). Decoupled
+    // 9-octave damping replacing the 3-band shelf that floored the DenseHall
+    // presets (cent dark + T60-16k dies). band 0..8 = 63 Hz..16 kHz; seconds<=0
+    // → that octave inherits the broadband Decay. No-op on every other engine.
+    void setDenseHallOctaveT60 (int band, float seconds);
+    void setDenseHallOctaveDecayRef (float seconds);
+    void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
+    // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
+    void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
+
+    // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
+    // energy so decay and tone are decoupled. Default off = bit-null.
+    void setTonalCorrection (bool enabled);
+
+    // Phase 3 output match-EQ: shape the wet steady-state envelope toward the
+    // anchor. corrLinear[0..8] = per-octave (63 Hz..16 kHz) output gains in
+    // [1e-3,1] (cut-only; normalize the anchor/DV ratio to max=1 offline, then
+    // re-gain-match). All ~1.0 → identity → bit-null. Engine-agnostic.
+    void setOutputMatchEQ (const float* corrLinear9);
+
+    // Phase A early-field: delay the late tail by `ms` relative to the ER so the
+    // ER defines the early window. 0 = off = bit-null. DenseHall path (Phase A).
+    void setTankOnsetMs (float ms);
+
     // SparseField (algo 11) only: the velvet-noise early-field generator dials
     // + the reduced-tail level. No-op routing on every other engine.
     void setSparseFieldSize       (float sizeScale);
     void setSparseFieldOnsetMs    (float ms);
     void setSparseFieldDecayMs    (float ms);
     void setSparseFieldBurst2Ms   (float ms);
+    void setSparseFieldBurst2Gain (float g);       // GAIN bump at burst2Ms (the discrete late tap; 0 = bit-null)
+    void setBuildupAmount         (float a);       // DenseHall tail buildup (0 = bypass/bit-null, 1 = full gradual build)
+    void setBuildupTimeScale      (float s);       // buildup build-time = hall size (scales the cascade; 1.0 = ~84ms)
+    void setBuildupPostTank       (bool b);        // true = diffuse tank OUTPUT (builds onset, tail/T60 intact); false = INPUT (Bright Hall)
     void setSparseFieldTailGain   (float gain);
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
+    // Diffused discrete early reflections (DenseHall clarity/un-masking comb).
+    void setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain);
 
     // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
     // enable=false → bypassed (bit-null on every other preset). amount maps to
@@ -359,6 +421,10 @@ public:
     void setDpvBassShelfGainDb   (float v);
     void setDpvBassShelfFreqHz   (float v);
 
+    // DattorroPlateVintage front-load early-reflection network (algo 1 only).
+    // erGain 0 = bypassed (byte-identical). See DattorroPlateVintage::setFrontLoad.
+    void setDpvFrontLoad         (float erGain, float predelayMs, float tapMs, float lpHz);
+
     // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
     // to silence. Used by the processor to bring an idle engine to a clean
     // start before a preset crossfade swaps it in.
@@ -384,25 +450,33 @@ private:
     DattorroTank       dattorro_;
     SixAPTankEngine    sixAPTank_;
     QuadTank           quad_;
-    FDNReverb          fdn_;
-    // Parallel-multiband FDN (3 band-isolated tanks). Opt-in per preset; when
-    // off, the single fdn_ above runs untouched → bit-identical for the fleet.
-    // Decouples per-band T60 from steady-state level (see MultibandFDN.h).
-    MultibandFDN       multibandFdn_;
+    FDNReverb          fdn_;             // algo 4 (Studio) — hidden, no preset; FiveBand/multiband params still forward here.
+    MultibandFDN       multibandFdn_;    // opt-in multiband (mb_* params); no preset enables it.
     bool               multibandActive_ = false;
     SpringEngine       spring_;
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
-    DspUtils::VintageTankEngine vintageTank_;  // algo 8 (2026-05-29): Griesinger/Lexicon figure-8 modulated AP loop. Built from first principles, replaces the FDN's unitary Hadamard scatter with a recirculating tank that builds modal density over time.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
-    FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ in the feedback loop (Jot/Schlecht accurate-RT). P2: templated FDNReverbT<true>; GEQ scaffold inert (flat) → still renders identical to FDN. P3 fills the per-octave GEQ.
+    FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
-    FDNReverbT<true, 32> accurateHall32_; // algo 12 (2026-06-10): 32-line AccurateHall (double lines + order-32 Hadamard) for HF modal density — Bright Hall metallic-ring fix. Gets every accurateHall_ setter forwarded alongside.
+    DiffusedEarlyReflections diffuseER_; // 2026-06-25: DISCRETE-but-smooth early reflections (diffuse-then-tap) — the clarity/un-masking comb the velvet field can't do without going metallic. DenseHall additive bus; bit-null when no reflections set.
+    // Removed 2026-06-13 (no factory preset; biggest dead RAM): VintageTankEngine
+    // vintageTank_ (algo 8) + FDNReverbT<true,32> accurateHall32_ (algo 12). Those
+    // enum values fall back to accurateHall_.
     // algo 13 (TiledRoom) is a COMPOSITE in the process() switch: sparseField_ ER
     // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
     // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
     // superseded by this composite. setTiledRoomVoicing() configures sparseField_.
+    DenseHallReverb    denseHall_;       // algo 14 (2026-06-13): diffused-FDN dense hall — the
+                                         // smooth dense late field the 16-line FDN can't reach.
+                                         // COMPOSITE: sparseField_ ER + denseHall_ tail in the switch.
+    BuildupDiffuser    buildupDiffuser_; // 2026-06-19: long allpass cascade that makes the DenseHall
+                                         // tail BUILD gradually (quiet early → the SparseField ER owns
+                                         // the early window with its dip + burst2 tap). Opt-in (amount
+                                         // 0 → bypassed → composite feeds the tank directly → bit-null).
+    bool               buildupPostTank_ = false;  // diffuse tank OUTPUT (Blade: builds onset, leaves the
+                                                   // recirculation → T60/decay/spectral intact) vs INPUT.
 
     // Pre-tank input diffuser, applied to every engine. Smears transients
     // before they hit the tank so onsets bloom into the tail rather than
@@ -427,6 +501,29 @@ private:
     OutputDiffusion outputDiffusion_;
     bool outDiffActive_ = false;
 
+    // Phase 3 output match-EQ: a static per-octave (9-band) GEQ on the wet output
+    // that shapes DV's steady-state spectral envelope toward the anchor's measured
+    // octave balance (closes the ss-energy gates — engine-agnostic, post-tank,
+    // pre-mix). Per-preset gain table via setOutputMatchEQ(); identity / skipped
+    // when inactive → bit-null. Stereo state (L/R), shared coeffs.
+    OctaveBandDamping matchEQL_, matchEQR_;
+    OctaveBandDamping::Coeffs matchCoeffs_ {};
+    bool matchEQActive_ = false;
+    // Sanitized per-octave gains (last set via setOutputMatchEQ) — retained so
+    // prepare() can redesign matchCoeffs_ at a new sample rate. Identity default.
+    float matchCorr_[OctaveBandDamping::kNumBands] =
+        { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+
+    // Phase A (early-field engine): tank-onset delay. Pushes the late DenseHall
+    // tail back by tankOnsetSamples_ RELATIVE to the undelayed sparse ER, so the
+    // ER owns the early window (controls energy_t50 / first50 / attack — the
+    // front-load the FDN-fast-fill tank can't). 0 = off = bit-null. DenseHall path
+    // only for Phase A (the make-or-break proof on Cathedral + Vocal Hall).
+    std::vector<float> tankOnsetBufL_, tankOnsetBufR_;
+    int tankOnsetWrite_   = 0;
+    int tankOnsetSamples_ = 0;
+    float tankOnsetMs_    = 0.0f;   // requested onset (ms); sample count recomputed from this
+
     EngineType currentEngine_ = EngineType::Dattorro;
     int currentAlgorithm_ = 0;
 
@@ -442,6 +539,22 @@ private:
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
     std::vector<float> sparseOutL_, sparseOutR_;   // algo 11: sparse early-field scratch
+    std::vector<float> buildupBufL_, buildupBufR_; // DenseHall buildup: diffused tank-input copy
+
+    // FORK A — discrete EARLY-REFLECTION tap ("duh-duh"). A single delayed dry tap
+    // (~90-110 ms, per-preset) summed to the wet, giving the prominent SECOND
+    // arrival the VVV hall anchors have at that time (DV's tank decays smoothly
+    // through it). NOT the smooth er_ cluster (8-80 ms) and NOT a tank-onset delay
+    // (that left a silence gap — reverted). One discrete reflection + a slightly
+    // offset R tap for width + a gentle LP (a real reflection is darker). reflGain_
+    // 0 → off → bit-identical. Fed from tankIn (post-predelay dry).
+    std::vector<float> reflBuf_;
+    std::vector<float> reflDryMono_;   // clean pre-diffuser dry mono (the tap's CLEAN feed, snapshot in the pre-delay loop)
+    int   reflMask_ = 0, reflWritePos_ = 0;
+    int   reflDelayL_ = 0, reflDelayR_ = 0;   // samples
+    float reflGain_ = 0.0f;                    // 0 = off (bit-null)
+    bool  reflActive_ = false;
+    float reflLpCoeff_ = 0.0f, reflLpStateL_ = 0.0f, reflLpStateR_ = 0.0f;  // reflection HF rolloff
 
     // algo 11 SparseField: level of the reduced accurateHall_ tail under the
     // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
@@ -450,6 +563,7 @@ private:
     // less-front-loaded room (Medium Drum Room, anchor first50 44.8%) back off the
     // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
     float sparseERGain_ = 1.0f;
+    float diffuseERGain_ = 1.0f;   // DiffusedEarlyReflections bus level (DenseHall)
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated
@@ -462,6 +576,16 @@ private:
     float xtalkHpCoeff_ = 0.0f;   // 1st-order LP coeff for the 1.5 kHz HF split
     float xtalkLpL_     = 0.0f;
     float xtalkLpR_     = 0.0f;
+
+    // Per-band Width tilt (setWidthBands). 3-band split of the SIDE signal via two
+    // independent one-pole LPs (300 Hz, 5 kHz) — complementary so low+mid+high
+    // reconstruct side exactly: low=LP300, mid=LP5k−LP300, high=side−LP5k. Each
+    // band scaled independently, then ×global Width. bandWidthActive_ false (all
+    // muls 1.0) → the legacy single-multiply path runs → bit-identical fleet.
+    float widthBandLow_ = 1.0f, widthBandMid_ = 1.0f, widthBandHi_ = 1.0f;
+    bool  bandWidthActive_ = false;
+    float wbLp1Coeff_ = 0.0f, wbLp2Coeff_ = 0.0f;   // 300 Hz / 5 kHz one-pole coeffs
+    float wbLp1State_ = 0.0f, wbLp2State_ = 0.0f;   // filter state (on the side signal)
     OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother gainTrimSmoother_;
 
@@ -523,6 +647,29 @@ private:
     Biquad loCutFilter_;
     Biquad hiCutFilter_;
 
+    // Output air-shelf (HF voicing): a post-tank RBJ high-shelf that can BOOST
+    // — unlike hiCutFilter_ (cut-only) and the cut-only output match-EQ — to
+    // lift the HF-deficient fleet toward the bright references (the documented
+    // HF-tilt wall: no engine had an HF up-tilt lever). Per-preset freq + gain
+    // dB; 0 dB → inactive → bit-identical bypass. Feed-forward (not in any
+    // feedback loop), so |H|>1 boost is unconditionally stable.
+    Biquad airShelfFilter_;
+    float  airShelfFreqHz_ = 8000.0f;
+    float  airShelfGainDb_ = 0.0f;
+    bool   airShelfActive_ = false;
+    void   updateAirShelfCoeffs();
+
+    // Output low-shelf (LF "fullness" voicing): the deep-sub counterpart of the
+    // air-shelf — a post-tank RBJ low-shelf that can BOOST the 20-60Hz deep-sub
+    // octave the boom gates (40Hz+) and the cut-only EQs don't cover, restoring the
+    // weight a preset's Lo Cut strips vs the references. Per-preset freq + gain dB;
+    // 0 dB → inactive → bit-identical bypass. Feed-forward → boost is stable.
+    Biquad lowShelfFilter_;
+    float  lowShelfFreqHz_ = 60.0f;
+    float  lowShelfGainDb_ = 0.0f;
+    bool   lowShelfActive_ = false;
+    void   updateLowShelfCoeffs();
+
     // Post-tank parametric EQ (4 bands, series). Sits between Hi Cut Shelf
     // and the mono-below + Width + Gain Trim output chain. Default state is
     // all bands at 0 dB gain → unity coefficients → bit-identical bypass
@@ -565,4 +712,6 @@ private:
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
+    void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
+    void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
 };

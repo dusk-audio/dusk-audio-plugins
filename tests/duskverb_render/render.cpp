@@ -29,6 +29,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -95,8 +96,8 @@ namespace
     // and cannot link the plugin enum, so bump this by hand when an engine is
     // added). Was a stale 9 after ReverseRoom became the 10th engine — that
     // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
-    static constexpr int   kNumAlgorithms    = 14;   // 0..13: + 13 TiledRoom
-    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 13.0f
+    static constexpr int   kNumAlgorithms    = 15;   // 0..14: + 13 TiledRoom, + 14 DenseHall
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 14.0f
 
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to
@@ -851,6 +852,7 @@ int main (int argc, char** argv)
     int          programIndex   = -1;   // factory program by index
     juce::String saveStatePath;         // dump getStateInformation bytes here after preset
     juce::String loadStatePath;         // setStateInformation from these bytes (one round-trip)
+    juce::String screenshotPath;        // --screenshot: open the plugin editor + grab its window to PNG, then exit
     int          waitAfterLoadMs = 0;   // for yabridge handshake races
     int          perParamDelayMs = 0;   // throttle preset apply for slow plugin bridges
     // SixAPTank-specific engine-state property overrides. Useful for tuner
@@ -911,6 +913,7 @@ int main (int argc, char** argv)
         else if (a == "--per-param-delay-ms" && i + 1 < argc)
                                                      perParamDelayMs = juce::String (argv[++i]).getIntValue();
         else if (a == "--save-state" && i + 1 < argc) saveStatePath = argv[++i];
+        else if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
         else if (a == "--sixap-early-hpf" && i + 1 < argc)
                                                      sixAPEarlyHighpassHz = juce::String (argv[++i]).getFloatValue();
         else if (a == "--sixap-early-mix" && i + 1 < argc)
@@ -1235,14 +1238,28 @@ int main (int argc, char** argv)
                 std::cerr << "  ! --nparam: parameter '" << name << "' not found" << std::endl;
                 continue;
             }
-            if (! valueStr.containsOnly ("0123456789.+-eE")
-                || valueStr.trim().isEmpty())
+            // Validate the WHOLE token parses as one float — a character whitelist
+            // alone accepts malformed values like "1e" or "1.2.3" that getFloatValue()
+            // would silently truncate-parse. strtod must consume the entire string.
+            const std::string rawVal = valueStr.trim().toStdString();
+            char* endPtr = nullptr;
+            errno = 0;
+            const double parsed = std::strtod (rawVal.c_str(), &endPtr);
+            // std::isfinite rejects the strtod-recognized "nan"/"inf"/"infinity"
+            // keywords (errno stays 0, so the errno test misses them). Without it
+            // jlimit(0,1,NaN) returns NaN and poisons the param/DSP; matches the
+            // --param path's isfinite guard.
+            const bool validNumber = ! rawVal.empty()
+                                     && endPtr == rawVal.c_str() + rawVal.size()
+                                     && errno == 0
+                                     && std::isfinite (parsed);
+            if (! validNumber)
             {
                 std::cerr << "  ! --nparam " << name << ": value '" << valueStr
                           << "' is not a number, skipped" << std::endl;
                 continue;
             }
-            const float normalised = juce::jlimit (0.0f, 1.0f, valueStr.getFloatValue());
+            const float normalised = juce::jlimit (0.0f, 1.0f, static_cast<float> (parsed));
             p->setValueNotifyingHost (normalised);
             std::cout << "  --nparam " << name << " norm=" << normalised
                       << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;
@@ -1267,6 +1284,92 @@ int main (int argc, char** argv)
     // values are what the renderer hears.
     applyAnyPreset();
     applyParamOverrides();
+
+    // --screenshot PATH: open the plugin's editor (with --param/--nparam preset
+    // applied so the GUI shows that state), let it paint, then grab the desktop
+    // to a PNG and exit. A reusable way to read a closed-source plugin's GUI
+    // state (e.g. Valhalla mode NAMES the host API exposes only as raw norms),
+    // WITH a chosen preset set. Runs on the message thread (this console app owns
+    // the MessageManager via ScopedJuceInitialiser_GUI).
+    //
+    // WORKS on the dev box's GNOME/Mutter Wayland session (verified 2026-06-16 on
+    // ValhallaShimmer + DuskVerb). Two things were essential: (1) host the editor
+    // in a DocumentWindow that is setAlwaysOnTop(true) BEFORE setVisible, so the
+    // Wine GUI maps + the window raises above the user's maximised apps; (2)
+    // capture with gnome-screenshot (GNOME Shell Wayland capture composites
+    // everything incl. XWayland/Wine) — ffmpeg x11grab is black under rootless
+    // XWayland, and JUCE's own snapshot can't read the Wine child surface. Do NOT
+    // resize/re-raise the window mid-flight after the editor attaches: that
+    // triggers an X BadWindow on yabridge's embedded child and aborts. The editor
+    // is already correctly sized at createEditorIfNeeded(), so set up once + pump.
+    // Crop the full-desktop PNG to the window (at the printed screen bounds) to read.
+    if (screenshotPath.isNotEmpty())
+    {
+        if (! plugin->hasEditor())
+        {
+            std::cerr << "  ! --screenshot: plugin reports no editor" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        auto* ed = plugin->createEditorIfNeeded();
+        if (ed == nullptr)
+        {
+            std::cerr << "  ! --screenshot: createEditor returned null" << std::endl;
+            plugin->releaseResources();
+            return 1;
+        }
+        std::cout << "Editor initial size: " << ed->getWidth() << "x" << ed->getHeight() << std::endl;
+        // Host the editor in a real top-level DocumentWindow, RAISED always-on-top
+        // (so it's above the user's maximised apps -> visible to a full-desktop
+        // screenshot). Capture with gnome-screenshot (GNOME Shell Wayland capture,
+        // composites everything incl. XWayland/Wine); ffmpeg x11grab is black here
+        // (rootless XWayland), and JUCE snapshot can't read the Wine child surface.
+        static juce::DocumentWindow* shotWin =
+            new juce::DocumentWindow ("DuskVerb-screenshot", juce::Colours::black,
+                                      juce::DocumentWindow::allButtons);
+        shotWin->setUsingNativeTitleBar (true);
+        shotWin->setAlwaysOnTop (true);           // raise above the user's maximised apps
+        shotWin->setContentNonOwned (ed, true);   // ed is already sized at createEditor
+        shotWin->setTopLeftPosition (60, 60);
+        shotWin->setVisible (true);
+        shotWin->toFront (true);
+        // Single pump — no mid-flight resize/re-raise (that triggered an X BadWindow
+        // on yabridge's embedded Wine child). Let the Wine GUI fully paint.
+        const int settleMs = (waitAfterLoadMs > 0 ? waitAfterLoadMs : 12000);
+        struct LoopStopper : public juce::Timer
+        {
+            void timerCallback() override
+            { stopTimer(); juce::MessageManager::getInstance()->stopDispatchLoop(); }
+        } stopper;
+        stopper.startTimer (settleMs);
+        juce::MessageManager::getInstance()->runDispatchLoop();
+
+        const auto b = shotWin->getScreenBounds();
+        std::cout << "Window on screen: " << b.getWidth() << "x" << b.getHeight()
+                  << " @ (" << b.getX() << "," << b.getY() << ")" << std::endl;
+        // Window held visible during the capture (we delete it afterwards).
+        juce::ChildProcess cap;
+        if (cap.start (juce::StringArray { "gnome-screenshot", "-f", screenshotPath }))
+        {
+            cap.readAllProcessOutput();
+            cap.waitForProcessToFinish (25000);
+        }
+        else
+        {
+            std::cerr << "  ! --screenshot: could not launch gnome-screenshot" << std::endl;
+        }
+        const bool shotOk = juce::File (screenshotPath).existsAsFile();
+        if (shotOk)
+            std::cout << "Wrote screenshot " << screenshotPath << std::endl;
+        else
+            std::cerr << "  ! --screenshot: no output file produced (capture failed)" << std::endl;
+
+        shotWin->clearContentComponent();   // detach ed (non-owned) before deleting
+        plugin->editorBeingDeleted (ed);
+        delete ed;
+        plugin->releaseResources();
+        return shotOk ? 0 : 1;   // non-zero on capture failure so scripts can detect it
+    }
 
     // --dump-params: emit the post-apply parameter values as a JSON dict in
     // DENORMALISED (display) units — exactly what --param NAME=VALUE consumes,
@@ -1417,6 +1520,11 @@ int main (int argc, char** argv)
     {
         if (auto* p = findParam (*plugin, "Gate")) p->setValue (0.0f);
         std::cout << "GATE-OFF OVERRIDE: gate_enabled forced to 0" << std::endl;
+        // Re-settle AFTER the override: the initial preroll above ran with the gate
+        // still ON, so without this the first (impulse) render carries stale gate /
+        // smoother state into the measured output.
+        plugin->reset();
+        runPreroll (prerunSeconds);
     }
 
     // Dry-passthrough test: forcibly override Bus Mode = false and Dry/Wet = 0
@@ -1428,6 +1536,11 @@ int main (int argc, char** argv)
         if (auto* p = findParam (*plugin, "Bus Mode"))   p->setValue (0.0f);
         if (auto* p = findParam (*plugin, "Dry/Wet"))    p->setValue (0.0f);
         std::cout << "DRY PASSTHROUGH TEST: Bus Mode=0, Dry/Wet=0 (gain_trim retained)" << std::endl;
+        // Re-settle AFTER the override so the dry-path measurement isn't contaminated
+        // by the Bus Mode / Dry-Wet smoothers ramping out of the pre-override (wet)
+        // state the initial preroll left them in.
+        plugin->reset();
+        runPreroll (prerunSeconds);
         // Skip impulse + noise renders — we only need the sine for measurement.
         const int sineSamples = static_cast<int> (kSampleRate * 2.0);
         juce::AudioBuffer<float> input (2, sineSamples);
