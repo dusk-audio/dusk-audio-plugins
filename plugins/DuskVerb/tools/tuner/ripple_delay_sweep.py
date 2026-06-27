@@ -32,6 +32,8 @@ def main():
     ap=argparse.ArgumentParser(); ap.add_argument("preset"); ap.add_argument("--trials",type=int,default=200)
     ap.add_argument("--bands",nargs="+",required=True); ap.add_argument("--workers",type=int,default=6)
     a=ap.parse_args()
+    bad=[b for b in a.bands if b not in BANDS]
+    if bad: sys.exit(f"unknown band(s) {bad}; known: {list(BANDS)}")
     adir,apref=PR[a.preset]; slug=a.preset.lower().replace(" ","_")
     asus=adir/f"{apref}_sustained.wav"; anb=adir/f"{apref}_noiseburst.wav"
     use_sus=asus.exists(); aref=str(asus if use_sus else anb)
@@ -59,44 +61,48 @@ def main():
     def obj(trial):
         ds=sorted(trial.suggest_int(f"d{i}",700,6700) for i in range(16))
         d=f"/tmp/rds_{slug}_{os.getpid()}_t{trial.number}"; shutil.rmtree(d,ignore_errors=True); os.makedirs(d)
-        env=dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(map(str,ds)))
-        r=subprocess.run([str(REND),"--program",a.preset,"--output-dir",d,"--param","Dry/Wet=1.0",
-                          "--param","Bus Mode=1","--param","Freeze=0","--sustained-pink-seconds","4.0"],
-                         capture_output=True,env=env)
-        cand=glob.glob(f"{d}/*sustained*.wav") if use_sus else glob.glob(f"{d}/*_noiseburst.wav")
-        if r.returncode!=0 or not cand: return 1e3
-        dv=cand[0]; pen=0.0
-        # (1) ripple: keep EVERY band's std within +1.0 dB of the anchor (margin
-        #     under the +1.5 gate). No reward for over-smoothing — that is what
-        #     redistributed band energy and opened ss/boom gates.
-        for b in ["bass","lowmid","mid","high"]:
-            s=_tail_env_ripple_db(dv,0.5,3.0,*BANDS[b])
-            if s is None: return 1e3
-            ar=anchor_std_all[b]
-            if ar is not None: pen += 3.0*max(0.0, (s-ar)-1.0)
-        # (2) preserve steady-state per-band energy vs the default-delay render
-        #     (so the ripple fix does not move the ss/boom gates). Band RMS over
-        #     the sustained steady window, gain-matched to anchor.
-        # (3) octave-T60 match on the trial noiseburst (hold anchor decay so no recal)
-        nbf=glob.glob(f"{d}/*_noiseburst.wav")
-        if not nbf: return 1e3
-        if nbf:
+        try:
+            env=dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(map(str,ds)))
+            try:
+                r=subprocess.run([str(REND),"--program",a.preset,"--output-dir",d,"--param","Dry/Wet=1.0",
+                                  "--param","Bus Mode=1","--param","Freeze=0","--sustained-pink-seconds","4.0"],
+                                 capture_output=True,env=env,timeout=180)
+            except subprocess.TimeoutExpired:
+                return 1e3            # hung render → failed trial
+            cand=glob.glob(f"{d}/*sustained*.wav") if use_sus else glob.glob(f"{d}/*_noiseburst.wav")
+            if r.returncode!=0 or not cand: return 1e3
+            dv=cand[0]; pen=0.0
+            # (1) ripple: keep the SELECTED (--bands) bands' std within +1.0 dB of the
+            #     anchor (margin under the +1.5 gate). No reward for over-smoothing —
+            #     that is what redistributed band energy and opened ss/boom gates.
+            for b in a.bands:
+                s=_tail_env_ripple_db(dv,0.5,3.0,*BANDS[b])
+                if s is None: return 1e3
+                ar=anchor_std_all[b]
+                if ar is not None: pen += 3.0*max(0.0, (s-ar)-1.0)
+            # (2) preserve steady-state per-band energy vs the default-delay render
+            #     (so the ripple fix does not move the ss/boom gates). Band RMS over
+            #     the sustained steady window, gain-matched to anchor.
+            # (3) octave-T60 match on the trial noiseburst (hold anchor decay so no recal)
+            nbf=glob.glob(f"{d}/*_noiseburst.wav")
+            if not nbf: return 1e3
             for (lo,hi),at in zip(OCT,anchor_t60,strict=True):
                 if at is None or at<=0.05: continue
                 mt=_t60_band_schroeder(nbf[0],lo,hi)
                 if mt is None: pen+=2.0; continue
                 pen += 2.0*max(0.0, abs(mt-at)/at - 0.05)
-        import numpy as _np
-        x,sr=sf.read(dv); m=x.mean(axis=1) if x.ndim>1 else x
-        _nbx=sf.read(nbf[0])[0]; _nbm=_nbx.mean(axis=1) if _nbx.ndim>1 else _nbx
-        g=anchor_nb_rms/ (np.sqrt(np.mean(_nbm**2))+1e-12)
-        from scipy.signal import butter as _bt, sosfiltfilt as _sf
-        i0=int(2.5*sr); i1=min(len(m), int(4.0*sr)); seg=m[i0:i1]*g
-        for (lo,hi),e0 in (ss_ref.items() if use_sus else []):
-            sos=_bt(4,[lo,min(hi,sr*0.49)],'band',fs=sr,output='sos')
-            e=20*np.log10(np.sqrt(np.mean(_sf(sos,seg)**2))+1e-12)
-            pen += 0.5*max(0.0, abs(e-e0)-1.6)
-        return pen
+            x,sr=sf.read(dv); m=x.mean(axis=1) if x.ndim>1 else x
+            _nbx=sf.read(nbf[0])[0]; _nbm=_nbx.mean(axis=1) if _nbx.ndim>1 else _nbx
+            g=anchor_nb_rms/ (np.sqrt(np.mean(_nbm**2))+1e-12)
+            from scipy.signal import butter as _bt, sosfiltfilt as _sf
+            i0=int(2.5*sr); i1=min(len(m), int(4.0*sr)); seg=m[i0:i1]*g
+            for (lo,hi),e0 in (ss_ref.items() if use_sus else []):
+                sos=_bt(4,[lo,min(hi,sr*0.49)],'band',fs=sr,output='sos')
+                e=20*np.log10(np.sqrt(np.mean(_sf(sos,seg)**2))+1e-12)
+                pen += 0.5*max(0.0, abs(e-e0)-1.6)
+            return pen
+        finally:
+            shutil.rmtree(d, ignore_errors=True)   # free the per-trial render dir (no /tmp leak)
     study=optuna.create_study(direction="minimize",sampler=optuna.samplers.TPESampler(seed=42))
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study.optimize(obj,n_trials=a.trials,n_jobs=a.workers)
@@ -106,9 +112,15 @@ def main():
     # final gate-exact readout at best
     d=f"/tmp/rds_{slug}_best"; shutil.rmtree(d,ignore_errors=True); os.makedirs(d)
     env=dict(os.environ, DUSKVERB_FDN_DELAYS=",".join(map(str,ds)))
-    subprocess.run([str(REND),"--program",a.preset,"--output-dir",d,"--param","Dry/Wet=1.0","--param","Bus Mode=1","--param","Freeze=0","--sustained-pink-seconds","4.0"],capture_output=True,env=env)
-    dv=(glob.glob(f"{d}/*sustained*.wav") if use_sus else glob.glob(f"{d}/*_noiseburst.wav"))[0]
-    for b in ["bass","lowmid","mid","high"]:
+    try:
+        rr=subprocess.run([str(REND),"--program",a.preset,"--output-dir",d,"--param","Dry/Wet=1.0","--param","Bus Mode=1","--param","Freeze=0","--sustained-pink-seconds","4.0"],capture_output=True,env=env,timeout=180)
+    except subprocess.TimeoutExpired:
+        print("  final rerender FAILED (timeout); best delays printed above"); return
+    cand=glob.glob(f"{d}/*sustained*.wav") if use_sus else glob.glob(f"{d}/*_noiseburst.wav")
+    if rr.returncode!=0 or not cand:
+        print(f"  final rerender FAILED (rc={rr.returncode}/no output); best delays printed above"); return
+    dv=cand[0]
+    for b in a.bands:
         s=_tail_env_ripple_db(dv,0.5,3.0,*BANDS[b]); ar=_tail_env_ripple_db(aref,0.5,3.0,*BANDS[b])
         dl=s-ar; print(f"    {b:7s} Δ={dl:+.2f} {'PASS' if dl<=1.5 else 'FAIL'}")
 

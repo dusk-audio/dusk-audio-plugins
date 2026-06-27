@@ -124,13 +124,13 @@ ENGINE_CEILING = {
                             "stereo":    "static-FIR per-tap L/R decorrelation differs from anchor's modal-density correlation",
                             "cent_50":   "gate window crops the centroid evolution window the anchor uses",
                             "cent_500":  "gate cliff truncates mid-tail centroid evolution"},
-    "Reverse Taps":        {"rt60":      "NonLinear forward-swelling gate shape vs anchor's backwards-convolved envelope — architectural inversion",
-                            "env_p2p":   "swell-then-cliff envelope vs anchor's true reverse exponential — intentional effect character",
-                            "bass_ratio":"reverse-mode taps weight bass differently than backwards-convolved energy distribution",
-                            "treble_ratio":"reverse swell HF accumulation differs from anchor's backwards-convolved HF rolloff",
-                            "stereo":    "reverse-mode tap decorrelation has no analog in true backwards convolution",
-                            "cent_50":   "reverse envelope shape relocates spectral energy across the window",
-                            "cent_500":  "reverse cliff truncates mid-window centroid measurement"},
+    # Reverse Taps exemptions REMOVED 2026-06-26: the old blanket list (rt60 /
+    # env_p2p / bass_ratio / treble_ratio / stereo / cent_50 / cent_500) was written
+    # for the retired NonLinear-vs-backwards-convolution mismatch. The current engine
+    # (ReverseRoomEngine = swell-ER → VelvetTail → input-keyed gate) targets the GATED
+    # lex-reverse-1 anchor faithfully — bright, wide, short per-band T60 + a gated
+    # envelope — so those metrics SHOULD match. Exempting them masked real regressions;
+    # let them surface as failures instead.
 }
 
 def evaluate(preset, anchor_path, slug, vst3):

@@ -2440,7 +2440,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // don't have to add a new field to FactoryPreset (would break the
     // aggregate-initializability of the brace-init preset list).
     // Names that aren't listed get RandomWalk (legacy bit-identical).
-    static const std::unordered_map<std::string_view, DspUtils::ModulationTopology> kTopologyByName = {
+    // constexpr std::array + linear scan (NOT std::unordered_map) — RT-safe on the
+    // audio thread (applyEngineConfig runs in performPresetSwap). See findPresetConfig().
+    static constexpr std::array<std::pair<std::string_view, DspUtils::ModulationTopology>, 4> kTopologyByName = {{
         // Phase 2 opt-ins (2026-05-28). Final list after listening +
         // measurement validation:
         //
@@ -2491,11 +2493,10 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // with VH now back on v15, fall through to the default and let
         // the per-line random LFOs handle modulation as they did when
         // the FDN path was last known stable.
-    };
+    }};
     DspUtils::ModulationTopology topo = DspUtils::ModulationTopology::RandomWalk;
-    auto it = kTopologyByName.find (std::string_view (name));
-    if (it != kTopologyByName.end())
-        topo = it->second;
+    if (const auto* p = findPresetConfig (kTopologyByName, std::string_view (name)))
+        topo = *p;
     engine.setModulationTopology (topo);
 
     // ─── Phase α: per-line frequency-indexed decay-tilt overrides ─────────
@@ -2508,7 +2509,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // multiplexing alone cannot reach (proven by the BH "sacrificial sweep"
     // verdict).
     struct DecayTiltConfig { float shortLine, longLine; };
-    static const std::unordered_map<std::string_view, DecayTiltConfig> kDecayTiltByName = {
+    static constexpr std::array<std::pair<std::string_view, DecayTiltConfig>, 0> kDecayTiltByName = {{
         // Phase α audit (2026-05-29): per-line tilt was designed to shape
         // RT60 per band but in practice DUMPS level into the long-line
         // band and STARVES level on the short-line band.
@@ -2532,13 +2533,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // { "Bright Hall",          { 0.55f, 1.65f } },  // disabled — factory row reverted to v1, tilt no longer needed
         // { "Cathedral Large Hall", { 0.45f, 1.85f } },  // disabled pending audition
         // { "Drum Plate",           { 0.70f, 1.30f } },  // disabled pending audition
-    };
+    }};
     float shortS = 1.0f, longS = 1.0f;
-    auto tiltIt = kDecayTiltByName.find (std::string_view (name));
-    if (tiltIt != kDecayTiltByName.end())
+    if (const auto* p = findPresetConfig (kDecayTiltByName, std::string_view (name)))
     {
-        shortS = tiltIt->second.shortLine;
-        longS  = tiltIt->second.longLine;
+        shortS = p->shortLine;
+        longS  = p->longLine;
     }
     engine.setPerLineDecayTilt (shortS, longS);
 
@@ -2556,7 +2556,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // entry MUST define all 32 (else OOB). 16-line presets pad [16..31] with the
     // engine default tail primes (dormant: their active engine never reads them).
     struct BaseDelaySet { int delays[32]; };
-    static const std::unordered_map<std::string_view, BaseDelaySet> kBaseDelaysByName = {
+    static constexpr std::array<std::pair<std::string_view, BaseDelaySet>, 5> kBaseDelaysByName = {{
         // Vocal Hall (Step 2 on v15 baseline, 2026-05-30): restored Phase β
         // sweep result. Without this override the engine's default log-
         // spaced-prime delays push the dominant pairwise (1/T_i - 1/T_j)
@@ -2604,7 +2604,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                            4055, 4594, 5184, 5202, 5808, 6246, 6423, 6678,
                            1213, 1361, 1531, 1721, 1933, 2153, 2417, 2713,
                            3041, 3413, 3833, 4297, 4817, 5417, 6079, 6469 } } },
-    };
+    }};
 
     // ─── Phase γ: per-preset post-tank band-trim region gains ────────────
     // 4 floats per preset (Sub / LowMid / MidHi / Air) in dB. Defaults 0 →
@@ -2612,7 +2612,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // Presets not in the map skip the call entirely (APVTS-default 0 dB
     // already pushed via forcePushAllParametersTo at swap time).
     struct PostBandTrimConfig { float sub, lowMid, midHi, air; };
-    static const std::unordered_map<std::string_view, PostBandTrimConfig> kPostBandTrimByName = {
+    static constexpr std::array<std::pair<std::string_view, PostBandTrimConfig>, 5> kPostBandTrimByName = {{
         // Vocal Hall (front-load campaign 2026-06-08): PostTankBandTrim sub/low
         // lift TRIED to refill the cold sustained low left by the tank_level 0.42
         // front-load cut, but a flat region lift pushes boom-sub + snare level
@@ -2667,15 +2667,15 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // (brighten the onset, leave the tail) — a real engine add, not a shelf. See
         // memory duskverb_fleet_hf_tilt_wall. Crossover infra kept (kPostBandCross,
         // bit-null when unused) for that future early-only lever.
-    };
+    }};
     PostBandTrimConfig pbt { 0.0f, 0.0f, 0.0f, 0.0f };
-    auto pbtIt = kPostBandTrimByName.find (std::string_view (name));
-    if (pbtIt != kPostBandTrimByName.end())
-        pbt = pbtIt->second;
+    const auto* pbtEntry = findPresetConfig (kPostBandTrimByName, std::string_view (name));
+    if (pbtEntry != nullptr)
+        pbt = *pbtEntry;
     // Sweep override: DUSKVERB_BANDTRIM = "sub,lowMid,midHi,air" dB (the UltraRoom
     // decouple level lever). Rebuild-free; only the listed preset opts in.
     const char* envBt = tuningEnv().bandtrim;
-    if (envBt != nullptr && envBt[0] != '\0' && pbtIt != kPostBandTrimByName.end())
+    if (envBt != nullptr && envBt[0] != '\0' && pbtEntry != nullptr)
     {
         juce::StringArray t; t.addTokens (juce::String (envBt), ",", "");
         if (t.size() == 4)
@@ -2711,14 +2711,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // DUSKVERB_TANKFEED = "lowFc,lowDb,highFc,highDb".
     {
         struct TankFeedConfig { float lowFc, lowDb, highFc, highDb; };
-        static const std::unordered_map<std::string_view, TankFeedConfig> kTankFeedEQByName = {
+        static constexpr std::array<std::pair<std::string_view, TankFeedConfig>, 1> kTankFeedEQByName = {{
             // BEGIN_TANKFEED_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
             { "Medium Drum Room", { 250.0f, -0.16244f, 3736.08f, -0.84836f } },
             // END_TANKFEED_MAP
-        };
+        }};
         TankFeedConfig tf { 200.0f, 0.0f, 2500.0f, 0.0f };
-        if (auto it = kTankFeedEQByName.find (std::string_view (name)); it != kTankFeedEQByName.end())
-            tf = it->second;
+        if (const auto* p = findPresetConfig (kTankFeedEQByName, std::string_view (name)))
+            tf = *p;
         if (const char* envTf = tuningEnv().tankfeed; envTf != nullptr && envTf[0] != '\0')
         {
             juce::StringArray t; t.addTokens (juce::String (envTf), ",", "");
@@ -2738,15 +2738,15 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // DUSKVERB_DENSJIT = "<fraction>".
     {
         struct DensityJitterConfig { float fraction; };
-        static const std::unordered_map<std::string_view, DensityJitterConfig> kDensityJitterByName = {
+        static constexpr std::array<std::pair<std::string_view, DensityJitterConfig>, 2> kDensityJitterByName = {{
             // BEGIN_DENSJIT_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
             { "Medium Drum Room", { 0.00474f } },
             // END_DENSJIT_MAP
             { "Vintage Gold Plate", { 0.0f } },   // 2026-06-13: kill the 2% density wander — it was the audible tail chorus (renamed from "Studio Plate")
-        };
+        }};
         float dj = 0.02f;
-        if (auto it = kDensityJitterByName.find (std::string_view (name)); it != kDensityJitterByName.end())
-            dj = it->second.fraction;
+        if (const auto* p = findPresetConfig (kDensityJitterByName, std::string_view (name)))
+            dj = p->fraction;
         // NB: the DUSKVERB_* env-override checks throughout applyEngineConfig (densjit,
         // dens, maindet, matcheq, octt60, …) exist ONLY for the offline rebuild-free
         // tuning sweeps. In a normal/shipping session every getenv() returns null so
@@ -2779,7 +2779,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // (false / identity) = byte-identical for every non-room Dattorro preset.
         struct DensityConfig { float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f;
                                bool roomfill = false; float det[4] = { 1.0f, 1.0f, 1.0f, 1.0f }; };
-        static const std::unordered_map<std::string_view, DensityConfig> kDattorroDensityByName = {
+        static constexpr std::array<std::pair<std::string_view, DensityConfig>, 3> kDattorroDensityByName = {{
             // BEGIN_DATTDENS_MAP (offline density/modred/indiff sweep, key on exact row name)
             // Drum Plate: density 1.0 (12 in-loop APs) + Size up (row 0.337->0.8)
             // densify the modes → kill the ~360Hz tail "boing" (19.5->~15dB =
@@ -2804,12 +2804,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // need ENGINE MIGRATION (FDN 16-line / velvet, dense modes w/o a runaway loop)
             // or accept the boing. See memory duskverb_boing_sparse_modal.
             // END_DATTDENS_MAP
-        };
+        }};
         float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f;
         bool  roomfill = false; float det[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-        if (auto it = kDattorroDensityByName.find (std::string_view (name)); it != kDattorroDensityByName.end())
-        { density = it->second.density; modred = it->second.modred; indiff = it->second.indiff; softonset = it->second.softonset; bloom = it->second.bloom;
-          roomfill = it->second.roomfill; for (int b = 0; b < 4; ++b) det[b] = it->second.det[b]; }
+        if (const auto* p = findPresetConfig (kDattorroDensityByName, std::string_view (name)))
+        { density = p->density; modred = p->modred; indiff = p->indiff; softonset = p->softonset; bloom = p->bloom;
+          roomfill = p->roomfill; for (int b = 0; b < 4; ++b) det[b] = p->det[b]; }
         if (const char* e = tuningEnv().dens;   e != nullptr && e[0] != '\0') density   = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().modred; e != nullptr && e[0] != '\0') modred    = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().indiff; e != nullptr && e[0] != '\0') indiff    = juce::String (e).getFloatValue();
@@ -2839,7 +2839,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // → octave GEQ inactive → byte-identical legacy 3-band.
     {
         struct OctaveT60Config { float t60[9]; float decayRef; };
-        static const std::unordered_map<std::string_view, OctaveT60Config> kDattorroOctaveT60ByName = {
+        static constexpr std::array<std::pair<std::string_view, OctaveT60Config>, 3> kDattorroOctaveT60ByName = {{
             // Re-tuned 2026-06-15 vs the CORRECTED LexVintagePlate anchors. Values
             // are the CALIBRATED commanded T60s (Newton-corrected so the REALIZED
             // per-octave RT60 lands within ±5% JND of the anchor — the raw anchor
@@ -2876,11 +2876,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // so per-band-match and audible-broadband-match are mutually exclusive here;
             // the user hears broadband → ear over the per-band gates.
             { "Vintage Vocal Plate", { { 0.650f, 0.640f, 0.620f, 0.666f, 0.744f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.703f } },  // 2026-06-24 decayRef tuned so the Decay knob (0.90) reads ~= the realized RT60 (~0.90s): decayRef 0.724 gave realized 0.874 @ knob 0.90 (3% low); 0.703 lifts scale 1.24->1.28 -> realized ~0.90 = honest knob.
-        };
+        }};
         float t60[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         float ref = 0.0f;
-        if (auto it = kDattorroOctaveT60ByName.find (std::string_view (name)); it != kDattorroOctaveT60ByName.end())
-        { for (int b = 0; b < 9; ++b) t60[b] = it->second.t60[b]; ref = it->second.decayRef; }
+        if (const auto* p = findPresetConfig (kDattorroOctaveT60ByName, std::string_view (name)))
+        { for (int b = 0; b < 9; ++b) t60[b] = p->t60[b]; ref = p->decayRef; }
         // Calibration override: DUSKVERB_OCTT60="t0,t1,...,t8" (9 csv) + DUSKVERB_OCTREF.
         if (const char* e = tuningEnv().octt60; e != nullptr && e[0] != '\0')
         {
@@ -2898,7 +2898,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // Per-preset dB[9] (63|125|250|500|1k|2k|4k|8k|16k); 0 = identity = bit-null.
     {
         struct TonalCorrConfig { float db[9]; };
-        static const std::unordered_map<std::string_view, TonalCorrConfig> kDattorroTonalCorrByName = {
+        static constexpr std::array<std::pair<std::string_view, TonalCorrConfig>, 1> kDattorroTonalCorrByName = {{
             // BEGIN_DATTTONAL_MAP (offline calibrated cut-only octave trims)
             // Vintage Vocal Plate 2026-06-19: cut-only post-tank trim of DV's broadly-
             // hot upper-mid/HF (mid 250-1k +3.3, hi 4-12k +4.4) + the 1k tank-mode
@@ -2915,10 +2915,10 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // (+2.7dB), and brightened (16k uncut + makeup) — all ear-confirmed.
             // The real fix is the boing itself: Size-up + density (modal density).)
             // END_DATTTONAL_MAP
-        };
+        }};
         float db[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        if (auto it = kDattorroTonalCorrByName.find (std::string_view (name)); it != kDattorroTonalCorrByName.end())
-            for (int b = 0; b < 9; ++b) db[b] = it->second.db[b];
+        if (const auto* p = findPresetConfig (kDattorroTonalCorrByName, std::string_view (name)))
+            for (int b = 0; b < 9; ++b) db[b] = p->db[b];
         if (const char* e = tuningEnv().tonal; e != nullptr && e[0] != '\0')
         {
             juce::StringArray toks; toks.addTokens (juce::String (e), ",", "");
@@ -3007,7 +3007,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // 6th field erGain: ER level in the mix (1.0 = full). Backs off the ER for a
     // less-front-loaded room so it doesn't overshoot energy_first50.
     struct CompositeER { float erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, erGain, burst2Gain = 0.0f, buildupAmount = 0.0f, buildupTime = 1.0f, buildupPostTank = 0.0f; };
-    static const std::unordered_map<std::string_view, CompositeER> kCompositeERByName = {
+    static constexpr std::array<std::pair<std::string_view, CompositeER>, 7> kCompositeERByName = {{
         // Tiled Room: tiledroom_voicing_sweep.py best (n_fail 26->16). Tight ER,
         // fast onset, short discharge, micro-burst ~18 ms, ER/tail mix 0.49, full ER.
         { "Tiled Room",       { 0.3248f, 1.4567f, 17.1838f, 17.749f, 0.4928f, 1.0000f } },
@@ -3042,11 +3042,10 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // (edt mid +52%→+2%, edt hi +28%→−18%). erGain 0.40 keeps the QuadTank tail
         // primary so it's a chamber, not an ER slap.
         { "79 Vocal Chamber", { 0.40f, 110.0f, 30.0f, 130.0f, 0.75f, 0.40f } },
-    };
-    auto erIt = kCompositeERByName.find (std::string_view (name));
-    if (erIt != kCompositeERByName.end())
+    }};
+    if (const auto* erEntry = findPresetConfig (kCompositeERByName, std::string_view (name)))
     {
-        CompositeER c = erIt->second;
+        CompositeER c = *erEntry;
         const char* envTr = tuningEnv().tiledRoom;
         if (envTr != nullptr && envTr[0] != '\0')
         {
@@ -3112,9 +3111,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
 
     if (! fdnDelaysFromEnv)   // an env DUSKVERB_FDN_DELAYS override owns the delays — don't clobber it
     {
-        auto bdIt = kBaseDelaysByName.find (std::string_view (name));
-        if (bdIt != kBaseDelaysByName.end())
-            engine.setFDNBaseDelays (bdIt->second.delays);
+        if (const auto* p = findPresetConfig (kBaseDelaysByName, std::string_view (name)))
+            engine.setFDNBaseDelays (p->delays);
         else
             engine.resetFDNBaseDelays();   // no custom set → restore default so a prior preset's custom delays don't leak (setFDNBaseDelays(nullptr) only PRESERVES, never resets)
     }
@@ -3133,12 +3131,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         float bsSlowDb;  // η: dual bass shelf slow gain (dB)
         float bsTransMs; // η: dual bass shelf transition time (ms)
     };
-    static const std::unordered_map<std::string_view, ZetaEtaConfig> kZetaEtaByName = {
+    [[maybe_unused]] static constexpr std::array<std::pair<std::string_view, ZetaEtaConfig>, 0> kZetaEtaByName = {{
         // VH (and any other ζ+η-opt-in preset) now applies values via
         // FactoryPreset::applyTo writing APVTS. Map kept as the documented
         // canonical defaults but no longer applied — APVTS path handles
         // all the smoother ramping and inter-block coefficient sync.
-    };
+    }};
     // Note: kZetaEtaByName map intentionally NOT applied here. ζ+η per-
     // preset values now flow through APVTS via FactoryPreset::applyTo +
     // forcePushAllParametersTo so they share the same smoother/edge-detect

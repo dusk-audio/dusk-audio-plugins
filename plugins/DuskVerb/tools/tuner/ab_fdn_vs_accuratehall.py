@@ -31,8 +31,12 @@ PRESETS = {
 
 
 def full_rms(p):
+    # Mono-mix BEFORE RMS (matches the whole tuner suite + full_check's mono-domain
+    # gates). Raw whole-array RMS diverges ~3 dB for decorrelated stereo, mis-leveling
+    # the gain-match that full_check then reads.
     x, _ = sf.read(p)
-    return float(np.sqrt(np.mean(x**2)))
+    m = x.mean(axis=1) if x.ndim > 1 else x
+    return float(np.sqrt(np.mean(m**2)))
 
 
 def render(name, algo10, dst):
@@ -67,7 +71,11 @@ def lexdir(adir, prefix, dst):
     shutil.rmtree(dst, ignore_errors=True); os.makedirs(dst, exist_ok=True)
     for s in STIM:
         src = f"{adir}/{prefix}_{s}.wav"
-        if os.path.exists(src): shutil.copy(src, f"{dst}/anchor_{s}.wav")
+        # Fail fast: a missing stimulus would silently shrink the comparison set,
+        # so full_check would A/B on an incomplete anchor and report misleading deltas.
+        if not os.path.exists(src):
+            raise RuntimeError(f"missing anchor stimulus {src!r} — refusing to run full_check on a partial set")
+        shutil.copy(src, f"{dst}/anchor_{s}.wav")
 
 
 def run_fc(dvdir, lex, name):

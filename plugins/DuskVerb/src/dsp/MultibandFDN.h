@@ -103,6 +103,10 @@ public:
         oL_.assign (n, 0);  oR_.assign (n, 0);
 
         designCrossovers();
+        // Reset the LR4 crossover filter state on (re)prepare so a reused instance
+        // (sample-rate / block-size change) can't carry old session delay state into
+        // the freshly-designed filters. (The tanks reset themselves in their prepare.)
+        lpLow_.reset(); hpLow_.reset(); lpHigh_.reset(); hpHigh_.reset();
     }
 
     void setCrossovers (float lowHz, float highHz)

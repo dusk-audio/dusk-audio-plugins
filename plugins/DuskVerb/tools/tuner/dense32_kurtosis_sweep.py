@@ -138,8 +138,11 @@ def main():
     print(f"anchor      agg2-14k={a_agg:.1f}  "
           f"sub={ {f'{l//1000}-{h//1000}k': round(a_sub[(l,h)],1) for l,h in SUB} }")
     n_agg, n_sub = render_kurts(NAIVE32, "naive", keep=True)
-    print(f"naive-32    agg2-14k={n_agg:.1f}  "
-          f"sub={ {f'{l//1000}-{h//1000}k': round(n_sub[(l,h)],1) for l,h in SUB} }")
+    if n_agg is None:
+        print("naive-32    render FAILED (rc!=0 / timeout / no noiseburst)")
+    else:
+        print(f"naive-32    agg2-14k={n_agg:.1f}  "
+              f"sub={ {f'{l//1000}-{h//1000}k': round(n_sub[(l,h)],1) for l,h in SUB} }")
     print(f"target agg={TARGET_AGG}  sub-cap={SUB_CAP}  base_mean={BASE_MEAN:.0f}\n")
 
     def obj(trial):
@@ -168,16 +171,20 @@ def main():
 
     # Final scoreboard: naive-32 vs optimized vs anchor.
     b_agg, b_sub = render_kurts(best, "best", keep=True)
-    print(f"\n{'band':8s} {'naive32':>9s} {'optim':>9s} {'anchor':>9s}")
-    rows = [("2-14k", (2000, 14000))] + [(f"{l//1000}-{h//1000}k", (l, h)) for l, h in SUB]
-    for lab, (lo, hi) in rows:
-        # render_kurts(keep=True) leaves the dirs as /tmp/d32_<tag>_<pid>/ — match
-        # THIS process's pid (not a bare wildcard) so a stale dir from an older /
-        # concurrent run can't be picked up instead of the current render.
-        nk = tail_kurt(glob.glob(f'/tmp/d32_naive_{os.getpid()}/*_noiseburst.wav')[0], lo, hi)
-        ok = tail_kurt(glob.glob(f'/tmp/d32_best_{os.getpid()}/*_noiseburst.wav')[0], lo, hi)
-        ak = tail_kurt(anb, lo, hi)
-        print(f"{lab:8s} {nk:9.1f} {ok:9.1f} {ak:9.1f}")
+    # render_kurts(keep=True) leaves the dirs as /tmp/d32_<tag>_<pid>/ — match THIS
+    # process's pid (not a bare wildcard) so a stale/concurrent run can't be picked up.
+    naive_nb = glob.glob(f'/tmp/d32_naive_{os.getpid()}/*_noiseburst.wav')
+    best_nb  = glob.glob(f'/tmp/d32_best_{os.getpid()}/*_noiseburst.wav')
+    if b_agg is None or not naive_nb or not best_nb:
+        print("\nFinal scoreboard skipped: a kept render failed (naive/best produced no noiseburst).")
+    else:
+        print(f"\n{'band':8s} {'naive32':>9s} {'optim':>9s} {'anchor':>9s}")
+        rows = [("2-14k", (2000, 14000))] + [(f"{l//1000}-{h//1000}k", (l, h)) for l, h in SUB]
+        for lab, (lo, hi) in rows:
+            nk = tail_kurt(naive_nb[0], lo, hi)
+            ok = tail_kurt(best_nb[0], lo, hi)
+            ak = tail_kurt(anb, lo, hi)
+            print(f"{lab:8s} {nk:9.1f} {ok:9.1f} {ak:9.1f}")
 
     print("\n// AccurateHall32 mode-spread (32 prime delays, mean-anchored to 16-line baseline)")
     print("static constexpr int kBrightHall32Delays[32] = {")

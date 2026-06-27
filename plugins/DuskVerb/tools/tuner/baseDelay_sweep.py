@@ -82,6 +82,7 @@ def render_and_measure(delays, preset, anchor_targets, out_dir):
 
 
 def main():
+    global VST3   # reassigned below from --vst3 / DUSKVERB_VST3 (declared before any read)
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", required=True, choices=list(PRESET_TARGETS.keys()))
     ap.add_argument("--trials", type=int, default=300)
@@ -90,7 +91,13 @@ def main():
     ap.add_argument("--study-name", default=None)
     ap.add_argument("--storage", default=None,
                     help="Optional sqlite URL for resumable study")
+    ap.add_argument("--vst3", default=os.environ.get("DUSKVERB_VST3", str(VST3)),
+                    help=f"DuskVerb VST3 path (default {VST3}, or DUSKVERB_VST3 env var).")
     args = ap.parse_args()
+
+    # Resolve the VST3 path (CLI > DUSKVERB_VST3 env > default) before any render —
+    # render_and_measure + the final render read the module-global VST3.
+    VST3 = Path(args.vst3)
 
     targets = PRESET_TARGETS[args.preset]
     out_root = Path(args.out)
