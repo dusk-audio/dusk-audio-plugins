@@ -12,6 +12,7 @@ Picks min-fail combo, prints params + delta sheet.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -55,6 +56,8 @@ def run_check(out_dir: Path) -> int:
 
 
 def render(out_dir: Path, mid_mult: float, treble_mult: float, gain_trim: float) -> bool:
+    # Full clean dir so stale artifacts in a reused trial dir can't contaminate scoring.
+    shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         str(RENDER), "--vst3", str(VST3),
@@ -69,9 +72,6 @@ def render(out_dir: Path, mid_mult: float, treble_mult: float, gain_trim: float)
         "--output-dir", str(out_dir),
     ]
     wav = out_dir / "BrightHall_noiseburst.wav"
-    # Drop any stale artifact so existence check reflects THIS run.
-    if wav.exists():
-        wav.unlink()
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:

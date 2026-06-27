@@ -29,6 +29,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -95,8 +96,8 @@ namespace
     // and cannot link the plugin enum, so bump this by hand when an engine is
     // added). Was a stale 9 after ReverseRoom became the 10th engine — that
     // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
-    static constexpr int   kNumAlgorithms    = 14;   // 0..13: + 13 TiledRoom
-    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 13.0f
+    static constexpr int   kNumAlgorithms    = 15;   // 0..14: + 13 TiledRoom, + 14 DenseHall
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 14.0f
 
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to
@@ -1237,15 +1238,23 @@ int main (int argc, char** argv)
                 std::cerr << "  ! --nparam: parameter '" << name << "' not found" << std::endl;
                 continue;
             }
-            if (! valueStr.containsOnly ("0123456789.+-eE")
-                || valueStr.trim().isEmpty()
-                || ! valueStr.containsAnyOf ("0123456789"))   // require >=1 digit: reject "+", "-", ".", "e", "+-"
+            // Validate the WHOLE token parses as one float — a character whitelist
+            // alone accepts malformed values like "1e" or "1.2.3" that getFloatValue()
+            // would silently truncate-parse. strtod must consume the entire string.
+            const std::string rawVal = valueStr.trim().toStdString();
+            char* endPtr = nullptr;
+            errno = 0;
+            const double parsed = std::strtod (rawVal.c_str(), &endPtr);
+            const bool validNumber = ! rawVal.empty()
+                                     && endPtr == rawVal.c_str() + rawVal.size()
+                                     && errno == 0;
+            if (! validNumber)
             {
                 std::cerr << "  ! --nparam " << name << ": value '" << valueStr
                           << "' is not a number, skipped" << std::endl;
                 continue;
             }
-            const float normalised = juce::jlimit (0.0f, 1.0f, valueStr.getFloatValue());
+            const float normalised = juce::jlimit (0.0f, 1.0f, static_cast<float> (parsed));
             p->setValueNotifyingHost (normalised);
             std::cout << "  --nparam " << name << " norm=" << normalised
                       << " read_back='" << p->getText (p->getValue(), 50) << "'" << std::endl;

@@ -343,11 +343,16 @@ float QuadTank::readOutputTap (const OutputTap& tap) const
 
     if (bufType == 2)
     {
-        // Read from AP2 internal buffer at fractional position
+        // Read from AP2 internal buffer at fractional position. Use the same cubic
+        // interpolation as the delay-line taps below (readInterpolated) so the
+        // output tap geometry isn't snapped to whole samples — truncating
+        // positionFrac to an int offset broke the fractional tap placement.
         const auto& ap = tank.ap2;
-        int tapOffset = static_cast<int> (tap.positionFrac * static_cast<float> (ap.delaySamples));
-        tapOffset = std::max (tapOffset, 1);
-        return ap.buffer[static_cast<size_t> ((ap.writePos - tapOffset) & ap.mask)];
+        float tapDelay = std::max (tap.positionFrac * static_cast<float> (ap.delaySamples), 1.0f);
+        float readPos  = static_cast<float> (ap.writePos) - tapDelay;
+        int   intIdx   = static_cast<int> (std::floor (readPos));
+        float frac     = readPos - static_cast<float> (intIdx);
+        return DspUtils::cubicHermite (ap.buffer.data(), ap.mask, intIdx, frac);
     }
 
     const DelayLine* delayBuf = (bufType == 0) ? &tank.delay1 : &tank.delay2;

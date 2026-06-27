@@ -653,7 +653,9 @@ def early_reflections(p, drop_db=40.0, win_ms=250.0, prom_db=6.0,
     env_s = np.convolve(env, np.ones(win) / win, mode='same')
     env_db = 20.0 * np.log10(env_s + 1e-30)
     pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk, drop_db)
-    a = on + int(gap_ms / 1000.0 * sr)     # skip the transient: start one min-gap past onset
+    a = pk + int(gap_ms / 1000.0 * sr)     # skip the transient: start one min-gap past the PEAK
+                                           # (not the onset) so slow attacks don't count the main
+                                           # transient itself as a reflection
     b = min(len(env_db), on + int(win_ms / 1000.0 * sr))
     if b - a < 10:
         return None
@@ -958,6 +960,15 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
 
     fails = []
 
+    # Upfront REQUIRED-stimulus validation: a missing core render must force a
+    # failure so the run can't end as a false "ALL GATES PASS". Optional stimuli
+    # (impulse/sine1k/sustained) stay as skips in the loops below.
+    for req in ('noiseburst', 'snare'):
+        if not find_stim(dv_dir, req):
+            fails.append(f"REQUIRED stimulus '{req}' missing in render dir {dv_dir}")
+        if not find_stim(lex_dir, req):
+            fails.append(f"REQUIRED stimulus '{req}' missing in anchor dir {lex_dir}")
+
     print(f"══════════════════ FULL CHECK — {name} ══════════════════\n")
 
     # ─── Level (across stimuli) ───
@@ -1141,16 +1152,23 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # ── DISCRETE EARLY TAP (the audible 'extra delay tap' — prominence + time) ──
             tt_dv, pr_dv = early_tap(imp_dv)
             tt_lx, pr_lx = early_tap(imp_lx)
-            if pr_lx is not None and pr_dv is not None and pr_lx >= GATES['early_tap_min_prom_dB']:
+            if pr_lx is not None and pr_lx >= GATES['early_tap_min_prom_dB']:
                 # Anchor HAS a prominent discrete tap → DV must have an audibly-discrete
                 # tap (prominence ≥ floor) at the right time. Floor = lesser of
                 # (anchor − prom_dB) and the absolute audible_dB, because DV's blob reads
                 # as loud as the anchor's tick at a lower prominence number (ear-calib).
                 prom_floor = min(pr_lx - GATES['early_tap_prom_dB'], GATES['early_tap_audible_dB'])
-                passing = (pr_dv >= prom_floor) and (abs(tt_dv - tt_lx) <= GATES['early_tap_time_ms'])
-                line = (f"  {'early tap (prom@time)':30s}  DV={pr_dv:4.1f}dB@{tt_dv:.0f}ms  "
-                        f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
-                        f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  {'✓' if passing else '✗'}")
+                if pr_dv is None:
+                    # Anchor has a prominent tap but DV has none → fail (not skip).
+                    passing = False
+                    line = (f"  {'early tap (prom@time)':30s}  DV=  none  "
+                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  ✗")
+                else:
+                    passing = (pr_dv >= prom_floor) and (abs(tt_dv - tt_lx) <= GATES['early_tap_time_ms'])
+                    line = (f"  {'early tap (prom@time)':30s}  DV={pr_dv:4.1f}dB@{tt_dv:.0f}ms  "
+                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
             else:
@@ -1585,8 +1603,8 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
 
     # ─── Per-band RT60 (Schroeder backward integration, noiseburst tail) ───
     if dv and lx:
-        print("\n── PER-BAND RT60 (Schroeder backward int, ±5% JND gate) ──")
         rt_gate = GATES['t60_band_pct']
+        print(f"\n── PER-BAND RT60 (Schroeder backward int, ±{rt_gate:.0f}% JND gate) ──")
         for (lo, hi, b_lab) in [(44,   88,    '63 Hz'),
                                  (88,   177,   '125 Hz'),
                                  (177,  355,   '250 Hz'),
@@ -1703,6 +1721,12 @@ def main():
                          "render.cpp's --sustained-pink-seconds). Sets the "
                          "steady-state scoring window end + tail-decay offset.")
     args = ap.parse_args()
+    # The steady-state scorer measures from t0=2.5 s. A hold at/below that leaves
+    # an empty window (NaN/SKIP), so reject it up front instead of silently scoring
+    # garbage.
+    if args.sustained_pink_seconds <= 2.5:
+        ap.error("--sustained-pink-seconds must be > 2.5 (the steady-state window "
+                 "start); got %g" % args.sustained_pink_seconds)
     fails = audit(args.dv_dir, args.lex_dir, args.name, args.category,
                   args.sustained_pink_seconds)
     if args.json:

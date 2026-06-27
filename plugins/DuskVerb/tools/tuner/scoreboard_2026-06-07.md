@@ -34,6 +34,9 @@ from STRUCTURAL.
 3. **`sine1k full RMS` (counts as 2 gates) fails 5 presets** — gross WET-LEVEL mismatch:
    VP −7.1 dB, DP −5.9, VH −3.0 (too quiet); BH +2.3, SDR +5.4 (too loud). **Cheapest fleet win:
    volume-match each preset's Gain Trim first** (memory: volume-match BEFORE spectral). ~10 gates.
+   **(CORRECTION, see Phase-A probes below: flat Gain Trim was FALSIFIED — it worsens n_fail
+   monotonically because the fleet is dominated by absolute-dB band gates; volume-match must be
+   PER-BAND, not a flat trim.)**
 
 4. **Per-octave `T60 NNN Hz` is the hard core**: VP 7, BH 7, Cathedral 8, Ambience 8, BR 4, DP 4,
    VH 4. This is the FDN/QuadTank decay-coupling wall — 9 octave gates vs 5 damping bands, and

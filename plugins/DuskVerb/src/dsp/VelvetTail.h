@@ -45,6 +45,11 @@ public:
         writePos_ = 0;
         readEnv();
         designCrossovers();
+        // Reset crossover filter state after (re)designing coeffs so a re-prepare
+        // (sample-rate / instance reuse) doesn't carry stale delay state into the
+        // freshly-built taps. clear() also resets these, but prepare() must stand
+        // alone for callers that don't follow it with clear().
+        lp250_.reset(); lp500_.reset(); lp2k_.reset();
         prepared_ = true;
         buildTaps();
     }

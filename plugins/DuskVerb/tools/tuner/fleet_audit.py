@@ -149,8 +149,7 @@ def render_and_check(name, no_render=False):
     slug = name.lower().replace(" ", "_").replace("'", "")
     dv, lex = f"/tmp/audit_{slug}", f"/tmp/audit_{slug}_a"
     if not (no_render and os.path.isdir(dv) and glob.glob(f"{dv}/*_noiseburst.wav")):
-        for d in (dv, lex):
-            shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+        shutil.rmtree(dv, ignore_errors=True); os.makedirs(dv)
         cmd = [REND, "--vst3", VST3, "--program", name, "--output-dir", dv,
                "--sustained-pink-seconds", "4.0"]
         if not shim:
@@ -159,15 +158,24 @@ def render_and_check(name, no_render=False):
         nb = glob.glob(f"{dv}/*_noiseburst.wav")
         if r.returncode != 0 or not nb:
             return f"RENDER_FAIL {name}\n{r.stderr[-400:]}", False
-        for s in STIM:
-            src = f"{adir}/{apref}_{s}.wav"
-            if os.path.exists(src):
-                shutil.copy(src, f"{lex}/anchor_{s}.wav")
-        if not os.path.exists(f"{lex}/anchor_noiseburst.wav"):
+        # Gain-match the freshly rendered dv wavs to the anchor noiseburst.
+        # Reuse path skips this: those wavs were already gain-matched earlier.
+        anchor_nb = f"{adir}/{apref}_noiseburst.wav"
+        if not os.path.exists(anchor_nb):
             return f"NO_ANCHOR {name} {adir}", False
-        g = rms(f"{lex}/anchor_noiseburst.wav") / max(rms(nb[0]), 1e-12)
+        g = rms(anchor_nb) / max(rms(nb[0]), 1e-12)
         for f in glob.glob(f"{dv}/*.wav"):
             x, sr = sf.read(f); sf.write(f, x * g, sr, subtype="FLOAT")
+
+    # ALWAYS (re)populate the anchor dir so full_check, run right after, never
+    # sees an empty/stale lex on the --no-render reuse path.
+    shutil.rmtree(lex, ignore_errors=True); os.makedirs(lex)
+    for s in STIM:
+        src = f"{adir}/{apref}_{s}.wav"
+        if os.path.exists(src):
+            shutil.copy(src, f"{lex}/anchor_{s}.wav")
+    if not os.path.exists(f"{lex}/anchor_noiseburst.wav"):
+        return f"NO_ANCHOR {name} {adir}", False
     fc = subprocess.run([sys.executable, FC, dv, lex, "--name", name],
                         capture_output=True, text=True, timeout=200)
     return fc.stdout, True
@@ -194,10 +202,12 @@ def calibration_report(name, commanded, fc_text):
     realized = parse_realized_t60(fc_text)
     rows, worst = [], 0.0
     low_short = mid_long = False
+    missing = False
     for i, hz in enumerate(OCTAVE_HZ):
         cmd = commanded[i]
         got = realized.get(hz)
         if got is None:
+            missing = True   # commanded octave with no realized measurement
             continue
         div = (got - cmd) / cmd if cmd > 0 else 0.0
         rows.append((hz, cmd, got, div))
@@ -206,9 +216,11 @@ def calibration_report(name, commanded, fc_text):
             low_short = True
         if 500 <= hz <= 4000 and div > CAL_TOL:
             mid_long = True
-    broken = worst > CAL_TOL
+    # Missing/empty realized rows = malformed full_check output, NOT a perfect
+    # calibration. Flag broken so it can't masquerade as worst=0%/PASS.
+    broken = missing or not rows or worst > CAL_TOL
     return {"name": name, "worst_divergence": worst, "broken": broken,
-            "tilt_inverted": low_short and mid_long, "rows": rows}
+            "missing": missing, "tilt_inverted": low_short and mid_long, "rows": rows}
 
 
 def fmt_calibration(cr):
@@ -280,9 +292,16 @@ def main():
             print(fmt_calibration(r["cal"]))
         if not any10:
             print("  (no algo 10/12 presets measured)")
-        if drift:
-            print(f"\nFAIL: {len(drift)} preset(s) with octave-T60 drift > {CAL_TOL*100:.0f}%: "
-                  + ", ".join(d["name"] for d in drift))
+        # A render/check failure (ok=False) must also fail verification — else a
+        # preset that never produced measurable output silently passes.
+        failed = [r for r in results if not r.get("ok")]
+        if drift or failed:
+            if drift:
+                print(f"\nFAIL: {len(drift)} preset(s) with octave-T60 drift > {CAL_TOL*100:.0f}%: "
+                      + ", ".join(d["name"] for d in drift))
+            if failed:
+                print(f"FAIL: {len(failed)} preset(s) failed render/check: "
+                      + ", ".join(f"{r['name']} ({r.get('msg', '?')})" for r in failed))
             return 1
         print("\nPASS: all AccurateHall presets realize their commanded T60.")
         return 0

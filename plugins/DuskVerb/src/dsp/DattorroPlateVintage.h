@@ -2,6 +2,7 @@
 
 #include "DattorroTank.h"
 
+#include <algorithm>   // std::min, std::max, std::fill (don't rely on transitive include)
 #include <cmath>
 #include <vector>
 
@@ -213,7 +214,10 @@ private:
         std::vector<float> buf; int mask = 0, w = 0;
         void prepare (int maxSamples)
         {
-            int n = 1; while (n < std::max (2, maxSamples)) n <<= 1;
+            // +1 so the buffer is strictly LARGER than maxSamples: with a pure
+            // pow2 size, mask == size-1 would alias the max delay onto zero delay.
+            // One extra slot keeps the oldest readable sample distinct from now.
+            int n = 1; while (n < std::max (2, maxSamples + 1)) n <<= 1;
             buf.assign (static_cast<size_t> (n), 0.0f); mask = n - 1; w = 0;
         }
         void clear() { std::fill (buf.begin(), buf.end(), 0.0f); w = 0; }

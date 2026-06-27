@@ -623,7 +623,11 @@ public:
     void setRegionGainDb (int region, float gainDb) noexcept
     {
         if (region < 0 || region >= kNumRegions) return;
-        regionGainDb_[region] = gainDb;
+        // Clamp to the same ±24 dB limit the underlying shelves enforce. Region 0
+        // flows straight into outGain_ (the base multiplier) in recomputeShelves(),
+        // which is NOT clamped by setShelf() — without this, an out-of-range region-0
+        // gain would bypass the intended limit.
+        regionGainDb_[region] = std::clamp (gainDb, -24.0f, 24.0f);
         recomputeShelves();
     }
 

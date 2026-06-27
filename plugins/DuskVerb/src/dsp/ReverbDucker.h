@@ -41,8 +41,17 @@ public:
 
     // Below this dry level the ducker does nothing; at/above refLevel above it
     // the duck is fully engaged. Linear amplitude.
-    void setThresholdLin (float t) { thresholdLin_ = std::max (0.0f, t); }
-    void setRefLevelLin  (float r) { refLevelLin_  = std::max (1.0e-4f, r); }
+    // Keep the invariant refLevelLin_ > thresholdLin_ after EITHER setter so the
+    // ducking span (refLevel − threshold) can never collapse to zero/negative.
+    void setThresholdLin (float t)
+    {
+        thresholdLin_ = std::max (0.0f, t);
+        if (refLevelLin_ <= thresholdLin_) refLevelLin_ = thresholdLin_ + 1.0e-4f;
+    }
+    void setRefLevelLin  (float r)
+    {
+        refLevelLin_ = std::max ({ 1.0e-4f, r, thresholdLin_ + 1.0e-4f });
+    }
 
     bool isActive() const { return depth_ > 0.0f; }
 
@@ -61,9 +70,12 @@ public:
             else
                 envelope_ = level + releaseCoeff_ * (envelope_ - level);
 
-            // Drive 0..1 from how far the dry env sits above threshold, scaled
-            // by the reference level (the dry level that fully engages the duck).
-            const float drive = std::clamp ((envelope_ - thresholdLin_) / refLevelLin_, 0.0f, 1.0f);
+            // Drive 0..1 from how far the dry env sits above threshold, normalized
+            // over the span from threshold to the absolute reference level (the dry
+            // level that fully engages the duck). Using the span — not refLevelLin_
+            // alone — keeps "full duck at refLevel" true regardless of threshold.
+            const float span  = std::max (refLevelLin_ - thresholdLin_, 1.0e-6f);
+            const float drive = std::clamp ((envelope_ - thresholdLin_) / span, 0.0f, 1.0f);
             const float duckGain = 1.0f - depth_ * drive;
 
             wetL[n] *= duckGain;

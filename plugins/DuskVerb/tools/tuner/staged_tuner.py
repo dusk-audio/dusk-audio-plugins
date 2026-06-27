@@ -150,6 +150,9 @@ STAGE1_FLAT_DEFAULTS = {
     # EQs flat
     "Lo Cut": 20.0, "Hi Cut": 20000.0, "Saturation": 0.0,
     "Gain Trim": 0.0,
+    # Hi Cut Shelf neutral (0 dB = no shelf). Stage 3 owns it (s3_active); without
+    # this default Stage 1/2 inherit the factory shelf instead of staying flat.
+    "Hi Cut Shelf": 0.0,
     # Phase α PostTankEQ — 0 dB = unity bypass (designUnity → bit-identical
     # passthrough). Locking these flat in stages that don't own them keeps
     # presets without an EQ override sounding identical to pre-Phase-α.
@@ -1059,34 +1062,38 @@ def run_stage(stage_name, active_params, locked_overrides, loss_fn,
             sample[name] = lo + u * (hi - lo)
         overrides = {**locked_overrides, **sample}
         out = scratch / f"{stage_slug}_{trial.number:04d}"
-        files = render(preset, overrides, vst3, out)
-        if files is None:
-            return 1e6
+        # finally guarantees the per-trial output dir is removed even when
+        # render() returns None or loss_fn raises — otherwise those paths leak.
         try:
-            loss, info = loss_fn(files, anchor_files)
-        except Exception as e:
-            sys.stderr.write(f"stage loss raised: {e}\n")
-            return 1e6
-        for k, v in info.items():
-            if isinstance(v, (int, float)) and v == v:
-                trial.set_user_attr(k, float(v))
-        # Record denormalized values so the report shows real units.
-        for k, v in sample.items():
-            trial.set_user_attr(f"denorm_{k}", float(v))
-        # Live trial breakdown — first 20 trials + every 25th after — so
-        # the bass-clarity penalty's effect on the loss surface is visible
-        # in real time during the sweep.
-        if trial.number < 20 or trial.number % 25 == 0:
-            bc = info.get("bass_clarity_loss", 0.0)
-            bch = info.get("bass_clarity_max_hot_dB", 0.0)
-            sl1 = (info.get("spec_L1_max_dB")
-                   or info.get("spec_l1_db")
-                   or info.get("spec_L1") or 0.0)
-            print(f"  trial {trial.number:04d}  loss={loss:.4f}  "
-                  f"spec={sl1:.3f}  bass_clarity={bc:.4f}  "
-                  f"max_hot_dB={bch:+.2f}", flush=True)
-        shutil.rmtree(out, ignore_errors=True)
-        return loss
+            files = render(preset, overrides, vst3, out)
+            if files is None:
+                return 1e6
+            try:
+                loss, info = loss_fn(files, anchor_files)
+            except Exception as e:
+                sys.stderr.write(f"stage loss raised: {e}\n")
+                return 1e6
+            for k, v in info.items():
+                if isinstance(v, (int, float)) and v == v:
+                    trial.set_user_attr(k, float(v))
+            # Record denormalized values so the report shows real units.
+            for k, v in sample.items():
+                trial.set_user_attr(f"denorm_{k}", float(v))
+            # Live trial breakdown — first 20 trials + every 25th after — so
+            # the bass-clarity penalty's effect on the loss surface is visible
+            # in real time during the sweep.
+            if trial.number < 20 or trial.number % 25 == 0:
+                bc = info.get("bass_clarity_loss", 0.0)
+                bch = info.get("bass_clarity_max_hot_dB", 0.0)
+                sl1 = (info.get("spec_L1_max_dB")
+                       or info.get("spec_l1_db")
+                       or info.get("spec_L1") or 0.0)
+                print(f"  trial {trial.number:04d}  loss={loss:.4f}  "
+                      f"spec={sl1:.3f}  bass_clarity={bc:.4f}  "
+                      f"max_hot_dB={bch:+.2f}", flush=True)
+            return loss
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
 
     t0 = time.time()
     study.optimize(objective, n_trials=n_trials, n_jobs=workers, show_progress_bar=False)

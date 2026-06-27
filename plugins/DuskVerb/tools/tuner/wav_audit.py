@@ -207,17 +207,20 @@ def audit_one(path):
     # 1/3-octave band energies on the segment after peak (50 ms - 1.0 s)
     a, b = pk + int(0.05*sr), min(pk + int(1.0*sr), n)
     seg = mono[a:b]
-    centers = standard_third_oct_centers(sr)
-    bands = third_octave_band_db(seg, sr, centers)
-    print(f"\n── 1/3-octave band power on segment peak+[50ms, 1.0s] ──")
-    print(f"  (raw band power dB; NOT RMS-normalized — kept absolute so direct comparison is meaningful)")
-    print(f"  {'fc(Hz)':>8s}  {'power(dB)':>10s}")
-    for fc, p in bands:
-        if p == float('-inf'):
-            ps = '   -inf'
-        else:
-            ps = f"{p:+10.2f}"
-        print(f"  {fc:8.1f}  {ps}")
+    if b - a < 256:
+        print("  (post-peak window too short for 1/3-oct band analysis — skipped)")
+    else:
+        centers = standard_third_oct_centers(sr)
+        bands = third_octave_band_db(seg, sr, centers)
+        print(f"\n── 1/3-octave band power on segment peak+[50ms, 1.0s] ──")
+        print(f"  (raw band power dB; NOT RMS-normalized — kept absolute so direct comparison is meaningful)")
+        print(f"  {'fc(Hz)':>8s}  {'power(dB)':>10s}")
+        for fc, p in bands:
+            if p == float('-inf'):
+                ps = '   -inf'
+            else:
+                ps = f"{p:+10.2f}"
+            print(f"  {fc:8.1f}  {ps}")
 
 
 def audit_compare(dv_path, lex_path):
@@ -291,30 +294,33 @@ def audit_compare(dv_path, lex_path):
     # Match segment length (longer one truncated)
     n = min(len(seg_dv), len(seg_lx))
     seg_dv = seg_dv[:n]; seg_lx = seg_lx[:n]
-    bands_dv = third_octave_band_db(seg_dv, sr, centers)
-    bands_lx = third_octave_band_db(seg_lx, sr, centers)
-
-    print(f"\n── 1/3-oct band energy DELTA, ABSOLUTE (no normalization) ──")
-    print(f"  positive Δ = Lex has more energy in this band (DV needs +Δ dB lift)")
-    print(f"  {'fc(Hz)':>8s}  {'DV(dB)':>10s}  {'Lex(dB)':>10s}  {'Δ-needed':>9s}  bar")
-    rows = []
-    for (fc1, dv), (fc2, lx) in zip(bands_dv, bands_lx):
-        if dv == float('-inf') or lx == float('-inf'):
-            continue
-        delta = lx - dv
-        n_bars = min(int(abs(delta)), 15)
-        bar = ('+' if delta > 0 else '-')*n_bars if abs(delta) > 0.5 else ''
-        flag = ' ⚠' if abs(delta) > 5 else ''
-        print(f"  {fc1:8.1f}  {dv:+10.2f}  {lx:+10.2f}  {delta:+9.2f}  {bar}{flag}")
-        rows.append((fc1, dv, lx, delta))
-    abs_d = [abs(r[3]) for r in rows]
-    if not rows or not abs_d:
-        print("\n  (no valid bands — both renders below floor in every band)")
+    if n < 256:
+        print("\n  (post-peak segment too short for 1/3-oct band delta — skipped)")
     else:
-        max_abs = max(abs_d)
-        print(f"\n  mean |Δ|:  {sum(abs_d)/len(abs_d):.2f} dB")
-        peak_fc = next((r[0] for r in rows if abs(r[3]) == max_abs), None)
-        print(f"  max  |Δ|:  {max_abs:.2f} dB @ {peak_fc:.1f} Hz")
+        bands_dv = third_octave_band_db(seg_dv, sr, centers)
+        bands_lx = third_octave_band_db(seg_lx, sr, centers)
+
+        print(f"\n── 1/3-oct band energy DELTA, ABSOLUTE (no normalization) ──")
+        print(f"  positive Δ = Lex has more energy in this band (DV needs +Δ dB lift)")
+        print(f"  {'fc(Hz)':>8s}  {'DV(dB)':>10s}  {'Lex(dB)':>10s}  {'Δ-needed':>9s}  bar")
+        rows = []
+        for (fc1, dv), (fc2, lx) in zip(bands_dv, bands_lx):
+            if dv == float('-inf') or lx == float('-inf'):
+                continue
+            delta = lx - dv
+            n_bars = min(int(abs(delta)), 15)
+            bar = ('+' if delta > 0 else '-')*n_bars if abs(delta) > 0.5 else ''
+            flag = ' ⚠' if abs(delta) > 5 else ''
+            print(f"  {fc1:8.1f}  {dv:+10.2f}  {lx:+10.2f}  {delta:+9.2f}  {bar}{flag}")
+            rows.append((fc1, dv, lx, delta))
+        abs_d = [abs(r[3]) for r in rows]
+        if not rows or not abs_d:
+            print("\n  (no valid bands — both renders below floor in every band)")
+        else:
+            max_abs = max(abs_d)
+            print(f"\n  mean |Δ|:  {sum(abs_d)/len(abs_d):.2f} dB")
+            peak_fc = next((r[0] for r in rows if abs(r[3]) == max_abs), None)
+            print(f"  max  |Δ|:  {max_abs:.2f} dB @ {peak_fc:.1f} Hz")
 
 
 def main():

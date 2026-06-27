@@ -499,8 +499,14 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         if (idx >= 0 && idx < getNumAlgorithms())
         {
             // Manual sync (no attachment): write the 14-wide choice param by index.
+            // Bracket in a host change gesture so automation + undo capture the
+            // edit exactly as the attachment-backed path would.
             if (auto* ap = p.parameters.getParameter ("algorithm"))
+            {
+                ap->beginChangeGesture();
                 ap->setValueNotifyingHost (ap->convertTo0to1 ((float) idx));
+                ap->endChangeGesture();
+            }
 
             const auto e = getAlgorithmConfig (idx).engine;
             engineGlyph_.setEngine (e);

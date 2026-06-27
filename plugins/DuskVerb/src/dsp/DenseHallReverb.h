@@ -59,9 +59,14 @@ public:
         rebuild();   // sets line_[i].len at the current size (no allocation)
 
         // Smooth modulation LFOs (sine), detuned per side; spin LFO slower.
+        // prepare() seeds the phase but also sets a hardcoded rate — reapply the
+        // stored modRate_ afterward so a prior setModRate() (preset/state) survives
+        // re-initialization instead of being reset to the 0.7 Hz default.
         lfo1_.prepare (sr_, 0.7f, 0x111u);
         lfo2_.prepare (sr_, 0.83f, 0x222u);
         spin_.prepare (sr_, 0.30f, 0x333u);
+        lfo1_.setRate (modRate_);
+        lfo2_.setRate (modRate_ * 1.19f);
         for (auto& d : dc_) d.reset();
         prepared_ = true;
         clear();
@@ -108,7 +113,7 @@ public:
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
     void setModDepth (float d)       { modDepth_ = std::clamp (d, 0.0f, 1.0f); }       // scales allpass/delay excursion
-    void setModRate (float hz)       { float r=std::clamp(hz,0.05f,3.0f); lfo1_.setRate(r); lfo2_.setRate(r*1.19f); }
+    void setModRate (float hz)       { modRate_=std::clamp(hz,0.05f,3.0f); lfo1_.setRate(modRate_); lfo2_.setRate(modRate_*1.19f); }
     void setFreeze (bool f)          { frozen_ = f; if (prepared_) update(); }
 
     // ── Process ───────────────────────────────────────────────────────────────
@@ -360,14 +365,25 @@ private:
         const float meanLen = sumLen / (float) kN;
         const float loopSec = meanLen / sr_;
         const float gMid = frozen_ ? 1.0f : std::pow (10.0f, -3.0f * loopSec / rt60_);
-        midG_   = std::clamp (gMid, 0.0f, 0.999f);
-        // Per-band per-pass gains from the RT60 multipliers. Mid is the
-        // broadband reference (midMul_=1 -> gMidB_=midG_); bass/treble tilt
-        // relative to it. Each band's gain sets BOTH its decay and steady
-        // level (feedback-damping coupling — inherent to a single-tap loop).
-        gMidB_  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, midMul_)),  0.0f, 0.999f);
-        gLowB_  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, bassMul_)), 0.0f, 0.9995f);
-        gHighB_ = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);
+        if (frozen_)
+        {
+            // True unity hold: freeze MUST be loss-less. The ≤0.999 clamps below
+            // cap the non-frozen gain for stability, but applied to gMid=1.0 they
+            // bleed ~0.1%/pass → the "frozen" tail slowly decays. Force exact 1.0
+            // on every band (and the octave path reads midG_, so it holds too).
+            midG_ = gMidB_ = gLowB_ = gHighB_ = 1.0f;
+        }
+        else
+        {
+            midG_   = std::clamp (gMid, 0.0f, 0.999f);
+            // Per-band per-pass gains from the RT60 multipliers. Mid is the
+            // broadband reference (midMul_=1 -> gMidB_=midG_); bass/treble tilt
+            // relative to it. Each band's gain sets BOTH its decay and steady
+            // level (feedback-damping coupling — inherent to a single-tap loop).
+            gMidB_  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, midMul_)),  0.0f, 0.999f);
+            gLowB_  = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, bassMul_)), 0.0f, 0.9995f);
+            gHighB_ = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);
+        }
         // Tunable crossover one-pole coeffs (defaults 250 Hz / 3.5 kHz).
         lCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (lowX_,  sr_ * 0.45f) / sr_);
         hCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (highX_, sr_ * 0.45f) / sr_);
@@ -428,6 +444,7 @@ private:
     }
 
     float sr_ = 44100.0f, size_ = 1.0f, rt60_ = 2.5f, bassMul_ = 1.0f, midMul_ = 1.0f, trebMul_ = 1.0f, modDepth_ = 0.4f;
+    float modRate_ = 0.7f;   // persisted Mod Rate (lfo1_ base; lfo2_ = ×1.19) so prepare() doesn't drop it
     float lowX_ = 250.0f, highX_ = 3500.0f;
     float norm_ = 0.354f, midG_ = 0.0f, gLowB_ = 0.0f, gMidB_ = 0.0f, gHighB_ = 0.0f;
     float lCoeff_ = 0.03f, hCoeff_ = 0.4f;

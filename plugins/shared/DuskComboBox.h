@@ -93,10 +93,18 @@ private:
             const int id = getItemId (i);
             if (id == 0)
             {
-                m.addSeparator();
+                // ComboBox id-0 rows are either section headings (carry text) or
+                // plain separators (empty). Preserve a heading's text via
+                // addSectionHeader instead of flattening it to a separator.
+                const auto txt = getItemText (i);
+                if (txt.isNotEmpty()) m.addSectionHeader (txt);
+                else                  m.addSeparator();
                 continue;
             }
-            m.addItem (id, getItemText (i), true, id == selected);
+            // isItemEnabled() takes the item ID, not the loop index — passing i
+            // here disabled/enabled the wrong rows (or only matched by accident
+            // when IDs happened to equal indices).
+            m.addItem (id, getItemText (i), isItemEnabled (id), id == selected);
         }
         return m;
     }

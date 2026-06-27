@@ -34,6 +34,12 @@ def _load_stereo(path: str) -> tuple[int, np.ndarray]:
     sr, x = wavfile.read(path)
     if x.dtype.kind == 'i':
         x = x.astype(np.float32) / np.iinfo(x.dtype).max
+    elif x.dtype.kind == 'u':
+        # Unsigned PCM (e.g. 8-bit WAV) is offset-binary: silence sits at the
+        # mid-code, not 0. Center then scale to [-1, 1) like the signed path,
+        # else every sample carries a large DC offset.
+        mid = (np.iinfo(x.dtype).max + 1) / 2.0
+        x = (x.astype(np.float32) - mid) / mid
     elif x.dtype.kind == 'f':
         x = x.astype(np.float32)
     if x.ndim == 1:

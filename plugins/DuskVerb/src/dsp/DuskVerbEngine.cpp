@@ -1059,14 +1059,10 @@ void DuskVerbEngine::setHiCutShelfGainDb (float dB)
     // Force coefficient recompute at the current corner — the per-block
     // smoother won't re-run updateHiCutCoeffs unless the FREQUENCY moves.
     updateHiCutCoeffs (hiCutSmoother_.current);
-
-    // VintageTank routes the Hi-Cut-Shelf knob into its in-loop damping LP
-    // cutoff (per user spec). dB ∈ [-24, 0] mapped logarithmically to
-    // [1500 Hz, 18000 Hz] — fully open = ~18 kHz (no damping), max cut =
-    // ~1.5 kHz (dark, vintage-plate-like tail).
-    const float t = (clamped + 24.0f) / 24.0f;             // 0 (full cut) .. 1 (no cut)
-    const float dampHz = std::pow (1500.0f, 1.0f - t) * std::pow (18000.0f, t);
-
+    // (A VintageTank damping-LP cutoff was derived here from `clamped` but never
+    // applied — dead calculation removed. VintageTank is hidden / used by no
+    // shipping preset, so there's no routing target; re-add wiring if that
+    // engine is reinstated.)
 }
 
 void DuskVerbEngine::setWidth (float width)

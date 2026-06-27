@@ -40,6 +40,10 @@ void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
     earlyL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     earlyR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     frontPredelaySamp_ = std::max (1, static_cast<int> (frontPredelayMs_ * 0.001f * sampleRate_));
+    // Mirror setFrontLoad()'s capacity clamp: if setFrontLoad() ran before prepare(),
+    // frontPredelayMs_ may exceed the tank pre-delay ring — saturate to its longest
+    // representable delay so readAgo() can't (w-d)&mask wrap-alias to a shorter delay.
+    frontPredelaySamp_ = std::min (frontPredelaySamp_, tankPreL_.mask);
     erLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (frontLpHz_, 0.45f * sampleRate_) / sampleRate_);
     erLpZL_ = erLpZR_ = 0.0f;
 

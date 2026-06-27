@@ -105,6 +105,7 @@ def main():
         for i in range(N_LINES):
             delays.append(trial.suggest_int(f"d{i:02d}", K_MIN, K_MAX))
         delays_sorted = sorted(delays)
+        trial.set_user_attr("delays", delays_sorted)
         tmp = Path(tempfile.mkdtemp(prefix=f"sweep_{trial.number}_"))
         try:
             measured = render_and_measure(delays_sorted, args.preset, targets, tmp)
@@ -122,7 +123,6 @@ def main():
             err = abs(measured[band] - target) / target
             loss += err * w
             trial.set_user_attr(f"{band}_peak", measured[band])
-        trial.set_user_attr("delays", delays_sorted)
         return loss
 
     storage = args.storage
@@ -162,16 +162,23 @@ def main():
     # Render the best one to out_root for visual inspection
     env = os.environ.copy()
     env["DUSKVERB_FDN_DELAYS"] = csv
-    subprocess.run([
-        str(RENDER), "--vst3", str(VST3),
-        "--program", args.preset,
-        "--param", "Dry/Wet=1.0",
-        "--param", "Bus Mode=On",
-        "--prerun-seconds", "5",
-        "--sustained-pink-seconds", "4",
-        "--output-dir", str(out_root),
-    ], env=env, check=False, capture_output=True)
-    print(f"\nBest render in {out_root}")
+    try:
+        res = subprocess.run([
+            str(RENDER), "--vst3", str(VST3),
+            "--program", args.preset,
+            "--param", "Dry/Wet=1.0",
+            "--param", "Bus Mode=On",
+            "--prerun-seconds", "5",
+            "--sustained-pink-seconds", "4",
+            "--output-dir", str(out_root),
+        ], env=env, check=False, capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        print(f"\nFinal render FAILED (timeout >120s) for {args.preset}", file=sys.stderr)
+    else:
+        if res.returncode == 0:
+            print(f"\nBest render in {out_root}")
+        else:
+            print(f"\nFinal render FAILED (rc={res.returncode})", file=sys.stderr)
 
 
 if __name__ == "__main__":

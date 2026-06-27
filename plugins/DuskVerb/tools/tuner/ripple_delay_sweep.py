@@ -79,6 +79,7 @@ def main():
         #     the sustained steady window, gain-matched to anchor.
         # (3) octave-T60 match on the trial noiseburst (hold anchor decay so no recal)
         nbf=glob.glob(f"{d}/*_noiseburst.wav")
+        if not nbf: return 1e3
         if nbf:
             for (lo,hi),at in zip(OCT,anchor_t60,strict=True):
                 if at is None or at<=0.05: continue
@@ -87,7 +88,8 @@ def main():
                 pen += 2.0*max(0.0, abs(mt-at)/at - 0.05)
         import numpy as _np
         x,sr=sf.read(dv); m=x.mean(axis=1) if x.ndim>1 else x
-        g=anchor_nb_rms/ (np.sqrt(np.mean((sf.read(glob.glob(f"{d}/*_noiseburst.wav")[0])[0]).mean(axis=1)**2))+1e-12)
+        _nbx=sf.read(nbf[0])[0]; _nbm=_nbx.mean(axis=1) if _nbx.ndim>1 else _nbx
+        g=anchor_nb_rms/ (np.sqrt(np.mean(_nbm**2))+1e-12)
         from scipy.signal import butter as _bt, sosfiltfilt as _sf
         i0=int(2.5*sr); i1=min(len(m), int(4.0*sr)); seg=m[i0:i1]*g
         for (lo,hi),e0 in (ss_ref.items() if use_sus else []):
