@@ -68,6 +68,9 @@ def main():
                     help="Resolution. 6 = 1/6-oct (default). 12 = 1/12-oct.")
     args = ap.parse_args()
 
+    if args.bands_per_oct <= 0:
+        ap.error("--bands-per-oct must be a positive integer")
+
     stem = args.stimulus
     if stem == "auto":
         for s in ("sustained", "noiseburst", "snare"):
@@ -107,6 +110,9 @@ def main():
 
     dv_b = fine_band_power_db(dv, t0_dv, t1_dv, args.bands_per_oct)
     lx_b = fine_band_power_db(lx, t0_lx, t1_lx, args.bands_per_oct)
+    if not dv_b or not lx_b:
+        sys.exit("no valid bands measured in dv_dir or lex_dir (check stimulus "
+                 "window / sample rate); aborting to avoid a false empty 'match'")
     # zip() below silently truncates to the shorter list; band counts can differ
     # if the two renders have different sample rates (band centers are filtered
     # against sr*0.45). Warn loudly with which side is shorter and the top band

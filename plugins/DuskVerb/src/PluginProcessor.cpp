@@ -1610,10 +1610,12 @@ namespace {
     static constexpr float kPteqDefaultFreq[4] = {  80.0f,  500.0f, 3000.0f, 10000.0f };
     static constexpr float kPteqDefaultQ   [4] = {   1.5f,    1.0f,    1.5f,     0.8f };
     static constexpr float kPteqZeroGain   [4] = {   0.0f,    0.0f,    0.0f,     0.0f };
-    static const std::unordered_map<std::string_view, PostTankEQConfig>&
-    pteqByName()
-    {
-        static const std::unordered_map<std::string_view, PostTankEQConfig> m = {
+    // File-scope (NOT a function-local static): initializes at static-init time on
+    // the loader thread, never on the first audio-thread call. applyEngineConfig()
+    // reads this during performPresetSwap (audio thread); a function-local static
+    // would take the one-time init guard + heap-allocate its buckets on that first
+    // swap. Same RT-safety rationale as the constexpr name→config arrays elsewhere.
+    static const std::unordered_map<std::string_view, PostTankEQConfig> kPteqByName = {
             // Drum Plate (2026-06-23 workflow): gentle post-tank shape — 3.5kHz Q1.2
             // -1.5dB tames bloom 2-4k/4-8k; 12kHz Q0.8 +2.0dB fills the HF-top the
             // 8kHz Hi Cut creates (the win driver). 17->12. Post-tank + gentle (unlike
@@ -1718,15 +1720,6 @@ namespace {
                 {   1.00f,   1.00f,   0.70f,    1.00f },
                 {   0.00f,    0.00f,  -5.00f,   -2.50f },
             } },
-            // Drum Plate (AccurateHall migration 2026-06-10): 1 kHz steady-
-            // state lift — DV renders sine1k far below the anchor's plate
-            // resonance (-13 dB rel.); post-tank boost lifts it without
-            // touching the calibrated decay.
-            { "Drum Plate", {
-                {  150.0f, 1000.0f, 3000.0f,  8000.0f },
-                {   0.80f,   2.50f,   1.50f,    1.00f },
-                {  +3.50f,   +2.00f,   0.00f,   +4.00f },
-            } },
             { "Blade Runner 224", {
                 {  350.0f, 3000.0f, 6000.0f, 10000.0f },
                 {   1.20f,   1.50f,   1.00f,    1.20f },
@@ -1743,9 +1736,9 @@ namespace {
                 {    1.20f,   1.00f,   1.00f,     1.00f },
                 {    4.50f,   0.00f,   0.00f,     0.00f },
             } },
-        };
-        return m;
-    }
+    };
+    static const std::unordered_map<std::string_view, PostTankEQConfig>&
+    pteqByName() { return kPteqByName; }
     inline void resolvePteqFreqQ (const char* name, float fOut[4], float qOut[4])
     {
         // Env sweep override (DUSKVERB_PTEQ = 12 CSV floats f,q,g per band x4)
@@ -1908,6 +1901,20 @@ void DuskVerbProcessor::applyFactoryPreset (const FactoryPreset& preset)
     pendingPresetSwap_.store (true, std::memory_order_release);
 }
 
+// Linear-scan lookup for the small per-preset name→config tables below. They are
+// static constexpr std::array (NOT std::map) because applyEngineConfig runs on the
+// AUDIO thread (performPresetSwap) — a function-local std::map would heap-allocate
+// its RB-tree nodes and take the static-init guard lock on the first preset swap.
+// Returns nullptr when the name isn't listed.
+template <typename V, std::size_t N>
+static const V* findPresetConfig (const std::array<std::pair<std::string_view, V>, N>& table,
+                                  std::string_view nv) noexcept
+{
+    for (const auto& e : table)
+        if (e.first == nv) return &e.second;
+    return nullptr;
+}
+
 // Out-of-line definition of FactoryPreset::applyEngineConfig — placed here
 // where DuskVerbEngine's full type is visible.
 void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
@@ -1972,7 +1979,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // No-op on every other engine — the GEQ exists only in accurateHall_.
     {
         struct OctaveT60Override { float t60[9]; };
-        static const std::map<std::string_view, OctaveT60Override> kAccurateHallT60ByName = {
+        // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs
+        // on the AUDIO thread (performPresetSwap); a function-local std::map would
+        // heap-allocate its RB-tree nodes + take the static-init guard lock on the
+        // first preset swap. Same RT-safe pattern as the DenseHall GEQ map below.
+        static constexpr std::array<std::pair<std::string_view, OctaveT60Override>, 3> kAccurateHallT60ByName = {{
             // Per-octave T60 targets (63 Hz..16 kHz), calibrated to land each
             // octave within ±5% of the VVV anchor (Schroeder backward-int on
             // the noiseburst tail). The 9-vs-5 coupling wall the FDN
@@ -2008,16 +2019,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Caught by fleet_audit.py --verify-tables. (Tiled Room's algo-13 composite
             // DOES call accurateHall_, so its entry stays live — see header.)
             // END_OCTAVE_T60_MAP
-        };
-        auto it = kAccurateHallT60ByName.find (std::string_view (name));
+        }};
+        const OctaveT60Override* hit = findPresetConfig (kAccurateHallT60ByName, std::string_view (name));
         for (int b = 0; b < 9; ++b)
-            engine.setAccurateHallOctaveT60 (
-                b, it != kAccurateHallT60ByName.end() ? it->second.t60[b] : 0.0f);
+            engine.setAccurateHallOctaveT60 (b, hit ? hit->t60[b] : 0.0f);
         // Couple the Decay knob to the octave curve: reference = this preset's
         // baked Decay, so loading reproduces the calibrated curve exactly while
         // the live knob scales it. Unmapped presets clear the ref (scale 1.0).
-        engine.setAccurateHallOctaveDecayRef (
-            it != kAccurateHallT60ByName.end() ? decay : 0.0f);
+        engine.setAccurateHallOctaveDecayRef (hit ? decay : 0.0f);
     }
 
     // ─── DenseHall (algo 14) per-OCTAVE T60 GEQ — FORK #2 (2026-06-16) ──────
@@ -2092,13 +2101,15 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // tuned by tools/tuner/outdiff_kurtosis_sweep.py.
     {
         struct OutDiffConfig { float amount, lfoScale, delayScale; };
-        static const std::map<std::string_view, OutDiffConfig> kOutputDiffusionByName = {
+        // constexpr std::array + linear scan (NOT std::map) — RT-safe on the audio
+        // thread; same pattern as kOutputAirShelfByName. See findPresetConfig().
+        static constexpr std::array<std::pair<std::string_view, OutDiffConfig>, 0> kOutputDiffusionByName = {{
             // BEGIN_OUTDIFF_MAP (maintained by outdiff_kurtosis_sweep.py)
             // END_OUTDIFF_MAP
             // (Cathedral's FDN-era output-diffuser entry removed 2026-06-13 — it
             // migrated to the DenseHall engine, which is already dense; the
             // post-tank diffuser would over-smear it.)
-        };
+        }};
         // Sweep override: DUSKVERB_OUTDIFF="amount,lfoScale,delayScale" forces
         // the diffuser ON for the preset being rendered (the kurtosis sweep
         // drives it without a rebuild, like DUSKVERB_FDN_DELAYS).
@@ -2111,10 +2122,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             else
                 engine.setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);
         }
-        else if (auto od = kOutputDiffusionByName.find (std::string_view (name));
-                 od != kOutputDiffusionByName.end())
-            engine.setOutputDiffusion (true, od->second.amount,
-                                       od->second.lfoScale, od->second.delayScale);
+        else if (const auto* od = findPresetConfig (kOutputDiffusionByName, std::string_view (name)))
+            engine.setOutputDiffusion (true, od->amount, od->lfoScale, od->delayScale);
         else
             engine.setOutputDiffusion (false, 0.0f, 0.0f, 1.0f);   // bypass → bit-null
     }
@@ -2186,7 +2195,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // DUSKVERB_MATCHEQ="g0,..,g8" drives it without a rebuild (offline corr sweep);
     // else the per-preset baked map; else flat → bit-null.
     {
-        static const std::map<std::string_view, std::array<float, 9>> kOutputMatchEQByName = {
+        // constexpr std::array + linear scan (NOT std::map) — RT-safe on the audio
+        // thread; same pattern as kOutputAirShelfByName. See findPresetConfig().
+        static constexpr std::array<std::pair<std::string_view, std::array<float, 9>>, 8> kOutputMatchEQByName = {{
             // BEGIN_MATCHEQ_MAP (offline anchor-envelope fit, octave 63Hz..16kHz, cut-only)
             { "Vocal Plate",          { 0.8573f, 0.6909f, 0.6482f, 0.7116f, 0.7168f, 0.7990f, 0.9528f, 0.8954f, 1.0000f } },
             // Drum Plate + Vintage Gold Plate REMOVED 2026-06-15 (ear: heavy cut + big
@@ -2201,7 +2212,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "79 Vocal Chamber",     { 0.6672f, 0.6200f, 0.7059f, 0.7068f, 0.7097f, 0.7092f, 0.7763f, 0.5500f, 0.3505f } },  // 2026-06-23 workflow: 8k 1.0->0.55 (spec_L1 + tail-chorus, 18->16) + 125Hz 0.59->0.62 (body 125-250, 16->15)
             { "Small Drum Room",      { 0.9079f, 0.9794f, 0.8922f, 0.7830f, 0.7596f, 0.9453f, 1.0000f, 0.6887f, 0.2120f } },
             // END_MATCHEQ_MAP
-        };
+        }};
         float flat[9] = { 1,1,1,1,1,1,1,1,1 };
         if (const char* env = tuningEnv().matcheq; env != nullptr && env[0] != '\0')
         {
@@ -2209,8 +2220,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             if (t.size() == 9) { float g[9]; for (int k = 0; k < 9; ++k) g[k] = t[k].getFloatValue(); engine.setOutputMatchEQ (g); }
             else engine.setOutputMatchEQ (flat);
         }
-        else if (auto me = kOutputMatchEQByName.find (std::string_view (name)); me != kOutputMatchEQByName.end())
-            engine.setOutputMatchEQ (me->second.data());
+        else if (const auto* me = findPresetConfig (kOutputMatchEQByName, std::string_view (name)))
+            engine.setOutputMatchEQ (me->data());
         else
             engine.setOutputMatchEQ (flat);   // bit-null
     }
@@ -2222,7 +2233,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // plates/halls toward the bright references (cent_50 / cent_500 fleet audit).
     {
         struct AirShelf { float freqHz, gainDb; };
-        static const std::map<std::string_view, AirShelf> kOutputAirShelfByName = {
+        // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs on
+        // the AUDIO thread; same RT-safe pattern as kDiffuseERByName.
+        static constexpr std::array<std::pair<std::string_view, AirShelf>, 5> kOutputAirShelfByName = {{
             // BEGIN_AIRSHELF_MAP (per-preset HF air-shelf, 2026-06-24 fleet cent match
             // vs anchors; env-swept DUSKVERB_AIRSHELF, then baked. {freqHz, gainDb})
             // The air-shelf is an HF-LEVEL lever — it only belongs where the deficit is
@@ -2240,7 +2253,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             //   79 Vocal Chamber-> QuadTank qt_air_mult (was 0.5, inverted: air decayed slower than hi-mid)
             //   Large Chamber   -> early-transient dark (structural floor), shelf can't fix
             // END_AIRSHELF_MAP
-        };
+        }};
         const char* env = tuningEnv().airshelf;
         if (env != nullptr && env[0] != '\0')
         {
@@ -2248,8 +2261,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             if (t.size() == 2) engine.setOutputAirShelf (t[0].getFloatValue(), t[1].getFloatValue());
             else               engine.setOutputAirShelf (8000.0f, 0.0f);
         }
-        else if (auto as = kOutputAirShelfByName.find (std::string_view (name)); as != kOutputAirShelfByName.end())
-            engine.setOutputAirShelf (as->second.freqHz, as->second.gainDb);
+        else if (const auto* e = findPresetConfig (kOutputAirShelfByName, std::string_view (name)))
+            engine.setOutputAirShelf (e->freqHz, e->gainDb);
         else
             engine.setOutputAirShelf (8000.0f, 0.0f);   // bit-null
     }
@@ -2262,7 +2275,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // deep-sub 20-40Hz full_check gate.
     {
         struct LowShelf { float freqHz, gainDb; };
-        static const std::map<std::string_view, LowShelf> kOutputLowShelfByName = {
+        // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs on
+        // the AUDIO thread; same RT-safe pattern as kDiffuseERByName.
+        static constexpr std::array<std::pair<std::string_view, LowShelf>, 2> kOutputLowShelfByName = {{
             // BEGIN_LOWSHELF_MAP (per-preset deep-sub low-shelf, 2026-06-25. {freqHz, gainDb})
             // Restores the 20-40Hz deep-sub "fullness" the references keep but DV's Lo Cut
             // strips. Closes the deep-sub gate cleanly (no boom regression):
@@ -2271,7 +2286,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Blade Runner 224: NO low-shelf — its deep-sub deficit (-9.9dB) is too deep; any
             // boost big enough to close it over-booms 40-100Hz (coupled). Structural residual.
             // END_LOWSHELF_MAP
-        };
+        }};
         const char* env = tuningEnv().lowshelf;
         if (env != nullptr && env[0] != '\0')
         {
@@ -2279,8 +2294,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             if (t.size() == 2) engine.setOutputLowShelf (t[0].getFloatValue(), t[1].getFloatValue());
             else               engine.setOutputLowShelf (60.0f, 0.0f);
         }
-        else if (auto ls = kOutputLowShelfByName.find (std::string_view (name)); ls != kOutputLowShelfByName.end())
-            engine.setOutputLowShelf (ls->second.freqHz, ls->second.gainDb);
+        else if (const auto* e = findPresetConfig (kOutputLowShelfByName, std::string_view (name)))
+            engine.setOutputLowShelf (e->freqHz, e->gainDb);
         else
             engine.setOutputLowShelf (60.0f, 0.0f);   // bit-null
     }
@@ -2341,16 +2356,18 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Phase A front-loaded presets: tail delayed so the ER owns the early
         // window (moves energy_t50 toward the anchor). Front-loaded only — back-
         // loaded presets (Vocal Hall) need the complementary ER-boost (Phase B).
-        static const std::map<std::string_view, float> kTankOnsetByName = {
+        // constexpr std::array + linear scan (NOT std::map) — RT-safe on the audio
+        // thread; same pattern as kOutputAirShelfByName. See findPresetConfig().
+        static constexpr std::array<std::pair<std::string_view, float>, 0> kTankOnsetByName = {{
             // REVERTED 2026-06-15 (ear: 100ms tail delay = audible ER->silence->tail
             // gap, "sounds like a delay"; the sparse ER can't bridge it). Phase-A
             // primitive kept (env/map-drivable) but no preset ships it until the ER
             // is dense enough to fill the gap (Phase B density-ramp).
-        };
+        }};
         const char* env = tuningEnv().tankonset;
         float ms = 0.0f;
         if (env != nullptr && env[0] != '\0') ms = juce::String (env).getFloatValue();
-        else if (auto it = kTankOnsetByName.find (std::string_view (name)); it != kTankOnsetByName.end()) ms = it->second;
+        else if (const auto* it = findPresetConfig (kTankOnsetByName, std::string_view (name))) ms = *it;
         engine.setTankOnsetMs (ms);
     }
 
@@ -2953,6 +2970,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // line count (fdn_/accurateHall_ read the first 16, accurateHall32_ reads
     // all 32). Zero-padded so a 16-token override leaves the 32-line tail
     // defined (it is not the render target in that case).
+    bool fdnDelaysFromEnv = false;
     const char* envCsv = tuningEnv().fdnDelays;
     if (envCsv != nullptr && envCsv[0] != '\0')
     {
@@ -2970,8 +2988,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             }
             if (ok)
             {
+                // Apply the swept delays, but DON'T early-return — that skipped the
+                // composite voicing / buildup / shimmer-down / etc. below. Just mark
+                // that base delays are set so the per-preset base-delay map/reset
+                // section doesn't overwrite them.
                 engine.setFDNBaseDelays (parsed);
-                return;
+                fdnDelaysFromEnv = true;
             }
         }
     }
@@ -3088,11 +3110,14 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setShimmerDownOctaveMix (downMix);
     }
 
-    auto bdIt = kBaseDelaysByName.find (std::string_view (name));
-    if (bdIt != kBaseDelaysByName.end())
-        engine.setFDNBaseDelays (bdIt->second.delays);
-    else
-        engine.resetFDNBaseDelays();   // no custom set → restore default so a prior preset's custom delays don't leak (setFDNBaseDelays(nullptr) only PRESERVES, never resets)
+    if (! fdnDelaysFromEnv)   // an env DUSKVERB_FDN_DELAYS override owns the delays — don't clobber it
+    {
+        auto bdIt = kBaseDelaysByName.find (std::string_view (name));
+        if (bdIt != kBaseDelaysByName.end())
+            engine.setFDNBaseDelays (bdIt->second.delays);
+        else
+            engine.resetFDNBaseDelays();   // no custom set → restore default so a prior preset's custom delays don't leak (setFDNBaseDelays(nullptr) only PRESERVES, never resets)
+    }
 
     // ─── Phase ζ + η: per-preset in-loop peaking + dual-time-constant bass shelf ──
     // Both default to bypass (0 dB) when no per-preset entry exists. VH/BH

@@ -131,7 +131,7 @@ def main():
             npass = 0; new = list(targets[name])
             cells = []
             for k, (d, a) in enumerate(res):
-                if d is None or a is None or a <= 0.05:
+                if d is None or a is None or a <= 0.05 or d <= 0.0:
                     cells.append(f"{['63','125','250','500','1k','2k','4k','8k','16k'][k]}:skip")
                     continue
                 pct = (d - a) / a * 100

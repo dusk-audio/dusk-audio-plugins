@@ -12,7 +12,7 @@ root causes. Group fails into a few CAUSES, each mapped to an audible symptom.
 ## Before trusting any score, or before a release
 
 ```sh
-cd ~/projects/plugins
+# Run from the repo root (the directory containing plugins/ and build/).
 # 1. Source-only, instant, no render — catches engine-migration orphans:
 python3 plugins/DuskVerb/tools/tuner/fleet_audit.py --verify-tables   # exit 1 = dormant table
 

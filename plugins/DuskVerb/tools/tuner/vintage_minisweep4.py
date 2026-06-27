@@ -5,6 +5,7 @@ Lock from round-3: m=1.06, t=0.85, hc=7000, gt=0.5, lc=30.
 Adds PostBandTrim 4-band post-tank EQ axes.
 """
 import json
+import shutil
 import subprocess, sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,6 +18,8 @@ ANCHOR = Path("/tmp/anchor_bh")
 
 def trial(idx, sub, lm, mh, air):
     out_dir = Path(f"/tmp/bh_m4_{idx:04d}")
+    # Wipe the whole dir so no stale state of any kind leaks into this trial.
+    shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         str(RENDER), "--vst3", str(VST3),
@@ -38,13 +41,7 @@ def trial(idx, sub, lm, mh, air):
         "--sustained-pink-seconds", "4",
         "--output-dir", str(out_dir),
     ]
-    # Delete any stale output first so a previous run's file can't be mistaken
-    # for a successful render of THIS trial.
     out_wav = out_dir / "BrightHall_noiseburst.wav"
-    try:
-        out_wav.unlink()
-    except FileNotFoundError:
-        pass
     try:
         cp = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     except subprocess.TimeoutExpired:

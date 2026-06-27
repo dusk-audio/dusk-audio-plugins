@@ -263,15 +263,14 @@ private:
     // low-frequency content above 60 Hz. Earlier iteration at 120 Hz was
     // over-aggressive and removed musical bass that external reference clearly retains.
     static constexpr float kFeedbackHpfHz = 60.0f;
-    // LPF at 1.5 kHz — aggressive HF attenuation in the feedback path.
-    // Each cascade cycle pitches up by N semitones (×2 at +12), so a
-    // 200 Hz snare component migrates 200→400→800→1600→3200 Hz over 4
-    // cycles, accumulating as a "metallic" peak at 1-3 kHz that's the
-    // clearest audible artifact differentiating us from external reference shimmer.
-    // 1.5 kHz drops the migrated content by ~−3 dB at 1.5 kHz and ~−6 dB
-    // at 3 kHz per cycle, so by 3-4 cycles the high-end energy is
-    // exhausted before it can recirculate further.
-    static constexpr float kFeedbackLpfHz = 14000.0f;   // 2026-06-16: 6k->14k to brighten the cascade toward the (confirmed) anchor (cent_500 was -42%). (22k experiment gained only +0.5s T60-16k → the FDN hall, not this LPF, caps HF sustain.)
+    // LPF at 14 kHz — a gentle ceiling on the feedback path. Each cascade cycle
+    // pitches up by N semitones (×2 at +12), so without any cap the migrated
+    // content piles up against the AA-filter wall as a metallic 1-3 kHz peak.
+    // Earlier iterations cut hard (1.5 kHz, then 6 kHz) but ran too dark vs the
+    // anchor (cent_500 was -42%). 14 kHz keeps the cascade bright while still
+    // trimming the very top before it recirculates. (A 22 kHz experiment gained
+    // only +0.5 s T60-16k → the FDN hall, not this LPF, caps HF sustain.)
+    static constexpr float kFeedbackLpfHz = 14000.0f;   // 2026-06-16: 6k->14k brighten toward anchor
 
     double sampleRate_ = 48000.0;
     int    maxBlockSize_ = 0;

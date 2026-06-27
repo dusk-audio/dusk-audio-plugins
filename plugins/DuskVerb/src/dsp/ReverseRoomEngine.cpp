@@ -149,7 +149,19 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
     }
 
     if (numSamples > maxBlock_)
-        numSamples = maxBlock_;
+    {
+        // Host exceeded prepare()'s maxBlockSize. Process in maxBlock_-sized chunks
+        // (sequential → gate / velvet / ER state stays continuous) rather than
+        // truncating to maxBlock_ and dropping the rest of the host block.
+        int off = 0;
+        while (off < numSamples)
+        {
+            const int n = std::min (maxBlock_, numSamples - off);
+            process (inL + off, inR + off, outL + off, outR + off, n);
+            off += n;
+        }
+        return;
+    }
 
     // ── 1) Rising-ER FIR: shape dry input into a swelling early-reflection
     //        burst (the "reverse" onset). Per channel, allocation-free. ──

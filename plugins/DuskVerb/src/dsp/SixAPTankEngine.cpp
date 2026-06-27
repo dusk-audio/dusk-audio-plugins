@@ -451,7 +451,10 @@ void SixAPTankEngine::process (const float* inputL, const float* inputR,
     const float* in_L = diffusedL_.data();
     const float* in_R = diffusedR_.data();
 
-    for (int n = 0; n < numSamples; ++n)
+    // Iterate ONLY over the scratch-buffer-valid range. diffuseN caps reads of
+    // in_L/in_R and diffusedL_/diffusedR_ (earlyL/earlyR) to the prepared size;
+    // a host block larger than maxBlockSize would otherwise read out of bounds.
+    for (int n = 0; n < diffuseN; ++n)
     {
         float inL = in_L[n];
         float inR = in_R[n];
@@ -562,4 +565,8 @@ void SixAPTankEngine::process (const float* inputL, const float* inputR,
         outputL[n] = (damped  + rightLoop * 0.5f + earlyL * earlyMix_) * outputTrim_;
         outputR[n] = (dampedR - leftLoop  * 0.5f + earlyR * earlyMix_) * outputTrim_;
     }
+
+    // If the host block exceeded prepare()'s maxBlockSize, diffuseN capped the
+    // processed range — clear the unprocessed tail rather than leave it stale.
+    for (int n = diffuseN; n < numSamples; ++n) { outputL[n] = 0.0f; outputR[n] = 0.0f; }
 }

@@ -164,6 +164,9 @@ def main():
                 od.rmdir()          # drop the now-empty trial dir (avoid /tmp buildup)
             except OSError:
                 pass
+        base = BASELINE_NFAIL.get(args.preset)
+        if base is not None and nf > base:
+            guard += 100.0 * (nf - base)   # baseline n_fail hard guard: never trade a scoreboard regression
         # Now that attack is closed, minimize TOTAL n_fail (drive toward all-
         # within-JND) while the guard keeps the onset win locked. Small pd term
         # keeps a gradient on width/diffusion.

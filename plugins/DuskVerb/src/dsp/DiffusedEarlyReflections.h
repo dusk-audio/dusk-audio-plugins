@@ -145,7 +145,10 @@ private:
             if (timesMs_[i] <= 0.0f || timesMs_[i] > kMaxTimeMs) continue;
             const int d = static_cast<int> (timesMs_[i] * 0.001f * sr);
             if (d <= 0 || d > mask_) continue;
-            tapDelay_[m] = d; gains_[m] = gains_[i]; ++m;
+            // Compact timesMs_ alongside tapDelay_/gains_ (m <= i, in-place safe) so a
+            // later prepare()/rebuildTaps() pass operates on the surviving taps — not
+            // stale leading entries that drop valid taps after a dropped one.
+            tapDelay_[m] = d; gains_[m] = gains_[i]; timesMs_[m] = timesMs_[i]; ++m;
         }
         n_ = m;
     }

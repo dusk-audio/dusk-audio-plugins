@@ -28,16 +28,18 @@ have no anchor). Δ shown only where the gate FAILS.
 | Deep Blue Day | ~~40~~~~49~~ **37** | +7.6 @203 | pass | pass |  ← anchor re-captured at NATIVE mix=0.5 (wetDry=1.0 inflated to 49); DV mix 0.38→0.50. cent_50 now PASSES
 | Medium Drum Room | 45 | +10.9 | +3.8 | pass |
 
-**18 presets, mean n_fail = 26.9.**
+**18 presets, mean n_fail = 27.8.** (500 total fails / 18 — updated after the
+Reverse Taps re-capture lifted it 22→46.)
 
 ## Findings
 - **The new gates were the real deliverable.** Prior scoreboards were partly
   fiction — the boing + transient-loudness were invisible. True fleet state is
   much higher than the old teens.
-- **Boing (tail resonance) fails on 8/18** — and ACROSS ENGINES, not just
+- **Boing (tail resonance) fails on 7/18** — and ACROSS ENGINES, not just
   Dattorro: Live Room +20 (worst), Medium Drum +10.9, Ambience +9.9, Small Drum
-  +9.7, Deep Blue +7.5, Black Hole +7.3, Reverse Taps +11.4, Gold +4.3. A
-  prominent pitched tail mode = modal sparsity / under-diffusion fleet-wide.
+  +9.7, Deep Blue +7.5, Black Hole +7.3, Gold +4.3. (Reverse Taps no longer
+  fails — its +11.4 was vs the broken duplicate anchor; passes on the re-capture.)
+  A prominent pitched tail mode = modal sparsity / under-diffusion fleet-wide.
 - **impulse_rms (hit loudness) fails on ~10** — presets matched on sustained RMS
   but are hot/cold on the transient (±2-4dB). The sustained-only gates missed it.
 - **Drum Plate boing now PASSES** (Size-up fix held) — the one fixed so far.

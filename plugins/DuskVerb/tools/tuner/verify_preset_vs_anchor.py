@@ -135,16 +135,16 @@ ENGINE_CEILING = {
 
 def evaluate(preset, anchor_path, slug, vst3):
     """Returns dict with all metrics + per-gate verdicts."""
-    render(preset, vst3)
     dv_path = str(OUTPUT_DIR / f"{slug}_impulse.wav")
     try:
+        render(preset, vst3)
         dv = compute_metrics(dv_path)
         ref = compute_metrics(anchor_path)
     except Exception as e:
         return {'preset': preset, 'error': str(e)}
 
     dv_rms = rms_db(dv_path); ref_rms = rms_db(anchor_path)
-    rms_d = (dv_rms - ref_rms) if (dv_rms and ref_rms) else None
+    rms_d = (dv_rms - ref_rms) if (dv_rms is not None and ref_rms is not None) else None
 
     d50 = (dv['cent_50'] - ref['cent_50']) / max(ref['cent_50'], 1) * 100
     d500 = (dv['cent_500'] - ref['cent_500']) / max(ref['cent_500'], 1) * 100
@@ -196,9 +196,13 @@ def evaluate(preset, anchor_path, slug, vst3):
         else:
             (fails if abs(stereo_d) > 0.20 else warns).append(f"stereo Δ {stereo_d:+.3f} (need ±0.10)")
 
+    # Gate 1 (RMS level) is a HARD fail per the criteria — "everything else is
+    # meaningless if not [matched]". A lone RMS fail must NOT be softened to
+    # MINOR-FAIL, or an unmatched-level preset slips through as near-pass.
+    rms_failed = any(f.startswith("RMS") for f in fails)
     if not fails and not warns: verdict = "✓ PASS"
     elif not fails: verdict = "~ WARN"
-    elif len(fails) == 1: verdict = "~ MINOR-FAIL"
+    elif len(fails) == 1 and not rms_failed: verdict = "~ MINOR-FAIL"
     else: verdict = "✗ FAIL"
 
     # Auto-suggest Gain Trim adjustment if level off
@@ -260,6 +264,10 @@ def main():
             print(f"    FAIL: {f}")
         for w in r['warns']:
             print(f"    WARN: {w}")
+
+    err_count = sum(1 for r in results if 'error' in r)
+    if fail_count > 0 or err_count > 0:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
