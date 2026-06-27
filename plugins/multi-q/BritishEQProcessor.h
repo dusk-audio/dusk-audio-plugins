@@ -156,6 +156,7 @@ public:
         hfFilterR.reset();
         phaseShiftL.reset();
         phaseShiftR.reset();
+        xfmrFluxL = xfmrFluxR = 0.0f;
         consoleSaturation.reset();
     }
 
@@ -231,10 +232,21 @@ public:
                     sample = isLeft ? lpfL.processSample(sample) : lpfR.processSample(sample);
                 }
 
-                // Transformer phase shift (E-Series only)
+                // Transformer (E-Series only): phase rotation + LF-weighted core
+                // saturation. The iron saturates where flux is highest (LF), so the
+                // added harmonics come from an LF flux estimate and scale with the
+                // saturation amount (saturation = 0 leaves the signal untouched).
                 if (!params.isBlackMode)
                 {
                     sample = isLeft ? phaseShiftL.processSample(sample) : phaseShiftR.processSample(sample);
+
+                    if (params.saturation > 0.1f)
+                    {
+                        float& flux = isLeft ? xfmrFluxL : xfmrFluxR;
+                        flux += xfmrLpCoef * (sample - flux);
+                        const float lfHarm = std::tanh(flux * kXfmrDrive) / kXfmrDrive - flux;
+                        sample += lfHarm * (params.saturation * 0.01f) * kXfmrAmount;
+                    }
                 }
 
                 // Console saturation
@@ -280,6 +292,16 @@ private:
     // Phase shift for E-Series transformer emulation
     juce::dsp::IIR::Filter<float> phaseShiftL, phaseShiftR;
 
+    // E-Series transformer core saturation. The iron saturates where flux is
+    // highest (low frequencies), so the added harmonics are extracted from an
+    // LF flux estimate — this is the low-end "weight" that distinguishes the
+    // E-series transformer from the G-series' broadband console saturation.
+    static constexpr float kXfmrLpHz   = 180.0f;   // LF flux estimate corner
+    static constexpr float kXfmrDrive  = 1.6f;     // core saturation drive
+    static constexpr float kXfmrAmount = 0.35f;    // blend depth of the LF harmonics
+    float xfmrFluxL = 0.0f, xfmrFluxR = 0.0f;      // per-channel LF flux state
+    float xfmrLpCoef = 0.0f;                       // one-pole LF estimate coefficient
+
     // Console saturation
     ConsoleSaturation consoleSaturation;
 
@@ -302,6 +324,10 @@ private:
         double sr = currentSampleRate.load(std::memory_order_acquire);
         float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sr);
         float tan_w0 = std::tan(w0 / 2.0f);
+
+        // LF flux estimate corner for the transformer core saturation.
+        xfmrLpCoef = 1.0f - std::exp (-juce::MathConstants<float>::twoPi
+                                       * kXfmrLpHz / static_cast<float>(sr));
 
         float a0 = 1.0f + tan_w0;
         float a1 = (1.0f - tan_w0) / a0;
