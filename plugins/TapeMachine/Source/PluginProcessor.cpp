@@ -627,27 +627,27 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (autoCompEnabled)
     {
         // VTM-style: Output compensates for input + tape compression.
-        // compressionCompensation is the negation of the tape's own (input-gain-
-        // removed) transfer, so applying -inputGainDB + comp drives net output to
-        // ~unity. Coefficients re-derived from the measured raw transfer curve
-        // (autoComp OFF, -6 dBFS / 1 kHz sine, 48k/512, OS=4x). The tape-alone
-        // gain delta at each drive point is:
-        //   -12dB -> +0.19   -6dB -> -0.20   0dB -> -2.45   +6dB -> -5.03   +12dB -> -11.09
-        // comp(d) = -tapeAlone(d), fitted as two quadratics meeting at d=0 (c=2.45):
-        //   d <= 0: through (-12,-0.19) (-6,+0.20) (0,+2.45)
-        //   d >  0: through (0,+2.45)  (+6,+5.03) (+12,+11.09)
+        // compressionCompensation negates the tape's own (input-gain-removed)
+        // transfer, so applying -inputGainDB + comp drives net output to ~unity.
+        // Re-derived from the measured raw transfer (autoComp OFF, -6 dBFS / 1 kHz
+        // sine, 48k/512) of the Jiles-Atherton tape. The tape-alone gain delta
+        // T(d) at each drive point is:
+        //   -12dB -> -11.88   -6dB -> -7.24   0dB -> -3.08   +6dB -> +0.57   +12dB -> +0.63
+        // comp(d) = d - T(d), fitted as two quadratics meeting at d=0 (c=3.08):
+        //   d <= 0: through (-12,-0.12) (-6,+1.24) (0,+3.08)
+        //   d >  0: through (0,+3.08)   (+6,+5.43) (+12,+11.37)
         float compressionCompensation;
         if (inputGainDB <= 0.0f)
         {
-            compressionCompensation = 0.025833f * inputGainDB * inputGainDB
-                                    + 0.53f     * inputGainDB
-                                    + 2.45f;
+            compressionCompensation = 0.0066667f * inputGainDB * inputGainDB
+                                    + 0.346667f  * inputGainDB
+                                    + 3.08f;
         }
         else
         {
-            compressionCompensation = 0.048333f * inputGainDB * inputGainDB
-                                    + 0.14f     * inputGainDB
-                                    + 2.45f;
+            compressionCompensation = 0.0498611f * inputGainDB * inputGainDB
+                                    + 0.0925f    * inputGainDB
+                                    + 3.08f;
         }
         targetOutputGain = juce::Decibels::decibelsToGain(-inputGainDB + compressionCompensation);
     }
