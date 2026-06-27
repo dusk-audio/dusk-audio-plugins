@@ -1245,9 +1245,14 @@ int main (int argc, char** argv)
             char* endPtr = nullptr;
             errno = 0;
             const double parsed = std::strtod (rawVal.c_str(), &endPtr);
+            // std::isfinite rejects the strtod-recognized "nan"/"inf"/"infinity"
+            // keywords (errno stays 0, so the errno test misses them). Without it
+            // jlimit(0,1,NaN) returns NaN and poisons the param/DSP; matches the
+            // --param path's isfinite guard.
             const bool validNumber = ! rawVal.empty()
                                      && endPtr == rawVal.c_str() + rawVal.size()
-                                     && errno == 0;
+                                     && errno == 0
+                                     && std::isfinite (parsed);
             if (! validNumber)
             {
                 std::cerr << "  ! --nparam " << name << ": value '" << valueStr
@@ -1515,6 +1520,11 @@ int main (int argc, char** argv)
     {
         if (auto* p = findParam (*plugin, "Gate")) p->setValue (0.0f);
         std::cout << "GATE-OFF OVERRIDE: gate_enabled forced to 0" << std::endl;
+        // Re-settle AFTER the override: the initial preroll above ran with the gate
+        // still ON, so without this the first (impulse) render carries stale gate /
+        // smoother state into the measured output.
+        plugin->reset();
+        runPreroll (prerunSeconds);
     }
 
     // Dry-passthrough test: forcibly override Bus Mode = false and Dry/Wet = 0
@@ -1526,6 +1536,11 @@ int main (int argc, char** argv)
         if (auto* p = findParam (*plugin, "Bus Mode"))   p->setValue (0.0f);
         if (auto* p = findParam (*plugin, "Dry/Wet"))    p->setValue (0.0f);
         std::cout << "DRY PASSTHROUGH TEST: Bus Mode=0, Dry/Wet=0 (gain_trim retained)" << std::endl;
+        // Re-settle AFTER the override so the dry-path measurement isn't contaminated
+        // by the Bus Mode / Dry-Wet smoothers ramping out of the pre-override (wet)
+        // state the initial preroll left them in.
+        plugin->reset();
+        runPreroll (prerunSeconds);
         // Skip impulse + noise renders — we only need the sine for measurement.
         const int sineSamples = static_cast<int> (kSampleRate * 2.0);
         juce::AudioBuffer<float> input (2, sineSamples);

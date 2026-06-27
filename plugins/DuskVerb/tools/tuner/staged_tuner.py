@@ -1150,6 +1150,12 @@ def main():
           f"{len(profile['stage1_ranges'])} stage-1 clamps")
 
     anchor_n = Path(args.anchor_rendered)
+    # The sustained/snare paths are derived by substituting "_noiseburst"; if the
+    # basename doesn't contain it, .replace() is a no-op → anchor_s/snare alias the
+    # noiseburst file and the tuner silently scores the wrong stimuli. Fail fast.
+    if "_noiseburst" not in anchor_n.name:
+        sys.exit(f"--anchor-rendered must point at the *_noiseburst*.wav anchor "
+                 f"(got '{anchor_n.name}'); sustained/snare paths derive from it)")
     anchor_s = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_sustained"))
     anchor_snare = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_snare"))
     for p in (anchor_n, anchor_s, anchor_snare):
@@ -1159,11 +1165,12 @@ def main():
                     "sustained": str(anchor_s),
                     "snare": str(anchor_snare)}
 
+    # Unique per-run work dir (tempfile.mkdtemp) so a concurrent / prior run of the
+    # SAME preset isn't wiped — the old `rmtree(work_dir/slug)` could erase another
+    # run's artifacts mid-flight.
     slug = "".join(c for c in args.preset if c.isalnum() or c in "+-_'")
-    work = Path(args.work_dir) / slug
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
+    Path(args.work_dir).mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f"{slug}_", dir=args.work_dir))
 
     # ─── Automated anchor profiling ────────────────────────────────────────
     # Slope-fit tail_t60 on the sustained-pink anchor post input-off, convert

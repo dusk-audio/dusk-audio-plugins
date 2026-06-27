@@ -4,36 +4,36 @@
 
 #include <vector>
 
-// ReverseRoomEngine — replicates the Lexicon PCM Room "Reverse 1" preset,
-// reverse-engineered from the anchor data (lex-reverse-1 impulse/sine renders):
+// ReverseRoomEngine — the gated-reverse engine (algo 9, the single preset
+// "Reverse Taps"), reverse-engineered from the GATED lex-reverse-1 anchor:
 //
-//   * It is NOT backwards-convolution. The impulse response peaks at ~70 ms
-//     then decays (RT60 ~4.6 s) — i.e. the algorithm is fully CAUSAL, no
-//     time-reversal, no latency.
+//   * NOT backwards-convolution — fully CAUSAL, no time-reversal, no latency.
 //   * The "reverse" character is a RISING-GAIN early-reflection onset: discrete
-//     taps at ~4.4 ms spacing whose gains ramp UP over the first ~70 ms (the
-//     "Tap Slope"). That gentle swell is the whole reverse effect and gives the
-//     measured env_p2p ~+24.6 dB — NOT the old NonLinear gate's +60 dB
-//     silence -> blast cliff.
-//   * The swell feeds a dark, modulated, diffuse tail: centroid darkens
-//     9.8k -> 3k Hz over 1 s, Spin modulation ~2.7 Hz, wide stereo.
+//     taps whose gains ramp UP over the first ~rampMs_ to a peak (the "Tap
+//     Slope", gain ~ (t/ramp)^slope_; slope_<1 = concave) — the swell.
+//   * An INPUT-KEYED hard gate (keyed off |dry input|, NOT the tail — the tail
+//     never falls below threshold) supplies the pre-onset silence + post-peak
+//     cliff: it opens on input, HOLDS while input is present (duration-dependent
+//     hold), then HARD-releases to near-silence → the anchor's gated envelope
+//     (env_p2p ~+72 dB), cutting the tail to its short per-band T60.
 //
-// Signal flow:  input -> [rising-ER tap FIR] -> [FDNReverb tail] -> output
-// The ER FIR shapes the dry input into a rising-onset early-reflection burst;
-// feeding the FDN in SERIES makes the diffuse tail inherit the swell, so the
-// whole response rises to a peak then decays — matching the reference envelope.
+// Signal flow:  input -> [rising-ER swell FIR] -> [VelvetTail tail] -> [gate] -> out
+// The swell-ER shapes the dry input into a rising-onset burst that feeds the
+// feed-FORWARD VelvetTail (sparse velvet-noise FIR: per-band tap-gain decay, NO
+// recirculation → no mid-decay floor, per-band decay/level/brightness/stereo all
+// decouple). The input-keyed gate then cuts the tail to the anchor's short T60 +
+// hard cliff. (Replaces the original FDNReverb tail, which floored the mids ~0.3 s
+// and ran too dark/correlated for this short, bright, wide gated reverse.)
 //
 // UI knob mapping (this engine — see PluginEditor::applyEngineAccent):
-//   DECAY      -> FDN tail RT60
-//   SIZE       -> FDN room size + ER tap span (scales the onset duration)
-//   DIFFUSION  -> ER tap density (sparse "Concrete Stairs" <-> dense) + FDN diffusion
-//   TREBLE MULT-> tail HF damping (the 9.8k->3k centroid darkening)
-//   BASS/MID   -> FDN band decay
-//   LOW/HI XOVER-> FDN band split
-//   DEPTH/RATE -> FDN modulation (the ~2.7 Hz Spin)
-//   SATURATION -> FDN input drive
-// The ER ramp duration + slope are the engine's fixed "Reverse" signature
-// (rampMs_/slope_), tuned to match the reference; not exposed as knobs.
+//   DECAY      -> VelvetTail global decay scale (setGlobalDecayScale)
+//   SIZE       -> VelvetTail size scale + ER tap span (scales the onset duration)
+//   DIFFUSION  -> ER tap density (setTankDiffusion → rebuildTaps)
+//   All other universal setters (Bass/Mid/Treble Multiply, Lo/Hi Crossover,
+//   Saturation, Mod Depth/Rate, Tail Spin, Freeze) are NO-OPS on this engine —
+//   the VelvetTail per-band T60/level/brightness + the gate timing are baked
+//   engine constants (the fixed "Reverse" signature: rampMs_/slope_/holdMs_/
+//   closeTauMs_/bandT60_), tuned to the reference, not exposed as knobs.
 class ReverseRoomEngine
 {
 public:

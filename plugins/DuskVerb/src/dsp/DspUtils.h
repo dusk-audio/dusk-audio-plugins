@@ -609,12 +609,15 @@ public:
         for (auto& s : shelves_) s.reset();
     }
 
-    // Set the 3 region crossovers (must be strictly ascending).
+    // Set the 3 region crossovers (must be strictly ascending). Reserve headroom
+    // below Nyquist for fMid/fHi so a near-Nyquist fLow can't push a clamp's lower
+    // bound above its upper bound (std::clamp(v, lo, hi) with lo>hi is UB).
     void setCrossovers (float fLow, float fMid, float fHi) noexcept
     {
-        fLow_ = std::clamp (fLow,  20.0f, sampleRate_ * 0.49f);
-        fMid_ = std::clamp (fMid,  fLow_ + 1.0f, sampleRate_ * 0.49f);
-        fHi_  = std::clamp (fHi,   fMid_ + 1.0f, sampleRate_ * 0.49f);
+        const float nyq = sampleRate_ * 0.49f;
+        fLow_ = std::clamp (fLow, 20.0f,        nyq - 2.0f);
+        fMid_ = std::clamp (fMid, fLow_ + 1.0f, nyq - 1.0f);
+        fHi_  = std::clamp (fHi,  fMid_ + 1.0f, nyq);
         recomputeShelves();
     }
 
@@ -862,9 +865,12 @@ public:
 
     void setCrossovers (float fLow, float fMid, float fHi) noexcept
     {
-        fLow_ = std::clamp (fLow,  20.0f, sampleRate_ * 0.49f);
-        fMid_ = std::clamp (fMid,  fLow_ + 1.0f, sampleRate_ * 0.49f);
-        fHi_  = std::clamp (fHi,   fMid_ + 1.0f, sampleRate_ * 0.49f);
+        // Headroom below Nyquist so a near-Nyquist fLow can't invert a later
+        // clamp's bounds (std::clamp with lo>hi is UB). Keeps fLow<fMid<fHi.
+        const float nyq = sampleRate_ * 0.49f;
+        fLow_ = std::clamp (fLow, 20.0f,        nyq - 2.0f);
+        fMid_ = std::clamp (fMid, fLow_ + 1.0f, nyq - 1.0f);
+        fHi_  = std::clamp (fHi,  fMid_ + 1.0f, nyq);
         recomputeSplitCoeffs();
     }
 

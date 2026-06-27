@@ -136,6 +136,11 @@ def main():
     study.optimize(obj, n_trials=a.trials, n_jobs=a.workers)
 
     bt = study.best_trial
+    if "delays" not in bt.user_attrs:
+        # Every trial hit the 1e3 sentinel (no successful render) → best_trial carries
+        # no user_attrs. Report cleanly instead of crashing on the KeyError.
+        print(f"\nAll {a.trials} trials failed (no successful render); nothing to report.")
+        return
     best = bt.user_attrs["delays"]
     print(f"\nBEST  loss={study.best_value:.2f}  n_fail={bt.user_attrs['nfail']}  "
           f"kurt2-14k={bt.user_attrs['kurt']}  mean={np.mean(best):.0f}")

@@ -183,6 +183,10 @@ def _tail_decay_times(mono: np.ndarray, sr: int) -> dict:
 
 def _slope_fit(env_seg: np.ndarray, sr: int) -> tuple[float, np.ndarray]:
     """Log-linear fit of envelope in dB. Returns (slope_dB_per_s, residual_dB)."""
+    # Guard empty input before .max() (which raises on a zero-length array) — a
+    # peak-near-end crop or silent segment can hand us an empty envelope.
+    if env_seg.size == 0:
+        return 0.0, np.array([0.0])
     seg = env_seg[env_seg > env_seg.max() * 1e-4]
     if len(seg) < 16:
         return 0.0, np.array([0.0])

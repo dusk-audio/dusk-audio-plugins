@@ -75,7 +75,7 @@ ATTACK: attack +116 ms · onset −82%
 STRUCTURAL: cent_50 −17.3% · diffusion 7.56 · spec_L1 max 8.06@12.9k · pitch-chorus 7.53x
 
 ### Vocal Hall — FDN — 17
-LEVEL: ss deep-sub +2.09 · ss hi +(-2.69) · boom sub +3.75 · sine1k −2.95 (×2)
+LEVEL: ss deep-sub +2.09 · ss hi -2.69 · boom sub +3.75 · sine1k −2.95 (×2)
 DECAY(wall): decay hi +20% · T60 63/4k/8k/16k (mixed)
 EDT: edt sub −57% · edt low −53% · edt low-mid −32% · edt hi +69%
 WIDTH: stereo_corr +0.11

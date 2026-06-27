@@ -274,7 +274,11 @@ def main():
         if not ok:
             return {"name": n, "ok": False, "msg": txt.splitlines()[0]}
         nf = parse_nfail(txt)
-        cr = calibration_report(n, commanded.get(n), txt) if algo in (10, 12) else None
+        # Use the SAME consumer set as the live audit (TABLE_ENGINES): accurateHall_
+        # also drives the SparseField(11) + TiledRoom(13) composites, so their
+        # commanded octave T60 must be verified too — not just algos 10/12.
+        cr = calibration_report(n, commanded.get(n), txt) \
+            if algo in TABLE_ENGINES["kAccurateHallT60ByName"] else None
         return {"name": n, "ok": True, "algo": algo, "n_fail": nf, "cal": cr}
 
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
@@ -283,7 +287,7 @@ def main():
     drift = [r for r in results if r.get("ok") and r.get("cal") and r["cal"]["broken"]]
 
     if args.verify_calibration:
-        print("=== CALIBRATION VERIFICATION (algo 10/12) ===")
+        print("=== CALIBRATION VERIFICATION (AccurateHall consumers: algo 10/12/11/13) ===")
         any10 = False
         for r in sorted([x for x in results if x.get("ok") and x.get("cal")],
                         key=lambda x: -x["cal"]["worst_divergence"]):

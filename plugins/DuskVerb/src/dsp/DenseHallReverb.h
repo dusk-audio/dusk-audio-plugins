@@ -80,6 +80,7 @@ public:
         for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; octDamp_[i].reset(); }
         spinL_.clear(); spinR_.clear();
         tcL_.reset(); tcR_.reset();
+        for (auto& d : dc_) d.reset();   // process() always runs the input DC blockers — clear their history too, else state leaks across instances/sessions
     }
 
     // ── Setters (universal surface) ──────────────────────────────────────────
