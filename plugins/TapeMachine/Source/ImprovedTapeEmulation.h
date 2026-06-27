@@ -240,20 +240,20 @@ private:
 };
 
 //==============================================================================
-// Langevin Tape Saturation (replaces J-A RK4 ODE)
-// Uses the Langevin function L(x) = coth(x) - 1/x as a memoryless waveshaper.
-// This is the anhysteretic magnetization curve from the Jiles-Atherton model,
-// providing identical H3-dominant harmonic character without state accumulation.
+// Jiles-Atherton Tape Hysteresis
+// Integrates the J-A dM/dH differential equation per sample (4th-order
+// Runge-Kutta), so the magnetisation M lags the applied field — a real tape
+// hysteresis loop with memory, not a static curve. The anhysteretic curve is the
+// Langevin function L(x) = coth(x) - 1/x (Padé approximant), and the loop output
+// is blended toward it by the AC-bias amount (bias dithers the magnetisation
+// across the full loop, so its average follows the anhysteretic response).
 //
-// Advantages over full J-A ODE:
-//   - Zero DC offset (odd-symmetric function)
-//   - Exact unity gain normalization (3*L(x)/x → 1 for small x)
-//   - No numerical instability for any parameter set
-//   - No transient/settling behavior
-//   - ~10x less CPU (no RK4 per sample)
+//   - α coupling, k pinning, c reversibility drive the loop shape
+//   - bounded by the saturation magnetisation (clamp + non-finite backstop)
+//   - the deck's auto-makeup carries the level; this stage is voiced, not unity
 //
 // THD characteristics (Type456, precision deck, bias=0.5):
-//   0VU: THD≈0.27% (H3 at -51dB, purely odd harmonics)
+//   0VU: THD≈0.27% (H3 at -51dB, dominantly odd harmonics)
 //   +6VU: THD≈3.0%
 //   Bias modulates THD: low bias = more saturation
 //   Type A cleaner than Type B (machine factor)
@@ -265,19 +265,21 @@ public:
     {
         float Ms = 280.0f;    // Saturation magnetization (kA/m)
         float a = 720.0f;     // Anhysteretic shape parameter (A/m)
-        float alpha = 0.016f; // Coupling coefficient (unused in waveshaper, kept for API)
-        float k = 640.0f;     // Pinning coefficient (unused in waveshaper, kept for API)
-        float c = 0.50f;      // Reversibility (unused in waveshaper, kept for API)
+        float alpha = 0.016f; // Inter-domain coupling coefficient
+        float k = 640.0f;     // Pinning coefficient (loop width)
+        float c = 0.50f;      // Reversibility (0 = fully irreversible, 1 = anhysteretic)
     };
 
     void prepare(double /*sampleRate*/, int /*oversamplingFactor*/ = 1)
     {
-        // No state to initialize (memoryless waveshaper)
+        prevM = 0.0f;
+        prevH = 0.0f;
     }
 
     void reset()
     {
-        // No state to reset (memoryless waveshaper)
+        prevM = 0.0f;
+        prevH = 0.0f;
     }
 
     void setFormulation(TapeFormulationParams params)
@@ -290,45 +292,123 @@ public:
         precisionMode = isPrecision;
     }
 
-    // Process one sample through Langevin saturation waveshaper
+    // Process one sample through the Jiles-Atherton hysteresis model.
     // input: normalized audio signal (-1 to +1)
     // drive: saturation depth (0 to ~3.0)
     // biasLinearization: 0-1, modulates saturation depth (models AC bias effect)
+    //
+    // Carries STATE (the magnetisation M and the previous applied field), so M
+    // lags the field — the real tape hysteresis loop. M follows the dM/dH J-A
+    // differential equation, integrated each sample by 4th-order Runge-Kutta;
+    // alpha (coupling), k (pinning) and c (reversibility) set the loop shape.
     float processSample(float input, float drive, float biasLinearization)
     {
-        if (drive < 0.001f || std::abs(input) < 1e-10f)
+        if (drive < 0.001f)
+        {
+            prevM = 0.0f;
+            prevH = 0.0f;
             return input;
+        }
 
         // Bias modulates effective saturation depth:
         // Low bias (0.0) = under-biased tape = more distortion (×1.3)
         // Reference bias (0.5) = no change (×1.0)
         // High bias (1.0) = over-biased tape = cleaner (×0.7)
-        float biasFactor = 1.0f + 0.6f * (0.5f - biasLinearization);
+        const float biasFactor = 1.0f + 0.6f * (0.5f - biasLinearization);
 
         // Machine character:
         // Type A (push-pull, transformerless) = slightly cleaner (×0.92)
         // Type B (transformer, single-ended stages) = slightly dirtier (×1.08)
-        float machineFactor = precisionMode ? 0.92f : 1.08f;
+        const float machineFactor = precisionMode ? 0.92f : 1.08f;
 
-        float effectiveDrive = drive * biasFactor * machineFactor;
+        const float effectiveDrive = drive * biasFactor * machineFactor;
 
-        // Langevin waveshaper: x = input * effectiveDrive * fieldScale / a
-        // Output = 3*L(x)*a / (effectiveDrive*fieldScale)
-        //        = input * 3*L(x)/x  (unity-normalized)
-        float x = input * effectiveDrive * fieldScale / currentParams.a;
-        float Lx = langevin(x);
+        const float Ms    = currentParams.Ms;
+        const float a     = currentParams.a;
+        const float alpha = currentParams.alpha;
+        const float k     = currentParams.k;
+        const float c     = currentParams.c;
 
-        // Unity-normalized: for small x, 3*L(x)/x → 1 (passes input unchanged)
-        // For large x, L(x) → 1, so output → 3*a/(effectiveDrive*fieldScale*input)
-        // which provides smooth soft compression.
-        float output = 3.0f * Lx * currentParams.a / (effectiveDrive * fieldScale);
+        // Applied field (same scaling as the anhysteretic path below).
+        const float H  = input * effectiveDrive * fieldScale;
+        const float dH = H - prevH;
+        const float delta = (dH >= 0.0f) ? 1.0f : -1.0f;
 
-        return output;
+        // dM/dH at a given (field, magnetisation). The denominators are floored
+        // so the stiff term can never divide by ~0 and blow up (this is the J-A
+        // model's only numerical hazard).
+        auto dMdH = [&] (float Hx, float Mx) -> float
+        {
+            const float He    = Hx + alpha * Mx;
+            const float q     = He / a;
+            const float Man   = Ms * langevin (q);
+            const float dManHe = (Ms / a) * langevinDeriv (q);
+            const float Mdiff = Man - Mx;
+            const bool  sameDir = (delta > 0.0f) ? (Mdiff > 0.0f) : (Mdiff < 0.0f);
+            const float deltaM = sameDir ? 1.0f : 0.0f;   // irreversible term off when unphysical
+
+            float kap = (1.0f - c) * delta * k - alpha * Mdiff;
+            if (std::abs (kap) < 1e-4f) kap = (kap < 0.0f ? -1e-4f : 1e-4f);
+            const float irr = deltaM * Mdiff / kap;
+
+            const float num = (1.0f - c) * irr + c * dManHe;
+            // alpha already enters the irreversible denominator (kap, above); the
+            // outer denominator carries only the reversible term (Chowdhury
+            // DAFx-19 f1Denom/f3). Adding -alpha*(1-c)*irr here double-counts it.
+            float den = 1.0f - alpha * c * dManHe;
+            if (std::abs (den) < 1e-4f) den = (den < 0.0f ? -1e-4f : 1e-4f);
+            return num / den;
+        };
+
+        // 4th-order Runge-Kutta over the field step [prevH, H].
+        const float k1 = dMdH (prevH,            prevM);
+        const float k2 = dMdH (prevH + 0.5f * dH, prevM + 0.5f * dH * k1);
+        const float k3 = dMdH (prevH + 0.5f * dH, prevM + 0.5f * dH * k2);
+        const float k4 = dMdH (prevH + dH,        prevM + dH * k3);
+        float M = prevM + (dH / 6.0f) * (k1 + 2.0f * k2 + 2.0f * k3 + k4);
+
+        // Stability backstop: a non-finite or runaway M resets the cell instead
+        // of poisoning the master. M is physically bounded by the saturation
+        // magnetisation (small overshoot allowed).
+        if (! std::isfinite (M))
+        {
+            prevM = 0.0f;
+            prevH = H;
+            return input;
+        }
+        const float Mlim = 1.5f * Ms;
+        M = (M > Mlim) ? Mlim : (M < -Mlim ? -Mlim : M);
+
+        prevM = M;
+        prevH = H;
+
+        // AC bias linearises the tape toward the anhysteretic (loop-free) curve:
+        // the bias dither cycles the magnetisation across the full loop so the
+        // average follows the anhysteretic response. Blend the hysteresis-loop
+        // magnetisation with the anhysteretic Langevin path by the bias amount —
+        // more bias = cleaner/linear, less bias = more of the loop's memory and
+        // low-level compression. Both paths share the field scaling.
+        const float loopOut   = M * 3.0f * a / (Ms * effectiveDrive * fieldScale);
+        const float anhystOut = 3.0f * langevin (H / a) * a / (effectiveDrive * fieldScale);
+        // ~25% loop at reference bias, more as bias drops. The loop path's
+        // small-signal gain is the reversibility c (< 1), so the blend sits
+        // slightly below the anhysteretic level (1 - loopWeight*(1-c)); the
+        // deck's auto-makeup downstream restores unity at the full chain (it is
+        // calibrated against this), so the nominal master tone is preserved while
+        // the loop contributes the real hysteresis memory + asymmetry.
+        const float loopWeight = (1.0f - biasLinearization) * 0.5f;
+        const float output = anhystOut + loopWeight * (loopOut - anhystOut);
+        return std::isfinite (output) ? output : input;
     }
 
 private:
     TapeFormulationParams currentParams;
     bool precisionMode = false;
+
+    // Hysteresis state: magnetisation and the previous applied field. This is
+    // what makes the model have memory (a real loop) rather than a static curve.
+    float prevM = 0.0f;
+    float prevH = 0.0f;
 
     // Field scaling: calibrated for target THD at operating levels.
     // With inputGain applied before tape emulation:
@@ -339,6 +419,7 @@ private:
     // Calibrated empirically against precision deck THD measurements.
     static constexpr float fieldScale = 3200.0f;
 
+public:
     // Langevin function: L(x) = coth(x) - 1/x
     // Padé [2,2] approximation: L(x) ≈ x*(315+105x²)/(945+420x²+63x⁴)
     // Denominator constant 945 (=3×315) ensures L(x)/x → 1/3 as x→0
@@ -367,6 +448,41 @@ private:
         float asympt = sign * (1.0f - 1.0f / ax);
         float t = (ax - 1.5f);
         return pade * (1.0f - t) + asympt * t;
+    }
+
+    // Susceptibility dM_an/dHe in the J-A ODE. This is the analytic derivative of
+    // langevin() ABOVE — the Padé approximant the model actually uses — NOT of the
+    // exact coth−1/x. The two diverge by >2× in the mid range, so using the exact
+    // derivative would make the loop's susceptibility inconsistent with its own
+    // anhysteretic curve. Matches langevin() region-for-region (the finite-diff
+    // consistency test in tape_hysteresis.cpp guards this).
+    static float langevinDeriv(float x)
+    {
+        const float ax = std::abs(x);
+        if (ax < 1.0e-4f)
+            return 1.0f / 3.0f;                    // d/dx[x/3]
+
+        const float x2 = x * x;
+        const float N  = 315.0f * x + 105.0f * x * x2;        // Padé numerator
+        const float D  = 945.0f + 420.0f * x2 + 63.0f * x2 * x2;
+        const float Np = 315.0f + 315.0f * x2;
+        const float Dp = 840.0f * x + 252.0f * x * x2;
+        const float padeP = (Np * D - N * Dp) / (D * D);
+
+        if (ax <= 1.5f)
+            return padeP;
+
+        const float asymptP = 1.0f / x2;            // d/dx[sign(x) − 1/x]
+        if (ax >= 2.5f)
+            return asymptP;
+
+        // Blend region 1.5 < |x| < 2.5 — derivative of pade*(1−t) + asympt*t,
+        // t = |x|−1.5, with sign s carrying d|x|/dx.
+        const float s      = (x >= 0.0f) ? 1.0f : -1.0f;
+        const float pade   = N / D;
+        const float asympt = s - 1.0f / x;
+        const float t      = ax - 1.5f;
+        return padeP * (1.0f - t) + asymptP * t + s * (asympt - pade);
     }
 };
 
