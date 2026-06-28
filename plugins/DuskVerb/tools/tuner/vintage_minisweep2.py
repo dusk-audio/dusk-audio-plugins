@@ -46,9 +46,13 @@ def render(out_dir: Path, mid, treble, bass, lo_xover, hi_cut, trim=1.5) -> bool
         "--sustained-pink-seconds", "4",
         "--output-dir", str(out_dir),
     ]
+    # Delete ALL stale WAVs first so no previous run's file (any stimulus) can be
+    # mistaken for a successful render of THIS trial.
+    for w in out_dir.glob("*.wav"):
+        w.unlink()
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        return (out_dir / "BrightHall_noiseburst.wav").exists()
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return cp.returncode == 0 and (out_dir / "BrightHall_noiseburst.wav").exists()
     except subprocess.TimeoutExpired:
         return False
 

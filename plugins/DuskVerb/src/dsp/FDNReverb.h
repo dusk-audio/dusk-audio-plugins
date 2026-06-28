@@ -175,6 +175,21 @@ public:
     static constexpr int kNumOctaveBands = 9;   // ISO octaves 63 Hz..16 kHz
     void setOctaveT60 (int band, float seconds);
 
+    // Decay-knob coupling for the octave-GEQ path. The per-octave T60 targets
+    // define the decay SHAPE; this reference is the broadband decay at which
+    // that shape is realized 1:1 (= the preset's baked Decay). The live Decay
+    // knob then scales the whole octave curve by decayTime_/ref, so the knob is
+    // never dead on an AccurateHall preset. ref<=0 → scale 1.0 (legacy: knob
+    // inert when octaves are pinned). No-op on the <false> instantiation.
+    void setOctaveDecayRef (float seconds);
+
+    // Jot tonal-correction filter (FDNReverbT<true> only): a stereo OUTPUT GEQ
+    // that flattens per-band steady-state ENERGY so changing an octave's T60 no
+    // longer changes its level — decouples decay from tone (the gain==decay==
+    // level coupling wall). Shape derived from the octave-T60 targets at
+    // preset-apply. Default OFF → identity → bit-null; no-op on <false>.
+    void setTonalCorrection (bool enabled);
+
     void clearBuffers();
 
 private:
@@ -254,6 +269,10 @@ private:
         // full per-octave decay.
         OctaveBandDamping::Coeffs octaveCoeffs[N] {};
         bool octaveActive = false;
+
+        // Jot tonal correction (single GEQ, applied per stereo output channel).
+        OctaveBandDamping::Coeffs tonalCorrCoeffs {};
+        bool tonalCorrActive = false;
 
         // Structural / anti-alias / DC-blocker coefficients
         float structHFCoeff      = 0.0f;
@@ -385,6 +404,7 @@ private:
     InlineAllpass inlineAPShort_[N];
     FiveBandDamping dampFilter_[N];      // holds biquad state only; coeffs come from lp.damping[]
     OctaveBandDamping octaveDamp_[N];    // AccurateHall per-octave GEQ state (8 shelves/line); coeffs from lp.octaveCoeffs[]. Idle (zero cost) unless octaveActive.
+    OctaveBandDamping tonalCorrL_, tonalCorrR_;  // Jot output tonal-correction (stereo); coeffs from lp.tonalCorrCoeffs. Identity unless tonalCorrActive.
     DspUtils::RandomWalkLFO lfos_[N];
     // Phase 2: single master sine LFO for CoherentLoop topology. All 16
     // delay lines tap THIS one LFO at per-line phase offsets so they
@@ -574,6 +594,8 @@ private:
     // octaveGEQActive_ gates the (P3) if-constexpr GEQ block; all-flat → no-op.
     float octaveT60_[kNumOctaveBands] {};
     bool  octaveGEQActive_ = false;
+    float octaveDecayRef_ = 0.0f;   // <=0 → octave scale 1.0 (legacy)
+    bool  tonalCorrEnabled_ = false;   // Jot tonal-correction opt-in (AccurateHall). Default off = bit-null.
 };
 
 // Backward-compatible alias. Every existing consumer (DuskVerbEngine::fdn_,

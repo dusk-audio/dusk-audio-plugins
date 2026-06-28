@@ -609,12 +609,15 @@ public:
         for (auto& s : shelves_) s.reset();
     }
 
-    // Set the 3 region crossovers (must be strictly ascending).
+    // Set the 3 region crossovers (must be strictly ascending). Reserve headroom
+    // below Nyquist for fMid/fHi so a near-Nyquist fLow can't push a clamp's lower
+    // bound above its upper bound (std::clamp(v, lo, hi) with lo>hi is UB).
     void setCrossovers (float fLow, float fMid, float fHi) noexcept
     {
-        fLow_ = std::clamp (fLow,  20.0f, sampleRate_ * 0.49f);
-        fMid_ = std::clamp (fMid,  fLow_ + 1.0f, sampleRate_ * 0.49f);
-        fHi_  = std::clamp (fHi,   fMid_ + 1.0f, sampleRate_ * 0.49f);
+        const float nyq = sampleRate_ * 0.49f;
+        fLow_ = std::clamp (fLow, 20.0f,        nyq - 2.0f);
+        fMid_ = std::clamp (fMid, fLow_ + 1.0f, nyq - 1.0f);
+        fHi_  = std::clamp (fHi,  fMid_ + 1.0f, nyq);
         recomputeShelves();
     }
 
@@ -623,7 +626,11 @@ public:
     void setRegionGainDb (int region, float gainDb) noexcept
     {
         if (region < 0 || region >= kNumRegions) return;
-        regionGainDb_[region] = gainDb;
+        // Clamp to the same ±24 dB limit the underlying shelves enforce. Region 0
+        // flows straight into outGain_ (the base multiplier) in recomputeShelves(),
+        // which is NOT clamped by setShelf() — without this, an out-of-range region-0
+        // gain would bypass the intended limit.
+        regionGainDb_[region] = std::clamp (gainDb, -24.0f, 24.0f);
         recomputeShelves();
     }
 
@@ -858,9 +865,12 @@ public:
 
     void setCrossovers (float fLow, float fMid, float fHi) noexcept
     {
-        fLow_ = std::clamp (fLow,  20.0f, sampleRate_ * 0.49f);
-        fMid_ = std::clamp (fMid,  fLow_ + 1.0f, sampleRate_ * 0.49f);
-        fHi_  = std::clamp (fHi,   fMid_ + 1.0f, sampleRate_ * 0.49f);
+        // Headroom below Nyquist so a near-Nyquist fLow can't invert a later
+        // clamp's bounds (std::clamp with lo>hi is UB). Keeps fLow<fMid<fHi.
+        const float nyq = sampleRate_ * 0.49f;
+        fLow_ = std::clamp (fLow, 20.0f,        nyq - 2.0f);
+        fMid_ = std::clamp (fMid, fLow_ + 1.0f, nyq - 1.0f);
+        fHi_  = std::clamp (fHi,  fMid_ + 1.0f, nyq);
         recomputeSplitCoeffs();
     }
 

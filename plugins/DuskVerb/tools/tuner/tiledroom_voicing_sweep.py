@@ -2,7 +2,7 @@
 """Voice the TiledRoomEngine (algo 13) on the VVV Tiled Room anchor.
 
 Sweeps the 6 engine voicing params via the DUSKVERB_TILEDROOM env override
-(erGain, tailGain, feedback, lpHz, onsetMs, erDecayMs) — no rebuild per trial.
+(erSize, onsetMs, erDecayMs, burst2Ms, sparseTailGain, erGain) — no rebuild per trial.
 Objective = full_check n_fail (gain-matched, sustained-correct). Robust harness
 (exception-contained eval, self-cleaning per-trial dirs, SQLite-persisted study,
 no enqueue) — same lessons as joint_dense32_sweep.py.
@@ -35,7 +35,7 @@ def rms(p):
 
 
 def eval_voicing(cfg, tag, bt=None):
-    dv = f"/tmp/trv_{tag}"; lex = f"/tmp/trv_{tag}_lex"
+    dv = f"/tmp/trv_{tag}_{os.getpid()}"; lex = f"/tmp/trv_{tag}_{os.getpid()}_lex"
     try:
         shutil.rmtree(dv, ignore_errors=True); shutil.rmtree(lex, ignore_errors=True)
         os.makedirs(dv, exist_ok=True); os.makedirs(lex, exist_ok=True)
@@ -43,7 +43,7 @@ def eval_voicing(cfg, tag, bt=None):
         if bt is not None:   # UltraRoom decouple: post-loop per-band level trim (dB)
             env["DUSKVERB_BANDTRIM"] = ",".join(f"{v:.3f}" for v in bt)
         r = subprocess.run([REND, "--program", PRESET, "--output-dir", dv, *WET],
-                           cwd=str(REPO), capture_output=True, text=True, env=env)
+                           cwd=str(REPO), capture_output=True, text=True, env=env, timeout=180)
         nb = glob.glob(f"{dv}/*_noiseburst.wav")
         if r.returncode != 0 or not nb:
             return None
@@ -54,9 +54,12 @@ def eval_voicing(cfg, tag, bt=None):
         if d < 1e-12: return None
         g = a / d
         for f in glob.glob(f"{dv}/*.wav"):
-            x, sr = sf.read(f); sf.write(f, x * g, sr)
+            # subtype="FLOAT": default WAV subtype is PCM_16, which requantizes the
+            # gain-scaled float render and adds a dither floor that corrupts quiet
+            # late-window gates (same fix as parallel_check.py / mdr_earlyfield_sweep.py).
+            x, sr = sf.read(f); sf.write(f, x * g, sr, subtype="FLOAT")
         r = subprocess.run([sys.executable, FC, dv, lex, "--name", PRESET, "--json"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=200)
         nf = None
         for line in r.stdout.splitlines():
             if line.startswith("JSON_RESULT:"):
@@ -136,6 +139,9 @@ def main():
 
     # Report the lowest-n_fail trial (not just lowest-loss) for the scoreboard.
     cs = [t for t in study.trials if t.value is not None and t.value < 1e2]
+    if not cs:
+        print(f"\nNo successful trials for {PRESET} (all hit the sentinel loss); nothing to report.")
+        return
     bestnf = min(cs, key=lambda t: (t.user_attrs.get("nfail", 99), t.value))
     print(f"\nBEST n_fail={bestnf.user_attrs['nfail']} first50={bestnf.user_attrs.get('first50')} "
           f"({PRESET}, baseline {BASELINE})")

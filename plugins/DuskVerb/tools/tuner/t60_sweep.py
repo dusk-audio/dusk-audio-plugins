@@ -106,6 +106,13 @@ def main():
     study.optimize(objective, n_trials=args.trials, n_jobs=args.workers)
 
     best = study.best_trial
+    # Abort only when NO real per-band T60 was recorded (every trial hit the render-
+    # fail sentinel). A high best.value alone is NOT a failure — loss is a sum of
+    # relative band errors and can legitimately exceed 100 on a poor-but-measured run.
+    if not any(f"t60_{c}" in best.user_attrs for _, _, c in BANDS):
+        print(f"\nAll trials failed to render/measure (best loss {best.value:.1f}); "
+              "no valid T60 measurement — nothing to report.")
+        return
     print("\n========== BEST ==========")
     print(f"Trial {best.number}  loss={best.value:.4f}")
     print("  params:")

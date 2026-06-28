@@ -14,7 +14,7 @@ Usage:
                                        --preset "Vintage Vocal Plate"
 """
 from __future__ import annotations
-import argparse, json, re, subprocess, sys
+import argparse, json, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np, soundfile as sf
 
@@ -81,7 +81,9 @@ def peak_aligned_thirdoct(p, t0=0.05, t1=1.0):
 
 
 def report(preset, params, vst3, anchor):
-    dv_dir = Path("/tmp/eval_best")
+    # Unique per-invocation dir so overlapping runs can't delete each other's
+    # render mid-flight (was a shared /tmp/eval_best). mkdtemp = its own scratch.
+    dv_dir = Path(tempfile.mkdtemp(prefix="eval_best_"))
     render(preset, params, vst3, dv_dir)
     # Derive the rendered files from the dir (the harness slug follows the
     # preset name), not a hardcoded "VintageVocalPlate_*" — that mislabelled
@@ -184,8 +186,9 @@ def main():
     if not params:
         sys.exit(f"empty best.json: {best_json}")
 
-    # Locked overrides applied for fair render conditions.
-    params = {**params, "Dry/Wet": 1.0, "Bus Mode": 1, "Freeze": 0, "Gain Trim": 0.0}
+    # Locked overrides applied for fair render conditions. Gain Trim is no
+    # longer forced here so the tuned value (now present in params) is heard.
+    params = {**params, "Dry/Wet": 1.0, "Bus Mode": 1, "Freeze": 0}
 
     print(f"Best params (from {best_json}):")
     for k, v in sorted(params.items()):

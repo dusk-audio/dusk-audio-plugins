@@ -236,7 +236,12 @@ private:
         // RBJ A = sqrt(gainLin); shelf gain at high frequencies = A^2.
         const float A     = std::sqrt (gainLin);
         const float sqrtA = std::sqrt (A);
-        const float fcCl  = std::min (fcHz, 0.49f * sampleRate_);
+        // Sanitize fcHz to a valid finite range BEFORE deriving w0/alpha: it is only
+        // upper-bounded by the caller, so a negative or NaN cutoff would otherwise
+        // produce garbage shelf coefficients. Force [1 Hz, 0.49·Fs].
+        const float fcSafe = std::isfinite (fcHz) ? std::clamp (fcHz, 1.0f, 0.49f * sampleRate_)
+                                                  : 0.49f * sampleRate_;
+        const float fcCl  = fcSafe;
         const float w0    = kTwoPi * fcCl / sampleRate_;
         const float cosw  = std::cos (w0);
         const float sinw  = std::sin (w0);

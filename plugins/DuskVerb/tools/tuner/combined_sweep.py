@@ -117,7 +117,7 @@ def measure_anchor(anchor_dir, slug):
 
 def render_trial(out_dir, preset, p):
     cmd = [str(RENDER), "--vst3", str(VST3), "--program", preset,
-           "--param", "Dry/Wet=1.0", "--param", "Bus Mode=On",
+           "--param", "Dry/Wet=1.0", "--param", "Bus Mode=1",
            "--param", f"Decay Time={p['decay']}",
            "--param", f"Bass Multiply={p['bass']}",
            "--param", f"Treble Multiply={p['treble']}",
@@ -214,11 +214,11 @@ def main():
         tmp = Path(tempfile.mkdtemp(prefix=f"comb_{trial.number}_"))
         try:
             if not render_trial(tmp, args.preset, p):
-                return 100.0
+                return 1e6
             nb = tmp / f"{slug}_noiseburst.wav"
             s1k = tmp / f"{slug}_sine1k.wav"
             if not nb.exists() or not s1k.exists():
-                return 100.0
+                return 1e6
 
             loss = 0.0
             measured = {}
@@ -269,8 +269,11 @@ def main():
                     overshoot = max(0.0, imp_band_db - (-43.0))
                     loss += overshoot * 4.0
                     measured["impulse_1k_band_db"] = imp_band_db
-            except Exception:
-                pass
+            except Exception as exc:
+                # Don't let a WAV read/filter failure silently skip the overshoot
+                # guard — a candidate that can't be checked must not pass for free.
+                measured["impulse_guard_error"] = str(exc)
+                loss += 4.0
 
             # snare RMS (weight 1.5)
             snare = tmp / f"{slug}_snare.wav"
