@@ -82,6 +82,7 @@ def render_and_measure(delays, preset, anchor_targets, out_dir):
 
 
 def main():
+    global VST3   # reassigned below from --vst3 / DUSKVERB_VST3 (declared before any read)
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", required=True, choices=list(PRESET_TARGETS.keys()))
     ap.add_argument("--trials", type=int, default=300)
@@ -90,7 +91,13 @@ def main():
     ap.add_argument("--study-name", default=None)
     ap.add_argument("--storage", default=None,
                     help="Optional sqlite URL for resumable study")
+    ap.add_argument("--vst3", default=os.environ.get("DUSKVERB_VST3", str(VST3)),
+                    help=f"DuskVerb VST3 path (default {VST3}, or DUSKVERB_VST3 env var).")
     args = ap.parse_args()
+
+    # Resolve the VST3 path (CLI > DUSKVERB_VST3 env > default) before any render —
+    # render_and_measure + the final render read the module-global VST3.
+    VST3 = Path(args.vst3)
 
     targets = PRESET_TARGETS[args.preset]
     out_root = Path(args.out)
@@ -105,6 +112,7 @@ def main():
         for i in range(N_LINES):
             delays.append(trial.suggest_int(f"d{i:02d}", K_MIN, K_MAX))
         delays_sorted = sorted(delays)
+        trial.set_user_attr("delays", delays_sorted)
         tmp = Path(tempfile.mkdtemp(prefix=f"sweep_{trial.number}_"))
         try:
             measured = render_and_measure(delays_sorted, args.preset, targets, tmp)
@@ -122,7 +130,6 @@ def main():
             err = abs(measured[band] - target) / target
             loss += err * w
             trial.set_user_attr(f"{band}_peak", measured[band])
-        trial.set_user_attr("delays", delays_sorted)
         return loss
 
     storage = args.storage
@@ -162,16 +169,25 @@ def main():
     # Render the best one to out_root for visual inspection
     env = os.environ.copy()
     env["DUSKVERB_FDN_DELAYS"] = csv
-    subprocess.run([
-        str(RENDER), "--vst3", str(VST3),
-        "--program", args.preset,
-        "--param", "Dry/Wet=1.0",
-        "--param", "Bus Mode=On",
-        "--prerun-seconds", "5",
-        "--sustained-pink-seconds", "4",
-        "--output-dir", str(out_root),
-    ], env=env, check=False, capture_output=True)
-    print(f"\nBest render in {out_root}")
+    try:
+        res = subprocess.run([
+            str(RENDER), "--vst3", str(VST3),
+            "--program", args.preset,
+            "--param", "Dry/Wet=1.0",
+            "--param", "Bus Mode=On",
+            "--prerun-seconds", "5",
+            "--sustained-pink-seconds", "4",
+            "--output-dir", str(out_root),
+        ], env=env, check=False, capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        print(f"\nFinal render FAILED (timeout >120s) for {args.preset}", file=sys.stderr)
+    else:
+        slug = args.preset.replace(" ", "")
+        if res.returncode == 0 and (out_root / f"{slug}_noiseburst.wav").exists():
+            print(f"\nBest render in {out_root}")
+        else:
+            print(f"\nFinal render FAILED (rc={res.returncode}, no output wav) for {args.preset}",
+                  file=sys.stderr)
 
 
 if __name__ == "__main__":

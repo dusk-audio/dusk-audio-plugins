@@ -15,12 +15,11 @@ Why this exists:
 What it does:
   For both a DV preset (rendered through the in-tree harness, post-
   warm-up) and a reference plugin preset (rendered through the same
-  harness via --vst2/--vst3 + --load-state), render four stimuli:
+  harness via --vst2/--vst3 + --load-state), render three stimuli:
 
     1. Dirac impulse                  — LTI fingerprint (legacy)
     2. Pink-noise burst, 50ms         — broadband + modulation-relevant
-    3. Sine sweep 20 Hz -> 20 kHz    — coverage of every modal region
-    4. Snare hit (real recording)     — sparse onset + transient HF
+    3. Snare hit (real recording)     — sparse onset + transient HF
 
   Compute the new noise-floor-aware decay times + spec_L1 +
   centroid_50/500 on each stimulus pair. Print a matrix.
@@ -79,7 +78,7 @@ def render_dv(preset: str, vst3: Path, out_dir: Path, prerun: float, slug: str) 
         # Force 100% wet in case the preset's mix isn't 1.0
         "--param", "Dry/Wet=1.0",
         "--param", "Bus Mode=1",
-        preset,
+        "--program", preset,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
@@ -210,8 +209,10 @@ def main():
     out_root = Path(args.output_dir)
     dv_dir = out_root / "dv"
     ref_dir = out_root / "ref"
-    if out_root.exists():
-        shutil.rmtree(out_root)
+    # Only remove the subdirectories this tool owns — never blow away an
+    # arbitrary --output-dir (could be user data if mis-pointed).
+    shutil.rmtree(dv_dir, ignore_errors=True)
+    shutil.rmtree(ref_dir, ignore_errors=True)
 
     print(f"=== Rendering DV ({args.dv_preset}) with prerun {args.prerun_seconds}s ===")
     render_dv(args.dv_preset, Path(args.dv_vst3), dv_dir, args.prerun_seconds, "DV")

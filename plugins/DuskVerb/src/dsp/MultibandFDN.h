@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 // ===========================================================================
@@ -102,12 +103,20 @@ public:
         oL_.assign (n, 0);  oR_.assign (n, 0);
 
         designCrossovers();
+        // Reset the LR4 crossover filter state on (re)prepare so a reused instance
+        // (sample-rate / block-size change) can't carry old session delay state into
+        // the freshly-designed filters. (The tanks reset themselves in their prepare.)
+        lpLow_.reset(); hpLow_.reset(); lpHigh_.reset(); hpHigh_.reset();
     }
 
     void setCrossovers (float lowHz, float highHz)
     {
+        // Enforce low < high before filter design: an inverted/equal pair makes
+        // the mid band empty (or negative) and the LR4 split stops summing flat.
+        // Order the two values, then keep a minimum separation.
+        if (lowHz > highHz) std::swap (lowHz, highHz);
         lowXover_  = lowHz;
-        highXover_ = highHz;
+        highXover_ = std::max (highHz, lowHz + 1.0f);
         if (sampleRate_ > 0.0) designCrossovers();
     }
 
@@ -132,7 +141,14 @@ public:
                   float* outL, float* outR, int numSamples)
     {
         const size_t N = static_cast<size_t> (numSamples);
-        if (loL_.size() < N) return;   // defensive (prepare sizes to maxBlock)
+        if (loL_.size() < N)
+        {
+            // Defensive (prepare sizes to maxBlock). Clear the output rather than
+            // leaving caller buffers untouched, else stale audio leaks through.
+            std::fill_n (outL, numSamples, 0.0f);
+            std::fill_n (outR, numSamples, 0.0f);
+            return;
+        }
 
         // ---- Phase-coherent LR4 3-way split ----
         for (int i = 0; i < numSamples; ++i)

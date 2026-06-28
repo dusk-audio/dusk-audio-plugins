@@ -6,6 +6,7 @@
 #include "ScalableEditorHelper.h"
 #include "UserPresetManager.h"
 #include "SupportersOverlay.h"
+#include "DuskComboBox.h"   // in-window dropdown (fixes JUCE native-popup glitch on Wayland/XWayland)
 
 #include <array>
 #include <functional>
@@ -34,6 +35,7 @@ inline juce::Colour getEngineAccent (EngineType engine)
         case EngineType::SparseField:     return juce::Colour (0xff4de8d9);  // aqua — sparse early field
         case EngineType::AccurateHall32:  return juce::Colour (0xff6ee87a);  // green — dense 32-line hall
         case EngineType::TiledRoom:       return juce::Colour (0xffe8c44d);  // amber — tight ceramic tiled room
+        case EngineType::DenseHall:       return juce::Colour (0xff8ad9ff);  // sky blue — dense diffused hall
     }
     return juce::Colour (0xffff7a3d);
 }
@@ -84,12 +86,12 @@ private:
 
 public:
 
-    static constexpr juce::uint32 kValueText    = 0xfff0f0f0;
-    static constexpr juce::uint32 kLabelText    = 0xffb0b0b8;
-    static constexpr juce::uint32 kGroupText    = 0xff9898a0;
+    static constexpr juce::uint32 kValueText    = 0xfff6f6f8;   // 2026-06-25 brighter (eye-strain)
+    static constexpr juce::uint32 kLabelText    = 0xffd8d8de;   // 2026-06-25 b0->d8: section headers more readable
+    static constexpr juce::uint32 kGroupText    = 0xffcacad0;   // 2026-06-25 98->ca: param names brighter/whiter
     static constexpr juce::uint32 kDimText      = 0xff555555;
 
-    static constexpr juce::uint32 kText         = 0xffe0e0e0;
+    static constexpr juce::uint32 kText         = 0xfff2f2f5;   // 2026-06-25 e0->f2: title/combo near-white
     static constexpr juce::uint32 kSubtleText   = 0xff888888;
 };
 
@@ -248,35 +250,27 @@ private:
     EngineType currentEngine_ = EngineType::Dattorro;
 
     // Algorithm dropdown (= engine selector). Mirrors the algorithm APVTS choice.
-    juce::ComboBox algorithmBox_;
+    DuskComboBox algorithmBox_;
     EngineGlyph    engineGlyph_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> algorithmAttachment_;
+    // (algorithmBox_ syncs via its manual onChange + timerCallback, not a
+    // position-based ComboBoxAttachment — the preset/engine list is sparse.)
 
     // Live output-tail histogram, painted under the header dropdowns.
     TailMeter tailMeter_;
 
-    // Preset browser. CategoryComboBox is a thin subclass of juce::ComboBox
-    // that overrides showPopup() to display a categorized PopupMenu
-    // (categories as nested submenus) instead of the default flat popup.
-    // Items are still registered via addItem() so the ComboBox's selected-
-    // text display + setSelectedId() / step navigation continue to work;
-    // the override only changes how the popup is presented.
-    class CategoryComboBox : public juce::ComboBox
-    {
-    public:
-        // Editor sets this to a lambda that returns the popup menu to show.
-        // If unset, falls back to the default flat ComboBox popup.
-        std::function<juce::PopupMenu()> menuBuilder;
-        void showPopup() override;
-    };
-    CategoryComboBox presetBox_;
+    // Preset browser. DuskComboBox renders its popup IN-WINDOW (not a native OS
+    // popup window) to avoid the Wayland/XWayland glitch, and takes a
+    // menuBuilder so the popup shows categories as nested submenus. Items are
+    // still registered via addItem() so the selected-text display +
+    // setSelectedId() / step navigation continue to work.
+    DuskComboBox presetBox_;
     juce::TextButton prevPresetButton_;
     juce::TextButton nextPresetButton_;
     void loadPreset (int index);
     void refreshPresetList();
     void stepFactoryPreset (int delta);
     // Builds a PopupMenu that mirrors the current preset list with categories
-    // as nested submenus. Used by CategoryComboBox::showPopup.
+    // as nested submenus. Used by DuskComboBox::showPopup() via presetBox_.menuBuilder.
     juce::PopupMenu buildPresetMenu();
 
     // User preset management
@@ -309,6 +303,9 @@ private:
     KnobWithLabel monoBelow_;
     KnobWithLabel width_;
     KnobWithLabel gainTrim_;
+    KnobWithLabel duck_;
+    KnobWithLabel tone_;
+    KnobWithLabel character_;
 
     juce::ToggleButton freezeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment_;
@@ -320,7 +317,7 @@ private:
     juce::ToggleButton busModeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> busModeAttachment_;
 
-    juce::ComboBox predelaySyncBox_;
+    DuskComboBox predelaySyncBox_;
     juce::Label    predelaySyncLabel_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> predelaySyncAttachment_;
 

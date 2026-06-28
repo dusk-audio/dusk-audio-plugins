@@ -83,6 +83,57 @@ public:
     // tail. Clamped to [0, 0.02]: the AP buffers allocate headroom for
     // exactly 2 % wander. 0.02 = bit-identical legacy.
     void setDensityJitter (float fraction);
+
+    // Plate density rework (default 0 / 1.0 = legacy, byte-identical):
+    //   setDensityDepth: 0 = legacy 3 APs; >0 engages all 6 density APs +
+    //     a small coeff boost (denser, smoother tail — no added modulation).
+    //   setModReduction: 1.0 = legacy mod; <1.0 pulls AP1 + delay modulation
+    //     toward still (toward the Lex/VVV near-static tail).
+    void setDensityDepth (float depth01);
+    void setModReduction (float reduction01);
+    // #87 boing fix (short rooms): when true, the 12-AP density cascade loads the
+    // MID-PRIME hall-scale density bases (kLeft/RightDensityAPBaseHall, 307-1303
+    // smp) instead of the short room bases, adding close-spaced coprime modes that
+    // fill the sparse low-mid gap → kills the comb-coincidence resonance. The 4
+    // MAIN delay lines stay at room scale (does NOT call setHallScale → room is not
+    // lengthened). Only takes effect when setDensityDepth(>0) engages the cascade.
+    // false = legacy room density bases = byte-identical.
+    void setDensityRoomFill (bool enable);
+    // Per-line incommensurate detune of the 4 main delay lines (fractional mult on
+    // top of totalScale). Breaks the L<->R harmonic ratios so coincident comb teeth
+    // interleave. {1,1,1,1} identity = bit-null. Factors = [Ldel1,Ldel2,Rdel1,Rdel2].
+    void setMainLineDetune (float lDel1, float lDel2, float rDel1, float rDel2);
+    // Input-diffuser coefficient scale (sweep handle). 1.0 = canonical
+    // 0.75/0.625; only active when setDensityDepth>0 engages the cascade.
+    void setInputDiffusionScale (float scale01);
+
+    // Per-octave T60 control (the AccurateHall GEQ, ported). band 0..8 =
+    // ISO octave centres 63|125|250|500|1k|2k|4k|8k|16k Hz; seconds = target
+    // T60 at that octave (>0 engages the octave GEQ in place of the 3-band
+    // damping). setOctaveDecayRef ties the Decay knob to the curve (scale =
+    // decayTime/ref) so the knob stays live. All-zero T60 = inactive = legacy.
+    void setOctaveT60 (int band, float seconds);
+    void setOctaveDecayRef (float seconds);
+
+    // Tonal-correction GEQ: a STATIC per-octave EQ on the wet OUTPUT (not in the
+    // recirculating loop), so it sets the steady-state spectral balance
+    // INDEPENDENTLY of the in-loop decay — the decoupling the Dattorro
+    // gain==decay==level coupling otherwise can't give (you can't cut a band's
+    // level without shortening its decay). band 0..8 = the ISO octaves; dB = the
+    // per-octave level trim (calibrated to match the anchor's steady-state
+    // spectrum). All-zero dB = identity = bit-identical.
+    void setTonalCorrDb (int band, float dB);
+
+    // Slow-attack BLOOM (input-onset-driven swell). The real Lex vintage vocal
+    // plate's impulse peaks ~90ms in (a gentle swell), not instantly. An input
+    // activity follower (slow release, so it stays latched through the tail)
+    // drives a one-pole swell gain that opens over attackMs after onset, then
+    // holds open — so the IR rises to a late peak (slow attack) WITHOUT killing
+    // the tail. 0 = off (gain pinned 1.0) = bit-identical. ms ≈ desired
+    // attack-to-peak time (tuned vs the anchor's attack_time gate).
+    void setBloomAttackMs (float ms);
+    void setBloomExp (float e);   // reverse-buildup curve power (>1 suppresses early)
+
     void clearBuffers();
 
 private:
@@ -200,7 +251,15 @@ private:
     // Density cascade: 3 additional allpasses between delay1 and damping.
     // Multiplies echo density ~8× per loop pass (each AP doubles mode count).
     // Delays are prime and coprime to all other elements.
-    static constexpr int kNumDensityAPs = 3;
+    // 12 density allpasses: the first 3 are the legacy cascade (always active);
+    // stages 3..11 are the dense-path extension, engaged when a preset opts in
+    // (numActiveDensityAPs_ 3->12). More Schroeder stages = more modes/echoes =
+    // shallower spectral comb (lower 'ripple' gates) AND smoother tail — the
+    // Lexicon/Valhalla density mechanism, no added modulation. Allpasses are
+    // lossless (|H|=1) so extra stages do NOT raise loop gain / threaten
+    // stability; they only fill the mode density. Default processes only 3 →
+    // byte-identical to the legacy plate.
+    static constexpr int kNumDensityAPs = 12;
 
     // Density-AP wander cap. The density-AP buffers allocate EXACTLY this much
     // read-offset headroom (see prepare()), and setDensityJitter() clamps to it
@@ -208,10 +267,16 @@ private:
     // expose an out-of-bounds interpolated read.
     static constexpr float kMaxDensityJitterFraction = 0.02f;
 
-    // Left tank density AP delays (at 44100 Hz)
-    static constexpr int kLeftDensityAPBase[kNumDensityAPs] = { 137, 199, 281 };
+    // Left tank density AP delays (at 44100 Hz). First 3 = legacy; last 3 = dense-path
+    // extension (prime + coprime to the legacy + delay lines → no resonant build-up).
+    // Stages 6..11 are SHORT (1-4 ms) like 3..5: density-FILL primes, not the
+    // long delays that add discrete mid comb teeth (raises 'ripple', the same
+    // trap as the input diffuser). All prime, coprime to stages 0..5 + the lines.
+    static constexpr int kLeftDensityAPBase[kNumDensityAPs] =
+        { 137, 199, 281, 53, 79, 113, 43, 67, 97, 131, 163, 191 };
     // Right tank density AP delays (at 44100 Hz)
-    static constexpr int kRightDensityAPBase[kNumDensityAPs] = { 149, 211, 263 };
+    static constexpr int kRightDensityAPBase[kNumDensityAPs] =
+        { 149, 211, 263, 61, 89, 127, 47, 71, 101, 139, 167, 193 };
 
     // Hall-scale delays: ~2x room for 1-12s RT60 (all prime, coprime to room delays)
     // Total loop: left=12161 (275.8ms), right=12559 (284.8ms)
@@ -225,8 +290,38 @@ private:
     static constexpr int kRightDel1BaseHall = 4219;  // ~95.7ms
     static constexpr int kRightAP2BaseHall  = 2749;  // ~62.3ms
     static constexpr int kRightDel2BaseHall = 3299;  // ~74.8ms
-    static constexpr int kLeftDensityAPBaseHall[kNumDensityAPs]  = { 307, 421, 577 };
-    static constexpr int kRightDensityAPBaseHall[kNumDensityAPs] = { 337, 461, 541 };
+    static constexpr int kLeftDensityAPBaseHall[kNumDensityAPs]  =
+        { 307, 421, 577, 661, 743, 827, 907, 991, 1063, 1151, 1229, 1303 };
+    static constexpr int kRightDensityAPBaseHall[kNumDensityAPs] =
+        { 337, 461, 541, 691, 769, 883, 937, 1009, 1091, 1171, 1249, 1321 };
+
+    // -----------------------------------------------------------------------
+    // Input diffusion cascade (Dattorro's pre-tank diffusers). A single mono
+    // chain of STATIC allpasses that smears the input impulse into a dense
+    // burst BEFORE it enters the tank. Without it, a single impulse reaches the
+    // 7 output taps as a sparse spray of discrete arrivals — the measured
+    // first-60 ms kurtosis spike (DV 7-27 vs a dense anchor's 3-6). With it, the
+    // early field is already a dense diffuse burst (low kurtosis), matching the
+    // Lexicon/Valhalla "smooth from sample one" character.
+    //
+    //   • Feed-FORWARD (NOT in the recirculating loop) → does NOT change RT60.
+    //   • Energy-preserving allpass (flat magnitude) → no level/spectrum shift;
+    //     redistributes early energy in TIME only.
+    //   • Scaled by sample rate only (NOT size/delayScale) so the ~20 ms smear
+    //     time is constant across room sizes — initial diffusion is a property
+    //     of the medium, not the room.
+    //   • Default bypassed (inputDiffusionActive_ = false) → byte-identical
+    //     legacy; engaged only on the dense-path opt-in (setDensityDepth > 0).
+    static constexpr int kNumInputDiffusers = 6;
+    // Input-diffuser delays (44100 Hz), all prime and coprime to every tank
+    // delay line / density AP (no shared period → no resonant build-up).
+    // SHORT + dense (~1–7 ms, vs Dattorro's classic 2–9 ms) because the measured
+    // kurtosis error lives in the FIRST 10 ms — short stages flood that window
+    // with echoes (the cascade convolution places arrivals at every integer
+    // combination of the 6 delays). Coeffs ~0.6 (not 0.75): the lower per-stage
+    // feedback rings less and reads smoother in the kurtosis trajectory.
+    static constexpr int   kInputDiffuserBase[kNumInputDiffusers]  = { 43, 71, 103, 167, 239, 313 };
+    static constexpr float kInputDiffuserCoeff[kNumInputDiffusers] = { 0.65f, 0.65f, 0.62f, 0.60f, 0.60f, 0.58f };
 
     // -----------------------------------------------------------------------
     // Each cross-coupled feedback loop.
@@ -248,6 +343,14 @@ private:
 
         // Three-band damping (bass / mid / air with independent per-band decay)
         ThreeBandDamping damping;
+
+        // Per-octave GEQ damping (9 ISO-octave T60 plateaus) — the AccurateHall
+        // mechanism, ported in to break the 3-band-vs-9-octave T60 wall. Only
+        // used when octaveActive_; coeffs designed message-thread per tank (the
+        // L/R loop lengths differ slightly), state stays RT-side. Default unused
+        // → byte-identical to the legacy 3-band plate.
+        OctaveBandDamping          octaveDamping;
+        OctaveBandDamping::Coeffs  octaveCoeffs {};
 
         // Static allpass (decay diffusion 2)
         Allpass ap2;
@@ -360,6 +463,61 @@ private:
     // smearing, producing audible discrete tap echoes in the tail.
     static constexpr float kDensityDiffBaseline_ = 0.55f;
     float densityDiffCoeff_ = kDensityDiffBaseline_;
+
+    // Dense-tail path (plate density rework). Default = legacy (3 APs, no boost,
+    // full modulation) so existing presets are byte-identical until they opt in.
+    //   numActiveDensityAPs_ : 3 (legacy) or 6 (dense) — more Schroeder stages =
+    //     more echoes/sec = smoother tail WITHOUT modulation (the Lex/VVV way).
+    //   densityCoeffBoost_   : multiplies densityDiffCoeff_ (clamped <0.85 in loop).
+    //   modReduction_        : scales AP1 + delay1/2 modulation toward 0 to pull the
+    //     tail near-still (the user hears ours wobble more than Lex/VVV). 1.0 = legacy.
+    int   numActiveDensityAPs_ = 3;
+    float densityCoeffBoost_   = 1.0f;
+    float modReduction_        = 1.0f;
+    bool  densityRoomFill_     = false;                       // #87: false = room density bases (bit-null)
+    float mainDetune_[4]       = { 1.0f, 1.0f, 1.0f, 1.0f };  // #87: {Ldel1,Ldel2,Rdel1,Rdel2}; identity = bit-null
+
+    // Per-octave GEQ state. octaveActive_ false (all T60 == 0) → legacy 3-band,
+    // bit-identical. Inter-octave crossovers = geometric means of the ISO
+    // centres (the full_check T60-gate band edges), shared with AccurateHall.
+    bool  octaveActive_   = false;
+    float octaveT60_[9]   = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    float octaveDecayRef_ = 0.0f;   // <0.05 → knob scale pinned at 1.0
+    static constexpr float kOctaveXoverHz[8] =
+        { 88.4f, 176.8f, 353.6f, 707.1f, 1414.2f, 2828.4f, 5656.9f, 11313.7f };
+
+    // Static output tonal-correction GEQ (stereo). Applied ONCE to the wet
+    // output (not recirculated) → steady-state spectral shaping decoupled from
+    // decay. Identity (all gains 1.0) → bit-null. Coeffs designed message-thread.
+    OctaveBandDamping          tonalCorrL_, tonalCorrR_;
+    OctaveBandDamping::Coeffs  tonalCorrCoeffs_ {};
+    bool  tonalCorrActive_     = false;
+    float tonalCorrGain_[9]    = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };   // linear per-octave
+    void  updateTonalCorr();
+
+    // Reverse-buildup (slow-attack) state. A TRIGGERED one-shot power-curve ramp:
+    // on an onset-after-silence the output gain rises env = rampPos^bloomExp_
+    // over bloomAttackMs_, so it stays LOW early (suppressing the tank's intrinsic
+    // ~60 ms peak — what a gentle one-pole follower could NOT do) then peaks late
+    // and HOLDS at 1 (tail rings undamped). Re-arms after bloomRearmSamples_ of
+    // input silence so each phrase-onset swells. bloomEnv_ pinned 1.0 inactive →
+    // bit-null.
+    bool  bloomActive_      = false;
+    float bloomAttackMs_    = 0.0f;
+    float bloomEnv_         = 1.0f;   // output swell gain (1 = fully open)
+    float bloomRampPos_     = 1.0f;   // 0..1 ramp progress (1 = done/held)
+    float bloomRampInc_     = 1.0f;   // per-sample ramp increment (1/peakSamples)
+    float bloomExp_         = 2.5f;   // power-curve exponent (>1 → suppress early)
+    int   bloomQuietSamples_   = 0;   // consecutive near-silent input samples
+    int   bloomRearmSamples_   = 6615; // input-silence length that re-arms a swell
+
+    // Input diffusion cascade state. Mono (single chain) — the tank input is a
+    // mono sum and the figure-8 + 7-tap output decorrelates to stereo, exactly
+    // as in Dattorro. Static (no jitter): initial diffusion must be still, not
+    // modulated. Engaged by setDensityDepth (>0); inactive = bit-identical.
+    Allpass inputDiffuser_[kNumInputDiffusers];
+    bool    inputDiffusionActive_ = false;
+    float   inputDiffCoeffScale_  = 1.0f;   // sweep handle; 1.0 = canonical coeffs
 
     // Delay-read modulation depth (peak excursion in samples). Applied to
     // delay1 and delay2 read taps via per-tank RandomWalkLFOs. Replaces the

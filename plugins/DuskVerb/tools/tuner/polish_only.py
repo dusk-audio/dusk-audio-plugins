@@ -49,6 +49,10 @@ def main():
     anchor_snare = anchor_n.with_name(anchor_n.name.replace("_noiseburst", "_snare"))
     anchor_files = {"noiseburst": str(anchor_n), "sustained": str(anchor_s),
                     "snare": str(anchor_snare)}
+    if not anchor_s.exists():
+        ap.error(f"derived sustained companion not found: {anchor_s}")
+    if not anchor_snare.exists():
+        ap.error(f"derived snare companion not found: {anchor_snare}")
 
     with open(args.locked_params) as f:
         locked = json.load(f)
@@ -97,7 +101,8 @@ def main():
     print(f"\n══════════ POLISH FINAL ══════════")
     print(f"  Combined locked + Stage 3 best → {final_json}")
     for k in sorted(final.keys()):
-        print(f"    {k:24s} = {final[k]:.4f}")
+        v = final[k]
+        print(f"    {k:24s} = {v:.4f}" if isinstance(v, (int, float)) else f"    {k:24s} = {v}")
 
     final_dir = work / "final"
     files = render(args.preset, final, args.vst3, final_dir)

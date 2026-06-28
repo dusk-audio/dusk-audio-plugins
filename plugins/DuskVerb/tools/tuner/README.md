@@ -19,7 +19,7 @@ One command per preset. No manual param edits.
 1. Render the reference anchor (Lex / VVV / etc.) at 100% wet, 5 s preroll:
    ```
    build/tests/duskverb_render/duskverb_render \
-       --vst2 /home/marc/.vst/yabridge/<RefPlugin>.so \
+       --vst2 <YABRIDGE_VST2_DIR>/<RefPlugin>.so \
        --load-state <ref-preset>.fxp \
        --param "Mix=1.0" \
        --prerun-seconds 5.0 \

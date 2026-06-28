@@ -33,7 +33,8 @@ python3 $FC /tmp/q $ANC/<anchor> --name "<PRESET>" --json   # JSON_RESULT line h
 ```
 - Diagnose engine by INDEX (`--param "Algorithm=N"`), NOT by name (harness name->index buggy).
   Engines: Dattorro 0, DattorroVintage 1, SixAPTank 2, QuadTank 3, FDN 4, Spring 5,
-  NonLinear 6, Shimmer 7, VintageTank 8, ReverseRoom 9.
+  NonLinear 6, Shimmer 7, VintageTank 8, ReverseRoom 9, AccurateHall 10,
+  SparseField 11, AccurateHall32 12, TiledRoom 13, DenseHall 14.
 - QuadTank 5-band sweep, live: `--param "QT Hi-Mid Multiply=X" --param "QT Air Multiply=Y"`
   (lower = more HF damping; -1 = transparent). Width is also live: `--param "Width=W"`.
 - After ANY .cpp/.h edit: `cmake --build build --config Release --target DuskVerb_VST3 -j$(nproc)`

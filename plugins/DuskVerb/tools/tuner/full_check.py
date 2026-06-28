@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse, json, sys
 from pathlib import Path
 import numpy as np, soundfile as sf
-from scipy.signal import butter, sosfiltfilt, hilbert
+from scipy.signal import butter, sosfiltfilt, hilbert, find_peaks
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from metrics_external import compute_metrics
@@ -37,11 +37,15 @@ GATES = {
     'snare_rms_dB':         1.5,
     'noiseburst_rms_dB':    2.0,
     'sub_lt_100_dB':        2.0,    # absolute band energy delta
-    'low_100_250_dB':       2.0,
-    'mid_250_1k_dB':        2.0,
-    'mid_1k_4k_dB':         2.0,
+    # JND-CALIBRATED 2026-06-17 (user: gates must measure "outside JND", not lab-
+    # tight). Band-energy loudness JND for complex/broadband tails ≈ 3 dB (was 2.0,
+    # an ideal-tone DL). The genuinely-audible gates (boing, env_p2p, bloom, cent,
+    # onset) are LEFT strict.
+    'low_100_250_dB':       3.0,
+    'mid_250_1k_dB':        3.0,
+    'mid_1k_4k_dB':         3.0,
     'hi_4k_12k_dB':         3.0,
-    'spec_L1_mean_dB':      2.0,    # RMS-normalized 1/3-oct mean
+    'spec_L1_mean_dB':      3.0,    # RMS-normalized 1/3-oct mean (broadband spectral JND ≈ 3 dB)
     'spec_L1_max_dB':       5.0,    # any single band
     # tail_t30 relaxed 2026-05-27 to ±25% (was ±15%) for DPV-family presets.
     # ENGINE CEILING: DattorroPlateVintage's structural HF damping is tightly
@@ -65,7 +69,7 @@ GATES = {
     # L/R-decorrelation detail this broadband number averages away. (DPV's
     # mono-compat width clamp may now fail this — that is the intended exposure,
     # not a regression: track it as an engine ceiling if a sweep can't close it.)
-    'stereo_corr':          0.05,
+    'stereo_corr':          0.10,   # JND-calibrated (was 0.05): correlation DL ≈ 0.1; the 0.05 flagged inaudible Δ
     # ── ONSET / SPATIAL / DIFFUSION (2026-06-02 perceptual gates, impulse) ──
     'attack_time_ms_abs':   5.0,    # onset→peak buildup time, absolute ms ...
     'attack_time_pct':     10.0,    # ... OR within ±10% (pass if EITHER holds)
@@ -82,8 +86,63 @@ GATES = {
     'energy_t50_ms_abs':   30.0,    # Gate 1 (core): |Δ time-to-50%-energy| vs anchor
     'energy_first50_pct':  10.0,    # Gate 2 (companion): |Δ % energy in first 50 ms| vs anchor
     'onset_slope_pct':     30.0,    # rising-swell slope dB/ms (noisy → wider gate)
-    'spatial_width_band':   0.06,   # per-band L/R corr abs-diff (low/mid/high)
+    # DISCRETE EARLY TAP (2026-06-18) — the audible "extra delay tap" the ear catches
+    # on VVV chambers/halls that NO aggregate gate measured. energy_t50/kurtosis see
+    # the energy SPREAD; this measures whether a DISTINCT reflection STANDS OUT.
+    # prominence = the dominant 40-250 ms arrival's peak MINUS the dip preceding it
+    # (dB). A discrete tap = high prominence (peaks above a dip); a smooth swell =
+    # low. Gated only when the anchor HAS a prominent tap (≥ min_prom).
+    # EAR-CALIBRATED target (79 Vocal Chamber, 2026-06-19): DV's tap is a fuller
+    # BLOB, the anchor's a sharp TICK — a blob reads as loud to the ear at a LOWER
+    # prominence number than the tick. At the tick-matching prominence (~anchor−3,
+    # gain 2.0) the user heard "too prominent"; at 14 dB@96 ms (gain 1.2) "much
+    # closer / balanced". So the pass target is the LESSER of (anchor − prom_dB) and
+    # an absolute audible floor — DV must have a clearly-discrete tap at the right
+    # time, NOT match the tick's prominence number. (Over-prominence is ear-judged,
+    # not gated: the fleet failure mode is buried/absent taps.) audible_dB anchored
+    # on 79VC; confirm on Blade/Bright when ear-tuned. See duskverb_early_tap_gate.
+    'early_tap_prom_dB':     3.0,   # DV prominence ≥ anchor − this …
+    'early_tap_audible_dB': 13.0,   # … but capped here (a 13 dB blob is audibly discrete)
+    'early_tap_time_ms':    40.0,   # |Δ tap time| vs anchor
+    'early_tap_min_prom_dB': 5.0,   # anchor must exceed this to gate (else no tap to match)
+    # Early-reflection PATTERN (complements early_tap's single-dominant tap): the
+    # COUNT of discrete reflections following the transient in the early window.
+    # Catches "anchor has a transient + N discrete slaps (duh-DUH...), DV is a
+    # smooth diffuse swell with none" — the Cathedral defect early_tap's argmax
+    # misses. Gated only when the anchor itself has >= min_n discrete reflections.
+    'early_refl_count_tol':  1,     # |N_dv - N_lx| discrete reflections after the transient
+    'early_refl_min_n':      2,     # anchor must have >= this many to gate (else no pattern)
+    'early_refl_win_ms':     250.0, # search window after onset
+    'early_refl_prom_dB':    6.0,   # min envelope prominence to count as a discrete reflection
+    'early_refl_gap_ms':     8.0,   # min spacing between counted reflections (and skip the transient)
+    # --- Perceptual gates (2026-06-25): catch ear-found types the static gates miss ---
+    # HF-tail TEXTURE ("crispy/metallic top" — static HF comb a static EQ/cent match
+    # averages away; modulation smooths it). Late-tail (0.3-1.2s) 2-12kHz spectral
+    # kurtosis on the noiseburst, anchor-relative. FAIL if DV exceeds anchor by tol.
+    'hf_tail_texture_kurt':  2.0,   # DV kurtosis may exceed anchor by at most this
+    'hf_tail_texture_floor': -55.0, # gate only if anchor 2-12k late-tail RMS >= this (else dark top -> skip)
+    # DEEP-SUB level ("fuller" — 20-40Hz weight; the boom gates start at 40Hz). 20-40Hz
+    # sustained (0.3-1.0s) RMS, gain-matched, anchor-relative. FAIL if |DV-anchor| > tol.
+    'deepsub_level_dB':      2.5,   # 20-40Hz level abs-diff vs anchor (LF JND)
+    'deepsub_floor_dB':     -55.0,  # gate only if anchor deep-sub >= this (else sub-less -> skip)
+    # TRANSIENT DEFINITION ("snare not masked / clarity" — VVV keeps the transient
+    # defined, DV smears it via diffuse buildup). Early-window (80ms) crest of the
+    # onset-aligned impulse power envelope (dB), anchor-relative.
+    'transient_def_tol_dB':   2.0,  # DV crest may fall below anchor by at most this
+    'transient_def_guard_dB': 6.0,  # gate only if anchor crest >= this (else no defined transient -> skip)
+    'transient_def_win_ms':  80.0,
+    'spatial_width_band':   0.10,   # per-band L/R corr abs-diff (JND-calibrated, was 0.06)
     'diffusion_flux':       1.50,   # kurtosis-trajectory L1 over first 150 ms
+    # Tail-resonance prominence (the "boing"/springy pitched-mode detector the
+    # ear caught on Drum Plate but every prior gate missed): dominant spectral
+    # peak in 200-2k of the late tail, prominence (peak/median, dB) vs the anchor.
+    # ONE-DIRECTIONAL — DV ringing MORE than the anchor is the defect; smoother
+    # is fine. Drum DV 19.5 dB @359 Hz vs VVV 14 dB @1076 Hz → +5.5 over.
+    'tail_resonance_dB':    3.0,
+    # Impulse-response RMS match — the TRANSIENT/hit loudness. The existing RMS
+    # gates use sustained-pink/noiseburst (steady-state), which can match while
+    # the impulse (a drum hit) is +2.7 dB hot. Catches "DV louder on the hit".
+    'impulse_rms_dB':       2.0,
     # ── ADVISORY (2026-06-02): printed + ✓/✗ shown, NOT counted in n_fail until
     # ear-validated. Thresholds calibrated from anchor-vs-anchor (≈0) + observed
     # DV-vs-anchor spread; |Δ| vs anchor unless noted. ──
@@ -96,13 +155,13 @@ GATES = {
     # bass-weight / brightness on musical content depends on these.
     # Sustained-pink per-band gates — finer split (deep sub vs sub, hi vs air)
     # so user-perceived gaps below 50 Hz and above 10 kHz can't be averaged away.
-    'ss_deep_sub_dB':       2.0,
-    'ss_sub_dB':            2.0,
-    'ss_low_dB':            2.0,
-    'ss_low_mid_dB':        2.0,
-    'ss_mid_dB':            2.0,
-    'ss_umid_dB':           2.0,
-    'ss_hi_dB':             2.0,
+    'ss_deep_sub_dB':       3.0,    # JND-calibrated 2026-06-17 (was 2.0): loudness DL for complex tail ≈ 3 dB
+    'ss_sub_dB':            3.0,
+    'ss_low_dB':            3.0,
+    'ss_low_mid_dB':        3.0,
+    'ss_mid_dB':            3.0,
+    'ss_umid_dB':           3.0,
+    'ss_hi_dB':             3.0,
     'ss_air_dB':            3.0,
     # Sustained-pink per-band tail decay (post input-off at t=4s).
     # Frequency-dependent decay reveals "bass dies fast" type problems.
@@ -141,7 +200,11 @@ GATES = {
     # the per-band sustained-pink gates above only fire when the harness
     # renders a sustained-pink stimulus (it doesn't), so per-band RT60 shape
     # was effectively UNGATED across every VH iteration since v13.
-    't60_band_pct':         5.0,
+    # JND-calibrated 2026-06-17 5.0 → 10.0: ITU-R BS.1116 ±5% is the trained-listener
+    # DL on identical material in ideal conditions; the practical RT60 JND on music /
+    # complex decays is ~10%. ±10% still flags gross per-octave tilt (the campaigns'
+    # +30-270% drifts) while ignoring sub-JND ±5-9% deltas the user can't hear.
+    't60_band_pct':        10.0,
     # PER-BAND TAIL MOD PEAK FREQUENCY — Hilbert envelope FFT, dominant peak
     # in 0.3-8 Hz range per band. VH listening v15: DV bass mod at 3.3 Hz vs
     # VVV 1.83 Hz, DV mid at 1.5 Hz vs VVV 0.46 Hz — DV mod runs at WRONG
@@ -543,6 +606,134 @@ def energy_arrival(p, drop_db=40.0, window_ms=2000.0):
     return t50, pct50, pct150, centroid
 
 
+def early_tap(p, drop_db=40.0, lo_ms=40.0, hi_ms=250.0):
+    """Dominant DISCRETE early reflection (the audible 'extra delay tap') in the
+    lo..hi ms post-onset window. Returns (t_ms, prominence_dB):
+      t_ms       — onset-relative time of the dominant early arrival
+      prominence — how far that arrival peaks ABOVE the dip preceding it (dB). A
+                   discrete reflection stands out (high prominence); a smooth swell
+                   does not. This is the 'duh-DUH' the ear catches but the aggregate
+                   energy_t50 / diffusion kurtosis gates miss.
+    (None, None) if the window is too short to assess."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    win = max(int(0.003 * sr), 1)   # 3 ms — preserve discrete arrivals (vs 2 ms elsewhere)
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(env_s + 1e-30)
+    pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk, drop_db)
+    a = on + int(lo_ms / 1000.0 * sr)
+    b = min(len(env_db), on + int(hi_ms / 1000.0 * sr))
+    if b - a < 10:
+        return None, None
+    rel = env_db[pk]                       # reference: onset peak
+    ti = a + int(np.argmax(env_db[a:b]))   # the tap = dominant arrival in the window
+    t_ms = (ti - on) / sr * 1000.0
+    L = env_db[ti] - rel                   # tap level rel onset peak
+    d0 = on + int(0.020 * sr)              # dip = min between onset+20ms and the tap
+    dip = (float(np.min(env_db[d0:ti])) - rel) if ti > d0 else L
+    return float(t_ms), float(L - dip)
+
+
+def early_reflections(p, drop_db=40.0, win_ms=250.0, prom_db=6.0,
+                      gap_ms=8.0, floor_db=40.0):
+    """List of DISCRETE early reflections FOLLOWING the transient, as (t_ms,
+    prominence_dB) onset-relative, within the first win_ms.
+
+    Where early_tap reports the single DOMINANT arrival (argmax), this reports
+    the whole PATTERN: peak-pick the 3 ms-smoothed Hilbert envelope (dB) with a
+    prominence floor (audibly discrete), a minimum inter-peak spacing, and an
+    absolute height floor (onset_peak - floor_db) so dither/quantization wiggle
+    in quiet windows can't fabricate phantom taps. The search starts gap_ms past
+    the onset so the transient itself is NOT counted — only the reflections that
+    follow it. A struck transient + discrete slaps yields several entries; a
+    smooth diffuse swell yields ~zero. (None if the window is too short.)"""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    win = max(int(0.003 * sr), 1)          # 3 ms — preserve discrete arrivals (matches early_tap)
+    env_s = np.convolve(env, np.ones(win) / win, mode='same')
+    env_db = 20.0 * np.log10(env_s + 1e-30)
+    pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk, drop_db)
+    a = pk + int(gap_ms / 1000.0 * sr)     # skip the transient: start one min-gap past the PEAK
+                                           # (not the onset) so slow attacks don't count the main
+                                           # transient itself as a reflection
+    b = min(len(env_db), on + int(win_ms / 1000.0 * sr))
+    if b - a < 10:
+        return None
+    seg = env_db[a:b]
+    floor = env_db[pk] - floor_db
+    dist = max(int(gap_ms / 1000.0 * sr), 1)
+    idx, props = find_peaks(seg, prominence=prom_db, distance=dist, height=floor)
+    return [((a + int(i) - on) / sr * 1000.0, float(props['prominences'][k]))
+            for k, i in enumerate(idx)]
+
+
+def _hf_tail_band(p, lo=2000.0, hi=12000.0, w0=0.30, w1=1.20):
+    """Band-limited late-tail segment (w0..w1 s post waveform-peak) for HF-texture."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    seg = m[pk + int(w0 * sr): pk + int(w1 * sr)]
+    if len(seg) < int(0.25 * sr):
+        return None, sr
+    sos = butter(4, [lo, min(hi, sr * 0.49)], 'band', fs=sr, output='sos')
+    return sosfiltfilt(sos, seg), sr
+
+
+def hf_tail_kurtosis(p):
+    """Spectral kurtosis of the 2-12kHz late tail. Crispy/metallic = sparse near-
+    undamped HF modes = tall spikes on a quiet floor = HIGH kurtosis; modulation
+    smears the comb = LOW kurtosis (without changing avg HF level, so a static
+    EQ/cent match misses it). Returns None if the window is too short."""
+    y, sr = _hf_tail_band(p)
+    if y is None:
+        return None
+    sp = np.abs(np.fft.rfft(y * np.hanning(len(y)))) + 1e-12
+    fr = np.fft.rfftfreq(len(y), 1.0 / sr); spb = sp[(fr >= 2000.0) & (fr <= 12000.0)]
+    if spb.size < 8:
+        return None
+    return float(((spb - spb.mean()) ** 4).mean() / (spb.var() ** 2 + 1e-30))
+
+
+def hf_tail_rms_db(p):
+    """2-12kHz late-tail RMS (dBFS) — the HF-texture gate's skip-guard (dark tops
+    are dither-floor garbage, no audible comb to match)."""
+    y, sr = _hf_tail_band(p)
+    return None if y is None else float(20.0 * np.log10(np.sqrt(np.mean(y * y)) + 1e-30))
+
+
+def deepsub_level_db(p, t0=0.3, t1=1.0, lo=20.0, hi=40.0):
+    """Peak-aligned 20-40Hz band RMS (dB) in a sustained [t0,t1]s post-peak window.
+    The 'fuller' deep-sub octave the boom gates (40Hz+) don't cover. On gain-matched
+    fleet_audit renders this is directly anchor-comparable."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    i0 = max(0, pk + int(t0 * sr)); i1 = min(len(m), pk + int(t1 * sr))
+    if i1 - i0 < 200:
+        return None
+    sos = butter(4, [lo, min(hi, sr * 0.49)], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, m[i0:i1])
+    return float(20.0 * np.log10(max(float(np.sqrt(np.mean(y ** 2))), 1e-12)))
+
+
+def transient_definition(p, win_ms=80.0, smooth_ms=2.0, rise_db=25.0):
+    """Early-window CREST of the onset-aligned power envelope (dB): peak/mean over
+    [0,win_ms] post-onset. A defined transient = sharp spike over a low tail (high
+    crest); a diffuse smear = transient buried in the buildup (low crest). Decay-
+    length invariant (fixed short window). Onset = first rise rise_db above the
+    10th-pct floor (robust to long tails AND pre-delay silence). Run on the impulse."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    w = max(int(smooth_ms / 1000.0 * sr), 1)
+    env_s = np.convolve(env, np.ones(w) / w, mode='same')
+    env_db = 20.0 * np.log10(env_s + 1e-30)
+    floor = float(np.percentile(env_db, 10.0))
+    idx = np.where(env_db >= floor + rise_db)[0]
+    on = int(idx[0]) if len(idx) else int(np.argmax(env_db))
+    seg = (env_s[on:on + int(win_ms / 1000.0 * sr)]) ** 2
+    if len(seg) < 8:
+        return None
+    return float(10.0 * np.log10(float(np.max(seg)) / (float(np.mean(seg)) + 1e-30)))
+
+
 def spatial_width_bands(p, t_ms=500.0):
     """Per-band L/R Pearson correlation over the first t_ms post-onset. 3 bands
     via 4th-order (LR4-equivalent, zero-phase) crossovers at 300 Hz / 5 kHz.
@@ -591,10 +782,43 @@ def diffusion_flux_curve(p, span_ms=150.0, win_ms=10.0):
     pk = int(np.argmax(env_db)); on = _onset_index(env_db, pk)
     w = max(int(win_ms / 1000.0 * sr), 8); hop = max(w // 2, 1)
     end = min(len(m), on + int(span_ms / 1000.0 * sr))
-    curve = []
+    curve = []; rms_db = []
     for s in range(on, end - w, hop):
-        curve.append(float(kurtosis(m[s:s + w], fisher=False)))   # 3.0 = Gaussian
-    return np.array(curve)
+        seg = m[s:s + w]
+        curve.append(float(kurtosis(seg, fisher=False)))   # 3.0 = Gaussian
+        rms_db.append(20.0 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-30))
+    # Per-window RMS (dB) returned alongside so the gate can FLOOR-GUARD: the
+    # kurtosis of a near-silent window is dither/quantization garbage (an
+    # anchor's pre-onset −127 dB windows score kurtosis 400+), which must be
+    # excluded from the trajectory comparison.
+    return np.array(curve), np.array(rms_db)
+
+
+def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
+    """Prominence (dB) of the dominant spectral peak in [lo,hi] of the late tail
+    — the pitched 'boing'/springy-mode detector. Windowed FFT from onset+200 ms;
+    prominence = peak / median(band). A diffuse tail → low prominence; a single
+    ringing mode → high. Returns (prominence_dB, peak_hz)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env)); t0 = pk + int(0.2 * sr)
+    tail = m[t0:t0 + int(tail_s * sr)]
+    if len(tail) < 2048:
+        return 0.0, 0.0
+    T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
+    f = np.fft.rfftfreq(len(tail), 1.0 / sr)
+    band = (f >= lo) & (f < hi)
+    Tb = T[band]
+    if Tb.size == 0 or np.max(Tb) <= 0:
+        return 0.0, 0.0
+    prom = 20.0 * np.log10(np.max(Tb) / (np.median(Tb) + 1e-30) + 1e-30)
+    return float(prom), float(f[band][int(np.argmax(Tb))])
+
+
+def impulse_rms_db(p):
+    """Broadband RMS (dB) of the impulse response — the transient/hit loudness
+    (sustained-pink RMS can match while the impulse is hot)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    return 20.0 * np.log10(np.sqrt(np.mean(m ** 2)) + 1e-30)
 
 
 # ─── ADVISORY perceptual metrics (2026-06-02) — modal ring / decay curvature /
@@ -736,6 +960,15 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
 
     fails = []
 
+    # Upfront REQUIRED-stimulus validation: a missing core render must force a
+    # failure so the run can't end as a false "ALL GATES PASS". Optional stimuli
+    # (impulse/sine1k/sustained) stay as skips in the loops below.
+    for req in ('noiseburst', 'snare'):
+        if not find_stim(dv_dir, req):
+            fails.append(f"REQUIRED stimulus '{req}' missing in render dir {dv_dir}")
+        if not find_stim(lex_dir, req):
+            fails.append(f"REQUIRED stimulus '{req}' missing in anchor dir {lex_dir}")
+
     print(f"══════════════════ FULL CHECK — {name} ══════════════════\n")
 
     # ─── Level (across stimuli) ───
@@ -845,16 +1078,55 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 d, p, line = check(bn, cd, cl, GATES['spatial_width_band'])
                 print(line)
                 if p == 'FAIL': fails.append(line.strip())
-            # Diffusion flux — kurtosis-trajectory match over first 150 ms.
-            k_dv = diffusion_flux_curve(imp_dv); k_lx = diffusion_flux_curve(imp_lx)
+            # Diffusion flux — kurtosis-trajectory over first 150 ms. The defect
+            # this catches is DV being SPARSE/GRAINY: a sparse field stays spiky
+            # (high kurtosis) where a dense one relaxes toward 3.0. So:
+            #   • FLOOR-GUARD: skip windows where EITHER signal is >60 dB below
+            #     its own loudest window — near-silent windows yield garbage
+            #     kurtosis (an anchor's silent pre-onset windows scored 400+,
+            #     which is what made this gate fire backwards on short / late-
+            #     onset plates).
+            #   • ONE-DIRECTIONAL: penalise only DV being SPIKIER than the anchor
+            #     (max(0, dv−lx)). DV SMOOTHER (denser) than a spiky/sparse anchor
+            #     is the goal, not a defect — don't punish it. (The Drum-Plate
+            #     case that motivated this gate — DV kurt 7-27 vs a smooth 3-6
+            #     anchor — still fires correctly.)
+            k_dv, r_dv = diffusion_flux_curve(imp_dv)
+            k_lx, r_lx = diffusion_flux_curve(imp_lx)
             n = min(len(k_dv), len(k_lx))
             if n >= 4:
-                flux = float(np.mean(np.abs(k_dv[:n] - k_lx[:n])))
+                dv_floor = r_dv[:n].max() - 60.0
+                lx_floor = r_lx[:n].max() - 60.0
+                keep = (r_dv[:n] > dv_floor) & (r_lx[:n] > lx_floor)
+                if int(keep.sum()) >= 4:
+                    excess = np.maximum(0.0, k_dv[:n] - k_lx[:n])[keep]
+                    flux = float(np.mean(excess))
+                else:
+                    flux = 0.0
                 passing = flux <= GATES['diffusion_flux']
                 line = (f"  {'diffusion_flux (kurt L1)':30s}  Δ={flux:6.2f}  "
                         f"gate=≤{GATES['diffusion_flux']}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
+
+            # ── TAIL RESONANCE ('boing'/springy pitched-mode) — one-directional ──
+            tr_dv, trf_dv = tail_resonance_prominence(imp_dv)
+            tr_lx, trf_lx = tail_resonance_prominence(imp_lx)
+            tr_excess = tr_dv - tr_lx                 # DV ringing MORE than anchor = defect
+            passing = tr_excess <= GATES['tail_resonance_dB']
+            line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
+                    f"Lex={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
+                    f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+            # ── IMPULSE RMS (transient/hit loudness — sustained gates miss it) ──
+            ir_dv = impulse_rms_db(imp_dv); ir_lx = impulse_rms_db(imp_lx)
+            passing = abs(ir_dv - ir_lx) <= GATES['impulse_rms_dB']
+            line = (f"  {'impulse RMS (hit loudness)':30s}  DV={ir_dv:6.1f}  Lex={ir_lx:6.1f}  "
+                    f"Δ={ir_dv - ir_lx:+5.1f}  gate=±{GATES['impulse_rms_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
 
             # ── TEMPORAL ENERGY ARRIVAL (where the energy sits in time) ──
             t50_dv, p50_dv, p150_dv, cen_dv = energy_arrival(imp_dv)
@@ -876,6 +1148,99 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # Diagnostic (not gated): first-150ms fraction + energy centroid.
             print(f"  {'energy first150ms / centroid':30s}  DV={p150_dv:5.1f}%/{cen_dv:.0f}ms  "
                   f"Lex={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
+
+            # ── DISCRETE EARLY TAP (the audible 'extra delay tap' — prominence + time) ──
+            tt_dv, pr_dv = early_tap(imp_dv)
+            tt_lx, pr_lx = early_tap(imp_lx)
+            if pr_lx is not None and pr_lx >= GATES['early_tap_min_prom_dB']:
+                # Anchor HAS a prominent discrete tap → DV must have an audibly-discrete
+                # tap (prominence ≥ floor) at the right time. Floor = lesser of
+                # (anchor − prom_dB) and the absolute audible_dB, because DV's blob reads
+                # as loud as the anchor's tick at a lower prominence number (ear-calib).
+                prom_floor = min(pr_lx - GATES['early_tap_prom_dB'], GATES['early_tap_audible_dB'])
+                if pr_dv is None:
+                    # Anchor has a prominent tap but DV has none → fail (not skip).
+                    passing = False
+                    line = (f"  {'early tap (prom@time)':30s}  DV=  none  "
+                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  ✗")
+                else:
+                    passing = (pr_dv >= prom_floor) and (abs(tt_dv - tt_lx) <= GATES['early_tap_time_ms'])
+                    line = (f"  {'early tap (prom@time)':30s}  DV={pr_dv:4.1f}dB@{tt_dv:.0f}ms  "
+                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            else:
+                print(f"  {'early tap (prom@time)':30s}  SKIPPED (anchor has no prominent discrete tap)")
+
+            # ── EARLY-REFLECTION PATTERN (count of discrete slaps after the
+            #    transient — catches the duh-DUH structure early_tap's single
+            #    argmax misses, e.g. Cathedral: anchor 2+ slaps vs DV smooth swell) ──
+            refl_dv = early_reflections(imp_dv, win_ms=GATES['early_refl_win_ms'],
+                                        prom_db=GATES['early_refl_prom_dB'],
+                                        gap_ms=GATES['early_refl_gap_ms'])
+            refl_lx = early_reflections(imp_lx, win_ms=GATES['early_refl_win_ms'],
+                                        prom_db=GATES['early_refl_prom_dB'],
+                                        gap_ms=GATES['early_refl_gap_ms'])
+            if refl_dv is not None and refl_lx is not None \
+               and len(refl_lx) >= GATES['early_refl_min_n']:
+                n_dv, n_lx = len(refl_dv), len(refl_lx)
+                passing = abs(n_dv - n_lx) <= GATES['early_refl_count_tol']
+                t_dv = ",".join(f"{t:.0f}" for t, _ in refl_dv[:5]) or "-"
+                t_lx = ",".join(f"{t:.0f}" for t, _ in refl_lx[:5]) or "-"
+                line = (f"  {'early refl count':30s}  DV={n_dv} [{t_dv}]ms  "
+                        f"Lex={n_lx} [{t_lx}]ms  "
+                        f"gate=±{GATES['early_refl_count_tol']}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            else:
+                nlx = "0" if refl_lx is None else len(refl_lx)
+                print(f"  {'early refl count':30s}  SKIPPED (anchor has <{GATES['early_refl_min_n']} discrete reflections: {nlx})")
+
+            # ── TRANSIENT DEFINITION (snare not masked / clarity — VVV keeps the
+            #    transient defined, DV smears it via the diffuse buildup). Impulse crest. ──
+            td_dv = transient_definition(imp_dv, win_ms=GATES['transient_def_win_ms'])
+            td_lx = transient_definition(imp_lx, win_ms=GATES['transient_def_win_ms'])
+            if td_dv is not None and td_lx is not None and td_lx >= GATES['transient_def_guard_dB']:
+                dt = td_dv - td_lx
+                passing = dt >= -GATES['transient_def_tol_dB']
+                line = (f"  {'transient def (crest dB)':30s}  DV={td_dv:5.1f}  Lex={td_lx:5.1f}  "
+                        f"Δ={dt:+5.1f}  gate≥-{GATES['transient_def_tol_dB']:.1f}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            else:
+                print(f"  {'transient def (crest dB)':30s}  SKIPPED (anchor transient not defined)")
+
+        # ── HF-TAIL TEXTURE (crispy/metallic top — a static HF comb the static
+        #    EQ/cent match averages away; modulation smooths it). Noiseburst —
+        #    runs independently of the impulse stimulus. ──
+        nb_dv = find_stim(dv_dir, 'noiseburst'); nb_lx = find_stim(lex_dir, 'noiseburst')
+        if nb_dv and nb_lx:
+            k_dv = hf_tail_kurtosis(nb_dv); k_lx = hf_tail_kurtosis(nb_lx)
+            a_hf = hf_tail_rms_db(nb_lx)
+            if k_dv is not None and k_lx is not None and a_hf is not None \
+               and a_hf >= GATES['hf_tail_texture_floor']:
+                dk = k_dv - k_lx
+                passing = dk <= GATES['hf_tail_texture_kurt']
+                line = (f"  {'HF-tail texture (kurt)':30s}  DV={k_dv:5.1f}  Lex={k_lx:5.1f}  "
+                        f"Δ={dk:+5.1f}  gate≤+{GATES['hf_tail_texture_kurt']:.1f}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            else:
+                print(f"  {'HF-tail texture (kurt)':30s}  SKIPPED (anchor top dark / window short)")
+
+            # ── DEEP-SUB level (20-40Hz "fuller"; the boom gates start at 40Hz) ──
+            ds_dv = deepsub_level_db(nb_dv); ds_lx = deepsub_level_db(nb_lx)
+            if ds_dv is not None and ds_lx is not None and ds_lx >= GATES['deepsub_floor_dB']:
+                dd = ds_dv - ds_lx
+                passing = abs(dd) <= GATES['deepsub_level_dB']
+                line = (f"  {'deep-sub 20-40Hz (dB)':30s}  DV={ds_dv:7.1f}  Lex={ds_lx:7.1f}  "
+                        f"Δ={dd:+5.1f}  gate=±{GATES['deepsub_level_dB']:.1f}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
+            else:
+                print(f"  {'deep-sub 20-40Hz (dB)':30s}  SKIPPED (anchor sub-less)")
 
         # ─── 1/3-oct RMS-normalized L1 ───
         # Floor-guard: skip bands where the ANCHOR is below -55 dB (RMS-norm) —
@@ -994,8 +1359,14 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             pidx = int(np.argmax(sm))
             floor = float(np.median(sm[-min(int(0.5*sr), len(sm)):]))
             thr = max(peak * 10**(-target_db/10), floor * 4.0)
-            below = np.where((np.arange(len(sm)) > pidx) & (sm < thr))[0]
-            return (int(below[0]) - pidx) / sr if len(below) else None
+            # LAST sample above threshold, not the first BELOW. On a sustained
+            # pad the cascade keeps BLOOMING after the pink turns off (envelope
+            # rises post-off), so first-below fired on a momentary dip → ~0.01 s
+            # phantom decay. Last-above = the point after which the band stays
+            # below thr = the true decay length. The floor*4 clamp keeps noise
+            # out of the crossing. Monotonic decays: last-above ≡ old first-below.
+            above = np.where((np.arange(len(sm)) > pidx) & (sm >= thr))[0]
+            return (int(above[-1]) - pidx) / sr if len(above) else None
 
         # Bands include low_mid 250-500 — the user-perceived gap band.
         band_list = [('sub <100',      20,  100),
@@ -1133,6 +1504,13 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             dv_db = _post_peak_band_rms_db(dv, 300, 800, lo, hi)
             lx_db = _post_peak_band_rms_db(lx, 300, 800, lo, hi)
             if dv_db is None or lx_db is None: continue
+            # JND-calibrated 2026-06-17: skip when the ANCHOR body window is below
+            # ~-72 dBFS — the band has decayed to inaudible there, so "DV colder"
+            # (e.g. -194 vs -144 on a gated reverse, or -92 vs -81) is a silence-vs-
+            # silence comparison, not an audible "thinner" defect.
+            if lx_db < -72.0:
+                print(f"  {f'body {b_lab}':30s}  SKIPPED (anchor body below -72 dB floor)")
+                continue
             delta = dv_db - lx_db
             passing = delta >= -body_gate
             line = (f"  {f'body {b_lab}':30s}  "
@@ -1225,8 +1603,8 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
 
     # ─── Per-band RT60 (Schroeder backward integration, noiseburst tail) ───
     if dv and lx:
-        print("\n── PER-BAND RT60 (Schroeder backward int, ±5% JND gate) ──")
         rt_gate = GATES['t60_band_pct']
+        print(f"\n── PER-BAND RT60 (Schroeder backward int, ±{rt_gate:.0f}% JND gate) ──")
         for (lo, hi, b_lab) in [(44,   88,    '63 Hz'),
                                  (88,   177,   '125 Hz'),
                                  (177,  355,   '250 Hz'),
@@ -1343,6 +1721,12 @@ def main():
                          "render.cpp's --sustained-pink-seconds). Sets the "
                          "steady-state scoring window end + tail-decay offset.")
     args = ap.parse_args()
+    # The steady-state scorer measures from t0=2.5 s. A hold at/below that leaves
+    # an empty window (NaN/SKIP), so reject it up front instead of silently scoring
+    # garbage.
+    if args.sustained_pink_seconds <= 2.5:
+        ap.error("--sustained-pink-seconds must be > 2.5 (the steady-state window "
+                 "start); got %g" % args.sustained_pink_seconds)
     fails = audit(args.dv_dir, args.lex_dir, args.name, args.category,
                   args.sustained_pink_seconds)
     if args.json:

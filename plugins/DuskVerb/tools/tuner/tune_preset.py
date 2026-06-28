@@ -105,7 +105,10 @@ def render_with(preset, params, vst3, out_dir, prerun=5.0, extra=None):
     # positional arg — the positional routes through the harness's legacy
     # duplicate preset table and drifts from what the plugin ships.
     cmd += ["--program", preset]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        sys.exit("render timed out (>180s) — aborting tune")
     if r.returncode != 0:
         sys.exit(f"render failed: {r.stderr[-400:]}")
 

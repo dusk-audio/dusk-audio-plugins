@@ -45,16 +45,32 @@ enum class EngineType : int
                             // 4-line FDN tail (~1.1 kHz loop -> dark late field). Tight ceramic
                             // tiled room — the front-load + instant-dark character a single-tank
                             // FDN structurally cannot express. Tiled Room only.
+    DenseHall         = 14, // Diffused-FDN dense hall (DenseHallReverb): 8-line FDN with heavy
+                            // allpass diffusion at every stage + modulation everywhere → a dense,
+                            // smooth tail (flatness ~0.16 vs the 16-line FDN's sparse 0.044). The
+                            // late field the AccurateHall FDN structurally cannot reach. Welded to
+                            // a sparse discrete-ER front for the early field. DuskVerb's own code.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
+//
+// `visible` curates the dropdown: the engines no factory preset uses (FDN/"Studio",
+// VintageTank/"Vintage Hall", SparseField/"Sparse", AccurateHall32/"Concert Hall" —
+// redundant variants of the Dattorro-tank / Hadamard-FDN cores, or folded into the
+// composite Hall) are hidden so the roster reads as an intentional palette of distinct
+// "spaces". (QuadTank/"Chamber" IS visible — 79 Vocal Chamber uses it.) The enum, the
+// 15-wide `algorithm` choice param, and every factory preset's stored algorithm index
+// are LEFT UNCHANGED — hidden engines still load from saved state and still run in the
+// DSP switch; merely not offered in the dropdown. (kEngines below is the source of
+// truth for the count + visible flags.)
 struct AlgorithmConfig
 {
     const char* name;
     EngineType  engine;
+    bool        visible;
 };
 
-inline int getNumAlgorithms() { return 14; }
+inline int getNumAlgorithms() { return 15; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -65,22 +81,23 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
     // so these strings are display-only and must NOT be reordered or removed
     // (that would shift indices and break saved state). Rename freely.
     static constexpr AlgorithmConfig kEngines[] = {
-        { "Plate",         EngineType::Dattorro        },
-        { "Vintage Plate", EngineType::DattorroVintage },
-        { "Smooth Plate",  EngineType::SixAPTank       },
-        { "Room",          EngineType::QuadTank        },
-        { "Studio",        EngineType::FDN             },
-        { "Spring",        EngineType::Spring          },
-        { "Gated",         EngineType::NonLinear       },
-        { "Shimmer",       EngineType::Shimmer         },
-        { "Vintage Hall",  EngineType::VintageTank     },
-        { "Reverse",       EngineType::ReverseRoom     },
-        { "Hall",          EngineType::AccurateHall    },
-        { "Sparse",        EngineType::SparseField     },
-        { "Concert Hall",  EngineType::AccurateHall32  },
-        { "Tiled Room",    EngineType::TiledRoom       },
+        { "Plate",         EngineType::Dattorro,        true  },
+        { "Vintage Plate", EngineType::DattorroVintage, true  },
+        { "Smooth Plate",  EngineType::SixAPTank,       true  },
+        { "Chamber",       EngineType::QuadTank,        true  }, // used by 79 Vocal Chamber
+        { "Studio",        EngineType::FDN,             false }, // hidden: no preset; plain Hadamard superseded by Hall
+        { "Spring",        EngineType::Spring,          true  },
+        { "Gated",         EngineType::NonLinear,       true  },
+        { "Shimmer",       EngineType::Shimmer,         true  },
+        { "Vintage Hall",  EngineType::VintageTank,     false }, // hidden: no preset; redundant tank
+        { "Reverse",       EngineType::ReverseRoom,     true  },
+        { "Hall",          EngineType::AccurateHall,    true  },
+        { "Sparse",        EngineType::SparseField,     false }, // hidden: no preset; folded into Hall/composite
+        { "Concert Hall",  EngineType::AccurateHall32,  false }, // hidden 2026-06-13: Bright Hall migrated to DenseHall; 32-line FDN superseded, no preset uses it
+        { "Tiled Room",    EngineType::TiledRoom,       true  },
+        { "Dense Hall",    EngineType::DenseHall,       true  },
     };
-    if (index < 0 || index >= 14)
+    if (index < 0 || index >= 15)
         index = 0;
     return kEngines[index];
 }

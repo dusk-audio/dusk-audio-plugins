@@ -396,8 +396,8 @@ namespace
 // grows to ~159 px (vs MIX at 92) while the secondary-tier knobs eat more of
 // their column yPad. Pass 5 keeps the FREEZE strip at 22 px (was briefly
 // shrunk to 16) so FREEZE / BUS / GATE all render at the same visual height.
-static constexpr int kBaseWidth  = 1240;
-static constexpr int kBaseHeight = 560;
+static constexpr int kBaseWidth  = 1400;   // widened 1240->1400 for the bottom-row knobs
+static constexpr int kBaseHeight = 760;    // 560->760: added a 3rd row (MACRO: Tone/Character/Duck), sized so the macro knob+label stack clears the bottom edge
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -450,6 +450,15 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         "Stereo width of the wet signal");
     gainTrim_ .init (*this, p.parameters, "gain_trim", "TRIM",        " dB",
         "Output gain offset applied after the dry/wet mix");
+    duck_     .init (*this, p.parameters, "duck",      "DUCK",        "%",
+        "Ducks the wet tail while the dry input is loud, then lets it swell "
+        "back as the source decays. 0 = off. Keeps vocals/drums up front.");
+    tone_     .init (*this, p.parameters, "tone",      "TONE",        "",
+        "Global spectral tilt over any space: left = darker, centre = preset "
+        "as-voiced, right = brighter. Layers on top of the preset's voicing.");
+    character_.init (*this, p.parameters, "character", "CHARACTER",   "%",
+        "Adds movement + grit: more modulation/chorus and saturation as you turn "
+        "it up. 0 = the preset as-voiced.");
 
     // ---- Algorithm selector + topology glyph ----
     // The glyph reads the current algorithm and renders a tiny topology icon
@@ -457,13 +466,25 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     // active at a glance, not just its name. It updates whenever the
     // dropdown changes.
     algorithmBox_.setJustificationType (juce::Justification::centred);
-    algorithmBox_.setTooltip ("Engine architecture (Dattorro / 6-AP / QuadTank / FDN). "
-                              "Switching here changes the DSP without overwriting your knob values.");
+    algorithmBox_.setTooltip ("Reverb space. Switching here changes the DSP without "
+                              "overwriting your knob values.");
+    // Curated palette: only the engines flagged `visible` are offered (the
+    // dead/redundant slots are hidden). Item IDs stay engineIndex+1 so they map
+    // directly onto the 14-wide `algorithm` choice param — we sync manually
+    // (a ComboBoxAttachment is position-based and can't handle a sparse list).
     for (int i = 0; i < getNumAlgorithms(); ++i)
-        algorithmBox_.addItem (getAlgorithmConfig (i).name, i + 1);
+        if (getAlgorithmConfig (i).visible)
+            algorithmBox_.addItem (getAlgorithmConfig (i).name, i + 1);
     addAndMakeVisible (algorithmBox_);
-    algorithmAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-        p.parameters, "algorithm", algorithmBox_);
+    {
+        const int curIdx = static_cast<int> (p.parameters.getRawParameterValue ("algorithm")->load());
+        // A hidden engine loaded from saved state isn't in the curated list —
+        // add it so the box isn't blank and the selection stays recoverable.
+        if (curIdx >= 0 && curIdx < getNumAlgorithms()
+            && algorithmBox_.indexOfItemId (curIdx + 1) < 0)
+            algorithmBox_.addItem (getAlgorithmConfig (curIdx).name, curIdx + 1);
+        algorithmBox_.setSelectedId (curIdx + 1, juce::dontSendNotification);
+    }
 
     addAndMakeVisible (engineGlyph_);
     {
@@ -477,11 +498,20 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         const int idx = algorithmBox_.getSelectedId() - 1;
         if (idx >= 0 && idx < getNumAlgorithms())
         {
+            // Manual sync (no attachment): write the 14-wide choice param by index.
+            // Bracket in a host change gesture so automation + undo capture the
+            // edit exactly as the attachment-backed path would.
+            if (auto* ap = p.parameters.getParameter ("algorithm"))
+            {
+                ap->beginChangeGesture();
+                ap->setValueNotifyingHost (ap->convertTo0to1 ((float) idx));
+                ap->endChangeGesture();
+            }
+
             const auto e = getAlgorithmConfig (idx).engine;
             engineGlyph_.setEngine (e);
             applyEngineAccent (e);   // recolour all knobs / value labels / tail meter
         }
-        juce::ignoreUnused (p);
     };
 
 
@@ -692,6 +722,13 @@ DuskVerbEditor::~DuskVerbEditor()
 
 void DuskVerbEditor::timerCallback()
 {
+    // Pause all 15 Hz repaint/meter work while a value-editor TextEditor is open.
+    // The periodic full-editor repaint races the in-window TextEditor's per-
+    // keystroke paint/focus handling and livelocks the UI on Linux ("froze while
+    // typing"). The labels/meters resume the instant the edit commits or cancels.
+    if (ValueEditor::anyOpen (*this))
+        return;
+
     auto update = [] (KnobWithLabel& k)
     {
         // If a per-engine value override is installed (NonLinear gate
@@ -716,6 +753,30 @@ void DuskVerbEditor::timerCallback()
     update (highCrossover_); update (saturation_); update (diffusion_);
     update (erLevel_);   update (erSize_);    update (mix_);       update (loCut_);
     update (hiCut_);     update (monoBelow_); update (width_);     update (gainTrim_);
+    update (duck_);      update (tone_);      update (character_);
+
+    // Manual algorithm-dropdown sync (no ComboBoxAttachment): reflect external
+    // changes to the choice param (preset load, automation, host) into the box
+    // selection + engine accent.
+    {
+        const int algoIdx = static_cast<int> (processorRef.parameters.getRawParameterValue ("algorithm")->load());
+        if (algoIdx >= 0 && algoIdx < getNumAlgorithms())
+        {
+            // Hidden engine selected externally (saved state / automation):
+            // add it on the fly so the box never shows blank.
+            if (algorithmBox_.indexOfItemId (algoIdx + 1) < 0)
+                algorithmBox_.addItem (getAlgorithmConfig (algoIdx).name, algoIdx + 1);
+            if (algorithmBox_.getSelectedId() != algoIdx + 1)
+                algorithmBox_.setSelectedId (algoIdx + 1, juce::dontSendNotification);
+
+            const auto e = getAlgorithmConfig (algoIdx).engine;
+            if (e != currentEngine_)
+            {
+                engineGlyph_.setEngine (e);
+                applyEngineAccent (e);
+            }
+        }
+    }
 
     inputMeter_.setStereoLevels  (processorRef.getInputLevelL(),  processorRef.getInputLevelR());
     outputMeter_.setStereoLevels (processorRef.getOutputLevelL(), processorRef.getOutputLevelR());
@@ -756,50 +817,57 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int titleBandH = scaler_.scaled (16);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.48f);
-    int bottomH = availH - topRowH;
-    int bottomY = topY + topRowH + gap;
+    // Three rows. Row 2 is the hero row — TIME (concentric DECAY) centred and
+    // flanked by DAMPING + EARLY REFLECTIONS — so it gets the most height.
+    // Row 1 = signal path (INPUT | FILTER | OUTPUT); row 3 = MODULATION + MACRO.
+    // Geometry MUST match resized() exactly.
+    // Row 2 (DAMPING|TIME|ER) trimmed 0.44->0.36 — the reclaimed height goes to
+    // the TOP row (row 1 = the remainder, the biggest). Row 3 fixed at 0.30 so its
+    // knob+label stack fits with bottom clearance (was overflowing → knobs touched
+    // the panel bottom). Geometry MUST match between paint() and resized().
+    int row2H = juce::roundToInt (availH * 0.36f);
+    int row3H = juce::roundToInt (availH * 0.30f);
+    int row1H = availH - row2H - row3H - gap * 2;
+    int row1Y = topY;
+    int row2Y = row1Y + row1H + gap;
+    int row3Y = row2Y + row2H + gap;
 
-    // Group panel widths MUST match resized() exactly — knobs are placed in
-    // resized() using these same percentages.
-    // INPUT 26 / TIME 28 / DAMPING 46 — INPUT narrowed (only 2 knobs + SYNC
-    // combo) so DAMPING's 5-knob row gets its full breathing room.
-    int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.26f);
-    int timeW      = static_cast<int> (topUsable * 0.28f);
-    int characterW = topUsable - inputW - timeW;
+    // ── Row 1: INPUT | FILTER | OUTPUT (reads left-to-right as signal flow) ──
+    int r1Usable  = contentW - gap * 2;
+    int r1InputW  = r1Usable / 3;
+    int r1FilterW = r1Usable / 3;
+    int r1OutputW = r1Usable - r1InputW - r1FilterW;
+    int r1InputX  = contentX;
+    int r1FilterX = r1InputX + r1InputW + gap;
+    int r1OutputX = r1FilterX + r1FilterW + gap;
+    drawGroupBox (g, { r1InputX,  row1Y, r1InputW,  row1H }, "INPUT",  titleBandH);
+    drawGroupBox (g, { r1FilterX, row1Y, r1FilterW, row1H }, "FILTER", titleBandH);
+    drawGroupBox (g, { r1OutputX, row1Y, r1OutputW, row1H }, "OUTPUT", titleBandH);
 
-    int inputX     = contentX;
-    int timeX      = inputX + inputW + gap;
-    int characterX = timeX + timeW + gap;
+    // ── Row 2: DAMPING | TIME (centre hero) | EARLY REFLECTIONS ──
+    int r2Usable = contentW - gap * 2;
+    int r2DampW  = static_cast<int> (r2Usable * 0.40f);
+    int r2TimeW  = static_cast<int> (r2Usable * 0.30f);
+    int r2ErW    = r2Usable - r2DampW - r2TimeW;
+    int r2DampX  = contentX;
+    int r2TimeX  = r2DampX + r2DampW + gap;
+    int r2ErX    = r2TimeX + r2TimeW + gap;
+    drawGroupBox (g, { r2DampX, row2Y, r2DampW, row2H }, "DAMPING",           titleBandH);
+    drawGroupBox (g, { r2TimeX, row2Y, r2TimeW, row2H }, "TIME",              titleBandH);
+    drawGroupBox (g, { r2ErX,   row2Y, r2ErW,   row2H }, "EARLY REFLECTIONS", titleBandH);
 
-    drawGroupBox (g, { inputX,     topY, inputW,     topRowH }, "INPUT",     titleBandH);
-    drawGroupBox (g, { timeX,      topY, timeW,      topRowH }, "TIME",      titleBandH);
-    drawGroupBox (g, { characterX, topY, characterW, topRowH }, "DAMPING",   titleBandH);
-
-    // ER widened to 26% (was 20%) for 3 knobs (added DIFFUSION).
-    // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
-    // the largest share for its 3 knobs + bus button.
-    int bottomUsable = contentW - gap * 3;
-    int modW    = static_cast<int> (bottomUsable * 0.18f);
-    int erW     = static_cast<int> (bottomUsable * 0.26f);
-    int eqW     = static_cast<int> (bottomUsable * 0.28f);
-    int outputW = bottomUsable - modW - erW - eqW;
-
-    int modX    = contentX;
-    int erX     = modX + modW + gap;
-    int eqX     = erX + erW + gap;
-    int outputX = eqX + eqW + gap;
-
-    // MODULATION group is re-titled "GATE" on the NonLinear engine since
-    // the knobs in there are mapped to ATTACK/RELEASE/DENSITY (gate
-    // controls), not modulation. Other engines keep "MODULATION".
+    // ── Row 3: MODULATION (moved down from the mid row) | MACRO ──
+    // MODULATION group is re-titled "GATE" on the NonLinear engine since its
+    // knobs map to ATTACK/RELEASE/DENSITY there. Other engines keep "MODULATION".
+    int r3Usable = contentW - gap;
+    int r3ModW   = static_cast<int> (r3Usable * (2.0f / 5.0f));
+    int r3MacroW = r3Usable - r3ModW;
+    int r3ModX   = contentX;
+    int r3MacroX = r3ModX + r3ModW + gap;
     const char* modulationTitle = (currentEngine_ == EngineType::NonLinear)
                                 ? "GATE" : "MODULATION";
-    drawGroupBox (g, { modX,    bottomY, modW,    bottomH }, modulationTitle,     titleBandH);
-    drawGroupBox (g, { erX,     bottomY, erW,     bottomH }, "EARLY REFLECTIONS", titleBandH);
-    drawGroupBox (g, { eqX,     bottomY, eqW,     bottomH }, "FILTER",            titleBandH);
-    drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT",            titleBandH);
+    drawGroupBox (g, { r3ModX,   row3Y, r3ModW,   row3H }, modulationTitle, titleBandH);
+    drawGroupBox (g, { r3MacroX, row3Y, r3MacroW, row3H }, "MACRO",         titleBandH);
 
     // IN / OUT labels — bigger and brighter, sitting just above the meters
     // and clear of the tail-meter ribbon above. Wider than the meter column
@@ -817,16 +885,27 @@ void DuskVerbEditor::paint (juce::Graphics& g)
 
 namespace
 {
-    void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize, float scaleFactor)
+    void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize, float scaleFactor,
+                    float labelScale = 1.0f)
     {
         // Logic-style stack: NAME (small dim) → VALUE (large accent) → KNOB.
         // Putting the value ABOVE the knob makes the readout the dominant
         // element of each control column; the rotary becomes a tactile
         // affordance underneath.
-        const int nameH  = juce::roundToInt (12.0f * scaleFactor);
-        const int valueH = juce::roundToInt (18.0f * scaleFactor);
-        const int gap    = juce::roundToInt (2.0f  * scaleFactor);
-        const int totalH = nameH + gap + valueH + gap + knobSize;
+        // labelScale (<1) tightens ONLY the name/value/gap overhead — not the
+        // knob — so a section with an extra element (OUTPUT's BUS strip) can fit
+        // the SAME-size rotary plus the strip without overflowing/overlapping.
+        const int nameH   = juce::roundToInt (12.0f * scaleFactor * labelScale);
+        const int valueH  = juce::roundToInt (18.0f * scaleFactor * labelScale);
+        const int gap     = juce::roundToInt (2.0f  * scaleFactor);   // name -> value
+        const int knobGap = juce::roundToInt (4.0f  * scaleFactor * labelScale);   // value -> knob
+        const int totalH  = nameH + gap + valueH + knobGap + knobSize;
+
+        // Scale the label fonts with the UI. Their bounds scale via scaleFactor,
+        // so the fonts MUST too — otherwise the fixed-size text overlaps the knob
+        // below 1x (and looks tiny above 1x). Floors keep them legible at min scale.
+        k.nameLabel .setFont (juce::FontOptions (juce::jmax (8.0f, 10.0f * scaleFactor * labelScale), juce::Font::bold));
+        k.valueLabel.setFont (juce::FontOptions (juce::jmax (9.0f, 12.0f * scaleFactor * labelScale), juce::Font::bold));
 
         const int yPad = (area.getHeight() - totalH) / 2;
         auto col = area;
@@ -836,17 +915,20 @@ namespace
         col.removeFromTop (gap);
         k.valueLabel.setVisible (true);
         k.valueLabel.setBounds (col.removeFromTop (valueH));
-        col.removeFromTop (gap);
+        col.removeFromTop (knobGap);
         auto knobArea = col.removeFromTop (knobSize);
         k.slider.setBounds (knobArea.withSizeKeepingCentre (knobSize, knobSize));
     }
 
     void layoutKnobsInGroup (juce::Rectangle<int> groupBounds, int topPad,
                              std::vector<std::pair<KnobWithLabel*, int>> knobs,
-                             float scaleFactor)
+                             float scaleFactor, int bottomMargin = 0)
     {
         auto area = groupBounds.reduced (4, 0);
         area.removeFromTop (topPad);
+        // Reserve a bottom margin so placeKnob centres the stack HIGHER, leaving
+        // clearance at the panel bottom (row 3 knobs were sitting on the edge).
+        area.removeFromBottom (bottomMargin);
         int colW = area.getWidth() / static_cast<int> (knobs.size());
         for (auto& [knob, knobSize] : knobs)
         {
@@ -917,124 +999,136 @@ void DuskVerbEditor::resized()
     int topPad     = titleBandH + scaler_.scaled (2);
 
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * 0.48f);
-    int bottomH = availH - topRowH;
-    int bottomY = topY + topRowH + gap;
+    // Row geometry — MUST match paint() exactly.
+    // Row 2 (DAMPING|TIME|ER) trimmed 0.44->0.36 — the reclaimed height goes to
+    // the TOP row (row 1 = the remainder, the biggest). Row 3 fixed at 0.30 so its
+    // knob+label stack fits with bottom clearance (was overflowing → knobs touched
+    // the panel bottom). Geometry MUST match between paint() and resized().
+    int row2H = juce::roundToInt (availH * 0.36f);
+    int row3H = juce::roundToInt (availH * 0.30f);
+    int row1H = availH - row2H - row3H - gap * 2;
+    int row1Y = topY;
+    int row2Y = row1Y + row1H + gap;
+    int row3Y = row2Y + row2H + gap;
 
     // Meters span the full content area.
     inputMeter_.setBounds  (margin,                       topY, meterW, availH + gap);
     outputMeter_.setBounds (getWidth() - margin - meterW, topY, meterW, availH + gap);
 
-    // 26 / 28 / 46 split — INPUT narrowed (only 2 knobs + SYNC combo) so
-    // DAMPING's 5-knob row gets its full breathing room. MUST stay in
-    // lock-step with paint().
-    int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.26f);
-    int timeW      = static_cast<int> (topUsable * 0.28f);
-    int characterW = topUsable - inputW - timeW;
+    // Single secondary tier — every knob except the DECAY hero is knobMed.
+    int knobMed = juce::roundToInt (74.0f * sf);
 
-    int inputX     = contentX;
-    int timeX      = inputX + inputW + gap;
-    int characterX = timeX + timeW + gap;
+    // ── Row 1: INPUT | FILTER | OUTPUT ──
+    int r1Usable  = contentW - gap * 2;
+    int r1InputW  = r1Usable / 3;
+    int r1FilterW = r1Usable / 3;
+    int r1OutputW = r1Usable - r1InputW - r1FilterW;
+    int r1InputX  = contentX;
+    int r1FilterX = r1InputX + r1InputW + gap;
+    int r1OutputX = r1FilterX + r1FilterW + gap;
 
-    // Two-tier knob hierarchy — primary (MIX) is knobBig; secondary
-    // (everything else except the DECAY hero) is knobMed. DECAY's
-    // concentric-ring rendering uses heroSize (computed below) which
-    // dominates at ~165 px diameter. Pass 4 bumped knobMed 76 → 84
-    // to soak up the remaining column yPad in non-hero panels.
-    int knobBig = juce::roundToInt (92.0f * sf);
-    int knobMed = juce::roundToInt (84.0f * sf);
-
-    // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
-    // The two knobs sit adjacent so the row reads as a coherent pair, and
-    // the SYNC stack lives at the right edge where its label/combo have
-    // natural breathing room (previously sandwiched between two knobs,
-    // which crowded the combo box width).
+    // INPUT: PRE-DELAY | SATURATION | SYNC label+combo. The SYNC stack lives at
+    // the right edge so its label/combo get natural breathing room.
     {
-        auto inputArea = juce::Rectangle<int> (inputX, topY, inputW, topRowH).reduced (4, 0);
+        auto inputArea = juce::Rectangle<int> (r1InputX, row1Y, r1InputW, row1H).reduced (4, 0);
         inputArea.removeFromTop (topPad);
 
         int colW = inputArea.getWidth() / 3;
-        placeKnob (preDelay_,  inputArea.removeFromLeft (colW), knobMed, sf);
+        placeKnob (preDelay_,   inputArea.removeFromLeft (colW), knobMed, sf);
         placeKnob (saturation_, inputArea.removeFromLeft (colW), knobMed, sf);
 
-        // Right column: SYNC label + combo, vertically centred.
         auto syncCol = inputArea.reduced (4, 0);
         const int labelH = scaler_.scaled (14);
         const int comboH = scaler_.scaled (24);
         const int stackH = labelH + scaler_.scaled (4) + comboH;
         const int yPad = std::max ((syncCol.getHeight() - stackH) / 2, 0);
         syncCol.removeFromTop (yPad);
+        // Scale the SYNC label font with the UI (same fix as the knob labels).
+        predelaySyncLabel_.setFont (juce::FontOptions (juce::jmax (8.0f, 11.0f * sf), juce::Font::bold));
         predelaySyncLabel_.setBounds (syncCol.removeFromTop (labelH));
         syncCol.removeFromTop (scaler_.scaled (4));
         predelaySyncBox_.setBounds (syncCol.removeFromTop (comboH));
     }
 
-    // TIME: decay + size knobs + bottom strip split into [DECAY LOCK | FREEZE].
-    // LOCK sits under DECAY so the visual relationship is unmistakable.
+    // FILTER: LO CUT | HI CUT | MONO<.
+    layoutKnobsInGroup ({ r1FilterX, row1Y, r1FilterW, row1H }, topPad,
+                        { { &loCut_, knobMed }, { &hiCut_, knobMed }, { &monoBelow_, knobMed } }, sf);
+
+    // OUTPUT: MIX | WIDTH | TRIM across the top + BUS strip along the bottom.
     {
-        auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
-        timeArea.removeFromTop (topPad);
-        // FREEZE strip 22 px — matches BUS and GATE strip heights so all
-        // three toggle buttons read as the same visual element.
-        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (22));
-
-        // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
-        // The hero is the visual centrepiece of the entire plugin — its
-        // concentric-ring rendering doesn't fit the standard placeKnob
-        // template, so it's positioned manually and centered in its column.
-        const int heroW = juce::roundToInt (knobArea.getWidth() * 0.70f);
-        auto heroArea  = knobArea.removeFromLeft (heroW);
-        const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
-        decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
-
-        // SIZE renders at the secondary tier (knobMed) so DECAY's
-        // concentric-ring hero is the unambiguously largest knob on the UI.
-        // Previously SIZE shared knobBig with MIX; visually it competed with
-        // the hero for top-row dominance.
-        placeKnob (size_, knobArea, knobMed, sf);
-
-        // FREEZE spans the full bottom strip of the TIME group. (8, 2) inset
-        // matches the BUS and GATE buttons so all three toggles render at the
-        // same visual height.
-        freezeButton_.setBounds (timeArea.reduced (8, 2));
+        auto outArea = juce::Rectangle<int> (r1OutputX, row1Y, r1OutputW, row1H).reduced (4, 0);
+        outArea.removeFromTop (topPad);
+        // OUTPUT carries an extra element (the BUS strip) that INPUT/FILTER don't.
+        // Keep the rotaries the SAME size (knobMed) — recover the strip's height
+        // from the label stack (labelScale 0.7 tightens name/value only) + the
+        // BUS bar. The full knob then sits clear of the bar, no overlap, no shrink.
+        const int busH = scaler_.scaled (28);   // taller toggle bar (matches FREEZE/GATE)
+        auto knobArea = outArea.removeFromTop (outArea.getHeight() - busH);
+        const int outCol = knobArea.getWidth() / 3;
+        const float outLabel = 0.7f;
+        placeKnob (mix_,      knobArea.removeFromLeft (outCol), knobMed, sf, outLabel);
+        placeKnob (width_,    knobArea.removeFromLeft (outCol), knobMed, sf, outLabel);
+        placeKnob (gainTrim_, knobArea,                         knobMed, sf, outLabel);
+        busModeButton_.setBounds (outArea.reduced (8, 2));
     }
 
-    // DAMPING: full 3-band (BASS/MID/TREBLE multipliers + LOW/HIGH crossovers).
-    // Five knobs ordered low→high so the damping curve reads left-to-right.
-    // DIFFUSION moved to the EARLY REFLECTIONS group below — both are early-
-    // density character — to keep DAMPING uncrowded with proper label space.
-    layoutKnobsInGroup ({ characterX, topY, characterW, topRowH }, topPad,
+    // ── Row 2: DAMPING | TIME (centre hero) | EARLY REFLECTIONS ──
+    int r2Usable = contentW - gap * 2;
+    int r2DampW  = static_cast<int> (r2Usable * 0.40f);
+    int r2TimeW  = static_cast<int> (r2Usable * 0.30f);
+    int r2ErW    = r2Usable - r2DampW - r2TimeW;
+    int r2DampX  = contentX;
+    int r2TimeX  = r2DampX + r2DampW + gap;
+    int r2ErX    = r2TimeX + r2TimeW + gap;
+
+    // DAMPING: BASS/MID/TREBLE multipliers + LOW/HIGH crossovers (5 knobs,
+    // ordered low→high so the damping curve reads left-to-right).
+    layoutKnobsInGroup ({ r2DampX, row2Y, r2DampW, row2H }, topPad,
                         { { &bassMult_,      knobMed },
                           { &midMult_,       knobMed },
                           { &damping_,       knobMed },
                           { &crossover_,     knobMed },
                           { &highCrossover_, knobMed } }, sf);
 
-    // ER widened to 26% (was 20%) for 3 knobs (added DIFFUSION).
-    // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
-    // the largest share for its 3 knobs + bus button.
-    int bottomUsable = contentW - gap * 3;
-    int modW    = static_cast<int> (bottomUsable * 0.18f);
-    int erW     = static_cast<int> (bottomUsable * 0.26f);
-    int eqW     = static_cast<int> (bottomUsable * 0.28f);
-    int outputW = bottomUsable - modW - erW - eqW;
-
-    int modX    = contentX;
-    int erX     = modX + modW + gap;
-    int eqX     = erX + erW + gap;
-    int outputX = eqX + eqW + gap;
-
+    // TIME (centre, hero): concentric DECAY + SIZE + FREEZE strip. The taller
+    // mid row lets the hero render large as the visual centrepiece.
     {
-        // Reserve a bottom strip in the MODULATION/GATE group for the GATE
-        // toggle button ONLY when the GATE button is visible (NonLinear
-        // engine). On every other engine the GATE button is hidden and the
-        // strip carve wasted vertical space. Now the knob area takes the
-        // full panel height when GATE is hidden.
-        juce::Rectangle<int> modPanel { modX, bottomY, modW, bottomH };
+        auto timeArea = juce::Rectangle<int> (r2TimeX, row2Y, r2TimeW, row2H).reduced (4, 0);
+        timeArea.removeFromTop (topPad);
+        // FREEZE strip 28 px — taller toggle bar; matches BUS/GATE strip heights.
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (28));
+
+        // Hero DECAY takes the LEFT ~72% of the row; SIZE the remainder. The
+        // concentric-ring rendering is positioned manually + centred.
+        const int heroW = juce::roundToInt (knobArea.getWidth() * 0.72f);
+        auto heroArea  = knobArea.removeFromLeft (heroW);
+        const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
+        decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
+
+        placeKnob (size_, knobArea, knobMed, sf);
+
+        freezeButton_.setBounds (timeArea.reduced (8, 2));
+    }
+
+    // EARLY REFLECTIONS: ER LEVEL | ER SIZE | DIFFUSION.
+    layoutKnobsInGroup ({ r2ErX, row2Y, r2ErW, row2H }, topPad,
+                        { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
+
+    // ── Row 3: MODULATION | MACRO (TONE/CHARACTER/DUCK) ──
+    int r3Usable = contentW - gap;
+    int r3ModW   = static_cast<int> (r3Usable * (2.0f / 5.0f));
+    int r3MacroW = r3Usable - r3ModW;
+    int r3ModX   = contentX;
+    int r3MacroX = r3ModX + r3ModW + gap;
+    const int row3BottomMargin = scaler_.scaled (12);   // lift row-3 knobs off the panel edge
+
+    // MODULATION: DEPTH | RATE. Reserve a bottom GATE strip only when the GATE
+    // button is visible (NonLinear engine); otherwise knobs take the full panel.
+    {
+        juce::Rectangle<int> modPanel { r3ModX, row3Y, r3ModW, row3H };
         if (gateButton_.isVisible())
         {
-            const int gateButtonH = scaler_.scaled (22);
+            const int gateButtonH = scaler_.scaled (28);   // taller toggle bar (matches FREEZE/BUS)
             auto modKnobArea = modPanel.removeFromTop (modPanel.getHeight() - gateButtonH);
             layoutKnobsInGroup (modKnobArea, topPad,
                                 { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
@@ -1043,32 +1137,13 @@ void DuskVerbEditor::resized()
         else
         {
             layoutKnobsInGroup (modPanel, topPad,
-                                { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+                                { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf, row3BottomMargin);
         }
     }
 
-    layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
-                        { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
-
-    layoutKnobsInGroup ({ eqX, bottomY, eqW, bottomH }, topPad,
-                        { { &loCut_, knobMed }, { &hiCut_, knobMed }, { &monoBelow_, knobMed } }, sf);
-
-    // OUTPUT: 3 knobs across top + bottom strip split into [MIX LOCK | BUS].
-    // LOCK sits under MIX (left third) so the visual relationship is clear.
-    {
-        auto outArea = juce::Rectangle<int> (outputX, bottomY, outputW, bottomH).reduced (4, 0);
-        outArea.removeFromTop (topPad);
-        int knobAreaH = outArea.getHeight() - scaler_.scaled (22);
-        auto knobArea = outArea.removeFromTop (knobAreaH);
-        // MIX is primary (peer of DECAY/SIZE in TIME); WIDTH and TRIM sit
-        // at the secondary tier.
-        int mixCol  = juce::roundToInt (knobArea.getWidth() * 0.42f);
-        int restCol = (knobArea.getWidth() - mixCol) / 2;
-        placeKnob (mix_,      knobArea.removeFromLeft (mixCol),  knobBig, sf);
-        placeKnob (width_,    knobArea.removeFromLeft (restCol), knobMed, sf);
-        placeKnob (gainTrim_, knobArea,                          knobMed, sf);
-        busModeButton_.setBounds (outArea.reduced (8, 2));
-    }
+    // MACRO: TONE | CHARACTER | DUCK — global morphers layered on every preset.
+    layoutKnobsInGroup ({ r3MacroX, row3Y, r3MacroW, row3H }, topPad,
+                        { { &tone_, knobMed }, { &character_, knobMed }, { &duck_, knobMed } }, sf, row3BottomMargin);
 
     titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };
 
@@ -1107,7 +1182,7 @@ void DuskVerbEditor::refreshPresetList()
 
     // Items are still added flat so ComboBox knows the ID-to-text mapping for
     // setSelectedId() and step navigation. The categorized presentation lives
-    // in buildPresetMenu() / CategoryComboBox::showPopup() — section headings
+    // in buildPresetMenu() / DuskComboBox::showPopup() — section headings
     // are NOT added here because the ComboBox's auto-built popup is bypassed.
     for (size_t i = 0; i < presets.size(); ++i)
         presetBox_.addItem (presets[i].name, static_cast<int> (i) + 2);
@@ -1123,86 +1198,49 @@ void DuskVerbEditor::refreshPresetList()
 juce::PopupMenu DuskVerbEditor::buildPresetMenu()
 {
     juce::PopupMenu menu;
-    menu.setLookAndFeel (&lnf_);   // render the popup + submenus with our dark dropdown L&F
+    menu.setLookAndFeel (&lnf_);   // render with our dark dropdown L&F
     const auto& presets = getFactoryPresets();
     const int currentId = presetBox_.getSelectedId();
 
-    // Group presets contiguously by category and emit one submenu per category.
-    // Categories appear in the order they first show up in the source array.
+    // FLAT list with category SECTION HEADERS — NOT submenus (2026-06-16). The
+    // in-window popup (DuskComboBox, withParentComponent — needed for Wayland)
+    // made submenus flaky: hover-to-open timing + clipping past the editor edge
+    // meant a pick "sometimes didn't take". A single scrollable column with
+    // non-clickable section headers groups by category just as clearly and is
+    // robust in-window (one mouse-down, no sideways submenu to miss/clip).
     juce::String currentCategory;
-    juce::PopupMenu categorySub;
-    auto flushCategory = [&]
-    {
-        if (currentCategory.isNotEmpty())
-            menu.addSubMenu (currentCategory, categorySub);
-        categorySub.clear();
-    };
     for (size_t i = 0; i < presets.size(); ++i)
     {
         const juce::String cat = presets[i].category;
         if (cat != currentCategory)
         {
-            flushCategory();
+            menu.addSectionHeader (cat);
             currentCategory = cat;
         }
         const int id = static_cast<int> (i) + 2;
-        categorySub.addItem (id, presets[i].name, /*enabled*/ true,
-                             /*ticked*/ id == currentId);
+        menu.addItem (id, presets[i].name, /*enabled*/ true, /*ticked*/ id == currentId);
     }
-    flushCategory();
 
     if (userPresetManager_)
     {
         auto userPresets = userPresetManager_->loadUserPresets();
         if (! userPresets.empty())
         {
-            juce::PopupMenu userSub;
+            menu.addSectionHeader ("User");
             for (size_t i = 0; i < userPresets.size(); ++i)
             {
                 const int id = static_cast<int> (1001 + i);
-                userSub.addItem (id, userPresets[i].name, true, id == currentId);
+                menu.addItem (id, userPresets[i].name, true, id == currentId);
             }
-            menu.addSubMenu ("User", userSub);
         }
     }
     return menu;
 }
 
-// CategoryComboBox::showPopup — overrides the default flat popup with a
-// categorized one (categories as nested submenus). On selection, route the
-// chosen ID through setSelectedId() so the existing onChange callback fires
-// exactly as if the user had picked from a flat list.
-//
-// hidePopup() in the async callback is ESSENTIAL: ComboBox tracks an
-// internal "menu is showing" flag (set when showPopup runs, cleared by
-// hidePopup). JUCE's default ComboBox::showPopup uses a static
-// popupMenuFinishedCallback that calls hidePopup() on dismiss. Without
-// that call, the second click after a selection finds the flag still set
-// and silently no-ops — the dropdown works once per editor lifetime,
-// then stops responding until the editor is reopened.
-void DuskVerbEditor::CategoryComboBox::showPopup()
-{
-    if (! menuBuilder)
-    {
-        juce::ComboBox::showPopup();
-        return;
-    }
-    auto menu = menuBuilder();
-    juce::Component::SafePointer<CategoryComboBox> safe (this);
-    menu.showMenuAsync (
-        juce::PopupMenu::Options()
-            .withTargetComponent (this)
-            .withMinimumWidth (getWidth()),
-        [safe] (int result)
-        {
-            if (safe != nullptr)
-            {
-                safe->hidePopup();
-                if (result > 0)
-                    safe->setSelectedId (result, juce::sendNotification);
-            }
-        });
-}
+// presetBox_'s categorized popup is now handled by DuskComboBox (shared) — its
+// showPopup() renders the menuBuilder() menu IN-WINDOW (withParentComponent),
+// avoiding the JUCE native-popup-window glitch on Wayland/XWayland. The
+// menuBuilder is wired in the constructor: presetBox_.menuBuilder = buildPresetMenu.
 
 void DuskVerbEditor::saveUserPreset()
 {
@@ -1320,7 +1358,7 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                      &damping_,  &bassMult_,  &midMult_,       &crossover_,
                      &highCrossover_, &saturation_, &diffusion_,
                      &erLevel_, &erSize_, &mix_, &loCut_, &hiCut_,
-                     &monoBelow_, &width_, &gainTrim_ })
+                     &monoBelow_, &width_, &gainTrim_, &duck_, &tone_, &character_ })
         k->setAccent (accent);
 
     // 3) Components that paint their own accent regions.
@@ -1647,10 +1685,13 @@ void EngineGlyph::paint (juce::Graphics& g)
             }
             break;
         }
+        case EngineType::DenseHall:
+        case EngineType::VintageTank:
+        case EngineType::AccurateHall32:
         default:
         {
             // Generic engine cue for engines without a bespoke glyph
-            // (VintageTank / ReverseRoom / AccurateHall / SparseField) — a
+            // (VintageTank / ReverseRoom / AccurateHall / SparseField / DenseHall) — a
             // centred ring so the header still shows an icon instead of empty space.
             const float r = std::min (w, h) * 0.30f;
             g.drawEllipse (inner.getCentreX() - r, inner.getCentreY() - r,
