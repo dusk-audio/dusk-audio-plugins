@@ -149,7 +149,8 @@ def render_and_check(name, no_render=False):
     slug = name.lower().replace(" ", "_").replace("'", "")
     dv, lex = f"/tmp/audit_{slug}", f"/tmp/audit_{slug}_a"
     if not (no_render and os.path.isdir(dv) and glob.glob(f"{dv}/*_noiseburst.wav")):
-        shutil.rmtree(dv, ignore_errors=True); os.makedirs(dv)
+        shutil.rmtree(dv, ignore_errors=True)
+        os.makedirs(dv)
         cmd = [REND, "--vst3", VST3, "--program", name, "--output-dir", dv,
                "--sustained-pink-seconds", "4.0"]
         if not shim:
@@ -165,7 +166,8 @@ def render_and_check(name, no_render=False):
             return f"NO_ANCHOR {name} {adir}", False
         g = rms(anchor_nb) / max(rms(nb[0]), 1e-12)
         for f in glob.glob(f"{dv}/*.wav"):
-            x, sr = sf.read(f); sf.write(f, x * g, sr, subtype="FLOAT")
+            x, sr = sf.read(f)
+            sf.write(f, x * g, sr, subtype="FLOAT")
 
     # ALWAYS (re)populate the anchor dir so full_check, run right after, never
     # sees an empty/stale lex on the --no-render reuse path.

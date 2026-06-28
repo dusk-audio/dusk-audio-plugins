@@ -41,15 +41,19 @@ def full_rms(p):
 
 def render(name, algo10, dst):
     for f in glob.glob(f"{OUTD}/*.wav"):
-        try: os.remove(f)
-        except OSError: pass
+        try:
+            os.remove(f)
+        except OSError:
+            pass
     args = [REND, "--program", name, *WET]
-    if algo10: args += ["--param", "Algorithm=10"]
+    if algo10:
+        args += ["--param", "Algorithm=10"]
     r = subprocess.run(args, cwd=REPO, capture_output=True, text=True, timeout=420)
     if r.returncode != 0:
         raise RuntimeError(f"render failed for {name!r} (rc={r.returncode})\n{r.stderr[-2000:]}")
     # Recreate dst empty so a partial/short render can't leave stale WAVs behind.
-    shutil.rmtree(dst, ignore_errors=True); os.makedirs(dst, exist_ok=True)
+    shutil.rmtree(dst, ignore_errors=True)
+    os.makedirs(dst, exist_ok=True)
     out = glob.glob(f"{OUTD}/*.wav")
     if not out:
         raise RuntimeError(f"render produced no WAVs for {name!r}")

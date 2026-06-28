@@ -143,7 +143,8 @@ def evaluate(preset, anchor_path, slug, vst3):
     except Exception as e:
         return {'preset': preset, 'error': str(e)}
 
-    dv_rms = rms_db(dv_path); ref_rms = rms_db(anchor_path)
+    dv_rms = rms_db(dv_path)
+    ref_rms = rms_db(anchor_path)
     rms_d = (dv_rms - ref_rms) if (dv_rms is not None and ref_rms is not None) else None
 
     d50 = (dv['cent_50'] - ref['cent_50']) / max(ref['cent_50'], 1) * 100

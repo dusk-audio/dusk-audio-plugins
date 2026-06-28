@@ -14,7 +14,7 @@ Usage:
                                        --preset "Vintage Vocal Plate"
 """
 from __future__ import annotations
-import argparse, json, re, shutil, subprocess, sys
+import argparse, json, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np, soundfile as sf
 
@@ -81,8 +81,9 @@ def peak_aligned_thirdoct(p, t0=0.05, t1=1.0):
 
 
 def report(preset, params, vst3, anchor):
-    dv_dir = Path("/tmp/eval_best")
-    shutil.rmtree(dv_dir, ignore_errors=True); dv_dir.mkdir(parents=True, exist_ok=True)
+    # Unique per-invocation dir so overlapping runs can't delete each other's
+    # render mid-flight (was a shared /tmp/eval_best). mkdtemp = its own scratch.
+    dv_dir = Path(tempfile.mkdtemp(prefix="eval_best_"))
     render(preset, params, vst3, dv_dir)
     # Derive the rendered files from the dir (the harness slug follows the
     # preset name), not a hardcoded "VintageVocalPlate_*" — that mislabelled
