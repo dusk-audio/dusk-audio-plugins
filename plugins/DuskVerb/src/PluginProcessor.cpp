@@ -2528,11 +2528,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // BH kept at MILD tilt 0.55/1.65 — its factory row IS v33 sweep best
         // which was tuned WITH tilt active; full disable broke that balance
         // (mids/highs went -3 to -7 dB cold). Milder tilt preserves Phase α
-        // bass-extension benefit at less aggressive level dump.
-        // { "Vocal Hall",           { 0.55f, 1.65f } },  // disabled
-        // { "Bright Hall",          { 0.55f, 1.65f } },  // disabled — factory row reverted to v1, tilt no longer needed
-        // { "Cathedral Large Hall", { 0.45f, 1.85f } },  // disabled pending audition
-        // { "Drum Plate",           { 0.70f, 1.30f } },  // disabled pending audition
+        // bass-extension benefit at less aggressive level dump. (The disabled
+        // per-preset tilt rows that documented those audition values were removed
+        // 2026-06-28 — the rationale above stands on its own; tilt is off fleet-wide.)
     }};
     float shortS = 1.0f, longS = 1.0f;
     if (const auto* p = findPresetConfig (kDecayTiltByName, std::string_view (name)))
@@ -3067,7 +3065,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         if (const char* envBu = tuningEnv().buildup; envBu != nullptr && envBu[0] != '\0')
         {
             juce::StringArray t; t.addTokens (juce::String (envBu), ",", "");
-            buildupAmt = t[0].getFloatValue();
+            if (t.size() >= 1) buildupAmt = t[0].getFloatValue();   // keep default if no token
             if (t.size() >= 2) buildupTime = t[1].getFloatValue();
             if (t.size() >= 3) buildupPost = t[2].getFloatValue() > 0.5f;
         }

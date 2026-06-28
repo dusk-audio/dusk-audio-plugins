@@ -114,7 +114,9 @@ def main():
         nf, kurt = eval_delays(delays, str(trial.number))
         if nf is None: return 1e3
         loss = float(nf)
-        if kurt is not None:
+        if kurt is None:
+            loss += 100.0   # unmeasurable kurtosis → can't compete with measured trials
+        else:
             loss += 0.5 * max(0.0, kurt - KURT_CEIL)         # hold the metal win
         loss += 0.01 * abs(float(np.mean(delays)) - BASE_MEAN)  # hold T60
         trial.set_user_attr("delays", delays)

@@ -22,9 +22,10 @@ ANCHOR = Path("/tmp/anchor_bh")
 def trial(idx, m, t, hc, gt, lc):
     out_dir = Path(f"/tmp/bh_m3_{idx:04d}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Delete any stale output first so a previous run's file can't be mistaken
-    # for a successful render of THIS trial.
-    (out_dir / "BrightHall_noiseburst.wav").unlink(missing_ok=True)
+    # Delete ALL stale WAVs first so no previous run's file (any stimulus) can be
+    # mistaken for a successful render of THIS trial (full_check globs the dir).
+    for w in out_dir.glob("*.wav"):
+        w.unlink()
     cmd = [
         str(RENDER), "--vst3", str(VST3),
         "--program", "Bright Hall",

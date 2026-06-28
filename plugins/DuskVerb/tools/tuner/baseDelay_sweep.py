@@ -182,10 +182,12 @@ def main():
     except subprocess.TimeoutExpired:
         print(f"\nFinal render FAILED (timeout >120s) for {args.preset}", file=sys.stderr)
     else:
-        if res.returncode == 0:
+        slug = args.preset.replace(" ", "")
+        if res.returncode == 0 and (out_root / f"{slug}_noiseburst.wav").exists():
             print(f"\nBest render in {out_root}")
         else:
-            print(f"\nFinal render FAILED (rc={res.returncode})", file=sys.stderr)
+            print(f"\nFinal render FAILED (rc={res.returncode}, no output wav) for {args.preset}",
+                  file=sys.stderr)
 
 
 if __name__ == "__main__":
