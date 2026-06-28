@@ -10,6 +10,7 @@
 #include "../../shared/ScalableEditorHelper.h"
 #include "../../shared/UserPresetManager.h"
 #include "TapeMachinePresets.h"
+#include "DuskPresetMenu.h"
 
 //==============================================================================
 // Main Plugin Editor
@@ -29,8 +30,10 @@ private:
     TapeMachineAudioProcessor& audioProcessor;
     TapeMachineLookAndFeel tapeMachineLookAndFeel;
 
-    // Preset selector
-    juce::ComboBox presetSelector;
+    // Preset selector — DuskPresetSelector overrides showPopup() so the
+    // dropdown renders as a Dusk-style modal panel inside the editor
+    // instead of opening JUCE's native top-level popup window.
+    DuskPresetSelector presetSelector;
     juce::Label presetLabel;
 
     // Combo boxes
