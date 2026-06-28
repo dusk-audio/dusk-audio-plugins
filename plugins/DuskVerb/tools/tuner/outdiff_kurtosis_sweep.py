@@ -8,7 +8,7 @@ broadband HF level so the smear doesn't dull the (bright) preset.
 
 Run from repo root:  python3 outdiff_kurtosis_sweep.py --trials 160
 """
-import argparse, os, sys, glob, shutil, subprocess
+import argparse, os, sys, glob, shutil, subprocess, tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import soundfile as sf, numpy as np, optuna
@@ -48,7 +48,7 @@ def main():
         amt = trial.suggest_float("amount", 0.3, 1.0)
         lfo = trial.suggest_float("lfoScale", 0.0, 1.0)
         dsc = trial.suggest_float("delayScale", 0.5, 4.0)
-        d = f"/tmp/odk_{os.getpid()}_{trial.number}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+        d = tempfile.mkdtemp(prefix=f"odk_{trial.number}_")   # unguessable per-trial dir (no /tmp TOCTOU)
         try:
             env = dict(os.environ, DUSKVERB_OUTDIFF=f"{amt},{lfo},{dsc}")
             try:
@@ -75,8 +75,8 @@ def main():
     study.optimize(obj, n_trials=a.trials, n_jobs=a.workers)
     bp = study.best_params
     print(f"\nBEST  amount={bp['amount']:.3f} lfoScale={bp['lfoScale']:.3f} delayScale={bp['delayScale']:.3f}  pen={study.best_value:.2f}")
-    # final scoreboard
-    d = f"/tmp/odk_best_{os.getpid()}"; shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    # final scoreboard (kept for inspection — its own unguessable dir)
+    d = tempfile.mkdtemp(prefix="odk_best_")
     env = dict(os.environ, DUSKVERB_OUTDIFF=f"{bp['amount']},{bp['lfoScale']},{bp['delayScale']}")
     proc = subprocess.run([str(REND),"--program","Bright Hall","--output-dir",d,*WET], capture_output=True, env=env)
     hits = glob.glob(f"{d}/*_noiseburst.wav")

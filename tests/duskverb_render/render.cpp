@@ -1348,17 +1348,24 @@ int main (int argc, char** argv)
         std::cout << "Window on screen: " << b.getWidth() << "x" << b.getHeight()
                   << " @ (" << b.getX() << "," << b.getY() << ")" << std::endl;
         // Window held visible during the capture (we delete it afterwards).
+        // Clear any stale PNG first so existsAsFile() below can't report success
+        // from a previous run's file when this capture actually failed.
+        juce::File shotFile (screenshotPath);
+        shotFile.deleteFile();
         juce::ChildProcess cap;
+        bool capExitOk = false;
         if (cap.start (juce::StringArray { "gnome-screenshot", "-f", screenshotPath }))
         {
             cap.readAllProcessOutput();
             cap.waitForProcessToFinish (25000);
+            capExitOk = (cap.getExitCode() == 0);
         }
         else
         {
             std::cerr << "  ! --screenshot: could not launch gnome-screenshot" << std::endl;
         }
-        const bool shotOk = juce::File (screenshotPath).existsAsFile();
+        // Success requires BOTH a clean process exit AND a freshly written file.
+        const bool shotOk = capExitOk && shotFile.existsAsFile();
         if (shotOk)
             std::cout << "Wrote screenshot " << screenshotPath << std::endl;
         else
