@@ -513,7 +513,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Plate",          "Plates",
           10, 0.35f, false, 29.16f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 6/9->9/9, gain-matched full_check 25->14 vs FDN. Octave targets in kAccurateHallT60ByName.
           0.689f, 0.15f, 0.37f, 1.51f, 1.281f, 1.028f, 392.516f,  // 2026-06-24 Decay knob 0.849->0.689 = realized broadband RT60 (honest knob; AccurateHall decayRef auto-tracks the knob so scale stays 1.0 -> octave T60 table + sound UNCHANGED).  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match VVV, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
-          0.58f, 0.25f, 0.76f, 30.0f, 17597.191f, 1.02f, false, 1.88f,  // 2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+1.88) after the output match-EQ cut (26->20). Lo Cut 30 keeps the lows.
+          0.58f, 0.25f, 0.76f, 30.0f, 17597.191f, 0.98f, false, 1.88f,  // 2026-06-28 Width 1.02->0.98: closes stereo_corr (DV -0.16 vs anchor -0.04, too wide) -> 19->18.  // 2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+1.88) after the output match-EQ cut (26->20). Lo Cut 30 keeps the lows.
           /* mono */ 20.0f, /* mid */ 1.33f, /* highX */ 2196.609f, /* sat */ 0.03f, /* hiCutShelfGainDb */ -5.774f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
@@ -881,7 +881,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Cathedral Large Hall", "Halls",
           14, 0.45f, false, 20.0f, 0,   // 2026-06-24 predelay 2.484->20.0 ms = VVV Cathedral PREDELAY (20.00 ms, from the GUI). DV brought the reverb in ~18ms early, fusing it with the transient -> no distinct "second tap"; the 20ms gap is the slap the ear hears.  // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail kills the metallic ring (tail kurtosis 14.6 -> 7.2)
           4.434f, 0.93880f, 0.38010f, 1.18680f, 0.750f, 1.557f,  265.871f,  // 2026-06-24 Decay knob 4.2->4.434 = realized broadband RT60 (honest; DenseHall decayRef auto-tracks knob -> scale 1.0 -> octave T60 table + sound UNCHANGED).  // 2026-06-17 EAR: decay 3.10->4.2 = anchor low T60 (4.02s) for low sustain.  // 2026-06-16 re-tune vs corrected anchor: Treble 1.416->0.75 (T60 2k/4k into gate), 24->22  // 2026-06-14 gain-matched 8-lever sweep (44->29): decay 3.10, Treble 1.416, Bass 1.557, LowXover 266.  // decay 3.44->4.07: restore length after honest-decay fold-in (RT60 3.38->~4.0)  // Treble 1.28->0.50: darken to anchor brightness (centroid 1987->1545, anchor 1551).
-          0.74244f, 0.05000f, 0.44666f,  40.730f, 16050.768f, 1.00257f, false, 6.01f,  // 2026-06-16 erLevel 0.36->0.05: Cathedral anchor is BACK-loaded (first50 13.6%), wants minimal discrete ER.2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+6.01) after the output match-EQ cut (29->22). HiCut 16051.
+          0.74244f, 0.05000f, 0.44666f,  40.730f, 16050.768f, 1.05000f, false, 6.01f,  // 2026-06-28 Width 1.00257->1.05: closes width-mid .3-5k (DV +0.15 vs anchor +0.03, too narrow) -> 20->19 (width-low stays: global Width saturates on the low band).  // 2026-06-16 erLevel 0.36->0.05: Cathedral anchor is BACK-loaded (first50 13.6%), wants minimal discrete ER.2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+6.01) after the output match-EQ cut (29->22). HiCut 16051.
           /* mono */ 20.0f, /* mid */ 1.026f, /* highX */ 3071.094f, /* sat */ 0.00126f,  // 2026-06-14 sweep: Mid 1.026, HighXover 3071.  // edt+498% residual is octave-T60-locked (GEQ recal = next pass)
           /* hiCutShelfGainDb */ -6.206f },   // 2026-06-14 sweep (was -9.0).
         // ── Blade Runner 224 ─────────────────────────────────────────────────
@@ -1139,7 +1139,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Ambience",             "Rooms",
           10, 0.40f, false,  8.00f, 0,   // 2026-06-12 anti-wash: predelay 2.91->8 ms for early-reflection separation (algo 10 AccurateHall)
           1.373f, 0.26283f, 0.17870f, 0.17487f, 0.64252f, 0.62992f,  327.98f,  // 2026-06-24 Decay knob 1.51574->1.373 = realized broadband RT60 (honest; AccurateHall decayRef auto-tracks knob -> scale 1.0 -> octave T60 table + sound UNCHANGED).
-          0.49320f, 0.86847f, 0.56f, 30.214f, 15746.05f, 1.07315f, false, 2.95f,  // tunable-cluster sweep 2026-06-11: 23 -> 16 (bass-damp+bandtrim boom/640, partial front-load, edt). gainTrim +3.28 = 100%-wet noiseburst RMS match.
+          0.49320f, 0.86847f, 0.56f, 30.214f, 15746.05f, 1.00000f, false, 2.95f,  // 2026-06-28 Width 1.07315->1.00: closes width-low <300 (DV -0.26 vs anchor -0.13, over-decorrelated) -> 17->16.  // tunable-cluster sweep 2026-06-11: 23 -> 16 (bass-damp+bandtrim boom/640, partial front-load, edt). gainTrim +3.28 = 100%-wet noiseburst RMS match.
           /* mono */ 20.0f, /* mid */ 0.70170f, /* highX */ 5834.41f, /* sat */ 0.16156f, /* hiCutShelfGainDb */ -5.41295f },
         // ── 1981 Gated Snare ─────────────────────────────────────────────────
         // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
