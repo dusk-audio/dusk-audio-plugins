@@ -2803,7 +2803,9 @@ public:
         constexpr float k2 = 0.004f, k3 = 0.003f;
 
         // Output stage (console harmonics + transformer + IR + makeup), per channel.
-        auto outStage = [this] (float compressed, int ch, float makeup)
+        // Capture k2/k3 explicitly: GCC/clang don't require capturing constexpr locals
+        // used by value, but MSVC does (C3493 'cannot be implicitly captured').
+        auto outStage = [this, k2, k3] (float compressed, int ch, float makeup)
         {
             float p = compressed;
             const float x2 = p * p, x3 = x2 * p;
