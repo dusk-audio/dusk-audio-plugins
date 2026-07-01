@@ -3,6 +3,7 @@
 #include "AlgorithmConfig.h"
 #include "DattorroTank.h"
 #include "DattorroPlateVintage.h"
+#include "DenseEarlyField.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
@@ -131,6 +132,15 @@ public:
     void setModDepth      (float depth);
     void setModRate       (float hz);
     void setShimmerDownOctaveMix (float mix);   // Shimmer warm-low voice (octave down); 0 = bit-null
+    void setShimmerSubOctaveMix  (float mix);   // Shimmer deep-low voice (2 octaves down → 250 Hz); 0 = bit-null
+    void setShimmerFeedbackHpfHz (float hz);    // Shimmer feedback-loop HPF corner (low-cascade survival); default 60
+    void setShimmerStereoMod     (float rateHz, float depth); // Shimmer wet stereo chorus/ensemble; depth 0 = bit-null
+    void setShimmerHFAir         (float mix);   // Shimmer post-loop +12st air voice (genuine >12k air); mix 0 = bit-null
+    void setShimmerUseDenseReverb (bool on);    // Shimmer tank: DenseHall (smooth HF) vs legacy sparse FDN (metallic); false = bit-identical
+    void setShimmerUseTailSpin    (bool on);    // Shimmer FDN output spin-comb (smears metallic, keeps FDN cascade/width/HF); false = untouched
+    void setShimmerUpVoiceScale   (float v1, float v2);  // Shimmer +12/+24 up-voice scale (mid-tail fill); 1.0/1.0 = bit-identical
+    void setShimmerOctaveCascade  (const float gains[4]); // Shimmer dry-fed even down-cascade (500/250/125/62); all 0 = bit-null
+    void setShimmerTailNoise      (float gain);  // Shimmer envelope-tracked tail noise floor (dense noise-like fade); 0 = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);
@@ -424,6 +434,16 @@ public:
     // DattorroPlateVintage front-load early-reflection network (algo 1 only).
     // erGain 0 = bypassed (byte-identical). See DattorroPlateVintage::setFrontLoad.
     void setDpvFrontLoad         (float erGain, float predelayMs, float tapMs, float lpHz);
+    // DPV post-main second reflection tap (the anchor's ~143 ms "duh-DUH").
+    // gain 0 = off = byte-identical. Forwards to DattorroPlateVintage::setPostMainTap.
+    void setDpvPostMainTap       (float ms, float gain, float lpHz);
+    // DPV dense early-field (fills the post-onset 0.1-0.5s "shelf"). gain 0 = off.
+    void setDpvDenseField        (float gain, float predelayMs, float t60Ms);
+    // Dattorro (algo 0) dense early-field — the SAME compact Schroeder field as the
+    // DPV one, but summed post-tank in this engine (DattorroTank.cpp stays untouched →
+    // all algo-0 presets bit-null when off). Fills the thin tail of the short rooms
+    // (Medium Drum Room: decay sub/low/mid -23..-30% vs anchor). gain 0 = off.
+    void setDattorroDenseField   (float gain, float predelayMs, float t60Ms);
 
     // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
     // to silence. Used by the processor to bring an idle engine to a clean
@@ -457,6 +477,7 @@ private:
     NonLinearEngine    nonLinear_;
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
+    DenseEarlyField    dattorroDenseField_; // algo 0 dense early-field, summed post-tank (off by default → bit-null). See setDattorroDenseField.
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.

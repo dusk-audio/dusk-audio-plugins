@@ -47,9 +47,39 @@ void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
     erLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (frontLpHz_, 0.45f * sampleRate_) / sampleRate_);
     erLpZL_ = erLpZR_ = 0.0f;
 
+    // Post-main second-reflection tap ring (~300 ms headroom for a ~143 ms tap).
+    const int postMax = std::max (16, static_cast<int> (0.30f * sampleRate_));
+    postMainL_.prepare (postMax); postMainR_.prepare (postMax);
+    postMainDelayL_ = std::min (std::max (1, static_cast<int> (postMainMs_ * 0.001f * sampleRate_)), postMainL_.mask);
+    postMainDelayR_ = std::min (std::max (1, static_cast<int> ((postMainMs_ + 9.0f) * 0.001f * sampleRate_)), postMainR_.mask);
+    postMainLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (postMainLpHz_, 0.45f * sampleRate_) / sampleRate_);
+    postMainLpZL_ = postMainLpZR_ = 0.0f;
+
+    // Dense early-field combs/allpasses + predelay (generous headroom).
+    const float rr = sampleRate_ / 44100.0f;
+    for (int c = 0; c < 4; ++c)
+    {
+        dfComb_[c].prepare (static_cast<int> (kDfCombMs[c] * 0.001f * sampleRate_) + 8);
+        dfCombLen_[c] = std::max (1, static_cast<int> (kDfCombMs[c] * 0.001f * sampleRate_));
+    }
+    dfAp1_.prepare (static_cast<int> (kDfAp1Ms * 0.001f * sampleRate_) + 8);
+    dfAp2_.prepare (static_cast<int> (kDfAp2Ms * 0.001f * sampleRate_) + 8);
+    dfAp1Len_ = std::max (1, static_cast<int> (kDfAp1Ms * 0.001f * sampleRate_));
+    dfAp2Len_ = std::max (1, static_cast<int> (kDfAp2Ms * 0.001f * sampleRate_));
+    dfPre_.prepare (static_cast<int> (0.30f * sampleRate_));   // up to 300 ms predelay
+    dfApR_.prepare (static_cast<int> (kDfDecorrMs * 0.001f * sampleRate_) + 8);
+    dfApRLen_ = std::max (1, static_cast<int> (kDfDecorrMs * 0.001f * sampleRate_));
+    dfLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (kDfLpHz, 0.45f * sampleRate_) / sampleRate_);
+    dfLpZ_ = 0.0f;
+    (void) rr;
+
     tank_.setStructuralHFDamping (structHfDampHz_);
 
     prepared_ = true;
+
+    // After prepared_ — setDenseField()'s recompute path is guarded on it, so
+    // dfPreSamp_/dfCombG_ would stay uninitialised if called earlier.
+    setDenseField (dfGain_, dfPredelayMs_, dfT60Ms_);   // (re)compute feedback + predelay
 }
 
 void DattorroPlateVintage::clearBuffers()
@@ -62,6 +92,11 @@ void DattorroPlateVintage::clearBuffers()
     erDelayL_.clear(); erDelayR_.clear();
     tankPreL_.clear(); tankPreR_.clear();
     erLpZL_ = erLpZR_ = 0.0f;
+    postMainL_.clear(); postMainR_.clear();
+    postMainLpZL_ = postMainLpZR_ = 0.0f;
+    for (int c = 0; c < 4; ++c) dfComb_[c].clear();
+    dfAp1_.clear(); dfAp2_.clear(); dfPre_.clear(); dfApR_.clear();
+    dfLpZ_ = 0.0f;
 }
 
 void DattorroPlateVintage::process (const float* inputL, const float* inputR,
@@ -126,6 +161,12 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
             earlyL_[static_cast<size_t> (n)] = frontErGain_ * erLpZL_;
             earlyR_[static_cast<size_t> (n)] = frontErGain_ * erLpZR_;
             // Pre-delay the tank input so its dense field fills in after the build.
+            // CAUTION: this OVERWRITES preTankL_/R_ with the PREDELAYED input. The post-main
+            // tap + dense field (post-tank loop) also read preTankL_/R_, so front-load is
+            // MUTUALLY EXCLUSIVE with them on a single preset — re-enabling front-load
+            // alongside the dense field would feed the tap/field the predelayed copy (wrong
+            // tap timing). Today no preset combines them (kDpvFrontLoadByName + kDpvPostMainTapByName
+            // are both empty); if that changes, capture the original pre-tank into a separate buffer.
             tankPreL_.write (il); tankPreR_.write (ir);
             preTankL_[static_cast<size_t> (n)] = tankPreL_.readAgo (frontPredelaySamp_);
             preTankR_[static_cast<size_t> (n)] = tankPreR_.readAgo (frontPredelaySamp_);
@@ -146,6 +187,56 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
         {
             l += earlyL_[static_cast<size_t> (n)];
             r += earlyR_[static_cast<size_t> (n)];
+        }
+        // Post-main second reflection tap: a darkened, delayed copy of the
+        // pre-tank signal summed POST-tank so it arrives AFTER the main onset —
+        // the anchor's ~143 ms second arrival, WITHOUT pre-echo. preTankL_ holds
+        // the pre-tank filtered signal (front is off for VVP). gain 0 = bit-null.
+        if (postMainActive_)
+        {
+            const float dl = postMainL_.readAgo (postMainDelayL_);
+            const float dr = postMainR_.readAgo (postMainDelayR_);
+            // Write silence while frozen so the tap admits no new input and its
+            // held content drains out with the frozen tank (mirrors the dense
+            // field's dfFrozen_ 0-feed above).
+            postMainL_.write (dfFrozen_ ? 0.0f : preTankL_[static_cast<size_t> (n)]);
+            postMainR_.write (dfFrozen_ ? 0.0f : preTankR_[static_cast<size_t> (n)]);
+            postMainLpZL_ += postMainLpCoeff_ * (dl - postMainLpZL_);
+            postMainLpZR_ += postMainLpCoeff_ * (dr - postMainLpZR_);
+            l += postMainGain_ * postMainLpZL_;
+            r += postMainGain_ * postMainLpZR_;
+        }
+        // Dense early-field: predelayed mono input → 4 parallel combs (dense
+        // diffuse buildup, medium decay) → 2 series allpasses → summed to output.
+        // Fills the post-onset 0.1-0.5 s shelf the sparse tank can't (no pre-echo:
+        // the predelay starts it after the main onset).
+        if (dfActive_)
+        {
+            // Fed 0 when frozen so the dense field decays out with the held tank
+            // (mirrors the algo-0 path in DuskVerbEngine).
+            const float xin = dfFrozen_ ? 0.0f
+                : 0.5f * (preTankL_[static_cast<size_t> (n)] + preTankR_[static_cast<size_t> (n)]);
+            // Read the predelayed tap BEFORE advancing the ring so dfPreSamp_ maps
+            // to an exact dfPreSamp_-sample delay (write-then-read was one sample
+            // early and aliased a stale slot at zero delay). Fast path for 0.
+            const float xp = (dfPreSamp_ == 0) ? xin : dfPre_.readAgo (dfPreSamp_);
+            dfPre_.write (xin);
+            float s = 0.0f;
+            for (int c = 0; c < 4; ++c)
+            {
+                const float d = dfComb_[c].readAgo (dfCombLen_[c]);
+                dfComb_[c].write (xp + dfCombG_[c] * d);
+                s += d;
+            }
+            s *= 0.25f;
+            const float a1 = dfAp1_.readAgo (dfAp1Len_); const float y1 = -kDfApG * s  + a1; dfAp1_.write (s  + kDfApG * y1);
+            const float a2 = dfAp2_.readAgo (dfAp2Len_); const float y2 = -kDfApG * y1 + a2; dfAp2_.write (y1 + kDfApG * y2);
+            // Darken (early reflections are duller) then decorrelate R for stereo.
+            dfLpZ_ += dfLpCoeff_ * (y2 - dfLpZ_);
+            const float yL = dfLpZ_;
+            const float ar = dfApR_.readAgo (dfApRLen_); const float yR = -kDfDecorrG * yL + ar; dfApR_.write (yL + kDfDecorrG * yR);
+            l += dfGain_ * yL;
+            r += dfGain_ * yR;
         }
         outputL[n] = l;
         outputR[n] = r;
@@ -172,7 +263,7 @@ void DattorroPlateVintage::setOctaveDecayRef    (float v) { tank_.setOctaveDecay
 void DattorroPlateVintage::setTonalCorrDb     (int b, float v) { tank_.setTonalCorrDb (b, v); }
 void DattorroPlateVintage::setBloomAttackMs     (float v) { tank_.setBloomAttackMs     (v); }
 void DattorroPlateVintage::setBloomExp          (float v) { tank_.setBloomExp          (v); }
-void DattorroPlateVintage::setFreeze            (bool  v) { tank_.setFreeze            (v); }
+void DattorroPlateVintage::setFreeze            (bool  v) { dfFrozen_ = v; tank_.setFreeze (v); }
 
 void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz)
 {
@@ -188,6 +279,39 @@ void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float t
         // representable instead. (2026-06-23 review fix; latent — current callers stay small.)
         frontPredelaySamp_ = std::min (frontPredelaySamp_, tankPreL_.mask);
         erLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (frontLpHz_, 0.45f * sampleRate_) / sampleRate_);
+    }
+}
+
+void DattorroPlateVintage::setPostMainTap (float ms, float gain, float lpHz)
+{
+    postMainMs_     = std::max (1.0f, ms);
+    postMainGain_   = std::clamp (gain, 0.0f, 4.0f);
+    postMainLpHz_   = std::clamp (lpHz, 1000.0f, 20000.0f);
+    postMainActive_ = postMainGain_ > 1.0e-6f;
+    if (prepared_)
+    {
+        postMainDelayL_ = std::min (std::max (1, static_cast<int> (postMainMs_ * 0.001f * sampleRate_)), postMainL_.mask);
+        postMainDelayR_ = std::min (std::max (1, static_cast<int> ((postMainMs_ + 9.0f) * 0.001f * sampleRate_)), postMainR_.mask);
+        postMainLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (postMainLpHz_, 0.45f * sampleRate_) / sampleRate_);
+    }
+}
+
+void DattorroPlateVintage::setDenseField (float gain, float predelayMs, float t60Ms)
+{
+    dfGain_       = std::clamp (gain, 0.0f, 4.0f);
+    dfPredelayMs_ = std::max (0.0f, predelayMs);
+    dfT60Ms_      = std::clamp (t60Ms, 50.0f, 2000.0f);
+    dfActive_     = dfGain_ > 1.0e-6f;
+    if (prepared_)
+    {
+        dfPreSamp_ = std::min (std::max (0, static_cast<int> (dfPredelayMs_ * 0.001f * sampleRate_)), dfPre_.mask);
+        const float t60s = dfT60Ms_ * 0.001f;
+        for (int c = 0; c < 4; ++c)
+        {
+            // Schroeder comb feedback for the target T60: g = 10^(-3·Lsec/T60).
+            const float Lsec = dfCombLen_[c] / sampleRate_;
+            dfCombG_[c] = std::clamp (std::pow (10.0f, -3.0f * Lsec / t60s), 0.0f, 0.97f);
+        }
     }
 }
 

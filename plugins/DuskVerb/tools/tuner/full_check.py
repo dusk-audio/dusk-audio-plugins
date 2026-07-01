@@ -175,6 +175,16 @@ GATES = {
     # Catches "DV drops, Lex holds flat" contour mismatch that scalar
     # decay metrics miss. <2 dB is excellent; 5 dB is audibly different.
     'env_shape_l1_dB':      3.0,
+    # TAIL DECAY-ENVELOPE match (2026-06-29, EAR "Lex fuller / rings out longer").
+    # The per-octave T60 gate fits the -5to-25 dB EARLY slope on the NOISEBURST
+    # and extrapolates assuming EXPONENTIAL decay — but the Lex Vintage Plate is
+    # NON-EXPONENTIAL (a loud 0.3-0.5 s "shelf" + a long quiet ringout) on the
+    # SNARE. Matching the early slope makes DV's exponential tail die too soon
+    # (sounds short/thin) while the noiseburst T60 reads DV as "too long". This
+    # gate compares the SNARE tail's dB-below-peak (the perceived ringout, level-
+    # independent) at 0.3/0.5/0.8/1.2 s vs the anchor — the decay SHAPE the ear
+    # actually hears. Mean |Δ| over the audible points; perceptual decay JND ~3 dB.
+    'decay_tail_l1_dB':     3.0,
     # Late-window low-band integrated RMS — catches "boomy" tail (DV bass
     # rings 0.5-2 s past where Lex's structural damping has attenuated it).
     # spec_L1 averaging is steady-state-spectrum-only and can pass while
@@ -221,6 +231,7 @@ GATES = {
     # high) — heard as "DV brighter / more honky" on vocal material.
     # Asymmetric tolerance because hot is the audible defect.
     'sine1k_full_rms_dB':   2.0,
+    'down_octave_cascade_dB': 4.0,   # SHIMMER only: per-band rel-fundamental JND on the SUSTAINED-sine down-octave cascade (the regenerative low warmth the 2s sine1k can't show)
     # PER-STIMULUS RMS DELTA — broadband level on each stimulus. Single
     # Gain Trim knob can't match all stimuli simultaneously when the
     # spectrum diverges, so this is informational + advisory. Gate as
@@ -273,7 +284,7 @@ ENGINE_CEILINGS = {
 # the h3 odd-harmonic clip signature), so the THD gate is meaningless here and is
 # skipped. Name-based, not category: "Black Hole" is category "Ambient" but still
 # Shimmer. The other distortion checks still apply.
-SHIMMER_PRESETS = {'Black Hole', 'Cascading Heaven', 'Deep Blue Day'}
+SHIMMER_PRESETS = {'Black Hole', 'Deep Blue Day'}   # the 2 shimmer (algo 7) presets; Cascading Heaven/Mobius were deleted in the 2026-06 roster cleanup
 
 
 def _is_ceiling(gate_id: str, category: str) -> bool:
@@ -426,6 +437,29 @@ def _full_rms_db (p):
     import soundfile as sf
     x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
     return float(20.0 * np.log10(max(np.sqrt(np.mean(m ** 2)), 1.0e-12)))
+
+
+_CASCADE_BANDS = [(31, 60), (60, 125), (125, 250), (235, 265), (470, 530)]
+
+def _rel_fundamental_bands (p, t0=10.0, t1=14.0):
+    """Per-band RMS normalized to the 1 kHz fundamental (dB), from a steady window of a
+    SUSTAINED sine render. Gain-independent (rel to the fundamental), so it survives the
+    noiseburst gain-match. Returns None if the render is too short (e.g. the old 2 s file)."""
+    import soundfile as sf
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    i0, i1 = int(t0 * sr), min(int(t1 * sr), len(m))
+    if i1 - i0 < int(sr * 1.0):
+        return None
+    seg = m[i0:i1]
+    X = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1.0 / sr)
+    def band_rms (lo, hi):
+        msk = (f >= lo) & (f < hi)
+        return float(np.sqrt(np.mean(X[msk] ** 2))) if msk.any() else 0.0
+    fund = band_rms(960.0, 1040.0)
+    if fund < 1.0e-9:
+        return None
+    return {(lo, hi): 20.0 * np.log10(band_rms(lo, hi) / fund + 1.0e-12) for (lo, hi) in _CASCADE_BANDS}
 
 
 def _sine1k_thd_pct (p, f0=1000.0):
@@ -1418,7 +1452,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     snare_lx = find_stim(lex_dir, 'snare')
     if snare_dv and snare_lx:
         from metrics_external import envelope_shape_l1 as _env_l1
-        x_dv, sr_dv = sf.read(snare_dv); x_lx, _ = sf.read(snare_lx)
+        x_dv, sr_dv = sf.read(snare_dv); x_lx, sr_lx = sf.read(snare_lx)
         m_dv = x_dv.mean(axis=1) if x_dv.ndim>1 else x_dv
         m_lx = x_lx.mean(axis=1) if x_lx.ndim>1 else x_lx
         env_l1 = _env_l1(m_dv, m_lx, sr_dv, post_peak_ms=500.0)
@@ -1428,6 +1462,34 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         print(line)
         if not passing and env_l1 == env_l1:
             fails.append(line.strip())
+
+    # ─── Tail decay-envelope match (perceptual ringout + fullness) ───
+    # The early-slope T60 gate (noiseburst, -5to-25 dB, exponential extrapolation)
+    # misses the Lex's non-exponential SNARE tail (loud 0.3-0.5 s shelf + long
+    # quiet ringout) the ear hears as "fuller / rings out longer". Compare the
+    # snare tail's dB-below-peak (decay SHAPE, level-independent) at perceptual
+    # times vs the anchor. See GATES['decay_tail_l1_dB'].
+    if snare_dv and snare_lx:
+        def _tail_env_db (m, sr):
+            pk = float (np.max (np.abs (m))) + 1.0e-12
+            out = {}
+            for tt in (0.3, 0.5, 0.8, 1.2):
+                a = int (tt * sr); seg = m[a : a + int (0.05 * sr)]
+                out[tt] = (20.0 * np.log10 (np.sqrt (np.mean (seg ** 2)) / pk + 1.0e-12)
+                           if len (seg) > 16 else None)
+            return out
+        ed_dv = _tail_env_db (m_dv, sr_dv); ed_lx = _tail_env_db (m_lx, sr_lx)
+        # Compare only where the anchor tail is still audible (>= -95 dB below peak).
+        diffs = [abs (ed_dv[tt] - ed_lx[tt]) for tt in ed_dv
+                 if ed_dv[tt] is not None and ed_lx[tt] is not None and ed_lx[tt] >= -95.0]
+        if diffs:
+            tail_l1 = float (np.mean (diffs))
+            print("\n── TAIL DECAY-ENVELOPE (snare, perceptual ringout/fullness 0.3-1.2 s) ──")
+            passing = tail_l1 <= GATES['decay_tail_l1_dB']
+            line = (f"  {'decay_tail_L1 (dB)':30s}  {tail_l1:6.2f}  "
+                    f"gate=±{GATES['decay_tail_l1_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
 
     # ─── Oscillation (detrended envelope ripple) ───
     if dv and lx:
@@ -1558,6 +1620,32 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     if dv_dir and lex_dir and name in SHIMMER_PRESETS:
         print("\n── SINE 1 kHz THD ── SKIPPED (Shimmer engine: octave pitch-shift "
               "reads as harmonics by design)")
+        # Down-octave cascade gate (SHIMMER only) — the regenerative low warmth a 1 kHz
+        # tone develops over SECONDS. Measured on the SUSTAINED *_sinelong.wav (the 2 s
+        # sine1k is too short for the cascade to build). Rel-fundamental, so gain-safe.
+        print("\n── DOWN-OCTAVE CASCADE (sustained 1 kHz, rel. fundamental) ──")
+        dv_sl = find_stim(dv_dir, 'sinelong'); lx_sl = find_stim(lex_dir, 'sinelong')
+        if not (dv_sl and lx_sl):
+            print("  cascade                      SKIPPED (no *_sinelong.wav — render with --long-sine-seconds 15)")
+        else:
+            dvb = _rel_fundamental_bands(dv_sl); lxb = _rel_fundamental_bands(lx_sl)
+            if dvb is None or lxb is None:
+                print("  cascade                      SKIPPED (sinelong too short)")
+            else:
+                # Only count bands where the ANCHOR has perceptually relevant content
+                # (>= -45 dB rel fundamental). Presets without a down voice (Black Hole)
+                # have a near-silent cascade in BOTH → no qualifying band → gate skipped.
+                for b in _CASCADE_BANDS:
+                    print(f"    {b[0]:>4}-{b[1]:<4} Hz   DV={dvb[b]:+6.1f}  VVV={lxb[b]:+6.1f}  Δ={dvb[b]-lxb[b]:+5.1f}")
+                diffs = [abs(dvb[b] - lxb[b]) for b in _CASCADE_BANDS if lxb[b] >= -45.0]
+                if not diffs:
+                    print("  down-octave cascade          SKIPPED (anchor has no down-octave content)")
+                else:
+                    l1 = float(np.mean(diffs)); g = GATES['down_octave_cascade_dB']
+                    passing = l1 <= g
+                    line = (f"  down-octave cascade L1 (dB)   {l1:5.2f}  gate=±{g}  {'✓' if passing else '✗'}")
+                    print(line)
+                    if not passing: fails.append(line.strip())
     elif dv_dir and lex_dir:
         print("\n── SINE 1 kHz THD (nonlinearity detector, DV-excess over anchor) ──")
         thd_gate = GATES['sine1k_thd_excess_pct']
