@@ -109,6 +109,24 @@ public:
     // pre-network engine byte-for-byte.
     void setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz);
 
+    // Post-main discrete second reflection tap — the anchor's "duh-DUH"
+    // (Lexicon Vintage Plate: main onset ~83 ms + a near-equal SECOND arrival
+    // ~143 ms). A darkened, stereo-decorrelated, delayed copy of the pre-tank
+    // signal summed POST-tank, arriving AFTER the main onset (the opposite of
+    // the front-load ER, which pre-echoes). Mirrors DenseHall's reflBuf tap.
+    // ms = tap time (input-relative), gain = level (>1 allowed), lpHz = darken.
+    // gain 0 = off = byte-identical.
+    void setPostMainTap (float ms, float gain, float lpHz);
+
+    // Dense early-field — a compact Schroeder reverb (4 parallel combs + 2 series
+    // allpasses) fed from the pre-tank input via a predelay, summed POST-tank.
+    // Fills the loud post-onset 0.1-0.5 s "shelf" a real plate has but the sparse
+    // Dattorro tank lacks (its early field disperses too fast → thin/peaked). The
+    // predelay keeps it AFTER the main onset (no pre-echo); the combs build dense
+    // diffuse energy (not discrete taps → no diffusion_flux spike) then decay at
+    // t60Ms. gain 0 = off = byte-identical.
+    void setDenseField (float gain, float predelayMs, float t60Ms);
+
 private:
     DattorroTank tank_;
 
@@ -242,6 +260,36 @@ private:
     static constexpr int   kErTaps = 3;
     static constexpr float kErTapFrac[kErTaps] = { 0.30f, 0.60f, 0.92f };
     static constexpr float kErTapGain[kErTaps] = { 0.50f, 0.72f, 1.00f };
+
+    // ── Post-main second reflection tap (see setPostMainTap) ──
+    // Delayed darkened copy of the pre-tank signal, summed POST-tank so it lands
+    // AFTER the main onset (no pre-echo). Power-of-2 ring + 1-pole LP + R offset
+    // for L/R decorrelation. gain 0 → inactive → bit-null (skipped entirely).
+    RingDelay postMainL_, postMainR_;
+    int   postMainDelayL_ = 0, postMainDelayR_ = 0;
+    float postMainGain_   = 0.0f;                 // 0 = off (bit-null)
+    float postMainLpZL_   = 0.0f, postMainLpZR_ = 0.0f, postMainLpCoeff_ = 1.0f;
+    float postMainMs_     = 143.0f;               // tap time (input-relative)
+    float postMainLpHz_   = 6000.0f;              // darken (real reflections are duller)
+    bool  postMainActive_ = false;
+
+    // ── Dense early-field (see setDenseField) ── 4 combs + 2 allpasses, mono.
+    RingDelay dfComb_[4], dfAp1_, dfAp2_, dfPre_;
+    int   dfCombLen_[4] = { 0, 0, 0, 0 }, dfAp1Len_ = 0, dfAp2Len_ = 0, dfPreSamp_ = 0;
+    float dfCombG_[4]   = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float dfGain_       = 0.0f;                    // 0 = off (bit-null)
+    float dfT60Ms_      = 500.0f, dfPredelayMs_ = 70.0f;
+    bool  dfActive_     = false;
+    bool  dfFrozen_     = false;                   // when set, dense field is zero-fed (decays with the tank)
+    float dfLpZ_        = 0.0f, dfLpCoeff_ = 1.0f; // darken (early reflections are duller)
+    RingDelay dfApR_;   int dfApRLen_ = 0;         // R-channel decorrelation allpass (stereo)
+    static constexpr float kDfApG   = 0.7f;
+    static constexpr float kDfLpHz  = 12000.0f;    // dense-field band-limit (near-bypass; LP hurt the shelf fill)
+    static constexpr float kDfDecorrMs = 3.7f;     // R decorrelation delay (mild)
+    static constexpr float kDfDecorrG  = 0.14f;    // mild decorrelation (anchor early field is near-mono)
+    // Comb/allpass base delays (ms @ 44.1k) — prime-ish, dense buildup.
+    static constexpr float kDfCombMs[4] = { 23.3f, 29.7f, 37.1f, 43.3f };
+    static constexpr float kDfAp1Ms = 5.5f, kDfAp2Ms = 1.7f;
     // Per-preset EQ state — cached so individual setter calls re-design
     // the affected filter without losing the other axis's setting. Defaults
     // match the original Vintage Vocal Plate calibration.

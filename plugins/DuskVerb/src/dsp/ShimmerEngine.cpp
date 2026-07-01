@@ -200,6 +200,16 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     pitchDownR_.setModulation (6.1f, 0.018f, 0xD0117Bu);
     pitchDownL_.setPitchRatio (kVoiceDownRatio);   // −1 oct (×0.5 → 500 Hz)
     pitchDownR_.setPitchRatio (kVoiceDownRatio);
+    pitchSubL_.prepare (sampleRate);
+    pitchSubR_.prepare (sampleRate);
+    pitchSubL_.setModulation (4.7f, 0.018f, 0x5B0117Au);
+    pitchSubR_.setModulation (5.9f, 0.018f, 0x5B0117Bu);
+    pitchSubL_.setPitchRatio (kVoiceSubRatio);     // −2 oct (×0.25 → 250 Hz)
+    pitchSubR_.setPitchRatio (kVoiceSubRatio);
+    stereoMod_.prepare (sampleRate);
+    air_.prepare (sampleRate);
+    air_.setMix (airMix_);
+    stereoMod_.setParams (stereoModRate_, stereoModDepth_, sampleRate);
 
     // Hall reverb baseline: long, lush, slightly dark (period-correct
     // for the late-1970s digital hall hardware character that the original Eno/Lanois rig used).
@@ -230,8 +240,8 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     fbDelayLineR_.assign (static_cast<size_t> (fbDelaySamples_), 0.0f);
 
     const float sr = static_cast<float> (sampleRate);
-    fbHpfL_.setHPCutoff (kFeedbackHpfHz, sr);
-    fbHpfR_.setHPCutoff (kFeedbackHpfHz, sr);
+    fbHpfL_.setHPCutoff (feedbackHpfHz_, sr);
+    fbHpfR_.setHPCutoff (feedbackHpfHz_, sr);
     fbLpfL_.setLPCutoff (kFeedbackLpfHz, sr);
     fbLpfR_.setLPCutoff (kFeedbackLpfHz, sr);
     fbHpfL_.clear(); fbHpfR_.clear();
@@ -249,6 +259,10 @@ void ShimmerEngine::clearBuffers()
     pitch2R_.clear();
     pitchDownL_.clear();
     pitchDownR_.clear();
+    pitchSubL_.clear();
+    pitchSubR_.clear();
+    stereoMod_.clear();
+    air_.clear();
     reverb_.clearBuffers();
     std::fill (reverbInL_.begin(), reverbInL_.end(), 0.0f);
     std::fill (reverbInR_.begin(), reverbInR_.end(), 0.0f);
@@ -280,6 +294,21 @@ void ShimmerEngine::setCrossoverFreq  (float hz)   { reverb_.setCrossoverFreq  (
 void ShimmerEngine::setHighCrossoverFreq (float hz){ reverb_.setHighCrossoverFreq (hz); }
 void ShimmerEngine::setTankDiffusion (float amount){ reverb_.setTankDiffusion (amount); }
 void ShimmerEngine::setDownOctaveMix (float mix)   { downMix_ = std::clamp (mix, 0.0f, 4.0f); }
+void ShimmerEngine::setSubOctaveMix  (float mix)   { subMix_  = std::clamp (mix, 0.0f, 4.0f); }
+void ShimmerEngine::setHFAir (float mix) { airMix_ = mix; air_.setMix (mix); }
+void ShimmerEngine::setStereoMod (float rateHz, float depth)
+{
+    stereoModRate_  = rateHz;
+    stereoModDepth_ = depth;
+    stereoMod_.setParams (rateHz, depth, sampleRate_);
+}
+void ShimmerEngine::setFeedbackHpfHz (float hz)
+{
+    feedbackHpfHz_ = std::clamp (hz, 15.0f, 200.0f);
+    const float sr = static_cast<float> (sampleRate_);
+    fbHpfL_.setHPCutoff (feedbackHpfHz_, sr);
+    fbHpfR_.setHPCutoff (feedbackHpfHz_, sr);
+}
 
 void ShimmerEngine::setSaturation (float amount)
 {
@@ -376,13 +405,25 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // its 50 ms passes → loud deep low that builds SMOOTHLY (no abrupt "kick-in"
         // like a self-feeding output ladder). softClip bounds the per-grain peaks; the
         // 60 Hz HPF below caps the sub; a MODERATE downMix_ keeps the loop gain < 1 so
-        // it stays bounded (the clip was over-cranking to 3.5). 0 → skipped → bit-null.
+        // it stays bounded (the clip was over-cranking to 3.5). 0 → branch skipped (byte-
+        // identical on non-shimmer presets; this loop is the recursive-feedback TU, see the .h).
         if (downMix_ > 0.0f)
         {
             pitchedFbL += downMix_ * DspUtils::softClip (pitchDownL_.process (fbSrcL),
                                                          kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
             pitchedFbR += downMix_ * DspUtils::softClip (pitchDownR_.process (fbSrcR),
                                                          kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
+        }
+        // Octave-DOWN-2 (sub) voice: reaches 250 Hz in ONE step where the −1 oct cascade
+        // dies out, then the loop regenerates 125→62 Hz from it → the deep low wash Valhalla
+        // Shimmer has. Same softClip + loop band-pass keep it bounded. 0 → branch skipped
+        // (byte-identical on non-shimmer presets; recursive-feedback TU, see the .h note).
+        if (subMix_ > 0.0f)
+        {
+            pitchedFbL += subMix_ * DspUtils::softClip (pitchSubL_.process (fbSrcL),
+                                                        kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
+            pitchedFbR += subMix_ * DspUtils::softClip (pitchSubR_.process (fbSrcR),
+                                                        kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
         }
 
         // Band-pass the pitch-shifted feedback: HPF removes grain-rate
@@ -426,7 +467,15 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         fbDelayLineR_[static_cast<size_t> (fbDelayWritePos_)] = wR;
         if (++fbDelayWritePos_ >= fbDelaySamples_) fbDelayWritePos_ = 0;
 
-        outL[n] = std::tanh (wL * kWetOutputGain);
-        outR[n] = std::tanh (wR * kWetOutputGain);
+        float oL = wL, oR = wR;
+
+        // Stereo modulation on the OUTPUT ONLY (post-feedback-write so the loop is
+        // unaffected). depth 0 → struct inactive → oL/oR unchanged → bit-null.
+        // Post-loop HF-air voice (genuine >12 kHz air; bypasses the reverb HF-damp + loop LPF).
+        // Taps the raw wet (wL/wR), pitches its 6-12 kHz up to 12-24 k. mix 0 → bit-null.
+        if (air_.active) air_.process (wL, wR, oL, oR);
+        if (stereoMod_.active) stereoMod_.process (oL, oR);
+        outL[n] = std::tanh (oL * kWetOutputGain);
+        outR[n] = std::tanh (oR * kWetOutputGain);
     }
 }

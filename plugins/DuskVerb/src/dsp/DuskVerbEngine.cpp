@@ -24,6 +24,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     // All engines stay prepared so setAlgorithm() never has to allocate.
     dattorro_.prepare (sampleRate, maxBlockSize);
+    dattorroDenseField_.prepare (sampleRate);
     sixAPTank_.prepare (sampleRate, maxBlockSize);
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize); accurateHall_.prepare (sampleRate, maxBlockSize);
@@ -156,6 +157,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 void DuskVerbEngine::clearAllBuffers()
 {
     dattorro_ .clearBuffers();
+    dattorroDenseField_.clear();
     sixAPTank_.clearBuffers();
     quad_     .clearBuffers();
     fdn_      .clearBuffers();
@@ -269,6 +271,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     currentEngine_ = getAlgorithmConfig (index).engine;
 
     dattorro_.clearBuffers();
+    dattorroDenseField_.clear();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
     fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear();
@@ -784,6 +787,10 @@ void DuskVerbEngine::setModRate (float hz)
 
 // Shimmer octave-DOWN voice level (the warm low). Shimmer engine only; 0 = bit-null.
 void DuskVerbEngine::setShimmerDownOctaveMix (float mix) { shimmer_.setDownOctaveMix (mix); }
+void DuskVerbEngine::setShimmerSubOctaveMix  (float mix) { shimmer_.setSubOctaveMix  (mix); }
+void DuskVerbEngine::setShimmerFeedbackHpfHz (float hz)  { shimmer_.setFeedbackHpfHz (hz); }
+void DuskVerbEngine::setShimmerStereoMod     (float hz, float d) { shimmer_.setStereoMod (hz, d); }
+void DuskVerbEngine::setShimmerHFAir         (float mix) { shimmer_.setHFAir (mix); }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
 // Forward to the FDN tank and to ReverseRoom (which owns an FDN for its tail);
@@ -1113,6 +1120,21 @@ void DuskVerbEngine::setDpvFrontLoad (float erGain, float predelayMs, float tapM
     dattorroVintage_.setFrontLoad (erGain, predelayMs, tapMs, lpHz);
 }
 
+void DuskVerbEngine::setDpvPostMainTap (float ms, float gain, float lpHz)
+{
+    dattorroVintage_.setPostMainTap (ms, gain, lpHz);
+}
+
+void DuskVerbEngine::setDpvDenseField (float gain, float predelayMs, float t60Ms)
+{
+    dattorroVintage_.setDenseField (gain, predelayMs, t60Ms);
+}
+
+void DuskVerbEngine::setDattorroDenseField (float gain, float predelayMs, float t60Ms)
+{
+    dattorroDenseField_.setParams (gain, predelayMs, t60Ms);
+}
+
 void DuskVerbEngine::updateLoCutCoeffs (float hz)
 {
     // RBJ 2nd-order Butterworth high-pass.
@@ -1375,6 +1397,25 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         case EngineType::Dattorro:
             dattorro_.process (tankInL_.data(), tankInR_.data(),
                                tankOutL_.data(), tankOutR_.data(), numSamples);
+            // Dense early-field: predelayed dry-mono → compact Schroeder reverb,
+            // summed POST-tank to fill the thin post-onset shelf of the short rooms.
+            // Off (gain 0) → skipped entirely → tankOut byte-identical (bit-null).
+            // Fed 0 when frozen so the field decays out with the held tank.
+            if (dattorroDenseField_.active())
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    // Drive from the CLEAN dry-mono snapshot (captured before the
+                    // diffuser + tank-feed EQ mutate tankIn), not the processed
+                    // tank input, so the dense field is a defined discrete feed.
+                    const float xin = frozen_ ? 0.0f
+                        : reflDryMono_[static_cast<size_t> (i)];
+                    float dl = 0.0f, dr = 0.0f;
+                    dattorroDenseField_.processSample (xin, dl, dr);
+                    tankOutL_[static_cast<size_t> (i)] += dl;
+                    tankOutR_[static_cast<size_t> (i)] += dr;
+                }
+            }
             break;
         case EngineType::SixAPTank:
             sixAPTank_.process (tankInL_.data(), tankInR_.data(),
