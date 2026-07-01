@@ -281,6 +281,15 @@ public:
 
     void hideMenu()
     {
+        // Clear the base ComboBox's private `menuActive` flag. mouseDown() only opens the popup via
+        // showPopupIfNotActive(), which no-ops while `menuActive` is true; the base clears the flag
+        // in hidePopup(), but that is only invoked from the native popup's finished-callback, which
+        // we never trigger (we replaced the native popup with DuskPresetMenu). Without this reset
+        // the flag stays true after the first open, so the dropdown refuses to reopen once a preset
+        // has been selected or the menu dismissed (issue: dropdown dead after first use). hidePopup()
+        // self-guards on `menuActive`, so this is a cheap no-op when nothing is open.
+        hidePopup();
+
         if (activeMenu_ == nullptr) return;
         if (activeMenuHost_ != nullptr)
             activeMenuHost_->removeChildComponent (activeMenu_);

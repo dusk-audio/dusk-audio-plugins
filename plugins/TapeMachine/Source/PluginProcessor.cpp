@@ -579,11 +579,13 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         return;
 
     // Internal bypass: pass through. Latency is NOT touched here — it stays at the constant value
-    // set in prepareToPlay (and updated on the message thread via timerCallback() when the
-    // oversampling factor changes). Changing reported latency from the audio thread makes Bitwig's
-    // CLAP host restart the render every block, so offline export loops forever (issue #94). The
-    // oversampling latency is only a handful of samples, so a bypassed parallel copy is at worst
-    // sub-millisecond out of phase, which is a far smaller cost than a broken export.
+    // set in the constructor / prepareToPlay (and updated on the message thread via timerCallback()
+    // when the oversampling factor changes). Changing reported latency from the audio thread makes
+    // Bitwig's CLAP host restart the render every block, so offline export loops forever (issue #94).
+    // Deliberate trade-off: the plugin keeps reporting its oversampling latency (~60 samples at 4x,
+    // about a millisecond) while bypassed, so a bypassed instance on a PDC-compensated parallel bus
+    // can sit ~1 ms out of phase. That is a far smaller cost than a frozen export, and it cannot be
+    // corrected here without a latency change on the audio thread (the exact cause of #94).
     auto* bypassParamPtr = apvts.getRawParameterValue("bypass");
     if (bypassParamPtr != nullptr && bypassParamPtr->load() > 0.5f)
         return;
