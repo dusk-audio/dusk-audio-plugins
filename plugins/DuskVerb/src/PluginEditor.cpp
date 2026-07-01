@@ -542,6 +542,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     // category (Plates, Halls, Ambient, etc.) becomes a nested submenu so
     // the top-level menu fits in a small popup instead of one giant scroll.
     presetBox_.menuBuilder = [this] { return buildPresetMenu(); };
+    presetBox_.maxMenuColumns = 2;   // two columns; buildPresetMenu() inserts the column break
     addAndMakeVisible (presetBox_);
     refreshPresetList();
 
@@ -1145,7 +1146,17 @@ void DuskVerbEditor::resized()
     layoutKnobsInGroup ({ r3MacroX, row3Y, r3MacroW, row3H }, topPad,
                         { { &tone_, knobMed }, { &character_, knobMed }, { &duck_, knobMed } }, sf, row3BottomMargin);
 
-    titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };
+    // Patreon/supporters overlay opens only on the "DUSKVERB" wordmark itself,
+    // not the whole top row. Mirror the title draw in paint() (centred, 32*sf
+    // bold, 0.95 h-scale) to get the wordmark's actual bounds.
+    {
+        const auto sf = scaler_.getScaleFactor();
+        juce::Font titleFont (juce::FontOptions (32.0f * sf, juce::Font::bold));
+        titleFont.setHorizontalScale (0.95f);
+        const int textW = juce::GlyphArrangement::getStringWidthInt (titleFont, "DUSKVERB");
+        const int textX = (getWidth() - textW) / 2;
+        titleClickArea_ = { textX, scaler_.scaled (4), textW, scaler_.scaled (40) };
+    }
 
     if (supportersOverlay_)
         supportersOverlay_->setBounds (getLocalBounds());
@@ -1208,12 +1219,24 @@ juce::PopupMenu DuskVerbEditor::buildPresetMenu()
     // meant a pick "sometimes didn't take". A single scrollable column with
     // non-clickable section headers groups by category just as clearly and is
     // robust in-window (one mouse-down, no sideways submenu to miss/clip).
+    // Two columns: split at the category boundary nearest the halfway point so a
+    // header never detaches from its items (the bug that forced single-column).
+    // The explicit addColumnBreak() controls WHERE JUCE wraps, instead of letting
+    // it auto-split mid-category. maxMenuColumns=2 is set on presetBox_ to match.
+    const size_t splitTarget = presets.size() / 2;
+    bool columnBroken = false;
     juce::String currentCategory;
     for (size_t i = 0; i < presets.size(); ++i)
     {
         const juce::String cat = presets[i].category;
         if (cat != currentCategory)
         {
+            // Break to the second column at the first new category past halfway.
+            if (! columnBroken && i >= splitTarget)
+            {
+                menu.addColumnBreak();
+                columnBroken = true;
+            }
             menu.addSectionHeader (cat);
             currentCategory = cat;
         }

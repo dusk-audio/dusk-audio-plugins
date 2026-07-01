@@ -42,6 +42,12 @@ public:
         ids. */
     std::function<juce::PopupMenu()> menuBuilder;
 
+    /** Max columns for the popup. Default 1 = single scrolling column (keeps
+        category headers glued to their items). Set >1 only when the menuBuilder
+        inserts explicit addColumnBreak()s at category boundaries, so the split
+        can't detach a header from its items. */
+    int maxMenuColumns = 1;
+
     void showPopup() override
     {
         juce::PopupMenu menu = menuBuilder ? menuBuilder() : buildFlatMenu();
@@ -61,8 +67,10 @@ public:
                            // which detaches a category header from its items (the
                            // "Chambers" header landed bottom-left while its presets
                            // wrapped to the top-right column). One column + scroll
-                           // arrows keeps every header glued to its items.
-                           .withMaximumNumColumns (1);
+                           // arrows keeps every header glued to its items — UNLESS the
+                           // menuBuilder sets maxMenuColumns >1 AND inserts explicit
+                           // addColumnBreak()s at category boundaries (preset menu does).
+                           .withMaximumNumColumns (maxMenuColumns);
 
         // Render in-window. Parent to the top-level editor so the menu lives in
         // the existing plugin surface (no native popup window). If we are not
