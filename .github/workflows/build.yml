@@ -160,10 +160,14 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # gcc-11/g++-11 are in the default Ubuntu repos on the runner image, so no
-          # PPA is needed. The ubuntu-toolchain-r/test PPA add was the flaky step
-          # (launchpad resolution failures stalled + failed release builds); drop it.
-          apt-get update
+          # This job builds inside an Ubuntu 20.04 (focal) container for glibc
+          # compat, where gcc-11 is NOT in the base repos — it needs the
+          # ubuntu-toolchain-r/test PPA. That PPA add is occasionally flaky
+          # (launchpad resolution stalls), which failed past release builds, so
+          # wrap it in a timeout + retry rather than dropping it.
+          add_toolchain() { timeout 120 add-apt-repository -y ppa:ubuntu-toolchain-r/test && timeout 180 apt-get update; }
+          add_toolchain || { echo "PPA attempt 1 failed; retry in 15s"; sleep 15; add_toolchain; } \
+                        || { echo "PPA attempt 2 failed; retry in 30s"; sleep 30; add_toolchain; }
           apt-get install -y gcc-11 g++-11
           # Set GCC 11 as default for all compiler symlinks
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
