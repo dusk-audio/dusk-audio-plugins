@@ -355,6 +355,7 @@ private:
     juce::Rectangle<int> outputClipBounds;
     bool lastInputClipState = false;
     bool lastOutputClipState = false;
+    juce::String lastPresetName;  // #105: timer-poll to resync the preset-name dropdown after a late state restore
     void drawClipIndicator(juce::Graphics& g, juce::Rectangle<int> bounds, bool clipped);
 
     // Supporters overlay
