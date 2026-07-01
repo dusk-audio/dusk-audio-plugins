@@ -388,7 +388,11 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     britishPresetSelector.addItem("Air & Presence", 6);
     britishPresetSelector.addItem("Gentle Cut", 7);
     britishPresetSelector.addItem("Master Bus", 8);
-    britishPresetSelector.setSelectedId(1);
+    // dontSendNotification: this is a UI-only quick-preset combo that doesn't track the loaded
+    // preset, so it defaults to "Default" on open. Firing onChange here would call
+    // applyBritishPreset(1) ("Default - flat") AFTER construction and wipe the British params of
+    // whatever factory/user preset is loaded (issue #105 — reset on GUI open / session reload).
+    britishPresetSelector.setSelectedId(1, juce::dontSendNotification);
     britishPresetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     britishPresetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     britishPresetSelector.setVisible(false);
@@ -423,7 +427,10 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     tubePresetSelector.addItem("Full Mix", 5);
     tubePresetSelector.addItem("Subtle Warmth", 6);
     tubePresetSelector.addItem("Mastering", 7);
-    tubePresetSelector.setSelectedId(1);
+    // dontSendNotification: see britishPresetSelector above — firing onChange here would call
+    // applyTubePreset(1) ("Default - flat") after construction and wipe the loaded preset's Tube
+    // params (issue #105 — the async onChange was the reset the diagnostic log caught).
+    tubePresetSelector.setSelectedId(1, juce::dontSendNotification);
     tubePresetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     tubePresetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     tubePresetSelector.setVisible(false);
@@ -488,6 +495,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         bandDetailPanel->setMatchMode(isMatchMode);
     updateEQModeVisibility();
 
+
     // Initialize resizable UI using shared helper (handles size persistence)
     // Default: 1050x700, Min: 1050x550, Max: 3840x2160 (supports up to 4K displays)
     // Minimum width 1050px prevents toolbar control overlap in Digital mode
@@ -504,6 +512,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
 MultiQEditor::~MultiQEditor()
 {
+
     // Save window size for next session
     resizeHelper.saveSize();
 

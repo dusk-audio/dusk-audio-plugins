@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 #include "../MultiQ.h"
+#include "../MultiQEditor.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -331,6 +332,61 @@ static void testPan(MultiQ& plugin)
 }
 
 // ===== TEST: State Save/Restore Round-Trip =====
+// Issue #105 (the real bug): opening the editor must NOT reset the loaded British/Tube preset.
+// The tube/british quick-preset combos fired setSelectedId(1) with the default async
+// notification, so applyTube/BritishPreset(1) ("Default - flat") ran just after the editor was
+// built and wiped the loaded preset's params. Fix = dontSendNotification on those setSelectedId
+// calls. Needs a display (creates the real editor), so it self-skips on headless CI.
+static void testEditorPresetSurvivesOpen()
+{
+    std::cout << "\n--- Test: Editor open must not reset British/Tube preset (issue #105) ---\n";
+  #if JUCE_LINUX
+    if (juce::SystemStats::getEnvironmentVariable ("DISPLAY", juce::String()).isEmpty())
+    {
+        std::cout << "  (skipped: no DISPLAY — the editor needs X)\n";
+        return;
+    }
+  #endif
+    auto pump = []()
+    {
+        auto* mm = juce::MessageManager::getInstance();
+        mm->callAsync ([mm] { mm->stopDispatchLoop(); });
+        mm->runDispatchLoop();   // runs the queued async onChange (the old reset), then quits
+    };
+
+    auto testMode = [&pump] (int eqTypeVal, const juce::String& paramId, const juce::String& label)
+    {
+        MultiQ proc;
+        proc.setPlayConfigDetails (2, 2, 44100.0, 512);
+        proc.prepareToPlay (44100.0, 512);
+        auto val = [&proc] (const juce::String& id) { auto* p = proc.parameters.getRawParameterValue (id); return p ? p->load() : -999.0f; };
+
+        // Pick a factory preset for this mode whose tracked param is clearly non-default.
+        const auto& presets = proc.getFactoryPresets();
+        int chosen = -1; float before = 0.0f;
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            if (presets[i].eqType != eqTypeVal) continue;
+            proc.setCurrentProgram ((int) i + 1);
+            const float v = val (paramId);
+            if (std::abs (v) > 0.01f) { chosen = (int) i; before = v; break; }
+        }
+        const juce::String n0 = label + ": found a non-default factory preset";
+        check (n0.toRawUTF8(), chosen >= 0);
+        if (chosen < 0) return;
+
+        std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+        pump(); pump();   // let any queued async onChange fire (this was the reset)
+
+        const juce::String n1 = label + ": preset survives editor open";
+        checkDb (n1.toRawUTF8(), val (paramId), before, 0.05f);
+        if (ed) { proc.editorBeingDeleted (ed.get()); ed.reset(); }
+    };
+
+    testMode (3, ParamIDs::pultecLfBoostGain, "#105 Tube");
+    testMode (2, ParamIDs::britishLfGain,     "#105 British");
+}
+
 // Issue #105: British/Tube mode params must survive a getState/setState round-trip.
 // Reproduces the VST3 "resets to default on session open" path deterministically.
 static void testBritishTubeStateRoundTrip(MultiQ& plugin)
@@ -558,6 +614,7 @@ public:
         testPan(*plugin);
         testStateRoundTrip(*plugin);
         testBritishTubeStateRoundTrip(*plugin);
+        testEditorPresetSurvivesOpen();
         // LP+INV test skipped: FIR generation requires background thread + message loop
         // The LP+INV fix was verified manually and via pluginval automation tests
         // testINVLinearPhase(*plugin);
