@@ -160,7 +160,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          # gcc-11/g++-11 are in the default Ubuntu repos on the runner image, so no
+          # PPA is needed. The ubuntu-toolchain-r/test PPA add was the flaky step
+          # (launchpad resolution failures stalled + failed release builds); drop it.
           apt-get update
           apt-get install -y gcc-11 g++-11
           # Set GCC 11 as default for all compiler symlinks
