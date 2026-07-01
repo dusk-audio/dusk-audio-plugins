@@ -501,7 +501,13 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         float octMono = 0.0f;
         if (octActive_)
         {
-            float src = 0.5f * (inL[n] + inR[n]);
+            // Feed SILENCE while frozen: the octave cascade reads the LIVE dry input (unlike the
+            // pitch voices, which read the frozen feedback), so tracking live input during a freeze
+            // would leak that freeze-time material into the octaves on un-freeze. Silence drains
+            // the grain buffers so the held tank stays clean and the cascade resumes from the live
+            // input on release. (When frozen the reverb discards its input anyway; this keeps the
+            // generator state aligned with the freeze so there's no unfreeze transient.)
+            float src = frozen_ ? 0.0f : 0.5f * (inL[n] + inR[n]);
             for (int i = 0; i < kNumOctaves; ++i)
             {
                 src = octGenL_[i].process (src);        // cascade: 1k→500→250→125→62
