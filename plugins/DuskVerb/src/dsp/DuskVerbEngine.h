@@ -136,6 +136,11 @@ public:
     void setShimmerFeedbackHpfHz (float hz);    // Shimmer feedback-loop HPF corner (low-cascade survival); default 60
     void setShimmerStereoMod     (float rateHz, float depth); // Shimmer wet stereo chorus/ensemble; depth 0 = bit-null
     void setShimmerHFAir         (float mix);   // Shimmer post-loop +12st air voice (genuine >12k air); mix 0 = bit-null
+    void setShimmerUseDenseReverb (bool on);    // Shimmer tank: DenseHall (smooth HF) vs legacy sparse FDN (metallic); false = bit-identical
+    void setShimmerUseTailSpin    (bool on);    // Shimmer FDN output spin-comb (smears metallic, keeps FDN cascade/width/HF); false = untouched
+    void setShimmerUpVoiceScale   (float v1, float v2);  // Shimmer +12/+24 up-voice scale (mid-tail fill); 1.0/1.0 = bit-identical
+    void setShimmerOctaveCascade  (const float gains[4]); // Shimmer dry-fed even down-cascade (500/250/125/62); all 0 = bit-null
+    void setShimmerTailNoise      (float gain);  // Shimmer envelope-tracked tail noise floor (dense noise-like fade); 0 = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);

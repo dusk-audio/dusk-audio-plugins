@@ -53,6 +53,11 @@ struct TuningEnv
     const char* shimmerhpf;
     const char* shimmerstereo;
     const char* shimmerair;
+    const char* shimmerdense;
+    const char* shimmerspin;
+    const char* shimmerupv;
+    const char* shimmeroct;
+    const char* shimmernoise;
     const char* frontload;
     const char* dpvrefl;
     const char* densefield;
@@ -91,6 +96,11 @@ struct TuningEnv
           shimmerhpf (std::getenv ("DUSKVERB_SHIMMERHPF")),
           shimmerstereo (std::getenv ("DUSKVERB_SHIMMERSTEREO")),
           shimmerair (std::getenv ("DUSKVERB_SHIMMERAIR")),
+          shimmerdense (std::getenv ("DUSKVERB_SHIMMERDENSE")),
+          shimmerspin (std::getenv ("DUSKVERB_SHIMMERSPIN")),
+          shimmerupv (std::getenv ("DUSKVERB_SHIMMERUPV")),
+          shimmeroct (std::getenv ("DUSKVERB_SHIMMEROCT")),
+          shimmernoise (std::getenv ("DUSKVERB_SHIMMERNOISE")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
           densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
@@ -3275,6 +3285,75 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         if (const char* env = tuningEnv().shimmerair; env != nullptr && env[0] != '\0')
             airMix = juce::String (env).getFloatValue();
         engine.setShimmerHFAir (airMix);
+
+        // Dense-diffusion tank swap (fixes the metallic HF tail; kurt ~26 -> ~7).
+        // Per-preset bake below; default false = legacy sparse FDN (bit-identical).
+        // Env DUSKVERB_SHIMMERDENSE=1 forces it on for A/B.
+        static constexpr std::array<std::pair<std::string_view, bool>, 2> kShimmerDenseByName = {{
+            { "Black Hole",    false },   // flipped to true once re-voiced (Phase 3/4)
+            { "Deep Blue Day", false },
+        }};
+        bool useDense = false;
+        for (const auto& e : kShimmerDenseByName) if (e.first == nameView) { useDense = e.second; break; }
+        if (const char* env = tuningEnv().shimmerdense; env != nullptr && env[0] != '\0')
+            useDense = juce::String (env).getIntValue() != 0;
+        engine.setShimmerUseDenseReverb (useDense);
+
+        // Tail spin-comb: smears the FDN's metallic HF while keeping its cascade/width/HF
+        // (Deep Blue Day's fix — its character fights the full DenseHall swap). Per-preset
+        // bake below; env DUSKVERB_SHIMMERSPIN=1 for A/B. Only meaningful on the FDN path.
+        static constexpr std::array<std::pair<std::string_view, bool>, 2> kShimmerTailSpinByName = {{
+            { "Black Hole",    false },   // BH uses DenseHall, not the spin-comb
+            { "Deep Blue Day", false },   // flipped to true once re-voiced
+        }};
+        bool useSpin = false;
+        for (const auto& e : kShimmerTailSpinByName) if (e.first == nameView) { useSpin = e.second; break; }
+        if (const char* env = tuningEnv().shimmerspin; env != nullptr && env[0] != '\0')
+            useSpin = juce::String (env).getIntValue() != 0;
+        engine.setShimmerUseTailSpin (useSpin);
+
+        // Per-preset up-voice scale — fills the mid tail (250 Hz-1 kHz) on transients. Deep Blue
+        // Day boosts to match Valhalla's fuller snare-body regeneration. 1.0/1.0 = bit-identical.
+        static constexpr std::array<std::pair<std::string_view, std::pair<float, float>>, 2> kShimmerUpVoiceByName = {{
+            { "Black Hole",    { 1.0f, 1.0f } },
+            { "Deep Blue Day", { 1.0f, 1.0f } },   // tuned by the sweep below
+        }};
+        float upv1 = 1.0f, upv2 = 1.0f;
+        for (const auto& e : kShimmerUpVoiceByName) if (e.first == nameView) { upv1 = e.second.first; upv2 = e.second.second; break; }
+        if (const char* env = tuningEnv().shimmerupv; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray parts; parts.addTokens (juce::String (env), ",", "");
+            if (parts.size() >= 2) { upv1 = parts[0].getFloatValue(); upv2 = parts[1].getFloatValue(); }
+        }
+        engine.setShimmerUpVoiceScale (upv1, upv2);
+
+        // Dry-fed even octave cascade (500/250/125/62 Hz) — Deep Blue Day uses it INSTEAD of the
+        // old feedback down/sub voices (which were subharmonic-masked + the sub ratio was clamped
+        // to −12). All-zero = off/bit-null. Env DUSKVERB_SHIMMEROCT="g500,g250,g125,g62".
+        static const std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
+            { "Black Hole",    { 0.0f, 0.0f, 0.0f, 0.0f } },
+            { "Deep Blue Day", { 0.0f, 0.0f, 0.0f, 0.0f } },   // tuned by the sweep below
+        }};
+        float octGains[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        for (const auto& e : kShimmerOctaveByName) if (e.first == nameView) { for (int i = 0; i < 4; ++i) octGains[i] = e.second[i]; break; }
+        if (const char* env = tuningEnv().shimmeroct; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray parts; parts.addTokens (juce::String (env), ",", "");
+            for (int i = 0; i < 4 && i < parts.size(); ++i) octGains[i] = parts[i].getFloatValue();
+        }
+        engine.setShimmerOctaveCascade (octGains);
+
+        // Tail noise floor — the dense noise-like fade Valhalla has; masks the sparse-mode ring.
+        // gain 0 = off/bit-null. Env DUSKVERB_SHIMMERNOISE.
+        static constexpr std::array<std::pair<std::string_view, float>, 2> kShimmerTailNoiseByName = {{
+            { "Black Hole",    0.0f },
+            { "Deep Blue Day", 0.0f },   // tuned by the sweep below
+        }};
+        float noiseGain = 0.0f;
+        for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second; break; }
+        if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
+            noiseGain = juce::String (env).getFloatValue();
+        engine.setShimmerTailNoise (noiseGain);
     }
 
     if (! fdnDelaysFromEnv)   // an env DUSKVERB_FDN_DELAYS override owns the delays — don't clobber it

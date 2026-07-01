@@ -153,11 +153,16 @@ def render_and_check(name, no_render=False):
         os.makedirs(dv)
         cmd = [REND, "--vst3", VST3, "--program", name, "--output-dir", dv,
                "--sustained-pink-seconds", "4.0"]
-        # Force full-wet for every preset. Shimmer presets ADD a sustained-sine
-        # render for the down-octave cascade gate (in addition to full-wet).
-        cmd += ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1"]
         if shim:
-            cmd += ["--long-sine-seconds", "15"]   # sustained sine for the down-octave cascade gate
+            # Shimmer presets are rendered at their NATIVE 50% wet — the Valhalla Shimmer
+            # anchors were captured at 50% (BH/DBD mix 0.50), so forcing full-wet compared a
+            # dry-less DV tail against a mix that carries the dry transient, faking the whole
+            # front-load/energy-arrival gate cluster (attack, energy_t50/first50, transient).
+            # Add the sustained sine for the down-octave cascade gate.
+            cmd += ["--long-sine-seconds", "15"]
+        else:
+            # Non-shimmer presets match 100%-wet Valhalla anchors → force full-wet.
+            cmd += ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1"]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=420)
         nb = glob.glob(f"{dv}/*_noiseburst.wav")
         if r.returncode != 0 or not nb:
