@@ -1386,6 +1386,17 @@ void MultiQEditor::timerCallback()
     if (masterParam)
         graphicDisplay->setMasterGain(masterParam->load());
 
+    // Keep the preset-name dropdown in sync with the restored state. The name lives in a state
+    // property (presetName); the editor reads it once at construction, but on a session reload the
+    // host can restore the state AFTER the editor is built, leaving the dropdown stuck on "Default"
+    // even though the params (the actual sound) are correct (issue #105 follow-up). Refresh only
+    // when the name actually changes, so this is a cheap poll.
+    const juce::String currentPresetName = processor.parameters.state.getProperty("presetName", "").toString();
+    if (currentPresetName != lastPresetName)
+    {
+        lastPresetName = currentPresetName;
+        updatePresetSelector();
+    }
 }
 
 void MultiQEditor::parameterChanged(const juce::String& parameterID, float newValue)
