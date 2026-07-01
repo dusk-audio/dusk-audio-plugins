@@ -888,6 +888,7 @@ int main (int argc, char** argv)
     // true steady-state per-band decay (the way musical content drives a
     // reverb, not a 100 ms burst). 0 = disabled.
     double sustainedPinkSeconds = 0.0;
+    double longSineSeconds = 0.0;   // opt-in long sustained 1 kHz sine (shimmer cascade); 0 = off
     // Per-parameter overrides via --param NAME=VALUE. Stored in declaration
     // order so multiple --param flags compose the way the user wrote them
     // (last write wins). Applied AFTER the preset so they override anything
@@ -929,6 +930,8 @@ int main (int argc, char** argv)
             prerunSeconds = juce::String (argv[++i]).getDoubleValue();
         else if (a == "--sustained-pink-seconds" && i + 1 < argc)
             sustainedPinkSeconds = juce::String (argv[++i]).getDoubleValue();
+        else if (a == "--long-sine-seconds" && i + 1 < argc)
+            longSineSeconds = juce::String (argv[++i]).getDoubleValue();
         else if (a == "--param" && i + 1 < argc)
         {
             // Format: NAME=VALUE  (NAME may contain spaces; matches the
@@ -1744,6 +1747,24 @@ int main (int argc, char** argv)
         fillSineTone (input, kSampleRate, 1000.0, -12.0);
         auto output = renderThroughPlugin (*plugin, input);
         auto outFile = outDir.getChildFile (slug + "_sine1k.wav");
+        if (writeWav (outFile, output, kSampleRate))
+            std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+    }
+
+    // ---- Render 4b (optional): LONG sustained 1 kHz sine ----
+    // The 2 s sine1k above is too short for a REGENERATIVE shimmer cascade to build
+    // (the down/sub octave ladder needs ~5-10 s to populate 500/250/125/62 Hz). This
+    // opt-in long render at -18 dBFS lets the cascade settle so the rel-fundamental
+    // down-octave gate measures the real low-octave content. Off (==0) → not written
+    // → every existing render byte-identical (bit-null). 15 s matches the anchor protocol.
+    if (longSineSeconds > 0.0)
+    {
+        plugin->reset();
+        const int sineSamples = static_cast<int> (kSampleRate * longSineSeconds);
+        juce::AudioBuffer<float> input (2, sineSamples);
+        fillSineTone (input, kSampleRate, 1000.0, -18.0);
+        auto output = renderThroughPlugin (*plugin, input);
+        auto outFile = outDir.getChildFile (slug + "_sinelong.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
     }

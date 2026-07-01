@@ -49,7 +49,19 @@ struct TuningEnv
     const char* maindet;
     const char* buildup;
     const char* shimmerdown;
+    const char* shimmersub;
+    const char* shimmerhpf;
+    const char* shimmerstereo;
+    const char* shimmerair;
+    const char* shimmerdense;
+    const char* shimmerspin;
+    const char* shimmerupv;
+    const char* shimmeroct;
+    const char* shimmernoise;
     const char* frontload;
+    const char* dpvrefl;
+    const char* densefield;
+    const char* ddensefield;
     const char* airshelf;
     const char* lowshelf;
     const char* differ;
@@ -80,7 +92,19 @@ struct TuningEnv
           maindet   (std::getenv ("DUSKVERB_MAINDET")),
           buildup   (std::getenv ("DUSKVERB_BUILDUP")),
           shimmerdown (std::getenv ("DUSKVERB_SHIMMERDOWN")),
+          shimmersub (std::getenv ("DUSKVERB_SHIMMERSUB")),
+          shimmerhpf (std::getenv ("DUSKVERB_SHIMMERHPF")),
+          shimmerstereo (std::getenv ("DUSKVERB_SHIMMERSTEREO")),
+          shimmerair (std::getenv ("DUSKVERB_SHIMMERAIR")),
+          shimmerdense (std::getenv ("DUSKVERB_SHIMMERDENSE")),
+          shimmerspin (std::getenv ("DUSKVERB_SHIMMERSPIN")),
+          shimmerupv (std::getenv ("DUSKVERB_SHIMMERUPV")),
+          shimmeroct (std::getenv ("DUSKVERB_SHIMMEROCT")),
+          shimmernoise (std::getenv ("DUSKVERB_SHIMMERNOISE")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
+          dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
+          densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
+          ddensefield (std::getenv ("DUSKVERB_DDENSEFIELD")),
           airshelf  (std::getenv ("DUSKVERB_AIRSHELF")),
           lowshelf  (std::getenv ("DUSKVERB_LOWSHELF")),
           differ    (std::getenv ("DUSKVERB_DIFFER")) {}
@@ -2245,7 +2269,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Vintage Gold Plate",   { 5000.0f,   7.5f } },   // cent_50 -30.5->-5.4, cent_500 -19.5->+5.9
             { "Deep Blue Day",        { 3000.0f,   6.0f } },   // cent_50 -14.4->+7.0, cent_500 -29.1->-9.5
             { "Ambience",             { 3000.0f,  -5.0f } },   // bright-late: cent_500 +45.3->+5.1, cent_50 +12.5->-11.7
-            { "Black Hole",           { 3000.0f,  12.0f } },   // cent_50 -19.7->+13.9 (closes early); cent_500 -16.9 residual = structural FDN HF-decay wall (skipped per ear call)
+            { "Black Hole",           { 3000.0f,   2.5f } },   // 2026-06-29 gain 12->2.5 (EAR "DV brighter" + snare/noiseburst): +12 over-cranked the 4-12k presence ~9 dB hot vs Valhalla (snare HF tilt -6 vs -15) — harsh-bright. 2.5 matches the 4-12k presence (tilt ~-15 = Valhalla) -> n_fail 34->25. DV stays darker by CENTROID (no >12k air) — that's the 12 kHz pitch-shifter AA ceiling, structural. (Prev +12 chased cent_50 on the early window but over-brightened the band the ear hears.)
             // NOT here (cent_500 is a LATE-tail per-band-DECAY / low-mid-LEVEL problem the
             // air-shelf can't fix; fixed at the proper in-loop lever instead):
             //   Vocal Plate     -> AccurateHall low-mid LEVEL cut (pteqByName) — 63/250Hz +10dB hot
@@ -2395,7 +2419,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Blade Runner 224",     { 0.88f, 1.00f, 1.00f } },  // narrow low → width-low passes (29→28)
             { "Medium Drum Room",     { 1.12f, 1.12f, 1.00f } },  // WIDEN lo/mid → stereo_corr+width lo/mid (26→24)
             { "Reverse Taps",         { 0.50f, 0.88f, 0.88f } },  // strong narrow low + lo mid/hi (46→44)
-            { "Vintage Vocal Plate",  { 0.85f, 1.00f, 1.00f } },  // narrow low → width-low passes (36→35)
+            { "Vintage Vocal Plate",  { 0.85f, 1.00f, 1.00f } },  // narrow low → width-low passes (36→35). (2026-06-29: the 1.50 widen was front-load compensation; reverted with the front-load.)
             { "Vintage Gold Plate",   { 0.80f, 0.90f, 1.00f } },  // 2026-06-23 workflow: narrow low+mid → stereo_corr + width-low pass (14→12)
             { "Tiled Room",           { 0.88f, 1.00f, 1.00f } },  // 2026-06-23 workflow: narrow low → width-low pass, stereo_corr held (14→13)
             // No clean per-band fix (stereo fails trade / decouple): Drum Plate
@@ -2775,7 +2799,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // main lines (close-spaced coprime modes → kills the comb resonance); det[4]
         // = per-line incommensurate detune {Ldel1,Ldel2,Rdel1,Rdel2}. Defaults
         // (false / identity) = byte-identical for every non-room Dattorro preset.
-        struct DensityConfig { float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f;
+        struct DensityConfig { float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f, bloomExp = 1.0f;
                                bool roomfill = false; float det[4] = { 1.0f, 1.0f, 1.0f, 1.0f }; };
         static constexpr std::array<std::pair<std::string_view, DensityConfig>, 3> kDattorroDensityByName = {{
             // BEGIN_DATTDENS_MAP (offline density/modred/indiff sweep, key on exact row name)
@@ -2786,7 +2810,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Drum Plate", { 1.0f /*density*/, 1.0f /*modred*/, 1.0f /*indiff*/ } },
             // Vintage Vocal Plate: input diffusion densifies the early field
             // (24->22 vs the corrected anchor); octave GEQ left off (3-band path).
-            { "Vintage Vocal Plate", { 0.0f /*density*/, 1.0f /*modred*/, 1.0f /*indiff*/ } },
+            { "Vintage Vocal Plate", { 0.0f /*density*/, 1.0f /*modred*/, 1.0f /*indiff*/, 0.0f /*softonset*/, 90.0f /*bloom*/, 2.0f /*bloomExp*/ } },  // 2026-06-29 density REVERTED to 0: the 12-AP cascade SHORTENED the HF tail (T60-16k 0.41->0.25 = dull top); the structHfDamp 9000 fix now supplies fullness (tailFlat 0.24 > anchor 0.20) AND the crispy HF sustain (16k 0.59 vs anchor 0.55) the EAR wants. + bloom-attack 90ms/exp 2.0: slow-build swell back-loads the onset WITHOUT pre-echo -> energy_t50/first50/transient_def/impulse-RMS. attack_time caps ~70ms; sine1k = 1k modal wall.
             // Vintage Gold Plate: density 1.0 engages the full 12-AP in-loop
             // cascade — more modes = shallower spectral comb (ripple 6.2->~2).
             // Pairs with the octave GEQ (re-calibrated for the longer loop).
@@ -2803,10 +2827,10 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // or accept the boing. See memory duskverb_boing_sparse_modal.
             // END_DATTDENS_MAP
         }};
-        float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f;
+        float density = 0.0f, modred = 1.0f, indiff = 0.0f, softonset = 0.0f, bloom = 0.0f, bloomExp = 1.0f;
         bool  roomfill = false; float det[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
         if (const auto* p = findPresetConfig (kDattorroDensityByName, std::string_view (name)))
-        { density = p->density; modred = p->modred; indiff = p->indiff; softonset = p->softonset; bloom = p->bloom;
+        { density = p->density; modred = p->modred; indiff = p->indiff; softonset = p->softonset; bloom = p->bloom; bloomExp = p->bloomExp;
           roomfill = p->roomfill; for (int b = 0; b < 4; ++b) det[b] = p->det[b]; }
         if (const char* e = tuningEnv().dens;   e != nullptr && e[0] != '\0') density   = juce::String (e).getFloatValue();
         if (const char* e = tuningEnv().modred; e != nullptr && e[0] != '\0') modred    = juce::String (e).getFloatValue();
@@ -2825,6 +2849,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setDattorroBloomAttackMs (bloom);
         engine.setDattorroDensityRoomFill (roomfill);
         engine.setDattorroMainLineDetune (det[0], det[1], det[2], det[3]);
+        engine.setDattorroBloomExp (bloomExp);
         if (const char* e = tuningEnv().bloomexp; e != nullptr && e[0] != '\0') engine.setDattorroBloomExp (juce::String (e).getFloatValue());
     }
 
@@ -2873,7 +2898,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // the anchor's BROADBAND decay (0.93s) exceeds its own max per-band (0.80s),
             // so per-band-match and audible-broadband-match are mutually exclusive here;
             // the user hears broadband → ear over the per-band gates.
-            { "Vintage Vocal Plate", { { 0.650f, 0.640f, 0.620f, 0.666f, 0.744f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.703f } },  // 2026-06-24 decayRef tuned so the Decay knob (0.90) reads ~= the realized RT60 (~0.90s): decayRef 0.724 gave realized 0.874 @ knob 0.90 (3% low); 0.703 lifts scale 1.24->1.28 -> realized ~0.90 = honest knob.
+            { "Vintage Vocal Plate", { { 0.650f, 0.640f, 0.620f, 0.666f, 0.744f, 0.658f, 0.595f, 0.700f, 1.210f }, 0.700f } },  // 2026-06-29 decayRef 0.82->0.70 (EAR "Lex rings out longer / DV shorter"): LENGTHENS the tail to match the anchor's PERCEIVED ringout (mid-tail @1.2s -91->-81 ≈ anchor -79). UNDOES Surgery A's gate-driven shortening: the T60-25dB gate measures the anchor's EARLY slope (0.61s) but the Lex is NON-EXPONENTIAL (rings out far past that), so matching the gate made DV sound too short. Ear > gate here; raises n_fail (T60 "too long") but matches the audible tail.
         }};
         float t60[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         float ref = 0.0f;
@@ -2906,7 +2931,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // via the noiseburst gain-match (sub-bass pops hot) — left uncut.
             // 2026-06-20 EAR "brighter": eased the 4k/8k/16k cuts (-5/-4/-2 -> -2/-1/0)
             // so the (now longer + thus darker) tail keeps its top → cent_50 stays bright.
-            { "Vintage Vocal Plate", { { 0.0f, 0.0f, -2.0f, -3.0f, -6.0f, -3.0f, -2.0f, -1.0f, 0.0f } } },
+            { "Vintage Vocal Plate", { { 0.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 0.0f } } },  // 2026-06-29 EAR "muffled/midrange different": the old -6dB@1k + -3@500/2k scoop GOUGED the upper-mid presence (snare tail 630-2500Hz was -5 to -7dB under anchor). Flatten to a gentle -1 uniform trim -> tail upper-mid match 5.3->3.3 L1, n_fail 36->35. Residual jaggedness (peaks 125/400, dip 1k) is DPV modal structure vs Lexicon, not EQ-fixable. Sweep: tonal_sweep.py / tonal_refine.py.
             // (Drum Plate REMOVED 2026-06-15: the tonal cuts were treating a
             // SYMPTOM — the +6dB@125 tilt is the boing mode's energy. It gamed the
             // sustained gates (19->8 fiction), broke the impulse/hit loudness
@@ -2939,6 +2964,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // pattern as kWidthBandsByName / kDenseHallOctaveT60ByName.
         static constexpr std::array<std::pair<std::string_view, FrontLoadConfig>, 0> kDpvFrontLoadByName = {
             // BEGIN_DPVFRONTLOAD_MAP
+            // 2026-06-29 REVERTED: enabling the front-load ER for VVP closed the energy-arrival
+            // gates (35->15) but fired ER taps 56/98ms BEFORE the delayed main (143ms) = audible
+            // PRE-ECHO double-tap (user ear-caught). It gamed the gates with an artifact the anchor
+            // does not have (anchor = main 83ms + POST-main second tap 143ms). The network can only
+            // pre-echo on this engine config; a proper post-main second tap needs a discrete delay
+            // tap the DPV lacks (engine work). Left off = byte-null.
             // END_DPVFRONTLOAD_MAP
         };
         float erGain = 0.0f, predelayMs = 60.0f, tapMs = 80.0f, lpHz = 7000.0f;
@@ -2955,6 +2986,86 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             if (toks.size() > 3) lpHz       = toks[3].getFloatValue();
         }
         engine.setDpvFrontLoad (erGain, predelayMs, tapMs, lpHz);
+
+        // Post-main second reflection tap (the anchor's ~143 ms "duh-DUH"). A
+        // darkened delayed copy summed POST-tank (arrives AFTER the main onset —
+        // no pre-echo, unlike the front-load ER). Per-preset {ms, gain, lpHz};
+        // gain 0 (unlisted) = off = byte-identical. Env DUSKVERB_DPVREFL="ms,gain,lpHz".
+        struct PostMainTapConfig { float ms, gain, lpHz; };
+        static constexpr std::array<std::pair<std::string_view, PostMainTapConfig>, 0> kDpvPostMainTapByName = {
+            // BEGIN_DPVPOSTMAIN_MAP
+            // END_DPVPOSTMAIN_MAP
+        };
+        float pmMs = 143.0f, pmGain = 0.0f, pmLpHz = 6000.0f;
+        for (const auto& e : kDpvPostMainTapByName)
+            if (e.first == nameView)
+            { pmMs = e.second.ms; pmGain = e.second.gain; pmLpHz = e.second.lpHz; break; }
+        if (const char* e = tuningEnv().dpvrefl; e != nullptr && e[0] != '\0')
+        {
+            juce::StringArray toks; toks.addTokens (juce::String (e), ",", "");
+            if (toks.size() > 0) pmMs   = toks[0].getFloatValue();
+            if (toks.size() > 1) pmGain = toks[1].getFloatValue();
+            if (toks.size() > 2) pmLpHz = toks[2].getFloatValue();
+        }
+        engine.setDpvPostMainTap (pmMs, pmGain, pmLpHz);
+
+        // Dense early-field: a compact Schroeder reverb summed POST-tank to fill
+        // the loud post-onset 0.1-0.5s "shelf" the sparse Dattorro tank lacks (the
+        // ear's "fuller"). Per-preset {gain, predelayMs, t60Ms}; gain 0 = off.
+        // Env DUSKVERB_DENSEFIELD="gain,predelayMs,t60Ms".
+        struct DenseFieldConfig { float gain, predelayMs, t60Ms; };
+        static constexpr std::array<std::pair<std::string_view, DenseFieldConfig>, 1> kDpvDenseFieldByName = {{
+            // BEGIN_DPVDENSEFIELD_MAP
+            // 2026-06-29 (EAR "Lex fuller"): a compact Schroeder reverb (4 combs + 2
+            // allpasses, predelayed 80 ms so it's POST-onset, T60 500 ms) summed post-
+            // tank fills the loud 0.1-0.5 s "shelf" the sparse Dattorro tank lacks.
+            // Closes the new decay_tail_l1 gate (the metric that matches the ear) with
+            // no pre-echo / no flux spike / no clip. The shape floor the tuning couldn't.
+            { "Vintage Vocal Plate", { 0.22f /*gain*/, 65.0f /*predelayMs*/, 650.0f /*t60Ms*/ } },  // 2026-06-29 fuller pass: longer T60 (650) SPREADS the early energy (fills @0.3s -30->-28 toward anchor -24) instead of a louder peak (gain 0.24 made a 140ms bump). Single clean onset, decay_tail passes, no flux.
+            // END_DPVDENSEFIELD_MAP
+        }};
+        float dfGain = 0.0f, dfPre = 70.0f, dfT60 = 500.0f;
+        for (const auto& e : kDpvDenseFieldByName)
+            if (e.first == nameView)
+            { dfGain = e.second.gain; dfPre = e.second.predelayMs; dfT60 = e.second.t60Ms; break; }
+        if (const char* e = tuningEnv().densefield; e != nullptr && e[0] != '\0')
+        {
+            juce::StringArray toks; toks.addTokens (juce::String (e), ",", "");
+            if (toks.size() > 0) dfGain = toks[0].getFloatValue();
+            if (toks.size() > 1) dfPre  = toks[1].getFloatValue();
+            if (toks.size() > 2) dfT60  = toks[2].getFloatValue();
+        }
+        engine.setDpvDenseField (dfGain, dfPre, dfT60);
+
+        // Dattorro (algo 0) dense early-field — the SAME compact Schroeder field,
+        // summed post-tank in DuskVerbEngine (DattorroTank.cpp untouched → every
+        // algo-0 preset bit-null when off). Fills the thin tail of the short rooms
+        // (Medium Drum Room: decay sub/low/mid -23..-30% vs the fat-snare anchor).
+        // Per-preset {gain, predelayMs, t60Ms}; gain 0 (unlisted) = off.
+        // Env DUSKVERB_DDENSEFIELD="gain,predelayMs,t60Ms" for rebuild-free sweeps.
+        static constexpr std::array<std::pair<std::string_view, DenseFieldConfig>, 1> kDattorroDenseFieldByName = {{
+            // BEGIN_DATTORRODENSEFIELD_MAP
+            // 2026-06-29: the same dense-field win as VVP, ported to the algo-0 rooms.
+            // Medium Drum Room's tail was thin (decay sub/low/mid -23..-30%, T60-500
+            // -24% vs the fat-snare anchor); a compact Schroeder field (predelay 42 ms
+            // = POST-onset, long T60 730 ms SPREADS energy into the 0.1-0.5 s window)
+            // fills it: 25 -> 19. Residual 19 = boing (333 Hz sparse mode), T60-63
+            // bass coupling, discrete-ER structure, cent/sine1k voicing -- structural.
+            { "Medium Drum Room", { 0.27f /*gain*/, 42.0f /*predelayMs*/, 730.0f /*t60Ms*/ } },
+            // END_DATTORRODENSEFIELD_MAP
+        }};
+        float ddGain = 0.0f, ddPre = 70.0f, ddT60 = 500.0f;
+        for (const auto& e : kDattorroDenseFieldByName)
+            if (e.first == nameView)
+            { ddGain = e.second.gain; ddPre = e.second.predelayMs; ddT60 = e.second.t60Ms; break; }
+        if (const char* e = tuningEnv().ddensefield; e != nullptr && e[0] != '\0')
+        {
+            juce::StringArray toks; toks.addTokens (juce::String (e), ",", "");
+            if (toks.size() > 0) ddGain = toks[0].getFloatValue();
+            if (toks.size() > 1) ddPre  = toks[1].getFloatValue();
+            if (toks.size() > 2) ddT60  = toks[2].getFloatValue();
+        }
+        engine.setDattorroDenseField (ddGain, ddPre, ddT60);
     }
 
     // Sweep override: DUSKVERB_FDN_DELAYS env var wins over the map. CSV of
@@ -3096,7 +3207,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // static-init guard lock + heap-allocate on first preset swap. Same RT-safe
         // pattern as kWidthBandsByName / kDenseHallOctaveT60ByName.
         static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerDownByName = {{
-            { "Deep Blue Day", 1.50f },   // 2026-06-19: warm-low octave-DOWN voice IN THE FEEDBACK LOOP (alongside the up shimmer → builds with IDENTICAL timing, no late "kick-in"; softClip ceil 1.5 + 60Hz HPF + final tanh → wet stem bit-bounded). Matches VALHALLA SHIMMER DeepBlueDay (program 3), NOT VVV. downMix 4.0 made the WET low so hot that at 50% mix + a hot dry track the SUM clipped in the DAW (+ the loud low masked the high octave) — backed off to 1.5: 250Hz 45 (VS 60), 500Hz 37 (VS 64). Warm but mix-safe; wet-stem peak -4.9dB even on a sustained chord.
+            { "Deep Blue Day", 0.35f },   // 2026-06-29: −1 oct voice DROPPED 1.5→0.35 — the new −2 oct SUB voice (below) does the low work far more efficiently (reaches 250 Hz in one step vs the −1 oct cascade dying out). 0.35 just tops up the 500 Hz rung. See kShimmerSubByName/kShimmerHpfByName for the validated 1 kHz-sine match to Valhalla Shimmer program 3.
         }};
         float downMix = 0.0f;
         const std::string_view nameView (name);
@@ -3105,6 +3216,144 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         if (const char* env = tuningEnv().shimmerdown; env != nullptr && env[0] != '\0')
             downMix = juce::String (env).getFloatValue();
         engine.setShimmerDownOctaveMix (downMix);
+
+        // Sub voice (−2 oct → 250 Hz) + feedback-HPF corner: the −1 oct cascade dies out
+        // before the deep lows; the sub voice reaches 250 Hz in one step and a lower HPF
+        // corner lets the 60-250 Hz wash survive the loop. Matches Valhalla Shimmer
+        // DeepBlueDay (program 3: 250 Hz −9 dB, 60-200 wash −15..−22 rel. fundamental).
+        // 0 / default 60 = bit-null (Black Hole + non-shimmer untouched).
+        // Env DUSKVERB_SHIMMERSUB="mix", DUSKVERB_SHIMMERHPF="hz" for rebuild-free sweeps.
+        static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerSubByName = {{
+            // 2026-06-29: −2 oct (×0.25 → 250 Hz) voice. Tuned vs Valhalla Shimmer program 3
+            // on a sustained 1 kHz sine (rel. fundamental @ output level): lifts 31-60 Hz
+            // −55→−30 (Val −22), 60-125 −54→−20 (Val −18), 250 Hz −28→−3 (Val −9). The deep
+            // low warmth DV lacked. Residual: 250-500 runs ~+6 dB hot (the +12 st up voice
+            // re-pitches the sub's 250 → 500) — structural, not tunable from here.
+            { "Deep Blue Day", 3.20f },
+        }};
+        static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerHpfByName = {{
+            { "Deep Blue Day", 24.0f },  // feedback HPF 60→24 so the regenerated 31-125 Hz wash survives the loop (24 still clears the ~12 Hz grain rumble). Flattens DV's over-steep low cascade toward Valhalla's.
+        }};
+        float subMix = 0.0f, hpfHz = 60.0f;
+        for (const auto& e : kShimmerSubByName) if (e.first == nameView) { subMix = e.second; break; }
+        for (const auto& e : kShimmerHpfByName) if (e.first == nameView) { hpfHz  = e.second; break; }
+        if (const char* env = tuningEnv().shimmersub; env != nullptr && env[0] != '\0')
+            subMix = juce::String (env).getFloatValue();
+        if (const char* env = tuningEnv().shimmerhpf; env != nullptr && env[0] != '\0')
+            hpfHz  = juce::String (env).getFloatValue();
+        engine.setShimmerSubOctaveMix  (subMix);
+        engine.setShimmerFeedbackHpfHz (hpfHz);
+
+        // Wet stereo chorus/ensemble — Valhalla Shimmer Black Hole swings the image at
+        // ~0.83 Hz (measured L-R mod rms 6.8 dB vs DV's static 2.2). A slow anti-phase
+        // modulated-delay pair gives that moving field. {rateHz, depth}; depth 0 = off.
+        // Env DUSKVERB_SHIMMERSTEREO="rateHz,depth".
+        static constexpr std::array<std::pair<std::string_view, std::pair<float,float>>, 1> kShimmerStereoByName = {{
+            // 2026-06-29: rate 0.42 Hz (the comb passes its notch TWICE per LFO cycle, so
+            // the L-R movement lands at 2×0.42 = 0.83 Hz = Valhalla's measured rate), depth
+            // 0.8. Result vs Valhalla Shimmer Black Hole: L-R mod rate 0.83 Hz (exact),
+            // correlation +0.62 (Val +0.60), movement rms 4.2 dB (Val 6.8 — full magnitude
+            // destabilises the rate, 4.2 is the musical max; up from DV's static 2.2).
+            { "Black Hole", { 0.42f, 0.00f } },   // 2026-06-29 DORMANT: the sine-tuned chorus matched the 0.83 Hz movement but worsened the broadband stereo_corr gate (-0.22 vs anchor +0.12 = over-wide) — the real BH "stereo" gap is mono HIGHS (width hi +0.02 vs +0.95), addressed via width/brightness below. Infra kept for a future gentler pass.
+        }};
+        float smRate = 0.83f, smDepth = 0.0f;
+        for (const auto& e : kShimmerStereoByName) if (e.first == nameView) { smRate = e.second.first; smDepth = e.second.second; break; }
+        if (const char* env = tuningEnv().shimmerstereo; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray toks; toks.addTokens (juce::String (env), ",", "");
+            if (toks.size() > 0) smRate  = toks[0].getFloatValue();
+            if (toks.size() > 1) smDepth = toks[1].getFloatValue();
+        }
+        engine.setShimmerStereoMod (smRate, smDepth);
+
+        // HF-air voice — the genuine >12 kHz air Valhalla Shimmer has (centroid ~9.9k/6.6k vs
+        // DV ~6k/5k). A post-loop +12 st shifter on the wet 6-12 kHz makes 12-24 k air,
+        // bypassing the reverb HF-damp + 14 k feedback LPF that cap it. mix 0 = off = bit-null.
+        // Env DUSKVERB_SHIMMERAIR="mix".
+        static constexpr std::array<std::pair<std::string_view, float>, 2> kShimmerAirByName = {{
+            // 2026-06-30: post-loop +12 st air voice = the genuine >12 kHz air the engine
+            // couldn't make (the reverb HF-damps + the 14 k feedback LPF cut the in-loop air).
+            // Raises the snare centroid toward Valhalla WITHOUT harshening 4-12k (unlike the
+            // air shelf): BH 6006→7029 (Val 9920), DBD 4936→5749 (Val 6620), tilt stays matched.
+            // Capped at the max that doesn't regress the noiseburst ss_air gate (DV's residual
+            // 12.9 k AA spike already runs the noiseburst air-heavy) — closes ~half the gap clean.
+            { "Black Hole",    1.5f },
+            { "Deep Blue Day", 2.0f },
+        }};
+        float airMix = 0.0f;
+        for (const auto& e : kShimmerAirByName) if (e.first == nameView) { airMix = e.second; break; }
+        if (const char* env = tuningEnv().shimmerair; env != nullptr && env[0] != '\0')
+            airMix = juce::String (env).getFloatValue();
+        engine.setShimmerHFAir (airMix);
+
+        // Dense-diffusion tank swap (fixes the metallic HF tail; kurt ~26 -> ~7).
+        // Per-preset bake below; default false = legacy sparse FDN (bit-identical).
+        // Env DUSKVERB_SHIMMERDENSE=1 forces it on for A/B.
+        static constexpr std::array<std::pair<std::string_view, bool>, 2> kShimmerDenseByName = {{
+            { "Black Hole",    false },   // flipped to true once re-voiced (Phase 3/4)
+            { "Deep Blue Day", false },
+        }};
+        bool useDense = false;
+        for (const auto& e : kShimmerDenseByName) if (e.first == nameView) { useDense = e.second; break; }
+        if (const char* env = tuningEnv().shimmerdense; env != nullptr && env[0] != '\0')
+            useDense = juce::String (env).getIntValue() != 0;
+        engine.setShimmerUseDenseReverb (useDense);
+
+        // Tail spin-comb: smears the FDN's metallic HF while keeping its cascade/width/HF
+        // (Deep Blue Day's fix — its character fights the full DenseHall swap). Per-preset
+        // bake below; env DUSKVERB_SHIMMERSPIN=1 for A/B. Only meaningful on the FDN path.
+        static constexpr std::array<std::pair<std::string_view, bool>, 2> kShimmerTailSpinByName = {{
+            { "Black Hole",    false },   // BH uses DenseHall, not the spin-comb
+            { "Deep Blue Day", false },   // flipped to true once re-voiced
+        }};
+        bool useSpin = false;
+        for (const auto& e : kShimmerTailSpinByName) if (e.first == nameView) { useSpin = e.second; break; }
+        if (const char* env = tuningEnv().shimmerspin; env != nullptr && env[0] != '\0')
+            useSpin = juce::String (env).getIntValue() != 0;
+        engine.setShimmerUseTailSpin (useSpin);
+
+        // Per-preset up-voice scale — fills the mid tail (250 Hz-1 kHz) on transients. Deep Blue
+        // Day boosts to match Valhalla's fuller snare-body regeneration. 1.0/1.0 = bit-identical.
+        static constexpr std::array<std::pair<std::string_view, std::pair<float, float>>, 2> kShimmerUpVoiceByName = {{
+            { "Black Hole",    { 1.0f, 1.0f } },
+            { "Deep Blue Day", { 1.0f, 1.0f } },   // tuned by the sweep below
+        }};
+        float upv1 = 1.0f, upv2 = 1.0f;
+        for (const auto& e : kShimmerUpVoiceByName) if (e.first == nameView) { upv1 = e.second.first; upv2 = e.second.second; break; }
+        if (const char* env = tuningEnv().shimmerupv; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray parts; parts.addTokens (juce::String (env), ",", "");
+            if (parts.size() >= 2) { upv1 = parts[0].getFloatValue(); upv2 = parts[1].getFloatValue(); }
+        }
+        engine.setShimmerUpVoiceScale (upv1, upv2);
+
+        // Dry-fed even octave cascade (500/250/125/62 Hz) — Deep Blue Day uses it INSTEAD of the
+        // old feedback down/sub voices (which were subharmonic-masked + the sub ratio was clamped
+        // to −12). All-zero = off/bit-null. Env DUSKVERB_SHIMMEROCT="g500,g250,g125,g62".
+        static const std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
+            { "Black Hole",    { 0.0f, 0.0f, 0.0f, 0.0f } },
+            { "Deep Blue Day", { 0.0f, 0.0f, 0.0f, 0.0f } },   // tuned by the sweep below
+        }};
+        float octGains[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        for (const auto& e : kShimmerOctaveByName) if (e.first == nameView) { for (int i = 0; i < 4; ++i) octGains[i] = e.second[i]; break; }
+        if (const char* env = tuningEnv().shimmeroct; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray parts; parts.addTokens (juce::String (env), ",", "");
+            for (int i = 0; i < 4 && i < parts.size(); ++i) octGains[i] = parts[i].getFloatValue();
+        }
+        engine.setShimmerOctaveCascade (octGains);
+
+        // Tail noise floor — the dense noise-like fade Valhalla has; masks the sparse-mode ring.
+        // gain 0 = off/bit-null. Env DUSKVERB_SHIMMERNOISE.
+        static constexpr std::array<std::pair<std::string_view, float>, 2> kShimmerTailNoiseByName = {{
+            { "Black Hole",    0.0f },
+            { "Deep Blue Day", 0.0f },   // tuned by the sweep below
+        }};
+        float noiseGain = 0.0f;
+        for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second; break; }
+        if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
+            noiseGain = juce::String (env).getFloatValue();
+        engine.setShimmerTailNoise (noiseGain);
     }
 
     if (! fdnDelaysFromEnv)   // an env DUSKVERB_FDN_DELAYS override owns the delays — don't clobber it
