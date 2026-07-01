@@ -53,23 +53,23 @@ problem).
 > **"CORRECTED recommendation — densify DenseHall's LOW-MID"** at the end of this doc.
 > The text below is kept only for the historical rationale.
 
-Migrate the 4 DenseHall halls to the **SparseField composite (algo 11)** = 16-line
+_The retired plan (kept only for rationale — it was NOT carried out):_ it would have
+migrated the 4 DenseHall halls to the **SparseField composite (algo 11)** = 16-line
 dense AccurateHall tail (kills modes, de-risk-proven) + front-loaded sparse ER
-(keeps the front-load that DenseHall+BuildupDiffuser currently provides). Plain
-algo 10 would lose the front-load (energy_t50/onset would regress), so use 11.
+(to keep the front-load DenseHall+BuildupDiffuser provides). Plain algo 10 would have
+lost the front-load (energy_t50/onset regressing), so it specified 11.
 
-Steps per preset (Cathedral, Large Chamber, Blade Runner, Vocal Hall):
+The per-preset steps would have been (Cathedral, Large Chamber, Blade Runner, Vocal Hall):
 1. Switch FactoryPresets algo 14 → 11; set the SparseField ER tap list + tail/ER
    gain from the existing DenseHall ER config.
 2. Add an octave-T60 entry to `kAccurateHallT60ByName` and run
    `calibrate_octave_t60.py` (LIVE tooling — Vocal Plate/Ambience/Tiled already use it).
 3. Re-check width/level/front-load; sweep residuals.
 
-- Yield: ~7 modal fails + the AccurateHall octave-GEQ decouples T60 (may close
-  several T60/decay fails the DenseHall 3-band path can't).
-- Cost: ~½–1 day per preset (re-tune), 4 presets. Reuses live engine + tooling.
-- Risk: SparseField ER must reproduce each hall's early field; cent/bright-early
-  profile differs. Bit-null N/A (this is a deliberate engine change per preset).
+Projected at the time: ~7 modal fails closed + the AccurateHall octave-GEQ decoupling
+T60; ~½–1 day per preset × 4; risk that SparseField ER couldn't reproduce each hall's
+early field (cent/bright-early profile differs). **This was disproven by the pilot and
+reverted — see "PILOT RESULTS" and "CORRECTED recommendation" below.**
 
 ## Workstream B — SHORT ROOMS (defer; low confidence)
 Source-prescribed loopless engine (VelvetTail) is unwired; 16-line FDN only
