@@ -6,7 +6,8 @@
 class ImprovedTapeEmulation;
 class WowFlutterProcessor;  // Forward declaration for shared wow/flutter
 
-class TapeMachineAudioProcessor : public juce::AudioProcessor
+class TapeMachineAudioProcessor : public juce::AudioProcessor,
+                                  private juce::Timer
 {
 public:
     TapeMachineAudioProcessor();
@@ -116,6 +117,26 @@ private:
 
     float currentSampleRate = 44100.0f;
     float currentOversampledRate = 176400.0f;  // Default value; computed dynamically in prepareToPlay()
+
+    // Latency must never be changed from the audio thread. Bitwig's CLAP host treats every
+    // setLatencySamples() call as a restart request, and doing it mid-render (per block, on
+    // oversampling/bypass changes) made offline export loop forever (issue #94; VST3 tolerated it).
+    // The audio thread only does an RT-safe atomic store of the requested latency here (−1 = no
+    // request); a slow message-thread Timer consumes it and calls setLatencySamples() off-thread.
+    // (An AsyncUpdater would post a message from the audio thread, which can allocate — not
+    // strictly RT-safe — so a polled atomic is used instead.)
+    void timerCallback() override;
+    std::atomic<int> requestedLatencySamples { -1 };
+
+    // Reports latency to the host ONLY when it actually changes. JUCE fires
+    // audioProcessorChanged(latencyChanged) on every setLatencySamples() call and the CLAP wrapper
+    // turns that into host->request_restart(); since activate()->prepareToPlay() always re-reports
+    // the same latency, an unconditional call makes CLAP hosts (Bitwig) restart on every activate,
+    // an infinite restart loop that hung offline audio export (issue #94). This member persists
+    // across deactivate/reactivate (deliberately NOT reset in releaseResources) so reactivation
+    // sees an unchanged value and stays quiet. Message-thread only, so no atomic needed.
+    int lastReportedLatency = -1;
+    void setLatencyIfChanged (int newLatency);
 
     std::atomic<float>* tapeMachineParam = nullptr;
     std::atomic<float>* tapeSpeedParam = nullptr;

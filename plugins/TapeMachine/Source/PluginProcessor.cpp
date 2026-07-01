@@ -70,10 +70,61 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
 
     // Initialize shared wow/flutter for stereo coherence
     sharedWowFlutter = std::make_unique<WowFlutterProcessor>();
+
+    // Report the initial latency HERE, in the constructor, BEFORE the CLAP wrapper attaches as an
+    // AudioProcessor listener (it does so right after constructing us). Once attached, any
+    // setLatencySamples() routes through JUCE audioProcessorChanged() to a SYNCHRONOUS
+    // host->request_restart() (the CLAP helper runs main-thread callbacks inline). Bitwig activates
+    // on the main thread during offline bounce, so that restart re-enters the host mid-bounce and
+    // freezes the export (issue #94). Priming the value now — with no listener yet, so it notifies
+    // no one — means it is already correct at the host's first activate(), and setLatencyIfChanged()
+    // in prepareToPlay() then fires ZERO restarts. Latency is fixed by the oversampling filter
+    // design, so a throwaway probe at a dummy block size yields the same value as the real chain.
+    {
+        const int choice = oversamplingParam ? static_cast<int>(oversamplingParam->load()) : 2;
+        const int factor = (choice == 0) ? 1 : (choice == 1) ? 2 : 4;
+        if (factor > 1)
+        {
+            juce::dsp::Oversampling<float> probe(2, (factor == 4) ? 2 : 1,
+                                                 juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
+            probe.initProcessing(512);
+            lastReportedLatency = static_cast<int>(std::lround(probe.getLatencyInSamples()));
+        }
+        else
+        {
+            lastReportedLatency = 0;
+        }
+        setLatencySamples(lastReportedLatency);
+    }
+
+    // Poll the audio thread's latency request off the audio thread (issue #94). 10 Hz is ample —
+    // the oversampling factor only changes on a user action, so a ~100 ms apply latency is fine.
+    startTimer(100);
 }
 
 TapeMachineAudioProcessor::~TapeMachineAudioProcessor()
 {
+    stopTimer();   // stop polling before destruction
+}
+
+void TapeMachineAudioProcessor::timerCallback()
+{
+    // Message thread: the CLAP-safe place to change reported latency (issue #94). Consume the
+    // audio thread's RT-safe request (−1 = none) and apply it here.
+    const int req = requestedLatencySamples.exchange(-1, std::memory_order_relaxed);
+    if (req >= 0)
+        setLatencyIfChanged(req);
+}
+
+void TapeMachineAudioProcessor::setLatencyIfChanged (int newLatency)
+{
+    // See header: report to the host only on a real change, else CLAP hosts restart-loop on every
+    // activate() and offline export hangs (issue #94). Message thread only.
+    if (newLatency != lastReportedLatency)
+    {
+        lastReportedLatency = newLatency;
+        setLatencySamples (newLatency);
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::createParameterLayout()
@@ -410,12 +461,20 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     if (flutterAmountParam)
         smoothedFlutter.setCurrentAndTargetValue(flutterAmountParam->load());
 
-    // Report latency to host for PDC
-    auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
+    // Report latency to host for PDC. Guarded: activate()->prepareToPlay() runs on every host
+    // (re)activation and reports the same value; an unconditional setLatencySamples() here made
+    // CLAP hosts restart-loop and hung offline export (issue #94). setLatencyIfChanged() only
+    // touches the host when the value actually changes.
+    juce::dsp::Oversampling<float>* activeOversampler = nullptr;
+    if (currentOversamplingFactor == 4)
+        activeOversampler = oversampler4x.get();
+    else if (currentOversamplingFactor == 2)
+        activeOversampler = oversampler2x.get();
+    // currentOversamplingFactor == 1 means no oversampling, activeOversampler stays nullptr
     if (activeOversampler)
-        setLatencySamples(static_cast<int>(std::lround(activeOversampler->getLatencyInSamples())));
+        setLatencyIfChanged(static_cast<int>(std::lround(activeOversampler->getLatencyInSamples())));
     else
-        setLatencySamples(0);
+        setLatencyIfChanged(0);
 }
 
 void TapeMachineAudioProcessor::releaseResources()
@@ -519,31 +578,15 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (buffer.getNumSamples() == 0)
         return;
 
-    // When bypassed (host or internal), pass through undelayed and report 0 latency.
-    // This prevents phase offset when the plugin is disabled on a parallel bus —
-    // DAW won't apply PDC for a plugin that reports 0 latency.
+    // Internal bypass: pass through. Latency is NOT touched here — it stays at the constant value
+    // set in prepareToPlay (and updated on the message thread via timerCallback() when the
+    // oversampling factor changes). Changing reported latency from the audio thread makes Bitwig's
+    // CLAP host restart the render every block, so offline export loops forever (issue #94). The
+    // oversampling latency is only a handful of samples, so a bypassed parallel copy is at worst
+    // sub-millisecond out of phase, which is a far smaller cost than a broken export.
     auto* bypassParamPtr = apvts.getRawParameterValue("bypass");
     if (bypassParamPtr != nullptr && bypassParamPtr->load() > 0.5f)
-    {
-        if (getLatencySamples() != 0)
-            setLatencySamples(0);
         return;
-    }
-
-    // Restore actual latency when not bypassed
-    {
-        auto* currentOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
-        if (currentOversamplingFactor > 1 && currentOversampler)
-        {
-            int expectedLatency = static_cast<int>(std::lround(currentOversampler->getLatencyInSamples()));
-            if (getLatencySamples() != expectedLatency)
-                setLatencySamples(expectedLatency);
-        }
-        else if (getLatencySamples() != 0)
-        {
-            setLatencySamples(0);
-        }
-    }
 
     // Detect mono vs stereo from bus layout (reflects track configuration)
     const auto inputBus = getBusesLayout().getMainInputChannelSet();
@@ -769,11 +812,14 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         if (sharedWowFlutter)
             sharedWowFlutter->prepare(newOversampledRate, currentOversamplingFactor);
 
-        // Update latency for host PDC
-        if (activeOversampler)
-            setLatencySamples(static_cast<int>(std::lround(activeOversampler->getLatencyInSamples())));
-        else
-            setLatencySamples(0);
+        // Update latency for host PDC — but NOT from this (audio) thread. setLatencySamples()
+        // here hangs CLAP offline export in Bitwig (issue #94). RT-safe atomic store only; the
+        // message-thread timerCallback() consumes it and calls setLatencySamples() off-thread,
+        // where a host restart is safe.
+        requestedLatencySamples.store(activeOversampler
+                                          ? static_cast<int>(std::lround(activeOversampler->getLatencyInSamples()))
+                                          : 0,
+                                      std::memory_order_relaxed);
 
         // Re-prepare processor chain with new oversampled rate so the SVF filters
         // store the correct sample rate for coefficient calculation.
