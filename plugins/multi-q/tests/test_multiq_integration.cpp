@@ -331,6 +331,77 @@ static void testPan(MultiQ& plugin)
 }
 
 // ===== TEST: State Save/Restore Round-Trip =====
+// Issue #105: British/Tube mode params must survive a getState/setState round-trip.
+// Reproduces the VST3 "resets to default on session open" path deterministically.
+static void testBritishTubeStateRoundTrip(MultiQ& plugin)
+{
+    std::cout << "\n--- Test: British/Tube State Round-Trip (issue #105) ---\n";
+
+    auto getParam = [](MultiQ& p, const juce::String& paramID) -> float {
+        auto* param = p.parameters.getParameter(paramID);
+        if (!param) return -999.0f;
+        return p.parameters.getParameterRange(paramID).convertFrom0to1(param->getValue());
+    };
+
+    auto roundTrip = [](MultiQ& src) {
+        juce::MemoryBlock st;
+        src.getStateInformation(st);
+        auto dst = std::make_unique<MultiQ>();
+        auto layouts = dst->getBusesLayout();
+        layouts.getMainInputChannelSet()  = juce::AudioChannelSet::stereo();
+        layouts.getMainOutputChannelSet() = juce::AudioChannelSet::stereo();
+        dst->setBusesLayout(layouts);
+        dst->setPlayConfigDetails(2, 2, 44100.0, 512);
+        dst->prepareToPlay(44100.0, 512);
+        dst->setStateInformation(st.getData(), static_cast<int>(st.getSize()));
+        return dst;
+    };
+
+    // --- BRITISH mode (eqType index 2) ---
+    resetPlugin(plugin);
+    setParam(plugin, ParamIDs::eqType, 2.0f);
+    setParam(plugin, ParamIDs::britishLfGain, 6.0f);
+    setParam(plugin, ParamIDs::britishHmFreq, 3000.0f);
+    setParam(plugin, ParamIDs::britishHfGain, -5.0f);
+    {
+        auto p2 = roundTrip(plugin);
+        checkDb("RT British: eqType stays British(2)", getParam(*p2, ParamIDs::eqType), 2.0f, 0.01f);
+        checkDb("RT British: LF gain survives", getParam(*p2, ParamIDs::britishLfGain), 6.0f, 0.05f);
+        checkDb("RT British: HM freq survives", getParam(*p2, ParamIDs::britishHmFreq), 3000.0f, 20.0f);
+        checkDb("RT British: HF gain survives", getParam(*p2, ParamIDs::britishHfGain), -5.0f, 0.05f);
+    }
+
+    // --- TUBE mode (eqType index 3) ---
+    resetPlugin(plugin);
+    setParam(plugin, ParamIDs::eqType, 3.0f);
+    setParam(plugin, ParamIDs::pultecTubeDrive, 0.8f);
+    {
+        auto p3 = roundTrip(plugin);
+        checkDb("RT Tube: eqType stays Tube(3)", getParam(*p3, ParamIDs::eqType), 3.0f, 0.01f);
+        checkDb("RT Tube: tube drive survives", getParam(*p3, ParamIDs::pultecTubeDrive), 0.8f, 0.02f);
+    }
+
+    // --- EXACT user path: select a British FACTORY PRESET, then round-trip ---
+    resetPlugin(plugin);
+    {
+        const auto& presets = plugin.getFactoryPresets();
+        int britIdx = -1;
+        for (size_t i = 0; i < presets.size(); ++i)
+            if (presets[i].eqType == 2) { britIdx = static_cast<int>(i); break; }
+        check("found a British factory preset", britIdx >= 0);
+        if (britIdx >= 0)
+        {
+            plugin.setCurrentProgram(britIdx + 1);   // +1: "Init" occupies slot 0
+            const float lf = getParam(plugin, ParamIDs::britishLfGain);
+            const float hm = getParam(plugin, ParamIDs::britishHmFreq);
+            auto p4 = roundTrip(plugin);
+            checkDb("RT British PRESET: eqType stays British", getParam(*p4, ParamIDs::eqType), 2.0f, 0.01f);
+            checkDb("RT British PRESET: LF gain survives", getParam(*p4, ParamIDs::britishLfGain), lf, 0.05f);
+            checkDb("RT British PRESET: HM freq survives", getParam(*p4, ParamIDs::britishHmFreq), hm, 20.0f);
+        }
+    }
+}
+
 static void testStateRoundTrip(MultiQ& plugin)
 {
     std::cout << "\n--- Test: State Save/Restore Round-Trip ---\n";
@@ -486,6 +557,7 @@ public:
         testPhaseInvert(*plugin);
         testPan(*plugin);
         testStateRoundTrip(*plugin);
+        testBritishTubeStateRoundTrip(*plugin);
         // LP+INV test skipped: FIR generation requires background thread + message loop
         // The LP+INV fix was verified manually and via pluginval automation tests
         // testINVLinearPhase(*plugin);
