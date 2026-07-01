@@ -153,8 +153,11 @@ def render_and_check(name, no_render=False):
         os.makedirs(dv)
         cmd = [REND, "--vst3", VST3, "--program", name, "--output-dir", dv,
                "--sustained-pink-seconds", "4.0"]
-        if not shim:
-            cmd += ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1"]
+        # Force full-wet for every preset. Shimmer presets ADD a sustained-sine
+        # render for the down-octave cascade gate (in addition to full-wet).
+        cmd += ["--param", "Dry/Wet=1.0", "--param", "Bus Mode=1"]
+        if shim:
+            cmd += ["--long-sine-seconds", "15"]   # sustained sine for the down-octave cascade gate
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=420)
         nb = glob.glob(f"{dv}/*_noiseburst.wav")
         if r.returncode != 0 or not nb:
@@ -172,7 +175,7 @@ def render_and_check(name, no_render=False):
     # ALWAYS (re)populate the anchor dir so full_check, run right after, never
     # sees an empty/stale lex on the --no-render reuse path.
     shutil.rmtree(lex, ignore_errors=True); os.makedirs(lex)
-    for s in STIM:
+    for s in STIM + (["sinelong"] if shim else []):
         src = f"{adir}/{apref}_{s}.wav"
         if os.path.exists(src):
             shutil.copy(src, f"{lex}/anchor_{s}.wav")

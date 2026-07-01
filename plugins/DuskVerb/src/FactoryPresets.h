@@ -566,7 +566,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vintage Vocal Plate",  "Plates",
           1,  0.5f,   false, 10.0f, 0,  // 2026-06-15 DPV(1). AccurateHall(10) migration TESTED+reverted: FDN slow-bloom suited the 91ms attack + killed boing, but washy early field regressed it (33 vs 21). busMode false.
           0.90000f, 0.80357f, 0.29369f, 1.64421f, 1.30000f, 1.38104f,  522.55f,  // 2026-06-24 Decay knob 0.50->0.90 + octave decayRef 0.40->0.724 (= the octave curve's natural scale-1.0 broadband): now the DISPLAYED Decay Time ~= the REALIZED RT60 (~0.90s, toward Lex 0.93) instead of the old misleading 0.5s knob / 0.876s actual. (Prior: 0.50 knob re-tune vs corrected anchor.)
-          0.24230f, 0.00f, 0.30f, 42.811f, 15000.0f, 1.00000f, false, 11.03f,  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim +11.03 (20->19). Width 1.0.
+          0.24230f, 0.00f, 0.30f, 25.000f, 15000.0f, 1.00000f, false, 11.03f,  // 2026-06-29 Lo Cut 42.8->25 (EAR "<80Hz different"): restores deep-sub 20-40Hz to MATCH anchor (was -6.4dB under at 42.8, -10.4 at the wrong 55; at 25 it's +0.1). HPF cutoff so it adds <55Hz weight WITHOUT the 40-300Hz boom. Also lifts the ss-deep-sub-20-50 gate (-6 under).  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim +11.03. Width 1.0.
           /* mono */ 20.0f, /* mid */ 1.42055f, /* highX */ 7049.45f, /* sat */ 0.12959f,
           /* hiCutShelfGainDb */ -6.0f,   // 2026-06-16 EAR: -12->-6 brighten (Lexicon brighter than ours)
           /* gate */ true,
@@ -574,9 +574,9 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
           /* sixAPBloomStagger    */ { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f },
           /* sixAPEarlyMix        */ 0.5f,  /* sixAPOutputTrim    */ 1.3f,
           /* bassChoke            */ 20.0f,
-          /* dpvHfShelfGainDb     */ 8.50f,       // 2026-06-24 EAR "Lex brighter": shelf 3.25->8.5 lifts the
+          /* dpvHfShelfGainDb     */ 8.50f,       // 2026-06-29 HF cut to 5.5 REVERTED: closed ss-hi/air but net-0 (gain-match whack-a-mole) AND darkened cent_50 -19%->-29% = re-muffle (the user's complaint). HF bloom vs cent is the documented Dattorro density coupling wall.  // 2026-06-24 EAR "Lex brighter": shelf 3.25->8.5 lifts the
           /* dpvHfShelfFreqHz     */ 4049.0f,     // EARLY field to ~Lex cent_50 5191; struct-damp 6605->4000
-          /* dpvStructHfDampHz    */ 4000.0f,     // keeps the LATE tail dark (cent_500 ~Lex 1688). Bright-early/dark-late; residual bloom 4-8k/8-12k is the Dattorro HF-density coupling the real Lex avoids (EAR-CHECK).
+          /* dpvStructHfDampHz    */ 5500.0f,     // 2026-06-29 4000->5500 (EAR "Lex crispier/fuller top"): less per-pass HF damping -> HF tail sustains longer (T60-16k 0.25->? toward Lex 0.55) = crispy sparkle + fills the tail. DV decay was HF-tilted (low long, top dies fast); Lex is EVEN across freq.
           /* dpvBoxCutGainDb      */ -1.52f,      // 2026-06-19: confirmed via bake-sweep the DPV EQ is LIVE but
           /* dpvBoxCutFreqHz      */ 704.0f,      // every lever is coupled to a structural wall — HF shelf brightens
           /* dpvBassShelfGainDb   */ 0.82f,       // cent_50 but blooms the tank HF (29->33); box/bass cut fixes sub/mid
@@ -1287,7 +1287,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Black Hole",           "Shimmer",
           7,  0.50f, false,   0.0f, 0,
           10.8728f, 0.56922f, 0.50890f, 0.10000f, 1.16880f, 0.53601f,  372.24f,  // 2026-06-16 EAR: modRate->0.1 = feedback 0 to match Valhalla BlackHole (screenshot feedback 0.000). DV sine 2k was +40dB hot vs anchor = over-shimmer. NOTE: DV pitch is feedback-loop-only → fb0 may kill shimmer (topology check).
-          0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 1.26041f, false, 7.64f,  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
+          0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 1.10000f, false, 7.64f,  // 2026-06-29 Width 1.26->1.10: DV's broadband stereo ran too WIDE (stereo_corr -0.01 vs Valhalla +0.12); 1.10 closes it (25->24). (snare confirmed DV wider than Valhalla, not narrower.)  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Deep Blue Day ────────────────────────────────────────────────
         // Reference: external reference Shimmer "DeepBlueDay" preset (named after the
@@ -1310,7 +1310,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Deep Blue Day",        "Shimmer",
           7,  0.50f, false,  25.0f, 0,  // mix pinned 50% — all Valhalla Shimmer factory presets ship 50% wet (verified from plugin UI 2026-06-15)
           18.000f, 0.59833f, 0.50f, 0.60500f, 0.999f, 1.000f, 668.755f,  // 2026-06-19 EAR "a bit more low end than VS over the long tail": Bass 1.5->1.0 — over the 15s tail Bass 1.5 made the LOW band (150-400) plateau (-25->-28dB t6->t13) while VS DECAYS (-24->-32); the down voice now supplies the warm low so Bass no longer needs 1.5 to fake it, and 1.0 restores VS's low-band decay (low@13s -32 = VS).  // (superseded) modRate 1.30->0.605 = feedback ~11.5%->~5% — tames DV's over-hot high octave to match VVV + frees headroom (less regen → the down voice runs hotter without clipping).  // "low missing in tail / darker": Bass 0.659->1.5 — Bass<1 made the LOW band decay FASTER than the tail (low died early -> tail lacked warm low -> sounded bright/thin). 1.5 sustains the low (low T60 12.5->13.3s ~VVV). NB tail HF is already DARKER than VVV; the "bright" was the missing low, not hot highs.  // decay 9.34->18 — THE fix. DV's tail was ~HALF VVV's length (per-band T60 7-10s vs VVV 13-16s); the sustained-spectrum match hid it (level, not ring-time). 18 ~doubles the tail toward VVV's 13-16s ambient wash. Feedback kept at 1.30 (~11.5%, user's clean setting) — the decay does the fullness, not metallic regeneration.  // 2026-06-16 EAR: modRate 0.605->1.30 = feedback ~0.048->0.115 (user: "closer to 11-12%")
-          0.80742f, 0.20f, 0.50f, 26.925f, 19144.104f, 1.69030f, false, 0.37f,
+          0.80742f, 0.20f, 0.50f, 26.925f, 19144.104f, 1.69030f, false, -4.50f,  // 2026-06-29 gainTrim 0.37->-4.50: the new −2 oct SUB voice (kShimmerSubByName 3.8) added deep-low energy that pushed the wet-stem peak 0.37->-0.3dB; trim back to ~-5dB so it matches Valhalla Shimmer's own stem level (-5.6dB peak) and stays mix-safe (50% mix + hot dry can't clip). Rel-fundamental shape (the screenshot match) is gain-invariant.
           /* mono */ 20.0f, /* mid */ 1.200f, /* highX */ 2157.808f, /* sat */ 0.23195f, /* hiCutShelfGainDb */ -12.109f },  // 2026-06-19 EAR "a bit fuller": mid 0.606->1.2 — DV's mid body (500-2k) ran ~0.5dB thinner + 0.7dB quieter than the anchor; mid_mult lifts the mid GEQ (shimmer feedback is in the pitch loop = sparkle not body; mid_mult is the body lever).  // 29->27->23: Shimmer 2nd pitch voice (+24, fills 12-24k) + Hi Cut 4521->11000 so its HF reaches output (matches Valhalla broadband octave; the dark 4521 was choking the new top band)
     };
     return presets;
