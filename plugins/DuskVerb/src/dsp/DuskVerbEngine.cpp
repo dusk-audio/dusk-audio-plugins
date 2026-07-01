@@ -791,6 +791,11 @@ void DuskVerbEngine::setShimmerSubOctaveMix  (float mix) { shimmer_.setSubOctave
 void DuskVerbEngine::setShimmerFeedbackHpfHz (float hz)  { shimmer_.setFeedbackHpfHz (hz); }
 void DuskVerbEngine::setShimmerStereoMod     (float hz, float d) { shimmer_.setStereoMod (hz, d); }
 void DuskVerbEngine::setShimmerHFAir         (float mix) { shimmer_.setHFAir (mix); }
+void DuskVerbEngine::setShimmerUseDenseReverb (bool on)  { shimmer_.setUseDenseReverb (on); }
+void DuskVerbEngine::setShimmerUseTailSpin    (bool on)  { shimmer_.setUseTailSpin (on); }
+void DuskVerbEngine::setShimmerUpVoiceScale   (float v1, float v2) { shimmer_.setUpVoiceScale (v1, v2); }
+void DuskVerbEngine::setShimmerOctaveCascade  (const float gains[4]) { shimmer_.setOctaveCascade (gains); }
+void DuskVerbEngine::setShimmerTailNoise      (float gain) { shimmer_.setTailNoise (gain); }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
 // Forward to the FDN tank and to ReverseRoom (which owns an FDN for its tail);

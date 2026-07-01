@@ -2,6 +2,7 @@
 
 #include "DspUtils.h"
 #include "FDNReverb.h"
+#include "DenseHallReverb.h"
 
 #include <array>
 #include <cmath>
@@ -77,6 +78,11 @@ public:
     void setFeedbackHpfHz     (float hz);      // feedback-loop HPF corner; lower = the low cascade survives (default 60; ~35 keeps killing the 12 Hz grain rumble)
     void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Matches Valhalla Black Hole's moving stereo field.
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
+    void setUseDenseReverb    (bool on);     // route the tank through DenseHallReverb (dense diffusion → smooth, non-metallic HF tail) instead of the sparse 16-line FDN. false = legacy FDN (bit-identical).
+    void setUseTailSpin       (bool on);     // 2-stage modulated-allpass spin-comb on the FDN wet output — smears the metallic HF while keeping the FDN's cascade/width/HF (for Deep Blue Day). false = untouched.
+    void setTailNoise         (float gain);  // envelope-tracked band-limited noise floor on the output — the dense noise-like fade Valhalla has; masks the sparse-mode ring. 0 = off/bit-null.
+    void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
+    void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches Valhalla's even down-cascade. all 0 = off/bit-null.
     void setFreeze            (bool frozen);
 
 private:
@@ -161,6 +167,8 @@ private:
     static constexpr float kVoice2OctaveMul = 2.0f;   // +12 st above voice 1
     static constexpr float kVoice1Mix       = 0.78f;
     static constexpr float kVoice2Mix       = 0.60f;   // 2026-06-16: 0.34->0.60 — boost the +24 air voice to fill 12-24k toward the anchor's broadband octave (cent_500/spec_L1@12.9k).
+    float voice1Scale_ = 1.0f;   // per-preset multiplier on kVoice1Mix (mid-tail fill); 1.0 = legacy
+    float voice2Scale_ = 1.0f;   // per-preset multiplier on kVoice2Mix; 1.0 = legacy
 
     // DOWN voice (2026-06-19) — pitches the feedback DOWN one octave (×0.5) IN THE
     // FEEDBACK LOOP, alongside the up voices. The loop regenerates a descending ladder
@@ -194,6 +202,19 @@ private:
     static constexpr float kVoiceSubRatio   = 0.25f;  // −24 st
     float subMix_ = 0.0f;                             // per-preset; 0 = off (bit-null)
 
+    // DRY-FED OCTAVE CASCADE (2026-07-01) — a mono, FEED-FORWARD chain of −12 st pitch stages
+    // fed from the DRY input (not the feedback), each octave summed into the reverb input at its
+    // OWN gain. This is what Valhalla Shimmer does: independent per-octave generation → a gentle
+    // EVEN 500/250/125/62 descent. DV's old feedback down/sub voices could not (they read the
+    // recirculated wet, so a transient starves them, and the "sub" ratio 0.25 was silently
+    // clamped to 0.5 by setPitchRatio — never actually −24 st). Feed-forward → each stage's level
+    // is set purely by its gain, decoupled from feedback. All gains 0 → octActive_ false →
+    // skipped → bit-null. kNumOctaves stages: octGen_[0]=500, [1]=250, [2]=125, [3]=62 Hz.
+    static constexpr int kNumOctaves = 4;
+    GranularPitchShifter octGenL_[kNumOctaves];       // mono chain (index 0 = highest octave)
+    float octGain_[kNumOctaves] = { 0.0f, 0.0f, 0.0f, 0.0f };  // per-octave levels (per-preset)
+    bool  octActive_ = false;                         // any gain > 0
+
     // Hall reverb — reuses the existing FDNReverb (same engine that
     // powers the "Realistic Space" / FDN algorithm). Configured in
     // prepare() for a "long lush hall" baseline; per-preset setters
@@ -212,6 +233,14 @@ private:
     // (Lagrange/allpass interpolation) or a parallel non-recirculating pitched
     // voice — an engine fork, to be done with ear-validation in the loop.
     FDNReverb reverb_;
+
+    // Dense-diffusion alternative tank (10 input allpasses + 3 nested loop
+    // allpasses/line + 2 output spin-combs). Same class the hall presets use
+    // to reach kurtosis ~7; here it replaces the sparse FDN's metallic HF ring
+    // (kurt ~26) when useDenseReverb_ is set. Separate instance from the halls'
+    // denseHall_ → non-shimmer presets are unaffected. Off = legacy FDN path.
+    DenseHallReverb denseReverb_;
+    bool useDenseReverb_ = false;
 
     // Per-block scratch buffers for the pitch-shifter → reverb stage.
     // pitch shifter writes into these; reverb reads them and writes
@@ -330,6 +359,85 @@ private:
         }
     };
     StereoMod stereoMod_;
+
+    // Tail spin-comb — a 2-stage cascade of MODULATED Schroeder allpasses on the
+    // WET output (allpass = magnitude-flat → no comb notches, only the slow spin
+    // modulation smears the spectrum). L/R run in opposite mod phase. It smears the
+    // sparse FDN's metallic HF modes (kurt ~31 → ~9, matching Valhalla) WITHOUT the
+    // density of a full reverb swap, so the FDN tank's deep-low cascade / width /
+    // HF-sustain are preserved. Applied to the OUTPUT only, post-feedback-write, so
+    // the recirculating cascade stays un-spun. Used on Deep Blue Day (keeps its FDN);
+    // Black Hole uses DenseHall instead. off (useTailSpin_ = false) → oL/oR untouched.
+    struct TailSpin
+    {
+        struct AP { std::vector<float> buf; int mask = 0, w = 0, len = 0; float exc = 0;
+            void alloc (int n, int e) { len = std::max (1, n); exc = (float) e;
+                int sz = 1; while (sz < len + e + 8) sz <<= 1; buf.assign ((size_t) sz, 0.0f); mask = sz - 1; w = 0; }
+            void clear() { std::fill (buf.begin(), buf.end(), 0.0f); w = 0; }
+            inline float process (float x, float mod) {
+                const float rp = (float) w - (float) len - exc * mod;
+                const int i0 = (int) std::floor (rp); const float fr = rp - (float) i0;
+                const float d = DspUtils::cubicHermite (buf.data(), mask, i0, fr);   // HF-lossless
+                const float in = x + kSG * d; buf[(size_t) w] = in + DspUtils::kDenormalPrevention; w = (w + 1) & mask;
+                return d - kSG * in; }
+            static constexpr float kSG = 0.7f; };
+        AP l0, l1, r0, r1; float ph0 = 0.0f, ph1 = 1.7f, inc0 = 0.0f, inc1 = 0.0f;
+        void prepare (double sr) {
+            const float s = (float) sr;
+            l0.alloc ((int) (0.0070f * s), (int) (0.0015f * s)); r0.alloc ((int) (0.0070f * s), (int) (0.0015f * s));
+            l1.alloc ((int) (0.0080f * s), (int) (0.0015f * s)); r1.alloc ((int) (0.0080f * s), (int) (0.0015f * s));
+            inc0 = 6.283185307f * 1.30f / s; inc1 = 6.283185307f * 1.53f / s; ph0 = 0.0f; ph1 = 1.7f; }
+        void clear() { l0.clear(); l1.clear(); r0.clear(); r1.clear(); ph0 = 0.0f; ph1 = 1.7f; }
+        inline void process (float& L, float& R) {
+            const float m0 = std::sin (ph0), m1 = std::sin (ph1);
+            ph0 += inc0; if (ph0 > 6.283185307f) ph0 -= 6.283185307f;
+            ph1 += inc1; if (ph1 > 6.283185307f) ph1 -= 6.283185307f;
+            L = l1.process (l0.process (L,  m0),  m1);
+            R = r1.process (r0.process (R, -m0), -m1); }   // opposite mod → L/R decorrelation
+    };
+    TailSpin tailSpin_;
+    bool useTailSpin_ = false;
+
+    // Tail noise floor — the dense, noise-like decay Valhalla's shimmer has and DV's sparse FDN
+    // lacks (measured: Valhalla's fade stays denser + ~2 dB higher; DV collapses to a single
+    // sparse mode). A low-level band-limited noise, ENVELOPE-TRACKED to the wet tail so it fades
+    // WITH the decay ("white noise heard as the audio fades out"). It fills the spectral gaps
+    // between DV's sparse modes → masks the discrete low-mode ring (203 Hz boing) so it blends
+    // into a wash instead of standing out as a pitch. gain 0 → inactive → bit-null.
+    struct TailNoise
+    {
+        static constexpr std::uint32_t kSeedL = 0x9E3779B9u;
+        static constexpr std::uint32_t kSeedR = 0x85EBCA6Bu;
+        std::uint32_t rngL = kSeedL, rngR = kSeedR;
+        float envL = 0.0f, envR = 0.0f, atk = 0.0f, rel = 0.0f;
+        OnePole hpL, hpR, lpL, lpR;               // band-limit the noise to the tail's dark color
+        float gain_ = 0.0f; bool active_ = false;
+        void prepare (double sr) {
+            const float s = static_cast<float> (sr);
+            atk = std::exp (-1.0f / (0.005f * s));    // ~5 ms attack
+            rel = std::exp (-1.0f / (0.100f * s));    // ~100 ms release (tracks the decay smoothly)
+            hpL.setHPCutoff (250.0f, s); hpR.setHPCutoff (250.0f, s);
+            lpL.setLPCutoff (7000.0f, s); lpR.setLPCutoff (7000.0f, s);
+        }
+        void clear() { rngL = kSeedL; rngR = kSeedR; envL = envR = 0.0f; hpL.clear(); hpR.clear(); lpL.clear(); lpR.clear(); }
+        void setGain (float g) { gain_ = std::max (0.0f, g); active_ = gain_ > 1.0e-6f; }
+        bool active() const { return active_; }
+        inline float noise (std::uint32_t& s) {
+            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+            return static_cast<float> (s) * (1.0f / 2147483648.0f) - 1.0f;   // ~[-1,1)
+        }
+        inline void process (float wetL, float wetR, float& oL, float& oR) {
+            const float aL = std::abs (wetL), aR = std::abs (wetR);
+            envL = (aL > envL) ? aL + atk * (envL - aL) : aL + rel * (envL - aL);   // fast up, slow down
+            envR = (aR > envR) ? aR + atk * (envR - aR) : aR + rel * (envR - aR);
+            const float nL = lpL.processLP (hpL.processHP (noise (rngL)));
+            const float nR = lpR.processLP (hpR.processHP (noise (rngR)));
+            oL += gain_ * envL * nL;
+            oR += gain_ * envR * nR;
+        }
+    };
+    TailNoise tailNoise_;
+    float noiseGain_ = 0.0f;   // per-preset; 0 = off (bit-null)
     float stereoModRate_ = 0.83f, stereoModDepth_ = 0.0f;   // depth 0 = bypassed (bit-null)
 
     // HF-air voice — the genuine >12 kHz "air" Valhalla Shimmer has (centroid ~9.9k BH /
