@@ -3483,6 +3483,11 @@ void MultiQEditor::onPresetSelected(juce::ComboBox& sender)
 
     // Resync the OTHER combo (main <-> mode-panel) to the selection just made (#105).
     updatePresetSelector();
+
+    // Notify the host so ITS preset/program dropdown reflects a plugin-side change (#105). Ardour's
+    // dropdown reads the plugin's programs (getCurrentProgram, set by setCurrentProgram/resetToInit
+    // above), so host->plugin already synced; this closes the reverse direction plugin->host.
+    processor.updateHostDisplay(juce::AudioProcessorListener::ChangeDetails{}.withProgramChanged(true));
 }
 
 void MultiQEditor::saveUserPreset()
