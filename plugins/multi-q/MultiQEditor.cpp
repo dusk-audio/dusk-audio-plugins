@@ -180,7 +180,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     presetSelector = std::make_unique<juce::ComboBox>();
     presetSelector->setTooltip("Factory and user presets");
     updatePresetSelector();
-    presetSelector->onChange = [this]() { onPresetSelected(); };
+    presetSelector->onChange = [this]() { onPresetSelected(*presetSelector); };
     addAndMakeVisible(presetSelector.get());
 
     // Save preset button
@@ -380,23 +380,13 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     britishAbButton.setVisible(false);
     addAndMakeVisible(britishAbButton);
 
-    britishPresetSelector.addItem("Default", 1);
-    britishPresetSelector.addItem("Warm Vocal", 2);
-    britishPresetSelector.addItem("Bright Guitar", 3);
-    britishPresetSelector.addItem("Punchy Drums", 4);
-    britishPresetSelector.addItem("Full Bass", 5);
-    britishPresetSelector.addItem("Air & Presence", 6);
-    britishPresetSelector.addItem("Gentle Cut", 7);
-    britishPresetSelector.addItem("Master Bus", 8);
-    // dontSendNotification: this is a UI-only quick-preset combo that doesn't track the loaded
-    // preset, so it defaults to "Default" on open. Firing onChange here would call
-    // applyBritishPreset(1) ("Default - flat") AFTER construction and wipe the British params of
-    // whatever factory/user preset is loaded (issue #105 — reset on GUI open / session reload).
-    britishPresetSelector.setSelectedId(1, juce::dontSendNotification);
+    // #105: this panel combo mirrors the main preset dropdown — same factory presets, same handler,
+    // kept in sync by updatePresetSelector(). Items + selection are filled there, not here (it used
+    // to be a separate quick-preset list that never synced or persisted).
     britishPresetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     britishPresetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     britishPresetSelector.setVisible(false);
-    britishPresetSelector.onChange = [this]() { applyBritishPreset(britishPresetSelector.getSelectedId()); };
+    britishPresetSelector.onChange = [this]() { onPresetSelected(britishPresetSelector); };
     addAndMakeVisible(britishPresetSelector);
 
     // Global oversampling selector (visible in all modes)
@@ -420,21 +410,12 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     addAndMakeVisible(tubeAbButton);
 
     // Tube mode preset selector
-    tubePresetSelector.addItem("Default", 1);
-    tubePresetSelector.addItem("Warm Vocal", 2);
-    tubePresetSelector.addItem("Vintage Bass", 3);
-    tubePresetSelector.addItem("Silky Highs", 4);
-    tubePresetSelector.addItem("Full Mix", 5);
-    tubePresetSelector.addItem("Subtle Warmth", 6);
-    tubePresetSelector.addItem("Mastering", 7);
-    // dontSendNotification: see britishPresetSelector above — firing onChange here would call
-    // applyTubePreset(1) ("Default - flat") after construction and wipe the loaded preset's Tube
-    // params (issue #105 — the async onChange was the reset the diagnostic log caught).
-    tubePresetSelector.setSelectedId(1, juce::dontSendNotification);
+    // #105: mirrors the main preset dropdown (see britishPresetSelector). Items + selection filled
+    // by updatePresetSelector(); shares the onPresetSelected handler.
     tubePresetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     tubePresetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     tubePresetSelector.setVisible(false);
-    tubePresetSelector.onChange = [this]() { applyTubePreset(tubePresetSelector.getSelectedId()); };
+    tubePresetSelector.onChange = [this]() { onPresetSelected(tubePresetSelector); };
     addAndMakeVisible(tubePresetSelector);
 
     tubeHqButton = std::make_unique<juce::ToggleButton>("HQ");
@@ -2542,355 +2523,6 @@ void MultiQEditor::layoutBritishControls()
     // These will be laid out in resized() alongside the EQ type selector
 }
 
-void MultiQEditor::applyBritishPreset(int presetId)
-{
-    // Validate presetId is within expected range (1-8)
-    if (presetId < 1 || presetId > 8)
-    {
-        DBG("MultiQEditor::applyBritishPreset: Invalid presetId " + juce::String(presetId) + " (expected 1-8)");
-        return;
-    }
-
-    // Helper to set parameter value with defensive checks
-    auto setParam = [this](const juce::String& paramId, float value) {
-        auto* param = processor.parameters.getParameter(paramId);
-        if (param == nullptr)
-        {
-            DBG("MultiQEditor::applyBritishPreset: Parameter '" + paramId + "' not found");
-            return;
-        }
-        // Clamp value to parameter's valid range before converting
-        auto range = param->getNormalisableRange();
-        float clampedValue = juce::jlimit(range.start, range.end, value);
-        param->setValueNotifyingHost(param->convertTo0to1(clampedValue));
-    };
-
-    // Preset definitions: HPF freq, HPF on, LPF freq, LPF on,
-    //                     LF gain, LF freq, LF bell,
-    //                     LMF gain, LMF freq, LMF Q,
-    //                     HMF gain, HMF freq, HMF Q,
-    //                     HF gain, HF freq, HF bell,
-    //                     Saturation, Input, Output
-
-    switch (presetId)
-    {
-        case 1:  // Default - flat response
-            setParam(ParamIDs::britishHpfFreq, 20.0f);
-            setParam(ParamIDs::britishHpfEnabled, 0.0f);
-            setParam(ParamIDs::britishLpfFreq, 20000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 0.0f);
-            setParam(ParamIDs::britishLfGain, 0.0f);
-            setParam(ParamIDs::britishLfFreq, 100.0f);
-            setParam(ParamIDs::britishLfBell, 0.0f);
-            setParam(ParamIDs::britishLmGain, 0.0f);
-            setParam(ParamIDs::britishLmFreq, 400.0f);
-            setParam(ParamIDs::britishLmQ, 1.0f);
-            setParam(ParamIDs::britishHmGain, 0.0f);
-            setParam(ParamIDs::britishHmFreq, 2000.0f);
-            setParam(ParamIDs::britishHmQ, 1.0f);
-            setParam(ParamIDs::britishHfGain, 0.0f);
-            setParam(ParamIDs::britishHfFreq, 8000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 0.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 0.0f);
-            break;
-
-        case 2:  // Warm Vocal - presence boost, slight low cut
-            setParam(ParamIDs::britishHpfFreq, 80.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 16000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLfGain, -2.0f);
-            setParam(ParamIDs::britishLfFreq, 200.0f);
-            setParam(ParamIDs::britishLfBell, 1.0f);
-            setParam(ParamIDs::britishLmGain, 2.0f);
-            setParam(ParamIDs::britishLmFreq, 800.0f);
-            setParam(ParamIDs::britishLmQ, 1.5f);
-            setParam(ParamIDs::britishHmGain, 3.0f);
-            setParam(ParamIDs::britishHmFreq, 3500.0f);
-            setParam(ParamIDs::britishHmQ, 1.2f);
-            setParam(ParamIDs::britishHfGain, 2.0f);
-            setParam(ParamIDs::britishHfFreq, 12000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 15.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 0.0f);
-            break;
-
-        case 3:  // Bright Guitar - aggressive highs, tight low end
-            setParam(ParamIDs::britishHpfFreq, 100.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 20000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 0.0f);
-            setParam(ParamIDs::britishLfGain, -3.0f);
-            setParam(ParamIDs::britishLfFreq, 150.0f);
-            setParam(ParamIDs::britishLfBell, 1.0f);
-            setParam(ParamIDs::britishLmGain, -2.0f);
-            setParam(ParamIDs::britishLmFreq, 500.0f);
-            setParam(ParamIDs::britishLmQ, 2.0f);
-            setParam(ParamIDs::britishHmGain, 4.0f);
-            setParam(ParamIDs::britishHmFreq, 3000.0f);
-            setParam(ParamIDs::britishHmQ, 1.5f);
-            setParam(ParamIDs::britishHfGain, 5.0f);
-            setParam(ParamIDs::britishHfFreq, 10000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 20.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 0.0f);
-            break;
-
-        case 4:  // Punchy Drums - enhanced attack, controlled lows
-            setParam(ParamIDs::britishHpfFreq, 60.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 18000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLfGain, 3.0f);
-            setParam(ParamIDs::britishLfFreq, 80.0f);
-            setParam(ParamIDs::britishLfBell, 0.0f);
-            setParam(ParamIDs::britishLmGain, -4.0f);
-            setParam(ParamIDs::britishLmFreq, 350.0f);
-            setParam(ParamIDs::britishLmQ, 1.8f);
-            setParam(ParamIDs::britishHmGain, 4.0f);
-            setParam(ParamIDs::britishHmFreq, 4000.0f);
-            setParam(ParamIDs::britishHmQ, 1.2f);
-            setParam(ParamIDs::britishHfGain, 2.0f);
-            setParam(ParamIDs::britishHfFreq, 8000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 25.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 0.0f);
-            break;
-
-        case 5:  // Full Bass - big low end, clarity on top
-            setParam(ParamIDs::britishHpfFreq, 30.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 12000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLfGain, 6.0f);
-            setParam(ParamIDs::britishLfFreq, 80.0f);
-            setParam(ParamIDs::britishLfBell, 0.0f);
-            setParam(ParamIDs::britishLmGain, -3.0f);
-            setParam(ParamIDs::britishLmFreq, 250.0f);
-            setParam(ParamIDs::britishLmQ, 1.5f);
-            setParam(ParamIDs::britishHmGain, 2.0f);
-            setParam(ParamIDs::britishHmFreq, 1500.0f);
-            setParam(ParamIDs::britishHmQ, 1.0f);
-            setParam(ParamIDs::britishHfGain, -2.0f);
-            setParam(ParamIDs::britishHfFreq, 6000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 30.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, -3.0f);
-            break;
-
-        case 6:  // Air & Presence - sparkle and definition
-            setParam(ParamIDs::britishHpfFreq, 40.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 20000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 0.0f);
-            setParam(ParamIDs::britishLfGain, 0.0f);
-            setParam(ParamIDs::britishLfFreq, 100.0f);
-            setParam(ParamIDs::britishLfBell, 0.0f);
-            setParam(ParamIDs::britishLmGain, -2.0f);
-            setParam(ParamIDs::britishLmFreq, 600.0f);
-            setParam(ParamIDs::britishLmQ, 1.2f);
-            setParam(ParamIDs::britishHmGain, 3.0f);
-            setParam(ParamIDs::britishHmFreq, 5000.0f);
-            setParam(ParamIDs::britishHmQ, 1.0f);
-            setParam(ParamIDs::britishHfGain, 5.0f);
-            setParam(ParamIDs::britishHfFreq, 12000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 10.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 0.0f);
-            break;
-
-        case 7:  // Gentle Cut - subtle mud/harsh removal
-            setParam(ParamIDs::britishHpfFreq, 50.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 18000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLfGain, -1.5f);
-            setParam(ParamIDs::britishLfFreq, 200.0f);
-            setParam(ParamIDs::britishLfBell, 1.0f);
-            setParam(ParamIDs::britishLmGain, -2.5f);
-            setParam(ParamIDs::britishLmFreq, 400.0f);
-            setParam(ParamIDs::britishLmQ, 1.5f);
-            setParam(ParamIDs::britishHmGain, -2.0f);
-            setParam(ParamIDs::britishHmFreq, 2500.0f);
-            setParam(ParamIDs::britishHmQ, 1.2f);
-            setParam(ParamIDs::britishHfGain, -1.0f);
-            setParam(ParamIDs::britishHfFreq, 8000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 5.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 1.0f);
-            break;
-
-        case 8:  // Master Bus - gentle glue and sheen
-            setParam(ParamIDs::britishHpfFreq, 25.0f);
-            setParam(ParamIDs::britishHpfEnabled, 1.0f);
-            setParam(ParamIDs::britishLpfFreq, 20000.0f);
-            setParam(ParamIDs::britishLpfEnabled, 0.0f);
-            setParam(ParamIDs::britishLfGain, 1.0f);
-            setParam(ParamIDs::britishLfFreq, 60.0f);
-            setParam(ParamIDs::britishLfBell, 0.0f);
-            setParam(ParamIDs::britishLmGain, -1.0f);
-            setParam(ParamIDs::britishLmFreq, 300.0f);
-            setParam(ParamIDs::britishLmQ, 0.8f);
-            setParam(ParamIDs::britishHmGain, 0.5f);
-            setParam(ParamIDs::britishHmFreq, 3000.0f);
-            setParam(ParamIDs::britishHmQ, 0.7f);
-            setParam(ParamIDs::britishHfGain, 1.5f);
-            setParam(ParamIDs::britishHfFreq, 12000.0f);
-            setParam(ParamIDs::britishHfBell, 0.0f);
-            setParam(ParamIDs::britishSaturation, 8.0f);
-            setParam(ParamIDs::britishInputGain, 0.0f);
-            setParam(ParamIDs::britishOutputGain, 0.0f);
-            break;
-
-        default:
-            break;
-    }
-}
-
-void MultiQEditor::applyTubePreset(int presetId)
-{
-    // Validate presetId is within expected range (1-7)
-    if (presetId < 1 || presetId > 7)
-    {
-        DBG("MultiQEditor::applyTubePreset: Invalid presetId " + juce::String(presetId) + " (expected 1-7)");
-        return;
-    }
-
-    // Helper to set parameter value with defensive checks
-    auto setParam = [this](const juce::String& paramId, float value) {
-        auto* param = processor.parameters.getParameter(paramId);
-        if (param == nullptr)
-        {
-            DBG("MultiQEditor::applyTubePreset: Parameter '" + paramId + "' not found");
-            return;
-        }
-        auto range = param->getNormalisableRange();
-        float clampedValue = juce::jlimit(range.start, range.end, value);
-        param->setValueNotifyingHost(param->convertTo0to1(clampedValue));
-    };
-
-    // Tube EQ parameters: LF Boost, LF Atten, LF Freq, HF Boost, HF Freq, HF BW, HF Atten, HF Atten Freq,
-    //                       Tube Drive, Input, Output, Mid section enabled
-
-    switch (presetId)
-    {
-        case 1:  // Default - flat response
-            setParam(ParamIDs::pultecLfBoostGain, 0.0f);
-            setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
-            setParam(ParamIDs::pultecHfBoostGain, 0.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 0.0f);  // 3k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
-            setParam(ParamIDs::pultecHfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecHfAttenFreq, 0.0f);  // 5k Hz
-            setParam(ParamIDs::pultecTubeDrive, 0.0f);
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        case 2:  // Warm Vocal - boost lows, gentle air
-            setParam(ParamIDs::pultecLfBoostGain, 3.0f);
-            setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 3.0f);  // 100 Hz (index 3)
-            setParam(ParamIDs::pultecHfBoostGain, 4.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 5.0f);  // 12 kHz (index 5)
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.6f);
-            setParam(ParamIDs::pultecHfAttenGain, 2.0f);
-            setParam(ParamIDs::pultecHfAttenFreq, 1.0f);  // 10 kHz (index 1)
-            setParam(ParamIDs::pultecTubeDrive, 0.2f);
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        case 3:  // Vintage Bass - classic low-end trick
-            setParam(ParamIDs::pultecLfBoostGain, 6.0f);
-            setParam(ParamIDs::pultecLfAttenGain, 4.0f);  // Simultaneous boost & cut
-            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
-            setParam(ParamIDs::pultecHfBoostGain, 0.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 0.0f);
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
-            setParam(ParamIDs::pultecHfAttenGain, 3.0f);
-            setParam(ParamIDs::pultecHfAttenFreq, 2.0f);  // 20k Hz
-            setParam(ParamIDs::pultecTubeDrive, 0.3f);
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        case 4:  // Silky Highs - smooth high-end boost
-            setParam(ParamIDs::pultecLfBoostGain, 0.0f);
-            setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
-            setParam(ParamIDs::pultecHfBoostGain, 5.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 8 kHz (index 3)
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.7f);  // Wide bandwidth
-            setParam(ParamIDs::pultecHfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecHfAttenFreq, 0.0f);
-            setParam(ParamIDs::pultecTubeDrive, 0.15f);
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        case 5:  // Full Mix - balanced enhancement
-            setParam(ParamIDs::pultecLfBoostGain, 3.0f);
-            setParam(ParamIDs::pultecLfAttenGain, 1.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
-            setParam(ParamIDs::pultecHfBoostGain, 3.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 5.0f);  // 12 kHz (index 5)
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
-            setParam(ParamIDs::pultecHfAttenGain, 1.0f);
-            setParam(ParamIDs::pultecHfAttenFreq, 1.0f);  // 10k Hz
-            setParam(ParamIDs::pultecTubeDrive, 0.25f);
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        case 6:  // Subtle Warmth - gentle coloration
-            setParam(ParamIDs::pultecLfBoostGain, 1.5f);
-            setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 3.0f);  // 100 Hz (index 3)
-            setParam(ParamIDs::pultecHfBoostGain, 1.5f);
-            setParam(ParamIDs::pultecHfBoostFreq, 5.0f);  // 12 kHz (index 5)
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
-            setParam(ParamIDs::pultecHfAttenGain, 0.5f);
-            setParam(ParamIDs::pultecHfAttenFreq, 2.0f);  // 20k Hz
-            setParam(ParamIDs::pultecTubeDrive, 0.1f);
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        case 7:  // Mastering - subtle wide enhancement
-            setParam(ParamIDs::pultecLfBoostGain, 2.0f);
-            setParam(ParamIDs::pultecLfAttenGain, 1.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
-            setParam(ParamIDs::pultecHfBoostGain, 2.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 8 kHz (index 3)
-            setParam(ParamIDs::pultecHfBoostBandwidth, 0.8f);  // Very wide
-            setParam(ParamIDs::pultecHfAttenGain, 0.5f);
-            setParam(ParamIDs::pultecHfAttenFreq, 2.0f);  // 20k Hz
-            setParam(ParamIDs::pultecTubeDrive, 0.05f);  // Subtle tube warmth
-            setParam(ParamIDs::pultecInputGain, 0.0f);
-            setParam(ParamIDs::pultecOutputGain, 0.0f);
-            setParam(ParamIDs::pultecMidEnabled, 0.0f);
-            break;
-
-        default:
-            break;
-    }
-}
 
 void MultiQEditor::setupTubeEQControls()
 {
@@ -3718,98 +3350,78 @@ void MultiQEditor::updateDynamicAttachments()
 
 // Factory Preset Methods
 
-void MultiQEditor::updatePresetSelector()
+// #105: Fill a preset combo with Init + the factory presets for the current EQ mode + user presets,
+// then select the one named by the presetName state property. Shared by the main top dropdown AND
+// the Tube/British mode-panel combo so both show the same list and stay in sync (the panel combo
+// used to be a separate quick-preset list that never synced — the reported bug).
+void MultiQEditor::populatePresetCombo(juce::ComboBox& combo)
 {
-    if (!presetSelector)
-        return;
+    combo.clear(juce::dontSendNotification);
 
-    presetSelector->clear(juce::dontSendNotification);
-
-    // Get current EQ type to filter presets
     auto* eqTypeParam = processor.parameters.getRawParameterValue(ParamIDs::eqType);
-    int currentEqType = eqTypeParam ? static_cast<int>(eqTypeParam->load()) : 0;
+    const int currentEqType = eqTypeParam ? static_cast<int>(eqTypeParam->load()) : 0;
 
-    // Always add Init (ID 1) — it's mode-agnostic
-    presetSelector->addItem("Init", 1);
+    combo.addItem("Init", 1);   // mode-agnostic (ID 1)
 
-    // Add factory presets filtered by current EQ type, grouped by category
     const auto& presets = processor.getFactoryPresets();
     juce::String lastCategory;
     for (size_t i = 0; i < presets.size(); ++i)
     {
         if (presets[i].eqType != currentEqType)
             continue;
-
-        // Add category heading when category changes
         if (presets[i].category != lastCategory)
         {
-            presetSelector->addSeparator();
-            presetSelector->addSectionHeading(presets[i].category);
+            combo.addSeparator();
+            combo.addSectionHeading(presets[i].category);
             lastCategory = presets[i].category;
         }
-
-        // ID = i + 2 (1 is Init, factory presets start at 2)
-        presetSelector->addItem(presets[i].name, static_cast<int>(i + 2));
+        combo.addItem(presets[i].name, static_cast<int>(i + 2));   // factory presets start at ID 2
     }
 
-    // Add user presets (IDs starting at 1001)
     if (userPresetManager)
     {
         auto userPresets = userPresetManager->loadUserPresets();
         if (!userPresets.empty())
         {
-            presetSelector->addSeparator();
-            presetSelector->addSectionHeading("User Presets");
-
+            combo.addSeparator();
+            combo.addSectionHeading("User Presets");
             for (size_t i = 0; i < userPresets.size(); ++i)
-            {
-                presetSelector->addItem(userPresets[i].name, static_cast<int>(1001 + i));
-            }
+                combo.addItem(userPresets[i].name, static_cast<int>(1001 + i));   // user presets at ID 1001+
         }
     }
 
-    // Restore preset selection from saved state
-    auto savedName = processor.parameters.state.getProperty("presetName", "").toString();
-    if (savedName.isNotEmpty())
+    // Select the preset named in the state (what onPresetSelected/setCurrentProgram stored).
+    const auto savedName = processor.parameters.state.getProperty("presetName", "").toString();
+    int selId = 1;   // default: Init
+    if (savedName.isNotEmpty() && savedName != "Init")
     {
         bool found = false;
-        if (savedName == "Init")
-        {
-            presetSelector->setSelectedId(1, juce::dontSendNotification);
-            found = true;
-        }
-        if (!found)
-        {
-            for (size_t i = 0; i < presets.size(); ++i)
-            {
-                if (presets[i].name == savedName)
-                {
-                    presetSelector->setSelectedId(static_cast<int>(i + 2), juce::dontSendNotification);
-                    found = true;
-                    break;
-                }
-            }
-        }
+        for (size_t i = 0; i < presets.size() && !found; ++i)
+            if (presets[i].name == savedName) { selId = static_cast<int>(i + 2); found = true; }
         if (!found && userPresetManager)
         {
-            auto userPresets2 = userPresetManager->loadUserPresets();
-            for (size_t i = 0; i < userPresets2.size(); ++i)
-            {
-                if (userPresets2[i].name == savedName)
-                {
-                    presetSelector->setSelectedId(static_cast<int>(1001 + i), juce::dontSendNotification);
-                    found = true;
-                    break;
-                }
-            }
+            auto up = userPresetManager->loadUserPresets();
+            for (size_t i = 0; i < up.size() && !found; ++i)
+                if (up[i].name == savedName) { selId = static_cast<int>(1001 + i); found = true; }
         }
-        if (!found)
-            presetSelector->setSelectedId(1, juce::dontSendNotification);
     }
-    else
-    {
-        presetSelector->setSelectedId(1, juce::dontSendNotification);
-    }
+    combo.setSelectedId(selId, juce::dontSendNotification);
+}
+
+void MultiQEditor::updatePresetSelector()
+{
+    if (presetSelector)
+        populatePresetCombo(*presetSelector);
+
+    // Mirror into the active mode's panel combo so it shows the same list + selection as the main
+    // dropdown (issue #105). Driven off the eqType param (not the mode flags) so it is correct even
+    // when called from the constructor before the flags are set.
+    auto* eqTypeParam = processor.parameters.getRawParameterValue(ParamIDs::eqType);
+    const int eqType = eqTypeParam ? static_cast<int>(eqTypeParam->load()) : 0;
+    if (eqType == static_cast<int>(EQType::British))
+        populatePresetCombo(britishPresetSelector);
+    else if (eqType == static_cast<int>(EQType::Tube))
+        populatePresetCombo(tubePresetSelector);
 }
 
 void MultiQEditor::refreshUserPresets()
@@ -3824,17 +3436,15 @@ void MultiQEditor::refreshUserPresets()
         presetSelector->setSelectedId(currentId, juce::dontSendNotification);
 }
 
-void MultiQEditor::onPresetSelected()
+void MultiQEditor::onPresetSelected(juce::ComboBox& sender)
 {
-    if (!presetSelector)
-        return;
-
     // Do not load a preset while a cross-mode transfer is in progress;
     // the transfer sets band params explicitly and must not be overwritten.
     if (processor.transferInProgress.load())
         return;
 
-    int selectedId = presetSelector->getSelectedId();
+    // #105: the main dropdown and the mode-panel combo share this handler; read whichever fired.
+    int selectedId = sender.getSelectedId();
     if (selectedId <= 0)
         return;
 
@@ -3870,6 +3480,9 @@ void MultiQEditor::onPresetSelected()
             processor.parameters.state.setProperty("presetName", presets[static_cast<size_t>(factoryIndex)].name, nullptr);
         }
     }
+
+    // Resync the OTHER combo (main <-> mode-panel) to the selection just made (#105).
+    updatePresetSelector();
 }
 
 void MultiQEditor::saveUserPreset()
