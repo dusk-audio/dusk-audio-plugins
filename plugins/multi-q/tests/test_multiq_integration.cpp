@@ -382,7 +382,9 @@ static void testEditorPresetSurvivesOpen()
         checkDb (n1.toRawUTF8(), val (paramId), before, 0.05f);
 
         // #105 unify: the mode-panel preset combo must mirror the main dropdown (same preset shown).
-        if (auto* mqEd = dynamic_cast<MultiQEditor*> (ed.get()))
+        auto* mqEd = dynamic_cast<MultiQEditor*> (ed.get());
+        check ((label + ": editor is MultiQEditor").toRawUTF8(), mqEd != nullptr);
+        if (mqEd)
         {
             const juce::String mainTxt  = mqEd->getMainPresetText();
             const juce::String panelTxt = (eqTypeVal == 3) ? mqEd->getTubePresetText() : mqEd->getBritishPresetText();

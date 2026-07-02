@@ -3397,7 +3397,7 @@ void MultiQEditor::populatePresetCombo(juce::ComboBox& combo)
     {
         bool found = false;
         for (size_t i = 0; i < presets.size() && !found; ++i)
-            if (presets[i].name == savedName) { selId = static_cast<int>(i + 2); found = true; }
+            if (presets[i].eqType == currentEqType && presets[i].name == savedName) { selId = static_cast<int>(i + 2); found = true; }
         if (!found && userPresetManager)
         {
             auto up = userPresetManager->loadUserPresets();
