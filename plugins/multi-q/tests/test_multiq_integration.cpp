@@ -380,6 +380,15 @@ static void testEditorPresetSurvivesOpen()
 
         const juce::String n1 = label + ": preset survives editor open";
         checkDb (n1.toRawUTF8(), val (paramId), before, 0.05f);
+
+        // #105 unify: the mode-panel preset combo must mirror the main dropdown (same preset shown).
+        if (auto* mqEd = dynamic_cast<MultiQEditor*> (ed.get()))
+        {
+            const juce::String mainTxt  = mqEd->getMainPresetText();
+            const juce::String panelTxt = (eqTypeVal == 3) ? mqEd->getTubePresetText() : mqEd->getBritishPresetText();
+            const juce::String n2 = label + ": panel combo mirrors main combo";
+            check (n2.toRawUTF8(), mainTxt.isNotEmpty() && panelTxt == mainTxt);
+        }
         if (ed) { proc.editorBeingDeleted (ed.get()); ed.reset(); }
     };
 

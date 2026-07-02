@@ -43,6 +43,11 @@ public:
     void mouseDown(const juce::MouseEvent& e) override;
     bool keyPressed(const juce::KeyPress& key) override;
 
+    // #105 test accessors: the displayed text of the main + mode-panel preset combos (must match).
+    juce::String getMainPresetText()    const { return presetSelector ? presetSelector->getText() : juce::String(); }
+    juce::String getTubePresetText()    const { return tubePresetSelector.getText(); }
+    juce::String getBritishPresetText() const { return britishPresetSelector.getText(); }
+
 private:
     MultiQ& processor;
     MultiQLookAndFeel lookAndFeel;
@@ -112,7 +117,8 @@ private:
     // Factory preset selector (Digital mode)
     std::unique_ptr<juce::ComboBox> presetSelector;
     void updatePresetSelector();
-    void onPresetSelected();
+    void populatePresetCombo(juce::ComboBox& combo);  // #105: fill+select a preset combo (main + mode-panel mirror)
+    void onPresetSelected(juce::ComboBox& sender);    // #105: sender-aware so panel combo mirrors main
 
     // User preset system
     std::unique_ptr<UserPresetManager> userPresetManager;
@@ -378,8 +384,6 @@ private:
     void updateEQModeVisibility();
     void layoutBritishControls();
     void drawBritishKnobMarkings(juce::Graphics& g);  // Draw tick marks and value labels around knobs
-    void applyBritishPreset(int presetId);  // Apply British mode factory preset
-    void applyTubePreset(int presetId);     // Apply Tube mode factory preset
 
     // Tube EQ mode helpers
     void setupTubeEQControls();
