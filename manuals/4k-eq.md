@@ -28,6 +28,8 @@ The console-style saturation stage adds a small amount of harmonic color when dr
 
 You should hear the source change tonal balance without changing apparent level. If you do hear a level change, double-check Auto Gain is on and that you have not pushed any band past 12 dB.
 
+To dial in an exact setting, double-click any knob to type a value directly instead of dragging.
+
 ## Workflows
 
 ### Vocal presence and clarity

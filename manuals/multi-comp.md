@@ -1,7 +1,7 @@
 ---
 slug: multi-comp
-version: 1.2.10
-last_updated: 2026-05-08
+version: 1.3.0
+last_updated: 2026-07-02
 tagline: Multi-mode dynamics compressor (8 modes plus 4-band multiband)
 ---
 
@@ -133,11 +133,11 @@ This same pattern works for kick mud (enable just the Low band, set Crossover 1 
 
 ### Mode-specific notes
 
-- **Vintage Opto:** Peak Reduction (0 to 100%) is the only compression control. Limit Mode toggles between gentle (off) and aggressive (on).
-- **Vintage FET:** Ratio is fixed in steps (4:1, 8:1, 12:1, 20:1, All). All-Buttons enables the famous extreme compression with non-linear character; Curve Mode picks Modern (the original algorithm) or Measured (matches hardware capture). Transient (0 to 100%) blends raw transient through the compressor.
+- **Vintage Opto:** Peak Reduction (0 to 100%) is the only compression control. Limit Mode toggles between gentle (off) and aggressive (on). The release models the T4B optical cell's dual-decay behavior, including the slow "afterglow" that keeps a residual grip on sustained material after the main release has recovered, so long notes settle rather than jumping straight back to unity.
+- **Vintage FET:** Ratio is fixed in steps (4:1, 8:1, 12:1, 20:1, All), with the ratio curves re-derived from measurements of the real hardware rather than the datasheet ideal. Threshold (-60 to 0 dB) sets where compression begins. All-Buttons enables the famous extreme compression with non-linear character; Curve Mode picks Modern (the original algorithm) or Measured (matches hardware capture). Transient (0 to 100%) blends raw transient through the compressor. The FET harmonic content scales with gain reduction, so it stays clean when barely working and grows dirtier as it clamps harder.
 - **Classic VCA:** Wide threshold range (-38 to +12 dB) and ratio up to 120:1 (limiting). Over Easy switches to soft knee.
-- **Vintage VCA (Bus):** Discrete attack (0.1, 0.3, 1, 3, 10, 30 ms) and release (0.1, 0.3, 0.6, 1.2 s, Auto). 30 ms attack plus Auto release is the classic glue setting.
-- **Studio FET:** Same control set as Vintage FET but voiced cleaner with less harmonic content.
+- **Vintage VCA (Bus):** A faithful stereo-linked bus compressor modeled on the classic SSL-style master-buss design. Discrete attack (0.1, 0.3, 1, 3, 10, 30 ms) and release (0.1, 0.3, 0.6, 1.2 s, Auto). The two channels share a single stereo-linked detector so the stereo image stays stable under gain reduction, and the output carries gain-reduction-scaled harmonics for the characteristic bus "glue." 30 ms attack plus Auto release is the classic glue setting.
+- **Studio FET:** Same control set as Vintage FET (including the -60 to 0 dB Threshold) but voiced cleaner with less harmonic content.
 - **Studio VCA:** Continuous controls, ratio up to 10:1, voiced for transparent dynamics work.
 - **Digital:** Continuous everything, with adjustable Knee width (0 to 20 dB) and Adaptive Release (program-dependent). Use this when you want precision.
 - **Multiband:** Four bands (Low, Lo-Mid, Hi-Mid, High) with three Linkwitz-Riley 4th order crossovers. Each band has its own threshold/ratio/attack/release/makeup, plus solo and ON. Disabling a band collapses the splitter so the band's frequency range merges into the nearest enabled neighbor (a real two-band or three-band layout, not just a bypass).

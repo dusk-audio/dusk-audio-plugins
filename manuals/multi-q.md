@@ -88,7 +88,7 @@ Settings:
 - **HF Gain:** +2 dB at 8000 Hz, Shelf
 - **Saturation:** 15%
 
-Why this works. British mode in Multi-Q runs the same engine as 4K-EQ, so the "Vocal Presence" approach from 4K-EQ applies directly. The 300 Hz cut clears boxiness, the 3.5 kHz boost adds intelligibility, the 8 kHz shelf adds air. Saturation at 15% adds the slight harmonic content that makes a vocal sit in a mix without surgical work. For a more aggressive character, switch to Black mode.
+Why this works. British mode in Multi-Q runs the same filter engine as 4K-EQ, so the "Vocal Presence" approach from 4K-EQ applies directly. The 300 Hz cut clears boxiness, the 3.5 kHz boost adds intelligibility, the 8 kHz shelf adds air. With Brown (E-series) selected, Saturation at 15% adds low-weighted transformer-core harmonics that thicken the vocal's body and help it sit in a mix without surgical work. For a more aggressive character, switch to Black mode.
 
 ### Tube mode: vintage bass with the boost-and-cut trick
 
@@ -140,11 +140,11 @@ Same controls as 4K-EQ:
 
 - **HPF / LPF:** Frequency and enabled toggles.
 - **Four bands** (LF, LM, HM, HF): gain, frequency, Q (LM/HM only); LF and HF have Bell/Shelf switches.
-- **EQ Type:** Brown or Black.
+- **EQ Type:** Brown or Black. Brown (E-series) drives the saturation stage from an E-series transformer-core model whose drive is weighted toward the low frequencies, so pushing Saturation thickens and adds weight to the low end rather than coloring the whole band evenly. Black is the cleaner console voicing.
 - **Saturation:** 0 to 100%.
 - **M/S Mode:** Off or On.
 
-See the 4K-EQ chapter for detailed parameter notes; the engine is identical.
+British mode is built on the 4K-EQ engine and shares its filter topology, so the 4K-EQ chapter's parameter notes apply. The one difference is the Brown/E-series transformer saturation above, which is voiced specifically for Multi-Q's British mode; see the 4K-EQ chapter for the filter details.
 
 ### Tube mode
 
@@ -165,7 +165,7 @@ Boost and Attenuation at the same frequency interact in the passive style: the c
 - **Right-click for hidden options.** Filter shape, dynamic EQ, M/S routing per-band, all live in the right-click menu. Beginners often miss them and miss half the plugin's capability as a result.
 - **The boost-and-cut trick is mode-specific.** Only Tube mode has that interaction. In Digital or British modes, boosting and cutting at the same frequency cancels out (or nearly so).
 - **A/B is your friend on long EQ sessions.** Set A as your starting point. Build B to compare. If neither sounds right, click A again to reset. The A/B slots are persistent within the session; they do not save with presets.
-- **British mode shares the 4K-EQ engine.** Settings and behavior are identical. If you have a 4K-EQ preset you like, you can recreate it in Multi-Q's British mode by hand.
+- **British mode shares the 4K-EQ filter engine.** The EQ curves match, so a 4K-EQ preset you like can be recreated in Multi-Q's British mode by hand. The one thing that differs is Brown/E-series saturation, which is voiced with a low-weighted transformer-core drive here; matched EQ settings will track, but heavy saturation will sound a touch fuller in the lows.
 - **The spectrum analyzer is a guide, not a sound.** Pre/Post toggle shows you what changed; do not let the pretty curve trick you. Listen first, look at the spectrum to confirm.
 
 ## Presets Explained
@@ -206,4 +206,4 @@ If you want to study the presets, open one and right-click each band to inspect 
 
 **Right-click does nothing.** On Linux, some hosts intercept right-click for their own menus. Try Ctrl+click or check your host's preferences for plugin context-menu handling.
 
-**My British mode preset sounds different from a 4K-EQ preset with the same settings.** The engines should be identical. The most likely cause is sample-rate handling or auto-gain compensation; confirm both plugins are at the same sample rate and either both have Auto Gain on or both off.
+**My British mode preset sounds different from a 4K-EQ preset with the same settings.** The filter curves are the same, so a difference usually comes from one of three things: British mode's Brown/E-series saturation uses a low-weighted transformer-core drive that differs from 4K-EQ, so match the Saturation amount and EQ Type; or check that both plugins are at the same sample rate; or confirm Auto Gain is either on for both or off for both.
