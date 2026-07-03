@@ -709,8 +709,12 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         const int guardTarget = presetModeGuardTarget.load(std::memory_order_relaxed);
         if (guardTarget >= 0)
             eqType = static_cast<EQType>(guardTarget);
-        presetModeGuardSamples.store(juce::jmax(0, guardLeft - buffer.getNumSamples()),
-                                     std::memory_order_release);
+        // Atomic decrement (not load-then-store): a concurrent re-arm from setCurrentProgram writes
+        // a fresh, larger window, and fetch_sub applies to whatever value is current, so this block's
+        // subtraction can never clobber that re-arm. The counter may dip up to one block below zero on
+        // the final tick; the >0 test above treats <=0 as expired and the next arm overwrites it, so
+        // it cannot drift any further negative.
+        presetModeGuardSamples.fetch_sub(buffer.getNumSamples(), std::memory_order_acq_rel);
     }
 
     // Detect EQ type change and start crossfade
