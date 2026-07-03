@@ -5,18 +5,19 @@
 
     Special thanks to our Patreon supporters who make these plugins possible!
 
-    ⚠  IMPORTANT: this file exists in THREE git worktrees and must stay in sync:
-        - plugins/plugins/shared/PatreonBackers.h                (main)
-        - plugins-worktree/plugins/shared/PatreonBackers.h
-        - plugins-multi-synth/plugins/shared/PatreonBackers.h
-    Whichever worktree you edit, copy the change to the other two before
-    rebuilding; otherwise plugins built from different worktrees will show
-    inconsistent credits.
+    Do NOT hand-edit the tier arrays below. They are generated from the live
+    Patreon campaign by scripts/update-patrons.py (run it before a release, or
+    let CI run it — the setup job in .github/workflows/build.yml refreshes this
+    header and every release build ships the current list). To move a name or
+    change a display spelling, use the "name_overrides" map in the script's
+    config rather than editing here, or your edit will be overwritten.
 
-    To add new backers:
-    1. Add names to the appropriate tier array below
-    2. Copy this file to the other two worktrees (see paths above)
-    3. Rebuild all plugins
+        scripts/update-patrons.py            # refresh from Patreon, rewrite this file
+        scripts/update-patrons.py --dry-run  # preview, write nothing
+
+    The script also keeps sibling worktrees that carry this header in sync
+    (plugins-main / plugins-worktree / plugins-multi-synth), so credits stay
+    consistent across worktrees.
 
     Tier Benefits:
     - Hugs ($1/month):       Development updates, name in credits
@@ -67,11 +68,15 @@ namespace PatreonCredits
     // Hugs ($1/month)
     inline const std::vector<juce::String> hugs = {
         "Adrienne",
+        "Andre C",
         "Benjamin Walker",
+        "Chaumontet Olivier",
         "Codey",
+        "Dusk Audio",
         "fennek",
         "fisHkiD76",
         "Jon Skarin",
+        "LEONID FEDOROV",
         "Samantha Druker",
     };
 

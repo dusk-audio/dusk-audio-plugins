@@ -104,6 +104,8 @@ ML-powered intelligent drum pattern generator:
 - Context-aware fills
 - Style classification
 
+Training data: Groove MIDI Dataset (Google Magenta), CC-BY 4.0. See [DATASETS.md](DATASETS.md).
+
 ### DuskAmp - IN DEVELOPMENT
 Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution cab, and post-FX:
 - Three preamp topologies: Clean (Fender Twin), British Crunch (Marshall Plexi), British Chime (Vox AC30)
