@@ -1,17 +1,12 @@
 #pragma once
 
 // =====================================================================
-// PHASE 3 SANDBOX — NOT YET WIRED INTO FDN OR QUADTANK.
-//
-// Status: 2026-05-28 — drafted, isolated, awaiting V1 listening-test
-// approval before integration. Do NOT #include this from FDNReverb.cpp
-// or QuadTank.cpp until V1 baseline is signed off audibly. While this
-// file sits unincluded, the existing shipped binary remains bit-identical
-// to the calibrated V1 master at commit 8a36e88.
-//
-// ---------------------------------------------------------------------
 // TimeVaryingDamping
 // ---------------------------------------------------------------------
+//
+// Integrated into the FDN engine: FDNReverb owns a tvDampHi_ instance and
+// applies it per delay line inside the tank loop (see FDNReverb.cpp).
+// QuadTank does not use it.
 //
 // Per-line energy-following high-shelf with coefficient lerping between
 // pre-computed "early" (transient / bright) and "late" (decayed / dark)
