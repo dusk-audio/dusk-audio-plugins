@@ -2,35 +2,35 @@
 slug: duskverb
 version: 0.6.0
 last_updated: 2026-07-02
-tagline: Algorithmic reverb with six engines (pre-release)
+tagline: Algorithmic reverb with eleven engines (pre-release)
 ---
 
 # DuskVerb
 
-> **Pre-release.** DuskVerb is currently in pre-release status. Parameter ranges, preset names, and engine behavior may change before the 1.0 release. This manual reflects the current 0.5.x line; check the website for updates if you are reading an older copy.
+> **Pre-release.** DuskVerb is currently in pre-release status. Parameter ranges, preset names, and engine behavior may change before the 1.0 release. This manual reflects the current 0.6.x line; check the website for updates if you are reading an older copy.
 
 ## Overview
 
 ![DuskVerb main UI](screenshots/duskverb/01-main-ui.png)
 
-DuskVerb is an algorithmic reverb with six distinct engines under one user interface. Each engine targets a different reverb territory: **Vintage Plate (Dattorro)** captures the classic plate sound; **High Density (6-AP)** is dense and modern; **Quad Room (QuadTank)** is for tight rooms and short ambience; **Realistic Space (FDN)** is the largest, longest, and most realistic; **Spring Tank (6G15)** is the surf-guitar spring sound; **Non-Linear (RMX16)** is the gated 1980s drum sound and other non-natural curves.
+DuskVerb is an algorithmic reverb with eleven distinct engines under one user interface. Each engine targets a different reverb territory: **Plate** is the classic dense plate that works on almost everything; **Vintage Plate** is the darker, steely vintage-plate character; **Smooth Plate** is a smooth six-allpass plate; **Chamber** is a studio chamber and tight-room voice; **Spring** is the surf-guitar spring sound; **Gated** produces the gated 1980s drum sound and other non-natural curves; **Shimmer** adds pitched sparkle above and warmth below the tail; **Reverse** is the swelling reverse effect; **Hall** is a realistic per-octave-tuned hall; **Tiled Room** is a bright tiled room; and **Dense Hall** is a lush, densely diffused hall.
 
-Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 34 factory presets are anchored to specific hardware references (Lexicon 480L, PCM 90, EMT 140, Bricasti M7, AMS RMX16, others) and serve both as starting points and as a tutorial in what each engine can do.
+Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets are anchored to specific hardware references (Lexicon 224 and 480L, EMT 140, AMS RMX16, and others) and serve both as starting points and as a tutorial in what each engine can do.
 
-It is not a convolution reverb (use Convolution Reverb for IR-based work), and it is not a delay/multitap effect. It is a six-in-one algorithmic reverb that lets you pick the right engine for the job.
+It is not a convolution reverb (use Convolution Reverb for IR-based work), and it is not a delay/multitap effect. It is an eleven-in-one algorithmic reverb that lets you pick the right engine for the job.
 
 ## Quick Start
 
 1. Insert DuskVerb on a return bus or directly on a track. For most workflows, an aux/return at 100% wet is the cleanest setup.
-2. Pick an **Algorithm** from the top dropdown. If you are not sure, start with **Vintage Plate (Dattorro)**; it works on almost everything.
+2. Pick an **Algorithm** from the top dropdown. If you are not sure, start with **Plate**; it works on almost everything.
 
-![Algorithm dropdown showing 6 engines](screenshots/duskverb/02-algorithm-dropdown.png)
-3. Open the preset menu. Each engine has its own preset list. Pick one that matches your source (Vocal Plate for vocals, Tight Drum Room for drums, etc.).
-4. Adjust **Decay Time** to taste. The preset gives you a starting point; longer decays sustain more, shorter decays sit more discreetly.
+![Algorithm dropdown showing the engine list](screenshots/duskverb/02-algorithm-dropdown.png)
+3. Open the preset menu. Pick one that matches your source (Vocal Plate for vocals, Small Drum Room for drums, and so on). Presets are laid out in a two-column menu grouped by category.
+4. Adjust **Decay Time** to taste. The Decay knob is calibrated so the position reflects the actual tail length; longer decays sustain more, shorter decays sit more discreetly.
 5. Use **Pre-Delay** (0 to 250 ms) to push the reverb tail later, which keeps the dry signal forward and the reverb perceived as space rather than smear.
 6. The **Dry/Wet** knob controls the mix. On a return bus, leave at 100%. On an insert, dial back to 20-40% wet.
 
-You should hear a tail when you stop the source. If the tail is too dark, raise **Treble Multiply**; too bright, lower it. If the tail rings or sounds metallic, drop **Diffusion** below the preset value or pick a different engine.
+You should hear a tail when you stop the source. If the tail is too dark, raise **Treble Multiply** (or nudge the **Tone** macro brighter); too bright, lower it. If the tail rings or sounds metallic, drop **Diffusion** below the preset value or pick a different engine.
 
 ## Workflows
 
@@ -41,7 +41,7 @@ You should hear a tail when you stop the source. If the tail is too dark, raise 
 
 Settings (or load the **Vocal Plate** preset and tweak from there):
 
-- **Algorithm:** Vintage Plate (Dattorro)
+- **Algorithm:** Plate
 - **Decay Time:** 1.8 s
 - **Pre-Delay:** 30 ms
 - **Size:** 0.6
@@ -59,9 +59,9 @@ Why this works. Plate reverbs are dense from the first reflection; they do not h
 **Source:** Drum bus or a snare track that needs room without long tail.
 **Goal:** Short, punchy ambience that adds size without smearing transients.
 
-Settings:
+Settings (or load the **Small Drum Room** preset):
 
-- **Algorithm:** Quad Room (QuadTank)
+- **Algorithm:** Chamber
 - **Decay Time:** 0.6 s
 - **Pre-Delay:** 0 ms
 - **Size:** 0.4
@@ -71,16 +71,16 @@ Settings:
 - **Lo Cut:** 80 Hz
 - **Dry/Wet:** 25% (insert) or 100% on a return
 
-Why this works. Short decay plus low diffusion plus prominent early reflections gives a "room" sound rather than a "reverb" sound. The drums still hit hard; the room just adds a bit of three-dimensional space. The "Tight Drum Room" preset uses these proportions.
+Why this works. Short decay plus low diffusion plus prominent early reflections gives a "room" sound rather than a "reverb" sound. The drums still hit hard; the room just adds a bit of three-dimensional space. The **Small Drum Room** and **Medium Drum Room** presets use these proportions.
 
 ### Realistic concert hall on piano
 
 **Source:** Solo piano or piano in a sparse mix.
 **Goal:** A long, lush hall tail that sounds like a real space.
 
-Settings (or use the **Smooth Concert Hall** preset):
+Settings (or use the **Cathedral Large Hall** preset):
 
-- **Algorithm:** Realistic Space (FDN)
+- **Algorithm:** Hall
 - **Decay Time:** 4.5 s
 - **Pre-Delay:** 60 ms
 - **Size:** 0.85
@@ -94,18 +94,18 @@ Settings (or use the **Smooth Concert Hall** preset):
 - **Hi Cut:** 12000 Hz
 - **Dry/Wet:** 100% on a return at -10 to -6 dB send level
 
-Why this works. The FDN engine produces realistic late reverberation with audible per-frequency decay differences. Bass multiply above 1 emphasizes the long bass tail typical of real halls. Treble multiply below 1 captures the high-frequency absorption you hear in rooms with absorptive surfaces. Long pre-delay (60 ms) maintains piano clarity.
+Why this works. The Hall engine tunes decay per octave, so it produces realistic late reverberation with audible per-frequency decay differences. Bass multiply above 1 emphasizes the long bass tail typical of real halls. Treble multiply below 1 captures the high-frequency absorption you hear in rooms with absorptive surfaces. Long pre-delay (60 ms) maintains piano clarity. For a denser, smoother variant of the same space, try the **Dense Hall** engine.
 
 ### Gated 80s snare
 
-![Non-Linear engine with Gate enabled](screenshots/duskverb/03-engine-non-linear.png)
+![Gated engine with Gate enabled](screenshots/duskverb/03-engine-non-linear.png)
 
 **Source:** Snare drum that needs the classic 1980s gated sound.
 **Goal:** A non-natural reverb shape that cuts off after a fixed time.
 
-Settings:
+Settings (or load the **1981 Gated Snare** preset):
 
-- **Algorithm:** Non-Linear (RMX16)
+- **Algorithm:** Gated
 - **Decay Time:** 1.2 s (the gate length, not natural decay)
 - **Pre-Delay:** 0 ms
 - **Size:** 0.6
@@ -113,13 +113,21 @@ Settings:
 - **Gate:** Enabled (default; this is the parameter that makes the engine non-linear)
 - **Dry/Wet:** 35% (insert)
 
-Why this works. The Non-Linear engine in this mode mimics the AMS RMX16's "Non-Lin 2" algorithm: the reverb has constant level for a fixed time (set by Decay Time) and then cuts to silence rather than fading naturally. This produces the 1980s snare sound that defined a decade of records. The "Snare Plate XL" preset is plate-based; for true gated character, switch to Non-Linear.
+Why this works. The Gated engine mimics the AMS RMX16's "Non-Lin 2" algorithm: the reverb has constant level for a fixed time (set by Decay Time) and then cuts to silence rather than fading naturally. This produces the 1980s snare sound that defined a decade of records. For the swelling backward version instead, load **Reverse Taps** on the **Reverse** engine.
 
 ## Parameter Reference
 
 ### Algorithm
 
-- **Algorithm:** Selects which DSP engine processes the audio. Six choices: Vintage Plate (Dattorro), High Density (6-AP), Quad Room (QuadTank), Realistic Space (FDN), Spring Tank (6G15), Non-Linear (RMX16). Switching engines crossfades over a few hundred milliseconds.
+- **Algorithm:** Selects which DSP engine processes the audio. Eleven choices: Plate, Vintage Plate, Smooth Plate, Chamber, Spring, Gated, Shimmer, Reverse, Hall, Tiled Room, Dense Hall. Switching engines crossfades over a few hundred milliseconds.
+
+### Macros
+
+The bottom macro row applies three global shapers on top of whatever engine and preset you have loaded. At their defaults they are neutral, so a preset sounds exactly as designed until you move them.
+
+- **Tone:** -1 to +1. Spectral tilt from dark to bright. Negative values roll the tail down (lower Treble Multiply and Hi Cut); positive values open it up. A fast way to match a reverb to a track without touching the per-band controls.
+- **Character:** 0 to 1. Movement and grit. Adds modulation depth and saturation together, taking a static tail toward a livelier, slightly driven one.
+- **Duck:** 0 to 1. Wet ducking depth, sidechained off the dry input. Pulls the reverb down while the source plays and lets it bloom in the gaps, keeping dense mixes clear.
 
 ### Mix and routing
 
@@ -131,8 +139,8 @@ Why this works. The Non-Linear engine in this mode mimics the AMS RMX16's "Non-L
 
 - **Pre-Delay:** 0 to 250 ms. Delay before the reverb tail begins. Longer pre-delay separates the dry signal from the reverb.
 - **Pre-Delay Sync:** Free, 1/32, 1/16, 1/8, 1/4, 1/2, 1/1. When set to a note value, pre-delay locks to the host tempo.
-- **Decay Time:** 0.2 to 30 s. Total tail length. Different engines interpret this differently; the FDN engine reaches the highest decays; the Non-Linear engine treats this as a gate length.
-- **Size:** 0 to 1. Perceived room size. Engine-dependent: in Quad Room, low values are cabinet-sized and high values are arena-sized.
+- **Decay Time:** 0.2 to 30 s. Total tail length. The knob is calibrated so its position tracks the actual decay time across engines. The Hall engine reaches the highest decays; the Gated engine treats this as a gate length.
+- **Size:** 0 to 1. Perceived room size. Engine-dependent: in Chamber, low values are cabinet-sized and high values are arena-sized.
 
 ### Modulation
 
@@ -159,58 +167,59 @@ Why this works. The Non-Linear engine in this mode mimics the AMS RMX16's "Non-L
 
 - **Width:** 0 to 2. Stereo width of the reverb output. 1 is unity; 2 is double-wide (M/S based).
 - **Freeze:** Off or On. When on, the reverb tail cycles infinitely.
-- **Gate:** Off or On. Enables the Non-Linear engine's gating behavior.
+- **Gate:** Off or On. Enables the Gated engine's gating behavior.
 - **Mono Below:** 20 to 300 Hz. Frequencies below this cutoff are summed to mono in the reverb output. Default 20 Hz (effectively bypass); typical settings 80 to 150 Hz to keep low-frequency reverb mono-compatible.
 - **Gain Trim:** -48 to +48 dB. Final output level adjustment.
 
 ## Tips and Traps
 
 - **Pre-Delay is your most important parameter for clarity.** Without pre-delay, the reverb tail starts on the same sample as the dry signal and the result smears. 20 to 60 ms of pre-delay keeps vocals and drums distinct from their reverb.
-- **Hardware anchors are real.** The presets are tuned to specific hardware references. "Vintage Vocal Plate" is anchored to the EMT 140; "Blade Runner Concert" to the Lexicon 224; "Cathedral" to a long Lex 480L hall. If you are familiar with the source hardware, the preset name tells you what to expect.
+- **The macros are the fast path.** Tone, Character, and Duck reshape any preset without diving into the per-band controls. Reach for them first when a preset is close but not quite matched to the track.
+- **Hardware anchors are real.** The presets are tuned to specific hardware references. "Vintage Vocal Plate" leans on the EMT 140's darker, steely plate character; "Blade Runner 224" captures the long-decay Lexicon 224 sound; "Cathedral Large Hall" is a long Lexicon-style hall. If you are familiar with the source hardware, the preset name tells you what to expect.
 - **Engine switching is not parameter-preserving.** Each engine has its own internal state. Switching engines while a tail is decaying produces a crossfade; do not expect identical-sounding results across engines at the same parameter values.
 - **Freeze is loud.** Freeze captures the current reverb tail and loops it indefinitely. Levels can build dramatically; pull Gain Trim back before enabling Freeze on a busy mix.
 
 ![Freeze engaged](screenshots/duskverb/04-freeze-engaged.png)
 - **Mono Below preserves bass mono compatibility.** Stereo reverb on bass frequencies often phases on mono fold-down. Set Mono Below to 80 to 120 Hz on mastering or mix-bus reverb.
-- **The Non-Linear engine treats Decay Time as a gate length.** It does not behave like other engines for that parameter. Refer to the gated-snare workflow above.
+- **The Gated engine treats Decay Time as a gate length.** It does not behave like other engines for that parameter. Refer to the gated-snare workflow above.
 
 ## Presets Explained
 
 ![Preset menu by category](screenshots/duskverb/05-presets-by-category.png)
 
-DuskVerb ships with 34 factory presets across 7 categories. Each is hardware-anchored and serves as a starting point.
+DuskVerb ships with 20 factory presets, laid out in a two-column menu grouped by category. Each is hardware-anchored and serves as a starting point.
 
 ### Plates
 
-Six plate presets ranging from short and bright (**Vocal Plate**, anchored to PCM 90 P2 1.0) to long and lush (**Gold Plate**, PCM 90 P2 0.2). **Vintage Vocal Plate** is the EMT 140 anchor for darker, steely plate character. **Snare Plate XL** is the long plate sound that helped define 1980s snare reverb on records.
+Four plate presets: **Vocal Plate** is the bright, smooth plate for lead vocals; **Vintage Vocal Plate** is the darker, steely EMT 140 character; **Drum Plate** is the punchy plate for snares and drums; **Vintage Gold Plate** is the long, lush plate that helped define 1980s record production.
 
 ### Halls
 
-Eleven halls, from utility (**Utility Hall**, PCM 90 P0 2.9) through bright studio (**Bright Hall**, PCM 90 P0 2.8) to lush concert (**Smooth Concert Hall**, Lex 480L Smooth Hall) to massive cathedral (**Cathedral**, Lex 224 Concert Hall A 6.5 s). **Blade Runner 224** and **Blade Runner Concert** capture the long-decay extended-tail Lex 224 sound. **Lush Dark Hall** is the Lex 480L Hall A warm-dark variant. Pick by length and brightness.
-
-### Rooms
-
-Five rooms covering tight (**Tight Drum Room**) through medium (**PCM Drum Room**, **Studio Room**) to atmospheric (**Reverse Taps**, **In The Air Tonight** for the Phil Collins gated drum effect). Use **Tight Drum Room** as your default for drum bus ambience.
+Four halls, from bright studio (**Bright Hall**) through vocal-tuned (**Vocal Hall**) to massive (**Cathedral Large Hall**, a long Lexicon-style concert hall). **Blade Runner 224** captures the long-decay extended-tail Lexicon 224 sound. Pick by length and brightness.
 
 ### Chambers
 
-**Realistic Chamber** captures a typical studio chamber sound; longer than a room but shorter than a hall.
+**79 Vocal Chamber** is a studio chamber voiced for vocals (Chamber engine); **Large Chamber** is a bigger, denser chamber space (Dense Hall engine). Both sit between a room and a hall in size.
+
+### Rooms
+
+Four rooms covering tight (**Small Drum Room**) through medium (**Medium Drum Room**, **Live Room**) to bright and reflective (**Tiled Room**). Use **Small Drum Room** as your default for drum-bus ambience.
 
 ### Springs
 
-**Surf '63 Spring** is the Dick Dale "Misirlou" reverb; aggressive, bouncy. **Tank Drip** is a shorter spring tank for subtler surf and reggae work.
+**Surf '63 Spring** is the Dick Dale "Misirlou" spring sound; aggressive and bouncy, for surf and reggae guitar work.
 
-### Ambient
+### Gated and Reverse
 
-Four ambient presets: **Black Hole** (Eventide-anchored), **Infinite Blackhole** (huge sustaining ambience), **Mobius Pad** (Strymon-anchored), **Ambient Swell**. Use these for sound design and pad-like effects rather than realistic space.
+**1981 Gated Snare** is the classic gated-reverb snare on the Gated engine. **Reverse Taps** is the swelling backward-reverb effect on the Reverse engine.
 
-### Shimmer
+### Ambient and Shimmer
 
-**Cascading Heaven**, **Deep Blue Day** (the Brian Eno track that the engine is named after). Currently the Shimmer engine is hidden in the dropdown but the presets remain accessible. Re-enabled for 1.0.
+**Ambience** is a soft atmospheric wash for pads and sound design. The shimmer presets use the overhauled Shimmer engine, which adds a post-loop high-frequency air voice for sparkle above the tail and a down-octave voice for warmth below it: **Deep Blue Day** (after the Brian Eno track) is the lush, warm shimmer; **Black Hole** is the huge, sustaining ambient shimmer.
 
 ## Troubleshooting
 
-**The tail sounds metallic or rings.** Drop **Diffusion** to around 0.5 to 0.7 if the tail is buzzing or sounds like a ring modulator. Try a different engine; the FDN engine is the smoothest at long decays, the Vintage Plate engine is naturally more dense.
+**The tail sounds metallic or rings.** Drop **Diffusion** to around 0.5 to 0.7 if the tail is buzzing or sounds like a ring modulator. Try a different engine; the Hall and Dense Hall engines are the smoothest at long decays, while the Plate engines are naturally denser.
 
 **The reverb is too loud at low frequencies.** Raise **Lo Cut** to 100 to 200 Hz so the reverb input is high-passed before reaching the engine. Bass frequencies in reverb tails build up quickly and muddy a mix.
 

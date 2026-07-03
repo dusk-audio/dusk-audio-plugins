@@ -61,6 +61,8 @@ The right setup depends on your DAW. The plugin always sits in front of your syn
 2. The plugin receives MIDI from the track automatically.
 3. Your instrument remains unchanged.
 
+If Chord Analyzer MIDI does not appear in the MIDI Inserts slot after updating, force a plugin rescan in Cubase's Plug-in Manager so the host picks up the updated plugin category.
+
 ### Ableton Live
 
 Ableton does not list MIDI-only plugins in MIDI tracks the same way other DAWs do, so use the **instrument version** with an Instrument Rack:
