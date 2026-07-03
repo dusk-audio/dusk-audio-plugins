@@ -333,6 +333,14 @@ public:
     // from loading "Init" (which would reset all band gains) via the async UI update chain.
     std::atomic<bool> transferInProgress{false};
 
+    // Preset-load mode guard (issue #105): after a host-driven factory preset switches the EQ mode,
+    // some hosts (e.g. Bitwig) re-assert their cached eqType value once, reverting British/Tube back
+    // to Digital. For a short window after such a load, processBlock pins the DSP to the loaded mode
+    // so the audio never follows that revert; a delayed re-apply on the message thread then
+    // converges the eqType parameter/UI. Target -1 = guard inactive.
+    std::atomic<int> presetModeGuardTarget{-1};
+    std::atomic<int> presetModeGuardSamples{0};
+
     // Public parameter access for GUI
     juce::AudioProcessorValueTreeState parameters;
 
@@ -639,9 +647,14 @@ private:
     // Per-band enable/disable crossfade (~3ms)
     std::array<juce::SmoothedValue<float>, NUM_BANDS> bandEnableSmoothed;
 
-    // EQ type switching crossfade (~10ms)
+    // EQ type switching crossfade (~20ms)
     juce::SmoothedValue<float> eqTypeCrossfade{1.0f};  // 1.0 = fully new type
-    juce::AudioBuffer<float> prevTypeBuffer;  // Saved output from previous EQ type
+    // Continuity seed for the mode-switch crossfade: the last clean output sample per channel,
+    // captured when NOT crossfading. The crossfade blends from this exact value (the point the
+    // waveform actually left off) into the new mode, so output[0] never steps -> no click. An
+    // earlier design blended against the whole previous block, which stepped by a full block of
+    // phase at the switch -> an audible pop.
+    std::array<float, 2> eqXfadeHold{{0.0f, 0.0f}};
     EQType previousEQType = EQType::Digital;
     bool eqTypeChanging = false;
 
