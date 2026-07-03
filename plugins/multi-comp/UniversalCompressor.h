@@ -270,6 +270,15 @@ private:
     std::vector<int> bypassFadeDelayWritePos;
     int bypassFadeDelaySize{0};
 
+    // Input-history ring for latency-aligned dry output on bypass / 0% mix (issue #106). Written
+    // every block, read back delayed by getLatencySamples() so bypassed output stays phase-aligned
+    // with the host's PDC WITHOUT changing the reported latency from the audio thread. Zeroing
+    // latency on bypass made Cubase restart its audio engine in a feedback loop (prepareToPlay set
+    // N -> bypassed block set 0 -> restart -> repeat), dropping playback.
+    juce::AudioBuffer<float> bypassAlignBuf;
+    std::array<int, 2> bypassAlignWritePos{{0, 0}};
+    int bypassAlignSize{0};
+
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal
     juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal

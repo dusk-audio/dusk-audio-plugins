@@ -142,6 +142,58 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building: $NAME (target: ${TARGET:-all}) version: ${VERSION:-default}"
 
+      # Refresh plugins/shared/PatreonBackers.h once from the live Patreon campaign and hand it to
+      # every build job as an artifact, so releases ship the current supporters list without anyone
+      # hand-editing the header. Runs here (ubuntu-latest has python3) rather than inside each build
+      # container, and only once so the token refresh isn't raced by concurrent jobs.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # this job never pushes; don't leave the token in git config
+
+      - name: Refresh Patreon supporters
+        # Best-effort: with no secrets (forks / dev builds) the committed list is kept. When the
+        # secrets ARE configured this must succeed — a release should never silently ship a stale
+        # list (see scripts/update-patrons.py for the one-time token setup).
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+        run: |
+          present=0
+          for v in "${PATREON_ACCESS_TOKEN}" "${PATREON_REFRESH_TOKEN}" "${PATREON_CLIENT_ID}" "${PATREON_CLIENT_SECRET}"; do
+            [ -n "$v" ] && present=$((present + 1))
+          done
+          if [ "$present" -eq 0 ]; then
+            echo "::warning::Patreon secrets not configured - using the committed supporters list (may be stale)."
+            exit 0
+          fi
+          if [ "$present" -lt 4 ]; then
+            echo "::error::Patreon secrets are only partially configured ($present/4). Set ALL of PATREON_ACCESS_TOKEN, PATREON_REFRESH_TOKEN, PATREON_CLIENT_ID and PATREON_CLIENT_SECRET, or none."
+            exit 1
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if the refresh fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes special characters in the secrets; a raw heredoc would corrupt the
+          # JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            exit 1
+          fi
+
+      - name: Upload refreshed supporters header
+        uses: actions/upload-artifact@v4
+        with:
+          name: patreon-header
+          path: plugins/shared/PatreonBackers.h
+          retention-days: 1
+
   build-linux:
     needs: setup
     runs-on: ubuntu-latest
@@ -193,6 +245,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Apply refreshed supporters list
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
+        uses: actions/download-artifact@v4
+        with:
+          name: patreon-header
+          path: patreon-header
+
+      - name: Install refreshed supporters header
+        shell: bash
+        run: |
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
 
       - name: Checkout JUCE
         uses: actions/checkout@v4
@@ -392,6 +459,21 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply refreshed supporters list
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
+        uses: actions/download-artifact@v4
+        with:
+          name: patreon-header
+          path: patreon-header
+
+      - name: Install refreshed supporters header
+        shell: bash
+        run: |
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
+
       - name: Checkout JUCE
         uses: actions/checkout@v4
         with:
@@ -551,6 +633,21 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply refreshed supporters list
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
+        uses: actions/download-artifact@v4
+        with:
+          name: patreon-header
+          path: patreon-header
+
+      - name: Install refreshed supporters header
+        shell: bash
+        run: |
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
+
       - name: Checkout JUCE
         uses: actions/checkout@v4
         with:
@@ -695,6 +792,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Apply refreshed supporters list
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
+        uses: actions/download-artifact@v4
+        with:
+          name: patreon-header
+          path: patreon-header
+
+      - name: Install refreshed supporters header
+        shell: bash
+        run: |
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
 
       - name: Checkout JUCE
         uses: actions/checkout@v4

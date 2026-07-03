@@ -55,6 +55,9 @@ public:
         beginTest("Bypass Functionality");
         testBypass();
 
+        beginTest("Mix Zero Alignment");
+        testMixZeroAlignment();
+
         beginTest("Compression Ratios");
         testCompressionRatios();
 
@@ -460,38 +463,126 @@ private:
     void testBypass()
     {
         UniversalCompressor compressor;
-        compressor.prepareToPlay(48000.0, 512);
+        const double sr = 48000.0;
+        const int bs = 512;
+        compressor.prepareToPlay(sr, bs);
 
         auto& params = compressor.getParameters();
 
-        // Create test signal
-        juce::AudioBuffer<float> inputBuffer(2, 512);
-        fillBufferWithSineWave(inputBuffer, 0.8f, 1000.0f, 48000.0);
+        // Issue #106: bypass must NOT change the reported latency (zeroing it on the audio thread
+        // made Cubase restart its engine in a loop). Instead the plugin keeps a constant latency and
+        // passes the dry signal through delayed by exactly that latency (parallel-bus alignment).
+        const int latencyBefore = compressor.getLatencySamples();
 
-        // Store original signal
-        juce::AudioBuffer<float> originalBuffer(2, 512);
-        originalBuffer.makeCopyOf(inputBuffer);
-
-        // Enable bypass
         if (auto* bypass = params.getRawParameterValue("bypass"))
             *bypass = 1.0f;
 
+        // Stream a continuous sine through several bypassed blocks, capturing input and output so we
+        // can check the delayed-passthrough alignment once the internal history ring is warm.
+        const int numBlocks = 8;
+        std::vector<float> in, out;
+        in.reserve(static_cast<size_t>(numBlocks * bs));
+        out.reserve(static_cast<size_t>(numBlocks * bs));
+        double phase = 0.0;
+        const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / sr;
         juce::MidiBuffer midiBuffer;
-        compressor.processBlock(inputBuffer, midiBuffer);
-
-        // With bypass, output should equal input
-        float maxDiff = 0.0f;
-        for (int ch = 0; ch < 2; ++ch)
+        for (int b = 0; b < numBlocks; ++b)
         {
-            for (int i = 0; i < 512; ++i)
+            juce::AudioBuffer<float> buf(2, bs);
+            for (int i = 0; i < bs; ++i)
             {
-                float diff = std::abs(inputBuffer.getSample(ch, i) - originalBuffer.getSample(ch, i));
-                maxDiff = juce::jmax(maxDiff, diff);
+                const float s = 0.8f * static_cast<float>(std::sin(phase));
+                phase += inc;
+                buf.setSample(0, i, s);
+                buf.setSample(1, i, s);
+                in.push_back(s);
             }
+            compressor.processBlock(buf, midiBuffer);
+            for (int i = 0; i < bs; ++i)
+                out.push_back(buf.getSample(0, i));
         }
 
+        const int latencyAfter = compressor.getLatencySamples();
+        expect(latencyAfter == latencyBefore,
+               "Bypass does NOT change reported latency (issue #106): before=" + juce::String(latencyBefore)
+                   + " after=" + juce::String(latencyAfter));
+
+        // Bypassed output must equal the input delayed by exactly the reported latency. Guard that we
+        // actually captured enough audio past the warmup+latency region, otherwise the loop below runs
+        // zero times and the comparison passes without validating anything.
+        const int D = latencyAfter;
+        const int firstCheck = D + bs;  // skip the warmup (one block) + latency fill region
+        expect(static_cast<int>(out.size()) > firstCheck,
+               "captured enough audio to validate bypass alignment (need > " + juce::String(firstCheck)
+                   + ", have " + juce::String(static_cast<int>(out.size())) + ")");
+
+        float maxDiff = 0.0f;
+        for (int n = firstCheck; n < static_cast<int>(out.size()); ++n)
+            maxDiff = juce::jmax(maxDiff, std::abs(out[static_cast<size_t>(n)] - in[static_cast<size_t>(n - D)]));
+
         expect(maxDiff < 0.0001f,
-               "Bypass mode passes audio unchanged (max diff: " + juce::String(maxDiff) + ")");
+               "Bypass passes audio through delayed by exactly the reported latency (D=" + juce::String(D)
+                   + ", max diff: " + juce::String(maxDiff) + ")");
+    }
+
+    void testMixZeroAlignment()
+    {
+        // 0% mix (100% dry) takes the same latency-aligned dry passthrough as bypass
+        // (emitLatencyAlignedDry). Verify that branch also keeps a constant latency and delays the
+        // dry by exactly that latency — a sample-level check, not just RMS.
+        UniversalCompressor compressor;
+        const double sr = 48000.0;
+        const int bs = 512;
+        compressor.prepareToPlay(sr, bs);
+        auto& params = compressor.getParameters();
+
+        const int latencyBefore = compressor.getLatencySamples();
+        if (auto* bypass = params.getRawParameterValue("bypass"))
+            *bypass = 0.0f;                       // not bypassed — exercise the mix path
+        if (auto* mix = params.getRawParameterValue("mix"))
+            *mix = 0.0f;                          // 100% dry -> the mixAmount <= 0.001f branch
+
+        const int numBlocks = 8;
+        std::vector<float> in, out;
+        in.reserve(static_cast<size_t>(numBlocks * bs));
+        out.reserve(static_cast<size_t>(numBlocks * bs));
+        double phase = 0.0;
+        const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / sr;
+        juce::MidiBuffer midiBuffer;
+        for (int b = 0; b < numBlocks; ++b)
+        {
+            juce::AudioBuffer<float> buf(2, bs);
+            for (int i = 0; i < bs; ++i)
+            {
+                const float s = 0.8f * static_cast<float>(std::sin(phase));
+                phase += inc;
+                buf.setSample(0, i, s);
+                buf.setSample(1, i, s);
+                in.push_back(s);
+            }
+            compressor.processBlock(buf, midiBuffer);
+            for (int i = 0; i < bs; ++i)
+                out.push_back(buf.getSample(0, i));
+        }
+
+        const int latencyAfter = compressor.getLatencySamples();
+        expect(latencyAfter == latencyBefore,
+               "0% mix does NOT change reported latency (issue #106): before=" + juce::String(latencyBefore)
+                   + " after=" + juce::String(latencyAfter));
+
+        const int D = latencyAfter;
+        const int firstCheck = D + bs;
+        expect(static_cast<int>(out.size()) > firstCheck,
+               "captured enough audio to validate 0% mix alignment (need > " + juce::String(firstCheck)
+                   + ", have " + juce::String(static_cast<int>(out.size())) + ")");
+
+        float maxDiff = 0.0f;
+        for (int n = firstCheck; n < static_cast<int>(out.size()); ++n)
+            maxDiff = juce::jmax(maxDiff, std::abs(out[static_cast<size_t>(n)] - in[static_cast<size_t>(n - D)]));
+
+        expect(maxDiff < 0.0001f,
+               "0% mix passes audio through delayed by exactly the reported latency (D=" + juce::String(D)
+                   + ", max diff: " + juce::String(maxDiff) + ")");
     }
 
     void testCompressionRatios()
