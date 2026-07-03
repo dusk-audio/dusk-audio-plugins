@@ -1,9 +1,9 @@
 # 4K EQ - Classic British Console EQ Emulation
 
-Professional 4-band parametric equalizer with analog modeling, built with JUCE for VST3/LV2/AU/Standalone formats.
+Professional 4-band parametric equalizer with analog modeling, built with JUCE for VST3/LV2/AU/CLAP/Standalone formats.
 
 ![Plugin Type](https://img.shields.io/badge/Type-EQ%20%2F%20Filter-blue)
-![Formats](https://img.shields.io/badge/Formats-VST3%20%7C%20LV2%20%7C%20AU%20%7C%20Standalone-green)
+![Formats](https://img.shields.io/badge/Formats-VST3%20%7C%20LV2%20%7C%20AU%20%7C%20CLAP%20%7C%20Standalone-green)
 ![JUCE](https://img.shields.io/badge/JUCE-7%2B-orange)
 
 ## Features
@@ -42,8 +42,8 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
   - Gain knobs: 0dB center indicator highlighted
 - **Clear labeling** - All knobs labeled (GAIN, FREQ, Q, HPF, LPF, OUTPUT, DRIVE)
 - **Mouse wheel support** - Scroll to adjust knobs
-- **Double-click reset** - Quick return to default values
-- **Preset browser** - 15 factory presets + user state saving
+- **Double-click to edit** - Type an exact value into any knob (Ctrl/Cmd+click resets to default)
+- **Preset browser** - 14 factory presets + user state saving
 - **Auto-gain button** - Toggle automatic gain compensation on/off
 
 ## Factory Presets
@@ -140,6 +140,7 @@ cmake --build . --target FourKEQ_All -j8
 - `FourKEQ_VST3` - VST3 plugin only
 - `FourKEQ_LV2` - LV2 plugin only
 - `FourKEQ_AU` - AU plugin (macOS only)
+- `FourKEQ_CLAP` - CLAP plugin only
 - `FourKEQ_Standalone` - Standalone application
 - `FourKEQ_All` - All formats
 
@@ -147,6 +148,7 @@ cmake --build . --target FourKEQ_All -j8
 - **VST3**: `~/.vst3/4K EQ.vst3` (Linux), `~/Library/Audio/Plug-Ins/VST3/` (macOS)
 - **LV2**: `~/.lv2/4K EQ.lv2`
 - **AU**: `~/Library/Audio/Plug-Ins/Components/4K EQ.component` (macOS)
+- **CLAP**: `~/.clap/4K EQ.clap` (Linux), `~/Library/Audio/Plug-Ins/CLAP/` (macOS), `%COMMONPROGRAMFILES%\CLAP\4K EQ.clap` (Windows)
 
 ## Development
 
@@ -178,6 +180,36 @@ cmake --build . --target FourKEQ_All -j8
 - **Efficiency**: Highly optimized - can be used on every channel in a mix without CPU issues
 
 ## Changelog
+
+### v1.0.10 (2026-05-08)
+- ✅ Unified double-click-to-edit value entry across all knobs
+- ✅ Added CLAP plugin format support
+- ✅ Miscellaneous shared LookAndFeel polish
+
+### v1.0.9 (2026-04-08)
+- ✅ Maintenance release (shared code and build updates)
+
+### v1.0.8 (2026-02-04)
+- ✅ FabFilter-style Shift+drag fine control (5x finer)
+- ✅ Velocity-sensitive dragging for natural feel
+- ✅ Ctrl/Cmd+click to reset knobs to default
+- ✅ Fixed jerky fine control
+
+### v1.0.7 (2026-02-03)
+- ✅ Window size now persists between sessions
+- ✅ Adopted shared ScalableEditorHelper for consistent resize behavior
+
+### v1.0.6 (2026-01-29)
+- ✅ Selectable dB range for the EQ graph (±12/±24/±30/±60 dB, Warped)
+- ✅ Expanded EQ graph height and cleaner FILTERS section layout
+- ✅ SSL-style IN button positioning; width-only UI scaling fix
+
+### v1.0.5 (2026-01-28)
+- ✅ Automatic website version update on release-tag push
+
+### v1.0.4 (2026-01-27)
+- ✅ Cmd/Ctrl+drag fine control
+- ✅ LED mono/stereo detection
 
 ### v1.0.2 (2025-10-21) - Professional Console Accuracy Update
 - ✅ **CRITICAL**: Fixed frequency ranges to match console hardware specs

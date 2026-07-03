@@ -97,7 +97,7 @@ If you see persistent negative correlation, swap the polarity of one channel of 
 
 ## Parameter Reference
 
-Spectrum Analyzer has 10 user-facing parameters, all exposed through the settings overlay (gear icon) except Channel Mode which sits in the header. The LUFS, True Peak, and correlation meters are always running and have no parameters of their own.
+Spectrum Analyzer has 10 user-facing parameters, all exposed through the settings overlay (gear icon) except Channel Mode which sits in the header. Double-click any knob in the overlay to type an exact value directly instead of dragging. The LUFS, True Peak, and correlation meters are always running and have no parameters of their own.
 
 ### Display
 
