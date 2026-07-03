@@ -5204,6 +5204,19 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     }
     bypassFadeDelayWritePos.assign(static_cast<size_t>(numChannels), 0);
 
+    // Input-history ring for latency-aligned dry output on bypass / 0% mix (issue #106). Sized to
+    // the maximum reportable latency so getLatencySamples() worth of history is always available:
+    // constant oversampling latency (4x) + global lookahead (10ms) + Digital lookahead (10ms).
+    {
+        const int osMax  = antiAliasing ? antiAliasing->getMaxLatency() : 0;
+        const int laMax  = juce::jlimit(0, 4096, static_cast<int>(std::ceil(sampleRate * 0.01)));  // 10ms
+        const int digMax = juce::jlimit(0, 4096, static_cast<int>(std::ceil(sampleRate * 0.01)));  // 10ms
+        bypassAlignSize = osMax + laMax + digMax + samplesPerBlock + 1;
+        bypassAlignBuf.setSize(juce::jmin(numChannels, 2), bypassAlignSize, false, false, true);
+        bypassAlignBuf.clear();
+        bypassAlignWritePos = {{0, 0}};
+    }
+
     // Initialize RMS coefficient for ~200ms averaging window
     // GR-based auto-gain: smooth the gain reduction with ~200ms time constant
     // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
@@ -5255,14 +5268,56 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (!bypassParam)
         return;
 
-    // Bypassed: zero latency, no processing (clean parallel bus behavior)
+    // Feed the input-history ring every block so the bypass / 0% mix passthrough can emit dry audio
+    // delayed by the CONSTANT reported latency, preserving parallel-bus alignment without changing
+    // setLatencySamples from the audio thread (issue #106). preWp = per-channel write position BEFORE
+    // this block, so the delayed read below is relative to this block's first sample.
+    const int alignPreWp0 = bypassAlignWritePos[0];
+    const int alignPreWp1 = bypassAlignWritePos[1];
+    if (bypassAlignSize > 1)
+    {
+        const int ns = buffer.getNumSamples();
+        for (int ch = 0; ch < juce::jmin(buffer.getNumChannels(), 2); ++ch)
+        {
+            int wp = bypassAlignWritePos[static_cast<size_t>(ch)];
+            const float* in = buffer.getReadPointer(ch);
+            for (int i = 0; i < ns; ++i)
+            {
+                bypassAlignBuf.setSample(ch, wp, in[i]);
+                wp = (wp + 1) % bypassAlignSize;
+            }
+            bypassAlignWritePos[static_cast<size_t>(ch)] = wp;
+        }
+    }
+
+    // Overwrite `buffer` with the input delayed by the current reported latency (read from the ring
+    // written above). Used by the bypass and 0%-mix paths so their dry output lands at the same time
+    // the host expects given the plugin's constant PDC. D==0 yields the input unchanged.
+    auto emitLatencyAlignedDry = [this, alignPreWp0, alignPreWp1](juce::AudioBuffer<float>& buf)
+    {
+        if (bypassAlignSize <= 1)
+            return;
+        const int D = juce::jlimit(0, bypassAlignSize - 1, getLatencySamples());
+        const int ns = buf.getNumSamples();
+        for (int ch = 0; ch < juce::jmin(buf.getNumChannels(), 2); ++ch)
+        {
+            const int preWp = (ch == 0) ? alignPreWp0 : alignPreWp1;
+            float* out = buf.getWritePointer(ch);
+            for (int i = 0; i < ns; ++i)
+            {
+                const int rp = ((preWp + i - D) % bypassAlignSize + bypassAlignSize) % bypassAlignSize;
+                out[i] = bypassAlignBuf.getSample(ch, rp);
+            }
+        }
+    };
+
+    // Bypassed: pass audio through with constant latency (see emitLatencyAlignedDry).
     if (*bypassParam > 0.5f)
     {
-        // Report 0 latency during bypass so DAW doesn't apply PDC
-        // for a plugin that isn't processing. This is the key fix for
-        // "disabled plugin on bus causes phase issues".
-        if (getLatencySamples() != 0)
-            setLatencySamples(0);
+        // Do NOT change latency here. Reporting 0 on bypass (while prepareToPlay reports the real
+        // latency) makes some hosts, e.g. Cubase, restart the audio engine every block in a loop,
+        // dropping playback (issue #106). We keep the constant reported latency and time-align the
+        // dry output instead (emitLatencyAlignedDry below).
 
         // Keep all delay paths warm during bypass: feed audio through the
         // ring buffers (discard output) so that on unbypass the wet path has
@@ -5306,6 +5361,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
         bypassFadeRemaining = 0;  // Cancel any in-progress fade if re-bypassed
         wasBypassedLastBlock = true;
+        emitLatencyAlignedDry(buffer);  // dry, delayed by the constant reported latency
         return;
     }
 
@@ -5573,13 +5629,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
     }
 
-    // At 0% mix (100% dry), skip all processing and pass through undelayed.
-    // Report 0 latency so DAW doesn't apply PDC (same approach as bypass).
+    // At 0% mix (100% dry), skip all processing. Keep the constant reported latency (do NOT zero it
+    // from the audio thread — see issue #106 in the bypass path) and time-align the dry output.
     if (mixAmount <= 0.001f)
     {
-        if (getLatencySamples() != 0)
-            setLatencySamples(0);
-
         const int bypassChannels = buffer.getNumChannels();
         const int bypassSamples = buffer.getNumSamples();
 
@@ -5598,6 +5651,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
         }
         grMeter.store(0.0f, std::memory_order_relaxed);
+        emitLatencyAlignedDry(buffer);  // dry, delayed by the constant reported latency
         return;
     }
 
@@ -6989,9 +7043,8 @@ juce::AudioProcessorParameter* UniversalCompressor::getBypassParameter() const
 void UniversalCompressor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     // Host bypass (fallback — with getBypassParameter() set, this should rarely be called).
-    // Report 0 latency and pass audio through undelayed, same as our internal bypass.
-    if (getLatencySamples() != 0)
-        setLatencySamples(0);
+    // Do NOT change latency here: keep the constant reported latency so the host does not restart
+    // its audio engine on bypass (issue #106). Audio passes through unchanged.
     // Mark as bypassed so processBlock can detect the transition and restore latency.
     wasBypassedLastBlock = true;
     // Clear bypass fade state so stale delay-line samples don't leak into the next fade
