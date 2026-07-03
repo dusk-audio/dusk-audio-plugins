@@ -3229,7 +3229,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // −55→−30 (Val −22), 60-125 −54→−20 (Val −18), 250 Hz −28→−3 (Val −9). The deep
             // low warmth DV lacked. Residual: 250-500 runs ~+6 dB hot (the +12 st up voice
             // re-pitches the sub's 250 → 500) — structural, not tunable from here.
-            { "Deep Blue Day", 3.20f },
+            { "Deep Blue Day", 4.50f },   // 2026-07-03 3.2->4.5: closes boom-sub 1-2s (tail low warmth) + the down-octave cascade L1 (7.25->pass); saturates past 4.5 (5.5 measured identical).
         }};
         static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerHpfByName = {{
             { "Deep Blue Day", 24.0f },  // feedback HPF 60→24 so the regenerated 31-125 Hz wash survives the loop (24 still clears the ~12 Hz grain rumble). Flattens DV's over-steep low cascade toward Valhalla's.
@@ -3278,7 +3278,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Capped at the max that doesn't regress the noiseburst ss_air gate (DV's residual
             // 12.9 k AA spike already runs the noiseburst air-heavy) — closes ~half the gap clean.
             { "Black Hole",    1.5f },
-            { "Deep Blue Day", 2.0f },
+            { "Deep Blue Day", 1.2f },   // 2026-07-03 2.0->1.2: 2.0 pushed the snare cent_50 +19% bright (gate ±15) — 1.2 lands it in-gate; 1.0-1.4 all pass, 1.2 = mid. Bloom 4-8k/8-12k barely react to air (late-HF rise is the loop's, not this voice's).
         }};
         float airMix = 0.0f;
         for (const auto& e : kShimmerAirByName) if (e.first == nameView) { airMix = e.second; break; }
@@ -3332,7 +3332,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // to −12). All-zero = off/bit-null. Env DUSKVERB_SHIMMEROCT="g500,g250,g125,g62".
         static const std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
             { "Black Hole",    { 0.0f, 0.0f, 0.0f, 0.0f } },
-            { "Deep Blue Day", { 0.0f, 0.0f, 0.0f, 0.0f } },   // tuned by the sweep below
+            { "Deep Blue Day", { 0.0f, 0.5f, 0.5f, 0.0f } },   // 2026-07-03: 250/125 Hz fill — with Decay 20 + feedback 0.7 it recovers T60-125/250 (in-gate) that the feedback cut alone pushed long; non-additive (oct alone broke mid gates, Decay-20 alone broke low_mid; the pair nets -1). g500 stays 0 (the +12 up voice already re-pitches the sub's 250->500, 250-500 runs hot).
         }};
         float octGains[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         for (const auto& e : kShimmerOctaveByName) if (e.first == nameView) { for (int i = 0; i < 4; ++i) octGains[i] = e.second[i]; break; }
