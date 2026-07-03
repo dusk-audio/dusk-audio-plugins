@@ -1,10 +1,10 @@
 # Dusk Audio Plugins
 
-A collection of professional audio VST3/LV2 plugins built with JUCE.
+A collection of professional audio VST3/AU/LV2 plugins built with JUCE. Several titles (4K EQ, Spectrum Analyzer) also ship in CLAP format.
 
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
-> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, and **Chord Analyzer** are currently released and recommended for production use. All other plugins are in active development.
+> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are currently released and recommended for production use. All other plugins are in active development.
 
 ## Plugins
 
@@ -15,15 +15,16 @@ Classic British console EQ emulation featuring:
 - Brown/Black variants (two console voicings)
 - Advanced analog saturation modeling
 - 2x/4x oversampling for anti-aliasing
+- VST3/AU/LV2/CLAP formats
 
 ### Multi-Comp - RELEASED
 Multi-mode compressor with seven classic compression styles plus 4-band multiband compression:
 
 **Compression Modes:**
-- **Vintage Opto** – Classic 1960s tube optical leveling amplifier. Program-dependent attack/release with smooth, musical compression. Features "Peak Reduction" and "Gain" controls with optional Limit mode.
-- **Vintage FET** – Classic late-1960s FET limiting amplifier. All-discrete Class A design with ultra-fast attack times. Features "All Buttons" mode for extreme compression/distortion. Four ratio settings: 4:1, 8:1, 12:1, 20:1, plus All.
+- **Vintage Opto** – Classic 1960s tube optical leveling amplifier. Program-dependent attack/release with smooth, musical compression, including a T4B-style slow "afterglow" release on sustained material. Features "Peak Reduction" and "Gain" controls with optional Limit mode.
+- **Vintage FET** – Classic late-1960s FET limiting amplifier. All-discrete Class A design with ultra-fast attack times. Ratios (4:1, 8:1, 12:1, 20:1, plus All) re-derived from real hardware measurements, a new adjustable Threshold (-60 to 0 dB), gain-reduction-scaled harmonics, and "All Buttons" mode for extreme compression/distortion.
 - **Classic VCA** – Fast, precise 1970s VCA compressor. Known for its punchy, aggressive character with soft-knee compression. Great for drums and percussive sources.
-- **Bus Compressor** – Classic British console bus compressor. The quintessential mix bus glue with fixed attack/release detents and Auto release. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
+- **Bus Compressor** – Faithful stereo-linked SSL-style console bus compressor. The quintessential mix bus glue with fixed attack/release detents, Auto release, and gain-reduction-scaled harmonics. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
 - **Studio FET** – Later revision FET limiter. Cleaner character with approximately 30% of the harmonic content of the vintage version. More controlled transient response.
 - **Studio VCA** – Modern British dual VCA compressor. Clean, musical compression with RMS detection and soft knee. Excellent for vocals and mix bus applications.
 - **Digital** – Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection. Ideal for surgical dynamics control where transparency is paramount.
@@ -45,7 +46,7 @@ Analog tape machine emulation featuring:
 ### Multi-Q - RELEASED
 Universal EQ with multiple modes:
 - **Digital Mode**: Clean 8-band parametric with color-coded bands, per-band M/S channel routing
-- **British Mode**: Classic console EQ with two console voicings
+- **British Mode**: Classic console EQ with two console voicings; Brown (E-series) adds low-weighted transformer-core saturation
 - **Tube Mode**: Warm analog-style EQ with harmonic saturation
 - Real-time FFT analyzer with pre/post display
 - Q-coupling modes for natural EQ response
@@ -68,14 +69,16 @@ Zero-latency IR-based reverb:
 - Waveform display
 - Size, pre-delay, damping, width, mix controls
 
-### DuskVerb - IN DEVELOPMENT
-Algorithmic reverb with 53 factory presets:
-- Hadamard FDN, QuadTank, and Dattorro tank algorithms
-- Per-preset tuned engine wrappers with corrective EQ
-- Size, pre-delay, damping, modulation, and mix controls
+### DuskVerb - PRE-RELEASE
+Algorithmic reverb with 11 selectable engines and 20 factory presets:
+- 11 engines: Plate, Vintage Plate, Smooth Plate, Chamber, Spring, Gated, Shimmer, Reverse, Hall, Tiled Room, Dense Hall
+- Tone / Character / Duck macro row for one-knob global shaping over any engine
+- Overhauled Shimmer engine: post-loop HF air voice for sparkle plus a down-octave voice for warmth
+- Per-preset tuned engine wrappers with corrective EQ, anchored to Lexicon, EMT, and AMS references
+- Honest Decay knob (position tracks actual tail length), size, pre-delay, damping, modulation, and mix controls
 - Early reflections with configurable patterns
 
-### Spectrum Analyzer - IN DEVELOPMENT
+### Spectrum Analyzer - RELEASED
 Professional FFT spectrum analyzer with metering:
 - Real-time FFT spectrum display
 - LUFS integrated and short-term metering
@@ -83,6 +86,7 @@ Professional FFT spectrum analyzer with metering:
 - K-System metering (K-12, K-14, K-20)
 - Stereo correlation meter
 - Mid/Side and Left/Right channel routing
+- VST3/AU/LV2/CLAP formats
 
 ### Tape Echo - IN DEVELOPMENT
 Classic tape delay with spring reverb:
