@@ -447,11 +447,13 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         bandEnableSmoothed[static_cast<size_t>(i)].setCurrentAndTargetValue(enabled);
     }
 
-    eqTypeCrossfade.reset(sampleRate, 0.01);
+    eqTypeCrossfade.reset(sampleRate, 0.02);
     eqTypeCrossfade.setCurrentAndTargetValue(1.0f);
     previousEQType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
     eqTypeChanging = false;
-    prevTypeBuffer.setSize(2, samplesPerBlock, false, false, true);
+    eqXfadeHold = {{0.0f, 0.0f}};
+    presetModeGuardSamples.store(0, std::memory_order_relaxed);
+    presetModeGuardTarget.store(-1, std::memory_order_relaxed);
 
     osCrossfade.reset(sampleRate, 0.005);
     osCrossfade.setCurrentAndTargetValue(1.0f);
@@ -696,11 +698,30 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     // Check EQ type (Digital, British, or Tube)
     auto eqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
 
+    // Pin the mode to a just-loaded factory preset for a short window (issue #105). Some hosts
+    // (Bitwig) re-assert their cached eqType once after a host-driven program change, which would
+    // otherwise revert British/Tube presets to Digital mid-block. Holding the loaded mode here keeps
+    // the audio from flickering; the delayed re-apply in setCurrentProgram converges the parameter.
+    if (const int guardLeft = presetModeGuardSamples.load(std::memory_order_acquire); guardLeft > 0)
+    {
+        // Acquire above synchronizes with the release store in setCurrentProgram, so once a
+        // nonzero countdown is visible the matching target store is guaranteed visible too.
+        const int guardTarget = presetModeGuardTarget.load(std::memory_order_relaxed);
+        if (guardTarget >= 0)
+            eqType = static_cast<EQType>(guardTarget);
+        // Atomic decrement (not load-then-store): a concurrent re-arm from setCurrentProgram writes
+        // a fresh, larger window, and fetch_sub applies to whatever value is current, so this block's
+        // subtraction can never clobber that re-arm. The counter may dip up to one block below zero on
+        // the final tick; the >0 test above treats <=0 as expired and the next arm overwrites it, so
+        // it cannot drift any further negative.
+        presetModeGuardSamples.fetch_sub(buffer.getNumSamples(), std::memory_order_acq_rel);
+    }
+
     // Detect EQ type change and start crossfade
     if (eqType != previousEQType)
     {
-        // prevTypeBuffer already contains last processed output (saved at end of previous block)
-        // Start crossfade from old EQ type's output to new EQ type's output
+        // eqXfadeHold holds the last clean output sample (continuity point). Crossfade from it into
+        // the new EQ type's output so the transition never steps.
         eqTypeChanging = true;
         eqTypeCrossfade.setCurrentAndTargetValue(0.0f);
         eqTypeCrossfade.setTargetValue(1.0f);
@@ -1602,7 +1623,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     }
 
     // Save processed output for potential future crossfades (only when not currently crossfading)
-    // This ensures prevOsBuffer and prevTypeBuffer contain the last fully-processed output
+    // This ensures prevOsBuffer holds the last fully-processed output for the OS-mode crossfade,
+    // and eqXfadeHold holds the continuity seed for the EQ-type crossfade.
     if (!osChanging)
     {
         int copyLen = juce::jmin(buffer.getNumSamples(), prevOsBuffer.getNumSamples());
@@ -1612,10 +1634,13 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     }
     if (!eqTypeChanging)
     {
-        int copyLen = juce::jmin(buffer.getNumSamples(), prevTypeBuffer.getNumSamples());
-        int copyCh = juce::jmin(buffer.getNumChannels(), prevTypeBuffer.getNumChannels());
-        for (int ch = 0; ch < copyCh; ++ch)
-            prevTypeBuffer.copyFrom(ch, 0, buffer, ch, 0, copyLen);
+        // Seed the mode-switch crossfade with the final output sample (the true continuity point),
+        // so a later switch blends from where the waveform actually left off -> no click. See
+        // eqXfadeHold.
+        const int lastIdx = buffer.getNumSamples() - 1;
+        if (lastIdx >= 0)
+            for (int ch = 0; ch < juce::jmin(buffer.getNumChannels(), 2); ++ch)
+                eqXfadeHold[static_cast<size_t>(ch)] = buffer.getSample(ch, lastIdx);
     }
 
     // Apply oversampling mode switch crossfade
@@ -1642,11 +1667,15 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         }
     }
 
-    // Apply EQ type switch crossfade
+    // Apply EQ type switch crossfade. Blend from the held continuity seed (the last clean output
+    // sample) into the new mode: at mix=0 the output equals where the waveform left off, so there is
+    // no step -> no click. The seed is a constant across the ~20ms ramp; its contribution decays as
+    // mix -> 1, leaving only the new mode. (An earlier design blended against the previous block,
+    // whose sample i sat a full block of phase away from the switch point -> the audible pop.)
     if (eqTypeChanging)
     {
-        int xfCh = juce::jmin(buffer.getNumChannels(), prevTypeBuffer.getNumChannels());
-        int xfLen = juce::jmin(buffer.getNumSamples(), prevTypeBuffer.getNumSamples());
+        int xfCh = juce::jmin(buffer.getNumChannels(), 2);
+        int xfLen = buffer.getNumSamples();
         if (eqTypeCrossfade.isSmoothing())
         {
             for (int i = 0; i < xfLen; ++i)
@@ -1654,7 +1683,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                 float mix = eqTypeCrossfade.getNextValue();
                 for (int ch = 0; ch < xfCh; ++ch)
                 {
-                    float prev = prevTypeBuffer.getSample(ch, i);
+                    float prev = eqXfadeHold[static_cast<size_t>(ch)];
                     float curr = buffer.getSample(ch, i);
                     buffer.setSample(ch, i, prev + mix * (curr - prev));
                 }
@@ -3925,6 +3954,35 @@ void MultiQ::setCurrentProgram(int index)
         MultiQPresets::applyPreset(parameters, factoryPresets[static_cast<size_t>(presetIndex)]);
         parameters.state.setProperty("presetName",
             factoryPresets[static_cast<size_t>(presetIndex)].name, nullptr);
+
+        // Defend the loaded mode against a host re-asserting its cached eqType (issue #105). Some
+        // hosts (Bitwig) call setCurrentProgram on a worker thread, or re-entrantly during their own
+        // program write; JUCE then suppresses the performEdit host-notification for the parameter
+        // changes above, so the host never learns the new eqType and re-asserts its cached value on
+        // the next audio block, reverting British/Tube presets to Digital. Two-part fix:
+        //   1) processBlock pins the DSP to this mode for ~500 ms so the audio never follows that
+        //      one-shot revert (no mode flicker in the sound);
+        //   2) a short delayed re-apply on the message thread lands after the revert and re-issues
+        //      the parameter edits (which DO notify the host from a non-re-entrant context), so the
+        //      eqType parameter and UI converge to the preset's mode.
+        const int guardMode = factoryPresets[static_cast<size_t>(presetIndex)].eqType;
+        // Store the target first, then publish the countdown with a release store so the audio
+        // thread's acquire load of presetModeGuardSamples can never observe a nonzero countdown
+        // before the matching target is visible. The countdown is measured in host-rate samples
+        // (baseSampleRate, not the oversampled currentSampleRate) because processBlock decrements
+        // it by buffer.getNumSamples(), which is always host-rate, so the guard stays ~500 ms
+        // regardless of the oversampling factor.
+        presetModeGuardTarget.store(guardMode, std::memory_order_relaxed);
+        presetModeGuardSamples.store(static_cast<int>(baseSampleRate.load() * 0.5),
+                                     std::memory_order_release);
+
+        juce::WeakReference<MultiQ> weakThis(this);
+        const int pi = presetIndex;
+        juce::Timer::callAfterDelay(150, [weakThis, pi]() mutable
+        {
+            if (auto* self = weakThis.get())
+                MultiQPresets::applyPreset(self->parameters, self->factoryPresets[static_cast<size_t>(pi)]);
+        });
     }
 }
 
