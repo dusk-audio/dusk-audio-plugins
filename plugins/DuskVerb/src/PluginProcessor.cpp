@@ -58,6 +58,7 @@ struct TuningEnv
     const char* shimmerupv;
     const char* shimmeroct;
     const char* shimmernoise;
+    const char* shimmerhfs;
     const char* frontload;
     const char* dpvrefl;
     const char* densefield;
@@ -101,6 +102,7 @@ struct TuningEnv
           shimmerupv (std::getenv ("DUSKVERB_SHIMMERUPV")),
           shimmeroct (std::getenv ("DUSKVERB_SHIMMEROCT")),
           shimmernoise (std::getenv ("DUSKVERB_SHIMMERNOISE")),
+          shimmerhfs (std::getenv ("DUSKVERB_SHIMMERHFS")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
           densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
@@ -3354,6 +3356,26 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
             noiseGain = juce::String (env).getFloatValue();
         engine.setShimmerTailNoise (noiseGain);
+
+        // Feedback-loop HF compensation shelf (lift above cornerHz per pass) —
+        // the FDN tank's per-pass HF loss, not the loop LPF, caps HF T60
+        // (T60-16k wall, ShimmerEngine.h). First-order: the corner is the
+        // mid-isolation lever (4 kHz leaks lift into the mids and stretches
+        // their decay; higher corners spare them). 0 dB = off/bit-null.
+        // Env DUSKVERB_SHIMMERHFS="dB[,cornerHz]".
+        static constexpr std::array<std::pair<std::string_view, std::pair<float, float>>, 2> kShimmerHFSustainByName = {{
+            { "Black Hole",    { 0.0f, 4000.0f } },
+            { "Deep Blue Day", { 0.0f, 4000.0f } },   // tuned by the sweep below
+        }};
+        float hfsDb = 0.0f, hfsHz = 4000.0f;
+        for (const auto& e : kShimmerHFSustainByName) if (e.first == nameView) { hfsDb = e.second.first; hfsHz = e.second.second; break; }
+        if (const char* env = tuningEnv().shimmerhfs; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray toks; toks.addTokens (juce::String (env), ",", "");
+            if (toks.size() > 0) hfsDb = toks[0].getFloatValue();
+            if (toks.size() > 1) hfsHz = toks[1].getFloatValue();
+        }
+        engine.setShimmerHFSustainDb (hfsDb, hfsHz);
     }
 
     if (! fdnDelaysFromEnv)   // an env DUSKVERB_FDN_DELAYS override owns the delays — don't clobber it

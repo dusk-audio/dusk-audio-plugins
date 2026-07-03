@@ -270,6 +270,9 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     fbLpfR_.setLPCutoff (kFeedbackLpfHz, sr);
     fbHpfL_.clear(); fbHpfR_.clear();
     fbLpfL_.clear(); fbLpfR_.clear();
+    hfShelfL_.setHPCutoff (hfSustainHz_, sr);
+    hfShelfR_.setHPCutoff (hfSustainHz_, sr);
+    hfShelfL_.clear(); hfShelfR_.clear();
 
     updatePitchRatio();
     prepared_ = true;
@@ -301,6 +304,7 @@ void ShimmerEngine::clearBuffers()
     fbDelayWritePos_ = 0;
     fbHpfL_.clear(); fbHpfR_.clear();
     fbLpfL_.clear(); fbLpfR_.clear();
+    hfShelfL_.clear(); hfShelfR_.clear();
 }
 
 // ============================================================================
@@ -387,6 +391,22 @@ void ShimmerEngine::setOctaveCascade (const float gains[4])
         any = any || (octGain_[i] > 1.0e-6f);
     }
     octActive_ = any;
+}
+
+void ShimmerEngine::setHFSustainDb (float db, float cornerHz)
+{
+    // Clamp to +12 dB: the shelf compounds per loop pass, and the loop's
+    // softClip + kFeedbackLoopAttn bound it, but past ~12 dB the boosted
+    // band pins the clip every pass (distorted ring, not longer T60).
+    db = std::clamp (db, 0.0f, 12.0f);
+    hfSustainGain_ = (db > 0.01f) ? std::pow (10.0f, db / 20.0f) - 1.0f : 0.0f;
+    hfSustainHz_   = std::clamp (cornerHz, 1000.0f, 12000.0f);
+    if (prepared_)
+    {
+        const float sr = static_cast<float> (sampleRate_);
+        hfShelfL_.setHPCutoff (hfSustainHz_, sr);
+        hfShelfR_.setHPCutoff (hfSustainHz_, sr);
+    }
 }
 
 void ShimmerEngine::updatePitchRatio()
@@ -483,8 +503,19 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // sub-harmonics that would otherwise rumble up over time; LPF
         // tames the upper-spectrum metallic ring caused by repeated
         // pitch-up cycles concentrating energy near the AA-filter wall.
-        const float bandedL = fbLpfL_.processLP (fbHpfL_.processHP (pitchedFbL));
-        const float bandedR = fbLpfR_.processLP (fbHpfR_.processHP (pitchedFbR));
+        float bandedL = fbLpfL_.processLP (fbHpfL_.processHP (pitchedFbL));
+        float bandedR = fbLpfR_.processLP (fbHpfR_.processHP (pitchedFbR));
+
+        // HF-sustain compensation shelf: the tank is HF-lossy per pass (that
+        // loss, not the LPF above, caps HF T60). Re-enter the loop with the
+        // >4 kHz band lifted so the HF ring survives more passes. First-order
+        // high-shelf: x + g * HP(x). gain <= 0 → skipped (bit-null pattern,
+        // same as the downMix_/subMix_ branches above; recursive-feedback TU).
+        if (hfSustainGain_ > 0.0f)
+        {
+            bandedL += hfSustainGain_ * hfShelfL_.processHP (bandedL);
+            bandedR += hfSustainGain_ * hfShelfR_.processHP (bandedR);
+        }
 
         // Apply user feedback gain × kFeedbackLoopAttn, then softClip
         // as a runaway safety net.

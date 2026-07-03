@@ -83,6 +83,7 @@ public:
     void setTailNoise         (float gain);  // envelope-tracked band-limited noise floor on the output — the dense noise-like fade Valhalla has; masks the sparse-mode ring. 0 = off/bit-null.
     void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
     void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches Valhalla's even down-cascade. all 0 = off/bit-null.
+    void setHFSustainDb       (float db, float cornerHz = 4000.0f);   // feedback-loop HF compensation shelf (dB lift above cornerHz, applied post-band-pass, pre-fb-gain). The FDN tank is HF-lossy per pass — that loss, not the loop LPF, caps HF T60 (T60-16k wall). Re-entering the loop with the HF band lifted extends the HF ring; bounded by kFeedbackLoopAttn + the loop softClip. First-order (6 dB/oct) — corner placement is the mid-isolation lever. 0 dB = off/bit-null.
     void setFreeze            (bool frozen);
 
 private:
@@ -307,6 +308,16 @@ private:
         void clear() { prevIn = prevOut = 0.0f; }
     };
     OnePole fbHpfL_, fbHpfR_, fbLpfL_, fbLpfR_;
+
+    // HF-sustain compensation shelf (setHFSustainDb): first-order high-shelf
+    // built from a OnePole HP — y = x + gain * HP(x), corner kHFSustainHz.
+    // Runs INSIDE the recursive feedback path (post-band-pass, pre-fb-gain),
+    // so a few dB here compounds every ~50 ms pass and directly extends the
+    // HF T60 the HF-lossy tank truncates. hfSustainGain_ <= 0 skips the
+    // branch (same runtime bit-null pattern as downMix_/subMix_ above).
+    OnePole hfShelfL_, hfShelfR_;
+    float hfSustainHz_   = 4000.0f;   // shelf corner (setHFSustainDb); re-applied in prepare()
+    float hfSustainGain_ = 0.0f;   // linear extra gain for the HP band (10^(dB/20) - 1); 0 = off
 
     // Stereo modulation (chorus/ensemble) on the WET output — a slow LFO sweeps
     // per-channel modulated delays in ANTI-PHASE, so the L/R combs move oppositely:
