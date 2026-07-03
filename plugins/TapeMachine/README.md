@@ -75,7 +75,7 @@ Copy to your plugin folders:
 
 For those interested in what's under the hood:
 
-### Signal Chain (20 stages)
+### Signal Chain (14 stages)
 1. Input metering and gain staging
 2. Input transformer saturation (Classic102 only)
 3. Pre-emphasis EQ (NAB/CCIR/AES record curve)
