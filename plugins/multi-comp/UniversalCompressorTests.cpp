@@ -55,6 +55,9 @@ public:
         beginTest("Bypass Functionality");
         testBypass();
 
+        beginTest("Mix Zero Alignment");
+        testMixZeroAlignment();
+
         beginTest("Compression Ratios");
         testCompressionRatios();
 
@@ -504,14 +507,81 @@ private:
                "Bypass does NOT change reported latency (issue #106): before=" + juce::String(latencyBefore)
                    + " after=" + juce::String(latencyAfter));
 
-        // Bypassed output must equal the input delayed by exactly the reported latency.
+        // Bypassed output must equal the input delayed by exactly the reported latency. Guard that we
+        // actually captured enough audio past the warmup+latency region, otherwise the loop below runs
+        // zero times and the comparison passes without validating anything.
         const int D = latencyAfter;
+        const int firstCheck = D + bs;  // skip the warmup (one block) + latency fill region
+        expect(static_cast<int>(out.size()) > firstCheck,
+               "captured enough audio to validate bypass alignment (need > " + juce::String(firstCheck)
+                   + ", have " + juce::String(static_cast<int>(out.size())) + ")");
+
         float maxDiff = 0.0f;
-        for (int n = D + bs; n < static_cast<int>(out.size()); ++n)  // skip initial fill region
+        for (int n = firstCheck; n < static_cast<int>(out.size()); ++n)
             maxDiff = juce::jmax(maxDiff, std::abs(out[static_cast<size_t>(n)] - in[static_cast<size_t>(n - D)]));
 
         expect(maxDiff < 0.0001f,
                "Bypass passes audio through delayed by exactly the reported latency (D=" + juce::String(D)
+                   + ", max diff: " + juce::String(maxDiff) + ")");
+    }
+
+    void testMixZeroAlignment()
+    {
+        // 0% mix (100% dry) takes the same latency-aligned dry passthrough as bypass
+        // (emitLatencyAlignedDry). Verify that branch also keeps a constant latency and delays the
+        // dry by exactly that latency — a sample-level check, not just RMS.
+        UniversalCompressor compressor;
+        const double sr = 48000.0;
+        const int bs = 512;
+        compressor.prepareToPlay(sr, bs);
+        auto& params = compressor.getParameters();
+
+        const int latencyBefore = compressor.getLatencySamples();
+        if (auto* bypass = params.getRawParameterValue("bypass"))
+            *bypass = 0.0f;                       // not bypassed — exercise the mix path
+        if (auto* mix = params.getRawParameterValue("mix"))
+            *mix = 0.0f;                          // 100% dry -> the mixAmount <= 0.001f branch
+
+        const int numBlocks = 8;
+        std::vector<float> in, out;
+        in.reserve(static_cast<size_t>(numBlocks * bs));
+        out.reserve(static_cast<size_t>(numBlocks * bs));
+        double phase = 0.0;
+        const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / sr;
+        juce::MidiBuffer midiBuffer;
+        for (int b = 0; b < numBlocks; ++b)
+        {
+            juce::AudioBuffer<float> buf(2, bs);
+            for (int i = 0; i < bs; ++i)
+            {
+                const float s = 0.8f * static_cast<float>(std::sin(phase));
+                phase += inc;
+                buf.setSample(0, i, s);
+                buf.setSample(1, i, s);
+                in.push_back(s);
+            }
+            compressor.processBlock(buf, midiBuffer);
+            for (int i = 0; i < bs; ++i)
+                out.push_back(buf.getSample(0, i));
+        }
+
+        const int latencyAfter = compressor.getLatencySamples();
+        expect(latencyAfter == latencyBefore,
+               "0% mix does NOT change reported latency (issue #106): before=" + juce::String(latencyBefore)
+                   + " after=" + juce::String(latencyAfter));
+
+        const int D = latencyAfter;
+        const int firstCheck = D + bs;
+        expect(static_cast<int>(out.size()) > firstCheck,
+               "captured enough audio to validate 0% mix alignment (need > " + juce::String(firstCheck)
+                   + ", have " + juce::String(static_cast<int>(out.size())) + ")");
+
+        float maxDiff = 0.0f;
+        for (int n = firstCheck; n < static_cast<int>(out.size()); ++n)
+            maxDiff = juce::jmax(maxDiff, std::abs(out[static_cast<size_t>(n)] - in[static_cast<size_t>(n - D)]));
+
+        expect(maxDiff < 0.0001f,
+               "0% mix passes audio through delayed by exactly the reported latency (D=" + juce::String(D)
                    + ", max diff: " + juce::String(maxDiff) + ")");
     }
 

@@ -5295,10 +5295,16 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // the host expects given the plugin's constant PDC. D==0 yields the input unchanged.
     auto emitLatencyAlignedDry = [this, alignPreWp0, alignPreWp1](juce::AudioBuffer<float>& buf)
     {
-        if (bypassAlignSize <= 1)
-            return;
-        const int D = juce::jlimit(0, bypassAlignSize - 1, getLatencySamples());
         const int ns = buf.getNumSamples();
+        const int D = juce::jlimit(0, juce::jmax(0, bypassAlignSize - 1), getLatencySamples());
+        // Undelayed fallback when the ring is unsized, or this block is larger than it was sized for
+        // (an out-of-spec / offline block exceeding prepareToPlay's samplesPerBlock). Delaying it
+        // would read history the same block's top-of-block write already overwrote. buf still holds
+        // the dry input here, so returning leaves a clean passthrough — the same graceful degradation
+        // the oversampler uses when it bails on an oversized block. No audio-thread resize (that would
+        // allocate on the real-time path).
+        if (bypassAlignSize <= 1 || D + ns >= bypassAlignSize)
+            return;
         for (int ch = 0; ch < juce::jmin(buf.getNumChannels(), 2); ++ch)
         {
             const int preWp = (ch == 0) ? alignPreWp0 : alignPreWp1;
