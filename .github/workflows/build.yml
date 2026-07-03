@@ -148,6 +148,8 @@ jobs:
       # container, and only once so the token refresh isn't raced by concurrent jobs.
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # this job never pushes; don't leave the token in git config
 
       - name: Refresh Patreon supporters
         # Best-effort: with no secrets (forks / dev builds) the committed list is kept. When the
@@ -160,10 +162,17 @@ jobs:
           PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
         run: |
-          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
-             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+          present=0
+          for v in "${PATREON_ACCESS_TOKEN}" "${PATREON_REFRESH_TOKEN}" "${PATREON_CLIENT_ID}" "${PATREON_CLIENT_SECRET}"; do
+            [ -n "$v" ] && present=$((present + 1))
+          done
+          if [ "$present" -eq 0 ]; then
             echo "::warning::Patreon secrets not configured - using the committed supporters list (may be stale)."
             exit 0
+          fi
+          if [ "$present" -lt 4 ]; then
+            echo "::error::Patreon secrets are only partially configured ($present/4). Set ALL of PATREON_ACCESS_TOKEN, PATREON_REFRESH_TOKEN, PATREON_CLIENT_ID and PATREON_CLIENT_SECRET, or none."
+            exit 1
           fi
           umask 077
           mkdir -p "${HOME}/.config/dusk-audio"
@@ -238,24 +247,19 @@ jobs:
           submodules: recursive
 
       - name: Apply refreshed supporters list
-        # Overwrite the committed header with the one refreshed once in the setup job (issue: stop
-        # hand-editing PatreonBackers.h). Best-effort: if the artifact is absent the committed list
-        # is used, so builds never break on a missing/failed refresh.
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
         uses: actions/download-artifact@v4
         with:
           name: patreon-header
           path: patreon-header
-        continue-on-error: true
 
       - name: Install refreshed supporters header
         shell: bash
         run: |
-          if [ -f patreon-header/PatreonBackers.h ]; then
-            cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
-            echo "Applied refreshed PatreonBackers.h from the setup job"
-          else
-            echo "No refreshed header artifact - building with the committed list"
-          fi
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
 
       - name: Checkout JUCE
         uses: actions/checkout@v4
@@ -456,24 +460,19 @@ jobs:
           submodules: recursive
 
       - name: Apply refreshed supporters list
-        # Overwrite the committed header with the one refreshed once in the setup job (issue: stop
-        # hand-editing PatreonBackers.h). Best-effort: if the artifact is absent the committed list
-        # is used, so builds never break on a missing/failed refresh.
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
         uses: actions/download-artifact@v4
         with:
           name: patreon-header
           path: patreon-header
-        continue-on-error: true
 
       - name: Install refreshed supporters header
         shell: bash
         run: |
-          if [ -f patreon-header/PatreonBackers.h ]; then
-            cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
-            echo "Applied refreshed PatreonBackers.h from the setup job"
-          else
-            echo "No refreshed header artifact - building with the committed list"
-          fi
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
 
       - name: Checkout JUCE
         uses: actions/checkout@v4
@@ -635,24 +634,19 @@ jobs:
           submodules: recursive
 
       - name: Apply refreshed supporters list
-        # Overwrite the committed header with the one refreshed once in the setup job (issue: stop
-        # hand-editing PatreonBackers.h). Best-effort: if the artifact is absent the committed list
-        # is used, so builds never break on a missing/failed refresh.
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
         uses: actions/download-artifact@v4
         with:
           name: patreon-header
           path: patreon-header
-        continue-on-error: true
 
       - name: Install refreshed supporters header
         shell: bash
         run: |
-          if [ -f patreon-header/PatreonBackers.h ]; then
-            cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
-            echo "Applied refreshed PatreonBackers.h from the setup job"
-          else
-            echo "No refreshed header artifact - building with the committed list"
-          fi
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
 
       - name: Checkout JUCE
         uses: actions/checkout@v4
@@ -800,24 +794,19 @@ jobs:
           submodules: recursive
 
       - name: Apply refreshed supporters list
-        # Overwrite the committed header with the one refreshed once in the setup job (issue: stop
-        # hand-editing PatreonBackers.h). Best-effort: if the artifact is absent the committed list
-        # is used, so builds never break on a missing/failed refresh.
+        # Always use the header refreshed once in the setup job. download-artifact errors if the
+        # artifact is missing, failing the build loudly rather than silently shipping a possibly
+        # stale committed list (the setup job always uploads it, so a miss is a real error).
         uses: actions/download-artifact@v4
         with:
           name: patreon-header
           path: patreon-header
-        continue-on-error: true
 
       - name: Install refreshed supporters header
         shell: bash
         run: |
-          if [ -f patreon-header/PatreonBackers.h ]; then
-            cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
-            echo "Applied refreshed PatreonBackers.h from the setup job"
-          else
-            echo "No refreshed header artifact - building with the committed list"
-          fi
+          cp patreon-header/PatreonBackers.h plugins/shared/PatreonBackers.h
+          echo "Applied refreshed PatreonBackers.h from the setup job"
 
       - name: Checkout JUCE
         uses: actions/checkout@v4
