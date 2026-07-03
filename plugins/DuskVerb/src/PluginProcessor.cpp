@@ -3280,7 +3280,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Capped at the max that doesn't regress the noiseburst ss_air gate (DV's residual
             // 12.9 k AA spike already runs the noiseburst air-heavy) — closes ~half the gap clean.
             { "Black Hole",    1.5f },
-            { "Deep Blue Day", 1.2f },   // 2026-07-03 2.0->1.2: 2.0 pushed the snare cent_50 +19% bright (gate ±15) — 1.2 lands it in-gate; 1.0-1.4 all pass, 1.2 = mid. Bloom 4-8k/8-12k barely react to air (late-HF rise is the loop's, not this voice's).
+            { "Deep Blue Day", 1.3f },   // 2026-07-03 2.0->1.3: 2.0 pushed the snare cent_50 +19% bright (gate ±15) — 1.0-1.4 all land it in-gate. 1.3 (not 1.2) also closes spec_L1@12.9k: the residual AA-image NOTCH there is FILLED by this voice (air DOWN made spec_L1 worse — 1.05 -> 5.69 dB). Bloom 4-8k/8-12k barely react to air (late-HF rise is the loop's, not this voice's).
         }};
         float airMix = 0.0f;
         for (const auto& e : kShimmerAirByName) if (e.first == nameView) { airMix = e.second; break; }
