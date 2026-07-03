@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 #include "../MultiQ.h"
+#include "../MultiQEditor.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -331,6 +332,143 @@ static void testPan(MultiQ& plugin)
 }
 
 // ===== TEST: State Save/Restore Round-Trip =====
+// Issue #105 (the real bug): opening the editor must NOT reset the loaded British/Tube preset.
+// The tube/british quick-preset combos fired setSelectedId(1) with the default async
+// notification, so applyTube/BritishPreset(1) ("Default - flat") ran just after the editor was
+// built and wiped the loaded preset's params. Fix = dontSendNotification on those setSelectedId
+// calls. Needs a display (creates the real editor), so it self-skips on headless CI.
+static void testEditorPresetSurvivesOpen()
+{
+    std::cout << "\n--- Test: Editor open must not reset British/Tube preset (issue #105) ---\n";
+  #if JUCE_LINUX
+    if (juce::SystemStats::getEnvironmentVariable ("DISPLAY", juce::String()).isEmpty())
+    {
+        std::cout << "  (skipped: no DISPLAY — the editor needs X)\n";
+        return;
+    }
+  #endif
+    auto pump = []()
+    {
+        auto* mm = juce::MessageManager::getInstance();
+        mm->callAsync ([mm] { mm->stopDispatchLoop(); });
+        mm->runDispatchLoop();   // runs the queued async onChange (the old reset), then quits
+    };
+
+    auto testMode = [&pump] (int eqTypeVal, const juce::String& paramId, const juce::String& label)
+    {
+        MultiQ proc;
+        proc.setPlayConfigDetails (2, 2, 44100.0, 512);
+        proc.prepareToPlay (44100.0, 512);
+        auto val = [&proc] (const juce::String& id) { auto* p = proc.parameters.getRawParameterValue (id); return p ? p->load() : -999.0f; };
+
+        // Pick a factory preset for this mode whose tracked param is clearly non-default.
+        const auto& presets = proc.getFactoryPresets();
+        int chosen = -1; float before = 0.0f;
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            if (presets[i].eqType != eqTypeVal) continue;
+            proc.setCurrentProgram ((int) i + 1);
+            const float v = val (paramId);
+            if (std::abs (v) > 0.01f) { chosen = (int) i; before = v; break; }
+        }
+        const juce::String n0 = label + ": found a non-default factory preset";
+        check (n0.toRawUTF8(), chosen >= 0);
+        if (chosen < 0) return;
+
+        std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+        pump(); pump();   // let any queued async onChange fire (this was the reset)
+
+        const juce::String n1 = label + ": preset survives editor open";
+        checkDb (n1.toRawUTF8(), val (paramId), before, 0.05f);
+
+        // #105 unify: the mode-panel preset combo must mirror the main dropdown (same preset shown).
+        auto* mqEd = dynamic_cast<MultiQEditor*> (ed.get());
+        check ((label + ": editor is MultiQEditor").toRawUTF8(), mqEd != nullptr);
+        if (mqEd)
+        {
+            const juce::String mainTxt  = mqEd->getMainPresetText();
+            const juce::String panelTxt = (eqTypeVal == 3) ? mqEd->getTubePresetText() : mqEd->getBritishPresetText();
+            const juce::String n2 = label + ": panel combo mirrors main combo";
+            check (n2.toRawUTF8(), mainTxt.isNotEmpty() && panelTxt == mainTxt);
+        }
+        if (ed) { proc.editorBeingDeleted (ed.get()); ed.reset(); }
+    };
+
+    testMode (3, ParamIDs::pultecLfBoostGain, "#105 Tube");
+    testMode (2, ParamIDs::britishLfGain,     "#105 British");
+}
+
+// Issue #105: British/Tube mode params must survive a getState/setState round-trip.
+// Reproduces the VST3 "resets to default on session open" path deterministically.
+static void testBritishTubeStateRoundTrip(MultiQ& plugin)
+{
+    std::cout << "\n--- Test: British/Tube State Round-Trip (issue #105) ---\n";
+
+    auto getParam = [](MultiQ& p, const juce::String& paramID) -> float {
+        auto* param = p.parameters.getParameter(paramID);
+        if (!param) return -999.0f;
+        return p.parameters.getParameterRange(paramID).convertFrom0to1(param->getValue());
+    };
+
+    auto roundTrip = [](MultiQ& src) {
+        juce::MemoryBlock st;
+        src.getStateInformation(st);
+        auto dst = std::make_unique<MultiQ>();
+        auto layouts = dst->getBusesLayout();
+        layouts.getMainInputChannelSet()  = juce::AudioChannelSet::stereo();
+        layouts.getMainOutputChannelSet() = juce::AudioChannelSet::stereo();
+        dst->setBusesLayout(layouts);
+        dst->setPlayConfigDetails(2, 2, 44100.0, 512);
+        dst->prepareToPlay(44100.0, 512);
+        dst->setStateInformation(st.getData(), static_cast<int>(st.getSize()));
+        return dst;
+    };
+
+    // --- BRITISH mode (eqType index 2) ---
+    resetPlugin(plugin);
+    setParam(plugin, ParamIDs::eqType, 2.0f);
+    setParam(plugin, ParamIDs::britishLfGain, 6.0f);
+    setParam(plugin, ParamIDs::britishHmFreq, 3000.0f);
+    setParam(plugin, ParamIDs::britishHfGain, -5.0f);
+    {
+        auto p2 = roundTrip(plugin);
+        checkDb("RT British: eqType stays British(2)", getParam(*p2, ParamIDs::eqType), 2.0f, 0.01f);
+        checkDb("RT British: LF gain survives", getParam(*p2, ParamIDs::britishLfGain), 6.0f, 0.05f);
+        checkDb("RT British: HM freq survives", getParam(*p2, ParamIDs::britishHmFreq), 3000.0f, 20.0f);
+        checkDb("RT British: HF gain survives", getParam(*p2, ParamIDs::britishHfGain), -5.0f, 0.05f);
+    }
+
+    // --- TUBE mode (eqType index 3) ---
+    resetPlugin(plugin);
+    setParam(plugin, ParamIDs::eqType, 3.0f);
+    setParam(plugin, ParamIDs::pultecTubeDrive, 0.8f);
+    {
+        auto p3 = roundTrip(plugin);
+        checkDb("RT Tube: eqType stays Tube(3)", getParam(*p3, ParamIDs::eqType), 3.0f, 0.01f);
+        checkDb("RT Tube: tube drive survives", getParam(*p3, ParamIDs::pultecTubeDrive), 0.8f, 0.02f);
+    }
+
+    // --- EXACT user path: select a British FACTORY PRESET, then round-trip ---
+    resetPlugin(plugin);
+    {
+        const auto& presets = plugin.getFactoryPresets();
+        int britIdx = -1;
+        for (size_t i = 0; i < presets.size(); ++i)
+            if (presets[i].eqType == 2) { britIdx = static_cast<int>(i); break; }
+        check("found a British factory preset", britIdx >= 0);
+        if (britIdx >= 0)
+        {
+            plugin.setCurrentProgram(britIdx + 1);   // +1: "Init" occupies slot 0
+            const float lf = getParam(plugin, ParamIDs::britishLfGain);
+            const float hm = getParam(plugin, ParamIDs::britishHmFreq);
+            auto p4 = roundTrip(plugin);
+            checkDb("RT British PRESET: eqType stays British", getParam(*p4, ParamIDs::eqType), 2.0f, 0.01f);
+            checkDb("RT British PRESET: LF gain survives", getParam(*p4, ParamIDs::britishLfGain), lf, 0.05f);
+            checkDb("RT British PRESET: HM freq survives", getParam(*p4, ParamIDs::britishHmFreq), hm, 20.0f);
+        }
+    }
+}
+
 static void testStateRoundTrip(MultiQ& plugin)
 {
     std::cout << "\n--- Test: State Save/Restore Round-Trip ---\n";
@@ -486,6 +624,8 @@ public:
         testPhaseInvert(*plugin);
         testPan(*plugin);
         testStateRoundTrip(*plugin);
+        testBritishTubeStateRoundTrip(*plugin);
+        testEditorPresetSurvivesOpen();
         // LP+INV test skipped: FIR generation requires background thread + message loop
         // The LP+INV fix was verified manually and via pluginval automation tests
         // testINVLinearPhase(*plugin);
