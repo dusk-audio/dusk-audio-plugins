@@ -42,7 +42,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
   - Gain knobs: 0dB center indicator highlighted
 - **Clear labeling** - All knobs labeled (GAIN, FREQ, Q, HPF, LPF, OUTPUT, DRIVE)
 - **Mouse wheel support** - Scroll to adjust knobs
-- **Double-click reset** - Quick return to default values
+- **Double-click to edit** - Type an exact value into any knob (Ctrl/Cmd+click resets to default)
 - **Preset browser** - 14 factory presets + user state saving
 - **Auto-gain button** - Toggle automatic gain compensation on/off
 
@@ -148,7 +148,7 @@ cmake --build . --target FourKEQ_All -j8
 - **VST3**: `~/.vst3/4K EQ.vst3` (Linux), `~/Library/Audio/Plug-Ins/VST3/` (macOS)
 - **LV2**: `~/.lv2/4K EQ.lv2`
 - **AU**: `~/Library/Audio/Plug-Ins/Components/4K EQ.component` (macOS)
-- **CLAP**: `~/.clap/4K EQ.clap` (Linux), `~/Library/Audio/Plug-Ins/CLAP/` (macOS)
+- **CLAP**: `~/.clap/4K EQ.clap` (Linux), `~/Library/Audio/Plug-Ins/CLAP/` (macOS), `%COMMONPROGRAMFILES%\CLAP\4K EQ.clap` (Windows)
 
 ## Development
 
