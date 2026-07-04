@@ -1052,7 +1052,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // non-FDN, so no kFiveBandByName entry (FiveBand/makeup are no-ops).
         { "Small Drum Room",      "Rooms",
           0,  0.25f, false,  9.00f, 0,   // 2026-06-12 anti-wash re-voice: predelay 1.18->9 ms (dry/tail separation for slap definition)
-          0.40083f, 0.32752f, 0.00430f, 0.23945f, 1.13952f, 1.12685f,  516.73f,
+          0.40083f, 0.32752f, 0.00430f, 0.23945f, 1.13952f, 0.85f,  516.73f,  // 2026-07-03 Bass 1.127->0.85: T60-63 +71%/250 +23% long + decay sub/low/low_mid +27..43 vs anchor; with the match-EQ 8k/16k cut lands 26->23. T60-500 rides +hair over (LowX shield tested worse).
           0.58f, 0.80f, 0.57f, 22.132f, 4799.3f, 1.00000f, false, 12.19f,  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim +12.19 (29->28).
           /* mono */ 20.0f, /* mid */ 1.21799f, /* highX */ 8771.6f, /* sat */ 0.06325f,  // Dattorro re-engine vs CORRECTED anchor (sustained-gate full_check) -> 23.
           /* hiCutShelfGainDb */ -4.50f },

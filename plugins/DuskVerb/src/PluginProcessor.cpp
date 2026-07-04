@@ -2236,7 +2236,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "Vintage Vocal Plate",  { 0.7424f, 0.9964f, 1.0000f, 0.9505f, 0.9176f, 0.8638f, 0.6995f, 0.5468f, 0.7873f } },
             { "Bright Hall",          { 0.9951f, 0.8682f, 0.8703f, 0.8686f, 0.8598f, 0.8872f, 0.5800f, 0.6800f, 1.0000f } },  // 2026-06-19 EAR + tone-match: 4k 0.85->0.58 + 8k 0.91->0.68 — DV ran +3.3dB over VVV at 5-10k; the match-EQ 4k/8k cut (the Treble param is dead-wired on DenseHall) flattens the whole 5-10k to within ±1.1dB of VVV (6.3-8k +2.4->+0.5).
             { "79 Vocal Chamber",     { 0.6672f, 0.6200f, 0.7059f, 0.7068f, 0.7097f, 0.7092f, 0.7763f, 0.5500f, 0.3505f } },  // 2026-06-23 workflow: 8k 1.0->0.55 (spec_L1 + tail-chorus, 18->16) + 125Hz 0.59->0.62 (body 125-250, 16->15)
-            { "Small Drum Room",      { 0.9079f, 0.9794f, 0.8922f, 0.7830f, 0.7596f, 0.9453f, 1.0000f, 0.6887f, 0.2120f } },
+            { "Small Drum Room",      { 0.9079f, 0.9794f, 0.8922f, 0.7830f, 0.7596f, 0.9453f, 1.0000f, 0.6000f, 0.1000f } },  // 2026-07-03 8k 0.689->0.60 + 16k 0.212->0.10: ss-air ran +12 dB hot (yet T60-16k short — loud-but-dying top). With Bass 0.85: 26->23. 8k 0.50 over-cuts (hi 4-12k breaks).
             // END_MATCHEQ_MAP
         }};
         float flat[9] = { 1,1,1,1,1,1,1,1,1 };
