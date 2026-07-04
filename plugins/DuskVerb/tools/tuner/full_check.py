@@ -873,6 +873,14 @@ def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
     tail = m[t0:t0 + int(tail_s * sr)]
     if len(tail) < 2048:
         return 0.0, 0.0
+    # Floor guard (2026-07-04): on a GATED preset (Reverse Taps) the envelope
+    # argmax is the swell peak, so this window lands AFTER the gate closes —
+    # an FFT of near-silence has median ~0 and the prominence explodes to
+    # +50 dB of pure noise-floor structure. No audible tail = no boing.
+    tail_rms = float(np.sqrt(np.mean(tail ** 2)))
+    pk_amp = float(env[pk]) + 1e-30
+    if 20.0 * np.log10(tail_rms / pk_amp + 1e-12) < -70.0:
+        return 0.0, 0.0
     T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
     f = np.fft.rfftfreq(len(tail), 1.0 / sr)
     band = (f >= lo) & (f < hi)
@@ -896,6 +904,10 @@ def tail_resonance_top3(p, lo=200.0, hi=2000.0, tail_s=1.0):
     tail = m[t0:t0 + int(tail_s * sr)]
     if len(tail) < 2048:
         return 0.0
+    tail_rms = float(np.sqrt(np.mean(tail ** 2)))
+    pk_amp = float(env[pk]) + 1e-30
+    if 20.0 * np.log10(tail_rms / pk_amp + 1e-12) < -70.0:
+        return 0.0   # gated silence — see tail_resonance_prominence floor guard
     T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
     f = np.fft.rfftfreq(len(tail), 1.0 / sr)
     band = (f >= lo) & (f < hi)
