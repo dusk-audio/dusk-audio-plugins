@@ -1646,6 +1646,41 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     line = (f"  down-octave cascade L1 (dB)   {l1:5.2f}  gate=±{g}  {'✓' if passing else '✗'}")
                     print(line)
                     if not passing: fails.append(line.strip())
+
+        # ── LOW-RUNG TAIL GROWTH (DV-only, absolute) ──
+        # The Deep Blue Day "never fades out" defect: the recirculating sub voice
+        # past unity loop gain made the 62/125/250 Hz rungs GROW +25 dB across the
+        # post-tone tail into a softClip equilibrium — invisible while sinelong was
+        # tone-only. Requires a render with the 12 s silence tail (render.cpp
+        # 2026-07-04); older tone-only renders skip (no tail window). A healthy
+        # tail DECAYS: growth (late − early band RMS) must stay ≤ +1 dB.
+        if dv_sl:
+            _x, _sr = sf.read(dv_sl); _m = _x.mean(axis=1) if _x.ndim > 1 else _x
+            _sosf = butter(4, [900.0/(_sr/2), 1100.0/(_sr/2)], btype='band', output='sos')
+            _b1k = sosfiltfilt(_sosf, _m)
+            _w = max(int(0.05*_sr), 1)
+            _env = np.sqrt(np.convolve(_b1k*_b1k, np.ones(_w)/_w, mode='same'))
+            _edb = 20.0*np.log10(_env + 1e-12)
+            _above = np.where(_edb > _edb.max() - 6.0)[0]
+            _tone_end = (_above[-1]/_sr) if len(_above) else 0.0
+            if len(_m)/_sr - _tone_end >= 10.5:
+                print("\n── LOW-RUNG TAIL GROWTH (post-tone, DV-only; healthy tail decays) ──")
+                worst = -1e9; worst_f = 0
+                for _f0 in (62.0, 125.0, 250.0):
+                    _sos = butter(4, [_f0/1.3/(_sr/2), _f0*1.3/(_sr/2)], btype='band', output='sos')
+                    _bb = sosfiltfilt(_sos, _m)
+                    def _rms_db(t0, t1):
+                        _i0, _i1 = int(t0*_sr), min(int(t1*_sr), len(_bb))
+                        return 20.0*np.log10(float(np.sqrt(np.mean(_bb[_i0:_i1]**2))) + 1e-12)
+                    _early = _rms_db(_tone_end + 0.5, _tone_end + 1.5)
+                    _late  = _rms_db(_tone_end + 9.0, _tone_end + 10.0)
+                    _gr = _late - _early
+                    print(f"    {int(_f0):4d} Hz   early={_early:6.1f}  late={_late:6.1f}  growth={_gr:+5.1f} dB")
+                    if _gr > worst: worst, worst_f = _gr, int(_f0)
+                _pass = worst <= 1.0
+                line = (f"  low-rung tail growth (dB)      worst {worst:+5.1f} @ {worst_f} Hz  gate≤+1.0  {'✓' if _pass else '✗'}")
+                print(line)
+                if not _pass: fails.append(line.strip())
     elif dv_dir and lex_dir:
         print("\n── SINE 1 kHz THD (nonlinearity detector, DV-excess over anchor) ──")
         thd_gate = GATES['sine1k_thd_excess_pct']

@@ -1760,9 +1760,22 @@ int main (int argc, char** argv)
     if (longSineSeconds > 0.0)
     {
         plugin->reset();
-        const int sineSamples = static_cast<int> (kSampleRate * longSineSeconds);
-        juce::AudioBuffer<float> input (2, sineSamples);
-        fillSineTone (input, kSampleRate, 1000.0, -18.0);
+        // Tone + 12 s of SILENCE tail. The tail window exists so full_check's
+        // low-rung-growth gate can see feedback-loop buildup: the Deep Blue Day
+        // "never fades out" defect (recirculating sub voice past unity gain,
+        // 62/125/250 Hz rungs GREW +25 dB across the tail) was invisible while
+        // sinelong was tone-only. Steady-state metrics (down-octave cascade)
+        // window inside the tone portion and are unaffected.
+        const int sineSamples  = static_cast<int> (kSampleRate * longSineSeconds);
+        const int tailSamples  = static_cast<int> (kSampleRate * 12.0);
+        juce::AudioBuffer<float> input (2, sineSamples + tailSamples);
+        input.clear();
+        {
+            juce::AudioBuffer<float> tone (2, sineSamples);
+            fillSineTone (tone, kSampleRate, 1000.0, -18.0);
+            for (int ch = 0; ch < 2; ++ch)
+                input.copyFrom (ch, 0, tone, ch, 0, sineSamples);
+        }
         auto output = renderThroughPlugin (*plugin, input);
         auto outFile = outDir.getChildFile (slug + "_sinelong.wav");
         if (writeWav (outFile, output, kSampleRate))
