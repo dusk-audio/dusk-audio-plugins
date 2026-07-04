@@ -3499,13 +3499,21 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // gain 0 = off/bit-null. Env DUSKVERB_SHIMMERNOISE.
         static constexpr std::array<std::pair<std::string_view, float>, 2> kShimmerTailNoiseByName = {{
             { "Black Hole",    0.0f },
-            { "Deep Blue Day", 0.0f },   // tuned by the sweep below
+            { "Deep Blue Day", 0.7f },   // 2026-07-04 EAR "missing the ocean white noise in the tail": 0.7 with the darker 150-3500 band + the 500 ms slow-bloom attack = gate-NEUTRAL (32=32, cents clean) — the wash fades with the tail and fills the gaps between the sparse modes the user hears ringing.
         }};
-        float noiseGain = 0.0f;
+        float noiseGain = 0.0f, noiseHp = 250.0f, noiseLp = 7000.0f;
         for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second; break; }
+        // Deep Blue Day ocean color (2026-07-04 EAR): darker band so the wash
+        // doesn't brighten the centroid. Env "gain[,hpHz,lpHz]" overrides.
+        if (nameView == std::string_view ("Deep Blue Day")) { noiseHp = 150.0f; noiseLp = 3500.0f; }
         if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
-            noiseGain = juce::String (env).getFloatValue();
-        engine.setShimmerTailNoise (noiseGain);
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() > 0) noiseGain = t[0].getFloatValue();
+            if (t.size() > 1) noiseHp   = t[1].getFloatValue();
+            if (t.size() > 2) noiseLp   = t[2].getFloatValue();
+        }
+        engine.setShimmerTailNoise (noiseGain, noiseHp, noiseLp);
 
         // Feedback-loop HF compensation shelf (lift above cornerHz per pass) —
         // the FDN tank's per-pass HF loss, not the loop LPF, caps HF T60

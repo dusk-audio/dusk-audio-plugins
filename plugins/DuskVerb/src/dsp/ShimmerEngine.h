@@ -80,7 +80,7 @@ public:
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
     void setUseDenseReverb    (bool on);     // route the tank through DenseHallReverb (dense diffusion → smooth, non-metallic HF tail) instead of the sparse 16-line FDN. false = legacy FDN (bit-identical).
     void setUseTailSpin       (bool on);     // 2-stage modulated-allpass spin-comb on the FDN wet output — smears the metallic HF while keeping the FDN's cascade/width/HF (for Deep Blue Day). false = untouched.
-    void setTailNoise         (float gain);  // envelope-tracked band-limited noise floor on the output — the dense noise-like fade Valhalla has; masks the sparse-mode ring. 0 = off/bit-null.
+    void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the 'ocean' fade Valhalla has; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
     void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
     void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches Valhalla's even down-cascade. all 0 = off/bit-null.
     void setHFSustainDb       (float db, float cornerHz = 4000.0f);   // feedback-loop HF compensation shelf (dB lift above cornerHz, applied post-band-pass, pre-fb-gain). The FDN tank is HF-lossy per pass — that loss, not the loop LPF, caps HF T60 (T60-16k wall). Re-entering the loop with the HF band lifted extends the HF ring; bounded by kFeedbackLoopAttn + the loop softClip. First-order (6 dB/oct) — corner placement is the mid-isolation lever. 0 dB = off/bit-null.
@@ -425,13 +425,28 @@ private:
         float gain_ = 0.0f; bool active_ = false;
         void prepare (double sr) {
             const float s = static_cast<float> (sr);
-            atk = std::exp (-1.0f / (0.005f * s));    // ~5 ms attack
+            // 2026-07-04 attack 5 ms -> 500 ms: the ocean wash is a TAIL
+            // phenomenon — a fast attack put noise inside the snare's first
+            // 50/500 ms windows and shifted the centroid gates. A slow bloom
+            // keeps the onset clean; release still tracks the fade down.
+            atk = std::exp (-1.0f / (0.500f * s));
             rel = std::exp (-1.0f / (0.100f * s));    // ~100 ms release (tracks the decay smoothly)
-            hpL.setHPCutoff (250.0f, s); hpR.setHPCutoff (250.0f, s);
-            lpL.setLPCutoff (7000.0f, s); lpR.setLPCutoff (7000.0f, s);
+            srStore = s;
+            hpL.setHPCutoff (hpHz_, s); hpR.setHPCutoff (hpHz_, s);
+            lpL.setLPCutoff (lpHz_, s); lpR.setLPCutoff (lpHz_, s);
         }
         void clear() { rngL = kSeedL; rngR = kSeedR; envL = envR = 0.0f; hpL.clear(); hpR.clear(); lpL.clear(); lpR.clear(); }
         void setGain (float g) { gain_ = std::max (0.0f, g); active_ = gain_ > 1.0e-6f; }
+        // Shape the noise color (2026-07-04 EAR "ocean tail": the fixed 250-7k
+        // band read too bright — cent/ss-air broke; the ocean wash wants a
+        // darker slope). Re-applies the band corners at the stored sample rate.
+        float srStore = 48000.0f, hpHz_ = 250.0f, lpHz_ = 7000.0f;
+        void setBand (float hpHz, float lpHz) {
+            hpHz_ = std::clamp (hpHz, 20.0f, 2000.0f);
+            lpHz_ = std::clamp (lpHz, 500.0f, 16000.0f);
+            hpL.setHPCutoff (hpHz_, srStore); hpR.setHPCutoff (hpHz_, srStore);
+            lpL.setLPCutoff (lpHz_, srStore); lpR.setLPCutoff (lpHz_, srStore);
+        }
         bool active() const { return active_; }
         inline float noise (std::uint32_t& s) {
             s ^= s << 13; s ^= s >> 17; s ^= s << 5;

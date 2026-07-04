@@ -141,7 +141,7 @@ public:
     void setShimmerUseTailSpin    (bool on);    // Shimmer FDN output spin-comb (smears metallic, keeps FDN cascade/width/HF); false = untouched
     void setShimmerUpVoiceScale   (float v1, float v2);  // Shimmer +12/+24 up-voice scale (mid-tail fill); 1.0/1.0 = bit-identical
     void setShimmerOctaveCascade  (const float gains[4]); // Shimmer dry-fed even down-cascade (500/250/125/62); all 0 = bit-null
-    void setShimmerTailNoise      (float gain);  // Shimmer envelope-tracked tail noise floor (dense noise-like fade); 0 = bit-null
+    void setShimmerTailNoise      (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // Shimmer envelope-tracked 'ocean' tail noise (band-shapeable); 0 = bit-null
     void setShimmerHFSustainDb    (float db, float cornerHz = 4000.0f);   // Shimmer feedback-loop HF compensation shelf (lift above cornerHz per pass, extends HF T60); 0 dB = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);

@@ -848,7 +848,7 @@ void DuskVerbEngine::setShimmerUseDenseReverb (bool on)  { shimmer_.setUseDenseR
 void DuskVerbEngine::setShimmerUseTailSpin    (bool on)  { shimmer_.setUseTailSpin (on); }
 void DuskVerbEngine::setShimmerUpVoiceScale   (float v1, float v2) { shimmer_.setUpVoiceScale (v1, v2); }
 void DuskVerbEngine::setShimmerOctaveCascade  (const float gains[4]) { shimmer_.setOctaveCascade (gains); }
-void DuskVerbEngine::setShimmerTailNoise      (float gain) { shimmer_.setTailNoise (gain); }
+void DuskVerbEngine::setShimmerTailNoise      (float gain, float hpHz, float lpHz) { shimmer_.setTailNoise (gain, hpHz, lpHz); }
 void DuskVerbEngine::setShimmerHFSustainDb    (float db, float cornerHz) { shimmer_.setHFSustainDb (db, cornerHz); }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.

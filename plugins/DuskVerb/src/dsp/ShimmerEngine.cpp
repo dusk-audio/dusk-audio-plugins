@@ -376,7 +376,7 @@ void ShimmerEngine::setFreeze (bool frozen)
 
 void ShimmerEngine::setUseDenseReverb (bool on) { useDenseReverb_ = on; }
 void ShimmerEngine::setUseTailSpin    (bool on) { useTailSpin_ = on; }
-void ShimmerEngine::setTailNoise      (float gain) { noiseGain_ = gain; tailNoise_.setGain (gain); }
+void ShimmerEngine::setTailNoise      (float gain, float hpHz, float lpHz) { noiseGain_ = gain; tailNoise_.setGain (gain); tailNoise_.setBand (hpHz, lpHz); }
 void ShimmerEngine::setUpVoiceScale (float v1, float v2)
 {
     voice1Scale_ = std::clamp (v1, 0.0f, 4.0f);
