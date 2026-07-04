@@ -3507,7 +3507,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second; break; }
         // Deep Blue Day ocean color (2026-07-04 EAR): darker band so the wash
         // doesn't brighten the centroid. Env "gain[,hpHz,lpHz]" overrides.
-        if (nameView == std::string_view ("Deep Blue Day")) { noiseHp = 150.0f; noiseLp = 3500.0f; }
+        if (nameView == std::string_view ("Deep Blue Day")) { noiseHp = 150.0f; noiseLp = 2800.0f; }   // 2026-07-04 LP 3500->2800: the one-pole leak let the wash carry T60-16k +14.9% LONG; 2800 pulls it to +12.4 (with the HFS shelf at 12 dB @ 5k).
         if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
         {
             juce::StringArray t; t.addTokens (juce::String (env), ",", "");
@@ -3525,7 +3525,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Env DUSKVERB_SHIMMERHFS="dB[,cornerHz]".
         static constexpr std::array<std::pair<std::string_view, std::pair<float, float>>, 2> kShimmerHFSustainByName = {{
             { "Black Hole",    { 0.0f, 4000.0f } },
-            { "Deep Blue Day", { 0.0f, 4000.0f } },   // tuned by the sweep below
+            { "Deep Blue Day", { 12.0f, 5000.0f } },   // 2026-07-04: with the rebalanced loop (sub 1.5) + the ocean noise carrying 16k, 12 dB @ 5k lands T60-8k IN GATE (9.91 -> 11.21 s vs REF 12.40) and 4k at -10.2 hair-out — the "structurally unreachable" HF-sustain wall is now two hairs, not a chasm.
         }};
         float hfsDb = 0.0f, hfsHz = 4000.0f;
         for (const auto& e : kShimmerHFSustainByName) if (e.first == nameView) { hfsDb = e.second.first; hfsHz = e.second.second; break; }
