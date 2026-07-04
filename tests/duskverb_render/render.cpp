@@ -1689,6 +1689,63 @@ int main (int argc, char** argv)
     plugin->reset();
     runPreroll (prerunSeconds);
 
+    // ---- Render 4c: piano stem (user's ear-check material, always on) ----
+    // The user's own audition material (Ariana piano, F minor, 170 BPM, 22.6 s
+    // stereo, trimmed -1 dB from a +0.1 dBFS source peak). Sustained harmonic
+    // content with decaying chords — reveals tail buildup, wobble and tonal
+    // coloration on the material the user actually listens with. Auto-resolved
+    // like the session stem; skips with a warning when absent. Padded with a
+    // full tail for decay analysis.
+    {
+        const juce::File exeDir = juce::File::getSpecialLocation (
+                                      juce::File::currentExecutableFile).getParentDirectory();
+        const juce::File pianoWav = [&exeDir]
+        {
+            const juce::Array<juce::File> candidates = {
+                exeDir.getChildFile ("test_signals/piano.wav"),
+                exeDir.getParentDirectory().getParentDirectory().getParentDirectory()
+                      .getChildFile ("tests/duskverb_render/test_signals/piano.wav"),
+                juce::File::getCurrentWorkingDirectory()
+                      .getChildFile ("tests/duskverb_render/test_signals/piano.wav"),
+            };
+            for (const auto& f : candidates)
+                if (f.existsAsFile()) return f;
+            return juce::File();
+        }();
+
+        if (pianoWav.existsAsFile())
+        {
+            juce::AudioFormatManager fmtMgr;
+            fmtMgr.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (
+                fmtMgr.createReaderFor (pianoWav));
+            if (reader != nullptr)
+            {
+                const int stemSamples  = static_cast<int> (reader->lengthInSamples);
+                const int tailSamples  = static_cast<int> (kRenderSec * kSampleRate);
+                const int totalSamples = stemSamples + tailSamples;
+                juce::AudioBuffer<float> pianoInput (2, totalSamples);
+                pianoInput.clear();
+                reader->read (&pianoInput, 0, stemSamples, 0, true, true);
+                if (reader->numChannels == 1)
+                    pianoInput.copyFrom (1, 0, pianoInput, 0, 0, stemSamples);
+
+                auto output = renderThroughPlugin (*plugin, pianoInput);
+                auto outFile = outDir.getChildFile (slug + "_piano.wav");
+                if (writeWav (outFile, output, kSampleRate))
+                    std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+            }
+        }
+        else
+        {
+            std::cerr << "  ! piano.wav stimulus not found (test_signals/piano.wav)"
+                      << std::endl;
+        }
+    }
+
+    plugin->reset();
+    runPreroll (prerunSeconds);
+
     // ---- Render 2b: arbitrary stem (--input-wav) ----
     // Loads any user-supplied WAV, pads with 6 seconds of silence so the
     // reverb tail fully decays, processes through the active engine,

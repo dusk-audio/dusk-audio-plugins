@@ -165,6 +165,7 @@ plugins/DuskAmp/resources/cabs/*.wav
 # with exactly these files, so they must ship with the source tree.
 !tests/duskverb_render/test_signals/snare_-12dB.wav
 !tests/duskverb_render/test_signals/session.wav
+!tests/duskverb_render/test_signals/piano.wav
 
 # DuskVerb calibration database (local tooling artifact)
 calibration.db
