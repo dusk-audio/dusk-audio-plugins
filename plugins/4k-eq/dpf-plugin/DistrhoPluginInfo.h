@@ -25,8 +25,8 @@
 #define DISTRHO_UI_USE_CUSTOM           1
 #define DISTRHO_UI_CUSTOM_INCLUDE_PATH  "DearImGui.hpp"
 #define DISTRHO_UI_CUSTOM_WIDGET_TYPE   DGL_NAMESPACE::ImGuiTopLevelWidget
-#define DISTRHO_UI_DEFAULT_WIDTH        980
-#define DISTRHO_UI_DEFAULT_HEIGHT       520
+#define DISTRHO_UI_DEFAULT_WIDTH        960
+#define DISTRHO_UI_DEFAULT_HEIGHT       680
 #define DISTRHO_UI_USER_RESIZABLE       1
 
 #define DISTRHO_PLUGIN_CLAP_FEATURES   "audio-effect", "equalizer", "stereo"

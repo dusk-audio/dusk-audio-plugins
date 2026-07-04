@@ -90,7 +90,8 @@ public:
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
-              const char* fmt = "%.2f", const char* suffix = "")
+              const char* fmt = "%.2f", const char* suffix = "",
+              ImU32 faceColor = 0)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -148,28 +149,47 @@ public:
                             pal.whiteDim, 1.3f * s);
             }
 
-        dl->AddCircleFilled(c, R, IM_COL32(70, 70, 73, 255), 48);
-        dl->AddCircleFilled(c, R * 0.97f, IM_COL32(128, 128, 132, 255), 48);
-        for (int i = 0; i < 24; ++i)
+        if (faceColor == 0)
         {
-            const float a = (float)i / 24.0f * 2.0f * kPi;
+            // chrome knob (Tape Echo style)
+            dl->AddCircleFilled(c, R, IM_COL32(70, 70, 73, 255), 48);
+            dl->AddCircleFilled(c, R * 0.97f, IM_COL32(128, 128, 132, 255), 48);
+            for (int i = 0; i < 24; ++i)
+            {
+                const float a = (float)i / 24.0f * 2.0f * kPi;
+                const ImVec2 dir(std::sin(a), -std::cos(a));
+                dl->AddLine(ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f),
+                            ImVec2(c.x + dir.x * R * 0.97f, c.y + dir.y * R * 0.97f),
+                            IM_COL32(55, 55, 58, 130), 1.4f * s);
+            }
+            const float capR = R * 0.72f;
+            dl->AddCircleFilled(c, capR, IM_COL32(96, 97, 100, 255), 40);
+            dl->AddCircleFilled(ImVec2(c.x - capR * 0.15f, c.y - capR * 0.20f), capR * 0.93f, IM_COL32(176, 178, 182, 255), 40);
+            dl->AddCircleFilled(ImVec2(c.x - capR * 0.25f, c.y - capR * 0.32f), capR * 0.55f, IM_COL32(225, 227, 231, 150), 40);
+            dl->AddCircleFilled(c, capR * 0.42f, IM_COL32(158, 160, 164, 255), 40);
+            dl->AddCircle(c, capR, IM_COL32(20, 20, 20, 255), 40, 1.4f * s);
+            const float a = knobAngle(t);
             const ImVec2 dir(std::sin(a), -std::cos(a));
-            dl->AddLine(ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f),
-                        ImVec2(c.x + dir.x * R * 0.97f, c.y + dir.y * R * 0.97f),
-                        IM_COL32(55, 55, 58, 130), 1.4f * s);
+            dl->AddLine(ImVec2(c.x + dir.x * capR * 0.15f, c.y + dir.y * capR * 0.15f),
+                        ImVec2(c.x + dir.x * capR * 0.95f, c.y + dir.y * capR * 0.95f),
+                        IM_COL32(25, 25, 27, 255), 3.0f * s);
         }
-        const float capR = R * 0.72f;
-        dl->AddCircleFilled(c, capR, IM_COL32(96, 97, 100, 255), 40);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.15f, c.y - capR * 0.20f), capR * 0.93f, IM_COL32(176, 178, 182, 255), 40);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.25f, c.y - capR * 0.32f), capR * 0.55f, IM_COL32(225, 227, 231, 150), 40);
-        dl->AddCircleFilled(c, capR * 0.42f, IM_COL32(158, 160, 164, 255), 40);
-        dl->AddCircle(c, capR, IM_COL32(20, 20, 20, 255), 40, 1.4f * s);
-
-        const float a = knobAngle(t);
-        const ImVec2 dir(std::sin(a), -std::cos(a));
-        dl->AddLine(ImVec2(c.x + dir.x * capR * 0.15f, c.y + dir.y * capR * 0.15f),
-                    ImVec2(c.x + dir.x * capR * 0.95f, c.y + dir.y * capR * 0.95f),
-                    IM_COL32(25, 25, 27, 255), 3.0f * s);
+        else
+        {
+            // console knob (4K style): dark body, colored face, white pointer
+            dl->AddCircleFilled(c, R, IM_COL32(18, 18, 20, 255), 48);
+            dl->AddCircleFilled(c, R * 0.86f, IM_COL32(40, 40, 43, 255), 48);
+            dl->AddCircleFilled(c, R * 0.62f, faceColor, 44);
+            // top-left sheen
+            dl->AddCircleFilled(ImVec2(c.x - R * 0.18f, c.y - R * 0.22f), R * 0.34f, IM_COL32(255, 255, 255, 38), 32);
+            dl->AddCircle(c, R * 0.62f, IM_COL32(0, 0, 0, 140), 44, 1.2f * s);
+            dl->AddCircle(c, R, IM_COL32(0, 0, 0, 255), 48, 1.4f * s);
+            const float a = knobAngle(t);
+            const ImVec2 dir(std::sin(a), -std::cos(a));
+            dl->AddLine(c, ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f),
+                        IM_COL32(245, 245, 245, 255), 2.4f * s);
+            dl->AddCircleFilled(c, R * 0.10f, IM_COL32(245, 245, 245, 255), 12);
+        }
 
         if (hovered || active)
         {
