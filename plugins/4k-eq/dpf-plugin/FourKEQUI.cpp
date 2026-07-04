@@ -37,11 +37,13 @@ namespace
     // column dividers
     constexpr float COL[7] = { 40, 197, 335, 469, 603, 737, 920 };
 
-    // band face colours
-    constexpr ImU32 C_LF  = IM_COL32(196, 74, 66, 255);
-    constexpr ImU32 C_LMF = IM_COL32(202, 132, 66, 255);
-    constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
-    constexpr ImU32 C_HF  = IM_COL32(84, 146, 204, 255);
+    // band face colours (SSL 4000 scheme: LMF green, HMF blue, HF cyan; the LF
+    // knob colour tracks the EQ type — Brown vs Black — see lfColor()).
+    constexpr ImU32 C_LF_BROWN = IM_COL32(150, 96, 44, 255);
+    constexpr ImU32 C_LF_BLACK = IM_COL32(46, 46, 50, 255);
+    constexpr ImU32 C_LMF = IM_COL32(92, 168, 96, 255);
+    constexpr ImU32 C_HMF = IM_COL32(66, 118, 194, 255);
+    constexpr ImU32 C_HF  = IM_COL32(96, 178, 206, 255);
     constexpr ImU32 C_GREY = IM_COL32(92, 94, 99, 255);
 
     constexpr ImU32 kPanel   = IM_COL32(34, 34, 37, 255);
@@ -359,10 +361,10 @@ private:
         smallToggle(dl, "lpfin", kLpfEnabled, fcx + 30, 420, fcx + 62, 442, values[kLpfEnabled], "IN");
         colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, 556, 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
 
-        band(dl, 1, "LF",  C_LF,  kLfGain, kLfFreq, kLfBell, -1, 30.f, 480.f);
-        band(dl, 2, "LMF", C_LMF, kLmGain, kLmFreq, kLmQ,    +1, 200.f, 2500.f);
-        band(dl, 3, "HMF", C_HMF, kHmGain, kHmFreq, kHmQ,    +1, 600.f, 7000.f);
-        band(dl, 4, "HF",  C_HF,  kHfGain, kHfFreq, kHfBell, -1, 1500.f, 16000.f);
+        band(dl, 1, lfColor(), kLfGain, 30.f, 480.f,    kLfFreq, kLfBell, -1);
+        band(dl, 2, C_LMF,     kLmGain, 200.f, 2500.f,  kLmFreq, kLmQ,    +1);
+        band(dl, 3, C_HMF,     kHmGain, 600.f, 7000.f,  kHmFreq, kHmQ,    +1);
+        band(dl, 4, C_HF,      kHfGain, 1500.f, 16000.f, kHfFreq, kHfBell, -1);
 
         // MASTER
         const float mcx = 0.5f * (COL[5] + COL[6]);
@@ -378,19 +380,23 @@ private:
         smallToggle(dl, "ms", kMsMode, mcx - 24, 606, mcx + 24, 628, values[kMsMode], "M/S");
     }
 
-    // A parametric band column: GAIN (top) + FREQ (mid) + Q knob or BELL toggle.
-    void band(ImDrawList* dl, int col, const char* name, ImU32 color,
-              uint32_t gainId, uint32_t freqId, uint32_t thirdId, int thirdKind,
-              float fMin, float fMax)
+    ImU32 lfColor() const { return values[kEqType] > 0.5f ? C_LF_BLACK : C_LF_BROWN; }
+
+    // SSL-style band column: a concentric GAIN(outer)+FREQ(inner) knob, with a
+    // Q knob (mids) or a Bell/Shelf toggle (LF & HF) below.
+    void band(ImDrawList* dl, int col, ImU32 color, uint32_t gainId,
+              float fMin, float fMax, uint32_t freqId, uint32_t thirdId, int thirdKind)
     {
         const float cx = 0.5f * (COL[col] + COL[col + 1]);
-        colKnob(dl, (std::string(name) + "g").c_str(), gainId, -20.f, 20.f, cx, 306, 26, color, "GAIN", "-20", "+20", "%.1f", " dB");
-        char fmn[8], fmx[8]; freqLabel(fMin, fmn); freqLabel(fMax, fmx);
-        colKnob(dl, (std::string(name) + "f").c_str(), freqId, fMin, fMax, cx, 430, 26, color, "FREQ", fmn, fmx, "%.0f", " Hz");
+        char idb[24]; std::snprintf(idb, sizeof(idb), "band%d", col);
+        panel.concentricKnob(idb, gainId, -20.f, 20.f, values[gainId], kDefaults[gainId],
+                             freqId, fMin, fMax, values[freqId], kDefaults[freqId],
+                             cx, 344, 36, color);
+        panel.text(dl, cx, 344 + 44, 9.0f, IM_COL32(150, 152, 156, 255), "GAIN / FREQ", 0);
         if (thirdKind > 0)
-            colKnob(dl, (std::string(name) + "q").c_str(), thirdId, 0.4f, 4.0f, cx, 556, 24, color, "Q", "0.4", "4", "%.2f", "");
+            colKnob(dl, (std::string("q") + idb).c_str(), thirdId, 0.4f, 4.0f, cx, 520, 22, color, "Q", "0.4", "4", "%.2f", "");
         else
-            smallToggle(dl, (std::string(name) + "b").c_str(), thirdId, cx - 30, 546, cx + 30, 568,
+            smallToggle(dl, (std::string("b") + idb).c_str(), thirdId, cx - 32, 508, cx + 32, 532,
                         values[thirdId], values[thirdId] > 0.5f ? "BELL" : "SHELF");
     }
 
