@@ -3499,15 +3499,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
 
         // Tail noise floor — the dense noise-like fade Valhalla has; masks the sparse-mode ring.
         // gain 0 = off/bit-null. Env DUSKVERB_SHIMMERNOISE.
-        static constexpr std::array<std::pair<std::string_view, float>, 2> kShimmerTailNoiseByName = {{
-            { "Black Hole",    0.0f },
-            { "Deep Blue Day", 0.7f },   // 2026-07-04 EAR "missing the ocean white noise in the tail": 0.7 with the darker 150-3500 band + the 500 ms slow-bloom attack = gate-NEUTRAL (32=32, cents clean) — the wash fades with the tail and fills the gaps between the sparse modes the user hears ringing.
+        struct TailNoiseCfg { float gain, hpHz, lpHz; };
+        static constexpr std::array<std::pair<std::string_view, TailNoiseCfg>, 2> kShimmerTailNoiseByName = {{
+            { "Black Hole",    { 0.8f, 150.0f, 4500.0f } },   // 2026-07-04: the slow-bloom wash retry (the old 5 ms-attack probes were net-worse) — 27->25 (cent_500 + spec_L1 close) and the wash lifts the dead top: T60-16k 4.0 -> 6.7 s toward REF 9.6.
+            { "Deep Blue Day", { 0.7f, 150.0f, 2800.0f } },   // 2026-07-04 EAR "missing the ocean white noise": 0.7/dark band/slow bloom = gate-neutral, fills the sparse-mode gaps. LP 3500->2800 with the HFS shelf (16k leak trim).
         }};
         float noiseGain = 0.0f, noiseHp = 250.0f, noiseLp = 7000.0f;
-        for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second; break; }
-        // Deep Blue Day ocean color (2026-07-04 EAR): darker band so the wash
-        // doesn't brighten the centroid. Env "gain[,hpHz,lpHz]" overrides.
-        if (nameView == std::string_view ("Deep Blue Day")) { noiseHp = 150.0f; noiseLp = 2800.0f; }   // 2026-07-04 LP 3500->2800: the one-pole leak let the wash carry T60-16k +14.9% LONG; 2800 pulls it to +12.4 (with the HFS shelf at 12 dB @ 5k).
+        for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second.gain; noiseHp = e.second.hpHz; noiseLp = e.second.lpHz; break; }
         if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
         {
             juce::StringArray t; t.addTokens (juce::String (env), ",", "");
