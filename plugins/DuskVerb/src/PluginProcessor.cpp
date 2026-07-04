@@ -2307,7 +2307,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         struct AirShelf { float freqHz, gainDb; };
         // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs on
         // the AUDIO thread; same RT-safe pattern as kDiffuseERByName.
-        static constexpr std::array<std::pair<std::string_view, AirShelf>, 6> kOutputAirShelfByName = {{
+        static constexpr std::array<std::pair<std::string_view, AirShelf>, 7> kOutputAirShelfByName = {{
+            { "Live Room",            { 8000.0f,   5.0f } },   // 2026-07-04 vs the corrected (fxp-truth) anchor: DV read dark (cent_50 -49%, ss-air -4.8); +5 dB @ 8k closes air/snare/impulse/ripple-bass/piano-band (36->31; with Bass 1.55 -> 30).
             { "Vocal Hall",           { 9000.0f,   2.0f } },   // 2026-07-04 EAR "VVV richer and brighter": +2 dB @ 9k. Gates +1 (body 500-1k trades via gain-match) — ear-driven, the anchor IS brighter.
             // BEGIN_AIRSHELF_MAP (per-preset HF air-shelf, 2026-06-24 fleet cent match
             // vs anchors; env-swept DUSKVERB_AIRSHELF, then baked. {freqHz, gainDb})
