@@ -93,6 +93,17 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
         // arrival, not a smeared blob.
         const float fc = 11000.0f;
         reflLpCoeff_ = 1.0f - std::exp (-kTwoPi * fc / static_cast<float> (sampleRate));
+        // Early-tap bank shares this buffer — re-realize its sample delays at the
+        // new rate and clear its filter state.
+        etapLpStateL_ = etapLpStateR_ = 0.0f;
+        etapLpCoeff_  = 1.0f - std::exp (-kTwoPi * etapLpFcHz_ / static_cast<float> (sampleRate));
+        if (etapCount_ > 0)
+        {
+            float ms[kMaxEarlyTaps], g[kMaxEarlyTaps];
+            const int n = etapCount_;
+            for (int i = 0; i < n; ++i) { ms[i] = etapMs_[i]; g[i] = etapGain_[i]; }
+            setEarlyTapBank (ms, g, n, etapLpFcHz_);
+        }
     }
 
     // Per-sample smoothers — short time constants, advance once per sample.
@@ -571,6 +582,30 @@ void DuskVerbEngine::setReflectionTap (float ms, float gain, float lpFc)
     reflLpCoeff_ = 1.0f - std::exp (-6.283185307179586f * fc / sr);
 }
 
+void DuskVerbEngine::setEarlyTapBank (const float* timesMs, const float* gains, int count, float lpFc)
+{
+    // Multi-tap generalization of Fork A: N discrete reflections at the anchor's
+    // measured arrival times. Shares reflBuf_ (clean pre-diffuser dry). Per-tap
+    // alternating ±4 ms R offset gives each arrival width without smearing the
+    // pattern. count 0 → etapActive_ false → the block is skipped → bit-null.
+    const float sr = static_cast<float> (sampleRate_);
+    const int   maxD = (reflMask_ > 1) ? reflMask_ - 1 : 1;
+    etapCount_ = std::clamp (count, 0, kMaxEarlyTaps);
+    for (int i = 0; i < etapCount_; ++i)
+    {
+        etapMs_[i]     = std::clamp (timesMs[i], 1.0f, 300.0f);
+        etapGain_[i]   = std::clamp (gains[i], 0.0f, 4.0f);
+        const float rOff = (i & 1) ? -4.0f : 4.0f;
+        etapDelayL_[i] = std::clamp (static_cast<int> (etapMs_[i] * 0.001f * sr), 1, maxD);
+        etapDelayR_[i] = std::clamp (static_cast<int> ((etapMs_[i] + rOff) * 0.001f * sr), 1, maxD);
+    }
+    bool any = false;
+    for (int i = 0; i < etapCount_; ++i) any = any || (etapGain_[i] > 1.0e-6f);
+    etapActive_ = any && etapCount_ > 0;
+    etapLpFcHz_  = std::clamp (lpFc, 1000.0f, 20000.0f);
+    etapLpCoeff_ = 1.0f - std::exp (-6.283185307179586f * etapLpFcHz_ / sr);
+}
+
 void DuskVerbEngine::setTonalCorrection (bool enabled)
 {
     accurateHall_.setTonalCorrection (enabled);   // AccurateHall (algo 10) only; other engines have no Jot output GEQ
@@ -724,6 +759,7 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setDattorroDensityRoomFill (false); setDattorroMainLineDetune (1.0f, 1.0f, 1.0f, 1.0f);
     setDattorroSoftOnsetMs (0.0f); setDattorroBloomAttackMs (0.0f);
     setReflectionTap (0.0f, 0.0f); setTankOnsetMs (0.0f);          // discrete tap + tank-onset → off
+    setEarlyTapBank  (nullptr, nullptr, 0);                        // tap bank → off (count 0 never dereferences)
     setTiledRoomVoicing (1.0f, 14.0f, 55.0f, 115.0f, 0.45f, 1.0f); // SparseEarlyField voicing → engine defaults
     setSparseFieldBurst2Gain (0.0f);
     setDiffuseER (nullptr, nullptr, 0, 0.6f, 1.0f);   // diffused discrete-ER → inactive (bit-null)
@@ -1684,17 +1720,35 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // kReflectionByName is empty/env-only today). Out of the recursive tank → no
         // codegen drift. (Note: a tap can't fix a late-energy/front-load clarity
         // problem — it's a small arrival vs the whole tail; it's for a discrete slap.)
-        if (reflActive_)
+        if (reflActive_ || etapActive_)
         {
             const float dryMono = reflDryMono_[static_cast<size_t> (i)];   // CLEAN pre-diffuser dry (snapshot above)
             reflBuf_[static_cast<size_t> (reflWritePos_)] = dryMono;
-            const float tapL = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayL_) & reflMask_)];
-            const float tapR = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayR_) & reflMask_)];
+            if (reflActive_)
+            {
+                const float tapL = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayL_) & reflMask_)];
+                const float tapR = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayR_) & reflMask_)];
+                reflLpStateL_ += reflLpCoeff_ * (tapL - reflLpStateL_);
+                reflLpStateR_ += reflLpCoeff_ * (tapR - reflLpStateR_);
+                wetL += reflGain_ * reflLpStateL_;
+                wetR += reflGain_ * reflLpStateR_;
+            }
+            // Early-tap BANK: N anchor-timed discrete arrivals, one shared LP pair
+            // (real reflections are darker than the direct sound).
+            if (etapActive_)
+            {
+                float sumL = 0.0f, sumR = 0.0f;
+                for (int t = 0; t < etapCount_; ++t)
+                {
+                    sumL += etapGain_[t] * reflBuf_[static_cast<size_t> ((reflWritePos_ - etapDelayL_[t]) & reflMask_)];
+                    sumR += etapGain_[t] * reflBuf_[static_cast<size_t> ((reflWritePos_ - etapDelayR_[t]) & reflMask_)];
+                }
+                etapLpStateL_ += etapLpCoeff_ * (sumL - etapLpStateL_);
+                etapLpStateR_ += etapLpCoeff_ * (sumR - etapLpStateR_);
+                wetL += etapLpStateL_;
+                wetR += etapLpStateR_;
+            }
             reflWritePos_ = (reflWritePos_ + 1) & reflMask_;
-            reflLpStateL_ += reflLpCoeff_ * (tapL - reflLpStateL_);
-            reflLpStateR_ += reflLpCoeff_ * (tapR - reflLpStateR_);
-            wetL += reflGain_ * reflLpStateL_;
-            wetR += reflGain_ * reflLpStateR_;
         }
 
         wetL = loCutFilter_.processL (wetL);

@@ -59,6 +59,7 @@ struct TuningEnv
     const char* shimmeroct;
     const char* shimmernoise;
     const char* shimmerhfs;
+    const char* ertaps;
     const char* frontload;
     const char* dpvrefl;
     const char* densefield;
@@ -103,6 +104,7 @@ struct TuningEnv
           shimmeroct (std::getenv ("DUSKVERB_SHIMMEROCT")),
           shimmernoise (std::getenv ("DUSKVERB_SHIMMERNOISE")),
           shimmerhfs (std::getenv ("DUSKVERB_SHIMMERHFS")),
+          ertaps (std::getenv ("DUSKVERB_ERTAPS")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
           densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
@@ -2214,6 +2216,44 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             for (const auto& e : kReflectionByName) if (e.name == nv) { ms = e.ms; gain = e.gain; lpFc = e.lpFc; break; }
             engine.setReflectionTap (ms, gain, lpFc);
         }
+    }
+
+    // Early-tap BANK — up to 8 discrete reflections at the ANCHOR's measured
+    // arrival times (the early-refl-count gate wants 2-10 arrivals; the single
+    // Fork-A tap above can't match a pattern). Env DUSKVERB_ERTAPS=
+    // "t1:g1,t2:g2,...[;lpHz]" for rebuild-free sweeps; else the per-preset
+    // bake; else off (count 0 → bit-identical fleet).
+    {
+        struct ETapConfig { std::string_view name; int n; float ms[8]; float g[8]; float lpFc; };
+        static constexpr std::array<ETapConfig, 1> kEarlyTapsByName = {{
+            // BEGIN_ERTAPS_MAP (times from full_check 'early refl' anchor readouts)
+            { "", 0, {}, {}, 9000.0f },   // placeholder — filled per-preset after env sweeps
+            // END_ERTAPS_MAP
+        }};
+        float ms[8] = {}, g[8] = {}; int n = 0; float lpFc = 9000.0f;
+        if (const char* env = tuningEnv().ertaps; env != nullptr && env[0] != '\0')
+        {
+            juce::String s (env);
+            const int semi = s.indexOfChar (';');
+            if (semi >= 0) { lpFc = s.substring (semi + 1).getFloatValue(); s = s.substring (0, semi); }
+            juce::StringArray pairs; pairs.addTokens (s, ",", "");
+            for (int i = 0; i < pairs.size() && n < 8; ++i)
+            {
+                const int colon = pairs[i].indexOfChar (':');
+                if (colon <= 0) continue;
+                ms[n] = pairs[i].substring (0, colon).getFloatValue();
+                g[n]  = pairs[i].substring (colon + 1).getFloatValue();
+                ++n;
+            }
+        }
+        else
+        {
+            const std::string_view nv (name);
+            for (const auto& e : kEarlyTapsByName)
+                if (e.n > 0 && e.name == nv)
+                { n = e.n; for (int i = 0; i < n; ++i) { ms[i] = e.ms[i]; g[i] = e.g[i]; } lpFc = e.lpFc; break; }
+        }
+        engine.setEarlyTapBank (ms, g, n, lpFc);
     }
 
     // Phase 3 output match-EQ: per-octave (9-band, 63 Hz..16 kHz) cut-only output

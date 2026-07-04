@@ -321,6 +321,7 @@ public:
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
     void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
+    void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at anchor-measured times; count 0 = off/bit-null
 
     // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
     // energy so decay and tone are decoupled. Default off = bit-null.
@@ -577,6 +578,22 @@ private:
     float reflGain_ = 0.0f;                    // 0 = off (bit-null)
     bool  reflActive_ = false;
     float reflLpCoeff_ = 0.0f, reflLpStateL_ = 0.0f, reflLpStateR_ = 0.0f;  // reflection HF rolloff
+
+    // Early-tap BANK (setEarlyTapBank) — up to 8 discrete reflections at the
+    // ANCHOR's measured arrival times. Generalizes the single Fork-A tap: the
+    // early-refl-count gate wants 2-10 discrete arrivals; one tap can't match a
+    // pattern. Shares reflBuf_/reflDryMono_ (clean pre-diffuser dry). Per-tap
+    // alternating ±4 ms R offset decorrelates arrivals (width without a mono
+    // slap-train). etapCount_ 0 → skipped → bit-identical fleet.
+    static constexpr int kMaxEarlyTaps = 8;
+    int   etapDelayL_[kMaxEarlyTaps] = {};
+    int   etapDelayR_[kMaxEarlyTaps] = {};
+    float etapGain_[kMaxEarlyTaps] = {};
+    float etapMs_[kMaxEarlyTaps] = {};         // requested times, re-realized on prepare()
+    int   etapCount_ = 0;
+    bool  etapActive_ = false;
+    float etapLpCoeff_ = 1.0f, etapLpStateL_ = 0.0f, etapLpStateR_ = 0.0f;
+    float etapLpFcHz_ = 9000.0f;
 
     // algo 11 SparseField: level of the reduced accurateHall_ tail under the
     // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
