@@ -2307,7 +2307,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         struct AirShelf { float freqHz, gainDb; };
         // constexpr std::array + linear scan (NOT std::map) — applyEngineConfig runs on
         // the AUDIO thread; same RT-safe pattern as kDiffuseERByName.
-        static constexpr std::array<std::pair<std::string_view, AirShelf>, 5> kOutputAirShelfByName = {{
+        static constexpr std::array<std::pair<std::string_view, AirShelf>, 6> kOutputAirShelfByName = {{
+            { "Vocal Hall",           { 9000.0f,   2.0f } },   // 2026-07-04 EAR "VVV richer and brighter": +2 dB @ 9k. Gates +1 (body 500-1k trades via gain-match) — ear-driven, the anchor IS brighter.
             // BEGIN_AIRSHELF_MAP (per-preset HF air-shelf, 2026-06-24 fleet cent match
             // vs anchors; env-swept DUSKVERB_AIRSHELF, then baked. {freqHz, gainDb})
             // The air-shelf is an HF-LEVEL lever — it only belongs where the deficit is
@@ -3302,7 +3303,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // 136, near-match; not the overshot 60ms of the first pass). Fixes the cloud
         // (edt mid +52%→+2%, edt hi +28%→−18%). erGain 0.40 keeps the QuadTank tail
         // primary so it's a chamber, not an ER slap.
-        { "79 Vocal Chamber", { 0.40f, 110.0f, 30.0f, 130.0f, 0.75f, 0.40f } },
+        { "79 Vocal Chamber", { 0.40f, 110.0f, 30.0f, 130.0f, 0.92f, 0.40f } },   // 2026-07-04 tailGain 0.75->0.92 (EAR "VVV thicker/denser"): with Diffusion 0.95 closes body 125-250 / edt-hi / attack / deep-sub / flux (18->17); the fuller tank IS the density the ear heard missing.
     }};
     if (const auto* erEntry = findPresetConfig (kCompositeERByName, std::string_view (name)))
     {
