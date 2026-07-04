@@ -139,6 +139,24 @@ GATES = {
     # ONE-DIRECTIONAL — DV ringing MORE than the anchor is the defect; smoother
     # is fine. Drum DV 19.5 dB @359 Hz vs VVV 14 dB @1076 Hz → +5.5 over.
     'tail_resonance_dB':    3.0,
+    # Top-3 modal prominence mean — anti-mode-hop companion to the single-peak
+    # boing gate (notching the worst mode moves the argmax to the next one while
+    # the comb still rings; averaging the top 3 sees the pattern). Same 3 dB JND.
+    'tail_resonance_top3_dB': 3.0,
+    # PRE-ECHO / double-tap (2026-07-04): energy ahead of the main arrival on the
+    # snare (grain-window leak, predelay double-tap — the VVP defect the ear
+    # caught with no gate to catch it). DV pre-onset RMS (dB rel peak) may exceed
+    # the anchor's by at most this. A real pre-echo reads +15..30 dB over.
+    'pre_onset_excess_dB':  6.0,
+    # PER-BAND TAIL GROWTH (2026-07-04, all presets): a healthy band decays;
+    # feedback past unity GROWS (Deep Blue Day rungs +25 dB — and the T60 fit
+    # read the pathology as a favorable long decay). Worst sliding-window
+    # growth on the noiseburst tail must stay under this.
+    'band_tail_growth_dB':  1.5,
+    # ODD-harmonic THD excess (SHIMMER only, 2026-07-04): the standard THD gate
+    # is skipped for shimmer (octave voices = even multiples by design), but
+    # 3rd/5th harmonics are genuine distortion (sat/clip grit). DV% - anchor%.
+    'sine1k_odd_thd_excess_pct': 1.0,
     # Impulse-response RMS match — the TRANSIENT/hit loudness. The existing RMS
     # gates use sustained-pink/noiseburst (steady-state), which can match while
     # the impulse (a drum hit) is +2.7 dB hot. Catches "DV louder on the hit".
@@ -848,6 +866,131 @@ def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
     return float(prom), float(f[band][int(np.argmax(Tb))])
 
 
+def tail_resonance_top3(p, lo=200.0, hi=2000.0, tail_s=1.0):
+    """Mean prominence (dB) of the TOP-3 spectral peaks in [lo,hi] of the late
+    tail. The single-peak boing gate is gameable by mode-hopping: notch the
+    dominant mode and the detector reports the next one at lower prominence
+    while the tail still rings a comb of modes (measured 2026-07-03: Live Room
+    228 Hz in-loop notch moved the peak 211->247->317 with the ring audibly
+    tamed but present). Averaging the top-3 catches the PATTERN. Peaks are
+    picked greedily with a 1/6-octave exclusion around each accepted peak."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env)); t0 = pk + int(0.2 * sr)
+    tail = m[t0:t0 + int(tail_s * sr)]
+    if len(tail) < 2048:
+        return 0.0
+    T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
+    f = np.fft.rfftfreq(len(tail), 1.0 / sr)
+    band = (f >= lo) & (f < hi)
+    Tb = T[band].copy(); fb = f[band]
+    if Tb.size == 0 or np.max(Tb) <= 0:
+        return 0.0
+    med = np.median(Tb) + 1e-30
+    proms = []
+    for _ in range(3):
+        i = int(np.argmax(Tb))
+        if Tb[i] <= 0: break
+        proms.append(20.0 * np.log10(Tb[i] / med + 1e-30))
+        f0 = fb[i]
+        Tb[(fb >= f0 / 1.122) & (fb <= f0 * 1.122)] = 0.0   # 1/6-oct exclusion
+    return float(np.mean(proms)) if proms else 0.0
+
+
+def pre_onset_energy(p, pre_win_s=0.060, guard_s=0.004):
+    """Pre-echo / double-tap detector (the VVP defect the ear caught but no gate
+    measured): RMS in the [onset-60ms, onset-4ms] window, dB relative to the
+    response peak. A clean render has only silence/noise-floor there; a
+    pre-echo (grain window leak, predelay double-tap) puts real energy ahead
+    of the main arrival. Compared DV-excess vs the anchor (the anchor's own
+    stimulus bleed cancels out). Returns dB-rel-peak (very negative = clean)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    w = max(int(0.002 * sr), 1)
+    sm = np.convolve(env, np.ones(w) / w, mode='same')
+    pk = int(np.argmax(sm))
+    # Onset = FIRST significant arrival (-25 dB rel max crossing), NOT the
+    # global max: a reverb whose wet bloom out-peaks the dry hit would
+    # otherwise put the dry arrival inside the "pre-onset" window and read
+    # it as pre-echo (measured on Tiled Room: DV peak 34 ms vs anchor 15).
+    thresh = sm[pk] * 10.0 ** (-25.0 / 20.0)
+    above = np.where(sm[:pk + 1] >= thresh)[0]
+    onset = int(above[0]) if len(above) else pk
+    i1 = max(onset - int(guard_s * sr), 1)
+    i0 = max(i1 - int(pre_win_s * sr), 0)
+    if i1 - i0 < 16:
+        return -120.0
+    # A slow ATTACK RAMP also puts energy here (79VC swells over ~95 ms) — a
+    # ramp rises monotonically INTO the onset and is not a pre-echo. A real
+    # pre-echo is a DISCRETE blip: a local max followed by a dip (>=6 dB)
+    # before the onset ramp begins. Gate on the blip's level, not window RMS.
+    seg = sm[i0:i1]
+    j = int(np.argmax(seg))
+    dip = float(seg[j:].min()) if j < len(seg) - 1 else float(seg[-1])
+    blip = float(seg[j])
+    peak = float(sm[pk]) + 1e-30
+    if blip <= 0 or 20.0 * np.log10(blip / (dip + 1e-30) + 1e-12) < 6.0:
+        return -120.0   # monotone ramp (or flat noise) — no discrete pre-event
+    return 20.0 * np.log10(blip / peak + 1e-12)
+
+
+def band_tail_monotonicity(p, floor_db=-70.0):
+    """Worst per-octave tail GROWTH (dB) on the noiseburst — a healthy reverb
+    band decays monotonically (small ripple aside); a feedback path past unity
+    gain GROWS (the Deep Blue Day never-fades defect: rungs rose +25 dB while
+    the per-band T60 fit read the pathology as a favorable long decay).
+    Sliding 1 s windows from 0.3 s post-peak while above floor_db rel peak;
+    growth = later-window RMS minus earlier-window RMS, maximized over bands
+    and window pairs. Returns (worst_growth_dB, worst_band_hz)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env))
+    worst, worst_f = -120.0, 0
+    for f0 in (63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0):
+        lo, hi = f0 / 1.4, min(f0 * 1.4, 0.47 * sr)
+        sos = butter(4, [lo / (sr / 2), hi / (sr / 2)], btype='band', output='sos')
+        b = sosfiltfilt(sos, m)
+        pk_db = 20.0 * np.log10(np.abs(b).max() + 1e-12)
+        t = pk + int(0.3 * sr)
+        rms_seq = []
+        while t + sr <= len(b):
+            seg = b[t:t + sr]
+            r = 20.0 * np.log10(float(np.sqrt(np.mean(seg ** 2))) + 1e-12)
+            rms_seq.append(r)
+            t += sr // 2
+        # growth = any later window above any earlier one, both above floor
+        for i in range(len(rms_seq)):
+            if rms_seq[i] - pk_db < floor_db: continue
+            for j in range(i + 1, len(rms_seq)):
+                g = rms_seq[j] - rms_seq[i]
+                if g > worst and rms_seq[j] - pk_db > floor_db:
+                    worst, worst_f = g, int(f0)
+    return worst, worst_f
+
+
+def sine1k_odd_thd_pct(p):
+    """ODD-harmonic THD (h3, h5 vs fundamental, %) on the sine1k steady tail.
+    For SHIMMER presets the standard THD gate is skipped by design (the octave
+    voices land on EVEN multiples: 2 k, 4 k, 500, 250 = musical content). But
+    3rd/5th harmonics are NOT octave products — energy at 3 k / 5 k from a 1 k
+    tone is genuine nonlinear distortion (saturation drive, clip grit): the
+    Deep Blue Day sat 0.232 makes a 3 kHz product at -17 dB rel fundamental
+    where the Valhalla anchor sits at -80. Returns % or None."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    n = len(m)
+    if n < sr:
+        return None
+    seg = m[n // 4: 3 * n // 4]
+    X = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1.0 / sr)
+    def bmax(f0):
+        i = (f > f0 - 40) & (f < f0 + 40)
+        return float(X[i].max()) if i.any() else 0.0
+    fund = bmax(1000.0)
+    if fund < 1e-9:
+        return None
+    odd = np.sqrt(bmax(3000.0) ** 2 + bmax(5000.0) ** 2)
+    return 100.0 * odd / fund
+
+
 def impulse_rms_db(p):
     """Broadband RMS (dB) of the impulse response — the transient/hit loudness
     (sustained-pink RMS can match while the impulse is hot)."""
@@ -1033,6 +1176,16 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             print(line)
             if p == 'FAIL': fails.append(line.strip())
 
+        # ── PER-BAND TAIL GROWTH (DV-only absolute; a healthy band DECAYS) ──
+        # Guards the whole T60 family: a feedback path past unity gain GROWS,
+        # and the Schroeder T60 fit reads the pathology as a long decay.
+        gw, gf = band_tail_monotonicity(dv)
+        _pass = gw <= GATES['band_tail_growth_dB']
+        line = (f"  {'band tail growth (dB)':30s}  worst {gw:+5.1f} @ {gf} Hz  "
+                f"gate≤+{GATES['band_tail_growth_dB']}  {'✓' if _pass else '✗'}")
+        print(line)
+        if not _pass: fails.append(line.strip())
+
     # ─── Peak-aligned compute_metrics ───
     if dv and lx:
         m_dv = compute_metrics(dv); m_lx = compute_metrics(lx)
@@ -1151,6 +1304,15 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
                     f"Lex={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
                     f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+            # ── Top-3 modal prominence (anti-mode-hop companion) ──
+            t3_dv = tail_resonance_top3(imp_dv); t3_lx = tail_resonance_top3(imp_lx)
+            t3_excess = t3_dv - t3_lx
+            passing = t3_excess <= GATES['tail_resonance_top3_dB']
+            line = (f"  {'tail resonance top-3 (boing)':30s}  DV={t3_dv:5.1f}dB  Lex={t3_lx:5.1f}dB  "
+                    f"Δ={t3_excess:+5.1f}  gate≤+{GATES['tail_resonance_top3_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
 
@@ -1455,6 +1617,18 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         x_dv, sr_dv = sf.read(snare_dv); x_lx, sr_lx = sf.read(snare_lx)
         m_dv = x_dv.mean(axis=1) if x_dv.ndim>1 else x_dv
         m_lx = x_lx.mean(axis=1) if x_lx.ndim>1 else x_lx
+        # ── PRE-ECHO / double-tap (energy AHEAD of the main arrival) ──
+        pe_dv = pre_onset_energy(snare_dv); pe_lx = pre_onset_energy(snare_lx)
+        pe_excess = pe_dv - pe_lx
+        print("\n── PRE-ECHO (snare, RMS in [onset-60ms, onset-4ms] rel peak) ──")
+        # Floor-skip: below -80 dB rel peak the pre-window is noise floor —
+        # a delta between two silences is not a pre-echo.
+        _pass = pe_excess <= GATES['pre_onset_excess_dB'] or pe_dv < -80.0
+        line = (f"  {'pre-onset energy (dB rel pk)':30s}  DV={pe_dv:6.1f}  Lex={pe_lx:6.1f}  "
+                f"Δ={pe_excess:+5.1f}  gate≤+{GATES['pre_onset_excess_dB']}  {'✓' if _pass else '✗'}")
+        print(line)
+        if not _pass: fails.append(line.strip())
+
         env_l1 = _env_l1(m_dv, m_lx, sr_dv, post_peak_ms=500.0)
         print("\n── ENVELOPE-SHAPE CONTOUR (snare stimulus, 0-500 ms post-peak) ──")
         passing = (env_l1 == env_l1) and env_l1 <= GATES['env_shape_l1_dB']
@@ -1620,6 +1794,19 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     if dv_dir and lex_dir and name in SHIMMER_PRESETS:
         print("\n── SINE 1 kHz THD ── SKIPPED (Shimmer engine: octave pitch-shift "
               "reads as harmonics by design)")
+        # ── ODD-harmonic THD (shimmer-safe distortion detector) ──
+        # Octave voices land on EVEN multiples (2k/4k/500/250 = musical); energy
+        # at 3k/5k from a 1k tone is genuine nonlinearity (sat/clip grit).
+        _os_dv = find_stim(dv_dir, 'sine1k'); _os_lx = find_stim(lex_dir, 'sine1k')
+        if _os_dv and _os_lx:
+            odv = sine1k_odd_thd_pct(_os_dv); olx = sine1k_odd_thd_pct(_os_lx)
+            if odv is not None and olx is not None:
+                oexc = odv - olx
+                _pass = oexc <= GATES['sine1k_odd_thd_excess_pct']
+                line = (f"  {'sine1k ODD-harm THD (%)':30s}  DV={odv:6.2f}  VVV={olx:6.2f}  "
+                        f"Δ={oexc:+6.2f}  gate≤+{GATES['sine1k_odd_thd_excess_pct']}  {'✓' if _pass else '✗'}")
+                print(line)
+                if not _pass: fails.append(line.strip())
         # Down-octave cascade gate (SHIMMER only) — the regenerative low warmth a 1 kHz
         # tone develops over SECONDS. Measured on the SUSTAINED *_sinelong.wav (the 2 s
         # sine1k is too short for the cascade to build). Rel-fundamental, so gain-safe.
