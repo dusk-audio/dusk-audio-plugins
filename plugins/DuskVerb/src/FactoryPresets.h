@@ -971,7 +971,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "79 Vocal Chamber",     "Chambers",
           3,  0.30f, false,  0.0f, 0,
           4.8190f, 0.76512f, 0.54685f, 1.74903f, 0.50150f, 0.94761f,  675.47f,
-          0.52932f, 0.20f, 0.44f, 26.022f, 8021.01f, 0.97000f, false, -2.99f,  // 2026-06-14 Phase-3 match-EQ (s=0.35): gainTrim -2.99 (18->17). Width 0.97 near-mono to anchor.
+          0.95f, 0.20f, 0.44f, 26.022f, 8021.01f, 0.97000f, false, -2.99f,  // 2026-07-04 diffusion 0.529->0.95 (EAR "VVV thicker/denser"): with the composite tailGain 0.92 -> denser tank tail; body/edt-hi/attack/flux all improve.  // 2026-06-14 Phase-3 match-EQ (s=0.35): gainTrim -2.99 (18->17). Width 0.97 near-mono to anchor.
           /* mono */ 20.0f, /* mid */ 0.56053f, /* highX */ 5417.19f, /* sat */ 0.08377f,  // re-derived post Decay-calibration (honest Decay 4.82 s; was 22->24 fails)
           /* hiCutShelfGainDb */ -23.5f },
         // ── Large Chamber ──────────────────────────────────────────────────
