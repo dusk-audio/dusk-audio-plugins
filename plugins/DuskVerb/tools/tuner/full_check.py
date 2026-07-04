@@ -1131,12 +1131,12 @@ def check(label, dv_val, lex_val, gate, kind='abs'):
         delta = (dv_val - lex_val) / lex_val * 100
         passing = abs(delta) <= gate
         return delta, ('PASS' if passing else 'FAIL'), \
-               f"  {label:30s}  DV={dv_val:.3f}  Lex={lex_val:.3f}  Δ={delta:+6.1f}%  gate=±{gate}%  {'✓' if passing else '✗'}"
+               f"  {label:30s}  DV={dv_val:.3f}  REF={lex_val:.3f}  Δ={delta:+6.1f}%  gate=±{gate}%  {'✓' if passing else '✗'}"
     else:
         delta = dv_val - lex_val
         passing = abs(delta) <= gate
         return delta, ('PASS' if passing else 'FAIL'), \
-               f"  {label:30s}  DV={dv_val:+7.3f}  Lex={lex_val:+7.3f}  Δ={delta:+6.2f}  gate=±{gate}  {'✓' if passing else '✗'}"
+               f"  {label:30s}  DV={dv_val:+7.3f}  REF={lex_val:+7.3f}  Δ={delta:+6.2f}  gate=±{gate}  {'✓' if passing else '✗'}"
 
 
 def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.0):
@@ -1157,6 +1157,19 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     # Upfront REQUIRED-stimulus validation: a missing core render must force a
     # failure so the run can't end as a false "ALL GATES PASS". Optional stimuli
     # (impulse/sine1k/sustained) stay as skips in the loops below.
+    # Print the ANCHOR SOURCE so nobody misreads the neutral REF= label
+    # (12 presets anchor to VVV, 4 to Lexicon PCM, 2 to Valhalla Shimmer —
+    # the old hardcoded 'Lex=' label caused exactly that misread).
+    try:
+        import glob as _g, os as _os
+        _ref = _g.glob(_os.path.join(lex_dir, '*_noiseburst.wav'))
+        if _ref:
+            _b = _os.path.basename(_ref[0])
+            _src = 'VVV' if _b.startswith(('vvv', 'anchor')) else _b
+            # audit dirs copy as anchor_*.wav — recover source from the ORIGIN dir name if present
+        print(f"  [anchor dir: {lex_dir}]")
+    except Exception:
+        pass
     for req in ('noiseburst', 'snare'):
         if not find_stim(dv_dir, req):
             fails.append(f"REQUIRED stimulus '{req}' missing in render dir {dv_dir}")
@@ -1263,7 +1276,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 dms = a_dv - a_lx
                 passing = (abs(dms) <= GATES['attack_time_ms_abs']) or \
                           (a_lx > 0 and abs(dms) / a_lx * 100.0 <= GATES['attack_time_pct'])
-                line = (f"  {'attack_time (ms)':30s}  DV={a_dv:7.1f}  Lex={a_lx:7.1f}  "
+                line = (f"  {'attack_time (ms)':30s}  DV={a_dv:7.1f}  REF={a_lx:7.1f}  "
                         f"Δ={dms:+6.1f}ms  gate=±{GATES['attack_time_ms_abs']}ms/"
                         f"±{GATES['attack_time_pct']}%  {'✓' if passing else '✗'}")
                 print(line)
@@ -1319,7 +1332,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             tr_excess = tr_dv - tr_lx                 # DV ringing MORE than anchor = defect
             passing = tr_excess <= GATES['tail_resonance_dB']
             line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
-                    f"Lex={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
+                    f"REF={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
                     f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1332,7 +1345,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 return (_ix[0] / _sr * 1000.0) if len (_ix) else 0.0
             fa_dv = _first_arrival_ms (imp_dv); fa_lx = _first_arrival_ms (imp_lx)
             _pass = abs (fa_dv - fa_lx) <= GATES['first_arrival_ms']
-            line = (f"  {'first arrival (ms)':30s}  DV={fa_dv:6.1f}  Lex={fa_lx:6.1f}  "
+            line = (f"  {'first arrival (ms)':30s}  DV={fa_dv:6.1f}  REF={fa_lx:6.1f}  "
                     f"Δ={fa_dv - fa_lx:+6.1f}  gate=±{GATES['first_arrival_ms']}  {'✓' if _pass else '✗'}")
             print (line)
             if not _pass: fails.append (line.strip())
@@ -1341,7 +1354,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             t3_dv = tail_resonance_top3(imp_dv); t3_lx = tail_resonance_top3(imp_lx)
             t3_excess = t3_dv - t3_lx
             passing = t3_excess <= GATES['tail_resonance_top3_dB']
-            line = (f"  {'tail resonance top-3 (boing)':30s}  DV={t3_dv:5.1f}dB  Lex={t3_lx:5.1f}dB  "
+            line = (f"  {'tail resonance top-3 (boing)':30s}  DV={t3_dv:5.1f}dB  REF={t3_lx:5.1f}dB  "
                     f"Δ={t3_excess:+5.1f}  gate≤+{GATES['tail_resonance_top3_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1349,7 +1362,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # ── IMPULSE RMS (transient/hit loudness — sustained gates miss it) ──
             ir_dv = impulse_rms_db(imp_dv); ir_lx = impulse_rms_db(imp_lx)
             passing = abs(ir_dv - ir_lx) <= GATES['impulse_rms_dB']
-            line = (f"  {'impulse RMS (hit loudness)':30s}  DV={ir_dv:6.1f}  Lex={ir_lx:6.1f}  "
+            line = (f"  {'impulse RMS (hit loudness)':30s}  DV={ir_dv:6.1f}  REF={ir_lx:6.1f}  "
                     f"Δ={ir_dv - ir_lx:+5.1f}  gate=±{GATES['impulse_rms_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1360,20 +1373,20 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # Gate 1 (core): time-to-50%-energy, absolute ms vs anchor.
             dt = t50_dv - t50_lx
             passing = abs(dt) <= GATES['energy_t50_ms_abs']
-            line = (f"  {'energy t50 (ms to 50%E)':30s}  DV={t50_dv:7.1f}  Lex={t50_lx:7.1f}  "
+            line = (f"  {'energy t50 (ms to 50%E)':30s}  DV={t50_dv:7.1f}  REF={t50_lx:7.1f}  "
                     f"Δ={dt:+6.1f}ms  gate=±{GATES['energy_t50_ms_abs']}ms  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
             # Gate 2 (companion): early-energy fraction, % in first 50 ms.
             dp = p50_dv - p50_lx
             passing = abs(dp) <= GATES['energy_first50_pct']
-            line = (f"  {'energy first50ms (%)':30s}  DV={p50_dv:7.1f}  Lex={p50_lx:7.1f}  "
+            line = (f"  {'energy first50ms (%)':30s}  DV={p50_dv:7.1f}  REF={p50_lx:7.1f}  "
                     f"Δ={dp:+6.1f}pp  gate=±{GATES['energy_first50_pct']}pp  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
             # Diagnostic (not gated): first-150ms fraction + energy centroid.
             print(f"  {'energy first150ms / centroid':30s}  DV={p150_dv:5.1f}%/{cen_dv:.0f}ms  "
-                  f"Lex={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
+                  f"REF={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
 
             # ── DISCRETE EARLY TAP (the audible 'extra delay tap' — prominence + time) ──
             tt_dv, pr_dv = early_tap(imp_dv)
@@ -1388,12 +1401,12 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     # Anchor has a prominent tap but DV has none → fail (not skip).
                     passing = False
                     line = (f"  {'early tap (prom@time)':30s}  DV=  none  "
-                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"REF={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
                             f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  ✗")
                 else:
                     passing = (pr_dv >= prom_floor) and (abs(tt_dv - tt_lx) <= GATES['early_tap_time_ms'])
                     line = (f"  {'early tap (prom@time)':30s}  DV={pr_dv:4.1f}dB@{tt_dv:.0f}ms  "
-                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"REF={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
                             f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1416,7 +1429,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 t_dv = ",".join(f"{t:.0f}" for t, _ in refl_dv[:5]) or "-"
                 t_lx = ",".join(f"{t:.0f}" for t, _ in refl_lx[:5]) or "-"
                 line = (f"  {'early refl count':30s}  DV={n_dv} [{t_dv}]ms  "
-                        f"Lex={n_lx} [{t_lx}]ms  "
+                        f"REF={n_lx} [{t_lx}]ms  "
                         f"gate=±{GATES['early_refl_count_tol']}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1431,7 +1444,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if td_dv is not None and td_lx is not None and td_lx >= GATES['transient_def_guard_dB']:
                 dt = td_dv - td_lx
                 passing = dt >= -GATES['transient_def_tol_dB']
-                line = (f"  {'transient def (crest dB)':30s}  DV={td_dv:5.1f}  Lex={td_lx:5.1f}  "
+                line = (f"  {'transient def (crest dB)':30s}  DV={td_dv:5.1f}  REF={td_lx:5.1f}  "
                         f"Δ={dt:+5.1f}  gate≥-{GATES['transient_def_tol_dB']:.1f}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1449,7 +1462,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                and a_hf >= GATES['hf_tail_texture_floor']:
                 dk = k_dv - k_lx
                 passing = dk <= GATES['hf_tail_texture_kurt']
-                line = (f"  {'HF-tail texture (kurt)':30s}  DV={k_dv:5.1f}  Lex={k_lx:5.1f}  "
+                line = (f"  {'HF-tail texture (kurt)':30s}  DV={k_dv:5.1f}  REF={k_lx:5.1f}  "
                         f"Δ={dk:+5.1f}  gate≤+{GATES['hf_tail_texture_kurt']:.1f}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1461,7 +1474,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if ds_dv is not None and ds_lx is not None and ds_lx >= GATES['deepsub_floor_dB']:
                 dd = ds_dv - ds_lx
                 passing = abs(dd) <= GATES['deepsub_level_dB']
-                line = (f"  {'deep-sub 20-40Hz (dB)':30s}  DV={ds_dv:7.1f}  Lex={ds_lx:7.1f}  "
+                line = (f"  {'deep-sub 20-40Hz (dB)':30s}  DV={ds_dv:7.1f}  REF={ds_lx:7.1f}  "
                         f"Δ={dd:+5.1f}  gate=±{GATES['deepsub_level_dB']:.1f}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1654,7 +1667,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         # Floor-skip: below -80 dB rel peak the pre-window is noise floor —
         # a delta between two silences is not a pre-echo.
         _pass = pe_excess <= GATES['pre_onset_excess_dB'] or pe_dv < -80.0
-        line = (f"  {'pre-onset energy (dB rel pk)':30s}  DV={pe_dv:6.1f}  Lex={pe_lx:6.1f}  "
+        line = (f"  {'pre-onset energy (dB rel pk)':30s}  DV={pe_dv:6.1f}  REF={pe_lx:6.1f}  "
                 f"Δ={pe_excess:+5.1f}  gate≤+{GATES['pre_onset_excess_dB']}  {'✓' if _pass else '✗'}")
         print(line)
         if not _pass: fails.append(line.strip())
@@ -1736,7 +1749,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 delta = dv_db - lx_db
                 passing = abs(delta) <= boom_gate
                 line = (f"  {f'boom {b_lab} {win_lab}':30s}  "
-                        f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+6.2f}  "
+                        f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+6.2f}  "
                         f"gate=±{boom_gate}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1754,7 +1767,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = delta <= bloom_gate
             line = (f"  {f'bloom {b_lab}':30s}  "
-                    f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate≤+{bloom_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1780,7 +1793,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = delta >= -body_gate
             line = (f"  {f'body {b_lab}':30s}  "
-                    f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate≥-{body_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1800,7 +1813,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = abs(delta) <= ps_gate
             line = (f"  {f'full RMS {stim}':30s}  "
-                    f"DV={dv_db:+7.2f}  VVV={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate=±{ps_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1815,7 +1828,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = abs(delta) <= s1_gate
             line = (f"  {'sine1k full RMS':30s}  "
-                    f"DV={dv_db:+7.2f}  VVV={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate=±{s1_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1840,7 +1853,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         _rl = 20.0*np.log10(float(np.sqrt(np.mean(_ml[int(1*_srp):int(_stem_end*_srp)]**2)))+1e-12)
         _d = _rd - _rl
         _pass = abs(_d) <= GATES['piano_rms_dB']
-        line = f"  {'piano RMS':30s}  DV={_rd:6.1f}  Lex={_rl:6.1f}  Δ={_d:+5.1f}  gate=±{GATES['piano_rms_dB']}  {'✓' if _pass else '✗'}"
+        line = f"  {'piano RMS':30s}  DV={_rd:6.1f}  REF={_rl:6.1f}  Δ={_d:+5.1f}  gate=±{GATES['piano_rms_dB']}  {'✓' if _pass else '✗'}"
         print(line)
         if not _pass: fails.append(line.strip())
         # 2) band balance over the playing window
@@ -1850,7 +1863,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             bd = _band_rms_db(_md, lo, hi, 1, _stem_end); bl = _band_rms_db(_ml, lo, hi, 1, _stem_end)
             if bd is None or bl is None: continue
             dd = bd - bl
-            print(f"    {lab:7s} {lo:5d}-{hi:<5d}  DV={bd:6.1f}  Lex={bl:6.1f}  Δ={dd:+5.1f}")
+            print(f"    {lab:7s} {lo:5d}-{hi:<5d}  DV={bd:6.1f}  REF={bl:6.1f}  Δ={dd:+5.1f}")
             if abs(dd) > abs(worst): worst, wl = dd, lab
         _pass = abs(worst) <= GATES['piano_band_dB']
         line = f"  {'piano band balance (worst)':30s}  Δ={worst:+5.1f} @ {wl}  gate=±{GATES['piano_band_dB']}  {'✓' if _pass else '✗'}"
@@ -1900,7 +1913,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if odv is not None and olx is not None:
                 oexc = odv - olx
                 _pass = oexc <= GATES['sine1k_odd_thd_excess_pct']
-                line = (f"  {'sine1k ODD-harm THD (%)':30s}  DV={odv:6.2f}  VVV={olx:6.2f}  "
+                line = (f"  {'sine1k ODD-harm THD (%)':30s}  DV={odv:6.2f}  REF={olx:6.2f}  "
                         f"Δ={oexc:+6.2f}  gate≤+{GATES['sine1k_odd_thd_excess_pct']}  {'✓' if _pass else '✗'}")
                 print(line)
                 if not _pass: fails.append(line.strip())
@@ -1920,7 +1933,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 # (>= -45 dB rel fundamental). Presets without a down voice (Black Hole)
                 # have a near-silent cascade in BOTH → no qualifying band → gate skipped.
                 for b in _CASCADE_BANDS:
-                    print(f"    {b[0]:>4}-{b[1]:<4} Hz   DV={dvb[b]:+6.1f}  VVV={lxb[b]:+6.1f}  Δ={dvb[b]-lxb[b]:+5.1f}")
+                    print(f"    {b[0]:>4}-{b[1]:<4} Hz   DV={dvb[b]:+6.1f}  REF={lxb[b]:+6.1f}  Δ={dvb[b]-lxb[b]:+5.1f}")
                 diffs = [abs(dvb[b] - lxb[b]) for b in _CASCADE_BANDS if lxb[b] >= -45.0]
                 if not diffs:
                     print("  down-octave cascade          SKIPPED (anchor has no down-octave content)")
@@ -1977,7 +1990,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 excess = dv_thd - lx_thd
                 passing = excess <= thd_gate
                 line = (f"  {'sine1k THD (%)':30s}  "
-                        f"DV={dv_thd:5.2f}  VVV={lx_thd:5.2f}  Δ={excess:+5.2f}  "
+                        f"DV={dv_thd:5.2f}  REF={lx_thd:5.2f}  Δ={excess:+5.2f}  "
                         f"gate≤+{thd_gate}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -2003,7 +2016,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             ratio = dv_c / lx_c
             passing = 0.3 <= ratio <= 3.0
             line = (f"  {'tail pitch-chorus (Hz)':30s}  "
-                    f"DV={dv_c:5.2f}  VVV={lx_c:5.2f}  ratio={ratio:4.2f}x  "
+                    f"DV={dv_c:5.2f}  REF={lx_c:5.2f}  ratio={ratio:4.2f}x  "
                     f"gate=0.3-3.0x  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -2029,7 +2042,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             pct = (dv_t - lx_t) / lx_t * 100.0
             passing = abs(pct) <= rt_gate
             line = (f"  {f'T60 {b_lab}':30s}  "
-                    f"DV={dv_t:5.2f}s  VVV={lx_t:5.2f}s  Δ={pct:+6.1f}%  "
+                    f"DV={dv_t:5.2f}s  REF={lx_t:5.2f}s  Δ={pct:+6.1f}%  "
                     f"gate=±{rt_gate}%  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -2061,7 +2074,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # DV-hotter is what we're catching.
             passing = delta <= rip_gate
             line = (f"  {f'ripple {b_lab}':30s}  "
-                    f"DV={dv_std:5.2f}  Lex={lx_std:5.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_std:5.2f}  REF={lx_std:5.2f}  Δ={delta:+5.2f}  "
                     f"gate≤+{rip_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -2076,7 +2089,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             print(f"  {'spectral_flux_var':30s}  SKIPPED (tail below floor)")
         else:
             dd = abs(fv_dv - fv_lx); ok = dd <= GATES['spectral_flux_variance']
-            print(f"  {'spectral_flux_var':30s}  DV={fv_dv:6.3f}  VVV={fv_lx:6.3f}  "
+            print(f"  {'spectral_flux_var':30s}  DV={fv_dv:6.3f}  REF={fv_lx:6.3f}  "
                   f"|Δ|={dd:6.3f}  gate≤{GATES['spectral_flux_variance']}  "
                   f"{'✓' if ok else '✗'}  [ADVISORY]")
         r_dv = adv_decay_curvature(dv); r_lx = adv_decay_curvature(lx)
@@ -2086,7 +2099,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if av is None or bv is None:
                 print(f"  {rn:30s}  SKIPPED (span unmeasurable)"); continue
             dd = abs(av - bv); ok = dd <= GATES[gk]
-            print(f"  {rn:30s}  DV={av:5.3f}  VVV={bv:5.3f}  |Δ|={dd:5.3f}  "
+            print(f"  {rn:30s}  DV={av:5.3f}  REF={bv:5.3f}  |Δ|={dd:5.3f}  "
                   f"gate≤{GATES[gk]}  {'✓' if ok else '✗'}  [ADVISORY]")
         bk_dv = adv_bark_masking_traj(dv); bk_lx = adv_bark_masking_traj(lx)
         if bk_dv is None or bk_lx is None:
