@@ -131,7 +131,7 @@ private:
     int   inputActiveSamps_ = 0;   // samples input has been present this burst
     int   holdMaxSamps_     = 0;   // = holdMaxMs_ * sr (ceiling)
     float holdPerSec_       = 60.0f;  // +ms hold per second of input presence
-    float holdMaxMs_        = 600.0f; // hold ceiling (sustained)
+    float holdMaxMs_        = 450.0f; // hold ceiling (sustained). 2026-07-04 600->450: on the 22.6 s piano stem the gate held ~0.5 s of loud low-mid past where the Lex reverse had closed (piano-tail gate +21 dB); 450 tracks the anchor's release without touching the noiseburst T60s (hold there is duration-scaled ~346 ms, under both caps).
 
     double sampleRate_ = 48000.0;
     int    maxBlock_   = 0;

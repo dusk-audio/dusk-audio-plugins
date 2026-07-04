@@ -1842,6 +1842,12 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             bd = _band_rms_db(_md, lo, hi, _stem_end + 0.5, _stem_end + 3.0)
             bl = _band_rms_db(_ml, lo, hi, _stem_end + 0.5, _stem_end + 3.0)
             if bd is None or bl is None: continue
+            # Clamp both sides to a -70 dBFS floor: below that is silence /
+            # dither (a hard output gate like Reverse Taps'), and an unclamped
+            # delta reads floor-vs-floor as +90 dB. Clamping keeps the REAL
+            # part of a gate-timing difference and kills the silence blowup.
+            bd = max(bd, -70.0); bl = max(bl, -70.0)
+            if bd == -70.0 and bl == -70.0: continue
             dd = bd - bl
             if abs(dd) > abs(worst): worst, wl = dd, lab
         _pass = abs(worst) <= GATES['piano_tail_dB']
