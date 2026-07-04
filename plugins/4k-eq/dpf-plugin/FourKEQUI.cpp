@@ -1,9 +1,12 @@
-// FourKEQUI.cpp — Dear ImGui UI for 4K EQ 2. Console-strip layout: an analytic
-// response curve with a live FFT spectrum overlay (pre/post), four parametric
-// band columns plus HPF/LPF, global controls and L/R I/O meters. All custom
-// ImDrawList rendering in a 980x520 design space, uniformly scaled. The curve
-// is computed from the SAME coefficient math as the audio path
-// (FourKEQDSP static designers), never by probing audio.
+// FourKEQUI.cpp — Dear ImGui UI for 4K EQ 2, matching the JUCE 4K EQ front
+// panel: a full-width response graph over six console channel-strip columns
+// (FILTERS | LF | LMF | HMF | HF | MASTER) with per-band colour coding
+// (LF red, LMF orange, HMF green, HF blue), INPUT/OUTPUT edge meters, preset
+// and oversample selectors, a Brown/Black voicing toggle and Hide Graph.
+// All custom ImDrawList rendering in a 960x680 design space, uniformly scaled.
+// The response curve is computed from the SAME coefficient math as the audio
+// path (FourKEQDSP designers), never by probing audio; a live FFT of the
+// pre/post spectrum is drawn behind it.
 
 #include "DistrhoUI.hpp"
 #include "FourKEQAccess.hpp"
@@ -22,30 +25,38 @@ START_NAMESPACE_DISTRHO
 
 namespace
 {
-    constexpr float kDesignW = 980.0f;
-    constexpr float kDesignH = 520.0f;
-    constexpr float kDbRange = 15.0f;   // curve vertical: +-15 dB full height
+    constexpr float kDesignW = 960.0f;
+    constexpr float kDesignH = 680.0f;
+    constexpr float kDbRange = 20.0f;               // graph vertical: +-20 dB
     constexpr float kFMin = 20.0f, kFMax = 20000.0f;
 
-    // graph + meter rects (design space)
-    constexpr float GX0 = 58, GY0 = 58, GX1 = 838, GY1 = 250;
-    constexpr float MX0 = 852, MY0 = 58, MX1 = 966, MY1 = 250;
+    // graph + meter rects
+    constexpr float GX0 = 42, GY0 = 98, GX1 = 918, GY1 = 214;
+    constexpr float INX0 = 8,   INX1 = 34,  MET_Y0 = 224, MET_Y1 = 656;
+    constexpr float OUTX0 = 926, OUTX1 = 952;
+    // column dividers
+    constexpr float COL[7] = { 40, 197, 335, 469, 603, 737, 920 };
+
+    // band face colours
+    constexpr ImU32 C_LF  = IM_COL32(196, 74, 66, 255);
+    constexpr ImU32 C_LMF = IM_COL32(202, 132, 66, 255);
+    constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
+    constexpr ImU32 C_HF  = IM_COL32(84, 146, 204, 255);
+    constexpr ImU32 C_GREY = IM_COL32(92, 94, 99, 255);
+
+    constexpr ImU32 kPanel   = IM_COL32(34, 34, 37, 255);
+    constexpr ImU32 kPanelDk = IM_COL32(24, 24, 26, 255);
+    constexpr ImU32 kHeader  = IM_COL32(18, 18, 20, 255);
+    constexpr ImU32 kAmber   = IM_COL32(150, 96, 32, 255);
+    constexpr ImU32 kGreenBtn = IM_COL32(48, 108, 56, 255);
 
     constexpr float kDefaults[kParamCount] = {
-        20.f, 0.f,      // hpf freq/en
-        20000.f, 0.f,   // lpf freq/en
-        0.f, 100.f, 0.f,        // lf
-        0.f, 600.f, 0.7f,       // lm
-        0.f, 2000.f, 0.7f,      // hm
-        0.f, 8000.f, 0.f,       // hf
-        0.f,            // eq type
-        0.f,            // bypass
-        0.f, 0.f, 0.f,  // in/out gain, sat
-        0.f, 0.f, 0.f, 1.f,     // os, ms, prepost, autogain
-        0.f, 0.f,       // out peaks
+        20.f, 0.f, 20000.f, 0.f,
+        0.f, 100.f, 0.f, 0.f, 600.f, 0.7f, 0.f, 2000.f, 0.7f, 0.f, 8000.f, 0.f,
+        0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
     };
 
-    const int   kGridF[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
+    const int   kGridF[]  = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     const char* kGridFL[] = { "20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
 }
 
@@ -57,16 +68,12 @@ public:
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kDefaults[i];
-        setGeometryConstraints(560, 297, true);
-        labelFont = duskdpf::loadCrispFont(30.0f * getScaleFactor());
+        setGeometryConstraints(576, 408, true);
+        labelFont = duskdpf::loadCrispFont(32.0f * getScaleFactor());
         fft.prepare(kFftSize);
         specDb.assign(kFftSize / 2 + 1, -120.0f);
-        duskdpf::Palette pal;
-        pal.accent = IM_COL32(120, 175, 235, 255);
-        panel.setPalette(pal);
     }
 
-    //--- ParamHost ------------------------------------------------------------
     void beginEdit(uint32_t idx) override { editParameter(idx, true); }
     void endEdit(uint32_t idx) override   { editParameter(idx, false); }
     void setParam(uint32_t idx, float v) override { setParameterValue(idx, v); }
@@ -94,14 +101,13 @@ protected:
                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(8, 8, 8, 255));
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(6, 6, 7, 255));
         dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, kDesignH), IM_COL32(30, 30, 33, 255));
 
         drawHeader(dl);
         drawGraph(dl);
+        drawColumns(dl);
         drawMeters(dl);
-        drawBands(dl);
-        drawGlobals(dl);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -109,24 +115,31 @@ protected:
 
 private:
     static constexpr int kFftSize = 2048;
+    const auto& pal() const { return panel.palette(); }
+    float sc() const { return panel.scale(); }
 
-    //--- header + preset combo ------------------------------------------------
+    //========================================================================
+    // header
+    //========================================================================
     void drawHeader(ImDrawList* dl)
     {
-        const auto& pal = panel.palette();
-        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 46), IM_COL32(16, 16, 17, 255));
+        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 88), kHeader);
         dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 3), IM_COL32(150, 150, 152, 255));
-        dl->AddRect(panel.P(20, 8), panel.P(190, 38), IM_COL32(210, 210, 210, 200), 4.0f * panel.scale(), 0, 1.6f * panel.scale());
-        panel.text(dl, 32, 13, 19, pal.white, "4K EQ 2", -1, true);
-        panel.text(dl, kDesignW - 24, 14, 14, pal.white, "Dusk Audio", 1, true);
+        dl->AddLine(panel.P(0, 88), panel.P(kDesignW, 88), IM_COL32(60, 60, 63, 255), 1.5f * sc());
 
-        ImGui::SetCursorScreenPos(panel.P(210, 10));
-        ImGui::SetNextItemWidth(220.0f * panel.scale());
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(38, 38, 41, 255));
+        panel.text(dl, 28, 30, 26, pal().white, "4K EQ", -1, true);
+        panel.text(dl, 30, 60, 11, IM_COL32(150, 152, 156, 255), "Console-Style Equalizer", -1);
+        panel.text(dl, kDesignW - 26, 62, 11, IM_COL32(150, 152, 156, 255), "DUSK AUDIO", 1, true);
+
+        // preset dropdown
+        ImGui::SetCursorScreenPos(panel.P(226, 30));
+        ImGui::SetNextItemWidth(196.0f * sc());
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(46, 46, 50, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
-        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(60, 90, 130, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(228, 228, 224, 255));
         const char* preview = (currentPreset >= 0 && currentPreset < kNumFactoryPresets)
-                                  ? kFactoryPresets[currentPreset].name : "Presets...";
+                                  ? kFactoryPresets[currentPreset].name : "Default";
         if (ImGui::BeginCombo("##presets", preview))
         {
             for (int i = 0; i < kNumFactoryPresets; ++i)
@@ -134,11 +147,54 @@ private:
                     applyPreset(i);
             ImGui::EndCombo();
         }
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(4);
 
-        // spectrum pre/post toggle
-        panel.toggle("prepost", kSpectrumPrePost, 452, 12, 556, 34, values[kSpectrumPrePost],
-                     values[kSpectrumPrePost] > 0.5f ? "SPEC: PRE" : "SPEC: POST");
+        // Oversample selector (cycles 2x/4x)
+        headerButton(dl, "os", 440, 30, 578, 54,
+                     values[kOversampling] > 0.5f ? "Oversample: 4x" : "Oversample: 2x",
+                     IM_COL32(46, 46, 50, 255), pal().white,
+                     [&]{ cycleParam(kOversampling, 2); });
+
+        // Hide Graph toggle
+        headerButton(dl, "hidegraph", 590, 30, 690, 54, showGraph ? "Hide Graph" : "Show Graph",
+                     IM_COL32(46, 46, 50, 255), pal().white, [&]{ showGraph = !showGraph; });
+
+        // Brown / Black voicing (amber when Brown, blue-grey when Black)
+        const bool brown = values[kEqType] < 0.5f;
+        headerButton(dl, "eqtype", 702, 30, 800, 54, brown ? "BROWN" : "BLACK",
+                     brown ? kAmber : IM_COL32(60, 74, 96, 255), IM_COL32(245, 240, 232, 255),
+                     [&]{ cycleParam(kEqType, 2); });
+
+        // Spectrum source (pre/post) — small, right of voicing
+        headerButton(dl, "prepost", 806, 30, 892, 54,
+                     values[kSpectrumPrePost] > 0.5f ? "SPEC PRE" : "SPEC POST",
+                     IM_COL32(40, 40, 44, 255), IM_COL32(180, 182, 186, 255),
+                     [&]{ toggleParam(kSpectrumPrePost); });
+    }
+
+    template <class Fn>
+    void headerButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                      const char* label, ImU32 bg, ImU32 fg, Fn onClick)
+    {
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) onClick();
+        dl->AddRectFilled(b0, b1, bg, 4.0f * sc());
+        dl->AddRect(b0, b1, hov ? IM_COL32(200, 200, 205, 200) : IM_COL32(90, 90, 96, 200), 4.0f * sc(), 0, 1.2f * sc());
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.5f, fg, label, 0, true);
+    }
+
+    void cycleParam(uint32_t id, int n)
+    {
+        float nv = values[id] + 1.0f; if (nv > n - 1 + 0.5f) nv = 0.0f;
+        editParameter(id, true); values[id] = nv; setParameterValue(id, nv); editParameter(id, false);
+    }
+    void toggleParam(uint32_t id)
+    {
+        float nv = values[id] > 0.5f ? 0.0f : 1.0f;
+        editParameter(id, true); values[id] = nv; setParameterValue(id, nv); editParameter(id, false);
     }
 
     void applyPreset(int idx)
@@ -158,111 +214,88 @@ private:
             {kHpfEnabled, p.hpfFreq > 20.5f ? 1.0f : 0.0f},
             {kLpfEnabled, p.lpfFreq < 19999.0f ? 1.0f : 0.0f},
         };
-        for (const KV& e : kv)
-        {
-            editParameter(e.id, true); values[e.id] = e.v;
-            setParameterValue(e.id, e.v); editParameter(e.id, false);
-        }
+        for (const KV& e : kv) { editParameter(e.id, true); values[e.id] = e.v; setParameterValue(e.id, e.v); editParameter(e.id, false); }
     }
 
-    //--- analytic composite response (same coeff math as the audio core) ------
-    // Fixed display rate: the audible 20 Hz-20 kHz shape is essentially
-    // rate-independent for these prewarped filters; 96 kHz matches 2x @ 48k.
+    //========================================================================
+    // response graph + spectrum
+    //========================================================================
     float responseDb(float freq) const
     {
-        using duskaudio::Biquad;
-        using duskaudio::BiquadCoeffs;
+        using duskaudio::Biquad; using duskaudio::BiquadCoeffs;
         const double fs = 96000.0;
         const double w = 2.0 * 3.14159265358979323846 * (double)freq / fs;
         const bool black = values[kEqType] > 0.5f;
         double magLin = 1.0;
         auto acc = [&](const BiquadCoeffs& c) { Biquad b; b.setCoeffs(c); magLin *= b.magnitude(w); };
-
         if (values[kHpfEnabled] > 0.5f)
         {
             acc(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
             acc(Biquad::highPass(fs, values[kHpfFreq], 0.54f));
         }
-        // LF
         if (black && values[kLfBell] > 0.5f)
             acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLfFreq], 0.7f, values[kLfGain], black));
         else
             acc(duskaudio::FourKEQDSP::consoleShelf(fs, values[kLfFreq], 0.7f, values[kLfGain], false, black));
-        // LM
-        {
-            float q = values[kLmQ];
-            if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kLmGain], q);
-            acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLmFreq], q, values[kLmGain], black));
-        }
-        // HM
-        {
-            float f = values[kHmFreq], q = values[kHmQ];
-            if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kHmGain], q);
-            else if (f > 7000.f) f = 7000.f;
-            if (f > 3000.f) f = duskaudio::FourKEQDSP::preWarp(f, fs);
-            acc(duskaudio::FourKEQDSP::consolePeak(fs, f, q, values[kHmGain], black));
-        }
-        // HF
-        {
-            const float fw = duskaudio::FourKEQDSP::preWarp(values[kHfFreq], fs);
-            if (black && values[kHfBell] > 0.5f)
-                acc(duskaudio::FourKEQDSP::consolePeak(fs, fw, 0.7f, values[kHfGain], black));
-            else
-                acc(duskaudio::FourKEQDSP::consoleShelf(fs, fw, 0.7f, values[kHfGain], true, black));
-        }
+        { float q = values[kLmQ]; if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kLmGain], q);
+          acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLmFreq], q, values[kLmGain], black)); }
+        { float f = values[kHmFreq], q = values[kHmQ];
+          if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kHmGain], q); else if (f > 7000.f) f = 7000.f;
+          if (f > 3000.f) f = duskaudio::FourKEQDSP::preWarp(f, fs);
+          acc(duskaudio::FourKEQDSP::consolePeak(fs, f, q, values[kHmGain], black)); }
+        { const float fw = duskaudio::FourKEQDSP::preWarp(values[kHfFreq], fs);
+          if (black && values[kHfBell] > 0.5f) acc(duskaudio::FourKEQDSP::consolePeak(fs, fw, 0.7f, values[kHfGain], black));
+          else acc(duskaudio::FourKEQDSP::consoleShelf(fs, fw, 0.7f, values[kHfGain], true, black)); }
         if (values[kLpfEnabled] > 0.5f)
-        {
-            float f = values[kLpfFreq];
-            if (f > fs * 0.3) f = duskaudio::FourKEQDSP::preWarp(f, fs);
-            acc(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f));
-        }
+        { float f = values[kLpfFreq]; if (f > fs * 0.3) f = duskaudio::FourKEQDSP::preWarp(f, fs);
+          acc(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f)); }
         return 20.0f * std::log10((float)std::max(magLin, 1e-6));
     }
 
     void drawGraph(ImDrawList* dl)
     {
-        const auto& pal = panel.palette();
-        const float sc = panel.scale();
-        dl->AddRectFilled(panel.P(GX0 - 4, GY0 - 4), panel.P(GX1 + 4, GY1 + 4), IM_COL32(70, 70, 72, 255), 4.0f * sc);
-        dl->AddRectFilled(panel.P(GX0, GY0), panel.P(GX1, GY1), IM_COL32(15, 17, 20, 255));
+        dl->AddRectFilled(panel.P(GX0 - 3, GY0 - 3), panel.P(GX1 + 3, GY1 + 3), IM_COL32(60, 60, 63, 255), 3.0f * sc());
+        dl->AddRectFilled(panel.P(GX0, GY0), panel.P(GX1, GY1), IM_COL32(14, 16, 18, 255));
         dl->PushClipRect(panel.P(GX0, GY0), panel.P(GX1, GY1), true);
 
-        // frequency grid
         for (int i = 0; i < (int)(sizeof(kGridF) / sizeof(kGridF[0])); ++i)
         {
-            const float lx = (std::log10((float)kGridF[i]) - std::log10(kFMin)) / (std::log10(kFMax) - std::log10(kFMin));
+            const float lx = flog(kGridF[i]);
             const float x = GX0 + lx * (GX1 - GX0);
-            dl->AddLine(panel.P(x, GY0), panel.P(x, GY1), IM_COL32(45, 48, 52, 255), 1.0f * sc);
-            panel.text(dl, x, GY1 - 12, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
+            dl->AddLine(panel.P(x, GY0), panel.P(x, GY1), IM_COL32(40, 43, 47, 255), 1.0f * sc());
+            if (kGridF[i] == 100 || kGridF[i] == 1000 || kGridF[i] == 10000)
+                panel.text(dl, x, GY1 - 13, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
         }
-        // dB grid
-        for (int db = -12; db <= 12; db += 6)
+        for (int db = -20; db <= 20; db += 10)
         {
-            const float ny = 0.5f - 0.5f * ((float)db / kDbRange);
-            const float y = GY0 + ny * (GY1 - GY0);
+            const float y = GY0 + (0.5f - 0.5f * ((float)db / kDbRange)) * (GY1 - GY0);
             dl->AddLine(panel.P(GX0, y), panel.P(GX1, y),
-                        db == 0 ? IM_COL32(70, 74, 80, 255) : IM_COL32(38, 40, 44, 255), 1.0f * sc);
+                        db == 0 ? IM_COL32(64, 68, 74, 255) : IM_COL32(34, 36, 40, 255), 1.0f * sc());
             char b[8]; std::snprintf(b, sizeof(b), "%+d", db);
-            if (db != 0) panel.text(dl, GX0 + 3, y - 5, 8.0f, IM_COL32(110, 114, 120, 255), b, -1);
+            if (db != -20) panel.text(dl, GX0 + 4, y - 5, 8.0f, IM_COL32(120, 124, 130, 255), db == 0 ? "0" : b, -1);
         }
 
-        drawSpectrum(dl);
-
-        // response curve
-        const int N = 220;
-        std::vector<ImVec2> pts; pts.reserve(N);
-        for (int i = 0; i < N; ++i)
+        if (showGraph)
         {
-            const float lx = (float)i / (N - 1);
-            const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-            pts.push_back(panel.curvePoint(GX0, GY0, GX1, GY1, freq, responseDb(freq), kFMin, kFMax, kDbRange));
+            drawSpectrum(dl);
+            const int N = 240;
+            std::vector<ImVec2> pts; pts.reserve(N);
+            for (int i = 0; i < N; ++i)
+            {
+                const float lx = (float)i / (N - 1);
+                const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
+                float ny = 0.5f - 0.5f * (responseDb(freq) / kDbRange);
+                ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
+                pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
+            }
+            dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(236, 236, 236, 255), 0, 2.0f * sc());
         }
-        dl->AddPolyline(pts.data(), (int)pts.size(), pal.accent, 0, 2.2f * sc);
+        else
+            panel.text(dl, 0.5f * (GX0 + GX1), 0.5f * (GY0 + GY1) - 6, 12, IM_COL32(110, 114, 120, 255), "GRAPH HIDDEN", 0);
 
         dl->PopClipRect();
     }
 
-    //--- live FFT spectrum overlay --------------------------------------------
     void drawSpectrum(ImDrawList* dl)
     {
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
@@ -273,167 +306,187 @@ private:
                 ring = pre ? fourKEQGetPreSpectrum(inst) : fourKEQGetPostSpectrum(inst);
         if (ring == nullptr) return;
 
-        float buf[kFftSize];
-        ring->snapshot(buf, kFftSize);
-        float mag[kFftSize / 2 + 1];
-        fft.magnitude(buf, mag);
-
-        const float sc = panel.scale();
+        float buf[kFftSize]; ring->snapshot(buf, kFftSize);
+        float mag[kFftSize / 2 + 1]; fft.magnitude(buf, mag);
         const float dt = ImGui::GetIO().DeltaTime;
         const float smooth = 1.0f - std::exp(-dt * 12.0f);
         const int half = kFftSize / 2;
-        std::vector<ImVec2> pts; pts.reserve(half);
+        std::vector<ImVec2> pts; pts.reserve((size_t)half + 2);
+        pts.push_back(panel.P(GX0, GY1));
         for (int k = 1; k <= half; ++k)
         {
-            const float freq = (float)k * 48000.0f / kFftSize; // display bin freq @48k
+            const float freq = (float)k * 48000.0f / kFftSize;
             float db = 20.0f * std::log10(mag[k] > 1e-7f ? mag[k] : 1e-7f);
             specDb[(size_t)k] += (db - specDb[(size_t)k]) * smooth;
             if (freq < kFMin || freq > kFMax) continue;
-            const float lx = (std::log10(freq) - std::log10(kFMin)) / (std::log10(kFMax) - std::log10(kFMin));
-            const float x = GX0 + lx * (GX1 - GX0);
-            // map -72..0 dBFS into the graph height
             float ny = 1.0f - (specDb[(size_t)k] + 72.0f) / 72.0f;
-            ny = ny < 0.0f ? 0.0f : (ny > 1.0f ? 1.0f : ny);
-            pts.push_back(panel.P(x, GY0 + ny * (GY1 - GY0)));
+            ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
+            pts.push_back(panel.P(GX0 + flog(freq) * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }
-        if (pts.size() > 2)
-            dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(90, 130, 100, 150), 0, 1.3f * sc);
+        pts.push_back(panel.P(GX1, GY1));
+        if (pts.size() > 3)
+        {
+            dl->AddConvexPolyFilled(pts.data(), (int)pts.size(), IM_COL32(70, 110, 140, 46));
+            dl->AddPolyline(pts.data() + 1, (int)pts.size() - 2, IM_COL32(96, 150, 190, 130), 0, 1.2f * sc());
+        }
        #else
         (void)dl;
        #endif
     }
 
-    //--- I/O meters -----------------------------------------------------------
+    static float flog(float f) { return (std::log10(f) - std::log10(kFMin)) / (std::log10(kFMax) - std::log10(kFMin)); }
+
+    //========================================================================
+    // channel-strip columns
+    //========================================================================
+    void drawColumns(ImDrawList* dl)
+    {
+        // panel background + dividers + headers
+        dl->AddRectFilled(panel.P(COL[0], 220), panel.P(COL[6], 662), kPanel, 4.0f * sc());
+        const char* names[6] = { "FILTERS", "LF", "LMF", "HMF", "HF", "MASTER" };
+        for (int i = 0; i < 6; ++i)
+        {
+            const float cx = 0.5f * (COL[i] + COL[i + 1]);
+            if (i > 0) dl->AddLine(panel.P(COL[i], 224), panel.P(COL[i], 658), IM_COL32(20, 20, 22, 255), 1.4f * sc());
+            panel.text(dl, cx, 232, 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
+        }
+
+        // FILTERS
+        const float fcx = 0.5f * (COL[0] + COL[1]);
+        colKnob(dl, "hpf", kHpfFreq, 20.f, 500.f, fcx - 14, 306, 26, C_GREY, "HPF", "20", "500", "%.0f", " Hz");
+        smallToggle(dl, "hpfin", kHpfEnabled, fcx + 30, 296, fcx + 62, 318, values[kHpfEnabled], "IN");
+        colKnob(dl, "lpf", kLpfFreq, 3000.f, 20000.f, fcx - 14, 430, 26, C_GREY, "LPF", "3k", "20k", "%.0f", " Hz");
+        smallToggle(dl, "lpfin", kLpfEnabled, fcx + 30, 420, fcx + 62, 442, values[kLpfEnabled], "IN");
+        colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, 556, 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
+
+        band(dl, 1, "LF",  C_LF,  kLfGain, kLfFreq, kLfBell, -1, 30.f, 480.f);
+        band(dl, 2, "LMF", C_LMF, kLmGain, kLmFreq, kLmQ,    +1, 200.f, 2500.f);
+        band(dl, 3, "HMF", C_HMF, kHmGain, kHmFreq, kHmQ,    +1, 600.f, 7000.f);
+        band(dl, 4, "HF",  C_HF,  kHfGain, kHfFreq, kHfBell, -1, 1500.f, 16000.f);
+
+        // MASTER
+        const float mcx = 0.5f * (COL[5] + COL[6]);
+        panelButton(dl, "bypass", mcx - 40, 268, mcx + 40, 292,
+                    values[kBypass] > 0.5f ? "BYPASSED" : "BYPASS",
+                    values[kBypass] > 0.5f ? IM_COL32(150, 60, 48, 255) : IM_COL32(50, 50, 54, 255),
+                    [&]{ toggleParam(kBypass); });
+        panelButton(dl, "autogain", mcx - 40, 300, mcx + 40, 324, "AUTO GAIN",
+                    values[kAutoGain] > 0.5f ? kGreenBtn : IM_COL32(50, 50, 54, 255),
+                    [&]{ toggleParam(kAutoGain); });
+        colKnob(dl, "drive", kSaturation, 0.f, 100.f, mcx, 430, 26, C_GREY, "DRIVE", "0", "100", "%.0f", "");
+        colKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, 556, 26, C_GREY, "OUTPUT", "-12", "+12", "%.1f", " dB");
+        smallToggle(dl, "ms", kMsMode, mcx - 24, 606, mcx + 24, 628, values[kMsMode], "M/S");
+    }
+
+    // A parametric band column: GAIN (top) + FREQ (mid) + Q knob or BELL toggle.
+    void band(ImDrawList* dl, int col, const char* name, ImU32 color,
+              uint32_t gainId, uint32_t freqId, uint32_t thirdId, int thirdKind,
+              float fMin, float fMax)
+    {
+        const float cx = 0.5f * (COL[col] + COL[col + 1]);
+        colKnob(dl, (std::string(name) + "g").c_str(), gainId, -20.f, 20.f, cx, 306, 26, color, "GAIN", "-20", "+20", "%.1f", " dB");
+        char fmn[8], fmx[8]; freqLabel(fMin, fmn); freqLabel(fMax, fmx);
+        colKnob(dl, (std::string(name) + "f").c_str(), freqId, fMin, fMax, cx, 430, 26, color, "FREQ", fmn, fmx, "%.0f", " Hz");
+        if (thirdKind > 0)
+            colKnob(dl, (std::string(name) + "q").c_str(), thirdId, 0.4f, 4.0f, cx, 556, 24, color, "Q", "0.4", "4", "%.2f", "");
+        else
+            smallToggle(dl, (std::string(name) + "b").c_str(), thirdId, cx - 30, 546, cx + 30, 568,
+                        values[thirdId], values[thirdId] > 0.5f ? "BELL" : "SHELF");
+    }
+
+    static void freqLabel(float hz, char* out)
+    {
+        if (hz >= 1000.f) std::snprintf(out, 8, "%gk", hz / 1000.f);
+        else              std::snprintf(out, 8, "%g", hz);
+    }
+
+    // knob + name label below + min/max tick labels at the dial ends.
+    void colKnob(ImDrawList* dl, const char* id, uint32_t param, float minV, float maxV,
+                 float cx, float cy, float r, ImU32 face, const char* name,
+                 const char* lmin, const char* lmax, const char* fmt, const char* suffix)
+    {
+        panel.knob(id, param, minV, maxV, cx, cy, r, values[param], kDefaults[param],
+                   false, false, fmt, suffix, face);
+        // dial-end tick labels
+        const float a0 = duskdpf::DuskPanel::knobAngle(0.0f), a1 = duskdpf::DuskPanel::knobAngle(1.0f);
+        panel.text(dl, cx + std::sin(a0) * (r + 12), cy - std::cos(a0) * (r + 12) - 4, 8.0f, IM_COL32(140, 142, 146, 255), lmin, 1);
+        panel.text(dl, cx + std::sin(a1) * (r + 12), cy - std::cos(a1) * (r + 12) - 4, 8.0f, IM_COL32(140, 142, 146, 255), lmax, -1);
+        panel.text(dl, cx, cy + r + 8, 10.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
+    }
+
+    void smallToggle(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0, float x1, float y1,
+                     float& value, const char* label)
+    {
+        const bool on = value > 0.5f;
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        if (ImGui::IsItemClicked()) toggleParam(param);
+        dl->AddRectFilled(b0, b1, on ? IM_COL32(64, 96, 130, 255) : IM_COL32(44, 44, 48, 255), 3.0f * sc());
+        dl->AddRect(b0, b1, IM_COL32(90, 90, 96, 220), 3.0f * sc(), 0, 1.0f * sc());
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 9.0f, on ? pal().white : IM_COL32(160, 162, 166, 255), label, 0, true);
+    }
+
+    template <class Fn>
+    void panelButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                     const char* label, ImU32 bg, Fn onClick)
+    {
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) onClick();
+        dl->AddRectFilled(b0, b1, bg, 4.0f * sc());
+        dl->AddRect(b0, b1, hov ? IM_COL32(200, 200, 205, 220) : IM_COL32(90, 90, 96, 200), 4.0f * sc(), 0, 1.2f * sc());
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.0f, pal().white, label, 0, true);
+    }
+
+    //========================================================================
+    // edge meters (INPUT left, OUTPUT right)
+    //========================================================================
     void drawMeters(ImDrawList* dl)
     {
-        const auto& pal = panel.palette();
-        const float sc = panel.scale();
-        dl->AddRectFilled(panel.P(MX0 - 4, MY0 - 4), panel.P(MX1 + 4, MY1 + 4), IM_COL32(70, 70, 72, 255), 4.0f * sc);
-        dl->AddRectFilled(panel.P(MX0, MY0), panel.P(MX1, MY1), IM_COL32(15, 17, 20, 255));
-
-        float inL = values[kOutPeakL], inR = values[kOutPeakR], outL = inL, outR = inR;
+        float inL = 0, inR = 0, outL = 0, outR = 0;
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
         if (fourKEQGetInputPeakL != nullptr)
             if (void* inst = getPluginInstancePointer())
-            {
-                inL = fourKEQGetInputPeakL(inst); inR = fourKEQGetInputPeakR(inst);
-                outL = fourKEQGetOutputPeakL(inst); outR = fourKEQGetOutputPeakR(inst);
-            }
+            { inL = fourKEQGetInputPeakL(inst); inR = fourKEQGetInputPeakR(inst);
+              outL = fourKEQGetOutputPeakL(inst); outR = fourKEQGetOutputPeakR(inst); }
        #endif
-        const float bw = 20.0f, gap = 6.0f;
-        const float x0 = MX0 + 12;
-        drawBar(dl, x0,             MY0 + 20, bw, MY1 - 18, inL,  "I-L");
-        drawBar(dl, x0 + bw + gap,  MY0 + 20, bw, MY1 - 18, inR,  "I-R");
-        drawBar(dl, x0 + 2*(bw+gap)+8, MY0 + 20, bw, MY1 - 18, outL, "O-L");
-        drawBar(dl, x0 + 3*(bw+gap)+8, MY0 + 20, bw, MY1 - 18, outR, "O-R");
-        panel.text(dl, 0.5f * (MX0 + MX1), MY0 + 6, 9.0f, pal.whiteDim, "METERS", 0);
+        panel.text(dl, INX0 - 2, 208, 8.5f, IM_COL32(150, 152, 156, 255), "INPUT", -1, true);
+        panel.text(dl, OUTX1 + 2, 208, 8.5f, IM_COL32(150, 152, 156, 255), "OUTPUT", 1, true);
+        meterPair(dl, INX0, INX1, inL, inR);
+        meterPair(dl, OUTX0, OUTX1, outL, outR);
+        char b[16];
+        std::snprintf(b, sizeof(b), "%.0f", 20.0f * std::log10(std::max(inL, inR) > 1e-5f ? std::max(inL, inR) : 1e-5f));
+        panel.text(dl, 0.5f * (INX0 + INX1), MET_Y1 + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
+        std::snprintf(b, sizeof(b), "%.0f", 20.0f * std::log10(std::max(outL, outR) > 1e-5f ? std::max(outL, outR) : 1e-5f));
+        panel.text(dl, 0.5f * (OUTX0 + OUTX1), MET_Y1 + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
     }
 
-    void drawBar(ImDrawList* dl, float x, float yTop, float w, float yBot, float lin, const char* lbl)
+    void meterPair(ImDrawList* dl, float x0, float x1, float l, float r)
     {
-        const float sc = panel.scale();
-        dl->AddRectFilled(panel.P(x, yTop), panel.P(x + w, yBot), IM_COL32(28, 30, 33, 255));
+        dl->AddRectFilled(panel.P(x0 - 2, MET_Y0 - 2), panel.P(x1 + 2, MET_Y1 + 2), IM_COL32(60, 60, 63, 255), 2.0f * sc());
+        dl->AddRectFilled(panel.P(x0, MET_Y0), panel.P(x1, MET_Y1), IM_COL32(14, 16, 18, 255));
+        const float mid = 0.5f * (x0 + x1);
+        meterBar(dl, x0 + 1, mid - 0.5f, l);
+        meterBar(dl, mid + 0.5f, x1 - 1, r);
+    }
+
+    void meterBar(ImDrawList* dl, float x0, float x1, float lin)
+    {
         float db = 20.0f * std::log10(lin > 1e-5f ? lin : 1e-5f);
-        float t = (db + 60.0f) / 60.0f; t = t < 0 ? 0 : (t > 1 ? 1 : t); // -60..0 dBFS
-        const float yFill = yBot - t * (yBot - yTop);
-        ImU32 col = db > -3.0f ? IM_COL32(230, 70, 55, 255)
-                  : db > -12.0f ? IM_COL32(230, 200, 70, 255)
-                                : IM_COL32(90, 200, 110, 255);
-        dl->AddRectFilled(panel.P(x, yFill), panel.P(x + w, yBot), col);
-        panel.text(dl, x + w * 0.5f, yBot + 3, 7.5f, IM_COL32(120, 124, 130, 255), lbl, 0);
-    }
-
-    //--- band columns ---------------------------------------------------------
-    void drawBands(ImDrawList* dl)
-    {
-        const float y = 300;      // knob row center
-        const float top = 268;    // label baseline
-        // HPF column
-        panel.knobLabel(dl, 92, top, "HPF");
-        panel.knob("hpf_f", kHpfFreq, 20.f, 500.f, 92, y, 24, values[kHpfFreq], kDefaults[kHpfFreq], false, true, "%.0f", " Hz");
-        panel.toggle("hpf_en", kHpfEnabled, 70, 338, 114, 356, values[kHpfEnabled], values[kHpfEnabled] > 0.5f ? "ON" : "OFF");
-
-        drawBand(dl, 210, "LF", kLfGain, kLfFreq, 30.f, 480.f, kLfBell, -1);
-        drawBand(dl, 372, "LM", kLmGain, kLmFreq, 200.f, 2500.f, kLmQ, +1);
-        drawBand(dl, 534, "HM", kHmGain, kHmFreq, 600.f, 7000.f, kHmQ, +1);
-        drawBand(dl, 696, "HF", kHfGain, kHfFreq, 1500.f, 16000.f, kHfBell, -1);
-
-        // LPF column
-        panel.knobLabel(dl, 872, top, "LPF");
-        panel.knob("lpf_f", kLpfFreq, 3000.f, 20000.f, 872, y, 24, values[kLpfFreq], kDefaults[kLpfFreq], false, true, "%.0f", " Hz");
-        panel.toggle("lpf_en", kLpfEnabled, 850, 338, 894, 356, values[kLpfEnabled], values[kLpfEnabled] > 0.5f ? "ON" : "OFF");
-    }
-
-    // A parametric band column: gain knob (top), freq knob (below), and a
-    // Q knob (mids, thirdParam>0) or a bell/shelf toggle (LF/HF, thirdParam<0).
-    void drawBand(ImDrawList* dl, float cx, const char* name,
-                  uint32_t gainId, uint32_t freqId, float fMin, float fMax,
-                  uint32_t thirdId, int thirdKind)
-    {
-        panel.knobLabel(dl, cx, 268, name);
-        panel.knob((std::string(name) + "_g").c_str(), gainId, -20.f, 20.f, cx - 26, 300, 20,
-                   values[gainId], kDefaults[gainId], false, true, "%.1f", " dB");
-        panel.knob((std::string(name) + "_f").c_str(), freqId, fMin, fMax, cx + 26, 300, 20,
-                   values[freqId], kDefaults[freqId], false, true, "%.0f", " Hz");
-        if (thirdKind > 0) // Q knob
-            panel.knob((std::string(name) + "_q").c_str(), thirdId, 0.4f, 4.0f, cx, 360, 18,
-                       values[thirdId], kDefaults[thirdId], false, true, "%.2f", "");
-        else               // bell/shelf toggle
-            panel.toggle((std::string(name) + "_b").c_str(), thirdId, cx - 26, 350, cx + 26, 370,
-                         values[thirdId], values[thirdId] > 0.5f ? "BELL" : "SHELF");
-    }
-
-    //--- global row -----------------------------------------------------------
-    void drawGlobals(ImDrawList* dl)
-    {
-        const auto& pal = panel.palette();
-        const float sc = panel.scale();
-        dl->AddRectFilled(panel.P(20, 392), panel.P(kDesignW - 20, 500), IM_COL32(22, 22, 24, 255), 6.0f * sc);
-        const float y = 448, top = 404;
-
-        panel.knobLabel(dl, 70, top, "INPUT");
-        panel.knob("ingain", kInputGain, -12.f, 12.f, 70, y, 20, values[kInputGain], kDefaults[kInputGain], false, true, "%.1f", " dB");
-        panel.knobLabel(dl, 158, top, "OUTPUT");
-        panel.knob("outgain", kOutputGain, -12.f, 12.f, 158, y, 20, values[kOutputGain], kDefaults[kOutputGain], false, true, "%.1f", " dB");
-        panel.knobLabel(dl, 246, top, "SATUR.");
-        panel.knob("sat", kSaturation, 0.f, 100.f, 246, y, 20, values[kSaturation], kDefaults[kSaturation], false, true, "%.0f", " %");
-
-        // EQ type (Brown/Black)
-        panel.text(dl, 360, top + 4, 10, pal.white, "EQ VOICE", 0, true);
-        panel.toggle("eqtype", kEqType, 330, 430, 434, 452, values[kEqType],
-                     values[kEqType] > 0.5f ? "BLACK (G)" : "BROWN (E)");
-        // Oversampling
-        panel.text(dl, 360, top + 62, 10, pal.white, "OVERSAMPLE", 0, true);
-        panel.toggle("os", kOversampling, 330, 464, 434, 486, values[kOversampling],
-                     values[kOversampling] > 0.5f ? "4x" : "2x");
-
-        // M/S + auto-gain
-        panel.toggle("ms", kMsMode, 470, 430, 574, 452, values[kMsMode],
-                     values[kMsMode] > 0.5f ? "M/S ON" : "M/S OFF");
-        panel.toggle("autogain", kAutoGain, 470, 464, 574, 486, values[kAutoGain],
-                     values[kAutoGain] > 0.5f ? "AUTOGAIN" : "AUTO OFF");
-
-        // Power / bypass (host-designated)
-        const bool on = values[kBypass] < 0.5f;
-        panel.text(dl, 900, top, 10, pal.white, "POWER", 0, true);
-        panel.led(dl, 900, top + 22, on, 7.0f);
-        // toggle flips bypass; note inverted (on == not bypassed)
-        float shown = on ? 0.0f : 1.0f; // toggle expects value>0.5 == active(bypassed)
-        (void)shown;
-        const ImVec2 h0 = panel.P(872, 440), h1 = panel.P(928, 488);
-        ImGui::SetCursorScreenPos(h0);
-        ImGui::InvisibleButton("power", ImVec2(h1.x - h0.x, h1.y - h0.y));
-        if (ImGui::IsItemClicked())
+        float t = (db + 60.0f) / 60.0f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const float yFill = MET_Y1 - t * (MET_Y1 - MET_Y0);
+        ImU32 col = db > -1.5f ? IM_COL32(226, 70, 55, 255)
+                  : db > -10.f ? IM_COL32(224, 196, 72, 255) : IM_COL32(96, 196, 112, 255);
+        dl->AddRectFilled(panel.P(x0, yFill), panel.P(x1, MET_Y1), col);
+        // segment ticks
+        for (int i = 1; i < 12; ++i)
         {
-            const float nv = on ? 1.0f : 0.0f;
-            editParameter(kBypass, true); values[kBypass] = nv;
-            setParameterValue(kBypass, nv); editParameter(kBypass, false);
+            const float y = MET_Y0 + (float)i / 12.0f * (MET_Y1 - MET_Y0);
+            dl->AddLine(panel.P(x0, y), panel.P(x1, y), IM_COL32(14, 16, 18, 200), 1.0f * sc());
         }
-        dl->AddRectFilled(panel.P(884, 448), panel.P(916, 484), IM_COL32(45, 45, 48, 255), 4.0f * sc);
-        dl->AddRectFilled(on ? panel.P(888, 452) : panel.P(888, 468),
-                          on ? panel.P(912, 466) : panel.P(912, 482),
-                          IM_COL32(190, 190, 194, 255), 3.0f * sc);
-        panel.text(dl, 900, 490, 8.5f, on ? pal.white : pal.whiteDim, on ? "ON" : "BYPASS", 0);
     }
 
     duskdpf::DuskPanel panel;
@@ -442,6 +495,7 @@ private:
     ImFont* labelFont = nullptr;
     float values[kParamCount] = {};
     int currentPreset = -1;
+    bool showGraph = true;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
 };
