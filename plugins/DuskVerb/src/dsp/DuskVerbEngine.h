@@ -217,6 +217,7 @@ public:
     // rooms. 0.02 (engine default) = bit-identical; forwarded to the Dattorro
     // tank only.
     void setDattorroDensityJitter (float fraction);
+    void setDattorroModeNotch (float hz, float cutDb, float q);   // in-loop mode notch (boing); cutDb 0 = off/bit-null
     // Plate density rework (algo 0 + algo 1). depth 0 / reduction 1.0 = legacy.
     void setDattorroDensity (float depth01);          // 0 legacy 3 APs -> >0 dense 6 APs
     void setDattorroModReduction (float reduction01); // 1.0 legacy mod -> <1.0 stiller tail
