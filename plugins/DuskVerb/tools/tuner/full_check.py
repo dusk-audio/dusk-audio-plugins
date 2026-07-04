@@ -157,6 +157,16 @@ GATES = {
     # is skipped for shimmer (octave voices = even multiples by design), but
     # 3rd/5th harmonics are genuine distortion (sat/clip grit). DV% - anchor%.
     'sine1k_odd_thd_excess_pct': 1.0,
+    # ── PIANO STEM gates (2026-07-04, real musical material) ── The user's own
+    # audition material rendered through BOTH DV and the anchor plugins
+    # (Shimmer program replay / VVV nparam replay validated corr 1.0000 /
+    # Lex fxp state replay). Catches what synthetic stimuli miss on the
+    # content the user actually listens with. Skip when either side lacks
+    # a *_piano.wav.
+    'piano_rms_dB':          2.0,   # broadband level on the stem (post gain-match)
+    'piano_band_dB':         3.0,   # worst of 6 bands over the playing window (JND)
+    'piano_tail_dB':         3.0,   # worst of 4 bands in the post-stem decay window
+    'piano_growth_dB':       1.5,   # DV-only: worst band growth across the stem (buildup on real material)
     # Impulse-response RMS match — the TRANSIENT/hit loudness. The existing RMS
     # gates use sustained-pink/noiseburst (steady-state), which can match while
     # the impulse (a drum hit) is +2.7 dB hot. Catches "DV louder on the hit".
@@ -1791,6 +1801,67 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if not passing: fails.append(line.strip())
 
     # ─── Sine 1 kHz HARMONIC DISTORTION — nonlinearity detector ───
+    # ─── PIANO STEM (real musical material — the user's audition content) ───
+    pn_dv = find_stim(dv_dir, 'piano'); pn_lx = find_stim(lex_dir, 'piano')
+    if pn_dv and pn_lx:
+        print("\n── PIANO STEM (22.6 s music + tail; anchor replay-validated) ──")
+        _xd, _srp = sf.read(pn_dv); _xl, _ = sf.read(pn_lx)
+        _md = _xd.mean(axis=1) if _xd.ndim > 1 else _xd
+        _ml = _xl.mean(axis=1) if _xl.ndim > 1 else _xl
+        _stem_end = 22.6
+        def _band_rms_db(m, lo, hi, t0, t1):
+            i0, i1 = int(t0 * _srp), min(int(t1 * _srp), len(m))
+            if i1 - i0 < 256: return None
+            sos = butter(4, [lo / (_srp/2), min(hi / (_srp/2), 0.99)], btype='band', output='sos')
+            b = sosfiltfilt(sos, m[i0:i1])
+            return 20.0 * np.log10(float(np.sqrt(np.mean(b ** 2))) + 1e-12)
+        # 1) broadband stem level
+        _rd = 20.0*np.log10(float(np.sqrt(np.mean(_md[int(1*_srp):int(_stem_end*_srp)]**2)))+1e-12)
+        _rl = 20.0*np.log10(float(np.sqrt(np.mean(_ml[int(1*_srp):int(_stem_end*_srp)]**2)))+1e-12)
+        _d = _rd - _rl
+        _pass = abs(_d) <= GATES['piano_rms_dB']
+        line = f"  {'piano RMS':30s}  DV={_rd:6.1f}  Lex={_rl:6.1f}  Δ={_d:+5.1f}  gate=±{GATES['piano_rms_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+        # 2) band balance over the playing window
+        _bands = [(20,100,'sub'),(100,300,'low'),(300,1000,'lowmid'),(1000,3000,'mid'),(3000,8000,'hi'),(8000,16000,'air')]
+        worst, wl = 0.0, ''
+        for lo, hi, lab in _bands:
+            bd = _band_rms_db(_md, lo, hi, 1, _stem_end); bl = _band_rms_db(_ml, lo, hi, 1, _stem_end)
+            if bd is None or bl is None: continue
+            dd = bd - bl
+            print(f"    {lab:7s} {lo:5d}-{hi:<5d}  DV={bd:6.1f}  Lex={bl:6.1f}  Δ={dd:+5.1f}")
+            if abs(dd) > abs(worst): worst, wl = dd, lab
+        _pass = abs(worst) <= GATES['piano_band_dB']
+        line = f"  {'piano band balance (worst)':30s}  Δ={worst:+5.1f} @ {wl}  gate=±{GATES['piano_band_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+        # 3) post-stem tail balance (the ring-out the ear judges last)
+        worst, wl = 0.0, ''
+        for lo, hi, lab in [(60,250,'low'),(250,1000,'lowmid'),(1000,4000,'mid'),(4000,12000,'hi')]:
+            bd = _band_rms_db(_md, lo, hi, _stem_end + 0.5, _stem_end + 3.0)
+            bl = _band_rms_db(_ml, lo, hi, _stem_end + 0.5, _stem_end + 3.0)
+            if bd is None or bl is None: continue
+            dd = bd - bl
+            if abs(dd) > abs(worst): worst, wl = dd, lab
+        _pass = abs(worst) <= GATES['piano_tail_dB']
+        line = f"  {'piano tail balance (worst)':30s}  Δ={worst:+5.1f} @ {wl}  gate=±{GATES['piano_tail_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+        # 4) anchor-relative low-band growth across the stem (buildup on real
+        # material; the music's own dynamics cancel in the DV-anchor difference)
+        worst, wf = -120.0, 0
+        for f0 in (62, 125, 250):
+            e_d = _band_rms_db(_md, f0/1.3, f0*1.3, 2, 7);  l_d = _band_rms_db(_md, f0/1.3, f0*1.3, 17, _stem_end)
+            e_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 2, 7);  l_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 17, _stem_end)
+            if None in (e_d, l_d, e_l, l_l): continue
+            g = (l_d - e_d) - (l_l - e_l)
+            if g > worst: worst, wf = g, f0
+        _pass = worst <= GATES['piano_growth_dB']
+        line = f"  {'piano low growth vs anchor':30s}  worst {worst:+5.1f} @ {wf} Hz  gate≤+{GATES['piano_growth_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+
     if dv_dir and lex_dir and name in SHIMMER_PRESETS:
         print("\n── SINE 1 kHz THD ── SKIPPED (Shimmer engine: octave pitch-shift "
               "reads as harmonics by design)")

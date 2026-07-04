@@ -42,7 +42,7 @@ FC   = f"{ROOT}/plugins/DuskVerb/tools/tuner/full_check.py"
 PROC = f"{ROOT}/plugins/DuskVerb/src/PluginProcessor.cpp"
 TR   = os.path.expanduser("~/projects/dusk-audio-tools/tuner_runs/anchors")
 RD   = os.path.expanduser("~/projects/dusk-audio-tools/anchors/rendered")
-STIM = ["impulse", "noiseburst", "snare", "sine1k", "sustained"]
+STIM = ["impulse", "noiseburst", "snare", "sine1k", "sustained", "piano"]
 CAL_TOL = 0.15            # realized T60 must be within +/-15% of commanded
 OCTAVE_HZ = [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
