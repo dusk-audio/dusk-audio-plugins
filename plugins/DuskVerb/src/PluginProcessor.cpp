@@ -60,6 +60,7 @@ struct TuningEnv
     const char* shimmernoise;
     const char* shimmerhfs;
     const char* ertaps;
+    const char* datnotch;
     const char* frontload;
     const char* dpvrefl;
     const char* densefield;
@@ -105,6 +106,7 @@ struct TuningEnv
           shimmernoise (std::getenv ("DUSKVERB_SHIMMERNOISE")),
           shimmerhfs (std::getenv ("DUSKVERB_SHIMMERHFS")),
           ertaps (std::getenv ("DUSKVERB_ERTAPS")),
+          datnotch (std::getenv ("DUSKVERB_DATNOTCH")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
           densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
@@ -2820,6 +2822,40 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         if (const char* envDj = tuningEnv().densjit; envDj != nullptr && envDj[0] != '\0')
             dj = juce::String (envDj).getFloatValue();
         engine.setDattorroDensityJitter (dj);
+    }
+
+    // In-loop mode notch (Dattorro tank) — narrow peaking CUT inside the
+    // recirculation, compounding per pass: shortens ONE mode's decay (the room
+    // "boing": Live 211 Hz, Medium 334, Small 963). An OUTPUT notch only cuts
+    // level and the boing hops to the next mode; in-loop attacks its T60.
+    // Env DUSKVERB_DATNOTCH="hz,cutDb,Q"; else per-preset bake; else off/bit-null.
+    {
+        struct MN { float hz, cutDb, q; };
+        static constexpr std::array<std::pair<std::string_view, MN>, 1> kModeNotchByName = {{
+            // BEGIN_DATNOTCH_MAP
+            // 2026-07-03: wide gentle cut centered between the 211/247 Hz mode pair —
+            // boing prominence 39.2 -> 26.5 dB (Δ vs anchor +20 -> +7.3, detector hops
+            // to the weaker 317 mode) + ss-low-100-250 passes: 28 -> 27. Sharper/deeper
+            // variants kill 211 harder but trade body 125-250 worse. Ported probes:
+            // SDR 963 (hops to a LOUDER 1925 mode), MDR 334 (marginal), VGP 525
+            // (T60-500/edt break) — all net-0 or worse, not baked.
+            { "Live Room", { 228.0f, -4.0f, 3.5f } },
+            // END_DATNOTCH_MAP
+        }};
+        float mhz = 0.0f, mcut = 0.0f, mq = 8.0f;
+        if (const char* env = tuningEnv().datnotch; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() >= 2) { mhz = t[0].getFloatValue(); mcut = t[1].getFloatValue(); }
+            if (t.size() >= 3) mq = t[2].getFloatValue();
+        }
+        else
+        {
+            const std::string_view nv (name);
+            for (const auto& e : kModeNotchByName)
+                if (! e.first.empty() && e.first == nv) { mhz = e.second.hz; mcut = e.second.cutDb; mq = e.second.q; break; }
+        }
+        engine.setDattorroModeNotch (mhz, mcut, mq);
     }
 
     // Plate density rework (algo 0 Dattorro + algo 1 DattorroPlateVintage):

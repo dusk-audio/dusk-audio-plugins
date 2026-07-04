@@ -735,6 +735,8 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setTankFeedEQ (200.0f, 0.0f, 2500.0f, 0.0f);
     // Dattorro density-AP jitter → engine default (0.02).
     setDattorroDensityJitter (0.02f);
+    // In-loop mode notch → off.
+    setDattorroModeNotch (0.0f, 0.0f, 8.0f);
     // Output diffusion → disabled. applyEngineConfig's else-branch covers the
     // with-preset path, but the null-preset swap calls THIS alone — without it,
     // a prior preset's post-tank diffusion (e.g. Bright Hall) would leak.
@@ -963,6 +965,11 @@ void DuskVerbEngine::setPostTankEQBand (int index, float freqHz, float qFactor, 
 void DuskVerbEngine::setDattorroDensityJitter (float fraction)
 {
     dattorro_.setDensityJitter (fraction);
+}
+
+void DuskVerbEngine::setDattorroModeNotch (float hz, float cutDb, float q)
+{
+    dattorro_.setModeNotch (hz, cutDb, q);
 }
 
 void DuskVerbEngine::setDattorroDensity (float depth01)
