@@ -148,6 +148,13 @@ GATES = {
     # caught with no gate to catch it). DV pre-onset RMS (dB rel peak) may exceed
     # the anchor's by at most this. A real pre-echo reads +15..30 dB over.
     'pre_onset_excess_dB':  6.0,
+    # FIRST-ARRIVAL time (2026-07-04): |Δ| of the impulse wet's first
+    # -30 dB-rel-peak crossing vs the anchor. Every other temporal metric
+    # peak-ALIGNS, so a pure predelay mismatch is invisible to the suite —
+    # Live Room shipped 25 ms late for weeks (anchor has ZERO predelay)
+    # and only the ear caught it. 5 ms ~ the audibility threshold for
+    # arrival-gap changes on transients.
+    'first_arrival_ms':     5.0,
     # PER-BAND TAIL GROWTH (2026-07-04, all presets): a healthy band decays;
     # feedback past unity GROWS (Deep Blue Day rungs +25 dB — and the T60 fit
     # read the pathology as a favorable long decay). Worst sliding-window
@@ -1316,6 +1323,19 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
+
+            # ── FIRST ARRIVAL (absolute, pre-alignment) ──
+            def _first_arrival_ms (path):
+                _x, _sr = sf.read (path); _m = _x.mean(axis=1) if _x.ndim > 1 else _x
+                _env = np.abs (hilbert (_m)); _pk = _env.max()
+                _ix = np.where (_env >= _pk * 10.0 ** (-30.0 / 20.0))[0]
+                return (_ix[0] / _sr * 1000.0) if len (_ix) else 0.0
+            fa_dv = _first_arrival_ms (imp_dv); fa_lx = _first_arrival_ms (imp_lx)
+            _pass = abs (fa_dv - fa_lx) <= GATES['first_arrival_ms']
+            line = (f"  {'first arrival (ms)':30s}  DV={fa_dv:6.1f}  Lex={fa_lx:6.1f}  "
+                    f"Δ={fa_dv - fa_lx:+6.1f}  gate=±{GATES['first_arrival_ms']}  {'✓' if _pass else '✗'}")
+            print (line)
+            if not _pass: fails.append (line.strip())
 
             # ── Top-3 modal prominence (anti-mode-hop companion) ──
             t3_dv = tail_resonance_top3(imp_dv); t3_lx = tail_resonance_top3(imp_lx)
