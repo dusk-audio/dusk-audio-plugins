@@ -3308,7 +3308,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // −55→−30 (Val −22), 60-125 −54→−20 (Val −18), 250 Hz −28→−3 (Val −9). The deep
             // low warmth DV lacked. Residual: 250-500 runs ~+6 dB hot (the +12 st up voice
             // re-pitches the sub's 250 → 500) — structural, not tunable from here.
-            { "Deep Blue Day", 4.50f },   // 2026-07-03 3.2->4.5: closes boom-sub 1-2s (tail low warmth) + the down-octave cascade L1 (7.25->pass); saturates past 4.5 (5.5 measured identical).
+            { "Deep Blue Day", 1.50f },   // 2026-07-04 4.5->1.5 (EAR): the recirculating sub voice pushed the loop's low-register gain past unity — 62/125/250 rungs GREW +19..25 dB across a 20 s tail into a softClip equilibrium that NEVER fades (user: "buildup that never fades out"; Valhalla gently fades). Unity crossing measured at ~2.0; 1.5 fades -7 dB and the dry-fed octave cascade (below) restores the low fullness SAFELY (feed-forward, cannot build). Gates hid this: sinelong renders tone-only (no tail window), and the buildup inflated low T60 readings toward the anchor's long values.
         }};
         static constexpr std::array<std::pair<std::string_view, float>, 1> kShimmerHpfByName = {{
             { "Deep Blue Day", 24.0f },  // feedback HPF 60→24 so the regenerated 31-125 Hz wash survives the loop (24 still clears the ~12 Hz grain rumble). Flattens DV's over-steep low cascade toward Valhalla's.
@@ -3411,7 +3411,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // to −12). All-zero = off/bit-null. Env DUSKVERB_SHIMMEROCT="g500,g250,g125,g62".
         static const std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
             { "Black Hole",    { 0.0f, 0.0f, 0.0f, 0.0f } },
-            { "Deep Blue Day", { 0.0f, 0.5f, 0.5f, 0.0f } },   // 2026-07-03: 250/125 Hz fill — with Decay 20 + feedback 0.7 it recovers T60-125/250 (in-gate) that the feedback cut alone pushed long; non-additive (oct alone broke mid gates, Decay-20 alone broke low_mid; the pair nets -1). g500 stays 0 (the +12 up voice already re-pitches the sub's 250->500, 250-500 runs hot).
+            { "Deep Blue Day", { 0.0f, 0.8f, 0.9f, 0.5f } },   // 2026-07-04 {0,.5,.5,0}->{0,.8,.9,.5} (EAR, with sub 4.5->1.5): the dry-fed cascade takes over the low warmth the recirculating sub voice used to supply — feed-forward, so it decays WITH the tank and cannot build up. Recovers down-octave cascade L1 + boom vs the plain sub cut (30->27). g500 stays 0 (the +12 up voice already re-pitches 250->500).
         }};
         float octGains[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         for (const auto& e : kShimmerOctaveByName) if (e.first == nameView) { for (int i = 0; i < 4; ++i) octGains[i] = e.second[i]; break; }
