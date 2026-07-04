@@ -2233,7 +2233,12 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         struct ETapConfig { std::string_view name; int n; float ms[8]; float g[8]; float lpFc; };
         static constexpr std::array<ETapConfig, 1> kEarlyTapsByName = {{
             // BEGIN_ERTAPS_MAP (times from full_check 'early refl' anchor readouts)
-            { "", 0, {}, {}, 9000.0f },   // placeholder — filled per-preset after env sweeps
+            // 2026-07-04: one quiet dark tap at the VVV anchor's 11.6 ms first
+            // arrival — the QuadTank's earliest output tap sits at 18.8 ms and
+            // the velvet field at 110, so nothing in the composite could arrive
+            // on time. Lands arrival 11.5 ms exact + closes sine1k/pitch-chorus/
+            // piano-band (17 -> 14). The tap bank's first baked win.
+            { "79 Vocal Chamber", 1, { 11.6f }, { 0.2f }, 6000.0f },
             // END_ERTAPS_MAP
         }};
         float ms[8] = {}, g[8] = {}; int n = 0; float lpFc = 9000.0f;
