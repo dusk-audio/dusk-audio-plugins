@@ -95,7 +95,7 @@ private:
     // GATE (below) supplies the pre-onset silence + post-peak cliff, so floorGain_
     // drops to near-zero (the old 0.45 dodged an env_p2p cliff vs the OLD UNGATED
     // anchor — that anchor/verdict is stale; the current anchor IS +72dB gated).
-    float rampMs_    = 470.0f;  // onset RISE to the peak (swept 2026-06-17: attack≈345ms match)
+    float rampMs_    = 310.0f;  // onset RISE to the peak. 2026-07-04 EAR "too much vs the subtle Lex": 470 made the swell keep rising to 606 ms and peak +1.5 dB hot where the Lex peaks at 410 ms and fades — 310 (+102 ms predelay) lands the peak at ~410.
     float slope_     = 0.7f;    // Tap Slope; <1 = concave (was 1.6 convex)
     float floorGain_ = 0.05f;   // near-zero: gate owns silence/cliff (was 0.45)
     float density_   = 0.85f;   // from setTankDiffusion
@@ -122,7 +122,7 @@ private:
     int   holdCounter_ = 0;        // samples remaining in Hold before Closing
     int   holdSamples_ = 0;        // = holdMs_ * sr (base hold, retriggerable)
     float holdMs_      = 340.0f;   // BASE hold ms (≈ impulse; short input) (swept)
-    float closeTauMs_  = 3.0f;     // close slew tau → hard cliff (swept)
+    float closeTauMs_  = 30.0f;    // close slew tau. 2026-07-04: the re-measured anchor FADES ~40 dB over 200 ms after the peak (tau ~45 ms), not a 3 ms cliff — 30 ms reads subtle, not chopped.
 
     // DURATION-DEPENDENT hold: hold grows with how long input has been present in
     // this burst, so an impulse cuts fast (impulse tail_t60 0.094s) while
