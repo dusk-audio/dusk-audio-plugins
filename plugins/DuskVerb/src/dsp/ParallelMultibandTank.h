@@ -183,7 +183,7 @@ public:
 private:
     static constexpr int kLines  = 4;
     static constexpr int kMaxExc = 16;
-    static constexpr float kExcSamp[kBands] = { 0.0f, 0.0f, 2.0f, 3.0f, 4.0f, 5.0f };
+    static constexpr float kExcSamp[kBands] = { 0.0f, 0.0f, 2.0f, 3.0f, 2.0f, 1.0f };   // 2026-07-04 b4/b5 4,5 -> 2,1: ±4-5-sample wander through LINEAR-interp reads on 10-16 ms lines is a per-pass HF loss that capped realized T60-16k at ~1.0 s regardless of command; the top band is noise-like anyway and needs no wander.
 
     void splitBands (float v, int ch, float* bands)
     {
