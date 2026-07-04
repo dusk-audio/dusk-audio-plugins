@@ -202,119 +202,6 @@ public:
         return changed;
     }
 
-    // SSL-style concentric band knob: an outer skirt (gain) around an inner
-    // knob (frequency) sharing a center. The region the pointer press lands in
-    // (inner disc vs outer annulus) picks which parameter that drag controls;
-    // wheel / double-click act on whichever region the cursor is over. gain and
-    // freq are mutated in place. outerCol tints the skirt (LF passes the EQ-type
-    // colour); the readout shows the region under the cursor.
-    void concentricKnob(const char* id,
-                        uint32_t gParam, float gMin, float gMax, float& gVal, float gDef,
-                        uint32_t fParam, float fMin, float fMax, float& fVal, float fDef,
-                        float cx, float cy, float R, ImU32 outerCol)
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const float RR = R * s;
-        const ImVec2 c = P(cx, cy);
-        const float innerR = RR * 0.52f;
-
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.0f * RR, 2.0f * RR));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-
-        auto overInner = [&]() {
-            const ImVec2 m = ImGui::GetIO().MousePos;
-            const float d = std::sqrt((m.x - c.x) * (m.x - c.x) + (m.y - c.y) * (m.y - c.y));
-            return d < innerR;
-        };
-        auto region = [&](bool inner, uint32_t& p, float& lo, float& hi, float*& v, float& def) {
-            if (inner) { p = fParam; lo = fMin; hi = fMax; v = &fVal; def = fDef; }
-            else       { p = gParam; lo = gMin; hi = gMax; v = &gVal; def = gDef; }
-        };
-
-        if (ImGui::IsItemActivated())
-        {
-            concInner = overInner();
-            uint32_t p; float lo, hi, def; float* v;
-            region(concInner, p, lo, hi, v, def);
-            host->beginEdit(p); dragValue = *v;
-        }
-        if (active)
-        {
-            uint32_t p; float lo, hi, def; float* v;
-            region(concInner, p, lo, hi, v, def);
-            const float speed = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-            dragValue -= ImGui::GetIO().MouseDelta.y * speed * (hi - lo);
-            dragValue = dragValue < lo ? lo : (dragValue > hi ? hi : dragValue);
-            if (dragValue != *v) { *v = dragValue; host->setParam(p, dragValue); }
-        }
-        if (ImGui::IsItemDeactivated())
-        {
-            uint32_t p; float lo, hi, def; float* v; region(concInner, p, lo, hi, v, def);
-            host->endEdit(p);
-        }
-        if (hovered && !active)
-        {
-            const bool inner = overInner();
-            uint32_t p; float lo, hi, def; float* v; region(inner, p, lo, hi, v, def);
-            if (ImGui::IsMouseDoubleClicked(0))
-            {
-                host->beginEdit(p); *v = def; host->setParam(p, def); host->endEdit(p);
-            }
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f)
-            {
-                float nv = *v + wheel * (hi - lo) * 0.02f;
-                nv = nv < lo ? lo : (nv > hi ? hi : nv);
-                host->beginEdit(p); *v = nv; host->setParam(p, nv); host->endEdit(p);
-            }
-        }
-
-        const float gt = (gMax > gMin) ? (gVal - gMin) / (gMax - gMin) : 0.0f;
-        const float ft = (fMax > fMin) ? (fVal - fMin) / (fMax - fMin) : 0.0f;
-
-        // outer skirt (gain)
-        dl->AddCircleFilled(c, RR, IM_COL32(16, 16, 18, 255), 52);
-        dl->AddCircleFilled(c, RR * 0.95f, outerCol, 52);
-        dl->AddCircleFilled(ImVec2(c.x - RR * 0.16f, c.y - RR * 0.2f), RR * 0.5f, IM_COL32(255, 255, 255, 26), 40);
-        for (int i = 0; i <= 10; ++i) // skirt scale ticks
-        {
-            const float a = knobAngle((float)i / 10.0f);
-            const ImVec2 d(std::sin(a), -std::cos(a));
-            dl->AddLine(ImVec2(c.x + d.x * RR * 0.80f, c.y + d.y * RR * 0.80f),
-                        ImVec2(c.x + d.x * RR * 0.92f, c.y + d.y * RR * 0.92f),
-                        IM_COL32(0, 0, 0, 120), 1.2f * s);
-        }
-        { // gain pointer on the skirt
-            const float a = knobAngle(gt);
-            const ImVec2 d(std::sin(a), -std::cos(a));
-            dl->AddLine(ImVec2(c.x + d.x * innerR * 1.06f, c.y + d.y * innerR * 1.06f),
-                        ImVec2(c.x + d.x * RR * 0.9f, c.y + d.y * RR * 0.9f),
-                        IM_COL32(245, 245, 245, 255), 3.0f * s);
-        }
-        // inner knob (frequency)
-        dl->AddCircleFilled(c, innerR, IM_COL32(28, 28, 31, 255), 44);
-        dl->AddCircleFilled(ImVec2(c.x - innerR * 0.2f, c.y - innerR * 0.24f), innerR * 0.6f, IM_COL32(255, 255, 255, 20), 32);
-        dl->AddCircle(c, innerR, IM_COL32(0, 0, 0, 200), 44, 1.2f * s);
-        { // freq pointer
-            const float a = knobAngle(ft);
-            const ImVec2 d(std::sin(a), -std::cos(a));
-            dl->AddLine(c, ImVec2(c.x + d.x * innerR * 0.82f, c.y + d.y * innerR * 0.82f),
-                        IM_COL32(235, 235, 235, 255), 2.2f * s);
-            dl->AddCircleFilled(c, innerR * 0.14f, IM_COL32(235, 235, 235, 255), 12);
-        }
-
-        if (hovered || active)
-        {
-            const bool inner = active ? concInner : overInner();
-            char buf[40];
-            if (inner) std::snprintf(buf, sizeof(buf), "%.0f Hz", fVal);
-            else       std::snprintf(buf, sizeof(buf), "%+.1f dB", gVal);
-            text(dl, cx, cy + R + 8.0f, 9.5f, pal.whiteDim, buf, 0);
-        }
-    }
-
     void knobLabel(ImDrawList* dl, float cx, float topY, const char* l1, const char* l2 = nullptr) const
     {
         text(dl, cx, topY, 11.0f, pal.white, l1, 0, true);
@@ -366,7 +253,6 @@ private:
     ParamHost* host = nullptr;
     Palette pal;
     float dragValue = 0.0f;
-    bool  concInner = false; // concentric knob: inner (freq) vs outer (gain) active
 };
 
 //==============================================================================
