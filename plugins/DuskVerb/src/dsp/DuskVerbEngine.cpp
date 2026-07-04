@@ -77,9 +77,10 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sparseOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     sparseOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
-    // FORK A reflection tap — buffer sized for ~250 ms max delay (power of two).
+    // FORK A reflection tap — sized for the 300 ms max tap time accepted by
+    // setEarlyTapBank()/setReflection (power of two).
     {
-        const int wantLen = static_cast<int> (0.25 * sampleRate) + 4;
+        const int wantLen = static_cast<int> (0.30 * sampleRate) + 4;
         int len = 1;
         while (len < wantLen) len <<= 1;
         reflBuf_.assign (static_cast<size_t> (len), 0.0f);
@@ -550,6 +551,11 @@ void DuskVerbEngine::setDenseHallOctaveT60 (int band, float seconds)
 {
     // DenseHall (algo 14) per-octave GEQ — fork #2. No-op on every other engine.
     denseHall_.setOctaveT60 (band, seconds);
+}
+
+void DuskVerbEngine::setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz)
+{
+    denseHall_.setLowAccumLimiter (threshDb, maxCut, splitHz);
 }
 
 void DuskVerbEngine::setDenseHallOctaveDecayRef (float seconds)
@@ -1727,8 +1733,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // kReflectionByName is empty/env-only today). Out of the recursive tank → no
         // codegen drift. (Note: a tap can't fix a late-energy/front-load clarity
         // problem — it's a small arrival vs the whole tail; it's for a discrete slap.)
-        if (reflActive_ || etapActive_)
         {
+            // Write + advance EVERY sample so the ring history stays warm across
+            // presets that disable taps — enabling them mid-flight must not read
+            // ~250 ms of stale silence. Inactive presets stay bit-identical: only
+            // the guarded reads below touch the wet signal.
             const float dryMono = reflDryMono_[static_cast<size_t> (i)];   // CLEAN pre-diffuser dry (snapshot above)
             reflBuf_[static_cast<size_t> (reflWritePos_)] = dryMono;
             if (reflActive_)

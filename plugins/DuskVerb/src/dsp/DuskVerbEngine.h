@@ -318,6 +318,7 @@ public:
     // presets (cent dark + T60-16k dies). band 0..8 = 63 Hz..16 kHz; seconds<=0
     // → that octave inherits the broadband Decay. No-op on every other engine.
     void setDenseHallOctaveT60 (int band, float seconds);
+    void setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz);   // drive-following sub charge limiter (piano-gate defect); maxCut 0 = bit-null
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.

@@ -61,6 +61,7 @@ struct TuningEnv
     const char* shimmerhfs;
     const char* ertaps;
     const char* datnotch;
+    const char* dhlowlim;
     const char* frontload;
     const char* dpvrefl;
     const char* densefield;
@@ -107,6 +108,7 @@ struct TuningEnv
           shimmerhfs (std::getenv ("DUSKVERB_SHIMMERHFS")),
           ertaps (std::getenv ("DUSKVERB_ERTAPS")),
           datnotch (std::getenv ("DUSKVERB_DATNOTCH")),
+          dhlowlim (std::getenv ("DUSKVERB_DHLOWLIM")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
           densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
@@ -2857,6 +2859,34 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                 if (! e.first.empty() && e.first == nv) { mhz = e.second.hz; mcut = e.second.cutDb; mq = e.second.q; break; }
         }
         engine.setDattorroModeNotch (mhz, mcut, mq);
+    }
+
+    // DenseHall LOW ACCUMULATION LIMITER — drive-following sub-band charge
+    // limiter (piano-gate defect: Vocal Hall 62 Hz grew +6.8 dB over the 22 s
+    // piano stem; impulse tails never reach the threshold so noiseburst T60
+    // gates are untouched). Env DUSKVERB_DHLOWLIM="threshDb,maxCut,splitHz";
+    // else per-preset bake; else off/bit-null.
+    {
+        struct LL { float threshDb, maxCut, splitHz; };
+        static constexpr std::array<std::pair<std::string_view, LL>, 1> kDhLowLimByName = {{
+            // BEGIN_DHLOWLIM_MAP
+            { "", { 0.0f, 0.0f, 90.0f } },   // placeholder — filled after env sweeps
+            // END_DHLOWLIM_MAP
+        }};
+        float llT = 0.0f, llC = 0.0f, llH = 90.0f;
+        if (const char* env = tuningEnv().dhlowlim; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray t; t.addTokens (juce::String (env), ",", "");
+            if (t.size() >= 2) { llT = t[0].getFloatValue(); llC = t[1].getFloatValue(); }
+            if (t.size() >= 3) llH = t[2].getFloatValue();
+        }
+        else
+        {
+            const std::string_view nv (name);
+            for (const auto& e : kDhLowLimByName)
+                if (! e.first.empty() && e.first == nv) { llT = e.second.threshDb; llC = e.second.maxCut; llH = e.second.splitHz; break; }
+        }
+        engine.setDenseHallLowAccumLimiter (llT, llC, llH);
     }
 
     // Plate density rework (algo 0 Dattorro + algo 1 DattorroPlateVintage):
