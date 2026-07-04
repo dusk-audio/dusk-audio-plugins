@@ -2229,7 +2229,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // Drum Plate + Vintage Gold Plate REMOVED 2026-06-15 (ear: heavy cut + big
             // makeup unmasked the Dattorro tail grain vs the smooth anchor — gates win,
             // sound loss). Dattorro plates keep their natural tail.
-            { "Cathedral Large Hall", { 0.8778f, 0.9426f, 0.8631f, 1.0000f, 0.7319f, 0.5983f, 0.4500f, 0.4500f, 0.3603f } },  // 2026-06-23 workflow: 4k/8k 0.58/0.59->0.45 (with BUILDUP) tames bloom 4-8k/8-12k
+            { "Cathedral Large Hall", { 0.8778f, 0.9426f, 0.8631f, 1.0000f, 0.7319f, 0.5983f, 0.4500f, 0.4000f, 0.2200f } },  // 2026-07-03 8k 0.45->0.40 + 16k 0.36->0.22: ss-air ran +5.5 hot; closes ss-air/bloom 8-12k/flux/env_shape/decay_tail (20->17). Gentler 16k=0.28 scores WORSE (20) — the 12.9k spec residual is a DV notch, cutting around it trades better elsewhere.  // 2026-06-23 workflow: 4k/8k 0.58/0.59->0.45 (with BUILDUP) tames bloom 4-8k/8-12k
             { "Reverse Taps",         { 0.6750f, 0.8359f, 0.9478f, 0.3300f, 0.3600f, 0.3300f, 0.4000f, 0.7776f, 1.0000f } },  // 2026-07-03 mid cut 500/1k/2k/4k (0.46/0.52/0.45/0.48 -> 0.33/0.36/0.33/0.40): ss mid +5/upper-mid +5.3 hot vs anchor; closes sine1k + ss-deep-sub + spec means (27->25). 63-cut+8k-lift REGRESSES (sub-bass + ss-hi). Residual spec@80: DV mode ~64 Hz vs anchor ~80 Hz (+13.8/-11 dB adjacent bands) = velvet band-structure, not EQ.
             // strength-iterated (partial s) — gentler tables that rescue presets full strength over-corrected:
             { "Black Hole",           { 0.3911f, 0.4127f, 0.4340f, 0.4046f, 0.3763f, 0.3884f, 0.3867f, 0.4817f, 1.0000f } },
