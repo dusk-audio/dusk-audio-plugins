@@ -31,6 +31,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sparseField_.prepare (sampleRate, maxBlockSize);
     diffuseER_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
+    pmb_.prepare (sampleRate, maxBlockSize);
     buildupDiffuser_.prepare (sampleRate, maxBlockSize);
     buildupBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     buildupBufR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -177,6 +178,7 @@ void DuskVerbEngine::clearAllBuffers()
     sparseField_.clear();           // algo 11 early-field tap buffers
     diffuseER_.clear();             // diffused discrete-ER bus (DenseHall)
     denseHall_.clear();             // algo 14 dense hall tank state
+    pmb_.clear();                   // algo 15 parallel multiband tank state
     buildupDiffuser_.clear();       // DenseHall tail-buildup cascade
  // algo 12 (32-line)
     outputDiffusion_.clear();       // per-preset post-tank diffuser (BH)
@@ -286,7 +288,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorroDenseField_.clear();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
-    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear();
+    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear(); pmb_.clear();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -322,6 +324,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     dattorroVintage_.setFreeze (frozen);
     reverseRoom_.setFreeze (frozen);
     denseHall_.setFreeze (frozen);
+    pmb_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -344,6 +347,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
 
     reverseRoom_.setDecayTime (seconds);
     denseHall_.setDecayTime (seconds);
+    pmb_.setDecayScale (seconds / 2.0f);   // 2 s = the band table's reference decay; knob scales the curve
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -556,6 +560,11 @@ void DuskVerbEngine::setDenseHallOctaveT60 (int band, float seconds)
 void DuskVerbEngine::setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz)
 {
     denseHall_.setLowAccumLimiter (threshDb, maxCut, splitHz);
+}
+
+void DuskVerbEngine::setPmbBand (int b, float t60s, float level, float direct, float width)
+{
+    pmb_.setBand (b, t60s, level, direct, width);
 }
 
 void DuskVerbEngine::setDenseHallOctaveDecayRef (float seconds)
@@ -1636,6 +1645,21 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                     tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * diffuseERGain_;
                     tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * diffuseERGain_;
                 }
+            }
+            break;
+
+        case EngineType::ParallelMultiband:
+            // Per-band decoupled tank (pilot). COMPOSITE like DenseHall: the
+            // sparse discrete-ER front supplies the early field; the parallel
+            // bands own the tail with independent level/decay/EDT/width.
+            pmb_.process (tankInL_.data(), tankInR_.data(),
+                          tankOutL_.data(), tankOutR_.data(), numSamples);
+            sparseField_.process (tankInL_.data(), tankInR_.data(),
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
+                tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
             }
             break;
     }
