@@ -2414,7 +2414,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // is L/R CORRELATION (higher = more correlated/narrower); <1 narrows a
         // band, >1 widens it. These close the width_low/mid/hi + stereo_corr
         // gates the frequency-flat global Width could not (it traded bands).
-        static constexpr std::array<std::pair<std::string_view, WB>, 9> kWidthBandsByName = {{
+        static constexpr std::array<std::pair<std::string_view, WB>, 10> kWidthBandsByName = {{
+            { "Deep Blue Day",        { 1.00f, 1.00f, 0.50f } },  // 2026-07-03: narrow the >5k side — anchor has MONO-ISH highs (corr +0.95) over a decorrelated broadband tail; DV ran +0.77. 0.5 -> +0.87 = width-hi pass, zero collateral (25->24). Black Hole needs ~0.15 for the same flip but that breaks broadband stereo_corr — conflict case, not baked. Live Room's width-low is the INVERSE problem (anchor lows anti-correlated -0.85, DV near-mono) — scaling can't CREATE side energy; needs decorrelated low generation.
             { "Cathedral Large Hall", { 0.94f, 0.94f, 0.92f } },  // all 4 stereo gates → pass (22→19)
             { "Small Drum Room",      { 0.92f, 0.92f, 1.35f } },  // narrow lo/mid + WIDEN hi — conflict case (29→27)
             { "Bright Hall",          { 0.98f, 1.00f, 1.00f } },  // threads width-low vs stereo_corr (19→18)
