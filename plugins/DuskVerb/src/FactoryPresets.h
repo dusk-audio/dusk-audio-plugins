@@ -1093,7 +1093,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // (0.3-1s range) + higher diffusion 0.72 (thick, not washy) + hi_cut 8k
         // (bright room). General-purpose: guitars / keys / vocals / room mics.
         { "Live Room",            "Rooms",
-          0,  0.28f, false,  20.0f, 0,
+          0,  0.28f, false,  0.0f, 0,   // 2026-07-04 predelay 20->0: the corrected (fxp-truth) anchor's wet starts at 0.02 ms — Lex Medium Live Room 1 has NO predelay; DV's baked 20 ms was an audible detached slap the Lex doesn't have. Gate-neutral-ish (peak-aligned metrics cancel pure time shifts; ±3 borderline flicker).
           0.52f, 0.45f, 0.10f, 0.80f, 0.81f, 1.40f, 317.135f,  // 2026-07-03 Bass 1.666->1.4: lows ran hot+long vs anchor (ss sub +6.3 dB, ss low +3.2, T60-250 +12.9%, cent_500 -68% dark) — the anchor is a BRIGHTER, mid-forward live room. Joint move with mid 0.566->0.75 + Width 1.0->0.9 (stereo_corr -0.34 vs -0.15 over-wide): 31->28.
           0.72f, 0.50f, 0.55f, 20.0f, 15408.042f, 0.90f, false, 6.63f,  // 2026-06-14 lo-cut pass: LoCut 40->20 (39->34).
           /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 5738.312f, /* sat */ 0.08f, /* hiCutShelfGainDb */ -10.896f },  // residual 28 = engine-class: boing 39 dB @ 211 Hz sparse mode (notch hops, needs tank diffusion), early field 0 taps vs 2, sine1k 1k-mode +7.4 dB, width-hi per-band tilt.
