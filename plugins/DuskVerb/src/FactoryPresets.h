@@ -1286,7 +1286,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // fix (oversample the shifter / dedicated HF voice), not tuning. See memory.
         { "Black Hole",           "Shimmer",
           7,  0.50f, false,   0.0f, 0,
-          10.8728f, 0.56922f, 0.50890f, 0.10000f, 1.16880f, 0.53601f,  372.24f,  // 2026-06-16 EAR: modRate->0.1 = feedback 0 to match Valhalla BlackHole (screenshot feedback 0.000). DV sine 2k was +40dB hot vs anchor = over-shimmer. NOTE: DV pitch is feedback-loop-only → fb0 may kill shimmer (topology check).
+          10.8728f, 0.56922f, 0.50890f, 0.10000f, 1.16880f, 0.45f,  372.24f,  // 2026-07-03 Bass 0.536->0.45: decay low_mid +24.9% long -> pass (24->23). T60-63 +37% is bass-mult-saturated (0.35 measured identical) — the 63 Hz ring lives in the FDN low modes, not the damping band.  // 2026-06-16 EAR: modRate->0.1 = feedback 0 to match Valhalla BlackHole (screenshot feedback 0.000). DV sine 2k was +40dB hot vs anchor = over-shimmer. NOTE: DV pitch is feedback-loop-only → fb0 may kill shimmer (topology check).
           0.85741f, 0.05f, 0.70f, 24.591f, 18926.8f, 1.10000f, false, 7.64f,  // 2026-06-29 Width 1.26->1.10: DV's broadband stereo ran too WIDE (stereo_corr -0.01 vs Valhalla +0.12); 1.10 closes it (25->24). (snare confirmed DV wider than Valhalla, not narrower.)  // 2026-06-14 Phase-3 match-EQ (s=0.75): gainTrim re-matched (+7.64) after the output match-EQ cut (28->25).
           /* mono */ 60.0f, /* mid */ 0.75073f, /* highX */ 3390.34f, /* sat */ 0.38197f },
         // ── Deep Blue Day ────────────────────────────────────────────────
