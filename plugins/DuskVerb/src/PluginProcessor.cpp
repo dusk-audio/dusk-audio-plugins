@@ -62,6 +62,7 @@ struct TuningEnv
     const char* ertaps;
     const char* datnotch;
     const char* dhlowlim;
+    const char* pmb;
     const char* frontload;
     const char* dpvrefl;
     const char* densefield;
@@ -109,6 +110,7 @@ struct TuningEnv
           ertaps (std::getenv ("DUSKVERB_ERTAPS")),
           datnotch (std::getenv ("DUSKVERB_DATNOTCH")),
           dhlowlim (std::getenv ("DUSKVERB_DHLOWLIM")),
+          pmb (std::getenv ("DUSKVERB_PMB")),
           frontload (std::getenv ("DUSKVERB_FRONTLOAD")),
           dpvrefl   (std::getenv ("DUSKVERB_DPVREFL")),
           densefield (std::getenv ("DUSKVERB_DENSEFIELD")),
@@ -2887,6 +2889,46 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                 if (! e.first.empty() && e.first == nv) { llT = e.second.threshDb; llC = e.second.maxCut; llH = e.second.splitHz; break; }
         }
         engine.setDenseHallLowAccumLimiter (llT, llC, llH);
+    }
+
+    // ParallelMultiband (algo 15) per-band table — {t60, level, direct, width}
+    // per band (6 bands: <120 / 120-350 / 350-1k / 1k-3k / 3k-8k / >8k).
+    // Env DUSKVERB_PMB="t60x6;levelx6;directx6;widthx6" (4 groups of 6, ';'
+    // between groups, ',' within); else the per-preset bake; else engine
+    // defaults. No-op on every other engine.
+    {
+        struct PMB { float t60[6], lvl[6], dir[6], wid[6]; };
+        static constexpr std::array<std::pair<std::string_view, PMB>, 1> kPmbByName = {{
+            // BEGIN_PMB_MAP
+            { "", { {2,2.2f,2,1.6f,1.2f,0.8f}, {1,1,1,1,1,1}, {0,0,0,0,0,0}, {1,1,1,1,1,1} } },   // placeholder
+            // END_PMB_MAP
+        }};
+        float t60v[6] = {2,2.2f,2,1.6f,1.2f,0.8f}, lvlv[6] = {1,1,1,1,1,1}, dirv[6] = {0,0,0,0,0,0}, widv[6] = {1,1,1,1,1,1};
+        bool have = false;
+        if (const char* env = tuningEnv().pmb; env != nullptr && env[0] != '\0')
+        {
+            juce::StringArray groups; groups.addTokens (juce::String (env), ";", "");
+            float* dst[4] = { t60v, lvlv, dirv, widv };
+            for (int gI = 0; gI < 4 && gI < groups.size(); ++gI)
+            {
+                juce::StringArray t; t.addTokens (groups[gI], ",", "");
+                for (int k = 0; k < 6 && k < t.size(); ++k) dst[gI][k] = t[k].getFloatValue();
+            }
+            have = true;
+        }
+        else
+        {
+            const std::string_view nv (name);
+            for (const auto& e : kPmbByName)
+                if (! e.first.empty() && e.first == nv)
+                {
+                    for (int k = 0; k < 6; ++k) { t60v[k] = e.second.t60[k]; lvlv[k] = e.second.lvl[k]; dirv[k] = e.second.dir[k]; widv[k] = e.second.wid[k]; }
+                    have = true; break;
+                }
+        }
+        if (have)
+            for (int k = 0; k < 6; ++k)
+                engine.setPmbBand (k, t60v[k], lvlv[k], dirv[k], widv[k]);
     }
 
     // Plate density rework (algo 0 Dattorro + algo 1 DattorroPlateVintage):

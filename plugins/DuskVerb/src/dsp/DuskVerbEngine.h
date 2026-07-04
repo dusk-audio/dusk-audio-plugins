@@ -19,6 +19,7 @@
 #include "OutputDiffusion.h"
 #include "DenseHallReverb.h"
 #include "BuildupDiffuser.h"
+#include "ParallelMultibandTank.h"
 
 #include <algorithm>
 #include <cmath>
@@ -319,6 +320,7 @@ public:
     // → that octave inherits the broadband Decay. No-op on every other engine.
     void setDenseHallOctaveT60 (int band, float seconds);
     void setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz);   // drive-following sub charge limiter (piano-gate defect); maxCut 0 = bit-null
+    void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
@@ -493,6 +495,7 @@ private:
     // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
     // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
     // superseded by this composite. setTiledRoomVoicing() configures sparseField_.
+    ParallelMultibandTank pmb_;          // algo 15 (2026-07-04): per-band decoupled tank (pilot)
     DenseHallReverb    denseHall_;       // algo 14 (2026-06-13): diffused-FDN dense hall — the
                                          // smooth dense late field the 16-line FDN can't reach.
                                          // COMPOSITE: sparseField_ ER + denseHall_ tail in the switch.
