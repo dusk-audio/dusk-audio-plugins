@@ -39,6 +39,7 @@ namespace
     constexpr float COL[7] = { 40, 197, 335, 469, 603, 737, 920 };
 
     // band face colours
+    constexpr ImU32 C_LF_BROWN = IM_COL32(96, 56, 48, 255); // SSL LF maroon console knob
     constexpr ImU32 C_LF  = IM_COL32(196, 74, 66, 255);
     constexpr ImU32 C_LMF = IM_COL32(202, 132, 66, 255);
     constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
@@ -416,7 +417,20 @@ private:
         steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, LPFF, true,  "kHz");
         colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(568), 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
 
-        band(dl, 1, "LF",  C_LF,  kLfGain, kLfFreq, kLfBell, -1, 30.f, 480.f);
+        // LF — SSL brown console band: GAIN (0 top, +-15 dB) + FREQ (200 top,
+        // 30-450 Hz) with labelled detents, plus a metal BELL/SHELF button.
+        {
+            const float lcx = 0.5f * (COL[1] + COL[2]);
+            static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
+            static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
+            static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
+            static const float FT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
+            static const float FV[7] = { 30.f, 50.f, 100.f, 200.f, 300.f, 400.f, 450.f };
+            static const char* const FL[7] = { "30", "50", "100", "200", "300", "400", "450" };
+            consoleDetentKnob(dl, "lfg", lcx, cY(310), 24.f, kLfGain, GT, GV, GL, 11, C_LF_BROWN, "dB", "%.1f dB");
+            consoleDetentKnob(dl, "lff", lcx, cY(438), 24.f, kLfFreq, FT, FV, FL, 7, C_LF_BROWN, "Hz", "%.0f Hz");
+            metalButton(dl, "lfbell", lcx - 30.f, cY(546), lcx + 30.f, cY(572), kLfBell, "BELL", "SHELF");
+        }
         band(dl, 2, "LMF", C_LMF, kLmGain, kLmFreq, kLmQ,    +1, 200.f, 2500.f);
         band(dl, 3, "HMF", C_HMF, kHmGain, kHmFreq, kHmQ,    +1, 600.f, 7000.f);
         band(dl, 4, "HF",  C_HF,  kHfGain, kHfFreq, kHfBell, -1, 1500.f, 16000.f);
@@ -585,32 +599,8 @@ private:
             panel.text(dl, cx + dx * (R + 17.f), cy + dy * (R + 17.f) - 4.f, 8.5f, IM_COL32(196, 198, 202, 255), labels[i], align, true);
         }
 
-        // brushed-metal body
-        dl->AddCircleFilled(c, RR, IM_COL32(18, 18, 20, 255), 48);                    // rim
-        dl->AddCircleFilled(c, RR * 0.95f, IM_COL32(88, 90, 94, 255), 48);            // skirt
-        for (int i = 0; i < 20; ++i) // knurled skirt notches
-        {
-            const float a = (float)i / 20.f * 2.f * duskdpf::DuskPanel::kPi;
-            const ImVec2 d(std::sin(a), -std::cos(a));
-            dl->AddLine(ImVec2(c.x + d.x * RR * 0.80f, c.y + d.y * RR * 0.80f),
-                        ImVec2(c.x + d.x * RR * 0.93f, c.y + d.y * RR * 0.93f), IM_COL32(40, 40, 43, 160), 1.3f * s);
-        }
-        const float capR = RR * 0.74f;
-        dl->AddCircleFilled(c, capR, IM_COL32(150, 152, 156, 255), 44);               // cap base
-        // vertical brushed streaks + top-left sheen
-        dl->PushClipRect(ImVec2(c.x - capR, c.y - capR), ImVec2(c.x + capR, c.y + capR), true);
-        for (int i = -4; i <= 4; ++i)
-            dl->AddLine(ImVec2(c.x + i * capR * 0.2f, c.y - capR), ImVec2(c.x + i * capR * 0.2f, c.y + capR),
-                        IM_COL32(168, 170, 174, 60), 1.2f * s);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.22f, c.y - capR * 0.28f), capR * 0.7f, IM_COL32(190, 192, 196, 70), 40);
-        dl->PopClipRect();
-        dl->AddCircle(c, capR, IM_COL32(30, 30, 32, 255), 44, 1.4f * s);
-
-        // pointer (dark vertical indicator)
-        const float a = duskdpf::DuskPanel::knobAngle(t);
-        const ImVec2 pd(std::sin(a), -std::cos(a));
-        dl->AddLine(ImVec2(c.x + pd.x * capR * 0.12f, c.y + pd.y * capR * 0.12f),
-                    ImVec2(c.x + pd.x * capR * 0.92f, c.y + pd.y * capR * 0.92f), IM_COL32(30, 30, 33, 255), 3.4f * s);
+        // brushed-metal body: silver cap + dark pointer for the filter knobs.
+        drawMetalKnobBody(dl, c, RR, t, IM_COL32(150, 152, 156, 255), IM_COL32(30, 30, 33, 255));
 
         // rolloff icon + unit below (HPF: icon left / unit right; LPF: unit left / icon right)
         const float iy = cy + R + 22.f;
@@ -635,6 +625,130 @@ private:
             else std::snprintf(buf, sizeof(buf), "%.0f Hz", values[freqId]);
             panel.text(dl, cx, cy - R - 14.f, 9.5f, pal().whiteDim, buf, 0);
         }
+    }
+
+    // Shared brushed-metal knob body (skirt + knurl + cap + sheen + pointer).
+    // capCol tints the cap (silver for filters, maroon for the console bands);
+    // pointerCol is the indicator line (dark on silver, white on maroon).
+    void drawMetalKnobBody(ImDrawList* dl, ImVec2 c, float RR, float t, ImU32 capCol, ImU32 pointerCol)
+    {
+        const float s = sc();
+        dl->AddCircleFilled(c, RR, IM_COL32(18, 18, 20, 255), 48);          // rim
+        dl->AddCircleFilled(c, RR * 0.95f, IM_COL32(88, 90, 94, 255), 48);  // skirt
+        for (int i = 0; i < 20; ++i)                                        // knurl
+        {
+            const float a = (float)i / 20.f * 2.f * duskdpf::DuskPanel::kPi;
+            const ImVec2 d(std::sin(a), -std::cos(a));
+            dl->AddLine(ImVec2(c.x + d.x * RR * 0.80f, c.y + d.y * RR * 0.80f),
+                        ImVec2(c.x + d.x * RR * 0.93f, c.y + d.y * RR * 0.93f), IM_COL32(40, 40, 43, 160), 1.3f * s);
+        }
+        const float capR = RR * 0.74f;
+        dl->AddCircleFilled(c, capR, capCol, 44);
+        dl->PushClipRect(ImVec2(c.x - capR, c.y - capR), ImVec2(c.x + capR, c.y + capR), true);
+        for (int i = -4; i <= 4; ++i)                                       // brushed streaks
+            dl->AddLine(ImVec2(c.x + i * capR * 0.2f, c.y - capR), ImVec2(c.x + i * capR * 0.2f, c.y + capR),
+                        IM_COL32(255, 255, 255, 34), 1.2f * s);
+        dl->AddCircleFilled(ImVec2(c.x - capR * 0.22f, c.y - capR * 0.28f), capR * 0.7f, IM_COL32(255, 255, 255, 40), 40); // sheen
+        dl->PopClipRect();
+        dl->AddCircle(c, capR, IM_COL32(20, 20, 22, 255), 44, 1.4f * s);
+        const float a = duskdpf::DuskPanel::knobAngle(t);
+        const ImVec2 pd(std::sin(a), -std::cos(a));
+        dl->AddLine(ImVec2(c.x + pd.x * capR * 0.12f, c.y + pd.y * capR * 0.12f),
+                    ImVec2(c.x + pd.x * capR * 0.92f, c.y + pd.y * capR * 0.92f), pointerCol, 3.4f * s);
+    }
+
+    //========================================================================
+    // SSL-style brown console band knob: continuous knob over arbitrary
+    // (t, value) breakpoints with dots + labels all around (e.g. LF GAIN with
+    // 0 at top, +-15 dB; LF FREQ 30-450 Hz with 200 at top). Maroon cap, white
+    // pointer, unit beneath.
+    //========================================================================
+    static float detentPosToVal(const float* T, const float* V, int n, float t)
+    {
+        if (t <= T[0]) return V[0];
+        if (t >= T[n - 1]) return V[n - 1];
+        for (int i = 0; i < n - 1; ++i)
+            if (t <= T[i + 1]) { const float a = (t - T[i]) / (T[i + 1] - T[i]); return V[i] + (V[i + 1] - V[i]) * a; }
+        return V[n - 1];
+    }
+    static float detentValToPos(const float* T, const float* V, int n, float v)
+    {
+        if (v <= V[0]) return T[0];
+        if (v >= V[n - 1]) return T[n - 1];
+        for (int i = 0; i < n - 1; ++i)
+            if (v <= V[i + 1]) { const float a = (v - V[i]) / (V[i + 1] - V[i]); return T[i] + (T[i + 1] - T[i]) * a; }
+        return T[n - 1];
+    }
+
+    void consoleDetentKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
+                           uint32_t paramId, const float* T, const float* V,
+                           const char* const* labels, int n, ImU32 capCol,
+                           const char* unit, const char* fmt)
+    {
+        const float s = sc();
+        const ImVec2 c = panel.P(cx, cy);
+        const float RR = R * s;
+        auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
+
+        float t = detentValToPos(T, V, n, values[paramId]);
+
+        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        auto setFromT = [&](float tt) { const float nv = detentPosToVal(T, V, n, tt); values[paramId] = nv; setParameterValue(paramId, nv); };
+        if (ImGui::IsItemActivated()) { editParameter(paramId, true); stepDragT = t; }
+        if (act)
+        {
+            const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+            stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
+            t = stepDragT; setFromT(t);
+        }
+        if (ImGui::IsItemDeactivated()) editParameter(paramId, false);
+        if (hov && !act)
+        {
+            if (ImGui::IsMouseDoubleClicked(0))
+            { editParameter(paramId, true); values[paramId] = kDefaults[paramId]; setParameterValue(paramId, kDefaults[paramId]); editParameter(paramId, false); t = detentValToPos(T, V, n, values[paramId]); }
+            const float wh = ImGui::GetIO().MouseWheel;
+            if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
+        }
+
+        for (int i = 0; i < n; ++i)
+        {
+            const float a = duskdpf::DuskPanel::knobAngle(T[i]);
+            const float dx = std::sin(a), dy = -std::cos(a);
+            dl->AddCircleFilled(panel.P(cx + dx * (R + 8.f), cy + dy * (R + 8.f)), 1.5f * s, IM_COL32(150, 152, 156, 255), 8);
+            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
+            panel.text(dl, cx + dx * (R + 16.f), cy + dy * (R + 16.f) - 4.f, 8.f, IM_COL32(196, 198, 202, 255), labels[i], align, true);
+        }
+
+        drawMetalKnobBody(dl, c, RR, t, capCol, IM_COL32(245, 245, 245, 255));
+        panel.text(dl, cx, cy + R + 15.f, 10.f, IM_COL32(206, 208, 212, 255), unit, 0, true);
+
+        if (hov || act)
+        {
+            char buf[24]; std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
+            panel.text(dl, cx, cy - R - 13.f, 9.5f, pal().whiteDim, buf, 0);
+        }
+    }
+
+    // Raised silver metal button (BELL / SHELF). Beveled, pressed-in when active.
+    void metalButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                     uint32_t paramId, const char* onLabel, const char* offLabel)
+    {
+        const bool on = values[paramId] > 0.5f;
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        if (ImGui::IsItemClicked()) toggleParam(paramId);
+        dl->AddRectFilled(b0, b1, IM_COL32(18, 18, 20, 255), 5.f * s); // dark border
+        const ImVec2 f0(b0.x + 1.6f * s, b0.y + 1.6f * s), f1(b1.x - 1.6f * s, b1.y - 1.6f * s);
+        const ImU32 top = on ? IM_COL32(120, 122, 126, 255) : IM_COL32(182, 184, 188, 255);
+        const ImU32 bot = on ? IM_COL32(150, 152, 156, 255) : IM_COL32(138, 140, 144, 255);
+        dl->AddRectFilledMultiColor(f0, f1, top, top, bot, bot); // vertical gradient (inverted when pressed)
+        dl->AddLine(ImVec2(f0.x, f0.y), ImVec2(f1.x, f0.y), IM_COL32(255, 255, 255, on ? 40 : 150), 1.2f * s); // top highlight
+        dl->AddLine(ImVec2(f0.x, f1.y), ImVec2(f1.x, f1.y), IM_COL32(0, 0, 0, on ? 120 : 60), 1.2f * s);       // bottom shadow
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 11.f, IM_COL32(34, 34, 38, 255), on ? onLabel : offLabel, 0, true);
     }
 
     //========================================================================
