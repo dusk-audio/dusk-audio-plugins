@@ -645,10 +645,7 @@ private:
         const float capR = RR * 0.74f;
         dl->AddCircleFilled(c, capR, capCol, 44);
         dl->PushClipRect(ImVec2(c.x - capR, c.y - capR), ImVec2(c.x + capR, c.y + capR), true);
-        for (int i = -4; i <= 4; ++i)                                       // brushed streaks
-            dl->AddLine(ImVec2(c.x + i * capR * 0.2f, c.y - capR), ImVec2(c.x + i * capR * 0.2f, c.y + capR),
-                        IM_COL32(255, 255, 255, 34), 1.2f * s);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.22f, c.y - capR * 0.28f), capR * 0.7f, IM_COL32(255, 255, 255, 40), 40); // sheen
+        dl->AddCircleFilled(ImVec2(c.x - capR * 0.22f, c.y - capR * 0.28f), capR * 0.7f, IM_COL32(255, 255, 255, 34), 40); // top-left sheen
         dl->PopClipRect();
         dl->AddCircle(c, capR, IM_COL32(20, 20, 22, 255), 44, 1.4f * s);
         const float a = duskdpf::DuskPanel::knobAngle(t);
