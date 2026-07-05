@@ -131,6 +131,7 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
     meterDecay = std::exp(-1.0f / (0.3f * (float)baseSampleRate));
     powerSmoother.prepare(baseSampleRate, 0.03f); // ~30 ms bypass crossfade
     powerSmoother.snap(pBypass.load(R) > 0.5f ? 0.0f : 1.0f);
+    lastSmoothedPower.store(powerSmoother.value(), R);
 
     lastHpfEnabled = pHpfEnabled.load(R) > 0.5f;
     lastLpfEnabled = pLpfEnabled.load(R) > 0.5f;
@@ -245,8 +246,21 @@ void FourKEQDSP::processBlock(const float* const* inputs, float* const* outputs,
     ScopedFlushDenormals ftz;
 
     const int nCh = std::max(1, std::min(numChannels, kMaxChannels));
-    const int nS  = std::min(numSamples, maxBlock);
 
+    // Chunk oversized host buffers (larger than the prepared maxBlock) so every
+    // output sample is written and the scratch buffers never overflow.
+    for (int offset = 0; offset < numSamples; offset += maxBlock)
+    {
+        const int n = std::min(numSamples - offset, maxBlock);
+        const float* in[kMaxChannels]; float* out[kMaxChannels];
+        for (int c = 0; c < nCh; ++c) { in[c] = inputs[c] + offset; out[c] = outputs[c] + offset; }
+        processChunk(in, out, nCh, n);
+    }
+}
+
+void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
+                              int nCh, int nS) noexcept
+{
     // Oversampling factor may change with sample rate / user param at block rate.
     const int wantFactor = chooseFactor(baseSampleRate, pOversampling.load(R) >= 0.5f);
     if (wantFactor != curFactor)
@@ -388,6 +402,8 @@ void FourKEQDSP::processBlock(const float* const* inputs, float* const* outputs,
             outPk[c] = std::max(outPk[c], std::abs(y));
         }
     }
+    // Publish the settled crossfade level for latency gating (see getLatencySamples).
+    lastSmoothedPower.store(powerSmoother.value(), R);
 
     //--- metering store (peak-hold with ~300 ms release) ----------------------
     const float dk = std::pow(meterDecay, (float)nS);

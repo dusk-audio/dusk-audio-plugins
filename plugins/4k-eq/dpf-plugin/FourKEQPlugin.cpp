@@ -180,6 +180,14 @@ protected:
         pushAllParams();
         updateLatency();
     }
+    // Reconfigure the DSP (scratch/oversampler sizing) when the host changes its
+    // buffer size without a full restart, so the prepared max block never goes stale.
+    void bufferSizeChanged(uint32_t newBufferSize) override
+    {
+        dsp.prepare(getSampleRate(), (int)newBufferSize);
+        pushAllParams();
+        updateLatency();
+    }
 
     //--- audio ----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
