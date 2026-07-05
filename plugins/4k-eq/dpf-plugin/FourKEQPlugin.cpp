@@ -89,6 +89,8 @@ protected:
         case kMsMode:    boolean(); p.name = "M/S Mode"; p.symbol = "ms_mode"; rng(0, 0, 1); break;
         case kSpectrumPrePost: boolean(); p.name = "Spectrum Pre/Post"; p.symbol = "spectrum_prepost"; rng(0, 0, 1); break;
         case kAutoGain:  boolean(); p.name = "Auto Gain Compensation"; p.symbol = "auto_gain"; rng(1, 0, 1); break;
+        case kShowGraph: p.hints = kParameterIsBoolean | kParameterIsInteger; // UI-only, not automatable
+                         p.name = "Show Graph"; p.symbol = "show_graph"; rng(1, 0, 1); break;
         case kOutPeakL:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak L"; p.symbol = "out_peak_l"; rng(0, 0, 2); break;
         case kOutPeakR:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak R"; p.symbol = "out_peak_r"; rng(0, 0, 2); break;
         }
@@ -135,6 +137,7 @@ protected:
         case kOversampling: dsp.setOversampling((int)(value + 0.5f)); break;
         case kMsMode:     dsp.setMsMode(value > 0.5f); break;
         case kSpectrumPrePost: break; // UI-only (analyzer source select)
+        case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
         case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
         }
     }

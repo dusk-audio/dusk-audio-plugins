@@ -19,6 +19,7 @@ enum ParamId
     kMsMode,
     kSpectrumPrePost, // 0 = post-EQ, 1 = pre-EQ (UI analyzer source)
     kAutoGain,
+    kShowGraph,       // UI-only: response graph shown (1) / collapsed (0); persists
     kNumInputParams,
     // output params (meters) — also read directly via the same-process bridge
     kOutPeakL = kNumInputParams,

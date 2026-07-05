@@ -54,7 +54,13 @@ namespace
     constexpr float kDefaults[kParamCount] = {
         20.f, 0.f, 20000.f, 0.f,
         0.f, 100.f, 0.f, 0.f, 600.f, 0.7f, 0.f, 2000.f, 0.7f, 0.f, 8000.f, 0.f,
-        0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+        0.f,            // eq type
+        0.f,            // bypass
+        0.f, 0.f, 0.f,  // in/out gain, sat
+        0.f, 0.f, 0.f,  // os, ms, spectrum pre/post
+        1.f,            // auto gain
+        1.f,            // show graph
+        0.f, 0.f,       // out peaks
     };
 
     const int   kGridF[]  = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
@@ -85,16 +91,37 @@ public:
 protected:
     void parameterChanged(uint32_t index, float value) override
     {
-        if (index < kParamCount) values[index] = value;
+        if (index >= kParamCount) return;
+        values[index] = value;
+        if (index == kShowGraph)
+        {
+            // restore persisted graph state on UI (re)open; size on next frame
+            showGraph = value > 0.5f;
+            needResize = true;
+        }
     }
 
     void onImGuiDisplay() override
     {
         const float winW = (float)getWidth(), winH = (float)getHeight();
-        const float designH = showGraph ? kDesignH : kDesignHCollapsed;
-        const float s = std::min(winW / kDesignW, winH / designH);
-        const ImVec2 org(0.5f * (winW - kDesignW * s), 0.5f * (winH - designH * s));
+
+        // Request the host window match the current graph state (some hosts honor
+        // it and snap tight; those that keep their frame are handled by the fill
+        // below). Done here, outside the ImGui frame, so the resize is not lost.
+        if (needResize) { applyGraphSize(); needResize = false; }
+
+        // Scale by WIDTH so knobs stay circular; the control block then stretches
+        // vertically to fill whatever height the host actually gave us — no dead
+        // space when a host declines to shrink its window after a collapse.
+        const float s = winW / kDesignW;
+        const ImVec2 org(0.0f, 0.0f);
         panel.begin(s, org, labelFont, this);
+
+        // control-area vertical remap: design rows [220..662] -> [dstTop..dstBot]
+        ctlDstTop_ = showGraph ? 220.0f : 96.0f;
+        const float avail = winH / s;                       // window height in design units
+        ctlDstBot_ = std::max(ctlDstTop_ + 300.0f, avail - 10.0f);
+        ctlScaleY_ = (ctlDstBot_ - ctlDstTop_) / (662.0f - 220.0f);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -106,31 +133,37 @@ protected:
                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(6, 6, 7, 255));
-        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, designH), IM_COL32(30, 30, 33, 255));
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(30, 30, 33, 255)); // chassis fills window
 
-        // header + graph draw at the normal origin; when the graph is hidden the
-        // control block reflows up by the graph band (like the JUCE editor, which
-        // resizes the window and re-lays out) and the window is shortened on toggle.
         drawHeader(dl);
         if (showGraph)
             drawGraph(dl);
-
-        const float ctlShift = showGraph ? 0.0f : -(kDesignH - kDesignHCollapsed);
-        panel.begin(s, ImVec2(org.x, org.y + ctlShift * s), labelFont, this);
         drawColumns(dl);
         drawMeters(dl);
-        panel.begin(s, org, labelFont, this);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
     }
 
-    // Match the JUCE 4K EQ Hide/Show Graph button: collapse/expand the window
-    // height (controls reflow up when hidden), not just blank the graph.
+    // Control-area vertical remap: maps a design Y in the [220..662] band to the
+    // stretched/repositioned band so the strip always fills the window height.
+    // Knob radii use the width scale only, so circles stay circular.
+    float cY(float y) const { return ctlDstTop_ + (y - 220.0f) * ctlScaleY_; }
+
+    // Match the JUCE Hide/Show Graph: persist the state and request the host to
+    // resize (grow/shrink) to the matching height.
     void toggleGraph()
     {
         showGraph = !showGraph;
+        editParameter(kShowGraph, true);
+        values[kShowGraph] = showGraph ? 1.0f : 0.0f;
+        setParameterValue(kShowGraph, values[kShowGraph]);
+        editParameter(kShowGraph, false);
+        applyGraphSize();
+    }
+
+    void applyGraphSize()
+    {
         const float designH = showGraph ? kDesignH : kDesignHCollapsed;
         setSize((uint)getWidth(), (uint)std::lround((double)getWidth() * designH / kDesignW));
     }
@@ -358,23 +391,23 @@ private:
     //========================================================================
     void drawColumns(ImDrawList* dl)
     {
-        // panel background + dividers + headers
-        dl->AddRectFilled(panel.P(COL[0], 220), panel.P(COL[6], 662), kPanel, 4.0f * sc());
+        // panel background + dividers + headers (control-area Y goes through cY())
+        dl->AddRectFilled(panel.P(COL[0], cY(220)), panel.P(COL[6], cY(662)), kPanel, 4.0f * sc());
         const char* names[6] = { "FILTERS", "LF", "LMF", "HMF", "HF", "MASTER" };
         for (int i = 0; i < 6; ++i)
         {
             const float cx = 0.5f * (COL[i] + COL[i + 1]);
-            if (i > 0) dl->AddLine(panel.P(COL[i], 224), panel.P(COL[i], 658), IM_COL32(20, 20, 22, 255), 1.4f * sc());
-            panel.text(dl, cx, 232, 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
+            if (i > 0) dl->AddLine(panel.P(COL[i], cY(224)), panel.P(COL[i], cY(658)), IM_COL32(20, 20, 22, 255), 1.4f * sc());
+            panel.text(dl, cx, cY(232), 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
         }
 
         // FILTERS
         const float fcx = 0.5f * (COL[0] + COL[1]);
-        colKnob(dl, "hpf", kHpfFreq, 20.f, 500.f, fcx - 14, 306, 26, C_GREY, "HPF", "20", "500", "%.0f", " Hz");
-        smallToggle(dl, "hpfin", kHpfEnabled, fcx + 30, 296, fcx + 62, 318, values[kHpfEnabled], "IN");
-        colKnob(dl, "lpf", kLpfFreq, 3000.f, 20000.f, fcx - 14, 430, 26, C_GREY, "LPF", "3k", "20k", "%.0f", " Hz");
-        smallToggle(dl, "lpfin", kLpfEnabled, fcx + 30, 420, fcx + 62, 442, values[kLpfEnabled], "IN");
-        colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, 556, 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
+        colKnob(dl, "hpf", kHpfFreq, 20.f, 500.f, fcx - 14, cY(306), 26, C_GREY, "HPF", "20", "500", "%.0f", " Hz");
+        smallToggle(dl, "hpfin", kHpfEnabled, fcx + 30, cY(296), fcx + 62, cY(318), values[kHpfEnabled], "IN");
+        colKnob(dl, "lpf", kLpfFreq, 3000.f, 20000.f, fcx - 14, cY(430), 26, C_GREY, "LPF", "3k", "20k", "%.0f", " Hz");
+        smallToggle(dl, "lpfin", kLpfEnabled, fcx + 30, cY(420), fcx + 62, cY(442), values[kLpfEnabled], "IN");
+        colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(556), 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
 
         band(dl, 1, "LF",  C_LF,  kLfGain, kLfFreq, kLfBell, -1, 30.f, 480.f);
         band(dl, 2, "LMF", C_LMF, kLmGain, kLmFreq, kLmQ,    +1, 200.f, 2500.f);
@@ -383,16 +416,16 @@ private:
 
         // MASTER
         const float mcx = 0.5f * (COL[5] + COL[6]);
-        panelButton(dl, "bypass", mcx - 40, 268, mcx + 40, 292,
+        panelButton(dl, "bypass", mcx - 40, cY(268), mcx + 40, cY(292),
                     values[kBypass] > 0.5f ? "BYPASSED" : "BYPASS",
                     values[kBypass] > 0.5f ? IM_COL32(150, 60, 48, 255) : IM_COL32(50, 50, 54, 255),
                     [&]{ toggleParam(kBypass); });
-        panelButton(dl, "autogain", mcx - 40, 300, mcx + 40, 324, "AUTO GAIN",
+        panelButton(dl, "autogain", mcx - 40, cY(300), mcx + 40, cY(324), "AUTO GAIN",
                     values[kAutoGain] > 0.5f ? kGreenBtn : IM_COL32(50, 50, 54, 255),
                     [&]{ toggleParam(kAutoGain); });
-        colKnob(dl, "drive", kSaturation, 0.f, 100.f, mcx, 430, 26, C_GREY, "DRIVE", "0", "100", "%.0f", "");
-        colKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, 556, 26, C_GREY, "OUTPUT", "-12", "+12", "%.1f", " dB");
-        smallToggle(dl, "ms", kMsMode, mcx - 24, 606, mcx + 24, 628, values[kMsMode], "M/S");
+        colKnob(dl, "drive", kSaturation, 0.f, 100.f, mcx, cY(430), 26, C_GREY, "DRIVE", "0", "100", "%.0f", "");
+        colKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, cY(556), 26, C_GREY, "OUTPUT", "-12", "+12", "%.1f", " dB");
+        smallToggle(dl, "ms", kMsMode, mcx - 24, cY(606), mcx + 24, cY(628), values[kMsMode], "M/S");
     }
 
     // A parametric band column: GAIN (top) + FREQ (mid) + Q knob or BELL toggle.
@@ -401,13 +434,13 @@ private:
               float fMin, float fMax)
     {
         const float cx = 0.5f * (COL[col] + COL[col + 1]);
-        colKnob(dl, (std::string(name) + "g").c_str(), gainId, -20.f, 20.f, cx, 306, 26, color, "GAIN", "-20", "+20", "%.1f", " dB");
+        colKnob(dl, (std::string(name) + "g").c_str(), gainId, -20.f, 20.f, cx, cY(306), 26, color, "GAIN", "-20", "+20", "%.1f", " dB");
         char fmn[8], fmx[8]; freqLabel(fMin, fmn); freqLabel(fMax, fmx);
-        colKnob(dl, (std::string(name) + "f").c_str(), freqId, fMin, fMax, cx, 430, 26, color, "FREQ", fmn, fmx, "%.0f", " Hz");
+        colKnob(dl, (std::string(name) + "f").c_str(), freqId, fMin, fMax, cx, cY(430), 26, color, "FREQ", fmn, fmx, "%.0f", " Hz");
         if (thirdKind > 0)
-            colKnob(dl, (std::string(name) + "q").c_str(), thirdId, 0.4f, 4.0f, cx, 556, 24, color, "Q", "0.4", "4", "%.2f", "");
+            colKnob(dl, (std::string(name) + "q").c_str(), thirdId, 0.4f, 4.0f, cx, cY(556), 24, color, "Q", "0.4", "4", "%.2f", "");
         else
-            smallToggle(dl, (std::string(name) + "b").c_str(), thirdId, cx - 30, 546, cx + 30, 568,
+            smallToggle(dl, (std::string(name) + "b").c_str(), thirdId, cx - 30, cY(546), cx + 30, cY(568),
                         values[thirdId], values[thirdId] > 0.5f ? "BELL" : "SHELF");
     }
 
@@ -470,21 +503,22 @@ private:
             { inL = fourKEQGetInputPeakL(inst); inR = fourKEQGetInputPeakR(inst);
               outL = fourKEQGetOutputPeakL(inst); outR = fourKEQGetOutputPeakR(inst); }
        #endif
-        panel.text(dl, INX0 - 2, 208, 8.5f, IM_COL32(150, 152, 156, 255), "INPUT", -1, true);
-        panel.text(dl, OUTX1 + 2, 208, 8.5f, IM_COL32(150, 152, 156, 255), "OUTPUT", 1, true);
+        panel.text(dl, INX0 - 2, cY(208), 8.5f, IM_COL32(150, 152, 156, 255), "INPUT", -1, true);
+        panel.text(dl, OUTX1 + 2, cY(208), 8.5f, IM_COL32(150, 152, 156, 255), "OUTPUT", 1, true);
         meterPair(dl, INX0, INX1, inL, inR);
         meterPair(dl, OUTX0, OUTX1, outL, outR);
         char b[16];
         std::snprintf(b, sizeof(b), "%.0f", 20.0f * std::log10(std::max(inL, inR) > 1e-5f ? std::max(inL, inR) : 1e-5f));
-        panel.text(dl, 0.5f * (INX0 + INX1), MET_Y1 + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
+        panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_Y1) + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
         std::snprintf(b, sizeof(b), "%.0f", 20.0f * std::log10(std::max(outL, outR) > 1e-5f ? std::max(outL, outR) : 1e-5f));
-        panel.text(dl, 0.5f * (OUTX0 + OUTX1), MET_Y1 + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
+        panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_Y1) + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
     }
 
     void meterPair(ImDrawList* dl, float x0, float x1, float l, float r)
     {
-        dl->AddRectFilled(panel.P(x0 - 2, MET_Y0 - 2), panel.P(x1 + 2, MET_Y1 + 2), IM_COL32(60, 60, 63, 255), 2.0f * sc());
-        dl->AddRectFilled(panel.P(x0, MET_Y0), panel.P(x1, MET_Y1), IM_COL32(14, 16, 18, 255));
+        const float y0 = cY(MET_Y0), y1 = cY(MET_Y1);
+        dl->AddRectFilled(panel.P(x0 - 2, y0 - 2), panel.P(x1 + 2, y1 + 2), IM_COL32(60, 60, 63, 255), 2.0f * sc());
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(14, 16, 18, 255));
         const float mid = 0.5f * (x0 + x1);
         meterBar(dl, x0 + 1, mid - 0.5f, l);
         meterBar(dl, mid + 0.5f, x1 - 1, r);
@@ -492,16 +526,17 @@ private:
 
     void meterBar(ImDrawList* dl, float x0, float x1, float lin)
     {
+        const float y0 = cY(MET_Y0), y1 = cY(MET_Y1);
         float db = 20.0f * std::log10(lin > 1e-5f ? lin : 1e-5f);
         float t = (db + 60.0f) / 60.0f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
-        const float yFill = MET_Y1 - t * (MET_Y1 - MET_Y0);
+        const float yFill = y1 - t * (y1 - y0);
         ImU32 col = db > -1.5f ? IM_COL32(226, 70, 55, 255)
                   : db > -10.f ? IM_COL32(224, 196, 72, 255) : IM_COL32(96, 196, 112, 255);
-        dl->AddRectFilled(panel.P(x0, yFill), panel.P(x1, MET_Y1), col);
+        dl->AddRectFilled(panel.P(x0, yFill), panel.P(x1, y1), col);
         // segment ticks
         for (int i = 1; i < 12; ++i)
         {
-            const float y = MET_Y0 + (float)i / 12.0f * (MET_Y1 - MET_Y0);
+            const float y = y0 + (float)i / 12.0f * (y1 - y0);
             dl->AddLine(panel.P(x0, y), panel.P(x1, y), IM_COL32(14, 16, 18, 200), 1.0f * sc());
         }
     }
@@ -513,6 +548,8 @@ private:
     float values[kParamCount] = {};
     int currentPreset = -1;
     bool showGraph = true;
+    bool needResize = false;
+    float ctlDstTop_ = 220.0f, ctlDstBot_ = 662.0f, ctlScaleY_ = 1.0f;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
 };
