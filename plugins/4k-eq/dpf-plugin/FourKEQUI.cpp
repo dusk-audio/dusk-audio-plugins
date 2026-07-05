@@ -291,7 +291,7 @@ private:
             acc(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
             acc(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
         }
-        if (black && values[kLfBell] > 0.5f)
+        if (values[kLfBell] > 0.5f)
             acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLfFreq], 0.7f, values[kLfGain], black));
         else
             acc(duskaudio::FourKEQDSP::consoleShelf(fs, values[kLfFreq], 0.7f, values[kLfGain], false, black));
@@ -300,7 +300,7 @@ private:
         { float f = values[kHmFreq], q = values[kHmQ];
           if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kHmGain], q); else if (f > 7000.f) f = 7000.f;
           acc(duskaudio::FourKEQDSP::consolePeak(fs, f, q, values[kHmGain], black)); }
-        { if (black && values[kHfBell] > 0.5f) acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kHfFreq], 0.7f, values[kHfGain], black));
+        { if (values[kHfBell] > 0.5f) acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kHfFreq], 0.7f, values[kHfGain], black));
           else acc(duskaudio::FourKEQDSP::consoleShelf(fs, values[kHfFreq], 0.7f, values[kHfGain], true, black)); }
         if (values[kLpfEnabled] > 0.5f)
         { const float f = (float)std::max(1.0, std::min((double)values[kLpfFreq], fs * 0.4998));

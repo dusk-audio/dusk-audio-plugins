@@ -171,10 +171,10 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
     const float lpfQ = black ? 0.8f : 0.707f;
     const BiquadCoeffs lpf = Biquad::lowPass(fs, lpfFreq, lpfQ);
 
-    // LF band: shelf, or bell in Black+bell.
+    // LF band: shelf, or bell when the Bell switch is on (works in both voicings).
     const float lfGain = pLfGain.load(R), lfFreq = pLfFreq.load(R);
     const bool  lfBell = pLfBell.load(R) > 0.5f;
-    const BiquadCoeffs lf = (black && lfBell)
+    const BiquadCoeffs lf = lfBell
         ? consolePeak(fs, lfFreq, 0.7f, lfGain, black)
         : consoleShelf(fs, lfFreq, 0.7f, lfGain, /*high*/false, black);
 
@@ -193,10 +193,10 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
     else if (hmFreq > 7000.0f) hmFreq = 7000.0f;
     const BiquadCoeffs hm = consolePeak(fs, hmFreq, hmQ, hmGain, black);
 
-    // HF band: shelf, or bell in Black+bell (consoleShelf pre-warps fc).
+    // HF band: shelf, or bell when the Bell switch is on (works in both voicings).
     const float hfGain = pHfGain.load(R), hfFreq = pHfFreq.load(R);
     const bool  hfBell = pHfBell.load(R) > 0.5f;
-    const BiquadCoeffs hf = (black && hfBell)
+    const BiquadCoeffs hf = hfBell
         ? consolePeak(fs, hfFreq, 0.7f, hfGain, black)
         : consoleShelf(fs, hfFreq, 0.7f, hfGain, /*high*/true, black);
 
