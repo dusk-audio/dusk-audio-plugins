@@ -239,10 +239,15 @@ private:
         for (int b = 0; b < kBands; ++b)
         {
             const float t = frozen_ ? 1.0e9f : t60_[b] * decayScale_;
-            // mean line length for the band sets the per-pass gain
+            // mean line length for the band sets the per-pass gain. Size can't
+            // change the reserved buffer lengths at runtime (allocation is
+            // prepare-only), so it acts HERE: sizeScale_ scales the EFFECTIVE
+            // loop length, so a bigger Size lengthens decay + densifies the band.
+            // sizeScale_ == 1.0 (default) -> identical to the fixed-length
+            // mapping (bit-null for the pilot's baked config).
             float meanLen = 0.0f;
             for (int l = 0; l < kLines; ++l) meanLen += static_cast<float> (len_[b][l]);
-            meanLen *= 0.25f;
+            meanLen *= 0.25f * sizeScale_;
             g_[b] = std::min (0.9995f, std::pow (10.0f, -3.0f * meanLen / (t * sr_)));
         }
     }

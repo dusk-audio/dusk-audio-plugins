@@ -213,6 +213,7 @@ void DuskVerbEngine::clearAllBuffers()
     std::fill (reflBuf_.begin(), reflBuf_.end(), 0.0f);
     reflWritePos_ = 0;
     reflLpStateL_ = reflLpStateR_ = 0.0f;
+    etapLpStateL_ = etapLpStateR_ = 0.0f;   // early-tap bank shares reflBuf_ — clear its LP state too
 
     loCutFilter_.reset();
     hiCutFilter_.reset();
@@ -306,6 +307,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     std::fill (reflBuf_.begin(), reflBuf_.end(), 0.0f);
     reflWritePos_ = 0;
     reflLpStateL_ = reflLpStateR_ = 0.0f;
+    etapLpStateL_ = etapLpStateR_ = 0.0f;   // early-tap bank shares reflBuf_ — clear its LP state too
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
