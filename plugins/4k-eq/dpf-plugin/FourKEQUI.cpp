@@ -427,9 +427,9 @@ private:
             static const float FT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
             static const float FV[7] = { 30.f, 50.f, 100.f, 200.f, 300.f, 400.f, 450.f };
             static const char* const FL[7] = { "30", "50", "100", "200", "300", "400", "450" };
-            consoleDetentKnob(dl, "lfg", lcx, cY(310), 24.f, kLfGain, GT, GV, GL, 11, C_LF_BROWN, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lff", lcx, cY(438), 24.f, kLfFreq, FT, FV, FL, 7, C_LF_BROWN, "Hz", "%.0f Hz");
-            metalButton(dl, "lfbell", lcx - 30.f, cY(546), lcx + 30.f, cY(572), kLfBell, "BELL", "SHELF");
+            consoleDetentKnob(dl, "lfg", lcx, cY(314), 28.f, kLfGain, GT, GV, GL, 11, C_LF_BROWN, "dB", "%.1f dB");
+            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT, FV, FL, 7, C_LF_BROWN, "Hz", "%.0f Hz");
+            metalButton(dl, "lfbell", lcx - 32.f, cY(560), lcx + 32.f, cY(584), kLfBell, "BELL", "SHELF");
         }
         band(dl, 2, "LMF", C_LMF, kLmGain, kLmFreq, kLmQ,    +1, 200.f, 2500.f);
         band(dl, 3, "HMF", C_HMF, kHmGain, kHmFreq, kHmQ,    +1, 600.f, 7000.f);
@@ -480,9 +480,9 @@ private:
                    false, false, fmt, suffix, face);
         // dial-end tick labels
         const float a0 = duskdpf::DuskPanel::knobAngle(0.0f), a1 = duskdpf::DuskPanel::knobAngle(1.0f);
-        panel.text(dl, cx + std::sin(a0) * (r + 12), cy - std::cos(a0) * (r + 12) - 4, 8.0f, IM_COL32(140, 142, 146, 255), lmin, 1);
-        panel.text(dl, cx + std::sin(a1) * (r + 12), cy - std::cos(a1) * (r + 12) - 4, 8.0f, IM_COL32(140, 142, 146, 255), lmax, -1);
-        panel.text(dl, cx, cy + r + 8, 10.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
+        panel.text(dl, cx + std::sin(a0) * (r + 14), cy - std::cos(a0) * (r + 14) - 5, 9.5f, IM_COL32(170, 172, 176, 255), lmin, 1);
+        panel.text(dl, cx + std::sin(a1) * (r + 14), cy - std::cos(a1) * (r + 14) - 5, 9.5f, IM_COL32(170, 172, 176, 255), lmax, -1);
+        panel.text(dl, cx, cy + r + 8, 11.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
     }
 
     void smallToggle(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0, float x1, float y1,
@@ -594,9 +594,9 @@ private:
         {
             const float a = duskdpf::DuskPanel::knobAngle(stepLT(i));
             const float dx = std::sin(a), dy = -std::cos(a);
-            dl->AddCircleFilled(panel.P(cx + dx * (R + 8.f), cy + dy * (R + 8.f)), 1.6f * s, IM_COL32(150, 152, 156, 255), 8);
+            dl->AddCircleFilled(panel.P(cx + dx * (R + 9.f), cy + dy * (R + 9.f)), 1.7f * s, IM_COL32(150, 152, 156, 255), 8);
             const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
-            panel.text(dl, cx + dx * (R + 17.f), cy + dy * (R + 17.f) - 4.f, 8.5f, IM_COL32(196, 198, 202, 255), labels[i], align, true);
+            panel.text(dl, cx + dx * (R + 20.f), cy + dy * (R + 20.f) - 5.f, 11.f, IM_COL32(206, 208, 212, 255), labels[i], align, true);
         }
 
         // brushed-metal body: silver cap + dark pointer for the filter knobs.
@@ -606,15 +606,15 @@ private:
         const float iy = cy + R + 22.f;
         if (lowpass)
         {
-            ImVec2 ic[4] = { panel.P(cx + 2.f, iy - 3.f), panel.P(cx + 9.f, iy - 3.f), panel.P(cx + 16.f, iy), panel.P(cx + 21.f, iy + 6.f) };
+            ImVec2 ic[4] = { panel.P(cx + 4.f, iy - 3.f), panel.P(cx + 11.f, iy - 3.f), panel.P(cx + 18.f, iy), panel.P(cx + 23.f, iy + 6.f) };
             dl->AddPolyline(ic, 4, IM_COL32(196, 198, 202, 255), 0, 1.4f * s);
-            panel.text(dl, cx - 4.f, iy - 8.f, 10.f, IM_COL32(206, 208, 212, 255), unit, 1, true);
+            panel.text(dl, cx - 4.f, iy - 9.f, 12.f, IM_COL32(210, 212, 216, 255), unit, 1, true);
         }
         else
         {
-            ImVec2 ic[4] = { panel.P(cx - 20.f, iy + 6.f), panel.P(cx - 15.f, iy), panel.P(cx - 8.f, iy - 3.f), panel.P(cx + 2.f, iy - 3.f) };
+            ImVec2 ic[4] = { panel.P(cx - 22.f, iy + 6.f), panel.P(cx - 17.f, iy), panel.P(cx - 10.f, iy - 3.f), panel.P(cx + 4.f, iy - 3.f) };
             dl->AddPolyline(ic, 4, IM_COL32(196, 198, 202, 255), 0, 1.4f * s);
-            panel.text(dl, cx + 8.f, iy - 8.f, 10.f, IM_COL32(206, 208, 212, 255), unit, -1, true);
+            panel.text(dl, cx + 8.f, iy - 9.f, 12.f, IM_COL32(210, 212, 216, 255), unit, -1, true);
         }
 
         if (hov || act)
@@ -716,13 +716,13 @@ private:
         {
             const float a = duskdpf::DuskPanel::knobAngle(T[i]);
             const float dx = std::sin(a), dy = -std::cos(a);
-            dl->AddCircleFilled(panel.P(cx + dx * (R + 8.f), cy + dy * (R + 8.f)), 1.5f * s, IM_COL32(150, 152, 156, 255), 8);
+            dl->AddCircleFilled(panel.P(cx + dx * (R + 9.f), cy + dy * (R + 9.f)), 1.6f * s, IM_COL32(150, 152, 156, 255), 8);
             const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
-            panel.text(dl, cx + dx * (R + 16.f), cy + dy * (R + 16.f) - 4.f, 8.f, IM_COL32(196, 198, 202, 255), labels[i], align, true);
+            panel.text(dl, cx + dx * (R + 20.f), cy + dy * (R + 20.f) - 5.f, 10.5f, IM_COL32(206, 208, 212, 255), labels[i], align, true);
         }
 
         drawMetalKnobBody(dl, c, RR, t, capCol, IM_COL32(245, 245, 245, 255));
-        panel.text(dl, cx, cy + R + 15.f, 10.f, IM_COL32(206, 208, 212, 255), unit, 0, true);
+        panel.text(dl, cx, cy + R + 16.f, 12.f, IM_COL32(210, 212, 216, 255), unit, 0, true);
 
         if (hov || act)
         {
