@@ -1844,19 +1844,24 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     pn_dv = find_stim(dv_dir, 'piano'); pn_lx = find_stim(lex_dir, 'piano')
     if pn_dv and pn_lx:
         print("\n── PIANO STEM (22.6 s music + tail; anchor replay-validated) ──")
-        _xd, _srp = sf.read(pn_dv); _xl, _ = sf.read(pn_lx)
+        _xd, _srp = sf.read(pn_dv); _xl, _srl = sf.read(pn_lx)
         _md = _xd.mean(axis=1) if _xd.ndim > 1 else _xd
         _ml = _xl.mean(axis=1) if _xl.ndim > 1 else _xl
-        _stem_end = 22.6
-        def _band_rms_db(m, lo, hi, t0, t1):
-            i0, i1 = int(t0 * _srp), min(int(t1 * _srp), len(m))
+        # Derive the analysis window from the ACTUAL rendered lengths of BOTH
+        # files, not a hardcoded 22.6 s at the DV rate: a shorter asset, or an
+        # anchor at a different sample rate, would otherwise window past EOF and
+        # mis-score. Anchor rate (_srl) is captured separately so the anchor's
+        # filters + windows below use its OWN rate, never the DV rate.
+        _stem_end = min(22.6, len(_md) / _srp, len(_ml) / _srl)
+        def _band_rms_db(m, lo, hi, t0, t1, sr):
+            i0, i1 = int(t0 * sr), min(int(t1 * sr), len(m))
             if i1 - i0 < 256: return None
-            sos = butter(4, [lo / (_srp/2), min(hi / (_srp/2), 0.99)], btype='band', output='sos')
+            sos = butter(4, [lo / (sr/2), min(hi / (sr/2), 0.99)], btype='band', output='sos')
             b = sosfiltfilt(sos, m[i0:i1])
             return 20.0 * np.log10(float(np.sqrt(np.mean(b ** 2))) + 1e-12)
         # 1) broadband stem level
         _rd = 20.0*np.log10(float(np.sqrt(np.mean(_md[int(1*_srp):int(_stem_end*_srp)]**2)))+1e-12)
-        _rl = 20.0*np.log10(float(np.sqrt(np.mean(_ml[int(1*_srp):int(_stem_end*_srp)]**2)))+1e-12)
+        _rl = 20.0*np.log10(float(np.sqrt(np.mean(_ml[int(1*_srl):int(_stem_end*_srl)]**2)))+1e-12)
         _d = _rd - _rl
         _pass = abs(_d) <= GATES['piano_rms_dB']
         line = f"  {'piano RMS':30s}  DV={_rd:6.1f}  REF={_rl:6.1f}  Δ={_d:+5.1f}  gate=±{GATES['piano_rms_dB']}  {'✓' if _pass else '✗'}"
@@ -1866,7 +1871,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         _bands = [(20,100,'sub'),(100,300,'low'),(300,1000,'lowmid'),(1000,3000,'mid'),(3000,8000,'hi'),(8000,16000,'air')]
         worst, wl = 0.0, ''
         for lo, hi, lab in _bands:
-            bd = _band_rms_db(_md, lo, hi, 1, _stem_end); bl = _band_rms_db(_ml, lo, hi, 1, _stem_end)
+            bd = _band_rms_db(_md, lo, hi, 1, _stem_end, _srp); bl = _band_rms_db(_ml, lo, hi, 1, _stem_end, _srl)
             if bd is None or bl is None: continue
             dd = bd - bl
             print(f"    {lab:7s} {lo:5d}-{hi:<5d}  DV={bd:6.1f}  REF={bl:6.1f}  Δ={dd:+5.1f}")
@@ -1878,8 +1883,8 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         # 3) post-stem tail balance (the ring-out the ear judges last)
         worst, wl = 0.0, ''
         for lo, hi, lab in [(60,250,'low'),(250,1000,'lowmid'),(1000,4000,'mid'),(4000,12000,'hi')]:
-            bd = _band_rms_db(_md, lo, hi, _stem_end + 0.5, _stem_end + 3.0)
-            bl = _band_rms_db(_ml, lo, hi, _stem_end + 0.5, _stem_end + 3.0)
+            bd = _band_rms_db(_md, lo, hi, _stem_end + 0.5, _stem_end + 3.0, _srp)
+            bl = _band_rms_db(_ml, lo, hi, _stem_end + 0.5, _stem_end + 3.0, _srl)
             if bd is None or bl is None: continue
             # Clamp both sides to a -70 dBFS floor: below that is silence /
             # dither (a hard output gate like Reverse Taps'), and an unclamped
@@ -1897,8 +1902,8 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         # material; the music's own dynamics cancel in the DV-anchor difference)
         worst, wf = -120.0, 0
         for f0 in (62, 125, 250):
-            e_d = _band_rms_db(_md, f0/1.3, f0*1.3, 2, 7);  l_d = _band_rms_db(_md, f0/1.3, f0*1.3, 17, _stem_end)
-            e_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 2, 7);  l_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 17, _stem_end)
+            e_d = _band_rms_db(_md, f0/1.3, f0*1.3, 2, 7, _srp);  l_d = _band_rms_db(_md, f0/1.3, f0*1.3, 17, _stem_end, _srp)
+            e_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 2, 7, _srl);  l_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 17, _stem_end, _srl)
             if None in (e_d, l_d, e_l, l_l): continue
             g = (l_d - e_d) - (l_l - e_l)
             if g > worst: worst, wf = g, f0
