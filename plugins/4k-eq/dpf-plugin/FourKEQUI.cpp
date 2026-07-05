@@ -39,7 +39,8 @@ namespace
     constexpr float COL[7] = { 40, 197, 335, 469, 603, 737, 920 };
 
     // band face colours
-    constexpr ImU32 C_LF_BROWN = IM_COL32(96, 56, 48, 255); // SSL LF maroon console knob
+    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);  // SSL LF maroon console knob
+    constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // SSL LMF blue console knob
     constexpr ImU32 C_LF  = IM_COL32(196, 74, 66, 255);
     constexpr ImU32 C_LMF = IM_COL32(202, 132, 66, 255);
     constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
@@ -417,13 +418,14 @@ private:
         steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, LPFF, true,  "kHz");
         colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(568), 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
 
-        // LF — SSL brown console band: GAIN (0 top, +-15 dB) + FREQ (200 top,
-        // 30-450 Hz) with labelled detents, plus a metal BELL/SHELF button.
+        // Shared GAIN detent table (0 at top, +-15 dB) for the console bands.
+        static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
+        static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
+        static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
+
+        // LF — SSL brown console band: GAIN + FREQ (30-450 Hz) + BELL/SHELF button.
         {
             const float lcx = 0.5f * (COL[1] + COL[2]);
-            static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
-            static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
-            static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
             static const float FT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
             static const float FV[7] = { 30.f, 50.f, 100.f, 200.f, 300.f, 400.f, 450.f };
             static const char* const FL[7] = { "30", "50", "100", "200", "300", "400", "450" };
@@ -431,7 +433,21 @@ private:
             consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT, FV, FL, 7, C_LF_BROWN, "Hz", "%.0f Hz");
             metalButton(dl, "lfbell", lcx - 32.f, cY(560), lcx + 32.f, cY(584), kLfBell, "BELL", "SHELF");
         }
-        band(dl, 2, "LMF", C_LMF, kLmGain, kLmFreq, kLmQ,    +1, 200.f, 2500.f);
+        // LMF — SSL blue console band: GAIN + FREQ (.2-2.5 kHz, 1 at top) + Q
+        // (.5-3, descending), with narrow/wide bandwidth symbols under Q.
+        {
+            const float mcx = 0.5f * (COL[2] + COL[3]);
+            static const float MFT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
+            static const float MFV[7] = { 200.f, 300.f, 800.f, 1000.f, 1500.f, 2000.f, 2500.f };
+            static const char* const MFL[7] = { ".2", ".3", ".8", "1", "1.5", "2", "2.5" };
+            static const float MQT[5] = { 0.f, .25f, .5f, .75f, 1.f };
+            static const float MQV[5] = { 3.f, 2.f, 1.5f, 1.f, .5f };
+            static const char* const MQL[5] = { "3", "2", "1.5", "1", ".5" };
+            consoleDetentKnob(dl, "lmg", mcx, cY(314), 28.f, kLmGain, GT, GV, GL, 11, C_LMF_BLUE, "dB", "%.1f dB");
+            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, MFT, MFV, MFL, 7, C_LMF_BLUE, "kHz", "%.0f Hz");
+            consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, MQT, MQV, MQL, 5, C_LMF_BLUE, "", "Q %.2f");
+            bandwidthIcons(dl, mcx, cY(590) + 40.f);
+        }
         band(dl, 3, "HMF", C_HMF, kHmGain, kHmFreq, kHmQ,    +1, 600.f, 7000.f);
         band(dl, 4, "HF",  C_HF,  kHfGain, kHfFreq, kHfBell, -1, 1500.f, 16000.f);
 
@@ -670,10 +686,17 @@ private:
     }
     static float detentValToPos(const float* T, const float* V, int n, float v)
     {
-        if (v <= V[0]) return T[0];
-        if (v >= V[n - 1]) return T[n - 1];
+        // clamp to the value range (works whether V ascends or descends)
+        float lo = V[0], hi = V[0];
+        for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
+        v = v < lo ? lo : (v > hi ? hi : v);
         for (int i = 0; i < n - 1; ++i)
-            if (v <= V[i + 1]) { const float a = (v - V[i]) / (V[i + 1] - V[i]); return T[i] + (T[i + 1] - T[i]) * a; }
+            if ((v - V[i]) * (v - V[i + 1]) <= 0.f) // v lies within this segment
+            {
+                const float d = V[i + 1] - V[i];
+                const float a = d != 0.f ? (v - V[i]) / d : 0.f;
+                return T[i] + (T[i + 1] - T[i]) * a;
+            }
         return T[n - 1];
     }
 
@@ -726,6 +749,17 @@ private:
             char buf[24]; std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
             panel.text(dl, cx, cy - R - 13.f, 9.5f, pal().whiteDim, buf, 0);
         }
+    }
+
+    // Narrow + wide "peak" bandwidth symbols (drawn under a Q knob).
+    void bandwidthIcons(ImDrawList* dl, float cx, float iy)
+    {
+        const float s = sc();
+        const ImU32 col = IM_COL32(150, 152, 156, 255);
+        ImVec2 nar[5] = { panel.P(cx - 24.f, iy + 5.f), panel.P(cx - 20.f, iy + 5.f), panel.P(cx - 16.f, iy - 6.f), panel.P(cx - 12.f, iy + 5.f), panel.P(cx - 8.f, iy + 5.f) };
+        dl->AddPolyline(nar, 5, col, 0, 1.4f * s);
+        ImVec2 wid[6] = { panel.P(cx + 8.f, iy + 5.f), panel.P(cx + 12.f, iy + 5.f), panel.P(cx + 15.f, iy - 4.f), panel.P(cx + 19.f, iy - 4.f), panel.P(cx + 22.f, iy + 5.f), panel.P(cx + 26.f, iy + 5.f) };
+        dl->AddPolyline(wid, 6, col, 0, 1.4f * s);
     }
 
     // Raised silver metal button (BELL / SHELF). Beveled, pressed-in when active.
