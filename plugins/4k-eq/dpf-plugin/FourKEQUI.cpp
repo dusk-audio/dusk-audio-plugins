@@ -405,12 +405,12 @@ private:
             panel.text(dl, cx, cY(232), 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
         }
 
-        // FILTERS
+        // FILTERS — SSL-style stepped HPF (OUT position folds in the enable),
+        // then a plain LPF knob + input trim.
         const float fcx = 0.5f * (COL[0] + COL[1]);
-        colKnob(dl, "hpf", kHpfFreq, 20.f, 500.f, fcx - 14, cY(306), 26, C_GREY, "HPF", "20", "500", "%.0f", " Hz");
-        smallToggle(dl, "hpfin", kHpfEnabled, fcx + 30, cY(296), fcx + 62, cY(318), values[kHpfEnabled], "IN");
-        colKnob(dl, "lpf", kLpfFreq, 3000.f, 20000.f, fcx - 14, cY(430), 26, C_GREY, "LPF", "3k", "20k", "%.0f", " Hz");
-        smallToggle(dl, "lpfin", kLpfEnabled, fcx + 30, cY(420), fcx + 62, cY(442), values[kLpfEnabled], "IN");
+        hpfKnob(dl, fcx, cY(316), 28.0f);
+        colKnob(dl, "lpf", kLpfFreq, 3000.f, 20000.f, fcx - 14, cY(452), 26, C_GREY, "LPF", "3k", "20k", "%.0f", " Hz");
+        smallToggle(dl, "lpfin", kLpfEnabled, fcx + 30, cY(442), fcx + 62, cY(464), values[kLpfEnabled], "IN");
         colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(556), 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
 
         band(dl, 1, "LF",  C_LF,  kLfGain, kLfFreq, kLfBell, -1, 30.f, 480.f);
@@ -496,6 +496,128 @@ private:
     }
 
     //========================================================================
+    // SSL-style stepped HPF rotary: OUT + 20/70/120/200/300/350 Hz detents,
+    // dots + labels around a brushed-metal knob, vertical pointer, HPF icon.
+    // The OUT position folds in the filter enable (no separate IN switch).
+    //========================================================================
+    static float hpfLT(int i) { static const float t[7] = {0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f}; return t[i]; }
+    static float hpfLF(int i) { static const float f[7] = {20.f, 20.f, 70.f, 120.f, 200.f, 300.f, 350.f}; return f[i]; }
+
+    void hpfPosToState(float t, bool& en, float& f) const
+    {
+        if (t < 0.06f) { en = false; f = values[kHpfFreq]; return; }
+        en = true;
+        if (t <= hpfLT(1)) { f = 20.f; return; }
+        for (int i = 1; i <= 5; ++i)
+            if (t <= hpfLT(i + 1)) { const float a = (t - hpfLT(i)) / (hpfLT(i + 1) - hpfLT(i)); f = hpfLF(i) + (hpfLF(i + 1) - hpfLF(i)) * a; return; }
+        f = 350.f;
+    }
+    float hpfStateToPos(bool en, float freq) const
+    {
+        if (!en) return 0.f;
+        const float fr = freq < 20.f ? 20.f : (freq > 350.f ? 350.f : freq);
+        if (fr <= 20.f) return hpfLT(1);
+        for (int i = 1; i <= 5; ++i)
+            if (fr <= hpfLF(i + 1)) { const float a = (fr - hpfLF(i)) / (hpfLF(i + 1) - hpfLF(i)); return hpfLT(i) + (hpfLT(i + 1) - hpfLT(i)) * a; }
+        return 1.f;
+    }
+    void applyHpfPos(float t)
+    {
+        bool en; float f; hpfPosToState(t, en, f);
+        values[kHpfEnabled] = en ? 1.f : 0.f; setParameterValue(kHpfEnabled, values[kHpfEnabled]);
+        if (en) { values[kHpfFreq] = f; setParameterValue(kHpfFreq, f); }
+    }
+
+    void hpfKnob(ImDrawList* dl, float cx, float cy, float R)
+    {
+        const float s = sc();
+        const ImVec2 c = panel.P(cx, cy);
+        const float RR = R * s;
+        auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
+
+        const bool en = values[kHpfEnabled] > 0.5f;
+        float t = hpfStateToPos(en, values[kHpfFreq]);
+
+        // interaction
+        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+        ImGui::InvisibleButton("hpfknob", ImVec2(2.f * RR, 2.f * RR));
+        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        if (ImGui::IsItemActivated()) { editParameter(kHpfEnabled, true); editParameter(kHpfFreq, true); hpfDragT = t; }
+        if (act)
+        {
+            const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+            hpfDragT = c01(hpfDragT - ImGui::GetIO().MouseDelta.y * sp);
+            t = hpfDragT; applyHpfPos(t);
+        }
+        if (ImGui::IsItemDeactivated()) { editParameter(kHpfEnabled, false); editParameter(kHpfFreq, false); }
+        if (hov && !act)
+        {
+            if (ImGui::IsMouseDoubleClicked(0)) // reset to OUT
+            { editParameter(kHpfEnabled, true); applyHpfPos(0.f); editParameter(kHpfEnabled, false); t = 0.f; }
+            const float wh = ImGui::GetIO().MouseWheel;
+            if (wh != 0.f)
+            {
+                t = c01(t + wh * 0.02f);
+                editParameter(kHpfEnabled, true); editParameter(kHpfFreq, true);
+                applyHpfPos(t);
+                editParameter(kHpfFreq, false); editParameter(kHpfEnabled, false);
+            }
+        }
+
+        // detent dots + labels
+        static const char* LL[7] = { "OUT", "20", "70", "120", "200", "300", "350" };
+        for (int i = 0; i < 7; ++i)
+        {
+            const float a = duskdpf::DuskPanel::knobAngle(hpfLT(i));
+            const float dx = std::sin(a), dy = -std::cos(a);
+            dl->AddCircleFilled(panel.P(cx + dx * (R + 8.f), cy + dy * (R + 8.f)), 1.6f * s, IM_COL32(150, 152, 156, 255), 8);
+            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
+            panel.text(dl, cx + dx * (R + 17.f), cy + dy * (R + 17.f) - 4.f, 8.5f, IM_COL32(196, 198, 202, 255), LL[i], align, true);
+        }
+
+        // brushed-metal body
+        dl->AddCircleFilled(c, RR, IM_COL32(18, 18, 20, 255), 48);                    // rim
+        dl->AddCircleFilled(c, RR * 0.95f, IM_COL32(88, 90, 94, 255), 48);            // skirt
+        for (int i = 0; i < 20; ++i) // knurled skirt notches
+        {
+            const float a = (float)i / 20.f * 2.f * duskdpf::DuskPanel::kPi;
+            const ImVec2 d(std::sin(a), -std::cos(a));
+            dl->AddLine(ImVec2(c.x + d.x * RR * 0.80f, c.y + d.y * RR * 0.80f),
+                        ImVec2(c.x + d.x * RR * 0.93f, c.y + d.y * RR * 0.93f), IM_COL32(40, 40, 43, 160), 1.3f * s);
+        }
+        const float capR = RR * 0.74f;
+        dl->AddCircleFilled(c, capR, IM_COL32(150, 152, 156, 255), 44);               // cap base
+        // vertical brushed streaks + top-left sheen
+        dl->PushClipRect(ImVec2(c.x - capR, c.y - capR), ImVec2(c.x + capR, c.y + capR), true);
+        for (int i = -4; i <= 4; ++i)
+            dl->AddLine(ImVec2(c.x + i * capR * 0.2f, c.y - capR), ImVec2(c.x + i * capR * 0.2f, c.y + capR),
+                        IM_COL32(168, 170, 174, 60), 1.2f * s);
+        dl->AddCircleFilled(ImVec2(c.x - capR * 0.22f, c.y - capR * 0.28f), capR * 0.7f, IM_COL32(190, 192, 196, 70), 40);
+        dl->PopClipRect();
+        dl->AddCircle(c, capR, IM_COL32(30, 30, 32, 255), 44, 1.4f * s);
+
+        // pointer (dark vertical indicator)
+        const float a = duskdpf::DuskPanel::knobAngle(t);
+        const ImVec2 pd(std::sin(a), -std::cos(a));
+        dl->AddLine(ImVec2(c.x + pd.x * capR * 0.12f, c.y + pd.y * capR * 0.12f),
+                    ImVec2(c.x + pd.x * capR * 0.92f, c.y + pd.y * capR * 0.92f), IM_COL32(30, 30, 33, 255), 3.4f * s);
+
+        // HPF icon (rolloff curve) + "Hz" below
+        const float iy = cy + R + 22.f;
+        ImVec2 ic[4] = { panel.P(cx - 20.f, iy + 6.f), panel.P(cx - 15.f, iy), panel.P(cx - 8.f, iy - 3.f), panel.P(cx + 2.f, iy - 3.f) };
+        dl->AddPolyline(ic, 4, IM_COL32(196, 198, 202, 255), 0, 1.4f * s);
+        panel.text(dl, cx + 8.f, iy - 8.f, 10.f, IM_COL32(206, 208, 212, 255), "Hz", -1, true);
+
+        if (hov || act)
+        {
+            char buf[24];
+            if (!en) std::snprintf(buf, sizeof(buf), "OUT");
+            else std::snprintf(buf, sizeof(buf), "%.0f Hz", values[kHpfFreq]);
+            panel.text(dl, cx, cy - R - 14.f, 9.5f, pal().whiteDim, buf, 0);
+        }
+    }
+
+    //========================================================================
     // edge meters (INPUT left, OUTPUT right)
     //========================================================================
     void drawMeters(ImDrawList* dl)
@@ -554,6 +676,7 @@ private:
     bool showGraph = true;
     bool needResize = false;
     float ctlDstTop_ = 220.0f, ctlDstBot_ = 662.0f, ctlScaleY_ = 1.0f;
+    float hpfDragT = 0.0f; // HPF stepped-knob drag origin
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
 };
