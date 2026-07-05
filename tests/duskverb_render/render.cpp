@@ -83,20 +83,18 @@ namespace
 
     // ── Algorithm choice normalisation ──────────────────────────────────────
     // DuskVerb's "Algorithm" parameter is a JUCE AudioParameterChoice. A choice
-    // param normalises index i as i / (numChoices - 1). The dropdown exposes 9
-    // engines (getAlgorithmConfig() in AlgorithmConfig.h):
+    // param normalises index i as i / (numChoices - 1), so the divisor below MUST
+    // equal getNumAlgorithms() - 1. The harness is standalone and cannot link the
+    // plugin enum, so bump kNumAlgorithms by hand whenever an engine is added or
+    // removed (getAlgorithmConfig()/getNumAlgorithms() in AlgorithmConfig.h).
+    // There are 16 engines now (indices 0..15):
     //   0 Dattorro · 1 DattorroVintage · 2 SixAPTank · 3 QuadTank · 4 FDN
-    //   5 Spring   · 6 NonLinear        · 7 Shimmer   · 8 VintageTank
-    // This divisor MUST equal numAlgorithms - 1. It was 7 in the 8-engine era;
-    // adding VintageTank (2026-05-30, commit 4362b22) made it 8. A stale divisor
-    // silently misroutes the engine (e.g. FDN index 4 → Spring) — the bug this
-    // branch (87-fix-fdn-quadtank) fixes. Keep kNumAlgorithms in sync with
-    // getNumAlgorithms() whenever an engine is added or removed.
-    // MUST equal AlgorithmConfig::getNumAlgorithms() (the harness is standalone
-    // and cannot link the plugin enum, so bump this by hand when an engine is
-    // added). Was a stale 9 after ReverseRoom became the 10th engine — that
-    // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
-    static constexpr int   kNumAlgorithms    = 16;   // 0..15: + 13 TiledRoom, + 14 DenseHall, + 15 ParallelMultiband
+    //   5 Spring   · 6 NonLinear · 7 Shimmer · 8 VintageTank · 9 ReverseRoom
+    //   10 AccurateHall · 11 SparseField · 12 AccurateHall32 · 13 TiledRoom
+    //   14 DenseHall · 15 ParallelMultiband
+    // A stale divisor silently misroutes the engine (e.g. FDN index 4 → Spring) —
+    // the off-by-one bug this constant guards against (branch 87-fix-fdn-quadtank).
+    static constexpr int   kNumAlgorithms    = 16;   // 0..15 (see AlgorithmConfig::getNumAlgorithms())
     static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 15.0f
 
     // Keys are the human-readable parameter NAMES (matching what the AU host
@@ -212,7 +210,7 @@ namespace
 
     // Compact preset builder. Field order matches FactoryPresets.h exactly so
     // values can be transcribed 1:1 from the source.  Algorithm choice param
-    // values are the choice INDEX (0..8); we normalise to index/(N-1) below.
+    // values are the choice INDEX (0..15); we normalise to index/(N-1) below.
     PresetParams makePreset (const char* name,
         int algoIdx, float mix, bool bus, float predelay,
         float decay, float size, float modDepth, float modRate,
@@ -226,11 +224,10 @@ namespace
             juce::String (name),
             {
                 // Divisor must equal (numAlgorithms - 1) = kAlgorithmDivisor.
-                // 10 algorithms now (Dattorro / DattorroVintage / SixAPTank /
-                // QuadTank / FDN / Spring / NonLinear / Shimmer / VintageTank /
-                // ReverseRoom) → divisor = 9. Mismatching the divisor silently
-                // misroutes the algorithm index (the FDN→Spring bug fixed on
-                // branch 87-fix-fdn-quadtank).
+                // 16 engines now (0..15, see the kNumAlgorithms comment above) →
+                // divisor = 15. Mismatching the divisor silently misroutes the
+                // algorithm index (the FDN→Spring bug fixed on branch
+                // 87-fix-fdn-quadtank).
                 { "Algorithm",       static_cast<float> (algoIdx) / kAlgorithmDivisor },
                 { "Dry/Wet",         mix },
                 { "Bus Mode",        bus ? 1.0f : 0.0f },
