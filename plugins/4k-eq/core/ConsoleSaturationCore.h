@@ -1,22 +1,26 @@
-// ConsoleSaturationCore.h — framework-free port of ConsoleSaturation.h.
+// ConsoleSaturationCore.h — framework-free port of Multi-Q's British-mode
+// ConsoleSaturation (the up-to-date console saturator, replacing the older
+// piecewise Jiles-Atherton model the standalone 4K EQ shipped with).
 //
-// British console harmonic emulation (two voicings, E-Series warm/2nd-harmonic
-// and G-Series clean/3rd-harmonic). This is a straight de-JUCE of the JUCE
-// plugins/4k-eq/ConsoleSaturation.h: the saturation math is byte-for-byte the
-// same; only three JUCE touch-points are replaced:
-//   juce::MathConstants<float>::twoPi -> duskaudio::kDuskTwoPi
-//   juce::jlimit(lo,hi,x)             -> clampf(x,lo,hi)
-//   juce::ScopedNoDenormals           -> removed (the DSP core sets FTZ/DAZ
-//                                        once per block via ScopedFlushDenormals)
-// The per-instance component tolerances use a FIXED seed here (JUCE used
-// std::random_device) so offline A/B renders are reproducible; the ±5% analog
-// variation is preserved, it is just deterministic per build.
+// Polynomial waveshaper with first-order ADAA, per-sample:
+//   1. pre-emphasis  (+1.5 dB HF shelf @ 8 kHz — HF saturates more, "sheen")
+//   2. drive + soft-clip cap, then y = x + (b·x²+c·x³+d·x⁴+e·x⁵) via ADAA
+//        E-series (Brown): H2-dominant, warm/gritty
+//        G-series (Black): H3-dominant, ~60% THD, smoother
+//   3. de-emphasis   (exact IIR inverse of pre-emphasis)
+//   4. DC block, console noise floor, gain-comp + drive-scaled dry/wet mix
+//
+// De-JUCE of plugins/multi-q/ConsoleSaturation.h: math byte-identical; the
+// three JUCE touch-points (twoPi, jlimit, ScopedNoDenormals) are swapped and
+// the noise seed is FIXED so offline renders reproduce (the ±5% instance
+// variation of the old model is gone in this design). safeIsFinite -> std::isfinite.
 
 #pragma once
 
 #include <cmath>
 #include <random>
-#include "../../shared-dpf/dsp/DuskFilters.hpp" // kDuskTwoPi
+#include "../../shared-dpf/dsp/DuskFilters.hpp"  // kDuskTwoPi
+#include "../../shared-dpf/dsp/DuskADAA.hpp"
 
 namespace duskaudio
 {
@@ -28,13 +32,7 @@ public:
 
     ConsoleSaturationCore()
     {
-        // Deterministic per-instance tolerance draw (fixed seed => reproducible).
-        std::mt19937 gen(0x4B455121u); // "KEQ!"
-        std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
-        transformerTolerance       = 1.0f + dist(gen);
-        opAmpTolerance             = 1.0f + dist(gen);
-        outputTransformerTolerance = 1.0f + dist(gen);
-        noiseGen  = std::mt19937(0x4E4F4953u); // "NOIS"
+        noiseGen  = std::mt19937(0x4E4F4953u); // "NOIS" — fixed for reproducible renders
         noiseDist = std::uniform_real_distribution<float>(-1.0f, 1.0f);
     }
 
@@ -43,51 +41,68 @@ public:
     void setSampleRate(double newSampleRate)
     {
         sampleRate = newSampleRate;
-        const float cutoffFreq = 5.0f;
-        const float RC = 1.0f / (kDuskTwoPi * cutoffFreq);
-        dcBlockerCoeff = RC / (RC + 1.0f / static_cast<float>(sampleRate));
+        const float sr = static_cast<float>(sampleRate);
+
+        const float dcCutoff = 5.0f;
+        const float dcRC = 1.0f / (kDuskTwoPi * dcCutoff);
+        dcBlockerCoeff = dcRC / (dcRC + 1.0f / sr);
+
+        const float lpCutoff = 8000.0f;
+        lpEmphCoeff = 1.0f - std::exp(-kDuskTwoPi * lpCutoff / sr);
+        emphShelfGain = std::pow(10.0f, 1.5f / 20.0f) - 1.0f; // +1.5 dB shelf amount
+
+        const float alpha = 1.0f - lpEmphCoeff;
+        const float Am    = emphShelfGain * alpha;
+        const float h0    = 1.0f + Am;
+        deEmphB0 =  1.0f / h0;
+        deEmphB1 = -alpha / h0;
+        deEmphA1 =  (alpha + Am) / h0;
     }
 
-    void reset()
+    void reset() { resetChannel(true); resetChannel(false); }
+
+    void resetChannel(bool isLeft)
     {
-        dcBlockerX1_L = dcBlockerY1_L = 0.0f;
-        dcBlockerX1_R = dcBlockerY1_R = 0.0f;
-        lastSample_L = lastSample_R = 0.0f;
-        highFreqEstimate_L = highFreqEstimate_R = 0.0f;
+        if (isLeft) { dcBlockerX1_L = dcBlockerY1_L = 0.0f; lpEmphState_L = 0.0f; deEmphX1_L = deEmphY1_L = 0.0f; prevXdL = 0.0f; }
+        else        { dcBlockerX1_R = dcBlockerY1_R = 0.0f; lpEmphState_R = 0.0f; deEmphX1_R = deEmphY1_R = 0.0f; prevXdR = 0.0f; }
     }
 
-    float processSample(float input, float drive, bool isLeftChannel)
+    // drive in [0, 1].
+    float processSample(float input, float drive, bool isLeft)
     {
-        if (drive < 0.001f)
-            return input;
+        if (!std::isfinite(input)) return 0.0f;
 
-        float limited = input;
-        float absInput = std::abs(input);
-        if (absInput > 0.95f)
-        {
-            float excess = absInput - 0.95f;
-            float compressed = 0.95f + std::tanh(excess * 3.0f) * 0.05f;
-            limited = (input > 0.0f) ? compressed : -compressed;
-        }
+        float x = applyPreEmphasis(input, isLeft);
 
-        float highFreqContent = estimateHighFrequencyContent(limited, isLeftChannel);
-        float hfReduction = highFreqContent * (0.25f + drive * 0.35f);
-        float effectiveDrive = drive * (1.0f - hfReduction);
+        const float DRIVE_SCALE = 4.0f;
+        const float driveAmount = drive * DRIVE_SCALE;
+        const float xd_raw = x * driveAmount;
+        const float xd = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
 
-        float transformed = processInputTransformer(limited, effectiveDrive * transformerTolerance);
-        float opAmpOut = processOpAmpStage(transformed, effectiveDrive * opAmpTolerance);
+        float b, c, d, e;
+        if (consoleType == ConsoleType::ESeries) { b = 0.012f; c = 0.004f; d = 0.001f;  e = 0.001f; }
+        else                                     { b = 0.003f; c = 0.008f; d = 0.0005f; e = 0.001f; }
 
-        float output = (consoleType == ConsoleType::ESeries)
-            ? processOutputTransformer(opAmpOut, drive * 0.7f * outputTransformerTolerance)
-            : opAmpOut;
+        float& prevXd = isLeft ? prevXdL : prevXdR;
+        const float distortion = adaa::process(
+            xd, prevXd,
+            [b, c, d, e](float v) { return adaa::polyWaveshaper(v, b, c, d, e); },
+            [b, c, d, e](float v) { return adaa::polyAntideriv(v, b, c, d, e); });
+        prevXd = xd;
+        float y = x + (driveAmount > 1e-9f ? distortion / driveAmount : 0.0f);
 
-        float noiseLevel = 0.00003162f * (1.0f + drive * 0.5f); // -90dB base
-        output += noiseDist(noiseGen) * noiseLevel;
+        y = applyDeEmphasis(y, isLeft);
+        y = processDCBlocker(y, isLeft);
 
-        output = processDCBlocker(output, isLeftChannel);
+        const float noiseLevel = 0.00002f * (1.0f + drive * 0.3f);
+        y += noiseDist(noiseGen) * noiseLevel;
 
-        float wetMix = clampf(drive * 1.4f, 0.0f, 1.0f);
-        return input * (1.0f - wetMix) + output * wetMix;
+        y *= 1.0f / (1.0f + drive * 0.15f);
+        const float wetMix = clampf(drive * 1.4f, 0.0f, 1.0f);
+        const float result = input * (1.0f - wetMix) + y * wetMix;
+
+        if (!std::isfinite(result)) { resetChannel(isLeft); return 0.0f; }
+        return result;
     }
 
 private:
@@ -100,151 +115,41 @@ private:
     float dcBlockerX1_R = 0.0f, dcBlockerY1_R = 0.0f;
     float dcBlockerCoeff = 0.999f;
 
-    float lastSample_L = 0.0f, lastSample_R = 0.0f;
-    float highFreqEstimate_L = 0.0f, highFreqEstimate_R = 0.0f;
-    float highFreqScale = 3.0f;
+    float lpEmphCoeff = 0.68f;
+    float emphShelfGain = 0.189f;
+    float lpEmphState_L = 0.0f, lpEmphState_R = 0.0f;
 
-    float transformerTolerance = 1.0f;
-    float opAmpTolerance = 1.0f;
-    float outputTransformerTolerance = 1.0f;
+    float deEmphB0 = 0.886f, deEmphB1 = 0.284f, deEmphA1 = 0.398f;
+    float deEmphX1_L = 0.0f, deEmphY1_L = 0.0f;
+    float deEmphX1_R = 0.0f, deEmphY1_R = 0.0f;
+
+    float prevXdL = 0.0f, prevXdR = 0.0f;
 
     std::mt19937 noiseGen;
     std::uniform_real_distribution<float> noiseDist;
 
-    float estimateHighFrequencyContent(float input, bool isLeftChannel)
+    float applyPreEmphasis(float input, bool isLeft)
     {
-        float& lastSample = isLeftChannel ? lastSample_L : lastSample_R;
-        float& estimate = isLeftChannel ? highFreqEstimate_L : highFreqEstimate_R;
-        float difference = std::abs(input - lastSample);
-        lastSample = input;
-        const float smoothing = 0.95f;
-        estimate = estimate * smoothing + difference * (1.0f - smoothing);
-        return clampf(estimate * highFreqScale, 0.0f, 1.0f);
+        float& lpState = isLeft ? lpEmphState_L : lpEmphState_R;
+        lpState += lpEmphCoeff * (input - lpState);
+        return input + emphShelfGain * (input - lpState);
     }
 
-    float processInputTransformer(float input, float drive)
+    float applyDeEmphasis(float input, bool isLeft)
     {
-        const float transformerDrive = 1.0f + drive * 7.0f;
-        float driven = input * transformerDrive;
-        float abs_x = std::abs(driven);
-
-        float saturated;
-        if (abs_x < 0.9f)
-            saturated = driven;
-        else if (abs_x < 1.5f)
-        {
-            float excess = abs_x - 0.9f;
-            float compressed = 0.9f + excess * (1.0f - excess * 0.15f);
-            saturated = (driven > 0.0f) ? compressed : -compressed;
-        }
-        else
-        {
-            float excess = abs_x - 1.5f;
-            float compressed = 1.5f + std::tanh(excess * 1.5f) * 0.3f;
-            saturated = (driven > 0.0f) ? compressed : -compressed;
-        }
-
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
-        if (abs_x > threshold)
-        {
-            float saturationAmount = (abs_x - threshold) / (1.2f - threshold);
-            saturationAmount = clampf(saturationAmount, 0.0f, 1.0f);
-            if (consoleType == ConsoleType::ESeries)
-                saturated += saturated * saturated * (0.12f * saturationAmount);
-            else
-            {
-                saturated += saturated * saturated * (0.025f * saturationAmount);
-                saturated += saturated * saturated * saturated * (0.050f * saturationAmount);
-            }
-        }
-        return saturated / transformerDrive;
+        float& x1 = isLeft ? deEmphX1_L : deEmphX1_R;
+        float& y1 = isLeft ? deEmphY1_L : deEmphY1_R;
+        const float output = deEmphB0 * input + deEmphB1 * x1 + deEmphA1 * y1;
+        x1 = input; y1 = output;
+        return output;
     }
 
-    float processOpAmpStage(float input, float drive)
+    float processDCBlocker(float input, bool isLeft)
     {
-        const float opAmpDrive = 1.0f + drive * 9.0f;
-        float driven = input * opAmpDrive;
-        float output;
-
-        if (driven > 0.0f)
-        {
-            if (driven < 1.0f)
-                output = driven;
-            else if (driven < 1.8f)
-            {
-                float excess = driven - 1.0f;
-                output = 1.0f + excess * (1.0f - excess * 0.2f);
-            }
-            else
-            {
-                float clipHardness = (consoleType == ConsoleType::ESeries) ? 1.5f : 2.0f;
-                output = 1.5f + std::tanh((driven - 1.8f) * clipHardness) * 0.3f;
-            }
-        }
-        else
-        {
-            if (driven > -1.0f)
-                output = driven;
-            else if (driven > -1.9f)
-            {
-                float excess = -driven - 1.0f;
-                output = -1.0f - excess * (1.0f - excess * 0.18f);
-            }
-            else
-            {
-                float clipHardness = (consoleType == ConsoleType::ESeries) ? 1.5f : 2.0f;
-                output = -1.55f + std::tanh((driven + 1.9f) * clipHardness) * 0.3f;
-            }
-        }
-
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
-        if (std::abs(driven) > threshold)
-        {
-            float saturationAmount = (std::abs(driven) - threshold) / (1.5f - threshold);
-            saturationAmount = clampf(saturationAmount, 0.0f, 1.0f);
-            if (consoleType == ConsoleType::ESeries)
-                output += output * output * std::copysign(0.10f * saturationAmount, output);
-            else
-            {
-                output += output * output * std::copysign(0.022f * saturationAmount, output);
-                output += output * output * output * (0.040f * saturationAmount);
-            }
-        }
-        return output / opAmpDrive;
-    }
-
-    float processOutputTransformer(float input, float drive)
-    {
-        const float transformerDrive = 1.0f + drive * 2.0f;
-        float driven = input * transformerDrive;
-        float abs_x = std::abs(driven);
-
-        float saturated;
-        if (abs_x < 0.5f)
-            saturated = driven;
-        else if (abs_x < 0.9f)
-        {
-            float excess = abs_x - 0.5f;
-            float compressed = 0.5f + excess * (1.0f - excess * 0.25f);
-            saturated = (driven > 0.0f) ? compressed : -compressed;
-        }
-        else
-        {
-            float excess = abs_x - 0.9f;
-            float compressed = 0.9f + std::tanh(excess * 1.5f) * 0.15f;
-            saturated = (driven > 0.0f) ? compressed : -compressed;
-        }
-        saturated += saturated * std::abs(saturated) * 0.05f;
-        return saturated / transformerDrive;
-    }
-
-    float processDCBlocker(float input, bool isLeftChannel)
-    {
-        float& x1 = isLeftChannel ? dcBlockerX1_L : dcBlockerX1_R;
-        float& y1 = isLeftChannel ? dcBlockerY1_L : dcBlockerY1_R;
-        float output = input - x1 + dcBlockerCoeff * y1;
-        x1 = input;
-        y1 = output;
+        float& x1 = isLeft ? dcBlockerX1_L : dcBlockerX1_R;
+        float& y1 = isLeft ? dcBlockerY1_L : dcBlockerY1_R;
+        const float output = input - x1 + dcBlockerCoeff * y1;
+        x1 = input; y1 = output;
         return output;
     }
 

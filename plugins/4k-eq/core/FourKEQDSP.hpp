@@ -157,6 +157,12 @@ private:
     bool lastHpfEnabled = false;
     bool lastLpfEnabled = false;
 
+    // E-series transformer core saturation (Brown only): the iron saturates
+    // where flux is highest (LF), so the added odd harmonics come from an LF
+    // flux estimate. Ported from Multi-Q's British mode.
+    float xfmrFlux[kMaxChannels] = { 0.0f, 0.0f }; // per-channel LF flux state
+    float xfmrLpCoef = 0.0f;                        // one-pole LF estimate coeff @ osRate
+
     //--- metering -------------------------------------------------------------
     std::atomic<float> inPeakL{0.f}, inPeakR{0.f}, outPeakL{0.f}, outPeakR{0.f};
     float meterDecay = 1.0f;

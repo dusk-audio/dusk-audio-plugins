@@ -22,43 +22,82 @@ float FourKEQDSP::dynamicQ(float gainDb, float baseQ) noexcept
     return clampf(dq, 0.5f, 8.0f);
 }
 
+// Standard bilinear pre-warp (Multi-Q's britishPreWarpFrequency). Retained for
+// callers that want an fc estimate; the console coeff builders below pre-warp
+// internally, so recomputeCoeffs no longer applies the old piecewise HF fudge.
 float FourKEQDSP::preWarp(float freq, double sampleRate) noexcept
 {
     const float nyquist = static_cast<float>(sampleRate * 0.5);
-    const float omega = kDuskPi * freq / static_cast<float>(sampleRate);
-    float warpedFreq = static_cast<float>(sampleRate) / kDuskPi * std::tan(omega);
-
-    if (freq > 3000.0f)
-    {
-        const float ratio = freq / nyquist;
-        float compensation = 1.0f;
-        if (ratio < 0.3f)
-            compensation = 1.0f + (ratio - 0.136f) * 0.15f;
-        else if (ratio < 0.5f)
-            compensation = 1.0f + (ratio - 0.3f) * 0.4f;
-        else
-            compensation = 1.0f + (ratio - 0.5f) * 0.6f;
-        warpedFreq = freq * compensation;
-    }
-    return std::min(warpedFreq, nyquist * 0.99f);
+    float safeFreq = std::min(freq, nyquist * 0.98f);
+    safeFreq = std::max(safeFreq, 1.0f);
+    const float omega = kDuskPi * safeFreq / static_cast<float>(sampleRate);
+    const float warped = static_cast<float>(sampleRate) / kDuskPi * std::tan(omega);
+    return std::min(std::max(warped, 1.0f), nyquist * 0.99f);
 }
 
+// Console peak — analog-matched (Multi-Q). Pre-warps the BANDWIDTH
+// (kbw = tan(pi·bw/sr)) with the center via cos(2pi·fc/sr): constant-Q,
+// cramping-free at any sample rate. Black mode uses proportional Q.
 BiquadCoeffs FourKEQDSP::consolePeak(double fs, float freq, float q, float gainDb, bool black) noexcept
 {
-    float consoleQ = q;
+    static constexpr double kPi = 3.14159265358979323846;
+    double consoleQ = q;
     if (black && std::abs(gainDb) > 0.1f)
     {
-        const float gf = std::abs(gainDb) / 15.0f;
-        consoleQ *= (gainDb > 0.0f) ? (1.0f + gf * 1.2f) : (1.0f + gf * 0.6f);
+        const double gf = std::abs((double)gainDb) / 15.0;
+        consoleQ *= (gainDb > 0.0f) ? (1.0 + gf * 1.2) : (1.0 + gf * 0.6);
     }
-    consoleQ = clampf(consoleQ, 0.1f, 10.0f);
-    return Biquad::peak(fs, freq, gainDb, consoleQ);
+    consoleQ = std::max(0.1, std::min(consoleQ, 10.0));
+
+    const double fc  = std::max(1.0, std::min((double)freq, fs * 0.4998));
+    const double bw  = fc / consoleQ;
+    const double kbw = std::tan(kPi * std::min(bw, fs * 0.4998) / fs);
+    const double A   = std::pow(10.0, (double)gainDb / 40.0);
+    const double cosW = std::cos(2.0 * kPi * fc / fs);
+
+    const double b0 = 1.0 + kbw * A, b2 = 1.0 - kbw * A;
+    const double a0 = 1.0 + kbw / A, a2 = 1.0 - kbw / A;
+    const double b1 = -2.0 * cosW,   a1 = -2.0 * cosW;
+    const double inv = 1.0 / a0;
+    return { (float)(b0 * inv), (float)(b1 * inv), (float)(b2 * inv), (float)(a1 * inv), (float)(a2 * inv) };
 }
 
+// Console shelf — analog-matched (Multi-Q). RBJ shelf with the S-based alpha,
+// deriving cosW/sinW from k = tan(pi·fc/sr) so the turnover lands exactly at fc.
 BiquadCoeffs FourKEQDSP::consoleShelf(double fs, float freq, float q, float gainDb, bool high, bool black) noexcept
 {
-    float consoleQ = q * (black ? 1.4f : 0.65f);
-    return Biquad::shelf(fs, freq, gainDb, consoleQ, high);
+    static constexpr double kPi = 3.14159265358979323846;
+    double consoleQ = q * (black ? 1.4 : 0.65);
+    consoleQ = std::max(0.01, consoleQ);
+
+    const double fc  = std::max(1.0, std::min((double)freq, fs * 0.4998));
+    const double A   = std::pow(10.0, (double)gainDb / 40.0);
+    const double sqA = std::sqrt(A);
+    const double k   = std::tan(kPi * fc / fs), k2 = k * k;
+    const double cosW = (1.0 - k2) / (1.0 + k2), sinW = 2.0 * k / (1.0 + k2);
+    const double alpha = sinW / 2.0 * std::sqrt((A + 1.0 / A) * (1.0 / consoleQ - 1.0) + 2.0);
+
+    double b0, b1, b2, a0, a1, a2;
+    if (high)
+    {
+        b0 =  A * ((A + 1.0) + (A - 1.0) * cosW + 2.0 * sqA * alpha);
+        b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosW);
+        b2 =  A * ((A + 1.0) + (A - 1.0) * cosW - 2.0 * sqA * alpha);
+        a0 = (A + 1.0) - (A - 1.0) * cosW + 2.0 * sqA * alpha;
+        a1 =  2.0 * ((A - 1.0) - (A + 1.0) * cosW);
+        a2 = (A + 1.0) - (A - 1.0) * cosW - 2.0 * sqA * alpha;
+    }
+    else
+    {
+        b0 =  A * ((A + 1.0) - (A - 1.0) * cosW + 2.0 * sqA * alpha);
+        b1 =  2.0 * A * ((A - 1.0) - (A + 1.0) * cosW);
+        b2 =  A * ((A + 1.0) - (A - 1.0) * cosW - 2.0 * sqA * alpha);
+        a0 = (A + 1.0) + (A - 1.0) * cosW + 2.0 * sqA * alpha;
+        a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosW);
+        a2 = (A + 1.0) + (A - 1.0) * cosW - 2.0 * sqA * alpha;
+    }
+    const double inv = 1.0 / a0;
+    return { (float)(b0 * inv), (float)(b1 * inv), (float)(b2 * inv), (float)(a1 * inv), (float)(a2 * inv) };
 }
 
 int FourKEQDSP::chooseFactor(double baseSampleRate, bool want4x) noexcept
@@ -87,6 +126,7 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
 
     consoleSat.setSampleRate(osRate);
     consoleSat.reset();
+    xfmrLpCoef = 1.0f - std::exp(-kDuskTwoPi * 180.0f / (float)osRate); // LF flux corner
 
     meterDecay = std::exp(-1.0f / (0.3f * (float)baseSampleRate));
     powerSmoother.prepare(baseSampleRate, 0.03f); // ~30 ms bypass crossfade
@@ -104,6 +144,7 @@ void FourKEQDSP::reset()
     for (auto& c : ch) c.reset();
     for (auto& o : os) o.reset();
     consoleSat.reset();
+    xfmrFlux[0] = xfmrFlux[1] = 0.0f;
     preRing.reset();
     postRing.reset();
     std::fill(scratchL.begin(), scratchL.end(), 0.0f);
@@ -119,14 +160,13 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
 {
     const bool black = pEqType.load(R) > 0.5f;
 
-    // HPF: 1st-order + 2nd-order (Q=0.54) = 18 dB/oct.
+    // HPF: 1st-order + 2nd-order (Q=1.0, Butterworth cascade) = 18 dB/oct.
     const float hpfFreq = pHpfFreq.load(R);
     const BiquadCoeffs hpf1 = Biquad::firstOrderHighPass(fs, hpfFreq);
-    const BiquadCoeffs hpf2 = Biquad::highPass(fs, hpfFreq, 0.54f);
+    const BiquadCoeffs hpf2 = Biquad::highPass(fs, hpfFreq, 1.0f);
 
-    // LPF: 2nd-order, Q depends on mode; prewarp near Nyquist.
-    float lpfFreq = pLpfFreq.load(R);
-    if (lpfFreq > fs * 0.3f) lpfFreq = preWarp(lpfFreq, fs);
+    // LPF: 2nd-order, Q by mode; lowPass() pre-warps internally, just clamp fc.
+    const float lpfFreq = (float)std::max(1.0, std::min((double)pLpfFreq.load(R), fs * 0.4998));
     const float lpfQ = black ? 0.8f : 0.707f;
     const BiquadCoeffs lpf = Biquad::lowPass(fs, lpfFreq, lpfQ);
 
@@ -143,23 +183,21 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
     if (black) lmQ = dynamicQ(lmGain, lmQ);
     const BiquadCoeffs lm = consolePeak(fs, lmFreq, lmQ, lmGain, black);
 
-    // HM band: peak; Black proportional Q + 13k range; Brown fixed Q + 7k cap.
+    // HM band: peak; Black proportional Q + full range; Brown fixed Q + 7k cap.
+    // The analog-matched consolePeak pre-warps fc internally — no fudge here.
     const float hmGain = pHmGain.load(R);
     float hmFreq = pHmFreq.load(R);
     float hmQ = pHmQ.load(R);
     if (black) hmQ = dynamicQ(hmGain, hmQ);
     else if (hmFreq > 7000.0f) hmFreq = 7000.0f;
-    float hmProc = hmFreq;
-    if (hmFreq > 3000.0f) hmProc = preWarp(hmFreq, fs);
-    const BiquadCoeffs hm = consolePeak(fs, hmProc, hmQ, hmGain, black);
+    const BiquadCoeffs hm = consolePeak(fs, hmFreq, hmQ, hmGain, black);
 
-    // HF band: shelf (always prewarped), or bell in Black+bell.
+    // HF band: shelf, or bell in Black+bell (consoleShelf pre-warps fc).
     const float hfGain = pHfGain.load(R), hfFreq = pHfFreq.load(R);
     const bool  hfBell = pHfBell.load(R) > 0.5f;
-    const float hfWarp = preWarp(hfFreq, fs);
     const BiquadCoeffs hf = (black && hfBell)
-        ? consolePeak(fs, hfWarp, 0.7f, hfGain, black)
-        : consoleShelf(fs, hfWarp, 0.7f, hfGain, /*high*/true, black);
+        ? consolePeak(fs, hfFreq, 0.7f, hfGain, black)
+        : consoleShelf(fs, hfFreq, 0.7f, hfGain, /*high*/true, black);
 
     // Transformer phase allpass, fixed 200 Hz (Brown only, gated at runtime).
     const BiquadCoeffs ap = Biquad::firstOrderAllPass(fs, 200.0f);
@@ -218,6 +256,7 @@ void FourKEQDSP::processBlock(const float* const* inputs, float* const* outputs,
         for (auto& c : ch) c.reset();
         consoleSat.setSampleRate(baseSampleRate * curFactor);
         consoleSat.reset();
+        xfmrLpCoef = 1.0f - std::exp(-kDuskTwoPi * 180.0f / (float)(baseSampleRate * curFactor));
         reportedLatency = (int)std::lround(os[0].latency());
     }
     const double osRate = baseSampleRate * curFactor;
@@ -283,7 +322,20 @@ void FourKEQDSP::processBlock(const float* const* inputs, float* const* outputs,
                 x = cf.hm.process(x);
                 x = cf.hf.process(x);
                 if (lpfEn) x = cf.lpf.process(x);
-                if (brown) x = cf.allpass.process(x);
+                // Transformer (Brown/E-series only): phase rotation + LF-weighted
+                // core saturation (added odd harmonics from an LF flux estimate,
+                // scaled by drive — saturation 0 leaves the signal untouched).
+                if (brown)
+                {
+                    x = cf.allpass.process(x);
+                    if (satAmt > 0.001f)
+                    {
+                        float& flux = xfmrFlux[(size_t)c];
+                        flux += xfmrLpCoef * (x - flux);
+                        const float lfHarm = std::tanh(flux * 1.6f) / 1.6f - flux;
+                        x += lfHarm * satAmt * 0.35f;
+                    }
+                }
                 if (satAmt > 0.001f) x = consoleSat.processSample(x, satAmt, left);
                 return x;
             });

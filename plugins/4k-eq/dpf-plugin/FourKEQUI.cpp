@@ -228,10 +228,12 @@ private:
         const bool black = values[kEqType] > 0.5f;
         double magLin = 1.0;
         auto acc = [&](const BiquadCoeffs& c) { Biquad b; b.setCoeffs(c); magLin *= b.magnitude(w); };
+        // Mirrors FourKEQDSP::recomputeCoeffs exactly (analog-matched, HPF Q=1.0,
+        // no piecewise prewarp — the console builders prewarp fc internally).
         if (values[kHpfEnabled] > 0.5f)
         {
             acc(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
-            acc(Biquad::highPass(fs, values[kHpfFreq], 0.54f));
+            acc(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
         }
         if (black && values[kLfBell] > 0.5f)
             acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLfFreq], 0.7f, values[kLfGain], black));
@@ -241,13 +243,11 @@ private:
           acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLmFreq], q, values[kLmGain], black)); }
         { float f = values[kHmFreq], q = values[kHmQ];
           if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kHmGain], q); else if (f > 7000.f) f = 7000.f;
-          if (f > 3000.f) f = duskaudio::FourKEQDSP::preWarp(f, fs);
           acc(duskaudio::FourKEQDSP::consolePeak(fs, f, q, values[kHmGain], black)); }
-        { const float fw = duskaudio::FourKEQDSP::preWarp(values[kHfFreq], fs);
-          if (black && values[kHfBell] > 0.5f) acc(duskaudio::FourKEQDSP::consolePeak(fs, fw, 0.7f, values[kHfGain], black));
-          else acc(duskaudio::FourKEQDSP::consoleShelf(fs, fw, 0.7f, values[kHfGain], true, black)); }
+        { if (black && values[kHfBell] > 0.5f) acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kHfFreq], 0.7f, values[kHfGain], black));
+          else acc(duskaudio::FourKEQDSP::consoleShelf(fs, values[kHfFreq], 0.7f, values[kHfGain], true, black)); }
         if (values[kLpfEnabled] > 0.5f)
-        { float f = values[kLpfFreq]; if (f > fs * 0.3) f = duskaudio::FourKEQDSP::preWarp(f, fs);
+        { const float f = (float)std::max(1.0, std::min((double)values[kLpfFreq], fs * 0.4998));
           acc(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f)); }
         return 20.0f * std::log10((float)std::max(magLin, 1e-6));
     }
