@@ -1039,6 +1039,9 @@ void DattorroTank::clearBuffers()
     limiterEnv_ = 0.0f;
     structHFStateL_ = 0.0f;
     structHFStateR_ = 0.0f;
+    // In-loop mode-notch biquad state (mirrors the reset in setModeNotch) — else
+    // stale notch samples survive an algorithm/preset swap that calls clearBuffers.
+    mnZ1L_ = mnZ2L_ = mnZ1R_ = mnZ2R_ = 0.0f;
     bloomEnv_     = bloomActive_ ? 0.0f : 1.0f;
     bloomRampPos_ = bloomActive_ ? 0.0f : 1.0f;
     bloomQuietSamples_ = bloomRearmSamples_;  // armed: first onset triggers the swell

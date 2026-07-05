@@ -304,7 +304,7 @@ private:
         // LOW ACCUMULATION LIMITER: per-line low-band envelope; above threshold,
         // attenuate the low band per pass (drive-following — impulse tails never
         // reach the threshold, sustained bass charge does). Off = branch skipped.
-        if (limActive_)
+        if (limActive_ && ! frozen_)
         {
             limLp_[i] += limLpCoeff_ * (v - limLp_[i]);
             const float low = limLp_[i];
