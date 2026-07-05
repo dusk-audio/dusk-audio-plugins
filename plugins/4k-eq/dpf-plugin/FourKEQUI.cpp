@@ -39,8 +39,10 @@ namespace
     constexpr float COL[7] = { 40, 197, 335, 469, 603, 737, 920 };
 
     // band face colours
-    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);  // SSL LF maroon console knob
+    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // SSL LF maroon console knob
     constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // SSL LMF blue console knob
+    constexpr ImU32 C_HMF_GREEN = IM_COL32(58, 108, 58, 255);  // SSL HMF green console knob
+    constexpr ImU32 C_HF_RED    = IM_COL32(158, 52, 46, 255);  // SSL HF red console knob
     constexpr ImU32 C_LF  = IM_COL32(196, 74, 66, 255);
     constexpr ImU32 C_LMF = IM_COL32(202, 132, 66, 255);
     constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
@@ -418,10 +420,14 @@ private:
         steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, LPFF, true,  "kHz");
         colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(568), 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
 
-        // Shared GAIN detent table (0 at top, +-15 dB) for the console bands.
+        // Shared GAIN (0 top, +-15 dB) and Q (.5-3 descending) detent tables.
         static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
         static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
         static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
+        static const float QT[5] = { 0.f, .25f, .5f, .75f, 1.f };
+        static const float QV[5] = { 3.f, 2.f, 1.5f, 1.f, .5f };
+        static const char* const QL[5] = { "3", "2", "1.5", "1", ".5" };
+        static const float FT7[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f }; // 7 evenly-spaced detents
 
         // LF — SSL brown console band: GAIN + FREQ (30-450 Hz) + BELL/SHELF button.
         {
@@ -437,19 +443,32 @@ private:
         // (.5-3, descending), with narrow/wide bandwidth symbols under Q.
         {
             const float mcx = 0.5f * (COL[2] + COL[3]);
-            static const float MFT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
             static const float MFV[7] = { 200.f, 300.f, 800.f, 1000.f, 1500.f, 2000.f, 2500.f };
             static const char* const MFL[7] = { ".2", ".3", ".8", "1", "1.5", "2", "2.5" };
-            static const float MQT[5] = { 0.f, .25f, .5f, .75f, 1.f };
-            static const float MQV[5] = { 3.f, 2.f, 1.5f, 1.f, .5f };
-            static const char* const MQL[5] = { "3", "2", "1.5", "1", ".5" };
             consoleDetentKnob(dl, "lmg", mcx, cY(314), 28.f, kLmGain, GT, GV, GL, 11, C_LMF_BLUE, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, MFT, MFV, MFL, 7, C_LMF_BLUE, "kHz", "%.0f Hz");
-            consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, MQT, MQV, MQL, 5, C_LMF_BLUE, "", "Q %.2f");
+            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, FT7, MFV, MFL, 7, C_LMF_BLUE, "kHz", "%.0f Hz");
+            consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, QT, QV, QL, 5, C_LMF_BLUE, "", "Q %.2f");
             bandwidthIcons(dl, mcx, cY(590) + 40.f);
         }
-        band(dl, 3, "HMF", C_HMF, kHmGain, kHmFreq, kHmQ,    +1, 600.f, 7000.f);
-        band(dl, 4, "HF",  C_HF,  kHfGain, kHfFreq, kHfBell, -1, 1500.f, 16000.f);
+        // HMF — SSL green console band: GAIN + FREQ (.6-7 kHz, 3 at top) + Q.
+        {
+            const float hcx = 0.5f * (COL[3] + COL[4]);
+            static const float HFV[7] = { 600.f, 800.f, 1500.f, 3000.f, 4500.f, 6000.f, 7000.f };
+            static const char* const HFL[7] = { ".6", ".8", "1.5", "3", "4.5", "6", "7" };
+            consoleDetentKnob(dl, "hmg", hcx, cY(314), 28.f, kHmGain, GT, GV, GL, 11, C_HMF_GREEN, "dB", "%.1f dB");
+            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmFreq, FT7, HFV, HFL, 7, C_HMF_GREEN, "kHz", "%.0f Hz");
+            consoleDetentKnob(dl, "hmq", hcx, cY(590), 28.f, kHmQ, QT, QV, QL, 5, C_HMF_GREEN, "", "Q %.2f");
+            bandwidthIcons(dl, hcx, cY(590) + 40.f);
+        }
+        // HF — SSL red console band: GAIN + FREQ (1.5-16 kHz, 8 at top) + BELL/SHELF.
+        {
+            const float hcx = 0.5f * (COL[4] + COL[5]);
+            static const float XFV[7] = { 1500.f, 2000.f, 5000.f, 8000.f, 10000.f, 14000.f, 16000.f };
+            static const char* const XFL[7] = { "1.5", "2", "5", "8", "10", "14", "16" };
+            consoleDetentKnob(dl, "hfg", hcx, cY(314), 28.f, kHfGain, GT, GV, GL, 11, C_HF_RED, "dB", "%.1f dB");
+            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfFreq, FT7, XFV, XFL, 7, C_HF_RED, "kHz", "%.0f Hz");
+            metalButton(dl, "hfbell", hcx - 32.f, cY(560), hcx + 32.f, cY(584), kHfBell, "BELL", "SHELF");
+        }
 
         // MASTER
         const float mcx = 0.5f * (COL[5] + COL[6]);
