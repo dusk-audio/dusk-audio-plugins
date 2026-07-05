@@ -97,7 +97,7 @@ namespace
     // added). Was a stale 9 after ReverseRoom became the 10th engine — that
     // off-by-one divisor misrouted --param "Algorithm" (e.g. FDN 4 → wrong engine).
     static constexpr int   kNumAlgorithms    = 16;   // 0..15: + 13 TiledRoom, + 14 DenseHall, + 15 ParallelMultiband
-    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 14.0f
+    static constexpr float kAlgorithmDivisor = static_cast<float> (kNumAlgorithms - 1);  // 15.0f
 
     // Keys are the human-readable parameter NAMES (matching what the AU host
     // surfaces). The original string IDs from the plugin source are hashed to

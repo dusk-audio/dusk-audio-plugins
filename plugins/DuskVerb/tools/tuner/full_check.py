@@ -1175,11 +1175,12 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     try:
         import glob as _g, os as _os
         _ref = _g.glob(_os.path.join(lex_dir, '*_noiseburst.wav'))
+        _src = None
         if _ref:
             _b = _os.path.basename(_ref[0])
+            # audit dirs copy as anchor_*.wav — recover source from the file name
             _src = 'VVV' if _b.startswith(('vvv', 'anchor')) else _b
-            # audit dirs copy as anchor_*.wav — recover source from the ORIGIN dir name if present
-        print(f"  [anchor dir: {lex_dir}]")
+        print(f"  [anchor dir: {lex_dir}" + (f"  source: {_src}]" if _src else "]"))
     except Exception:
         pass
     for req in ('noiseburst', 'snare'):
