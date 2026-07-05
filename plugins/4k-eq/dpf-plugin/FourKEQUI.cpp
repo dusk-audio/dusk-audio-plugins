@@ -360,12 +360,16 @@ private:
         float mag[kFftSize / 2 + 1]; fft.magnitude(buf, mag);
         const float dt = ImGui::GetIO().DeltaTime;
         const float smooth = 1.0f - std::exp(-dt * 12.0f);
+        // Rings are filled at the DSP base rate, so map bins with the host rate
+        // (not a fixed 48 kHz) or peaks misalign with the response curve at other rates.
+        const double sr = getSampleRate();
+        const float binHz = (float)((sr > 1.0 ? sr : 48000.0) / kFftSize);
         const int half = kFftSize / 2;
         std::vector<ImVec2> pts; pts.reserve((size_t)half + 2);
         pts.push_back(panel.P(GX0, GY1));
         for (int k = 1; k <= half; ++k)
         {
-            const float freq = (float)k * 48000.0f / kFftSize;
+            const float freq = (float)k * binHz;
             float db = 20.0f * std::log10(mag[k] > 1e-7f ? mag[k] : 1e-7f);
             specDb[(size_t)k] += (db - specDb[(size_t)k]) * smooth;
             if (freq < kFMin || freq > kFMax) continue;

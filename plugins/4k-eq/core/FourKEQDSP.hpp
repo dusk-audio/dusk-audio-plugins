@@ -77,11 +77,14 @@ public:
     void processBlock(const float* const* inputs, float* const* outputs,
                       int numChannels, int numSamples) noexcept;
 
-    // Reported latency in base-rate samples. 0 while bypass is engaged so a
-    // settled bypass is a bit-exact, undelayed passthrough (host PDC off).
+    // Reported latency in base-rate samples. 0 only once the bypass crossfade
+    // has fully SETTLED to passthrough (a bit-exact, undelayed dry path); during
+    // the ~30 ms fade, and whenever active, the oversampler latency is reported.
+    // Gating on the settled smoothed power (not the raw flag) avoids a latency
+    // flip mid-crossfade.
     int getLatencySamples() const noexcept
     {
-        return pBypass.load(std::memory_order_relaxed) > 0.5f ? 0 : reportedLatency;
+        return lastSmoothedPower.load(std::memory_order_relaxed) <= 0.001f ? 0 : reportedLatency;
     }
 
     //--- parameters (atomic, any thread) --------------------------------------
@@ -140,6 +143,10 @@ private:
 
     void recomputeCoeffs(double osRate) noexcept; // sets both channels from a snapshot
     float calcAutoGainCompensation() const noexcept;
+    // Processes up to maxBlock samples; processBlock() chunks oversized host
+    // buffers through this so every output sample is written.
+    void processChunk(const float* const* inputs, float* const* outputs,
+                      int numChannels, int numSamples) noexcept;
 
     //--- config ---------------------------------------------------------------
     double baseSampleRate = 44100.0;
@@ -154,6 +161,7 @@ private:
     std::vector<float> scratchL, scratchR;
 
     SmoothedValue powerSmoother; // bypass crossfade
+    std::atomic<float> lastSmoothedPower{ 1.0f }; // settled crossfade state for latency gating
     bool lastHpfEnabled = false;
     bool lastLpfEnabled = false;
 
