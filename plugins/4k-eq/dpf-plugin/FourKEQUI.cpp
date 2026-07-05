@@ -26,7 +26,8 @@ START_NAMESPACE_DISTRHO
 namespace
 {
     constexpr float kDesignW = 960.0f;
-    constexpr float kDesignH = 680.0f;
+    constexpr float kDesignH = 680.0f;             // graph shown
+    constexpr float kDesignHCollapsed = 556.0f;    // graph hidden (band removed)
     constexpr float kDbRange = 20.0f;               // graph vertical: +-20 dB
     constexpr float kFMin = 20.0f, kFMax = 20000.0f;
 
@@ -68,7 +69,10 @@ public:
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kDefaults[i];
-        setGeometryConstraints(576, 408, true);
+        // No hard aspect lock: the Hide Graph toggle changes the window aspect
+        // between the shown/collapsed heights, and onImGuiDisplay letterboxes any
+        // size cleanly (scale = min ratio), so free resize never distorts.
+        setGeometryConstraints(576, 320, false);
         labelFont = duskdpf::loadCrispFont(32.0f * getScaleFactor());
         fft.prepare(kFftSize);
         specDb.assign(kFftSize / 2 + 1, -120.0f);
@@ -87,8 +91,9 @@ protected:
     void onImGuiDisplay() override
     {
         const float winW = (float)getWidth(), winH = (float)getHeight();
-        const float s = std::min(winW / kDesignW, winH / kDesignH);
-        const ImVec2 org(0.5f * (winW - kDesignW * s), 0.5f * (winH - kDesignH * s));
+        const float designH = showGraph ? kDesignH : kDesignHCollapsed;
+        const float s = std::min(winW / kDesignW, winH / designH);
+        const ImVec2 org(0.5f * (winW - kDesignW * s), 0.5f * (winH - designH * s));
         panel.begin(s, org, labelFont, this);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -102,15 +107,32 @@ protected:
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(6, 6, 7, 255));
-        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, kDesignH), IM_COL32(30, 30, 33, 255));
+        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, designH), IM_COL32(30, 30, 33, 255));
 
+        // header + graph draw at the normal origin; when the graph is hidden the
+        // control block reflows up by the graph band (like the JUCE editor, which
+        // resizes the window and re-lays out) and the window is shortened on toggle.
         drawHeader(dl);
-        drawGraph(dl);
+        if (showGraph)
+            drawGraph(dl);
+
+        const float ctlShift = showGraph ? 0.0f : -(kDesignH - kDesignHCollapsed);
+        panel.begin(s, ImVec2(org.x, org.y + ctlShift * s), labelFont, this);
         drawColumns(dl);
         drawMeters(dl);
+        panel.begin(s, org, labelFont, this);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
+    }
+
+    // Match the JUCE 4K EQ Hide/Show Graph button: collapse/expand the window
+    // height (controls reflow up when hidden), not just blank the graph.
+    void toggleGraph()
+    {
+        showGraph = !showGraph;
+        const float designH = showGraph ? kDesignH : kDesignHCollapsed;
+        setSize((uint)getWidth(), (uint)std::lround((double)getWidth() * designH / kDesignW));
     }
 
 private:
@@ -155,9 +177,9 @@ private:
                      IM_COL32(46, 46, 50, 255), pal().white,
                      [&]{ cycleParam(kOversampling, 2); });
 
-        // Hide Graph toggle
+        // Hide/Show Graph toggle — collapses the window like the JUCE editor.
         headerButton(dl, "hidegraph", 590, 30, 690, 54, showGraph ? "Hide Graph" : "Show Graph",
-                     IM_COL32(46, 46, 50, 255), pal().white, [&]{ showGraph = !showGraph; });
+                     IM_COL32(46, 46, 50, 255), pal().white, [&]{ toggleGraph(); });
 
         // Brown / Black voicing (amber when Brown, blue-grey when Black)
         const bool brown = values[kEqType] < 0.5f;
@@ -275,23 +297,18 @@ private:
             if (db != -20) panel.text(dl, GX0 + 4, y - 5, 8.0f, IM_COL32(120, 124, 130, 255), db == 0 ? "0" : b, -1);
         }
 
-        if (showGraph)
+        drawSpectrum(dl);
+        const int N = 240;
+        std::vector<ImVec2> pts; pts.reserve(N);
+        for (int i = 0; i < N; ++i)
         {
-            drawSpectrum(dl);
-            const int N = 240;
-            std::vector<ImVec2> pts; pts.reserve(N);
-            for (int i = 0; i < N; ++i)
-            {
-                const float lx = (float)i / (N - 1);
-                const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-                float ny = 0.5f - 0.5f * (responseDb(freq) / kDbRange);
-                ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
-                pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
-            }
-            dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(236, 236, 236, 255), 0, 2.0f * sc());
+            const float lx = (float)i / (N - 1);
+            const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
+            float ny = 0.5f - 0.5f * (responseDb(freq) / kDbRange);
+            ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
+            pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }
-        else
-            panel.text(dl, 0.5f * (GX0 + GX1), 0.5f * (GY0 + GY1) - 6, 12, IM_COL32(110, 114, 120, 255), "GRAPH HIDDEN", 0);
+        dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(236, 236, 236, 255), 0, 2.0f * sc());
 
         dl->PopClipRect();
     }
