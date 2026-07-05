@@ -1169,20 +1169,13 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     # Upfront REQUIRED-stimulus validation: a missing core render must force a
     # failure so the run can't end as a false "ALL GATES PASS". Optional stimuli
     # (impulse/sine1k/sustained) stay as skips in the loops below.
-    # Print the ANCHOR SOURCE so nobody misreads the neutral REF= label
-    # (12 presets anchor to VVV, 4 to Lexicon PCM, 2 to Valhalla Shimmer —
-    # the old hardcoded 'Lex=' label caused exactly that misread).
-    try:
-        import glob as _g, os as _os
-        _ref = _g.glob(_os.path.join(lex_dir, '*_noiseburst.wav'))
-        _src = None
-        if _ref:
-            _b = _os.path.basename(_ref[0])
-            # audit dirs copy as anchor_*.wav — recover source from the file name
-            _src = 'VVV' if _b.startswith(('vvv', 'anchor')) else _b
-        print(f"  [anchor dir: {lex_dir}" + (f"  source: {_src}]" if _src else "]"))
-    except Exception:
-        pass
+    # Print the anchor DIRECTORY so nobody misreads the neutral REF= label
+    # (12 presets anchor to VVV, 4 to Lexicon PCM, 2 to Valhalla Shimmer). The
+    # dir path IS the provenance: fleet_audit copies stimuli to neutral
+    # anchor_*.wav names, so the copied filename can no longer distinguish the
+    # three sources — inferring from it collapsed everything to "VVV". Show the
+    # path instead and let the reader see which anchor set it points at.
+    print(f"  [anchor dir: {lex_dir}]")
     for req in ('noiseburst', 'snare'):
         if not find_stim(dv_dir, req):
             fails.append(f"REQUIRED stimulus '{req}' missing in render dir {dv_dir}")

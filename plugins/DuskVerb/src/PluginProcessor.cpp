@@ -2910,8 +2910,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             { "", { {2,2.2f,2,1.6f,1.2f,0.8f}, {1,1,1,1,1,1}, {0,0,0,0,0,0}, {1,1,1,1,1,1} } },   // placeholder
             // END_PMB_MAP
         }};
+        // Start from engine defaults; env or a per-preset bake overrides them.
         float t60v[6] = {2,2.2f,2,1.6f,1.2f,0.8f}, lvlv[6] = {1,1,1,1,1,1}, dirv[6] = {0,0,0,0,0,0}, widv[6] = {1,1,1,1,1,1};
-        bool have = false;
         if (const char* env = tuningEnv().pmb; env != nullptr && env[0] != '\0')
         {
             juce::StringArray groups; groups.addTokens (juce::String (env), ";", "");
@@ -2921,7 +2921,6 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                 juce::StringArray t; t.addTokens (groups[gI], ",", "");
                 for (int k = 0; k < 6 && k < t.size(); ++k) dst[gI][k] = t[k].getFloatValue();
             }
-            have = true;
         }
         else
         {
@@ -2930,12 +2929,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                 if (! e.first.empty() && e.first == nv)
                 {
                     for (int k = 0; k < 6; ++k) { t60v[k] = e.second.t60[k]; lvlv[k] = e.second.lvl[k]; dirv[k] = e.second.dir[k]; widv[k] = e.second.wid[k]; }
-                    have = true; break;
+                    break;
                 }
         }
-        if (have)
-            for (int k = 0; k < 6; ++k)
-                engine.setPmbBand (k, t60v[k], lvlv[k], dirv[k], widv[k]);
+        // Apply unconditionally (like the neighbouring setter blocks): an unmapped
+        // preset must reset every band to defaults, not latch the last preset's.
+        for (int k = 0; k < 6; ++k)
+            engine.setPmbBand (k, t60v[k], lvlv[k], dirv[k], widv[k]);
     }
 
     // Plate density rework (algo 0 Dattorro + algo 1 DattorroPlateVintage):
