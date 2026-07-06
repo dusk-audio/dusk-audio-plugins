@@ -35,7 +35,7 @@ static constexpr SyncDivision kSyncDivisions[] =
     { "1/8.",  0.75        },
     { "1/4",   1.0         },
 };
-static constexpr int kNumSyncDivisions = 8;
+static constexpr int kNumSyncDivisions = (int)(sizeof(kSyncDivisions) / sizeof(kSyncDivisions[0]));
 
 // Head-1 delay for a division at the given tempo, octave-folded into the
 // motor's mechanical range (69-177 ms). The fold always converges because

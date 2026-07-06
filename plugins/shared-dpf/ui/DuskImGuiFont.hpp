@@ -35,6 +35,8 @@ inline const char* findCrispFontPath()
         "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/Library/Fonts/Arial Bold.ttf",
+        "C:/Windows/Fonts/segoeuib.ttf",   // Windows: Segoe UI Bold
+        "C:/Windows/Fonts/arialbd.ttf",    // Windows: Arial Bold (fallback)
     };
     for (const char* path : kCandidates)
         if (FILE* f = std::fopen(path, "rb")) { std::fclose(f); return path; }
