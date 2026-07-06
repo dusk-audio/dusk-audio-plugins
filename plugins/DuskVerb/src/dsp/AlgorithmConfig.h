@@ -101,7 +101,7 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Concert Hall",  EngineType::AccurateHall32,  false }, // hidden 2026-06-13: Bright Hall migrated to DenseHall; 32-line FDN superseded, no preset uses it
         { "Tiled Room",    EngineType::TiledRoom,       true  },
         { "Dense Hall",    EngineType::DenseHall,       true  },
-        { "Parallel Hall", EngineType::ParallelMultiband, false }, // hidden pilot (2026-07-04): per-band decoupled tank; Vocal Hall migration candidate
+        { "Parallel Hall", EngineType::ParallelMultiband, true  }, // 2026-07-06: visible — Vocal Hall migrated onto it (per-band decoupled tank)
     };
     if (index < 0 || index >= 16)
         index = 0;

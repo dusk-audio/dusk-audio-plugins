@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // FourKEQPlugin.cpp — DPF shell around the framework-free FourKEQDSP core.
 
 #include "DistrhoPlugin.hpp"
@@ -80,11 +84,12 @@ protected:
         case kInputGain: p.name = "Input Gain"; p.symbol = "input_gain"; p.unit = "dB"; rng(0, -12, 12); break;
         case kOutputGain:p.name = "Output Gain"; p.symbol = "output_gain"; p.unit = "dB"; rng(0, -12, 12); break;
         case kSaturation:p.name = "Saturation"; p.symbol = "saturation"; p.unit = "%"; rng(0, 0, 100); break;
-        case kOversampling: p.hints |= kParameterIsInteger; p.name = "Oversampling"; p.symbol = "oversampling"; rng(0, 0, 1);
-                         p.enumValues.count = 2; p.enumValues.restrictedMode = true;
-                         { auto* e = new ParameterEnumerationValue[2];
+        case kOversampling: p.hints |= kParameterIsInteger; p.name = "Oversampling"; p.symbol = "oversampling"; rng(0, 0, 2);
+                         p.enumValues.count = 3; p.enumValues.restrictedMode = true;
+                         { auto* e = new ParameterEnumerationValue[3];
                            e[0] = ParameterEnumerationValue(0.f, kOversampleLabels[0]);
                            e[1] = ParameterEnumerationValue(1.f, kOversampleLabels[1]);
+                           e[2] = ParameterEnumerationValue(2.f, kOversampleLabels[2]);
                            p.enumValues.values = e; } break;
         case kMsMode:    boolean(); p.name = "M/S Mode"; p.symbol = "ms_mode"; rng(0, 0, 1); break;
         case kSpectrumPrePost: boolean(); p.name = "Spectrum Pre/Post"; p.symbol = "spectrum_prepost"; rng(0, 0, 1); break;
@@ -178,7 +183,9 @@ protected:
     {
         dsp.prepare(newSampleRate, (int)getBufferSize());
         pushAllParams();
-        updateLatency();
+        // No updateLatency() here: setLatency() is only valid in the ctor,
+        // activate() and run() (DPF contract), and this fires while deactivated.
+        // The host reactivates after a rate change -> activate()/run() refresh it.
     }
     // Reconfigure the DSP (scratch/oversampler sizing) when the host changes its
     // buffer size without a full restart, so the prepared max block never goes stale.
@@ -186,7 +193,7 @@ protected:
     {
         dsp.prepare(getSampleRate(), (int)newBufferSize);
         pushAllParams();
-        updateLatency();
+        // (latency refreshed by activate()/run(), never here — see sampleRateChanged)
     }
 
     //--- audio ----------------------------------------------------------------

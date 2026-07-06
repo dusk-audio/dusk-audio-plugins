@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // FourKEQDSP.hpp — framework-free 4K console EQ core (C++17, no JUCE/DPF).
 //
 // Port of plugins/4k-eq/FourKEQ.{h,cpp}. The DSP is identical in structure to
@@ -20,6 +24,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
 #include "../../shared-dpf/dsp/DuskDenormals.hpp"
@@ -39,27 +44,35 @@ public:
     static constexpr int kSize = 4096; // power of two
     void reset() noexcept
     {
-        for (auto& v : buf) v = 0.0f;
+        for (auto& v : buf) v.store(0.0f, std::memory_order_relaxed);
         writePos.store(0, std::memory_order_relaxed);
     }
     void push(float x) noexcept
     {
-        const int w = writePos.load(std::memory_order_relaxed);
-        buf[(size_t)(w & (kSize - 1))] = x;
-        writePos.store(w + 1, std::memory_order_release);
+        const std::uint32_t w = writePos.load(std::memory_order_relaxed);
+        buf[(size_t)(w & (kSize - 1))].store(x, std::memory_order_relaxed);
+        writePos.store(w + 1, std::memory_order_release); // unsigned wrap is well-defined
     }
     // Copy the most recent n samples (oldest-first) into dst. UI thread.
     void snapshot(float* dst, int n) const noexcept
     {
         if (n > kSize) n = kSize;
-        const int w = writePos.load(std::memory_order_acquire);
+        const std::uint32_t w = writePos.load(std::memory_order_acquire);
         for (int i = 0; i < n; ++i)
-            dst[i] = buf[(size_t)((w - n + i) & (kSize - 1))];
+            dst[i] = buf[(size_t)((w - (std::uint32_t)n + (std::uint32_t)i) & (kSize - 1))].load(std::memory_order_relaxed);
     }
 
 private:
-    float buf[kSize] = {};
-    std::atomic<int> writePos { 0 };
+    // Per-element atomics (relaxed). The writePos release/acquire still orders
+    // index coordination; making each slot atomic removes the formal data race
+    // on the float storage when the audio push() overlaps a UI snapshot() (a
+    // torn read is UB even though it degrades to a benign spectrum glitch).
+    std::atomic<float> buf[kSize] = {};
+    // Unsigned so the monotonic increment wraps with well-defined modular
+    // semantics on long runs (a signed int would overflow into UB after
+    // ~2^31 pushes, ~12 h at 48 kHz). The power-of-two mask indexing is
+    // unchanged — two's-complement masking gave the same indices.
+    std::atomic<std::uint32_t> writePos { 0 };
 };
 
 class FourKEQDSP
@@ -109,7 +122,7 @@ public:
     void setInputGainDb(float db) noexcept { pInputGain.store(db, R); }
     void setOutputGainDb(float db)noexcept { pOutputGain.store(db, R); }
     void setSaturation(float pct) noexcept { pSaturation.store(pct, R); }
-    void setOversampling(int x2_0_x4_1) noexcept { pOversampling.store((float)x2_0_x4_1, R); }
+    void setOversampling(int mode_1x2x4x) noexcept { pOversampling.store((float)mode_1x2x4x, R); } // 0=1x,1=2x,2=4x
     void setMsMode(bool on)       noexcept { pMsMode.store(on ? 1.f : 0.f, R); }
     void setAutoGain(bool on)     noexcept { pAutoGain.store(on ? 1.f : 0.f, R); }
 
@@ -123,14 +136,22 @@ public:
     const SpectrumRing& preSpectrum()  const noexcept { return preRing; }
     const SpectrumRing& postSpectrum() const noexcept { return postRing; }
 
-    //--- coefficient designers, shared with the UI response curve -------------
-    // Console-voiced band coefficients (mode-dependent Q). Exposed so the UI
-    // can evaluate the exact same magnitude the audio path produces.
-    static BiquadCoeffs consolePeak (double fs, float freq, float q, float gainDb, bool black) noexcept;
-    static BiquadCoeffs consoleShelf(double fs, float freq, float q, float gainDb, bool high, bool black) noexcept;
-    static float dynamicQ(float gainDb, float baseQ) noexcept;
+    //--- parallel-summing EQ, shared with the UI response curve ---------------
+    // The real 82E242 EQ sums fixed-Q band-pass / shelf blocks with the dry
+    // signal at one node: H = 1 + sum_i K_i * F_i, K_i = 10^(G_i/20) - 1. This
+    // makes band interaction, constant-Q (E) and asymmetric cut fall out of the
+    // structure instead of being faked. F_i come straight from Biquad designers
+    // (bandPassConstantPeak / firstOrderLowPass / firstOrderHighPass / lowPass /
+    // highPass); the two helpers below are the only band-specific voicing.
+    //
+    // Mid-band Q voicing: E-series (Brown) is constant-Q; G-series (Black) is
+    // proportional-Q (narrows on boost/cut). Single application.
+    static float voicedMidQ(float gainDb, float baseQ, bool black) noexcept;
+    // Parallel summing gain for a band: K = 10^(gainDb/20) - 1 (0 at unity,
+    // negative for cut -> the block subtracts, giving the SSL asymmetric cut).
+    static float bandK(float gainDb) noexcept { return std::pow(10.0f, 0.05f * gainDb) - 1.0f; }
     static float preWarp(float freq, double fs) noexcept;
-    static int   chooseFactor(double baseSampleRate, bool want4x) noexcept;
+    static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
 private:
     static constexpr std::memory_order R = std::memory_order_relaxed;
@@ -157,6 +178,10 @@ private:
     std::array<ChannelFilters, kMaxChannels> ch;
     Oversampler          os[kMaxChannels];
     ConsoleSaturationCore consoleSat;
+
+    // Parallel summing gains per band (shared by both channels), set in
+    // recomputeCoeffs alongside the band filter coefficients.
+    float kLf = 0.f, kLm = 0.f, kHm = 0.f, kHf = 0.f;
 
     std::vector<float> scratchL, scratchR;
 

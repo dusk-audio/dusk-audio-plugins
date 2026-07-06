@@ -40,9 +40,13 @@ REND = f"{ROOT}/build/tests/duskverb_render/duskverb_render"
 VST3 = os.path.expanduser("~/.vst3/DuskVerb.vst3")
 FC   = f"{ROOT}/plugins/DuskVerb/tools/tuner/full_check.py"
 PROC = f"{ROOT}/plugins/DuskVerb/src/PluginProcessor.cpp"
+FACT = f"{ROOT}/plugins/DuskVerb/src/FactoryPresets.h"
 TR   = os.path.expanduser("~/projects/dusk-audio-tools/tuner_runs/anchors")
 RD   = os.path.expanduser("~/projects/dusk-audio-tools/anchors/rendered")
 STIM = ["impulse", "noiseburst", "snare", "sine1k", "sustained", "piano"]
+# Optional stimuli: absent from older anchor sets, so treat a miss as skip-and-
+# continue (as render_and_check/full_check do), never a fleet-aborting FATAL.
+OPTIONAL_STIM = {"piano"}
 CAL_TOL = 0.15            # realized T60 must be within +/-15% of commanded
 OCTAVE_HZ = [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
@@ -78,7 +82,8 @@ def commanded_octave_t60():
     """Parse kAccurateHallT60ByName from PluginProcessor.cpp -> {name: [9 floats]}.
     Single source of truth; can't drift from the shipped plugin."""
     src = open(PROC, encoding="utf-8").read()
-    blk = re.search(r"kAccurateHallT60ByName\s*=\s*\{(.*?)\n\s*\};", src, re.S)
+    # `\}?\};` — see keyed_map_names: the map is a std::array closed by `}};`.
+    blk = re.search(r"kAccurateHallT60ByName\s*=\s*\{(.*?)\n\s*\}?\};", src, re.S)
     out = {}
     if not blk:
         return out
@@ -102,19 +107,39 @@ TABLE_ENGINES = {
                                           # Omitting 11/13 false-flagged Tiled Room's
                                           # LIVE octave entry as dormant -> wrongly deleted.
     "kDattorroOctaveT60ByName": (0, 1),   # consumed only by dattorro_/dattorroVintage_
+    "kDenseHallOctaveT60ByName": (14,),   # consumed only by denseHall_
+    "kPmbByName": (15,),                  # consumed only by pmb_ (ParallelMultiband)
+    "kFiveBandByName": (4, 10, 11, 13),   # FactoryPresets.h; every field routes only
+                                          # to fdn_/accurateHall_/multibandFdn_. NOTE:
+                                          # even on an allowed algo, the DECAY fields
+                                          # (sub/hiMid/xSub/xAir) are flattened to
+                                          # identity whenever the octave GEQ is active
+                                          # (all shipping AccurateHall-tail presets) —
+                                          # only the input-makeup/in-loop fields can be
+                                          # live. This check catches the routing tier.
 }
 
 
 def keyed_map_names(map_name):
-    """Quoted preset names keyed in a kXxxByName map in PluginProcessor.cpp."""
-    src = open(PROC, encoding="utf-8").read()
-    blk = re.search(map_name + r"\s*=\s*\{(.*?)\n\s*\};", src, re.S)
-    if not blk:
-        return []
-    # entries open with `{ "Name",` - skip // comment lines
-    body = "\n".join(l for l in blk.group(1).splitlines()
-                     if not l.lstrip().startswith("//"))
-    return re.findall(r'\{\s*"([^"]+)"\s*,', body)
+    """Quoted preset names keyed in a kXxxByName map (PluginProcessor.cpp or
+    FactoryPresets.h — kFiveBandByName lives in the header)."""
+    out = []
+    for path in (PROC, FACT):
+        src = open(path, encoding="utf-8").read()
+        # `\}?\};` closes both `};` (std::map) and `}};` (std::array). The old
+        # pattern (`\};` only) never matched a `}};` closer, so the non-greedy
+        # capture ran past the map into the next block that DID end in `};`,
+        # attributing every later map's rows to this map — 59 phantom dormant
+        # kAccurateHallT60ByName entries when the real map had 3 live rows
+        # (found + fixed 2026-07-06).
+        blk = re.search(map_name + r"\s*=\s*\{(.*?)\n\s*\}?\};", src, re.S)
+        if not blk:
+            continue
+        # entries open with `{ "Name",` - skip // comment lines
+        body = "\n".join(l for l in blk.group(1).splitlines()
+                         if not l.lstrip().startswith("//"))
+        out += re.findall(r'\{\s*"([^"]+)"\s*,', body)
+    return out
 
 
 def dormant_table_entries():
@@ -186,9 +211,71 @@ def render_and_check(name, no_render=False):
             shutil.copy(src, f"{lex}/anchor_{s}.wav")
     if not os.path.exists(f"{lex}/anchor_noiseburst.wav"):
         return f"NO_ANCHOR {name} {adir}", False
-    fc = subprocess.run([sys.executable, FC, dv, lex, "--name", name],
+    fc = subprocess.run([sys.executable, FC, dv, lex, "--name", name, "--json"],
                         capture_output=True, text=True, timeout=200)
     return fc.stdout, True
+
+
+def parse_fails(fc_text):
+    """Failing-gate list from full_check --json (short names). [] if absent."""
+    m = re.search(r"^JSON_RESULT: (.*)$", fc_text, re.M)
+    if not m:
+        return []
+    try:
+        raw = json.loads(m.group(1)).get("fails", [])
+    except json.JSONDecodeError:
+        return []
+    return [re.split(r"\s{2,}", x)[0].strip() for x in raw]
+
+
+def check_anchor(name):
+    """Anchor hygiene (D5): missing/silent anchors made fiction scores before
+    (3 VVV anchors were once dry-only renders). Returns list of problem strings;
+    entries prefixed FATAL: should block the audit."""
+    adir, shim = FLEET[name]
+    apref = os.path.basename(adir)
+    problems = []
+    stims = STIM + (["sinelong"] if shim else [])
+    for s in stims:
+        p = f"{adir}/{apref}_{s}.wav"
+        if not os.path.exists(p):
+            # Optional stimuli (piano) skip like render_and_check/full_check;
+            # only a required stimulus miss is FATAL (aborts the fleet).
+            if s in OPTIONAL_STIM:
+                problems.append(f"optional anchor stimulus {os.path.basename(p)} absent — skipped")
+            else:
+                problems.append(f"FATAL: missing anchor stimulus {os.path.basename(p)}")
+            continue
+        info = sf.info(p)
+        if "FLOAT" not in info.subtype:
+            # PCM16 requantization has faked gate walls before — warn loudly.
+            problems.append(f"{os.path.basename(p)}: subtype {info.subtype} (want FLOAT)")
+    nb = f"{adir}/{apref}_noiseburst.wav"
+    if os.path.exists(nb):
+        x, srate = sf.read(nb)
+        m = x.mean(axis=1) if x.ndim > 1 else x
+        full = float(np.sqrt(np.mean(m * m)))
+        if full < 10 ** (-70 / 20):
+            problems.append(f"FATAL: noiseburst RMS {20*np.log10(max(full,1e-12)):.0f} dBFS — silent anchor")
+        else:
+            # Dry-only detector (the 3 historically-broken VVV anchors had NO
+            # reverb): a wet render keeps energy alive after the loud region; a
+            # dry capture collapses to the floor immediately. NOT judged on the
+            # file end — anchors legitimately carry trailing digital silence
+            # after the tail decays. Reverse/gated programs can cut hard, so
+            # this is a WARNING, never fatal.
+            blk = 512
+            nblk = len(m) // blk
+            if nblk > 4:
+                env = np.sqrt(np.mean(m[:nblk*blk].reshape(nblk, blk) ** 2, axis=1))
+                db = 20 * np.log10(np.maximum(env / (env.max() + 1e-12), 1e-9))
+                loud = np.where(db > -20)[0]
+                live = np.where(db > -70)[0]
+                if len(loud) and len(live):
+                    tail_ms = (live[-1] - loud[-1]) * blk / srate * 1000
+                    if tail_ms < 80:
+                        problems.append(f"noiseburst energy dies {tail_ms:.0f} ms after the burst — dry-only anchor? (verify by ear)")
+    return problems
 
 
 def parse_realized_t60(fc_text):
@@ -254,6 +341,11 @@ def main():
     ap.add_argument("--no-render", action="store_true",
                     help="reuse existing /tmp/audit_* renders")
     ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--out", nargs="?", default=None,
+                    const=os.path.dirname(os.path.abspath(__file__)),
+                    help="persist scoreboard_<date>.md + .json (default dir: "
+                         "the tuner dir). Without this the audit writes NOTHING "
+                         "to disk — the cause of 3-week-stale scoreboards.")
     args = ap.parse_args()
 
     # Source-only dormant-table check (no render). This is the cheapest, most
@@ -278,6 +370,17 @@ def main():
         if n not in FLEET:
             print(f"unknown preset: {n}"); return 2
 
+    # Anchor hygiene precheck (before any render): silent/dry/missing anchors
+    # produce fiction scores that read as engine regressions.
+    fatal_anchor = False
+    for n in names:
+        for prob in check_anchor(n):
+            print(f"ANCHOR {n}: {prob}")
+            fatal_anchor |= prob.startswith("FATAL:")
+    if fatal_anchor:
+        print("aborting: fix the anchors above (re-render), then re-run.")
+        return 2
+
     def work(n):
         algo = preset_algo(n)
         txt, ok = render_and_check(n, no_render=args.no_render)
@@ -289,7 +392,8 @@ def main():
         # commanded octave T60 must be verified too — not just algos 10/12.
         cr = calibration_report(n, commanded.get(n), txt) \
             if algo in TABLE_ENGINES["kAccurateHallT60ByName"] else None
-        return {"name": n, "ok": True, "algo": algo, "n_fail": nf, "cal": cr}
+        return {"name": n, "ok": True, "algo": algo, "n_fail": nf, "cal": cr,
+                "fails": parse_fails(txt)}
 
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
         results = list(ex.map(work, names))
@@ -339,6 +443,40 @@ def main():
             print(fmt_calibration(d["cal"]))
     print(json.dumps([{k: v for k, v in r.items() if k != "cal"} for r in results]),
           file=sys.stderr)
+
+    if args.out:
+        import datetime
+        date = datetime.date.today().isoformat()
+        ok = [r for r in results if r.get("ok")]
+        total = sum(r["n_fail"] or 0 for r in ok)
+        md = [f"# DuskVerb fleet scoreboard — {date}\n",
+              f"Generated by `fleet_audit.py --out` (fresh renders unless --no-render was passed).\n",
+              f"**Total fails: {total}   Mean: {total/max(len(ok),1):.1f}   Presets: {len(ok)}**\n",
+              "| Preset | Algo | n_fail | Calibration | Failing gates (short) |",
+              "|---|---|---|---|---|"]
+        for r in sorted(ok, key=lambda x: -(x["n_fail"] or 0)):
+            cal = ""
+            if r.get("cal"):
+                cal = (f"BROKEN ({r['cal']['worst_divergence']*100:.0f}%)"
+                       if r["cal"]["broken"] else "ok")
+            md.append(f"| {r['name']} | {r['algo']} | {r['n_fail']} | {cal} | "
+                      f"{', '.join(r.get('fails', []))} |")
+        for r in results:
+            if not r.get("ok"):
+                md.append(f"| {r['name']} | - | RENDER/CHECK FAIL | | {r.get('msg','')} |")
+        if dormant:
+            md.append("\n## Dormant table entries (verify-tables)\n")
+            md += [f"- `{mp}['{name}']` on algo {algo}, map routes to {allowed}"
+                   for mp, name, algo, allowed in dormant]
+        os.makedirs(args.out, exist_ok=True)  # a user-supplied --out dir may not exist yet
+        base = os.path.join(args.out, f"scoreboard_{date}")
+        with open(base + ".md", "w") as f:
+            f.write("\n".join(md) + "\n")
+        with open(base + ".json", "w") as f:
+            json.dump({"date": date, "total": total,
+                       "results": [{k: v for k, v in r.items() if k != "cal"}
+                                   for r in results]}, f, indent=1)
+        print(f"\nwrote {base}.md / .json")
     return 0
 
 

@@ -1,3 +1,7 @@
+# Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+# Third-party components (DPF — ISC; Dear ImGui — MIT; and others) are attributed
+# in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+#
 # Standalone CMake for the DPF-based 4K EQ 2 plugin.
 # Configure this directory directly:
 #   cmake -B build -GNinja [-DDPF_PATH=/path/to/DPF]
@@ -32,3 +36,7 @@ target_include_directories(four_k_eq_2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DPF_INCLUDE_DIRS})
+
+# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
+dusk_dpf_install_local(four_k_eq_2)

@@ -1,3 +1,7 @@
+# Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+# Third-party components (DPF — ISC; Dear ImGui — MIT; and others) are attributed
+# in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+#
 # DuskDpfPlugin.cmake — shared DPF wiring for Dusk Audio DPF plugins.
 #
 # include() this from a plugin's CMakeLists after project(). It locates the
@@ -33,3 +37,63 @@ set(DUSK_DPF_INCLUDE_DIRS
     "${DUSK_SHARED_DPF_DIR}/dsp"
     "${DUSK_SHARED_DPF_DIR}/ui"
     "${DPFWIDGETS_PATH}/opengl")
+
+# Copy the built CLAP/VST3/LV2 artefacts into the user plugin dirs after each
+# build, so hosts always load the freshly-built binary (DPF's ninja target only
+# writes to <build>/bin). Call AFTER dpf_add_plugin with the plugin base name.
+# Disable with -DDUSK_DPF_INSTALL_LOCAL=OFF (e.g. on CI / release runners).
+option(DUSK_DPF_INSTALL_LOCAL "Copy built DPF plugins into the user plugin dirs after build" ON)
+
+function(dusk_dpf_install_local plugin_name)
+    if(NOT DUSK_DPF_INSTALL_LOCAL)
+        return()
+    endif()
+    if(NOT DEFINED ENV{HOME} OR "$ENV{HOME}" STREQUAL "")
+        message(STATUS "DUSK_DPF_INSTALL_LOCAL: HOME unset, skipping local install of ${plugin_name}")
+        return()
+    endif()
+
+    if(CMAKE_HOST_APPLE)
+        set(_clap "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP")
+        set(_vst3 "$ENV{HOME}/Library/Audio/Plug-Ins/VST3")
+        set(_lv2  "$ENV{HOME}/Library/Audio/Plug-Ins/LV2")
+    else()
+        set(_clap "$ENV{HOME}/.clap")
+        set(_vst3 "$ENV{HOME}/.vst3")
+        set(_lv2  "$ENV{HOME}/.lv2")
+    endif()
+    set(_bin "${CMAKE_BINARY_DIR}/bin")
+
+    if(TARGET ${plugin_name}-clap)
+        # macOS emits a .clap BUNDLE (directory, like VST3/LV2); Linux/Windows a
+        # single-file .clap. Copy accordingly so the macOS install isn't a
+        # truncated single-file copy of a bundle.
+        if(CMAKE_HOST_APPLE)
+            add_custom_command(TARGET ${plugin_name}-clap POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${_clap}"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.clap" "${_clap}/${plugin_name}.clap"
+                COMMENT "Installing ${plugin_name}.clap -> ${_clap}"
+                VERBATIM)
+        else()
+            add_custom_command(TARGET ${plugin_name}-clap POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${_clap}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_bin}/${plugin_name}.clap" "${_clap}/${plugin_name}.clap"
+                COMMENT "Installing ${plugin_name}.clap -> ${_clap}"
+                VERBATIM)
+        endif()
+    endif()
+    if(TARGET ${plugin_name}-vst3)
+        add_custom_command(TARGET ${plugin_name}-vst3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_vst3}"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.vst3" "${_vst3}/${plugin_name}.vst3"
+            COMMENT "Installing ${plugin_name}.vst3 -> ${_vst3}"
+            VERBATIM)
+    endif()
+    if(TARGET ${plugin_name}-lv2)
+        add_custom_command(TARGET ${plugin_name}-lv2 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_lv2}"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.lv2" "${_lv2}/${plugin_name}.lv2"
+            COMMENT "Installing ${plugin_name}.lv2 -> ${_lv2}"
+            VERBATIM)
+    endif()
+endfunction()

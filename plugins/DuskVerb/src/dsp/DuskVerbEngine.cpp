@@ -695,6 +695,26 @@ void DuskVerbEngine::setDiffuseER (const float* timesMs, const float* gains, int
     diffuseERGain_ = std::clamp (busGain, 0.0f, 2.0f);
 }
 
+void DuskVerbEngine::setDiffuseERHighpass (float hz)
+{
+    diffuseERHpHz_ = std::clamp (hz, 0.0f, 12000.0f);
+    if (diffuseERHpHz_ <= 0.0f)
+        return;
+    // LR4 highpass = two cascaded RBJ Butterworth-2 HP sections (Q 0.7071).
+    const float w0 = 6.2831853f * diffuseERHpHz_ / static_cast<float> (sampleRate_);
+    const float cw = std::cos (w0), sw = std::sin (w0);
+    const float al = sw / (2.0f * 0.70710678f);
+    const float a0 = 1.0f + al;
+    dfHpB_[0] = ((1.0f + cw) * 0.5f) / a0;
+    dfHpB_[1] = -(1.0f + cw) / a0;
+    dfHpB_[2] = ((1.0f + cw) * 0.5f) / a0;
+    dfHpA_[0] = (-2.0f * cw) / a0;
+    dfHpA_[1] = (1.0f - al) / a0;
+    for (int c = 0; c < 2; ++c)
+        for (int st = 0; st < 2; ++st)
+            dfHpZ_[c][st][0] = dfHpZ_[c][st][1] = 0.0f;
+}
+
 void DuskVerbEngine::setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale)
 {
     outDiffActive_ = enable;
@@ -852,6 +872,7 @@ void DuskVerbEngine::setShimmerUpVoiceScale   (float v1, float v2) { shimmer_.se
 void DuskVerbEngine::setShimmerOctaveCascade  (const float gains[4]) { shimmer_.setOctaveCascade (gains); }
 void DuskVerbEngine::setShimmerTailNoise      (float gain, float hpHz, float lpHz) { shimmer_.setTailNoise (gain, hpHz, lpHz); }
 void DuskVerbEngine::setShimmerHFSustainDb    (float db, float cornerHz) { shimmer_.setHFSustainDb (db, cornerHz); }
+void DuskVerbEngine::setShimmerOutputHeadroom (float h) { shimmer_.setOutputHeadroom (h); }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
 // Forward to the FDN tank and to ReverseRoom (which owns an FDN for its tail);
@@ -1662,6 +1683,37 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             {
                 tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
                 tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
+            }
+            // Diffused-burst ER bus, same hookup as the DenseHall composite
+            // (2026-07-06: the post-hit "whoosh" the VVV anchor carries lives
+            // here — the parallel band tanks alone onset too cleanly).
+            // Optionally highpassed (setDiffuseERHighpass) so the whoosh adds
+            // NO steady-state energy at/below 1 kHz — an unfiltered bus pumped
+            // sine1k +11 dB. Skipped (no reflections configured) → bit-null.
+            if (diffuseER_.active())
+            {
+                diffuseER_.process (tankInL_.data(), tankInR_.data(),
+                                    sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                if (diffuseERHpHz_ > 0.0f)
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float* smp[2] = { &sparseOutL_[static_cast<size_t> (i)], &sparseOutR_[static_cast<size_t> (i)] };
+                        for (int c = 0; c < 2; ++c)
+                            for (int st = 0; st < 2; ++st)
+                            {
+                                const float x = *smp[c];
+                                float* z = dfHpZ_[c][st];
+                                const float y = dfHpB_[0] * x + z[0];
+                                z[0] = dfHpB_[1] * x - dfHpA_[0] * y + z[1];
+                                z[1] = dfHpB_[2] * x - dfHpA_[1] * y;
+                                *smp[c] = y;
+                            }
+                    }
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * diffuseERGain_;
+                    tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * diffuseERGain_;
+                }
             }
             break;
     }

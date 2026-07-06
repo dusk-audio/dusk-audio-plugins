@@ -348,6 +348,13 @@ void ShimmerEngine::setSaturation (float amount)
     saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
 }
 
+void ShimmerEngine::setOutputHeadroom (float h)
+{
+    // Clamp to [1, 8]: below 1 would tighten the clip (pointless / more grit),
+    // above 8 makes the output effectively linear (no safety limit at all).
+    outputHeadroom_ = std::clamp (h, 1.0f, 8.0f);
+}
+
 // DEPTH (mod_depth, 0..1) → PITCH semitones (0..24). 0 = unity (no shift),
 // 0.5 = +12 (octave up — canonical Eno Choir), 1.0 = +24 (Cascading Heaven).
 void ShimmerEngine::setModDepth (float depth)
@@ -592,7 +599,12 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // Tail noise floor — envelope-tracked to the wet, fades with the decay (Valhalla's
         // dense noise-like fade; masks the sparse-mode ring). gain 0 → skipped → bit-null.
         if (tailNoise_.active()) tailNoise_.process (wL, wR, oL, oR);
-        outL[n] = std::tanh (oL * kWetOutputGain);
-        outR[n] = std::tanh (oR * kWetOutputGain);
+        // Output limiter. h==1 → plain tanh (bit-null). h>1 → h*tanh(x/h): the
+        // knee moves to ±h so long-decay buildup (Deep Blue Day) stays linear
+        // and doesn't emit odd-harmonic (3k/5k) grit on sustained tones.
+        const float gL = oL * kWetOutputGain, gR = oR * kWetOutputGain;
+        const float h = outputHeadroom_;
+        outL[n] = (h == 1.0f) ? std::tanh (gL) : h * std::tanh (gL / h);
+        outR[n] = (h == 1.0f) ? std::tanh (gR) : h * std::tanh (gR / h);
     }
 }

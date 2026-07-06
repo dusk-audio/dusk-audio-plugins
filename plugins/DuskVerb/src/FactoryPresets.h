@@ -372,32 +372,28 @@ struct FactoryPreset
         // name→map — same pattern as kPostTankEQByName — so the fragile
         // aggregate-init rows (these struct fields sit last) stay untouched.
         struct FiveBandOverride { float sub, hiMid, xSub, xAir, inSub, inMid, inHigh, inLoopDb; };
+        // ROUTING (verified 2026-07-06): every field of this map reaches only
+        // fdn_/accurateHall_/multibandFdn_ (DuskVerbEngine::setSubMultiply etc.
+        // fan out to exactly those three), so entries are LIVE only for presets
+        // whose audio path runs one of them: algo 4 (FDN — no shipping preset),
+        // algo 10 (AccurateHall) and the algo 11/13 composites whose tail is
+        // accurateHall_. ADDITIONALLY the decay fields (sub/hiMid/xSub/xAir)
+        // are flattened to identity whenever the octave GEQ is active
+        // (FDNReverb.cpp designCoeffs: octaveGEQActive_ → FiveBandDamping =
+        // identity, kAccurateHallT60ByName carries the full per-octave decay)
+        // — which is every shipping AccurateHall-tail preset. Net: only the
+        // input-makeup / in-loop fields can be live, and only on algo 10/11/13.
+        // 2026-07-06 cleanup: removed 5 fully-inert entries (Drum Plate →
+        // Dattorro 0, Blade Runner 224 / Cathedral Large Hall / Vocal Hall →
+        // DenseHall 14, Vocal Plate → octave-GEQ flattened + all other fields
+        // 0). Bit-null verified by render diff. Historical tunings live in git.
+        // The long-standing "kFiveBandByName['Vocal Plate'] won't apply" bug is
+        // therefore NOT a bug: the octave table is the T60 lever for algo-10
+        // presets. fleet_audit.py --verify-tables now checks this map.
         static const std::map<juce::String, FiveBandOverride> kFiveBandByName = {
-            // Drum Plate (FDN) — direct-scoreboard + warm-start sweep vs VVV
-            // anchor, 27→23. FiveBand mults + feed-forward Input Sub +2.02 dB:
-            // restores the low-end body that read "weak" by ear (closes
-            // ss-deep-sub / ss-sub). 1 kHz notch + mild sub-hot remain (FDN
-            // steady-state limit — see commits 4876359/91da13e for the in-loop
-            // peak fix that proved it can't be filled within stability).
-            { "Drum Plate", { 0.5349f, 0.8907f, 67.45f, 15219.49f, 2.02f, 0.0f, 0.0f, 0.0f } },
-            // Tiled Room (FDN) — scoreboard+warm-start vs VVV "Tiled Room", 47→28.
+            // Tiled Room (algo-13 composite, tail = accurateHall_): decay fields
+            // flattened (octave GEQ live), but Input Sub/Mid makeup IS live.
             { "Tiled Room", { 1.661f, 0.8853f, 43.26f, 10850.0f, 0.0346f, -1.87f, 0.0f, 0.0f } },
-            { "Blade Runner 224", { 1.8467f, 0.2189f, 119.28f, 14310.79f, 1.6074f, 3.4473f, 0.0f, 0.1912f } },
-            // Cathedral (AccurateHall since 2026-06-09): in-loop peak 1.4 -> 0.
-            // Under the octave GEQ, in-loop gain at 1 kHz distorts that band's
-            // accurate-RT decay (the calibrator oscillated +228/-56% at 1k).
-            // Input makeup (pre-loop, level-only) kept.
-            { "Cathedral Large Hall", { 1.827f, 0.8574f, 104.8f, 8400.0f, 2.657f, 2.079f, 0.0f, 0.0f } },
-            // Vocal Hall (FDN) — 2026-06-07 co-tune. Sub 1.615 (lengthen T60 63),
-            // Hi-Mid 0.577 (shorten T60 8k + decay-hi). xSub 120 / xAir 8000 as
-            // shipped. No input makeup / in-loop peak. Pairs w/ row Treble 1.091
-            // + pteq level comp to decouple level from the decay retune. 17->10.
-            { "Vocal Hall", { 1.615f, 0.577f, 120.0f, 8000.0f, 0.0f, 0.0f, 0.0f, 0.0f } },
-            // Vocal Plate (FDN) — T60 decay tune 2026-06-08. PINS Hi-Mid 0.85 so the air
-            // band (4k/8k) does NOT inherit the row Treble (0.60): without this entry the
-            // sentinel sets fbHiMid=damping=0.60 → double HF damping → 4k/8k T60 -10%. Sub
-            // 0.74 = the prior bass-inherit value (unchanged). xSub/xAir as shipped.
-            { "Vocal Plate", { 0.74f, 0.85f, 120.0f, 8000.0f, 0.0f, 0.0f, 0.0f, 0.0f } },
         };
         float fbSub   = subMult   >= 0.0f ? subMult   : bassMult;
         float fbHiMid = hiMidMult >= 0.0f ? hiMidMult : damping;
@@ -860,7 +856,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   erSize        0.55 → 0.45 — redistributes early-tap timeline
         //                                 to support new erLevel.
         { "Vocal Hall",           "Halls",
-          14, 0.35f, false, 8.0f, 0,    // 2026-06-24 predelay 22->8.0 ms = VVV Vocal Hall (Concert Hall mode) PREDELAY (8.00 ms, from the GUI); DV's 22ms read too distant.  // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail (kurtosis 12.6 -> 6.2).
+          15, 0.35f, false, 8.0f, 0,    // 2026-07-06: migrated DenseHall(14) -> ParallelMultiband(15) after the split fix; per-band {t60,level,direct,width} in kPmbByName (PluginProcessor). full_check 15 -> 13; T60 9/9, width 3/3, body all pass. PENDING EAR SIGN-OFF.  // 2026-06-24 predelay 22->8.0 ms = VVV Vocal Hall (Concert Hall mode) PREDELAY (8.00 ms, from the GUI); DV's 22ms read too distant.  // 2026-06-13: migrated FDN(10) -> DenseHall(14); dense diffused tail (kurtosis 12.6 -> 6.2).
           5.226f, 0.76f, 0.50390f, 0.78820f, 1.479f, 1.750f,  621.727f,  // 2026-06-24 Decay knob 5.6->5.226 = realized broadband RT60 (honest; DenseHall decayRef auto-tracks knob -> scale 1.0 -> octave T60 table + sound UNCHANGED).  // 2026-06-17 EAR: decay 3.04->5.6 = anchor low T60 (5.51s); lows were -45% short = "weak/no low end". Octave GEQ cuts mids/highs back.  // 2026-06-16 re-tune vs corrected anchor: Bass 1.35->1.75 + mid 1.263->0.92 (mids into gate), 27->25  // 2026-06-14 gain-matched 8-lever sweep (31->26): decay 3.04, Treble 1.479, Bass 1.35, LowXover 622.  // decay 3.50->4.04: restore length after honest-decay fold-in (RT60 4.42->~5.1)  // Treble 1.084->1.60: brighten to anchor (centroid 1585->~1700; HiCut 6k->10k below adds the rest).
           0.77940f, 0.29000f, 0.44870f,  33.0f,   6500.000f, 0.96000f, false,  5.70f,  // 2026-06-17 EAR: HiCut 13826->6500 (shelf now reaches the hot 5-12k: hi/ss_hi/ss_air/bloom/cent_50 were +) + gainTrim 10.3->5.7 (user: too loud).  // 2026-06-16 erLevel 0.79->0.29: DenseHall re-included in discrete-ER bus (the "duh-duh"); 0.79 over-front-loaded (first50 +35pp).2026-06-14 sweep: HiCut 10k->13826; gainTrim level-matched (+10.32).  // erLevel 0.608->0.79 (front-load deck) + Width 0.995->0.96 + GainTrim -2.5->+2.0: with er_decorr 0.6 (kFrontLoadByName) the width family lands ~VVV; GainTrim + erLevel restore level/front-load after tank_level 0.42 cut.
           /* mono */ 20.0f, /* mid */ 1.060f, /* highX */ 4603.805f, /* sat */ 0.0f, /* hiCutShelfGainDb */ -10.058f },  // 2026-06-17 EAR: Mid 0.92->1.06 — fill the low mid/body (mid 1-4k/body 500-1k/1-2k were -2dB).  // 2026-06-14 sweep: Mid 1.263, HighXover 4604, HiCutShelf -10.06.  // Mid 0.76->0.753. MonoBelow 150->20 (mono was correlating the low, fighting er_decorr's image fix). Sat 0.0 (clean highs).

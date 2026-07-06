@@ -484,7 +484,7 @@ float EQCurveDisplay::calculateLFResponse(float freq) const
 
     float fc = cachedParams.lfFreq;
     float gain = cachedParams.lfGain;
-    bool isBell = cachedParams.lfBell && cachedParams.isBlack;
+    bool isBell = cachedParams.lfBell;   // bell works in both voicings
 
     if (isBell)
     {
@@ -548,7 +548,7 @@ float EQCurveDisplay::calculateHFResponse(float freq) const
 
     float fc = cachedParams.hfFreq;
     float gain = cachedParams.hfGain;
-    bool isBell = cachedParams.hfBell && cachedParams.isBlack;
+    bool isBell = cachedParams.hfBell;   // bell works in both voicings
 
     if (isBell)
     {
@@ -574,15 +574,34 @@ float EQCurveDisplay::calculateHFResponse(float freq) const
 
 float EQCurveDisplay::calculateCombinedResponse(float freq) const
 {
-    float response = 0.0f;
+    // Parallel-summing EQ: the four bands sum as dry + sum(K_i * shape_i), NOT a
+    // dB cascade, so overlapping boosts add sub-additively (matches the audio's
+    // 82E242 topology). Each calculate*Response returns gain*shape in dB; recover
+    // the normalized shape and re-sum with K_i = 10^(gain/20)-1. HPF/LPF are real
+    // series filters and multiply the magnitude.
+    auto band = [](float calcDb, float gainDb) -> float
+    {
+        if (std::abs(gainDb) < 0.1f) return 0.0f;
+        const float shape = calcDb / gainDb;                 // normalized [0,1]
+        const float K = std::pow(10.0f, 0.05f * gainDb) - 1.0f;
+        return K * shape;
+    };
 
-    // Add all band responses
-    response += calculateHPFResponse(freq);
-    response += calculateLPFResponse(freq);
-    response += calculateLFResponse(freq);
-    response += calculateLMFResponse(freq);
-    response += calculateHMFResponse(freq);
-    response += calculateHFResponse(freq);
+    float lin = 1.0f
+        + band(calculateLFResponse(freq),  cachedParams.lfGain)
+        + band(calculateLMFResponse(freq), cachedParams.lmGain)
+        + band(calculateHMFResponse(freq), cachedParams.hmGain)
+        + band(calculateHFResponse(freq),  cachedParams.hfGain);
 
-    return response;
+    // Series filters (HPF/LPF) scale the magnitude.
+    lin *= std::pow(10.0f, 0.05f * calculateHPFResponse(freq));
+    lin *= std::pow(10.0f, 0.05f * calculateLPFResponse(freq));
+
+    // The parallel voltage sum can go NEGATIVE when deep overlapping cuts
+    // subtract past zero (phase inversion); the plot shows |H|, so take the
+    // magnitude BEFORE the floor + log — else a sign flip renders as a false
+    // deep notch instead of the true (shallower) response.
+    lin = std::abs(lin);
+    if (lin < 1.0e-6f) lin = 1.0e-6f;
+    return 20.0f * std::log10(lin);
 }

@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // DuskImGuiWidgets.hpp — reusable Dear ImGui panel toolkit for Dusk DPF UIs.
 //
 // Extracted from plugins/tape-echo/dpf-plugin/TapeEchoUI.cpp. Provides a fixed
@@ -15,7 +19,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 #include <vector>
+
+#include "DuskImGuiFont.hpp"  // CrispFontSet — nearest-size face per label
 
 namespace duskdpf
 {
@@ -49,21 +57,38 @@ public:
         s = scale; org = origin; labelFont = font; host = h;
     }
     void setPalette(const Palette& p) noexcept { pal = p; }
+    void setFontSet(const CrispFontSet& fs) noexcept { fontSet = fs; }
     float scale() const noexcept { return s; }
+
+    // Nearest atlas face to a draw size (physical px). Falls back to the single
+    // labelFont, then the ImGui default, when no multi-size set was provided.
+    ImFont* pickFont(float px) const noexcept
+    {
+        if (ImFont* f = fontSet.pick(px)) return f;
+        return labelFont != nullptr ? labelFont : ImGui::GetFont();
+    }
 
     ImVec2 P(float x, float y) const noexcept { return ImVec2(org.x + x * s, org.y + y * s); }
 
     void text(ImDrawList* dl, float x, float y, float size, ImU32 col,
               const char* txt, int align /*-1 L,0 C,1 R*/, bool bold = false) const
     {
-        ImFont* font = labelFont != nullptr ? labelFont : ImGui::GetFont();
         const float sz = size * s;
+        ImFont* font = pickFont(sz);
         const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
         ImVec2 pos = P(x, y);
         if (align == 0) pos.x -= 0.5f * ts.x;
         if (align == 1) pos.x -= ts.x;
+        // Snap the origin to a whole device pixel so the linear font sampler
+        // doesn't smear glyphs across texel boundaries (subpixel = fuzzy).
+        pos.x = std::floor(pos.x + 0.5f);
+        pos.y = std::floor(pos.y + 0.5f);
         dl->AddText(font, sz, pos, col, txt);
-        if (bold && labelFont == nullptr)
+        // Fake-bold overlay ONLY when pickFont() fell back to the non-bold ImGui
+        // default atlas. A CrispFontSet face (or the single labelFont) is already
+        // a genuine bold, so double-drawing over it just smears the glyphs — key
+        // on the actual selected font, not merely labelFont == nullptr.
+        if (bold && font == ImGui::GetFont())
             dl->AddText(font, sz, ImVec2(pos.x + 0.6f * s, pos.y), col, txt);
     }
 
@@ -85,13 +110,89 @@ public:
 
     static float knobAngle(float t) { return (-135.0f + 270.0f * t) * kPi / 180.0f; }
 
+    //--- value read-out bubble + inline text entry ---------------------------
+    // JUCE-style pop-out: a light rounded pill with a little pointer, placed to
+    // the RIGHT of the knob (flips left near the window edge). Shown while a knob
+    // is hovered/dragged instead of a cramped label above it.
+    void valueBubble(ImDrawList* dl, float cx, float cy, float r, const char* txt) const
+    {
+        const float fs = 12.0f * s;
+        ImFont* font = pickFont(fs);
+        const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, txt);
+        const float padX = 7.0f * s, padY = 4.0f * s, gap = 7.0f * s, tail = 5.0f * s;
+        const ImVec2 kc = P(cx, cy);
+        const float halfH = ts.y * 0.5f + padY;
+        const float bw = ts.x + 2.0f * padX;
+
+        // Default to the right; flip left if it would spill past the window edge.
+        const float winR = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+        bool left = (kc.x + r * s + gap + bw + tail) > (winR - 4.0f * s);
+
+        ImVec2 bmin, bmax;
+        if (!left) { bmin = ImVec2(kc.x + r * s + gap, kc.y - halfH); bmax = ImVec2(bmin.x + bw, kc.y + halfH); }
+        else       { const float rx = kc.x - r * s - gap; bmin = ImVec2(rx - bw, kc.y - halfH); bmax = ImVec2(rx, kc.y + halfH); }
+
+        const float rad = halfH;
+        const ImU32 bg = IM_COL32(246, 247, 249, 255), edge = IM_COL32(0, 0, 0, 70), ink = IM_COL32(22, 22, 24, 255);
+        // pointer tail toward the knob
+        if (!left)
+            dl->AddTriangleFilled(ImVec2(bmin.x - tail, kc.y), ImVec2(bmin.x + 1.0f * s, kc.y - tail),
+                                  ImVec2(bmin.x + 1.0f * s, kc.y + tail), bg);
+        else
+            dl->AddTriangleFilled(ImVec2(bmax.x + tail, kc.y), ImVec2(bmax.x - 1.0f * s, kc.y - tail),
+                                  ImVec2(bmax.x - 1.0f * s, kc.y + tail), bg);
+        dl->AddRectFilled(bmin, bmax, bg, rad);
+        dl->AddRect(bmin, bmax, edge, rad, 0, 1.0f * s);
+        dl->AddText(font, fs, ImVec2(bmin.x + padX, kc.y - ts.y * 0.5f), ink, txt);
+    }
+
+    // Open the inline editor on the knob `id`, seeded with its current value.
+    void openValueEdit(const char* id, float curValue) noexcept
+    {
+        valueEditId_ = id;
+        std::snprintf(valueEditBuf_, sizeof(valueEditBuf_), "%.4g", (double) curValue);
+        valueEditFocus_ = true;
+    }
+    bool isEditingValue(const char* id) const noexcept { return valueEditId_ == id; }
+
+    // Draw the inline InputText over knob `id` when it is being edited. Returns
+    // true and writes the parsed number to outValue on commit (Enter / focus
+    // loss). Escape cancels. Caller clamps and applies to the parameter.
+    bool valueEdit(const char* id, float cx, float cy, float /*r*/, float& outValue)
+    {
+        if (valueEditId_ != id)
+            return false;
+        const ImVec2 c = P(cx, cy);
+        const float w = 58.0f * s, h = 22.0f * s;
+        ImGui::SetCursorScreenPos(ImVec2(c.x - w * 0.5f, c.y - h * 0.5f));
+        ImGui::SetNextItemWidth(w);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(246, 247, 249, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(22, 22, 24, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * s, 3.0f * s));
+        if (valueEditFocus_) { ImGui::SetKeyboardFocusHere(); valueEditFocus_ = false; }
+        char wid[48]; std::snprintf(wid, sizeof(wid), "##ve_%s", id);
+        const bool entered = ImGui::InputText(wid, valueEditBuf_, sizeof(valueEditBuf_),
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        const bool committed = ImGui::IsItemDeactivatedAfterEdit();
+        const bool deactivated = ImGui::IsItemDeactivated();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+        if (entered || committed) { outValue = (float) std::atof(valueEditBuf_); valueEditId_.clear(); return true; }
+        if (deactivated) valueEditId_.clear(); // Escape / click-away without an edit
+        return false;
+    }
+
     // Chrome knob bound to value (mutated in place). fmt/suffix control the
     // hover readout (e.g. "%.1f"/" dB"). Returns true if the value changed.
+    // bodyless=true skips the tick ring + knob body/pointer so the caller can
+    // render its own body (e.g. the brushed-metal 4K knob) while this still owns
+    // all gestures (drag / shift-fine / wheel / double-click-type / Cmd-reset)
+    // plus the value bubble + inline editor.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
               const char* fmt = "%.2f", const char* suffix = "",
-              ImU32 faceColor = 0)
+              ImU32 faceColor = 0, bool bodyless = false)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -104,42 +205,55 @@ public:
         const bool hovered = ImGui::IsItemHovered();
         const bool active  = ImGui::IsItemActive();
 
-        if (ImGui::IsItemActivated()) { host->beginEdit(param); dragValue = value; }
-        if (active)
+        const bool editing = (valueEditId_ == id);
+        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        if (!editing)
         {
-            const float speed = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-            dragValue -= ImGui::GetIO().MouseDelta.y * speed * range;
-            dragValue = dragValue < minV ? minV : (dragValue > maxV ? maxV : dragValue);
-            const float nv = stepped ? std::round(dragValue) : dragValue;
-            if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
-        }
-        if (ImGui::IsItemDeactivated()) host->endEdit(param);
-
-        if ((hovered || active) && ImGui::IsMouseDoubleClicked(0))
-        {
-            host->beginEdit(param);
-            value = defaultVal; dragValue = value;
-            host->setParam(param, value); host->endEdit(param); changed = true;
-        }
-        else if (hovered && !active)
-        {
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f)
+            if (ImGui::IsItemActivated())
             {
-                float nv = value + wheel * (stepped ? 1.0f : range * 0.02f);
-                nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-                nv = stepped ? std::round(nv) : nv;
-                if (nv != value)
+                if (modKey) // Ctrl/Cmd+click: reset to default (no drag)
                 {
-                    host->beginEdit(param); value = nv;
-                    host->setParam(param, nv); host->endEdit(param); changed = true;
+                    host->beginEdit(param); value = defaultVal; dragValue = value;
+                    host->setParam(param, value); host->endEdit(param); changed = true;
+                    modResetActive_ = true;
+                }
+                else { host->beginEdit(param); dragValue = value; modResetActive_ = false; }
+            }
+            if (active && !modResetActive_)
+            {
+                const float speed = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                dragValue -= ImGui::GetIO().MouseDelta.y * speed * range;
+                dragValue = dragValue < minV ? minV : (dragValue > maxV ? maxV : dragValue);
+                const float nv = stepped ? std::round(dragValue) : dragValue;
+                if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
+            }
+            if (ImGui::IsItemDeactivated()) { if (!modResetActive_) host->endEdit(param); modResetActive_ = false; }
+
+            if (!modKey && (hovered || active) && ImGui::IsMouseDoubleClicked(0))
+            {
+                openValueEdit(id, value); // double-click: type a value
+                host->endEdit(param);     // close the gesture the press opened
+            }
+            else if (hovered && !active)
+            {
+                const float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f)
+                {
+                    float nv = value + wheel * (stepped ? 1.0f : range * 0.02f);
+                    nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                    nv = stepped ? std::round(nv) : nv;
+                    if (nv != value)
+                    {
+                        host->beginEdit(param); value = nv;
+                        host->setParam(param, nv); host->endEdit(param); changed = true;
+                    }
                 }
             }
         }
 
         const float t = range > 0.0f ? (value - minV) / range : 0.0f;
 
-        if (panelTicks)
+        if (panelTicks && !bodyless)
             for (int i = 0; i <= 10; ++i)
             {
                 const float a = knobAngle((float)i / 10.0f);
@@ -149,7 +263,11 @@ public:
                             pal.whiteDim, 1.3f * s);
             }
 
-        if (faceColor == 0)
+        if (bodyless)
+        {
+            // caller renders the body; we own only gestures + value read-out
+        }
+        else if (faceColor == 0)
         {
             // chrome knob (Tape Echo style)
             dl->AddCircleFilled(c, R, IM_COL32(70, 70, 73, 255), 48);
@@ -191,13 +309,24 @@ public:
             dl->AddCircleFilled(c, R * 0.10f, IM_COL32(245, 245, 245, 255), 12);
         }
 
-        if (hovered || active)
+        float typed;
+        if (valueEdit(id, cx, cy, radius, typed))
+        {
+            typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
+            if (stepped) typed = std::round(typed);
+            if (typed != value)
+            {
+                host->beginEdit(param); value = typed;
+                host->setParam(param, value); host->endEdit(param); changed = true;
+            }
+        }
+        else if ((hovered || active) && valueEditId_ != id)
         {
             char buf[48];
             char num[32];
             std::snprintf(num, sizeof(num), fmt, value);
             std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-            text(dl, cx, cy + radius + 9.0f, 10.0f, pal.whiteDim, buf, 0);
+            valueBubble(dl, cx, cy, radius, buf);
         }
         return changed;
     }
@@ -252,7 +381,14 @@ private:
     ImFont* labelFont = nullptr;
     ParamHost* host = nullptr;
     Palette pal;
+    CrispFontSet fontSet;  // multi-size faces; pickFont() chooses nearest
     float dragValue = 0.0f;
+
+    // Inline value-entry state (double-click a knob to type a value).
+    std::string valueEditId_;
+    char        valueEditBuf_[32] = { 0 };
+    bool        valueEditFocus_ = false;
+    bool        modResetActive_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 };
 
 //==============================================================================

@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // FourKEQAccess.hpp — UI-side accessors for same-process DSP data (meters +
 // spectrum). Declared weak so the split LV2 UI (which links without the DSP)
 // resolves them to null and falls back to the output parameters; in the

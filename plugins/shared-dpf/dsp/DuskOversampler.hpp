@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // DuskOversampler.hpp — streaming 2x / 4x polyphase-halfband oversampler.
 //
 // Framework-free replacement for juce::dsp::Oversampling, for running a

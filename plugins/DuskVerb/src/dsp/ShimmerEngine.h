@@ -84,6 +84,7 @@ public:
     void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
     void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches Valhalla's even down-cascade. all 0 = off/bit-null.
     void setHFSustainDb       (float db, float cornerHz = 4000.0f);   // feedback-loop HF compensation shelf (dB lift above cornerHz, applied post-band-pass, pre-fb-gain). The FDN tank is HF-lossy per pass — that loss, not the loop LPF, caps HF T60 (T60-16k wall). Re-entering the loop with the HF band lifted extends the HF ring; bounded by kFeedbackLoopAttn + the loop softClip. First-order (6 dB/oct) — corner placement is the mid-isolation lever. 0 dB = off/bit-null.
+    void setOutputHeadroom    (float h);   // OUTPUT-stage tanh headroom. The wet output is tanh(oL*kWetOutputGain); on very-long-decay presets (Deep Blue Day, Decay 20 s) the sustained-tone buildup drives that tanh into its nonlinear region → ODD-harmonic (3k/5k) grit on a 1 kHz tone (~5% vs anchor 0.01%). h scales the knee: out = h*tanh(x/h) so the curve stays linear up to ±h (h>1 = more headroom, less distortion; the RAW wet feeding the loop is untouched, so cascade dynamics are identical). h=1.0 → EXACTLY tanh(x) = bit-null (Black Hole + every non-DBD preset).
     void setFreeze            (bool frozen);
 
 private:
@@ -529,6 +530,7 @@ private:
     float pitchSemitones_   = 12.0f;   // setModDepth: 0..24
     float feedbackGain_     = 0.65f;   // setModRate:  0..0.95
     float saturationAmount_ = 0.0f;    // setSaturation: 0..1
+    float outputHeadroom_   = 1.0f;    // setOutputHeadroom: output-tanh knee scale; 1.0 = bit-null (plain tanh)
 
     // Stability: hard cap on feedback gain so the cascade can't run away
     // even at extreme reverb decays. The reverb's natural attenuation +

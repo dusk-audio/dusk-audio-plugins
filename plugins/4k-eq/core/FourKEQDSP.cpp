@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // FourKEQDSP.cpp — implementation of the framework-free 4K console EQ core.
 
 #include "FourKEQDSP.hpp"
@@ -14,10 +18,19 @@ static inline float clampf(float v, float lo, float hi) noexcept { return v < lo
 //==============================================================================
 // Static coefficient designers (shared with the UI response curve)
 //==============================================================================
-float FourKEQDSP::dynamicQ(float gainDb, float baseQ) noexcept
+// Mid-band Q voicing, applied ONCE (consolePeak no longer scales Q internally).
+// Matches the hardware topology confirmed by SSL/Waves docs:
+//   E-series (Brown): CONSTANT-Q — bandwidth is fixed regardless of gain
+//                     ("as the boost grows the base of the mountain stays put").
+//   G-series (Black): PROPORTIONAL-Q — Q narrows as boost/cut increases, so the
+//                     perceived energy change stays roughly constant.
+// (Earlier this file applied proportional-Q to BOTH — and to Black twice. Both
+//  were wrong; this is the single, correct, per-console application.)
+float FourKEQDSP::voicedMidQ(float gainDb, float baseQ, bool black) noexcept
 {
+    if (!black) return clampf(baseQ, 0.5f, 8.0f); // E-series: constant-Q
     const float absGain = std::abs(gainDb);
-    const float scale = (gainDb >= 0.0f) ? 2.0f : 1.5f;
+    const float scale = (gainDb >= 0.0f) ? 2.0f : 1.5f; // G-series: proportional
     const float dq = baseQ * (1.0f + (absGain / 20.0f) * scale);
     return clampf(dq, 0.5f, 8.0f);
 }
@@ -35,76 +48,13 @@ float FourKEQDSP::preWarp(float freq, double sampleRate) noexcept
     return std::min(std::max(warped, 1.0f), nyquist * 0.99f);
 }
 
-// Console peak — analog-matched (Multi-Q). Pre-warps the BANDWIDTH
-// (kbw = tan(pi·bw/sr)) with the center via cos(2pi·fc/sr): constant-Q,
-// cramping-free at any sample rate. Black mode uses proportional Q.
-BiquadCoeffs FourKEQDSP::consolePeak(double fs, float freq, float q, float gainDb, bool black) noexcept
+// mode: 0 = 1x (off), 1 = 2x, 2 = 4x. Capped so the oversampled rate stays sane
+// at already-high base rates (>=176.4k -> 1x, >=88.2k -> max 2x).
+int FourKEQDSP::chooseFactor(double baseSampleRate, int mode) noexcept
 {
-    static constexpr double kPi = 3.14159265358979323846;
-    double consoleQ = q;
-    if (black && std::abs(gainDb) > 0.1f)
-    {
-        const double gf = std::abs((double)gainDb) / 15.0;
-        consoleQ *= (gainDb > 0.0f) ? (1.0 + gf * 1.2) : (1.0 + gf * 0.6);
-    }
-    consoleQ = std::max(0.1, std::min(consoleQ, 10.0));
-
-    const double fc  = std::max(1.0, std::min((double)freq, fs * 0.4998));
-    const double bw  = fc / consoleQ;
-    const double kbw = std::tan(kPi * std::min(bw, fs * 0.4998) / fs);
-    const double A   = std::pow(10.0, (double)gainDb / 40.0);
-    const double cosW = std::cos(2.0 * kPi * fc / fs);
-
-    const double b0 = 1.0 + kbw * A, b2 = 1.0 - kbw * A;
-    const double a0 = 1.0 + kbw / A, a2 = 1.0 - kbw / A;
-    const double b1 = -2.0 * cosW,   a1 = -2.0 * cosW;
-    const double inv = 1.0 / a0;
-    return { (float)(b0 * inv), (float)(b1 * inv), (float)(b2 * inv), (float)(a1 * inv), (float)(a2 * inv) };
-}
-
-// Console shelf — analog-matched (Multi-Q). RBJ shelf with the S-based alpha,
-// deriving cosW/sinW from k = tan(pi·fc/sr) so the turnover lands exactly at fc.
-BiquadCoeffs FourKEQDSP::consoleShelf(double fs, float freq, float q, float gainDb, bool high, bool black) noexcept
-{
-    static constexpr double kPi = 3.14159265358979323846;
-    double consoleQ = q * (black ? 1.4 : 0.65);
-    consoleQ = std::max(0.01, consoleQ);
-
-    const double fc  = std::max(1.0, std::min((double)freq, fs * 0.4998));
-    const double A   = std::pow(10.0, (double)gainDb / 40.0);
-    const double sqA = std::sqrt(A);
-    const double k   = std::tan(kPi * fc / fs), k2 = k * k;
-    const double cosW = (1.0 - k2) / (1.0 + k2), sinW = 2.0 * k / (1.0 + k2);
-    const double alpha = sinW / 2.0 * std::sqrt((A + 1.0 / A) * (1.0 / consoleQ - 1.0) + 2.0);
-
-    double b0, b1, b2, a0, a1, a2;
-    if (high)
-    {
-        b0 =  A * ((A + 1.0) + (A - 1.0) * cosW + 2.0 * sqA * alpha);
-        b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosW);
-        b2 =  A * ((A + 1.0) + (A - 1.0) * cosW - 2.0 * sqA * alpha);
-        a0 = (A + 1.0) - (A - 1.0) * cosW + 2.0 * sqA * alpha;
-        a1 =  2.0 * ((A - 1.0) - (A + 1.0) * cosW);
-        a2 = (A + 1.0) - (A - 1.0) * cosW - 2.0 * sqA * alpha;
-    }
-    else
-    {
-        b0 =  A * ((A + 1.0) - (A - 1.0) * cosW + 2.0 * sqA * alpha);
-        b1 =  2.0 * A * ((A - 1.0) - (A + 1.0) * cosW);
-        b2 =  A * ((A + 1.0) - (A - 1.0) * cosW - 2.0 * sqA * alpha);
-        a0 = (A + 1.0) + (A - 1.0) * cosW + 2.0 * sqA * alpha;
-        a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosW);
-        a2 = (A + 1.0) + (A - 1.0) * cosW - 2.0 * sqA * alpha;
-    }
-    const double inv = 1.0 / a0;
-    return { (float)(b0 * inv), (float)(b1 * inv), (float)(b2 * inv), (float)(a1 * inv), (float)(a2 * inv) };
-}
-
-int FourKEQDSP::chooseFactor(double baseSampleRate, bool want4x) noexcept
-{
-    if (baseSampleRate >= 176400.0) return 1; // Nyquist already high enough
-    if (baseSampleRate >= 88200.0)  return 2; // cap at 2x
-    return want4x ? 4 : 2;
+    const int req = mode <= 0 ? 1 : (mode == 1 ? 2 : 4);
+    const int cap = baseSampleRate >= 176400.0 ? 1 : (baseSampleRate >= 88200.0 ? 2 : 4);
+    return req < cap ? req : cap;
 }
 
 //==============================================================================
@@ -118,7 +68,7 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
     scratchL.assign((size_t)maxBlock, 0.0f);
     scratchR.assign((size_t)maxBlock, 0.0f);
 
-    curFactor = chooseFactor(baseSampleRate, pOversampling.load(R) >= 0.5f);
+    curFactor = chooseFactor(baseSampleRate, (int)(pOversampling.load(R) + 0.5f));
     const double osRate = baseSampleRate * curFactor;
 
     for (auto& o : os) { o.setFactor(curFactor); o.reset(); }
@@ -171,34 +121,42 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
     const float lpfQ = black ? 0.8f : 0.707f;
     const BiquadCoeffs lpf = Biquad::lowPass(fs, lpfFreq, lpfQ);
 
-    // LF band: shelf, or bell when the Bell switch is on (works in both voicings).
+    // --- Parallel-summing EQ bands (82E242 topology) ----------------------
+    // Each band is a fixed-Q band-pass / shelf building block fed the dry EQ
+    // input; the processor sums them as dry + sum(K_i * F_i) with K = bandK(G).
+    // Interaction, constant-Q (E) and asymmetric cut emerge from the structure.
+    const float bellQ = black ? 0.9f : 0.6f;
+
+    // LF: low shelf (first-order Brown / resonant 2nd-order Black), or bell.
     const float lfGain = pLfGain.load(R), lfFreq = pLfFreq.load(R);
     const bool  lfBell = pLfBell.load(R) > 0.5f;
     const BiquadCoeffs lf = lfBell
-        ? consolePeak(fs, lfFreq, 0.7f, lfGain, black)
-        : consoleShelf(fs, lfFreq, 0.7f, lfGain, /*high*/false, black);
+        ? Biquad::bandPassConstantPeak(fs, lfFreq, bellQ)
+        : (black ? Biquad::lowPass(fs, lfFreq, 0.9f)
+                 : Biquad::firstOrderLowPass(fs, lfFreq));
+    kLf = bandK(lfGain);
 
-    // LM band: peak; Black uses proportional Q.
-    const float lmGain = pLmGain.load(R), lmFreq = pLmFreq.load(R);
-    float lmQ = pLmQ.load(R);
-    if (black) lmQ = dynamicQ(lmGain, lmQ);
-    const BiquadCoeffs lm = consolePeak(fs, lmFreq, lmQ, lmGain, black);
+    // LM: fixed-Q (Brown) / proportional-Q (Black) band-pass.
+    const float lmFreq = pLmFreq.load(R);
+    const float lmQ = voicedMidQ(pLmGain.load(R), pLmQ.load(R), black);
+    const BiquadCoeffs lm = Biquad::bandPassConstantPeak(fs, lmFreq, lmQ);
+    kLm = bandK(pLmGain.load(R));
 
-    // HM band: peak; Black proportional Q + full range; Brown fixed Q + 7k cap.
-    // The analog-matched consolePeak pre-warps fc internally — no fudge here.
-    const float hmGain = pHmGain.load(R);
+    // HM: band-pass; Brown caps freq at 7 kHz.
     float hmFreq = pHmFreq.load(R);
-    float hmQ = pHmQ.load(R);
-    if (black) hmQ = dynamicQ(hmGain, hmQ);
-    else if (hmFreq > 7000.0f) hmFreq = 7000.0f;
-    const BiquadCoeffs hm = consolePeak(fs, hmFreq, hmQ, hmGain, black);
+    if (!black && hmFreq > 7000.0f) hmFreq = 7000.0f;
+    const float hmQ = voicedMidQ(pHmGain.load(R), pHmQ.load(R), black);
+    const BiquadCoeffs hm = Biquad::bandPassConstantPeak(fs, hmFreq, hmQ);
+    kHm = bandK(pHmGain.load(R));
 
-    // HF band: shelf, or bell when the Bell switch is on (works in both voicings).
+    // HF: high shelf (first-order Brown / resonant 2nd-order Black), or bell.
     const float hfGain = pHfGain.load(R), hfFreq = pHfFreq.load(R);
     const bool  hfBell = pHfBell.load(R) > 0.5f;
     const BiquadCoeffs hf = hfBell
-        ? consolePeak(fs, hfFreq, 0.7f, hfGain, black)
-        : consoleShelf(fs, hfFreq, 0.7f, hfGain, /*high*/true, black);
+        ? Biquad::bandPassConstantPeak(fs, hfFreq, bellQ)
+        : (black ? Biquad::highPass(fs, hfFreq, 0.9f)
+                 : Biquad::firstOrderHighPass(fs, hfFreq));
+    kHf = bandK(hfGain);
 
     // Transformer phase allpass, fixed 200 Hz (Brown only, gated at runtime).
     const BiquadCoeffs ap = Biquad::firstOrderAllPass(fs, 200.0f);
@@ -213,25 +171,38 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
 
 float FourKEQDSP::calcAutoGainCompensation() const noexcept
 {
-    const float lfGainDB = pLfGain.load(R), lmGainDB = pLmGain.load(R);
-    const float hmGainDB = pHmGain.load(R), hfGainDB = pHfGain.load(R);
-    const float lmQ = pLmQ.load(R), hmQ = pHmQ.load(R);
-    const bool  lfBell = pLfBell.load(R) > 0.5f, hfBell = pHfBell.load(R) > 0.5f;
+    // Topology-correct auto-gain: measure the ACTUAL parallel-summed response
+    // (reusing the coefficients recomputeCoeffs just built into ch[0]) and undo
+    // its pink-weighted (equal-energy-per-octave) RMS level. Works for any band
+    // combination because it evaluates the real magnitude — overlapping boosts
+    // that sub-add in the summing node are counted once, not double-counted like
+    // the old per-band gain*bandwidth heuristic did.
+    const double osRate = baseSampleRate * (double)curFactor;
+    const bool hpfEn = pHpfEnabled.load(R) > 0.5f;
+    const bool lpfEn = pLpfEnabled.load(R) > 0.5f;
+    const ChannelFilters& cf = ch[0];
 
-    if (!std::isfinite(lfGainDB) || !std::isfinite(lmGainDB) ||
-        !std::isfinite(hmGainDB) || !std::isfinite(hfGainDB))
-        return 1.0f;
-
-    const float lfBandwidth = lfBell ? 0.3f : 0.5f;
-    const float lfEnergy = lfGainDB * lfBandwidth;
-    const float lmEnergy = lmGainDB * std::min(0.7f / lmQ, 0.5f);
-    const float hmEnergy = hmGainDB * std::min(0.7f / hmQ, 0.5f);
-    const float hfBandwidth = hfBell ? 0.3f : 0.6f;
-    const float hfEnergy = hfGainDB * hfBandwidth;
-
-    float compensationDB = -(lfEnergy + lmEnergy + hmEnergy + hfEnergy);
-    compensationDB = clampf(compensationDB, -12.0f, 12.0f);
-    return dbToGain(compensationDB);
+    double sumSq = 0.0; int cnt = 0;
+    // log-spaced probes, 25 Hz .. 20 kHz — one every ~1/3 octave (pink weight).
+    for (double f = 25.0; f <= 20000.0; f *= 1.2589254) // 2^(1/3)
+    {
+        const double w = 2.0 * kDuskPi * f / osRate;
+        if (w >= kDuskPi) break; // above Nyquist of the OS rate
+        std::complex<double> H = 1.0
+            + (double)kLf * cf.lf.response(w)
+            + (double)kLm * cf.lm.response(w)
+            + (double)kHm * cf.hm.response(w)
+            + (double)kHf * cf.hf.response(w);
+        double mag = std::abs(H);
+        if (hpfEn) mag *= cf.hpf1.magnitude(w) * cf.hpf2.magnitude(w);
+        if (lpfEn) mag *= cf.lpf.magnitude(w);
+        if (std::isfinite(mag)) { sumSq += mag * mag; ++cnt; }
+    }
+    if (cnt == 0) return 1.0f;
+    const double rms = std::sqrt(sumSq / (double)cnt);
+    if (!std::isfinite(rms) || rms <= 1e-6) return 1.0f;
+    float compDb = clampf(-20.0f * (float)std::log10(rms), -12.0f, 12.0f);
+    return dbToGain(compDb);
 }
 
 //==============================================================================
@@ -262,7 +233,7 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
                               int nCh, int nS) noexcept
 {
     // Oversampling factor may change with sample rate / user param at block rate.
-    const int wantFactor = chooseFactor(baseSampleRate, pOversampling.load(R) >= 0.5f);
+    const int wantFactor = chooseFactor(baseSampleRate, (int)(pOversampling.load(R) + 0.5f));
     if (wantFactor != curFactor)
     {
         curFactor = wantFactor;
@@ -330,25 +301,34 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
         {
             wet[c][n] = o.processSample(wet[c][n], [&](float x) noexcept
             {
+                // Filters are genuine HP/LP stages, kept in series.
                 if (hpfEn) { x = cf.hpf1.process(x); x = cf.hpf2.process(x); }
-                x = cf.lf.process(x);
-                x = cf.lm.process(x);
-                x = cf.hm.process(x);
-                x = cf.hf.process(x);
+                // Parallel-summing EQ (82E242): dry + sum of band blocks, each
+                // fed the SAME EQ input. All four filters advance every sample.
+                const float e = x;
+                x = e + kLf * cf.lf.process(e)
+                      + kLm * cf.lm.process(e)
+                      + kHm * cf.hm.process(e)
+                      + kHf * cf.hf.process(e);
                 if (lpfEn) x = cf.lpf.process(x);
                 // Transformer (Brown/E-series only): phase rotation + LF-weighted
-                // core saturation (added odd harmonics from an LF flux estimate,
-                // scaled by drive — saturation 0 leaves the signal untouched).
+                // core saturation. The iron colours even at unity — a small
+                // always-on 2nd/3rd-harmonic term from the LF flux estimate is
+                // present regardless of the drive knob, and the drive knob adds
+                // more on top. (Real E-series channel path is never bit-clean.)
                 if (brown)
                 {
                     x = cf.allpass.process(x);
-                    if (satAmt > 0.001f)
-                    {
-                        float& flux = xfmrFlux[(size_t)c];
-                        flux += xfmrLpCoef * (x - flux);
-                        const float lfHarm = std::tanh(flux * 1.6f) / 1.6f - flux;
-                        x += lfHarm * satAmt * 0.35f;
-                    }
+                    float& flux = xfmrFlux[(size_t)c];
+                    flux += xfmrLpCoef * (x - flux);
+                    const float lfHarm = std::tanh(flux * 1.6f) / 1.6f - flux;
+                    // Measured SSL 4000E nominal THD is ~0.0003-0.0007% — nearly
+                    // clean; the audible colour comes from DRIVING it. So the
+                    // always-on term is only a token analog trace (real iron is
+                    // never perfectly linear), with the drive knob adding the
+                    // rest. Jensen JT-115K-E core => even/H2-dominant (E path).
+                    constexpr float kBaseIron = 0.015f;  // token trace, ~inaudible
+                    x += lfHarm * (kBaseIron + satAmt * 0.35f);
                 }
                 if (satAmt > 0.001f) x = consoleSat.processSample(x, satAmt, left);
                 return x;

@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // DuskADAA.hpp — first-order antiderivative antialiasing (ADAA) helpers.
 //
 // Framework-free copy of Multi-Q's ADAASaturation.h. Standard waveshaper

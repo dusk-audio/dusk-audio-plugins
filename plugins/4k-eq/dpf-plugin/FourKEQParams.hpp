@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // FourKEQParams.hpp — parameter ids, choice labels and factory presets shared
 // by the 4K EQ 2 DPF shell and its ImGui UI. Names / ranges / defaults mirror
 // the JUCE FourKEQ::createParameterLayout exactly.
@@ -15,7 +19,7 @@ enum ParamId
     kEqType,        // 0 = Brown (E-series), 1 = Black (G-series)
     kBypass,        // host-designated
     kInputGain, kOutputGain, kSaturation,
-    kOversampling,  // 0 = 2x, 1 = 4x
+    kOversampling,  // 0 = 1x (off), 1 = 2x, 2 = 4x
     kMsMode,
     kSpectrumPrePost, // 0 = post-EQ, 1 = pre-EQ (UI analyzer source)
     kAutoGain,
@@ -28,7 +32,7 @@ enum ParamId
 };
 
 static constexpr const char* kEqTypeLabels[2]      = { "Brown", "Black" };
-static constexpr const char* kOversampleLabels[2]  = { "2x", "4x" };
+static constexpr const char* kOversampleLabels[3]  = { "1x", "2x", "4x" };
 
 // Factory presets: same values as the JUCE FourKEQPresets. A preset sets the
 // tone controls; HPF/LPF are auto-enabled when their frequency departs from the

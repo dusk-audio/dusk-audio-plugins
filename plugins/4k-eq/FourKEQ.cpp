@@ -1,6 +1,7 @@
 #include "FourKEQ.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <complex>
 
 // Helper function to prevent frequency cramping at high frequencies
 // Based on console-style analog prototype matching for accurate HF response
@@ -638,12 +639,17 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
                 processSample = hpfFilter.processSample(processSample, useLeftFilter);
             }
 
-            // Apply 4-band EQ (no per-band saturation - removed for accuracy)
-            // Real console saturation is from the channel strip, not individual EQ bands
-            processSample = lfFilter.processSample(processSample, useLeftFilter);
-            processSample = lmFilter.processSample(processSample, useLeftFilter);
-            processSample = hmFilter.processSample(processSample, useLeftFilter);
-            processSample = hfFilter.processSample(processSample, useLeftFilter);
+            // Apply 4-band EQ — PARALLEL voltage-summing (82E242 topology):
+            // dry + sum(K_i * band_i), each band fed the SAME EQ input. Band
+            // interaction, constant-Q (E) and asymmetric cut emerge from this.
+            {
+                const float e = processSample;
+                processSample = e
+                    + kLf * lfFilter.processSample(e, useLeftFilter)
+                    + kLm * lmFilter.processSample(e, useLeftFilter)
+                    + kHm * hmFilter.processSample(e, useLeftFilter)
+                    + kHf * hfFilter.processSample(e, useLeftFilter);
+            }
 
             // Apply LPF
             // Only process if LPF is enabled - when disabled, completely bypassed
@@ -720,11 +726,11 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
     {
         float outputGainValue = outputGainParam->load();
 
-        // Apply auto-gain compensation only if enabled
+        // Apply auto-gain compensation only if enabled (cached in updateFilters).
         float autoCompensation = 1.0f;
         if (autoGainParam && autoGainParam->load() > 0.5f)
         {
-            autoCompensation = calculateAutoGainCompensation();
+            autoCompensation = autoGainComp_;
         }
 
         float totalGain = juce::Decibels::decibelsToGain(outputGainValue) * autoCompensation;
@@ -799,6 +805,11 @@ void FourKEQ::updateFilters()
         updateHFBand(oversampledRate);
         hfDirty.store(false);
     }
+
+    // Cache auto-gain here (coefficients are now current). updateFilters() runs
+    // whenever any EQ or HPF/LPF-enable param changes, so processBlock can reuse
+    // the cached value instead of recomputing the pink-weighted RMS every block.
+    autoGainComp_ = calculateAutoGainCompensation();
 }
 
 void FourKEQ::updateHPF(double sampleRate)
@@ -875,6 +886,10 @@ void FourKEQ::updateLPF(double sampleRate)
     }
 }
 
+// Parallel building blocks: each band's filter is a fixed-Q band-pass (peaks /
+// bells) or a shelf-forming low/high-pass; the summing gain kX = bandK(gain) is
+// applied in processBlock. Brown (E) shelves are first-order 6 dB/oct; Black (G)
+// shelves are 2nd-order resonant (the "dip-and-bump"). Bell works in both modes.
 void FourKEQ::updateLFBand(double sampleRate)
 {
     if (sampleRate <= 0.0)
@@ -885,20 +900,13 @@ void FourKEQ::updateLFBand(double sampleRate)
     bool isBlack = (cachedParams.eqType > 0.5f);
     bool isBell = (cachedParams.lfBell > 0.5f);
 
-    if (isBlack && isBell)
-    {
-        // Bell mode in Black variant - use console peak coefficients
-        auto coeffs = makeConsolePeak(sampleRate, freq, 0.7f, gain, isBlack);
-        lfFilter.filter.coefficients = coeffs;
-        lfFilter.filterR.coefficients = coeffs;
-    }
-    else
-    {
-        // Shelf mode - use console shelf coefficients
-        auto coeffs = makeConsoleShelf(sampleRate, freq, 0.7f, gain, false, isBlack);
-        lfFilter.filter.coefficients = coeffs;
-        lfFilter.filterR.coefficients = coeffs;
-    }
+    auto coeffs = isBell
+        ? juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, freq, isBlack ? 0.9f : 0.6f)
+        : (isBlack ? juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq, 0.9f)
+                   : juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass(sampleRate, freq));
+    lfFilter.filter.coefficients = coeffs;
+    lfFilter.filterR.coefficients = coeffs;
+    kLf = bandK(gain);
 }
 
 void FourKEQ::updateLMBand(double sampleRate)
@@ -911,19 +919,14 @@ void FourKEQ::updateLMBand(double sampleRate)
     float q = cachedParams.lmQ;
     bool isBlack = (cachedParams.eqType > 0.5f);
 
-    // Brown vs Black mode differences (per E-series vs G-series specs)
+    // Brown (E): fixed Q (constant-Q). Black (G): proportional Q.
     if (isBlack)
-    {
-        // Black (G-series): Proportional Q - increases with gain for surgical precision
         q = calculateDynamicQ(gain, q);
-    }
-    // else: Brown (E-series): Fixed Q - no proportionality, maintains constant bandwidth
 
-    // Use console-specific peak coefficients
-    auto coeffs = makeConsolePeak(sampleRate, freq, q, gain, isBlack);
-
+    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, freq, q);
     lmFilter.filter.coefficients = coeffs;
     lmFilter.filterR.coefficients = coeffs;
+    kLm = bandK(gain);
 }
 
 void FourKEQ::updateHMBand(double sampleRate)
@@ -936,34 +939,25 @@ void FourKEQ::updateHMBand(double sampleRate)
     float q = cachedParams.hmQ;
     bool isBlack = (cachedParams.eqType > 0.5f);
 
-    // Brown vs Black mode differences (per E-series vs G-series specs)
     if (isBlack)
     {
-        // Black (G-series): Proportional Q, extended frequency range (up to 13kHz)
+        // Black (G): proportional Q, full frequency range.
         q = calculateDynamicQ(gain, q);
-        // No frequency limiting in Black mode - full 600Hz-13kHz range
     }
     else
     {
-        // Brown (E-series): Fixed Q, limited to 7kHz
-        // No proportionality - maintains constant bandwidth per E-series design
-        // Soft-limit frequency for Brown mode character
-        if (freq > 7000.0f) {
+        // Brown (E): fixed Q, soft-limited to 7 kHz.
+        if (freq > 7000.0f)
             freq = 7000.0f;
-        }
     }
 
-    // Pre-warp frequency if above 3kHz to prevent cramping
-    float processFreq = freq;
-    if (freq > 3000.0f) {
-        processFreq = preWarpFrequency(freq, sampleRate);
-    }
+    // Pre-warp above 3 kHz to prevent cramping.
+    float processFreq = (freq > 3000.0f) ? preWarpFrequency(freq, sampleRate) : freq;
 
-    // Use console-specific peak coefficients
-    auto coeffs = makeConsolePeak(sampleRate, processFreq, q, gain, isBlack);
-
+    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, processFreq, q);
     hmFilter.filter.coefficients = coeffs;
     hmFilter.filterR.coefficients = coeffs;
+    kHm = bandK(gain);
 }
 
 void FourKEQ::updateHFBand(double sampleRate)
@@ -976,23 +970,16 @@ void FourKEQ::updateHFBand(double sampleRate)
     bool isBlack = (cachedParams.eqType > 0.5f);
     bool isBell = (cachedParams.hfBell > 0.5f);
 
-    // Always pre-warp HF band frequencies to prevent cramping
+    // Always pre-warp HF band frequencies to prevent cramping.
     float warpedFreq = preWarpFrequency(freq, sampleRate);
 
-    if (isBlack && isBell)
-    {
-        // Bell mode in Black variant - use console peak coefficients
-        auto coeffs = makeConsolePeak(sampleRate, warpedFreq, 0.7f, gain, isBlack);
-        hfFilter.filter.coefficients = coeffs;
-        hfFilter.filterR.coefficients = coeffs;
-    }
-    else
-    {
-        // Shelf mode - use console shelf coefficients
-        auto coeffs = makeConsoleShelf(sampleRate, warpedFreq, 0.7f, gain, true, isBlack);
-        hfFilter.filter.coefficients = coeffs;
-        hfFilter.filterR.coefficients = coeffs;
-    }
+    auto coeffs = isBell
+        ? juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, warpedFreq, isBlack ? 0.9f : 0.6f)
+        : (isBlack ? juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, warpedFreq, 0.9f)
+                   : juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sampleRate, warpedFreq));
+    hfFilter.filter.coefficients = coeffs;
+    hfFilter.filterR.coefficients = coeffs;
+    kHf = bandK(gain);
 }
 
 float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
@@ -1032,215 +1019,52 @@ float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
 
 float FourKEQ::calculateAutoGainCompensation() const
 {
-    // Calculate auto-gain compensation based on EQ energy contribution
-    // Uses a bandwidth-weighted approach that accounts for filter shapes
-
-    // Get gain parameters
-    auto* lfGainP = parameters.getParameter("lf_gain");
-    auto* lmGainP = parameters.getParameter("lm_gain");
-    auto* hmGainP = parameters.getParameter("hm_gain");
-    auto* hfGainP = parameters.getParameter("hf_gain");
-
-    // Get Q parameters for mid bands
-    auto* lmQP = parameters.getParameter("lm_q");
-    auto* hmQP = parameters.getParameter("hm_q");
-
-    // Get bell/shelf mode for LF and HF
-    auto* lfBellP = parameters.getParameter("lf_bell");
-    auto* hfBellP = parameters.getParameter("hf_bell");
-
-    // Safety check
-    if (!lfGainP || !lmGainP || !hmGainP || !hfGainP)
+    // Topology-correct auto-gain: measure the ACTUAL parallel-summed response
+    // (H = 1 + sum K_i * band_i, reusing the coefficients update*Band built) and
+    // undo its pink-weighted (equal-energy-per-octave) RMS level. Because it
+    // evaluates the real magnitude, overlapping boosts that sub-add in the
+    // summing node are counted once — not double-counted like the old per-band
+    // gain*bandwidth heuristic.
+    const double sr = currentSampleRate * (double) oversamplingFactor;
+    if (sr <= 0.0)
         return 1.0f;
 
-    // Get denormalized values
-    float lfGainDB = lfGainP->convertFrom0to1(lfGainP->getValue());
-    float lmGainDB = lmGainP->convertFrom0to1(lmGainP->getValue());
-    float hmGainDB = hmGainP->convertFrom0to1(hmGainP->getValue());
-    float hfGainDB = hfGainP->convertFrom0to1(hfGainP->getValue());
-
-    float lmQ = lmQP ? lmQP->convertFrom0to1(lmQP->getValue()) : 1.0f;
-    float hmQ = hmQP ? hmQP->convertFrom0to1(hmQP->getValue()) : 1.0f;
-
-    bool lfBell = lfBellP && lfBellP->getValue() > 0.5f;
-    bool hfBell = hfBellP && hfBellP->getValue() > 0.5f;
-
-    // Validate values
-    if (!std::isfinite(lfGainDB) || !std::isfinite(lmGainDB) ||
-        !std::isfinite(hmGainDB) || !std::isfinite(hfGainDB))
+    auto lf = lfFilter.filter.coefficients; auto lm = lmFilter.filter.coefficients;
+    auto hm = hmFilter.filter.coefficients; auto hf = hfFilter.filter.coefficients;
+    if (lf == nullptr || lm == nullptr || hm == nullptr || hf == nullptr)
         return 1.0f;
 
-    // Calculate bandwidth-weighted energy contribution for each band
-    // Shelves contribute more energy than narrow peaks
-    // Higher Q = narrower bandwidth = less energy contribution
+    const bool hpfEn = hpfEnabledParam && hpfEnabledParam->load() > 0.5f;
+    const bool lpfEn = lpfEnabledParam && lpfEnabledParam->load() > 0.5f;
 
-    // LF band: shelf mode affects ~1 octave, bell ~0.5 octaves
-    float lfBandwidth = lfBell ? 0.3f : 0.5f;
-    float lfEnergy = lfGainDB * lfBandwidth;
-
-    // LMF band: Q determines bandwidth (Q=1 is ~1 octave, Q=4 is ~0.25 octaves)
-    float lmBandwidth = 0.7f / lmQ;  // Inverse relationship with Q
-    float lmEnergy = lmGainDB * juce::jmin(lmBandwidth, 0.5f);
-
-    // HMF band: same as LMF
-    float hmBandwidth = 0.7f / hmQ;
-    float hmEnergy = hmGainDB * juce::jmin(hmBandwidth, 0.5f);
-
-    // HF band: shelf affects more octaves due to position in spectrum
-    float hfBandwidth = hfBell ? 0.3f : 0.6f;
-    float hfEnergy = hfGainDB * hfBandwidth;
-
-    // Sum the energy contributions
-    // This represents the approximate dB change in overall energy
-    float totalEnergyDB = lfEnergy + lmEnergy + hmEnergy + hfEnergy;
-
-    // Compensation: invert the energy change
-    // Use 100% compensation for accurate loudness matching
-    float compensationDB = -totalEnergyDB;
-
-    // Limit to reasonable range
-    compensationDB = juce::jlimit(-12.0f, 12.0f, compensationDB);
-
-    return juce::Decibels::decibelsToGain(compensationDB);
-}
-
-//==============================================================================
-// Console-Specific Filter Coefficient Generation
-// Based on hardware measurements and analog prototype matching
-//==============================================================================
-
-juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeConsoleShelf(
-    double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
-{
-    // Console shelves have characteristic asymmetric response differences between modes:
-    // Black mode (G-series): Steeper, more focused shelves for precise tonal shaping
-    // Brown mode (E-series): Gentler, broader shelves for musical warmth
-    //
-    // IMPORTANT: Unlike peaks, shelf Q is FIXED (not gain-dependent) for both modes
-    // The difference is only in the base Q value, not in any resonance or gain-scaling
-
-    float A = std::pow(10.0f, gainDB / 40.0f);
-    float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-    float cosw0 = std::cos(w0);
-    float sinw0 = std::sin(w0);
-
-    // Console-specific shelf Q: FIXED for both modes (no gain dependency)
-    float consoleQ = q;
-    if (isBlackMode)
+    auto bandC = [sr](const juce::dsp::IIR::Coefficients<float>::Ptr& c, double f)
     {
-        // Black mode (G-series): Steeper, more focused shelves
-        // Higher Q = steeper transition = more "modern" sound
-        consoleQ *= 1.4f;  // Fixed multiplier - characteristic G-series shelf slope
-    }
-    else
+        const double m = c->getMagnitudeForFrequency(f, sr);
+        const double p = c->getPhaseForFrequency(f, sr);
+        return std::complex<double>(m * std::cos(p), m * std::sin(p));
+    };
+
+    double sumSq = 0.0; int cnt = 0;
+    for (double f = 25.0; f <= 20000.0 && f < sr * 0.5; f *= 1.2589254) // 1/3-oct
     {
-        // Brown mode (E-series): Gentler, broader shelves
-        // Lower Q = gentler transition = more "vintage/musical" sound
-        consoleQ *= 0.65f;  // Fixed multiplier - characteristic E-series shelf slope
+        std::complex<double> H = 1.0
+            + (double) kLf * bandC(lf, f) + (double) kLm * bandC(lm, f)
+            + (double) kHm * bandC(hm, f) + (double) kHf * bandC(hf, f);
+        double mag = std::abs(H);
+        if (hpfEn && hpfFilter.stage1L.coefficients != nullptr && hpfFilter.stage2.filter.coefficients != nullptr)
+            mag *= hpfFilter.stage1L.coefficients->getMagnitudeForFrequency(f, sr)
+                 * hpfFilter.stage2.filter.coefficients->getMagnitudeForFrequency(f, sr);
+        if (lpfEn && lpfFilter.filter.coefficients != nullptr)
+            mag *= lpfFilter.filter.coefficients->getMagnitudeForFrequency(f, sr);
+        if (std::isfinite(mag)) { sumSq += mag * mag; ++cnt; }
     }
-
-    // NO gain-dependent Q modification for shelves
-    // Real console hardware has fixed shelf Q regardless of boost/cut amount
-    // Any perceived "resonance" comes from the shelf curve shape itself, not Q variation
-
-    float alpha = sinw0 / (2.0f * consoleQ);
-
-    float b0, b1, b2, a0, a1, a2;
-
-    if (isHighShelf)
-    {
-        // High shelf with console character
-        b0 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
-        b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw0);
-        b2 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
-        a0 = (A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
-        a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosw0);
-        a2 = (A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
-    }
-    else
-    {
-        // Low shelf with console character
-        b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
-        b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
-        b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
-        a0 = (A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
-        a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0);
-        a2 = (A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
-    }
-
-    // Normalize
-    b0 /= a0;
-    b1 /= a0;
-    b2 /= a0;
-    a1 /= a0;
-    a2 /= a0;
-
-    // Use JUCE's smart pointer system to avoid memory leaks
-    return juce::dsp::IIR::Coefficients<float>::Ptr(new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
-}
-
-juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeConsolePeak(
-    double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
-{
-    // Console peak filters have fundamentally different Q behavior between modes:
-    // Black mode (G-series): Proportional Q - bandwidth varies with gain for surgical precision
-    // Brown mode (E-series): Constant Q - bandwidth remains fixed at all gains for musical character
-    //
-    // This is THE defining difference between E and G series EQ behavior per hardware documentation
-
-    float A = std::pow(10.0f, gainDB / 40.0f);
-    float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-    float cosw0 = std::cos(w0);
-    float sinw0 = std::sin(w0);
-
-    // Console-specific Q behavior: CRITICAL DIFFERENCE between modes
-    float consoleQ = q;
-
-    if (isBlackMode && std::abs(gainDB) > 0.1f)
-    {
-        // G-Series (Black): PROPORTIONAL Q - increases with gain amount
-        // More gain = narrower bandwidth = more surgical/focused
-        // This is what makes the G-series sound "precise" and "modern"
-
-        float gainFactor = std::abs(gainDB) / 15.0f;  // Normalize to typical hardware max (+/-15dB)
-
-        if (gainDB > 0.0f)
-        {
-            // Boosts: Q increases significantly for surgical precision
-            // At +15dB, Q roughly doubles (G-series measured behavior)
-            consoleQ *= (1.0f + gainFactor * 1.2f);
-        }
-        else
-        {
-            // Cuts: Q increases moderately for broad, musical reductions
-            // At -15dB, Q increases by ~60% (gentler than boosts)
-            consoleQ *= (1.0f + gainFactor * 0.6f);
-        }
-    }
-    // else: E-Series (Brown) - Q remains COMPLETELY CONSTANT at all gains
-    // This is the "musical" E-series character - consistent bandwidth regardless of boost/cut amount
-    // No modification to consoleQ for Brown mode - this is intentional and matches hardware!
-
-    consoleQ = juce::jlimit(0.1f, 10.0f, consoleQ);
-    float alpha = sinw0 / (2.0f * consoleQ);
-
-    // Standard peaking EQ coefficients with console-modified Q
-    float b0 = 1.0f + alpha * A;
-    float b1 = -2.0f * cosw0;
-    float b2 = 1.0f - alpha * A;
-    float a0 = 1.0f + alpha / A;
-    float a1 = -2.0f * cosw0;
-    float a2 = 1.0f - alpha / A;
-
-    // Normalize
-    b0 /= a0;
-    b1 /= a0;
-    b2 /= a0;
-    a1 /= a0;
-    a2 /= a0;
-
-    // Use JUCE's smart pointer system to avoid memory leaks
-    return juce::dsp::IIR::Coefficients<float>::Ptr(new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
+    if (cnt == 0)
+        return 1.0f;
+    const double rms = std::sqrt(sumSq / (double) cnt);
+    if (!std::isfinite(rms) || rms <= 1e-6)
+        return 1.0f;
+    const float compDb = juce::jlimit(-12.0f, 12.0f, -20.0f * (float) std::log10(rms));
+    return juce::Decibels::decibelsToGain(compDb);
 }
 
 //==============================================================================

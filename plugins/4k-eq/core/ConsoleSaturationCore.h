@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // ConsoleSaturationCore.h — framework-free port of Multi-Q's British-mode
 // ConsoleSaturation (the up-to-date console saturator, replacing the older
 // piecewise Jiles-Atherton model the standalone 4K EQ shipped with).
@@ -6,7 +10,10 @@
 //   1. pre-emphasis  (+1.5 dB HF shelf @ 8 kHz — HF saturates more, "sheen")
 //   2. drive + soft-clip cap, then y = x + (b·x²+c·x³+d·x⁴+e·x⁵) via ADAA
 //        E-series (Brown): H2-dominant, warm/gritty
-//        G-series (Black): H3-dominant, ~60% THD, smoother
+//        G-series (Black): H3-dominant, smoother
+//   Drive is scaled so the knob spans a realistic SSL channel range (roughly
+//   fractions of a % THD at nominal up to a few % pushed) — not the cartoonish
+//   over-drive the old constant produced.
 //   3. de-emphasis   (exact IIR inverse of pre-emphasis)
 //   4. DC block, console noise floor, gain-comp + drive-scaled dry/wet mix
 //
@@ -32,7 +39,7 @@ public:
 
     ConsoleSaturationCore()
     {
-        noiseGen  = std::mt19937(0x4E4F4953u); // "NOIS" — fixed for reproducible renders
+        noiseGen  = std::mt19937(kNoiseSeed); // "NOIS" — fixed for reproducible renders
         noiseDist = std::uniform_real_distribution<float>(-1.0f, 1.0f);
     }
 
@@ -59,7 +66,15 @@ public:
         deEmphA1 =  (alpha + Am) / h0;
     }
 
-    void reset() { resetChannel(true); resetChannel(false); }
+    void reset()
+    {
+        resetChannel(true);
+        resetChannel(false);
+        // Reseed the deterministic noise generator to the constructor's fixed
+        // seed. Without this, RNG state carries across a reset, so an offline
+        // render's output depends on how much audio was processed before it.
+        noiseGen.seed(kNoiseSeed);
+    }
 
     void resetChannel(bool isLeft)
     {
@@ -74,7 +89,7 @@ public:
 
         float x = applyPreEmphasis(input, isLeft);
 
-        const float DRIVE_SCALE = 4.0f;
+        const float DRIVE_SCALE = 2.5f; // realistic SSL channel range (was 4.0)
         const float driveAmount = drive * DRIVE_SCALE;
         const float xd_raw = x * driveAmount;
         const float xd = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
@@ -125,6 +140,7 @@ private:
 
     float prevXdL = 0.0f, prevXdR = 0.0f;
 
+    static constexpr unsigned kNoiseSeed = 0x4E4F4953u; // "NOIS" — fixed seed (ctor + reset)
     std::mt19937 noiseGen;
     std::uniform_real_distribution<float> noiseDist;
 

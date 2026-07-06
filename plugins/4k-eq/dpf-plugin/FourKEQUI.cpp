@@ -1,3 +1,7 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+//
 // FourKEQUI.cpp — Dear ImGui UI for 4K EQ 2, matching the JUCE 4K EQ front
 // panel: a full-width response graph over six console channel-strip columns
 // (FILTERS | LF | LMF | HMF | HF | MASTER) with per-band colour coding
@@ -15,6 +19,7 @@
 
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
+#include "PatreonBackersDpf.hpp"
 
 #include <cmath>
 #include <string>
@@ -32,11 +37,18 @@ namespace
     constexpr float kFMin = 20.0f, kFMax = 20000.0f;
 
     // graph + meter rects
-    constexpr float GX0 = 42, GY0 = 98, GX1 = 918, GY1 = 214;
-    constexpr float INX0 = 8,   INX1 = 34,  MET_Y0 = 224, MET_Y1 = 656;
+    constexpr float GX0 = 9, GY0 = 98, GX1 = 951, GY1 = 214; // outer frame lines up with IN/OUT meter outer edges
+    constexpr float INX0 = 8,   INX1 = 34,  MET_Y0 = 246, MET_Y1 = 656;
+    constexpr float MET_LBL_Y = 228;  // INPUT/OUTPUT caption, inside the control band
     constexpr float OUTX0 = 926, OUTX1 = 952;
     // column dividers
-    constexpr float COL[7] = { 40, 197, 335, 469, 603, 737, 920 };
+    constexpr float COL[7] = { 40, 186, 331, 477, 622, 768, 920 };
+
+    // preset dropdown box (design coords) — shared by the header box + popup.
+    // Aligned to the header control-row height so the box + buttons line up.
+    constexpr float kPresetX0 = 200.f, kPresetY0 = 26.f, kPresetX1 = 396.f, kPresetY1 = 56.f;
+    constexpr float kPresetRowH = 22.f;
+    constexpr float kHdrY0 = 26.f, kHdrY1 = 56.f;   // header button row
 
     // band face colours
     constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // SSL LF maroon console knob
@@ -48,6 +60,12 @@ namespace
     constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
     constexpr ImU32 C_HF  = IM_COL32(84, 146, 204, 255);
     constexpr ImU32 C_GREY = IM_COL32(92, 94, 99, 255);
+
+    // Master-knob tick rings (continuous knobs: value + label per tick).
+    constexpr float  MK_GAIN_V[]  = { -12.f, -6.f, 0.f, 6.f, 12.f };
+    const     char*  MK_GAIN_L[]  = { "12", "6", "0", "6", "12" };
+    constexpr float  MK_DRIVE_V[] = { 0.f, 25.f, 50.f, 75.f, 100.f };
+    const     char*  MK_DRIVE_L[] = { "0", "25", "50", "75", "100" };
 
     constexpr ImU32 kPanel   = IM_COL32(34, 34, 37, 255);
     constexpr ImU32 kPanelDk = IM_COL32(24, 24, 26, 255);
@@ -82,8 +100,14 @@ public:
         // No hard aspect lock: the Hide Graph toggle changes the window aspect
         // between the shown/collapsed heights, and onImGuiDisplay letterboxes any
         // size cleanly (scale = min ratio), so free resize never distorts.
-        setGeometryConstraints(576, 320, false);
-        labelFont = duskdpf::loadCrispFont(32.0f * getScaleFactor());
+        updateSizeConstraints();  // aspect-locked resize (no letterbox margins)
+        // Multi-size atlas: the bold face at several native sizes spanning the
+        // on-screen text range, so each label is drawn near-native (crisp) — one
+        // oversized atlas blurred small text by downscaling it 3-5x.
+        static const float kFontSizes[] = { 9.f, 11.f, 13.f, 16.f, 20.f, 26.f };
+        fontSet = duskdpf::loadCrispFontSet(kFontSizes, 6, getScaleFactor());
+        labelFont = fontSet.primary();
+        panel.setFontSet(fontSet);
         fft.prepare(kFftSize);
         specDb.assign(kFftSize / 2 + 1, -120.0f);
     }
@@ -114,18 +138,21 @@ protected:
         // below). Done here, outside the ImGui frame, so the resize is not lost.
         if (needResize) { applyGraphSize(); needResize = false; }
 
-        // Scale by WIDTH so knobs stay circular; the control block then stretches
-        // vertically to fill whatever height the host actually gave us — no dead
-        // space when a host declines to shrink its window after a collapse.
-        const float s = winW / kDesignW;
-        const ImVec2 org(0.0f, 0.0f);
+        // Uniform scale + letterbox: scale the whole design by the SMALLER of the
+        // width/height ratios and centre it. Scaling by width alone (with the
+        // control band stretched to fill height) made knobs grow with width while
+        // vertical spacing shrank on a wider-than-design window -> labels collided.
+        // Uniform scale locks knobs and layout together at any window aspect;
+        // leftover area becomes a clean chassis-coloured margin.
+        const float designH = showGraph ? kDesignH : kDesignHCollapsed;
+        const float s = std::min(winW / kDesignW, winH / designH);
+        const ImVec2 org((winW - kDesignW * s) * 0.5f, (winH - designH * s) * 0.5f);
         panel.begin(s, org, labelFont, this);
 
-        // control-area vertical remap: design rows [220..662] -> [dstTop..dstBot]
+        // Control rows keep their design spacing (no vertical compression); shift
+        // up when the graph is hidden to fill the reclaimed band.
         ctlDstTop_ = showGraph ? 220.0f : 96.0f;
-        const float avail = winH / s;                       // window height in design units
-        ctlDstBot_ = std::max(ctlDstTop_ + 300.0f, avail - 10.0f);
-        ctlScaleY_ = (ctlDstBot_ - ctlDstTop_) / (662.0f - 220.0f);
+        ctlScaleY_ = 1.0f;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -142,8 +169,21 @@ protected:
         drawHeader(dl);
         if (showGraph)
             drawGraph(dl);
+        // While a modal (preset list / credits) is open, absorb input BEFORE the
+        // controls are submitted so knobs/buttons underneath don't react through
+        // it. Submitted here (before drawColumns) so it wins ImGui's hover — the
+        // modal's own rows are hit-tested manually, so they still work over it.
+        if (presetOpen || showCredits)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(0, 0));
+            ImGui::InvisibleButton("modalblock", ImVec2(winW, winH));
+        }
         drawColumns(dl);
         drawMeters(dl);
+        if (presetOpen)
+            drawPresetPopup(dl, winW, winH);
+        if (showCredits)
+            drawCredits(dl, winW, winH);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -169,7 +209,20 @@ protected:
     void applyGraphSize()
     {
         const float designH = showGraph ? kDesignH : kDesignHCollapsed;
+        updateSizeConstraints();
         setSize((uint)getWidth(), (uint)std::lround((double)getWidth() * designH / kDesignW));
+    }
+
+    // Lock the resize aspect ratio to the current design (graph shown vs hidden)
+    // so the host constrains dragging to it — the UI fills the window with no
+    // letterbox margins. The onImGuiDisplay uniform scale is the fallback for
+    // hosts that ignore the constraint.
+    void updateSizeConstraints()
+    {
+        const float designH = showGraph ? kDesignH : kDesignHCollapsed;
+        const uint minW = 560;
+        const uint minH = (uint)std::lround((double)minW * designH / kDesignW);
+        setGeometryConstraints(minW, minH, /*keepAspectRatio*/ true);
     }
 
 private:
@@ -186,48 +239,63 @@ private:
         dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 3), IM_COL32(150, 150, 152, 255));
         dl->AddLine(panel.P(0, 88), panel.P(kDesignW, 88), IM_COL32(60, 60, 63, 255), 1.5f * sc());
 
-        panel.text(dl, 28, 30, 26, pal().white, "4K EQ", -1, true);
-        panel.text(dl, 30, 60, 11, IM_COL32(150, 152, 156, 255), "Console-Style Equalizer", -1);
-        panel.text(dl, kDesignW - 26, 62, 11, IM_COL32(150, 152, 156, 255), "DUSK AUDIO", 1, true);
-
-        // preset dropdown
-        ImGui::SetCursorScreenPos(panel.P(226, 30));
-        ImGui::SetNextItemWidth(196.0f * sc());
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(46, 46, 50, 255));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
-        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(228, 228, 224, 255));
-        const char* preview = (currentPreset >= 0 && currentPreset < kNumFactoryPresets)
-                                  ? kFactoryPresets[currentPreset].name : "Default";
-        if (ImGui::BeginCombo("##presets", preview))
+        panel.text(dl, 28, 28, 25, pal().white, "4K EQ 2", -1, true);
+        panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255), "Console-Style Equalizer", -1);
+        // Clickable title -> Patreon supporters overlay.
         {
-            for (int i = 0; i < kNumFactoryPresets; ++i)
-                if (ImGui::Selectable(kFactoryPresets[i].name, i == currentPreset))
-                    applyPreset(i);
-            ImGui::EndCombo();
+            const ImVec2 t0 = panel.P(26, 20), t1 = panel.P(150, 48);
+            ImGui::SetCursorScreenPos(t0);
+            ImGui::InvisibleButton("titlecredits", ImVec2(t1.x - t0.x, t1.y - t0.y));
+            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (ImGui::IsItemClicked()) { showCredits = true; creditsArmed = false; }
         }
-        ImGui::PopStyleColor(4);
+        panel.text(dl, kDesignW - 26, 68, 10.5f, IM_COL32(140, 142, 146, 255), "DUSK AUDIO", 1, true);
 
-        // Oversample selector (cycles 2x/4x)
-        headerButton(dl, "os", 440, 30, 578, 54,
-                     values[kOversampling] > 0.5f ? "Oversample: 4x" : "Oversample: 2x",
-                     IM_COL32(46, 46, 50, 255), pal().white,
-                     [&]{ cycleParam(kOversampling, 2); });
+        // preset dropdown — custom widget (ImGui combo's SetWindowFontScale was
+        // blurry). Crisp panel.text; the expanded list is drawn later, on top.
+        {
+            const ImVec2 p0 = panel.P(kPresetX0, kPresetY0), p1 = panel.P(kPresetX1, kPresetY1);
+            dl->AddRectFilled(p0, p1, IM_COL32(46, 46, 50, 255), 3.f * sc());
+            dl->AddRect(p0, p1, presetOpen ? IM_COL32(120, 150, 200, 240) : IM_COL32(90, 90, 96, 220), 3.f * sc(), 0, 1.f * sc());
+            const char* preview = (currentPreset >= 0 && currentPreset < kNumFactoryPresets)
+                                      ? kFactoryPresets[currentPreset].name : "Default";
+            panel.text(dl, kPresetX0 + 9.f, 0.5f * (kPresetY0 + kPresetY1) - 6.5f, 13.f, IM_COL32(228, 228, 224, 255), preview, -1);
+            const ImVec2 ac = panel.P(kPresetX1 - 13.f, 0.5f * (kPresetY0 + kPresetY1));
+            dl->AddTriangleFilled(ImVec2(ac.x - 4.f * sc(), ac.y - 2.5f * sc()),
+                                  ImVec2(ac.x + 4.f * sc(), ac.y - 2.5f * sc()),
+                                  ImVec2(ac.x, ac.y + 3.5f * sc()), IM_COL32(180, 182, 186, 255));
+            ImGui::SetCursorScreenPos(p0);
+            ImGui::InvisibleButton("presetbox", ImVec2(p1.x - p0.x, p1.y - p0.y));
+            if (ImGui::IsItemClicked()) presetOpen = !presetOpen;
+        }
 
-        // Hide/Show Graph toggle — collapses the window like the JUCE editor.
-        headerButton(dl, "hidegraph", 590, 30, 690, 54, showGraph ? "Hide Graph" : "Show Graph",
-                     IM_COL32(46, 46, 50, 255), pal().white, [&]{ toggleGraph(); });
+        // Control row — evenly spaced, uniform height (kHdrY0..kHdrY1).
+        const ImU32 btnBg = IM_COL32(46, 46, 50, 255);
 
-        // Brown / Black voicing (amber when Brown, blue-grey when Black)
+        // Oversample (cycles 1x/2x/4x).
+        static const char* kOsBtn[3] = { "Oversample: 1x", "Oversample: 2x", "Oversample: 4x" };
+        int osi = (int)(values[kOversampling] + 0.5f); osi = osi < 0 ? 0 : (osi > 2 ? 2 : osi);
+        headerButton(dl, "os", 412, kHdrY0, 536, kHdrY1, kOsBtn[osi], btnBg, pal().white,
+                     [&]{ cycleParam(kOversampling, 3); });
+
+        // Brown / Black voicing (amber when Brown, blue-grey when Black).
         const bool brown = values[kEqType] < 0.5f;
-        headerButton(dl, "eqtype", 702, 30, 800, 54, brown ? "BROWN" : "BLACK",
+        headerButton(dl, "eqtype", 548, kHdrY0, 640, kHdrY1, brown ? "BROWN" : "BLACK",
                      brown ? kAmber : IM_COL32(60, 74, 96, 255), IM_COL32(245, 240, 232, 255),
                      [&]{ cycleParam(kEqType, 2); });
 
-        // Spectrum source (pre/post) — small, right of voicing
-        headerButton(dl, "prepost", 806, 30, 892, 54,
-                     values[kSpectrumPrePost] > 0.5f ? "SPEC PRE" : "SPEC POST",
-                     IM_COL32(40, 40, 44, 255), IM_COL32(180, 182, 186, 255),
+        // --- Analyzer group: Graph collapse | FFT on/off | spectrum source ---
+        headerButton(dl, "hidegraph", 652, kHdrY0, 740, kHdrY1, showGraph ? "Hide Graph" : "Show Graph",
+                     btnBg, pal().white, [&]{ toggleGraph(); });
+
+        headerButton(dl, "fft", 752, kHdrY0, 822, kHdrY1, showFft ? "FFT: On" : "FFT: Off",
+                     showFft ? IM_COL32(52, 70, 92, 255) : btnBg,
+                     showFft ? IM_COL32(210, 224, 240, 255) : IM_COL32(150, 152, 156, 255),
+                     [&]{ showFft = !showFft; });
+
+        headerButton(dl, "prepost", 834, kHdrY0, 920, kHdrY1,
+                     values[kSpectrumPrePost] > 0.5f ? "FFT PRE" : "FFT POST",
+                     btnBg, IM_COL32(180, 182, 186, 255),
                      [&]{ toggleParam(kSpectrumPrePost); });
     }
 
@@ -282,33 +350,170 @@ private:
     float responseDb(float freq) const
     {
         using duskaudio::Biquad; using duskaudio::BiquadCoeffs;
-        const double fs = 96000.0;
+        using duskaudio::FourKEQDSP;
+        // Evaluate at the DSP's ACTUAL processing rate: host base rate * the
+        // rate-capped oversampling factor, exactly as recomputeCoeffs() designs
+        // the biquads. A fixed 96 kHz warps the drawn curve away from the sound
+        // at any other host rate / oversampling factor. kOversampling is already
+        // the DSP mode (0=1x,1=2x,2=4x), so chooseFactor() applies the same cap.
+        const double base = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+        const double fs = base * (double) FourKEQDSP::chooseFactor(base, (int)(values[kOversampling] + 0.5f));
         const double w = 2.0 * 3.14159265358979323846 * (double)freq / fs;
         const bool black = values[kEqType] > 0.5f;
-        double magLin = 1.0;
-        auto acc = [&](const BiquadCoeffs& c) { Biquad b; b.setCoeffs(c); magLin *= b.magnitude(w); };
-        // Mirrors FourKEQDSP::recomputeCoeffs exactly (analog-matched, HPF Q=1.0,
-        // no piecewise prewarp — the console builders prewarp fc internally).
+        // Series filter magnitudes (genuine HP/LP stages, mirrors recomputeCoeffs).
+        double filtMag = 1.0;
         if (values[kHpfEnabled] > 0.5f)
         {
-            acc(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
-            acc(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
+            Biquad h1; h1.setCoeffs(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
+            Biquad h2; h2.setCoeffs(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
+            filtMag *= h1.magnitude(w) * h2.magnitude(w);
         }
-        if (values[kLfBell] > 0.5f)
-            acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLfFreq], 0.7f, values[kLfGain], black));
-        else
-            acc(duskaudio::FourKEQDSP::consoleShelf(fs, values[kLfFreq], 0.7f, values[kLfGain], false, black));
-        { float q = values[kLmQ]; if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kLmGain], q);
-          acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kLmFreq], q, values[kLmGain], black)); }
-        { float f = values[kHmFreq], q = values[kHmQ];
-          if (black) q = duskaudio::FourKEQDSP::dynamicQ(values[kHmGain], q); else if (f > 7000.f) f = 7000.f;
-          acc(duskaudio::FourKEQDSP::consolePeak(fs, f, q, values[kHmGain], black)); }
-        { if (values[kHfBell] > 0.5f) acc(duskaudio::FourKEQDSP::consolePeak(fs, values[kHfFreq], 0.7f, values[kHfGain], black));
-          else acc(duskaudio::FourKEQDSP::consoleShelf(fs, values[kHfFreq], 0.7f, values[kHfGain], true, black)); }
         if (values[kLpfEnabled] > 0.5f)
-        { const float f = (float)std::max(1.0, std::min((double)values[kLpfFreq], fs * 0.4998));
-          acc(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f)); }
+        {
+            const float f = (float)std::max(1.0, std::min((double)values[kLpfFreq], fs * 0.4998));
+            Biquad lp; lp.setCoeffs(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f));
+            filtMag *= lp.magnitude(w);
+        }
+        // Parallel-summing EQ: Heq = 1 + sum(K_i * F_i(w)), complex — mirrors the
+        // audio path (dry + summed fixed-Q band blocks) so the curve == the sound.
+        auto blockResp = [&](const BiquadCoeffs& c) {
+            Biquad b; b.setCoeffs(c); return b.response(w);
+        };
+        const float bellQ = black ? 0.9f : 0.6f;
+        std::complex<double> Heq(1.0, 0.0);
+        // LF
+        Heq += (double)FourKEQDSP::bandK(values[kLfGain]) * blockResp(values[kLfBell] > 0.5f
+            ? Biquad::bandPassConstantPeak(fs, values[kLfFreq], bellQ)
+            : (black ? Biquad::lowPass(fs, values[kLfFreq], 0.9f)
+                     : Biquad::firstOrderLowPass(fs, values[kLfFreq])));
+        // LM
+        Heq += (double)FourKEQDSP::bandK(values[kLmGain]) * blockResp(
+            Biquad::bandPassConstantPeak(fs, values[kLmFreq],
+                FourKEQDSP::voicedMidQ(values[kLmGain], values[kLmQ], black)));
+        // HM (Brown caps 7 kHz)
+        { float hmFreq = values[kHmFreq]; if (!black && hmFreq > 7000.f) hmFreq = 7000.f;
+          Heq += (double)FourKEQDSP::bandK(values[kHmGain]) * blockResp(
+              Biquad::bandPassConstantPeak(fs, hmFreq,
+                  FourKEQDSP::voicedMidQ(values[kHmGain], values[kHmQ], black))); }
+        // HF
+        Heq += (double)FourKEQDSP::bandK(values[kHfGain]) * blockResp(values[kHfBell] > 0.5f
+            ? Biquad::bandPassConstantPeak(fs, values[kHfFreq], bellQ)
+            : (black ? Biquad::highPass(fs, values[kHfFreq], 0.9f)
+                     : Biquad::firstOrderHighPass(fs, values[kHfFreq])));
+
+        const double magLin = std::abs(Heq) * filtMag;
         return 20.0f * std::log10((float)std::max(magLin, 1e-6));
+    }
+
+    // Selectable graph vertical scale (matches the JUCE ±12/±24/±30/±60/Warped).
+    static constexpr const char* kRangeLabels[5] = { "+/-6 dB", "+/-12 dB", "+/-18 dB", "+/-30 dB", "Warped" };
+    float graphRangeDb() const { static const float R[4] = { 6.f, 12.f, 18.f, 30.f }; return graphRangeIdx < 4 ? R[graphRangeIdx] : 18.f; }
+    // dB -> normalized y in [0,1] (0 = top). Warped mode is a sqrt law that gives
+    // more resolution near 0 dB.
+    float dbToNy(float db) const
+    {
+        if (graphRangeIdx == 4)
+        {
+            const float m = 24.0f;
+            float d = db < -m ? -m : (db > m ? m : db);
+            const float tt = (d >= 0.f ? 1.f : -1.f) * std::sqrt(std::abs(d) / m);
+            return 0.5f - 0.5f * tt;
+        }
+        const float r = graphRangeDb();
+        float d = db < -r ? -r : (db > r ? r : db);
+        return 0.5f - 0.5f * (d / r);
+    }
+
+    // Expanded preset list — drawn on top, crisp panel.text, all presets (no
+    // scroll). Click a row to select; click outside or Esc to close.
+    void drawPresetPopup(ImDrawList* dl, float winW, float winH)
+    {
+        const int n = kNumFactoryPresets;
+        const float top = kPresetY1 + 2.f;
+        const float bot = top + n * kPresetRowH + 6.f;
+        const ImVec2 p0 = panel.P(kPresetX0, top), p1 = panel.P(kPresetX1, bot);
+        dl->AddRectFilled(p0, p1, IM_COL32(24, 24, 26, 255), 3.f * sc());
+        dl->AddRect(p0, p1, IM_COL32(96, 100, 108, 235), 3.f * sc(), 0, 1.f * sc());
+
+        // Manual hit-test (not ImGui items): the rows overlap the knob buttons
+        // underneath, and ImGui's hover goes to the earlier-submitted item (the
+        // knobs), so InvisibleButton rows over a knob were unclickable.
+        const ImVec2 m = ImGui::GetMousePos();
+        for (int i = 0; i < n; ++i)
+        {
+            const float ry0 = top + 3.f + i * kPresetRowH;
+            const ImVec2 r0 = panel.P(kPresetX0 + 2.f, ry0), r1 = panel.P(kPresetX1 - 2.f, ry0 + kPresetRowH);
+            const bool hov = m.x >= r0.x && m.x <= r1.x && m.y >= r0.y && m.y <= r1.y;
+            if (hov)              dl->AddRectFilled(r0, r1, IM_COL32(70, 90, 120, 255), 2.f * sc());
+            else if (i == currentPreset) dl->AddRectFilled(r0, r1, IM_COL32(48, 52, 58, 255), 2.f * sc());
+            panel.text(dl, kPresetX0 + 11.f, ry0 + 0.5f * kPresetRowH - 6.f, 12.f, IM_COL32(224, 224, 220, 255), kFactoryPresets[i].name, -1);
+            if (hov && ImGui::IsMouseClicked(0)) { applyPreset(i); presetOpen = false; }
+        }
+
+        // Close on Esc or a click outside the popup + box.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { presetOpen = false; return; }
+        if (ImGui::IsMouseClicked(0))
+        {
+            const ImVec2 m = ImGui::GetMousePos();
+            const ImVec2 b0 = panel.P(kPresetX0, kPresetY0), b1 = panel.P(kPresetX1, kPresetY1);
+            const bool inPopup = m.x >= p0.x && m.x <= p1.x && m.y >= p0.y && m.y <= p1.y;
+            const bool inBox   = m.x >= b0.x && m.x <= b1.x && m.y >= b0.y && m.y <= b1.y;
+            if (!inPopup && !inBox) presetOpen = false;
+            (void)winW; (void)winH;
+        }
+    }
+
+    // Patreon supporters overlay (opened by clicking the title). Dim scrim +
+    // centered card listing tiers; click anywhere or press Esc to close.
+    void drawCredits(ImDrawList* dl, float winW, float winH)
+    {
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 205));
+
+        const float s = sc();
+        // Line heights (screen px). Content height is measured so the card fits.
+        const float LN = 21.f * s, LH = 26.f * s, GAP = 12.f * s;
+        const float titleH = 40.f * s, subH = 30.f * s, footH = 34.f * s, padY = 30.f * s;
+        const auto& tiers = duskdpf::patreonTiers();
+        float contentH = titleH + subH + footH;
+        for (const auto& t : tiers)
+            if (!t.names.empty()) contentH += LH + (float)t.names.size() * LN + GAP;
+
+        const float cardW = 480.f * s;
+        float cardH = contentH + 2.f * padY;
+        if (cardH > winH * 0.95f) cardH = winH * 0.95f;
+        const ImVec2 cc(winW * 0.5f, winH * 0.5f);
+        const ImVec2 c0(cc.x - cardW * 0.5f, cc.y - cardH * 0.5f), c1(cc.x + cardW * 0.5f, cc.y + cardH * 0.5f);
+        dl->AddRectFilled(c0, c1, IM_COL32(26, 27, 30, 255), 8.f * s);
+        dl->AddRect(c0, c1, IM_COL32(90, 92, 98, 255), 8.f * s, 0, 1.5f * s);
+
+        auto ctext = [&](float yPx, float sz, ImU32 col, const char* txt, bool bold) {
+            const float fsz = sz * s;
+            ImFont* f = panel.pickFont(fsz);
+            const ImVec2 ts = f->CalcTextSizeA(fsz, FLT_MAX, 0.f, txt);
+            const float px = std::floor(cc.x - ts.x * 0.5f + 0.5f), py = std::floor(yPx + 0.5f);
+            dl->AddText(f, fsz, ImVec2(px, py), col, txt);
+            (void)bold;
+        };
+
+        float y = c0.y + padY;
+        ctext(y, 24.f, IM_COL32(238, 236, 228, 255), "SUPPORTERS", true); y += titleH;
+        ctext(y, 13.f, IM_COL32(160, 162, 166, 255), "Thank you to our Patreon supporters", false); y += subH;
+
+        for (const auto& tier : tiers)
+        {
+            if (tier.names.empty()) continue;
+            ctext(y, 15.f, IM_COL32(150, 172, 214, 255), tier.title, true); y += LH;
+            for (const char* nm : tier.names) { ctext(y, 15.f, IM_COL32(220, 220, 216, 255), nm, false); y += LN; }
+            y += GAP;
+        }
+        ctext(c1.y - 24.f * s, 11.f, IM_COL32(140, 142, 148, 255), "click anywhere to close", false);
+
+        // Dismiss on any click or Esc (manual — the modal input blocker owns the
+        // ImGui hover/active id, so an InvisibleButton here would never click).
+        // Arm only after the opening click is released so it doesn't self-close.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showCredits = false;
+        else if (!creditsArmed) { if (!ImGui::IsMouseDown(0)) creditsArmed = true; }
+        else if (ImGui::IsMouseClicked(0)) showCredits = false;
     }
 
     void drawGraph(ImDrawList* dl)
@@ -325,29 +530,55 @@ private:
             if (kGridF[i] == 100 || kGridF[i] == 1000 || kGridF[i] == 10000)
                 panel.text(dl, x, GY1 - 13, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
         }
-        for (int db = -20; db <= 20; db += 10)
         {
-            const float y = GY0 + (0.5f - 0.5f * ((float)db / kDbRange)) * (GY1 - GY0);
-            dl->AddLine(panel.P(GX0, y), panel.P(GX1, y),
-                        db == 0 ? IM_COL32(64, 68, 74, 255) : IM_COL32(34, 36, 40, 255), 1.0f * sc());
-            char b[8]; std::snprintf(b, sizeof(b), "%+d", db);
-            if (db != -20) panel.text(dl, GX0 + 4, y - 5, 8.0f, IM_COL32(120, 124, 130, 255), db == 0 ? "0" : b, -1);
+            const float R = graphRangeDb();
+            const float ticks[5] = { -R, -0.5f * R, 0.f, 0.5f * R, R };
+            for (int i = 0; i < 5; ++i)
+            {
+                const float db = ticks[i];
+                const float y = GY0 + dbToNy(db) * (GY1 - GY0);
+                dl->AddLine(panel.P(GX0, y), panel.P(GX1, y),
+                            db == 0.f ? IM_COL32(64, 68, 74, 255) : IM_COL32(34, 36, 40, 255), 1.0f * sc());
+                char b[8]; std::snprintf(b, sizeof(b), "%+d", (int)db);
+                // Clamp the label fully inside the graph so the top (+R) and
+                // bottom (-R) values are never clipped by the graph edge.
+                float ly = y - 6.f;
+                ly = ly < GY0 + 1.f ? GY0 + 1.f : (ly > GY1 - 13.f ? GY1 - 13.f : ly);
+                panel.text(dl, GX0 + 5, ly, 11.f, IM_COL32(150, 154, 160, 255), db == 0.f ? "0" : b, -1);
+            }
         }
 
-        drawSpectrum(dl);
+        if (showFft)
+            drawSpectrum(dl);
         const int N = 240;
         std::vector<ImVec2> pts; pts.reserve(N);
         for (int i = 0; i < N; ++i)
         {
             const float lx = (float)i / (N - 1);
             const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-            float ny = 0.5f - 0.5f * (responseDb(freq) / kDbRange);
+            float ny = dbToNy(responseDb(freq));
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
             pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }
         dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(236, 236, 236, 255), 0, 2.0f * sc());
 
         dl->PopClipRect();
+
+        // Vertical-scale selector, top-right of the graph.
+        ImGui::SetCursorScreenPos(panel.P(GX1 - 78, GY0 + 4));
+        ImGui::SetNextItemWidth(74.0f * sc());
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 32, 36, 210));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(206, 208, 212, 255));
+        if (ImGui::BeginCombo("##graphrange", kRangeLabels[graphRangeIdx], ImGuiComboFlags_NoArrowButton))
+        {
+            for (int i = 0; i < 5; ++i)
+                if (ImGui::Selectable(kRangeLabels[i], i == graphRangeIdx))
+                    graphRangeIdx = i;
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleColor(4);
     }
 
     void drawSpectrum(ImDrawList* dl)
@@ -369,8 +600,12 @@ private:
         const double sr = getSampleRate();
         const float binHz = (float)((sr > 1.0 ? sr : 48000.0) / kFftSize);
         const int half = kFftSize / 2;
-        std::vector<ImVec2> pts; pts.reserve((size_t)half + 2);
-        pts.push_back(panel.P(GX0, GY1));
+        // Build the curve points only (one per in-range bin). The old code fed a
+        // jagged, non-convex polygon (anchored at the bottom-left corner) to
+        // AddConvexPolyFilled, which fans triangles from that corner — the stray
+        // diagonal "blue lines" and translucent haze. Instead fill per-segment
+        // quads down to the baseline (each convex) and stroke a clean top line.
+        std::vector<ImVec2> curve; curve.reserve((size_t)half);
         for (int k = 1; k <= half; ++k)
         {
             const float freq = (float)k * binHz;
@@ -379,13 +614,16 @@ private:
             if (freq < kFMin || freq > kFMax) continue;
             float ny = 1.0f - (specDb[(size_t)k] + 72.0f) / 72.0f;
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
-            pts.push_back(panel.P(GX0 + flog(freq) * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
+            curve.push_back(panel.P(GX0 + flog(freq) * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }
-        pts.push_back(panel.P(GX1, GY1));
-        if (pts.size() > 3)
+        if (curve.size() >= 2)
         {
-            dl->AddConvexPolyFilled(pts.data(), (int)pts.size(), IM_COL32(70, 110, 140, 46));
-            dl->AddPolyline(pts.data() + 1, (int)pts.size() - 2, IM_COL32(96, 150, 190, 130), 0, 1.2f * sc());
+            const float baseY = panel.P(GX0, GY1).y;
+            for (size_t i = 0; i + 1 < curve.size(); ++i)
+                dl->AddQuadFilled(curve[i], curve[i + 1],
+                                  ImVec2(curve[i + 1].x, baseY), ImVec2(curve[i].x, baseY),
+                                  IM_COL32(70, 110, 140, 46));
+            dl->AddPolyline(curve.data(), (int)curve.size(), IM_COL32(96, 150, 190, 130), 0, 1.2f * sc());
         }
        #else
         (void)dl;
@@ -418,7 +656,7 @@ private:
         const float fcx = 0.5f * (COL[0] + COL[1]);
         steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfFreq, HPFL, HPFF, false, "Hz");
         steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, LPFF, true,  "kHz");
-        colKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(568), 26, C_GREY, "INPUT", "-12", "+12", "%.1f", " dB");
+        colMetalKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(568), 26, "INPUT", MK_GAIN_V, MK_GAIN_L, 5, "%.1f", " dB");
 
         // Shared GAIN (0 top, +-15 dB) and Q (.5-3 descending) detent tables.
         static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
@@ -479,8 +717,8 @@ private:
         panelButton(dl, "autogain", mcx - 40, cY(300), mcx + 40, cY(324), "AUTO GAIN",
                     values[kAutoGain] > 0.5f ? kGreenBtn : IM_COL32(50, 50, 54, 255),
                     [&]{ toggleParam(kAutoGain); });
-        colKnob(dl, "drive", kSaturation, 0.f, 100.f, mcx, cY(430), 26, C_GREY, "DRIVE", "0", "100", "%.0f", "");
-        colKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, cY(556), 26, C_GREY, "OUTPUT", "-12", "+12", "%.1f", " dB");
+        colMetalKnob(dl, "drive", kSaturation, 0.f, 100.f, mcx, cY(430), 26, "DRIVE", MK_DRIVE_V, MK_DRIVE_L, 5, "%.0f", "");
+        colMetalKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, cY(556), 26, "OUTPUT", MK_GAIN_V, MK_GAIN_L, 5, "%.1f", " dB");
         smallToggle(dl, "ms", kMsMode, mcx - 24, cY(606), mcx + 24, cY(628), values[kMsMode], "M/S");
     }
 
@@ -518,6 +756,35 @@ private:
         panel.text(dl, cx + std::sin(a0) * (r + 14), cy - std::cos(a0) * (r + 14) - 5, 9.5f, IM_COL32(170, 172, 176, 255), lmin, 1);
         panel.text(dl, cx + std::sin(a1) * (r + 14), cy - std::cos(a1) * (r + 14) - 5, 9.5f, IM_COL32(170, 172, 176, 255), lmax, -1);
         panel.text(dl, cx, cy + r + 8, 11.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
+    }
+
+    // Brushed-metal continuous knob (INPUT/DRIVE/OUTPUT) matching the FILTERS and
+    // band knobs' look: silver metal body drawn here, gestures + value bubble +
+    // inline editor owned by panel.knob in bodyless mode.
+    void colMetalKnob(ImDrawList* dl, const char* id, uint32_t param, float minV, float maxV,
+                      float cx, float cy, float r, const char* name,
+                      const float* TV, const char* const* TL, int nT,
+                      const char* fmt, const char* suffix)
+    {
+        const float range = maxV - minV;
+        float t = range > 0.f ? (values[param] - minV) / range : 0.f;
+        t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+        drawMetalKnobBody(dl, panel.P(cx, cy), r * sc(), t,
+                          IM_COL32(150, 152, 156, 255), IM_COL32(30, 30, 33, 255));
+        // tick dots + labels around the dial, matching the band/filter knobs.
+        for (int i = 0; i < nT; ++i)
+        {
+            const float tt = range > 0.f ? (TV[i] - minV) / range : 0.f;
+            const float a = duskdpf::DuskPanel::knobAngle(tt);
+            const float dx = std::sin(a), dy = -std::cos(a);
+            dl->AddCircleFilled(panel.P(cx + dx * (r + 9.f), cy + dy * (r + 9.f)), 1.6f * sc(), IM_COL32(150, 152, 156, 255), 8);
+            const int align = dx < -0.25f ? 1 : (dx > 0.25f ? -1 : 0);
+            panel.text(dl, cx + dx * (r + 20.f), cy + dy * (r + 20.f) - 5.f, 10.5f, IM_COL32(206, 208, 212, 255), TL[i], align, true);
+        }
+        panel.text(dl, cx, cy + r + 10.f, 11.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
+        // gestures + value read-out on top (no body drawn)
+        panel.knob(id, param, minV, maxV, cx, cy, r, values[param], kDefaults[param],
+                   false, false, fmt, suffix, 0, /*bodyless*/true);
     }
 
     void smallToggle(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0, float x1, float y1,
@@ -602,25 +869,35 @@ private:
         ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
         ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
         const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-        if (ImGui::IsItemActivated()) { editParameter(enId, true); editParameter(freqId, true); stepDragT = t; }
-        if (act)
+        const bool editing = panel.isEditingValue(id);
+        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        if (!editing)
         {
-            const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-            stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-            t = stepDragT; stepApply(enId, freqId, F, t);
-        }
-        if (ImGui::IsItemDeactivated()) { editParameter(enId, false); editParameter(freqId, false); }
-        if (hov && !act)
-        {
-            if (ImGui::IsMouseDoubleClicked(0)) // reset to OUT
-            { editParameter(enId, true); stepApply(enId, freqId, F, 0.f); editParameter(enId, false); t = 0.f; }
-            const float wh = ImGui::GetIO().MouseWheel;
-            if (wh != 0.f)
+            if (ImGui::IsItemActivated())
             {
-                t = c01(t + wh * 0.02f);
-                editParameter(enId, true); editParameter(freqId, true);
-                stepApply(enId, freqId, F, t);
-                editParameter(freqId, false); editParameter(enId, false);
+                if (modKey) // Ctrl/Cmd+click: reset to OUT (default)
+                { editParameter(enId, true); stepApply(enId, freqId, F, 0.f); editParameter(enId, false); t = 0.f; stepModReset_ = true; }
+                else { editParameter(enId, true); editParameter(freqId, true); stepDragT = t; stepModReset_ = false; }
+            }
+            if (act && !stepModReset_)
+            {
+                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
+                t = stepDragT; stepApply(enId, freqId, F, t);
+            }
+            if (ImGui::IsItemDeactivated()) { if (!stepModReset_) { editParameter(enId, false); editParameter(freqId, false); } stepModReset_ = false; }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a frequency
+            { panel.openValueEdit(id, values[freqId]); editParameter(enId, false); editParameter(freqId, false); }
+            else if (hov && !act)
+            {
+                const float wh = ImGui::GetIO().MouseWheel;
+                if (wh != 0.f)
+                {
+                    t = c01(t + wh * 0.02f);
+                    editParameter(enId, true); editParameter(freqId, true);
+                    stepApply(enId, freqId, F, t);
+                    editParameter(freqId, false); editParameter(enId, false);
+                }
             }
         }
 
@@ -652,13 +929,25 @@ private:
             panel.text(dl, cx + 8.f, iy - 9.f, 12.f, IM_COL32(210, 212, 216, 255), unit, -1, true);
         }
 
-        if (hov || act)
+        float typed;
+        if (panel.valueEdit(id, cx, cy, R, typed))
+        {
+            // Typed frequency: enable the filter and clamp to its range.
+            float lo = F[1], hi = F[1];
+            for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
+            typed = typed < lo ? lo : (typed > hi ? hi : typed);
+            editParameter(enId, true); editParameter(freqId, true);
+            values[enId] = 1.f;    setParameterValue(enId, 1.f);
+            values[freqId] = typed; setParameterValue(freqId, typed);
+            editParameter(freqId, false); editParameter(enId, false);
+        }
+        else if ((hov || act) && !editing)
         {
             char buf[24];
             if (!en) std::snprintf(buf, sizeof(buf), "OUT");
             else if (values[freqId] >= 1000.f) std::snprintf(buf, sizeof(buf), "%.1f kHz", values[freqId] / 1000.f);
             else std::snprintf(buf, sizeof(buf), "%.0f Hz", values[freqId]);
-            panel.text(dl, cx, cy - R - 14.f, 9.5f, pal().whiteDim, buf, 0);
+            panel.valueBubble(dl, cx, cy, R, buf);
         }
     }
 
@@ -680,7 +969,12 @@ private:
         const float capR = RR * 0.74f;
         dl->AddCircleFilled(c, capR, capCol, 44);
         dl->PushClipRect(ImVec2(c.x - capR, c.y - capR), ImVec2(c.x + capR, c.y + capR), true);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.22f, c.y - capR * 0.28f), capR * 0.7f, IM_COL32(255, 255, 255, 34), 40); // top-left sheen
+        // Matte SSL cap: a gentle top-to-bottom shade (top a touch lighter,
+        // bottom a touch darker) for roundness; the cap colour stays essentially
+        // unchanged. Low-alpha discs centred just off the cap fade before centre.
+        dl->AddCircleFilled(ImVec2(c.x, c.y + capR * 0.64f), capR * 0.82f, IM_COL32(0, 0, 0, 20), 40);       // subtle bottom shade
+        dl->AddCircleFilled(ImVec2(c.x, c.y - capR * 0.60f), capR * 0.85f, IM_COL32(255, 255, 255, 13), 40); // top lift
+        dl->AddCircleFilled(ImVec2(c.x, c.y - capR * 0.72f), capR * 0.55f, IM_COL32(255, 255, 255, 17), 40);
         dl->PopClipRect();
         dl->AddCircle(c, capR, IM_COL32(20, 20, 22, 255), 44, 1.4f * s);
         const float a = duskdpf::DuskPanel::knobAngle(t);
@@ -734,21 +1028,31 @@ private:
         ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
         ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
         const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        const bool editing = panel.isEditingValue(id);
+        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) { const float nv = detentPosToVal(T, V, n, tt); values[paramId] = nv; setParameterValue(paramId, nv); };
-        if (ImGui::IsItemActivated()) { editParameter(paramId, true); stepDragT = t; }
-        if (act)
+        auto resetDefault = [&] { editParameter(paramId, true); values[paramId] = kDefaults[paramId]; setParameterValue(paramId, kDefaults[paramId]); editParameter(paramId, false); t = detentValToPos(T, V, n, values[paramId]); };
+        if (!editing)
         {
-            const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-            stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-            t = stepDragT; setFromT(t);
-        }
-        if (ImGui::IsItemDeactivated()) editParameter(paramId, false);
-        if (hov && !act)
-        {
-            if (ImGui::IsMouseDoubleClicked(0))
-            { editParameter(paramId, true); values[paramId] = kDefaults[paramId]; setParameterValue(paramId, kDefaults[paramId]); editParameter(paramId, false); t = detentValToPos(T, V, n, values[paramId]); }
-            const float wh = ImGui::GetIO().MouseWheel;
-            if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
+            if (ImGui::IsItemActivated())
+            {
+                if (modKey) { resetDefault(); stepModReset_ = true; }         // Ctrl/Cmd+click: reset
+                else { editParameter(paramId, true); stepDragT = t; stepModReset_ = false; }
+            }
+            if (act && !stepModReset_)
+            {
+                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                stepDragT = c01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
+                t = stepDragT; setFromT(t);
+            }
+            if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(paramId, false); stepModReset_ = false; }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0))
+            { panel.openValueEdit(id, values[paramId]); editParameter(paramId, false); } // double-click: type a value
+            else if (hov && !act)
+            {
+                const float wh = ImGui::GetIO().MouseWheel;
+                if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
+            }
         }
 
         for (int i = 0; i < n; ++i)
@@ -763,10 +1067,18 @@ private:
         drawMetalKnobBody(dl, c, RR, t, capCol, IM_COL32(245, 245, 245, 255));
         panel.text(dl, cx, cy + R + 16.f, 12.f, IM_COL32(210, 212, 216, 255), unit, 0, true);
 
-        if (hov || act)
+        float typed;
+        if (panel.valueEdit(id, cx, cy, R, typed))
+        {
+            float lo = V[0], hi = V[0];
+            for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
+            typed = typed < lo ? lo : (typed > hi ? hi : typed);
+            editParameter(paramId, true); values[paramId] = typed; setParameterValue(paramId, typed); editParameter(paramId, false);
+        }
+        else if ((hov || act) && !editing)
         {
             char buf[24]; std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
-            panel.text(dl, cx, cy - R - 13.f, 9.5f, pal().whiteDim, buf, 0);
+            panel.valueBubble(dl, cx, cy, R, buf);
         }
     }
 
@@ -813,15 +1125,29 @@ private:
             { inL = fourKEQGetInputPeakL(inst); inR = fourKEQGetInputPeakR(inst);
               outL = fourKEQGetOutputPeakL(inst); outR = fourKEQGetOutputPeakR(inst); }
        #endif
-        panel.text(dl, INX0 - 2, cY(208), 8.5f, IM_COL32(150, 152, 156, 255), "INPUT", -1, true);
-        panel.text(dl, OUTX1 + 2, cY(208), 8.5f, IM_COL32(150, 152, 156, 255), "OUTPUT", 1, true);
-        meterPair(dl, INX0, INX1, inL, inR);
+        panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "IN", 0, true);
+        panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "OUT", 0, true);
+        meterPair(dl, INX0, INX1, inL, inR);   // bars update every frame (smooth)
         meterPair(dl, OUTX0, OUTX1, outL, outR);
+
+        // Numeric dB readout: hold the peak over a ~150 ms window and refresh the
+        // digits at that slower rate (like commercial meters) so they read
+        // cleanly instead of flickering every frame. One decimal place.
+        meterPkIn_  = std::max(meterPkIn_,  std::max(inL, inR));
+        meterPkOut_ = std::max(meterPkOut_, std::max(outL, outR));
+        meterTimer_ += ImGui::GetIO().DeltaTime;
+        if (meterTimer_ >= 0.15f)
+        {
+            meterTimer_ = 0.f;
+            meterDbIn_  = 20.0f * std::log10(meterPkIn_  > 1e-5f ? meterPkIn_  : 1e-5f);
+            meterDbOut_ = 20.0f * std::log10(meterPkOut_ > 1e-5f ? meterPkOut_ : 1e-5f);
+            meterPkIn_ = meterPkOut_ = 0.f;
+        }
         char b[16];
-        std::snprintf(b, sizeof(b), "%.0f", 20.0f * std::log10(std::max(inL, inR) > 1e-5f ? std::max(inL, inR) : 1e-5f));
-        panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_Y1) + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
-        std::snprintf(b, sizeof(b), "%.0f", 20.0f * std::log10(std::max(outL, outR) > 1e-5f ? std::max(outL, outR) : 1e-5f));
-        panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_Y1) + 4, 8.0f, IM_COL32(140, 142, 146, 255), b, 0);
+        std::snprintf(b, sizeof(b), "%.1f", meterDbIn_);
+        panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_Y1) + 5, 11.f, IM_COL32(160, 162, 166, 255), b, 0);
+        std::snprintf(b, sizeof(b), "%.1f", meterDbOut_);
+        panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_Y1) + 5, 11.f, IM_COL32(160, 162, 166, 255), b, 0);
     }
 
     void meterPair(ImDrawList* dl, float x0, float x1, float l, float r)
@@ -854,13 +1180,24 @@ private:
     duskdpf::DuskPanel panel;
     duskdpf::RealFFT fft;
     std::vector<float> specDb;
+    duskdpf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
+    // Throttled numeric meter readout (peak-hold over a ~150 ms window).
+    float meterPkIn_ = 0.f, meterPkOut_ = 0.f;
+    float meterDbIn_ = -60.f, meterDbOut_ = -60.f;
+    float meterTimer_ = 0.f;
     float values[kParamCount] = {};
     int currentPreset = -1;
     bool showGraph = true;
+    bool showCredits = false;    // Patreon supporters overlay (title click)
+    bool creditsArmed = false;   // ignore the opening click until mouse released
+    bool presetOpen = false;     // custom preset dropdown expanded
+    bool showFft = true;         // spectrum analyzer overlay on the graph
+    int  graphRangeIdx = 2;      // 0:+-6 1:+-12 2:+-18 3:+-30 4:Warped
     bool needResize = false;
-    float ctlDstTop_ = 220.0f, ctlDstBot_ = 662.0f, ctlScaleY_ = 1.0f;
+    float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f; // stepped filter-knob drag origin (HPF/LPF)
+    bool  stepModReset_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
 };

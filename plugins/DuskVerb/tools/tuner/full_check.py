@@ -280,6 +280,23 @@ GATES = {
     # 0.5% absolute excess over the anchor is well below audibility yet flags
     # any gross nonlinearity. Asymmetric (DV-hot only — quieter THD is fine).
     'sine1k_thd_excess_pct': 0.5,
+    # ── ADVISORY-ONLY detection metrics (2026-07-06, D1/D2 + whoosh) ──
+    # Uncounted rows (printed with [ADVISORY]); promote to counted only after an
+    # ear test confirms each tracks an audible defect.
+    #  D1: extend the shimmer-only odd-THD detector to EVERY preset. Vocal Hall
+    #      once shipped an audible 2% THD bug (AttackRamp AM) with NO gate. The
+    #      odd (h3/h5) signature isolates saturation/clip grit from linear tail
+    #      content; excess over the anchor ≤ +1.0% (reuses sine1k_odd_thd_excess_pct).
+    #  whoosh: the post-hit HF "rush" — the 2-10 kHz snare band envelope runs
+    #      hotter 0-60 ms after onset then RECEDES 60-120 ms on the anchors; DV
+    #      onsets too cleanly (Marc's round-2 ear verdict, §9 P5). Per-window
+    #      |DV−anchor| ≤ 1.5 dB.
+    #  D2: metallic/comb diagnostics that actually worked for DenseHall (osc_p2p
+    #      was the WRONG metric) — dominant autocorr-lag peak height + Abel-Huang
+    #      normalized echo density on the noiseburst tail. |Δ| vs anchor.
+    'whoosh_2_10k_dB':        1.5,   # per-window |Δ| of the 2-10 kHz snare band env
+    'metallic_autocorr_peak': 0.15,  # |Δ| normalized dominant autocorr peak (comb/metal)
+    'echo_density':           0.15,  # |Δ| Abel-Huang normalized echo density (diffusion)
 }
 
 
@@ -1126,6 +1143,84 @@ def adv_bark_masking_traj(p, t0=0.2, t1=1.5, win_ms=50.0):
         traj.append(sone)
     if len(traj) < 2: return None
     return np.array(traj).ravel()
+
+
+# ─── ADVISORY detection metrics (2026-07-06) — whoosh / metallic-comb ───────────
+# All DV-vs-anchor on gain-matched renders; printed [ADVISORY], never counted.
+
+def adv_whoosh_2_10k(p):
+    """Post-hit 'whoosh': the 2-10 kHz band envelope after a snare onset. On the
+    anchors this HF rush runs hotter over 0-60 ms then RECEDES 60-120 ms; the
+    PMB/back-loading tanks onset too cleanly and lack it (Marc's round-2 ear
+    verdict, HANDOFF §9 P5). Returns {(0,20):dB,(20,60):dB,(60,120):dB} of the
+    band RMS in ms-windows after the broadband snare peak, or None. Gain-matched
+    renders make absolute dB directly comparable DV-vs-anchor."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    sos = butter(4, [2000.0, min(10000.0, sr * 0.49)], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, m)
+    pk = int(np.argmax(np.abs(m)))          # onset = broadband snare hit
+    out = {}
+    for (t0, t1) in ((0, 20), (20, 60), (60, 120)):
+        a = pk + int(t0 / 1000.0 * sr); b = min(pk + int(t1 / 1000.0 * sr), len(y))
+        if b - a < 8:
+            return None
+        out[(t0, t1)] = 20.0 * np.log10(float(np.sqrt(np.mean(y[a:b] ** 2))) + 1e-30)
+    return out
+
+
+def adv_autocorr_lag_peak(p, t0=0.3, t1=1.5):
+    """Metallic-comb detector (the diagnostic that actually worked for DenseHall;
+    osc_p2p was the WRONG metric — see memory notes). A comb/metallic ring locks
+    energy at a fixed loop lag → a tall autocorrelation peak; a diffuse tail's
+    autocorr collapses toward 0. Returns (lag_ms, peak_height 0-1) of the dominant
+    autocorr peak in the 1-50 ms lag range on the post-peak tail, or None
+    (floor-guarded)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    a, b = pk + int(t0 * sr), min(pk + int(t1 * sr), len(m))
+    seg = m[a:b]
+    if len(seg) < int(0.2 * sr): return None
+    if 20.0 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-30) < -80.0: return None
+    seg = seg - np.mean(seg)
+    # FFT autocorrelation (O(n log n); np.correlate 'full' is O(n²) and times out
+    # on a multi-second tail).
+    n = len(seg)
+    nfft = 1 << int(np.ceil(np.log2(2 * n)))
+    F = np.fft.rfft(seg, nfft)
+    ac = np.fft.irfft(F * np.conj(F), nfft)[:n]
+    if ac[0] <= 1e-30: return None
+    ac = ac / ac[0]
+    lo = max(int(0.001 * sr), 1)            # ignore <1 ms lags (self/ceiling)
+    hi = min(int(0.05 * sr), len(ac))       # up to 50 ms lags
+    if hi <= lo + 1: return None
+    band = ac[lo:hi]
+    i = int(np.argmax(band))
+    return ((lo + i) / sr * 1000.0, float(band[i]))
+
+
+def adv_echo_density(p, t0=0.0, t1=0.4, win_ms=20.0):
+    """Abel-Huang normalized echo density on the early tail — how quickly the
+    reverb fills toward Gaussian diffusion. Per window: fraction of taps whose
+    |amplitude| exceeds the window std, scaled by 1/erfc(1/√2) so dense/diffuse
+    → 1.0 and a sparse comb/metallic tail stays low. Returns the window-mean, or
+    None (floor-guarded)."""
+    from math import erfc, sqrt
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    a, b = pk + int(t0 * sr), min(pk + int(t1 * sr), len(m))
+    seg = m[a:b]
+    if len(seg) < int(0.1 * sr): return None
+    if 20.0 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-30) < -80.0: return None
+    w = max(int(win_ms / 1000.0 * sr), 64); hop = max(w // 2, 1)
+    norm = 1.0 / erfc(1.0 / sqrt(2.0))      # ≈ 3.152; Gaussian echo density → 1.0
+    eds = []
+    for s in range(0, len(seg) - w, hop):
+        win = seg[s:s + w]
+        sig = float(np.std(win))
+        if sig < 1e-12: continue
+        eds.append(norm * float(np.mean(np.abs(win) > sig)))
+    if not eds: return None
+    return float(np.mean(eds))
 
 
 def check(label, dv_val, lex_val, gate, kind='abs'):
@@ -2121,6 +2216,53 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             ok = l1 <= GATES['bark_masking_l1']
             print(f"  {'bark_masking_l1 (x1e3)':30s}  L1={l1:6.3f}  "
                   f"gate≤{GATES['bark_masking_l1']}  {'✓' if ok else '✗'}  [ADVISORY]")
+
+        # D2 — metallic/comb diagnostics on the noiseburst tail (autocorr-lag
+        # peak + Abel-Huang echo density). The metrics that actually diagnosed
+        # DenseHall's metallic+watery defect; osc_p2p was the wrong one.
+        ac_dv = adv_autocorr_lag_peak(dv); ac_lx = adv_autocorr_lag_peak(lx)
+        if ac_dv is None or ac_lx is None:
+            print(f"  {'metallic autocorr peak':30s}  SKIPPED (tail below floor)")
+        else:
+            dd = abs(ac_dv[1] - ac_lx[1]); ok = dd <= GATES['metallic_autocorr_peak']
+            print(f"  {'metallic autocorr peak':30s}  DV={ac_dv[1]:5.3f}@{ac_dv[0]:5.1f}ms  "
+                  f"REF={ac_lx[1]:5.3f}@{ac_lx[0]:5.1f}ms  |Δ|={dd:5.3f}  "
+                  f"gate≤{GATES['metallic_autocorr_peak']}  {'✓' if ok else '✗'}  [ADVISORY]")
+        ed_dv = adv_echo_density(dv); ed_lx = adv_echo_density(lx)
+        if ed_dv is None or ed_lx is None:
+            print(f"  {'echo density (Abel-Huang)':30s}  SKIPPED (tail below floor)")
+        else:
+            dd = abs(ed_dv - ed_lx); ok = dd <= GATES['echo_density']
+            print(f"  {'echo density (Abel-Huang)':30s}  DV={ed_dv:5.3f}  REF={ed_lx:5.3f}  "
+                  f"|Δ|={dd:5.3f}  gate≤{GATES['echo_density']}  {'✓' if ok else '✗'}  [ADVISORY]")
+
+    # D1 — odd-harmonic THD (h3/h5) extended to EVERY preset as an advisory row.
+    # For shimmer presets a COUNTED version already fires above; this row is the
+    # uncounted fleet-wide detector (a distortion bug that once shipped unseen).
+    _td = find_stim(dv_dir, 'sine1k'); _tl = find_stim(lex_dir, 'sine1k')
+    if _td and _tl:
+        _dv_thd = sine1k_odd_thd_pct(_td); _lx_thd = sine1k_odd_thd_pct(_tl)
+        if _dv_thd is None or _lx_thd is None:
+            print(f"  {'odd-THD (all, %)':30s}  SKIPPED (fundamental below floor)  [ADVISORY]")
+        else:
+            _exc = _dv_thd - _lx_thd; _ok = _exc <= GATES['sine1k_odd_thd_excess_pct']
+            print(f"  {'odd-THD (all, %)':30s}  DV={_dv_thd:6.2f}  REF={_lx_thd:6.2f}  "
+                  f"Δ={_exc:+6.2f}  gate≤+{GATES['sine1k_odd_thd_excess_pct']}  "
+                  f"{'✓' if _ok else '✗'}  [ADVISORY]")
+
+    # whoosh — post-hit 2-10 kHz snare band envelope, per ms-window vs anchor.
+    # Sanity target: Vocal Hall DV should read COLD vs its anchor in 0-60 ms.
+    _wd = find_stim(dv_dir, 'snare'); _wl = find_stim(lex_dir, 'snare')
+    if _wd and _wl:
+        _wdv = adv_whoosh_2_10k(_wd); _wlx = adv_whoosh_2_10k(_wl)
+        if _wdv is None or _wlx is None:
+            print(f"  {'whoosh 2-10k (snare)':30s}  SKIPPED (window too short)  [ADVISORY]")
+        else:
+            for (t0, t1) in ((0, 20), (20, 60), (60, 120)):
+                _d = _wdv[(t0, t1)] - _wlx[(t0, t1)]; _ok = abs(_d) <= GATES['whoosh_2_10k_dB']
+                print(f"  {f'whoosh 2-10k {t0}-{t1}ms':30s}  DV={_wdv[(t0,t1)]:+7.2f}  "
+                      f"REF={_wlx[(t0,t1)]:+7.2f}  Δ={_d:+6.2f}  gate=±{GATES['whoosh_2_10k_dB']}  "
+                      f"{'✓' if _ok else '✗'}  [ADVISORY]")
 
     # ─── Summary ───
     print()

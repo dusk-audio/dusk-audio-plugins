@@ -143,6 +143,7 @@ public:
     void setShimmerOctaveCascade  (const float gains[4]); // Shimmer dry-fed even down-cascade (500/250/125/62); all 0 = bit-null
     void setShimmerTailNoise      (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // Shimmer envelope-tracked 'ocean' tail noise (band-shapeable); 0 = bit-null
     void setShimmerHFSustainDb    (float db, float cornerHz = 4000.0f);   // Shimmer feedback-loop HF compensation shelf (lift above cornerHz per pass, extends HF T60); 0 dB = bit-null
+    void setShimmerOutputHeadroom (float h);    // Shimmer output-tanh headroom (kills the long-decay sustained-tone odd-THD grit); 1.0 = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);
@@ -355,6 +356,10 @@ public:
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
     // Diffused discrete early reflections (DenseHall clarity/un-masking comb).
     void setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain);
+    // Highpass on the diffuse-ER bus (24 dB/oct LR4), ParallelMultiband
+    // composite only: keeps the post-hit HF "whoosh" without adding
+    // steady-state energy at/below 1 kHz (sine1k budget). 0 = off/bit-null.
+    void setDiffuseERHighpass (float hz);
 
     // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
     // enable=false → bypassed (bit-null on every other preset). amount maps to
@@ -608,6 +613,9 @@ private:
     // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
     float sparseERGain_ = 1.0f;
     float diffuseERGain_ = 1.0f;   // DiffusedEarlyReflections bus level (DenseHall)
+    float diffuseERHpHz_ = 0.0f;   // PMB diffuse-bus HP (0 = off/bit-null)
+    float dfHpB_[3] = {}, dfHpA_[2] = {};   // shared LR4 stage coeffs (Q=0.7071 ×2)
+    float dfHpZ_[2][2][2] = {};             // [ch][stage][z1,z2]
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated
