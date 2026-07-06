@@ -110,11 +110,14 @@ void ReverseRoomEngine::rebuildTaps()
 
         for (int k = 0; k < n; ++k)
         {
-            // Roughly even spacing across the ramp with +-half-slot jitter
-            // -> ~4-5 ms average spacing, semi-dense (matches density 0.47).
-            const float frac = (static_cast<float> (k) + 0.5f) / static_cast<float> (n);
-            const float jit  = (rnd() - 0.5f) / static_cast<float> (n);
-            const float pf   = std::clamp (frac + jit, 0.0f, 1.0f);
+            // FULLY RANDOM tap positions (2026-07-04). The previous
+            // roughly-even spacing (+-half-slot jitter) left the tap train
+            // periodic: ramp/nTaps ~ 2.8-4.2 ms -> a comb resonance the boing
+            // gate read as a massive ringing mode (213 Hz at ramp 470,
+            // 289 Hz at ramp 310, up to +27 dB over the anchor). Uniform
+            // random draws have no period -> no comb; density is preserved
+            // (same tap count over the same ramp).
+            const float pf = std::clamp (rnd(), 0.0f, 1.0f);
             int p = minTap + static_cast<int> (pf * static_cast<float> (rampSamp - minTap));
             p = std::clamp (p, 1, e.mask);
             e.pos[k] = p;

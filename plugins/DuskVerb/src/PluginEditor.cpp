@@ -409,24 +409,24 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     preDelay_ .init (*this, p.parameters, "predelay",  "PRE-DELAY",   " ms",
         "Delay before reverb starts. Creates space between dry signal and reverb tail");
     decay_    .init (*this, p.parameters, "decay",
-        "Reverb tail length (RT60). Hero control — drag vertically.");
+        "Reverb tail length (RT60). Hero control - drag vertically.");
     size_     .init (*this, p.parameters, "size",      "SIZE",        "%",
-        "Virtual room size — affects echo density and spacing");
+        "Virtual room size - affects echo density and spacing");
     modDepth_ .init (*this, p.parameters, "mod_depth", "DEPTH",       "%",
         "Chorus-like modulation depth. Reduces metallic ringing");
     modRate_  .init (*this, p.parameters, "mod_rate",  "RATE",        " Hz",
         "Speed of internal pitch modulation");
     damping_  .init (*this, p.parameters, "damping",   "TREBLE MULT", "x",
-        "High-frequency decay multiplier. <1× = natural air absorption");
+        "High-frequency decay multiplier. <1x = natural air absorption");
     bassMult_ .init (*this, p.parameters, "bass_mult", "BASS MULT",   "x",
-        "Low-frequency decay multiplier. >1× = bass rings longer than mids");
+        "Low-frequency decay multiplier. >1x = bass rings longer than mids");
     midMult_  .init (*this, p.parameters, "mid_mult",  "MID MULT",    "x",
         "Mid-band decay multiplier (between low and high crossovers). "
-        "1.0× = natural rate. >1× = mids ring longer; <1× = mids decay faster.");
+        "1.0x = natural rate. >1x = mids ring longer; <1x = mids decay faster.");
     crossover_.init (*this, p.parameters, "crossover", "LOW XOVER",   " Hz",
-        "Bass↔mid split frequency. Below this, bass multiplier applies.");
+        "Bass/mid split frequency. Below this, bass multiplier applies.");
     highCrossover_.init (*this, p.parameters, "high_crossover", "HIGH XOVER", " Hz",
-        "Mid↔treble split frequency. Above this, treble multiplier applies.");
+        "Mid/treble split frequency. Above this, treble multiplier applies.");
     saturation_.init (*this, p.parameters, "saturation", "SATURATION", "%",
         "In-loop tanh drive. 0% = clean (transparent reverb). "
         "100% = warm analog-style saturation on every loop pass.");
@@ -644,7 +644,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     freezeButton_.setButtonText ("FREEZE");
     freezeButton_.setName ("freeze");
     freezeButton_.setClickingTogglesState (true);
-    freezeButton_.setTooltip ("Freeze the reverb tail — input is muted and the existing tail "
+    freezeButton_.setTooltip ("Freeze the reverb tail - input is muted and the existing tail "
                               "loops indefinitely. Useful for ambient pads and risers.");
     addAndMakeVisible (freezeButton_);
     freezeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
@@ -667,7 +667,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     busModeButton_.setButtonText ("BUS");
     busModeButton_.setName ("bus_mode");
     busModeButton_.setClickingTogglesState (true);
-    busModeButton_.setTooltip ("Bus mode — outputs 100% wet signal regardless of DRY/WET. "
+    busModeButton_.setTooltip ("Bus mode - outputs 100% wet signal regardless of DRY/WET. "
                                "Use on a send/return aux with the DRY/WET knob disabled.");
     addAndMakeVisible (busModeButton_);
     busModeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
@@ -1426,7 +1426,7 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
                                               : "DIFFUSION",
                                   juce::dontSendNotification);
     diffusion_.slider.setTooltip (isNonLinear ? "Hold: how long the gate stays fully open after the dry input drops below threshold (0 - 500 ms). 100-200 ms is classic gated-snare territory."
-                                 : isSpring   ? "Chirp: dispersion-AP coefficient — 0 = plain delay, 1 = full Fender 'boing' on transients"
+                                 : isSpring   ? "Chirp: dispersion-AP coefficient - 0 = plain delay, 1 = full Fender 'boing' on transients"
                                               : "Diffusion: smear amount before the late tank");
 
     // mid_mult hijacked by NonLinear → THRESHOLD (the gate's sidechain

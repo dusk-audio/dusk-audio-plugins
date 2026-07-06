@@ -50,6 +50,11 @@ enum class EngineType : int
                             // smooth tail (flatness ~0.16 vs the 16-line FDN's sparse 0.044). The
                             // late field the AccurateHall FDN structurally cannot reach. Welded to
                             // a sparse discrete-ER front for the early field. DuskVerb's own code.
+    ParallelMultiband = 15, // 6 complementary bands, EACH with its own 4-line mini-FDN and
+                            // independent {T60, level, direct, width} — the decoupling engine:
+                            // level==decay==EDT coupling (the fleet's load-bearing wall) does not
+                            // exist here by construction. Low bands unmodulated (kills the
+                            // sub-skirt mod-sideband smear). Pilot: Vocal Hall.
 };
 
 // Per-engine descriptor surfaced in the algorithm dropdown.
@@ -70,7 +75,7 @@ struct AlgorithmConfig
     bool        visible;
 };
 
-inline int getNumAlgorithms() { return 15; }
+inline int getNumAlgorithms() { return 16; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -96,8 +101,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Concert Hall",  EngineType::AccurateHall32,  false }, // hidden 2026-06-13: Bright Hall migrated to DenseHall; 32-line FDN superseded, no preset uses it
         { "Tiled Room",    EngineType::TiledRoom,       true  },
         { "Dense Hall",    EngineType::DenseHall,       true  },
+        { "Parallel Hall", EngineType::ParallelMultiband, true  }, // 2026-07-06: visible — Vocal Hall migrated onto it (per-band decoupled tank)
     };
-    if (index < 0 || index >= 15)
+    if (index < 0 || index >= 16)
         index = 0;
     return kEngines[index];
 }

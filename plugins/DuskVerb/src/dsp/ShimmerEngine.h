@@ -80,9 +80,11 @@ public:
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
     void setUseDenseReverb    (bool on);     // route the tank through DenseHallReverb (dense diffusion → smooth, non-metallic HF tail) instead of the sparse 16-line FDN. false = legacy FDN (bit-identical).
     void setUseTailSpin       (bool on);     // 2-stage modulated-allpass spin-comb on the FDN wet output — smears the metallic HF while keeping the FDN's cascade/width/HF (for Deep Blue Day). false = untouched.
-    void setTailNoise         (float gain);  // envelope-tracked band-limited noise floor on the output — the dense noise-like fade Valhalla has; masks the sparse-mode ring. 0 = off/bit-null.
+    void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the 'ocean' fade Valhalla has; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
     void setUpVoiceScale      (float v1, float v2);  // per-preset scale on the +12/+24 up-voices — fills the mid tail (250 Hz-1 kHz) harder on transients (Deep Blue Day). 1.0/1.0 = bit-identical.
     void setOctaveCascade     (const float gains[4]);  // dry-fed feed-forward octave cascade levels (500/250/125/62 Hz) — matches Valhalla's even down-cascade. all 0 = off/bit-null.
+    void setHFSustainDb       (float db, float cornerHz = 4000.0f);   // feedback-loop HF compensation shelf (dB lift above cornerHz, applied post-band-pass, pre-fb-gain). The FDN tank is HF-lossy per pass — that loss, not the loop LPF, caps HF T60 (T60-16k wall). Re-entering the loop with the HF band lifted extends the HF ring; bounded by kFeedbackLoopAttn + the loop softClip. First-order (6 dB/oct) — corner placement is the mid-isolation lever. 0 dB = off/bit-null.
+    void setOutputHeadroom    (float h);   // OUTPUT-stage tanh headroom. The wet output is tanh(oL*kWetOutputGain); on very-long-decay presets (Deep Blue Day, Decay 20 s) the sustained-tone buildup drives that tanh into its nonlinear region → ODD-harmonic (3k/5k) grit on a 1 kHz tone (~5% vs anchor 0.01%). h scales the knee: out = h*tanh(x/h) so the curve stays linear up to ±h (h>1 = more headroom, less distortion; the RAW wet feeding the loop is untouched, so cascade dynamics are identical). h=1.0 → EXACTLY tanh(x) = bit-null (Black Hole + every non-DBD preset).
     void setFreeze            (bool frozen);
 
 private:
@@ -308,6 +310,16 @@ private:
     };
     OnePole fbHpfL_, fbHpfR_, fbLpfL_, fbLpfR_;
 
+    // HF-sustain compensation shelf (setHFSustainDb): first-order high-shelf
+    // built from a OnePole HP — y = x + gain * HP(x), corner kHFSustainHz.
+    // Runs INSIDE the recursive feedback path (post-band-pass, pre-fb-gain),
+    // so a few dB here compounds every ~50 ms pass and directly extends the
+    // HF T60 the HF-lossy tank truncates. hfSustainGain_ <= 0 skips the
+    // branch (same runtime bit-null pattern as downMix_/subMix_ above).
+    OnePole hfShelfL_, hfShelfR_;
+    float hfSustainHz_   = 4000.0f;   // shelf corner (setHFSustainDb); re-applied in prepare()
+    float hfSustainGain_ = 0.0f;   // linear extra gain for the HP band (10^(dB/20) - 1); 0 = off
+
     // Stereo modulation (chorus/ensemble) on the WET output — a slow LFO sweeps
     // per-channel modulated delays in ANTI-PHASE, so the L/R combs move oppositely:
     // on a steady tone the image swings side-to-side (Valhalla Shimmer Black Hole
@@ -414,13 +426,28 @@ private:
         float gain_ = 0.0f; bool active_ = false;
         void prepare (double sr) {
             const float s = static_cast<float> (sr);
-            atk = std::exp (-1.0f / (0.005f * s));    // ~5 ms attack
+            // 2026-07-04 attack 5 ms -> 500 ms: the ocean wash is a TAIL
+            // phenomenon — a fast attack put noise inside the snare's first
+            // 50/500 ms windows and shifted the centroid gates. A slow bloom
+            // keeps the onset clean; release still tracks the fade down.
+            atk = std::exp (-1.0f / (0.500f * s));
             rel = std::exp (-1.0f / (0.100f * s));    // ~100 ms release (tracks the decay smoothly)
-            hpL.setHPCutoff (250.0f, s); hpR.setHPCutoff (250.0f, s);
-            lpL.setLPCutoff (7000.0f, s); lpR.setLPCutoff (7000.0f, s);
+            srStore = s;
+            hpL.setHPCutoff (hpHz_, s); hpR.setHPCutoff (hpHz_, s);
+            lpL.setLPCutoff (lpHz_, s); lpR.setLPCutoff (lpHz_, s);
         }
         void clear() { rngL = kSeedL; rngR = kSeedR; envL = envR = 0.0f; hpL.clear(); hpR.clear(); lpL.clear(); lpR.clear(); }
         void setGain (float g) { gain_ = std::max (0.0f, g); active_ = gain_ > 1.0e-6f; }
+        // Shape the noise color (2026-07-04 EAR "ocean tail": the fixed 250-7k
+        // band read too bright — cent/ss-air broke; the ocean wash wants a
+        // darker slope). Re-applies the band corners at the stored sample rate.
+        float srStore = 48000.0f, hpHz_ = 250.0f, lpHz_ = 7000.0f;
+        void setBand (float hpHz, float lpHz) {
+            hpHz_ = std::clamp (hpHz, 20.0f, 2000.0f);
+            lpHz_ = std::clamp (lpHz, 500.0f, 16000.0f);
+            hpL.setHPCutoff (hpHz_, srStore); hpR.setHPCutoff (hpHz_, srStore);
+            lpL.setLPCutoff (lpHz_, srStore); lpR.setLPCutoff (lpHz_, srStore);
+        }
         bool active() const { return active_; }
         inline float noise (std::uint32_t& s) {
             s ^= s << 13; s ^= s >> 17; s ^= s << 5;
@@ -503,6 +530,7 @@ private:
     float pitchSemitones_   = 12.0f;   // setModDepth: 0..24
     float feedbackGain_     = 0.65f;   // setModRate:  0..0.95
     float saturationAmount_ = 0.0f;    // setSaturation: 0..1
+    float outputHeadroom_   = 1.0f;    // setOutputHeadroom: output-tanh knee scale; 1.0 = bit-null (plain tanh)
 
     // Stability: hard cap on feedback gain so the cascade can't run away
     // even at extreme reverb decays. The reverb's natural attenuation +

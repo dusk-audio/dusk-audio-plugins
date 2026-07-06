@@ -19,6 +19,7 @@
 #include "OutputDiffusion.h"
 #include "DenseHallReverb.h"
 #include "BuildupDiffuser.h"
+#include "ParallelMultibandTank.h"
 
 #include <algorithm>
 #include <cmath>
@@ -140,7 +141,9 @@ public:
     void setShimmerUseTailSpin    (bool on);    // Shimmer FDN output spin-comb (smears metallic, keeps FDN cascade/width/HF); false = untouched
     void setShimmerUpVoiceScale   (float v1, float v2);  // Shimmer +12/+24 up-voice scale (mid-tail fill); 1.0/1.0 = bit-identical
     void setShimmerOctaveCascade  (const float gains[4]); // Shimmer dry-fed even down-cascade (500/250/125/62); all 0 = bit-null
-    void setShimmerTailNoise      (float gain);  // Shimmer envelope-tracked tail noise floor (dense noise-like fade); 0 = bit-null
+    void setShimmerTailNoise      (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // Shimmer envelope-tracked 'ocean' tail noise (band-shapeable); 0 = bit-null
+    void setShimmerHFSustainDb    (float db, float cornerHz = 4000.0f);   // Shimmer feedback-loop HF compensation shelf (lift above cornerHz per pass, extends HF T60); 0 dB = bit-null
+    void setShimmerOutputHeadroom (float h);    // Shimmer output-tanh headroom (kills the long-decay sustained-tone odd-THD grit); 1.0 = bit-null
     void setTailSpinDepth (float depth);   // post-loop output AM; FDN/ReverseRoom only
     void setTailSpinRate  (float hz);
     void setDiffusion     (float amount);
@@ -216,6 +219,7 @@ public:
     // rooms. 0.02 (engine default) = bit-identical; forwarded to the Dattorro
     // tank only.
     void setDattorroDensityJitter (float fraction);
+    void setDattorroModeNotch (float hz, float cutDb, float q);   // in-loop mode notch (boing); cutDb 0 = off/bit-null
     // Plate density rework (algo 0 + algo 1). depth 0 / reduction 1.0 = legacy.
     void setDattorroDensity (float depth01);          // 0 legacy 3 APs -> >0 dense 6 APs
     void setDattorroModReduction (float reduction01); // 1.0 legacy mod -> <1.0 stiller tail
@@ -316,10 +320,13 @@ public:
     // presets (cent dark + T60-16k dies). band 0..8 = 63 Hz..16 kHz; seconds<=0
     // → that octave inherits the broadband Decay. No-op on every other engine.
     void setDenseHallOctaveT60 (int band, float seconds);
+    void setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz);   // drive-following sub charge limiter (piano-gate defect); maxCut 0 = bit-null
+    void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
     void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
+    void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at anchor-measured times; count 0 = off/bit-null
 
     // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
     // energy so decay and tone are decoupled. Default off = bit-null.
@@ -349,6 +356,10 @@ public:
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
     // Diffused discrete early reflections (DenseHall clarity/un-masking comb).
     void setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain);
+    // Highpass on the diffuse-ER bus (24 dB/oct LR4), ParallelMultiband
+    // composite only: keeps the post-hit HF "whoosh" without adding
+    // steady-state energy at/below 1 kHz (sine1k budget). 0 = off/bit-null.
+    void setDiffuseERHighpass (float hz);
 
     // Per-preset post-tank output diffusion (Bright Hall metallic-ring fix).
     // enable=false → bypassed (bit-null on every other preset). amount maps to
@@ -489,6 +500,7 @@ private:
     // + accurateHall_ 16-line tail (shared with SparseField). No dedicated member
     // — the standalone 4-line TiledRoomEngine was a kill-test (flutter+spectral),
     // superseded by this composite. setTiledRoomVoicing() configures sparseField_.
+    ParallelMultibandTank pmb_;          // algo 15 (2026-07-04): per-band decoupled tank (pilot)
     DenseHallReverb    denseHall_;       // algo 14 (2026-06-13): diffused-FDN dense hall — the
                                          // smooth dense late field the 16-line FDN can't reach.
                                          // COMPOSITE: sparseField_ ER + denseHall_ tail in the switch.
@@ -577,6 +589,22 @@ private:
     bool  reflActive_ = false;
     float reflLpCoeff_ = 0.0f, reflLpStateL_ = 0.0f, reflLpStateR_ = 0.0f;  // reflection HF rolloff
 
+    // Early-tap BANK (setEarlyTapBank) — up to 8 discrete reflections at the
+    // ANCHOR's measured arrival times. Generalizes the single Fork-A tap: the
+    // early-refl-count gate wants 2-10 discrete arrivals; one tap can't match a
+    // pattern. Shares reflBuf_/reflDryMono_ (clean pre-diffuser dry). Per-tap
+    // alternating ±4 ms R offset decorrelates arrivals (width without a mono
+    // slap-train). etapCount_ 0 → skipped → bit-identical fleet.
+    static constexpr int kMaxEarlyTaps = 8;
+    int   etapDelayL_[kMaxEarlyTaps] = {};
+    int   etapDelayR_[kMaxEarlyTaps] = {};
+    float etapGain_[kMaxEarlyTaps] = {};
+    float etapMs_[kMaxEarlyTaps] = {};         // requested times, re-realized on prepare()
+    int   etapCount_ = 0;
+    bool  etapActive_ = false;
+    float etapLpCoeff_ = 1.0f, etapLpStateL_ = 0.0f, etapLpStateR_ = 0.0f;
+    float etapLpFcHz_ = 9000.0f;
+
     // algo 11 SparseField: level of the reduced accurateHall_ tail under the
     // sparse early field (1.0 = full tail). Per-preset via kSparseFieldByName.
     float sparseTailGain_ = 0.45f;
@@ -585,6 +613,9 @@ private:
     // ER so it doesn't overshoot. Default 1.0 = Tiled Room behaviour (bit-exact).
     float sparseERGain_ = 1.0f;
     float diffuseERGain_ = 1.0f;   // DiffusedEarlyReflections bus level (DenseHall)
+    float diffuseERHpHz_ = 0.0f;   // PMB diffuse-bus HP (0 = off/bit-null)
+    float dfHpB_[3] = {}, dfHpA_[2] = {};   // shared LR4 stage coeffs (Q=0.7071 ×2)
+    float dfHpZ_[2][2][2] = {};             // [ch][stage][z1,z2]
 
     // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     // mixSmoother lives on the processor (so the dry signal stays correlated

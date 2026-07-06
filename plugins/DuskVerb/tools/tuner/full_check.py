@@ -139,6 +139,41 @@ GATES = {
     # ONE-DIRECTIONAL — DV ringing MORE than the anchor is the defect; smoother
     # is fine. Drum DV 19.5 dB @359 Hz vs VVV 14 dB @1076 Hz → +5.5 over.
     'tail_resonance_dB':    3.0,
+    # Top-3 modal prominence mean — anti-mode-hop companion to the single-peak
+    # boing gate (notching the worst mode moves the argmax to the next one while
+    # the comb still rings; averaging the top 3 sees the pattern). Same 3 dB JND.
+    'tail_resonance_top3_dB': 3.0,
+    # PRE-ECHO / double-tap (2026-07-04): energy ahead of the main arrival on the
+    # snare (grain-window leak, predelay double-tap — the VVP defect the ear
+    # caught with no gate to catch it). DV pre-onset RMS (dB rel peak) may exceed
+    # the anchor's by at most this. A real pre-echo reads +15..30 dB over.
+    'pre_onset_excess_dB':  6.0,
+    # FIRST-ARRIVAL time (2026-07-04): |Δ| of the impulse wet's first
+    # -30 dB-rel-peak crossing vs the anchor. Every other temporal metric
+    # peak-ALIGNS, so a pure predelay mismatch is invisible to the suite —
+    # Live Room shipped 25 ms late for weeks (anchor has ZERO predelay)
+    # and only the ear caught it. 5 ms ~ the audibility threshold for
+    # arrival-gap changes on transients.
+    'first_arrival_ms':     5.0,
+    # PER-BAND TAIL GROWTH (2026-07-04, all presets): a healthy band decays;
+    # feedback past unity GROWS (Deep Blue Day rungs +25 dB — and the T60 fit
+    # read the pathology as a favorable long decay). Worst sliding-window
+    # growth on the noiseburst tail must stay under this.
+    'band_tail_growth_dB':  1.5,
+    # ODD-harmonic THD excess (SHIMMER only, 2026-07-04): the standard THD gate
+    # is skipped for shimmer (octave voices = even multiples by design), but
+    # 3rd/5th harmonics are genuine distortion (sat/clip grit). DV% - anchor%.
+    'sine1k_odd_thd_excess_pct': 1.0,
+    # ── PIANO STEM gates (2026-07-04, real musical material) ── The user's own
+    # audition material rendered through BOTH DV and the anchor plugins
+    # (Shimmer program replay / VVV nparam replay validated corr 1.0000 /
+    # Lex fxp state replay). Catches what synthetic stimuli miss on the
+    # content the user actually listens with. Skip when either side lacks
+    # a *_piano.wav.
+    'piano_rms_dB':          2.0,   # broadband level on the stem (post gain-match)
+    'piano_band_dB':         3.0,   # worst of 6 bands over the playing window (JND)
+    'piano_tail_dB':         3.0,   # worst of 4 bands in the post-stem decay window
+    'piano_growth_dB':       1.5,   # DV-only: worst band growth across the stem (buildup on real material)
     # Impulse-response RMS match — the TRANSIENT/hit loudness. The existing RMS
     # gates use sustained-pink/noiseburst (steady-state), which can match while
     # the impulse (a drum hit) is +2.7 dB hot. Catches "DV louder on the hit".
@@ -245,6 +280,23 @@ GATES = {
     # 0.5% absolute excess over the anchor is well below audibility yet flags
     # any gross nonlinearity. Asymmetric (DV-hot only — quieter THD is fine).
     'sine1k_thd_excess_pct': 0.5,
+    # ── ADVISORY-ONLY detection metrics (2026-07-06, D1/D2 + whoosh) ──
+    # Uncounted rows (printed with [ADVISORY]); promote to counted only after an
+    # ear test confirms each tracks an audible defect.
+    #  D1: extend the shimmer-only odd-THD detector to EVERY preset. Vocal Hall
+    #      once shipped an audible 2% THD bug (AttackRamp AM) with NO gate. The
+    #      odd (h3/h5) signature isolates saturation/clip grit from linear tail
+    #      content; excess over the anchor ≤ +1.0% (reuses sine1k_odd_thd_excess_pct).
+    #  whoosh: the post-hit HF "rush" — the 2-10 kHz snare band envelope runs
+    #      hotter 0-60 ms after onset then RECEDES 60-120 ms on the anchors; DV
+    #      onsets too cleanly (Marc's round-2 ear verdict, §9 P5). Per-window
+    #      |DV−anchor| ≤ 1.5 dB.
+    #  D2: metallic/comb diagnostics that actually worked for DenseHall (osc_p2p
+    #      was the WRONG metric) — dominant autocorr-lag peak height + Abel-Huang
+    #      normalized echo density on the noiseburst tail. |Δ| vs anchor.
+    'whoosh_2_10k_dB':        1.5,   # per-window |Δ| of the 2-10 kHz snare band env
+    'metallic_autocorr_peak': 0.15,  # |Δ| normalized dominant autocorr peak (comb/metal)
+    'echo_density':           0.15,  # |Δ| Abel-Huang normalized echo density (diffusion)
 }
 
 
@@ -838,6 +890,14 @@ def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
     tail = m[t0:t0 + int(tail_s * sr)]
     if len(tail) < 2048:
         return 0.0, 0.0
+    # Floor guard (2026-07-04): on a GATED preset (Reverse Taps) the envelope
+    # argmax is the swell peak, so this window lands AFTER the gate closes —
+    # an FFT of near-silence has median ~0 and the prominence explodes to
+    # +50 dB of pure noise-floor structure. No audible tail = no boing.
+    tail_rms = float(np.sqrt(np.mean(tail ** 2)))
+    pk_amp = float(env[pk]) + 1e-30
+    if 20.0 * np.log10(tail_rms / pk_amp + 1e-12) < -70.0:
+        return 0.0, 0.0
     T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
     f = np.fft.rfftfreq(len(tail), 1.0 / sr)
     band = (f >= lo) & (f < hi)
@@ -846,6 +906,135 @@ def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
         return 0.0, 0.0
     prom = 20.0 * np.log10(np.max(Tb) / (np.median(Tb) + 1e-30) + 1e-30)
     return float(prom), float(f[band][int(np.argmax(Tb))])
+
+
+def tail_resonance_top3(p, lo=200.0, hi=2000.0, tail_s=1.0):
+    """Mean prominence (dB) of the TOP-3 spectral peaks in [lo,hi] of the late
+    tail. The single-peak boing gate is gameable by mode-hopping: notch the
+    dominant mode and the detector reports the next one at lower prominence
+    while the tail still rings a comb of modes (measured 2026-07-03: Live Room
+    228 Hz in-loop notch moved the peak 211->247->317 with the ring audibly
+    tamed but present). Averaging the top-3 catches the PATTERN. Peaks are
+    picked greedily with a 1/6-octave exclusion around each accepted peak."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env)); t0 = pk + int(0.2 * sr)
+    tail = m[t0:t0 + int(tail_s * sr)]
+    if len(tail) < 2048:
+        return 0.0
+    tail_rms = float(np.sqrt(np.mean(tail ** 2)))
+    pk_amp = float(env[pk]) + 1e-30
+    if 20.0 * np.log10(tail_rms / pk_amp + 1e-12) < -70.0:
+        return 0.0   # gated silence — see tail_resonance_prominence floor guard
+    T = np.abs(np.fft.rfft(tail * np.hanning(len(tail))))
+    f = np.fft.rfftfreq(len(tail), 1.0 / sr)
+    band = (f >= lo) & (f < hi)
+    Tb = T[band].copy(); fb = f[band]
+    if Tb.size == 0 or np.max(Tb) <= 0:
+        return 0.0
+    med = np.median(Tb) + 1e-30
+    proms = []
+    for _ in range(3):
+        i = int(np.argmax(Tb))
+        if Tb[i] <= 0: break
+        proms.append(20.0 * np.log10(Tb[i] / med + 1e-30))
+        f0 = fb[i]
+        Tb[(fb >= f0 / 1.122) & (fb <= f0 * 1.122)] = 0.0   # 1/6-oct exclusion
+    return float(np.mean(proms)) if proms else 0.0
+
+
+def pre_onset_energy(p, pre_win_s=0.060, guard_s=0.004):
+    """Pre-echo / double-tap detector (the VVP defect the ear caught but no gate
+    measured): RMS in the [onset-60ms, onset-4ms] window, dB relative to the
+    response peak. A clean render has only silence/noise-floor there; a
+    pre-echo (grain window leak, predelay double-tap) puts real energy ahead
+    of the main arrival. Compared DV-excess vs the anchor (the anchor's own
+    stimulus bleed cancels out). Returns dB-rel-peak (very negative = clean)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m))
+    w = max(int(0.002 * sr), 1)
+    sm = np.convolve(env, np.ones(w) / w, mode='same')
+    pk = int(np.argmax(sm))
+    # Onset = FIRST significant arrival (-25 dB rel max crossing), NOT the
+    # global max: a reverb whose wet bloom out-peaks the dry hit would
+    # otherwise put the dry arrival inside the "pre-onset" window and read
+    # it as pre-echo (measured on Tiled Room: DV peak 34 ms vs anchor 15).
+    thresh = sm[pk] * 10.0 ** (-25.0 / 20.0)
+    above = np.where(sm[:pk + 1] >= thresh)[0]
+    onset = int(above[0]) if len(above) else pk
+    i1 = max(onset - int(guard_s * sr), 1)
+    i0 = max(i1 - int(pre_win_s * sr), 0)
+    if i1 - i0 < 16:
+        return -120.0
+    # A slow ATTACK RAMP also puts energy here (79VC swells over ~95 ms) — a
+    # ramp rises monotonically INTO the onset and is not a pre-echo. A real
+    # pre-echo is a DISCRETE blip: a local max followed by a dip (>=6 dB)
+    # before the onset ramp begins. Gate on the blip's level, not window RMS.
+    seg = sm[i0:i1]
+    j = int(np.argmax(seg))
+    dip = float(seg[j:].min()) if j < len(seg) - 1 else float(seg[-1])
+    blip = float(seg[j])
+    peak = float(sm[pk]) + 1e-30
+    if blip <= 0 or 20.0 * np.log10(blip / (dip + 1e-30) + 1e-12) < 6.0:
+        return -120.0   # monotone ramp (or flat noise) — no discrete pre-event
+    return 20.0 * np.log10(blip / peak + 1e-12)
+
+
+def band_tail_monotonicity(p, floor_db=-70.0):
+    """Worst per-octave tail GROWTH (dB) on the noiseburst — a healthy reverb
+    band decays monotonically (small ripple aside); a feedback path past unity
+    gain GROWS (the Deep Blue Day never-fades defect: rungs rose +25 dB while
+    the per-band T60 fit read the pathology as a favorable long decay).
+    Sliding 1 s windows from 0.3 s post-peak while above floor_db rel peak;
+    growth = later-window RMS minus earlier-window RMS, maximized over bands
+    and window pairs. Returns (worst_growth_dB, worst_band_hz)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env))
+    worst, worst_f = -120.0, 0
+    for f0 in (63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0):
+        lo, hi = f0 / 1.4, min(f0 * 1.4, 0.47 * sr)
+        sos = butter(4, [lo / (sr / 2), hi / (sr / 2)], btype='band', output='sos')
+        b = sosfiltfilt(sos, m)
+        pk_db = 20.0 * np.log10(np.abs(b).max() + 1e-12)
+        t = pk + int(0.3 * sr)
+        rms_seq = []
+        while t + sr <= len(b):
+            seg = b[t:t + sr]
+            r = 20.0 * np.log10(float(np.sqrt(np.mean(seg ** 2))) + 1e-12)
+            rms_seq.append(r)
+            t += sr // 2
+        # growth = any later window above any earlier one, both above floor
+        for i in range(len(rms_seq)):
+            if rms_seq[i] - pk_db < floor_db: continue
+            for j in range(i + 1, len(rms_seq)):
+                g = rms_seq[j] - rms_seq[i]
+                if g > worst and rms_seq[j] - pk_db > floor_db:
+                    worst, worst_f = g, int(f0)
+    return worst, worst_f
+
+
+def sine1k_odd_thd_pct(p):
+    """ODD-harmonic THD (h3, h5 vs fundamental, %) on the sine1k steady tail.
+    For SHIMMER presets the standard THD gate is skipped by design (the octave
+    voices land on EVEN multiples: 2 k, 4 k, 500, 250 = musical content). But
+    3rd/5th harmonics are NOT octave products — energy at 3 k / 5 k from a 1 k
+    tone is genuine nonlinear distortion (saturation drive, clip grit): the
+    Deep Blue Day sat 0.232 makes a 3 kHz product at -17 dB rel fundamental
+    where the Valhalla anchor sits at -80. Returns % or None."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    n = len(m)
+    if n < sr:
+        return None
+    seg = m[n // 4: 3 * n // 4]
+    X = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1.0 / sr)
+    def bmax(f0):
+        i = (f > f0 - 40) & (f < f0 + 40)
+        return float(X[i].max()) if i.any() else 0.0
+    fund = bmax(1000.0)
+    if fund < 1e-9:
+        return None
+    odd = np.sqrt(bmax(3000.0) ** 2 + bmax(5000.0) ** 2)
+    return 100.0 * odd / fund
 
 
 def impulse_rms_db(p):
@@ -956,6 +1145,84 @@ def adv_bark_masking_traj(p, t0=0.2, t1=1.5, win_ms=50.0):
     return np.array(traj).ravel()
 
 
+# ─── ADVISORY detection metrics (2026-07-06) — whoosh / metallic-comb ───────────
+# All DV-vs-anchor on gain-matched renders; printed [ADVISORY], never counted.
+
+def adv_whoosh_2_10k(p):
+    """Post-hit 'whoosh': the 2-10 kHz band envelope after a snare onset. On the
+    anchors this HF rush runs hotter over 0-60 ms then RECEDES 60-120 ms; the
+    PMB/back-loading tanks onset too cleanly and lack it (Marc's round-2 ear
+    verdict, HANDOFF §9 P5). Returns {(0,20):dB,(20,60):dB,(60,120):dB} of the
+    band RMS in ms-windows after the broadband snare peak, or None. Gain-matched
+    renders make absolute dB directly comparable DV-vs-anchor."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    sos = butter(4, [2000.0, min(10000.0, sr * 0.49)], 'band', fs=sr, output='sos')
+    y = sosfiltfilt(sos, m)
+    pk = int(np.argmax(np.abs(m)))          # onset = broadband snare hit
+    out = {}
+    for (t0, t1) in ((0, 20), (20, 60), (60, 120)):
+        a = pk + int(t0 / 1000.0 * sr); b = min(pk + int(t1 / 1000.0 * sr), len(y))
+        if b - a < 8:
+            return None
+        out[(t0, t1)] = 20.0 * np.log10(float(np.sqrt(np.mean(y[a:b] ** 2))) + 1e-30)
+    return out
+
+
+def adv_autocorr_lag_peak(p, t0=0.3, t1=1.5):
+    """Metallic-comb detector (the diagnostic that actually worked for DenseHall;
+    osc_p2p was the WRONG metric — see memory notes). A comb/metallic ring locks
+    energy at a fixed loop lag → a tall autocorrelation peak; a diffuse tail's
+    autocorr collapses toward 0. Returns (lag_ms, peak_height 0-1) of the dominant
+    autocorr peak in the 1-50 ms lag range on the post-peak tail, or None
+    (floor-guarded)."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    a, b = pk + int(t0 * sr), min(pk + int(t1 * sr), len(m))
+    seg = m[a:b]
+    if len(seg) < int(0.2 * sr): return None
+    if 20.0 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-30) < -80.0: return None
+    seg = seg - np.mean(seg)
+    # FFT autocorrelation (O(n log n); np.correlate 'full' is O(n²) and times out
+    # on a multi-second tail).
+    n = len(seg)
+    nfft = 1 << int(np.ceil(np.log2(2 * n)))
+    F = np.fft.rfft(seg, nfft)
+    ac = np.fft.irfft(F * np.conj(F), nfft)[:n]
+    if ac[0] <= 1e-30: return None
+    ac = ac / ac[0]
+    lo = max(int(0.001 * sr), 1)            # ignore <1 ms lags (self/ceiling)
+    hi = min(int(0.05 * sr), len(ac))       # up to 50 ms lags
+    if hi <= lo + 1: return None
+    band = ac[lo:hi]
+    i = int(np.argmax(band))
+    return ((lo + i) / sr * 1000.0, float(band[i]))
+
+
+def adv_echo_density(p, t0=0.0, t1=0.4, win_ms=20.0):
+    """Abel-Huang normalized echo density on the early tail — how quickly the
+    reverb fills toward Gaussian diffusion. Per window: fraction of taps whose
+    |amplitude| exceeds the window std, scaled by 1/erfc(1/√2) so dense/diffuse
+    → 1.0 and a sparse comb/metallic tail stays low. Returns the window-mean, or
+    None (floor-guarded)."""
+    from math import erfc, sqrt
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    pk = int(np.argmax(np.abs(m)))
+    a, b = pk + int(t0 * sr), min(pk + int(t1 * sr), len(m))
+    seg = m[a:b]
+    if len(seg) < int(0.1 * sr): return None
+    if 20.0 * np.log10(np.sqrt(np.mean(seg ** 2)) + 1e-30) < -80.0: return None
+    w = max(int(win_ms / 1000.0 * sr), 64); hop = max(w // 2, 1)
+    norm = 1.0 / erfc(1.0 / sqrt(2.0))      # ≈ 3.152; Gaussian echo density → 1.0
+    eds = []
+    for s in range(0, len(seg) - w, hop):
+        win = seg[s:s + w]
+        sig = float(np.std(win))
+        if sig < 1e-12: continue
+        eds.append(norm * float(np.mean(np.abs(win) > sig)))
+    if not eds: return None
+    return float(np.mean(eds))
+
+
 def check(label, dv_val, lex_val, gate, kind='abs'):
     """Returns (delta, pass/fail, formatted string)."""
     if dv_val is None or lex_val is None:
@@ -971,12 +1238,12 @@ def check(label, dv_val, lex_val, gate, kind='abs'):
         delta = (dv_val - lex_val) / lex_val * 100
         passing = abs(delta) <= gate
         return delta, ('PASS' if passing else 'FAIL'), \
-               f"  {label:30s}  DV={dv_val:.3f}  Lex={lex_val:.3f}  Δ={delta:+6.1f}%  gate=±{gate}%  {'✓' if passing else '✗'}"
+               f"  {label:30s}  DV={dv_val:.3f}  REF={lex_val:.3f}  Δ={delta:+6.1f}%  gate=±{gate}%  {'✓' if passing else '✗'}"
     else:
         delta = dv_val - lex_val
         passing = abs(delta) <= gate
         return delta, ('PASS' if passing else 'FAIL'), \
-               f"  {label:30s}  DV={dv_val:+7.3f}  Lex={lex_val:+7.3f}  Δ={delta:+6.2f}  gate=±{gate}  {'✓' if passing else '✗'}"
+               f"  {label:30s}  DV={dv_val:+7.3f}  REF={lex_val:+7.3f}  Δ={delta:+6.2f}  gate=±{gate}  {'✓' if passing else '✗'}"
 
 
 def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.0):
@@ -997,6 +1264,13 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     # Upfront REQUIRED-stimulus validation: a missing core render must force a
     # failure so the run can't end as a false "ALL GATES PASS". Optional stimuli
     # (impulse/sine1k/sustained) stay as skips in the loops below.
+    # Print the anchor DIRECTORY so nobody misreads the neutral REF= label
+    # (12 presets anchor to VVV, 4 to Lexicon PCM, 2 to Valhalla Shimmer). The
+    # dir path IS the provenance: fleet_audit copies stimuli to neutral
+    # anchor_*.wav names, so the copied filename can no longer distinguish the
+    # three sources — inferring from it collapsed everything to "VVV". Show the
+    # path instead and let the reader see which anchor set it points at.
+    print(f"  [anchor dir: {lex_dir}]")
     for req in ('noiseburst', 'snare'):
         if not find_stim(dv_dir, req):
             fails.append(f"REQUIRED stimulus '{req}' missing in render dir {dv_dir}")
@@ -1032,6 +1306,16 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                                 band_rms_db(lx, lo, hi), GATES[gate_key])
             print(line)
             if p == 'FAIL': fails.append(line.strip())
+
+        # ── PER-BAND TAIL GROWTH (DV-only absolute; a healthy band DECAYS) ──
+        # Guards the whole T60 family: a feedback path past unity gain GROWS,
+        # and the Schroeder T60 fit reads the pathology as a long decay.
+        gw, gf = band_tail_monotonicity(dv)
+        _pass = gw <= GATES['band_tail_growth_dB']
+        line = (f"  {'band tail growth (dB)':30s}  worst {gw:+5.1f} @ {gf} Hz  "
+                f"gate≤+{GATES['band_tail_growth_dB']}  {'✓' if _pass else '✗'}")
+        print(line)
+        if not _pass: fails.append(line.strip())
 
     # ─── Peak-aligned compute_metrics ───
     if dv and lx:
@@ -1093,7 +1377,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 dms = a_dv - a_lx
                 passing = (abs(dms) <= GATES['attack_time_ms_abs']) or \
                           (a_lx > 0 and abs(dms) / a_lx * 100.0 <= GATES['attack_time_pct'])
-                line = (f"  {'attack_time (ms)':30s}  DV={a_dv:7.1f}  Lex={a_lx:7.1f}  "
+                line = (f"  {'attack_time (ms)':30s}  DV={a_dv:7.1f}  REF={a_lx:7.1f}  "
                         f"Δ={dms:+6.1f}ms  gate=±{GATES['attack_time_ms_abs']}ms/"
                         f"±{GATES['attack_time_pct']}%  {'✓' if passing else '✗'}")
                 print(line)
@@ -1149,15 +1433,37 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             tr_excess = tr_dv - tr_lx                 # DV ringing MORE than anchor = defect
             passing = tr_excess <= GATES['tail_resonance_dB']
             line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
-                    f"Lex={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
+                    f"REF={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
                     f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
+            print(line)
+            if not passing: fails.append(line.strip())
+
+            # ── FIRST ARRIVAL (absolute, pre-alignment) ──
+            def _first_arrival_ms (path):
+                _x, _sr = sf.read (path); _m = _x.mean(axis=1) if _x.ndim > 1 else _x
+                _env = np.abs (hilbert (_m)); _pk = _env.max()
+                _ix = np.where (_env >= _pk * 10.0 ** (-30.0 / 20.0))[0]
+                return (_ix[0] / _sr * 1000.0) if len (_ix) else 0.0
+            fa_dv = _first_arrival_ms (imp_dv); fa_lx = _first_arrival_ms (imp_lx)
+            _pass = abs (fa_dv - fa_lx) <= GATES['first_arrival_ms']
+            line = (f"  {'first arrival (ms)':30s}  DV={fa_dv:6.1f}  REF={fa_lx:6.1f}  "
+                    f"Δ={fa_dv - fa_lx:+6.1f}  gate=±{GATES['first_arrival_ms']}  {'✓' if _pass else '✗'}")
+            print (line)
+            if not _pass: fails.append (line.strip())
+
+            # ── Top-3 modal prominence (anti-mode-hop companion) ──
+            t3_dv = tail_resonance_top3(imp_dv); t3_lx = tail_resonance_top3(imp_lx)
+            t3_excess = t3_dv - t3_lx
+            passing = t3_excess <= GATES['tail_resonance_top3_dB']
+            line = (f"  {'tail resonance top-3 (boing)':30s}  DV={t3_dv:5.1f}dB  REF={t3_lx:5.1f}dB  "
+                    f"Δ={t3_excess:+5.1f}  gate≤+{GATES['tail_resonance_top3_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
 
             # ── IMPULSE RMS (transient/hit loudness — sustained gates miss it) ──
             ir_dv = impulse_rms_db(imp_dv); ir_lx = impulse_rms_db(imp_lx)
             passing = abs(ir_dv - ir_lx) <= GATES['impulse_rms_dB']
-            line = (f"  {'impulse RMS (hit loudness)':30s}  DV={ir_dv:6.1f}  Lex={ir_lx:6.1f}  "
+            line = (f"  {'impulse RMS (hit loudness)':30s}  DV={ir_dv:6.1f}  REF={ir_lx:6.1f}  "
                     f"Δ={ir_dv - ir_lx:+5.1f}  gate=±{GATES['impulse_rms_dB']}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1168,20 +1474,20 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # Gate 1 (core): time-to-50%-energy, absolute ms vs anchor.
             dt = t50_dv - t50_lx
             passing = abs(dt) <= GATES['energy_t50_ms_abs']
-            line = (f"  {'energy t50 (ms to 50%E)':30s}  DV={t50_dv:7.1f}  Lex={t50_lx:7.1f}  "
+            line = (f"  {'energy t50 (ms to 50%E)':30s}  DV={t50_dv:7.1f}  REF={t50_lx:7.1f}  "
                     f"Δ={dt:+6.1f}ms  gate=±{GATES['energy_t50_ms_abs']}ms  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
             # Gate 2 (companion): early-energy fraction, % in first 50 ms.
             dp = p50_dv - p50_lx
             passing = abs(dp) <= GATES['energy_first50_pct']
-            line = (f"  {'energy first50ms (%)':30s}  DV={p50_dv:7.1f}  Lex={p50_lx:7.1f}  "
+            line = (f"  {'energy first50ms (%)':30s}  DV={p50_dv:7.1f}  REF={p50_lx:7.1f}  "
                     f"Δ={dp:+6.1f}pp  gate=±{GATES['energy_first50_pct']}pp  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
             # Diagnostic (not gated): first-150ms fraction + energy centroid.
             print(f"  {'energy first150ms / centroid':30s}  DV={p150_dv:5.1f}%/{cen_dv:.0f}ms  "
-                  f"Lex={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
+                  f"REF={p150_lx:5.1f}%/{cen_lx:.0f}ms  [diagnostic]")
 
             # ── DISCRETE EARLY TAP (the audible 'extra delay tap' — prominence + time) ──
             tt_dv, pr_dv = early_tap(imp_dv)
@@ -1196,12 +1502,12 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     # Anchor has a prominent tap but DV has none → fail (not skip).
                     passing = False
                     line = (f"  {'early tap (prom@time)':30s}  DV=  none  "
-                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"REF={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
                             f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  ✗")
                 else:
                     passing = (pr_dv >= prom_floor) and (abs(tt_dv - tt_lx) <= GATES['early_tap_time_ms'])
                     line = (f"  {'early tap (prom@time)':30s}  DV={pr_dv:4.1f}dB@{tt_dv:.0f}ms  "
-                            f"Lex={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
+                            f"REF={pr_lx:4.1f}dB@{tt_lx:.0f}ms  "
                             f"gate≥{prom_floor:.1f}dB/±{GATES['early_tap_time_ms']:.0f}ms  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1224,7 +1530,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 t_dv = ",".join(f"{t:.0f}" for t, _ in refl_dv[:5]) or "-"
                 t_lx = ",".join(f"{t:.0f}" for t, _ in refl_lx[:5]) or "-"
                 line = (f"  {'early refl count':30s}  DV={n_dv} [{t_dv}]ms  "
-                        f"Lex={n_lx} [{t_lx}]ms  "
+                        f"REF={n_lx} [{t_lx}]ms  "
                         f"gate=±{GATES['early_refl_count_tol']}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1239,7 +1545,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if td_dv is not None and td_lx is not None and td_lx >= GATES['transient_def_guard_dB']:
                 dt = td_dv - td_lx
                 passing = dt >= -GATES['transient_def_tol_dB']
-                line = (f"  {'transient def (crest dB)':30s}  DV={td_dv:5.1f}  Lex={td_lx:5.1f}  "
+                line = (f"  {'transient def (crest dB)':30s}  DV={td_dv:5.1f}  REF={td_lx:5.1f}  "
                         f"Δ={dt:+5.1f}  gate≥-{GATES['transient_def_tol_dB']:.1f}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1257,7 +1563,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                and a_hf >= GATES['hf_tail_texture_floor']:
                 dk = k_dv - k_lx
                 passing = dk <= GATES['hf_tail_texture_kurt']
-                line = (f"  {'HF-tail texture (kurt)':30s}  DV={k_dv:5.1f}  Lex={k_lx:5.1f}  "
+                line = (f"  {'HF-tail texture (kurt)':30s}  DV={k_dv:5.1f}  REF={k_lx:5.1f}  "
                         f"Δ={dk:+5.1f}  gate≤+{GATES['hf_tail_texture_kurt']:.1f}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1269,7 +1575,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if ds_dv is not None and ds_lx is not None and ds_lx >= GATES['deepsub_floor_dB']:
                 dd = ds_dv - ds_lx
                 passing = abs(dd) <= GATES['deepsub_level_dB']
-                line = (f"  {'deep-sub 20-40Hz (dB)':30s}  DV={ds_dv:7.1f}  Lex={ds_lx:7.1f}  "
+                line = (f"  {'deep-sub 20-40Hz (dB)':30s}  DV={ds_dv:7.1f}  REF={ds_lx:7.1f}  "
                         f"Δ={dd:+5.1f}  gate=±{GATES['deepsub_level_dB']:.1f}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1455,6 +1761,18 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
         x_dv, sr_dv = sf.read(snare_dv); x_lx, sr_lx = sf.read(snare_lx)
         m_dv = x_dv.mean(axis=1) if x_dv.ndim>1 else x_dv
         m_lx = x_lx.mean(axis=1) if x_lx.ndim>1 else x_lx
+        # ── PRE-ECHO / double-tap (energy AHEAD of the main arrival) ──
+        pe_dv = pre_onset_energy(snare_dv); pe_lx = pre_onset_energy(snare_lx)
+        pe_excess = pe_dv - pe_lx
+        print("\n── PRE-ECHO (snare, RMS in [onset-60ms, onset-4ms] rel peak) ──")
+        # Floor-skip: below -80 dB rel peak the pre-window is noise floor —
+        # a delta between two silences is not a pre-echo.
+        _pass = pe_excess <= GATES['pre_onset_excess_dB'] or pe_dv < -80.0
+        line = (f"  {'pre-onset energy (dB rel pk)':30s}  DV={pe_dv:6.1f}  REF={pe_lx:6.1f}  "
+                f"Δ={pe_excess:+5.1f}  gate≤+{GATES['pre_onset_excess_dB']}  {'✓' if _pass else '✗'}")
+        print(line)
+        if not _pass: fails.append(line.strip())
+
         env_l1 = _env_l1(m_dv, m_lx, sr_dv, post_peak_ms=500.0)
         print("\n── ENVELOPE-SHAPE CONTOUR (snare stimulus, 0-500 ms post-peak) ──")
         passing = (env_l1 == env_l1) and env_l1 <= GATES['env_shape_l1_dB']
@@ -1532,7 +1850,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 delta = dv_db - lx_db
                 passing = abs(delta) <= boom_gate
                 line = (f"  {f'boom {b_lab} {win_lab}':30s}  "
-                        f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+6.2f}  "
+                        f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+6.2f}  "
                         f"gate=±{boom_gate}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1550,7 +1868,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = delta <= bloom_gate
             line = (f"  {f'bloom {b_lab}':30s}  "
-                    f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate≤+{bloom_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1576,7 +1894,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = delta >= -body_gate
             line = (f"  {f'body {b_lab}':30s}  "
-                    f"DV={dv_db:+7.2f}  Lex={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate≥-{body_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1596,7 +1914,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = abs(delta) <= ps_gate
             line = (f"  {f'full RMS {stim}':30s}  "
-                    f"DV={dv_db:+7.2f}  VVV={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate=±{ps_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1611,15 +1929,100 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             delta = dv_db - lx_db
             passing = abs(delta) <= s1_gate
             line = (f"  {'sine1k full RMS':30s}  "
-                    f"DV={dv_db:+7.2f}  VVV={lx_db:+7.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_db:+7.2f}  REF={lx_db:+7.2f}  Δ={delta:+5.2f}  "
                     f"gate=±{s1_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
 
     # ─── Sine 1 kHz HARMONIC DISTORTION — nonlinearity detector ───
+    # ─── PIANO STEM (real musical material — the user's audition content) ───
+    pn_dv = find_stim(dv_dir, 'piano'); pn_lx = find_stim(lex_dir, 'piano')
+    if pn_dv and pn_lx:
+        print("\n── PIANO STEM (22.6 s music + tail; anchor replay-validated) ──")
+        _xd, _srp = sf.read(pn_dv); _xl, _srl = sf.read(pn_lx)
+        _md = _xd.mean(axis=1) if _xd.ndim > 1 else _xd
+        _ml = _xl.mean(axis=1) if _xl.ndim > 1 else _xl
+        # Derive the analysis window from the ACTUAL rendered lengths of BOTH
+        # files, not a hardcoded 22.6 s at the DV rate: a shorter asset, or an
+        # anchor at a different sample rate, would otherwise window past EOF and
+        # mis-score. Anchor rate (_srl) is captured separately so the anchor's
+        # filters + windows below use its OWN rate, never the DV rate.
+        _stem_end = min(22.6, len(_md) / _srp, len(_ml) / _srl)
+        def _band_rms_db(m, lo, hi, t0, t1, sr):
+            i0, i1 = int(t0 * sr), min(int(t1 * sr), len(m))
+            if i1 - i0 < 256: return None
+            sos = butter(4, [lo / (sr/2), min(hi / (sr/2), 0.99)], btype='band', output='sos')
+            b = sosfiltfilt(sos, m[i0:i1])
+            return 20.0 * np.log10(float(np.sqrt(np.mean(b ** 2))) + 1e-12)
+        # 1) broadband stem level
+        _rd = 20.0*np.log10(float(np.sqrt(np.mean(_md[int(1*_srp):int(_stem_end*_srp)]**2)))+1e-12)
+        _rl = 20.0*np.log10(float(np.sqrt(np.mean(_ml[int(1*_srl):int(_stem_end*_srl)]**2)))+1e-12)
+        _d = _rd - _rl
+        _pass = abs(_d) <= GATES['piano_rms_dB']
+        line = f"  {'piano RMS':30s}  DV={_rd:6.1f}  REF={_rl:6.1f}  Δ={_d:+5.1f}  gate=±{GATES['piano_rms_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+        # 2) band balance over the playing window
+        _bands = [(20,100,'sub'),(100,300,'low'),(300,1000,'lowmid'),(1000,3000,'mid'),(3000,8000,'hi'),(8000,16000,'air')]
+        worst, wl = 0.0, ''
+        for lo, hi, lab in _bands:
+            bd = _band_rms_db(_md, lo, hi, 1, _stem_end, _srp); bl = _band_rms_db(_ml, lo, hi, 1, _stem_end, _srl)
+            if bd is None or bl is None: continue
+            dd = bd - bl
+            print(f"    {lab:7s} {lo:5d}-{hi:<5d}  DV={bd:6.1f}  REF={bl:6.1f}  Δ={dd:+5.1f}")
+            if abs(dd) > abs(worst): worst, wl = dd, lab
+        _pass = abs(worst) <= GATES['piano_band_dB']
+        line = f"  {'piano band balance (worst)':30s}  Δ={worst:+5.1f} @ {wl}  gate=±{GATES['piano_band_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+        # 3) post-stem tail balance (the ring-out the ear judges last)
+        worst, wl = 0.0, ''
+        for lo, hi, lab in [(60,250,'low'),(250,1000,'lowmid'),(1000,4000,'mid'),(4000,12000,'hi')]:
+            bd = _band_rms_db(_md, lo, hi, _stem_end + 0.5, _stem_end + 3.0, _srp)
+            bl = _band_rms_db(_ml, lo, hi, _stem_end + 0.5, _stem_end + 3.0, _srl)
+            if bd is None or bl is None: continue
+            # Clamp both sides to a -70 dBFS floor: below that is silence /
+            # dither (a hard output gate like Reverse Taps'), and an unclamped
+            # delta reads floor-vs-floor as +90 dB. Clamping keeps the REAL
+            # part of a gate-timing difference and kills the silence blowup.
+            bd = max(bd, -70.0); bl = max(bl, -70.0)
+            if bd == -70.0 and bl == -70.0: continue
+            dd = bd - bl
+            if abs(dd) > abs(worst): worst, wl = dd, lab
+        _pass = abs(worst) <= GATES['piano_tail_dB']
+        line = f"  {'piano tail balance (worst)':30s}  Δ={worst:+5.1f} @ {wl}  gate=±{GATES['piano_tail_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+        # 4) anchor-relative low-band growth across the stem (buildup on real
+        # material; the music's own dynamics cancel in the DV-anchor difference)
+        worst, wf = -120.0, 0
+        for f0 in (62, 125, 250):
+            e_d = _band_rms_db(_md, f0/1.3, f0*1.3, 2, 7, _srp);  l_d = _band_rms_db(_md, f0/1.3, f0*1.3, 17, _stem_end, _srp)
+            e_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 2, 7, _srl);  l_l = _band_rms_db(_ml, f0/1.3, f0*1.3, 17, _stem_end, _srl)
+            if None in (e_d, l_d, e_l, l_l): continue
+            g = (l_d - e_d) - (l_l - e_l)
+            if g > worst: worst, wf = g, f0
+        _pass = worst <= GATES['piano_growth_dB']
+        line = f"  {'piano low growth vs anchor':30s}  worst {worst:+5.1f} @ {wf} Hz  gate≤+{GATES['piano_growth_dB']}  {'✓' if _pass else '✗'}"
+        print(line)
+        if not _pass: fails.append(line.strip())
+
     if dv_dir and lex_dir and name in SHIMMER_PRESETS:
         print("\n── SINE 1 kHz THD ── SKIPPED (Shimmer engine: octave pitch-shift "
               "reads as harmonics by design)")
+        # ── ODD-harmonic THD (shimmer-safe distortion detector) ──
+        # Octave voices land on EVEN multiples (2k/4k/500/250 = musical); energy
+        # at 3k/5k from a 1k tone is genuine nonlinearity (sat/clip grit).
+        _os_dv = find_stim(dv_dir, 'sine1k'); _os_lx = find_stim(lex_dir, 'sine1k')
+        if _os_dv and _os_lx:
+            odv = sine1k_odd_thd_pct(_os_dv); olx = sine1k_odd_thd_pct(_os_lx)
+            if odv is not None and olx is not None:
+                oexc = odv - olx
+                _pass = oexc <= GATES['sine1k_odd_thd_excess_pct']
+                line = (f"  {'sine1k ODD-harm THD (%)':30s}  DV={odv:6.2f}  REF={olx:6.2f}  "
+                        f"Δ={oexc:+6.2f}  gate≤+{GATES['sine1k_odd_thd_excess_pct']}  {'✓' if _pass else '✗'}")
+                print(line)
+                if not _pass: fails.append(line.strip())
         # Down-octave cascade gate (SHIMMER only) — the regenerative low warmth a 1 kHz
         # tone develops over SECONDS. Measured on the SUSTAINED *_sinelong.wav (the 2 s
         # sine1k is too short for the cascade to build). Rel-fundamental, so gain-safe.
@@ -1636,7 +2039,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 # (>= -45 dB rel fundamental). Presets without a down voice (Black Hole)
                 # have a near-silent cascade in BOTH → no qualifying band → gate skipped.
                 for b in _CASCADE_BANDS:
-                    print(f"    {b[0]:>4}-{b[1]:<4} Hz   DV={dvb[b]:+6.1f}  VVV={lxb[b]:+6.1f}  Δ={dvb[b]-lxb[b]:+5.1f}")
+                    print(f"    {b[0]:>4}-{b[1]:<4} Hz   DV={dvb[b]:+6.1f}  REF={lxb[b]:+6.1f}  Δ={dvb[b]-lxb[b]:+5.1f}")
                 diffs = [abs(dvb[b] - lxb[b]) for b in _CASCADE_BANDS if lxb[b] >= -45.0]
                 if not diffs:
                     print("  down-octave cascade          SKIPPED (anchor has no down-octave content)")
@@ -1646,6 +2049,41 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                     line = (f"  down-octave cascade L1 (dB)   {l1:5.2f}  gate=±{g}  {'✓' if passing else '✗'}")
                     print(line)
                     if not passing: fails.append(line.strip())
+
+        # ── LOW-RUNG TAIL GROWTH (DV-only, absolute) ──
+        # The Deep Blue Day "never fades out" defect: the recirculating sub voice
+        # past unity loop gain made the 62/125/250 Hz rungs GROW +25 dB across the
+        # post-tone tail into a softClip equilibrium — invisible while sinelong was
+        # tone-only. Requires a render with the 12 s silence tail (render.cpp
+        # 2026-07-04); older tone-only renders skip (no tail window). A healthy
+        # tail DECAYS: growth (late − early band RMS) must stay ≤ +1 dB.
+        if dv_sl:
+            _x, _sr = sf.read(dv_sl); _m = _x.mean(axis=1) if _x.ndim > 1 else _x
+            _sosf = butter(4, [900.0/(_sr/2), 1100.0/(_sr/2)], btype='band', output='sos')
+            _b1k = sosfiltfilt(_sosf, _m)
+            _w = max(int(0.05*_sr), 1)
+            _env = np.sqrt(np.convolve(_b1k*_b1k, np.ones(_w)/_w, mode='same'))
+            _edb = 20.0*np.log10(_env + 1e-12)
+            _above = np.where(_edb > _edb.max() - 6.0)[0]
+            _tone_end = (_above[-1]/_sr) if len(_above) else 0.0
+            if len(_m)/_sr - _tone_end >= 10.5:
+                print("\n── LOW-RUNG TAIL GROWTH (post-tone, DV-only; healthy tail decays) ──")
+                worst = -1e9; worst_f = 0
+                for _f0 in (62.0, 125.0, 250.0):
+                    _sos = butter(4, [_f0/1.3/(_sr/2), _f0*1.3/(_sr/2)], btype='band', output='sos')
+                    _bb = sosfiltfilt(_sos, _m)
+                    def _rms_db(t0, t1):
+                        _i0, _i1 = int(t0*_sr), min(int(t1*_sr), len(_bb))
+                        return 20.0*np.log10(float(np.sqrt(np.mean(_bb[_i0:_i1]**2))) + 1e-12)
+                    _early = _rms_db(_tone_end + 0.5, _tone_end + 1.5)
+                    _late  = _rms_db(_tone_end + 9.0, _tone_end + 10.0)
+                    _gr = _late - _early
+                    print(f"    {int(_f0):4d} Hz   early={_early:6.1f}  late={_late:6.1f}  growth={_gr:+5.1f} dB")
+                    if _gr > worst: worst, worst_f = _gr, int(_f0)
+                _pass = worst <= 1.0
+                line = (f"  low-rung tail growth (dB)      worst {worst:+5.1f} @ {worst_f} Hz  gate≤+1.0  {'✓' if _pass else '✗'}")
+                print(line)
+                if not _pass: fails.append(line.strip())
     elif dv_dir and lex_dir:
         print("\n── SINE 1 kHz THD (nonlinearity detector, DV-excess over anchor) ──")
         thd_gate = GATES['sine1k_thd_excess_pct']
@@ -1658,7 +2096,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 excess = dv_thd - lx_thd
                 passing = excess <= thd_gate
                 line = (f"  {'sine1k THD (%)':30s}  "
-                        f"DV={dv_thd:5.2f}  VVV={lx_thd:5.2f}  Δ={excess:+5.2f}  "
+                        f"DV={dv_thd:5.2f}  REF={lx_thd:5.2f}  Δ={excess:+5.2f}  "
                         f"gate≤+{thd_gate}  {'✓' if passing else '✗'}")
                 print(line)
                 if not passing: fails.append(line.strip())
@@ -1684,7 +2122,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             ratio = dv_c / lx_c
             passing = 0.3 <= ratio <= 3.0
             line = (f"  {'tail pitch-chorus (Hz)':30s}  "
-                    f"DV={dv_c:5.2f}  VVV={lx_c:5.2f}  ratio={ratio:4.2f}x  "
+                    f"DV={dv_c:5.2f}  REF={lx_c:5.2f}  ratio={ratio:4.2f}x  "
                     f"gate=0.3-3.0x  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1710,7 +2148,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             pct = (dv_t - lx_t) / lx_t * 100.0
             passing = abs(pct) <= rt_gate
             line = (f"  {f'T60 {b_lab}':30s}  "
-                    f"DV={dv_t:5.2f}s  VVV={lx_t:5.2f}s  Δ={pct:+6.1f}%  "
+                    f"DV={dv_t:5.2f}s  REF={lx_t:5.2f}s  Δ={pct:+6.1f}%  "
                     f"gate=±{rt_gate}%  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1742,7 +2180,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             # DV-hotter is what we're catching.
             passing = delta <= rip_gate
             line = (f"  {f'ripple {b_lab}':30s}  "
-                    f"DV={dv_std:5.2f}  Lex={lx_std:5.2f}  Δ={delta:+5.2f}  "
+                    f"DV={dv_std:5.2f}  REF={lx_std:5.2f}  Δ={delta:+5.2f}  "
                     f"gate≤+{rip_gate}  {'✓' if passing else '✗'}")
             print(line)
             if not passing: fails.append(line.strip())
@@ -1757,7 +2195,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             print(f"  {'spectral_flux_var':30s}  SKIPPED (tail below floor)")
         else:
             dd = abs(fv_dv - fv_lx); ok = dd <= GATES['spectral_flux_variance']
-            print(f"  {'spectral_flux_var':30s}  DV={fv_dv:6.3f}  VVV={fv_lx:6.3f}  "
+            print(f"  {'spectral_flux_var':30s}  DV={fv_dv:6.3f}  REF={fv_lx:6.3f}  "
                   f"|Δ|={dd:6.3f}  gate≤{GATES['spectral_flux_variance']}  "
                   f"{'✓' if ok else '✗'}  [ADVISORY]")
         r_dv = adv_decay_curvature(dv); r_lx = adv_decay_curvature(lx)
@@ -1767,7 +2205,7 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if av is None or bv is None:
                 print(f"  {rn:30s}  SKIPPED (span unmeasurable)"); continue
             dd = abs(av - bv); ok = dd <= GATES[gk]
-            print(f"  {rn:30s}  DV={av:5.3f}  VVV={bv:5.3f}  |Δ|={dd:5.3f}  "
+            print(f"  {rn:30s}  DV={av:5.3f}  REF={bv:5.3f}  |Δ|={dd:5.3f}  "
                   f"gate≤{GATES[gk]}  {'✓' if ok else '✗'}  [ADVISORY]")
         bk_dv = adv_bark_masking_traj(dv); bk_lx = adv_bark_masking_traj(lx)
         if bk_dv is None or bk_lx is None:
@@ -1778,6 +2216,53 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             ok = l1 <= GATES['bark_masking_l1']
             print(f"  {'bark_masking_l1 (x1e3)':30s}  L1={l1:6.3f}  "
                   f"gate≤{GATES['bark_masking_l1']}  {'✓' if ok else '✗'}  [ADVISORY]")
+
+        # D2 — metallic/comb diagnostics on the noiseburst tail (autocorr-lag
+        # peak + Abel-Huang echo density). The metrics that actually diagnosed
+        # DenseHall's metallic+watery defect; osc_p2p was the wrong one.
+        ac_dv = adv_autocorr_lag_peak(dv); ac_lx = adv_autocorr_lag_peak(lx)
+        if ac_dv is None or ac_lx is None:
+            print(f"  {'metallic autocorr peak':30s}  SKIPPED (tail below floor)")
+        else:
+            dd = abs(ac_dv[1] - ac_lx[1]); ok = dd <= GATES['metallic_autocorr_peak']
+            print(f"  {'metallic autocorr peak':30s}  DV={ac_dv[1]:5.3f}@{ac_dv[0]:5.1f}ms  "
+                  f"REF={ac_lx[1]:5.3f}@{ac_lx[0]:5.1f}ms  |Δ|={dd:5.3f}  "
+                  f"gate≤{GATES['metallic_autocorr_peak']}  {'✓' if ok else '✗'}  [ADVISORY]")
+        ed_dv = adv_echo_density(dv); ed_lx = adv_echo_density(lx)
+        if ed_dv is None or ed_lx is None:
+            print(f"  {'echo density (Abel-Huang)':30s}  SKIPPED (tail below floor)")
+        else:
+            dd = abs(ed_dv - ed_lx); ok = dd <= GATES['echo_density']
+            print(f"  {'echo density (Abel-Huang)':30s}  DV={ed_dv:5.3f}  REF={ed_lx:5.3f}  "
+                  f"|Δ|={dd:5.3f}  gate≤{GATES['echo_density']}  {'✓' if ok else '✗'}  [ADVISORY]")
+
+    # D1 — odd-harmonic THD (h3/h5) extended to EVERY preset as an advisory row.
+    # For shimmer presets a COUNTED version already fires above; this row is the
+    # uncounted fleet-wide detector (a distortion bug that once shipped unseen).
+    _td = find_stim(dv_dir, 'sine1k'); _tl = find_stim(lex_dir, 'sine1k')
+    if _td and _tl:
+        _dv_thd = sine1k_odd_thd_pct(_td); _lx_thd = sine1k_odd_thd_pct(_tl)
+        if _dv_thd is None or _lx_thd is None:
+            print(f"  {'odd-THD (all, %)':30s}  SKIPPED (fundamental below floor)  [ADVISORY]")
+        else:
+            _exc = _dv_thd - _lx_thd; _ok = _exc <= GATES['sine1k_odd_thd_excess_pct']
+            print(f"  {'odd-THD (all, %)':30s}  DV={_dv_thd:6.2f}  REF={_lx_thd:6.2f}  "
+                  f"Δ={_exc:+6.2f}  gate≤+{GATES['sine1k_odd_thd_excess_pct']}  "
+                  f"{'✓' if _ok else '✗'}  [ADVISORY]")
+
+    # whoosh — post-hit 2-10 kHz snare band envelope, per ms-window vs anchor.
+    # Sanity target: Vocal Hall DV should read COLD vs its anchor in 0-60 ms.
+    _wd = find_stim(dv_dir, 'snare'); _wl = find_stim(lex_dir, 'snare')
+    if _wd and _wl:
+        _wdv = adv_whoosh_2_10k(_wd); _wlx = adv_whoosh_2_10k(_wl)
+        if _wdv is None or _wlx is None:
+            print(f"  {'whoosh 2-10k (snare)':30s}  SKIPPED (window too short)  [ADVISORY]")
+        else:
+            for (t0, t1) in ((0, 20), (20, 60), (60, 120)):
+                _d = _wdv[(t0, t1)] - _wlx[(t0, t1)]; _ok = abs(_d) <= GATES['whoosh_2_10k_dB']
+                print(f"  {f'whoosh 2-10k {t0}-{t1}ms':30s}  DV={_wdv[(t0,t1)]:+7.2f}  "
+                      f"REF={_wlx[(t0,t1)]:+7.2f}  Δ={_d:+6.2f}  gate=±{GATES['whoosh_2_10k_dB']}  "
+                      f"{'✓' if _ok else '✗'}  [ADVISORY]")
 
     # ─── Summary ───
     print()
