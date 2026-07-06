@@ -190,6 +190,23 @@ private:
     bool lastHpfEnabled = false;
     bool lastLpfEnabled = false;
 
+    // Cached auto-gain. calcAutoGainCompensation() is a ~28-point complex
+    // response scan — too costly to run every block. It only moves when a
+    // band/filter param moves, so cache it keyed on a snapshot of those raw
+    // params and re-scan only on change (invalidated in reset() so a re-prepare
+    // at a new sample rate re-scans). No extra smoothing needed: the core steps
+    // coefficients per block (no coeff interpolation), so auto-gain stepping in
+    // lock-step with them introduces no new discontinuity.
+    struct AutoGainSnapshot
+    {
+        float p[18] = {};
+        bool operator!=(const AutoGainSnapshot& o) const noexcept
+        { for (int i = 0; i < 18; ++i) if (p[i] != o.p[i]) return true; return false; }
+    };
+    AutoGainSnapshot autoGainSnap_;
+    float autoCompCached_ = 1.0f;
+    bool  autoCompValid_  = false;
+
     // E-series transformer core saturation (Brown only): the iron saturates
     // where flux is highest (LF), so the added odd harmonics come from an LF
     // flux estimate. Ported from Multi-Q's British mode.

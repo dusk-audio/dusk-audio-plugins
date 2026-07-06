@@ -102,6 +102,7 @@ void FourKEQDSP::reset()
     std::fill(scratchR.begin(), scratchR.end(), 0.0f);
     inPeakL.store(0.f, R); inPeakR.store(0.f, R);
     outPeakL.store(0.f, R); outPeakR.store(0.f, R);
+    autoCompValid_ = false; // force an auto-gain re-scan after a (re-)prepare / rate change
 }
 
 //==============================================================================
@@ -358,7 +359,26 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
         }
 
     //--- output gain * auto-gain ----------------------------------------------
-    const float autoComp = pAutoGain.load(R) > 0.5f ? calcAutoGainCompensation() : 1.0f;
+    // Re-run the expensive probe scan only when an auto-gain-relevant param
+    // moved; otherwise reuse the cached value (see AutoGainSnapshot).
+    float autoComp = 1.0f;
+    if (pAutoGain.load(R) > 0.5f)
+    {
+        const AutoGainSnapshot snap = { {
+            pLfGain.load(R), pLfFreq.load(R), pLfBell.load(R),
+            pLmGain.load(R), pLmFreq.load(R), pLmQ.load(R),
+            pHmGain.load(R), pHmFreq.load(R), pHmQ.load(R),
+            pHfGain.load(R), pHfFreq.load(R), pHfBell.load(R),
+            pEqType.load(R), pHpfFreq.load(R), pHpfEnabled.load(R),
+            pLpfFreq.load(R), pLpfEnabled.load(R), (float)curFactor } };
+        if (!autoCompValid_ || snap != autoGainSnap_)
+        {
+            autoGainSnap_  = snap;
+            autoCompCached_ = calcAutoGainCompensation();
+            autoCompValid_ = true;
+        }
+        autoComp = autoCompCached_;
+    }
     const float outGain = dbToGain(pOutputGain.load(R)) * autoComp;
     for (int c = 0; c < nCh; ++c)
         for (int n = 0; n < nS; ++n)

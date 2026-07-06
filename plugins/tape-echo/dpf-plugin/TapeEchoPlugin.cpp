@@ -204,7 +204,11 @@ protected:
                 (int)(values[kParamSyncDivision].load(std::memory_order_relaxed) + 0.5f));
             // Convert to the motor-speed knob's 0..1 range; the DSP's motor
             // inertia smoother turns tempo changes into tape-style glides.
-            dsp.setRepeatRate(1.0f - (float)((ms - 69.0) / 108.0));
+            // Map the delay (ms) back onto the motor knob's 0..1 range using the
+            // DSP's own delay bounds so this stays aligned if they ever change.
+            constexpr double kMinMs = duskaudio::TapeEchoDSP::kMinDelayMs;
+            constexpr double kMaxMs = duskaudio::TapeEchoDSP::kMaxDelayMs;
+            dsp.setRepeatRate(1.0f - (float)((ms - kMinMs) / (kMaxMs - kMinMs)));
         }
 
         dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);

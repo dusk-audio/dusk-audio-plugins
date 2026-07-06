@@ -57,6 +57,7 @@ function(dusk_dpf_install_local plugin_name)
         set(_clap "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP")
         set(_vst3 "$ENV{HOME}/Library/Audio/Plug-Ins/VST3")
         set(_lv2  "$ENV{HOME}/Library/Audio/Plug-Ins/LV2")
+        set(_au   "$ENV{HOME}/Library/Audio/Plug-Ins/Components")  # AU is macOS-only
     else()
         set(_clap "$ENV{HOME}/.clap")
         set(_vst3 "$ENV{HOME}/.vst3")
@@ -94,6 +95,15 @@ function(dusk_dpf_install_local plugin_name)
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_lv2}"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.lv2" "${_lv2}/${plugin_name}.lv2"
             COMMENT "Installing ${plugin_name}.lv2 -> ${_lv2}"
+            VERBATIM)
+    endif()
+    # AU is a macOS-only .component bundle; DPF only creates the -au target when
+    # building on macOS, so this branch is inert (target absent) elsewhere.
+    if(TARGET ${plugin_name}-au)
+        add_custom_command(TARGET ${plugin_name}-au POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_au}"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.component" "${_au}/${plugin_name}.component"
+            COMMENT "Installing ${plugin_name}.component -> ${_au}"
             VERBATIM)
     endif()
 endfunction()

@@ -2438,7 +2438,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // must add zero steady-state at/below 1 kHz. Per-preset bake; env
         // DUSKVERB_DIFFERHP=<hz> sweeps without rebuild. 0 = off/bit-null.
         float hpHz = 0.0f;
-        if (juce::String (name) == "Vocal Hall") hpHz = 1800.0f;
+        if (std::string_view (name) == "Vocal Hall") hpHz = 1800.0f;
         if (const char* hpEnv = tuningEnv().differhp; hpEnv != nullptr && hpEnv[0] != '\0')
             hpHz = juce::String (hpEnv).getFloatValue();
         engine.setDiffuseERHighpass (hpHz);
