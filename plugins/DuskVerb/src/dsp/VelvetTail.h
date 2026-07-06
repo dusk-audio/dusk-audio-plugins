@@ -273,9 +273,9 @@ private:
     Biquad lp250_, lp500_, lp2k_;
 
     // baked 4-band defaults (anchor lex-reverse-1, hand-tuned 2026-06-17/18).
-    float bandT60_[kBands]      = { 0.13f, 0.08f, 0.09f, 0.10f };
-    float band125T60_          = 0.55f;
-    float bandLevelLin_[kBands] = { 1.413f, 0.794f, 0.501f, 3.548f };  // {+3,-2,-6,+11} dB
+    float bandT60_[kBands]      = { 0.09f, 0.15f, 0.115f, 0.145f };   // 2026-07-04 recal vs anchor after the swell ear-fix exposed the tail (the old 3 ms gate cliff was guillotining it): T60 63/125/8k -> in-gate. Residual 250/500 straddle = the documented crossover-leak wall.
+    float band125T60_          = 0.42f;   // 2026-07-04: 125 Hz measured +33% over anchor at 0.55
+    float bandLevelLin_[kBands] = { 1.413f, 0.794f, 0.708f, 2.512f };  // 2026-07-04 {+3,-2,-3,+8} dB: mid up (sine1k deficit), hi down (ss upper-mid hot)
     float flipFrac_            = 0.60f;  // in-clamp; ≥0.30 ⇒ always-flip the ~30% else-taps (the validated sound)
     float cellRateMs_[kBands]  = { 0.5f, 0.5f, 0.5f, 0.25f };
     float sizeScale_           = 1.0f;

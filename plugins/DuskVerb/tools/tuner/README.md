@@ -1,105 +1,104 @@
-# DuskVerb Automated Preset Tuner
+# DuskVerb Preset Tuner
 
-One command per preset. No manual param edits.
+Tooling for matching each anchored DuskVerb preset to its commercial anchor
+(Valhalla VintageVerb, Lexicon, Valhalla Shimmer). The operating picture,
+fleet map, engine workstreams, and traps live in
+`HANDOFF_2026-07-06_opus48.md` — read it first. This README is just the
+tool index + the day-to-day flow.
 
-## Files
+## Core scripts
 
 | File | Role |
 |---|---|
-| `metrics_external.py` | Peak-aligned, noise-floor-gated metrics. Don't edit unless adding a new metric. |
-| `wav_audit.py` | Independent cross-validator (no shared code). Use to verify metrics_external isn't lying. |
-| `full_check.py` | PASS/FAIL gates per category. Every category user has flagged → one gate here. |
-| `preset_vs_external_optuna.py` | Optuna sweep. Loss function = every gate's metric. Free param ranges = clamped to physical bands. |
-| `tune_preset.py` | One-command wrapper: sweep → apply → auto level-match → full_check. |
+| `fleet_audit.py` | Renders + scores the whole fleet; anchor-hygiene precheck; table/calibration verifiers. Run at every session start/end. |
+| `full_check.py` | PASS/FAIL gate harness for one preset vs its anchor dir. `--json` emits the machine-readable failing-gate list. The Optuna objective and the scoreboard both call this. |
+| `preset_vs_external_optuna.py` | Optuna sweep. Objective = `full_check.py --json` n_fail (+ margin). Warm-start via `--enqueue-json`. Cold-start use only. |
+| `tune_preset.py` | Thin cold-start wrapper around the Optuna sweep. NOT the primary path — see its docstring. `--self-test` proves parse_best still tracks the sweep output. |
+| `calibrate_octave_t60.py` | Rewrites `BEGIN/END_OCTAVE_T60_MAP` blocks. MANDATORY after any engine delay-line change. |
+| `metrics_external.py` | Peak-aligned, noise-floor-gated metrics used by full_check. Edit only when adding a metric. |
+| `wav_audit.py` | Independent cross-validator (no shared code) to confirm metrics_external isn't lying. |
 
-## Workflow
+Anchors: VVV under `~/projects/dusk-audio-tools/tuner_runs/anchors/`; Lexicon +
+Shimmer under `~/projects/dusk-audio-tools/anchors/rendered/`.
 
-### Tuning a new preset
+## Fleet audit
 
-1. Render the reference anchor (Lex / VVV / etc.) at 100% wet, 5 s preroll:
-   ```
-   build/tests/duskverb_render/duskverb_render \
-       --vst2 <YABRIDGE_VST2_DIR>/<RefPlugin>.so \
-       --load-state <ref-preset>.fxp \
-       --param "Mix=1.0" \
-       --prerun-seconds 5.0 \
-       --output-dir /tmp/anchor_<name> "RefAnchor"
-   ```
+```
+python3 fleet_audit.py --out            # dated scoreboard_<date>.md + .json (per-preset failing gates)
+python3 fleet_audit.py --verify-tables         # keyed-map rows all live (exit 0 = clean)
+python3 fleet_audit.py --verify-calibration    # commanded-vs-realized octave-T60 drift
+python3 fleet_audit.py --no-render             # reuse /tmp/audit_* renders (STALE after a rebuild)
+```
 
-2. Run the tuner:
-   ```
-   python3 plugins/DuskVerb/tools/tuner/tune_preset.py "<DV preset name>" \
-       --anchor-rendered /tmp/anchor_<name>/RefAnchor_noiseburst.wav \
-       --trials 1500 --workers 4
-   ```
+The anchor-hygiene precheck runs automatically: missing/silent anchor = FATAL
+abort; non-FLOAT subtype or dry-only suspicion = warning.
 
-3. Wait ~12-15 minutes.
+A `--verify-calibration` BROKEN flag is HYGIENE, not a free gate win: it means
+commanded != realized, but the gates score the *realized* value, which often
+already matches the anchor. Recalibrating can REGRESS a tuned preset.
 
-4. If all gates pass → paste the printed lock-in values into
-   `FactoryPresets.h` + `tests/duskverb_render/render.cpp`, commit.
+## Score one preset
 
-5. If any gate fails → **DO NOT** patch params by hand. Either:
-   - Tighten the failing gate's loss weight in `preset_vs_external_optuna.py`
-   - Add a new loss term if the gate has no Optuna equivalent
-   - Re-run `tune_preset.py`
+```
+python3 full_check.py <dv_render_dir> <anchor_dir> --name "Vocal Hall"          # human report
+python3 full_check.py <dv_render_dir> <anchor_dir> --name "Vocal Hall" --json   # failing-gate list
+```
 
-### When a listening test catches an issue full_check missed
+## Per-preset tuning order (HANDOFF §5)
 
-This is the contract. Every issue from listening → permanent tooling
-upgrade. Manual fixes are forbidden.
+Manual per-gate tuning is the primary method. Optuna is cold-start ONLY —
+re-sweeping an already-tuned preset floors at its baseline.
 
-1. **Find a metric** that captures the issue. Use `wav_audit.py` or
-   ad-hoc scripts. If no existing metric works, build one.
+1. **Gain-match** DV to anchor RMS first (biggest single gate-count mover).
+2. **1-D clean levers** one at a time, re-score after each: Width, Lo Cut, Decay.
+3. **Manual per-gate deltas**: read the failing-gate list, map each gate to its
+   lever (HANDOFF walls/levers history).
+4. **Baked-table edits**: FactoryPresets.h positional row + keyed maps
+   (kPmbByName, octave-T60, kPteqByName). Edit the map + rebuild — runtime
+   `--param` edits of these are desync-BLOCKED by design (load-bearing).
+5. **Octave-T60 recalibration** (`calibrate_octave_t60.py`) after any engine
+   delay-line change.
+6. **Listen**: render snare + piano + a sustained pad, A/B at matched loudness,
+   then hand off to the user's ear (final sign-off, not QA).
 
-2. **Add a gate** to `full_check.py` with a numeric threshold.
+## Env-var engine sweeps (`DUSKVERB_*`)
 
-3. **Add a loss term** to `preset_vs_external_optuna.py` with a
-   reasonable weight.
+New/experimental engine paths ship behind `DUSKVERB_*` env vars (default =
+bit-null off) so they can be A/B'd via `duskverb_render` without a rebuild,
+e.g. `DUSKVERB_PMB`, `DUSKVERB_DIFFER` / `DUSKVERB_DIFFERHP`, `DUSKVERB_VELVET`.
+Sweep by exporting the var, rendering, and scoring with full_check; bake the
+winner into its keyed map once the ear approves. Grep the C++ for the current
+`DUSKVERB_` set — the list changes per campaign.
 
-4. **Re-run tune_preset.py** for the affected preset(s).
+## Cold-start Optuna (when warranted)
 
-5. **Commit** the new gate + loss term to the repo so all future
-   presets benefit.
+```
+# Warm-start from the shipping baseline so trial 0 = baseline (can only improve):
+duskverb_render --program "Vocal Hall" --dump-params > /tmp/vh_baseline.json
 
-## Gate categories (current)
+python3 tune_preset.py "Vocal Hall" \
+    --anchor-rendered <anchor_dir>/<Anchor>_noiseburst.wav \
+    --enqueue-json /tmp/vh_baseline.json \
+    --trials 300 --workers 6
+```
 
-| Category | Gate | Why it exists |
-|---|---|---|
-| Level — snare RMS | ±1.5 dB | Loudness must match first |
-| Level — noiseburst RMS | ±2.0 dB | Same on broadband stimulus |
-| Band — sub <100 Hz | ±2.0 dB | User caught sub-bass surplus on a previous sweep |
-| Band — low 100-250 Hz | ±2.0 dB | User caught low-mid surplus on a previous sweep |
-| Band — mid 250-1k Hz | ±2.0 dB | Required for spectral neutrality |
-| Band — mid 1-4k Hz | ±2.0 dB | Required for upper-mid neutrality |
-| Band — hi 4-12k Hz | ±3.0 dB | Air-band engine ceiling tolerated |
-| Decay — tail_t30 | ±15 % | Initial-tail length |
-| Decay — tail_t60 | ±25 % | Late-tail length (loose because engine ceilings) |
-| Spectral — cent_50 | ±15 % | Early-bloom brightness |
-| Spectral — cent_500 | ±15 % (skipped if Lex below noise floor) | Mid-tail darkening |
-| Envelope — env_p2p | ±5 dB (skipped if Lex tail below floor) | Transient density |
-| Stereo — correlation | ±0.15 | Mono-compatibility + image |
-| EQ shape — spec_L1 mean | ±2.0 dB | RMS-norm 1/3-oct shape |
-| EQ shape — spec_L1 max | ±5.0 dB | No single-band spike |
-| Oscillation — env P2P delta | ±4 dB (skipped if Lex envelope below floor) | Modulator artifact |
+Limits: `--workers <= 6`, `--trials <= 300` (a 1500/4-worker cold sweep OOM'd
+the 32 GB box; the wrapper clamps). The wrapper prints the winning params for
+you to bake by hand — it does not edit any source file. Drive
+`preset_vs_external_optuna.py` directly if you need locks / range overrides.
 
-## DSP guard-rails enforced via FREE_PARAMS clamps
+## The gate contract
 
-| Param | Range | Reason |
-|---|---|---|
-| Width | [0.5, 1.05] | >1.05 with sparse Dattorro produces anti-correlated L/R |
-| Bass Multiply | [0.5, 1.5] | Wider → Optuna abuses as EQ knob |
-| Mid Multiply | [0.5, 1.5] | Same |
-| Treble Multiply | [0.5, 1.5] | Same |
-| Low Crossover | [80, 600] Hz | Below 80 collapses sub/bass; above 600 collapses bass/mid |
-| High Crossover | [3000, 10000] Hz | Above 10k collapses mid/treble |
+Every listening issue full_check missed becomes permanent tooling:
+add a metric (`metrics_external.py` / `wav_audit.py`), add a gate
+(`full_check.py`) with a numeric threshold, add a loss term
+(`preset_vs_external_optuna.py`), re-score. Manual one-off patches without a
+gate don't scale to the 18 anchored presets.
 
-## DO NOT
+## Render rules (violations have burned days — HANDOFF §0)
 
-- Edit FactoryPresets.h positional values in response to a listening report
-- Edit render.cpp preset rows in response to a listening report
-- Run an Optuna sweep without the gates active
-- Trust spec_L1 alone — it's RMS-normalized and hides absolute level mismatches
-- Compare DV vs Lex without peak-alignment (Lex VVP has ~150 ms pre-delay baked in)
-- Render without 5 s preroll (modulator + biquad state need time to settle)
-- Tune on impulse stimulus (Dirac aliases on time-variant reverbs)
-- Tune without snare-RMS level match first (loudness invalidates every other metric)
+- 100% wet always: `--param "Dry/Wet=1.0" --param "Bus Mode=1"` (Freeze=0).
+- `--program <name>`, NOT `--preset` (the latter re-applies a stale mirror).
+- Level-match to anchor RMS before judging any spectral/centroid metric.
+- Write analysis WAVs `sf.write(..., subtype='FLOAT')` (PCM16 requant fakes walls).
+- NEVER use pedalboard. `duskverb_render` (JUCE CLI) only.

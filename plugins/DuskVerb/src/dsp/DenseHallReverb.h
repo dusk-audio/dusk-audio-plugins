@@ -69,6 +69,7 @@ public:
         lfo2_.setRate (modRate_ * 1.19f);
         for (auto& d : dc_) d.reset();
         prepared_ = true;
+        updateLimiterCoeffs();
         clear();
         update();
     }
@@ -77,7 +78,7 @@ public:
     {
         for (auto& a : inAPL_) a.clear();
         for (auto& a : inAPR_) a.clear();
-        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; octDamp_[i].reset(); }
+        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; octDamp_[i].reset(); limLp_[i] = limEnv_[i] = 0.0f; }
         spinL_.clear(); spinR_.clear();
         tcL_.reset(); tcR_.reset();
         for (auto& d : dc_) d.reset();   // process() always runs the input DC blockers — clear their history too, else state leaks across instances/sessions
@@ -111,6 +112,23 @@ public:
     void setOctaveDecayRef (float seconds) { octaveDecayRef_ = seconds; if (prepared_) update(); }
     // FORK B: opt-in per preset. Default off = bit-identical. Needs octaveActive_.
     void setTonalCorrection (bool enabled) { tonalCorrEnabled_ = enabled; if (prepared_) update(); }
+    // LOW ACCUMULATION LIMITER (2026-07-04, piano-gate defect): under sustained
+    // low-frequency drive (repeating bass notes) the tank's sub band CHARGES —
+    // Vocal Hall's 62 Hz grew +6.8 dB across a 22 s piano stem while the VVV
+    // anchor stayed flat (DV's sub EDT ~2x the anchor's; each note tops up what
+    // hasn't decayed). A static damping change would break the noiseburst T60
+    // gates; instead each line follows its OWN low-band envelope and only when
+    // that exceeds the threshold does it attenuate the low band per pass —
+    // impulse/noiseburst tails never reach the threshold, a sustained charge
+    // does. maxCut 0 → inactive → bit-identical.
+    void setLowAccumLimiter (float threshDb, float maxCut, float splitHz)
+    {
+        limThreshLin_ = std::pow (10.0f, std::clamp (threshDb, -80.0f, 0.0f) / 20.0f);
+        limMaxCut_    = std::clamp (maxCut, 0.0f, 0.5f);
+        limSplitHz_   = std::clamp (splitHz, 30.0f, 300.0f);
+        limActive_    = limMaxCut_ > 1.0e-6f;
+        if (prepared_) updateLimiterCoeffs();
+    }
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
     void setModDepth (float d)       { modDepth_ = std::clamp (d, 0.0f, 1.0f); }       // scales allpass/delay excursion
@@ -282,6 +300,19 @@ private:
             const float midB  = hsf_[i] - lsf_[i];                // lowX_ .. highX_
             const float highB = v - hsf_[i];                      // > highX_
             v = gLowB_ * lowB + gMidB_ * midB + gHighB_ * highB;
+        }
+        // LOW ACCUMULATION LIMITER: per-line low-band envelope; above threshold,
+        // attenuate the low band per pass (drive-following — impulse tails never
+        // reach the threshold, sustained bass charge does). Off = branch skipped.
+        if (limActive_ && ! frozen_)
+        {
+            limLp_[i] += limLpCoeff_ * (v - limLp_[i]);
+            const float low = limLp_[i];
+            const float a = std::abs (low);
+            limEnv_[i] += (a > limEnv_[i] ? limAtkCoeff_ : limRelCoeff_) * (a - limEnv_[i]);
+            const float over = limEnv_[i] / limThreshLin_;
+            if (over > 1.0f)
+                v -= std::min ((over - 1.0f) * 0.5f, 1.0f) * limMaxCut_ * low;
         }
         // per-line loop allpass diffusers (modulated) — the in-loop density.
         // Two nested allpasses (opposite mod sign) double the echo density.
@@ -468,6 +499,29 @@ private:
     float octaveT60_[9] {};
     float octaveDecayRef_ = 0.0f;
     bool  octaveActive_   = false;
+
+    // Low accumulation limiter state (setLowAccumLimiter). Per-line one-pole
+    // low split + per-line low-band envelope (fast attack, ~1 s release).
+    bool  limActive_    = false;
+    float limThreshLin_ = 0.01f;     // linear envelope threshold
+    float limMaxCut_    = 0.0f;      // max per-pass low-band gain cut (0..0.5)
+    float limSplitHz_   = 90.0f;
+    float limLpCoeff_   = 0.0f, limAtkCoeff_ = 0.0f, limRelCoeff_ = 0.0f;
+    float limLp_[kN]  = {};
+    float limEnv_[kN] = {};
+
+    void updateLimiterCoeffs()
+    {
+        const float sr = sr_;
+        limLpCoeff_  = 1.0f - std::exp (-6.2831853f * limSplitHz_ / sr);
+        // SLOW time constants — the point is to track the CHARGE, not the note:
+        // a 600 ms attack means a noiseburst/impulse can't engage the limiter
+        // (T60 gates untouched), and a 6 s release means engagement grows with
+        // the accumulated low energy across a sustained passage, so the cut is
+        // larger late than early — flattening the charge, not just the level.
+        limAtkCoeff_ = 1.0f - std::exp (-1.0f / (0.600f * sr));
+        limRelCoeff_ = 1.0f - std::exp (-1.0f / (6.0f   * sr));
+    }
 
     // FORK B — Jot output tonal-correction (stereo). Identity unless opted in.
     OctaveBandDamping        tcL_, tcR_;

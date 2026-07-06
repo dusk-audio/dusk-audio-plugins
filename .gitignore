@@ -160,6 +160,13 @@ plugins/DuskAmp/resources/cabs/*.wav
 !plugins/DuskAmp/resources/cabs/vox_ac15_sm57.wav
 !plugins/DuskAmp/resources/cabs/vox_ac15_se4_close.wav
 
+# DuskVerb render-tool test stimuli — render.cpp resolves these from
+# tests/duskverb_render/test_signals/; the historical anchors were rendered
+# with exactly these files, so they must ship with the source tree.
+!tests/duskverb_render/test_signals/snare_-12dB.wav
+!tests/duskverb_render/test_signals/session.wav
+!tests/duskverb_render/test_signals/piano.wav
+
 # DuskVerb calibration database (local tooling artifact)
 calibration.db
 calibration.db-shm

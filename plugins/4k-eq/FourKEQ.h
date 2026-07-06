@@ -191,11 +191,17 @@ private:
     // HPF structure
     HighPassFilter hpfFilter;
 
-    // 4-band EQ filters
+    // 4-band EQ filters — parallel-summing building blocks (band-pass / shelf),
+    // each fed the dry EQ input and summed with gain k*. See processBlock.
     FilterBand lfFilter;   // Low frequency
     FilterBand lmFilter;   // Low-mid frequency
     FilterBand hmFilter;   // High-mid frequency
     FilterBand hfFilter;   // High frequency
+    // Parallel summing gains (K = 10^(dB/20)-1), set per band in update*Band.
+    float kLf = 0.0f, kLm = 0.0f, kHm = 0.0f, kHf = 0.0f;
+    // Auto-gain compensation, cached; recomputed in updateFilters() (which runs
+    // when any EQ/enable param changes), not per processBlock.
+    float autoGainComp_ = 1.0f;
 
     // Oversampling
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
@@ -351,13 +357,9 @@ private:
     // Helper methods
     float calculateDynamicQ(float gain, float baseQ) const;
     float calculateAutoGainCompensation() const;
-
-    // Console-specific filter coefficient generation
-    // Based on hardware measurements and analog prototype matching
-    juce::dsp::IIR::Coefficients<float>::Ptr makeConsoleShelf(
-        double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const;
-    juce::dsp::IIR::Coefficients<float>::Ptr makeConsolePeak(
-        double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const;
+    // Parallel summing gain for a band: K = 10^(dB/20) - 1 (0 at unity, negative
+    // for cut). The 82E242 EQ is dry + sum(K_i * band_i), not a series cascade.
+    static float bandK(float gainDB) noexcept { return std::pow(10.0f, 0.05f * gainDB) - 1.0f; }
 
     // Parameter creation
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

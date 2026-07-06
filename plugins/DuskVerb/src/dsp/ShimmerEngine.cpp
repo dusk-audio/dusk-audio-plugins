@@ -270,6 +270,9 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     fbLpfR_.setLPCutoff (kFeedbackLpfHz, sr);
     fbHpfL_.clear(); fbHpfR_.clear();
     fbLpfL_.clear(); fbLpfR_.clear();
+    hfShelfL_.setHPCutoff (hfSustainHz_, sr);
+    hfShelfR_.setHPCutoff (hfSustainHz_, sr);
+    hfShelfL_.clear(); hfShelfR_.clear();
 
     updatePitchRatio();
     prepared_ = true;
@@ -301,6 +304,7 @@ void ShimmerEngine::clearBuffers()
     fbDelayWritePos_ = 0;
     fbHpfL_.clear(); fbHpfR_.clear();
     fbLpfL_.clear(); fbLpfR_.clear();
+    hfShelfL_.clear(); hfShelfR_.clear();
 }
 
 // ============================================================================
@@ -344,6 +348,13 @@ void ShimmerEngine::setSaturation (float amount)
     saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
 }
 
+void ShimmerEngine::setOutputHeadroom (float h)
+{
+    // Clamp to [1, 8]: below 1 would tighten the clip (pointless / more grit),
+    // above 8 makes the output effectively linear (no safety limit at all).
+    outputHeadroom_ = std::clamp (h, 1.0f, 8.0f);
+}
+
 // DEPTH (mod_depth, 0..1) → PITCH semitones (0..24). 0 = unity (no shift),
 // 0.5 = +12 (octave up — canonical Eno Choir), 1.0 = +24 (Cascading Heaven).
 void ShimmerEngine::setModDepth (float depth)
@@ -372,7 +383,7 @@ void ShimmerEngine::setFreeze (bool frozen)
 
 void ShimmerEngine::setUseDenseReverb (bool on) { useDenseReverb_ = on; }
 void ShimmerEngine::setUseTailSpin    (bool on) { useTailSpin_ = on; }
-void ShimmerEngine::setTailNoise      (float gain) { noiseGain_ = gain; tailNoise_.setGain (gain); }
+void ShimmerEngine::setTailNoise      (float gain, float hpHz, float lpHz) { noiseGain_ = gain; tailNoise_.setGain (gain); tailNoise_.setBand (hpHz, lpHz); }
 void ShimmerEngine::setUpVoiceScale (float v1, float v2)
 {
     voice1Scale_ = std::clamp (v1, 0.0f, 4.0f);
@@ -387,6 +398,22 @@ void ShimmerEngine::setOctaveCascade (const float gains[4])
         any = any || (octGain_[i] > 1.0e-6f);
     }
     octActive_ = any;
+}
+
+void ShimmerEngine::setHFSustainDb (float db, float cornerHz)
+{
+    // Clamp to +12 dB: the shelf compounds per loop pass, and the loop's
+    // softClip + kFeedbackLoopAttn bound it, but past ~12 dB the boosted
+    // band pins the clip every pass (distorted ring, not longer T60).
+    db = std::clamp (db, 0.0f, 12.0f);
+    hfSustainGain_ = (db > 0.01f) ? std::pow (10.0f, db / 20.0f) - 1.0f : 0.0f;
+    hfSustainHz_   = std::clamp (cornerHz, 1000.0f, 12000.0f);
+    if (prepared_)
+    {
+        const float sr = static_cast<float> (sampleRate_);
+        hfShelfL_.setHPCutoff (hfSustainHz_, sr);
+        hfShelfR_.setHPCutoff (hfSustainHz_, sr);
+    }
 }
 
 void ShimmerEngine::updatePitchRatio()
@@ -483,8 +510,19 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // sub-harmonics that would otherwise rumble up over time; LPF
         // tames the upper-spectrum metallic ring caused by repeated
         // pitch-up cycles concentrating energy near the AA-filter wall.
-        const float bandedL = fbLpfL_.processLP (fbHpfL_.processHP (pitchedFbL));
-        const float bandedR = fbLpfR_.processLP (fbHpfR_.processHP (pitchedFbR));
+        float bandedL = fbLpfL_.processLP (fbHpfL_.processHP (pitchedFbL));
+        float bandedR = fbLpfR_.processLP (fbHpfR_.processHP (pitchedFbR));
+
+        // HF-sustain compensation shelf: the tank is HF-lossy per pass (that
+        // loss, not the LPF above, caps HF T60). Re-enter the loop with the
+        // >4 kHz band lifted so the HF ring survives more passes. First-order
+        // high-shelf: x + g * HP(x). gain <= 0 → skipped (bit-null pattern,
+        // same as the downMix_/subMix_ branches above; recursive-feedback TU).
+        if (hfSustainGain_ > 0.0f)
+        {
+            bandedL += hfSustainGain_ * hfShelfL_.processHP (bandedL);
+            bandedR += hfSustainGain_ * hfShelfR_.processHP (bandedR);
+        }
 
         // Apply user feedback gain × kFeedbackLoopAttn, then softClip
         // as a runaway safety net.
@@ -561,7 +599,12 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // Tail noise floor — envelope-tracked to the wet, fades with the decay (Valhalla's
         // dense noise-like fade; masks the sparse-mode ring). gain 0 → skipped → bit-null.
         if (tailNoise_.active()) tailNoise_.process (wL, wR, oL, oR);
-        outL[n] = std::tanh (oL * kWetOutputGain);
-        outR[n] = std::tanh (oR * kWetOutputGain);
+        // Output limiter. h==1 → plain tanh (bit-null). h>1 → h*tanh(x/h): the
+        // knee moves to ±h so long-decay buildup (Deep Blue Day) stays linear
+        // and doesn't emit odd-harmonic (3k/5k) grit on sustained tones.
+        const float gL = oL * kWetOutputGain, gR = oR * kWetOutputGain;
+        const float h = outputHeadroom_;
+        outL[n] = (h == 1.0f) ? std::tanh (gL) : h * std::tanh (gL / h);
+        outR[n] = (h == 1.0f) ? std::tanh (gR) : h * std::tanh (gR / h);
     }
 }

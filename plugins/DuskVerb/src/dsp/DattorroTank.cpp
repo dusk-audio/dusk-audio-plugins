@@ -278,6 +278,10 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     if (lastStructHFHz_ > 0.0f)
         setStructuralHFDamping (lastStructHFHz_);
 
+    // Re-realize the in-loop mode notch at the new sample rate (also clears state)
+    if (notchActive_)
+        setModeNotch (mnHz_, mnCutDb_, mnQ_);
+
     // Recompute soft-onset coefficient for the new sample rate
     if (softOnsetMs_ > 0.0f)
         setSoftOnsetMs (softOnsetMs_);
@@ -424,6 +428,19 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                 float& hfState = (&tank == &leftTank_) ? structHFStateL_ : structHFStateR_;
                 hfState = (1.0f - structHFCoeff_) * damped + structHFCoeff_ * hfState;
                 damped = hfState;
+            }
+
+            // --- In-loop mode notch (boing killer): narrow peaking CUT that
+            // compounds per pass -> shortens ONE mode's decay. Off = skipped. ---
+            if (notchActive_ && ! frozen_)
+            {
+                const bool isL = (&tank == &leftTank_);
+                float& z1 = isL ? mnZ1L_ : mnZ1R_;
+                float& z2 = isL ? mnZ2L_ : mnZ2R_;
+                const float y = mnB0_ * damped + z1;
+                z1 = mnB1_ * damped - mnA1_ * y + z2;
+                z2 = mnB2_ * damped - mnA2_ * y;
+                damped = y;
             }
 
             // --- Static allpass (decay diffusion 2) ---
@@ -922,6 +939,33 @@ void DattorroTank::setModReduction (float reduction01)
     modReduction_ = std::clamp (reduction01, 0.0f, 1.0f);
 }
 
+void DattorroTank::setModeNotch (float hz, float cutDb, float q)
+{
+    mnHz_ = hz; mnCutDb_ = cutDb; mnQ_ = std::clamp (q, 0.5f, 40.0f);
+    if (hz < 20.0f || cutDb >= -0.01f)
+    {
+        notchActive_ = false;
+        mnB0_ = 1.0f; mnB1_ = mnB2_ = mnA1_ = mnA2_ = 0.0f;
+        mnZ1L_ = mnZ2L_ = mnZ1R_ = mnZ2R_ = 0.0f;
+        return;
+    }
+    // RBJ peaking EQ, negative gain = narrow cut. Inside the loop the cut
+    // compounds per pass, shortening the mode's T60 without a broadband dip.
+    const float sr = static_cast<float> (sampleRate_);
+    const float A  = std::pow (10.0f, std::clamp (cutDb, -12.0f, 0.0f) / 40.0f);
+    const float w0 = 6.283185307179586f * std::clamp (hz, 20.0f, 0.45f * sr) / sr;
+    const float alpha = std::sin (w0) / (2.0f * mnQ_);
+    const float cosw = std::cos (w0);
+    const float a0 = 1.0f + alpha / A;
+    mnB0_ = (1.0f + alpha * A) / a0;
+    mnB1_ = (-2.0f * cosw) / a0;
+    mnB2_ = (1.0f - alpha * A) / a0;
+    mnA1_ = (-2.0f * cosw) / a0;
+    mnA2_ = (1.0f - alpha / A) / a0;
+    mnZ1L_ = mnZ2L_ = mnZ1R_ = mnZ2R_ = 0.0f;
+    notchActive_ = true;
+}
+
 void DattorroTank::setStructuralHFDamping (float hz)
 {
     lastStructHFHz_ = hz;
@@ -995,6 +1039,9 @@ void DattorroTank::clearBuffers()
     limiterEnv_ = 0.0f;
     structHFStateL_ = 0.0f;
     structHFStateR_ = 0.0f;
+    // In-loop mode-notch biquad state (mirrors the reset in setModeNotch) — else
+    // stale notch samples survive an algorithm/preset swap that calls clearBuffers.
+    mnZ1L_ = mnZ2L_ = mnZ1R_ = mnZ2R_ = 0.0f;
     bloomEnv_     = bloomActive_ ? 0.0f : 1.0f;
     bloomRampPos_ = bloomActive_ ? 0.0f : 1.0f;
     bloomQuietSamples_ = bloomRearmSamples_;  // armed: first onset triggers the swell

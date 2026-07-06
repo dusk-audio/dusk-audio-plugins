@@ -31,6 +31,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sparseField_.prepare (sampleRate, maxBlockSize);
     diffuseER_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
+    pmb_.prepare (sampleRate, maxBlockSize);
     buildupDiffuser_.prepare (sampleRate, maxBlockSize);
     buildupBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     buildupBufR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -77,9 +78,10 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     sparseOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     sparseOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
-    // FORK A reflection tap — buffer sized for ~250 ms max delay (power of two).
+    // FORK A reflection tap — sized for the 300 ms max tap time accepted by
+    // setEarlyTapBank()/setReflection (power of two).
     {
-        const int wantLen = static_cast<int> (0.25 * sampleRate) + 4;
+        const int wantLen = static_cast<int> (0.30 * sampleRate) + 4;
         int len = 1;
         while (len < wantLen) len <<= 1;
         reflBuf_.assign (static_cast<size_t> (len), 0.0f);
@@ -93,6 +95,17 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
         // arrival, not a smeared blob.
         const float fc = 11000.0f;
         reflLpCoeff_ = 1.0f - std::exp (-kTwoPi * fc / static_cast<float> (sampleRate));
+        // Early-tap bank shares this buffer — re-realize its sample delays at the
+        // new rate and clear its filter state.
+        etapLpStateL_ = etapLpStateR_ = 0.0f;
+        etapLpCoeff_  = 1.0f - std::exp (-kTwoPi * etapLpFcHz_ / static_cast<float> (sampleRate));
+        if (etapCount_ > 0)
+        {
+            float ms[kMaxEarlyTaps], g[kMaxEarlyTaps];
+            const int n = etapCount_;
+            for (int i = 0; i < n; ++i) { ms[i] = etapMs_[i]; g[i] = etapGain_[i]; }
+            setEarlyTapBank (ms, g, n, etapLpFcHz_);
+        }
     }
 
     // Per-sample smoothers — short time constants, advance once per sample.
@@ -165,6 +178,7 @@ void DuskVerbEngine::clearAllBuffers()
     sparseField_.clear();           // algo 11 early-field tap buffers
     diffuseER_.clear();             // diffused discrete-ER bus (DenseHall)
     denseHall_.clear();             // algo 14 dense hall tank state
+    pmb_.clear();                   // algo 15 parallel multiband tank state
     buildupDiffuser_.clear();       // DenseHall tail-buildup cascade
  // algo 12 (32-line)
     outputDiffusion_.clear();       // per-preset post-tank diffuser (BH)
@@ -199,6 +213,7 @@ void DuskVerbEngine::clearAllBuffers()
     std::fill (reflBuf_.begin(), reflBuf_.end(), 0.0f);
     reflWritePos_ = 0;
     reflLpStateL_ = reflLpStateR_ = 0.0f;
+    etapLpStateL_ = etapLpStateR_ = 0.0f;   // early-tap bank shares reflBuf_ — clear its LP state too
 
     loCutFilter_.reset();
     hiCutFilter_.reset();
@@ -274,7 +289,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     dattorroDenseField_.clear();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
-    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear();
+    fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear(); pmb_.clear();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -292,6 +307,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     std::fill (reflBuf_.begin(), reflBuf_.end(), 0.0f);
     reflWritePos_ = 0;
     reflLpStateL_ = reflLpStateR_ = 0.0f;
+    etapLpStateL_ = etapLpStateR_ = 0.0f;   // early-tap bank shares reflBuf_ — clear its LP state too
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -310,6 +326,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
     dattorroVintage_.setFreeze (frozen);
     reverseRoom_.setFreeze (frozen);
     denseHall_.setFreeze (frozen);
+    pmb_.setFreeze (frozen);
 }
 
 // Forward to the NonLinear engine — it's the only algorithm with a gate.
@@ -332,6 +349,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
 
     reverseRoom_.setDecayTime (seconds);
     denseHall_.setDecayTime (seconds);
+    pmb_.setDecayScale (seconds / 2.0f);   // 2 s = the band table's reference decay; knob scales the curve
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -541,6 +559,16 @@ void DuskVerbEngine::setDenseHallOctaveT60 (int band, float seconds)
     denseHall_.setOctaveT60 (band, seconds);
 }
 
+void DuskVerbEngine::setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz)
+{
+    denseHall_.setLowAccumLimiter (threshDb, maxCut, splitHz);
+}
+
+void DuskVerbEngine::setPmbBand (int b, float t60s, float level, float direct, float width)
+{
+    pmb_.setBand (b, t60s, level, direct, width);
+}
+
 void DuskVerbEngine::setDenseHallOctaveDecayRef (float seconds)
 {
     denseHall_.setOctaveDecayRef (seconds);
@@ -569,6 +597,30 @@ void DuskVerbEngine::setReflectionTap (float ms, float gain, float lpFc)
     reflActive_ = reflGain_ > 1.0e-6f;
     const float fc = std::clamp (lpFc, 1000.0f, 20000.0f);
     reflLpCoeff_ = 1.0f - std::exp (-6.283185307179586f * fc / sr);
+}
+
+void DuskVerbEngine::setEarlyTapBank (const float* timesMs, const float* gains, int count, float lpFc)
+{
+    // Multi-tap generalization of Fork A: N discrete reflections at the anchor's
+    // measured arrival times. Shares reflBuf_ (clean pre-diffuser dry). Per-tap
+    // alternating ±4 ms R offset gives each arrival width without smearing the
+    // pattern. count 0 → etapActive_ false → the block is skipped → bit-null.
+    const float sr = static_cast<float> (sampleRate_);
+    const int   maxD = (reflMask_ > 1) ? reflMask_ - 1 : 1;
+    etapCount_ = std::clamp (count, 0, kMaxEarlyTaps);
+    for (int i = 0; i < etapCount_; ++i)
+    {
+        etapMs_[i]     = std::clamp (timesMs[i], 1.0f, 300.0f);
+        etapGain_[i]   = std::clamp (gains[i], 0.0f, 4.0f);
+        const float rOff = (i & 1) ? -4.0f : 4.0f;
+        etapDelayL_[i] = std::clamp (static_cast<int> (etapMs_[i] * 0.001f * sr), 1, maxD);
+        etapDelayR_[i] = std::clamp (static_cast<int> ((etapMs_[i] + rOff) * 0.001f * sr), 1, maxD);
+    }
+    bool any = false;
+    for (int i = 0; i < etapCount_; ++i) any = any || (etapGain_[i] > 1.0e-6f);
+    etapActive_ = any && etapCount_ > 0;
+    etapLpFcHz_  = std::clamp (lpFc, 1000.0f, 20000.0f);
+    etapLpCoeff_ = 1.0f - std::exp (-6.283185307179586f * etapLpFcHz_ / sr);
 }
 
 void DuskVerbEngine::setTonalCorrection (bool enabled)
@@ -643,6 +695,26 @@ void DuskVerbEngine::setDiffuseER (const float* timesMs, const float* gains, int
     diffuseERGain_ = std::clamp (busGain, 0.0f, 2.0f);
 }
 
+void DuskVerbEngine::setDiffuseERHighpass (float hz)
+{
+    diffuseERHpHz_ = std::clamp (hz, 0.0f, 12000.0f);
+    if (diffuseERHpHz_ <= 0.0f)
+        return;
+    // LR4 highpass = two cascaded RBJ Butterworth-2 HP sections (Q 0.7071).
+    const float w0 = 6.2831853f * diffuseERHpHz_ / static_cast<float> (sampleRate_);
+    const float cw = std::cos (w0), sw = std::sin (w0);
+    const float al = sw / (2.0f * 0.70710678f);
+    const float a0 = 1.0f + al;
+    dfHpB_[0] = ((1.0f + cw) * 0.5f) / a0;
+    dfHpB_[1] = -(1.0f + cw) / a0;
+    dfHpB_[2] = ((1.0f + cw) * 0.5f) / a0;
+    dfHpA_[0] = (-2.0f * cw) / a0;
+    dfHpA_[1] = (1.0f - al) / a0;
+    for (int c = 0; c < 2; ++c)
+        for (int st = 0; st < 2; ++st)
+            dfHpZ_[c][st][0] = dfHpZ_[c][st][1] = 0.0f;
+}
+
 void DuskVerbEngine::setOutputDiffusion (bool enable, float amount, float lfoScale, float delayScale)
 {
     outDiffActive_ = enable;
@@ -700,6 +772,8 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setTankFeedEQ (200.0f, 0.0f, 2500.0f, 0.0f);
     // Dattorro density-AP jitter → engine default (0.02).
     setDattorroDensityJitter (0.02f);
+    // In-loop mode notch → off.
+    setDattorroModeNotch (0.0f, 0.0f, 8.0f);
     // Output diffusion → disabled. applyEngineConfig's else-branch covers the
     // with-preset path, but the null-preset swap calls THIS alone — without it,
     // a prior preset's post-tank diffusion (e.g. Bright Hall) would leak.
@@ -724,6 +798,7 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setDattorroDensityRoomFill (false); setDattorroMainLineDetune (1.0f, 1.0f, 1.0f, 1.0f);
     setDattorroSoftOnsetMs (0.0f); setDattorroBloomAttackMs (0.0f);
     setReflectionTap (0.0f, 0.0f); setTankOnsetMs (0.0f);          // discrete tap + tank-onset → off
+    setEarlyTapBank  (nullptr, nullptr, 0);                        // tap bank → off (count 0 never dereferences)
     setTiledRoomVoicing (1.0f, 14.0f, 55.0f, 115.0f, 0.45f, 1.0f); // SparseEarlyField voicing → engine defaults
     setSparseFieldBurst2Gain (0.0f);
     setDiffuseER (nullptr, nullptr, 0, 0.6f, 1.0f);   // diffused discrete-ER → inactive (bit-null)
@@ -795,7 +870,9 @@ void DuskVerbEngine::setShimmerUseDenseReverb (bool on)  { shimmer_.setUseDenseR
 void DuskVerbEngine::setShimmerUseTailSpin    (bool on)  { shimmer_.setUseTailSpin (on); }
 void DuskVerbEngine::setShimmerUpVoiceScale   (float v1, float v2) { shimmer_.setUpVoiceScale (v1, v2); }
 void DuskVerbEngine::setShimmerOctaveCascade  (const float gains[4]) { shimmer_.setOctaveCascade (gains); }
-void DuskVerbEngine::setShimmerTailNoise      (float gain) { shimmer_.setTailNoise (gain); }
+void DuskVerbEngine::setShimmerTailNoise      (float gain, float hpHz, float lpHz) { shimmer_.setTailNoise (gain, hpHz, lpHz); }
+void DuskVerbEngine::setShimmerHFSustainDb    (float db, float cornerHz) { shimmer_.setHFSustainDb (db, cornerHz); }
+void DuskVerbEngine::setShimmerOutputHeadroom (float h) { shimmer_.setOutputHeadroom (h); }
 
 // Tail Spin/Wander (post-loop output AM) exists only on the FDN-based engines.
 // Forward to the FDN tank and to ReverseRoom (which owns an FDN for its tail);
@@ -926,6 +1003,11 @@ void DuskVerbEngine::setPostTankEQBand (int index, float freqHz, float qFactor, 
 void DuskVerbEngine::setDattorroDensityJitter (float fraction)
 {
     dattorro_.setDensityJitter (fraction);
+}
+
+void DuskVerbEngine::setDattorroModeNotch (float hz, float cutDb, float q)
+{
+    dattorro_.setModeNotch (hz, cutDb, q);
 }
 
 void DuskVerbEngine::setDattorroDensity (float depth01)
@@ -1588,6 +1670,52 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 }
             }
             break;
+
+        case EngineType::ParallelMultiband:
+            // Per-band decoupled tank (pilot). COMPOSITE like DenseHall: the
+            // sparse discrete-ER front supplies the early field; the parallel
+            // bands own the tail with independent level/decay/EDT/width.
+            pmb_.process (tankInL_.data(), tankInR_.data(),
+                          tankOutL_.data(), tankOutR_.data(), numSamples);
+            sparseField_.process (tankInL_.data(), tankInR_.data(),
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
+                tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
+            }
+            // Diffused-burst ER bus, same hookup as the DenseHall composite
+            // (2026-07-06: the post-hit "whoosh" the VVV anchor carries lives
+            // here — the parallel band tanks alone onset too cleanly).
+            // Optionally highpassed (setDiffuseERHighpass) so the whoosh adds
+            // NO steady-state energy at/below 1 kHz — an unfiltered bus pumped
+            // sine1k +11 dB. Skipped (no reflections configured) → bit-null.
+            if (diffuseER_.active())
+            {
+                diffuseER_.process (tankInL_.data(), tankInR_.data(),
+                                    sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                if (diffuseERHpHz_ > 0.0f)
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float* smp[2] = { &sparseOutL_[static_cast<size_t> (i)], &sparseOutR_[static_cast<size_t> (i)] };
+                        for (int c = 0; c < 2; ++c)
+                            for (int st = 0; st < 2; ++st)
+                            {
+                                const float x = *smp[c];
+                                float* z = dfHpZ_[c][st];
+                                const float y = dfHpB_[0] * x + z[0];
+                                z[0] = dfHpB_[1] * x - dfHpA_[0] * y + z[1];
+                                z[1] = dfHpB_[2] * x - dfHpA_[1] * y;
+                                *smp[c] = y;
+                            }
+                    }
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * diffuseERGain_;
+                    tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * diffuseERGain_;
+                }
+            }
+            break;
     }
 
     // ---- 4b) Per-preset post-tank OUTPUT diffusion (Bright Hall) ----
@@ -1683,17 +1811,38 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // kReflectionByName is empty/env-only today). Out of the recursive tank → no
         // codegen drift. (Note: a tap can't fix a late-energy/front-load clarity
         // problem — it's a small arrival vs the whole tail; it's for a discrete slap.)
-        if (reflActive_)
         {
+            // Write + advance EVERY sample so the ring history stays warm across
+            // presets that disable taps — enabling them mid-flight must not read
+            // ~250 ms of stale silence. Inactive presets stay bit-identical: only
+            // the guarded reads below touch the wet signal.
             const float dryMono = reflDryMono_[static_cast<size_t> (i)];   // CLEAN pre-diffuser dry (snapshot above)
             reflBuf_[static_cast<size_t> (reflWritePos_)] = dryMono;
-            const float tapL = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayL_) & reflMask_)];
-            const float tapR = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayR_) & reflMask_)];
+            if (reflActive_)
+            {
+                const float tapL = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayL_) & reflMask_)];
+                const float tapR = reflBuf_[static_cast<size_t> ((reflWritePos_ - reflDelayR_) & reflMask_)];
+                reflLpStateL_ += reflLpCoeff_ * (tapL - reflLpStateL_);
+                reflLpStateR_ += reflLpCoeff_ * (tapR - reflLpStateR_);
+                wetL += reflGain_ * reflLpStateL_;
+                wetR += reflGain_ * reflLpStateR_;
+            }
+            // Early-tap BANK: N anchor-timed discrete arrivals, one shared LP pair
+            // (real reflections are darker than the direct sound).
+            if (etapActive_)
+            {
+                float sumL = 0.0f, sumR = 0.0f;
+                for (int t = 0; t < etapCount_; ++t)
+                {
+                    sumL += etapGain_[t] * reflBuf_[static_cast<size_t> ((reflWritePos_ - etapDelayL_[t]) & reflMask_)];
+                    sumR += etapGain_[t] * reflBuf_[static_cast<size_t> ((reflWritePos_ - etapDelayR_[t]) & reflMask_)];
+                }
+                etapLpStateL_ += etapLpCoeff_ * (sumL - etapLpStateL_);
+                etapLpStateR_ += etapLpCoeff_ * (sumR - etapLpStateR_);
+                wetL += etapLpStateL_;
+                wetR += etapLpStateR_;
+            }
             reflWritePos_ = (reflWritePos_ + 1) & reflMask_;
-            reflLpStateL_ += reflLpCoeff_ * (tapL - reflLpStateL_);
-            reflLpStateR_ += reflLpCoeff_ * (tapR - reflLpStateR_);
-            wetL += reflGain_ * reflLpStateL_;
-            wetR += reflGain_ * reflLpStateR_;
         }
 
         wetL = loCutFilter_.processL (wetL);

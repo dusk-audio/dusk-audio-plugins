@@ -73,6 +73,12 @@ public:
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
     void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
+    // In-loop MODE notch: a narrow RBJ peaking CUT inside the recirculation
+    // (post-damping). Unlike an output notch (level cut — the boing "hops" to
+    // the next mode), an in-loop cut compounds per pass and shortens THAT
+    // mode's decay specifically. cutDb 0 = branch skipped (bit-null; note the
+    // recursive-loop codegen caveat: adjacent FP may drift ~1e-4 when active).
+    void setModeNotch (float hz, float cutDb, float q);
     // Density-AP random-walk jitter depth (fraction of each AP's delay).
     // Engine default 0.02 (the #87 anti-ring wander). The in-loop wander is
     // a time-VARYING element: every pass FM-scatters tail energy broadband,
@@ -387,6 +393,13 @@ private:
 
     Tank leftTank_;
     Tank rightTank_;
+
+    // In-loop mode-notch (setModeNotch): RBJ peaking-cut biquad, one per tank
+    // (DF2-transposed state). Coefficients shared; notchActive_ false → skipped.
+    float mnB0_ = 1.0f, mnB1_ = 0.0f, mnB2_ = 0.0f, mnA1_ = 0.0f, mnA2_ = 0.0f;
+    float mnZ1L_ = 0.0f, mnZ2L_ = 0.0f, mnZ1R_ = 0.0f, mnZ2R_ = 0.0f;
+    float mnHz_ = 0.0f, mnCutDb_ = 0.0f, mnQ_ = 8.0f;   // stored for re-prepare
+    bool  notchActive_ = false;
 
     // -----------------------------------------------------------------------
     // Default output tap positions (early Dattorro-style, read from both tanks).
