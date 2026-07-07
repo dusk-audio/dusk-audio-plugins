@@ -327,19 +327,30 @@ private:
         }
         drawSaveModal();
 
-        // meter source toggle (INPUT / OUTPUT)
+        // segmented IN | OUT meter source switch (both cells visible)
         {
-            const bool out = meterSource != 0;
-            text(dl, 606, 6, 8.0f, kColInkDim, "METER", 0, true);
-            const ImVec2 b0 = P(578, 18), b1 = P(634, 38);
-            ImGui::SetCursorScreenPos(b0);
-            ImGui::InvisibleButton("metsrc", ImVec2(b1.x - b0.x, b1.y - b0.y));
-            if (ImGui::IsItemClicked()) meterSource ^= 1;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Meter source: what the VU meters show (INPUT or OUTPUT level).");
-            dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
-                                        IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
-            dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.2f * s);
-            text(dl, 606, 22, 9.5f, kColInk, out ? "OUTPUT" : "INPUT", 0, true);
+            const float mx0 = 576, mid = 610, mx1 = 644, my0 = 18, my1 = 38;
+            text(dl, mid, 6, 8.0f, kColInkDim, "METER", 0, true);
+            dl->AddRectFilled(P(mx0, my0), P(mx1, my1), IM_COL32(210, 211, 213, 255), 3.0f * s);
+
+            ImGui::SetCursorScreenPos(P(mx0, my0));
+            ImGui::InvisibleButton("mIn", ImVec2((mid - mx0) * s, (my1 - my0) * s));
+            if (ImGui::IsItemClicked()) meterSource = 0;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Meter the INPUT (record / tape-drive) level.");
+            const bool inAct = meterSource == 0;
+            if (inAct) dl->AddRectFilled(P(mx0, my0), P(mid, my1), IM_COL32(150, 152, 156, 255), 3.0f * s);
+            text(dl, 0.5f * (mx0 + mid), 22, 9.0f, inAct ? IM_COL32(22, 22, 24, 255) : kColInkDim, "IN", 0, inAct);
+
+            ImGui::SetCursorScreenPos(P(mid, my0));
+            ImGui::InvisibleButton("mOut", ImVec2((mx1 - mid) * s, (my1 - my0) * s));
+            if (ImGui::IsItemClicked()) meterSource = 1;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Meter the OUTPUT level (digital clip lamp active).");
+            const bool outAct = meterSource != 0;
+            if (outAct) dl->AddRectFilled(P(mid, my0), P(mx1, my1), IM_COL32(150, 152, 156, 255), 3.0f * s);
+            text(dl, 0.5f * (mid + mx1), 22, 9.0f, outAct ? IM_COL32(22, 22, 24, 255) : kColInkDim, "OUT", 0, outAct);
+
+            dl->AddLine(P(mid, my0 + 1), P(mid, my1 - 1), IM_COL32(120, 121, 123, 255), 1.0f * s);
+            dl->AddRect(P(mx0, my0), P(mx1, my1), IM_COL32(90, 90, 92, 255), 3.0f * s, 0, 1.2f * s);
         }
 
         // bypass, kept clear of the top-right corner screw (~x784)
