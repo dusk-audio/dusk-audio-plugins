@@ -32,13 +32,14 @@ namespace {
     constexpr float kDesignW = 800.0f;
     constexpr float kDesignH = 470.0f;
 
-    constexpr ImU32 kColPanel   = IM_COL32(188, 189, 191, 255);
-    constexpr ImU32 kColPanelHi = IM_COL32(206, 207, 209, 255);
-    constexpr ImU32 kColPanelLo = IM_COL32(150, 151, 153, 255);
-    constexpr ImU32 kColFrame   = IM_COL32(58, 58, 60, 255);
-    constexpr ImU32 kColInk     = IM_COL32(34, 34, 37, 255);
-    constexpr ImU32 kColInkDim  = IM_COL32(96, 97, 100, 255);
-    constexpr ImU32 kColScrew   = IM_COL32(120, 121, 123, 255);
+    // Warmed painted-steel greys (a touch of warmth vs. the old cool neutral).
+    constexpr ImU32 kColPanel   = IM_COL32(190, 188, 183, 255);
+    constexpr ImU32 kColPanelHi = IM_COL32(214, 212, 206, 255);
+    constexpr ImU32 kColPanelLo = IM_COL32(150, 148, 143, 255);
+    constexpr ImU32 kColFrame   = IM_COL32(60, 58, 55, 255);
+    constexpr ImU32 kColInk     = IM_COL32(34, 33, 31, 255);
+    constexpr ImU32 kColInkDim  = IM_COL32(98, 96, 92, 255);
+    constexpr ImU32 kColScrew   = IM_COL32(126, 123, 118, 255);
     constexpr ImU32 kColRed      = IM_COL32(190, 55, 40, 255);
 }
 
@@ -204,11 +205,18 @@ private:
     void drawPanel(ImDrawList* dl, float winW, float winH)
     {
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), kColFrame);
-        dl->AddRectFilledMultiColor(P(0, 0), P(kDesignW, kDesignH),
+        // main panel: top-down painted-steel gradient (light top -> darker bottom)
+        dl->AddRectFilledMultiColor(P(6, 6), P(kDesignW - 6, kDesignH - 6),
                                     kColPanelHi, kColPanelHi, kColPanelLo, kColPanelLo);
-        dl->AddRectFilled(P(6, 6), P(kDesignW - 6, kDesignH - 6), kColPanel);
-        for (float y = 8.0f; y < kDesignH - 6.0f; y += 3.0f)
-            dl->AddLine(P(8, y), P(kDesignW - 8, y), IM_COL32(255, 255, 255, 10), 1.0f);
+        // fine horizontal brushed grain: alternating light/dark hairlines
+        for (float y = 8.0f; y < kDesignH - 6.0f; y += 2.0f)
+        {
+            dl->AddLine(P(8, y),        P(kDesignW - 8, y),        IM_COL32(255, 255, 255, 9), 1.0f);
+            dl->AddLine(P(8, y + 1.0f), P(kDesignW - 8, y + 1.0f), IM_COL32(0, 0, 0, 7), 1.0f);
+        }
+        // bevel: bright top-left edge, dark bottom-right edge
+        dl->AddLine(P(6, 7), P(kDesignW - 6, 7), IM_COL32(235, 234, 228, 130), 1.4f * s);
+        dl->AddLine(P(6, kDesignH - 7), P(kDesignW - 6, kDesignH - 7), IM_COL32(40, 39, 37, 90), 1.4f * s);
         const float sx[4] = { 16, kDesignW - 16, 16, kDesignW - 16 };
         const float sy[4] = { 16, 16, kDesignH - 16, kDesignH - 16 };
         for (int i = 0; i < 4; ++i) screw(dl, sx[i], sy[i]);
@@ -217,10 +225,17 @@ private:
     void screw(ImDrawList* dl, float x, float y) const
     {
         const ImVec2 c = P(x, y);
-        dl->AddCircleFilled(c, 5.0f * s, kColScrew, 16);
-        dl->AddCircle(c, 5.0f * s, IM_COL32(80, 80, 82, 255), 16, 1.0f * s);
-        dl->AddLine(ImVec2(c.x - 3 * s, c.y - 3 * s), ImVec2(c.x + 3 * s, c.y + 3 * s),
-                    IM_COL32(70, 70, 72, 255), 1.2f * s);
+        dl->AddCircleFilled(c, 6.2f * s, IM_COL32(70, 68, 64, 90), 20);            // recessed shadow
+        dl->AddCircleFilled(c, 5.0f * s, kColScrew, 20);                           // head
+        dl->AddCircleFilled(ImVec2(c.x - 1.2f * s, c.y - 1.4f * s), 4.3f * s,
+                            IM_COL32(198, 195, 188, 150), 20);                     // bevel highlight
+        dl->AddCircleFilled(c, 3.6f * s, kColScrew, 20);
+        dl->AddCircle(c, 5.0f * s, IM_COL32(72, 70, 66, 255), 20, 1.0f * s);       // rim
+        const float a = (x < kDesignW * 0.5f) ? 0.5f : -0.5f;                      // slot angle
+        const ImVec2 d(std::cos(a), std::sin(a));
+        dl->AddLine(ImVec2(c.x - d.x * 3.2f * s, c.y - d.y * 3.2f * s),
+                    ImVec2(c.x + d.x * 3.2f * s, c.y + d.y * 3.2f * s),
+                    IM_COL32(56, 54, 50, 255), 1.3f * s);
     }
 
     // small silver chevron button (< or >) for preset stepping
