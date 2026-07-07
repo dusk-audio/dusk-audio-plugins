@@ -34,8 +34,6 @@ namespace {
     constexpr ImU32 kColScrew    = IM_COL32(120, 121, 123, 255);
     constexpr ImU32 kColReelGold = IM_COL32(198, 166, 98, 255);
     constexpr ImU32 kColReelSilv = IM_COL32(158, 159, 162, 255);
-    constexpr ImU32 kColVuFace   = IM_COL32(228, 198, 126, 255); // amber VU glass
-    constexpr ImU32 kColVuInk    = IM_COL32(48, 38, 18, 255);
     constexpr ImU32 kColRed      = IM_COL32(190, 55, 40, 255);
 }
 
@@ -222,56 +220,110 @@ private:
 
     void drawMeterBridge(ImDrawList* dl)
     {
-        const float x0 = 250, y0 = 150, x1 = 670, y1 = 300;
-        dl->AddRectFilled(P(x0 - 4, y0 - 4), P(x1 + 4, y1 + 4), IM_COL32(60, 60, 62, 255), 5.0f * s);
-        dl->AddRectFilled(P(x0, y0), P(x1, y1), kColVuFace, 4.0f * s); // amber glass
-        dl->AddRectFilledMultiColor(P(x0, y0), P(x1, y0 + 30),
-                                    IM_COL32(255, 255, 255, 60), IM_COL32(255, 255, 255, 60),
-                                    IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
-
         float lvlL = values[kParamVuL], lvlR = values[kParamVuR];
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
         if (tapeMachineGetVuL != nullptr && tapeMachineGetVuR != nullptr)
             if (void* const inst = getPluginInstancePointer())
             { lvlL = tapeMachineGetVuL(inst); lvlR = tapeMachineGetVuR(inst); }
        #endif
-        vuMeter(dl, 360, lvlL, needleL, "L");
-        vuMeter(dl, 560, lvlR, needleR, "R");
+        // two framed cream VU meters side by side (ported from the JUCE
+        // AnalogVUMeter: silver frame, dark bezel, cream face, red needle,
+        // -20..+3 VU scale with red zone, deco screws, glass highlight).
+        drawVU(dl, 258, 148, 454, 296, lvlL, needleL, "L");
+        drawVU(dl, 466, 148, 662, 296, lvlR, needleR, "R");
     }
 
-    void vuMeter(ImDrawList* dl, float cx, float level, float& needle, const char* label)
+    // JUCE AnalogVUMeter palette.
+    static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f; // -20 .. +3 VU angles
+
+    void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
+                float level, float& needle, const char* label)
     {
-        const float dt = ImGui::GetIO().DeltaTime;
-        const float dB = 20.0f * std::log10(level > 1e-5f ? level : 1e-5f);
+        // ballistics: 0 VU == -18 dBFS; needle 0..1 over -20..+3 VU.
+        const float dB = 20.0f * std::log10(level > 1e-4f ? level : 1e-4f) + 18.0f;
         float target = (dB + 20.0f) / 23.0f;
         target = target < 0.0f ? 0.0f : (target > 1.0f ? 1.0f : target);
-        needle += (target - needle) * (1.0f - std::exp(-dt * 8.0f));
+        needle += (target - needle) * (1.0f - std::exp(-ImGui::GetIO().DeltaTime * 11.0f));
 
-        const ImVec2 pivot = P(cx, 300);
-        const float rArc = 128.0f * s;
-        const float aMin = -0.60f, aMax = 0.60f;
+        // frame: silver bezel -> dark inner -> cream face
+        dl->AddRectFilledMultiColor(P(x0, y0), P(x1, y1),
+            IM_COL32(206, 199, 184, 255), IM_COL32(196, 189, 174, 255),
+            IM_COL32(168, 161, 146, 255), IM_COL32(160, 153, 138, 255));
+        dl->AddRectFilled(P(x0 + 3, y0 + 3), P(x1 - 3, y1 - 3), IM_COL32(58, 58, 58, 255), 3.0f * s);
+        const float fx0 = x0 + 6, fy0 = y0 + 6, fx1 = x1 - 6, fy1 = y1 - 6;
+        dl->AddRectFilled(P(fx0, fy0), P(fx1, fy1), IM_COL32(245, 240, 230, 255), 2.0f * s);
+        dl->AddRectFilledMultiColor(P(fx0, fy0), P(fx1, fy1),
+            IM_COL32(255, 252, 244, 90), IM_COL32(255, 252, 244, 90),
+            IM_COL32(236, 228, 212, 90), IM_COL32(236, 228, 212, 90));
 
-        dl->PushClipRect(P(cx - 78, 152), P(cx + 78, 236), true);
-        for (int i = 0; i <= 10; ++i)
+        const float cx = 0.5f * (fx0 + fx1);
+        const float pivotY = fy1 - 5.0f;
+        const float faceW = fx1 - fx0, faceH = fy1 - fy0;
+        const float L = std::min(faceW * 0.48f, faceH * 0.90f);
+
+        auto pt = [&](float r, float a) { return P(cx + r * std::cos(a), pivotY + r * std::sin(a)); };
+
+        // red zone arc (0..+3 VU)
         {
-            const float a = aMin + (aMax - aMin) * (float)i / 10.0f;
-            const ImVec2 d(std::sin(a), -std::cos(a));
-            const bool red = i >= 8;
-            dl->AddLine(ImVec2(pivot.x + d.x * (rArc - 6 * s), pivot.y + d.y * (rArc - 6 * s)),
-                        ImVec2(pivot.x + d.x * (rArc + (i % 5 == 0 ? 4 : 1) * s),
-                               pivot.y + d.y * (rArc + (i % 5 == 0 ? 4 : 1) * s)),
-                        red ? kColRed : kColVuInk, (i % 5 == 0 ? 1.8f : 1.1f) * s);
+            const float a0 = kVuA0 + (20.0f / 23.0f) * (kVuA1 - kVuA0);
+            const float rr = L * 0.86f;
+            dl->PathClear();
+            dl->PathArcTo(P(cx, pivotY), rr * s, a0, kVuA1, 24);
+            dl->PathStroke(IM_COL32(212, 44, 44, 150), 0, 3.0f * s);
         }
-        text(dl, cx, 168, 11, kColVuInk, "VU", 0, true);
-        text(dl, cx, 210, 9, kColVuInk, label, 0, true);
+        // scale ticks + numbers
+        const float dbv[11] = { -20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3 };
+        for (int i = 0; i < 11; ++i)
         {
-            const float a = aMin + (aMax - aMin) * needle;
-            const ImVec2 d(std::sin(a), -std::cos(a));
-            dl->AddLine(ImVec2(pivot.x + d.x * 34 * s, pivot.y + d.y * 34 * s),
-                        ImVec2(pivot.x + d.x * (rArc + 4 * s), pivot.y + d.y * (rArc + 4 * s)),
-                        IM_COL32(40, 30, 20, 255), 1.8f * s);
+            const float db = dbv[i];
+            const float a = kVuA0 + ((db + 20.0f) / 23.0f) * (kVuA1 - kVuA0);
+            const bool major = !(db == -2 || db == 2);
+            const bool red = db >= 0.0f;
+            const float tick = major ? 8.0f : 5.0f;
+            const float rt = L * 0.94f;
+            dl->AddLine(pt(rt, a), pt(rt + tick, a), red ? IM_COL32(212, 44, 44, 255) : IM_COL32(42, 42, 42, 255),
+                        (major ? 1.7f : 1.0f) * s);
+            const bool showNum = (db == -20 || db == -10 || db == -5 || db == 0 || db == 3);
+            if (showNum)
+            {
+                char b[6]; std::snprintf(b, sizeof(b), db == 0 ? "0" : db > 0 ? "+%d" : "%d", (int)db);
+                const ImVec2 tp = pt(L * 0.72f, a);
+                const char* fnt = b; ImFont* f = labelFont ? labelFont : ImGui::GetFont();
+                const float fs2 = 10.0f * s; ImVec2 ts = f->CalcTextSizeA(fs2, FLT_MAX, 0, fnt);
+                dl->AddText(f, fs2, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f),
+                            red ? IM_COL32(190, 40, 40, 255) : IM_COL32(42, 42, 42, 255), b);
+            }
         }
-        dl->PopClipRect();
+        // "VU" legend
+        text(dl, cx, pivotY - L * 0.46f, 11, IM_COL32(42, 42, 42, 255), "VU", 0, true);
+        text(dl, cx, pivotY - L * 0.46f + 13.0f, 8.5f, IM_COL32(90, 90, 90, 255), label, 0, true);
+
+        // needle (red, with shadow) + pivot cap
+        const float na = kVuA0 + needle * (kVuA1 - kVuA0);
+        dl->AddLine(P(cx + 2, pivotY + 2), P(cx + 2 + L * 0.95f * std::cos(na), pivotY + 2 + L * 0.95f * std::sin(na)),
+                    IM_COL32(0, 0, 0, 60), 3.0f * s);
+        {
+            const float perp = na + 1.5707963f, bw = 3.5f;
+            const ImVec2 tip = pt(L * 0.95f, na);
+            dl->AddTriangleFilled(P(cx + bw * 0.5f * std::cos(perp), pivotY + bw * 0.5f * std::sin(perp)),
+                                  tip,
+                                  P(cx - bw * 0.5f * std::cos(perp), pivotY - bw * 0.5f * std::sin(perp)),
+                                  IM_COL32(204, 51, 51, 255));
+        }
+        dl->AddCircleFilled(P(cx, pivotY), 4.5f * s, IM_COL32(20, 20, 20, 255), 18);
+        dl->AddCircleFilled(P(cx - 1.2f * s, pivotY - 1.4f * s), 1.6f * s, IM_COL32(120, 120, 120, 160), 10);
+
+        // glass highlight (top) + deco screws
+        dl->AddRectFilledMultiColor(P(fx0 + 4, fy0 + 2), P(fx1 - 4, fy0 + faceH * 0.22f),
+            IM_COL32(255, 255, 255, 34), IM_COL32(255, 255, 255, 34),
+            IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
+        const float m = 9.0f;
+        for (float sx : { x0 + m, x1 - m })
+            for (float sy : { y0 + m, y1 - m })
+            {
+                dl->AddCircleFilled(P(sx, sy), 3.0f * s, IM_COL32(176, 168, 152, 255), 14);
+                dl->AddLine(P(sx - 2, sy), P(sx + 2, sy), IM_COL32(26, 26, 24, 255), 1.2f * s);
+            }
     }
 
     void knob(ImDrawList* dl, const char* id, uint32_t param, float cx, float cy,
