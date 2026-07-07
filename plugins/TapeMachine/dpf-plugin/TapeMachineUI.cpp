@@ -299,24 +299,24 @@ private:
 
     void drawHeader(ImDrawList* dl)
     {
-        // Title nameplate + machine badge (left-anchored).
-        dl->AddRectFilled(P(15, 12), P(232, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
-        dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
-        text(dl, 27, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
+        // Title nameplate + machine badge (left-anchored, clear of the top-left screw ~x22).
+        dl->AddRectFilled(P(30, 12), P(247, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
+        dl->AddRect(P(30, 12), P(247, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
+        text(dl, 42, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
         {   // machine badge (accent-tinted) + non-standard indicator
             const char* badge = isA800() ? "A800" : "ATR-102";
             const bool std = comboIsStd();
-            ImGui::SetCursorScreenPos(P(178, 16));
+            ImGui::SetCursorScreenPos(P(193, 16));
             ImGui::InvisibleButton("badge", ImVec2(50.0f * s, 18.0f * s));
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(std ? "Tape machine: %s"
                                       : "Tape machine: %s\nCurrent speed / EQ / tape combo is non-standard for\n"
                                         "this machine (still fully modelled - nothing is disabled).",
                                   isA800() ? "A800 - tight, clean, punchy" : "ATR-102 - warm, wide, silky");
-            dl->AddRectFilled(P(178, 16), P(228, 34), accentCol(), 3.0f * s);
-            dl->AddRect(P(178, 16), P(228, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
-            text(dl, 203, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
-            if (!std) dl->AddCircleFilled(P(225, 19), 2.6f * s, kColNonStd, 10); // non-standard dot
+            dl->AddRectFilled(P(193, 16), P(243, 34), accentCol(), 3.0f * s);
+            dl->AddRect(P(193, 16), P(243, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
+            text(dl, 218, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
+            if (!std) dl->AddCircleFilled(P(240, 19), 2.6f * s, kColNonStd, 10); // non-standard dot
         }
 
         // preset browser, centred between the title and the (right-anchored) bypass:
