@@ -201,10 +201,6 @@ private:
         dl->AddRectFilledMultiColor(P(fx0, fy0), P(fx1, fy1),
             IM_COL32(252, 246, 226, 130), IM_COL32(252, 246, 226, 130),
             IM_COL32(210, 194, 158, 150), IM_COL32(210, 194, 158, 150));
-        // corner vignette
-        for (float vx : { fx0, fx1 })
-            for (float vy : { fy0, fy1 })
-                dl->AddCircleFilled(P(vx, vy), (fy1 - fy0) * 0.45f * s, IM_COL32(120, 96, 62, 26), 20);
 
         const float cx = 0.5f * (fx0 + fx1);
         const float pivotY = fy1 - 4.0f;
