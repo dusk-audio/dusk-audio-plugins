@@ -158,6 +158,9 @@ private:
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
         ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(150, 152, 156, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(198, 199, 201, 255));        // arrow bg
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(212, 213, 215, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(178, 179, 181, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
         if (ImGui::BeginCombo("##preset", cur))
         {
@@ -174,9 +177,10 @@ private:
             }
             ImGui::EndCombo();
         }
-        ImGui::PopStyleColor(5);
+        ImGui::PopStyleColor(8);
 
-        tmButton(dl, "bypass", kParamBypass, 704, 14, 785, 38, "BYPASS");
+        // bypass, kept clear of the top-right corner screw (~x784)
+        tmButton(dl, "bypass", kParamBypass, 648, 14, 736, 38, "BYPASS");
     }
 
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
@@ -277,22 +281,27 @@ private:
     }
 
     //--- selectors (single row of six) -----------------------------------------
-    void selector(ImDrawList* dl, const char* id, uint32_t param, float x, float y,
+    // cx = column centre; w = combo width (sized to fit its widest option +
+    // the dropdown arrow). The combo is centred under its (centred) label.
+    void selector(ImDrawList* dl, const char* id, uint32_t param, float cx, float y,
                   float w, const char* title)
     {
         const TmParam& d = kTmParams[param];
-        text(dl, x + 0.5f * w, y, 9.0f, kColInk, title, 0, true);
+        text(dl, cx, y, 9.0f, kColInk, title, 0, true);
         int cur = (int)(values[param] + 0.5f);
         if (cur < 0) cur = 0; if (cur >= d.numChoices) cur = d.numChoices - 1;
 
-        ImGui::SetCursorScreenPos(P(x, y + 13.0f));
+        ImGui::SetCursorScreenPos(P(cx - 0.5f * w, y + 13.0f));
         ImGui::SetNextItemWidth(w * s);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
         ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(150, 152, 156, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(198, 199, 201, 255));        // arrow bg
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(212, 213, 215, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(178, 179, 181, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
-        if (ImGui::BeginCombo(id, d.choices[cur], ImGuiComboFlags_NoArrowButton))
+        if (ImGui::BeginCombo(id, d.choices[cur]))   // arrow shown -> reads as a dropdown
         {
             for (int i = 0; i < d.numChoices; ++i)
                 if (ImGui::Selectable(d.choices[i], i == cur))
@@ -302,19 +311,24 @@ private:
                 }
             ImGui::EndCombo();
         }
-        ImGui::PopStyleColor(5);
+        ImGui::PopStyleColor(8);
     }
 
     void drawSelectors(ImDrawList* dl)
     {
-        const float w = 112.0f, y = 224.0f;
-        const float x[6] = { 20, 148, 276, 404, 532, 660 };
-        selector(dl, "##machine", kParamTapeMachine, x[0], y, w, "MACHINE");
-        selector(dl, "##speed",   kParamTapeSpeed,   x[1], y, w, "TAPE SPEED");
-        selector(dl, "##type",    kParamTapeType,    x[2], y, w, "TAPE TYPE");
-        selector(dl, "##path",    kParamSignalPath,  x[3], y, w, "SIGNAL PATH");
-        selector(dl, "##eq",      kParamEqStandard,  x[4], y, w, "EQ STANDARD");
-        selector(dl, "##os",      kParamOversampling,x[5], y, w, "OVERSAMPLING");
+        const float y = 224.0f;
+        // id, param, column-centre, width (fits widest option + arrow), title
+        struct Sel { const char* id; uint32_t p; float cx, w; const char* t; };
+        static const Sel ss[6] = {
+            { "##machine", kParamTapeMachine,  83.f, 100.f, "MACHINE"      },
+            { "##speed",   kParamTapeSpeed,   210.f,  82.f, "TAPE SPEED"   },
+            { "##type",    kParamTapeType,    337.f,  90.f, "TAPE TYPE"    },
+            { "##path",    kParamSignalPath,  463.f,  78.f, "SIGNAL PATH"  },
+            { "##eq",      kParamEqStandard,  590.f,  70.f, "EQ STANDARD"  },
+            { "##os",      kParamOversampling,717.f,  62.f, "OVERSAMPLING" },
+        };
+        for (const Sel& e : ss)
+            selector(dl, e.id, e.p, e.cx, y, e.w, e.t);
     }
 
     //--- knob rows -------------------------------------------------------------
