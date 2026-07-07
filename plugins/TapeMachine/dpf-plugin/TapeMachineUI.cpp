@@ -23,7 +23,7 @@ START_NAMESPACE_DISTRHO
 
 namespace {
     constexpr float kDesignW = 800.0f;
-    constexpr float kDesignH = 520.0f;
+    constexpr float kDesignH = 470.0f;
 
     constexpr ImU32 kColPanel   = IM_COL32(188, 189, 191, 255);
     constexpr ImU32 kColPanelHi = IM_COL32(206, 207, 209, 255);
@@ -89,7 +89,7 @@ protected:
         drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, "L");
         drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, "R");
         drawSelectors(dl);
-        drawKnobs(dl);
+        drawControls(dl);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -316,7 +316,7 @@ private:
 
     void drawSelectors(ImDrawList* dl)
     {
-        const float y = 224.0f;
+        const float y = 216.0f;
         // id, param, column-centre, width (fits widest option + arrow), title
         struct Sel { const char* id; uint32_t p; float cx, w; const char* t; };
         static const Sel ss[6] = {
@@ -345,35 +345,60 @@ private:
                    /*persistent*/ true, tip, /*rightClickReset*/ true, 1.0f, dispAdd);
     }
 
-    void drawKnobs(ImDrawList* dl)
+    // Centred small-caps section header with an underline.
+    void sectionHeader(ImDrawList* dl, float cx, float y, const char* txt)
     {
-        // main row: input, bias, wow, flutter, output
-        const float cy1 = 330.0f;
-        knob(dl, "input",  kParamInputGain, 112.0f, cy1, "INPUT",   "%.1f", " dB",
-             "Drive into the tape stage. Higher = more saturation.");
-        knob(dl, "bias",   kParamBias,      256.0f, cy1, "BIAS",    "%+.0f", "%",
-             "Tape bias vs. optimal calibration. Under-bias = grittier, more distortion.", -50.0f);
-        knob(dl, "wow",    kParamWow,       400.0f, cy1, "WOW",     "%.0f", "%",
-             "Slow pitch drift (~0.5 Hz) from the transport.");
-        knob(dl, "flut",   kParamFlutter,   544.0f, cy1, "FLUTTER", "%.0f", "%",
-             "Faster pitch modulation (tape/motor flutter).");
-        knob(dl, "output", kParamOutputGain,688.0f, cy1, "OUTPUT",  "%.1f", " dB",
-             "Make-up gain after the tape stage.");
+        text(dl, cx, y, 9.5f, kColInkDim, txt, 0, true);
+        ImFont* f = labelFont ? labelFont : ImGui::GetFont();
+        const float w = f->CalcTextSizeA(9.5f * s, FLT_MAX, 0, txt).x;
+        const ImVec2 c = P(cx, y + 13.0f);
+        dl->AddLine(ImVec2(c.x - w * 0.5f, c.y), ImVec2(c.x + w * 0.5f, c.y),
+                    IM_COL32(120, 121, 123, 220), 1.2f * s);
+    }
 
-        // character row: hp, lp, noise, + auto-comp / auto-cal buttons
-        const float cy2 = 448.0f;
-        knob(dl, "hp",    kParamHighpassFreq, 112.0f, cy2, "HIGHPASS", "%.0f", " Hz",
-             "High-pass filter on the output.");
-        knob(dl, "lp",    kParamLowpassFreq,  256.0f, cy2, "LOWPASS",  "%.0f", " Hz",
-             "Low-pass filter on the output (tape HF roll-off).");
-        knob(dl, "noise", kParamNoiseAmount,  400.0f, cy2, "NOISE",    "%.0f", "%",
-             "Tape hiss level. 0% = clean/silent.");
-        text(dl, 544, cy2 - 50.0f, 10, kColInk, "AUTO COMP", 0, true);
-        tmButton(dl, "autocomp", kParamAutoComp, 500, cy2 - 18, 588, cy2 + 18, "LINK",
+    // Four functional groups: GAIN STAGING | TAPE CHARACTER | TRANSPORT | FILTERS.
+    // Auto-comp (gain link) sits with gain staging; auto-cal (auto bias) with tape
+    // character, matching how each toggle couples to its knobs.
+    void drawControls(ImDrawList* dl)
+    {
+        const float hy = 264.0f, cy = 336.0f, ty = 396.0f;
+
+        sectionHeader(dl, 115, hy, "GAIN STAGING");
+        sectionHeader(dl, 305, hy, "TAPE CHARACTER");
+        sectionHeader(dl, 495, hy, "TRANSPORT");
+        sectionHeader(dl, 685, hy, "FILTERS");
+        for (float dx : { 210.0f, 400.0f, 590.0f })
+            dl->AddLine(P(dx, hy - 2), P(dx, ty + 28), IM_COL32(150, 151, 153, 200), 1.0f * s);
+
+        // GAIN STAGING
+        knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB",
+             "Drive into the tape stage. Higher = more saturation.");
+        knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB",
+             "Make-up gain after the tape stage.");
+        text(dl, 115, ty, 9.0f, kColInk, "GAIN LINK", 0, true);
+        tmButton(dl, "autocomp", kParamAutoComp, 82, ty + 10, 148, ty + 30, "ON",
                  "Auto gain compensation: output tracks input so level stays matched.");
-        text(dl, 688, cy2 - 50.0f, 10, kColInk, "AUTO CAL", 0, true);
-        tmButton(dl, "autocal",  kParamAutoCal,  644, cy2 - 18, 732, cy2 + 18, "AUTO",
-                 "Auto bias calibration for the selected tape and speed.");
+
+        // TAPE CHARACTER
+        knob(dl, "bias",  kParamBias,       257.0f, cy, "BIAS",  "%+.0f", "%",
+             "Tape bias vs. optimal calibration. Under-bias = grittier, more distortion.", -50.0f);
+        knob(dl, "noise", kParamNoiseAmount,353.0f, cy, "NOISE", "%.0f", "%",
+             "Tape hiss level. 0% = clean/silent.");
+        text(dl, 305, ty, 9.0f, kColInk, "AUTO BIAS", 0, true);
+        tmButton(dl, "autocal", kParamAutoCal, 272, ty + 10, 338, ty + 30, "ON",
+                 "Auto bias calibration for the selected tape and speed (disables the BIAS knob).");
+
+        // TRANSPORT
+        knob(dl, "wow",  kParamWow,     447.0f, cy, "WOW",     "%.0f", "%",
+             "Slow pitch drift (~0.5 Hz) from the transport.");
+        knob(dl, "flut", kParamFlutter, 543.0f, cy, "FLUTTER", "%.0f", "%",
+             "Faster pitch modulation (tape/motor flutter).");
+
+        // FILTERS
+        knob(dl, "hp", kParamHighpassFreq, 637.0f, cy, "HIGHPASS", "%.0f", " Hz",
+             "High-pass filter on the output.");
+        knob(dl, "lp", kParamLowpassFreq,  733.0f, cy, "LOWPASS",  "%.0f", " Hz",
+             "Low-pass filter on the output (tape HF roll-off).");
     }
 
     void tmButton(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0,
