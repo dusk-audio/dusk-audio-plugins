@@ -302,11 +302,20 @@ private:
         dl->AddRectFilled(P(15, 12), P(232, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
         dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
         text(dl, 27, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
-        {   // machine badge (accent-tinted, right side of the nameplate)
+        {   // machine badge (accent-tinted) + non-standard indicator
             const char* badge = isA800() ? "A800" : "ATR-102";
+            const bool std = comboIsStd();
+            ImGui::SetCursorScreenPos(P(178, 16));
+            ImGui::InvisibleButton("badge", ImVec2(50.0f * s, 18.0f * s));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(std ? "Tape machine: %s"
+                                      : "Tape machine: %s\nCurrent speed / EQ / tape combo is non-standard for\n"
+                                        "this machine (still fully modelled - nothing is disabled).",
+                                  isA800() ? "A800 - tight, clean, punchy" : "ATR-102 - warm, wide, silky");
             dl->AddRectFilled(P(178, 16), P(228, 34), accentCol(), 3.0f * s);
             dl->AddRect(P(178, 16), P(228, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
             text(dl, 203, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
+            if (!std) dl->AddCircleFilled(P(225, 19), 2.6f * s, kColNonStd, 10); // non-standard dot
         }
 
         // preset browser: < [combo] >  INIT  SAVE
@@ -527,7 +536,8 @@ private:
                   float w, const char* title, const char* tip)
     {
         const TmParam& d = kTmParams[param];
-        text(dl, cx, y, 9.0f, kColInk, title, 0, true);
+        const bool std = selectorIsStd(param);
+        text(dl, cx, y, 9.0f, std ? kColInk : kColNonStd, title, 0, true);   // amber = non-standard for machine
         int cur = (int)(values[param] + 0.5f);
         if (cur < 0) cur = 0; if (cur >= d.numChoices) cur = d.numChoices - 1;
 
@@ -542,7 +552,12 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(178, 179, 181, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
         const bool open = ImGui::BeginCombo(id, d.choices[cur]);   // arrow -> reads as a dropdown
-        if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        if (ImGui::IsItemHovered())
+        {
+            if (!std) ImGui::SetTooltip("%s\n(non-standard for the %s - still fully modelled)",
+                                        tip ? tip : "", isA800() ? "A800" : "ATR-102");
+            else if (tip != nullptr) ImGui::SetTooltip("%s", tip);
+        }
         if (open)
         {
             for (int i = 0; i < d.numChoices; ++i)
@@ -602,6 +617,24 @@ private:
         return isA800() ? IM_COL32(96, 120, 150, 255)    // cool blue-grey
                         : IM_COL32(176, 116, 70, 255);    // warm copper
     }
+
+    // Confirmed authentic matrix (soft-signal only; nothing is hard-gated):
+    //   A800    : speed 15/30, EQ NAB/CCIR, type 456/GP9/911
+    //   ATR-102 : speed 15/30, EQ NAB/AES,  type 456/GP9/250
+    bool speedIsStd() const { const int v = (int)(values[kParamTapeSpeed] + 0.5f); return v == 1 || v == 2; }
+    bool eqIsStd()    const { const int v = (int)(values[kParamEqStandard] + 0.5f);
+                              return isA800() ? (v == 0 || v == 1) : (v == 0 || v == 2); }
+    bool typeIsStd()  const { const int v = (int)(values[kParamTapeType] + 0.5f);
+                              return isA800() ? (v == 0 || v == 1 || v == 2) : (v == 0 || v == 1 || v == 3); }
+    bool comboIsStd() const { return speedIsStd() && eqIsStd() && typeIsStd(); }
+    bool selectorIsStd(uint32_t p) const
+    {
+        if (p == kParamTapeSpeed)  return speedIsStd();
+        if (p == kParamEqStandard) return eqIsStd();
+        if (p == kParamTapeType)   return typeIsStd();
+        return true;   // machine / signal-path / oversampling: always "standard"
+    }
+    static constexpr ImU32 kColNonStd = IM_COL32(162, 118, 52, 255); // muted amber
 
     // Centred small-caps section header with an accent underline.
     void sectionHeader(ImDrawList* dl, float cx, float y, const char* txt)
