@@ -19,6 +19,8 @@ void MultiQDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     // JUCE build's svfSmoothCoeff = 1 - exp(-1/(0.001*SR)).
     biquadSmoothCoeff = (float)(1.0 - std::exp(-1.0 / (0.001 * currentSampleRate)));
     for (auto& f : svfFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
+    for (auto& f : svfDynGainFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
+    dynamicEQ.prepare(currentSampleRate, 2);
     hpfFilter.reset(); lpfFilter.reset();
     for (auto& s : bandEnableSmoothed) { s.reset(currentSampleRate, 0.01); s.setCurrentAndTargetValue(1.0f); }
     prevBandPhaseInvertGain.fill(1.0f);
@@ -30,10 +32,55 @@ void MultiQDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 void MultiQDSP::reset()
 {
     for (auto& f : svfFilters) f.reset();
+    for (auto& f : svfDynGainFilters) f.reset();
+    dynamicEQ.reset();
     hpfFilter.reset(); lpfFilter.reset();
     prevBandPhaseInvertGain.fill(1.0f);
     prevBandPanVal.fill(0.0f);
     firstBlock = true;
+}
+
+// Set the dyn-gain SVF target for a band from the current dynamic gain (dB).
+// Ported from MultiQ::updateDynGainFilter — the SVF shape follows the band's
+// static shape (peaking/shelf/tilt); notch/BP/HP shapes carry no gain → identity.
+void MultiQDSP::updateDynGainFilter(int band, float dynGainDb, const Params& p)
+{
+    if (band < 1 || band > 6) return;
+    SVFCoeffs svfC;
+    if (std::abs(dynGainDb) < 0.01f)
+    {
+        svfC.setIdentity();
+        svfDynGainFilters[(size_t)(band - 1)].setTarget(svfC);
+        return;
+    }
+    const double sr = currentSampleRate;
+    float freq = p.bandFreq[(size_t)band];
+    float baseQ = p.bandQ[(size_t)band];
+    float staticGain = p.bandGain[(size_t)band];
+    float q = getQCoupledValue(baseQ, staticGain, (QCoupleMode)p.qCoupleMode);
+
+    if (band == 1)
+    {
+        int shape = p.bandShape[1];
+        if (shape == 1)      svfdes::computePeaking(svfC, sr, freq, dynGainDb, q);
+        else if (shape == 2) svfC.setIdentity();                       // HP: no dynamic gain
+        else                 svfdes::computeLowShelf(svfC, sr, freq, dynGainDb, q);
+    }
+    else if (band == 6)
+    {
+        int shape = p.bandShape[6];
+        if (shape == 1)      svfdes::computePeaking(svfC, sr, freq, dynGainDb, q);
+        else if (shape == 2) svfC.setIdentity();                       // LP: no dynamic gain
+        else                 svfdes::computeHighShelf(svfC, sr, freq, dynGainDb, q);
+    }
+    else
+    {
+        int shape = p.bandShape[(size_t)band];
+        if (shape == 1 || shape == 2) svfC.setIdentity();              // notch/BP: no gain
+        else if (shape == 3)          svfdes::computeTiltShelf(svfC, sr, freq, dynGainDb);
+        else                          svfdes::computePeaking(svfC, sr, freq, dynGainDb, q);
+    }
+    svfDynGainFilters[(size_t)(band - 1)].setTarget(svfC);
 }
 
 void MultiQDSP::computeTiltShelf(BiquadCoeffs& c, double sr, double freq, float gainDB)
@@ -231,6 +278,29 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         for (int i = 0; i < NUM_BANDS; ++i)
             bandEnableSmoothed[(size_t)i].setTargetValue(bandEnabled[(size_t)i] ? 1.0f : 0.0f);
 
+        // Match mode disables dynamics too.
+        std::array<bool, NUM_BANDS> bandDynEnabled{};
+        for (int i = 0; i < NUM_BANDS; ++i)
+            bandDynEnabled[(size_t)i] = (eqType == EQType::Match) ? false : p.bandDynEnabled[(size_t)i];
+
+        // Push dynamics parameters + detection-filter coeffs for all bands.
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            MultiQDynamics::BandParameters dp;
+            dp.enabled   = bandDynEnabled[(size_t)band];
+            dp.threshold = p.bandDynThreshold[(size_t)band];
+            dp.attack    = p.bandDynAttack[(size_t)band];
+            dp.release   = p.bandDynRelease[(size_t)band];
+            dp.range     = p.bandDynRange[(size_t)band];
+            dp.ratio     = p.bandDynRatio[(size_t)band];
+            dynamicEQ.setBandParameters(band, dp);
+            dynamicEQ.updateDetectionFilter(band, p.bandFreq[(size_t)band], p.bandQ[(size_t)band]);
+        }
+        // Dyn-gain filter coeffs use the PREVIOUS block's envelope (1-block latency).
+        for (int band = 1; band < 7; ++band)
+            if (bandDynEnabled[(size_t)band])
+                updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band), p);
+
         // static band coefficients (block rate; per-sample smoothing in the loop)
         for (int band = 1; band < 7; ++band)
         {
@@ -247,6 +317,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         if (firstBlock)
         {
             for (auto& f : svfFilters) f.snapToTarget();
+            for (auto& f : svfDynGainFilters) f.snapToTarget();
             for (int i = 0; i < NUM_BANDS; ++i)
                 bandEnableSmoothed[(size_t)i].setCurrentAndTargetValue(bandEnabled[(size_t)i] ? 1.0f : 0.0f);
             firstBlock = false;
@@ -372,7 +443,19 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                     auto& filter = svfFilters[(size_t)(band - 1)];
                     if (allStereoRouting)
                     {
-                        applyFilterStereo(filter);
+                        if (bandDynEnabled[(size_t)band])
+                        {
+                            float detectionL = dynamicEQ.processDetection(band, sampleL, 0);
+                            float detectionR = dynamicEQ.processDetection(band, sampleR, 1);
+                            dynamicEQ.processBand(band, detectionL, 0);
+                            dynamicEQ.processBand(band, detectionR, 1);
+                            applyFilterStereo(filter);
+                            applyFilterStereo(svfDynGainFilters[(size_t)(band - 1)]);
+                        }
+                        else
+                        {
+                            applyFilterStereo(filter);
+                        }
                         int satType = bandSatType[(size_t)band];
                         if (satType > 0)
                         {
@@ -385,7 +468,29 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                     else
                     {
                         int routing = effectiveRouting[(size_t)band];
-                        applyFilterWithRouting(filter, routing);
+                        if (bandDynEnabled[(size_t)band])
+                        {
+                            float detL = sampleL, detR = sampleR;
+                            if (routing == 3 || routing == 4)
+                            {
+                                float mid = (sampleL + sampleR) * 0.5f;
+                                float side = (sampleL - sampleR) * 0.5f;
+                                if (routing == 3) { detL = mid; detR = mid; }
+                                else              { detL = side; detR = side; }
+                            }
+                            else if (routing == 1) { detR = 0.0f; }
+                            else if (routing == 2) { detL = 0.0f; }
+                            float detectionL = dynamicEQ.processDetection(band, detL, 0);
+                            float detectionR = dynamicEQ.processDetection(band, detR, 1);
+                            dynamicEQ.processBand(band, detectionL, 0);
+                            dynamicEQ.processBand(band, detectionR, 1);
+                            applyFilterWithRouting(filter, routing);
+                            applyFilterWithRouting(svfDynGainFilters[(size_t)(band - 1)], routing);
+                        }
+                        else
+                        {
+                            applyFilterWithRouting(filter, routing);
+                        }
                         int satType = bandSatType[(size_t)band];
                         if (satType > 0)
                         {

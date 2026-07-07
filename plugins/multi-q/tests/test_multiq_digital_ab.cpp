@@ -47,8 +47,9 @@ int main(int argc, char** argv)
         else if (a == "--curve" && i + 1 < argc) curve = argv[++i];
         else if (a == "--match-clap") matchClap = true;
     }
-    const bool eq = (curve == "eq" || curve == "sat");
+    const bool eq = (curve == "eq" || curve == "sat" || curve == "dyn");
     const bool satMode = (curve == "sat");
+    const bool dynMode = (curve == "dyn");
 
     const int sr = 48000, ch = 2, block = 512;
     const int total = matchClap ? sr * 2 : sr * 4; // match claphost's 2 s when doing sample-level A/B
@@ -84,6 +85,9 @@ int main(int argc, char** argv)
         p.bandEnabled[7] = true; p.bandFreq[7] = 16000.f; p.bandQ[7] = 0.71f; p.bandSlope[7] = 1;
         // saturation A/B: band 4 (index 3) Tape @ drive 0.6
         if (satMode) { p.bandSatType[3] = 1; p.bandSatDrive[3] = 0.6f; }
+        // dynamics A/B: band 4 (index 3) dynamic EQ, low threshold so noise triggers it
+        if (dynMode) { p.bandDynEnabled[3] = true; p.bandDynThreshold[3] = -30.f; p.bandDynRatio[3] = 4.f;
+                       p.bandDynAttack[3] = 10.f; p.bandDynRelease[3] = 100.f; p.bandDynRange[3] = 12.f; }
     }
 
     // claphost uses mt19937(12345) with ONE uniform(-0.25,0.25) draw per sample

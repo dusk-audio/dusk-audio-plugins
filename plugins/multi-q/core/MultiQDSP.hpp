@@ -18,6 +18,7 @@
 
 #include "MultiQFilters.hpp"
 #include "MultiQParams.hpp"
+#include "MultiQDynamics.hpp"
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>
@@ -120,6 +121,8 @@ private:
     void updateHPF(const Params& p);
     void updateLPF(const Params& p);
     static void computeTiltShelf(BiquadCoeffs& c, double sr, double freq, float gainDB);
+    // set the dyn-gain SVF target for a band from the given dynamic gain (dB)
+    void updateDynGainFilter(int band, float dynGainDb, const Params& p);
 
     double currentSampleRate = 48000.0;
     float  biquadSmoothCoeff = 1.0f; // 1 - exp(-1/(0.001*sr)); per-sample coeff ramp
@@ -127,7 +130,9 @@ private:
     int    prevHpfStages = -1, prevLpfStages = -1;
 
     CascadedFilter hpfFilter, lpfFilter;
-    std::array<StereoBiquad, 6> svfFilters;   // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
+    std::array<StereoBiquad, 6> svfFilters;       // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
+    std::array<StereoSVF, 6>    svfDynGainFilters; // bands 2-7 dynamic-gain (Cytomic SVF)
+    MultiQDynamics dynamicEQ;
     std::array<LinearSmoothedValue, NUM_BANDS> bandEnableSmoothed;
     std::array<float, NUM_BANDS> prevBandPhaseInvertGain { {1,1,1,1,1,1,1,1} };
     std::array<float, NUM_BANDS> prevBandPanVal {};

@@ -427,4 +427,59 @@ namespace amb
     }
 } // namespace amb
 
+//==============================================================================
+// Cytomic SVF coefficient designers for the dynamic-gain path (verbatim from
+// MultiQ::computeSVF*). Transfer function matches the corresponding biquad; the
+// SVF topology is used so the gain can be modulated per block without zipper.
+namespace svfdes
+{
+    static void computePeaking(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
+    {
+        freq = std::max(1.0, std::min(freq, sr * 0.4998));
+        double A   = std::pow(10.0, gainDB / 40.0);
+        double g   = std::tan(kMultiQPi * freq / sr);
+        double bw  = freq / std::max(0.01, (double)q);
+        double kbw = std::tan(kMultiQPi * std::min(bw, sr * 0.4998) / sr);
+        double k   = std::max(0.001, kbw / (g * A));
+        c.a1 = (float)(1.0 / (1.0 + g * (g + k)));
+        c.a2 = (float)(g * c.a1);
+        c.a3 = (float)(g * c.a2);
+        c.m0 = 1.0f;
+        c.m1 = (float)(k * (A * A - 1.0));
+        c.m2 = 0.0f;
+    }
+
+    static void computeLowShelf(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
+    {
+        double A = std::pow(10.0, gainDB / 40.0);
+        double g = std::tan(kMultiQPi * freq / sr) / std::sqrt(A);
+        double k = 1.0 / q;
+        c.a1 = (float)(1.0 / (1.0 + g * (g + k)));
+        c.a2 = (float)(g * c.a1);
+        c.a3 = (float)(g * c.a2);
+        c.m0 = 1.0f;
+        c.m1 = (float)(k * (A - 1.0));
+        c.m2 = (float)(A * A - 1.0);
+    }
+
+    static void computeHighShelf(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
+    {
+        double A = std::pow(10.0, gainDB / 40.0);
+        double g = std::tan(kMultiQPi * freq / sr) * std::sqrt(A);
+        double k = 1.0 / q;
+        c.a1 = (float)(1.0 / (1.0 + g * (g + k)));
+        c.a2 = (float)(g * c.a1);
+        c.a3 = (float)(g * c.a2);
+        c.m0 = (float)(A * A);
+        c.m1 = (float)(k * A * (1.0 - A));
+        c.m2 = (float)(1.0 - A * A);
+    }
+
+    // tilt shelf = low shelf at Q=0.5 (matches the 1st-order biquad tilt).
+    static void computeTiltShelf(SVFCoeffs& c, double sr, double freq, float gainDB)
+    {
+        computeLowShelf(c, sr, freq, gainDB, 0.5f);
+    }
+} // namespace svfdes
+
 } // namespace duskaudio
