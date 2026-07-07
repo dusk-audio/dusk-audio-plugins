@@ -20,6 +20,10 @@
 namespace duskaudio
 {
 
+// M_PI is not guaranteed by the C++ standard (POSIX / needs _USE_MATH_DEFINES on
+// MSVC). Use a portable local constant, matching kDuskPi in DuskFilters.hpp.
+constexpr float kDuskSvfPi = 3.14159265358979323846f;
+
 class DuskSVF
 {
 public:
@@ -40,7 +44,7 @@ public:
         // clamp away from 0 and Nyquist exactly like JUCE's update()
         const float nyq = (float)(0.5 * fs);
         cutoff = cutoffHz < 20.0f ? 20.0f : (cutoffHz > nyq - 1.0f ? nyq - 1.0f : cutoffHz);
-        g = std::tan((float)M_PI * cutoff / (float)fs);
+        g = std::tan(kDuskSvfPi * cutoff / (float)fs);
         updateH();
     }
 

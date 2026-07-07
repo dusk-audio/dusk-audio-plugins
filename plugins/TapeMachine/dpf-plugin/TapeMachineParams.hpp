@@ -70,25 +70,27 @@ struct TmParam
 
 static constexpr TmParam kTmParams[kParamCount] =
 {
-    { "tapeMachine",  "Tape Machine", 'c', 0.f, 1.f,     0.f,  "",   tmparams::kTapeMachine, 2 },
-    { "tapeSpeed",    "Tape Speed",   'c', 0.f, 2.f,     1.f,  "",   tmparams::kTapeSpeed,   3 },
-    { "tapeType",     "Tape Type",    'c', 0.f, 3.f,     0.f,  "",   tmparams::kTapeType,    4 },
-    { "signalPath",   "Signal Path",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kSignalPath,  4 },
-    { "eqStandard",   "EQ Standard",  'c', 0.f, 2.f,     0.f,  "",   tmparams::kEqStandard,  3 },
+    // choice counts derive from their arrays via tmparams::count() so they can't
+    // drift out of sync (guards initParameter / selector against OOB choice access).
+    { "tapeMachine",  "Tape Machine", 'c', 0.f, 1.f,     0.f,  "",   tmparams::kTapeMachine, tmparams::count(tmparams::kTapeMachine) },
+    { "tapeSpeed",    "Tape Speed",   'c', 0.f, 2.f,     1.f,  "",   tmparams::kTapeSpeed,   tmparams::count(tmparams::kTapeSpeed) },
+    { "tapeType",     "Tape Type",    'c', 0.f, 3.f,     0.f,  "",   tmparams::kTapeType,    tmparams::count(tmparams::kTapeType) },
+    { "signalPath",   "Signal Path",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kSignalPath,  tmparams::count(tmparams::kSignalPath) },
+    { "eqStandard",   "EQ Standard",  'c', 0.f, 2.f,     0.f,  "",   tmparams::kEqStandard,  tmparams::count(tmparams::kEqStandard) },
     { "inputGain",    "Input Gain",   'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
     { "bias",         "Bias",         'f', 0.f, 100.f,   50.f, "%",  nullptr, 0 },
-    { "calibration",  "Calibration",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kCalibration, 4 },
-    { "autoCal",      "Auto Calibration",'c',0.f,1.f,    1.f,  "",   tmparams::kOffOn,       2 },
+    { "calibration",  "Calibration",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kCalibration, tmparams::count(tmparams::kCalibration) },
+    { "autoCal",      "Auto Calibration",'c',0.f,1.f,    1.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
     { "highpassFreq", "Highpass Freq",'g', 20.f, 500.f,  20.f, "Hz", nullptr, 0 },
     { "lowpassFreq",  "Lowpass Freq", 'g', 3000.f,20000.f,20000.f,"Hz",nullptr,0 },
     { "noiseAmount",  "Noise Amount", 'f', 0.f, 100.f,   0.f,  "%",  nullptr, 0 },
-    { "noiseEnabled", "Noise Enabled",'c', 0.f, 1.f,     0.f,  "",   tmparams::kOffOn,       2 },
+    { "noiseEnabled", "Noise Enabled",'c', 0.f, 1.f,     0.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
     { "wowAmount",    "Wow",          'f', 0.f, 100.f,   7.f,  "%",  nullptr, 0 },
     { "flutterAmount","Flutter",      'f', 0.f, 100.f,   3.f,  "%",  nullptr, 0 },
     { "outputGain",   "Output Gain",  'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
-    { "autoComp",     "Auto Compensation",'c',0.f,1.f,   1.f,  "",   tmparams::kOffOn,       2 },
-    { "oversampling", "Oversampling", 'c', 0.f, 2.f,     2.f,  "",   tmparams::kOversampling,3 },
-    { "bypass",       "Bypass",       'b', 0.f, 1.f,     0.f,  "",   tmparams::kOffOn,       2 },
+    { "autoComp",     "Auto Compensation",'c',0.f,1.f,   1.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
+    { "oversampling", "Oversampling", 'c', 0.f, 2.f,     2.f,  "",   tmparams::kOversampling,tmparams::count(tmparams::kOversampling) },
+    { "bypass",       "Bypass",       'b', 0.f, 1.f,     0.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
     { "vuL",          "VU L",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
     { "vuR",          "VU R",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
 };

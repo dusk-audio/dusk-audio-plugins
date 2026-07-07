@@ -135,6 +135,17 @@ protected:
         updateLatency();
     }
 
+    // Re-size the DSP scratch buffers when the host changes the block size. DPF
+    // deactivate/activates around this when the plugin is active (so activate()
+    // already re-prepares), but a doCallback=false path can skip that; re-prepare
+    // here too so the scratch always matches the current block size. Matches 4k-eq.
+    void bufferSizeChanged(uint32_t newBufferSize) override
+    {
+        dsp.prepare(getSampleRate(), (int)newBufferSize);
+        pushAllParams();
+        updateLatency();
+    }
+
     //--- audio -----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
