@@ -179,19 +179,9 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         return;
     }
 
-    // --- input VU (pre-processing peak, ~300 ms release; UI In/Out switch) ----
-    {
-        float sL = inVuStateL, sR = inVuStateR;
-        for (int n = 0; n < nSamples; ++n)
-        {
-            const float aL = std::abs (inputs[0][n]);
-            sL = aL > sL ? aL : sL * vuReleaseCoeff;
-            if (nCh >= 2) { const float aR = std::abs (inputs[1][n]); sR = aR > sR ? aR : sR * vuReleaseCoeff; }
-        }
-        inVuStateL = sL; inVuStateR = (nCh >= 2) ? sR : sL;
-        inVuL.store (inVuStateL, std::memory_order_relaxed);
-        inVuR.store (inVuStateR, std::memory_order_relaxed);
-    }
+    // Input VU is metered POST-input-trim / PRE-saturation, inside the processing
+    // loops below (see item B): it reflects record/tape-drive level, not the raw
+    // incoming signal. Same 0 VU reference + ~300 ms release as the output VU.
 
     const auto signalPath = static_cast<TapeCore::SignalPath> (clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));
 
@@ -212,6 +202,9 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         vuStateL = sL; vuStateR = (nCh >= 2) ? sR : sL;
         vuL.store (vuStateL, std::memory_order_relaxed);
         vuR.store (vuStateR, std::memory_order_relaxed);
+        inVuStateL = vuStateL; inVuStateR = vuStateR;   // Thru: input == output
+        inVuL.store (inVuStateL, std::memory_order_relaxed);
+        inVuR.store (inVuStateR, std::memory_order_relaxed);
         return;
     }
 
@@ -333,11 +326,13 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- per-channel oversampled processing ----------------------------------
     // Functor chain (at the oversampled rate): HP SVF -> tape core -> LP SVF ->
     // output gain. Input gain is applied at base rate before upsampling.
+    float inSL = inVuStateL, inSR = inVuStateR;   // input VU: peak of the post-trim record level
     {
         int osIdx = 0;
         for (int n = 0; n < nSamples; ++n)
         {
             const float x = inputs[0][n] * inGainArr[static_cast<size_t> (n)];
+            const float axL = std::abs (x); inSL = axL > inSL ? axL : inSL * vuReleaseCoeff;
             outputs[0][n] = osL.processSample (x, [&] (float s) noexcept
             {
                 const size_t si = static_cast<size_t> (osIdx);
@@ -359,6 +354,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         for (int n = 0; n < nSamples; ++n)
         {
             const float x = inputs[1][n] * inGainArr[static_cast<size_t> (n)];
+            const float axR = std::abs (x); inSR = axR > inSR ? axR : inSR * vuReleaseCoeff;
             outputs[1][n] = osR.processSample (x, [&] (float s) noexcept
             {
                 const size_t si = static_cast<size_t> (osIdx);
@@ -373,6 +369,11 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             });
         }
     }
+
+    // input VU store (post-trim / pre-sat record level)
+    inVuStateL = inSL; inVuStateR = (nCh >= 2) ? inSR : inSL;
+    inVuL.store (inVuStateL, std::memory_order_relaxed);
+    inVuR.store (inVuStateR, std::memory_order_relaxed);
 
     // --- crosstalk (base rate — deviation from JUCE's OS-rate placement) ------
     if (nCh >= 2)

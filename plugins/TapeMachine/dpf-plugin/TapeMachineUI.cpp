@@ -95,8 +95,9 @@ protected:
         ImDrawList* dl = ImGui::GetWindowDrawList();
         drawPanel(dl, winW, winH);
         drawHeader(dl);
-        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, clipHoldL, "L");
-        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, clipHoldR, "R");
+        const bool clipEnabled = meterSource != 0;   // OUTPUT source only
+        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, clipHoldL, clipEnabled, "L");
+        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, clipHoldR, clipEnabled, "R");
         drawSelectors(dl);
         drawControls(dl);
 
@@ -374,7 +375,7 @@ private:
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
 
     void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
-                float level, float& needle, float& clipHold, const char* label)
+                float level, float& needle, float& clipHold, bool clipEnabled, const char* label)
     {
         const float dB = 20.0f * std::log10(level > 1e-4f ? level : 1e-4f) + 18.0f;
         // deflection is linear in signal level (%), not dB: gives the classic
@@ -440,10 +441,12 @@ private:
         text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
         text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
 
-        // clip / over lamp (right): lights for ~1.2 s after any >= 0 dBFS peak
-        if (level > 1.0f) clipHold = 1.2f;
+        // over lamp (right). Only meaningful on the OUTPUT source, where it means a
+        // true >= 0 dBFS digital clip. On INPUT, being in the red is desirable tape
+        // drive, so the lamp is disabled (clipEnabled == false).
+        if (clipEnabled && level > 1.0f) clipHold = 1.2f;
         else if (clipHold > 0.0f) clipHold -= ImGui::GetIO().DeltaTime;
-        const bool over = clipHold > 0.0f;
+        const bool over = clipEnabled && clipHold > 0.0f;
         const ImVec2 lp = P(fx1 - 15, pivotY - L * 0.20f);
         if (over) dl->AddCircleFilled(lp, 8.0f * s, IM_COL32(230, 60, 40, 70), 20);   // glow
         dl->AddCircleFilled(lp, 5.0f * s, over ? IM_COL32(232, 60, 40, 255) : IM_COL32(96, 40, 32, 255), 16);
