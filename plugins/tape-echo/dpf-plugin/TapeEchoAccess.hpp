@@ -1,13 +1,15 @@
-// TapeEchoAccess.hpp — UI-side accessor for same-process DSP data.
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
-// Declared weak: in single-binary formats (CLAP, VST3, JACK standalone) the
-// strong definition in TapeEchoPlugin.cpp resolves it; in the LV2 UI, which
-// links as a separate .so without the DSP, it resolves to null and the UI
-// falls back to the output parameter (LV2 forwards those via port events).
+// TapeEchoAccess.hpp — UI-side accessor for same-process DSP data (the VU/peak
+// meter). Uses the shared weak-symbol bridge; see DuskAccessBridge.hpp for the
+// single-binary-vs-split-LV2 contract and the required UI-side null guard.
+// Strong definition lives in TapeEchoPlugin.cpp.
 
 #pragma once
 
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((weak))
-#endif
-float tapeEchoGetOutputLevel(void* pluginInstancePointer) noexcept;
+#include "DuskAccessBridge.hpp"
+
+// Linear output peak (0..~3), ~300 ms release. Null in the split LV2 UI.
+DUSK_ACCESS_DECL(float, tapeEchoGetOutputLevel);
