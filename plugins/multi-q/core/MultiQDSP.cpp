@@ -231,6 +231,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
     float* procR = isStereo ? outputs[1] : nullptr;
 
     const auto eqType = (EQType)p.eqType;
+    lastEqType = p.eqType; // cache for getLatencySamples()
 
     // British character: route through the upgraded FourKEQDSP core (its own
     // parallel-summing EQ + console saturation + oversampling + M/S). It reads
