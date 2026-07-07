@@ -184,76 +184,99 @@ private:
                 float level, float& needle, const char* label)
     {
         const float dB = 20.0f * std::log10(level > 1e-4f ? level : 1e-4f) + 18.0f;
-        float target = (dB + 20.0f) / 23.0f;
+        // deflection is linear in signal level (%), not dB: gives the classic
+        // log-spread VU scale (marks bunch at the bottom, open up near 0..+3).
+        float target = std::pow(10.0f, (dB - 3.0f) / 20.0f);
         target = target < 0.0f ? 0.0f : (target > 1.0f ? 1.0f : target);
         needle += (target - needle) * (1.0f - std::exp(-ImGui::GetIO().DeltaTime * 11.0f));
 
+        // warm tan bezel -> dark inner lip -> aged-cream face
         dl->AddRectFilledMultiColor(P(x0, y0), P(x1, y1),
-            IM_COL32(206, 199, 184, 255), IM_COL32(196, 189, 174, 255),
-            IM_COL32(168, 161, 146, 255), IM_COL32(160, 153, 138, 255));
-        dl->AddRectFilled(P(x0 + 3, y0 + 3), P(x1 - 3, y1 - 3), IM_COL32(58, 58, 58, 255), 3.0f * s);
-        const float fx0 = x0 + 6, fy0 = y0 + 6, fx1 = x1 - 6, fy1 = y1 - 6;
-        dl->AddRectFilled(P(fx0, fy0), P(fx1, fy1), IM_COL32(245, 240, 230, 255), 2.0f * s);
+            IM_COL32(170, 142, 100, 255), IM_COL32(158, 130, 88, 255),
+            IM_COL32(120, 96, 60, 255),  IM_COL32(110, 88, 54, 255));
+        dl->AddRect(P(x0, y0), P(x1, y1), IM_COL32(92, 72, 44, 255), 6.0f * s, 0, 1.4f * s);
+        dl->AddRectFilled(P(x0 + 4, y0 + 4), P(x1 - 4, y1 - 4), IM_COL32(56, 44, 30, 255), 4.0f * s);
+        const float fx0 = x0 + 7, fy0 = y0 + 7, fx1 = x1 - 7, fy1 = y1 - 7;
+        dl->AddRectFilled(P(fx0, fy0), P(fx1, fy1), IM_COL32(240, 231, 205, 255), 3.0f * s);
         dl->AddRectFilledMultiColor(P(fx0, fy0), P(fx1, fy1),
-            IM_COL32(255, 252, 244, 90), IM_COL32(255, 252, 244, 90),
-            IM_COL32(236, 228, 212, 90), IM_COL32(236, 228, 212, 90));
+            IM_COL32(252, 246, 226, 130), IM_COL32(252, 246, 226, 130),
+            IM_COL32(210, 194, 158, 150), IM_COL32(210, 194, 158, 150));
+        // corner vignette
+        for (float vx : { fx0, fx1 })
+            for (float vy : { fy0, fy1 })
+                dl->AddCircleFilled(P(vx, vy), (fy1 - fy0) * 0.45f * s, IM_COL32(120, 96, 62, 26), 20);
 
         const float cx = 0.5f * (fx0 + fx1);
-        const float pivotY = fy1 - 5.0f;
-        const float L = std::min((fx1 - fx0) * 0.48f, (fy1 - fy0) * 0.90f);
+        const float pivotY = fy1 - 4.0f;
+        const float L = std::min((fx1 - fx0) * 0.48f, (fy1 - fy0) * 0.92f);
         auto pt = [&](float r, float a) { return P(cx + r * std::cos(a), pivotY + r * std::sin(a)); };
+        ImFont* f = labelFont ? labelFont : ImGui::GetFont();
+        const ImU32 ink = IM_COL32(38, 32, 24, 255), red = IM_COL32(196, 42, 34, 255);
+        auto num = [&](float r, float a, const char* b, ImU32 c, float sz) {
+            ImVec2 ts = f->CalcTextSizeA(sz * s, FLT_MAX, 0, b);
+            ImVec2 tp = pt(r, a);
+            dl->AddText(f, sz * s, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f), c, b);
+        };
+        auto ang = [&](float db) { float n = std::pow(10.0f, (db - 3.0f) / 20.0f);
+                                   n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
+                                   return kVuA0 + n * (kVuA1 - kVuA0); };
 
-        {
-            const float a0 = kVuA0 + (20.0f / 23.0f) * (kVuA1 - kVuA0);
-            dl->PathClear();
-            dl->PathArcTo(P(cx, pivotY), L * 0.86f * s, a0, kVuA1, 24);
-            dl->PathStroke(IM_COL32(212, 44, 44, 150), 0, 3.0f * s);
-        }
+        // bold red arc over the 0..+3 zone
+        dl->PathClear();
+        dl->PathArcTo(P(cx, pivotY), L * 0.90f * s, ang(0.0f), kVuA1, 26);
+        dl->PathStroke(red, 0, 3.4f * s);
+
+        // dB scale: ticks + numbers (black below 0, red above)
         const float dbv[11] = { -20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3 };
         for (int i = 0; i < 11; ++i)
         {
-            const float db = dbv[i];
-            const float a = kVuA0 + ((db + 20.0f) / 23.0f) * (kVuA1 - kVuA0);
+            const float db = dbv[i], a = ang(db);
             const bool major = !(db == -2 || db == 2);
-            const bool red = db >= 0.0f;
-            const float rt = L * 0.94f;
-            dl->AddLine(pt(rt, a), pt(rt + (major ? 8.0f : 5.0f), a),
-                        red ? IM_COL32(212, 44, 44, 255) : IM_COL32(42, 42, 42, 255), (major ? 1.7f : 1.0f) * s);
-            if (db == -20 || db == -10 || db == -5 || db == 0 || db == 3)
-            {
-                char b[6]; std::snprintf(b, sizeof(b), db == 0 ? "0" : db > 0 ? "+%d" : "%d", (int)db);
-                const ImVec2 tp = pt(L * 0.72f, a);
-                ImFont* f = labelFont ? labelFont : ImGui::GetFont();
-                const float fs2 = 10.0f * s; ImVec2 ts = f->CalcTextSizeA(fs2, FLT_MAX, 0, b);
-                dl->AddText(f, fs2, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f),
-                            red ? IM_COL32(190, 40, 40, 255) : IM_COL32(42, 42, 42, 255), b);
-            }
+            const bool rz = db > 0.0f;
+            const float rt = L * 0.90f;
+            dl->AddLine(pt(rt, a), pt(rt + (major ? 6.0f : 4.0f), a),
+                        rz ? red : ink, (major ? 1.6f : 1.0f) * s);
+            char b[6]; std::snprintf(b, sizeof(b), "%d", (int)std::abs(db));
+            num(L * 0.80f, a, b, rz ? red : ink, 9.5f);
         }
-        text(dl, cx, pivotY - L * 0.46f, 11, IM_COL32(42, 42, 42, 255), "VU", 0, true);
-        text(dl, cx, pivotY - L * 0.46f + 13.0f, 8.5f, IM_COL32(90, 90, 90, 255), label, 0, true);
-
-        const float na = kVuA0 + needle * (kVuA1 - kVuA0);
-        dl->AddLine(P(cx + 2, pivotY + 2), P(cx + 2 + L * 0.95f * std::cos(na), pivotY + 2 + L * 0.95f * std::sin(na)),
-                    IM_COL32(0, 0, 0, 60), 3.0f * s);
+        // percentage row (0..100) across the black zone, closer to the pivot
+        const float pct0 = std::pow(10.0f, -3.0f / 20.0f); // 0 VU == 100%
+        for (int k = 0; k <= 5; ++k)
         {
-            const float perp = na + 1.5707963f, bw = 3.5f;
+            const float aP = kVuA0 + (k / 5.0f) * pct0 * (kVuA1 - kVuA0);
+            char b[6]; std::snprintf(b, sizeof(b), "%d", k * 20);
+            num(L * 0.60f, aP, b, IM_COL32(70, 60, 46, 255), 7.5f);
+        }
+        // - (left) and + (red, right) marks in the top corners
+        text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
+        text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
+
+        // peak LED (right)
+        dl->AddCircleFilled(P(fx1 - 15, pivotY - L * 0.20f), 4.6f * s, IM_COL32(112, 40, 30, 255), 16);
+        dl->AddCircleFilled(P(fx1 - 16, pivotY - L * 0.20f - 1), 1.5f * s, IM_COL32(210, 130, 110, 120), 10);
+
+        // VU legend (kept at its current position) + channel tag
+        text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
+        text(dl, cx, pivotY - L * 0.46f + 13.0f, 8.5f, IM_COL32(90, 80, 64, 255), label, 0, true);
+
+        // black needle with soft shadow + mound pivot
+        const float na = kVuA0 + needle * (kVuA1 - kVuA0);
+        dl->AddLine(P(cx + 2, pivotY + 1), pt(L * 0.95f, na), IM_COL32(60, 50, 36, 70), 4.0f * s);
+        {
+            const float perp = na + 1.5707963f, bw = 3.4f;
             dl->AddTriangleFilled(P(cx + bw * 0.5f * std::cos(perp), pivotY + bw * 0.5f * std::sin(perp)),
                                   pt(L * 0.95f, na),
                                   P(cx - bw * 0.5f * std::cos(perp), pivotY - bw * 0.5f * std::sin(perp)),
-                                  IM_COL32(204, 51, 51, 255));
+                                  IM_COL32(28, 24, 18, 255));
         }
-        dl->AddCircleFilled(P(cx, pivotY), 4.5f * s, IM_COL32(20, 20, 20, 255), 18);
-        dl->AddCircleFilled(P(cx - 1.2f * s, pivotY - 1.4f * s), 1.6f * s, IM_COL32(120, 120, 120, 160), 10);
+        dl->AddCircleFilled(P(cx, pivotY + 1), 8.0f * s, IM_COL32(40, 32, 22, 90), 20); // mound shadow
+        dl->AddCircleFilled(P(cx, pivotY), 4.6f * s, IM_COL32(24, 20, 14, 255), 18);
+        dl->AddCircleFilled(P(cx - 1.2f * s, pivotY - 1.4f * s), 1.5f * s, IM_COL32(150, 140, 120, 150), 10);
 
+        // glass top highlight
         dl->AddRectFilledMultiColor(P(fx0 + 4, fy0 + 2), P(fx1 - 4, fy0 + (fy1 - fy0) * 0.22f),
-            IM_COL32(255, 255, 255, 34), IM_COL32(255, 255, 255, 34),
+            IM_COL32(255, 255, 255, 30), IM_COL32(255, 255, 255, 30),
             IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
-        for (float sxx : { x0 + 9, x1 - 9 })
-            for (float syy : { y0 + 9, y1 - 9 })
-            {
-                dl->AddCircleFilled(P(sxx, syy), 3.0f * s, IM_COL32(176, 168, 152, 255), 14);
-                dl->AddLine(P(sxx - 2, syy), P(sxx + 2, syy), IM_COL32(26, 26, 24, 255), 1.2f * s);
-            }
     }
 
     //--- selectors (two rows of three, in the centre column) -------------------
