@@ -47,6 +47,7 @@ int main(int argc, char** argv)
         else if (a == "--curve" && i + 1 < argc) curve = argv[++i];
         else if (a == "--match-clap") matchClap = true;
     }
+    const bool britishMode = (curve == "british");
     const bool eq = (curve == "eq" || curve == "sat" || curve == "dyn");
     const bool satMode = (curve == "sat");
     const bool dynMode = (curve == "dyn");
@@ -58,7 +59,25 @@ int main(int argc, char** argv)
     dsp.prepare(sr, block);
 
     duskaudio::MultiQDSP::Params p; // defaults: all bands enabled, gain 0, HPF@20/12dB, LPF@20k/12dB
-    if (!eq)
+    if (britishMode)
+    {
+        // British character (routed through FourKEQDSP). Must match the standalone
+        // four_k_eq_2 knob-for-knob for the A/B.
+        p.eqType = 2;            // British
+        p.oversampling = 1;      // 2x
+        p.processingMode = 0;    // Stereo (M/S off)
+        auto& b = p.british;
+        b.hpfFreq = 50.f;  b.hpfEnabled = true;
+        b.lpfFreq = 18000.f; b.lpfEnabled = false;
+        b.lfGain = 6.f;  b.lfFreq = 80.f;   b.lfBell = false;
+        b.lmGain = -4.f; b.lmFreq = 500.f;  b.lmQ = 1.f;
+        b.hmGain = 5.f;  b.hmFreq = 3000.f; b.hmQ = 2.f;
+        b.hfGain = 4.f;  b.hfFreq = 12000.f; b.hfBell = true;
+        b.blackMode = true;      // Black (G)
+        b.saturation = 40.f;
+        b.inputGain = 2.f; b.outputGain = -1.f;
+    }
+    else if (!eq)
     {
         // passthrough reference: disable every band
         for (int b = 0; b < 8; ++b) p.bandEnabled[(size_t)b] = false;

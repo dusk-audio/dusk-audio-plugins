@@ -12,7 +12,7 @@
 // order: the A/B against the JUCE build depends on it (double intermediates,
 // float storage, exact normalisation).
 //
-// Deliberately dropped vs the JUCE header: BiquadCoeffs::applyToFilter (wrote
+// Deliberately dropped vs the JUCE header: MqBiquadCoeffs::applyToFilter (wrote
 // into a juce::dsp::IIR::Filter — the core drives StereoBiquad directly).
 
 #pragma once
@@ -41,7 +41,7 @@ inline bool safeIsFinite(float v)
 //==============================================================================
 // Biquad coefficient storage with magnitude evaluation (no heap allocation).
 // Stored normalized: {b0/a0, b1/a0, b2/a0, 1, a1/a0, a2/a0}.
-struct BiquadCoeffs
+struct MqBiquadCoeffs
 {
     float coeffs[6] = {1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
 
@@ -191,13 +191,13 @@ struct StereoSVF
 // sample-rate-independent shape). setSmoothCoeff sets the per-sample decay.
 struct StereoBiquad
 {
-    BiquadCoeffs coeffs;
-    BiquadCoeffs target;
+    MqBiquadCoeffs coeffs;
+    MqBiquadCoeffs target;
     float smoothCoeff = 0.02f;
     float s1L = 0.0f, s2L = 0.0f;
     float s1R = 0.0f, s2R = 0.0f;
 
-    void setCoeffs(const BiquadCoeffs& c) { target = c; }
+    void setCoeffs(const MqBiquadCoeffs& c) { target = c; }
     void reset() { s1L = s2L = s1R = s2R = 0.0f; coeffs = target; }
     void snapToTarget() { coeffs = target; }
     void setSmoothCoeff(float c) { smoothCoeff = c; }
@@ -244,7 +244,7 @@ namespace amb
         return std::max(1.0, std::min(fc, sr * 0.4998));
     }
 
-    static void computePeaking(BiquadCoeffs& c, double fc, double sr,
+    static void computePeaking(MqBiquadCoeffs& c, double fc, double sr,
                                 double gainDB, double Q)
     {
         fc = clampFreq(fc, sr);
@@ -271,7 +271,7 @@ namespace amb
         c.coeffs[5] = static_cast<float>(a2 / a0);
     }
 
-    static void computeLowShelf(BiquadCoeffs& c, double fc, double sr,
+    static void computeLowShelf(MqBiquadCoeffs& c, double fc, double sr,
                                   double gainDB, double Q)
     {
         fc = clampFreq(fc, sr);
@@ -302,7 +302,7 @@ namespace amb
         c.coeffs[5] = static_cast<float>(a2 / a0);
     }
 
-    static void computeHighShelf(BiquadCoeffs& c, double fc, double sr,
+    static void computeHighShelf(MqBiquadCoeffs& c, double fc, double sr,
                                    double gainDB, double Q)
     {
         fc = clampFreq(fc, sr);
@@ -333,7 +333,7 @@ namespace amb
         c.coeffs[5] = static_cast<float>(a2 / a0);
     }
 
-    static void computeHighPass(BiquadCoeffs& c, double fc, double sr, double Q)
+    static void computeHighPass(MqBiquadCoeffs& c, double fc, double sr, double Q)
     {
         fc = clampFreq(fc, sr);
         Q  = std::max(0.01, Q);
@@ -348,7 +348,7 @@ namespace amb
         c.coeffs[5] = static_cast<float>((k * k - k / Q + 1.0) * norm);
     }
 
-    static void computeLowPass(BiquadCoeffs& c, double fc, double sr, double Q)
+    static void computeLowPass(MqBiquadCoeffs& c, double fc, double sr, double Q)
     {
         fc = clampFreq(fc, sr);
         Q  = std::max(0.01, Q);
@@ -364,7 +364,7 @@ namespace amb
         c.coeffs[5] = static_cast<float>((k2 - k / Q + 1.0) * norm);
     }
 
-    static void computeFirstOrderHighPass(BiquadCoeffs& c, double fc, double sr)
+    static void computeFirstOrderHighPass(MqBiquadCoeffs& c, double fc, double sr)
     {
         fc = clampFreq(fc, sr);
         const double k    = std::tan(kMultiQPi * fc / sr);
@@ -378,7 +378,7 @@ namespace amb
         c.coeffs[5] = 0.0f;
     }
 
-    static void computeFirstOrderLowPass(BiquadCoeffs& c, double fc, double sr)
+    static void computeFirstOrderLowPass(MqBiquadCoeffs& c, double fc, double sr)
     {
         fc = clampFreq(fc, sr);
         const double k    = std::tan(kMultiQPi * fc / sr);
@@ -392,7 +392,7 @@ namespace amb
         c.coeffs[5] = 0.0f;
     }
 
-    static void computeNotch(BiquadCoeffs& c, double fc, double sr, double Q)
+    static void computeNotch(MqBiquadCoeffs& c, double fc, double sr, double Q)
     {
         fc = clampFreq(fc, sr);
         Q  = std::max(0.01, Q);
@@ -409,7 +409,7 @@ namespace amb
         c.coeffs[5] = static_cast<float>((1.0 - kbw) * norm);
     }
 
-    static void computeBandPass(BiquadCoeffs& c, double fc, double sr, double Q)
+    static void computeBandPass(MqBiquadCoeffs& c, double fc, double sr, double Q)
     {
         fc = clampFreq(fc, sr);
         Q  = std::max(0.01, Q);

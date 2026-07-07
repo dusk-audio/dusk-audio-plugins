@@ -27,10 +27,10 @@
 #include <cstdint>
 #include <vector>
 
-#include "../../shared-dpf/dsp/DuskDenormals.hpp"
-#include "../../shared-dpf/dsp/DuskSmoothed.hpp"
-#include "../../shared-dpf/dsp/DuskFilters.hpp"
-#include "../../shared-dpf/dsp/DuskOversampler.hpp"
+#include "DuskDenormals.hpp"
+#include "DuskSmoothed.hpp"
+#include "DuskFilters.hpp"
+#include "DuskOversampler.hpp"
 #include "ConsoleSaturationCore.h"
 
 namespace duskaudio

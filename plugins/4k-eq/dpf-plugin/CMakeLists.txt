@@ -27,14 +27,14 @@ dpf_add_plugin(four_k_eq_2
     UI_TYPE opengl
     FILES_DSP
         FourKEQPlugin.cpp
-        ../core/FourKEQDSP.cpp
+        ../../shared-dpf/dsp/FourKEQDSP.cpp
     FILES_UI
         FourKEQUI.cpp
         ${DUSK_DPF_UI_SOURCES})
 
 target_include_directories(four_k_eq_2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp"
     ${DUSK_DPF_INCLUDE_DIRS})
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build

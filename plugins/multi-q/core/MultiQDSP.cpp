@@ -12,9 +12,10 @@
 namespace duskaudio
 {
 
-void MultiQDSP::prepare(double sampleRate, int /*maxBlockSize*/)
+void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
 {
     currentSampleRate = sampleRate > 0 ? sampleRate : 48000.0;
+    britishEQ.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
     // Per-sample coefficient ramp for the static bands (~1 ms), matching the
     // JUCE build's svfSmoothCoeff = 1 - exp(-1/(0.001*SR)).
     biquadSmoothCoeff = (float)(1.0 - std::exp(-1.0 / (0.001 * currentSampleRate)));
@@ -34,6 +35,7 @@ void MultiQDSP::reset()
     for (auto& f : svfFilters) f.reset();
     for (auto& f : svfDynGainFilters) f.reset();
     dynamicEQ.reset();
+    britishEQ.reset();
     hpfFilter.reset(); lpfFilter.reset();
     prevBandPhaseInvertGain.fill(1.0f);
     prevBandPanVal.fill(0.0f);
@@ -83,7 +85,7 @@ void MultiQDSP::updateDynGainFilter(int band, float dynGainDb, const Params& p)
     svfDynGainFilters[(size_t)(band - 1)].setTarget(svfC);
 }
 
-void MultiQDSP::computeTiltShelf(BiquadCoeffs& c, double sr, double freq, float gainDB)
+void MultiQDSP::computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB)
 {
     // 1st-order tilt shelf, bilinear transform of H(s)=(s+w0*sqrt(A))/(s+w0/sqrt(A)).
     double w0 = 2.0 * kMultiQPi * freq;
@@ -106,7 +108,7 @@ void MultiQDSP::computeTiltShelf(BiquadCoeffs& c, double sr, double freq, float 
     c.coeffs[5] = 0.0f;
 }
 
-void MultiQDSP::computeBandCoeffs(int band, const Params& p, BiquadCoeffs& c) const
+void MultiQDSP::computeBandCoeffs(int band, const Params& p, MqBiquadCoeffs& c) const
 {
     const double sr = currentSampleRate;
     float gain = p.bandGain[(size_t)band];
@@ -164,7 +166,7 @@ void MultiQDSP::updateHPF(const Params& p)
     int soStageIdx = 0;
     for (int stage = 0; stage < stages; ++stage)
     {
-        BiquadCoeffs c;
+        MqBiquadCoeffs c;
         if (firstStageFirstOrder && stage == 0)
             amb::computeFirstOrderHighPass(c, clampedFreq, sampleRate);
         else
@@ -203,7 +205,7 @@ void MultiQDSP::updateLPF(const Params& p)
     int soStageIdx = 0;
     for (int stage = 0; stage < stages; ++stage)
     {
-        BiquadCoeffs c;
+        MqBiquadCoeffs c;
         if (firstStageFirstOrder && stage == 0)
             amb::computeFirstOrderLowPass(c, clampedFreq, sampleRate);
         else
@@ -225,14 +227,47 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
     const bool isStereo = numChannels > 1;
     float* procL = outputs[0];
     float* procR = isStereo ? outputs[1] : nullptr;
+
+    const auto eqType = (EQType)p.eqType;
+
+    // British character: route through the upgraded FourKEQDSP core (its own
+    // parallel-summing EQ + console saturation + oversampling + M/S). It reads
+    // inputs and writes outputs directly (in-place safe), so drive it before the
+    // Digital working-buffer copy below and return via master gain.
+    if (eqType == EQType::British)
+    {
+        const auto& b = p.british;
+        britishEQ.setHpfFreq(b.hpfFreq);   britishEQ.setHpfEnabled(b.hpfEnabled);
+        britishEQ.setLpfFreq(b.lpfFreq);   britishEQ.setLpfEnabled(b.lpfEnabled);
+        britishEQ.setLfGain(b.lfGain);     britishEQ.setLfFreq(b.lfFreq);   britishEQ.setLfBell(b.lfBell);
+        britishEQ.setLmGain(b.lmGain);     britishEQ.setLmFreq(b.lmFreq);   britishEQ.setLmQ(b.lmQ);
+        britishEQ.setHmGain(b.hmGain);     britishEQ.setHmFreq(b.hmFreq);   britishEQ.setHmQ(b.hmQ);
+        britishEQ.setHfGain(b.hfGain);     britishEQ.setHfFreq(b.hfFreq);   britishEQ.setHfBell(b.hfBell);
+        britishEQ.setEqType(b.blackMode ? 1 : 0);
+        britishEQ.setSaturation(b.saturation);
+        britishEQ.setInputGainDb(b.inputGain);
+        britishEQ.setOutputGainDb(b.outputGain);
+        britishEQ.setOversampling(p.oversampling);
+        britishEQ.setMsMode(p.processingMode == 3 || p.processingMode == 4);
+        britishEQ.setBypass(false);
+        britishEQ.setAutoGain(false);
+        britishEQ.processBlock(inputs, outputs, numChannels, numSamples);
+
+        float mgB = std::pow(10.0f, p.masterGain / 20.0f);
+        if (std::abs(p.masterGain) > 0.01f)
+        {
+            for (int i = 0; i < numSamples; ++i) procL[i] *= mgB;
+            if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mgB;
+        }
+        return;
+    }
+
     // in-place-safe copy of input into the output working buffers
     for (int i = 0; i < numSamples; ++i) procL[i] = inputs[0][i];
     if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] = inputs[1][i];
 
-    const auto eqType = (EQType)p.eqType;
-
-    // British/Tube not ported yet — pass audio through untouched (still apply
-    // master gain below so levels stay consistent for those modes' A/B).
+    // Tube not ported yet — pass audio through untouched (still apply master gain
+    // below so levels stay consistent for its A/B).
     const bool digitalPath = (eqType == EQType::Digital || eqType == EQType::Match);
 
     // effective per-band routing (0=Stereo,1=Left,2=Right,3=Mid,4=Side)
@@ -304,7 +339,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         // static band coefficients (block rate; per-sample smoothing in the loop)
         for (int band = 1; band < 7; ++band)
         {
-            BiquadCoeffs c;
+            MqBiquadCoeffs c;
             computeBandCoeffs(band, p, c);
             svfFilters[(size_t)(band - 1)].setCoeffs(c);
         }

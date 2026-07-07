@@ -19,6 +19,7 @@
 #include "MultiQFilters.hpp"
 #include "MultiQParams.hpp"
 #include "MultiQDynamics.hpp"
+#include "../../shared-dpf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>
@@ -61,8 +62,22 @@ public:
         int   processingMode = 0;    // 0=Stereo,1=L,2=R,3=Mid,4=Side
         int   qCoupleMode   = 0;     // 0..8
         int   eqType        = 0;     // 0=Digital,1=Match,2=British,3=Tube
+        int   oversampling  = 0;     // 0=1x,1=2x,2=4x (British/Tube nonlinearity only)
         int   soloBand      = -1;    // -1 = none
         bool  deltaSolo     = false;
+
+        // British character (routed through the upgraded FourKEQDSP core).
+        struct British {
+            float hpfFreq = 20.f;   bool hpfEnabled = false;
+            float lpfFreq = 20000.f; bool lpfEnabled = false;
+            float lfGain = 0.f; float lfFreq = 100.f;  bool lfBell = false;
+            float lmGain = 0.f; float lmFreq = 600.f;  float lmQ = 0.7f;
+            float hmGain = 0.f; float hmFreq = 2000.f; float hmQ = 0.7f;
+            float hfGain = 0.f; float hfFreq = 8000.f; bool hfBell = false;
+            bool  blackMode = false;   // false=Brown(E), true=Black(G)
+            float saturation = 0.f;    // 0-100 %
+            float inputGain = 0.f, outputGain = 0.f; // dB
+        } british;
     };
 
     void prepare(double sampleRate, int maxBlockSize);
@@ -77,7 +92,7 @@ private:
     struct CascadedFilter
     {
         static constexpr int MAX_STAGES = 8;
-        std::array<BiquadCoeffs, MAX_STAGES> co{};
+        std::array<MqBiquadCoeffs, MAX_STAGES> co{};
         std::array<float, MAX_STAGES> s1L{}, s2L{}, s1R{}, s2R{};
         int activeStages = 1;
 
@@ -117,10 +132,10 @@ private:
     };
 
     // coefficient builders (ported from MultiQ.cpp)
-    void computeBandCoeffs(int band, const Params& p, BiquadCoeffs& c) const;
+    void computeBandCoeffs(int band, const Params& p, MqBiquadCoeffs& c) const;
     void updateHPF(const Params& p);
     void updateLPF(const Params& p);
-    static void computeTiltShelf(BiquadCoeffs& c, double sr, double freq, float gainDB);
+    static void computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB);
     // set the dyn-gain SVF target for a band from the given dynamic gain (dB)
     void updateDynGainFilter(int band, float dynGainDb, const Params& p);
 
@@ -133,6 +148,7 @@ private:
     std::array<StereoBiquad, 6> svfFilters;       // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
     std::array<StereoSVF, 6>    svfDynGainFilters; // bands 2-7 dynamic-gain (Cytomic SVF)
     MultiQDynamics dynamicEQ;
+    FourKEQDSP britishEQ;              // British character (upgraded 4K parallel-summing core)
     std::array<LinearSmoothedValue, NUM_BANDS> bandEnableSmoothed;
     std::array<float, NUM_BANDS> prevBandPhaseInvertGain { {1,1,1,1,1,1,1,1} };
     std::array<float, NUM_BANDS> prevBandPanVal {};

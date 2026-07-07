@@ -35,7 +35,7 @@ struct BiquadCoeffs
 
 static int failures = 0;
 
-static bool coeffsEqual(const BiquadCoeffs& a, const duskaudio::BiquadCoeffs& b)
+static bool coeffsEqual(const BiquadCoeffs& a, const duskaudio::MqBiquadCoeffs& b)
 {
     return std::memcmp(a.coeffs, b.coeffs, sizeof(float) * 6) == 0;
 }
@@ -56,7 +56,7 @@ static void checkDesigner(const char* name, RefFn ref, CoreFn core,
         double fc = fcD(rng);
         if (fc > sr * 0.499) fc = sr * 0.499;
         double g = gD(rng), q = qD(rng);
-        BiquadCoeffs r; duskaudio::BiquadCoeffs c;
+        BiquadCoeffs r; duskaudio::MqBiquadCoeffs c;
         ref(r, fc, sr, g, q);
         core(c, fc, sr, g, q);
         if (!coeffsEqual(r, c)) { if (mism < 3) printf("    MISMATCH %s fc=%.2f sr=%.0f g=%.2f q=%.3f\n", name, fc, sr, g, q); ++mism; }
@@ -101,7 +101,7 @@ int main()
 {
     std::mt19937 rng(0xC0FFEE);
     printf("== coefficient designers (core vs unmodified AnalogMatchedBiquad.h) ==\n");
-    using RC = BiquadCoeffs; using CC = duskaudio::BiquadCoeffs;
+    using RC = BiquadCoeffs; using CC = duskaudio::MqBiquadCoeffs;
     checkDesigner("peaking",
         [](RC& c, double f, double s, double g, double q){ AnalogMatchedBiquad::computePeaking(c, f, s, g, q); },
         [](CC& c, double f, double s, double g, double q){ duskaudio::amb::computePeaking(c, f, s, g, q); }, rng, true);
@@ -137,7 +137,7 @@ int main()
         int mism = 0;
         for (int t = 0; t < 2000; ++t)
         {
-            duskaudio::BiquadCoeffs cc;
+            duskaudio::MqBiquadCoeffs cc;
             duskaudio::amb::computePeaking(cc, f(rng), 48000.0, g(rng), q(rng));
             duskaudio::StereoBiquad sb; sb.setCoeffs(cc); sb.snapToTarget(); sb.smoothCoeff = 1.0f;
             RefDF2T ref{cc.coeffs[0], cc.coeffs[1], cc.coeffs[2], cc.coeffs[4], cc.coeffs[5]};

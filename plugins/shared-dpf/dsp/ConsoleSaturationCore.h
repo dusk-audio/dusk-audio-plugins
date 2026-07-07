@@ -26,8 +26,8 @@
 
 #include <cmath>
 #include <random>
-#include "../../shared-dpf/dsp/DuskFilters.hpp"  // kDuskTwoPi
-#include "../../shared-dpf/dsp/DuskADAA.hpp"
+#include "DuskFilters.hpp"  // kDuskTwoPi
+#include "DuskADAA.hpp"
 
 namespace duskaudio
 {
