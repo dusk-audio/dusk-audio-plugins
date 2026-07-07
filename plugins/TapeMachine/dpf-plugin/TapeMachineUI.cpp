@@ -2,26 +2,28 @@
 // Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
-// TapeMachineUI.cpp — Dear ImGui UI for TapeMachine 2. Layout mirrors the JUCE
-// TapeMachine editor (800x568): header, a transport row with two reels flanking
-// a stereo VU bridge over two rows of three selectors, then a main knob row and
-// a character knob row. Recolored to a brushed-silver panel; the chrome knobs
-// (shared duskdpf::DuskPanel) and the cream JUCE VU meters are kept.
+// TapeMachineUI.cpp — Dear ImGui UI for TapeMachine 2 (800x520). Brushed-silver
+// panel: header (title, preset selector, bypass); two large Sifam-style VU
+// meters; a row of six tape/EQ selectors; a main knob row and a character knob
+// row. Chrome knobs via the shared duskdpf::DuskPanel. All drawn strings are
+// ASCII (the atlas font lacks some Unicode glyphs).
 
 #include "DistrhoUI.hpp"
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
+#include "TapeMachinePresets.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 START_NAMESPACE_DISTRHO
 
 namespace {
     constexpr float kDesignW = 800.0f;
-    constexpr float kDesignH = 568.0f;
+    constexpr float kDesignH = 520.0f;
 
     constexpr ImU32 kColPanel   = IM_COL32(188, 189, 191, 255);
     constexpr ImU32 kColPanelHi = IM_COL32(206, 207, 209, 255);
@@ -29,8 +31,7 @@ namespace {
     constexpr ImU32 kColFrame   = IM_COL32(58, 58, 60, 255);
     constexpr ImU32 kColInk     = IM_COL32(34, 34, 37, 255);
     constexpr ImU32 kColInkDim  = IM_COL32(96, 97, 100, 255);
-    constexpr ImU32 kColScrew    = IM_COL32(120, 121, 123, 255);
-    constexpr ImU32 kColReel     = IM_COL32(158, 159, 162, 255);
+    constexpr ImU32 kColScrew   = IM_COL32(120, 121, 123, 255);
     constexpr ImU32 kColRed      = IM_COL32(190, 55, 40, 255);
 }
 
@@ -46,7 +47,7 @@ public:
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kTmParams[i].def;
-        setGeometryConstraints(400, 284, true);
+        setGeometryConstraints(400, 260, true);
         labelFont = duskdpf::loadCrispFont(30.0f * getScaleFactor());
 
         duskdpf::Palette pal;
@@ -59,7 +60,10 @@ protected:
     void parameterChanged(uint32_t index, float value) override
     {
         if (index < kParamCount)
+        {
             values[index] = value;
+            if (index < kParamVuL) currentPreset = -1; // an edit deselects the preset
+        }
     }
 
     void onImGuiDisplay() override
@@ -69,7 +73,6 @@ protected:
         s   = std::min(winW / kDesignW, winH / kDesignH);
         org = ImVec2(0.5f * (winW - kDesignW * s), 0.5f * (winH - kDesignH * s));
         panel.begin(s, org, labelFont, this);
-        reelPhase += ImGui::GetIO().DeltaTime * reelSpeed();
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -83,12 +86,8 @@ protected:
         ImDrawList* dl = ImGui::GetWindowDrawList();
         drawPanel(dl, winW, winH);
         drawHeader(dl);
-
-        // transport: reels flank the centre column (VU + two selector rows)
-        drawReel(dl, 75, 167, 52);
-        drawReel(dl, 725, 167, 52);
-        drawVU(dl, 140, 68, 396, 184, meterLevel(0), needleL, "L");
-        drawVU(dl, 404, 68, 660, 184, meterLevel(1), needleR, "R");
+        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, "L");
+        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, "R");
         drawSelectors(dl);
         drawKnobs(dl);
 
@@ -112,11 +111,13 @@ private:
         return v;
     }
 
-    float reelSpeed() const
+    void applyPreset(int idx)
     {
-        if (values[kParamBypass] > 0.5f) return 0.0f;
-        const int sp = (int)(values[kParamTapeSpeed] + 0.5f);
-        return (sp == 2 ? 4.4f : sp == 1 ? 2.2f : 1.1f);
+        currentPreset = idx;
+        tmApplyPreset(idx, [this](uint32_t id, float v) {
+            values[id] = v;
+            editParameter(id, true); setParameterValue(id, v); editParameter(id, false);
+        });
     }
 
     void drawPanel(ImDrawList* dl, float winW, float winH)
@@ -143,39 +144,39 @@ private:
 
     void drawHeader(ImDrawList* dl)
     {
-        dl->AddRectFilled(P(15, 12), P(300, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
-        dl->AddRect(P(15, 12), P(300, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
-        text(dl, 28, 17, 17, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
-        text(dl, 690, 18, 13, kColInk, "Dusk Audio", 1, true);
-        tmButton(dl, "bypass", kParamBypass, 704, 14, 785, 38, "BYPASS");
-    }
+        dl->AddRectFilled(P(15, 12), P(232, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
+        dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
+        text(dl, 27, 17, 16, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
 
-    //--- transport -------------------------------------------------------------
-    void drawReel(ImDrawList* dl, float cx, float cy, float r)
-    {
-        const ImVec2 c = P(cx, cy);
-        dl->AddCircleFilled(c, r * s, kColReel, 56);
-        dl->AddCircle(c, r * s, IM_COL32(70, 70, 72, 255), 56, 2.0f * s);
-        dl->AddCircleFilled(c, r * 0.90f * s, IM_COL32(120, 120, 123, 255), 56);
-        dl->AddCircleFilled(c, r * 0.58f * s, kColReel, 48);
-        dl->AddCircle(c, r * 0.58f * s, IM_COL32(90, 90, 92, 255), 48, 1.4f * s);
-        const float a0 = reelPhase;
-        for (int i = 0; i < 3; ++i)
+        // preset selector (centre of header)
+        const char* cur = (currentPreset >= 0 && currentPreset < kNumTmPresets)
+                              ? kTmPresets[currentPreset].name : "Presets...";
+        text(dl, 262, 8, 8.5f, kColInkDim, "PRESET", -1, true);
+        ImGui::SetCursorScreenPos(P(262, 18));
+        ImGui::SetNextItemWidth(300.0f * s);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(150, 152, 156, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
+        if (ImGui::BeginCombo("##preset", cur))
         {
-            const float a = a0 + i * (2.0944f);
-            const ImVec2 h(c.x + std::sin(a) * r * 0.72f * s, c.y - std::cos(a) * r * 0.72f * s);
-            dl->AddCircleFilled(h, r * 0.15f * s, IM_COL32(96, 96, 99, 255), 24);
-            dl->AddCircle(h, r * 0.15f * s, IM_COL32(70, 70, 72, 200), 24, 1.0f * s);
+            const char* lastCat = nullptr;
+            for (int i = 0; i < kNumTmPresets; ++i)
+            {
+                if (lastCat == nullptr || std::strcmp(lastCat, kTmPresets[i].category) != 0)
+                {
+                    lastCat = kTmPresets[i].category;
+                    ImGui::TextDisabled("%s", lastCat);
+                }
+                if (ImGui::Selectable(kTmPresets[i].name, i == currentPreset))
+                    applyPreset(i);
+            }
+            ImGui::EndCombo();
         }
-        dl->AddCircleFilled(c, r * 0.22f * s, IM_COL32(205, 205, 207, 255), 28);
-        dl->AddCircle(c, r * 0.22f * s, IM_COL32(80, 80, 82, 255), 28, 1.4f * s);
-        for (int i = 0; i < 3; ++i)
-        {
-            const float a = a0 + i * 2.0944f;
-            dl->AddLine(c, ImVec2(c.x + std::sin(a) * r * 0.20f * s, c.y - std::cos(a) * r * 0.20f * s),
-                        IM_COL32(90, 90, 92, 255), 1.4f * s);
-        }
-        dl->AddCircleFilled(c, r * 0.07f * s, IM_COL32(40, 40, 42, 255), 12);
+        ImGui::PopStyleColor(5);
+
+        tmButton(dl, "bypass", kParamBypass, 704, 14, 785, 38, "BYPASS");
     }
 
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
@@ -251,7 +252,7 @@ private:
         dl->AddCircleFilled(P(fx1 - 15, pivotY - L * 0.20f), 4.6f * s, IM_COL32(112, 40, 30, 255), 16);
         dl->AddCircleFilled(P(fx1 - 16, pivotY - L * 0.20f - 1), 1.5f * s, IM_COL32(210, 130, 110, 120), 10);
 
-        // VU legend (kept at its current position) + channel tag
+        // VU legend + channel tag
         text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
         text(dl, cx, pivotY - L * 0.46f + 13.0f, 8.5f, IM_COL32(90, 80, 64, 255), label, 0, true);
 
@@ -265,7 +266,7 @@ private:
                                   P(cx - bw * 0.5f * std::cos(perp), pivotY - bw * 0.5f * std::sin(perp)),
                                   IM_COL32(28, 24, 18, 255));
         }
-        dl->AddCircleFilled(P(cx, pivotY + 1), 8.0f * s, IM_COL32(40, 32, 22, 90), 20); // mound shadow
+        dl->AddCircleFilled(P(cx, pivotY + 1), 8.0f * s, IM_COL32(40, 32, 22, 90), 20);
         dl->AddCircleFilled(P(cx, pivotY), 4.6f * s, IM_COL32(24, 20, 14, 255), 18);
         dl->AddCircleFilled(P(cx - 1.2f * s, pivotY - 1.4f * s), 1.5f * s, IM_COL32(150, 140, 120, 150), 10);
 
@@ -275,12 +276,12 @@ private:
             IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 0));
     }
 
-    //--- selectors (two rows of three, in the centre column) -------------------
+    //--- selectors (single row of six) -----------------------------------------
     void selector(ImDrawList* dl, const char* id, uint32_t param, float x, float y,
                   float w, const char* title)
     {
         const TmParam& d = kTmParams[param];
-        text(dl, x + 0.5f * w, y, 9.5f, kColInk, title, 0, true);
+        text(dl, x + 0.5f * w, y, 9.0f, kColInk, title, 0, true);
         int cur = (int)(values[param] + 0.5f);
         if (cur < 0) cur = 0; if (cur >= d.numChoices) cur = d.numChoices - 1;
 
@@ -306,14 +307,14 @@ private:
 
     void drawSelectors(ImDrawList* dl)
     {
-        const float W = 176.67f, x0 = 135.0f, w = W - 10.0f;
-        const float col[3] = { x0 + 5, x0 + W + 5, x0 + 2 * W + 5 };
-        selector(dl, "##machine", kParamTapeMachine, col[0], 190, w, "TAPE MACHINE");
-        selector(dl, "##speed",   kParamTapeSpeed,   col[1], 190, w, "TAPE SPEED");
-        selector(dl, "##type",    kParamTapeType,    col[2], 190, w, "TAPE TYPE");
-        selector(dl, "##path",    kParamSignalPath,  col[0], 238, w, "SIGNAL PATH");
-        selector(dl, "##eq",      kParamEqStandard,  col[1], 238, w, "EQ STANDARD");
-        selector(dl, "##os",      kParamOversampling,col[2], 238, w, "OVERSAMPLING");
+        const float w = 112.0f, y = 224.0f;
+        const float x[6] = { 20, 148, 276, 404, 532, 660 };
+        selector(dl, "##machine", kParamTapeMachine, x[0], y, w, "MACHINE");
+        selector(dl, "##speed",   kParamTapeSpeed,   x[1], y, w, "TAPE SPEED");
+        selector(dl, "##type",    kParamTapeType,    x[2], y, w, "TAPE TYPE");
+        selector(dl, "##path",    kParamSignalPath,  x[3], y, w, "SIGNAL PATH");
+        selector(dl, "##eq",      kParamEqStandard,  x[4], y, w, "EQ STANDARD");
+        selector(dl, "##os",      kParamOversampling,x[5], y, w, "OVERSAMPLING");
     }
 
     //--- knob rows -------------------------------------------------------------
@@ -328,22 +329,22 @@ private:
     void drawKnobs(ImDrawList* dl)
     {
         // main row: input, bias, wow, flutter, output
-        const float cy1 = 356.0f;
-        knob(dl, "input",  kParamInputGain, 116.67f, cy1, "INPUT",   "%.1f", " dB");
-        knob(dl, "bias",   kParamBias,      258.34f, cy1, "BIAS",    "%.0f", "%");
-        knob(dl, "wow",    kParamWow,       400.00f, cy1, "WOW",     "%.0f", "%");
-        knob(dl, "flut",   kParamFlutter,   541.67f, cy1, "FLUTTER", "%.0f", "%");
-        knob(dl, "output", kParamOutputGain,683.34f, cy1, "OUTPUT",  "%.1f", " dB");
+        const float cy1 = 330.0f;
+        knob(dl, "input",  kParamInputGain, 112.0f, cy1, "INPUT",   "%.1f", " dB");
+        knob(dl, "bias",   kParamBias,      256.0f, cy1, "BIAS",    "%.0f", "%");
+        knob(dl, "wow",    kParamWow,       400.0f, cy1, "WOW",     "%.0f", "%");
+        knob(dl, "flut",   kParamFlutter,   544.0f, cy1, "FLUTTER", "%.0f", "%");
+        knob(dl, "output", kParamOutputGain,688.0f, cy1, "OUTPUT",  "%.1f", " dB");
 
         // character row: hp, lp, noise, + auto-comp / auto-cal buttons
-        const float cy2 = 482.0f;
-        knob(dl, "hp",    kParamHighpassFreq, 110.0f, cy2, "HIGHPASS", "%.0f", " Hz");
-        knob(dl, "lp",    kParamLowpassFreq,  245.0f, cy2, "LOWPASS",  "%.0f", " Hz");
-        knob(dl, "noise", kParamNoiseAmount,  380.0f, cy2, "NOISE",    "%.0f", "%");
-        text(dl, 525, cy2 - 50.0f, 10, kColInk, "AUTO COMP", 0, true);
-        tmButton(dl, "autocomp", kParamAutoComp, 480, cy2 - 18, 570, cy2 + 18, "LINK");
-        text(dl, 680, cy2 - 50.0f, 10, kColInk, "AUTO CAL", 0, true);
-        tmButton(dl, "autocal",  kParamAutoCal,  630, cy2 - 18, 730, cy2 + 18, "AUTO");
+        const float cy2 = 448.0f;
+        knob(dl, "hp",    kParamHighpassFreq, 112.0f, cy2, "HIGHPASS", "%.0f", " Hz");
+        knob(dl, "lp",    kParamLowpassFreq,  256.0f, cy2, "LOWPASS",  "%.0f", " Hz");
+        knob(dl, "noise", kParamNoiseAmount,  400.0f, cy2, "NOISE",    "%.0f", "%");
+        text(dl, 544, cy2 - 50.0f, 10, kColInk, "AUTO COMP", 0, true);
+        tmButton(dl, "autocomp", kParamAutoComp, 500, cy2 - 18, 588, cy2 + 18, "LINK");
+        text(dl, 688, cy2 - 50.0f, 10, kColInk, "AUTO CAL", 0, true);
+        tmButton(dl, "autocal",  kParamAutoCal,  644, cy2 - 18, 732, cy2 + 18, "AUTO");
     }
 
     void tmButton(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0,
@@ -373,8 +374,8 @@ private:
     float   values[kParamCount] = {};
     float   s = 1.0f;
     ImVec2  org = ImVec2(0, 0);
-    float   reelPhase = 0.0f;
     float   needleL = 0.0f, needleR = 0.0f;
+    int     currentPreset = -1;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineUI)
 };

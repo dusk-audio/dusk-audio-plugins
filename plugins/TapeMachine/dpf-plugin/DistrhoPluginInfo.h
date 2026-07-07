@@ -30,12 +30,12 @@
 #define DISTRHO_UI_CUSTOM_INCLUDE_PATH  "DearImGui.hpp"
 #define DISTRHO_UI_CUSTOM_WIDGET_TYPE   DGL_NAMESPACE::ImGuiTopLevelWidget
 #define DISTRHO_UI_DEFAULT_WIDTH        800
-#define DISTRHO_UI_DEFAULT_HEIGHT       568
+#define DISTRHO_UI_DEFAULT_HEIGHT       520
 #define DISTRHO_UI_USER_RESIZABLE       1
 
 // Oversampling adds FIR group delay -> report it to the host.
 #define DISTRHO_PLUGIN_WANT_LATENCY  1
-#define DISTRHO_PLUGIN_WANT_PROGRAMS 0
+#define DISTRHO_PLUGIN_WANT_PROGRAMS 1
 #define DISTRHO_PLUGIN_WANT_STATE    0
 
 #define DISTRHO_PLUGIN_CLAP_FEATURES   "audio-effect", "distortion", "filter", "stereo"

@@ -7,6 +7,7 @@
 #include "DistrhoPlugin.hpp"
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
+#include "TapeMachinePresets.hpp"
 #include "TapeMachineDSP.hpp"
 
 #include <atomic>
@@ -18,7 +19,7 @@ class TapeMachinePlugin : public Plugin
 {
 public:
     TapeMachinePlugin()
-        : Plugin(kParamCount, 0, 0)
+        : Plugin(kParamCount, kNumTmPresets, 0)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i].store(kTmParams[i].def, std::memory_order_relaxed);
@@ -101,6 +102,18 @@ protected:
             return;
         values[index].store(value, std::memory_order_relaxed);
         applyToDsp(index, value);
+    }
+
+    //--- programs (factory presets) --------------------------------------------
+    void initProgramName(uint32_t index, String& programName) override
+    {
+        if (index < (uint32_t)kNumTmPresets)
+            programName = kTmPresets[index].name;
+    }
+
+    void loadProgram(uint32_t index) override
+    {
+        tmApplyPreset((int)index, [this](uint32_t id, float v) { setParameterValue(id, v); });
     }
 
     //--- lifecycle -------------------------------------------------------------
