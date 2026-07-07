@@ -30,9 +30,10 @@
 #define DISTRHO_UI_DEFAULT_WIDTH        1040
 #define DISTRHO_UI_DEFAULT_HEIGHT       680
 #define DISTRHO_UI_USER_RESIZABLE       1
-// Set to 1 later ONLY if the port actually adds oversampling latency around a
-// nonlinearity (ADAA tube may not need it — verify by measurement per 04-multi-q.md).
-#define DISTRHO_PLUGIN_WANT_LATENCY 0
+// British character routes through FourKEQDSP, which reports oversampler latency
+// when its oversampling factor > 0; the shell forwards MultiQDSP::getLatencySamples()
+// via setLatency() each block. Digital/Tube and un-oversampled British report 0.
+#define DISTRHO_PLUGIN_WANT_LATENCY 1
 #define DISTRHO_PLUGIN_WANT_PROGRAMS 1
 #define DISTRHO_PLUGIN_WANT_STATE   0
 

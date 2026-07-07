@@ -104,6 +104,15 @@ public:
     void process(const float* const* inputs, float* const* outputs,
                  int numChannels, int numSamples, const Params& p);
 
+    // Reported latency in base-rate samples. Digital/Tube run at base rate (0);
+    // British routes through FourKEQDSP, which reports oversampler latency when
+    // oversampling > 0. Reads the last-processed character (cached in process()),
+    // so call it after process() when the host asks for an updated latency.
+    int getLatencySamples() const noexcept
+    {
+        return lastEqType == (int)EQType::British ? britishEQ.getLatencySamples() : 0;
+    }
+
 private:
     // Framework-free cascaded biquad (variable-slope HPF/LPF). Direct-form II
     // transposed, coefficients set directly (no per-sample smoothing), NaN-guard
@@ -162,6 +171,7 @@ private:
     float  biquadSmoothCoeff = 1.0f; // 1 - exp(-1/(0.001*sr)); per-sample coeff ramp
     bool   firstBlock = true;
     int    prevHpfStages = -1, prevLpfStages = -1;
+    int    lastEqType = (int)EQType::Digital; // cached in process() for getLatencySamples()
 
     CascadedFilter hpfFilter, lpfFilter;
     std::array<StereoBiquad, 6> svfFilters;       // bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
