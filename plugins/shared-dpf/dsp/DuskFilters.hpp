@@ -232,6 +232,43 @@ public:
         return { b0 * inv, b1 * inv, b2 * inv, a1 * inv, a2 * inv };
     }
 
+    // RBJ low/high shelf in shelf-slope form with S=1 (alpha = sin(w0)/2 * sqrt(2)).
+    // Deliberately a DIFFERENT float op-order than shelf(...,Q) above: at Q=1/sqrt(2)
+    // the two are algebraically equal but diverge by ~1 ULP in ~40% of frequencies,
+    // so this exact variant is kept to reproduce tape-echo's original ShelfFilter
+    // bit-for-bit (offline null-render requirement). high=false selects the low shelf.
+    static BiquadCoeffs shelfSlope1(double fs, float freq, float gainDb, bool high) noexcept
+    {
+        const float A     = std::pow(10.0f, gainDb / 40.0f);
+        const float w0    = kDuskTwoPi * freq / (float)fs;
+        const float cosw  = std::cos(w0);
+        const float sinw  = std::sin(w0);
+        const float alpha = 0.5f * sinw * std::sqrt(2.0f); // S = 1
+        const float sqA2a = 2.0f * std::sqrt(A) * alpha;
+
+        float b0f, b1f, b2f, a0f, a1f, a2f;
+        if (!high)
+        {
+            b0f =     A * ((A + 1) - (A - 1) * cosw + sqA2a);
+            b1f = 2 * A * ((A - 1) - (A + 1) * cosw);
+            b2f =     A * ((A + 1) - (A - 1) * cosw - sqA2a);
+            a0f =         (A + 1) + (A - 1) * cosw + sqA2a;
+            a1f =    -2 * ((A - 1) + (A + 1) * cosw);
+            a2f =         (A + 1) + (A - 1) * cosw - sqA2a;
+        }
+        else
+        {
+            b0f =     A * ((A + 1) + (A - 1) * cosw + sqA2a);
+            b1f =-2 * A * ((A - 1) + (A + 1) * cosw);
+            b2f =     A * ((A + 1) + (A - 1) * cosw - sqA2a);
+            a0f =         (A + 1) - (A - 1) * cosw + sqA2a;
+            a1f =     2 * ((A - 1) - (A + 1) * cosw);
+            a2f =         (A + 1) - (A - 1) * cosw - sqA2a;
+        }
+        const float inv = 1.0f / a0f;
+        return { b0f * inv, b1f * inv, b2f * inv, a1f * inv, a2f * inv };
+    }
+
 private:
     BiquadCoeffs c;
     float z1 = 0.0f, z2 = 0.0f;

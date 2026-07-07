@@ -2,13 +2,12 @@
 # Third-party components (DPF — ISC; Dear ImGui — MIT; and others) are attributed
 # in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 #
-# Standalone CMake for the DPF-based Tape Echo plugin.
-# Configure this directory directly:
+# Standalone CMake for the DPF-based TapeMachine 2 plugin.
 #   cmake -B build -GNinja [-DDPF_PATH=/path/to/DPF]
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeEchoDPF VERSION 0.1.0)
+project(TapeMachine2DPF VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,25 +17,20 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/cmake/DuskDpfPlugin.cmake")
 
-dpf_add_plugin(tape_echo
+dpf_add_plugin(tape_machine_2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
-    # MONOLITHIC: DISTRHO_PLUGIN_WANT_DIRECT_ACCESS makes DPF's LV2 TTL export
-    # declare the UI inside the dsp binary; the LV2 build must match or hosts
-    # fail to load. Single-object LV2 also gives the VU meter direct access.
     MONOLITHIC
     UI_TYPE opengl
     FILES_DSP
-        TapeEchoPlugin.cpp
-        ../core/TapeEchoDSP.cpp
+        TapeMachinePlugin.cpp
+        ../core/TapeMachineDSP.cpp
     FILES_UI
-        TapeEchoUI.cpp
+        TapeMachineUI.cpp
         ${DUSK_DPF_UI_SOURCES})
 
-target_include_directories(tape_echo PUBLIC
+target_include_directories(tape_machine_2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
-    ${DUSK_DPF_INCLUDE_DIRS})   # shared-dpf dsp/ui + DPF-Widgets opengl
+    ${DUSK_DPF_INCLUDE_DIRS})
 
-# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
-# (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
-dusk_dpf_install_local(tape_echo)
+dusk_dpf_install_local(tape_machine_2)

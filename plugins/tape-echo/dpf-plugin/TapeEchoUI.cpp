@@ -8,7 +8,8 @@
 #include "DistrhoUI.hpp"
 #include "TapeEchoAccess.hpp"
 #include "TapeEchoParams.hpp"
-#include "DuskImGuiFont.hpp"   // shared crisp-bold loader (candidate search + DPI)
+#include "DuskImGuiFont.hpp"      // shared crisp-bold loader (candidate search + DPI)
+#include "DuskImGuiWidgets.hpp"   // shared DuskPanel: chrome knob, LED, text, value bubble
 
 #include <cmath>
 #include <cstdio>
@@ -55,9 +56,14 @@ namespace
     constexpr float kPi = 3.14159265358979f;
 }
 
-class TapeEchoUI : public UI
+class TapeEchoUI : public UI, public duskdpf::ParamHost
 {
 public:
+    //--- duskdpf::ParamHost: forward the shared widgets' edits to the host ------
+    void beginEdit(uint32_t idx) override { editParameter(idx, true); }
+    void endEdit(uint32_t idx) override   { editParameter(idx, false); }
+    void setParam(uint32_t idx, float v) override { setParameterValue(idx, v); }
+
     TapeEchoUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
     {
@@ -84,6 +90,10 @@ protected:
         const float winH = (float)getHeight();
         s   = std::min(winW / kDesignW, winH / kDesignH);
         org = ImVec2(0.5f * (winW - kDesignW * s), 0.5f * (winH - kDesignH * s));
+
+        // Bind the shared widget panel to this frame's scale/origin/font. `this`
+        // is the ParamHost the knob/LED gestures call back into.
+        panel.begin(s, org, labelFont, this);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -114,169 +124,36 @@ private:
     //--- helpers -----------------------------------------------------------------
     ImVec2 P(float x, float y) const { return ImVec2(org.x + x * s, org.y + y * s); }
 
+    // Thin adapters onto the shared duskdpf::DuskPanel (all the chrome-knob
+    // drawing, LED, text crisping, gesture handling + value bubble live there
+    // now; every Dusk DPF plugin renders identical controls through it).
     void text(ImDrawList* dl, float x, float y, float size, ImU32 col,
               const char* txt, int align /* -1 left, 0 center, 1 right */,
               bool bold = false) const
     {
-        ImFont* font = labelFont != nullptr ? labelFont : ImGui::GetFont();
-        const float sz = size * s;
-        const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
-        ImVec2 pos = P(x, y);
-        if (align == 0) pos.x -= 0.5f * ts.x;
-        if (align == 1) pos.x -= ts.x;
-        dl->AddText(font, sz, pos, col, txt);
-        // faux-bold double draw only when stuck on the fallback font (the
-        // label font is a genuine bold face; double-drawing it smears)
-        if (bold && labelFont == nullptr)
-            dl->AddText(font, sz, ImVec2(pos.x + 0.6f * s, pos.y), col, txt);
+        panel.text(dl, x, y, size, col, txt, align, bold);
     }
 
     void led(ImDrawList* dl, float x, float y, bool on, float r = 5.0f) const
     {
-        const ImVec2 c = P(x, y);
-        dl->AddCircleFilled(c, (r + 2.5f) * s, IM_COL32(60, 60, 62, 255), 20);
-        dl->AddCircleFilled(c, (r + 1.0f) * s, IM_COL32(0, 0, 0, 255), 20);
-        if (on)
-        {
-            dl->AddCircleFilled(c, (r + 5.0f) * s, kColLedGlow, 20);
-            dl->AddCircleFilled(c, r * s, kColLedOn, 20);
-            dl->AddCircleFilled(ImVec2(c.x - 1.5f * s, c.y - 1.5f * s), 1.6f * s,
-                                IM_COL32(255, 215, 205, 230), 10);
-        }
-        else
-        {
-            dl->AddCircleFilled(c, r * s, kColLedOff, 20);
-        }
+        panel.led(dl, x, y, on, r);
     }
 
-    //--- chrome knob ---------------------------------------------------------------
-    static float knobAngle(float t) { return (-135.0f + 270.0f * t) * kPi / 180.0f; }
+    static float knobAngle(float t) { return duskdpf::DuskPanel::knobAngle(t); }
 
     void knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, bool stepped = false,
               bool panelTicks = true)
     {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const float R  = radius * s;
-        const ImVec2 c = P(cx, cy);
-        const float range = maxV - minV;
-
-        // interaction -------------------------------------------------------------
-        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
-        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-
-        if (ImGui::IsItemActivated())
-        {
-            editParameter(param, true);
-            dragValue = values[param];
-        }
-        if (active)
-        {
-            const float speed = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-            dragValue -= ImGui::GetIO().MouseDelta.y * speed * range;
-            dragValue = dragValue < minV ? minV : (dragValue > maxV ? maxV : dragValue);
-            const float nv = stepped ? std::round(dragValue) : dragValue;
-            if (nv != values[param])
-            {
-                values[param] = nv;
-                setParameterValue(param, nv);
-            }
-        }
-        if (ImGui::IsItemDeactivated())
-            editParameter(param, false);
-
-        if ((hovered || active) && ImGui::IsMouseDoubleClicked(0))
-        {
-            // The double-click activated the item this same frame, so the
-            // IsItemActivated branch above already opened the gesture and the
-            // IsItemDeactivated branch will close it on release — just set the
-            // value here; reopening/closing would nest the gesture.
-            values[param] = kParamDefaults[param];
-            dragValue = values[param];
-            setParameterValue(param, values[param]);
-        }
-        else if (hovered && !active)
-        {
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f)
-            {
-                float nv = values[param] + wheel * (stepped ? 1.0f : range * 0.02f);
-                nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-                nv = stepped ? std::round(nv) : nv;
-                if (nv != values[param])
-                {
-                    editParameter(param, true);
-                    values[param] = nv;
-                    setParameterValue(param, nv);
-                    editParameter(param, false);
-                }
-            }
-        }
-
-        // drawing --------------------------------------------------------------------
-        const float t = range > 0.0f ? (values[param] - minV) / range : 0.0f;
-
-        if (panelTicks)
-        {
-            for (int i = 0; i <= 10; ++i)
-            {
-                const float a = knobAngle((float)i / 10.0f);
-                const ImVec2 dir(std::sin(a), -std::cos(a));
-                dl->AddLine(ImVec2(c.x + dir.x * (R + 2.5f * s), c.y + dir.y * (R + 2.5f * s)),
-                            ImVec2(c.x + dir.x * (R + 6.5f * s), c.y + dir.y * (R + 6.5f * s)),
-                            kColWhiteDim, 1.3f * s);
-            }
-        }
-
-        // scalloped chrome skirt
-        dl->AddCircleFilled(c, R, IM_COL32(70, 70, 73, 255), 48);
-        dl->AddCircleFilled(c, R * 0.97f, IM_COL32(128, 128, 132, 255), 48);
-        for (int i = 0; i < 24; ++i) // skirt ridges
-        {
-            const float a = (float)i / 24.0f * 2.0f * kPi;
-            const ImVec2 dir(std::sin(a), -std::cos(a));
-            dl->AddLine(ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f),
-                        ImVec2(c.x + dir.x * R * 0.97f, c.y + dir.y * R * 0.97f),
-                        IM_COL32(55, 55, 58, 130), 1.4f * s);
-        }
-
-        // domed chrome cap
-        const float capR = R * 0.72f;
-        dl->AddCircleFilled(c, capR, IM_COL32(96, 97, 100, 255), 40);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.15f, c.y - capR * 0.20f),
-                            capR * 0.93f, IM_COL32(176, 178, 182, 255), 40);
-        dl->AddCircleFilled(ImVec2(c.x - capR * 0.25f, c.y - capR * 0.32f),
-                            capR * 0.55f, IM_COL32(225, 227, 231, 150), 40);
-        dl->AddCircleFilled(c, capR * 0.42f, IM_COL32(158, 160, 164, 255), 40);
-        dl->AddCircle(c, capR, IM_COL32(20, 20, 20, 255), 40, 1.4f * s);
-
-        // pointer line across the cap
-        const float a = knobAngle(t);
-        const ImVec2 dir(std::sin(a), -std::cos(a));
-        dl->AddLine(ImVec2(c.x + dir.x * capR * 0.15f, c.y + dir.y * capR * 0.15f),
-                    ImVec2(c.x + dir.x * capR * 0.95f, c.y + dir.y * capR * 0.95f),
-                    IM_COL32(25, 25, 27, 255), 3.0f * s);
-
-        if (hovered || active)
-        {
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), stepped ? "%.0f" : "%.2f", values[param]);
-            text(dl, cx, cy + radius + 9.0f, 10.0f, kColWhiteDim, buf, 0);
-        }
+        panel.knob(id, param, minV, maxV, cx, cy, radius,
+                   values[param], kParamDefaults[param], stepped, panelTicks,
+                   stepped ? "%.0f" : "%.2f");
     }
 
-    // label above a knob with a triangle marker
     void knobLabel(ImDrawList* dl, float cx, float topY, const char* l1,
-                   const char* l2 = nullptr)
+                   const char* l2 = nullptr) const
     {
-        text(dl, cx, topY, 11.0f, kColWhite, l1, 0, true);
-        if (l2 != nullptr)
-            text(dl, cx, topY + 12.0f, 11.0f, kColWhite, l2, 0, true);
-        const float ty = topY + (l2 != nullptr ? 25.0f : 14.0f);
-        dl->AddTriangleFilled(P(cx - 4.0f, ty), P(cx + 4.0f, ty), P(cx, ty + 6.0f),
-                              kColWhite);
+        panel.knobLabel(dl, cx, topY, l1, l2);
     }
 
     //--- sections ---------------------------------------------------------------------
@@ -568,9 +445,9 @@ private:
         "HEADS 2+3 + REV", "HEADS 1+3 + REV", "ALL HEADS + REV", "REVERB ONLY",
     };
 
+    duskdpf::DuskPanel panel;
     ImFont* labelFont = nullptr;
     float  values[kParamCount] = {};
-    float  dragValue = 0.0f;
     float  needlePos = 0.0f;
     float  meterLevel = 0.0f;
     int    currentPreset = -1;
