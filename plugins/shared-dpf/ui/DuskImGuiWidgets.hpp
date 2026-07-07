@@ -339,17 +339,30 @@ public:
         }
         else if ((hovered || active) && valueEditId_ != id)
         {
-            // dragging -> live value; just hovering -> the parameter name (if given,
-            // else fall back to the value so existing callers are unchanged).
-            if (active || name == nullptr)
+            char buf[48], num[32];
+            if (active && name != nullptr)
             {
-                char buf[48], num[32];
+                // Dragging: show the value at the fine-drag step's resolution so
+                // shift-fine can land on values the resting readout rounds away
+                // (e.g. -2.0 dB at rest, -1.97 dB mid-drag). Precision follows the
+                // fine step (0.0008 * range in display units), not a fixed count.
+                const float fineStep = 0.0008f * range * (dispMul != 0.0f ? std::fabs(dispMul) : 1.0f);
+                int d = (int) std::ceil(-std::log10(fineStep > 1e-9f ? fineStep : 1e-9f));
+                d = d < 0 ? 0 : (d > 4 ? 4 : d);
+                bool plus = false; for (const char* p = fmt; *p; ++p) if (*p == '+') { plus = true; break; }
+                char f2[8]; std::snprintf(f2, sizeof(f2), plus ? "%%+.%df" : "%%.%df", d);
+                std::snprintf(num, sizeof(num), f2, value * dispMul + dispAdd);
+                std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
+                valueBubble(dl, cx, cy, radius, buf);
+            }
+            else if (name != nullptr && !active)   // hovering only -> parameter name
+                valueBubble(dl, cx, cy, radius, name);
+            else                                    // legacy callers (no name): caller fmt, unchanged
+            {
                 std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
                 std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
                 valueBubble(dl, cx, cy, radius, buf);
             }
-            else
-                valueBubble(dl, cx, cy, radius, name);
         }
         if (persistent && valueEditId_ != id)
         {
