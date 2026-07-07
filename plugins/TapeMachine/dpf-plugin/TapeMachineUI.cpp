@@ -145,23 +145,75 @@ private:
                     IM_COL32(70, 70, 72, 255), 1.2f * s);
     }
 
+    // small silver chevron button (< or >) for preset stepping
+    bool chevron(ImDrawList* dl, const char* id, float cx, float cy, bool left, const char* tip)
+    {
+        const ImVec2 b0 = P(cx - 9, cy - 10), b1 = P(cx + 9, cy + 10);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (tip != nullptr && hov) ImGui::SetTooltip("%s", tip);
+        dl->AddRectFilled(b0, b1, hov ? IM_COL32(214, 214, 216, 255) : IM_COL32(224, 224, 226, 255), 2.0f * s);
+        dl->AddRect(b0, b1, IM_COL32(120, 121, 123, 255), 2.0f * s, 0, 1.0f * s);
+        const ImVec2 c = P(cx, cy); const float d = 4.0f * s;
+        if (left) dl->AddTriangleFilled(ImVec2(c.x + d * 0.5f, c.y - d), ImVec2(c.x + d * 0.5f, c.y + d), ImVec2(c.x - d * 0.7f, c.y), kColInk);
+        else      dl->AddTriangleFilled(ImVec2(c.x - d * 0.5f, c.y - d), ImVec2(c.x - d * 0.5f, c.y + d), ImVec2(c.x + d * 0.7f, c.y), kColInk);
+        return ImGui::IsItemClicked();
+    }
+
+    // small silver text button
+    bool textButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                    const char* label, const char* tip)
+    {
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
+                                    IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
+        dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.2f * s);
+        text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 9.5f, kColInk, label, 0, true);
+        return ImGui::IsItemClicked();
+    }
+
+    void initDefaults()
+    {
+        currentPreset = -1;
+        for (uint32_t i = 0; i < kParamVuL; ++i)
+        {
+            if (i == kParamBypass) continue;   // don't fight host bypass on Init
+            const float d = kTmParams[i].def;
+            values[i] = d;
+            editParameter(i, true); setParameterValue(i, d); editParameter(i, false);
+        }
+    }
+
+    void stepPreset(int dir)
+    {
+        int i = currentPreset < 0 ? (dir < 0 ? 0 : -1) : currentPreset;
+        i += dir;
+        if (i < 0) i = 0; if (i >= kNumTmPresets) i = kNumTmPresets - 1;
+        applyPreset(i);
+    }
+
     void drawHeader(ImDrawList* dl)
     {
         dl->AddRectFilled(P(15, 12), P(232, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
         dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
         text(dl, 27, 17, 16, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
 
-        // preset selector (centre of header)
+        // preset browser: < [combo] >  INIT
         const char* cur = (currentPreset >= 0 && currentPreset < kNumTmPresets)
                               ? kTmPresets[currentPreset].name : "Presets...";
-        text(dl, 262, 8, 8.5f, kColInkDim, "PRESET", -1, true);
-        ImGui::SetCursorScreenPos(P(262, 18));
-        ImGui::SetNextItemWidth(300.0f * s);
+        text(dl, 375, 6, 8.0f, kColInkDim, "PRESET", 0, true);
+        if (chevron(dl, "##pv", 250, 28, true, "Previous preset")) stepPreset(-1);
+        ImGui::SetCursorScreenPos(P(264, 18));
+        ImGui::SetNextItemWidth(222.0f * s);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
         ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(150, 152, 156, 255));
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(198, 199, 201, 255));        // arrow bg
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(198, 199, 201, 255));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(212, 213, 215, 255));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(178, 179, 181, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
@@ -181,12 +233,14 @@ private:
             ImGui::EndCombo();
         }
         ImGui::PopStyleColor(8);
+        if (chevron(dl, "##nx", 500, 28, false, "Next preset")) stepPreset(+1);
+        if (textButton(dl, "##init", 516, 18, 560, 38, "INIT", "Reset all controls to their defaults")) initDefaults();
 
-        // meter source toggle (INPUT / OUTPUT) between the preset combo and bypass
+        // meter source toggle (INPUT / OUTPUT)
         {
             const bool out = meterSource != 0;
-            text(dl, 604, 6, 8.0f, kColInkDim, "METER", 0, true);
-            const ImVec2 b0 = P(575, 18), b1 = P(633, 38);
+            text(dl, 596, 6, 8.0f, kColInkDim, "METER", 0, true);
+            const ImVec2 b0 = P(568, 18), b1 = P(624, 38);
             ImGui::SetCursorScreenPos(b0);
             ImGui::InvisibleButton("metsrc", ImVec2(b1.x - b0.x, b1.y - b0.y));
             if (ImGui::IsItemClicked()) meterSource ^= 1;
@@ -194,7 +248,7 @@ private:
             dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
                                         IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
             dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.2f * s);
-            text(dl, 604, 22, 9.5f, kColInk, out ? "OUTPUT" : "INPUT", 0, true);
+            text(dl, 596, 22, 9.5f, kColInk, out ? "OUTPUT" : "INPUT", 0, true);
         }
 
         // bypass, kept clear of the top-right corner screw (~x784)
