@@ -35,7 +35,7 @@
 
 // Oversampling adds FIR group delay -> report it to the host.
 #define DISTRHO_PLUGIN_WANT_LATENCY  1
-#define DISTRHO_PLUGIN_WANT_PROGRAMS 1
+#define DISTRHO_PLUGIN_WANT_PROGRAMS 0
 #define DISTRHO_PLUGIN_WANT_STATE    0
 
 #define DISTRHO_PLUGIN_CLAP_FEATURES   "audio-effect", "distortion", "filter", "stereo"
