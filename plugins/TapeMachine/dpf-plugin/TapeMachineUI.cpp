@@ -332,42 +332,58 @@ private:
     }
 
     //--- knob rows -------------------------------------------------------------
+    // Persistent value readout, right-click reset + tooltip inherited from the
+    // shared knob. dispAdd shifts the read-out (BIAS shows relative over/under).
     void knob(ImDrawList* dl, const char* id, uint32_t param, float cx, float cy,
-              const char* l1, const char* fmt, const char* suffix)
+              const char* l1, const char* fmt, const char* suffix,
+              const char* tip, float dispAdd = 0.0f)
     {
         const TmParam& d = kTmParams[param];
         panel.knobLabel(dl, cx, cy - 50.0f, l1);
-        panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, values[param], d.def, false, true, fmt, suffix);
+        panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, values[param], d.def,
+                   false, true, fmt, suffix, 0, false,
+                   /*persistent*/ true, tip, /*rightClickReset*/ true, 1.0f, dispAdd);
     }
 
     void drawKnobs(ImDrawList* dl)
     {
         // main row: input, bias, wow, flutter, output
         const float cy1 = 330.0f;
-        knob(dl, "input",  kParamInputGain, 112.0f, cy1, "INPUT",   "%.1f", " dB");
-        knob(dl, "bias",   kParamBias,      256.0f, cy1, "BIAS",    "%.0f", "%");
-        knob(dl, "wow",    kParamWow,       400.0f, cy1, "WOW",     "%.0f", "%");
-        knob(dl, "flut",   kParamFlutter,   544.0f, cy1, "FLUTTER", "%.0f", "%");
-        knob(dl, "output", kParamOutputGain,688.0f, cy1, "OUTPUT",  "%.1f", " dB");
+        knob(dl, "input",  kParamInputGain, 112.0f, cy1, "INPUT",   "%.1f", " dB",
+             "Drive into the tape stage. Higher = more saturation.");
+        knob(dl, "bias",   kParamBias,      256.0f, cy1, "BIAS",    "%+.0f", "%",
+             "Tape bias vs. optimal calibration. Under-bias = grittier, more distortion.", -50.0f);
+        knob(dl, "wow",    kParamWow,       400.0f, cy1, "WOW",     "%.0f", "%",
+             "Slow pitch drift (~0.5 Hz) from the transport.");
+        knob(dl, "flut",   kParamFlutter,   544.0f, cy1, "FLUTTER", "%.0f", "%",
+             "Faster pitch modulation (tape/motor flutter).");
+        knob(dl, "output", kParamOutputGain,688.0f, cy1, "OUTPUT",  "%.1f", " dB",
+             "Make-up gain after the tape stage.");
 
         // character row: hp, lp, noise, + auto-comp / auto-cal buttons
         const float cy2 = 448.0f;
-        knob(dl, "hp",    kParamHighpassFreq, 112.0f, cy2, "HIGHPASS", "%.0f", " Hz");
-        knob(dl, "lp",    kParamLowpassFreq,  256.0f, cy2, "LOWPASS",  "%.0f", " Hz");
-        knob(dl, "noise", kParamNoiseAmount,  400.0f, cy2, "NOISE",    "%.0f", "%");
+        knob(dl, "hp",    kParamHighpassFreq, 112.0f, cy2, "HIGHPASS", "%.0f", " Hz",
+             "High-pass filter on the output.");
+        knob(dl, "lp",    kParamLowpassFreq,  256.0f, cy2, "LOWPASS",  "%.0f", " Hz",
+             "Low-pass filter on the output (tape HF roll-off).");
+        knob(dl, "noise", kParamNoiseAmount,  400.0f, cy2, "NOISE",    "%.0f", "%",
+             "Tape hiss level. 0% = clean/silent.");
         text(dl, 544, cy2 - 50.0f, 10, kColInk, "AUTO COMP", 0, true);
-        tmButton(dl, "autocomp", kParamAutoComp, 500, cy2 - 18, 588, cy2 + 18, "LINK");
+        tmButton(dl, "autocomp", kParamAutoComp, 500, cy2 - 18, 588, cy2 + 18, "LINK",
+                 "Auto gain compensation: output tracks input so level stays matched.");
         text(dl, 688, cy2 - 50.0f, 10, kColInk, "AUTO CAL", 0, true);
-        tmButton(dl, "autocal",  kParamAutoCal,  644, cy2 - 18, 732, cy2 + 18, "AUTO");
+        tmButton(dl, "autocal",  kParamAutoCal,  644, cy2 - 18, 732, cy2 + 18, "AUTO",
+                 "Auto bias calibration for the selected tape and speed.");
     }
 
     void tmButton(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0,
-                  float x1, float y1, const char* label)
+                  float x1, float y1, const char* label, const char* tip = nullptr)
     {
         const bool on = values[param] > 0.5f;
         const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
         if (ImGui::IsItemClicked())
         {
             const float nv = on ? 0.0f : 1.0f;

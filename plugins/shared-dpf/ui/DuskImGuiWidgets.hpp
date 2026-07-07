@@ -188,11 +188,19 @@ public:
     // render its own body (e.g. the brushed-metal 4K knob) while this still owns
     // all gestures (drag / shift-fine / wheel / double-click-type / Cmd-reset)
     // plus the value bubble + inline editor.
+    // Opt-in extras (all default-off so existing callers are unchanged):
+    //   persistent      : draw the value under the knob even when not hovered
+    //   tooltip         : ImGui::SetTooltip text on hover
+    //   rightClickReset : right-click resets to default (in addition to Cmd-click)
+    //   dispMul/dispAdd : the read-out / type-entry value is (value*dispMul+dispAdd)
+    //                     so e.g. a 0..100 bias can read as relative -50..+50.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
               const char* fmt = "%.2f", const char* suffix = "",
-              ImU32 faceColor = 0, bool bodyless = false)
+              ImU32 faceColor = 0, bool bodyless = false,
+              bool persistent = false, const char* tooltip = nullptr,
+              bool rightClickReset = false, float dispMul = 1.0f, float dispAdd = 0.0f)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -204,6 +212,8 @@ public:
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
         const bool hovered = ImGui::IsItemHovered();
         const bool active  = ImGui::IsItemActive();
+        if (tooltip != nullptr && hovered && !active)
+            ImGui::SetTooltip("%s", tooltip);
 
         const bool editing = (valueEditId_ == id);
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
@@ -231,7 +241,7 @@ public:
 
             if (!modKey && (hovered || active) && ImGui::IsMouseDoubleClicked(0))
             {
-                openValueEdit(id, value); // double-click: type a value
+                openValueEdit(id, value * dispMul + dispAdd); // double-click: type a value
                 host->endEdit(param);     // close the gesture the press opened
             }
             else if (hovered && !active)
@@ -248,6 +258,11 @@ public:
                         host->setParam(param, nv); host->endEdit(param); changed = true;
                     }
                 }
+            }
+            if (rightClickReset && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                host->beginEdit(param); value = defaultVal;
+                host->setParam(param, value); host->endEdit(param); changed = true;
             }
         }
 
@@ -312,6 +327,7 @@ public:
         float typed;
         if (valueEdit(id, cx, cy, radius, typed))
         {
+            typed = (typed - dispAdd) / (dispMul != 0.0f ? dispMul : 1.0f); // display -> actual
             typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
             if (stepped) typed = std::round(typed);
             if (typed != value)
@@ -322,11 +338,17 @@ public:
         }
         else if ((hovered || active) && valueEditId_ != id)
         {
-            char buf[48];
-            char num[32];
-            std::snprintf(num, sizeof(num), fmt, value);
+            char buf[48], num[32];
+            std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
             std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
             valueBubble(dl, cx, cy, radius, buf);
+        }
+        if (persistent && valueEditId_ != id)
+        {
+            char buf[48], num[32];
+            std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+            std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
+            text(dl, cx, cy + radius + 8.0f, 9.5f, pal.whiteDim, buf, 0);
         }
         return changed;
     }
