@@ -19,6 +19,7 @@
 #include "MultiQFilters.hpp"
 #include "MultiQParams.hpp"
 #include "MultiQDynamics.hpp"
+#include "MultiQTube.hpp"                         // Tube character (framework-free TubeEQ port)
 #include "../../shared-dpf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
@@ -78,6 +79,24 @@ public:
             float saturation = 0.f;    // 0-100 %
             float inputGain = 0.f, outputGain = 0.f; // dB
         } british;
+
+        // Tube character (routed through the framework-free MultiQTube port).
+        // The 6 stepped frequencies are stored as RESOLVED Hz — the shell/harness
+        // applies the choice-index → Hz LUTs (MultiQ.cpp:784-842) before filling
+        // this, matching what the JUCE MultiQ shell hands to TubeEQProcessor.
+        struct Tube {
+            float lfBoostGain = 0.f;   float lfBoostFreq = 60.f;    // 20/30/60/100 Hz
+            float lfAttenGain = 0.f;
+            float hfBoostGain = 0.f;   float hfBoostFreq = 8000.f;  // 3k..16k Hz
+            float hfBoostBandwidth = 0.5f;
+            float hfAttenGain = 0.f;   float hfAttenFreq = 10000.f; // 5k/10k/20k Hz
+            bool  midEnabled = true;
+            float midLowFreq = 500.f;  float midLowPeak = 0.f;      // 0.2..1.0 kHz
+            float midDipFreq = 700.f;  float midDip = 0.f;          // 0.2..2.0 kHz
+            float midHighFreq = 3000.f; float midHighPeak = 0.f;    // 1.5..5.0 kHz
+            float inputGain = 0.f, outputGain = 0.f; // dB
+            float tubeDrive = 0.3f;    // 0-1
+        } tube;
     };
 
     void prepare(double sampleRate, int maxBlockSize);
@@ -149,6 +168,7 @@ private:
     std::array<StereoSVF, 6>    svfDynGainFilters; // bands 2-7 dynamic-gain (Cytomic SVF)
     MultiQDynamics dynamicEQ;
     FourKEQDSP britishEQ;              // British character (upgraded 4K parallel-summing core)
+    MultiQTube tubeEQ;                 // Tube character (framework-free TubeEQ port)
     std::array<LinearSmoothedValue, NUM_BANDS> bandEnableSmoothed;
     std::array<float, NUM_BANDS> prevBandPhaseInvertGain { {1,1,1,1,1,1,1,1} };
     std::array<float, NUM_BANDS> prevBandPanVal {};

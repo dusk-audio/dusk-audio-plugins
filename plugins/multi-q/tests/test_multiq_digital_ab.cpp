@@ -48,6 +48,7 @@ int main(int argc, char** argv)
         else if (a == "--match-clap") matchClap = true;
     }
     const bool britishMode = (curve == "british");
+    const bool tubeMode = (curve == "tube");
     const bool eq = (curve == "eq" || curve == "sat" || curve == "dyn");
     const bool satMode = (curve == "sat");
     const bool dynMode = (curve == "dyn");
@@ -76,6 +77,29 @@ int main(int argc, char** argv)
         b.blackMode = true;      // Black (G)
         b.saturation = 40.f;
         b.inputGain = 2.f; b.outputGain = -1.f;
+    }
+    else if (tubeMode)
+    {
+        // Tube character (framework-free MultiQTube port). Feature-exercising
+        // patch: LF boost+atten, HF boost with bandwidth, HF atten, mid low/dip/
+        // high, tube drive, in/out gain. Frequencies are RESOLVED Hz (the shell's
+        // choice-index → Hz LUT is applied here). Must match the JUCE MultiQ Tube
+        // knob-for-knob for the CLAP A/B (index mapping documented below).
+        p.eqType = 3;            // Tube
+        p.oversampling = 0;      // base rate (aliasing measured separately)
+        p.processingMode = 0;    // Stereo
+        auto& t = p.tube;
+        t.lfBoostGain = 6.f;  t.lfBoostFreq = 60.f;   // LF boost freq index 2
+        t.lfAttenGain = 3.f;
+        t.hfBoostGain = 6.f;  t.hfBoostFreq = 10000.f; // HF boost freq index 4
+        t.hfBoostBandwidth = 0.6f;
+        t.hfAttenGain = 4.f;  t.hfAttenFreq = 10000.f; // HF atten freq index 1
+        t.midEnabled = true;
+        t.midLowFreq = 500.f;  t.midLowPeak = 4.f;      // mid low freq index 2
+        t.midDipFreq = 700.f;  t.midDip = 3.f;          // mid dip freq index 3
+        t.midHighFreq = 3000.f; t.midHighPeak = 5.f;    // mid high freq index 2
+        t.inputGain = 2.f;  t.outputGain = -1.f;
+        t.tubeDrive = 0.5f;
     }
     else if (!eq)
     {

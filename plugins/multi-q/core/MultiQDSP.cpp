@@ -16,6 +16,7 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
 {
     currentSampleRate = sampleRate > 0 ? sampleRate : 48000.0;
     britishEQ.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
+    tubeEQ.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512, 2);
     // Per-sample coefficient ramp for the static bands (~1 ms), matching the
     // JUCE build's svfSmoothCoeff = 1 - exp(-1/(0.001*SR)).
     biquadSmoothCoeff = (float)(1.0 - std::exp(-1.0 / (0.001 * currentSampleRate)));
@@ -36,6 +37,7 @@ void MultiQDSP::reset()
     for (auto& f : svfDynGainFilters) f.reset();
     dynamicEQ.reset();
     britishEQ.reset();
+    tubeEQ.reset();
     hpfFilter.reset(); lpfFilter.reset();
     prevBandPhaseInvertGain.fill(1.0f);
     prevBandPanVal.fill(0.0f);
@@ -262,12 +264,43 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         return;
     }
 
+    // Tube character: route through the framework-free MultiQTube port. It writes
+    // the buffers in place, so copy input→output first, run the tube on the output
+    // buffers, then apply master gain (mirrors the British branch's tail).
+    if (eqType == EQType::Tube)
+    {
+        for (int i = 0; i < numSamples; ++i) procL[i] = inputs[0][i];
+        if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] = inputs[1][i];
+
+        const auto& t = p.tube;
+        MultiQTube::Parameters tp;
+        tp.lfBoostGain = t.lfBoostGain;   tp.lfBoostFreq = t.lfBoostFreq;
+        tp.lfAttenGain = t.lfAttenGain;
+        tp.hfBoostGain = t.hfBoostGain;   tp.hfBoostFreq = t.hfBoostFreq;
+        tp.hfBoostBandwidth = t.hfBoostBandwidth;
+        tp.hfAttenGain = t.hfAttenGain;   tp.hfAttenFreq = t.hfAttenFreq;
+        tp.midEnabled = t.midEnabled;
+        tp.midLowFreq = t.midLowFreq;     tp.midLowPeak = t.midLowPeak;
+        tp.midDipFreq = t.midDipFreq;     tp.midDip = t.midDip;
+        tp.midHighFreq = t.midHighFreq;   tp.midHighPeak = t.midHighPeak;
+        tp.inputGain = t.inputGain;       tp.outputGain = t.outputGain;
+        tp.tubeDrive = t.tubeDrive;       tp.bypass = false;
+        tubeEQ.setParameters(tp);
+        tubeEQ.process(outputs, numChannels, numSamples);
+
+        float mgT = std::pow(10.0f, p.masterGain / 20.0f);
+        if (std::abs(p.masterGain) > 0.01f)
+        {
+            for (int i = 0; i < numSamples; ++i) procL[i] *= mgT;
+            if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mgT;
+        }
+        return;
+    }
+
     // in-place-safe copy of input into the output working buffers
     for (int i = 0; i < numSamples; ++i) procL[i] = inputs[0][i];
     if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] = inputs[1][i];
 
-    // Tube not ported yet — pass audio through untouched (still apply master gain
-    // below so levels stay consistent for its A/B).
     const bool digitalPath = (eqType == EQType::Digital || eqType == EQType::Match);
 
     // effective per-band routing (0=Stereo,1=Left,2=Right,3=Mid,4=Side)
