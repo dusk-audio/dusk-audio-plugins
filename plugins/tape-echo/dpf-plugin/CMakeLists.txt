@@ -1,6 +1,9 @@
-# Standalone CMake project for the DPF-based Tape Echo plugin.
-# Not wired into the top-level JUCE build; configure this directory directly:
+# Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+# Third-party components (DPF — ISC; Dear ImGui — MIT; and others) are attributed
+# in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 #
+# Standalone CMake for the DPF-based Tape Echo plugin.
+# Configure this directory directly:
 #   cmake -B build -GNinja [-DDPF_PATH=/path/to/DPF]
 #   cmake --build build
 
@@ -13,16 +16,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(DPF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../DPF" CACHE PATH "Path to DISTRHO Plugin Framework")
-set(DPFWIDGETS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../DPF-Widgets" CACHE PATH "Path to DPF-Widgets (Dear ImGui wrapper)")
-if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
-    message(FATAL_ERROR "DPF not found at ${DPF_PATH} — clone https://github.com/DISTRHO/DPF or pass -DDPF_PATH=...")
-endif()
-if(NOT EXISTS "${DPFWIDGETS_PATH}/opengl/DearImGui.cpp")
-    message(FATAL_ERROR "DPF-Widgets not found at ${DPFWIDGETS_PATH} — clone https://github.com/DISTRHO/DPF-Widgets or pass -DDPFWIDGETS_PATH=...")
-endif()
-
-add_subdirectory("${DPF_PATH}" dpf EXCLUDE_FROM_ALL)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/cmake/DuskDpfPlugin.cmake")
 
 dpf_add_plugin(tape_echo
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
@@ -36,10 +30,13 @@ dpf_add_plugin(tape_echo
         ../core/TapeEchoDSP.cpp
     FILES_UI
         TapeEchoUI.cpp
-        "${DPFWIDGETS_PATH}/opengl/DearImGui.cpp")
+        ${DUSK_DPF_UI_SOURCES})
 
 target_include_directories(tape_echo PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/ui"  # shared DuskImGuiFont.hpp
-    "${DPFWIDGETS_PATH}/opengl")
+    ${DUSK_DPF_INCLUDE_DIRS})   # shared-dpf dsp/ui + DPF-Widgets opengl
+
+# Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
+# (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
+dusk_dpf_install_local(tape_echo)
