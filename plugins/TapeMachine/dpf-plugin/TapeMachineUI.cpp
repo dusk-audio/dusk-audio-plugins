@@ -616,8 +616,12 @@ private:
         sectionHeader(dl, 305, hy, "TAPE CHARACTER");
         sectionHeader(dl, 495, hy, "TRANSPORT");
         sectionHeader(dl, 685, hy, "FILTERS");
+        // Frame the four groups as closed cells: dividers run to a shared bottom
+        // baseline so the two toggle-less sections read as balanced cells, not gaps.
+        const float cellTop = hy + 16.0f, cellBot = 452.0f;
         for (float dx : { 210.0f, 400.0f, 590.0f })
-            dl->AddLine(P(dx, hy - 2), P(dx, ty + 28), IM_COL32(150, 151, 153, 200), 1.0f * s);
+            dl->AddLine(P(dx, cellTop), P(dx, cellBot), IM_COL32(150, 151, 153, 170), 1.0f * s);
+        dl->AddLine(P(26, cellBot), P(774, cellBot), IM_COL32(150, 151, 153, 140), 1.0f * s);
 
         // GAIN STAGING
         knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB",
