@@ -19,8 +19,7 @@ enum ParamId
     kParamTapeType,        // choice: 456 / GP9 / 911 / 250
     kParamSignalPath,      // choice: Repro / Sync / Input / Thru
     kParamEqStandard,      // choice: NAB / CCIR / AES
-    kParamInputGain,       // -12..12 dB
-    kParamSaturation,      // 0..100 %
+    kParamInputGain,       // -12..12 dB  (this is the real tape-drive control)
     kParamBias,            // 0..100 % (50 = optimal)
     kParamCalibration,     // choice: 0 / +3 / +6 / +9 dB
     kParamAutoCal,         // choice: Off / On
@@ -77,7 +76,6 @@ static constexpr TmParam kTmParams[kParamCount] =
     { "signalPath",   "Signal Path",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kSignalPath,  4 },
     { "eqStandard",   "EQ Standard",  'c', 0.f, 2.f,     0.f,  "",   tmparams::kEqStandard,  3 },
     { "inputGain",    "Input Gain",   'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
-    { "saturation",   "Saturation",   'f', 0.f, 100.f,   4.f,  "%",  nullptr, 0 },
     { "bias",         "Bias",         'f', 0.f, 100.f,   50.f, "%",  nullptr, 0 },
     { "calibration",  "Calibration",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kCalibration, 4 },
     { "autoCal",      "Auto Calibration",'c',0.f,1.f,    1.f,  "",   tmparams::kOffOn,       2 },

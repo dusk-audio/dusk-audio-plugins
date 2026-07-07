@@ -139,7 +139,6 @@ private:
         case kParamSignalPath:  dsp.setSignalPath(iv);           break;
         case kParamEqStandard:  dsp.setEqStandard(iv);           break;
         case kParamInputGain:   dsp.setInputGainDb(v);           break;
-        case kParamSaturation:  dsp.setSaturation(v);            break;
         case kParamBias:        dsp.setBias(v);                  break;
         case kParamCalibration: dsp.setCalibration(iv);          break;
         case kParamAutoCal:     dsp.setAutoCal(v > 0.5f);        break;
