@@ -1,47 +1,15 @@
 // TapeEchoDSP.cpp — vintage three-head tape echo emulation core (framework-free C++17).
 
 #include "TapeEchoDSP.hpp"
+#include "DuskDenormals.hpp"   // ScopedFlushDenormals (SSE + ARM64 FPCR)
 
 #include <algorithm>
-
-#if defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1)
-  #include <xmmintrin.h>
-  #define TAPEECHO_HAS_SSE 1
-#endif
 
 namespace duskaudio
 {
 
 namespace
 {
-    // RAII flush-to-zero / denormals-are-zero for the duration of a block
-    // (replaces juce::ScopedNoDenormals).
-    struct ScopedFlushDenormals
-    {
-#if TAPEECHO_HAS_SSE
-        unsigned int oldCsr;
-        ScopedFlushDenormals() noexcept : oldCsr(_mm_getcsr())
-        {
-            _mm_setcsr(oldCsr | 0x8040u); // FTZ | DAZ
-        }
-        ~ScopedFlushDenormals() noexcept { _mm_setcsr(oldCsr); }
-#elif defined(__aarch64__)
-        // ARM64 (Apple Silicon and others): set the FZ bit in FPCR
-        uint64_t oldFpcr;
-        ScopedFlushDenormals() noexcept
-        {
-            asm volatile("mrs %0, fpcr" : "=r"(oldFpcr));
-            asm volatile("msr fpcr, %0" :: "r"(oldFpcr | (1ULL << 24)));
-        }
-        ~ScopedFlushDenormals() noexcept
-        {
-            asm volatile("msr fpcr, %0" :: "r"(oldFpcr));
-        }
-#else
-        ScopedFlushDenormals() noexcept = default;
-#endif
-    };
-
     // 4-point, 3rd-order Hermite. Interpolates between x0 and x1 at `frac`.
     inline float hermite(float frac, float xm1, float x0, float x1, float x2) noexcept
     {
@@ -97,22 +65,9 @@ namespace
 }
 
 //==============================================================================
-// Oversampled preamp — halfband taps (scipy remez, see design notes)
+// Oversampled preamp — halfband taps now shared (plugins/shared-dpf/dsp/
+// DuskOversampler.hpp, duskaudio::hbtaps::kA/kB; scipy remez, identical values).
 //==============================================================================
-namespace
-{
-    // stage A: 47-tap halfband, transition 0.08, stopband -67 dB
-    constexpr float kHbTapsA[12] = {
-        0.3168690344f, -0.1018442627f, 0.0567777617f, -0.0362614803f,
-        0.0242159187f, -0.0162814078f, 0.0107858313f, -0.0069217143f,
-        0.0042343916f, -0.0024153268f, 0.0012438004f, -0.0006166386f,
-    };
-    // stage B: 15-tap halfband, transition 0.26, stopband -75 dB
-    constexpr float kHbTapsB[4] = {
-        0.3048934958f, -0.0712879483f, 0.0197218961f, -0.0034083969f,
-    };
-}
-
 float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
 {
     // 4x oversampled saturation: upsample (2 cascaded 2x halfbands), shape,
@@ -121,54 +76,22 @@ float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
     for (int p = 0; p < 2; ++p)
     {
         ch.upA.push(p == 0 ? x : 0.0f);
-        const float a = 2.0f * ch.upA.out(kHbTapsA);
+        const float a = 2.0f * ch.upA.out(hbtaps::kA);
         for (int q = 0; q < 2; ++q)
         {
             ch.upB.push(q == 0 ? a : 0.0f);
-            const float b = 2.0f * ch.upB.out(kHbTapsB);
+            const float b = 2.0f * ch.upB.out(hbtaps::kB);
             ch.downB.push(preampShape(b * drive));
         }
-        ch.downA.push(ch.downB.out(kHbTapsB));
+        ch.downA.push(ch.downB.out(hbtaps::kB));
     }
-    return ch.downA.out(kHbTapsA);
+    return ch.downA.out(hbtaps::kA);
 }
 
 //==============================================================================
-// ShelfFilter — RBJ audio EQ cookbook shelves
+// (ShelfFilter coefficient design moved to shared Biquad::shelfSlope1 — see
+//  plugins/shared-dpf/dsp/DuskFilters.hpp. Bit-identical float op-order.)
 //==============================================================================
-void ShelfFilter::configure(Type type, float freqHz, float gainDb, double fs) noexcept
-{
-    const float A     = std::pow(10.0f, gainDb / 40.0f);
-    const float w0    = kTwoPi * freqHz / (float)fs;
-    const float cosw  = std::cos(w0);
-    const float sinw  = std::sin(w0);
-    const float alpha = 0.5f * sinw * std::sqrt(2.0f); // S = 1
-    const float sqA2a = 2.0f * std::sqrt(A) * alpha;
-
-    float b0f, b1f, b2f, a0f, a1f, a2f;
-    if (type == Type::lowShelf)
-    {
-        b0f =     A * ((A + 1) - (A - 1) * cosw + sqA2a);
-        b1f = 2 * A * ((A - 1) - (A + 1) * cosw);
-        b2f =     A * ((A + 1) - (A - 1) * cosw - sqA2a);
-        a0f =         (A + 1) + (A - 1) * cosw + sqA2a;
-        a1f =    -2 * ((A - 1) + (A + 1) * cosw);
-        a2f =         (A + 1) + (A - 1) * cosw - sqA2a;
-    }
-    else
-    {
-        b0f =     A * ((A + 1) + (A - 1) * cosw + sqA2a);
-        b1f =-2 * A * ((A - 1) + (A + 1) * cosw);
-        b2f =     A * ((A + 1) + (A - 1) * cosw - sqA2a);
-        a0f =         (A + 1) - (A - 1) * cosw + sqA2a;
-        a1f =     2 * ((A - 1) - (A + 1) * cosw);
-        a2f =         (A + 1) - (A - 1) * cosw - sqA2a;
-    }
-
-    const float inv = 1.0f / a0f;
-    b0 = b0f * inv;  b1 = b1f * inv;  b2 = b2f * inv;
-    a1 = a1f * inv;  a2 = a2f * inv;
-}
 
 //==============================================================================
 // SpringReverb
@@ -423,10 +346,10 @@ void TapeEchoDSP::refreshBlockRateControls()
         // default while channels[0] is shelved — an L/R mismatch.
         for (int c = 0; c < kMaxChannels; ++c)
         {
-            channels[(size_t)c].bassShelf.configure(ShelfFilter::Type::lowShelf,
-                                                    100.0f, bass * 12.0f, fs);
-            channels[(size_t)c].trebleShelf.configure(ShelfFilter::Type::highShelf,
-                                                      3000.0f, treble * 12.0f, fs);
+            channels[(size_t)c].bassShelf.setCoeffs(
+                Biquad::shelfSlope1(fs, 100.0f, bass * 12.0f, /*high=*/false));
+            channels[(size_t)c].trebleShelf.setCoeffs(
+                Biquad::shelfSlope1(fs, 3000.0f, treble * 12.0f, /*high=*/true));
         }
     }
 }

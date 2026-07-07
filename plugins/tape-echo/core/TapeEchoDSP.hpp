@@ -33,126 +33,26 @@
 #include <cstdint>
 #include <vector>
 
+// Shared DSP primitives (namespace duskaudio) — these replace the building
+// blocks that used to be defined locally here. All lifted from this very file
+// during the shared-dpf extraction, so consuming them is bit-identical.
+#include "DuskSmoothed.hpp"    // SmoothedValue
+#include "DuskFilters.hpp"     // OnePoleLP/HP, DCBlocker, Biquad (shelves)
+#include "DuskOversampler.hpp" // HalfbandFIR, hbtaps::kA/kB
+
 namespace duskaudio
 {
 
 //==============================================================================
-// Small framework-free building blocks
+// Small framework-free building blocks now live in plugins/shared-dpf/dsp:
+//   SmoothedValue            -> DuskSmoothed.hpp
+//   OnePoleLP / OnePoleHP    -> DuskFilters.hpp
+//   DCBlocker                -> DuskFilters.hpp (default R = 0.9975, ~20 Hz @ 48k;
+//                               tape-echo keeps the default, so it is unchanged)
+//   ShelfFilter              -> DuskFilters.hpp Biquad + Biquad::shelfSlope1()
+//   HalfbandFIR + hb taps    -> DuskOversampler.hpp (HalfbandFIR, hbtaps::kA/kB)
+// The shared versions were lifted from this file, so behavior is bit-identical.
 //==============================================================================
-
-// One-pole exponential parameter smoother (replaces juce::LinearSmoothedValue).
-class SmoothedValue
-{
-public:
-    void prepare(double sampleRate, float tauSeconds) noexcept
-    {
-        coeff = 1.0f - std::exp(-1.0f / (float)(tauSeconds * sampleRate));
-    }
-    void snap(float v) noexcept   { current = target = v; }
-    void setTarget(float v) noexcept { target = v; }
-    float next() noexcept         { current += coeff * (target - current); return current; }
-    float value() const noexcept  { return current; }
-
-private:
-    float current = 0.0f, target = 0.0f, coeff = 1.0f;
-};
-
-class OnePoleLP
-{
-public:
-    void setCutoff(float hz, double fs) noexcept
-    {
-        c = 1.0f - std::exp(-6.2831853f * hz / (float)fs);
-    }
-    void reset() noexcept { z = 0.0f; }
-    float process(float x) noexcept { z += c * (x - z); return z; }
-
-private:
-    float c = 1.0f, z = 0.0f;
-};
-
-class OnePoleHP
-{
-public:
-    void setCutoff(float hz, double fs) noexcept { lp.setCutoff(hz, fs); }
-    void reset() noexcept { lp.reset(); }
-    float process(float x) noexcept { return x - lp.process(x); }
-
-private:
-    OnePoleLP lp;
-};
-
-class DCBlocker
-{
-public:
-    void reset() noexcept { x1 = y1 = 0.0f; }
-    float process(float x) noexcept
-    {
-        const float y = x - x1 + 0.9975f * y1;
-        x1 = x;
-        y1 = y;
-        return y;
-    }
-
-private:
-    float x1 = 0.0f, y1 = 0.0f;
-};
-
-// Transposed direct-form II biquad, RBJ shelving coefficients.
-class ShelfFilter
-{
-public:
-    enum class Type { lowShelf, highShelf };
-
-    void configure(Type type, float freqHz, float gainDb, double fs) noexcept;
-    void reset() noexcept { z1 = z2 = 0.0f; }
-
-    float process(float x) noexcept
-    {
-        const float y = b0 * x + z1;
-        z1 = b1 * x - a1 * y + z2;
-        z2 = b2 * x - a2 * y;
-        return y;
-    }
-
-private:
-    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
-    float z1 = 0.0f, z2 = 0.0f;
-};
-
-//==============================================================================
-// Polyphase-friendly FIR halfband for 2x up/down sampling (ring convolution;
-// taps designed with scipy remez, halfband-exact: even offsets zero,
-// center 0.5). Used to run the preamp nonlinearity at 4x — saturating
-// full-band input at base rate folds harmonics of bright content straight
-// into the echo passband (measured up to -1.5 dBc before this).
-//==============================================================================
-template <int L, int NSide>
-class HalfbandFIR
-{
-public:
-    void reset() noexcept
-    {
-        for (float& v : buf) v = 0.0f;
-        pos = 0;
-    }
-    void push(float x) noexcept { pos = (pos + 1) & 63; buf[pos] = x; }
-    float out(const float* taps) const noexcept
-    {
-        constexpr int C = L / 2;
-        float acc = 0.5f * buf[(pos - C) & 63];
-        for (int i = 0; i < NSide; ++i)
-        {
-            const int k = 2 * i + 1;
-            acc += taps[i] * (buf[(pos - (C - k)) & 63] + buf[(pos - (C + k)) & 63]);
-        }
-        return acc;
-    }
-
-private:
-    float buf[64] = {};
-    int   pos = 0;
-};
 
 //==============================================================================
 // Spring reverb — simplified two-spring tank in the classic style.
@@ -297,8 +197,8 @@ private:
         OnePoleLP          recordLP;   // in-loop, darkens every repeat
         OnePoleLP          recordLP2;  // second pole: the record/repro chain of the
                                        // hardware rolls off steeper than 6 dB/oct
-        ShelfFilter        bassShelf;  // echo output path only
-        ShelfFilter        trebleShelf;
+        Biquad             bassShelf;  // echo output path only
+        Biquad             trebleShelf;
         SpringReverb       spring;
     };
 
