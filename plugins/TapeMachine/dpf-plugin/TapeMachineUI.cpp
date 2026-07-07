@@ -180,7 +180,8 @@ private:
         ImGui::PopStyleColor(8);
 
         // bypass, kept clear of the top-right corner screw (~x784)
-        tmButton(dl, "bypass", kParamBypass, 648, 14, 736, 38, "BYPASS");
+        tmButton(dl, "bypass", kParamBypass, 648, 14, 736, 38, "BYPASS",
+                 "Bypass the plugin (host-integrated).");
     }
 
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
@@ -284,7 +285,7 @@ private:
     // cx = column centre; w = combo width (sized to fit its widest option +
     // the dropdown arrow). The combo is centred under its (centred) label.
     void selector(ImDrawList* dl, const char* id, uint32_t param, float cx, float y,
-                  float w, const char* title)
+                  float w, const char* title, const char* tip)
     {
         const TmParam& d = kTmParams[param];
         text(dl, cx, y, 9.0f, kColInk, title, 0, true);
@@ -301,7 +302,9 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(212, 213, 215, 255));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(178, 179, 181, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
-        if (ImGui::BeginCombo(id, d.choices[cur]))   // arrow shown -> reads as a dropdown
+        const bool open = ImGui::BeginCombo(id, d.choices[cur]);   // arrow -> reads as a dropdown
+        if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        if (open)
         {
             for (int i = 0; i < d.numChoices; ++i)
                 if (ImGui::Selectable(d.choices[i], i == cur))
@@ -317,18 +320,24 @@ private:
     void drawSelectors(ImDrawList* dl)
     {
         const float y = 216.0f;
-        // id, param, column-centre, width (fits widest option + arrow), title
-        struct Sel { const char* id; uint32_t p; float cx, w; const char* t; };
+        // id, param, column-centre, width (fits widest option + arrow), title, tooltip
+        struct Sel { const char* id; uint32_t p; float cx, w; const char* t; const char* tip; };
         static const Sel ss[6] = {
-            { "##machine", kParamTapeMachine,  83.f, 100.f, "MACHINE"      },
-            { "##speed",   kParamTapeSpeed,   210.f,  82.f, "TAPE SPEED"   },
-            { "##type",    kParamTapeType,    337.f,  90.f, "TAPE TYPE"    },
-            { "##path",    kParamSignalPath,  463.f,  78.f, "SIGNAL PATH"  },
-            { "##eq",      kParamEqStandard,  590.f,  70.f, "EQ STANDARD"  },
-            { "##os",      kParamOversampling,717.f,  62.f, "OVERSAMPLING" },
+            { "##machine", kParamTapeMachine,  83.f, 100.f, "MACHINE",
+              "Tape machine model: Swiss 800 (tighter/cleaner) or Classic 102 (warmer)." },
+            { "##speed",   kParamTapeSpeed,   210.f,  82.f, "TAPE SPEED",
+              "Tape speed. Faster = extended lows/highs, less head bump and noise." },
+            { "##type",    kParamTapeType,    337.f,  90.f, "TAPE TYPE",
+              "Tape formulation: affects saturation, headroom and noise floor." },
+            { "##path",    kParamSignalPath,  463.f,  78.f, "SIGNAL PATH",
+              "Repro = full tape path; Sync = repro w/ extra HF loss; Input = electronics only; Thru = bypass." },
+            { "##eq",      kParamEqStandard,  590.f,  70.f, "EQ STANDARD",
+              "Record/repro EQ curve: NAB (US), CCIR/IEC (EU), or AES (30 IPS)." },
+            { "##os",      kParamOversampling,717.f,  62.f, "OVERSAMPLING",
+              "Anti-alias oversampling. Higher = cleaner saturation, more CPU." },
         };
         for (const Sel& e : ss)
-            selector(dl, e.id, e.p, e.cx, y, e.w, e.t);
+            selector(dl, e.id, e.p, e.cx, y, e.w, e.t, e.tip);
     }
 
     //--- knob rows -------------------------------------------------------------
