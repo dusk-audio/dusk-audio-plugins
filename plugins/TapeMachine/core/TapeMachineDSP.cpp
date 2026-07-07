@@ -90,9 +90,11 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     // VU: linear peak with ~300 ms release (per the DPF contract; JUCE used a
     // 300 ms RMS on separate in/out meters — see PORT_NOTES).
     vuReleaseCoeff = std::exp (-1.0f / (0.3f * static_cast<float> (baseSampleRate)));
-    vuStateL = vuStateR = 0.0f;
+    vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     vuL.store (0.0f, std::memory_order_relaxed);
     vuR.store (0.0f, std::memory_order_relaxed);
+    inVuL.store (0.0f, std::memory_order_relaxed);
+    inVuR.store (0.0f, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -112,9 +114,11 @@ void TapeMachineDSP::reset()
     sharedWowFlutter.randomUpdateCounter = 0;
 
     hpL.reset(); hpR.reset(); lpL.reset(); lpR.reset();
-    vuStateL = vuStateR = 0.0f;
+    vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     vuL.store (0.0f, std::memory_order_relaxed);
     vuR.store (0.0f, std::memory_order_relaxed);
+    inVuL.store (0.0f, std::memory_order_relaxed);
+    inVuR.store (0.0f, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -173,6 +177,20 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
         return;
+    }
+
+    // --- input VU (pre-processing peak, ~300 ms release; UI In/Out switch) ----
+    {
+        float sL = inVuStateL, sR = inVuStateR;
+        for (int n = 0; n < nSamples; ++n)
+        {
+            const float aL = std::abs (inputs[0][n]);
+            sL = aL > sL ? aL : sL * vuReleaseCoeff;
+            if (nCh >= 2) { const float aR = std::abs (inputs[1][n]); sR = aR > sR ? aR : sR * vuReleaseCoeff; }
+        }
+        inVuStateL = sL; inVuStateR = (nCh >= 2) ? sR : sL;
+        inVuL.store (inVuStateL, std::memory_order_relaxed);
+        inVuR.store (inVuStateR, std::memory_order_relaxed);
     }
 
     const auto signalPath = static_cast<TapeCore::SignalPath> (clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));

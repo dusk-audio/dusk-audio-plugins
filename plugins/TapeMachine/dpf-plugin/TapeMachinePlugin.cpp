@@ -28,6 +28,8 @@ public:
     // same-process meter access for the UI bridge (TapeMachineAccess.hpp)
     float getVuLForUI() const noexcept { return dsp.getVuL(); }
     float getVuRForUI() const noexcept { return dsp.getVuR(); }
+    float getInVuLForUI() const noexcept { return dsp.getInVuL(); }
+    float getInVuRForUI() const noexcept { return dsp.getInVuR(); }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -210,4 +212,14 @@ float tapeMachineGetVuR(void* const pluginInstancePointer) noexcept
 {
     auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getVuRForUI() : 0.0f;
+}
+float tapeMachineGetInVuL(void* const pluginInstancePointer) noexcept
+{
+    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    return p != nullptr ? p->getInVuLForUI() : 0.0f;
+}
+float tapeMachineGetInVuR(void* const pluginInstancePointer) noexcept
+{
+    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    return p != nullptr ? p->getInVuRForUI() : 0.0f;
 }

@@ -14,3 +14,6 @@
 // Linear output peak per channel (0..~2), ~300 ms release. Null in split LV2 UI.
 DUSK_ACCESS_DECL(float, tapeMachineGetVuL);
 DUSK_ACCESS_DECL(float, tapeMachineGetVuR);
+// Pre-processing input peak per channel (for the UI's In/Out meter switch).
+DUSK_ACCESS_DECL(float, tapeMachineGetInVuL);
+DUSK_ACCESS_DECL(float, tapeMachineGetInVuR);

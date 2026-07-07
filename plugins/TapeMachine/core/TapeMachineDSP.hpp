@@ -1506,6 +1506,9 @@ public:
 
     float getVuL() const noexcept { return vuL.load (std::memory_order_relaxed); }
     float getVuR() const noexcept { return vuR.load (std::memory_order_relaxed); }
+    // Pre-processing input peak (for a UI In/Out meter switch). Metering only.
+    float getInVuL() const noexcept { return inVuL.load (std::memory_order_relaxed); }
+    float getInVuR() const noexcept { return inVuR.load (std::memory_order_relaxed); }
 
 private:
     static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
@@ -1551,7 +1554,9 @@ private:
 
     // --- metering ---
     std::atomic<float> vuL{0.0f}, vuR{0.0f};
+    std::atomic<float> inVuL{0.0f}, inVuR{0.0f};
     float vuStateL = 0.0f, vuStateR = 0.0f;
+    float inVuStateL = 0.0f, inVuStateR = 0.0f;
     float vuReleaseCoeff = 0.0f;
 };
 

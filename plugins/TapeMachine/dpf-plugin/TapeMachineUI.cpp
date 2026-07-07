@@ -86,8 +86,8 @@ protected:
         ImDrawList* dl = ImGui::GetWindowDrawList();
         drawPanel(dl, winW, winH);
         drawHeader(dl);
-        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, "L");
-        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, "R");
+        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, clipHoldL, "L");
+        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, clipHoldR, "R");
         drawSelectors(dl);
         drawControls(dl);
 
@@ -102,11 +102,14 @@ private:
 
     float meterLevel(int ch)
     {
-        float v = values[ch == 0 ? kParamVuL : kParamVuR];
+        const bool out = meterSource != 0;
+        float v = values[ch == 0 ? kParamVuL : kParamVuR]; // output params (generic-UI fallback)
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (tapeMachineGetVuL != nullptr && tapeMachineGetVuR != nullptr)
-            if (void* const inst = getPluginInstancePointer())
-                v = ch == 0 ? tapeMachineGetVuL(inst) : tapeMachineGetVuR(inst);
+        if (void* const inst = getPluginInstancePointer())
+        {
+            if (out) { if (tapeMachineGetVuL)   v = ch == 0 ? tapeMachineGetVuL(inst)   : tapeMachineGetVuR(inst); }
+            else     { if (tapeMachineGetInVuL) v = ch == 0 ? tapeMachineGetInVuL(inst) : tapeMachineGetInVuR(inst); }
+        }
        #endif
         return v;
     }
@@ -179,6 +182,21 @@ private:
         }
         ImGui::PopStyleColor(8);
 
+        // meter source toggle (INPUT / OUTPUT) between the preset combo and bypass
+        {
+            const bool out = meterSource != 0;
+            text(dl, 604, 6, 8.0f, kColInkDim, "METER", 0, true);
+            const ImVec2 b0 = P(575, 18), b1 = P(633, 38);
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::InvisibleButton("metsrc", ImVec2(b1.x - b0.x, b1.y - b0.y));
+            if (ImGui::IsItemClicked()) meterSource ^= 1;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Meter source: what the VU meters show (INPUT or OUTPUT level).");
+            dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
+                                        IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
+            dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.2f * s);
+            text(dl, 604, 22, 9.5f, kColInk, out ? "OUTPUT" : "INPUT", 0, true);
+        }
+
         // bypass, kept clear of the top-right corner screw (~x784)
         tmButton(dl, "bypass", kParamBypass, 648, 14, 736, 38, "BYPASS",
                  "Bypass the plugin (host-integrated).");
@@ -187,7 +205,7 @@ private:
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
 
     void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
-                float level, float& needle, const char* label)
+                float level, float& needle, float& clipHold, const char* label)
     {
         const float dB = 20.0f * std::log10(level > 1e-4f ? level : 1e-4f) + 18.0f;
         // deflection is linear in signal level (%), not dB: gives the classic
@@ -253,9 +271,15 @@ private:
         text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
         text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
 
-        // peak LED (right)
-        dl->AddCircleFilled(P(fx1 - 15, pivotY - L * 0.20f), 4.6f * s, IM_COL32(112, 40, 30, 255), 16);
-        dl->AddCircleFilled(P(fx1 - 16, pivotY - L * 0.20f - 1), 1.5f * s, IM_COL32(210, 130, 110, 120), 10);
+        // clip / over lamp (right): lights for ~1.2 s after any >= 0 dBFS peak
+        if (level > 1.0f) clipHold = 1.2f;
+        else if (clipHold > 0.0f) clipHold -= ImGui::GetIO().DeltaTime;
+        const bool over = clipHold > 0.0f;
+        const ImVec2 lp = P(fx1 - 15, pivotY - L * 0.20f);
+        if (over) dl->AddCircleFilled(lp, 8.0f * s, IM_COL32(230, 60, 40, 70), 20);   // glow
+        dl->AddCircleFilled(lp, 5.0f * s, over ? IM_COL32(232, 60, 40, 255) : IM_COL32(96, 40, 32, 255), 16);
+        dl->AddCircleFilled(ImVec2(lp.x - 1.4f * s, lp.y - 1.6f * s), 1.6f * s,
+                            IM_COL32(255, 200, 180, over ? 210 : 90), 10);
 
         // VU legend + channel tag
         text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
@@ -439,6 +463,8 @@ private:
     float   s = 1.0f;
     ImVec2  org = ImVec2(0, 0);
     float   needleL = 0.0f, needleR = 0.0f;
+    float   clipHoldL = 0.0f, clipHoldR = 0.0f;
+    int     meterSource = 1;      // 0 = input, 1 = output
     int     currentPreset = -1;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineUI)
