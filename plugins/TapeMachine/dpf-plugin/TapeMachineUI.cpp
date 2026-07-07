@@ -299,6 +299,7 @@ private:
 
     void drawHeader(ImDrawList* dl)
     {
+        // Title nameplate + machine badge (left-anchored).
         dl->AddRectFilled(P(15, 12), P(232, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
         dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
         text(dl, 27, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
@@ -318,12 +319,12 @@ private:
             if (!std) dl->AddCircleFilled(P(225, 19), 2.6f * s, kColNonStd, 10); // non-standard dot
         }
 
-        // preset browser: < [combo] >  INIT  SAVE
+        // preset browser, centred between the title and the (right-anchored) bypass:
+        //   < [combo] >  INIT  SAVE          (all on the 18..38 band)
         const char* cur = currentPreset >= 0 ? kTmPresets[currentPreset].name
                         : (!currentUserName.empty() ? currentUserName.c_str() : "Presets...");
-        text(dl, 364, 6, 8.0f, kColInkDim, "PRESET", 0, true);
-        if (chevron(dl, "##pv", 250, 28, true, "Previous preset")) stepPreset(-1);
-        ImGui::SetCursorScreenPos(P(264, 18));
+        if (chevron(dl, "##pv", 298, 28, true, "Previous preset")) stepPreset(-1);
+        ImGui::SetCursorScreenPos(P(311, 18));
         ImGui::SetNextItemWidth(200.0f * s);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
@@ -356,44 +357,40 @@ private:
             ImGui::EndCombo();
         }
         ImGui::PopStyleColor(8);
-        if (chevron(dl, "##nx", 478, 28, false, "Next preset")) stepPreset(+1);
-        if (textButton(dl, "##init", 492, 18, 528, 38, "INIT", "Reset all controls to their defaults")) initDefaults();
-        if (textButton(dl, "##save", 532, 18, 568, 38, "SAVE", "Save the current settings as a user preset"))
+        if (chevron(dl, "##nx", 524, 28, false, "Next preset")) stepPreset(+1);
+        if (textButton(dl, "##init", 545, 18, 581, 38, "INIT", "Reset all controls to their defaults")) initDefaults();
+        if (textButton(dl, "##save", 587, 18, 623, 38, "SAVE", "Save the current settings as a user preset"))
         {
             std::snprintf(saveBuf, sizeof(saveBuf), "%s", currentUserName.c_str());
             ImGui::OpenPopup("Save Preset");
         }
         drawSaveModal();
 
-        // segmented IN | OUT meter source switch (both cells visible)
-        {
-            const float mx0 = 576, mid = 610, mx1 = 644, my0 = 18, my1 = 38;
-            text(dl, mid, 6, 8.0f, kColInkDim, "METER", 0, true);
-            dl->AddRectFilled(P(mx0, my0), P(mx1, my1), IM_COL32(210, 211, 213, 255), 3.0f * s);
-
-            ImGui::SetCursorScreenPos(P(mx0, my0));
-            ImGui::InvisibleButton("mIn", ImVec2((mid - mx0) * s, (my1 - my0) * s));
-            if (ImGui::IsItemClicked()) meterSource = 0;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Meter the INPUT (record / tape-drive) level.");
-            const bool inAct = meterSource == 0;
-            if (inAct) dl->AddRectFilled(P(mx0, my0), P(mid, my1), IM_COL32(150, 152, 156, 255), 3.0f * s);
-            text(dl, 0.5f * (mx0 + mid), 22, 9.0f, inAct ? IM_COL32(22, 22, 24, 255) : kColInkDim, "IN", 0, inAct);
-
-            ImGui::SetCursorScreenPos(P(mid, my0));
-            ImGui::InvisibleButton("mOut", ImVec2((mx1 - mid) * s, (my1 - my0) * s));
-            if (ImGui::IsItemClicked()) meterSource = 1;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Meter the OUTPUT level (digital clip lamp active).");
-            const bool outAct = meterSource != 0;
-            if (outAct) dl->AddRectFilled(P(mid, my0), P(mx1, my1), IM_COL32(150, 152, 156, 255), 3.0f * s);
-            text(dl, 0.5f * (mid + mx1), 22, 9.0f, outAct ? IM_COL32(22, 22, 24, 255) : kColInkDim, "OUT", 0, outAct);
-
-            dl->AddLine(P(mid, my0 + 1), P(mid, my1 - 1), IM_COL32(120, 121, 123, 255), 1.0f * s);
-            dl->AddRect(P(mx0, my0), P(mx1, my1), IM_COL32(90, 90, 92, 255), 3.0f * s, 0, 1.2f * s);
-        }
-
-        // bypass, kept clear of the top-right corner screw (~x784)
-        tmButton(dl, "bypass", kParamBypass, 648, 14, 736, 38, "BYPASS",
+        // bypass, right-anchored, clear of the top-right corner screw (~x784)
+        tmButton(dl, "bypass", kParamBypass, 680, 18, 768, 38, "BYPASS",
                  "Bypass the plugin (host-integrated).");
+    }
+
+    // Meter source IN|OUT switch. Removed from the UI by request; kept intact (the
+    // meterSource state + input-meter DSP path stay wired) so it can be reinstated.
+    void drawMeterSwitch(ImDrawList* dl)
+    {
+        const float mx0 = 576, mid = 610, mx1 = 644, my0 = 18, my1 = 38;
+        dl->AddRectFilled(P(mx0, my0), P(mx1, my1), IM_COL32(210, 211, 213, 255), 3.0f * s);
+        ImGui::SetCursorScreenPos(P(mx0, my0));
+        ImGui::InvisibleButton("mIn", ImVec2((mid - mx0) * s, (my1 - my0) * s));
+        if (ImGui::IsItemClicked()) meterSource = 0;
+        const bool inAct = meterSource == 0;
+        if (inAct) dl->AddRectFilled(P(mx0, my0), P(mid, my1), IM_COL32(150, 152, 156, 255), 3.0f * s);
+        text(dl, 0.5f * (mx0 + mid), 22, 9.0f, inAct ? IM_COL32(22, 22, 24, 255) : kColInkDim, "IN", 0, inAct);
+        ImGui::SetCursorScreenPos(P(mid, my0));
+        ImGui::InvisibleButton("mOut", ImVec2((mx1 - mid) * s, (my1 - my0) * s));
+        if (ImGui::IsItemClicked()) meterSource = 1;
+        const bool outAct = meterSource != 0;
+        if (outAct) dl->AddRectFilled(P(mid, my0), P(mx1, my1), IM_COL32(150, 152, 156, 255), 3.0f * s);
+        text(dl, 0.5f * (mid + mx1), 22, 9.0f, outAct ? IM_COL32(22, 22, 24, 255) : kColInkDim, "OUT", 0, outAct);
+        dl->AddLine(P(mid, my0 + 1), P(mid, my1 - 1), IM_COL32(120, 121, 123, 255), 1.0f * s);
+        dl->AddRect(P(mx0, my0), P(mx1, my1), IM_COL32(90, 90, 92, 255), 3.0f * s, 0, 1.2f * s);
     }
 
     void drawSaveModal()
