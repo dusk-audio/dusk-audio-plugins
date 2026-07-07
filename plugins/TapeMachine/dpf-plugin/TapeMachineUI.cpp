@@ -55,8 +55,15 @@ public:
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kTmParams[i].def;
-        setGeometryConstraints(400, 260, true);
-        labelFont = duskdpf::loadCrispFont(30.0f * getScaleFactor());
+        setGeometryConstraints(400, 260, true);   // aspect-locked
+
+        // Bake the bold face at several native sizes (design px * DPI scaleFactor)
+        // so body text and headers each render from a near-1x face (crisp, not an
+        // upscaled single size). pickFont() chooses the nearest per draw.
+        static const float kFontSizes[] = { 8.5f, 10.f, 11.f, 13.f, 16.f, 22.f };
+        fontSet   = duskdpf::loadCrispFontSet(kFontSizes, 6, getScaleFactor());
+        labelFont = fontSet.primary();
+        panel.setFontSet(fontSet);
 
         duskdpf::Palette pal;
         pal.white    = kColInk;
@@ -438,9 +445,10 @@ private:
         ImFont* f = labelFont ? labelFont : ImGui::GetFont();
         const ImU32 ink = IM_COL32(38, 32, 24, 255), red = IM_COL32(196, 42, 34, 255);
         auto num = [&](float r, float a, const char* b, ImU32 c, float sz) {
-            ImVec2 ts = f->CalcTextSizeA(sz * s, FLT_MAX, 0, b);
+            ImFont* nf = panel.pickFont(sz * s); if (nf == nullptr) nf = f;   // nearest baked size -> crisp
+            ImVec2 ts = nf->CalcTextSizeA(sz * s, FLT_MAX, 0, b);
             ImVec2 tp = pt(r, a);
-            dl->AddText(f, sz * s, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f), c, b);
+            dl->AddText(nf, sz * s, ImVec2(tp.x - ts.x * 0.5f, tp.y - ts.y * 0.5f), c, b);
         };
         auto ang = [&](float db) { float n = std::pow(10.0f, (db - 3.0f) / 20.0f);
                                    n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
@@ -678,6 +686,7 @@ private:
 
     //--- state -----------------------------------------------------------------
     duskdpf::DuskPanel panel;
+    duskdpf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     float   values[kParamCount] = {};
     float   s = 1.0f;
