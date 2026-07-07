@@ -18,6 +18,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <string>
+#include <vector>
+#include <fstream>
+#include <filesystem>
+#include <algorithm>
+#include <cctype>
 
 START_NAMESPACE_DISTRHO
 
@@ -54,6 +61,8 @@ public:
         pal.white    = kColInk;
         pal.whiteDim = kColInkDim;
         panel.setPalette(pal);
+
+        scanUserPresets();
     }
 
 protected:
@@ -62,7 +71,7 @@ protected:
         if (index < kParamCount)
         {
             values[index] = value;
-            if (index < kParamVuL) currentPreset = -1; // an edit deselects the preset
+            if (index < kParamVuL) { currentPreset = -1; currentUserName.clear(); } // edit deselects preset
         }
     }
 
@@ -114,13 +123,81 @@ private:
         return v;
     }
 
+    void setP(uint32_t id, float v)
+    {
+        values[id] = v;
+        editParameter(id, true); setParameterValue(id, v); editParameter(id, false);
+    }
+
     void applyPreset(int idx)
     {
         currentPreset = idx;
-        tmApplyPreset(idx, [this](uint32_t id, float v) {
-            values[id] = v;
-            editParameter(id, true); setParameterValue(id, v); editParameter(id, false);
-        });
+        currentUserName.clear();
+        tmApplyPreset(idx, [this](uint32_t id, float v) { setP(id, v); });
+    }
+
+    //--- user preset file library (~/.config/DuskAudio/TapeMachine2/presets) ---
+    std::string configDir() const
+    {
+        const char* home = std::getenv("HOME");
+        return std::string(home ? home : ".") + "/.config/DuskAudio/TapeMachine2/presets";
+    }
+
+    void scanUserPresets()
+    {
+        userPresets.clear();
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (fs::directory_iterator it(configDir(), ec), end; !ec && it != end; it.increment(ec))
+        {
+            if (it->path().extension() != ".tmpreset") continue;
+            std::ifstream f(it->path());
+            std::string line, name;
+            if (std::getline(f, line) && line.rfind("name=", 0) == 0) name = line.substr(5);
+            else name = it->path().stem().string();
+            userPresets.push_back({ name, it->path().string() });
+        }
+        std::sort(userPresets.begin(), userPresets.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+    }
+
+    void saveUserPreset(const char* rawName)
+    {
+        std::string name(rawName);
+        while (!name.empty() && name.back() == ' ') name.pop_back();
+        if (name.empty()) return;
+        std::error_code ec;
+        std::filesystem::create_directories(configDir(), ec);
+        std::string fn;
+        for (char c : name) fn += std::isalnum((unsigned char)c) ? c : '_';
+        std::ofstream f(configDir() + "/" + fn + ".tmpreset", std::ios::trunc);
+        if (!f) return;
+        f << "name=" << name << "\n";
+        for (uint32_t i = 0; i < kParamVuL; ++i)
+            if (i != kParamBypass) f << kTmParams[i].id << "=" << values[i] << "\n";
+        f.close();
+        scanUserPresets();
+        currentPreset = -1;
+        currentUserName = name;
+    }
+
+    void loadUserPreset(const std::string& path, const std::string& name)
+    {
+        std::ifstream f(path);
+        if (!f) return;
+        std::string line;
+        while (std::getline(f, line))
+        {
+            const auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string key = line.substr(0, eq);
+            if (key == "name") continue;
+            const float v = (float) std::atof(line.c_str() + eq + 1);
+            for (uint32_t i = 0; i < kParamVuL; ++i)
+                if (key == kTmParams[i].id) { setP(i, v); break; }
+        }
+        currentPreset = -1;
+        currentUserName = name;
     }
 
     void drawPanel(ImDrawList* dl, float winW, float winH)
@@ -202,13 +279,13 @@ private:
         dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
         text(dl, 27, 17, 16, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
 
-        // preset browser: < [combo] >  INIT
-        const char* cur = (currentPreset >= 0 && currentPreset < kNumTmPresets)
-                              ? kTmPresets[currentPreset].name : "Presets...";
-        text(dl, 375, 6, 8.0f, kColInkDim, "PRESET", 0, true);
+        // preset browser: < [combo] >  INIT  SAVE
+        const char* cur = currentPreset >= 0 ? kTmPresets[currentPreset].name
+                        : (!currentUserName.empty() ? currentUserName.c_str() : "Presets...");
+        text(dl, 364, 6, 8.0f, kColInkDim, "PRESET", 0, true);
         if (chevron(dl, "##pv", 250, 28, true, "Previous preset")) stepPreset(-1);
         ImGui::SetCursorScreenPos(P(264, 18));
-        ImGui::SetNextItemWidth(222.0f * s);
+        ImGui::SetNextItemWidth(200.0f * s);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
@@ -230,17 +307,30 @@ private:
                 if (ImGui::Selectable(kTmPresets[i].name, i == currentPreset))
                     applyPreset(i);
             }
+            if (!userPresets.empty())
+            {
+                ImGui::TextDisabled("User");
+                for (const auto& up : userPresets)
+                    if (ImGui::Selectable(up.first.c_str(), currentPreset < 0 && up.first == currentUserName))
+                        loadUserPreset(up.second, up.first);
+            }
             ImGui::EndCombo();
         }
         ImGui::PopStyleColor(8);
-        if (chevron(dl, "##nx", 500, 28, false, "Next preset")) stepPreset(+1);
-        if (textButton(dl, "##init", 516, 18, 560, 38, "INIT", "Reset all controls to their defaults")) initDefaults();
+        if (chevron(dl, "##nx", 478, 28, false, "Next preset")) stepPreset(+1);
+        if (textButton(dl, "##init", 492, 18, 528, 38, "INIT", "Reset all controls to their defaults")) initDefaults();
+        if (textButton(dl, "##save", 532, 18, 568, 38, "SAVE", "Save the current settings as a user preset"))
+        {
+            std::snprintf(saveBuf, sizeof(saveBuf), "%s", currentUserName.c_str());
+            ImGui::OpenPopup("Save Preset");
+        }
+        drawSaveModal();
 
         // meter source toggle (INPUT / OUTPUT)
         {
             const bool out = meterSource != 0;
-            text(dl, 596, 6, 8.0f, kColInkDim, "METER", 0, true);
-            const ImVec2 b0 = P(568, 18), b1 = P(624, 38);
+            text(dl, 606, 6, 8.0f, kColInkDim, "METER", 0, true);
+            const ImVec2 b0 = P(578, 18), b1 = P(634, 38);
             ImGui::SetCursorScreenPos(b0);
             ImGui::InvisibleButton("metsrc", ImVec2(b1.x - b0.x, b1.y - b0.y));
             if (ImGui::IsItemClicked()) meterSource ^= 1;
@@ -248,12 +338,37 @@ private:
             dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
                                         IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
             dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.2f * s);
-            text(dl, 596, 22, 9.5f, kColInk, out ? "OUTPUT" : "INPUT", 0, true);
+            text(dl, 606, 22, 9.5f, kColInk, out ? "OUTPUT" : "INPUT", 0, true);
         }
 
         // bypass, kept clear of the top-right corner screw (~x784)
         tmButton(dl, "bypass", kParamBypass, 648, 14, 736, 38, "BYPASS",
                  "Bypass the plugin (host-integrated).");
+    }
+
+    void drawSaveModal()
+    {
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(234, 234, 236, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(248, 249, 251, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(206, 207, 209, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(218, 219, 221, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(190, 191, 193, 255));
+        if (ImGui::BeginPopupModal("Save Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextUnformatted("Preset name");
+            ImGui::SetNextItemWidth(240.0f * s);
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            const bool enter = ImGui::InputText("##savename", saveBuf, sizeof(saveBuf),
+                                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+            const bool doSave = ImGui::Button("Save") || enter;
+            ImGui::SameLine();
+            const bool cancel = ImGui::Button("Cancel");
+            if (doSave && saveBuf[0] != '\0') { saveUserPreset(saveBuf); ImGui::CloseCurrentPopup(); }
+            if (cancel) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleColor(6);
     }
 
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
@@ -520,6 +635,10 @@ private:
     float   clipHoldL = 0.0f, clipHoldR = 0.0f;
     int     meterSource = 1;      // 0 = input, 1 = output
     int     currentPreset = -1;
+    std::string currentUserName;  // non-empty when a user preset is active
+    std::vector<std::pair<std::string, std::string>> userPresets; // (name, path)
+    char    saveBuf[64] = {};
+    bool    openSaveModal = false;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineUI)
 };
