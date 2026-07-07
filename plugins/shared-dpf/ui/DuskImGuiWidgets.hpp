@@ -200,7 +200,8 @@ public:
               const char* fmt = "%.2f", const char* suffix = "",
               ImU32 faceColor = 0, bool bodyless = false,
               bool persistent = false, const char* tooltip = nullptr,
-              bool rightClickReset = false, float dispMul = 1.0f, float dispAdd = 0.0f)
+              bool rightClickReset = false, float dispMul = 1.0f, float dispAdd = 0.0f,
+              const char* name = nullptr)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -338,10 +339,17 @@ public:
         }
         else if ((hovered || active) && valueEditId_ != id)
         {
-            char buf[48], num[32];
-            std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
-            std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-            valueBubble(dl, cx, cy, radius, buf);
+            // dragging -> live value; just hovering -> the parameter name (if given,
+            // else fall back to the value so existing callers are unchanged).
+            if (active || name == nullptr)
+            {
+                char buf[48], num[32];
+                std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+                std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
+                valueBubble(dl, cx, cy, radius, buf);
+            }
+            else
+                valueBubble(dl, cx, cy, radius, name);
         }
         if (persistent && valueEditId_ != id)
         {

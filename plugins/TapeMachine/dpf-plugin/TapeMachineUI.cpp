@@ -544,7 +544,8 @@ private:
         panel.knobLabel(dl, cx, cy - 50.0f, l1);
         panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, values[param], d.def,
                    false, true, fmt, suffix, 0, false,
-                   /*persistent*/ true, tip, /*rightClickReset*/ true, 1.0f, dispAdd);
+                   /*persistent*/ true, tip, /*rightClickReset*/ true, 1.0f, dispAdd,
+                   /*hover name*/ l1);
     }
 
     // Centred small-caps section header with an underline.
