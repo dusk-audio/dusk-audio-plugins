@@ -64,6 +64,12 @@ public:
         fontSet   = duskdpf::loadCrispFontSet(kFontSizes, 6, getScaleFactor());
         labelFont = fontSet.primary();
         panel.setFontSet(fontSet);
+        // DECISION (not an oversight): the atlas is baked once, here, at the ctor-time
+        // scaleFactor. A runtime DPI-scale change (dragging the window between a Retina
+        // and non-Retina display mid-session) is intentionally NOT rebaked - it is rare
+        // and fails soft (text blurry until the editor is reopened; nothing strands).
+        // Bounded fix if ever needed: hook the wrapper's scale-change callback and
+        // rebuild the CrispFontSet.
 
         duskdpf::Palette pal;
         pal.white    = kColInk;
