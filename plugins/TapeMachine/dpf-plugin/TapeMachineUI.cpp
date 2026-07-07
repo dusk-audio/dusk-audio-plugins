@@ -97,8 +97,9 @@ protected:
         drawPanel(dl, winW, winH);
         drawHeader(dl);
         const bool clipEnabled = meterSource != 0;   // OUTPUT source only
-        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, clipHoldL, clipEnabled, "L");
-        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, clipHoldR, clipEnabled, "R");
+        const ImU32 accent = accentCol();
+        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, clipHoldL, clipEnabled, accent, "L");
+        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, clipHoldR, clipEnabled, accent, "R");
         drawSelectors(dl);
         drawControls(dl);
 
@@ -293,7 +294,13 @@ private:
     {
         dl->AddRectFilled(P(15, 12), P(232, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
         dl->AddRect(P(15, 12), P(232, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
-        text(dl, 27, 17, 16, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
+        text(dl, 27, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
+        {   // machine badge (accent-tinted, right side of the nameplate)
+            const char* badge = isA800() ? "A800" : "ATR-102";
+            dl->AddRectFilled(P(178, 16), P(228, 34), accentCol(), 3.0f * s);
+            dl->AddRect(P(178, 16), P(228, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
+            text(dl, 203, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
+        }
 
         // preset browser: < [combo] >  INIT  SAVE
         const char* cur = currentPreset >= 0 ? kTmPresets[currentPreset].name
@@ -401,7 +408,8 @@ private:
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
 
     void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
-                float level, float& needle, float& clipHold, bool clipEnabled, const char* label)
+                float level, float& needle, float& clipHold, bool clipEnabled,
+                ImU32 accent, const char* label)
     {
         const float dB = 20.0f * std::log10(level > 1e-4f ? level : 1e-4f) + 18.0f;
         // deflection is linear in signal level (%), not dB: gives the classic
@@ -415,6 +423,7 @@ private:
             IM_COL32(170, 142, 100, 255), IM_COL32(158, 130, 88, 255),
             IM_COL32(120, 96, 60, 255),  IM_COL32(110, 88, 54, 255));
         dl->AddRect(P(x0, y0), P(x1, y1), IM_COL32(92, 72, 44, 255), 6.0f * s, 0, 1.4f * s);
+        dl->AddLine(P(x0 + 6, y0 + 3), P(x1 - 6, y0 + 3), accent, 1.6f * s); // machine accent stripe
         dl->AddRectFilled(P(x0 + 4, y0 + 4), P(x1 - 4, y1 - 4), IM_COL32(56, 44, 30, 255), 4.0f * s);
         const float fx0 = x0 + 7, fy0 = y0 + 7, fx1 = x1 - 7, fy1 = y1 - 7;
         dl->AddRectFilled(P(fx0, fy0), P(fx1, fy1), IM_COL32(240, 231, 205, 255), 3.0f * s);
@@ -577,15 +586,23 @@ private:
                    /*hover name*/ l1);
     }
 
-    // Centred small-caps section header with an underline.
+    // Machine-aware accent: A800 (Swiss 800) cooler blue-grey, ATR-102 (Classic
+    // 102) warmer copper. Derived live from the machine parameter.
+    bool isA800() const { return (int)(values[kParamTapeMachine] + 0.5f) == 0; }
+    ImU32 accentCol() const
+    {
+        return isA800() ? IM_COL32(96, 120, 150, 255)    // cool blue-grey
+                        : IM_COL32(176, 116, 70, 255);    // warm copper
+    }
+
+    // Centred small-caps section header with an accent underline.
     void sectionHeader(ImDrawList* dl, float cx, float y, const char* txt)
     {
         text(dl, cx, y, 9.5f, kColInkDim, txt, 0, true);
         ImFont* f = labelFont ? labelFont : ImGui::GetFont();
         const float w = f->CalcTextSizeA(9.5f * s, FLT_MAX, 0, txt).x;
         const ImVec2 c = P(cx, y + 13.0f);
-        dl->AddLine(ImVec2(c.x - w * 0.5f, c.y), ImVec2(c.x + w * 0.5f, c.y),
-                    IM_COL32(120, 121, 123, 220), 1.2f * s);
+        dl->AddLine(ImVec2(c.x - w * 0.5f, c.y), ImVec2(c.x + w * 0.5f, c.y), accentCol(), 1.4f * s);
     }
 
     // Four functional groups: GAIN STAGING | TAPE CHARACTER | TRANSPORT | FILTERS.
