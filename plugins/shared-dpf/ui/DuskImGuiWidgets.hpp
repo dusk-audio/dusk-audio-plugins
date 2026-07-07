@@ -349,9 +349,18 @@ public:
                 const float fineStep = 0.0008f * range * (dispMul != 0.0f ? std::fabs(dispMul) : 1.0f);
                 int d = (int) std::ceil(-std::log10(fineStep > 1e-9f ? fineStep : 1e-9f));
                 d = d < 0 ? 0 : (d > 4 ? 4 : d);
-                bool plus = false; for (const char* p = fmt; *p; ++p) if (*p == '+') { plus = true; break; }
-                char f2[8]; std::snprintf(f2, sizeof(f2), plus ? "%%+.%df" : "%%.%df", d);
-                std::snprintf(num, sizeof(num), f2, value * dispMul + dispAdd);
+                // resting precision from fmt (digits after the '.'); never show FEWER
+                // decimals than at rest -> if fine-step isn't finer, leave as-is.
+                int restD = 0; for (const char* p = fmt; *p; ++p)
+                    if (*p == '.') { for (const char* q = p + 1; *q >= '0' && *q <= '9'; ++q) restD = restD * 10 + (*q - '0'); break; }
+                if (d <= restD)
+                    std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+                else
+                {
+                    bool plus = false; for (const char* p = fmt; *p; ++p) if (*p == '+') { plus = true; break; }
+                    char f2[8]; std::snprintf(f2, sizeof(f2), plus ? "%%+.%df" : "%%.%df", d);
+                    std::snprintf(num, sizeof(num), f2, value * dispMul + dispAdd);
+                }
                 std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
                 valueBubble(dl, cx, cy, radius, buf);
             }
