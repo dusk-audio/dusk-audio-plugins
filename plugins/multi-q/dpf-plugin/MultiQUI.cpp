@@ -174,7 +174,9 @@ namespace
     // (design coords). Graph ~top 45%, strips one row, detail panel bottom ~27%.
     // IN/OUT meters flank the graph (thin vertical strips just inside the chassis
     // margins); strips + detail span nearly full width (edge-to-edge cells).
-    constexpr float DGX0 = 44.f, DGY0 = 104.f, DGX1 = 916.f, DGY1 = 408.f;
+    // NB: DGY0 sits below the Digital second toolbar row (y 90..116); the graph top
+    // was lowered from 104 to 120 to seat that row cleanly under the header.
+    constexpr float DGX0 = 44.f, DGY0 = 120.f, DGX1 = 916.f, DGY1 = 408.f;
     constexpr float DINX0 = 16.f, DINX1 = 34.f, DOUTX0 = 926.f, DOUTX1 = 944.f;
     constexpr float DSTRIP_Y0 = 416.f, DSTRIP_Y1 = 470.f, DSTRIP_X0 = 10.f, DSTRIP_X1 = 950.f;
     constexpr float DPX0 = 10.f, DPY0 = 476.f, DPX1 = 950.f, DPY1 = 662.f;
@@ -240,6 +242,11 @@ public:
         panel.setFontSet(fontSet);
         fft.prepare(kFftSize);
         specDb.assign(kFftSize / 2 + 1, -120.0f);
+        // Digital analyzer FFT — default Medium (4096); resized on resolution change.
+        digFft_.prepare(digFftSize_);
+        digSpecDb_.assign(digFftSize_ / 2 + 1, -120.0f);
+        digPeakDb_.assign(digFftSize_ / 2 + 1, -120.0f);
+        digFrozenDb_.assign(digFftSize_ / 2 + 1, -120.0f);
     }
 
     void beginEdit(uint32_t idx) override { editParameter(idx, true); }
@@ -912,9 +919,11 @@ private:
             }
         }
 
-        // live spectrum analyzer behind the response curves (dim, subtle)
-        if (showFft)
-            drawSpectrum(dl, DGX0, DGY0, DGX1, DGY1);
+        // live spectrum analyzer behind the response curves (dim, subtle). Gated by
+        // the Analyzer ENABLE param (JUCE analyzerEnabled); pre/post, resolution,
+        // smoothing, decay, peak-hold + freeze are all driven from the toolbar.
+        if (values[kParamAnalyzerEnabled] > 0.5f)
+            drawDigitalSpectrum(dl, DGX0, DGY0, DGX1, DGY1);
 
         // read + smooth the live per-band dynamic-EQ gains for the moving overlay
         updateDynGains();
@@ -1211,10 +1220,47 @@ private:
         else                  std::snprintf(buf, n, "%.0f Hz", f);
     }
 
-    // One-row band strip: full-width edge-to-edge cells, each with a band-colour
-    // ACCENT BAR along its top edge, "N:Name" bold, freq below, + a small enable
-    // indicator (top-right). Click the cell to SELECT (drives the detail panel);
-    // click the enable indicator to toggle the band. Selected cell = brighter bg.
+    // Editable strip field: a small boxed value that types-to-edit on double-click
+    // (parse via the shared inline editor, then clamp to the param range + notify the
+    // host), and selects the band on a single click. Mirrors JUCE BandStripComponent's
+    // double-click-to-type freq/gain/Q labels. Plain numeric entry (no "1.2k" suffix
+    // — the shared editor parses with atof; values pre-fill from the current setting).
+    void stripField(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                    int b, uint32_t pid, int fmt, bool en)
+    {
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        const bool editing = panel.isEditingValue(id);
+        if (!editing)
+        {
+            if (ImGui::IsItemClicked()) selectedBand_ = b;
+            if (hov && ImGui::IsMouseDoubleClicked(0)) { selectedBand_ = b; panel.openValueEdit(id, values[pid]); }
+        }
+        dl->AddRectFilled(b0, b1, hov ? IM_COL32(40, 40, 46, 255) : IM_COL32(22, 22, 26, 255), 2.f * s);
+        dl->AddRect(b0, b1, hov ? IM_COL32(130, 132, 136, 210) : IM_COL32(58, 58, 64, 180), 2.f * s, 0, 1.f * s);
+        const float cx = 0.5f * (x0 + x1), cy = 0.5f * (y0 + y1);
+        float typed;
+        if (panel.valueEdit(id, cx, cy, 0.f, typed))
+        {
+            const float mn = kMqParams[pid].min, mx = kMqParams[pid].max;
+            typed = typed < mn ? mn : (typed > mx ? mx : typed);
+            editParameter(pid, true); values[pid] = typed; setParameterValue(pid, typed); editParameter(pid, false);
+        }
+        else
+        {
+            char vb[24]; fmtDetail(vb, sizeof(vb), fmt, values[pid]);
+            panel.text(dl, cx, cy - 5.f, 9.f, en ? IM_COL32(214, 216, 220, 255) : IM_COL32(120, 122, 126, 255), vb, 0, true);
+        }
+    }
+
+    // One-row band strip: full-width edge-to-edge cells. Each cell has a band-colour
+    // ACCENT BAR on top, "N:Name", a small enable dot (top-right, click toggles), and
+    // editable FREQ + Q fields plus a GAIN field (gain bands) or SLOPE selector (HPF/
+    // LPF) — all double-click-to-type / click-to-select. Selected cell = brighter bg.
     void drawDigitalStrips(ImDrawList* dl)
     {
         const float s = sc();
@@ -1226,6 +1272,7 @@ private:
             const float cx = 0.5f * (x0 + x1);
             const bool en = values[mqidx::enabled(b)] > 0.5f;
             const bool selCell = (b == selectedBand_);
+            const bool edge = mqidx::isEdge(b);
             const ImU32 col = kDigitalBandCol[b];
 
             // full-cell background (edge-to-edge; selected brighter)
@@ -1234,33 +1281,51 @@ private:
             if (b > 0) dl->AddLine(panel.P(x0, DSTRIP_Y0), panel.P(x0, DSTRIP_Y1), IM_COL32(16, 16, 18, 255), 1.f * s);
 
             // band-colour accent bar along the TOP edge (dim when disabled)
-            dl->AddRectFilled(panel.P(x0, DSTRIP_Y0), panel.P(x1, DSTRIP_Y0 + 4),
+            dl->AddRectFilled(panel.P(x0, DSTRIP_Y0), panel.P(x1, DSTRIP_Y0 + 3),
                               en ? col : (col & 0x00FFFFFF) | 0x40000000);
 
-            // click cell -> select band (enable indicator region handled below)
+            // whole-cell catch-all UNDER the fields: click selects, enable-dot toggles.
             char cid[16]; std::snprintf(cid, sizeof(cid), "strip%d", b);
+            ImGui::SetNextItemAllowOverlap();
             ImGui::SetCursorScreenPos(c0);
             ImGui::InvisibleButton(cid, ImVec2(c1.x - c0.x, c1.y - c0.y));
             if (ImGui::IsItemClicked())
             {
                 const ImVec2 md = invP(ImGui::GetMousePos());
-                if (md.x >= x1 - 18 && md.y <= DSTRIP_Y0 + 20)
+                if (md.x >= x1 - 18 && md.y <= DSTRIP_Y0 + 18)
                     toggleParam(mqidx::enabled(b));
                 else
                     selectedBand_ = b;
             }
 
-            // "N:Name" (bold) + freq below, centred
+            // "N:Name"
             char nm[24]; std::snprintf(nm, sizeof(nm), "%d:%s", b + 1, kDigitalBandShort[b]);
-            panel.text(dl, cx, DSTRIP_Y0 + 14, 10.5f,
+            panel.text(dl, cx - 6.f, DSTRIP_Y0 + 8, 9.5f,
                        en ? IM_COL32(230, 230, 232, 255) : IM_COL32(128, 130, 134, 255), nm, 0, true);
-            char fb[24]; formatFreqShort(fb, sizeof(fb), values[mqidx::freq(b)]);
-            panel.text(dl, cx, DSTRIP_Y0 + 33, 10.f, IM_COL32(178, 180, 184, 255), fb, 0);
 
-            // small enable indicator (top-right)
-            const ImVec2 dc = panel.P(x1 - 10, DSTRIP_Y0 + 12);
-            dl->AddCircleFilled(dc, 3.8f * s, en ? col : IM_COL32(58, 58, 62, 255), 14);
-            dl->AddCircle(dc, 3.8f * s, IM_COL32(0, 0, 0, 160), 14, 1.f * s);
+            // small enable indicator (top-right) — sits over the catch-all, so it needs
+            // its own hit region priority handled by the md.x test above.
+            const ImVec2 dc = panel.P(x1 - 10, DSTRIP_Y0 + 9);
+            dl->AddCircleFilled(dc, 3.6f * s, en ? col : IM_COL32(58, 58, 62, 255), 14);
+            dl->AddCircle(dc, 3.6f * s, IM_COL32(0, 0, 0, 160), 14, 1.f * s);
+
+            // editable fields: FREQ | Q (row 1), GAIN or SLOPE (row 2)
+            char fid[24];
+            const float mid = cx;
+            std::snprintf(fid, sizeof(fid), "sf%d", b);
+            stripField(dl, fid, x0 + 4, DSTRIP_Y0 + 20, mid - 1, DSTRIP_Y0 + 34, b, (uint32_t)mqidx::freq(b), FMT_FREQ, en);
+            std::snprintf(fid, sizeof(fid), "sq%d", b);
+            stripField(dl, fid, mid + 1, DSTRIP_Y0 + 20, x1 - 4, DSTRIP_Y0 + 34, b, (uint32_t)mqidx::q(b), FMT_Q, en);
+            if (edge)
+            {
+                std::snprintf(fid, sizeof(fid), "ssl%d", b);
+                detailSelector(dl, fid, x0 + 4, DSTRIP_Y0 + 37, x1 - 4, DSTRIP_Y0 + 51, (uint32_t)mqidx::slope(b), false);
+            }
+            else
+            {
+                std::snprintf(fid, sizeof(fid), "sg%d", b);
+                stripField(dl, fid, x0 + 4, DSTRIP_Y0 + 37, x1 - 4, DSTRIP_Y0 + 51, b, (uint32_t)mqidx::gain(b), FMT_GAIN, en);
+            }
 
             // Solo reflection: dim non-soloed cells, ring the soloed one gold.
             if (soloB >= 0 && b != soloB) dl->AddRectFilled(c0, c1, IM_COL32(0, 0, 0, 90));
@@ -1608,6 +1673,158 @@ private:
         headerButton(dl, "dpbyp", 852, y0, 916, y1, values[kBypass] > 0.5f ? "BYPASSED" : "BYPASS",
                      values[kBypass] > 0.5f ? IM_COL32(150, 60, 48, 255) : btnBg, pal().white,
                      [&]{ toggleParam(kBypass); });
+
+        // second toolbar row (Q-couple, master, analyzer cluster, limiter)
+        drawDigitalToolbar(dl);
+    }
+
+    //========================================================================
+    // DIGITAL — second toolbar row under the header (JUCE MultiQEditor toolbar
+    // density). Left→right: Q-Couple | MASTER | Analyzer(enable/pre-post/mode/
+    // resolution/smoothing/decay/freeze) | Limiter(enable/ceiling/GR). Auto-Gain
+    // stays on the first header row. Sits at y 92..114 on the chassis, just above
+    // the response graph (DGY0 was lowered to 120 to make room).
+    //========================================================================
+    void drawDigitalToolbar(ImDrawList* dl)
+    {
+        const float s = sc();
+        const float y0 = 92.f, y1 = 114.f;
+        const ImU32 btnBg = IM_COL32(46, 46, 50, 255);
+
+        // seat strip + faint separators between the three groups
+        dl->AddRectFilled(panel.P(8, 90), panel.P(950, 116), IM_COL32(24, 24, 27, 255), 3.f * s);
+
+        // ---- Q-Couple (9 modes) ----
+        panel.text(dl, 14, y0 - 10.f, 8.f, IM_COL32(140, 142, 146, 255), "Q-COUPLE", -1, true);
+        headerCombo(dl, "##qcouple", 76, y0, 214, y1, kParamQCoupleMode, mqp::kQCouple, 9);
+
+        // ---- MASTER gain (-24..+24 dB) ----
+        headerValueBox(dl, "dpmaster", 220, y0, 300, y1, "MASTER", kParamMasterGain,
+                       -24.f, 24.f, false, "%+.1f", " dB", IM_COL32(96, 118, 150, 255));
+
+        dl->AddLine(panel.P(308, 92), panel.P(308, 114), IM_COL32(52, 52, 56, 255), 1.2f * s);
+        panel.text(dl, 494, y0 - 10.f, 8.f, IM_COL32(140, 142, 146, 255), "ANALYZER", 0, true);
+        panel.text(dl, 883, y0 - 10.f, 8.f, IM_COL32(140, 142, 146, 255), "LIMITER", 0, true);
+
+        // ---- Analyzer cluster ----
+        const bool anaOn = values[kParamAnalyzerEnabled] > 0.5f;
+        headerButton(dl, "dpana", 314, y0, 366, y1, "ANLZ",
+                     anaOn ? kGreenBtn : btnBg, pal().white, [&]{ toggleParam(kParamAnalyzerEnabled); });
+        // Pre/Post — JUCE toggle checked == Pre.
+        const bool pre = values[kParamAnalyzerPrePost] > 0.5f;
+        headerButton(dl, "dpprepost", 370, y0, 424, y1, pre ? "PRE" : "POST",
+                     pre ? IM_COL32(52, 78, 120, 255) : btnBg, pal().white,
+                     [&]{ toggleParam(kParamAnalyzerPrePost); });
+        headerCombo(dl, "##anamode",   428, y0, 494, y1, kParamAnalyzerMode,       mqp::kPeakRms,   2);
+        headerCombo(dl, "##anares",    498, y0, 588, y1, kParamAnalyzerResolution, mqp::kAnaRes,    3);
+        headerCombo(dl, "##anasmooth", 592, y0, 674, y1, kParamAnalyzerSmoothing,  mqp::kAnaSmooth, 4);
+        headerValueBox(dl, "dpdecay", 678, y0, 750, y1, "DEC", kParamAnalyzerDecay,
+                       3.f, 60.f, false, "%.0f", "", IM_COL32(150, 130, 90, 255));
+        headerButton(dl, "dpfreeze", 754, y0, 810, y1, digFrozen_ ? "FROZEN" : "FREEZE",
+                     digFrozen_ ? IM_COL32(40, 110, 150, 255) : btnBg, pal().white,
+                     [&]{ toggleFreeze(); });
+
+        dl->AddLine(panel.P(818, 92), panel.P(818, 114), IM_COL32(52, 52, 56, 255), 1.2f * s);
+
+        // ---- Limiter (enable + ceiling + GR readout) ----
+        const bool lim = values[kParamLimiterEnabled] > 0.5f;
+        headerButton(dl, "dplim", 824, y0, 868, y1, "LIMIT",
+                     lim ? IM_COL32(150, 90, 40, 255) : btnBg, pal().white,
+                     [&]{ toggleParam(kParamLimiterEnabled); });
+        headerValueBox(dl, "dpceil", 872, y0, 920, y1, "CEIL", kParamLimiterCeiling,
+                       -1.f, 0.f, false, "%.2f", "", IM_COL32(150, 90, 40, 255));
+        drawLimiterGr(dl, 924, y0, 946, y1);
+    }
+
+    // Toggle UI-local spectrum freeze; snapshots the current live trace on engage
+    // (JUCE FFTAnalyzer::toggleFreeze copies smoothedMagnitudes -> frozenMagnitudes).
+    void toggleFreeze()
+    {
+        digFrozen_ = !digFrozen_;
+        if (digFrozen_) digFrozenDb_ = digSpecDb_;
+    }
+
+    // Compact toolbar numeric box: caption (left) + value (right); vertical drag to
+    // adjust (Shift = fine, Ctrl/Cmd = reset-to-default), wheel steps, double-click
+    // types a value (shared inline editor). Used for MASTER / DECAY / CEILING.
+    void headerValueBox(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                        const char* caption, uint32_t pid, float minV, float maxV, bool logScale,
+                        const char* fmt, const char* suffix, ImU32 accent)
+    {
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        const float lmin = std::log10(std::max(1e-4f, minV)), lmax = std::log10(std::max(1e-4f, maxV));
+        auto toT = [&](float v) { return logScale ? clamp01((std::log10(std::max(minV, v)) - lmin) / (lmax - lmin))
+                                                  : clamp01((v - minV) / (maxV - minV)); };
+        auto toV = [&](float t) { return logScale ? std::pow(10.f, lmin + t * (lmax - lmin)) : minV + t * (maxV - minV); };
+
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        const bool editing = panel.isEditingValue(id);
+        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        float t = toT(values[pid]);
+        auto apply = [&](float tt) { const float v = toV(tt); values[pid] = v; setParameterValue(pid, v); };
+        if (!editing)
+        {
+            if (ImGui::IsItemActivated())
+            {
+                if (modKey) { setParamNotify(pid, mqDef(pid)); stepModReset_ = true; }
+                else { editParameter(pid, true); stepDragT = t; stepModReset_ = false; }
+            }
+            if (act && !stepModReset_)
+            {
+                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                stepDragT = clamp01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
+                t = stepDragT; apply(t);
+            }
+            if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(pid, false); stepModReset_ = false; }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) { panel.openValueEdit(id, values[pid]); editParameter(pid, false); }
+            if (hov && !act) { const float wh = ImGui::GetIO().MouseWheel; if (wh != 0.f) { t = clamp01(t + wh * 0.02f); editParameter(pid, true); apply(t); editParameter(pid, false); } }
+        }
+
+        dl->AddRectFilled(b0, b1, IM_COL32(30, 30, 34, 255), 3.f * s);
+        dl->AddRect(b0, b1, (hov || act) ? IM_COL32(150, 152, 156, 220) : IM_COL32(84, 84, 90, 200), 3.f * s, 0, 1.2f * s);
+        // accent tick on the left edge
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x0 + 3.f, y1), accent, 3.f * s);
+        panel.text(dl, x0 + 8.f, y0 + 0.5f * (y1 - y0) - 5.f, 8.5f, IM_COL32(150, 152, 156, 255), caption, -1, true);
+
+        float typed;
+        const float vcx = 0.5f * (x0 + x1) + 12.f, vcy = 0.5f * (y0 + y1);
+        if (panel.valueEdit(id, vcx, vcy, 0.f, typed))
+        {
+            typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
+            editParameter(pid, true); values[pid] = typed; setParameterValue(pid, typed); editParameter(pid, false);
+        }
+        else
+        {
+            char vb[24]; std::snprintf(vb, sizeof(vb), fmt, values[pid]);
+            char full[32]; std::snprintf(full, sizeof(full), "%s%s", vb, suffix);
+            panel.text(dl, x1 - 6.f, y0 + 0.5f * (y1 - y0) - 6.f, 10.f, IM_COL32(228, 224, 216, 255), full, 1, true);
+        }
+    }
+
+    // Read (weak bridge) + smooth the limiter gain reduction, then draw a tiny
+    // vertical GR bar (grows DOWN from the top as GR increases) with a "GR" cap.
+    // Surfaces the limiter's live gain reduction beside the OUT meter / master area.
+    void drawLimiterGr(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+        float gr = 0.f;
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQGetLimiterGR != nullptr)
+            if (void* inst = getPluginInstancePointer()) gr = multiQGetLimiterGR(inst);
+       #endif
+        const float dt = std::min(std::max(ImGui::GetIO().DeltaTime, 0.f), 0.1f);
+        const float sm = 1.0f - std::exp(-dt / 0.08f);
+        digLimGrDb_ += (gr - digLimGrDb_) * sm;
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0 + 8.f), b1 = panel.P(x1, y1);
+        dl->AddRectFilled(b0, b1, IM_COL32(20, 20, 22, 255), 2.f * s);
+        dl->AddRect(b0, b1, IM_COL32(70, 70, 74, 200), 2.f * s, 0, 1.f * s);
+        const float t = std::min(digLimGrDb_ / 12.f, 1.f);   // full bar at 12 dB GR
+        if (t > 0.001f)
+            dl->AddRectFilled(b0, panel.P(x1, (y0 + 8.f) + t * (y1 - (y0 + 8.f))), IM_COL32(210, 140, 60, 255), 2.f * s);
+        panel.text(dl, 0.5f * (x0 + x1), y0 - 2.f, 7.5f, IM_COL32(150, 130, 100, 255), "GR", 0, true);
     }
 
     // Small styled ImGui combo bound to a choice param (character / mode).
@@ -2171,6 +2388,146 @@ private:
        #endif
     }
 
+    // Digital analyzer FFT size from the resolution param. High (8192) is CAPPED at
+    // 4096 because the core SpectrumRing holds 4096 samples (shared class; not worth
+    // enlarging just for this). Low=2048, Medium/High=4096.
+    int digResolutionFftSize() const
+    {
+        switch (choiceIdx(kParamAnalyzerResolution))
+        {
+            case 0:  return 2048;   // Low
+            default: return 4096;   // Medium / High (High capped at ring size)
+        }
+    }
+
+    // Live analyzer for the Digital graph. Selects the PRE-EQ or POST ring by the
+    // pre/post param, FFTs on the UI thread at the resolution FFT size, applies the
+    // param-driven spatial + temporal smoothing and decay ballistic (Peak vs RMS),
+    // maintains a slow-decay peak-hold line, and overlays a frozen snapshot + badge.
+    // Separate from British's drawSpectrum so that skin stays byte-for-byte unchanged.
+    void drawDigitalSpectrum(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        const bool pre = values[kParamAnalyzerPrePost] > 0.5f;
+        const duskaudio::SpectrumRing* ring = nullptr;
+        if (void* inst = getPluginInstancePointer())
+        {
+            if (pre) { if (multiQGetInputSpectrum  != nullptr) ring = multiQGetInputSpectrum(inst); }
+            else     { if (multiQGetOutputSpectrum != nullptr) ring = multiQGetOutputSpectrum(inst); }
+        }
+        if (ring == nullptr) return;
+
+        // (re)size the analyzer FFT + buffers when the resolution changes.
+        const int fftN = digResolutionFftSize();
+        if (fftN != digFftSize_)
+        {
+            digFftSize_ = fftN;
+            digFft_.prepare(fftN);
+            digSpecDb_.assign((size_t)(fftN / 2 + 1), -120.0f);
+            digPeakDb_.assign((size_t)(fftN / 2 + 1), -120.0f);
+            digFrozenDb_.assign((size_t)(fftN / 2 + 1), -120.0f);
+        }
+
+        // fixed stack buffers (max 4096-pt FFT) — no per-frame heap churn.
+        float buf[4096]; float mag[2049];
+        ring->snapshot(buf, fftN);
+        digFft_.magnitude(buf, mag);
+
+        const double sr = getSampleRate();
+        const float binHz = (float)((sr > 1.0 ? sr : 48000.0) / fftN);
+        const int half = fftN / 2;
+        constexpr float kSpecTop = -6.0f, kSpecBot = -84.0f;
+
+        // smoothing param -> temporal coeff + spatial ±width (FFTAnalyzer tables).
+        const int smoothIdx = choiceIdx(kParamAnalyzerSmoothing);
+        static const float kTemporal[4] = { 0.0f, 0.7f, 0.85f, 0.93f };
+        static const int   kSpatial[4]  = { 0, 1, 2, 4 };
+        const float cT = kTemporal[smoothIdx < 0 ? 0 : (smoothIdx > 3 ? 3 : smoothIdx)];
+        const int   kW = kSpatial[smoothIdx < 0 ? 0 : (smoothIdx > 3 ? 3 : smoothIdx)];
+        const bool  rms   = choiceIdx(kParamAnalyzerMode) == 1;
+        const float decay = values[kParamAnalyzerDecay];                       // dB/s
+        const float dt    = std::min(std::max(ImGui::GetIO().DeltaTime, 0.f), 0.1f);
+        const float dDb   = decay * dt;                                        // max fall this frame
+
+        float raw[2049];
+        for (int k = 0; k <= half; ++k) raw[k] = 20.0f * std::log10(mag[k] > 1e-7f ? mag[k] : 1e-7f);
+
+        std::vector<ImVec2> curve, peak, frozen;
+        curve.reserve((size_t)half);
+        for (int k = 1; k <= half; ++k)
+        {
+            // spatial triangular smoothing over ±kW bins (weight = 1 - |j|/(kW+1)).
+            float target;
+            if (kW > 0)
+            {
+                float sum = 0.f, wsum = 0.f;
+                for (int j = -kW; j <= kW; ++j)
+                {
+                    const int idx = k + j;
+                    if (idx >= 0 && idx <= half)
+                    {
+                        const float w = 1.0f - std::abs((float)j) / (float)(kW + 1);
+                        sum += raw[(size_t)idx] * w; wsum += w;
+                    }
+                }
+                target = wsum > 0.f ? sum / wsum : raw[(size_t)k];
+            }
+            else target = raw[(size_t)k];
+
+            // temporal ballistic. Peak: fast attack, release limited to `decay` dB/s.
+            // RMS: symmetric exponential average (slower, steadier) — matches JUCE.
+            float& cur = digSpecDb_[(size_t)k];
+            const float prev = cur;
+            if (rms)
+                cur = 0.9f * cur + 0.1f * target;
+            else if (target > cur)
+                cur += (target - cur) * (1.0f - cT * 0.5f);
+            else
+            {
+                const float smoothed = cur + (target - cur) * (1.0f - cT);
+                cur = std::max(smoothed, prev - dDb);   // don't fall faster than `decay`
+            }
+
+            // peak-hold: instant rise, slow (decay dB/s) fall.
+            float& ph = digPeakDb_[(size_t)k];
+            if (cur > ph) ph = cur; else ph = std::max(cur, ph - dDb);
+
+            const float freq = (float)k * binHz;
+            if (freq < kFMin || freq > kFMax) continue;
+            const float px = x0 + flog(freq) * (x1 - x0);
+            auto toY = [&](float db) { float ny = (kSpecTop - db) / (kSpecTop - kSpecBot); ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny); return y0 + ny * (y1 - y0); };
+            curve.push_back(panel.P(px, toY(cur)));
+            peak.push_back(panel.P(px, toY(ph)));
+            if (digFrozen_) frozen.push_back(panel.P(px, toY(digFrozenDb_[(size_t)k])));
+        }
+
+        // main trace (filled) — pre in a warmer tint, post in the familiar blue.
+        if (curve.size() >= 2)
+        {
+            const ImU32 fill = pre ? IM_COL32(150, 110, 70, 40) : IM_COL32(70, 110, 140, 40);
+            const ImU32 line = pre ? IM_COL32(190, 150, 96, 130) : IM_COL32(96, 150, 190, 130);
+            const float baseY = panel.P(x0, y1).y;
+            for (size_t i = 0; i + 1 < curve.size(); ++i)
+                dl->AddQuadFilled(curve[i], curve[i + 1], ImVec2(curve[i + 1].x, baseY), ImVec2(curve[i].x, baseY), fill);
+            dl->AddPolyline(curve.data(), (int)curve.size(), line, 0, 1.1f * sc());
+        }
+        // peak-hold line (thin yellow).
+        if (peak.size() >= 2)
+            dl->AddPolyline(peak.data(), (int)peak.size(), IM_COL32(230, 220, 110, 150), 0, 1.0f * sc());
+        // frozen overlay (cyan) + FROZEN badge.
+        if (digFrozen_ && frozen.size() >= 2)
+        {
+            dl->AddPolyline(frozen.data(), (int)frozen.size(), IM_COL32(102, 204, 255, 180), 0, 1.5f * sc());
+            const ImVec2 p0 = panel.P(x1 - 66.f, y0 + 6.f), p1 = panel.P(x1 - 6.f, y0 + 22.f);
+            dl->AddRectFilled(p0, p1, IM_COL32(20, 60, 90, 220), 3.f * sc());
+            dl->AddRect(p0, p1, IM_COL32(102, 204, 255, 220), 3.f * sc(), 0, 1.f * sc());
+            panel.text(dl, x1 - 36.f, y0 + 8.f, 9.f, IM_COL32(180, 230, 255, 255), "FROZEN", 0, true);
+        }
+       #else
+        (void)dl; (void)x0; (void)y0; (void)x1; (void)y1;
+       #endif
+    }
+
     static float flog(float f) { return (std::log10(f) - std::log10(kFMin)) / (std::log10(kFMax) - std::log10(kFMin)); }
 
     //========================================================================
@@ -2674,6 +3031,15 @@ private:
     int  selectedBand_ = 4;    // Digital: selected band for the detail panel (default Mid)
     bool abIsA_ = true;        // Digital A/B compare — visual only (no DSP param yet)
     int  digPreset_ = -1;      // Digital: selected factory preset index (-1 = Init/none)
+
+    // Digital analyzer state (own FFT + buffers, kept separate from British `fft`/
+    // `specDb` so the two skins never fight over the FFT size). digFrozen_ + snapshot
+    // are UI-local (JUCE freezes on the 'F' key; here it's a FREEZE toggle button).
+    duskdpf::RealFFT   digFft_;
+    int                digFftSize_ = 4096;   // current analyzer FFT size (2048/4096; High capped at 4096 = ring size)
+    std::vector<float> digSpecDb_, digPeakDb_, digFrozenDb_;
+    bool               digFrozen_ = false;   // UI-local spectrum freeze
+    float              digLimGrDb_ = 0.f;     // smoothed limiter gain-reduction readout (dB)
 
     // Digital graph-interaction drag latch (JUCE EQGraphicDisplay drag model): the
     // modifier-selected mode + drag-start values are captured at mouse-down so

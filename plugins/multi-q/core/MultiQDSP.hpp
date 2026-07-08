@@ -145,6 +145,11 @@ public:
     // spectrum FFT. The audio thread push()es; the UI snapshot()s (see the
     // SpectrumRing snapshot protocol / FourKEQ analyzer).
     const SpectrumRing& outputSpectrum() const noexcept { return analyzerRing; }
+    // Companion PRE-EQ ring: recent RAW input (mono downmix) captured at the top of
+    // process(), before any character branch. Read-only/additive — filled from the
+    // input alongside the input-peak tap, never touching the processed audio, so
+    // Digital bit-identity is preserved. The UI picks pre vs post per its param.
+    const SpectrumRing& inputSpectrum() const noexcept { return inputAnalyzerRing; }
 
     // Live per-band dynamic-EQ gain (dB) for the UI's animated response overlay.
     // Read-only tap of the dynamics meter the DSP already maintains; never touches
@@ -256,6 +261,7 @@ private:
 
     //--- metering + analyzer taps (written in process(); read from any thread) -
     SpectrumRing analyzerRing;                            // recent output (mono), UI FFT
+    SpectrumRing inputAnalyzerRing;                       // recent raw input (mono), UI pre-EQ FFT
     std::atomic<float> inPeakL{0.f}, inPeakR{0.f}, outPeakL{0.f}, outPeakR{0.f};
     float meterDecay = 1.0f;                              // per-sample peak-hold release
 };

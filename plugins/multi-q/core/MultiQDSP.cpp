@@ -54,6 +54,7 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     inPeakL.store(0.f, std::memory_order_relaxed); inPeakR.store(0.f, std::memory_order_relaxed);
     outPeakL.store(0.f, std::memory_order_relaxed); outPeakR.store(0.f, std::memory_order_relaxed);
     analyzerRing.reset();
+    inputAnalyzerRing.reset();
 }
 
 void MultiQDSP::reset()
@@ -61,6 +62,7 @@ void MultiQDSP::reset()
     inPeakL.store(0.f, std::memory_order_relaxed); inPeakR.store(0.f, std::memory_order_relaxed);
     outPeakL.store(0.f, std::memory_order_relaxed); outPeakR.store(0.f, std::memory_order_relaxed);
     analyzerRing.reset();
+    inputAnalyzerRing.reset();
     for (auto& f : svfFilters) f.reset();
     for (auto& f : svfDynGainFilters) f.reset();
     dynamicEQ.reset();
@@ -274,6 +276,14 @@ void MultiQDSP::captureInputPeak(const float* const* inputs, int numChannels, in
     const float dR = inPeakR.load(std::memory_order_relaxed) * dk;
     inPeakL.store(pkL > dL ? pkL : dL, std::memory_order_relaxed);
     inPeakR.store(pkR > dR ? pkR : dR, std::memory_order_relaxed);
+
+    // PRE-EQ analyzer ring: push the RAW input (mono downmix) for the UI's pre/post
+    // analyzer. Read-only/additive — mirrors publishOutputTaps' ring push but from
+    // the input; it never writes the processed samples, so audio stays bit-identical.
+    if (numChannels > 1)
+        for (int i = 0; i < numSamples; ++i) inputAnalyzerRing.push(0.5f * (inputs[0][i] + inputs[1][i]));
+    else
+        for (int i = 0; i < numSamples; ++i) inputAnalyzerRing.push(inputs[0][i]);
 }
 
 void MultiQDSP::publishOutputTaps(const float* L, const float* R, bool isStereo, int numSamples) noexcept

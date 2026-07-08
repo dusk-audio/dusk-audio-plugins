@@ -38,6 +38,7 @@ public:
     float outPeakLForUI() const noexcept { return dsp.getOutputPeakL(); }
     float outPeakRForUI() const noexcept { return dsp.getOutputPeakR(); }
     const duskaudio::SpectrumRing* outSpecForUI() const noexcept { return &dsp.outputSpectrum(); }
+    const duskaudio::SpectrumRing* inSpecForUI()  const noexcept { return &dsp.inputSpectrum(); }
     float bandDynGainForUI(int band) const noexcept { return dsp.getBandDynamicGain(band); }
     float limiterGrForUI() const noexcept { return dsp.getLimiterGainReduction(); }
 
@@ -401,6 +402,10 @@ float multiQGetOutputPeakR(void* p) noexcept { return p ? asMq(p)->outPeakRForUI
 const duskaudio::SpectrumRing* multiQGetOutputSpectrum(void* p) noexcept
 {
     return p ? asMq(p)->outSpecForUI() : nullptr;
+}
+const duskaudio::SpectrumRing* multiQGetInputSpectrum(void* p) noexcept
+{
+    return p ? asMq(p)->inSpecForUI() : nullptr;
 }
 float multiQGetBandDynGain(void* p, int band) noexcept
 {
