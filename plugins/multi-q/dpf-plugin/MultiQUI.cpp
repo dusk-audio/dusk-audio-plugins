@@ -322,7 +322,7 @@ protected:
             // keep the shared 4-segment EQ-TYPE character selector.
             if (mode == kDigitalModeIndex)   { drawDigitalHeader(dl); drawDigital(dl); }
             else if (mode == kTubeModeIndex) { drawCharSelector(dl); drawTube(dl); }
-            else                             { drawCharSelector(dl); drawPlaceholder(dl, mode); } // Match: later phase
+            else                             { drawCharSelector(dl); drawMatch(dl); } // Match spectrum-learn UI
         }
 
         if (showCredits)
@@ -800,6 +800,294 @@ private:
        #else
         (void)band; (void)delta;
        #endif
+    }
+
+    //========================================================================
+    // MATCH — spectrum-learn bridge (weak-guarded like the meter/solo bridge)
+    //========================================================================
+    // True only when the same-process DSP bridge is reachable (single binary).
+    // In the split LV2 UI the weak symbols resolve to null -> controls grey out.
+    bool matchBridge()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        return multiQMatchClear != nullptr && getPluginInstancePointer() != nullptr;
+       #endif
+        return false;
+    }
+    bool matchLearningCurrent()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchIsLearningCurrent != nullptr)
+            if (void* i = getPluginInstancePointer()) return multiQMatchIsLearningCurrent(i);
+       #endif
+        return false;
+    }
+    bool matchLearningReference()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchIsLearningReference != nullptr)
+            if (void* i = getPluginInstancePointer()) return multiQMatchIsLearningReference(i);
+       #endif
+        return false;
+    }
+    bool matchHasCurrent()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchHasCurrent != nullptr)
+            if (void* i = getPluginInstancePointer()) return multiQMatchHasCurrent(i);
+       #endif
+        return false;
+    }
+    bool matchHasReference()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchHasReference != nullptr)
+            if (void* i = getPluginInstancePointer()) return multiQMatchHasReference(i);
+       #endif
+        return false;
+    }
+    bool matchHasCorrection()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchHasCorrection != nullptr)
+            if (void* i = getPluginInstancePointer()) return multiQMatchHasCorrection(i);
+       #endif
+        return false;
+    }
+    int matchFrames()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchFrameCount != nullptr)
+            if (void* i = getPluginInstancePointer()) return multiQMatchFrameCount(i);
+       #endif
+        return 0;
+    }
+    void matchStartCurrent(bool on)
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchStartLearnCurrent != nullptr)
+            if (void* i = getPluginInstancePointer()) multiQMatchStartLearnCurrent(i, on);
+       #else
+        (void)on;
+       #endif
+    }
+    void matchStartReference(bool on)
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchStartLearnReference != nullptr)
+            if (void* i = getPluginInstancePointer()) multiQMatchStartLearnReference(i, on);
+       #else
+        (void)on;
+       #endif
+    }
+    void matchCompute()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchCompute != nullptr)
+            if (void* i = getPluginInstancePointer()) multiQMatchCompute(i);
+       #endif
+    }
+    void matchClear()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQMatchClear != nullptr)
+            if (void* i = getPluginInstancePointer()) multiQMatchClear(i);
+       #endif
+    }
+    // Fill `out[0..n-1]` with dB values for which: 0 current, 1 reference, 2 correction.
+    // out[k] is FFT bin k (n == kMatchBins == full spectrum). Returns false if the
+    // bridge is unavailable (caller skips the curve).
+    bool matchGetCurve(int which, float* out, int n)
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (void* i = getPluginInstancePointer())
+        {
+            if (which == 0 && multiQMatchGetCurrentDb    != nullptr) { multiQMatchGetCurrentDb(i, out, n);    return true; }
+            if (which == 1 && multiQMatchGetReferenceDb  != nullptr) { multiQMatchGetReferenceDb(i, out, n);  return true; }
+            if (which == 2 && multiQMatchGetCorrectionDb != nullptr) { multiQMatchGetCorrectionDb(i, out, n); return true; }
+        }
+       #else
+        (void)which; (void)out; (void)n;
+       #endif
+        return false;
+    }
+
+    // Momentary action button with an explicit enabled state (greyed when the
+    // bridge is null or a precondition fails, e.g. MATCH before both spectra).
+    template <class Fn>
+    void matchActionButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                           const char* label, ImU32 bg, bool enabled, Fn onClick)
+    {
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = enabled && ImGui::IsItemHovered();
+        if (enabled && ImGui::IsItemClicked()) onClick();
+        dl->AddRectFilled(b0, b1, enabled ? bg : IM_COL32(38, 38, 41, 255), 4.f * s);
+        dl->AddRect(b0, b1, hov ? IM_COL32(200, 200, 205, 220) : IM_COL32(90, 90, 96, 200), 4.f * s, 0, 1.2f * s);
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.5f * (y1 - y0) - 6.f, 11.f,
+                   enabled ? pal().white : IM_COL32(110, 110, 114, 255), label, 0, true);
+    }
+
+    //========================================================================
+    // MATCH — spectrum-match learn workflow (replaces the dynamics detail panel)
+    //========================================================================
+    // Uses the same plot rect + log-freq/dB axes as Digital so CURRENT (blue),
+    // REFERENCE (green) and CORRECTION (amber) sit on shared axes. Learn/Match/
+    // Clear + Limit +/- + Apply + Smoothing wire straight to the committed bridge
+    // and the kParamMatch* params. Mirrors JUCE BandDetailPanel::setupMatchControls
+    // + EQGraphicDisplay::drawMatchOverlays.
+    static constexpr int kMatchBins = 2049;   // == MultiQMatch::NUM_BINS (4096-pt FFT)
+    void drawMatch(ImDrawList* dl)
+    {
+        const float s = sc();
+        const bool bridge  = matchBridge();
+        const bool learnC  = matchLearningCurrent();
+        const bool learnR  = matchLearningReference();
+        const bool hasC    = matchHasCurrent();
+        const bool hasR    = matchHasReference();
+        const bool hasCorr = matchHasCorrection();
+
+        // curve colours (ported from EQGraphicDisplay::drawMatchOverlays)
+        const ImU32 curLine = IM_COL32(0x44, 0x88, 0xcc, 0x9a), curFill = IM_COL32(0x44, 0x88, 0xcc, 0x22);
+        const ImU32 refLine = IM_COL32(0x44, 0xcc, 0x88, 0x9a), refFill = IM_COL32(0x44, 0xcc, 0x88, 0x22);
+        const ImU32 corLine = IM_COL32(0xff, 0xaa, 0x44, 0xe6), corFill = IM_COL32(0xff, 0xaa, 0x44, 0x40);
+
+        // ---- plot frame + background (shared with Digital) ----
+        dl->AddRectFilled(panel.P(DGX0 - 3, DGY0 - 3), panel.P(DGX1 + 3, DGY1 + 3), IM_COL32(60, 60, 63, 255), 3.f * s);
+        dl->AddRectFilled(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), IM_COL32(12, 13, 15, 255));
+        dl->PushClipRect(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), true);
+
+        // frequency grid (verbatim from drawDigital)
+        for (int i = 0; i < (int)(sizeof(kGridF) / sizeof(kGridF[0])); ++i)
+        {
+            const float x = DGX0 + flog((float)kGridF[i]) * (DGX1 - DGX0);
+            dl->AddLine(panel.P(x, DGY0), panel.P(x, DGY1), IM_COL32(38, 41, 45, 255), 1.f * s);
+            panel.text(dl, x, DGY1 - 13, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
+        }
+        // dB grid (uses the shared digY scale so 0 dB is centred)
+        {
+            const int R = (int)digRangeDb(digRangeIdx);
+            for (int db = -R; db <= R; db += 6)
+            {
+                const float y = digY((float)db);
+                dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y),
+                            db == 0 ? IM_COL32(64, 68, 74, 255) : IM_COL32(30, 33, 37, 255), 1.f * s);
+                char b[8]; std::snprintf(b, sizeof(b), "%+d", db);
+                float ly = y - 6.f; ly = ly < DGY0 + 1.f ? DGY0 + 1.f : (ly > DGY1 - 13.f ? DGY1 - 13.f : ly);
+                panel.text(dl, DGX0 + 5, ly, 9.5f, IM_COL32(150, 154, 160, 255), db == 0 ? "0" : b, -1);
+            }
+        }
+
+        // ---- the three learned curves ----
+        float buf[kMatchBins];
+        const double sr = digitalSampleRate();
+        float nyq = (float)(sr * 0.5); if (nyq < 1.f) nyq = 22050.f;
+        const float binW = nyq / (float)(kMatchBins - 1);
+        auto plotCurve = [&](int which, ImU32 lineCol, ImU32 fillCol, bool fromZero)
+        {
+            if (!matchGetCurve(which, buf, kMatchBins)) return;
+            const int N = 320;
+            std::vector<ImVec2> line; line.reserve(N);
+            for (int i = 0; i < N; ++i)
+            {
+                const float lx = (float)i / (N - 1);
+                const float x  = DGX0 + lx * (DGX1 - DGX0);
+                const float f  = std::pow(10.f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
+                int bin = (int)(f / binW); bin = bin < 0 ? 0 : (bin > kMatchBins - 1 ? kMatchBins - 1 : bin);
+                line.push_back(panel.P(x, digY(buf[bin])));
+            }
+            const float baseY = panel.P(0.f, fromZero ? digY(0.f) : DGY1).y;
+            for (size_t i = 0; i + 1 < line.size(); ++i)
+                dl->AddQuadFilled(line[i], line[i + 1],
+                                  ImVec2(line[i + 1].x, baseY), ImVec2(line[i].x, baseY), fillCol);
+            dl->AddPolyline(line.data(), (int)line.size(), lineCol, 0, (fromZero ? 2.2f : 1.5f) * s);
+        };
+        if (hasC)    plotCurve(0, curLine, curFill, false);
+        if (hasR)    plotCurve(1, refLine, refFill, false);
+        if (hasCorr) plotCurve(2, corLine, corFill, true);
+        dl->PopClipRect();
+
+        // ---- legend (top-left of plot) ----
+        auto legend = [&](float ly, ImU32 c, const char* t, bool lit)
+        {
+            dl->AddRectFilled(panel.P(DGX0 + 12, ly), panel.P(DGX0 + 26, ly + 8), lit ? c : IM_COL32(70, 72, 76, 255), 1.5f * s);
+            panel.text(dl, DGX0 + 32, ly - 1, 9.5f, lit ? IM_COL32(200, 202, 206, 255) : IM_COL32(120, 122, 126, 255), t, -1);
+        };
+        legend(DGY0 + 10, curLine, "CURRENT",    hasC);
+        legend(DGY0 + 24, refLine, "REFERENCE",  hasR);
+        legend(DGY0 + 38, corLine, "CORRECTION", hasCorr);
+
+        // ============ control chassis (replaces the dynamics detail panel) ============
+        const float PY0 = 424.f, PY1 = 662.f, DIVX = 624.f;
+        dl->AddRectFilled(panel.P(DGX0, PY0), panel.P(DGX1, PY1), IM_COL32(28, 30, 34, 255), 5.f * s);
+        dl->AddRect(panel.P(DGX0, PY0), panel.P(DGX1, PY1), IM_COL32(64, 66, 72, 255), 5.f * s, 0, 1.4f * s);
+        dl->AddLine(panel.P(DIVX, PY0 + 12), panel.P(DIVX, PY1 - 12), IM_COL32(50, 52, 58, 255), 1.4f * s);
+        panel.text(dl, 0.5f * (DGX0 + DIVX), PY0 + 12, 11.f, IM_COL32(150, 152, 156, 255), "LEARN & MATCH", 0, true);
+        panel.text(dl, 0.5f * (DIVX + DGX1), PY0 + 12, 11.f, IM_COL32(150, 152, 156, 255), "CORRECTION", 0, true);
+
+        // ---- learn / match / clear buttons ----
+        matchActionButton(dl, "mqlc", 70, 452, 330, 488,
+                           learnC ? "STOP" : (hasC ? "CURRENT *" : "LEARN CURRENT"),
+                           learnC ? IM_COL32(0xcc, 0x44, 0x44, 255)
+                                  : (hasC ? IM_COL32(0x2f, 0x52, 0x70, 255) : IM_COL32(0x2a, 0x3a, 0x4a, 255)),
+                           bridge, [this, learnC] { matchStartCurrent(!learnC); });
+        matchActionButton(dl, "mqlr", 344, 452, 604, 488,
+                           learnR ? "STOP" : (hasR ? "REFERENCE *" : "LEARN REFERENCE"),
+                           learnR ? IM_COL32(0xcc, 0x44, 0x44, 255)
+                                  : (hasR ? IM_COL32(0x2e, 0x66, 0x48, 255) : IM_COL32(0x2a, 0x4a, 0x3a, 255)),
+                           bridge, [this, learnR] { matchStartReference(!learnR); });
+
+        const bool canMatch = bridge && hasC && hasR;
+        matchActionButton(dl, "mqcompute", 70, 500, 330, 536, "MATCH",
+                           hasCorr ? IM_COL32(0xcc, 0x88, 0x44, 255) : IM_COL32(0x5a, 0x40, 0x30, 255),
+                           canMatch, [this] { matchCompute(); });
+        matchActionButton(dl, "mqclear", 344, 500, 604, 536, "CLEAR",
+                           IM_COL32(0x4a, 0x4a, 0x4a, 255), bridge, [this] { matchClear(); });
+
+        // ---- live learning status ----
+        char sb[48];
+        if (learnC || learnR)
+        {
+            std::snprintf(sb, sizeof(sb), "%d frames", matchFrames());
+            panel.text(dl, 74, 556, 12.f, IM_COL32(232, 224, 120, 255), sb, -1, true);
+        }
+        else if (!bridge)
+            panel.text(dl, 74, 556, 11.f, IM_COL32(150, 152, 156, 255), "Match bridge unavailable (split UI)", -1);
+        else
+            panel.text(dl, 74, 556, 11.f, hasCorr ? IM_COL32(255, 170, 80, 255) : IM_COL32(140, 142, 146, 255),
+                       hasCorr ? "Correction ready" : "Play audio, then Learn", -1);
+
+        panel.text(dl, 74, 578, 10.5f, hasC ? IM_COL32(90, 150, 210, 255) : IM_COL32(112, 114, 118, 255),
+                   hasC ? "Current: captured" : "Current: --", -1);
+        panel.text(dl, 320, 578, 10.5f, hasR ? IM_COL32(90, 200, 150, 255) : IM_COL32(112, 114, 118, 255),
+                   hasR ? "Reference: captured" : "Reference: --", -1);
+
+        // ---- correction settings (right column) ----
+        const ImU32 faceCol = IM_COL32(58, 78, 104, 255);
+        panel.text(dl, 700, 452, 10.f, IM_COL32(150, 152, 156, 255), "APPLY", 0, true);
+        if (panel.knob("mqapply", kParamMatchApply, -100.f, 100.f, 700, 512, 30,
+                       values[kParamMatchApply], mqDef(kParamMatchApply), false, true,
+                       "%.0f", "%", faceCol, false, true,
+                       "Apply amount: 100% full correction, 0% bypass, negative inverts", false, 1.f, 0.f, "APPLY")
+            && hasCorr)
+            matchCompute();
+
+        panel.text(dl, 840, 452, 10.f, IM_COL32(150, 152, 156, 255), "SMOOTHING", 0, true);
+        if (panel.knob("mqsmooth", kParamMatchSmoothing, 1.f, 24.f, 840, 512, 30,
+                       values[kParamMatchSmoothing], mqDef(kParamMatchSmoothing), false, true,
+                       "%.0f", " st", faceCol, false, true,
+                       "Smoothing width in semitones (12 = 1 octave)", false, 1.f, 0.f, "SMOOTHING")
+            && hasCorr)
+            matchCompute();
+
+        if (panel.toggle("mqlimb", kParamMatchLimitBoost, 646, 576, 762, 600,
+                         values[kParamMatchLimitBoost], "LIMIT +") && hasCorr)
+            matchCompute();
+        if (panel.toggle("mqlimc", kParamMatchLimitCut, 778, 576, 894, 600,
+                         values[kParamMatchLimitCut], "LIMIT -") && hasCorr)
+            matchCompute();
     }
 
     // Right-click band context menu (JUCE showBandContextMenu :1860-2012). Opened
