@@ -671,6 +671,206 @@ private:
         return shape == 0;                                // parametric: only Peaking
     }
 
+    // Does a *drag* on band b's node change its gain? Matches JUCE setBandGain
+    // (EQGraphicDisplay :1819-1838): every band 1..6 is gain-draggable EXCEPT
+    // parametric bands (2..5) currently in Notch(1)/BandPass(2). Both shelves
+    // (bands 1/6 in shelf, peaking or — for tilt — the parametric Tilt shape 3)
+    // therefore drag their gain even though their node sits on the 0 dB line
+    // (getControlPointPosition only lifts the node for peaking). HPF/LPF: never.
+    bool digBandDragGain(int b) const
+    {
+        if (b <= 0 || b >= 7) return false;               // HPF (0) / LPF (7)
+        if (b >= 2 && b <= 5)
+        {
+            const int shape = (int)std::lround(values[mqidx::shape(b)]);
+            if (shape == 1 || shape == 2) return false;   // Notch / BandPass: no gain
+        }
+        return true;                                      // shelves, peaking, tilt
+    }
+
+    // Design-space x -> frequency (inverse of flog over the plot rect).
+    float digFreqFromX(float x) const
+    {
+        const float t = clamp01((x - DGX0) / (DGX1 - DGX0));
+        return std::pow(10.f, std::log10(kFMin) + t * (std::log10(kFMax) - std::log10(kFMin)));
+    }
+
+    // Musical note name for a frequency, ported verbatim from JUCE
+    // EQGraphicDisplay.cpp frequencyToNoteName (A4 = 440 Hz, +/- cents suffix).
+    static void freqToNoteName(char* buf, size_t n, float hz)
+    {
+        if (hz <= 0.f) { if (n) buf[0] = '\0'; return; }
+        static const char* names[12] = { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
+        const float midi   = 12.f * std::log2(hz / 440.f) + 69.f;
+        const int   rounded = (int)std::lround(midi);
+        const int   cents   = (int)std::lround((midi - (float)rounded) * 100.f);
+        const int   idx     = ((rounded % 12) + 12) % 12;
+        const int   octave  = (rounded / 12) - 1;
+        if (cents != 0) std::snprintf(buf, n, "%s%d %s%dc", names[idx], octave, cents > 0 ? "+" : "", cents);
+        else            std::snprintf(buf, n, "%s%d", names[idx], octave);
+    }
+
+    // Context-menu band type name (matches JUCE showBandContextMenu :1871-1898).
+    const char* digBandTypeName(int b) const
+    {
+        if (b == 0) return "High-Pass";
+        if (b == 7) return "Low-Pass";
+        const int shape = (int)std::lround(values[mqidx::shape(b)]);
+        if (b == 1) { static const char* n[3] = { "Low Shelf", "Peaking", "High-Pass" }; return n[shape < 0 ? 0 : (shape > 2 ? 2 : shape)]; }
+        if (b == 6) { static const char* n[3] = { "High Shelf", "Peaking", "Low-Pass" }; return n[shape < 0 ? 0 : (shape > 2 ? 2 : shape)]; }
+        static const char* n[4] = { "Parametric", "Notch", "Band Pass", "Tilt Shelf" };
+        return n[shape < 0 ? 0 : (shape > 3 ? 3 : shape)];
+    }
+
+    // Write + notify one param, wrapped in a begin/end edit gesture.
+    void setParamNotify(uint32_t id, float v)
+    {
+        editParameter(id, true); values[id] = v; setParameterValue(id, v); editParameter(id, false);
+    }
+
+    // Reset a band to defaults. Alt-drag reset (JUCE :1315-1318) keeps the shape;
+    // double-click / "Reset to Default" (JUCE :1484-1496) also zeroes the shape.
+    void digResetBand(int b, bool resetShape)
+    {
+        setParamNotify((uint32_t)mqidx::freq(b), mqDef(mqidx::freq(b)));
+        if (mqidx::gain(b) >= 0) setParamNotify((uint32_t)mqidx::gain(b), 0.f);
+        setParamNotify((uint32_t)mqidx::q(b), 0.71f);
+        if (resetShape && mqidx::shape(b) >= 0) setParamNotify((uint32_t)mqidx::shape(b), 0.f);
+        selectedBand_ = b;
+    }
+
+    // Double-click on empty graph = JUCE "spectrum grab" (:1500-1563): enable the
+    // DISABLED parametric band (index 2..5) whose DEFAULT freq is nearest the click
+    // (log2 distance), force it to peaking, and drop it at the clicked freq/gain.
+    void digSpectrumGrab(ImVec2 mp)
+    {
+        if (mp.x < DGX0 || mp.x > DGX1 || mp.y < DGY0 || mp.y > DGY1) return;
+        const float clickFreq = digFreqFromX(mp.x);
+        const float clickGain = digDbFromY(mp.y);
+        int   band = -1;
+        float best = 1e30f;
+        for (int i = 2; i <= 5; ++i)
+        {
+            if (values[mqidx::enabled(i)] < 0.5f)
+            {
+                const float d = std::fabs(std::log2(clickFreq) - std::log2(mqDef(mqidx::freq(i))));
+                if (d < best) { best = d; band = i; }
+            }
+        }
+        if (band < 0) return;                             // all parametric bands live
+        setParamNotify((uint32_t)mqidx::enabled(band), 1.f);
+        setParamNotify((uint32_t)mqidx::shape(band), 0.f);   // peaking first (else gain no-ops)
+        float f = clickFreq < kFMin ? kFMin : (clickFreq > kFMax ? kFMax : clickFreq);
+        setParamNotify((uint32_t)mqidx::freq(band), f);
+        float g = clickGain < -24.f ? -24.f : (clickGain > 24.f ? 24.f : clickGain);
+        setParamNotify((uint32_t)mqidx::gain(band), g);
+        setParamNotify((uint32_t)mqidx::q(band), 0.71f);
+        selectedBand_ = band;
+    }
+
+    //---- Solo write/read bridge (weak-guarded like the meter/dyn-gain bridge) ----
+    int digSoloBand()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQGetSoloBand != nullptr)
+            if (void* inst = getPluginInstancePointer()) return multiQGetSoloBand(inst);
+       #endif
+        return -1;
+    }
+    bool digSoloDelta()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQGetSoloDelta != nullptr)
+            if (void* inst = getPluginInstancePointer()) return multiQGetSoloDelta(inst);
+       #endif
+        return false;
+    }
+    void digSetSolo(int band, bool delta)
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQSetSolo != nullptr)
+            if (void* inst = getPluginInstancePointer()) multiQSetSolo(inst, band, delta);
+       #else
+        (void)band; (void)delta;
+       #endif
+    }
+
+    // Right-click band context menu (JUCE showBandContextMenu :1860-2012). Opened
+    // with band=digCtxBand_ (>=0 over a node, -1 over empty graph). Undo/Redo are
+    // omitted: DPF param edits are host-undoable, so there is no internal stack.
+    void digDrawContextMenu()
+    {
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(222, 224, 228, 255));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(70, 90, 120, 255));
+        if (ImGui::BeginPopup("digbandctx"))
+        {
+            const int  b     = digCtxBand_;
+            const int  soloB = digSoloBand();
+            const bool delta = digSoloDelta();
+            if (b >= 0 && b < 8)
+            {
+                char hdr[48]; std::snprintf(hdr, sizeof(hdr), "Band %d: %s", b + 1, digBandTypeName(b));
+                ImGui::TextDisabled("%s", hdr);
+                ImGui::Separator();
+                const bool en = values[mqidx::enabled(b)] > 0.5f;
+                if (ImGui::MenuItem(en ? "Disable Band" : "Enable Band")) toggleParam(mqidx::enabled(b));
+                if (ImGui::MenuItem("Reset to Default", nullptr, false, en)) digResetBand(b, true);
+                ImGui::Separator();
+                const bool soloOn  = (soloB == b && !delta);
+                const bool deltaOn = (soloB == b && delta);
+                if (ImGui::MenuItem("Solo This Band", nullptr, soloOn, en))       digSetSolo(soloOn  ? -1 : b, false);
+                if (ImGui::MenuItem("Delta Solo (Listen)", nullptr, deltaOn, en)) digSetSolo(deltaOn ? -1 : b, true);
+                if (soloB >= 0 && ImGui::MenuItem("Un-solo"))                      digSetSolo(-1, false);
+                ImGui::Separator();
+            }
+            if (ImGui::MenuItem("Enable All Bands"))  for (int i = 0; i < 8; ++i) setParamNotify((uint32_t)mqidx::enabled(i), 1.f);
+            if (ImGui::MenuItem("Disable All Bands")) for (int i = 0; i < 8; ++i) setParamNotify((uint32_t)mqidx::enabled(i), 0.f);
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleColor(3);
+    }
+
+    // Free-hover readout + crosshair (JUCE :327-386): shown whenever the cursor is
+    // inside the plot and no node is being dragged. Four lines: frequency, musical
+    // note, cursor dB, live composite EQ response dB at that frequency.
+    void digDrawHoverReadout(ImDrawList* dl)
+    {
+        if (dragBand_ >= 0 || ImGui::IsPopupOpen("digbandctx")) return;
+        const ImVec2 mp = invP(ImGui::GetMousePos());
+        if (mp.x < DGX0 || mp.x > DGX1 || mp.y < DGY0 || mp.y > DGY1) return;
+
+        const float s = sc();
+        const float freq  = digFreqFromX(mp.x);
+        const float curDb = digDbFromY(mp.y);
+        const float eqDb  = digitalResponseDb(freq);
+
+        // faint crosshair
+        dl->PushClipRect(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), true);
+        dl->AddLine(panel.P(mp.x, DGY0), panel.P(mp.x, DGY1), IM_COL32(255, 255, 255, 32), 1.f * s);
+        dl->AddLine(panel.P(DGX0, mp.y), panel.P(DGX1, mp.y), IM_COL32(255, 255, 255, 32), 1.f * s);
+        dl->PopClipRect();
+
+        char l1[24], l2[24], l3[24], l4[24];
+        if (freq >= 1000.f) std::snprintf(l1, sizeof(l1), "%.2f kHz", freq / 1000.f);
+        else                std::snprintf(l1, sizeof(l1), "%d Hz", (int)freq);
+        freqToNoteName(l2, sizeof(l2), freq);
+        std::snprintf(l3, sizeof(l3), "%s%.1f dB", curDb >= 0.f ? "+" : "", curDb);
+        std::snprintf(l4, sizeof(l4), "EQ: %s%.1f dB", eqDb >= 0.f ? "+" : "", eqDb);
+
+        const float boxW = 82.f, boxH = 58.f, padX = 7.f;
+        float bx = mp.x + 14.f, by = mp.y - boxH - 6.f;
+        if (bx + boxW > DGX1) bx = mp.x - boxW - 6.f;
+        if (by < DGY0)        by = mp.y + 14.f;
+        const ImVec2 p0 = panel.P(bx, by), p1 = panel.P(bx + boxW, by + boxH);
+        dl->AddRectFilled(p0, p1, IM_COL32(16, 16, 20, 221), 4.f * s);
+        dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 80), 4.f * s, 0, 1.f * s);
+        panel.text(dl, bx + padX, by + 5.f,  9.5f, IM_COL32(221, 221, 221, 255), l1, -1);
+        panel.text(dl, bx + padX, by + 18.f, 9.5f, IM_COL32(204, 170, 119, 255), l2, -1);
+        panel.text(dl, bx + padX, by + 31.f, 9.5f, IM_COL32(170, 170, 170, 255), l3, -1);
+        panel.text(dl, bx + padX, by + 44.f, 9.5f, IM_COL32(136, 204, 255, 255), l4, -1);
+    }
+
     void drawDigital(ImDrawList* dl)
     {
         const float s = sc();
@@ -787,13 +987,32 @@ private:
         dl->PopClipRect();
 
         // ---- draggable band handles ----
-        const float lmin = std::log10(kFMin), lmax = std::log10(kFMax);
+        const int soloB = digSoloBand();   // >=0 while a band is soloed (dim others)
+
+        // Full-plot catch-all UNDER the handles: empty-area double-click spectrum-
+        // grab + empty right-click menu. AllowOverlap so the handles (submitted
+        // after) keep pointer priority; this button only fires on bare graph.
+        {
+            const ImVec2 bp0 = panel.P(DGX0, DGY0), bp1 = panel.P(DGX1, DGY1);
+            ImGui::SetNextItemAllowOverlap();
+            ImGui::SetCursorScreenPos(bp0);
+            ImGui::InvisibleButton("digplotbg", ImVec2(bp1.x - bp0.x, bp1.y - bp0.y));
+            if (ImGui::IsItemHovered())
+            {
+                if (ImGui::IsMouseDoubleClicked(0)) digSpectrumGrab(invP(ImGui::GetMousePos()));
+                else if (ImGui::IsMouseClicked(1)) { digCtxBand_ = -1; ImGui::OpenPopup("digbandctx"); }
+            }
+        }
+
         for (int b = 0; b < 8; ++b)
         {
             if (values[mqidx::enabled(b)] < 0.5f) continue;
-            const bool yDrag = digBandCarriesGain(b);
-            const float gainVal = yDrag ? values[mqidx::gain(b)] : 0.f;
-            const float freqVal = values[mqidx::freq(b)];
+            // Node Y reflects gain only for peaking shapes (JUCE getControlPoint-
+            // Position); shelves/tilt sit on 0 dB even though their gain is drag-
+            // able. The DRAG, however, uses digBandDragGain (shelves + tilt too).
+            const bool  showGain = digBandCarriesGain(b);
+            const float gainVal  = showGain ? values[mqidx::gain(b)] : 0.f;
+            const float freqVal  = values[mqidx::freq(b)];
             const float hx = DGX0 + flog(freqVal) * (DGX1 - DGX0);
             const float hy = digY(gainVal);
             const ImVec2 hc = panel.P(hx, hy);
@@ -802,33 +1021,87 @@ private:
             ImGui::SetCursorScreenPos(ImVec2(hc.x - hit, hc.y - hit));
             ImGui::InvisibleButton(id, ImVec2(2.f * hit, 2.f * hit));
             const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+
+            // ---- drag begin: latch mode + start values at mouse-down (JUCE
+            // mouseDown :1311-1350). Modifiers are captured ONCE here so releasing
+            // a key mid-drag never switches modes. Double-click / Alt reset early.
             if (ImGui::IsItemActivated())
             {
-                editParameter(mqidx::freq(b), true);
-                if (yDrag) editParameter(mqidx::gain(b), true);
-                dragBand_ = b;
                 selectedBand_ = b;   // selecting a handle drives the detail panel
-            }
-            if (act && dragBand_ == b)
-            {
-                const ImVec2 md = invP(ImGui::GetMousePos());
-                const float tx = clamp01((md.x - DGX0) / (DGX1 - DGX0));
-                float f = std::pow(10.f, lmin + tx * (lmax - lmin));
-                f = f < kFMin ? kFMin : (f > kFMax ? kFMax : f);
-                values[mqidx::freq(b)] = f; setParameterValue(mqidx::freq(b), f);
-                if (yDrag)
+                const ImGuiIO& io = ImGui::GetIO();
+                const bool cmd = io.KeyCtrl || io.KeySuper;   // Ctrl(Win/Lin) == Cmd(Mac)
+                if (ImGui::IsMouseDoubleClicked(0))
                 {
-                    float g = digDbFromY(md.y);
-                    g = g < -24.f ? -24.f : (g > 24.f ? 24.f : g);
-                    values[mqidx::gain(b)] = g; setParameterValue(mqidx::gain(b), g);
+                    digResetBand(b, /*resetShape=*/true);     // JUCE mouseDoubleClick on node
+                    digDragMode_ = DigDrag::None;
+                }
+                else if (io.KeyAlt && !cmd)
+                {
+                    digResetBand(b, /*resetShape=*/false);    // JUCE Alt reset :1311-1325
+                    digDragMode_ = DigDrag::None;
+                }
+                else
+                {
+                    if (io.KeyAlt && cmd)  digDragMode_ = DigDrag::QOnly;
+                    else if (cmd)          digDragMode_ = DigDrag::GainOnly;
+                    else if (io.KeyShift)  digDragMode_ = DigDrag::FreqOnly;
+                    else                   digDragMode_ = DigDrag::FreqGain;
+                    digDragStartFreq_  = values[mqidx::freq(b)];
+                    digDragStartGain_  = (mqidx::gain(b) >= 0) ? values[mqidx::gain(b)] : 0.f;
+                    digDragStartQ_     = values[mqidx::q(b)];
+                    digDragStartMouse_ = invP(ImGui::GetMousePos());
+                    editParameter(mqidx::freq(b), true);
+                    if (mqidx::gain(b) >= 0) editParameter(mqidx::gain(b), true);
+                    editParameter(mqidx::q(b), true);
+                    dragBand_ = b;
+                }
+            }
+            // ---- drag move: relative deltas from mouse-down (JUCE mouseDrag
+            // :1370-1435). Ctrl/Cmd held = 10x finer (checked live like JUCE).
+            if (act && dragBand_ == b && digDragMode_ != DigDrag::None)
+            {
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImVec2 md = invP(ImGui::GetMousePos());
+                float dX = md.x - digDragStartMouse_.x;
+                float dY = md.y - digDragStartMouse_.y;
+                if (io.KeyCtrl || io.KeySuper) { dX *= 0.1f; dY *= 0.1f; }
+                const float plotW = DGX1 - DGX0, plotH = DGY1 - DGY0;
+                const float span  = 2.f * digRangeDb(digRangeIdx);   // maxDB - minDB
+                auto setF = [&](float f) { f = f < kFMin ? kFMin : (f > kFMax ? kFMax : f);
+                                           values[mqidx::freq(b)] = f; setParameterValue(mqidx::freq(b), f); };
+                auto setG = [&](float g) { if (!digBandDragGain(b)) return;
+                                           g = g < -24.f ? -24.f : (g > 24.f ? 24.f : g);
+                                           values[mqidx::gain(b)] = g; setParameterValue(mqidx::gain(b), g); };
+                auto setQ = [&](float q) { q = q < 0.1f ? 0.1f : (q > 100.f ? 100.f : q);
+                                           values[mqidx::q(b)] = q; setParameterValue(mqidx::q(b), q); };
+                switch (digDragMode_)
+                {
+                    case DigDrag::FreqGain:
+                        setF(digDragStartFreq_ * std::pow(kFMax / kFMin, dX / plotW));
+                        setG(digDragStartGain_ - (dY / plotH) * span);
+                        break;
+                    case DigDrag::GainOnly:
+                        setG(digDragStartGain_ - (dY / plotH) * span);
+                        break;
+                    case DigDrag::FreqOnly:
+                        setF(digDragStartFreq_ * std::pow(kFMax / kFMin, dX / plotW));
+                        break;
+                    case DigDrag::QOnly:
+                        setQ(digDragStartQ_ * std::pow(2.f, -dY / 50.f));
+                        break;
+                    default: break;
                 }
             }
             if (ImGui::IsItemDeactivated() && dragBand_ == b)
             {
                 editParameter(mqidx::freq(b), false);
-                if (yDrag) editParameter(mqidx::gain(b), false);
+                if (mqidx::gain(b) >= 0) editParameter(mqidx::gain(b), false);
+                editParameter(mqidx::q(b), false);
                 dragBand_ = -1;
+                digDragMode_ = DigDrag::None;
             }
+            // Right-click a node -> that band's context menu (JUCE :1301-1309).
+            if (hov && ImGui::IsMouseClicked(1)) { digCtxBand_ = b; selectedBand_ = b; ImGui::OpenPopup("digbandctx"); }
             // Wheel over a band handle adjusts that band's Q (JUCE
             // EQGraphicDisplay::mouseWheelMove: newQ = Q * 1.15^(wheel*3)).
             if (hov && !act)
@@ -844,24 +1117,40 @@ private:
                     selectedBand_ = b;
                 }
             }
-            const ImU32 col = kDigitalBandCol[b];
+            ImU32 col = kDigitalBandCol[b];
+            const bool soloDim = (soloB >= 0 && b != soloB);
+            const bool soloOn  = (soloB == b);
+            if (soloDim) col = (col & 0x00FFFFFF) | 0x55000000;   // dim non-soloed nodes
             const bool sel = (b == selectedBand_);
             const float rr = (hov || act || sel) ? 8.5f * s : 6.5f * s;
             if (sel) dl->AddCircleFilled(hc, rr + 5.f * s, (col & 0x00FFFFFF) | 0x55000000, 24); // selected glow
             dl->AddCircleFilled(hc, rr + 1.5f * s, IM_COL32(0, 0, 0, 200), 20);
             dl->AddCircleFilled(hc, rr, col, 20);
             dl->AddCircle(hc, rr, IM_COL32(255, 255, 255, (hov || act || sel) ? 235 : 120), 20, sel ? 2.0f * s : 1.6f * s);
+            if (soloOn) dl->AddCircle(hc, rr + 4.f * s, IM_COL32(255, 230, 120, 235), 24, 2.0f * s); // solo ring
             panel.text(dl, hx, hy - 5.f, 9.f, IM_COL32(20, 20, 22, 255), std::to_string(b + 1).c_str(), 0, true);
-            if (hov || act)
+            // Per-node bubble ONLY while dragging (JUCE drag tooltip); free-hover
+            // over a node instead shows the 4-line readout below.
+            if (act)
             {
-                char bub[32];
-                if (yDrag) std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2fk  %+.1f dB" : "%.0f Hz  %+.1f dB",
-                                         values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)], values[mqidx::gain(b)]);
-                else std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2f kHz" : "%.0f Hz",
-                                   values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)]);
+                char bub[40];
+                if (digBandDragGain(b))
+                {
+                    const float gv = values[mqidx::gain(b)];
+                    std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2fk  %+.1f dB" : "%.0f Hz  %+.1f dB",
+                                  values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)], gv);
+                }
+                else
+                {
+                    std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2f kHz  Q %.2f" : "%.0f Hz  Q %.2f",
+                                  values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)], values[mqidx::q(b)]);
+                }
                 panel.valueBubble(dl, hx, hy, 8.f, bub);
             }
         }
+
+        digDrawContextMenu();
+        digDrawHoverReadout(dl);
 
         drawDigitalMeters(dl);
         drawDigitalStrips(dl);
@@ -930,6 +1219,7 @@ private:
     {
         const float s = sc();
         const float cw = (DSTRIP_X1 - DSTRIP_X0) / 8.f;
+        const int soloB = digSoloBand();   // >=0 while a band is soloed
         for (int b = 0; b < 8; ++b)
         {
             const float x0 = DSTRIP_X0 + b * cw, x1 = x0 + cw;
@@ -971,6 +1261,10 @@ private:
             const ImVec2 dc = panel.P(x1 - 10, DSTRIP_Y0 + 12);
             dl->AddCircleFilled(dc, 3.8f * s, en ? col : IM_COL32(58, 58, 62, 255), 14);
             dl->AddCircle(dc, 3.8f * s, IM_COL32(0, 0, 0, 160), 14, 1.f * s);
+
+            // Solo reflection: dim non-soloed cells, ring the soloed one gold.
+            if (soloB >= 0 && b != soloB) dl->AddRectFilled(c0, c1, IM_COL32(0, 0, 0, 90));
+            if (soloB == b)               dl->AddRect(c0, c1, IM_COL32(255, 230, 120, 235), 0, 0, 2.f * s);
         }
     }
 
@@ -1189,9 +1483,10 @@ private:
                         [this, b]{ toggleParam(mqidx::invert(b)); });
             phaseButton(dl, "dpph", bx0 + bhw + 4, cy - 33, bx1, cy - 12, ph,
                         [this, b]{ toggleParam(mqidx::phaseInvert(b)); });
+            const int soloB = digSoloBand();   // real exclusive solo via the DSP bridge
             panelButton(dl, "dpsolo", bx0, cy - 8, bx1, cy + 13, "SOLO",
-                        soloState_[b] ? IM_COL32(150, 140, 40, 255) : IM_COL32(46, 46, 50, 255),
-                        [this, b]{ soloState_[b] = !soloState_[b]; });
+                        soloB == b ? IM_COL32(150, 140, 40, 255) : IM_COL32(46, 46, 50, 255),
+                        [this, b, soloB]{ digSetSolo(soloB == b ? -1 : b, false); });
             detailSelector(dl, "dproute", bx0, cy + 17, bx1, cy + 34, (uint32_t)mqidx::routing(b), false);
         }
 
@@ -2378,8 +2673,16 @@ private:
     int  dragBand_ = -1;       // Digital: band whose handle is being dragged
     int  selectedBand_ = 4;    // Digital: selected band for the detail panel (default Mid)
     bool abIsA_ = true;        // Digital A/B compare — visual only (no DSP param yet)
-    bool soloState_[8] = {};   // Digital per-band SOLO — visual only (no DSP param yet)
     int  digPreset_ = -1;      // Digital: selected factory preset index (-1 = Init/none)
+
+    // Digital graph-interaction drag latch (JUCE EQGraphicDisplay drag model): the
+    // modifier-selected mode + drag-start values are captured at mouse-down so
+    // releasing a modifier mid-drag never switches modes.
+    enum class DigDrag { None, FreqGain, GainOnly, FreqOnly, QOnly };
+    DigDrag digDragMode_ = DigDrag::None;
+    float   digDragStartFreq_ = 0.f, digDragStartGain_ = 0.f, digDragStartQ_ = 0.71f;
+    ImVec2  digDragStartMouse_ { 0.f, 0.f };   // design coords at mouse-down
+    int     digCtxBand_ = -1;  // band whose right-click context menu is open (-1 = empty)
     float smoothedDynGain_[8] = {}; // Digital: smoothed live per-band dyn-EQ gain (dB)
     float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f;
