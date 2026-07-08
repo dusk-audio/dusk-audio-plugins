@@ -529,17 +529,43 @@ private:
     //========================================================================
     // DIGITAL — interactive log-frequency curve editor + 8 band strips
     //========================================================================
-    static float digRangeDb(int idx) { static const float R[5] = { 6.f, 12.f, 18.f, 24.f, 30.f }; return R[idx < 0 ? 0 : (idx > 4 ? 4 : idx)]; }
+    // Digital dB range set — matches JUCE DisplayScaleMode {±12, ±24, ±30, ±60, Warped}.
+    // Index 4 = Warped: sqrt-warped axis with an effective ±24 dB span (JUCE Warped
+    // sets minDisplayDB/maxDisplayDB to ∓24 and warps via getYForDB). digRangeDb()
+    // returns the linear/effective span; digGridStep() the dB ladder step (JUCE: 6 by
+    // default, 10 for ±30, 20 for ±60); digWarped() gates the nonlinear mapping.
+    static float digRangeDb(int idx) { static const float R[5] = { 12.f, 24.f, 30.f, 60.f, 24.f }; return R[idx < 0 ? 0 : (idx > 4 ? 4 : idx)]; }
+    bool  digWarped()  const { return digRangeIdx == 4; }
+    int   digGridStep() const { return digRangeIdx == 3 ? 20 : (digRangeIdx == 2 ? 10 : 6); }
     float digY(float db) const
     {
+        if (digWarped())
+        {
+            // sqrt-warped axis (verbatim mapping of British dbToNy warped branch /
+            // JUCE getYForDB): more vertical resolution around 0 dB. m = warped span.
+            const float m = 24.f;
+            float d = db < -m ? -m : (db > m ? m : db);
+            const float tt = (d >= 0.f ? 1.f : -1.f) * std::sqrt(std::abs(d) / m);
+            return DGY0 + (0.5f - 0.5f * tt) * (DGY1 - DGY0);
+        }
         const float r = digRangeDb(digRangeIdx);
         float d = db < -r ? -r : (db > r ? r : db);
         return DGY0 + (0.5f - 0.5f * d / r) * (DGY1 - DGY0);
     }
+    // Inverse of digY — MUST stay the exact inverse (incl. Warped) so dragged nodes
+    // track the cursor. For the linear scales this is the original formula; for
+    // Warped: norm→tt (=sign·√(|d|/m)) → db = sign(tt)·tt²·m (mirrors JUCE getDBAtY).
     float digDbFromY(float y) const
     {
+        const float norm = (y - DGY0) / (DGY1 - DGY0);
+        if (digWarped())
+        {
+            const float m = 24.f;
+            const float tt = (0.5f - norm) * 2.f;   // = sign·√(|d|/m)
+            return (tt >= 0.f ? 1.f : -1.f) * tt * tt * m;
+        }
         const float r = digRangeDb(digRangeIdx);
-        return (0.5f - (y - DGY0) / (DGY1 - DGY0)) * 2.f * r;
+        return (0.5f - norm) * 2.f * r;
     }
 
     void digTiltShelf(duskaudio::MqBiquadCoeffs& c, double sr, double freq, float gainDB) const
@@ -693,6 +719,44 @@ private:
             if (shape == 1 || shape == 2) return false;   // Notch / BandPass: no gain
         }
         return true;                                      // shelves, peaking, tilt
+    }
+
+    // Shape-glyph drawn INSIDE a control node (JUCE drawBandControlPoint :1008-1101).
+    // Primitives only — no unicode: HPF "/¯", LPF "¯\", low/high shelf steps, notch
+    // "V", bandpass "^", else the band number. cx/cy are the (design-space) node
+    // centre, iconR the glyph half-extent, w the stroke width, col the ink colour.
+    // Coordinate offsets are copied verbatim from the JUCE Path builders (y grows
+    // down in both frameworks, so +y is below centre).
+    void digNodeGlyph(ImDrawList* dl, int b, float cx, float cy,
+                      float iconR, float w, ImU32 col) const
+    {
+        const int shape = (mqidx::shape(b) >= 0) ? (int)std::lround(values[mqidx::shape(b)]) : 0;
+        // Resolve the glyph kind from band + shape (mirrors digitalBandMag routing).
+        // 0=number 1=HPF 2=LPF 3=lowShelf 4=highShelf 5=notch 6=bandpass
+        int g = 0;
+        if      (b == 0) g = 1;                                   // HPF
+        else if (b == 7) g = 2;                                   // LPF
+        else if (b == 1) g = (shape == 1) ? 0 : (shape == 2 ? 1 : 3); // peak / HPF / lowShelf
+        else if (b == 6) g = (shape == 1) ? 0 : (shape == 2 ? 2 : 4); // peak / LPF / highShelf
+        else             g = (shape == 1) ? 5 : (shape == 2 ? 6 : 0); // notch / bandpass / (peak,tilt)
+
+        if (g == 0)   // band number
+        {
+            panel.text(dl, cx, cy - 5.f, 9.f, col, std::to_string(b + 1).c_str(), 0, true);
+            return;
+        }
+        auto pt = [&](float ux, float uy) { return panel.P(cx + ux * iconR, cy + uy * iconR); };
+        ImVec2 v[5]; int n = 0;
+        switch (g)
+        {
+            case 1: v[0]=pt(-0.6f,0.4f); v[1]=pt(-0.1f,0.4f); v[2]=pt(0.3f,-0.4f); v[3]=pt(0.6f,-0.4f); n=4; break; // HPF /¯
+            case 2: v[0]=pt(-0.6f,-0.4f);v[1]=pt(-0.3f,-0.4f);v[2]=pt(0.1f,0.4f);  v[3]=pt(0.6f,0.4f);  n=4; break; // LPF ¯\
+            case 3: v[0]=pt(-0.6f,0.3f); v[1]=pt(-0.15f,0.3f);v[2]=pt(0.15f,-0.3f);v[3]=pt(0.6f,-0.3f); n=4; break; // low shelf
+            case 4: v[0]=pt(-0.6f,-0.3f);v[1]=pt(-0.15f,-0.3f);v[2]=pt(0.15f,0.3f);v[3]=pt(0.6f,0.3f);  n=4; break; // high shelf
+            case 5: v[0]=pt(-0.6f,-0.3f);v[1]=pt(-0.15f,-0.3f);v[2]=pt(0.f,0.5f);  v[3]=pt(0.15f,-0.3f);v[4]=pt(0.6f,-0.3f); n=5; break; // notch V
+            case 6: v[0]=pt(-0.6f,0.3f); v[1]=pt(-0.15f,0.3f);v[2]=pt(0.f,-0.5f);  v[3]=pt(0.15f,0.3f); v[4]=pt(0.6f,0.3f);  n=5; break; // bandpass ^
+        }
+        dl->AddPolyline(v, n, col, 0, w);
     }
 
     // Design-space x -> frequency (inverse of flog over the plot rect).
@@ -969,7 +1033,8 @@ private:
         // dB grid (uses the shared digY scale so 0 dB is centred)
         {
             const int R = (int)digRangeDb(digRangeIdx);
-            for (int db = -R; db <= R; db += 6)
+            const int step = digGridStep();
+            for (int db = -R; db <= R; db += step)
             {
                 const float y = digY((float)db);
                 dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y),
@@ -1174,33 +1239,61 @@ private:
         dl->AddRectFilled(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), IM_COL32(12, 13, 15, 255));
         dl->PushClipRect(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), true);
 
-        // frequency grid
+        // frequency grid — split into MINOR (~7% white) and MAJOR (~12% white)
+        // tiers at different opacities (JUCE drawGrid :462-486). Decade lines
+        // (100 / 1k / 10k / 20k) are the brighter major tier + carry the label.
         for (int i = 0; i < (int)(sizeof(kGridF) / sizeof(kGridF[0])); ++i)
         {
-            const float x = DGX0 + flog((float)kGridF[i]) * (DGX1 - DGX0);
-            dl->AddLine(panel.P(x, DGY0), panel.P(x, DGY1), IM_COL32(38, 41, 45, 255), 1.f * s);
-            panel.text(dl, x, DGY1 - 13, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
+            const int f = kGridF[i];
+            const bool major = (f == 100 || f == 1000 || f == 10000 || f == 20000);
+            const float x = DGX0 + flog((float)f) * (DGX1 - DGX0);
+            dl->AddLine(panel.P(x, DGY0), panel.P(x, DGY1),
+                        major ? IM_COL32(255, 255, 255, 30) : IM_COL32(255, 255, 255, 16), 1.f * s);
+            panel.text(dl, x, DGY1 - 13, 8.5f,
+                       major ? IM_COL32(138, 138, 138, 255) : IM_COL32(96, 96, 96, 255), kGridFL[i], 0);
         }
-        // faint musical note markers (C1..C8) along the BOTTOM of the plot,
-        // just above the frequency-axis labels (matches JUCE placement)
+        // piano strip along the bottom of the plot: white/black key ticks with C
+        // labels (JUCE drawPianoOverlay :569-636). MIDI 24 (C1) .. 108 (C8); black
+        // keys short/dim, white keys medium, C keys full height + label. Sits just
+        // above the frequency-axis labels; kept subtle so it reads behind curves.
         {
-            static const float kNoteHz[8] = { 32.70f, 65.41f, 130.81f, 261.63f, 523.25f, 1046.50f, 2093.00f, 4186.01f };
-            static const char* kNoteL[8]  = { "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8" };
-            for (int i = 0; i < 8; ++i)
+            static const bool  kBlack[12] = { false,true,false,true,false,false,true,false,true,false,true,false };
+            const float stripH = 11.f, stripY = DGY1 - 24.f;
+            dl->AddRectFilled(panel.P(DGX0, stripY), panel.P(DGX1, stripY + stripH), IM_COL32(0, 0, 0, 32));
+            dl->AddLine(panel.P(DGX0, stripY), panel.P(DGX1, stripY), IM_COL32(255, 255, 255, 32), 0.5f * s);
+            for (int midi = 24; midi <= 108; ++midi)
             {
-                const float x = DGX0 + flog(kNoteHz[i]) * (DGX1 - DGX0);
-                dl->AddLine(panel.P(x, DGY1 - 27), panel.P(x, DGY1 - 15), IM_COL32(60, 56, 76, 150), 1.f * s);
-                panel.text(dl, x, DGY1 - 26, 8.f, IM_COL32(112, 108, 130, 210), kNoteL[i], 0);
+                const float freq = 440.f * std::pow(2.f, (midi - 69) / 12.f);
+                if (freq < kFMin || freq > kFMax) continue;
+                const float x = DGX0 + flog(freq) * (DGX1 - DGX0);
+                const int   noteInOct = midi % 12;
+                if (noteInOct == 0)   // C — full-height tick + label
+                {
+                    dl->AddLine(panel.P(x, stripY), panel.P(x, stripY + stripH), IM_COL32(255, 255, 255, 96), 1.f * s);
+                    char lb[8]; std::snprintf(lb, sizeof(lb), "C%d", (midi / 12) - 1);
+                    panel.text(dl, x + 2.f, stripY + 1.f, 7.5f, IM_COL32(153, 153, 153, 210), lb, -1);
+                }
+                else if (kBlack[noteInOct])
+                    dl->AddLine(panel.P(x, stripY + stripH * 0.5f), panel.P(x, stripY + stripH), IM_COL32(255, 255, 255, 32), 0.5f * s);
+                else
+                    dl->AddLine(panel.P(x, stripY + stripH * 0.3f), panel.P(x, stripY + stripH), IM_COL32(255, 255, 255, 48), 0.5f * s);
             }
         }
-        // dB grid — horizontal lines every 6 dB (matches JUCE +24..-24 ladder)
+        // dB grid — horizontal ladder (step per scale). The 0 dB line gets a soft
+        // white glow underlay + brighter core (JUCE drawGrid :495-504).
         {
             const int R = (int)digRangeDb(digRangeIdx);
-            for (int db = -R; db <= R; db += 6)
+            const int step = digGridStep();
+            for (int db = -R; db <= R; db += step)
             {
                 const float y = digY((float)db);
-                dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y),
-                            db == 0 ? IM_COL32(64, 68, 74, 255) : IM_COL32(30, 33, 37, 255), 1.f * s);
+                if (db == 0)
+                {
+                    dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y), IM_COL32(255, 255, 255, 14), 2.5f * s); // glow
+                    dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y), IM_COL32(255, 255, 255, 64), 1.f * s);  // core
+                }
+                else
+                    dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y), IM_COL32(255, 255, 255, 16), 1.f * s);
                 char b[8]; std::snprintf(b, sizeof(b), "%+d", db);
                 float ly = y - 6.f; ly = ly < DGY0 + 1.f ? DGY0 + 1.f : (ly > DGY1 - 13.f ? DGY1 - 13.f : ly);
                 panel.text(dl, DGX0 + 5, ly, 9.5f, IM_COL32(150, 154, 160, 255), db == 0 ? "0" : b, -1);
@@ -1310,8 +1403,15 @@ private:
             const bool  showGain = digBandCarriesGain(b);
             const float gainVal  = showGain ? values[mqidx::gain(b)] : 0.f;
             const float freqVal  = values[mqidx::freq(b)];
+            const bool  dynOn    = values[mqidx::dynEnabled(b)] > 0.5f;
+            // Live dynamic offset (JUCE getControlPointPosition adds smoothedDynamic-
+            // Gains). The node + its hit target follow the MOVED position so grabbing
+            // the visible node works; the drag is relative, so the dyn bounce never
+            // fights an active drag. hyStatic marks where the node rests (ghost).
+            const float dynOff  = dynOn ? smoothedDynGain_[b] : 0.f;
             const float hx = DGX0 + flog(freqVal) * (DGX1 - DGX0);
-            const float hy = digY(gainVal);
+            const float hyStatic = digY(gainVal);
+            const float hy = digY(gainVal + dynOff);
             const ImVec2 hc = panel.P(hx, hy);
             const float hit = 11.f * s;
             char id[16]; std::snprintf(id, sizeof(id), "dh%d", b);
@@ -1359,11 +1459,17 @@ private:
             {
                 const ImGuiIO& io = ImGui::GetIO();
                 const ImVec2 md = invP(ImGui::GetMousePos());
+                const bool  fine = io.KeyCtrl || io.KeySuper;
                 float dX = md.x - digDragStartMouse_.x;
                 float dY = md.y - digDragStartMouse_.y;
-                if (io.KeyCtrl || io.KeySuper) { dX *= 0.1f; dY *= 0.1f; }
-                const float plotW = DGX1 - DGX0, plotH = DGY1 - DGY0;
-                const float span  = 2.f * digRangeDb(digRangeIdx);   // maxDB - minDB
+                if (fine) { dX *= 0.1f; dY *= 0.1f; }
+                const float plotW = DGX1 - DGX0;
+                // Gain delta comes from the (possibly Warped/±60) inverse mapping so
+                // the node tracks the cursor exactly. For the linear scales this is
+                // identical to the old -(dY/plotH)*span; for Warped it follows the
+                // sqrt axis. Fine mode scales the dB delta by 0.1 like freq/Q.
+                float gainDelta = digDbFromY(md.y) - digDbFromY(digDragStartMouse_.y);
+                if (fine) gainDelta *= 0.1f;
                 auto setF = [&](float f) { f = f < kFMin ? kFMin : (f > kFMax ? kFMax : f);
                                            values[mqidx::freq(b)] = f; setParameterValue(mqidx::freq(b), f); };
                 auto setG = [&](float g) { if (!digBandDragGain(b)) return;
@@ -1375,10 +1481,10 @@ private:
                 {
                     case DigDrag::FreqGain:
                         setF(digDragStartFreq_ * std::pow(kFMax / kFMin, dX / plotW));
-                        setG(digDragStartGain_ - (dY / plotH) * span);
+                        setG(digDragStartGain_ + gainDelta);
                         break;
                     case DigDrag::GainOnly:
-                        setG(digDragStartGain_ - (dY / plotH) * span);
+                        setG(digDragStartGain_ + gainDelta);
                         break;
                     case DigDrag::FreqOnly:
                         setF(digDragStartFreq_ * std::pow(kFMax / kFMin, dX / plotW));
@@ -1419,13 +1525,57 @@ private:
             const bool soloOn  = (soloB == b);
             if (soloDim) col = (col & 0x00FFFFFF) | 0x55000000;   // dim non-soloed nodes
             const bool sel = (b == selectedBand_);
-            const float rr = (hov || act || sel) ? 8.5f * s : 6.5f * s;
-            if (sel) dl->AddCircleFilled(hc, rr + 5.f * s, (col & 0x00FFFFFF) | 0x55000000, 24); // selected glow
-            dl->AddCircleFilled(hc, rr + 1.5f * s, IM_COL32(0, 0, 0, 200), 20);
-            dl->AddCircleFilled(hc, rr, col, 20);
-            dl->AddCircle(hc, rr, IM_COL32(255, 255, 255, (hov || act || sel) ? 235 : 120), 20, sel ? 2.0f * s : 1.6f * s);
+            const ImU32 colRGB = col & 0x00FFFFFF;
+            const float rr     = (hov || act || sel) ? 8.5f * s : 7.0f * s;
+            const float ringW  = (sel ? 3.0f : (hov ? 2.5f : 2.0f)) * s;
+            const float innerR = rr - ringW;
+
+            // ---- STALK: node -> 0 dB line (behind the node; JUCE :819-844) ----
+            {
+                const ImVec2 z = panel.P(hx, digY(0.f));
+                const ImU32 sa = (ImU32)(sel ? 150 : (hov ? 100 : 64)) << 24;
+                dl->AddLine(hc, z, colRGB | sa, (sel ? 2.4f : (hov ? 2.0f : 1.5f)) * s);
+            }
+            // ---- GHOST ring + tether at the static rest position while dynamics
+            //      move the node (JUCE :918-934) ----
+            if (dynOn && std::abs(dynOff) > 0.5f)
+            {
+                const ImVec2 gc = panel.P(hx, hyStatic);
+                dl->AddLine(gc, hc, colRGB | 0x28000000, 1.0f * s);
+                dl->AddCircle(gc, rr * 0.72f, colRGB | 0x40000000, 20, 1.5f * s);
+            }
+            // ---- soft outer glow (selected / hovered / has-gain) ----
+            if (sel)          dl->AddCircleFilled(hc, rr + 5.f * s, colRGB | 0x55000000, 24);
+            else if (hov)     dl->AddCircleFilled(hc, rr + 3.f * s, colRGB | 0x33000000, 24);
+            // ---- body: drop shadow, coloured ring, dark centre, rim highlights ----
+            dl->AddCircleFilled(ImVec2(hc.x + 1.5f * s, hc.y + 1.5f * s), rr, IM_COL32(0, 0, 0, 110), 24);
+            dl->AddCircleFilled(hc, rr, col, 24);
+            dl->AddCircleFilled(hc, innerR, IM_COL32(18, 19, 23, 235), 24);
+            dl->AddCircle(hc, innerR - 0.5f * s, colRGB | 0x66000000, 24, 0.9f * s);
+            dl->AddCircle(hc, rr, IM_COL32(255, 255, 255, (hov || act || sel) ? 235 : 120), 24, sel ? 2.0f * s : 1.5f * s);
+            if (sel)    dl->AddCircle(hc, rr + 1.0f * s, IM_COL32(255, 255, 255, 150), 24, 1.2f * s);
             if (soloOn) dl->AddCircle(hc, rr + 4.f * s, IM_COL32(255, 230, 120, 235), 24, 2.0f * s); // solo ring
-            panel.text(dl, hx, hy - 5.f, 9.f, IM_COL32(20, 20, 22, 255), std::to_string(b + 1).c_str(), 0, true);
+            // ---- SHAPE GLYPH (or band number) inside the node (JUCE :1008-1101) ----
+            digNodeGlyph(dl, b, hx, hy, innerR * 1.1f, (sel ? 2.0f : 1.5f) * s,
+                         IM_COL32(236, 238, 242, sel ? 255 : 225));
+            // ---- green->yellow DYNAMIC-ACTIVITY ARC around the node (JUCE :1104-1132) ----
+            if (dynOn && std::abs(dynOff) > 0.5f)
+            {
+                const float ng = std::min(std::abs(dynOff) / 24.f, 1.f);
+                const float ar = rr + 4.f * s;
+                const float a0 = -1.57079633f;                    // top
+                const float a1 = a0 + ng * 6.2831853f * 0.8f;     // clockwise sweep
+                auto lerpCol = [](ImU32 a, ImU32 bb, float t) {
+                    auto ch = [](ImU32 c, int sh) { return (float)((c >> sh) & 0xFF); };
+                    const int r  = (int)(ch(a, 0)  + (ch(bb, 0)  - ch(a, 0))  * t);
+                    const int gg = (int)(ch(a, 8)  + (ch(bb, 8)  - ch(a, 8))  * t);
+                    const int bl = (int)(ch(a, 16) + (ch(bb, 16) - ch(a, 16)) * t);
+                    return IM_COL32(r, gg, bl, 255);
+                };
+                const ImU32 ac = lerpCol(IM_COL32(0, 204, 102, 255), IM_COL32(255, 204, 0, 255), ng * 0.7f);
+                dl->PathArcTo(hc, ar, a0, a1, 32); dl->PathStroke((ac & 0x00FFFFFF) | 0x4D000000, 0, 4.5f * s);
+                dl->PathArcTo(hc, ar, a0, a1, 32); dl->PathStroke((ac & 0x00FFFFFF) | 0xE6000000, 0, 2.5f * s);
+            }
             // Per-node bubble ONLY while dragging (JUCE drag tooltip); free-hover
             // over a node instead shows the 4-line readout below.
             if (act)
@@ -1443,6 +1593,24 @@ private:
                                   values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)], values[mqidx::q(b)]);
                 }
                 panel.valueBubble(dl, hx, hy, 8.f, bub);
+            }
+        }
+
+        // ---- processing-mode badge: a LEFT/RIGHT/MID/SIDE pill at the plot's
+        //      top-right when processing_mode != Stereo (JUCE :259-285). ----
+        {
+            const int pm = (int)std::lround(values[kParamProcessingMode]);
+            if (pm > 0)
+            {
+                static const char* kPm[5] = { "", "LEFT", "RIGHT", "MID", "SIDE" };
+                const char* txt = kPm[pm < 0 ? 0 : (pm > 4 ? 4 : pm)];
+                ImFont* f = panel.pickFont(11.f * s);
+                const float tw = f->CalcTextSizeA(11.f * s, FLT_MAX, 0.f, txt).x / s + 12.f;
+                const float bx = DGX1 - tw - 6.f, by = DGY0 + 6.f, bh = 18.f;
+                const ImVec2 p0 = panel.P(bx, by), p1 = panel.P(bx + tw, by + bh);
+                dl->AddRectFilled(p0, p1, IM_COL32(26, 26, 46, 204), 4.f * s);
+                dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 96), 4.f * s, 0, 1.f * s);
+                panel.text(dl, bx + 0.5f * tw, by + 0.5f * bh - 5.5f, 11.f, IM_COL32(255, 255, 255, 221), txt, 0, true);
             }
         }
 
@@ -1471,31 +1639,70 @@ private:
        #endif
         panel.text(dl, 0.5f * (DINX0 + DINX1),  DGY0 - 13, 9.f, IM_COL32(160, 162, 166, 255), "IN",  0, true);
         panel.text(dl, 0.5f * (DOUTX0 + DOUTX1), DGY0 - 13, 9.f, IM_COL32(160, 162, 166, 255), "OUT", 0, true);
-        digMeterPair(dl, DINX0, DINX1, inL, inR);
-        digMeterPair(dl, DOUTX0, DOUTX1, outL, outR);
+        digMeterPair(dl, DINX0, DINX1, inL, inR, 0);
+        digMeterPair(dl, DOUTX0, DOUTX1, outL, outR, 2);
+
+        // small numeric dB readout under each meter (British already has one). Held
+        // ~0.15 s so it stays legible. Sits in the gap between plot and band strips.
+        digMtRdIn_  = std::max(digMtRdIn_,  std::max(inL, inR));
+        digMtRdOut_ = std::max(digMtRdOut_, std::max(outL, outR));
+        digMtRdTimer_ += ImGui::GetIO().DeltaTime;
+        if (digMtRdTimer_ >= 0.15f)
+        {
+            digMtRdTimer_ = 0.f;
+            digMtDbIn_  = 20.f * std::log10(digMtRdIn_  > 1e-5f ? digMtRdIn_  : 1e-5f);
+            digMtDbOut_ = 20.f * std::log10(digMtRdOut_ > 1e-5f ? digMtRdOut_ : 1e-5f);
+            digMtRdIn_ = digMtRdOut_ = 0.f;
+        }
+        char rb[12];
+        std::snprintf(rb, sizeof(rb), "%d", (int)std::lround(digMtDbIn_));
+        panel.text(dl, 0.5f * (DINX0 + DINX1), DGY1 + 1.f, 8.f, IM_COL32(150, 152, 156, 255), rb, 0);
+        std::snprintf(rb, sizeof(rb), "%d", (int)std::lround(digMtDbOut_));
+        panel.text(dl, 0.5f * (DOUTX0 + DOUTX1), DGY1 + 1.f, 8.f, IM_COL32(150, 152, 156, 255), rb, 0);
     }
 
-    void digMeterPair(ImDrawList* dl, float x0, float x1, float l, float r)
+    void digMeterPair(ImDrawList* dl, float x0, float x1, float l, float r, int slotBase)
     {
         dl->AddRectFilled(panel.P(x0 - 2, DGY0 - 2), panel.P(x1 + 2, DGY1 + 2), IM_COL32(60, 60, 63, 255), 2.f * sc());
-        dl->AddRectFilled(panel.P(x0, DGY0), panel.P(x1, DGY1), IM_COL32(14, 16, 18, 255));
+        dl->AddRectFilled(panel.P(x0, DGY0), panel.P(x1, DGY1), IM_COL32(10, 11, 13, 255));
         const float mid = 0.5f * (x0 + x1);
-        digMeterBar(dl, x0 + 1, mid - 0.5f, l);
-        digMeterBar(dl, mid + 0.5f, x1 - 1, r);
+        ledMeterBar(dl, x0 + 1, mid - 0.5f, DGY0, DGY1, l, slotBase);
+        ledMeterBar(dl, mid + 0.5f, x1 - 1, DGY0, DGY1, r, slotBase + 1);
     }
 
-    void digMeterBar(ImDrawList* dl, float x0, float x1, float lin)
+    // Discrete LED-segment meter (JUCE shared LEDMeter look): stacked segments —
+    // green to ~-12 dB, yellow to ~-3 dB, red near 0 — with a peak-hold cap segment
+    // and a clip box at the very top that latches red. `slot` indexes the per-channel
+    // peak/clip hold state (0-3 Digital in/out L/R, 4-7 British in/out L/R).
+    void ledMeterBar(ImDrawList* dl, float x0, float x1, float y0, float y1, float lin, int slot)
     {
+        const float s  = sc();
         const float db = 20.f * std::log10(lin > 1e-5f ? lin : 1e-5f);
-        float t = (db + 60.f) / 60.f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
-        const float yFill = DGY1 - t * (DGY1 - DGY0);
-        const ImU32 col = db > -1.5f ? IM_COL32(226, 70, 55, 255)
-                        : db > -10.f ? IM_COL32(224, 196, 72, 255) : IM_COL32(96, 196, 112, 255);
-        dl->AddRectFilled(panel.P(x0, yFill), panel.P(x1, DGY1), col);
-        for (int i = 1; i < 16; ++i)
+        const float dt = std::min(ImGui::GetIO().DeltaTime, 0.1f);
+        if (db > ledPk_[slot]) ledPk_[slot] = db; else ledPk_[slot] -= 18.f * dt; // ~18 dB/s fall
+        if (ledPk_[slot] < -60.f) ledPk_[slot] = -60.f;
+        if (db >= -0.3f) ledClip_[slot] = 1.5f; else ledClip_[slot] = std::max(0.f, ledClip_[slot] - dt);
+
+        const float capH = 5.f;
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y0 + capH),
+                          ledClip_[slot] > 0.f ? IM_COL32(255, 64, 48, 255) : IM_COL32(48, 20, 20, 255));
+        const float sTop = y0 + capH + 1.f, sBot = y1;
+        auto frac = [](float d) { float t = (d + 60.f) / 60.f; return t < 0.f ? 0.f : (t > 1.f ? 1.f : t); };
+        const float tv = frac(db), tp = frac(ledPk_[slot]);
+        const int n = 20;
+        for (int i = 0; i < n; ++i)
         {
-            const float y = DGY0 + (float)i / 16.f * (DGY1 - DGY0);
-            dl->AddLine(panel.P(x0, y), panel.P(x1, y), IM_COL32(14, 16, 18, 200), 1.f * sc());
+            const float f0 = (float)i / n, f1 = (float)(i + 1) / n;
+            const float segDbTop = -60.f + f1 * 60.f;
+            const float ry1 = sBot - f0 * (sBot - sTop);
+            const float ry0 = sBot - f1 * (sBot - sTop);
+            const ImU32 on = segDbTop > -3.f  ? IM_COL32(226, 70, 55, 255)
+                           : segDbTop > -12.f ? IM_COL32(224, 196, 72, 255)
+                           :                    IM_COL32(96, 196, 112, 255);
+            const bool lit = tv >= f0 + 1e-4f;
+            const bool pk  = (ledPk_[slot] > -59.f) && tp >= f0 && tp < f1;
+            const ImU32 c  = (lit || pk) ? on : IM_COL32(28, 30, 33, 255);
+            dl->AddRectFilled(panel.P(x0, ry0 + 0.8f * s), panel.P(x1, ry1), c);
         }
     }
 
@@ -1934,9 +2141,9 @@ private:
                      [&]{ toggleParam(kAutoGain); });
         // Processing mode (Stereo/Left/Right/Mid/Side)
         headerCombo(dl, "##pmode", 580, y0, 648, y1, kParamProcessingMode, mqp::kProcMode, 5);
-        // Graph range (UI-local +/-6/12/18/24/30) — wide enough to show "+/-24 dB"
+        // Graph range — JUCE DisplayScaleMode set {±12, ±24, ±30, ±60, Warped}
         {
-            static const char* kDR[5] = { "+/-6 dB", "+/-12 dB", "+/-18 dB", "+/-24 dB", "+/-30 dB" };
+            static const char* kDR[5] = { "+/-12 dB", "+/-24 dB", "+/-30 dB", "+/-60 dB", "Warped" };
             ImGui::SetCursorScreenPos(panel.P(652, y0));
             ImGui::SetNextItemWidth(96.f * s);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, btnBg);
@@ -3252,8 +3459,8 @@ private:
        #endif
         panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "IN", 0, true);
         panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "OUT", 0, true);
-        meterPair(dl, INX0, INX1, inL, inR);
-        meterPair(dl, OUTX0, OUTX1, outL, outR);
+        meterPair(dl, INX0, INX1, inL, inR, 4);
+        meterPair(dl, OUTX0, OUTX1, outL, outR, 6);
 
         meterPkIn_  = std::max(meterPkIn_,  std::max(inL, inR));
         meterPkOut_ = std::max(meterPkOut_, std::max(outL, outR));
@@ -3272,30 +3479,14 @@ private:
         panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_Y1) + 5, 11.f, IM_COL32(160, 162, 166, 255), b, 0);
     }
 
-    void meterPair(ImDrawList* dl, float x0, float x1, float l, float r)
+    void meterPair(ImDrawList* dl, float x0, float x1, float l, float r, int slotBase)
     {
         const float y0 = cY(MET_Y0), y1 = cY(MET_Y1);
         dl->AddRectFilled(panel.P(x0 - 2, y0 - 2), panel.P(x1 + 2, y1 + 2), IM_COL32(60, 60, 63, 255), 2.0f * sc());
-        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(14, 16, 18, 255));
+        dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), IM_COL32(10, 11, 13, 255));
         const float mid = 0.5f * (x0 + x1);
-        meterBar(dl, x0 + 1, mid - 0.5f, l);
-        meterBar(dl, mid + 0.5f, x1 - 1, r);
-    }
-
-    void meterBar(ImDrawList* dl, float x0, float x1, float lin)
-    {
-        const float y0 = cY(MET_Y0), y1 = cY(MET_Y1);
-        float db = 20.0f * std::log10(lin > 1e-5f ? lin : 1e-5f);
-        float t = (db + 60.0f) / 60.0f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
-        const float yFill = y1 - t * (y1 - y0);
-        ImU32 col = db > -1.5f ? IM_COL32(226, 70, 55, 255)
-                  : db > -10.f ? IM_COL32(224, 196, 72, 255) : IM_COL32(96, 196, 112, 255);
-        dl->AddRectFilled(panel.P(x0, yFill), panel.P(x1, y1), col);
-        for (int i = 1; i < 12; ++i)
-        {
-            const float y = y0 + (float)i / 12.0f * (y1 - y0);
-            dl->AddLine(panel.P(x0, y), panel.P(x1, y), IM_COL32(14, 16, 18, 200), 1.0f * sc());
-        }
+        ledMeterBar(dl, x0 + 1, mid - 0.5f, y0, y1, l, slotBase);       // British: slots 4-7
+        ledMeterBar(dl, mid + 0.5f, x1 - 1, y0, y1, r, slotBase + 1);
     }
 
     duskdpf::DuskPanel panel;
@@ -3314,7 +3505,7 @@ private:
     bool presetOpen = false;
     bool showFft = true;
     int  graphRangeIdx = 2;
-    int  digRangeIdx = 3;      // Digital plot +/- range idx into {6,12,18,24,30}
+    int  digRangeIdx = 1;      // Digital plot range idx into {±12,±24,±30,±60,Warped}; default ±24
     int  dragBand_ = -1;       // Digital: band whose handle is being dragged
     int  selectedBand_ = 4;    // Digital: selected band for the detail panel (default Mid)
     bool abIsA_ = true;        // Digital A/B compare — visual only (no DSP param yet)
@@ -3338,6 +3529,13 @@ private:
     ImVec2  digDragStartMouse_ { 0.f, 0.f };   // design coords at mouse-down
     int     digCtxBand_ = -1;  // band whose right-click context menu is open (-1 = empty)
     float smoothedDynGain_[8] = {}; // Digital: smoothed live per-band dyn-EQ gain (dB)
+    // LED-segment meter hold state: peak-hold dB + clip-hold timer per channel.
+    // Slots 0-3 = Digital in L/R + out L/R; 4-7 = British in L/R + out L/R.
+    float ledPk_[8]   = { -60.f, -60.f, -60.f, -60.f, -60.f, -60.f, -60.f, -60.f };
+    float ledClip_[8] = {};
+    // Digital meter numeric readout (0.15 s peak-hold, like British drawMeters).
+    float digMtRdIn_ = 0.f, digMtRdOut_ = 0.f, digMtRdTimer_ = 0.f;
+    float digMtDbIn_ = -60.f, digMtDbOut_ = -60.f;
     float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f;
     bool  stepModReset_ = false;
