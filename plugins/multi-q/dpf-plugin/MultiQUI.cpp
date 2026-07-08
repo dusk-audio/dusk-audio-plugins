@@ -114,36 +114,11 @@ namespace
 
     inline float mqDef(uint32_t p) { return kMqParams[p].def; }
 
-    // ---- British factory presets (ported from FourKEQParams.hpp kFactoryPresets;
-    // self-contained here to avoid the FourKEQ header's clashing kParamCount) ----
-    struct BritishPreset
-    {
-        const char* name;
-        float lfGain, lfFreq, lfBell;
-        float lmGain, lmFreq, lmQ;
-        float hmGain, hmFreq, hmQ;
-        float hfGain, hfFreq, hfBell;
-        float hpfFreq, lpfFreq;
-        float saturation, outputGain, inputGain, eqType;
-    };
-    constexpr BritishPreset kBritishPresets[] =
-    {
-        { "Vocal Presence",        3.0f,100.f,0.f, -3.0f,300.f,1.3f,  4.0f,3500.f,0.7f,  2.0f,8000.f,0.f,   80.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Kick Punch",            4.0f,50.f,0.f,  -2.5f,200.f,0.8f,  3.0f,2000.f,1.5f,  0.0f,8000.f,0.f,   30.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Snare Crack",           0.0f,100.f,0.f,  4.0f,250.f,0.7f,  5.0f,5000.f,1.2f,  3.0f,8000.f,1.f,  150.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Drum Bus Punch",        4.0f,70.f,0.f,  -3.0f,350.f,0.6f,  3.0f,3500.f,1.0f,  2.5f,10000.f,0.f,  20.f,20000.f, 25.f,0.f,0.f,1.f },
-        { "Bass Warmth",           4.0f,80.f,0.f,  -3.0f,400.f,0.7f,  2.0f,1500.f,0.7f,  0.0f,8000.f,0.f,   20.f,10000.f, 0.f,0.f,0.f,0.f },
-        { "Bass Guitar Polish",    5.0f,60.f,0.f,  -2.0f,250.f,1.0f,  3.0f,1200.f,0.8f,  2.0f,4500.f,1.f,   35.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Acoustic Guitar",      -2.0f,100.f,0.f,  2.0f,200.f,0.7f,  3.0f,2500.f,0.9f,  4.0f,12000.f,0.f,  80.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Piano Brilliance",      2.0f,80.f,0.f,  -2.5f,500.f,0.8f,  3.0f,2000.f,0.7f,  3.5f,8000.f,0.f,   30.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Bright Mix",            2.0f,60.f,0.f,   0.0f,600.f,0.7f, -2.0f,2500.f,0.8f,  2.5f,10000.f,0.f,  20.f,20000.f, 20.f,0.f,0.f,0.f },
-        { "Glue Bus",              2.0f,100.f,0.f,  0.0f,600.f,0.7f, -1.5f,3000.f,0.7f,  2.0f,10000.f,0.f,  20.f,20000.f, 20.f,0.f,0.f,0.f },
-        { "Telephone EQ",          0.0f,100.f,0.f,  6.0f,1000.f,1.5f, 0.0f,2000.f,0.7f,  0.0f,8000.f,0.f,  300.f,3000.f,  0.f,0.f,0.f,0.f },
-        { "Air & Silk",            0.0f,100.f,0.f,  0.0f,600.f,0.7f,  3.0f,7000.f,0.7f,  4.0f,15000.f,0.f,  20.f,20000.f, 0.f,0.f,0.f,0.f },
-        { "Master Sheen",          0.0f,100.f,0.f,  0.0f,600.f,0.7f,  1.0f,5000.f,0.7f,  1.5f,16000.f,0.f,  20.f,20000.f, 10.f,0.f,0.f,0.f },
-        { "Master Bus Sweetening", 1.0f,50.f,0.f,  -1.0f,600.f,0.5f,  0.5f,4000.f,0.6f,  1.5f,15000.f,0.f,  20.f,20000.f, 15.f,-0.5f,0.f,0.f },
-    };
-    constexpr int kNumBritishPresets = (int)(sizeof(kBritishPresets) / sizeof(kBritishPresets[0]));
+    // British factory presets now come from the shared, generated Multi-Q table
+    // (mqprog::kBritishPrograms in MultiQProgramPresets.hpp) — the same sparse
+    // (paramIndex,value) rows the DPF shell exposes as host programs. The old
+    // hand-rolled 4K-EQ list has been retired so the dropdown, the host programs
+    // and MultiQPresets.h all stay in lockstep.
 
     // Character selector (EQ Type: Digital / Match / British / Tube).
     const char* kCharLabels[4] = { "DIGITAL", "MATCH", "BRITISH", "TUBE" };
@@ -321,7 +296,7 @@ protected:
             // preset, Save, Auto Gain, mode, range, Oversample, Bypass); Match/Tube
             // keep the shared 4-segment EQ-TYPE character selector.
             if (mode == kDigitalModeIndex)   { drawDigitalHeader(dl); drawDigital(dl); }
-            else if (mode == kTubeModeIndex) { drawCharSelector(dl); drawTube(dl); }
+            else if (mode == kTubeModeIndex) { drawCharSelector(dl); drawTubePresetCombo(dl); drawTube(dl); }
             else                             { drawCharSelector(dl); drawMatch(dl); } // Match spectrum-learn UI
         }
 
@@ -401,8 +376,8 @@ private:
             const ImVec2 p0 = panel.P(kPresetX0, kPresetY0), p1 = panel.P(kPresetX1, kPresetY1);
             dl->AddRectFilled(p0, p1, IM_COL32(46, 46, 50, 255), 3.f * sc());
             dl->AddRect(p0, p1, presetOpen ? IM_COL32(120, 150, 200, 240) : IM_COL32(90, 90, 96, 220), 3.f * sc(), 0, 1.f * sc());
-            const char* preview = (currentPreset >= 0 && currentPreset < kNumBritishPresets)
-                                      ? kBritishPresets[currentPreset].name : "Default";
+            const char* preview = (currentPreset >= 0 && currentPreset < mqprog::kNumBritishPrograms)
+                                      ? mqprog::kBritishPrograms[currentPreset].name : "Default";
             panel.text(dl, kPresetX0 + 9.f, 0.5f * (kPresetY0 + kPresetY1) - 6.5f, 13.f, IM_COL32(228, 228, 224, 255), preview, -1);
             const ImVec2 ac = panel.P(kPresetX1 - 13.f, 0.5f * (kPresetY0 + kPresetY1));
             dl->AddTriangleFilled(ImVec2(ac.x - 4.f * sc(), ac.y - 2.5f * sc()),
@@ -2130,6 +2105,53 @@ private:
         digPreset_ = pi;
     }
 
+    // Apply a Tube (Pultec) factory preset (pi<0 = Init/defaults). Resets the Tube
+    // param group to layout defaults, then applies the preset's sparse overrides
+    // (which include eq_type=Tube) — matching the shell's loadProgram semantics.
+    void applyTubePreset(int pi)
+    {
+        auto setP = [&](uint32_t id, float v) {
+            editParameter(id, true); values[id] = v; setParameterValue(id, v); editParameter(id, false); };
+        for (uint32_t i = kParamPultecLfBoostGain; i <= kParamPultecMidHighPeak; ++i)
+            setP(i, kMqParams[i].def);                          // reset Tube group
+        setP(kParamEqType, (float)kTubeModeIndex);              // keep Tube character
+        if (pi >= 0 && pi < mqprog::kNumTubePrograms)
+        {
+            const mqprog::Program& prog = mqprog::kTubePrograms[pi];
+            for (int i = 0; i < prog.count; ++i) setP(prog.pairs[i].idx, prog.pairs[i].val);
+        }
+        tubePreset_ = pi;
+    }
+
+    // Tube preset dropdown — factory Tube presets (mqprog::kTubePrograms). Sits in
+    // the header gap between the title and the shared EQ-TYPE character selector.
+    void drawTubePresetCombo(ImDrawList* dl)
+    {
+        const float s = sc();
+        const float y0 = 61.f, y1 = 83.f;
+        panel.text(dl, 180.f, 52.f, 9.5f, IM_COL32(150, 152, 156, 255), "PRESET", -1, true);
+        const char* cur = (tubePreset_ >= 0 && tubePreset_ < mqprog::kNumTubePrograms)
+                              ? mqprog::kTubePrograms[tubePreset_].name : "Init";
+        ImGui::SetCursorScreenPos(panel.P(180.f, y0));
+        ImGui::SetNextItemWidth((348.f - 180.f) * s);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(50, 42, 34, 255));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(28, 22, 17, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(96, 70, 44, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(214, 196, 168, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f * s, 4.f * s));
+        if (ImGui::BeginCombo("##tbpreset", cur))
+        {
+            if (ImGui::Selectable("Init", tubePreset_ < 0)) applyTubePreset(-1);
+            for (int i = 0; i < mqprog::kNumTubePrograms; ++i)
+                if (ImGui::Selectable(mqprog::kTubePrograms[i].name, i == tubePreset_))
+                    applyTubePreset(i);
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+        (void)y1;
+    }
+
     //========================================================================
     // DIGITAL header — A/B, character dropdown, preset, Save, Auto Gain, mode,
     // graph range, Oversample, Bypass (JUCE MultiQEditor header layout).
@@ -2675,24 +2697,21 @@ private:
         editParameter(id, true); values[id] = nv; setParameterValue(id, nv); editParameter(id, false);
     }
 
+    // Apply a British factory preset (mqprog::kBritishPrograms). Mirrors the shell's
+    // loadProgram + applyDigitalPreset: reset the British param group to layout
+    // defaults, then apply the preset's sparse (paramIndex,value) overrides (which
+    // include eq_type=British, so the character stays selected).
     void applyPreset(int idx)
     {
-        if (idx < 0 || idx >= kNumBritishPresets) return;
+        if (idx < 0 || idx >= mqprog::kNumBritishPrograms) return;
+        auto setP = [&](uint32_t id, float v) {
+            editParameter(id, true); values[id] = v; setParameterValue(id, v); editParameter(id, false); };
+        for (uint32_t i = kParamBritishHpfFreq; i <= kParamBritishOutputGain; ++i)
+            setP(i, kMqParams[i].def);                              // reset British group
+        setP(kParamEqType, (float)kBritishModeIndex);              // keep British character
+        const mqprog::Program& prog = mqprog::kBritishPrograms[idx];
+        for (int i = 0; i < prog.count; ++i) setP(prog.pairs[i].idx, prog.pairs[i].val);
         currentPreset = idx;
-        const BritishPreset& p = kBritishPresets[idx];
-        struct KV { uint32_t id; float v; };
-        const KV kv[] = {
-            {kLfGain,p.lfGain},{kLfFreq,p.lfFreq},{kLfBell,p.lfBell},
-            {kLmGain,p.lmGain},{kLmFreq,p.lmFreq},{kLmQ,p.lmQ},
-            {kHmGain,p.hmGain},{kHmFreq,p.hmFreq},{kHmQ,p.hmQ},
-            {kHfGain,p.hfGain},{kHfFreq,p.hfFreq},{kHfBell,p.hfBell},
-            {kHpfFreq,p.hpfFreq},{kLpfFreq,p.lpfFreq},
-            {kSaturation,p.saturation},{kOutputGain,p.outputGain},
-            {kInputGain,p.inputGain},{kEqType,p.eqType},
-            {kHpfEnabled, p.hpfFreq > 20.5f ? 1.0f : 0.0f},
-            {kLpfEnabled, p.lpfFreq < 19999.0f ? 1.0f : 0.0f},
-        };
-        for (const KV& e : kv) { editParameter(e.id, true); values[e.id] = e.v; setParameterValue(e.id, e.v); editParameter(e.id, false); }
     }
 
     //========================================================================
@@ -2762,7 +2781,7 @@ private:
 
     void drawPresetPopup(ImDrawList* dl, float winW, float winH)
     {
-        const int n = kNumBritishPresets;
+        const int n = mqprog::kNumBritishPrograms;
         const float top = kPresetY1 + 2.f;
         const float bot = top + n * kPresetRowH + 6.f;
         const ImVec2 p0 = panel.P(kPresetX0, top), p1 = panel.P(kPresetX1, bot);
@@ -2777,7 +2796,7 @@ private:
             const bool hov = m.x >= r0.x && m.x <= r1.x && m.y >= r0.y && m.y <= r1.y;
             if (hov)              dl->AddRectFilled(r0, r1, IM_COL32(70, 90, 120, 255), 2.f * sc());
             else if (i == currentPreset) dl->AddRectFilled(r0, r1, IM_COL32(48, 52, 58, 255), 2.f * sc());
-            panel.text(dl, kPresetX0 + 11.f, ry0 + 0.5f * kPresetRowH - 6.f, 12.f, IM_COL32(224, 224, 220, 255), kBritishPresets[i].name, -1);
+            panel.text(dl, kPresetX0 + 11.f, ry0 + 0.5f * kPresetRowH - 6.f, 12.f, IM_COL32(224, 224, 220, 255), mqprog::kBritishPrograms[i].name, -1);
             if (hov && ImGui::IsMouseClicked(0)) { applyPreset(i); presetOpen = false; }
         }
 
@@ -3605,6 +3624,7 @@ private:
     float abBankB_[kParamCount] = {};   // snapshot B
     bool tubeAnalyzer_ = true; // Tube view: FFT analyzer overlay on/off (UI-local)
     int  digPreset_ = -1;      // Digital: selected factory preset index (-1 = Init/none)
+    int  tubePreset_ = -1;     // Tube: selected factory preset index (-1 = Init/none)
 
     // Digital analyzer state (own FFT + buffers, kept separate from British `fft`/
     // `specDb` so the two skins never fight over the FFT size). digFrozen_ + snapshot

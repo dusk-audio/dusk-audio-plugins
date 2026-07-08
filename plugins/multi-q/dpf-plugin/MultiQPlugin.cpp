@@ -25,7 +25,9 @@ class MultiQPlugin : public Plugin
 {
 public:
     MultiQPlugin()
-        : Plugin(kParamCount, 1 + mqprog::kNumDigitalPrograms /* Default + Digital presets */,
+        : Plugin(kParamCount,
+                 1 + mqprog::kNumDigitalPrograms + mqprog::kNumBritishPrograms + mqprog::kNumTubePrograms
+                     /* Default + Digital + British + Tube presets */,
                  1 /* one state: the Match learned/correction blob */)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
@@ -164,31 +166,53 @@ protected:
     }
 
     //--- programs (factory presets) --------------------------------------------
-    // Program 0 = "Default" (all params to layout defaults); programs 1..N = the
-    // Digital factory presets ported from MultiQPresets.h (see MultiQProgramPresets.hpp).
+    // Program 0 = "Default" (all params to layout defaults); the rest are the
+    // factory presets ported from MultiQPresets.h (see MultiQProgramPresets.hpp),
+    // laid out contiguously as [Default][Digital..][British..][Tube..]. Each
+    // British/Tube preset carries its eq_type in the sparse table, so applying its
+    // pairs also switches the plugin into that character.
     void initProgramName(uint32_t index, String& programName) override
     {
         if (index == 0) { programName = "Default"; return; }
-        const uint32_t pi = index - 1;
+        uint32_t pi = index - 1;
         if (pi < (uint32_t)mqprog::kNumDigitalPrograms)
-            programName = mqprog::kDigitalPrograms[pi].name;
+        { programName = mqprog::kDigitalPrograms[pi].name; return; }
+        pi -= (uint32_t)mqprog::kNumDigitalPrograms;
+        if (pi < (uint32_t)mqprog::kNumBritishPrograms)
+        { programName = mqprog::kBritishPrograms[pi].name; return; }
+        pi -= (uint32_t)mqprog::kNumBritishPrograms;
+        if (pi < (uint32_t)mqprog::kNumTubePrograms)
+            programName = mqprog::kTubePrograms[pi].name;
     }
 
     void loadProgram(uint32_t index) override
     {
-        // Every program starts from layout defaults, then a Digital preset applies
-        // its sparse (paramIndex,value) overrides on top.
+        // Every program starts from layout defaults, then the selected preset
+        // applies its sparse (paramIndex,value) overrides on top.
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i].store(kMqParams[i].def, std::memory_order_relaxed);
         if (index == 0)
             return;
-        const uint32_t pi = index - 1;
-        if (pi >= (uint32_t)mqprog::kNumDigitalPrograms)
+
+        const mqprog::Program* prog = nullptr;
+        uint32_t pi = index - 1;
+        if (pi < (uint32_t)mqprog::kNumDigitalPrograms)
+        {
+            values[kParamEqType].store(0.0f, std::memory_order_relaxed); // Digital character
+            prog = &mqprog::kDigitalPrograms[pi];                        // (Digital rows omit eq_type)
+        }
+        else if ((pi -= (uint32_t)mqprog::kNumDigitalPrograms) < (uint32_t)mqprog::kNumBritishPrograms)
+        {
+            prog = &mqprog::kBritishPrograms[pi]; // British rows carry eq_type=British
+        }
+        else if ((pi -= (uint32_t)mqprog::kNumBritishPrograms) < (uint32_t)mqprog::kNumTubePrograms)
+        {
+            prog = &mqprog::kTubePrograms[pi];    // Tube rows carry eq_type=Tube
+        }
+        if (prog == nullptr)
             return;
-        values[kParamEqType].store(0.0f, std::memory_order_relaxed); // Digital character
-        const mqprog::Program& prog = mqprog::kDigitalPrograms[pi];
-        for (int i = 0; i < prog.count; ++i)
-            values[prog.pairs[i].idx].store(prog.pairs[i].val, std::memory_order_relaxed);
+        for (int i = 0; i < prog->count; ++i)
+            values[prog->pairs[i].idx].store(prog->pairs[i].val, std::memory_order_relaxed);
     }
 
     //--- state (Match learned spectra + correction FIR) ------------------------

@@ -1,10 +1,13 @@
 // Copyright (C) 2026 Dusk Audio - GNU GPL v3.0 or later (see repository LICENSE).
 //
 // MultiQProgramPresets.hpp - AUTO-GENERATED from plugins/multi-q/MultiQPresets.h
-// (getFactoryPresets, eqType==0 Digital presets). DO NOT EDIT BY HAND; regenerate
-// with scratchpad/gen_presets.py. Each preset is a sparse list of (MqParamId,value)
-// pairs; params not listed keep their layout defaults. Shared by the DPF shell
-// (programs) and the Digital header preset dropdown.
+// (getFactoryPresets: eqType==0 Digital, ==2 British, ==3 Tube). DO NOT EDIT BY
+// HAND; regenerate with scratchpad/gen_presets.py. Each preset is a sparse list of
+// (MqParamId,value) pairs; params not listed keep their layout defaults. British/
+// Tube rows carry eq_type={2,3} so a single apply switches the plugin's character.
+// (Tube emits its FULL pultec_* set: JUCE applyPreset writes the whole TubePreset
+// struct, and mid_enabled / mid_dip_freq struct-defaults differ from the DPF layout
+// defaults.) Shared by the DPF shell (host programs) + the header preset dropdowns.
 #pragma once
 #include <cstdint>
 
@@ -13,6 +16,7 @@ namespace mqprog
     struct PgPair { uint32_t idx; float val; };
     struct Program { const char* name; const PgPair* pairs; int count; };
 
+    // ---- Digital presets (eqType==0) ----
     static constexpr PgPair kP0[] = { {0,1.0f}, {1,80.0f}, {2,0.71f}, {4,2.0f}, {8,1.0f}, {9,200.0f}, {11,1.0f}, {10,-2.5f}, {12,0.0f}, {19,0.0f}, {20,800.0f}, {22,0.71f}, {21,0.0f}, {23,0.0f}, {30,1.0f}, {31,2500.0f}, {33,1.2f}, {32,2.0f}, {34,0.0f}, {41,1.0f}, {42,5000.0f}, {44,0.8f}, {43,1.5f}, {45,0.0f}, {52,1.0f}, {53,10000.0f}, {55,0.71f}, {54,1.0f}, {56,0.0f}, {63,0.0f}, {64,12000.0f}, {66,0.71f}, {65,0.0f}, {67,0.0f}, {74,0.0f}, {75,18000.0f}, {76,0.71f}, {78,2.0f}, {86,2.0f}, {84,0.0f} };
     static constexpr PgPair kP1[] = { {0,1.0f}, {1,100.0f}, {2,0.71f}, {4,2.0f}, {8,1.0f}, {9,250.0f}, {11,1.5f}, {10,-3.0f}, {12,0.0f}, {19,1.0f}, {20,400.0f}, {22,2.5f}, {21,-2.0f}, {23,0.0f}, {30,0.0f}, {31,1000.0f}, {33,0.71f}, {32,0.0f}, {34,0.0f}, {41,1.0f}, {42,3000.0f}, {44,1.0f}, {43,1.0f}, {45,0.0f}, {52,0.0f}, {53,8000.0f}, {55,0.71f}, {54,0.0f}, {56,0.0f}, {63,0.0f}, {64,12000.0f}, {66,0.71f}, {65,0.0f}, {67,0.0f}, {74,0.0f}, {75,18000.0f}, {76,0.71f}, {78,2.0f}, {86,3.0f} };
     static constexpr PgPair kP2[] = { {0,1.0f}, {1,120.0f}, {2,0.71f}, {4,3.0f}, {8,1.0f}, {9,180.0f}, {11,0.8f}, {10,2.0f}, {12,0.0f}, {19,1.0f}, {20,350.0f}, {22,2.0f}, {21,-1.5f}, {23,0.0f}, {30,1.0f}, {31,2000.0f}, {33,1.5f}, {32,1.5f}, {34,0.0f}, {41,1.0f}, {42,4500.0f}, {44,1.0f}, {43,2.5f}, {45,0.0f}, {52,1.0f}, {53,8000.0f}, {55,0.71f}, {54,1.0f}, {56,0.0f}, {63,0.0f}, {64,10000.0f}, {66,0.71f}, {65,0.0f}, {67,0.0f}, {74,1.0f}, {75,15000.0f}, {76,0.71f}, {78,2.0f}, {84,0.0f} };
@@ -109,4 +113,63 @@ namespace mqprog
         { "M/S Stereo Width", kP45, (int)(sizeof(kP45)/sizeof(PgPair)) },
     };
     static constexpr int kNumDigitalPrograms = (int)(sizeof(kDigitalPrograms)/sizeof(Program));
+
+    // ---- British presets (eqType==2) ----
+    static constexpr PgPair kB0[] = { {87,2.0f}, {100,80.0f}, {101,1.0f}, {102,12000.0f}, {103,1.0f}, {104,2.0f}, {105,100.0f}, {106,0.0f}, {107,-1.5f}, {108,400.0f}, {109,0.8f}, {110,3.0f}, {111,3000.0f}, {112,1.2f}, {113,1.0f}, {114,8000.0f}, {115,0.0f}, {116,0.0f}, {117,0.0f} };
+    static constexpr PgPair kB1[] = { {87,2.0f}, {100,60.0f}, {101,1.0f}, {104,4.0f}, {105,100.0f}, {106,1.0f}, {107,-2.0f}, {108,400.0f}, {109,1.0f}, {110,2.0f}, {111,4000.0f}, {112,1.5f}, {113,1.5f}, {114,10000.0f}, {115,0.0f}, {116,1.0f} };
+    static constexpr PgPair kB2[] = { {87,2.0f}, {104,1.0f}, {105,80.0f}, {106,0.0f}, {110,0.5f}, {111,3000.0f}, {112,0.7f}, {113,0.5f}, {114,12000.0f}, {115,0.0f}, {116,0.0f}, {117,30.0f} };
+    static constexpr PgPair kB3[] = { {87,2.0f}, {104,0.5f}, {105,100.0f}, {116,0.0f}, {117,60.0f}, {118,3.0f} };
+    static constexpr PgPair kB4[] = { {87,2.0f}, {100,120.0f}, {101,1.0f}, {107,-3.0f}, {108,300.0f}, {109,1.5f}, {110,2.0f}, {111,5000.0f}, {112,1.0f}, {113,2.0f}, {114,8000.0f}, {115,0.0f}, {116,1.0f} };
+    static constexpr PgPair kB5[] = { {87,2.0f}, {100,80.0f}, {101,1.0f}, {104,2.0f}, {105,220.0f}, {107,-2.0f}, {108,400.0f}, {109,1.2f}, {110,3.0f}, {111,3500.0f}, {112,0.8f}, {113,4.0f}, {114,12000.0f}, {116,0.0f}, {117,0.2f} };
+    static constexpr PgPair kB6[] = { {87,2.0f}, {104,3.0f}, {105,60.0f}, {106,1.0f}, {107,-1.5f}, {108,350.0f}, {109,0.8f}, {110,2.5f}, {111,4000.0f}, {112,0.6f}, {113,2.0f}, {114,10000.0f}, {116,1.0f}, {117,0.15f} };
+    static constexpr PgPair kB7[] = { {87,2.0f}, {102,8000.0f}, {103,1.0f}, {104,4.0f}, {105,100.0f}, {107,-3.0f}, {108,250.0f}, {109,1.5f}, {110,2.0f}, {111,1500.0f}, {112,0.7f}, {116,0.0f}, {117,0.3f} };
+    static constexpr PgPair kB8[] = { {87,2.0f}, {104,1.5f}, {105,60.0f}, {110,1.0f}, {111,3000.0f}, {112,0.5f}, {113,1.5f}, {114,16000.0f}, {116,1.0f}, {117,0.1f} };
+    static constexpr PgPair kB9[] = { {87,2.0f}, {100,80.0f}, {101,1.0f}, {107,-2.5f}, {108,200.0f}, {109,1.0f}, {110,3.0f}, {111,5000.0f}, {112,0.7f}, {113,3.5f}, {114,12000.0f}, {116,0.0f}, {117,0.15f} };
+    static constexpr PgPair kB10[] = { {87,2.0f}, {100,200.0f}, {101,1.0f}, {104,-1.0f}, {105,300.0f}, {110,2.0f}, {111,6000.0f}, {112,0.5f}, {113,4.0f}, {114,12000.0f}, {116,0.0f}, {117,0.1f} };
+    static constexpr PgPair kB11[] = { {87,2.0f}, {104,0.5f}, {105,100.0f}, {113,0.5f}, {114,10000.0f}, {116,0.0f}, {117,0.5f}, {118,3.0f} };
+    static constexpr PgPair kB12[] = { {87,2.0f}, {100,100.0f}, {101,1.0f}, {102,12000.0f}, {103,1.0f}, {104,1.0f}, {105,200.0f}, {110,3.0f}, {111,2000.0f}, {112,0.6f}, {113,-1.0f}, {114,8000.0f}, {116,0.0f}, {117,0.25f} };
+
+    static constexpr Program kBritishPrograms[] = {
+        { "Console Vocal Chain", kB0, (int)(sizeof(kB0)/sizeof(PgPair)) },
+        { "Rock Drums", kB1, (int)(sizeof(kB1)/sizeof(PgPair)) },
+        { "Mix Bus Glue", kB2, (int)(sizeof(kB2)/sizeof(PgPair)) },
+        { "Console Warmth", kB3, (int)(sizeof(kB3)/sizeof(PgPair)) },
+        { "Broadcast Voice (British)", kB4, (int)(sizeof(kB4)/sizeof(PgPair)) },
+        { "Vocal Channel", kB5, (int)(sizeof(kB5)/sizeof(PgPair)) },
+        { "Drum Bus Punch", kB6, (int)(sizeof(kB6)/sizeof(PgPair)) },
+        { "Bass Guitar", kB7, (int)(sizeof(kB7)/sizeof(PgPair)) },
+        { "Mix Bus Glue (British)", kB8, (int)(sizeof(kB8)/sizeof(PgPair)) },
+        { "Acoustic Guitar", kB9, (int)(sizeof(kB9)/sizeof(PgPair)) },
+        { "Overhead Mics", kB10, (int)(sizeof(kB10)/sizeof(PgPair)) },
+        { "Console Color", kB11, (int)(sizeof(kB11)/sizeof(PgPair)) },
+        { "Electric Guitar", kB12, (int)(sizeof(kB12)/sizeof(PgPair)) },
+    };
+    static constexpr int kNumBritishPrograms = (int)(sizeof(kBritishPrograms)/sizeof(Program));
+
+    // ---- Tube presets (eqType==3) ----
+    static constexpr PgPair kT0[] = { {87,3.0f}, {120,6.0f}, {121,2.0f}, {122,4.0f}, {123,0.0f}, {124,3.0f}, {125,0.5f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.3f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT1[] = { {87,3.0f}, {120,0.0f}, {121,2.0f}, {122,0.0f}, {123,4.0f}, {124,5.0f}, {125,0.4f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.3f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT2[] = { {87,3.0f}, {120,2.0f}, {121,3.0f}, {122,0.0f}, {123,3.0f}, {124,3.0f}, {125,0.5f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.2f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT3[] = { {87,3.0f}, {120,2.0f}, {121,1.0f}, {122,0.0f}, {123,1.5f}, {124,6.0f}, {125,0.6f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.2f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT4[] = { {87,3.0f}, {120,4.0f}, {121,2.0f}, {122,3.0f}, {123,3.0f}, {124,4.0f}, {125,0.6f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.35f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT5[] = { {87,3.0f}, {120,0.0f}, {121,2.0f}, {122,0.0f}, {123,5.0f}, {124,5.0f}, {125,0.8f}, {126,1.0f}, {127,2.0f}, {128,0.0f}, {129,0.0f}, {130,0.2f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT6[] = { {87,3.0f}, {120,2.0f}, {121,3.0f}, {122,5.0f}, {123,3.0f}, {124,1.0f}, {125,0.3f}, {126,6.0f}, {127,0.0f}, {128,0.0f}, {129,0.0f}, {130,0.6f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT7[] = { {87,3.0f}, {120,6.0f}, {121,2.0f}, {122,2.0f}, {123,0.0f}, {124,3.0f}, {125,0.5f}, {126,3.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.4f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT8[] = { {87,3.0f}, {120,1.5f}, {121,2.0f}, {122,1.0f}, {123,2.0f}, {124,6.0f}, {125,0.7f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.15f}, {131,0.0f}, {132,2.0f}, {133,0.0f}, {134,4.0f}, {135,0.0f}, {136,2.0f}, {137,0.0f} };
+    static constexpr PgPair kT9[] = { {87,3.0f}, {120,3.0f}, {121,3.0f}, {122,0.0f}, {123,4.0f}, {124,3.0f}, {125,0.5f}, {126,0.0f}, {127,1.0f}, {128,0.0f}, {129,0.0f}, {130,0.3f}, {131,1.0f}, {132,2.0f}, {133,0.0f}, {134,3.0f}, {135,4.0f}, {136,2.0f}, {137,0.0f} };
+
+    static constexpr Program kTubePrograms[] = {
+        { "Vintage Bass Trick", kT0, (int)(sizeof(kT0)/sizeof(PgPair)) },
+        { "Vintage Air", kT1, (int)(sizeof(kT1)/sizeof(PgPair)) },
+        { "Warm Vocal (Tube)", kT2, (int)(sizeof(kT2)/sizeof(PgPair)) },
+        { "Gentle Master (Tube)", kT3, (int)(sizeof(kT3)/sizeof(PgPair)) },
+        { "Vintage Warmth", kT4, (int)(sizeof(kT4)/sizeof(PgPair)) },
+        { "HF Air", kT5, (int)(sizeof(kT5)/sizeof(PgPair)) },
+        { "Radio EQ", kT6, (int)(sizeof(kT6)/sizeof(PgPair)) },
+        { "Bass Thickener", kT7, (int)(sizeof(kT7)/sizeof(PgPair)) },
+        { "Mastering Sheen", kT8, (int)(sizeof(kT8)/sizeof(PgPair)) },
+        { "Mid Scoop", kT9, (int)(sizeof(kT9)/sizeof(PgPair)) },
+    };
+    static constexpr int kNumTubePrograms = (int)(sizeof(kTubePrograms)/sizeof(Program));
+
 }
