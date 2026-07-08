@@ -19,6 +19,7 @@
 #include "MultiQFilters.hpp"
 #include "MultiQParams.hpp"
 #include "MultiQDynamics.hpp"
+#include "MultiQMatch.hpp"                         // Match character (spectrum-match EQ + FIR conv)
 #include "MultiQTube.hpp"                         // Tube character (framework-free TubeEQ port)
 #include "MultiQLimiter.hpp"                      // output brickwall limiter (framework-free)
 #include "../../shared-dpf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
@@ -123,6 +124,7 @@ public:
         int lat = limiter.getLatencySamples();   // lookahead, all characters (0 if off)
         if (lastEqType == (int)EQType::British)   lat += britishEQ.getLatencySamples();
         else if (lastEqType == (int)EQType::Tube) lat += tubeEQ.getLatencySamples();
+        else if (lastEqType == (int)EQType::Match) lat += matchProc.getLatencySamples();
         else                                      lat += lastDigitalSatLatency;
         return lat;
     }
@@ -148,6 +150,12 @@ public:
     // Read-only tap of the dynamics meter the DSP already maintains; never touches
     // processed audio (bit-identity preserved).
     float getBandDynamicGain(int band) const noexcept { return dynamicEQ.getCurrentDynamicGain(band); }
+
+    // Match spectrum-EQ processor: the shell's UI write-bridge (learn/compute/
+    // clear) and the read-bridge (spectra/curves/state) go through this. The audio
+    // thread's learn-feed + FIR convolution happen inside MultiQDSP::process().
+    MultiQMatch&       matchProcessor()       noexcept { return matchProc; }
+    const MultiQMatch& matchProcessor() const noexcept { return matchProc; }
 
 private:
     // Framework-free cascaded biquad (variable-slope HPF/LPF). Direct-form II
@@ -225,6 +233,7 @@ private:
     std::array<StereoSVF, 6>    svfDynGainFilters; // bands 2-7 dynamic-gain (Cytomic SVF)
     MultiQDynamics dynamicEQ;
     FourKEQDSP britishEQ;              // British character (upgraded 4K parallel-summing core)
+    MultiQMatch matchProc;            // Match character (learn + correction-FIR convolution)
     MultiQTube tubeEQ;                 // Tube character (framework-free TubeEQ port)
     MultiQLimiter limiter;            // master-bus brickwall (all characters)
 
