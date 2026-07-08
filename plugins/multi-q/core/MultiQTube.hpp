@@ -30,6 +30,7 @@
 #include "../../shared/AnalogEmulation/AnalogEmulation.h"
 
 #include "../../shared-dpf/dsp/DuskDenormals.hpp"
+#include "../../shared-dpf/dsp/DuskOversampler.hpp"   // 2x/4x nonlinear-stage OS
 
 #include <array>
 #include <cmath>
@@ -518,10 +519,19 @@ public:
 
     void prepare(double sampleRate, int samplesPerBlock, int numChannels)
     {
+        baseSampleRate = sampleRate;
         currentSampleRate = sampleRate;
         this->numChannels = std::min(numChannels, maxProcessChannels);
 
-        // deterministic character seed (kept EXACTLY as the JUCE build)
+        // Nonlinear-stage oversampling: start at 1x (transparent passthrough).
+        // setOversampling() re-prepares the internal DSP at the elevated rate when
+        // hq_enabled changes; at 1x the per-sample chain is called directly, so the
+        // Tube path is bit-identical to the pre-oversampling build when hq is Off.
+        osFactor = 1;
+        for (auto& os : oversamplers) { os.setFactor(1); os.reset(); }
+
+        // deterministic character seed (kept EXACTLY as the JUCE build). Seeded off
+        // the BASE rate so the character is stable regardless of the hq setting.
         characterSeed = static_cast<uint32_t>(sampleRate * 1000.0);
         tubeStage.prepare(sampleRate, numChannels);
         pultecLF.prepare(sampleRate, characterSeed);
@@ -572,6 +582,49 @@ public:
 
     const Parameters& getParameters() const { return params; }
 
+    // Nonlinear-stage oversampling. mode: 0=Off(1x), 1=2x, 2=4x. When the factor
+    // changes, the whole internal Tube DSP is re-prepared at the elevated rate
+    // (base*factor) — RT-safe: every component exposes an alloc-free
+    // updateSampleRate(). The per-sample chain then runs inside the polyphase
+    // halfband oversampler, so the drive polynomial + transformer H3 (the tube's
+    // dominant aliasing sources) are band-limited. Only re-prepares on change, so
+    // steady-state blocks pay nothing.
+    void setOversampling(int mode)
+    {
+        int f = (mode == 2) ? 4 : (mode == 1) ? 2 : 1;
+        if (f == osFactor)
+            return;
+        osFactor = f;
+        updateSampleRate(baseSampleRate * (double)f);
+        for (auto& os : oversamplers) { os.setFactor(f); os.reset(); }
+    }
+
+    // Alloc-free sample-rate update (recomputes every coefficient + resets state at
+    // the new rate). Used by setOversampling; mirrors MultiQ::…updateSampleRate.
+    void updateSampleRate(double newRate)
+    {
+        currentSampleRate = newRate;
+        tubeStage.updateSampleRate(newRate);
+        pultecLF.updateSampleRate(newRate);
+        hfInductorL.updateSampleRate(newRate);
+        hfInductorR.updateSampleRate(newRate);
+        hfQInductor.updateSampleRate(newRate);
+        inputTransformer.updateSampleRate(newRate);
+        outputTransformer.updateSampleRate(newRate);
+        hfBoostFilterL.reset();    hfBoostFilterR.reset();
+        hfAttenFilterL.reset();    hfAttenFilterR.reset();
+        midLowPeakFilterL.reset(); midLowPeakFilterR.reset();
+        midDipFilterL.reset();     midDipFilterR.reset();
+        midHighPeakFilterL.reset();midHighPeakFilterR.reset();
+        needsUpdate = true;   // recompute biquad coeffs at the new rate
+    }
+
+    // Added latency (base-rate samples) of the nonlinear-stage oversampler. 0 at 1x.
+    int getLatencySamples() const noexcept
+    {
+        return osFactor <= 1 ? 0 : (int)std::lround(oversamplers[0].latency());
+    }
+
     // Process channel buffers in place. Mirrors TubeEQProcessor::process(buffer).
     void process(float* const* channelData, int numChans, int numSamples)
     {
@@ -589,7 +642,7 @@ public:
 
         const int channels = std::min(numChans, maxProcessChannels);
 
-        // Apply input gain (buffer-wide)
+        // Apply input gain (buffer-wide, at base rate)
         if (std::abs(params.inputGain) > 0.01f)
         {
             float inputGainLinear = std::pow(10.0f, params.inputGain / 20.0f);
@@ -604,59 +657,21 @@ public:
         {
             float* cd = channelData[ch];
             bool isLeft = (ch % 2 == 0);
+            auto& os = oversamplers[static_cast<size_t>(ch)];
 
             for (int i = 0; i < numSamples; ++i)
             {
-                float sample = cd[i];
-
-                if (!safeIsFinite(sample))
+                float in = cd[i];
+                if (!safeIsFinite(in))
                 {
                     cd[i] = 0.0f;
                     continue;
                 }
-
-                sample = inputTransformer.processSample(sample, ch);
-                sample = pultecLF.processSample(sample, ch);
-
-                if (params.hfBoostGain > 0.01f)
+                // The whole per-sample Tube chain runs at the oversampled rate.
+                cd[i] = os.processSample(in, [&](float sample) noexcept
                 {
-                    sample = isLeft ? hfInductorL.processNonlinearity(sample, params.hfBoostGain * 0.2f)
-                                    : hfInductorR.processNonlinearity(sample, params.hfBoostGain * 0.2f);
-
-                    sample = isLeft ? hfBoostFilterL.processSample(sample)
-                                    : hfBoostFilterR.processSample(sample);
-                }
-
-                if (params.hfAttenGain > 0.01f)
-                {
-                    sample = isLeft ? hfAttenFilterL.processSample(sample)
-                                    : hfAttenFilterR.processSample(sample);
-                }
-
-                if (params.midEnabled)
-                {
-                    if (params.midLowPeak > 0.01f)
-                        sample = isLeft ? midLowPeakFilterL.processSample(sample)
-                                        : midLowPeakFilterR.processSample(sample);
-
-                    if (params.midDip > 0.01f)
-                        sample = isLeft ? midDipFilterL.processSample(sample)
-                                        : midDipFilterR.processSample(sample);
-
-                    if (params.midHighPeak > 0.01f)
-                        sample = isLeft ? midHighPeakFilterL.processSample(sample)
-                                        : midHighPeakFilterR.processSample(sample);
-                }
-
-                if (params.tubeDrive > 0.01f)
-                    sample = tubeStage.processSample(sample, ch);
-
-                sample = outputTransformer.processSample(sample, ch);
-
-                if (!safeIsFinite(sample))
-                    sample = 0.0f;
-
-                cd[i] = sample;
+                    return processOneSample(sample, ch, isLeft);
+                });
             }
         }
 
@@ -697,11 +712,62 @@ public:
     }
 
 private:
+    // The whole per-sample Tube signal path (input transformer → passive LF → HF
+    // inductor+boost → HF atten → mid section → tube drive stage → output
+    // transformer). Extracted from process() so it can be driven by the polyphase
+    // oversampler at the elevated rate. Byte-for-byte the same op order as before.
+    inline float processOneSample(float sample, int ch, bool isLeft) noexcept
+    {
+        sample = inputTransformer.processSample(sample, ch);
+        sample = pultecLF.processSample(sample, ch);
+
+        if (params.hfBoostGain > 0.01f)
+        {
+            sample = isLeft ? hfInductorL.processNonlinearity(sample, params.hfBoostGain * 0.2f)
+                            : hfInductorR.processNonlinearity(sample, params.hfBoostGain * 0.2f);
+
+            sample = isLeft ? hfBoostFilterL.processSample(sample)
+                            : hfBoostFilterR.processSample(sample);
+        }
+
+        if (params.hfAttenGain > 0.01f)
+        {
+            sample = isLeft ? hfAttenFilterL.processSample(sample)
+                            : hfAttenFilterR.processSample(sample);
+        }
+
+        if (params.midEnabled)
+        {
+            if (params.midLowPeak > 0.01f)
+                sample = isLeft ? midLowPeakFilterL.processSample(sample)
+                                : midLowPeakFilterR.processSample(sample);
+
+            if (params.midDip > 0.01f)
+                sample = isLeft ? midDipFilterL.processSample(sample)
+                                : midDipFilterR.processSample(sample);
+
+            if (params.midHighPeak > 0.01f)
+                sample = isLeft ? midHighPeakFilterL.processSample(sample)
+                                : midHighPeakFilterR.processSample(sample);
+        }
+
+        if (params.tubeDrive > 0.01f)
+            sample = tubeStage.processSample(sample, ch);
+
+        sample = outputTransformer.processSample(sample, ch);
+
+        return safeIsFinite(sample) ? sample : 0.0f;
+    }
+
     Parameters params;
     bool needsUpdate = true;
-    double currentSampleRate = 44100.0;
+    double baseSampleRate = 44100.0;    // rate passed to prepare (pre-oversampling)
+    double currentSampleRate = 44100.0; // effective rate (base * osFactor)
     int numChannels = 2;
+    int osFactor = 1;                   // 1 / 2 / 4 (nonlinear-stage oversampling)
     uint32_t characterSeed = 0;
+
+    std::array<Oversampler, 8> oversamplers; // per-channel nonlinear-stage OS
 
     TubeBiquad hfBoostFilterL, hfBoostFilterR;
     TubeBiquad hfAttenFilterL, hfAttenFilterR;

@@ -20,7 +20,9 @@
 #include "MultiQParams.hpp"
 #include "MultiQDynamics.hpp"
 #include "MultiQTube.hpp"                         // Tube character (framework-free TubeEQ port)
+#include "MultiQLimiter.hpp"                      // output brickwall limiter (framework-free)
 #include "../../shared-dpf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
+#include "../../shared-dpf/dsp/DuskOversampler.hpp" // 2x/4x OS for Digital per-band saturation
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>
@@ -68,6 +70,13 @@ public:
         int   soloBand      = -1;    // -1 = none
         bool  deltaSolo     = false;
 
+        // Master-bus utilities (applied at the very end of process(), all
+        // characters). All default OFF so a default Params is a no-op vs the
+        // pre-feature build — preserving the validated Digital bit-exact A/B.
+        bool  autoGainEnabled  = false;   // 2 s RMS loudness match, +/-6 dB
+        bool  limiterEnabled   = false;   // ~1 ms-lookahead brickwall
+        float limiterCeiling   = 0.0f;    // dBFS
+
         // British character (routed through the upgraded FourKEQDSP core).
         struct British {
             float hpfFreq = 20.f;   bool hpfEnabled = false;
@@ -111,8 +120,15 @@ public:
     // so call it after process() when the host asks for an updated latency.
     int getLatencySamples() const noexcept
     {
-        return lastEqType == (int)EQType::British ? britishEQ.getLatencySamples() : 0;
+        int lat = limiter.getLatencySamples();   // lookahead, all characters (0 if off)
+        if (lastEqType == (int)EQType::British)   lat += britishEQ.getLatencySamples();
+        else if (lastEqType == (int)EQType::Tube) lat += tubeEQ.getLatencySamples();
+        else                                      lat += lastDigitalSatLatency;
+        return lat;
     }
+
+    // Current limiter gain reduction (dB, >=0) for the UI meter. Read-only tap.
+    float getLimiterGainReduction() const noexcept { return limiter.getGainReduction(); }
 
     //--- metering + analyzer taps (read-only observers; any thread) -----------
     // Read-only observers written in process() after the character branch; they
@@ -193,6 +209,11 @@ private:
     void captureInputPeak(const float* const* inputs, int numChannels, int numSamples) noexcept;
     void publishOutputTaps(const float* L, const float* R, bool isStereo, int numSamples) noexcept;
 
+    // Auto-gain: accumulate the raw-input loudness window (top of block) and apply
+    // the smoothed make-up gain to the post-master output (MultiQ.cpp:1523-1580).
+    void accumulateInputRms(const float* const* inputs, int numChannels, int numSamples) noexcept;
+    void applyAutoGain(float* L, float* R, bool isStereo, int numSamples) noexcept;
+
     double currentSampleRate = 48000.0;
     float  biquadSmoothCoeff = 1.0f; // 1 - exp(-1/(0.001*sr)); per-sample coeff ramp
     bool   firstBlock = true;
@@ -205,6 +226,21 @@ private:
     MultiQDynamics dynamicEQ;
     FourKEQDSP britishEQ;              // British character (upgraded 4K parallel-summing core)
     MultiQTube tubeEQ;                 // Tube character (framework-free TubeEQ port)
+    MultiQLimiter limiter;            // master-bus brickwall (all characters)
+
+    // Digital per-band saturation oversampling: one L/R polyphase oversampler per
+    // middle band (2-7). Engaged only when hq_enabled>0 AND the band saturates; at
+    // 1x each is a transparent passthrough (Digital A/B stays bit-identical).
+    std::array<Oversampler, 6> satOsL, satOsR;
+    int prevSatOsFactor = 1;          // reset OS state when the hq factor changes
+    int lastDigitalSatLatency = 0;    // summed active-sat-band OS latency (base samples)
+
+    //--- auto-gain (2 s RMS loudness match, +/-6 dB — MultiQ.cpp:1523-1580) ------
+    LinearSmoothedValue autoGainComp; // linear make-up gain, 2 s ramp
+    double inputRmsSum = 0.0, outputRmsSum = 0.0;
+    float  inputPeakMax = 0.0f, outputPeakMax = 0.0f;
+    int    rmsSampleCount = 0;
+    int    rmsWindowSamples = 96000;  // 2 s (set from sample rate in prepare)
     std::array<LinearSmoothedValue, NUM_BANDS> bandEnableSmoothed;
     std::array<float, NUM_BANDS> prevBandPhaseInvertGain { {1,1,1,1,1,1,1,1} };
     std::array<float, NUM_BANDS> prevBandPanVal {};

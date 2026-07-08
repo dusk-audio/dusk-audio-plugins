@@ -23,6 +23,24 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     for (auto& f : svfFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
     for (auto& f : svfDynGainFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
     dynamicEQ.prepare(currentSampleRate, 2);
+    limiter.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
+
+    // Auto-gain: 2 s RMS window + 2 s smoothing ramp (matches JUCE
+    // autoGainCompensation.reset(sr, 2.0) and rmsWindowSamples = 2*sr).
+    rmsWindowSamples = (int)(2.0 * currentSampleRate);
+    if (rmsWindowSamples < 1) rmsWindowSamples = 1;
+    autoGainComp.reset(currentSampleRate, 2.0);
+    autoGainComp.setCurrentAndTargetValue(1.0f);
+    inputRmsSum = outputRmsSum = 0.0;
+    inputPeakMax = outputPeakMax = 0.0f;
+    rmsSampleCount = 0;
+
+    // Per-band saturation oversamplers start transparent (1x).
+    for (auto& os : satOsL) { os.setFactor(1); os.reset(); }
+    for (auto& os : satOsR) { os.setFactor(1); os.reset(); }
+    prevSatOsFactor = 1;
+    lastDigitalSatLatency = 0;
+
     hpfFilter.reset(); lpfFilter.reset();
     for (auto& s : bandEnableSmoothed) { s.reset(currentSampleRate, 0.01); s.setCurrentAndTargetValue(1.0f); }
     prevBandPhaseInvertGain.fill(1.0f);
@@ -47,6 +65,13 @@ void MultiQDSP::reset()
     dynamicEQ.reset();
     britishEQ.reset();
     tubeEQ.reset();
+    limiter.requestReset();
+    for (auto& os : satOsL) os.reset();
+    for (auto& os : satOsR) os.reset();
+    autoGainComp.setCurrentAndTargetValue(1.0f);
+    inputRmsSum = outputRmsSum = 0.0;
+    inputPeakMax = outputPeakMax = 0.0f;
+    rmsSampleCount = 0;
     hpfFilter.reset(); lpfFilter.reset();
     prevBandPhaseInvertGain.fill(1.0f);
     prevBandPanVal.fill(0.0f);
@@ -270,6 +295,75 @@ void MultiQDSP::publishOutputTaps(const float* L, const float* R, bool isStereo,
         for (int i = 0; i < numSamples; ++i) analyzerRing.push(L[i]);
 }
 
+// Auto-gain input window (raw input, mono downmix). Matches MultiQ.cpp:856-873.
+void MultiQDSP::accumulateInputRms(const float* const* inputs, int numChannels, int numSamples) noexcept
+{
+    const float* L = inputs[0];
+    const float* R = numChannels > 1 ? inputs[1] : inputs[0];
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float s = 0.5f * (L[i] + R[i]);
+        inputRmsSum += (double)s * (double)s;
+        float a = std::fabs(s);
+        if (a > inputPeakMax) inputPeakMax = a;
+    }
+}
+
+// Auto-gain output window + windowed make-up target + apply (MultiQ.cpp:1526-1599).
+// Called on the post-master output so it loudness-matches the raw input, exactly
+// like the JUCE build (auto-gain sits after master gain, before the limiter).
+void MultiQDSP::applyAutoGain(float* L, float* R, bool isStereo, int numSamples) noexcept
+{
+    const float* Rr = (isStereo && R != nullptr) ? R : L;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float s = 0.5f * (L[i] + Rr[i]);
+        outputRmsSum += (double)s * (double)s;
+        float a = std::fabs(s);
+        if (a > outputPeakMax) outputPeakMax = a;
+    }
+    rmsSampleCount += numSamples;
+
+    if (rmsSampleCount >= rmsWindowSamples)
+    {
+        float inputRms  = std::sqrt((float)(inputRmsSum  / (double)rmsSampleCount));
+        float outputRms = std::sqrt((float)(outputRmsSum / (double)rmsSampleCount));
+        if (outputRms > 1e-6f && inputRms > 1e-6f)
+        {
+            float targetGain = inputRms / outputRms;
+            // Peak-safe cap: never push output peaks above the input peak level.
+            if (outputPeakMax > 1e-6f && inputPeakMax > 1e-6f)
+                targetGain = std::min(targetGain, inputPeakMax / outputPeakMax);
+            targetGain = std::clamp(targetGain, 0.5f, 2.0f); // +/-6 dB max
+            if (std::abs(targetGain - 1.0f) > 0.01f)         // dead zone (~0.09 dB)
+                autoGainComp.setTargetValue(targetGain);
+        }
+        inputRmsSum = outputRmsSum = 0.0;
+        inputPeakMax = outputPeakMax = 0.0f;
+        rmsSampleCount = 0;
+    }
+
+    if (autoGainComp.isSmoothing())
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float g = autoGainComp.getNextValue();
+            L[i] *= g;
+            if (isStereo && R != nullptr) R[i] *= g;
+        }
+    }
+    else
+    {
+        float g = autoGainComp.getCurrentValue();
+        if (std::abs(g - 1.0f) > 0.001f)
+            for (int i = 0; i < numSamples; ++i)
+            {
+                L[i] *= g;
+                if (isStereo && R != nullptr) R[i] *= g;
+            }
+    }
+}
+
 void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                         int numChannels, int numSamples, const Params& p)
 {
@@ -278,12 +372,25 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
     // Input peak tap: read BEFORE processing (outputs may alias inputs in place).
     captureInputPeak(inputs, numChannels, numSamples);
 
+    // Auto-gain input loudness window (raw input). When disabled, hold make-up at
+    // unity and clear the accumulators (matches MultiQ.cpp:1601-1610).
+    if (p.autoGainEnabled)
+        accumulateInputRms(inputs, numChannels, numSamples);
+    else
+    {
+        autoGainComp.setCurrentAndTargetValue(1.0f);
+        inputRmsSum = outputRmsSum = 0.0;
+        inputPeakMax = outputPeakMax = 0.0f;
+        rmsSampleCount = 0;
+    }
+
     const bool isStereo = numChannels > 1;
     float* procL = outputs[0];
     float* procR = isStereo ? outputs[1] : nullptr;
 
     const auto eqType = (EQType)p.eqType;
     lastEqType = p.eqType; // cache for getLatencySamples()
+    lastDigitalSatLatency = 0; // recomputed by the Digital branch if it saturates
 
     // British character: route through the upgraded FourKEQDSP core (its own
     // parallel-summing EQ + console saturation + oversampling + M/S). It reads
@@ -307,24 +414,25 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         britishEQ.setBypass(false);
         britishEQ.setAutoGain(false);
         britishEQ.processBlock(inputs, outputs, numChannels, numSamples);
-
-        float mgB = std::pow(10.0f, p.masterGain / 20.0f);
-        if (std::abs(p.masterGain) > 0.01f)
-        {
-            for (int i = 0; i < numSamples; ++i) procL[i] *= mgB;
-            if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mgB;
-        }
-        publishOutputTaps(procL, procR, isStereo, numSamples);
-        return;
     }
-
     // Tube character: route through the framework-free MultiQTube port. It writes
-    // the buffers in place, so copy input→output first, run the tube on the output
-    // buffers, then apply master gain (mirrors the British branch's tail).
-    if (eqType == EQType::Tube)
+    // the buffers in place, so copy input→output first, optionally M/S-encode, run
+    // the tube (which self-oversamples its nonlinear stages), then M/S-decode.
+    else if (eqType == EQType::Tube)
     {
         for (int i = 0; i < numSamples; ++i) procL[i] = inputs[0][i];
         if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] = inputs[1][i];
+
+        // Global M/S encode (Mid=3 / Side=4). Mirrors MultiQ.cpp:942-946 — the tube
+        // then processes the mid and side components, and we decode afterwards.
+        const bool tubeMS = isStereo && (p.processingMode == 3 || p.processingMode == 4);
+        if (tubeMS)
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float l = procL[i], r = procR[i];
+                procL[i] = (l + r) * 0.5f;  // mid
+                procR[i] = (l - r) * 0.5f;  // side
+            }
 
         const auto& t = p.tube;
         MultiQTube::Parameters tp;
@@ -339,19 +447,20 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         tp.midHighFreq = t.midHighFreq;   tp.midHighPeak = t.midHighPeak;
         tp.inputGain = t.inputGain;       tp.outputGain = t.outputGain;
         tp.tubeDrive = t.tubeDrive;       tp.bypass = false;
+        tubeEQ.setOversampling(p.oversampling); // 2x/4x on the nonlinear stages
         tubeEQ.setParameters(tp);
         tubeEQ.process(outputs, numChannels, numSamples);
 
-        float mgT = std::pow(10.0f, p.masterGain / 20.0f);
-        if (std::abs(p.masterGain) > 0.01f)
-        {
-            for (int i = 0; i < numSamples; ++i) procL[i] *= mgT;
-            if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mgT;
-        }
-        publishOutputTaps(procL, procR, isStereo, numSamples);
-        return;
+        if (tubeMS)
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float m = procL[i], s = procR[i];
+                procL[i] = m + s;   // left
+                procR[i] = m - s;   // right
+            }
     }
-
+    else
+    {
     // in-place-safe copy of input into the output working buffers
     for (int i = 0; i < numSamples; ++i) procL[i] = inputs[0][i];
     if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] = inputs[1][i];
@@ -486,6 +595,27 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         for (int b = 0; b < NUM_BANDS; ++b)
             if (effectiveRouting[(size_t)b] != 0) { allStereoRouting = false; break; }
 
+        // Per-band saturation oversampling factor (hq_enabled: 0/1/2 → 1x/2x/4x).
+        // Reset the OS state when the factor changes so no stale elevated-rate
+        // samples leak. At 1x the wrapped waveshaper is a passthrough (bit-exact).
+        const int satOsFactor = (p.oversampling == 2) ? 4 : (p.oversampling == 1) ? 2 : 1;
+        if (satOsFactor != prevSatOsFactor)
+        {
+            for (auto& os : satOsL) { os.setFactor(satOsFactor); os.reset(); }
+            for (auto& os : satOsR) { os.setFactor(satOsFactor); os.reset(); }
+            prevSatOsFactor = satOsFactor;
+        }
+        // Latency = summed group delay of the actively-saturating bands (serial in
+        // the chain). Zero at 1x or when no band saturates, so the linear Digital
+        // path stays zero-latency and the validated A/B is untouched.
+        if (satOsFactor > 1)
+        {
+            const int perBandLat = (int)std::lround(satOsL[0].latency());
+            for (int band = 1; band < 7; ++band)
+                if (bandActive[(size_t)band] && bandSatType[(size_t)band] > 0)
+                    lastDigitalSatLatency += perBandLat;
+        }
+
         for (int i = 0; i < numSamples; ++i)
         {
             float sampleL = procL[i];
@@ -584,8 +714,11 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                         {
                             float drive = bandSatDrive[(size_t)band];
                             CT curve = bandSatCurve[(size_t)band];
-                            sampleL = waveshaperCurves.processWithDrive(sampleL, curve, drive);
-                            sampleR = waveshaperCurves.processWithDrive(sampleR, curve, drive);
+                            // Oversampled memoryless waveshaper (hq_enabled). At 1x
+                            // this is a straight passthrough → bit-exact vs base.
+                            auto ws = [&](float s) noexcept { return waveshaperCurves.processWithDrive(s, curve, drive); };
+                            sampleL = satOsL[(size_t)(band - 1)].processSample(sampleL, ws);
+                            sampleR = satOsR[(size_t)(band - 1)].processSample(sampleR, ws);
                         }
                     }
                     else
@@ -619,14 +752,17 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                         {
                             CT curve = bandSatCurve[(size_t)band];
                             float drive = bandSatDrive[(size_t)band];
+                            auto& osL = satOsL[(size_t)(band - 1)];
+                            auto& osR = satOsR[(size_t)(band - 1)];
+                            auto ws = [&](float s) noexcept { return waveshaperCurves.processWithDrive(s, curve, drive); };
                             switch (routing)
                             {
-                                case 0: sampleL = waveshaperCurves.processWithDrive(sampleL, curve, drive);
-                                        sampleR = waveshaperCurves.processWithDrive(sampleR, curve, drive); break;
-                                case 1: sampleL = waveshaperCurves.processWithDrive(sampleL, curve, drive); break;
-                                case 2: sampleR = waveshaperCurves.processWithDrive(sampleR, curve, drive); break;
-                                case 3: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; mid=waveshaperCurves.processWithDrive(mid,curve,drive); sampleL=mid+side; sampleR=mid-side; break; }
-                                case 4: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; side=waveshaperCurves.processWithDrive(side,curve,drive); sampleL=mid+side; sampleR=mid-side; break; }
+                                case 0: sampleL = osL.processSample(sampleL, ws);
+                                        sampleR = osR.processSample(sampleR, ws); break;
+                                case 1: sampleL = osL.processSample(sampleL, ws); break;
+                                case 2: sampleR = osR.processSample(sampleR, ws); break;
+                                case 3: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; mid=osL.processSample(mid, ws); sampleL=mid+side; sampleR=mid-side; break; }
+                                case 4: { float mid=(sampleL+sampleR)*0.5f, side=(sampleL-sampleR)*0.5f; side=osR.processSample(side, ws); sampleL=mid+side; sampleR=mid-side; break; }
                             }
                         }
                     }
@@ -664,6 +800,10 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             prevBandPanVal[(size_t)b] = targetPanVal[(size_t)b];
         }
     }
+    } // end Digital/Match branch
+
+    // ---- Common master-bus tail (all characters), ordered as MultiQ.cpp ---------
+    // master gain (1511) → NaN sanitize (1514) → auto-gain (1525) → limiter (1612).
 
     // Master gain (applied to all modes, base rate) — mirrors the JUCE tail.
     float mg = std::pow(10.0f, p.masterGain / 20.0f);
@@ -671,6 +811,27 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
     {
         for (int i = 0; i < numSamples; ++i) procL[i] *= mg;
         if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mg;
+    }
+
+    // NaN/Inf sanitization before auto-gain + limiter + metering.
+    for (int i = 0; i < numSamples; ++i)
+        if (!safeIsFinite(procL[i])) procL[i] = 0.0f;
+    if (isStereo)
+        for (int i = 0; i < numSamples; ++i)
+            if (!safeIsFinite(procR[i])) procR[i] = 0.0f;
+
+    // Auto-gain (post-master, pre-limiter) — loudness-matches the raw input.
+    if (p.autoGainEnabled)
+        applyAutoGain(procL, procR, isStereo, numSamples);
+
+    // Output limiter (mastering safety brickwall) — all characters.
+    limiter.setEnabled(p.limiterEnabled);
+    if (p.limiterEnabled)
+    {
+        limiter.setCeiling(p.limiterCeiling);
+        float* limL = procL;
+        float* limR = isStereo ? procR : procL;
+        limiter.process(limL, limR, numSamples);
     }
 
     publishOutputTaps(procL, procR, isStereo, numSamples);

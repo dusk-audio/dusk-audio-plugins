@@ -29,3 +29,15 @@ DUSK_ACCESS_DECL(const duskaudio::SpectrumRing*, multiQGetOutputSpectrum);
 // Declared by hand (the DUSK_ACCESS_DECL macro carries only the void* instance
 // pointer; this one needs the extra band index). Read-only meter tap.
 DUSK_WEAK float multiQGetBandDynGain(void* pluginInstancePointer, int band) noexcept;
+
+// Output-limiter gain reduction (dB, >=0) for the UI limiter indicator. Read-only.
+DUSK_ACCESS_DECL(float, multiQGetLimiterGR);
+
+// Solo write-bridge (UI → DSP, transient editor state — NOT a host param). Set
+// band=-1 to clear solo; delta=true engages delta-solo (difference monitoring).
+// Solo applies in the Digital character only, matching the JUCE build; HPF/LPF
+// stay active when a parametric band is soloed. Read the current state back with
+// the getters (UI reflects it). Declared by hand (extra args beyond the void*).
+DUSK_WEAK void multiQSetSolo(void* pluginInstancePointer, int band, bool delta) noexcept;
+DUSK_WEAK int  multiQGetSoloBand(void* pluginInstancePointer) noexcept;
+DUSK_WEAK bool multiQGetSoloDelta(void* pluginInstancePointer) noexcept;

@@ -37,6 +37,17 @@ public:
     float outPeakRForUI() const noexcept { return dsp.getOutputPeakR(); }
     const duskaudio::SpectrumRing* outSpecForUI() const noexcept { return &dsp.outputSpectrum(); }
     float bandDynGainForUI(int band) const noexcept { return dsp.getBandDynamicGain(band); }
+    float limiterGrForUI() const noexcept { return dsp.getLimiterGainReduction(); }
+
+    // Solo write-bridge (transient editor state — the UI drives it, it is not a
+    // host-automatable parameter, mirroring the JUCE build's soloedBand/deltaSolo).
+    void setSoloForUI(int band, bool delta) noexcept
+    {
+        soloBand.store(band, std::memory_order_relaxed);
+        deltaSolo.store(delta, std::memory_order_relaxed);
+    }
+    int  soloBandForUI()  const noexcept { return soloBand.load(std::memory_order_relaxed); }
+    bool soloDeltaForUI() const noexcept { return deltaSolo.load(std::memory_order_relaxed); }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -225,8 +236,16 @@ private:
         p.qCoupleMode    = ci(kParamQCoupleMode);
         p.eqType         = ci(kParamEqType);
         p.oversampling   = ci(kParamHqEnabled); // 0=Off,1=2x,2=4x
-        p.soloBand       = -1;                  // UI wires solo later
-        p.deltaSolo      = false;
+
+        // Master-bus utilities (auto_gain_enabled / limiter_enabled / ceiling).
+        p.autoGainEnabled = bl(kParamAutoGainEnabled);
+        p.limiterEnabled  = bl(kParamLimiterEnabled);
+        p.limiterCeiling  = f(kParamLimiterCeiling);
+
+        // Solo / delta-solo come from the UI write-bridge (transient editor state,
+        // not host-automatable params) — see multiQSetSolo() in MultiQAccess.hpp.
+        p.soloBand  = soloBand.load(std::memory_order_relaxed);
+        p.deltaSolo = deltaSolo.load(std::memory_order_relaxed);
 
         auto& br = p.british;
         br.hpfFreq = f(kParamBritishHpfFreq);  br.hpfEnabled = bl(kParamBritishHpfEnabled);
@@ -275,6 +294,8 @@ private:
     MultiQDSP dsp;
     int lastLatency = -1;
     std::atomic<float> values[kParamCount] = {};
+    std::atomic<int>  soloBand{-1};    // -1 = no solo (UI-driven, see setSoloForUI)
+    std::atomic<bool> deltaSolo{false};
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQPlugin)
 };
@@ -304,3 +325,15 @@ float multiQGetBandDynGain(void* p, int band) noexcept
 {
     return p ? asMq(p)->bandDynGainForUI(band) : 0.0f;
 }
+float multiQGetLimiterGR(void* p) noexcept
+{
+    return p ? asMq(p)->limiterGrForUI() : 0.0f;
+}
+
+// Solo write-bridge (UI → DSP). band = -1 clears solo; delta engages delta-solo.
+void multiQSetSolo(void* p, int band, bool delta) noexcept
+{
+    if (p) asMq(p)->setSoloForUI(band, delta);
+}
+int  multiQGetSoloBand(void* p)  noexcept { return p ? asMq(p)->soloBandForUI()  : -1; }
+bool multiQGetSoloDelta(void* p) noexcept { return p ? asMq(p)->soloDeltaForUI() : false; }
