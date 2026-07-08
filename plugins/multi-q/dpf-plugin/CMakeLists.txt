@@ -27,6 +27,7 @@ dpf_add_plugin(multi_q_2
     FILES_DSP
         MultiQPlugin.cpp
         ../core/MultiQDSP.cpp
+        ../core/MultiQMatch.cpp               # Match character (spectrum-match EQ + FIR conv)
         ../../shared-dpf/dsp/FourKEQDSP.cpp   # British character core (header-only Tube needs no cpp)
     FILES_UI
         MultiQUI.cpp

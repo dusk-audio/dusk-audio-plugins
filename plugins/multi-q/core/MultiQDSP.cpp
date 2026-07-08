@@ -23,6 +23,7 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     for (auto& f : svfFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
     for (auto& f : svfDynGainFilters) { f.setSmoothCoeff(biquadSmoothCoeff); f.reset(); }
     dynamicEQ.prepare(currentSampleRate, 2);
+    matchProc.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
     limiter.prepare(currentSampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
 
     // Auto-gain: 2 s RMS window + 2 s smoothing ramp (matches JUCE
@@ -64,6 +65,7 @@ void MultiQDSP::reset()
     for (auto& f : svfDynGainFilters) f.reset();
     dynamicEQ.reset();
     britishEQ.reset();
+    matchProc.reset();
     tubeEQ.reset();
     limiter.requestReset();
     for (auto& os : satOsL) os.reset();
@@ -371,6 +373,14 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
 
     // Input peak tap: read BEFORE processing (outputs may alias inputs in place).
     captureInputPeak(inputs, numChannels, numSamples);
+
+    // Match EQ: apply any pending UI learn/clear requests, then feed the learning
+    // spectrum from the RAW input (mono downmix) before any processing overwrites
+    // it — mirrors MultiQ.cpp:511-548. Runs regardless of the active character so
+    // the UI can capture a "current"/"reference" from whatever is on the input.
+    matchProc.audioThreadSync();
+    if (matchProc.isLearning())
+        matchProc.feedLearningStereo(inputs[0], numChannels > 1 ? inputs[1] : nullptr, numSamples);
 
     // Auto-gain input loudness window (raw input). When disabled, hold make-up at
     // unity and clear the accumulators (matches MultiQ.cpp:1601-1610).
@@ -800,6 +810,13 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             prevBandPanVal[(size_t)b] = targetPanVal[(size_t)b];
         }
     }
+
+    // Match EQ correction: convolve the (all-bands-bypassed) signal with the
+    // learned correction FIR, after the band stage and before master gain —
+    // mirrors MultiQ.cpp:1462-1508. No-op passthrough until a correction is
+    // computed; match_apply is baked into the FIR (0% = unit-delta passthrough).
+    if (eqType == EQType::Match)
+        matchProc.process(procL, procR, isStereo, numSamples);
     } // end Digital/Match branch
 
     // ---- Common master-bus tail (all characters), ordered as MultiQ.cpp ---------

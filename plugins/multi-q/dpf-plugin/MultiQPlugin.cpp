@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 START_NAMESPACE_DISTRHO
 
@@ -24,7 +25,8 @@ class MultiQPlugin : public Plugin
 {
 public:
     MultiQPlugin()
-        : Plugin(kParamCount, 1 + mqprog::kNumDigitalPrograms /* Default + Digital presets */, 0 /* no state */)
+        : Plugin(kParamCount, 1 + mqprog::kNumDigitalPrograms /* Default + Digital presets */,
+                 1 /* one state: the Match learned/correction blob */)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i].store(kMqParams[i].def, std::memory_order_relaxed);
@@ -48,6 +50,45 @@ public:
     }
     int  soloBandForUI()  const noexcept { return soloBand.load(std::memory_order_relaxed); }
     bool soloDeltaForUI() const noexcept { return deltaSolo.load(std::memory_order_relaxed); }
+
+    //--- Match spectrum-EQ UI bridge (message thread) --------------------------
+    void matchStartLearnCurrentForUI(bool on) noexcept
+    {
+        if (on) dsp.matchProcessor().requestStartLearnCurrent();
+        else    dsp.matchProcessor().requestStopLearning();
+    }
+    void matchStartLearnReferenceForUI(bool on) noexcept
+    {
+        if (on) dsp.matchProcessor().requestStartLearnReference();
+        else    dsp.matchProcessor().requestStopLearning();
+    }
+    bool matchComputeForUI() noexcept
+    {
+        // Read the live Match params (mirrors MultiQ::computeMatchCorrection).
+        auto f = [this](int i) { return values[i].load(std::memory_order_relaxed); };
+        const float applyAmount = f(kParamMatchApply) / 100.0f;      // -1..+1
+        const float smoothing   = f(kParamMatchSmoothing);          // semitones
+        const bool  limitBoost  = f(kParamMatchLimitBoost) > 0.5f;
+        const bool  limitCut    = f(kParamMatchLimitCut) > 0.5f;
+        const float maxBoostDB  = limitBoost ? 6.0f : 0.0f;         // 0 = hard ±15 only
+        const float maxCutDB    = limitCut ? -6.0f : 0.0f;
+        const bool ok = dsp.matchProcessor().computeCorrection(
+            smoothing, applyAmount, maxBoostDB, maxCutDB, /*minimumPhase*/ true);
+        updateLatency();
+        return ok;
+    }
+    void matchClearForUI() noexcept { dsp.matchProcessor().requestClear(); }
+
+    bool matchIsLearningForUI()          const noexcept { return dsp.matchProcessor().isLearning(); }
+    bool matchIsLearningCurrentForUI()   const noexcept { return dsp.matchProcessor().isLearningCurrent(); }
+    bool matchIsLearningReferenceForUI() const noexcept { return dsp.matchProcessor().isLearningReference(); }
+    int  matchFrameCountForUI()          const noexcept { return dsp.matchProcessor().getLearningFrameCount(); }
+    bool matchHasCurrentForUI()          const noexcept { return dsp.matchProcessor().hasCurrentSpectrum(); }
+    bool matchHasReferenceForUI()        const noexcept { return dsp.matchProcessor().hasReferenceSpectrum(); }
+    bool matchHasCorrectionForUI()       const noexcept { return dsp.matchProcessor().hasCorrectionCurve(); }
+    void matchGetCurrentDbForUI(float* out, int n)    const noexcept { dsp.matchProcessor().getCurrentSpectrumDB(out, n); }
+    void matchGetReferenceDbForUI(float* out, int n)  const noexcept { dsp.matchProcessor().getReferenceSpectrumDB(out, n); }
+    void matchGetCorrectionDbForUI(float* out, int n) const noexcept { dsp.matchProcessor().getCorrectionCurveDB(out, n); }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -149,10 +190,48 @@ protected:
             values[prog.pairs[i].idx].store(prog.pairs[i].val, std::memory_order_relaxed);
     }
 
+    //--- state (Match learned spectra + correction FIR) ------------------------
+    // One host-persisted state key: "matchData" (a base64 blob of the learned
+    // current/reference spectra + correction curve + FIR). WANT_FULL_STATE lets
+    // the host pull it via getState() on save. The blob is applied after the DSP
+    // is prepared (activate()), so a restore that arrives before activate() is
+    // cached and re-applied — MultiQMatch::deserialize rebuilds the FIR and
+    // re-activates the convolver on the next processed block.
+    void initState(uint32_t index, State& state) override
+    {
+        if (index != 0) return;
+        state.key          = "matchData";
+        state.label        = "Match EQ Data";
+        state.defaultValue = "";
+        state.hints        = kStateIsHostReadable | kStateIsBase64Blob;
+    }
+
+    String getState(const char* key) const override
+    {
+        if (std::strcmp(key, "matchData") == 0)
+            return String(dsp.matchProcessor().serialize().c_str());
+        return String();
+    }
+
+    void setState(const char* key, const char* value) override
+    {
+        if (std::strcmp(key, "matchData") != 0)
+            return;
+        matchStateStr = value != nullptr ? value : "";
+        if (dspPrepared && !matchStateStr.empty())
+        {
+            dsp.matchProcessor().deserialize(matchStateStr);
+            updateLatency();
+        }
+    }
+
     //--- lifecycle -------------------------------------------------------------
     void activate() override
     {
         dsp.prepare(getSampleRate(), (int)getBufferSize());
+        dspPrepared = true;
+        if (!matchStateStr.empty())
+            dsp.matchProcessor().deserialize(matchStateStr);
         updateLatency();
     }
 
@@ -296,6 +375,8 @@ private:
     std::atomic<float> values[kParamCount] = {};
     std::atomic<int>  soloBand{-1};    // -1 = no solo (UI-driven, see setSoloForUI)
     std::atomic<bool> deltaSolo{false};
+    std::string matchStateStr;         // cached Match blob (applied once DSP prepared)
+    bool dspPrepared = false;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQPlugin)
 };
@@ -337,3 +418,19 @@ void multiQSetSolo(void* p, int band, bool delta) noexcept
 }
 int  multiQGetSoloBand(void* p)  noexcept { return p ? asMq(p)->soloBandForUI()  : -1; }
 bool multiQGetSoloDelta(void* p) noexcept { return p ? asMq(p)->soloDeltaForUI() : false; }
+
+// Match spectrum-EQ write/read bridge (UI → DSP). See MultiQAccess.hpp.
+void multiQMatchStartLearnCurrent(void* p, bool on) noexcept   { if (p) asMq(p)->matchStartLearnCurrentForUI(on); }
+void multiQMatchStartLearnReference(void* p, bool on) noexcept { if (p) asMq(p)->matchStartLearnReferenceForUI(on); }
+bool multiQMatchCompute(void* p) noexcept                       { return p ? asMq(p)->matchComputeForUI() : false; }
+void multiQMatchClear(void* p) noexcept                         { if (p) asMq(p)->matchClearForUI(); }
+bool multiQMatchIsLearning(void* p) noexcept                    { return p ? asMq(p)->matchIsLearningForUI() : false; }
+bool multiQMatchIsLearningCurrent(void* p) noexcept            { return p ? asMq(p)->matchIsLearningCurrentForUI() : false; }
+bool multiQMatchIsLearningReference(void* p) noexcept          { return p ? asMq(p)->matchIsLearningReferenceForUI() : false; }
+int  multiQMatchFrameCount(void* p) noexcept                    { return p ? asMq(p)->matchFrameCountForUI() : 0; }
+bool multiQMatchHasCurrent(void* p) noexcept                    { return p ? asMq(p)->matchHasCurrentForUI() : false; }
+bool multiQMatchHasReference(void* p) noexcept                  { return p ? asMq(p)->matchHasReferenceForUI() : false; }
+bool multiQMatchHasCorrection(void* p) noexcept                 { return p ? asMq(p)->matchHasCorrectionForUI() : false; }
+void multiQMatchGetCurrentDb(void* p, float* out, int n) noexcept    { if (p) asMq(p)->matchGetCurrentDbForUI(out, n); }
+void multiQMatchGetReferenceDb(void* p, float* out, int n) noexcept  { if (p) asMq(p)->matchGetReferenceDbForUI(out, n); }
+void multiQMatchGetCorrectionDb(void* p, float* out, int n) noexcept { if (p) asMq(p)->matchGetCorrectionDbForUI(out, n); }

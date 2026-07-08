@@ -41,3 +41,32 @@ DUSK_ACCESS_DECL(float, multiQGetLimiterGR);
 DUSK_WEAK void multiQSetSolo(void* pluginInstancePointer, int band, bool delta) noexcept;
 DUSK_WEAK int  multiQGetSoloBand(void* pluginInstancePointer) noexcept;
 DUSK_WEAK bool multiQGetSoloDelta(void* pluginInstancePointer) noexcept;
+
+// ---- Match spectrum-EQ write/read bridge (UI → DSP) ------------------------
+// The Match workflow (learn "current"/"reference" spectra, compute the correction
+// FIR, clear) is transient editor state driven by the UI, NOT host-automatable
+// params (mirrors the JUCE build's eqMatchProcessor). Learn ops are latched and
+// applied on the audio thread; compute/clear/getters run on the message thread.
+//
+// Learn control: `on=true` starts learning that target (resets its accumulator);
+// `on=false` stops learning. compute() builds the correction from the two learned
+// spectra reading the live match_apply/smoothing/limit_* params. clear() drops the
+// learned data + correction (fades the convolver out first).
+DUSK_WEAK void multiQMatchStartLearnCurrent(void* pluginInstancePointer, bool on) noexcept;
+DUSK_WEAK void multiQMatchStartLearnReference(void* pluginInstancePointer, bool on) noexcept;
+DUSK_WEAK bool multiQMatchCompute(void* pluginInstancePointer) noexcept;   // returns success
+DUSK_WEAK void multiQMatchClear(void* pluginInstancePointer) noexcept;
+
+// Learn-state getters for the UI.
+DUSK_WEAK bool multiQMatchIsLearning(void* pluginInstancePointer) noexcept;
+DUSK_WEAK bool multiQMatchIsLearningCurrent(void* pluginInstancePointer) noexcept;
+DUSK_WEAK bool multiQMatchIsLearningReference(void* pluginInstancePointer) noexcept;
+DUSK_WEAK int  multiQMatchFrameCount(void* pluginInstancePointer) noexcept;
+DUSK_WEAK bool multiQMatchHasCurrent(void* pluginInstancePointer) noexcept;
+DUSK_WEAK bool multiQMatchHasReference(void* pluginInstancePointer) noexcept;
+DUSK_WEAK bool multiQMatchHasCorrection(void* pluginInstancePointer) noexcept;
+
+// Curve getters for display — write up to n dB values (n <= 2049). Lock-free.
+DUSK_WEAK void multiQMatchGetCurrentDb(void* pluginInstancePointer, float* out, int n) noexcept;
+DUSK_WEAK void multiQMatchGetReferenceDb(void* pluginInstancePointer, float* out, int n) noexcept;
+DUSK_WEAK void multiQMatchGetCorrectionDb(void* pluginInstancePointer, float* out, int n) noexcept;
