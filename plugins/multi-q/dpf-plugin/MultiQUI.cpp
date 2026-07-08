@@ -20,6 +20,7 @@
 #include "DistrhoUI.hpp"
 #include "MultiQParams.hpp"
 #include "FourKEQDSP.hpp"
+#include "MultiQFilters.hpp"  // amb:: analog-matched designers + MqBiquadCoeffs (Digital curve)
 
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
@@ -145,6 +146,73 @@ namespace
     // Character selector (EQ Type: Digital / Match / British / Tube).
     const char* kCharLabels[4] = { "DIGITAL", "MATCH", "BRITISH", "TUBE" };
     constexpr int kBritishModeIndex = 2; // kMqParams eq_type: 0 Digital,1 Match,2 British,3 Tube
+    constexpr int kDigitalModeIndex = 0;
+    constexpr int kTubeModeIndex    = 3;
+
+    //========================================================================
+    // Digital curve-editor constants
+    //========================================================================
+    // Per-band colours ported from JUCE EQBand.h BandColors (band 0..7 ==
+    // JUCE band 1..8). HPF red / LowShelf orange / 4x parametric / HighShelf
+    // purple / LPF pink.
+    constexpr ImU32 kDigitalBandCol[8] = {
+        IM_COL32(0xff, 0x55, 0x55, 255), // 0 HPF   red
+        IM_COL32(0xff, 0xaa, 0x00, 255), // 1 LowSh  orange
+        IM_COL32(0xff, 0xee, 0x00, 255), // 2 Para   yellow
+        IM_COL32(0x88, 0xee, 0x44, 255), // 3 Para   lime
+        IM_COL32(0x00, 0xcc, 0xff, 255), // 4 Para   cyan
+        IM_COL32(0x55, 0x88, 0xff, 255), // 5 Para   blue
+        IM_COL32(0xaa, 0x66, 0xff, 255), // 6 HighSh purple
+        IM_COL32(0xff, 0x66, 0xcc, 255), // 7 LPF    pink
+    };
+    const char* kDigitalBandShort[8] = { "HPF", "L.SHELF", "LOW", "L-MID", "MID", "H-MID", "H.SHELF", "LPF" };
+
+    // Digital response plot rect + band-strip band (design coords).
+    constexpr float DGX0 = 44.f, DGY0 = 104.f, DGX1 = 916.f, DGY1 = 430.f;
+    constexpr float DSTRIP_Y0 = 446.f, DSTRIP_Y1 = 662.f, DSTRIP_X0 = 44.f, DSTRIP_X1 = 916.f;
+
+    // Butterworth per-stage Q tables (inlined from core ButterworthQ so the UI
+    // graph matches the DSP edge-filter cascade exactly, without pulling in the
+    // core header's clashing symbols).
+    constexpr float kButterQ = 0.7071067811865476f;
+    constexpr float kBq2[]  = { 0.7071f };
+    constexpr float kBq4[]  = { 0.5412f, 1.3066f };
+    constexpr float kBq6[]  = { 0.5176f, 0.7071f, 1.9319f };
+    constexpr float kBq8[]  = { 0.5098f, 0.6013f, 0.9000f, 2.5629f };
+    constexpr float kBq12[] = { 0.5024f, 0.5412f, 0.6313f, 0.7071f, 1.0000f, 1.9319f };
+    constexpr float kBq16[] = { 0.5006f, 0.5176f, 0.5612f, 0.6013f, 0.7071f, 0.9000f, 1.3066f, 2.5629f };
+    inline float butterStageQ(int totalSecondOrder, int stageIdx, float userQ)
+    {
+        const float* q = nullptr;
+        switch (totalSecondOrder)
+        {
+            case 1: q = kBq2;  break; case 2: q = kBq4;  break; case 3: q = kBq6;  break;
+            case 4: q = kBq8;  break; case 6: q = kBq12; break; case 8: q = kBq16; break;
+            default: return userQ;
+        }
+        if (stageIdx < 0 || stageIdx >= totalSecondOrder) return userQ;
+        return q[stageIdx] * (userQ / kButterQ);
+    }
+    // slope choice index -> cascade shape (stages, secondOrderStages, firstStageFirstOrder)
+    inline void slopeToCascade(int slope, int& stages, int& secondOrder, bool& firstFirst)
+    {
+        switch (slope)
+        {
+            case 0: stages = 1; firstFirst = true;  secondOrder = 0; break; // 6
+            case 1: stages = 1; firstFirst = false; secondOrder = 1; break; // 12
+            case 2: stages = 2; firstFirst = true;  secondOrder = 1; break; // 18
+            case 3: stages = 2; firstFirst = false; secondOrder = 2; break; // 24
+            case 4: stages = 3; firstFirst = false; secondOrder = 3; break; // 36
+            case 5: stages = 4; firstFirst = false; secondOrder = 4; break; // 48
+            case 6: stages = 6; firstFirst = false; secondOrder = 6; break; // 72
+            default:stages = 8; firstFirst = false; secondOrder = 8; break; // 96
+        }
+    }
+
+    // Tube (Pultec) column x-dividers + warm face colour.
+    constexpr ImU32 C_TUBE_FACE = IM_COL32(120, 78, 52, 255);   // bronze knob face
+    constexpr ImU32 C_TUBE_LBL  = IM_COL32(214, 196, 168, 255); // warm caption
+    constexpr float TGY0 = 104.f, TGY1 = 300.f;                 // tube response plot
 }
 
 class MultiQUI : public UI, public duskdpf::ParamHost
@@ -226,6 +294,7 @@ protected:
         }
         else
         {
+            const int mode = (int)std::lround(values[kParamEqType]);
             drawSimpleHeader(dl);
             drawCharSelector(dl);
             if (showCredits)
@@ -233,7 +302,9 @@ protected:
                 ImGui::SetCursorScreenPos(ImVec2(0, 0));
                 ImGui::InvisibleButton("modalblock", ImVec2(winW, winH));
             }
-            drawPlaceholder(dl, (int)std::lround(values[kParamEqType]));
+            if (mode == kDigitalModeIndex)   drawDigital(dl);
+            else if (mode == kTubeModeIndex) drawTube(dl);
+            else                             drawPlaceholder(dl, mode); // Match: later phase
         }
 
         if (showCredits)
@@ -358,7 +429,12 @@ private:
     void drawTitle(ImDrawList* dl)
     {
         panel.text(dl, 28, 28, 25, pal().white, "Multi-Q 2", -1, true);
-        panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255), "Console-Style Equalizer - British", -1);
+        static const char* kSub[4] = {
+            "Universal Equalizer - Digital", "Universal Equalizer - Match",
+            "Console-Style Equalizer - British", "Passive Program Equalizer - Tube" };
+        const int m = (int)std::lround(values[kParamEqType]);
+        panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255),
+                   kSub[(m >= 0 && m < 4) ? m : 0], -1);
         // Clickable title -> Patreon supporters overlay.
         {
             const ImVec2 t0 = panel.P(26, 20), t1 = panel.P(170, 48);
@@ -382,7 +458,638 @@ private:
         panel.text(dl, kDesignW * 0.5f, 344, 13.f, IM_COL32(160, 162, 166, 255),
                    "Curve editor UI — coming soon", 0);
         panel.text(dl, kDesignW * 0.5f, 372, 11.f, IM_COL32(130, 132, 136, 255),
-                   "Select BRITISH above for the console EQ.", 0);
+                   "Select DIGITAL, BRITISH or TUBE above.", 0);
+    }
+
+    //========================================================================
+    // shared helpers
+    //========================================================================
+    ImVec2 dOrg() const { return panel.P(0.f, 0.f); }
+    ImVec2 invP(ImVec2 screen) const
+    {
+        const ImVec2 o = dOrg(); const float s = sc();
+        return ImVec2((screen.x - o.x) / s, (screen.y - o.y) / s);
+    }
+    static float clamp01(float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); }
+    double digitalSampleRate() const { return getSampleRate() > 0.0 ? getSampleRate() : 48000.0; }
+    int choiceIdx(uint32_t p) const
+    {
+        int i = (int)std::lround(values[p]);
+        const int n = kMqParams[p].numChoices;
+        return i < 0 ? 0 : (i >= n ? n - 1 : i);
+    }
+    void cycleChoice(uint32_t id)
+    {
+        int n = kMqParams[id].numChoices; if (n < 1) n = 1;
+        float nv = values[id] + 1.0f; if (nv > n - 1 + 0.5f) nv = 0.0f;
+        editParameter(id, true); values[id] = nv; setParameterValue(id, nv); editParameter(id, false);
+    }
+
+    // Log-scaled continuous knob for a plain float param (freq/Q), rendered with
+    // the brushed-metal body. Owns drag / shift-fine / wheel / dbl-click-type /
+    // Cmd-reset gestures. Reuses stepDragT/stepModReset_ (one active knob only).
+    void logKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
+                 uint32_t pid, float minV, float maxV, const char* fmt, const char* suffix)
+    {
+        const float s = sc();
+        const ImVec2 c = panel.P(cx, cy);
+        const float RR = R * s;
+        const float lmin = std::log10(minV), lmax = std::log10(maxV);
+        auto toT = [&](float v) { return clamp01((std::log10(std::max(minV, v)) - lmin) / (lmax - lmin)); };
+        auto toV = [&](float t) { return std::pow(10.0f, lmin + t * (lmax - lmin)); };
+        float t = toT(values[pid]);
+
+        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        const bool editing = panel.isEditingValue(id);
+        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        auto apply = [&](float tt) { const float v = toV(tt); values[pid] = v; setParameterValue(pid, v); };
+        if (!editing)
+        {
+            if (ImGui::IsItemActivated())
+            {
+                if (modKey) { editParameter(pid, true); values[pid] = mqDef(pid); setParameterValue(pid, mqDef(pid)); editParameter(pid, false); t = toT(values[pid]); stepModReset_ = true; }
+                else { editParameter(pid, true); stepDragT = t; stepModReset_ = false; }
+            }
+            if (act && !stepModReset_)
+            {
+                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                stepDragT = clamp01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
+                t = stepDragT; apply(t);
+            }
+            if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(pid, false); stepModReset_ = false; }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) { panel.openValueEdit(id, values[pid]); editParameter(pid, false); }
+            else if (hov && !act) { const float wh = ImGui::GetIO().MouseWheel; if (wh != 0.f) { t = clamp01(t + wh * 0.02f); editParameter(pid, true); apply(t); editParameter(pid, false); } }
+        }
+
+        drawMetalKnobBody(dl, c, RR, t, IM_COL32(150, 152, 156, 255), IM_COL32(245, 245, 245, 255));
+
+        float typed;
+        if (panel.valueEdit(id, cx, cy, R, typed))
+        {
+            typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
+            editParameter(pid, true); values[pid] = typed; setParameterValue(pid, typed); editParameter(pid, false);
+        }
+        else if ((hov || act) && !editing)
+        {
+            char b[24];
+            const bool isHz = (suffix[0] == 'H') || (suffix[0] == ' ' && suffix[1] == 'H');
+            if (isHz && values[pid] >= 1000.f) std::snprintf(b, sizeof(b), "%.2f kHz", values[pid] / 1000.f);
+            else { char t2[16]; std::snprintf(t2, sizeof(t2), fmt, values[pid]); std::snprintf(b, sizeof(b), "%s%s", t2, suffix); }
+            panel.valueBubble(dl, cx, cy, R, b);
+        }
+    }
+
+    // Stepped choice box: caption above, current label inside, click cycles.
+    void stepSelector(ImDrawList* dl, const char* id, float cx, float cyTop, float w, float h,
+                      const char* caption, uint32_t pid, bool enabled = true)
+    {
+        const float s = sc();
+        if (caption) panel.text(dl, cx, cyTop - 14.f, 10.f, C_TUBE_LBL, caption, 0, true);
+        const ImVec2 b0 = panel.P(cx - 0.5f * w, cyTop), b1 = panel.P(cx + 0.5f * w, cyTop + h);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (enabled && ImGui::IsItemClicked()) cycleChoice(pid);
+        dl->AddRectFilled(b0, b1, IM_COL32(30, 26, 22, 255), 3.f * s);
+        dl->AddRect(b0, b1, hov && enabled ? IM_COL32(200, 170, 130, 220) : IM_COL32(96, 84, 70, 200), 3.f * s, 0, 1.2f * s);
+        const int i = choiceIdx(pid);
+        const char* lbl = kMqParams[pid].choices ? kMqParams[pid].choices[i] : "";
+        panel.text(dl, cx - 5.f, cyTop + 0.5f * h - 6.f, 11.f,
+                   enabled ? IM_COL32(232, 224, 210, 255) : IM_COL32(120, 112, 100, 255), lbl, 0, true);
+        const ImVec2 ac = panel.P(cx + 0.5f * w - 9.f, cyTop + 0.5f * h);
+        dl->AddTriangleFilled(ImVec2(ac.x - 3.f * s, ac.y - 2.f * s), ImVec2(ac.x + 3.f * s, ac.y - 2.f * s),
+                              ImVec2(ac.x, ac.y + 2.5f * s), IM_COL32(180, 160, 130, 255));
+    }
+
+    //========================================================================
+    // DIGITAL — interactive log-frequency curve editor + 8 band strips
+    //========================================================================
+    static float digRangeDb(int idx) { static const float R[3] = { 12.f, 24.f, 36.f }; return R[idx < 0 ? 0 : (idx > 2 ? 2 : idx)]; }
+    float digY(float db) const
+    {
+        const float r = digRangeDb(digRangeIdx);
+        float d = db < -r ? -r : (db > r ? r : db);
+        return DGY0 + (0.5f - 0.5f * d / r) * (DGY1 - DGY0);
+    }
+    float digDbFromY(float y) const
+    {
+        const float r = digRangeDb(digRangeIdx);
+        return (0.5f - (y - DGY0) / (DGY1 - DGY0)) * 2.f * r;
+    }
+
+    void digTiltShelf(duskaudio::MqBiquadCoeffs& c, double sr, double freq, float gainDB) const
+    {
+        // 1st-order tilt shelf — verbatim from MultiQDSP::computeTiltShelf.
+        const double w0 = 2.0 * duskaudio::kMultiQPi * freq;
+        const double T = 1.0 / sr;
+        const double wc = (2.0 / T) * std::tan(w0 * T / 2.0);
+        const double A = std::pow(10.0, gainDB / 40.0);
+        const double sqrtA = std::sqrt(A);
+        const double twoOverT = 2.0 / T;
+        const double b0 = twoOverT + wc * sqrtA, b1 = wc * sqrtA - twoOverT;
+        const double a0 = twoOverT + wc / sqrtA, a1 = wc / sqrtA - twoOverT;
+        c.coeffs[0] = float(b0 / a0); c.coeffs[1] = float(b1 / a0); c.coeffs[2] = 0.f;
+        c.coeffs[3] = 1.f; c.coeffs[4] = float(a1 / a0); c.coeffs[5] = 0.f;
+    }
+
+    double digitalEdgeMag(int b, double freq, double sr, bool hp) const
+    {
+        const double fc = std::max(20.0, std::min((double)values[mqidx::freq(b)], sr * 0.45));
+        const float userQ = values[mqidx::q(b)];
+        int stages, secondOrder; bool firstFirst;
+        slopeToCascade((int)std::lround(values[mqidx::slope(b)]), stages, secondOrder, firstFirst);
+        double mag = 1.0; int soIdx = 0;
+        for (int stage = 0; stage < stages; ++stage)
+        {
+            duskaudio::MqBiquadCoeffs c;
+            if (firstFirst && stage == 0)
+            {
+                if (hp) duskaudio::amb::computeFirstOrderHighPass(c, fc, sr);
+                else    duskaudio::amb::computeFirstOrderLowPass(c, fc, sr);
+            }
+            else
+            {
+                const float sq = butterStageQ(secondOrder, soIdx, userQ);
+                if (hp) duskaudio::amb::computeHighPass(c, fc, sr, sq);
+                else    duskaudio::amb::computeLowPass(c, fc, sr, sq);
+                ++soIdx;
+            }
+            mag *= c.getMagnitudeForFrequency(freq, sr);
+        }
+        return mag;
+    }
+
+    // Linear magnitude of one enabled Digital band (matches computeBandCoeffs).
+    double digitalBandMag(int b, double freq, double sr) const
+    {
+        if (values[mqidx::enabled(b)] < 0.5f) return 1.0;
+        if (b == 0) return digitalEdgeMag(0, freq, sr, true);
+        if (b == 7) return digitalEdgeMag(7, freq, sr, false);
+        duskaudio::MqBiquadCoeffs c;
+        const float gain = values[mqidx::gain(b)];
+        const float q    = values[mqidx::q(b)];
+        const float fc   = values[mqidx::freq(b)];
+        const int shape  = (int)std::lround(values[mqidx::shape(b)]);
+        if (b == 1)
+        {
+            if (shape == 1)      duskaudio::amb::computePeaking(c, fc, sr, gain, q);
+            else if (shape == 2) duskaudio::amb::computeHighPass(c, fc, sr, q);
+            else                 duskaudio::amb::computeLowShelf(c, fc, sr, gain, q);
+        }
+        else if (b == 6)
+        {
+            if (shape == 1)      duskaudio::amb::computePeaking(c, fc, sr, gain, q);
+            else if (shape == 2) duskaudio::amb::computeLowPass(c, fc, sr, q);
+            else                 duskaudio::amb::computeHighShelf(c, fc, sr, gain, q);
+        }
+        else
+        {
+            if (shape == 1)      duskaudio::amb::computeNotch(c, fc, sr, q);
+            else if (shape == 2) duskaudio::amb::computeBandPass(c, fc, sr, q);
+            else if (shape == 3) digTiltShelf(c, sr, fc, gain);
+            else                 duskaudio::amb::computePeaking(c, fc, sr, gain, q);
+        }
+        return c.getMagnitudeForFrequency(freq, sr);
+    }
+
+    float digitalResponseDb(float freq) const
+    {
+        const double sr = digitalSampleRate();
+        double mag = 1.0;
+        for (int b = 0; b < 8; ++b) mag *= digitalBandMag(b, freq, sr);
+        double db = 20.0 * std::log10(std::max(mag, 1e-6));
+        db += values[kParamMasterGain];
+        return (float)db;
+    }
+
+    // Does band b's control node carry gain (draggable in Y)? Matches JUCE
+    // getControlPointPosition: only peaking-shaped nodes sit off the 0 dB line.
+    bool digBandCarriesGain(int b) const
+    {
+        if (b == 0 || b == 7) return false;               // HPF/LPF at 0 dB
+        const int shape = (int)std::lround(values[mqidx::shape(b)]);
+        if (b == 1 || b == 6) return shape == 1;          // shelf bands: only Peaking
+        return shape == 0;                                // parametric: only Peaking
+    }
+
+    void drawDigital(ImDrawList* dl)
+    {
+        const float s = sc();
+        // ---- plot frame + background (spectrum tap not exposed by core -> dark) ----
+        dl->AddRectFilled(panel.P(DGX0 - 3, DGY0 - 3), panel.P(DGX1 + 3, DGY1 + 3), IM_COL32(60, 60, 63, 255), 3.f * s);
+        dl->AddRectFilled(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), IM_COL32(12, 13, 15, 255));
+        dl->PushClipRect(panel.P(DGX0, DGY0), panel.P(DGX1, DGY1), true);
+
+        // frequency grid
+        for (int i = 0; i < (int)(sizeof(kGridF) / sizeof(kGridF[0])); ++i)
+        {
+            const float x = DGX0 + flog((float)kGridF[i]) * (DGX1 - DGX0);
+            dl->AddLine(panel.P(x, DGY0), panel.P(x, DGY1), IM_COL32(38, 41, 45, 255), 1.f * s);
+            panel.text(dl, x, DGY1 - 13, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
+        }
+        // dB grid
+        {
+            const float R = digRangeDb(digRangeIdx);
+            const float ticks[5] = { -R, -0.5f * R, 0.f, 0.5f * R, R };
+            for (int i = 0; i < 5; ++i)
+            {
+                const float y = digY(ticks[i]);
+                dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y),
+                            ticks[i] == 0.f ? IM_COL32(64, 68, 74, 255) : IM_COL32(30, 33, 37, 255), 1.f * s);
+                char b[8]; std::snprintf(b, sizeof(b), "%+d", (int)ticks[i]);
+                float ly = y - 6.f; ly = ly < DGY0 + 1.f ? DGY0 + 1.f : (ly > DGY1 - 13.f ? DGY1 - 13.f : ly);
+                panel.text(dl, DGX0 + 5, ly, 10.f, IM_COL32(150, 154, 160, 255), ticks[i] == 0.f ? "0" : b, -1);
+            }
+        }
+
+        // per-band ghost curves (dim) then composite (bright)
+        const double sr = digitalSampleRate();
+        const int N = 300;
+        auto freqAt = [](float lx) { return std::pow(10.f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin))); };
+        for (int b = 0; b < 8; ++b)
+        {
+            if (values[mqidx::enabled(b)] < 0.5f) continue;
+            std::vector<ImVec2> gp; gp.reserve(N);
+            for (int i = 0; i < N; ++i)
+            {
+                const float lx = (float)i / (N - 1);
+                const float db = 20.f * std::log10((float)std::max(digitalBandMag(b, freqAt(lx), sr), 1e-6));
+                float y = digY(db);
+                gp.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), y));
+            }
+            const ImU32 col = kDigitalBandCol[b];
+            dl->AddPolyline(gp.data(), (int)gp.size(), (col & 0x00FFFFFF) | 0x50000000, 0, 1.2f * s);
+        }
+        std::vector<ImVec2> pts; pts.reserve(N);
+        for (int i = 0; i < N; ++i)
+        {
+            const float lx = (float)i / (N - 1);
+            float y = digY(digitalResponseDb(freqAt(lx)));
+            pts.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), y));
+        }
+        dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(236, 236, 236, 255), 0, 2.2f * s);
+        dl->PopClipRect();
+
+        // ---- draggable band handles ----
+        const float lmin = std::log10(kFMin), lmax = std::log10(kFMax);
+        for (int b = 0; b < 8; ++b)
+        {
+            if (values[mqidx::enabled(b)] < 0.5f) continue;
+            const bool yDrag = digBandCarriesGain(b);
+            const float gainVal = yDrag ? values[mqidx::gain(b)] : 0.f;
+            const float freqVal = values[mqidx::freq(b)];
+            const float hx = DGX0 + flog(freqVal) * (DGX1 - DGX0);
+            const float hy = digY(gainVal);
+            const ImVec2 hc = panel.P(hx, hy);
+            const float hit = 11.f * s;
+            char id[16]; std::snprintf(id, sizeof(id), "dh%d", b);
+            ImGui::SetCursorScreenPos(ImVec2(hc.x - hit, hc.y - hit));
+            ImGui::InvisibleButton(id, ImVec2(2.f * hit, 2.f * hit));
+            const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+            if (ImGui::IsItemActivated())
+            {
+                editParameter(mqidx::freq(b), true);
+                if (yDrag) editParameter(mqidx::gain(b), true);
+                dragBand_ = b;
+            }
+            if (act && dragBand_ == b)
+            {
+                const ImVec2 md = invP(ImGui::GetMousePos());
+                const float tx = clamp01((md.x - DGX0) / (DGX1 - DGX0));
+                float f = std::pow(10.f, lmin + tx * (lmax - lmin));
+                f = f < kFMin ? kFMin : (f > kFMax ? kFMax : f);
+                values[mqidx::freq(b)] = f; setParameterValue(mqidx::freq(b), f);
+                if (yDrag)
+                {
+                    float g = digDbFromY(md.y);
+                    g = g < -24.f ? -24.f : (g > 24.f ? 24.f : g);
+                    values[mqidx::gain(b)] = g; setParameterValue(mqidx::gain(b), g);
+                }
+            }
+            if (ImGui::IsItemDeactivated() && dragBand_ == b)
+            {
+                editParameter(mqidx::freq(b), false);
+                if (yDrag) editParameter(mqidx::gain(b), false);
+                dragBand_ = -1;
+            }
+            const ImU32 col = kDigitalBandCol[b];
+            const float rr = (hov || act) ? 8.f * s : 6.5f * s;
+            dl->AddCircleFilled(hc, rr + 1.5f * s, IM_COL32(0, 0, 0, 200), 20);
+            dl->AddCircleFilled(hc, rr, col, 20);
+            dl->AddCircle(hc, rr, IM_COL32(255, 255, 255, (hov || act) ? 230 : 120), 20, 1.6f * s);
+            panel.text(dl, hx, hy - 1.f, 8.f, IM_COL32(20, 20, 22, 255), std::to_string(b + 1).c_str(), 0, true);
+            if (hov || act)
+            {
+                char bub[32];
+                if (yDrag) std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2fk  %+.1f dB" : "%.0f Hz  %+.1f dB",
+                                         values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)], values[mqidx::gain(b)]);
+                else std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2f kHz" : "%.0f Hz",
+                                   values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)]);
+                panel.valueBubble(dl, hx, hy, 8.f, bub);
+            }
+        }
+
+        // range selector (top-right)
+        ImGui::SetCursorScreenPos(panel.P(DGX1 - 66, DGY0 + 4));
+        ImGui::SetNextItemWidth(62.f * s);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 32, 36, 210));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(206, 208, 212, 255));
+        static const char* kDR[3] = { "+/-12 dB", "+/-24 dB", "+/-36 dB" };
+        if (ImGui::BeginCombo("##digrange", kDR[digRangeIdx], ImGuiComboFlags_NoArrowButton))
+        {
+            for (int i = 0; i < 3; ++i) if (ImGui::Selectable(kDR[i], i == digRangeIdx)) digRangeIdx = i;
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleColor(4);
+
+        drawDigitalStrips(dl);
+    }
+
+    void drawDigitalStrips(ImDrawList* dl)
+    {
+        const float s = sc();
+        dl->AddRectFilled(panel.P(DSTRIP_X0 - 3, DSTRIP_Y0 - 3), panel.P(DSTRIP_X1 + 3, DSTRIP_Y1 + 3), kPanel, 4.f * s);
+        const float cw = (DSTRIP_X1 - DSTRIP_X0) / 8.f;
+        for (int b = 0; b < 8; ++b)
+        {
+            const float x0 = DSTRIP_X0 + b * cw, x1 = x0 + cw;
+            const float cx = 0.5f * (x0 + x1);
+            const bool en = values[mqidx::enabled(b)] > 0.5f;
+            const ImU32 col = kDigitalBandCol[b];
+            if (b > 0) dl->AddLine(panel.P(x0, DSTRIP_Y0 + 4), panel.P(x0, DSTRIP_Y1 - 4), IM_COL32(20, 20, 22, 255), 1.2f * s);
+            // colour accent bar (top)
+            dl->AddRectFilled(panel.P(x0 + 5, DSTRIP_Y0 + 6), panel.P(x1 - 5, DSTRIP_Y0 + 10),
+                              en ? col : (col & 0x00FFFFFF) | 0x40000000, 1.5f * s);
+            // name + enable dot
+            panel.text(dl, x0 + 10, DSTRIP_Y0 + 15, 9.5f, en ? IM_COL32(224, 224, 226, 255) : IM_COL32(120, 122, 126, 255), kDigitalBandShort[b], -1, true);
+            {
+                const ImVec2 dc = panel.P(x1 - 12, DSTRIP_Y0 + 19);
+                ImGui::SetCursorScreenPos(ImVec2(dc.x - 7 * s, dc.y - 7 * s));
+                char eid[16]; std::snprintf(eid, sizeof(eid), "den%d", b);
+                ImGui::InvisibleButton(eid, ImVec2(14 * s, 14 * s));
+                if (ImGui::IsItemClicked()) toggleParam(mqidx::enabled(b));
+                dl->AddCircleFilled(dc, 5.f * s, en ? col : IM_COL32(58, 58, 62, 255), 16);
+                dl->AddCircle(dc, 5.f * s, IM_COL32(0, 0, 0, 160), 16, 1.f * s);
+            }
+
+            // knob row: freq, gain(or none), Q
+            const float ky = DSTRIP_Y0 + 52;
+            const float kr = 11.f;
+            char kid[24];
+            std::snprintf(kid, sizeof(kid), "df%d", b);
+            logKnob(dl, kid, x0 + 22, ky, kr, mqidx::freq(b), 20.f, 20000.f, "%.0f", " Hz");
+            panel.text(dl, x0 + 22, ky + kr + 5.f, 8.5f, IM_COL32(150, 152, 156, 255), "FREQ", 0, true);
+            if (!mqidx::isEdge(b))
+            {
+                std::snprintf(kid, sizeof(kid), "dg%d", b);
+                panel.knob(kid, mqidx::gain(b), -24.f, 24.f, cx, ky, kr, values[mqidx::gain(b)], mqDef(mqidx::gain(b)),
+                           false, false, "%.1f", " dB", 0);
+                panel.text(dl, cx, ky + kr + 5.f, 8.5f, IM_COL32(150, 152, 156, 255), "GAIN", 0, true);
+            }
+            std::snprintf(kid, sizeof(kid), "dq%d", b);
+            logKnob(dl, kid, x1 - 22, ky, kr, mqidx::q(b), 0.1f, 100.f, "%.2f", "");
+            panel.text(dl, x1 - 22, ky + kr + 5.f, 8.5f, IM_COL32(150, 152, 156, 255), "Q", 0, true);
+
+            // shape (or slope for edge bands)
+            const float selW = cw - 16.f;
+            char sid[24];
+            if (mqidx::isEdge(b))
+            {
+                std::snprintf(sid, sizeof(sid), "dslope%d", b);
+                stepSelector(dl, sid, cx, DSTRIP_Y0 + 108, selW, 18.f, "SLOPE", (uint32_t)mqidx::slope(b));
+            }
+            else
+            {
+                std::snprintf(sid, sizeof(sid), "dshape%d", b);
+                stepSelector(dl, sid, cx, DSTRIP_Y0 + 108, selW, 18.f, "SHAPE", (uint32_t)mqidx::shape(b));
+                std::snprintf(sid, sizeof(sid), "dsat%d", b);
+                stepSelector(dl, sid, cx, DSTRIP_Y0 + 146, selW, 18.f, "SAT", (uint32_t)mqidx::satType(b));
+            }
+            // dyn toggle
+            char yid[24]; std::snprintf(yid, sizeof(yid), "ddyn%d", b);
+            const bool dyn = values[mqidx::dynEnabled(b)] > 0.5f;
+            panelButton(dl, yid, cx - 0.5f * selW, DSTRIP_Y1 - 26, cx + 0.5f * selW, DSTRIP_Y1 - 8,
+                        dyn ? "DYN ON" : "DYN",
+                        dyn ? kGreenBtn : IM_COL32(50, 50, 54, 255),
+                        [this, b] { toggleParam(mqidx::dynEnabled(b)); });
+        }
+
+        // stepSelector caption for SAT row on edge bands is skipped; note: edge
+        // bands carry no gain/shape/sat/dyn-gain — only slope + freq + Q + dyn.
+    }
+
+    //========================================================================
+    // TUBE — Pultec-style passive program EQ
+    //========================================================================
+    // Read-only response, ported verbatim from JUCE TubeEQCurveDisplay so the
+    // curve matches the DSP's voiced behaviour (analytic approximation; the real
+    // core adds inductor Q modulation + tube nonlinearity that no static curve
+    // can show). Frequencies resolved from the choice params via the mqp:: LUTs.
+    double tubeBiquadMag(double b0, double b1, double b2, double a1, double a2,
+                         double cosw, double sinw, double cos2w, double sin2w) const
+    {
+        double numR = b0 + b1 * cosw + b2 * cos2w;
+        double numI = -(b1 * sinw + b2 * sin2w);
+        double denR = 1.0 + a1 * cosw + a2 * cos2w;
+        double denI = -(a1 * sinw + a2 * sin2w);
+        double nn = numR * numR + numI * numI, dd = denR * denR + denI * denI;
+        return dd > 1e-20 ? std::sqrt(nn / dd) : 1.0;
+    }
+
+    float tubeLfCombinedDb(float freq, double sr) const
+    {
+        const float boostGain = values[kParamPultecLfBoostGain];
+        const float attenGain = values[kParamPultecLfAttenGain];
+        if (boostGain < 0.1f && attenGain < 0.1f) return 0.f;
+        float frequency = mqp::kLfBoostHz[choiceIdx(kParamPultecLfBoostFreq)];
+        const float maxFreq = (float)sr * 0.45f;
+        frequency = std::max(10.f, std::min(frequency, maxFreq));
+        const float twoPi = 2.f * (float)duskaudio::kMultiQPi;
+        const double omega = 2.0 * duskaudio::kMultiQPi * freq / sr;
+        const double cosw = std::cos(omega), sinw = std::sin(omega), cos2w = std::cos(2 * omega), sin2w = std::sin(2 * omega);
+        double peakMag = 1.0, dipMag = 1.0;
+        if (boostGain > 0.01f)
+        {
+            const float peakGainDB = boostGain * 1.4f + attenGain * boostGain * 0.08f;
+            float effQ = 0.55f * (1.0f + attenGain * 0.015f); effQ = std::max(effQ, 0.2f);
+            const float A = std::pow(10.f, peakGainDB / 40.f);
+            const float w0 = twoPi * frequency / (float)sr, cw = std::cos(w0), sw = std::sin(w0), al = sw / (2.f * effQ);
+            const float pb0 = 1 + al * A, pb1 = -2 * cw, pb2 = 1 - al * A, pa0 = 1 + al / A, pa1 = -2 * cw, pa2 = 1 - al / A;
+            peakMag = tubeBiquadMag(pb0 / pa0, pb1 / pa0, pb2 / pa0, pa1 / pa0, pa2 / pa0, cosw, sinw, cos2w, sin2w);
+        }
+        if (attenGain > 0.01f)
+        {
+            float dipFreq = std::max(10.f, std::min(frequency, maxFreq));
+            const float dipGainDB = -(attenGain * 1.75f + boostGain * attenGain * 0.06f);
+            const float dipQ = 0.65f + attenGain * 0.03f;
+            const float A = std::pow(10.f, dipGainDB / 40.f);
+            const float w0 = twoPi * dipFreq / (float)sr, cw = std::cos(w0), sw = std::sin(w0), al = sw / (2.f * dipQ), sqA = std::sqrt(A);
+            const float db0 = A * ((A + 1) - (A - 1) * cw + 2 * sqA * al);
+            const float db1 = 2 * A * ((A - 1) - (A + 1) * cw);
+            const float db2 = A * ((A + 1) - (A - 1) * cw - 2 * sqA * al);
+            const float da0 = (A + 1) + (A - 1) * cw + 2 * sqA * al;
+            const float da1 = -2 * ((A - 1) + (A + 1) * cw);
+            const float da2 = (A + 1) + (A - 1) * cw - 2 * sqA * al;
+            dipMag = tubeBiquadMag(db0 / da0, db1 / da0, db2 / da0, da1 / da0, da2 / da0, cosw, sinw, cos2w, sin2w);
+        }
+        return (float)(20.0 * std::log10(peakMag * dipMag + 1e-10));
+    }
+
+    float tubeHfBoostDb(float freq) const
+    {
+        const float g = values[kParamPultecHfBoostGain];
+        if (g < 0.1f) return 0.f;
+        const float fc = mqp::kHfBoostHz[choiceIdx(kParamPultecHfBoostFreq)];
+        const float gain = g * 1.8f;
+        const float q = 2.0f + (0.3f - 2.0f) * values[kParamPultecHfBoostBandwidth]; // jmap bw 0..1 -> Q 2..0.3
+        const float bandwidth = 1.0f / q;
+        const float logRatio = std::log(freq / fc);
+        return gain * std::exp(-0.5f * std::pow(logRatio / (bandwidth * 0.6f), 2.0f));
+    }
+
+    float tubeHfAttenDb(float freq) const
+    {
+        const float g = values[kParamPultecHfAttenGain];
+        if (g < 0.1f) return 0.f;
+        const float fc = mqp::kHfAttenHz[choiceIdx(kParamPultecHfAttenFreq)];
+        const float gain = -g * 1.6f;
+        const float logRatio = std::log10(freq / fc);
+        const float normalized = 0.5f * (1.0f + std::tanh(logRatio / 0.5f));
+        return gain * normalized;
+    }
+
+    float tubeMidDb(float freq, double sr) const
+    {
+        if (values[kParamPultecMidEnabled] < 0.5f) return 0.f;
+        const float lowPk = values[kParamPultecMidLowPeak], dip = values[kParamPultecMidDip], hiPk = values[kParamPultecMidHighPeak];
+        if (lowPk < 0.01f && dip < 0.01f && hiPk < 0.01f) return 0.f;
+        const double omega = 2.0 * duskaudio::kMultiQPi * freq / sr;
+        const double cosw = std::cos(omega), sinw = std::sin(omega), cos2w = std::cos(2 * omega), sin2w = std::sin(2 * omega);
+        auto peakMag = [&](float fc, float q, float gainDB) -> double {
+            const double tubeQ = std::max(0.01, (double)q * 0.85);
+            const double fcD = std::max(1.0, std::min((double)fc, sr * 0.4998));
+            const double bw = fcD / tubeQ;
+            const double kbw = std::tan(duskaudio::kMultiQPi * std::min(bw, sr * 0.4998) / sr);
+            const double A = std::pow(10.0, (double)gainDB / 40.0);
+            const double cW = std::cos(2.0 * duskaudio::kMultiQPi * fcD / sr);
+            const double b0 = (1 + kbw * A) / (1 + kbw / A), b1 = (-2 * cW) / (1 + kbw / A), b2 = (1 - kbw * A) / (1 + kbw / A);
+            const double a1 = (-2 * cW) / (1 + kbw / A), a2 = (1 - kbw / A) / (1 + kbw / A);
+            return tubeBiquadMag(b0, b1, b2, a1, a2, cosw, sinw, cos2w, sin2w);
+        };
+        double combined = 1.0;
+        if (lowPk > 0.01f) combined *= peakMag(mqp::kMidLowHz[choiceIdx(kParamPultecMidLowFreq)], 1.2f, lowPk * 1.2f);
+        if (dip   > 0.01f) combined *= peakMag(mqp::kMidDipHz[choiceIdx(kParamPultecMidDipFreq)], 0.8f, -dip * 1.0f);
+        if (hiPk  > 0.01f) combined *= peakMag(mqp::kMidHighHz[choiceIdx(kParamPultecMidHighFreq)], 1.4f, hiPk * 1.2f);
+        return (float)(20.0 * std::log10(combined + 1e-10));
+    }
+
+    float tubeResponseDb(float freq) const
+    {
+        const double sr = digitalSampleRate();
+        return tubeLfCombinedDb(freq, sr) + tubeHfBoostDb(freq) + tubeHfAttenDb(freq) + tubeMidDb(freq, sr);
+    }
+
+    void drawTube(ImDrawList* dl)
+    {
+        const float s = sc();
+        // ---- read-only response curve (fixed +/-18 dB) ----
+        const float R = 18.f;
+        dl->AddRectFilled(panel.P(DGX0 - 3, TGY0 - 3), panel.P(DGX1 + 3, TGY1 + 3), IM_COL32(60, 52, 44, 255), 3.f * s);
+        dl->AddRectFilled(panel.P(DGX0, TGY0), panel.P(DGX1, TGY1), IM_COL32(20, 16, 13, 255));
+        dl->PushClipRect(panel.P(DGX0, TGY0), panel.P(DGX1, TGY1), true);
+        auto ty = [&](float db) { float d = db < -R ? -R : (db > R ? R : db); return TGY0 + (0.5f - 0.5f * d / R) * (TGY1 - TGY0); };
+        for (int i = 0; i < (int)(sizeof(kGridF) / sizeof(kGridF[0])); ++i)
+        {
+            const float x = DGX0 + flog((float)kGridF[i]) * (DGX1 - DGX0);
+            dl->AddLine(panel.P(x, TGY0), panel.P(x, TGY1), IM_COL32(48, 40, 32, 255), 1.f * s);
+            panel.text(dl, x, TGY1 - 13, 8.5f, IM_COL32(150, 130, 104, 255), kGridFL[i], 0);
+        }
+        for (int k = -1; k <= 1; ++k)
+        {
+            const float y = ty(k * R);
+            dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y), k == 0 ? IM_COL32(80, 68, 54, 255) : IM_COL32(44, 37, 30, 255), 1.f * s);
+            char b[8]; std::snprintf(b, sizeof(b), "%+d", (int)(k * R));
+            panel.text(dl, DGX0 + 5, y - 6.f, 10.f, IM_COL32(170, 150, 122, 255), k == 0 ? "0" : b, -1);
+        }
+        {
+            const int N = 300;
+            std::vector<ImVec2> pts; pts.reserve(N);
+            for (int i = 0; i < N; ++i)
+            {
+                const float lx = (float)i / (N - 1);
+                const float freq = std::pow(10.f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
+                pts.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), ty(tubeResponseDb(freq))));
+            }
+            dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(240, 196, 120, 255), 0, 2.2f * s);
+        }
+        dl->PopClipRect();
+        panel.text(dl, DGX1 - 6, TGY0 + 6, 9.f, IM_COL32(150, 130, 104, 255), "READ-ONLY", 1, true);
+
+        // ---- control chassis ----
+        const float PY0 = 316.f, PY1 = 662.f;
+        dl->AddRectFilled(panel.P(DGX0, PY0), panel.P(DGX1, PY1), IM_COL32(46, 38, 31, 255), 5.f * s);
+        dl->AddRect(panel.P(DGX0, PY0), panel.P(DGX1, PY1), IM_COL32(80, 66, 52, 255), 5.f * s, 0, 1.4f * s);
+
+        // column dividers: LF | MID | HF | I/O
+        const float CX[5] = { 44.f, 262.f, 566.f, 806.f, 916.f };
+        const char* CN[4] = { "LOW FREQUENCY", "MID", "HIGH FREQUENCY", "GAIN" };
+        for (int i = 0; i < 4; ++i)
+        {
+            const float cx = 0.5f * (CX[i] + CX[i + 1]);
+            if (i > 0) dl->AddLine(panel.P(CX[i], PY0 + 8), panel.P(CX[i], PY1 - 8), IM_COL32(30, 24, 19, 255), 1.4f * s);
+            panel.text(dl, cx, PY0 + 10, 11.f, C_TUBE_LBL, CN[i], 0, true);
+        }
+
+        // --- LF section ---
+        {
+            const float cx = 0.5f * (CX[0] + CX[1]);
+            stepSelector(dl, "tlff", cx, PY0 + 44, 92.f, 20.f, "BOOST/ATTEN FREQ", kParamPultecLfBoostFreq);
+            tubeKnob(dl, "tlfb", kParamPultecLfBoostGain, 0.f, 10.f, cx - 46, PY0 + 130, 26.f, "BOOST", "%.1f", "");
+            tubeKnob(dl, "tlfa", kParamPultecLfAttenGain, 0.f, 10.f, cx + 46, PY0 + 130, 26.f, "ATTEN", "%.1f", "");
+        }
+        // --- MID section ---
+        {
+            const bool midOn = values[kParamPultecMidEnabled] > 0.5f;
+            const float cx = 0.5f * (CX[1] + CX[2]);
+            panelButton(dl, "tmiden", cx - 34, PY0 + 30, cx + 34, PY0 + 50, midOn ? "MID: ON" : "MID: OFF",
+                        midOn ? kGreenBtn : IM_COL32(50, 44, 38, 255), [this] { toggleParam(kParamPultecMidEnabled); });
+            const float col1 = CX[1] + 52, col2 = 0.5f * (CX[1] + CX[2]), col3 = CX[2] - 52;
+            stepSelector(dl, "tmlf", col1, PY0 + 78, 74.f, 18.f, "LOW PK FREQ", kParamPultecMidLowFreq, midOn);
+            stepSelector(dl, "tmdf", col2, PY0 + 78, 74.f, 18.f, "DIP FREQ", kParamPultecMidDipFreq, midOn);
+            stepSelector(dl, "tmhf", col3, PY0 + 78, 74.f, 18.f, "HIGH PK FREQ", kParamPultecMidHighFreq, midOn);
+            tubeKnob(dl, "tmlp", kParamPultecMidLowPeak, 0.f, 10.f, col1, PY0 + 158, 24.f, "PEAK", "%.1f", "");
+            tubeKnob(dl, "tmd",  kParamPultecMidDip,     0.f, 10.f, col2, PY0 + 158, 24.f, "DIP", "%.1f", "");
+            tubeKnob(dl, "tmhp", kParamPultecMidHighPeak,0.f, 10.f, col3, PY0 + 158, 24.f, "PEAK", "%.1f", "");
+        }
+        // --- HF section ---
+        {
+            const float cxa = CX[2] + 60, cxb = CX[3] - 60;
+            stepSelector(dl, "thbf", cxa, PY0 + 44, 82.f, 20.f, "BOOST FREQ", kParamPultecHfBoostFreq);
+            stepSelector(dl, "thaf", cxb, PY0 + 44, 82.f, 20.f, "ATTEN FREQ", kParamPultecHfAttenFreq);
+            tubeKnob(dl, "thb",  kParamPultecHfBoostGain, 0.f, 10.f, cxa, PY0 + 130, 26.f, "BOOST", "%.1f", "");
+            tubeKnob(dl, "thbw", kParamPultecHfBoostBandwidth, 0.f, 1.f, 0.5f * (cxa + cxb), PY0 + 220, 22.f, "BANDWIDTH", "%.2f", "");
+            tubeKnob(dl, "tha",  kParamPultecHfAttenGain, 0.f, 10.f, cxb, PY0 + 130, 26.f, "ATTEN", "%.1f", "");
+        }
+        // --- I/O + drive ---
+        {
+            const float cx = 0.5f * (CX[3] + CX[4]);
+            tubeKnob(dl, "tin",  kParamPultecInputGain,  -12.f, 12.f, cx, PY0 + 58,  22.f, "INPUT", "%.1f", " dB");
+            tubeKnob(dl, "tdrv", kParamPultecTubeDrive,   0.f,  1.f,  cx, PY0 + 150, 22.f, "DRIVE", "%.0f", "%", 100.f);
+            tubeKnob(dl, "tout", kParamPultecOutputGain, -12.f, 12.f, cx, PY0 + 242, 22.f, "OUTPUT", "%.1f", " dB");
+        }
+    }
+
+    void tubeKnob(ImDrawList* dl, const char* id, uint32_t pid, float minV, float maxV,
+                  float cx, float cy, float r, const char* caption, const char* fmt, const char* suffix,
+                  float dispMul = 1.0f)
+    {
+        panel.text(dl, cx, cy - r - 15.f, 10.f, C_TUBE_LBL, caption, 0, true);
+        panel.knob(id, pid, minV, maxV, cx, cy, r, values[pid], mqDef(pid),
+                   false, true, fmt, suffix, C_TUBE_FACE, false, true, nullptr, false, dispMul, 0.f);
     }
 
     template <class Fn>
@@ -1132,6 +1839,8 @@ private:
     bool presetOpen = false;
     bool showFft = true;
     int  graphRangeIdx = 2;
+    int  digRangeIdx = 1;      // Digital plot +/- range: 0=12,1=24,2=36 dB
+    int  dragBand_ = -1;       // Digital: band whose handle is being dragged
     float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f;
     bool  stepModReset_ = false;
