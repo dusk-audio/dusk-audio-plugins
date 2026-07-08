@@ -29,6 +29,13 @@ public:
             values[i].store(kMqParams[i].def, std::memory_order_relaxed);
     }
 
+    // same-process meter/analyzer access for the UI bridge (MultiQAccess.hpp)
+    float inPeakLForUI()  const noexcept { return dsp.getInputPeakL(); }
+    float inPeakRForUI()  const noexcept { return dsp.getInputPeakR(); }
+    float outPeakLForUI() const noexcept { return dsp.getOutputPeakL(); }
+    float outPeakRForUI() const noexcept { return dsp.getOutputPeakR(); }
+    const duskaudio::SpectrumRing* outSpecForUI() const noexcept { return &dsp.outputSpectrum(); }
+
 protected:
     //--- metadata --------------------------------------------------------------
     const char* getLabel() const override { return "MultiQ2"; }
@@ -266,7 +273,17 @@ Plugin* createPlugin()
 
 END_NAMESPACE_DISTRHO
 
-// same-process UI accessors (see MultiQAccess.hpp). Phase-2 core has no meters
-// yet, so these are 0.0f placeholders; Phase 3 wires the real DSP atomics.
-float multiQGetOutL(void*) noexcept { return 0.0f; }
-float multiQGetOutR(void*) noexcept { return 0.0f; }
+// same-process UI accessors (see MultiQAccess.hpp). Read straight off the live
+// DSP instance's lock-free atomics / analyzer ring; null-safe for the split UI.
+static DISTRHO_NAMESPACE::MultiQPlugin* asMq(void* p) noexcept
+{
+    return static_cast<DISTRHO_NAMESPACE::MultiQPlugin*>(p);
+}
+float multiQGetInputPeakL(void* p)  noexcept { return p ? asMq(p)->inPeakLForUI()  : 0.0f; }
+float multiQGetInputPeakR(void* p)  noexcept { return p ? asMq(p)->inPeakRForUI()  : 0.0f; }
+float multiQGetOutputPeakL(void* p) noexcept { return p ? asMq(p)->outPeakLForUI() : 0.0f; }
+float multiQGetOutputPeakR(void* p) noexcept { return p ? asMq(p)->outPeakRForUI() : 0.0f; }
+const duskaudio::SpectrumRing* multiQGetOutputSpectrum(void* p) noexcept
+{
+    return p ? asMq(p)->outSpecForUI() : nullptr;
+}

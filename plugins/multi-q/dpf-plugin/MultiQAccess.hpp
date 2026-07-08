@@ -3,16 +3,24 @@
 // others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
 // MultiQAccess.hpp — UI-side same-process DSP accessor bridge for Multi-Q 2.
-// The Phase-2 core carries no meters/analyzer yet, so these return 0.0f
-// placeholders; enough for the UI bridge to compile and for Phase-3 to wire the
-// real spectrum/meter atomics without changing the contract. See
-// DuskAccessBridge.hpp for the single-binary-vs-split-LV2 weak-symbol contract
-// and the required UI-side null guard. Strong definitions live in MultiQPlugin.cpp.
+// The MultiQDSP core exposes in/out peak meters and a post-processing analyzer
+// ring; the UI reads them straight off the live DSP instance through these
+// weak-symbol accessors. See DuskAccessBridge.hpp for the single-binary-vs-split-
+// LV2 weak-symbol contract and the required UI-side null guard. Strong
+// definitions live in MultiQPlugin.cpp. Mirrors FourKEQAccess.hpp.
 
 #pragma once
 
 #include "DuskAccessBridge.hpp"
 
-// Output peak level per channel (placeholder 0.0f until the core exposes meters).
-DUSK_ACCESS_DECL(float, multiQGetOutL);
-DUSK_ACCESS_DECL(float, multiQGetOutR);
+namespace duskaudio { class SpectrumRing; }
+
+// Linear peak levels (0..~2), ~300 ms release. Pre-processing input + post-
+// processing output, per channel.
+DUSK_ACCESS_DECL(float, multiQGetInputPeakL);
+DUSK_ACCESS_DECL(float, multiQGetInputPeakR);
+DUSK_ACCESS_DECL(float, multiQGetOutputPeakL);
+DUSK_ACCESS_DECL(float, multiQGetOutputPeakR);
+
+// Pointer to the DSP's lock-free post-processing analyzer ring (null out-of-process).
+DUSK_ACCESS_DECL(const duskaudio::SpectrumRing*, multiQGetOutputSpectrum);
