@@ -24,6 +24,7 @@
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>
+#include <atomic>
 
 namespace duskaudio
 {
@@ -113,6 +114,20 @@ public:
         return lastEqType == (int)EQType::British ? britishEQ.getLatencySamples() : 0;
     }
 
+    //--- metering + analyzer taps (read-only observers; any thread) -----------
+    // Read-only observers written in process() after the character branch; they
+    // never touch the processed audio (bit-identity preserved). Linear peak with
+    // ~300 ms release, relaxed atomics; pre-processing input and post-processing
+    // output, per channel (L/R).
+    float getInputPeakL()  const noexcept { return inPeakL.load(std::memory_order_relaxed); }
+    float getInputPeakR()  const noexcept { return inPeakR.load(std::memory_order_relaxed); }
+    float getOutputPeakL() const noexcept { return outPeakL.load(std::memory_order_relaxed); }
+    float getOutputPeakR() const noexcept { return outPeakR.load(std::memory_order_relaxed); }
+    // Lock-free ring of recent post-processing output (mono downmix) for the UI
+    // spectrum FFT. The audio thread push()es; the UI snapshot()s (see the
+    // SpectrumRing snapshot protocol / FourKEQ analyzer).
+    const SpectrumRing& outputSpectrum() const noexcept { return analyzerRing; }
+
 private:
     // Framework-free cascaded biquad (variable-slope HPF/LPF). Direct-form II
     // transposed, coefficients set directly (no per-sample smoothing), NaN-guard
@@ -167,6 +182,12 @@ private:
     // set the dyn-gain SVF target for a band from the given dynamic gain (dB)
     void updateDynGainFilter(int band, float dynGainDb, const Params& p);
 
+    // read-only observer taps (RT-safe, no alloc/lock): capture the pre-process
+    // input peak, and publish the post-process output peak + push the analyzer
+    // ring. Called once per block (input at the top, output before each return).
+    void captureInputPeak(const float* const* inputs, int numChannels, int numSamples) noexcept;
+    void publishOutputTaps(const float* L, const float* R, bool isStereo, int numSamples) noexcept;
+
     double currentSampleRate = 48000.0;
     float  biquadSmoothCoeff = 1.0f; // 1 - exp(-1/(0.001*sr)); per-sample coeff ramp
     bool   firstBlock = true;
@@ -182,6 +203,11 @@ private:
     std::array<LinearSmoothedValue, NUM_BANDS> bandEnableSmoothed;
     std::array<float, NUM_BANDS> prevBandPhaseInvertGain { {1,1,1,1,1,1,1,1} };
     std::array<float, NUM_BANDS> prevBandPanVal {};
+
+    //--- metering + analyzer taps (written in process(); read from any thread) -
+    SpectrumRing analyzerRing;                            // recent output (mono), UI FFT
+    std::atomic<float> inPeakL{0.f}, inPeakR{0.f}, outPeakL{0.f}, outPeakR{0.f};
+    float meterDecay = 1.0f;                              // per-sample peak-hold release
 };
 
 } // namespace duskaudio

@@ -19,6 +19,7 @@
 
 #include "DistrhoUI.hpp"
 #include "MultiQParams.hpp"
+#include "MultiQAccess.hpp"   // same-process meter/analyzer bridge (weak accessors)
 #include "FourKEQDSP.hpp"
 #include "MultiQFilters.hpp"  // amb:: analog-matched designers + MqBiquadCoeffs (Digital curve)
 
@@ -704,6 +705,10 @@ private:
             }
         }
 
+        // live spectrum analyzer behind the response curves (dim, subtle)
+        if (showFft)
+            drawSpectrum(dl, DGX0, DGY0, DGX1, DGY1);
+
         // per-band ghost curves (dim) then composite (bright)
         const double sr = digitalSampleRate();
         const int N = 300;
@@ -1313,7 +1318,7 @@ private:
         }
 
         if (showFft)
-            drawSpectrum(dl);
+            drawSpectrum(dl, GX0, GY0, GX1, GY1);
         const int N = 240;
         std::vector<ImVec2> pts; pts.reserve(N);
         for (int i = 0; i < N; ++i)
@@ -1345,9 +1350,54 @@ private:
         ImGui::PopStyleColor(4);
     }
 
-    // Multi-Q's Phase-2 core exposes no pre/post spectrum ring yet, so the FFT
-    // overlay is a no-op (the toggle + button are kept for UI parity).
-    void drawSpectrum(ImDrawList* dl) { (void)dl; }
+    // Live post-processing spectrum, drawn as a dim filled polyline BEHIND the
+    // response curve. Snapshots the DSP's lock-free analyzer ring (SpectrumRing:
+    // ACQUIRE write-index, copy N newest slots, torn frames self-drop), windows +
+    // FFTs on the UI thread (shared duskdpf::RealFFT), smooths in dB across frames,
+    // and maps log-freq X to the plot rect. Mirrors FourKEQUI::drawSpectrum.
+    void drawSpectrum(ImDrawList* dl, float x0, float y0, float x1, float y1)
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        const duskaudio::SpectrumRing* ring = nullptr;
+        if (multiQGetOutputSpectrum != nullptr)
+            if (void* inst = getPluginInstancePointer())
+                ring = multiQGetOutputSpectrum(inst);
+        if (ring == nullptr) return;
+
+        float buf[kFftSize]; ring->snapshot(buf, kFftSize);
+        float mag[kFftSize / 2 + 1]; fft.magnitude(buf, mag);
+        const float dt = ImGui::GetIO().DeltaTime;
+        const float smooth = 1.0f - std::exp(-dt * 12.0f);
+        // Rings fill at the DSP base rate; map bins with the host rate so the
+        // spectrum lines up with the log-frequency response curve at any rate.
+        const double sr = getSampleRate();
+        const float binHz = (float)((sr > 1.0 ? sr : 48000.0) / kFftSize);
+        const int half = kFftSize / 2;
+        constexpr float kSpecTop = -6.0f, kSpecBot = -84.0f; // dBFS window shown
+        std::vector<ImVec2> curve; curve.reserve((size_t)half);
+        for (int k = 1; k <= half; ++k)
+        {
+            const float freq = (float)k * binHz;
+            const float db = 20.0f * std::log10(mag[k] > 1e-7f ? mag[k] : 1e-7f);
+            specDb[(size_t)k] += (db - specDb[(size_t)k]) * smooth;
+            if (freq < kFMin || freq > kFMax) continue;
+            float ny = (kSpecTop - specDb[(size_t)k]) / (kSpecTop - kSpecBot);
+            ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
+            curve.push_back(panel.P(x0 + flog(freq) * (x1 - x0), y0 + ny * (y1 - y0)));
+        }
+        if (curve.size() >= 2)
+        {
+            const float baseY = panel.P(x0, y1).y;
+            for (size_t i = 0; i + 1 < curve.size(); ++i)
+                dl->AddQuadFilled(curve[i], curve[i + 1],
+                                  ImVec2(curve[i + 1].x, baseY), ImVec2(curve[i].x, baseY),
+                                  IM_COL32(70, 110, 140, 40));
+            dl->AddPolyline(curve.data(), (int)curve.size(), IM_COL32(96, 150, 190, 115), 0, 1.1f * sc());
+        }
+       #else
+        (void)dl; (void)x0; (void)y0; (void)x1; (void)y1;
+       #endif
+    }
 
     static float flog(float f) { return (std::log10(f) - std::log10(kFMin)) / (std::log10(kFMax) - std::log10(kFMin)); }
 
@@ -1769,12 +1819,20 @@ private:
     }
 
     //========================================================================
-    // edge meters (INPUT left, OUTPUT right) — Phase-2 core has no meters, so
-    // levels read 0.0f stubs (bars empty). Kept for visual parity with 4K EQ.
+    // edge meters (INPUT left, OUTPUT right) — real in/out peak levels read off
+    // the live DSP instance through the same-process bridge (MultiQAccess.hpp).
     //========================================================================
     void drawMeters(ImDrawList* dl)
     {
-        const float inL = 0, inR = 0, outL = 0, outR = 0;
+        float inL = 0, inR = 0, outL = 0, outR = 0;
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQGetInputPeakL != nullptr) // weak: null in the split LV2 UI
+            if (void* inst = getPluginInstancePointer())
+            {
+                inL  = multiQGetInputPeakL(inst);  inR  = multiQGetInputPeakR(inst);
+                outL = multiQGetOutputPeakL(inst); outR = multiQGetOutputPeakR(inst);
+            }
+       #endif
         panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "IN", 0, true);
         panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "OUT", 0, true);
         meterPair(dl, INX0, INX1, inL, inR);

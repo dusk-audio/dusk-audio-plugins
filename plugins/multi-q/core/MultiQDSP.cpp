@@ -29,10 +29,19 @@ void MultiQDSP::prepare(double sampleRate, int maxBlockSize)
     prevBandPanVal.fill(0.0f);
     prevHpfStages = prevLpfStages = -1;
     firstBlock = true;
+
+    // Read-only observer taps: peak-hold release (~300 ms) + fresh analyzer ring.
+    meterDecay = std::exp(-1.0f / (0.3f * (float)currentSampleRate));
+    inPeakL.store(0.f, std::memory_order_relaxed); inPeakR.store(0.f, std::memory_order_relaxed);
+    outPeakL.store(0.f, std::memory_order_relaxed); outPeakR.store(0.f, std::memory_order_relaxed);
+    analyzerRing.reset();
 }
 
 void MultiQDSP::reset()
 {
+    inPeakL.store(0.f, std::memory_order_relaxed); inPeakR.store(0.f, std::memory_order_relaxed);
+    outPeakL.store(0.f, std::memory_order_relaxed); outPeakR.store(0.f, std::memory_order_relaxed);
+    analyzerRing.reset();
     for (auto& f : svfFilters) f.reset();
     for (auto& f : svfDynGainFilters) f.reset();
     dynamicEQ.reset();
@@ -221,10 +230,53 @@ void MultiQDSP::updateLPF(const Params& p)
     lpfFilter.activeStages = stages;
 }
 
+// Read-only observer taps -----------------------------------------------------
+// Peak-hold with per-block decay, mirroring FourKEQDSP's metering store. These
+// only read the audio and store into relaxed atomics / push into the ring — they
+// never modify the processed samples, so Digital audio stays bit-identical.
+void MultiQDSP::captureInputPeak(const float* const* inputs, int numChannels, int numSamples) noexcept
+{
+    const float dk = std::pow(meterDecay, (float)numSamples);
+    float pkL = 0.f, pkR = 0.f;
+    for (int i = 0; i < numSamples; ++i) { float a = std::fabs(inputs[0][i]); if (a > pkL) pkL = a; }
+    if (numChannels > 1)
+        for (int i = 0; i < numSamples; ++i) { float a = std::fabs(inputs[1][i]); if (a > pkR) pkR = a; }
+    else
+        pkR = pkL;
+    const float dL = inPeakL.load(std::memory_order_relaxed) * dk;
+    const float dR = inPeakR.load(std::memory_order_relaxed) * dk;
+    inPeakL.store(pkL > dL ? pkL : dL, std::memory_order_relaxed);
+    inPeakR.store(pkR > dR ? pkR : dR, std::memory_order_relaxed);
+}
+
+void MultiQDSP::publishOutputTaps(const float* L, const float* R, bool isStereo, int numSamples) noexcept
+{
+    const float dk = std::pow(meterDecay, (float)numSamples);
+    float pkL = 0.f, pkR = 0.f;
+    for (int i = 0; i < numSamples; ++i) { float a = std::fabs(L[i]); if (a > pkL) pkL = a; }
+    if (isStereo && R != nullptr)
+        for (int i = 0; i < numSamples; ++i) { float a = std::fabs(R[i]); if (a > pkR) pkR = a; }
+    else
+        pkR = pkL;
+    const float dL = outPeakL.load(std::memory_order_relaxed) * dk;
+    const float dR = outPeakR.load(std::memory_order_relaxed) * dk;
+    outPeakL.store(pkL > dL ? pkL : dL, std::memory_order_relaxed);
+    outPeakR.store(pkR > dR ? pkR : dR, std::memory_order_relaxed);
+
+    // Mono downmix of the final output into the lock-free analyzer ring.
+    if (isStereo && R != nullptr)
+        for (int i = 0; i < numSamples; ++i) analyzerRing.push(0.5f * (L[i] + R[i]));
+    else
+        for (int i = 0; i < numSamples; ++i) analyzerRing.push(L[i]);
+}
+
 void MultiQDSP::process(const float* const* inputs, float* const* outputs,
                         int numChannels, int numSamples, const Params& p)
 {
     if (numSamples <= 0 || numChannels <= 0) return;
+
+    // Input peak tap: read BEFORE processing (outputs may alias inputs in place).
+    captureInputPeak(inputs, numChannels, numSamples);
 
     const bool isStereo = numChannels > 1;
     float* procL = outputs[0];
@@ -262,6 +314,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             for (int i = 0; i < numSamples; ++i) procL[i] *= mgB;
             if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mgB;
         }
+        publishOutputTaps(procL, procR, isStereo, numSamples);
         return;
     }
 
@@ -295,6 +348,7 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
             for (int i = 0; i < numSamples; ++i) procL[i] *= mgT;
             if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mgT;
         }
+        publishOutputTaps(procL, procR, isStereo, numSamples);
         return;
     }
 
@@ -618,6 +672,8 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         for (int i = 0; i < numSamples; ++i) procL[i] *= mg;
         if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] *= mg;
     }
+
+    publishOutputTaps(procL, procR, isStereo, numSamples);
 }
 
 } // namespace duskaudio
