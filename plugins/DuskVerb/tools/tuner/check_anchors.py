@@ -28,11 +28,10 @@ import numpy as np, soundfile as sf, glob, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fleet_audit as fa
 
-STIM = ['impulse', 'noiseburst', 'sustained', 'snare', 'sine1k', 'piano']
-# Optional stimuli mirror fleet_audit.py's OPTIONAL_STIM: a missing render is a
-# SKIP, not a hard failure (piano is not captured for every anchor, and the new
-# optional-stimulus flow in fleet_audit already treats it that way).
-OPTIONAL_STIM = {'piano'}
+# Reuse fleet_audit's stimulus sets so the two scripts never drift (a missing
+# optional stimulus is a SKIP, not a hard failure — used for iteration + membership).
+STIM = fa.STIM
+OPTIONAL_STIM = fa.OPTIONAL_STIM
 # presets whose tail is SUPPOSED to be gated/dead (not a capture defect)
 GATED = {'Reverse Taps'}
 

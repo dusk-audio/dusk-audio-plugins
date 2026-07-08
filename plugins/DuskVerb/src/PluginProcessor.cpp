@@ -3877,7 +3877,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         // Dry-fed even octave cascade (500/250/125/62 Hz) — Deep Blue Day uses it INSTEAD of the
         // old feedback down/sub voices (which were subharmonic-masked + the sub ratio was clamped
         // to −12). All-zero = off/bit-null. Env DUSKVERB_SHIMMEROCT="g500,g250,g125,g62".
-        static const std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
+        static constexpr std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
             { "Black Hole",    { 0.0f, 0.0f, 0.0f, 0.0f } },
             { "Deep Blue Day", { 0.0f, 0.8f, 0.9f, 0.5f } },   // 2026-07-04 {0,.5,.5,0}->{0,.8,.9,.5} (EAR, with sub 4.5->1.5): the dry-fed cascade takes over the low warmth the recirculating sub voice used to supply — feed-forward, so it decays WITH the tank and cannot build up. Recovers down-octave cascade L1 + boom vs the plain sub cut (30->27). g500 stays 0 (the +12 up voice already re-pitches 250->500).
         }};

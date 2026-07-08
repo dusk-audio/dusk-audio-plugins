@@ -53,6 +53,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     matchEQL_.prepare (static_cast<float> (sampleRate));
     matchEQR_.prepare (static_cast<float> (sampleRate));
     designMatchEQ();   // redesign match-EQ coeffs from stored gains at the new sample rate
+    setDiffuseERHighpass (diffuseERHpHz_);   // re-derive the LR4 corner (dfHpB_/dfHpA_) for the new sample rate
     {
         const int maxOnset = static_cast<int> (0.20 * sampleRate) + 8;   // up to 200 ms tail delay
         tankOnsetBufL_.assign (static_cast<size_t> (maxOnset), 0.0f);

@@ -248,9 +248,10 @@ def check_anchor(name):
     for s in stims:
         p = f"{adir}/{apref}_{s}.wav"
         if not os.path.exists(p):
-            # Optional stimuli (piano) skip like render_and_check/full_check;
-            # only a required stimulus miss is FATAL (aborts the fleet).
-            if s in OPTIONAL_STIM:
+            # Optional stimuli (piano, and sinelong which full_check also skips)
+            # skip like render_and_check/full_check; only a required stimulus
+            # miss is FATAL (aborts the fleet).
+            if s in OPTIONAL_STIM or s == "sinelong":
                 problems.append(f"optional anchor stimulus {os.path.basename(p)} absent — skipped")
             else:
                 problems.append(f"FATAL: missing anchor stimulus {os.path.basename(p)}")
