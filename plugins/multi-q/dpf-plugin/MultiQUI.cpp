@@ -390,6 +390,12 @@ private:
 
         drawTitle(dl);
 
+        // A/B compare — real two-bank swap (shares toggleAB() with the Digital
+        // header). Sits in the gap between the title and the preset dropdown.
+        headerButton(dl, "brab", 172, kHdrY0, 196, kHdrY1, abIsA_ ? "A" : "B",
+                     abIsA_ ? kGreenBtn : IM_COL32(60, 60, 64, 255), pal().white,
+                     [&]{ toggleAB(); });
+
         // preset dropdown — custom crisp widget; the expanded list draws later, on top.
         {
             const ImVec2 p0 = panel.P(kPresetX0, kPresetY0), p1 = panel.P(kPresetX1, kPresetY1);
@@ -797,6 +803,45 @@ private:
     void setParamNotify(uint32_t id, float v)
     {
         editParameter(id, true); values[id] = v; setParameterValue(id, v); editParameter(id, false);
+    }
+
+    // Params that a real A/B compare must NOT swap. The character/skin selector
+    // (eq_type) is excluded so an A/B click always compares WITHIN the current
+    // view instead of yanking the user into another skin. Multi-Q's DPF param
+    // table has no output-only/meter params (metering is via the spectrum
+    // bridge, not automation), so nothing else needs skipping.
+    static bool abSkipParam(uint32_t i) { return i == (uint32_t)kParamEqType; }
+
+    // Real A/B compare (JUCE MultiQEditor::toggleDigitalAB / toggleBritishAB):
+    // hold two full parameter snapshots and swap the LIVE params to the other
+    // bank on click. Shared by the Digital AND British headers.
+    //   - First use: seed BOTH banks from the current state, so A==B until the
+    //     user edits something (exactly like JUCE, where B starts as a copy of A).
+    //   - Click: save the current live values[] into the active bank, flip the
+    //     active bank, then LOAD the other bank by pushing every param through
+    //     the host (begin/set/end). setParamNotify writes values[] too, so the
+    //     graph + every control reflect the loaded bank on the same frame.
+    void toggleAB()
+    {
+        if (!abInit_)
+        {
+            for (uint32_t i = 0; i < kParamCount; ++i)
+                abBankA_[i] = abBankB_[i] = values[i];
+            abInit_ = true;
+        }
+        // 1) snapshot the CURRENT live state into the active bank
+        float* active = abIsA_ ? abBankA_ : abBankB_;
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            active[i] = values[i];
+        // 2) flip, then 3) load the other bank into the live params
+        abIsA_ = !abIsA_;
+        const float* load = abIsA_ ? abBankA_ : abBankB_;
+        for (uint32_t i = 0; i < kParamCount; ++i)
+        {
+            if (abSkipParam(i)) continue;
+            if (load[i] != values[i])
+                setParamNotify(i, load[i]);   // pushes host + updates values[] now
+        }
     }
 
     // Reset a band to defaults. Alt-drag reset (JUCE :1315-1318) keeps the shape;
@@ -2095,12 +2140,12 @@ private:
         const ImU32 btnBg = IM_COL32(46, 46, 50, 255);
         const float y0 = 30.f, y1 = 52.f;
 
-        // A/B compare — VISUAL ONLY (no A/B state param in the DPF core yet).
+        // A/B compare — real two-bank parameter swap (shared toggleAB()).
         {
             const ImVec2 b0 = panel.P(178, y0), b1 = panel.P(202, y1);
             ImGui::SetCursorScreenPos(b0);
             ImGui::InvisibleButton("abbtn", ImVec2(b1.x - b0.x, b1.y - b0.y));
-            if (ImGui::IsItemClicked()) abIsA_ = !abIsA_;
+            if (ImGui::IsItemClicked()) toggleAB();
             dl->AddRectFilled(b0, b1, abIsA_ ? kGreenBtn : IM_COL32(60, 60, 64, 255), 4.f * s);
             dl->AddRect(b0, b1, IM_COL32(90, 90, 96, 220), 4.f * s, 0, 1.2f * s);
             panel.text(dl, 190, y0 + 5.f, 11.f, pal().white, abIsA_ ? "A" : "B", 0, true);
@@ -2463,38 +2508,84 @@ private:
     void drawTube(ImDrawList* dl)
     {
         const float s = sc();
-        // ---- read-only response curve (fixed +/-18 dB) ----
-        const float R = 18.f;
+        const double sr = digitalSampleRate();
+        // ---- response curve area ----
+        // dB scale is driven by the shared display_scale param (JUCE ties the Tube
+        // graph to the same scale selector); default index 1 == +/-24 dB (was a
+        // fixed +/-18). {0:+/-12, 1:+/-24, 2:+/-30, 3:+/-60, 4:Warped->+/-24}.
+        static const float kScaleR[5] = { 12.f, 24.f, 30.f, 60.f, 24.f };
+        int scIdx = choiceIdx(kParamDisplayScaleMode);
+        const float R = kScaleR[(scIdx < 0 || scIdx > 4) ? 1 : scIdx];
         dl->AddRectFilled(panel.P(DGX0 - 3, TGY0 - 3), panel.P(DGX1 + 3, TGY1 + 3), IM_COL32(60, 52, 44, 255), 3.f * s);
         dl->AddRectFilled(panel.P(DGX0, TGY0), panel.P(DGX1, TGY1), IM_COL32(20, 16, 13, 255));
         dl->PushClipRect(panel.P(DGX0, TGY0), panel.P(DGX1, TGY1), true);
         auto ty = [&](float db) { float d = db < -R ? -R : (db > R ? R : db); return TGY0 + (0.5f - 0.5f * d / R) * (TGY1 - TGY0); };
+
+        // vertical freq grid
         for (int i = 0; i < (int)(sizeof(kGridF) / sizeof(kGridF[0])); ++i)
         {
             const float x = DGX0 + flog((float)kGridF[i]) * (DGX1 - DGX0);
             dl->AddLine(panel.P(x, TGY0), panel.P(x, TGY1), IM_COL32(48, 40, 32, 255), 1.f * s);
             panel.text(dl, x, TGY1 - 13, 8.5f, IM_COL32(150, 130, 104, 255), kGridFL[i], 0);
         }
-        for (int k = -1; k <= 1; ++k)
+        // horizontal dB grid — step chosen from the range (JUCE drawVintageGrid).
+        const float dbStep = R <= 12.f ? 3.f : (R <= 24.f ? 6.f : (R <= 30.f ? 10.f : 20.f));
+        for (float db = -R; db <= R + 0.1f; db += dbStep)
         {
-            const float y = ty(k * R);
-            dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y), k == 0 ? IM_COL32(80, 68, 54, 255) : IM_COL32(44, 37, 30, 255), 1.f * s);
-            char b[8]; std::snprintf(b, sizeof(b), "%+d", (int)(k * R));
-            panel.text(dl, DGX0 + 5, y - 6.f, 10.f, IM_COL32(170, 150, 122, 255), k == 0 ? "0" : b, -1);
+            const float y = ty(db);
+            const bool zero = std::abs(db) < 0.1f;
+            dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y), zero ? IM_COL32(80, 68, 54, 255) : IM_COL32(44, 37, 30, 255), 1.f * s);
+            char b[8]; std::snprintf(b, sizeof(b), "%+d", (int)std::lround(db));
+            panel.text(dl, DGX0 + 5, y - 6.f, 10.f, IM_COL32(170, 150, 122, 255), zero ? "0" : b, -1);
         }
+
+        // live FFT analyzer overlay — reuses the committed spectrum bridge +
+        // digital smoothing/freeze (pre/post via analyzer_pre_post). Drawn BEHIND
+        // the EQ curves, dim. UI-local ANALYZER on/off; FREEZE shares digFrozen_.
+        if (tubeAnalyzer_)
+            drawDigitalSpectrum(dl, DGX0, TGY0, DGX1, TGY1);
+
+        // ---- per-section colored sub-curves + combined white curve ----
+        // Split the tube response into its section contributions (matching JUCE
+        // TubeEQCurveDisplay's per-band curves): LF boost/atten in blue, HF
+        // boost/atten in light-blue, MID in amber; combined in white on top.
+        const int N = 300;
+        auto section = [&](ImU32 col, float thick, auto&& fn)
         {
-            const int N = 300;
             std::vector<ImVec2> pts; pts.reserve(N);
             for (int i = 0; i < N; ++i)
             {
                 const float lx = (float)i / (N - 1);
                 const float freq = std::pow(10.f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-                pts.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), ty(tubeResponseDb(freq))));
+                pts.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), ty(fn(freq))));
             }
-            dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(240, 196, 120, 255), 0, 2.2f * s);
-        }
+            dl->AddPolyline(pts.data(), (int)pts.size(), col, 0, thick * s);
+        };
+        const float lfB = values[kParamPultecLfBoostGain], lfA = values[kParamPultecLfAttenGain];
+        const float hfB = values[kParamPultecHfBoostGain], hfA = values[kParamPultecHfAttenGain];
+        const bool  midOn = values[kParamPultecMidEnabled] > 0.5f;
+        const bool  midAny = values[kParamPultecMidLowPeak] > 0.01f || values[kParamPultecMidDip] > 0.01f
+                          || values[kParamPultecMidHighPeak] > 0.01f;
+        if (lfB > 0.1f || lfA > 0.1f)
+            section(IM_COL32(96, 160, 200, 205), 1.6f, [&](float f) { return tubeLfCombinedDb(f, sr); });
+        if (hfB > 0.1f || hfA > 0.1f)
+            section(IM_COL32(130, 196, 224, 205), 1.6f, [&](float f) { return tubeHfBoostDb(f) + tubeHfAttenDb(f); });
+        if (midOn && midAny)
+            section(IM_COL32(216, 168, 110, 205), 1.6f, [&](float f) { return tubeMidDb(f, sr); });
+        section(IM_COL32(232, 228, 222, 255), 2.4f, [&](float f) { return tubeResponseDb(f); });
+
         dl->PopClipRect();
-        panel.text(dl, DGX1 - 6, TGY0 + 6, 9.f, IM_COL32(150, 130, 104, 255), "READ-ONLY", 1, true);
+
+        // small READ-ONLY note (curve is DSP-driven; not draggable). Kept small,
+        // top-centre so it clears the HUD toggles and the frozen badge.
+        panel.text(dl, 0.5f * (DGX0 + DGX1), TGY0 + 4.f, 8.5f, IM_COL32(120, 104, 84, 255), "READ-ONLY", 0, true);
+
+        // analyzer HUD toggles (top-left interior, clear of the dB label column).
+        const ImU32 hudDim = IM_COL32(48, 40, 32, 235);
+        headerButton(dl, "tbanlz", DGX0 + 34, TGY0 + 4, DGX0 + 96, TGY0 + 20, "ANLZ",
+                     tubeAnalyzer_ ? kGreenBtn : hudDim, pal().white, [&]{ tubeAnalyzer_ = !tubeAnalyzer_; });
+        headerButton(dl, "tbfrz", DGX0 + 100, TGY0 + 4, DGX0 + 168, TGY0 + 20, digFrozen_ ? "FROZEN" : "FREEZE",
+                     digFrozen_ ? IM_COL32(40, 110, 150, 255) : hudDim, pal().white, [&]{ toggleFreeze(); });
 
         // ---- control chassis ----
         const float PY0 = 316.f, PY1 = 662.f;
@@ -3508,7 +3599,11 @@ private:
     int  digRangeIdx = 1;      // Digital plot range idx into {±12,±24,±30,±60,Warped}; default ±24
     int  dragBand_ = -1;       // Digital: band whose handle is being dragged
     int  selectedBand_ = 4;    // Digital: selected band for the detail panel (default Mid)
-    bool abIsA_ = true;        // Digital A/B compare — visual only (no DSP param yet)
+    bool abIsA_ = true;        // A/B compare: which bank is live (shared Digital+British)
+    bool abInit_ = false;      // banks seeded from current state on first A/B use
+    float abBankA_[kParamCount] = {};   // snapshot A (all automatable params)
+    float abBankB_[kParamCount] = {};   // snapshot B
+    bool tubeAnalyzer_ = true; // Tube view: FFT analyzer overlay on/off (UI-local)
     int  digPreset_ = -1;      // Digital: selected factory preset index (-1 = Init/none)
 
     // Digital analyzer state (own FFT + buffers, kept separate from British `fft`/
