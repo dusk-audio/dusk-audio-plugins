@@ -25,10 +25,23 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     // All engines stay prepared so setAlgorithm() never has to allocate.
     dattorro_.prepare (sampleRate, maxBlockSize);
     dattorroDenseField_.prepare (sampleRate);
+    dynLowMid_.prepare (sampleRate);
     sixAPTank_.prepare (sampleRate, maxBlockSize);
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize); accurateHall_.prepare (sampleRate, maxBlockSize);
     sparseField_.prepare (sampleRate, maxBlockSize);
+    erDuck_.prepare (sampleRate);
+    etapDuck_.prepare (sampleRate);
+    tankDuck_.prepare (sampleRate);
+    // Wet-input sustained duck: re-derive coeffs at the new sample rate + clear state.
+    wetSusLimMidCfg_.updateCoeffs (sampleRate);
+    wetSusLimLowCfg_.updateCoeffs (sampleRate);
+    wetSusLimMidCutL_.design (wetSusLimMidCfg_.loHz, wetSusLimMidCfg_.hiHz, wetSusLimMidCfg_.maxCutDb, sampleRate);
+    wetSusLimMidCutR_.design (wetSusLimMidCfg_.loHz, wetSusLimMidCfg_.hiHz, wetSusLimMidCfg_.maxCutDb, sampleRate);
+    wetSusLimLowCutL_.design (wetSusLimLowCfg_.loHz, wetSusLimLowCfg_.hiHz, wetSusLimLowCfg_.maxCutDb, sampleRate);
+    wetSusLimLowCutR_.design (wetSusLimLowCfg_.loHz, wetSusLimLowCfg_.hiHz, wetSusLimLowCfg_.maxCutDb, sampleRate);
+    wetSusLimMidDet_.clear();  wetSusLimLowDet_.clear();
+    wetSusLimKey_.prepare (sampleRate);
     diffuseER_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
     pmb_.prepare (sampleRate, maxBlockSize);
@@ -171,6 +184,11 @@ void DuskVerbEngine::clearAllBuffers()
 {
     dattorro_ .clearBuffers();
     dattorroDenseField_.clear();
+    dynLowMid_.clear();
+    wetSusLimMidDet_.clear();  wetSusLimLowDet_.clear();
+    wetSusLimMidCutL_.clear(); wetSusLimMidCutR_.clear();
+    wetSusLimLowCutL_.clear(); wetSusLimLowCutR_.clear();
+    wetSusLimKey_.clear();
     sixAPTank_.clearBuffers();
     quad_     .clearBuffers();
     fdn_      .clearBuffers();
@@ -189,6 +207,13 @@ void DuskVerbEngine::clearAllBuffers()
     dattorroVintage_.clearBuffers();
 
     reverseRoom_.clearBuffers();
+
+    // Transient-duck envelopes/holds (sparse-ER, early-tap, early-window tank) —
+    // POD onset state that survives an idle engine; reset so a preset swap can't
+    // reuse a stale gate position.
+    erDuck_.reset();
+    etapDuck_.reset();
+    tankDuck_.reset();
 
     // Pre-tank input diffuser and early reflections — both retain
     // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
@@ -287,9 +312,17 @@ void DuskVerbEngine::setAlgorithm (int index)
 
     dattorro_.clearBuffers();
     dattorroDenseField_.clear();
+    dynLowMid_.clear();
+    wetSusLimMidDet_.clear();  wetSusLimLowDet_.clear();
+    wetSusLimMidCutL_.clear(); wetSusLimMidCutR_.clear();
+    wetSusLimLowCutL_.clear(); wetSusLimLowCutR_.clear();
+    wetSusLimKey_.clear();
     sixAPTank_.clearBuffers();
     quad_.clearBuffers();
     fdn_.clearBuffers(); accurateHall_.clearBuffers (); sparseField_.clear(); diffuseER_.clear(); outputDiffusion_.clear(); denseHall_.clear(); buildupDiffuser_.clear(); pmb_.clear();
+    erDuck_.reset();
+    etapDuck_.reset();
+    tankDuck_.reset();
     multibandFdn_.clearBuffers();
     spring_.clearBuffers();
     nonLinear_.clearBuffers();
@@ -559,9 +592,54 @@ void DuskVerbEngine::setDenseHallOctaveT60 (int band, float seconds)
     denseHall_.setOctaveT60 (band, seconds);
 }
 
-void DuskVerbEngine::setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz)
+void DuskVerbEngine::setShimmerNoiseDuck (float amt)
 {
-    denseHall_.setLowAccumLimiter (threshDb, maxCut, splitHz);
+    shimmer_.setNoiseSustainDuck (amt);
+}
+
+void DuskVerbEngine::setShimmerLoopHiLimiter (float loHz, float hiHz, float ratioThrDb, float maxCutDb,
+                                              float atkMs, float relFastMs, float relSlowMs)
+{
+    shimmer_.setLoopHiLimiter (loHz, hiHz, ratioThrDb, maxCutDb, atkMs, relFastMs, relSlowMs);
+}
+
+void DuskVerbEngine::setQuadStereoMod (float rateHz, float depth)
+{
+    quad_.setStereoMod (rateHz, depth);
+}
+
+void DuskVerbEngine::setTankHFSustain (float db, float cornerHz)
+{
+    // Per-pass HF-sustain compensation (top-octave cliff fix) — Dattorro + DenseHall
+    // cover all 7 spec_L1@12.9k presets. 0 dB = bit-null on both.
+    dattorro_.setHFSustain  (db, cornerHz);
+    denseHall_.setHFSustain (db, cornerHz);
+}
+
+void DuskVerbEngine::setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                                           float atkMs, float relFastMs, float relSlowMs)
+{
+    // Sustained-energy WET-INPUT duck, MID slot (law A "sine regulator") — configures the
+    // engine-level pre-ER/pre-tank duck in process() step 1b. Measurement (2026-07-07)
+    // showed the sine1k steady-state excess is ~90% FIRST-PASS throughput (killing the
+    // whole recirculation via Decay 0.1 s moved the sine only 0.2-1.2 dB), so the duck
+    // sits on the wet FEED (engine-agnostic, one site) rather than inside the loops; the
+    // per-engine in-loop instances from the same feature family remain available but
+    // dormant. maxCutDb 0 -> inactive -> bit-null.
+    wetSusLimMidCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    wetSusLimMidCutL_.design (wetSusLimMidCfg_.loHz, wetSusLimMidCfg_.hiHz, wetSusLimMidCfg_.maxCutDb, sampleRate_);
+    wetSusLimMidCutR_.design (wetSusLimMidCfg_.loHz, wetSusLimMidCfg_.hiHz, wetSusLimMidCfg_.maxCutDb, sampleRate_);
+    wetSusLimMidDet_.clear();
+}
+
+void DuskVerbEngine::setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                                           float atkMs, float relFastMs, float relSlowMs)
+{
+    // LOW slot (law B "charge limiter") — same engine-level wet-input duck.
+    wetSusLimLowCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    wetSusLimLowCutL_.design (wetSusLimLowCfg_.loHz, wetSusLimLowCfg_.hiHz, wetSusLimLowCfg_.maxCutDb, sampleRate_);
+    wetSusLimLowCutR_.design (wetSusLimLowCfg_.loHz, wetSusLimLowCfg_.hiHz, wetSusLimLowCfg_.maxCutDb, sampleRate_);
+    wetSusLimLowDet_.clear();
 }
 
 void DuskVerbEngine::setPmbBand (int b, float t60s, float level, float direct, float width)
@@ -643,6 +721,83 @@ void DuskVerbEngine::recomputeTankOnsetSamples()
     tankOnsetSamples_ = (sz > 1) ? std::min (s, sz - 1) : 0;
 }
 
+void DuskVerbEngine::setDattorroEarlyField (bool on)
+{
+    dattorroEarlyFieldOn_ = on;
+}
+
+void DuskVerbEngine::setDynamicLowMid (float threshDb, float maxCut, float splitHz, float atkMs, float relMs)
+{
+    dynLowMid_.setParams (threshDb, maxCut, splitHz, atkMs, relMs);
+}
+
+void DuskVerbEngine::setDattorroModeSmear (float depthSamples, float rateHz)
+{
+    // Applied to the Dattorro tank, the AccurateHall FDN, AND the ParallelMultiband tank
+    // so a boing preset on any of them gets it (each is a no-op at depth 0 → bit-null).
+    dattorro_.setModeSmear (depthSamples, rateHz);
+    accurateHall_.setModeSmear (depthSamples, rateHz);
+    pmb_.setModeSmear (depthSamples, rateHz);
+    shimmer_.setModeSmear (depthSamples, rateHz);
+}
+
+void DuskVerbEngine::setAccurateHallEarlyField (bool on)
+{
+    accurateHallEarlyFieldOn_ = on;
+}
+
+// Shared early-field composite (Dattorro + AccurateHall): optional tank-onset delay
+// that pushes the late tank back so the undelayed velvet sparse ER defines the attack/
+// onset/early reflections, then MIXES tank·sparseTailGain_ + sparseER·(sparseERGain_ ×
+// transient-duck). The duck (keyed off the clean dry mono) fires the ER on a hit —
+// closing attack/onset/early_refl/early_tap — but ducks it to silence on a sustained
+// tone/noise, so it adds NO steady energy (no noiseburst gain-match cascade, no sine1k
+// pump). Per-tap velvet signs are decorrelated so a sustained tone cannot coherently
+// comb at 1 kHz (the fixed-ERTAPS failure). Voicing from kCompositeERByName.
+void DuskVerbEngine::applyEarlyFieldComposite (int numSamples)
+{
+    // Tank-onset delay: push the late tank back by tankOnsetSamples_ (0 → skipped). Same
+    // ring-buffer delay the DenseHall case uses.
+    if (tankOnsetSamples_ > 0)
+    {
+        const int sz = static_cast<int> (tankOnsetBufL_.size());
+        for (int i = 0; i < numSamples; ++i)
+        {
+            int rd = tankOnsetWrite_ - tankOnsetSamples_; if (rd < 0) rd += sz;
+            const float dl = tankOnsetBufL_[static_cast<size_t> (rd)];
+            const float dr = tankOnsetBufR_[static_cast<size_t> (rd)];
+            tankOnsetBufL_[static_cast<size_t> (tankOnsetWrite_)] = tankOutL_[static_cast<size_t> (i)];
+            tankOnsetBufR_[static_cast<size_t> (tankOnsetWrite_)] = tankOutR_[static_cast<size_t> (i)];
+            tankOutL_[static_cast<size_t> (i)] = dl;
+            tankOutR_[static_cast<size_t> (i)] = dr;
+            if (++tankOnsetWrite_ >= sz) tankOnsetWrite_ = 0;
+        }
+    }
+    sparseField_.process (tankInL_.data(), tankInR_.data(),
+                          sparseOutL_.data(), sparseOutR_.data(), numSamples);
+    applyEarlyTankDuck (numSamples);
+    if (sparseERDuckAmount_ > 0.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float dg = erDuck_.process (reflDryMono_[static_cast<size_t> (i)]);
+            const float g  = sparseERGain_ * ((1.0f - sparseERDuckAmount_) + sparseERDuckAmount_ * dg);
+            tankOutL_[static_cast<size_t> (i)] =
+                tankOutL_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutL_[static_cast<size_t> (i)] * g;
+            tankOutR_[static_cast<size_t> (i)] =
+                tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)] * g;
+        }
+    }
+    else
+        for (int i = 0; i < numSamples; ++i)
+        {
+            tankOutL_[static_cast<size_t> (i)] =
+                tankOutL_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
+            tankOutR_[static_cast<size_t> (i)] =
+                tankOutR_[static_cast<size_t> (i)] * sparseTailGain_ + sparseOutR_[static_cast<size_t> (i)] * sparseERGain_;
+        }
+}
+
 void DuskVerbEngine::setOutputMatchEQ (const float* corrLinear9)
 {
     // Sanitize the per-octave gains before they reach designCoeffs: clamp into
@@ -688,6 +843,44 @@ void DuskVerbEngine::setBuildupTimeScale     (float s)   { buildupDiffuser_.setT
 void DuskVerbEngine::setBuildupPostTank      (bool b)    { buildupPostTank_ = b; }
 void DuskVerbEngine::setSparseFieldTailGain (float gain) { sparseTailGain_ = std::clamp (gain, 0.0f, 1.0f); }
 void DuskVerbEngine::setSparseERGain        (float gain) { sparseERGain_   = std::clamp (gain, 0.0f, 2.0f); }
+void DuskVerbEngine::setSparseERDuck (float amount, float holdMs, float thresh)
+{
+    sparseERDuckAmount_ = std::clamp (amount, 0.0f, 1.0f);
+    erDuck_.setHoldMs (holdMs);
+    erDuck_.setThreshold (thresh);
+}
+void DuskVerbEngine::setEarlyTapDuck (float amount, float holdMs, float thresh)
+{
+    etapDuckAmount_ = std::clamp (amount, 0.0f, 1.0f);
+    etapDuck_.setHoldMs (holdMs);
+    etapDuck_.setThreshold (thresh);
+}
+void DuskVerbEngine::setEarlyTankDuck (float amount, float holdMs, float thresh)
+{
+    tankDuckAmount_ = std::clamp (amount, 0.0f, 1.0f);
+    tankDuck_.setHoldMs (holdMs);
+    tankDuck_.setThreshold (thresh);
+}
+// Pre-ER pass: suppress the dense tank/wash for the early-reflection window (the
+// hold after an onset) so the discrete sparse-ER taps STAND OUT instead of being
+// buried in the wash. tankGain = 1 - amount·dg; the onset-gated dg holds ~1 across
+// the early field then decays to 0 on sustain, so the tail restores to FULL — the
+// sustained-window gates (ss/T60/tail/env_p2p) see an unchanged tank. Ducking the
+// early wash also delays the tank's energy arrival (helps energy_t50/first50 on the
+// too-front-loaded DenseHall rooms). Skipped entirely (tank untouched, tankDuck_
+// not advanced) when off → bit-null. Call right after sparseField_.process, before
+// the ER mix, at each engine's composite mix site.
+void DuskVerbEngine::applyEarlyTankDuck (int numSamples)
+{
+    if (tankDuckAmount_ <= 0.0f) return;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float dg  = tankDuck_.process (reflDryMono_[static_cast<size_t> (i)]);
+        const float tdg = 1.0f - tankDuckAmount_ * dg;
+        tankOutL_[static_cast<size_t> (i)] *= tdg;
+        tankOutR_[static_cast<size_t> (i)] *= tdg;
+    }
+}
 void DuskVerbEngine::setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain)
 {
     diffuseER_.setReflections (timesMs, gains, n);
@@ -1421,6 +1614,47 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         preDelayWritePos_ = (preDelayWritePos_ + 1) & preDelayMask_;
     }
 
+    // ---- 1b) Sustained-energy wet-input duck (SustainBandLimiter.h) ----
+    // Placed on the POST-predelay wet feed BEFORE the ER/tank split, because the
+    // sine1k steady-state excess was measured to be ~90% FIRST-PASS throughput
+    // (diffusers → pass-1 → taps, + the ER bus) — killing the entire recirculation
+    // (Decay 0.1 s) moved the sine only 0.2-1.2 dB, so no in-loop mechanism can
+    // reach it. Ducking the wet FEED scales first-pass + recirculation + ER
+    // together (full sine1k reach), reduces piano-stem charge accumulation
+    // equivalently (less injection = less charge = smaller tail), and is
+    // inherently T60-safe: the release decay is a loop property, injection is
+    // irrelevant after input-off. Detector is same-sample (feed-forward site).
+    // Inactive → block skipped → bit-null.
+    if (wetSusLimMidCfg_.active || wetSusLimLowCfg_.active)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float xl = tankInL_[static_cast<size_t> (i)];
+            float xr = tankInR_[static_cast<size_t> (i)];
+            const bool present = wetSusLimKey_.advance (std::fabs (xl) + std::fabs (xr));
+            if (wetSusLimMidCfg_.active)
+            {
+                const float bl = wetSusLimMidCutL_.band (xl);
+                const float br = wetSusLimMidCutR_.band (xr);
+                const float red = wetSusLimMidDet_.advanceUnit (0.5f * (std::fabs (bl) + std::fabs (br)) * wetSusLimMidCfg_.detNorm,
+                                                                wetSusLimMidCfg_, present);
+                xl -= red * bl;
+                xr -= red * br;
+            }
+            if (wetSusLimLowCfg_.active)
+            {
+                const float bl = wetSusLimLowCutL_.band (xl);
+                const float br = wetSusLimLowCutR_.band (xr);
+                const float red = wetSusLimLowDet_.advanceUnit (0.5f * (std::fabs (bl) + std::fabs (br)) * wetSusLimLowCfg_.detNorm,
+                                                                wetSusLimLowCfg_, present);
+                xl -= red * bl;
+                xr -= red * br;
+            }
+            tankInL_[static_cast<size_t> (i)] = xl;
+            tankInR_[static_cast<size_t> (i)] = xr;
+        }
+    }
+
     // ---- 2) Early reflections ----
     er_.process (tankInL_.data(), tankInR_.data(),
                  erOutL_.data(),  erOutR_.data(), numSamples);
@@ -1503,6 +1737,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                     tankOutR_[static_cast<size_t> (i)] += dr;
                 }
             }
+            // Early-Field composite (opt-in, 2026-07-06) — the velvet SparseEarlyField
+            // ER owns the early window while the tank tail is delayed behind it: the
+            // same Phase-A composite as DenseHall (1637), ported to the Dattorro rooms
+            // whose hard tank onset + missing ~10 ms first reflection no preset param
+            // can fix (Small Drum Room). Gated by dattorroEarlyFieldOn_ (NOT
+            // sparseERGain_, which the unmapped-preset reset pins to 1.0) → Drum Plate /
+            // Vintage Gold Plate skip it entirely → tankOut byte-identical. Verified
+            // 2026-07-06: block compiled in vs out → all 7 Drum Plate stimuli
+            // sample-level identical (maxΔ 0.0) — it's post-tank, outside the recursive
+            // loop, so trap #2's FP-feedback drift does not apply.
+            if (dattorroEarlyFieldOn_)
+                applyEarlyFieldComposite (numSamples);
             break;
         case EngineType::SixAPTank:
             sixAPTank_.process (tankInL_.data(), tankInR_.data(),
@@ -1520,6 +1766,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // arrival; the QuadTank tank is the late body (sparseTailGain × it).
             sparseField_.process (tankInL_.data(), tankInR_.data(),
                                   sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            applyEarlyTankDuck (numSamples);
             for (int i = 0; i < numSamples; ++i)
             {
                 tankOutL_[static_cast<size_t> (i)] =
@@ -1569,6 +1816,14 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // P1: identical signal path to FDN (plain FDNReverb, GEQ added P2).
             accurateHall_.process (tankInL_.data(), tankInR_.data(),
                                    tankOutL_.data(), tankOutR_.data(), numSamples);
+            // Early-field composite (opt-in, 2026-07-07): the FDN's slow washy onset
+            // (~26 ms attack floor) can't reach a sharp front-loaded plate anchor
+            // (Vocal Plate: attack 9.3 ms, onset_slope 4.3, first50 49 %, 6 reflections
+            // 26-79 ms). The ducked velvet sparse ER supplies that sharp early field on
+            // top of the FDN tail. Gated by accurateHallEarlyFieldOn_ → every other
+            // AccurateHall preset skips it → tankOut byte-identical (bit-null).
+            if (accurateHallEarlyFieldOn_)
+                applyEarlyFieldComposite (numSamples);
             break;
         case EngineType::AccurateHall32:
             // 32-line variant removed 2026-06-13 (Bright Hall migrated to DenseHall).
@@ -1593,6 +1848,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                                    tankOutL_.data(), tankOutR_.data(), numSamples);
             sparseField_.process (tankInL_.data(), tankInR_.data(),
                                   sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            applyEarlyTankDuck (numSamples);
             for (int i = 0; i < numSamples; ++i)
             {
                 tankOutL_[static_cast<size_t> (i)] =
@@ -1651,6 +1907,22 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             }
             sparseField_.process (tankInL_.data(), tankInR_.data(),
                                   sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            applyEarlyTankDuck (numSamples);
+            if (sparseERDuckAmount_ > 0.0f)
+            {
+                // Transient-ducked ER (opt-in per DenseHall preset via kCompositeERByName
+                // duck fields): fire the discrete reflections on the hit, silent on
+                // sustain — closes early_tap/early_refl without the noiseburst-onset
+                // cascade (the sustained-release T60/env_p2p gates protect the tail).
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float dg = erDuck_.process (reflDryMono_[static_cast<size_t> (i)]);
+                    const float g  = sparseERGain_ * ((1.0f - sparseERDuckAmount_) + sparseERDuckAmount_ * dg);
+                    tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * g;
+                    tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * g;
+                }
+            }
+            else
             for (int i = 0; i < numSamples; ++i)
             {
                 tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
@@ -1679,6 +1951,26 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                           tankOutL_.data(), tankOutR_.data(), numSamples);
             sparseField_.process (tankInL_.data(), tankInR_.data(),
                                   sparseOutL_.data(), sparseOutR_.data(), numSamples);
+            applyEarlyTankDuck (numSamples);
+            if (sparseERDuckAmount_ > 0.0f)
+            {
+                // Transient-ducked sparse ER (Small Drum Room): gate the ER by the
+                // input's transient-ness (from the CLEAN dry mono, reflDryMono_) so it
+                // fires on a hit — closing attack_time/early_refl/early_tap on the snare
+                // — but ducks to silence while a tone/noise SUSTAINS, so it adds no
+                // steady energy to inflate the noiseburst (→ no gain-match cascade) and
+                // no sustained 1 kHz throughput (→ no sine1k pump). The plain additive
+                // path (else) is untouched → bit-null on Vocal Hall / every other
+                // composite (sparseERDuckAmount_ 0).
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float dg = erDuck_.process (reflDryMono_[static_cast<size_t> (i)]);
+                    const float g  = sparseERGain_ * ((1.0f - sparseERDuckAmount_) + sparseERDuckAmount_ * dg);
+                    tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * g;
+                    tankOutR_[static_cast<size_t> (i)] += sparseOutR_[static_cast<size_t> (i)] * g;
+                }
+            }
+            else
             for (int i = 0; i < numSamples; ++i)
             {
                 tankOutL_[static_cast<size_t> (i)] += sparseOutL_[static_cast<size_t> (i)] * sparseERGain_;
@@ -1734,6 +2026,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             tankOutL_[static_cast<size_t> (i)] = matchEQL_.process (tankOutL_[static_cast<size_t> (i)], matchCoeffs_);
             tankOutR_[static_cast<size_t> (i)] = matchEQR_.process (tankOutR_[static_cast<size_t> (i)], matchCoeffs_);
         }
+
+    // Dynamic low-mid buildup limiter (piano-cluster fix) — cut the sustained low-mid
+    // charge the recirculating tanks accumulate above the anchors. Post-tank, before the
+    // ER sum. active() false (maxCut 0) → skipped → tankOut byte-identical (bit-null).
+    if (dynLowMid_.active())
+        for (int i = 0; i < numSamples; ++i)
+            dynLowMid_.processSample (tankOutL_[static_cast<size_t> (i)], tankOutR_[static_cast<size_t> (i)]);
 
     // ---- 5) Sum + Shell ----
     // DattorroVintage runs its own discrete sparse-tap ER generator and
@@ -1839,8 +2138,20 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 }
                 etapLpStateL_ += etapLpCoeff_ * (sumL - etapLpStateL_);
                 etapLpStateR_ += etapLpCoeff_ * (sumR - etapLpStateR_);
-                wetL += etapLpStateL_;
-                wetR += etapLpStateR_;
+                // Transient duck: on a hit the taps fire (reproduce the anchor's
+                // discrete reflection pattern); on sustain they close so the
+                // feed-forward tap sum can't pump the steady-state spectrum
+                // (sine1k/ripple). Keyed off the CLEAN dry-mono (same source the
+                // taps read), so the gate tracks the input onset, not the tail.
+                // amount 0 → g==1 → byte-identical to the un-ducked tap path.
+                float g = 1.0f;
+                if (etapDuckAmount_ > 0.0f)
+                {
+                    const float dg = etapDuck_.process (dryMono);
+                    g = (1.0f - etapDuckAmount_) + etapDuckAmount_ * dg;
+                }
+                wetL += g * etapLpStateL_;
+                wetR += g * etapLpStateR_;
             }
             reflWritePos_ = (reflWritePos_ + 1) & reflMask_;
         }

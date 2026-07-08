@@ -4,6 +4,7 @@
 #include "DattorroTank.h"
 #include "DattorroPlateVintage.h"
 #include "DenseEarlyField.h"
+#include "DynamicLowMidLimiter.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
@@ -16,6 +17,7 @@
 #include "ReverseRoomEngine.h"
 #include "SparseEarlyField.h"
 #include "DiffusedEarlyReflections.h"
+#include "TransientDuck.h"
 #include "OutputDiffusion.h"
 #include "DenseHallReverb.h"
 #include "BuildupDiffuser.h"
@@ -320,13 +322,34 @@ public:
     // presets (cent dark + T60-16k dies). band 0..8 = 63 Hz..16 kHz; seconds<=0
     // → that octave inherits the broadband Decay. No-op on every other engine.
     void setDenseHallOctaveT60 (int band, float seconds);
-    void setDenseHallLowAccumLimiter (float threshDb, float maxCut, float splitHz);   // drive-following sub charge limiter (piano-gate defect); maxCut 0 = bit-null
+    // Shimmer tail-noise sustain duck (piano-air leak); 0 = bit-null.
+    void setShimmerNoiseDuck (float amt);
+    // Shimmer ratio-keyed loop hi limiter (Black Hole air runaway); maxCutDb 0 = bit-null.
+    void setShimmerLoopHiLimiter (float loHz, float hiHz, float ratioThrDb, float maxCutDb,
+                                  float atkMs, float relFastMs, float relSlowMs);
+    // QuadTank wet-output stereo chorus/ensemble (79VC "phasey" character); depth 0 = bit-null.
+    void setQuadStereoMod (float rateHz, float depth);
+    // Per-pass HF-sustain compensation shelf (top-octave cliff / "muffle" fix) —
+    // Dattorro + DenseHall; 0 dB = bit-null.
+    void setTankHFSustain (float db, float cornerHz);
+    // Sustained-energy limiter (SustainBandLimiter.h). NOTE: despite the family name,
+    // these setters configure the ENGINE-LEVEL wet-input duck (wetSusLim*), applied in
+    // process() step 1b on the post-predelay wet feed BEFORE the ER/tank split — NOT a
+    // per-tank fan-out. Measurement showed the sine1k excess is ~90% first-pass
+    // throughput, so the feed is the effective site; the per-engine in-loop instances
+    // exist but stay dormant. maxCutDb 0 = inactive/bit-null. MID = law A "sine
+    // regulator", LOW = law B "charge limiter".
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
     void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
     void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
     void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at anchor-measured times; count 0 = off/bit-null
+    void setEarlyTapDuck  (float amount, float holdMs, float thresh);  // transient-gate the tap bank: fires on a hit, silent on sustain. amount 0 = off/bit-null
 
     // Jot tonal correction (AccurateHall algo 10): flatten per-band steady-state
     // energy so decay and tone are decoupled. Default off = bit-null.
@@ -342,6 +365,19 @@ public:
     // ER defines the early window. 0 = off = bit-null. DenseHall path (Phase A).
     void setTankOnsetMs (float ms);
 
+    // Dattorro (algo 0) early-field composite opt-in. When true the Dattorro case
+    // runs the same velvet-sparse-ER + tank-onset-delay composite as DenseHall,
+    // ported to the rooms whose hard tank onset + missing ~10 ms first reflection
+    // no preset param can fix (Small Drum Room). false → the block is skipped
+    // entirely → every other Dattorro preset stays bit-null. Gated by its OWN flag,
+    // NOT sparseERGain_ (the unmapped-preset reset sets that to 1.0 — see the
+    // kCompositeERByName else-branch — so Drum Plate/Vintage Gold Plate would run
+    // it otherwise).
+    void setDattorroEarlyField (bool on);
+    void setAccurateHallEarlyField (bool on);   // algo-10 EFE composite opt-in (Vocal Plate); false → bit-null
+    void setDattorroModeSmear (float depthSamples, float rateHz);  // deep+slow delay wander to smear the tail "boing" (algo 0); depth 0 = off/bit-null
+    void setDynamicLowMid (float threshDb, float maxCut, float splitHz, float atkMs, float relMs);  // post-tank sustained low-mid buildup limiter (piano cluster); maxCut 0 = off/bit-null
+
     // SparseField (algo 11) only: the velvet-noise early-field generator dials
     // + the reduced-tail level. No-op routing on every other engine.
     void setSparseFieldSize       (float sizeScale);
@@ -354,6 +390,8 @@ public:
     void setBuildupPostTank       (bool b);        // true = diffuse tank OUTPUT (builds onset, tail/T60 intact); false = INPUT (Bright Hall)
     void setSparseFieldTailGain   (float gain);
     void setSparseERGain          (float gain);   // algo 13 composite: ER level in the mix
+    void setSparseERDuck          (float amount, float holdMs, float thresh);   // transient-gate the sparse ER (0 = off = bit-null)
+    void setEarlyTankDuck         (float amount, float holdMs, float thresh);   // suppress the dense tank for the early-reflection window so discrete ER stands out (0 = off = bit-null)
     // Diffused discrete early reflections (DenseHall clarity/un-masking comb).
     void setDiffuseER (const float* timesMs, const float* gains, int n, float diffusion, float busGain);
     // Highpass on the diffuse-ER bus (24 dB/oct LR4), ParallelMultiband
@@ -489,6 +527,18 @@ private:
     ShimmerEngine      shimmer_;
     DattorroPlateVintage dattorroVintage_;  // re-pointed 2026-05-13: algo 7 slot now hosts DattorroPlateVintage (vintage-hardware post-EQ on Dattorro tank). Variable name retained so call sites stay stable.
     DenseEarlyField    dattorroDenseField_; // algo 0 dense early-field, summed post-tank (off by default → bit-null). See setDattorroDenseField.
+    DynamicLowMidLimiter dynLowMid_;        // post-tank sustained low-mid buildup limiter (piano cluster); off by default → bit-null.
+    // Sustained-energy WET-INPUT duck (SustainBandLimiter.h; process() step 1b, pre-ER/
+    // pre-tank on the post-predelay wet feed). MID = law A "sine regulator" (the sine1k
+    // excess is ~90% first-pass throughput — measured — so the duck must sit on the FEED,
+    // not in the loops), LOW = law B "charge limiter" (piano-stem accumulation: less
+    // injection = less charge = smaller tail; T60-safe by construction since the release
+    // decay is a loop property). Inactive → block skipped → bit-null.
+    SustainBandLimiter::Config   wetSusLimMidCfg_, wetSusLimLowCfg_;
+    SustainBandLimiter::Detector wetSusLimMidDet_, wetSusLimLowDet_;
+    SustainBandLimiter::PeakCut  wetSusLimMidCutL_, wetSusLimMidCutR_,
+                                 wetSusLimLowCutL_, wetSusLimLowCutR_;
+    SustainBandLimiter::InputKey wetSusLimKey_;
     ReverseRoomEngine  reverseRoom_;     // algo 9 (2026-05-31): causal rising-ER onset + dark FDN tail; replicates Lexicon PCM Room "Reverse 1".
     FDNReverbT<true>   accurateHall_;    // algo 10 (2026-06-09): FDN + per-octave GEQ. Also the fallback for the removed VintageTank(8)/AccurateHall32(12) engines on old saved sessions.
     SparseEarlyField   sparseField_;     // algo 11 (2026-06-10): velvet-noise front-loaded sparse early field. Summed with a reduced accurateHall_ tail in the SparseField process() case.
@@ -556,6 +606,13 @@ private:
     int tankOnsetWrite_   = 0;
     int tankOnsetSamples_ = 0;
     float tankOnsetMs_    = 0.0f;   // requested onset (ms); sample count recomputed from this
+    bool  dattorroEarlyFieldOn_ = false;   // algo-0 EFE composite opt-in (Small Drum Room); false → bit-null
+    bool  accurateHallEarlyFieldOn_ = false;   // algo-10 EFE composite opt-in (Vocal Plate); false → bit-null
+    // Shared early-field composite (tank-onset-delay + velvet sparse ER, ducked-mixed
+    // with a reduced tank). Called from the Dattorro AND AccurateHall cases; operates
+    // on tankOut*_ in place. Extracted so the two engines share one implementation.
+    void applyEarlyFieldComposite (int numSamples);
+    void applyEarlyTankDuck       (int numSamples);   // pre-ER pass: duck tankOut for the early window (bit-null when tankDuckAmount_ 0)
 
     EngineType currentEngine_ = EngineType::Dattorro;
     int currentAlgorithm_ = 0;
@@ -614,6 +671,34 @@ private:
     float sparseERGain_ = 1.0f;
     float diffuseERGain_ = 1.0f;   // DiffusedEarlyReflections bus level (DenseHall)
     float diffuseERHpHz_ = 0.0f;   // PMB diffuse-bus HP (0 = off/bit-null)
+    // Transient-ducked sparse ER (Small Drum Room, PMB): scale the sparse ER by a
+    // per-sample transient gate so it fires on a hit but is silent on sustain →
+    // closes the early field WITHOUT the noiseburst-gain-match cascade + sine1k
+    // pump that killed every plain additive-ER attempt. 0 = off = bit-null.
+    TransientDuck erDuck_;
+    float sparseERDuckAmount_ = 0.0f;   // 0 = no duck (bit-null), 1 = full duck
+    // Transient-ducked EARLY-TAP bank (setEarlyTapDuck): scales the discrete tap
+    // sum by a per-sample transient gate so the taps fire on a hit (impulse/snare
+    // reproduce the anchor's discrete reflection pattern + prominent late tap) but
+    // stay silent on sustain → no sine1k/ripple feed-forward cascade (measured
+    // +13.9 dB sine1k on Large Chamber without the duck). A SEPARATE instance from
+    // erDuck_: a preset may duck BOTH the sparse field (engine case) AND the tap
+    // bank (wet loop), and one shared duck would advance twice per sample. amount
+    // 0 = no duck → tap sum applied full → bit-null vs the un-ducked tap path.
+    TransientDuck etapDuck_;
+    float etapDuckAmount_ = 0.0f;       // 0 = no duck (bit-null), 1 = full duck
+    // Early-window TANK-DUCK (setEarlyTankDuck): the INVERSE of erDuck_. Instead of
+    // firing the ER on a hit, it SUPPRESSES the dense tank/wash for the early-
+    // reflection window so the discrete sparse-ER taps STAND OUT — creating real
+    // discrete reflections + a high crest instead of being buried in the dense wash
+    // (the DenseHall wall: additive ER gets swallowed, transient-def/early-refl never
+    // close). tankGain = 1 - amount·dg where dg is a hold-then-release onset gate:
+    // the tank ducks for ~holdMs after an onset, then restores to FULL for the
+    // sustained tail (dg→0 → gain→1), so ss/T60/tail gates are byte-untouched. A
+    // SEPARATE instance (own hold/thresh) from erDuck_/etapDuck_ — one shared duck
+    // would advance twice per sample. amount 0 = no duck → bit-null.
+    TransientDuck tankDuck_;
+    float tankDuckAmount_ = 0.0f;       // 0 = no duck (bit-null), 1 = full early-window tank suppression
     float dfHpB_[3] = {}, dfHpA_[2] = {};   // shared LR4 stage coeffs (Q=0.7071 ×2)
     float dfHpZ_[2][2][2] = {};             // [ch][stage][z1,z2]
 

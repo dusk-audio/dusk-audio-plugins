@@ -3,6 +3,7 @@
 #include "DspUtils.h"
 #include "TwoBandDamping.h"
 #include "TimeVaryingDamping.h"
+#include "SustainBandLimiter.h"
 
 #include <array>
 #include <atomic>
@@ -47,6 +48,14 @@ public:
     void setCrossoverFreq (float hz);
     void setSaturation (float amount);             // 0..1 drive softClip
     void setModDepth (float depth);
+    void setModeSmear (float depthSamples, float rateHz);  // deep+slow per-line delay wander to smear the tail "boing"; depth 0 = off/bit-null
+    // In-loop sustained-energy limiter (SustainBandLimiter.h). Two independent slots:
+    // MID = law A "sine regulator" (fast+deep, ~400-1500 Hz), LOW = law B "charge
+    // limiter" (slow duration-keyed, ~50-300 Hz, ≤3 dB). maxCutDb 0 → bit-null.
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
     void setModRate (float hz);
     void setSize (float size);
     void setFreeze (bool frozen);
@@ -406,6 +415,27 @@ private:
     OctaveBandDamping octaveDamp_[N];    // AccurateHall per-octave GEQ state (8 shelves/line); coeffs from lp.octaveCoeffs[]. Idle (zero cost) unless octaveActive.
     OctaveBandDamping tonalCorrL_, tonalCorrR_;  // Jot output tonal-correction (stereo); coeffs from lp.tonalCorrCoeffs. Identity unless tonalCorrActive.
     DspUtils::RandomWalkLFO lfos_[N];
+    // Mode-smear LFOs (setModeSmear): a SECOND, much deeper + much slower per-line
+    // random-walk summed on top of lfos_ on every delay read. Deep excursion smears
+    // each tail mode across a band so an isolated comb resonance (the "boing")
+    // averages into the dense-FDN median; the very low rate keeps the pitch chorus
+    // inaudible, and the N decorrelated lines spread the movement. Depth 0 → not
+    // advanced → bit-identical to the pre-smear read. Fits the existing per-line
+    // buffer slack (bufSize is nextPow2(maxDelay+~56), ~1700-sample headroom).
+    DspUtils::MultiSineLFO smearLfos_[N];   // continuous full-band traversal (not random-walk) → strong median fill
+
+    // --- In-loop sustained-energy limiter (SustainBandLimiter.h). SHARED detector per
+    // slot (one gDyn across all N lines — per-line gains would break the Hadamard mix's
+    // orthonormality → coloration/ripple AM). One-sample-latent: the detector advances at
+    // sample top from the PREVIOUS sample's summed |band| (negligible at 0.1-10 s taus).
+    // Config = plain members set from the message thread (transient-shaper precedent,
+    // not the LiveParams snapshot); inactive → blocks skipped → bit-null.
+    SustainBandLimiter::Config   susLimMidCfg_, susLimLowCfg_;
+    SustainBandLimiter::Detector susLimMidDet_, susLimLowDet_;
+    SustainBandLimiter::Splitter susLimMidSplit_[N], susLimLowSplit_[N];
+    SustainBandLimiter::InputKey susLimKey_;
+    float susLimMidRed_ = 0.0f, susLimLowRed_ = 0.0f;
+    float susLimMidAcc_ = 0.0f, susLimLowAcc_ = 0.0f;
     // Phase 2: single master sine LFO for CoherentLoop topology. All 16
     // delay lines tap THIS one LFO at per-line phase offsets so they
     // move in coordinated, phase-paired motion (line ch and ch+8 are
@@ -561,6 +591,12 @@ private:
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
+    // Mode-smear (setModeSmear): deep+slow per-line delay wander for the boing.
+    // depth 0 = off = bit-null (smear LFOs never advanced). Clamped to stay inside
+    // the per-line buffer slack.
+    float smearDepthSamples_ = 0.0f;
+    float smearRateHz_       = 0.08f;
+    bool  smearActive_       = false;
     float sizeParam_ = 1.0f;
     float feedbackModDepth_ = 0.0f;
     float crossoverModDepth_ = 0.0f;

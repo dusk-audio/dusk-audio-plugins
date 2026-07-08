@@ -2,6 +2,7 @@
 
 #include "DspUtils.h"
 #include "TwoBandDamping.h"
+#include "SustainBandLimiter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -43,6 +44,7 @@ public:
     void setSaturation (float amount);                 // 0..1 drive-style softClip
     void setModDepth (float depth);
     void setModRate (float hz);
+    void setModeSmear (float depthSamples, float rateHz);  // deep+slow delay wander to smear the tail "boing"; depth 0 = off/bit-null
     void setSize (float size);
     void setFreeze (bool frozen);
 
@@ -79,6 +81,18 @@ public:
     // mode's decay specifically. cutDb 0 = branch skipped (bit-null; note the
     // recursive-loop codegen caveat: adjacent FP may drift ~1e-4 when active).
     void setModeNotch (float hz, float cutDb, float q);
+    // Per-pass HF-sustain compensation shelf (the shimmer precedent, ported 2026-07-08):
+    // the tank is HF-lossy per pass (modulated-read interpolation + AA one-poles), which
+    // COMPOUNDS over the tail into a top-octave cliff (~-10 dB @12.5k, -50 @19k vs the
+    // anchors - Marc hears it as "muffled"). The octave GEQ is attenuation-only and
+    // cannot lift past that loss; a small per-pass HF lift (y += g*HP(y)) cancels it.
+    // Bounded: loop decay gain x lift stays < 1 per band; softClip backstop. 0 dB = bit-null.
+    void setHFSustain (float db, float cornerHz);
+    // In-loop sustained-energy limiter (SustainBandLimiter.h); maxCutDb 0 = bit-null.
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
     // Density-AP random-walk jitter depth (fraction of each AP's delay).
     // Engine default 0.02 (the #87 anti-ring wander). The in-loop wander is
     // a time-VARYING element: every pass FM-scatters tail energy broadband,
@@ -387,6 +401,16 @@ private:
         DspUtils::RandomWalkLFO delay1Lfo;
         DspUtils::RandomWalkLFO delay2Lfo;
 
+        // Mode-smear LFOs (setModeSmear): a SECOND, much deeper + much slower
+        // random-walk on the delay1/delay2 reads, summed on top of the mode-breaking
+        // delay*Lfo above. Deep excursion (~hundreds of samples) wanders each tail
+        // mode across a critical band so an isolated comb resonance (the "boing")
+        // averages out; the very low rate keeps the instantaneous pitch shift
+        // (chorus) inaudible. Decorrelated seeds per tank/tap. Depth 0 → not
+        // advanced → bit-identical to the pre-smear path.
+        DspUtils::MultiSineLFO smearLfo1;
+        DspUtils::MultiSineLFO smearLfo2;
+
         // Saved modulation offset: held constant when frozen to prevent read-head snap
         float savedAP1Mod = 0.0f;
     };
@@ -400,6 +424,21 @@ private:
     float mnZ1L_ = 0.0f, mnZ2L_ = 0.0f, mnZ1R_ = 0.0f, mnZ2R_ = 0.0f;
     float mnHz_ = 0.0f, mnCutDb_ = 0.0f, mnQ_ = 8.0f;   // stored for re-prepare
     bool  notchActive_ = false;
+
+    // Per-pass HF-sustain shelf state (setHFSustain): one-pole LP per tank; HP = x - lp.
+    float hfSusHz_ = 10000.0f, hfSusDb_ = 0.0f, hfSusGain_ = 0.0f, hfSusCoeff_ = 0.0f;
+    float hfSusLpL_ = 0.0f, hfSusLpR_ = 0.0f;
+
+    // In-loop sustained-energy limiter (SustainBandLimiter.h): two slots (MID law A /
+    // LOW law B), SHARED detector across both tanks (one gDyn), per-tank splitters.
+    // Config plain members (message thread); inactive → skipped → bit-null.
+    SustainBandLimiter::Config   susLimMidCfg_, susLimLowCfg_;
+    SustainBandLimiter::Detector susLimMidDet_, susLimLowDet_;
+    SustainBandLimiter::Splitter susLimMidSplitL_, susLimMidSplitR_,
+                                 susLimLowSplitL_, susLimLowSplitR_;
+    SustainBandLimiter::InputKey susLimKey_;
+    float susLimMidRed_ = 0.0f, susLimLowRed_ = 0.0f;
+    float susLimMidAcc_ = 0.0f, susLimLowAcc_ = 0.0f;
 
     // -----------------------------------------------------------------------
     // Default output tap positions (early Dattorro-style, read from both tanks).
@@ -537,6 +576,14 @@ private:
     // earlier per-sample white-noise jitter; the smooth wander breaks modal
     // resonances without producing audible FM sidebands.
     float delayModDepthSamples_ = 4.0f;
+
+    // Mode-smear (setModeSmear): deep+slow delay-read wander to smear the tail
+    // "boing". smearDepthSamples_ = peak excursion (0 = off = bit-null → the smear
+    // LFOs are never advanced). Fits inside the existing 6×-base delay-buffer
+    // headroom, so no re-allocation is needed.
+    float smearDepthSamples_ = 0.0f;
+    float smearRateHz_       = 0.08f;
+    bool  smearActive_       = false;
 
     // Density-AP wander depth fraction (see setDensityJitter). 0.02 = legacy.
     float densityJitterFraction_ = 0.02f;

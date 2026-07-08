@@ -24,15 +24,16 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     if (const char* ov = std::getenv ("DUSKVERB_REVERSE"))
     {
         float rm = rampMs_, sl = slope_, fg = floorGain_, thDb = -60.0f,
-              hm = holdMs_, ct = closeTauMs_;
-        if (std::sscanf (ov, "%f,%f,%f,%f,%f,%f", &rm, &sl, &fg, &thDb, &hm, &ct) >= 1)
+              hm = holdMs_, ct = closeTauMs_, ow = onsetWindowMs_;
+        if (std::sscanf (ov, "%f,%f,%f,%f,%f,%f,%f", &rm, &sl, &fg, &thDb, &hm, &ct, &ow) >= 1)
         {
-            rampMs_     = std::clamp (rm, 5.0f, 1000.0f);
-            slope_      = std::clamp (sl, 0.1f, 4.0f);
-            floorGain_  = std::clamp (fg, 0.0f, 1.0f);
-            threshLin_  = std::pow (10.0f, std::clamp (thDb, -120.0f, 0.0f) / 20.0f);
-            holdMs_     = std::clamp (hm, 0.0f, 4000.0f);
-            closeTauMs_ = std::clamp (ct, 0.5f, 200.0f);
+            rampMs_        = std::clamp (rm, 5.0f, 1000.0f);
+            slope_         = std::clamp (sl, 0.1f, 4.0f);
+            floorGain_     = std::clamp (fg, 0.0f, 1.0f);
+            threshLin_     = std::pow (10.0f, std::clamp (thDb, -120.0f, 0.0f) / 20.0f);
+            holdMs_        = std::clamp (hm, 0.0f, 4000.0f);
+            closeTauMs_    = std::clamp (ct, 0.5f, 200.0f);
+            onsetWindowMs_ = std::clamp (ow, 0.0f, 4000.0f);
         }
     }
 
@@ -63,6 +64,7 @@ void ReverseRoomEngine::prepare (double sampleRate, int maxBlockSize)
     gateCloseCoeff_ = onePole (closeTauMs_ * 0.001); // close tau → hard cliff, continuous gain
     holdSamples_    = std::max (1, static_cast<int> (holdMs_ * 0.001 * sampleRate));
     holdMaxSamps_   = std::max (holdSamples_, static_cast<int> (holdMaxMs_ * 0.001 * sampleRate));
+    onsetWindowSamps_ = static_cast<int> (onsetWindowMs_ * 0.001 * sampleRate);   // 0 = disabled
 
     rebuildTaps();
     clearBuffers();   // reset gate state + velvet running/biquad state across a
@@ -87,6 +89,7 @@ void ReverseRoomEngine::clearBuffers()
     gateGain_         = 0.0f;
     holdCounter_      = 0;
     inputActiveSamps_ = 0;
+    onsetAgeSamps_    = 0;
 }
 
 // Build the rising-gain early-reflection tap sets. Deterministic (fixed seed)
@@ -214,6 +217,8 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
     GateState st      = gateState_;
     int       hc      = holdCounter_;
     int       iActive = inputActiveSamps_;
+    int       age     = onsetAgeSamps_;
+    const int winSamp = onsetWindowSamps_;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -231,11 +236,29 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
         // Retriggerable hold state machine.
         switch (st)
         {
-            case GateState::Idle:    if (present) { st = GateState::Open; iActive = 1; } break;
+            case GateState::Idle:    if (present) { st = GateState::Open; iActive = 1; age = 0; } break;
             case GateState::Open:    if (! present) { st = GateState::Hold; hc = effHold; } break;
             case GateState::Hold:    if (present) st = GateState::Open;            // retrigger
                                      else if (--hc <= 0) st = GateState::Closing; break;
-            case GateState::Closing: if (present) { st = GateState::Open; iActive = 1; } break;  // retrigger
+            case GateState::Closing: if (present) { st = GateState::Open; iActive = 1; age = 0; } break;  // retrigger
+        }
+
+        // Onset-keyed window close (ENDED bursts only): once the burst is older
+        // than the window AND the input has stopped, cut immediately instead of
+        // serving out the remaining hold — the Lex reverse window is fixed-length
+        // from onset. While input is still present the legacy hold semantics
+        // stand untouched (a latch here killed the sustained stimuli: the piano
+        // never drops below threshold, so the gate stayed shut for 22 s).
+        if (winSamp > 0 && st != GateState::Idle)
+        {
+            if (age <= winSamp) ++age;   // capped: Closing never returns to Idle, so an
+                                         // un-capped counter would overflow on long silence
+            // SHORT bursts only (input itself ended inside the window): a long
+            // sustained drive gets the legacy release — the anchor rings its
+            // full per-band T60 after sustained input (the sustained-release
+            // Schroeder fits need that tail), it only hard-windows one-shots.
+            if (age > winSamp && ! present && iActive <= winSamp && st != GateState::Closing)
+                st = GateState::Closing;
         }
 
         const float target = (st == GateState::Open || st == GateState::Hold) ? 1.0f : floorL;
@@ -250,6 +273,7 @@ void ReverseRoomEngine::process (const float* inL, const float* inR,
     gateState_        = st;
     holdCounter_      = hc;
     inputActiveSamps_ = iActive;
+    onsetAgeSamps_    = age;
 }
 
 // ── Universal setters ──────────────────────────────────────────────────────

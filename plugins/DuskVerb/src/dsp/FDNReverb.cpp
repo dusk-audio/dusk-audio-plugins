@@ -280,8 +280,19 @@ void FDNReverbT<WithOctaveGEQ, N>::prepare (double sampleRate, int /*maxBlockSiz
         shaperLp_[i]   = 0.0f;
         shaperEnvF_[i] = 0.0f;
         shaperEnvS_[i] = 0.0f;
+        susLimMidSplit_[i].clear();
+        susLimLowSplit_[i].clear();
     }
     updateShaperCoeffs();   // TPT g + env coeffs from current params
+
+    // Sustain-band limiter: re-derive coeffs at the new sample rate from stored
+    // config (re-apply-in-prepare pattern) + clear detector/key state.
+    susLimMidCfg_.updateCoeffs (sampleRate);
+    susLimLowCfg_.updateCoeffs (sampleRate);
+    susLimMidDet_.clear();
+    susLimLowDet_.clear();
+    susLimKey_.prepare (sampleRate);
+    susLimMidRed_ = susLimLowRed_ = susLimMidAcc_ = susLimLowAcc_ = 0.0f;
 
     // Re-apply the in-loop peak from stored config — the per-line
     // inLoopPeak_[i].prepare() above designUnity'd the coeffs, so without this
@@ -381,6 +392,9 @@ void FDNReverbT<WithOctaveGEQ, N>::prepare (double sampleRate, int /*maxBlockSiz
         {
             const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
             lfos_[i].prepare (static_cast<float> (sampleRate), seed);
+            // Mode-smear LFO: decorrelated from lfos_ (different base seed) and per line.
+            smearLfos_[i].prepare (static_cast<float> (sampleRate),
+                                   0xA5C3E97Bu + static_cast<uint32_t> (i * 2749));
         }
         // Phase 2: master coherent LFO uses a separate seed so its starting
         // phase doesn't track the random-walk seeds.
@@ -445,6 +459,8 @@ void FDNReverbT<WithOctaveGEQ, N>::prepare (double sampleRate, int /*maxBlockSiz
     updateLFORates();
 
     prepared_ = true;
+    setModeSmear (smearDepthSamples_, smearRateHz_);   // apply smear depth/rate — AFTER prepared_ (the
+                                                       // setter early-returns while prepared_ is false)
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +509,27 @@ void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* in
         {
             inL = inputHighL_.process (inputMid_.processL (inputSubL_.process (inL)));
             inR = inputHighR_.process (inputMid_.processR (inputSubR_.process (inR)));
+        }
+
+        // --- Sustain-band limiter: advance the SHARED detectors once per sample from
+        // the PREVIOUS sample's summed in-band magnitude (one-sample detector latency
+        // is negligible at 0.1-10 s time constants). Input-keyed release: input present
+        // → relSlow (hold, cut deepens through a sustain); input silent → relFast
+        // (loop gain reverts before the T60 fit window). Inactive → untouched/bit-null.
+        if ((susLimMidCfg_.active || susLimLowCfg_.active) && ! frozen)
+        {
+            const bool present = susLimKey_.advance (std::fabs (inL) + std::fabs (inR));
+            constexpr float invN = 1.0f / static_cast<float> (N);
+            if (susLimMidCfg_.active)
+            {
+                susLimMidRed_ = susLimMidDet_.advance (susLimMidAcc_ * invN, susLimMidCfg_, present);
+                susLimMidAcc_ = 0.0f;
+            }
+            if (susLimLowCfg_.active)
+            {
+                susLimLowRed_ = susLimLowDet_.advance (susLimLowAcc_ * invN, susLimLowCfg_, present);
+                susLimLowAcc_ = 0.0f;
+            }
         }
 
         // --- 1) Read from all delay lines with LFO-modulated fractional position ---
@@ -573,7 +610,10 @@ void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* in
             {
                 mod = lfos_[ch].next() * lp.modDepthScale[ch];
             }
-            float readDelay = std::max (lp.delayLength[ch] + mod, 1.0f);
+            // Deep+slow mode-smear on top of mod. Advanced only when active AND not
+            // frozen → depth 0 keeps the read byte-exact (+0.0f is a no-op).
+            float smear = (smearActive_ && ! frozen) ? smearLfos_[ch].next() : 0.0f;
+            float readDelay = std::max (lp.delayLength[ch] + mod + smear, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
             int intIdx = static_cast<int> (std::floor (readPos));
@@ -738,6 +778,24 @@ void FDNReverbT<WithOctaveGEQ, N>::process (const float* inputL, const float* in
                 // contractive → BIBO-stable by construction.
                 const float gDyn = 1.0f - shaperDepth_ * e;
                 feedback[ch] = high + gDyn * low;
+            }
+
+            // --- Sustain-band limiter (in-loop; SustainBandLimiter.h) -------
+            // Applies the shared per-slot reduction (advanced at sample top) to
+            // this line's split band; accumulates this sample's |band| for the
+            // next advance. One gDyn across all lines keeps the Hadamard mix
+            // orthonormal. Inactive → feedback[ch] never touched → bit-null.
+            if (susLimMidCfg_.active && ! frozen)
+            {
+                const float b = susLimMidSplit_[ch].band (feedback[ch], susLimMidCfg_);
+                susLimMidAcc_ += std::fabs (b);
+                feedback[ch] -= susLimMidRed_ * b;
+            }
+            if (susLimLowCfg_.active && ! frozen)
+            {
+                const float b = susLimLowSplit_[ch].band (feedback[ch], susLimLowCfg_);
+                susLimLowAcc_ += std::fabs (b);
+                feedback[ch] -= susLimLowRed_ * b;
             }
 
             // Snapshot-path damping: coeffs come from lp.damping[ch] by const
@@ -1112,6 +1170,49 @@ void FDNReverbT<WithOctaveGEQ, N>::setModRate (float hz)
     modRateHz_ = std::max (hz, 0.01f);
     if (prepared_)
         updateLFORates();
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setModeSmear (float depthSamples, float rateHz)
+{
+    // Clamp depth to the per-line buffer slack so a deep read never wraps into stale
+    // history: bufSize is nextPow2(maxDelay + ~56), so the smallest slack (longest
+    // line) is > several hundred samples; 512 is a safe universal ceiling.
+    smearDepthSamples_ = std::clamp (depthSamples, 0.0f, 512.0f);
+    smearRateHz_       = std::clamp (rateHz, 0.001f, 5.0f);
+    smearActive_       = smearDepthSamples_ > 1.0e-3f;
+    if (! prepared_)
+        return;
+    // Per-line detuned low rates so no two lines trace the same wander (like the
+    // mode-breaking lfos_ rate spread).
+    for (int i = 0; i < N; ++i)
+    {
+        smearLfos_[i].setDepth (smearDepthSamples_);
+        smearLfos_[i].setRate  (smearRateHz_ * (0.90f + 0.012f * static_cast<float> (i)));
+    }
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSustainLimiterMid (float loHz, float hiHz, float threshDb,
+                                                         float maxCutDb, float atkMs,
+                                                         float relFastMs, float relSlowMs)
+{
+    susLimMidCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    // Fresh engage/disengage starts from a clean detector so a preset swap never
+    // inherits another preset's charge; splitter states decay naturally (they are
+    // only read while active).
+    susLimMidDet_.clear();
+    susLimMidRed_ = susLimMidAcc_ = 0.0f;
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::setSustainLimiterLow (float loHz, float hiHz, float threshDb,
+                                                         float maxCutDb, float atkMs,
+                                                         float relFastMs, float relSlowMs)
+{
+    susLimLowCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    susLimLowDet_.clear();
+    susLimLowRed_ = susLimLowAcc_ = 0.0f;
 }
 
 template <bool WithOctaveGEQ, int N>
@@ -1783,7 +1884,14 @@ void FDNReverbT<WithOctaveGEQ, N>::clearBuffers()
         inLoopPeak_[i].reset();
         // Phase η: clear dual-time-constant bass shelf state.
         dualBassShelf_[i].reset();
+        // Sustain-band limiter: clear split filters (config retained).
+        susLimMidSplit_[i].clear();
+        susLimLowSplit_[i].clear();
     }
+    susLimMidDet_.clear();
+    susLimLowDet_.clear();
+    susLimKey_.clear();
+    susLimMidRed_ = susLimLowRed_ = susLimMidAcc_ = susLimLowAcc_ = 0.0f;
     // Phase 3 (VH->0): per-line energy-following hi-shelf — single object with N
     // internal channel trackers. Reset its envelope state too so stale HF energy
     // doesn't leak into the first samples after a preset swap / unfreeze (dormant
@@ -1796,7 +1904,10 @@ void FDNReverbT<WithOctaveGEQ, N>::clearBuffers()
         lfos_[i].prepare (static_cast<float> (sampleRate_), seed);
         lfos_[i].setRate  (modRateHz_);
         lfos_[i].setDepth (modDepthSamples_);
+        smearLfos_[i].prepare (static_cast<float> (sampleRate_),
+                               0xA5C3E97Bu + static_cast<uint32_t> (i * 2749));
     }
+    setModeSmear (smearDepthSamples_, smearRateHz_);
 }
 
 // ===========================================================================

@@ -2,6 +2,7 @@
 
 #include "DspUtils.h"
 #include "TwoBandDamping.h"   // OctaveBandDamping (per-octave GEQ, design out-of-line)
+#include "SustainBandLimiter.h"
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -69,7 +70,11 @@ public:
         lfo2_.setRate (modRate_ * 1.19f);
         for (auto& d : dc_) d.reset();
         prepared_ = true;
-        updateLimiterCoeffs();
+        setHFSustain (hfSusDb_, hfSusHz_);   // re-derive shelf at the new sample rate
+        // Sustain-band limiter: re-derive coeffs at the new sample rate + key prepare.
+        susLimMidCfg_.updateCoeffs (sr_);
+        susLimLowCfg_.updateCoeffs (sr_);
+        susLimKey_.prepare (sr_);
         clear();
         update();
     }
@@ -78,7 +83,9 @@ public:
     {
         for (auto& a : inAPL_) a.clear();
         for (auto& a : inAPR_) a.clear();
-        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; octDamp_[i].reset(); limLp_[i] = limEnv_[i] = 0.0f; }
+        for (int i = 0; i < kN; ++i) { line_[i].clear(); loopAP_[i].clear(); loopAP2_[i].clear(); loopAP3_[i].clear(); lsf_[i] = hsf_[i] = 0.0f; octDamp_[i].reset(); susLimMidSplit_[i].clear(); susLimLowSplit_[i].clear(); }
+        susLimMidDet_.clear(); susLimLowDet_.clear(); susLimKey_.clear();
+        susLimMidRed_ = susLimLowRed_ = susLimMidAcc_ = susLimLowAcc_ = 0.0f;
         spinL_.clear(); spinR_.clear();
         tcL_.reset(); tcR_.reset();
         for (auto& d : dc_) d.reset();   // process() always runs the input DC blockers — clear their history too, else state leaks across instances/sessions
@@ -112,22 +119,39 @@ public:
     void setOctaveDecayRef (float seconds) { octaveDecayRef_ = seconds; if (prepared_) update(); }
     // FORK B: opt-in per preset. Default off = bit-identical. Needs octaveActive_.
     void setTonalCorrection (bool enabled) { tonalCorrEnabled_ = enabled; if (prepared_) update(); }
-    // LOW ACCUMULATION LIMITER (2026-07-04, piano-gate defect): under sustained
-    // low-frequency drive (repeating bass notes) the tank's sub band CHARGES —
-    // Vocal Hall's 62 Hz grew +6.8 dB across a 22 s piano stem while the VVV
-    // anchor stayed flat (DV's sub EDT ~2x the anchor's; each note tops up what
-    // hasn't decayed). A static damping change would break the noiseburst T60
-    // gates; instead each line follows its OWN low-band envelope and only when
-    // that exceeds the threshold does it attenuate the low band per pass —
-    // impulse/noiseburst tails never reach the threshold, a sustained charge
-    // does. maxCut 0 → inactive → bit-identical.
-    void setLowAccumLimiter (float threshDb, float maxCut, float splitHz)
+    // IN-LOOP SUSTAINED-ENERGY LIMITER (SustainBandLimiter.h; 2026-07-07 —
+    // generalizes the old LowAccumLimiter, which was band-capped 30-300 Hz /
+    // −6 dB with a 6 s always-on release that drained into the T60 fit window).
+    // Two slots (MID law A / LOW law B), shared detector across the 8 lines,
+    // input-keyed release. maxCutDb 0 → inactive → bit-identical.
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs)
     {
-        limThreshLin_ = std::pow (10.0f, std::clamp (threshDb, -80.0f, 0.0f) / 20.0f);
-        limMaxCut_    = std::clamp (maxCut, 0.0f, 0.5f);
-        limSplitHz_   = std::clamp (splitHz, 30.0f, 300.0f);
-        limActive_    = limMaxCut_ > 1.0e-6f;
-        if (prepared_) updateLimiterCoeffs();
+        susLimMidCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sr_);
+        susLimMidDet_.clear();
+        susLimMidRed_ = susLimMidAcc_ = 0.0f;
+    }
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs)
+    {
+        susLimLowCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sr_);
+        susLimLowDet_.clear();
+        susLimLowRed_ = susLimLowAcc_ = 0.0f;
+    }
+    // Per-pass HF-sustain compensation shelf (shimmer precedent, 2026-07-08): cancels
+    // the compounding modulated-read/AA HF loss that cliffs the top octave (the ear's
+    // "muffled"; spec_L1 max @12.9k on the hall presets). y += g*HP(y) per line per
+    // pass; bounded by the decay gain (band total < 1) + softClip. 0 dB = bit-null.
+    void setHFSustain (float db, float cornerHz)
+    {
+        hfSusDb_ = std::clamp (db, 0.0f, 6.0f);
+        hfSusHz_ = std::clamp (cornerHz, 2000.0f, 18000.0f);
+        hfSusGain_ = std::pow (10.0f, hfSusDb_ / 20.0f) - 1.0f;
+        if (prepared_)
+        {
+            hfSusCoeff_ = 1.0f - std::exp (-6.2831853f * hfSusHz_ / sr_);
+            for (int i = 0; i < kN; ++i) hfSusLp_[i] = 0.0f;
+        }
     }
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
@@ -145,6 +169,25 @@ public:
         {
             const float m1 = lfo1_.next() * md;
             const float m2 = lfo2_.next() * md;
+
+            // Sustain-band limiter: advance the shared detectors once per sample from
+            // the PREVIOUS sample's summed |band| across the 8 lines (one-sample
+            // latency negligible at the detector taus). Input-keyed release.
+            if ((susLimMidCfg_.active || susLimLowCfg_.active) && ! frozen_)
+            {
+                const bool present = susLimKey_.advance (std::abs (inLp[s]) + std::abs (inRp[s]));
+                constexpr float invN = 1.0f / static_cast<float> (kN);
+                if (susLimMidCfg_.active)
+                {
+                    susLimMidRed_ = susLimMidDet_.advance (susLimMidAcc_ * invN, susLimMidCfg_, present);
+                    susLimMidAcc_ = 0.0f;
+                }
+                if (susLimLowCfg_.active)
+                {
+                    susLimLowRed_ = susLimLowDet_.advance (susLimLowAcc_ * invN, susLimLowCfg_, present);
+                    susLimLowAcc_ = 0.0f;
+                }
+            }
 
             float l = dc_[0].process (inLp[s]);
             float r = dc_[1].process (inRp[s]);
@@ -301,18 +344,26 @@ private:
             const float highB = v - hsf_[i];                      // > highX_
             v = gLowB_ * lowB + gMidB_ * midB + gHighB_ * highB;
         }
-        // LOW ACCUMULATION LIMITER: per-line low-band envelope; above threshold,
-        // attenuate the low band per pass (drive-following — impulse tails never
-        // reach the threshold, sustained bass charge does). Off = branch skipped.
-        if (limActive_ && ! frozen_)
+        // Per-pass HF-sustain shelf (setHFSustain): 0 dB = skipped/bit-null.
+        if (hfSusGain_ > 0.0f && ! frozen_)
         {
-            limLp_[i] += limLpCoeff_ * (v - limLp_[i]);
-            const float low = limLp_[i];
-            const float a = std::abs (low);
-            limEnv_[i] += (a > limEnv_[i] ? limAtkCoeff_ : limRelCoeff_) * (a - limEnv_[i]);
-            const float over = limEnv_[i] / limThreshLin_;
-            if (over > 1.0f)
-                v -= std::min ((over - 1.0f) * 0.5f, 1.0f) * limMaxCut_ * low;
+            hfSusLp_[i] += hfSusCoeff_ * (v - hfSusLp_[i]);
+            v += hfSusGain_ * (v - hfSusLp_[i]);
+        }
+        // Sustain-band limiter (in-loop; SustainBandLimiter.h): applies the shared
+        // per-slot reduction (advanced once per sample in process()) to this line's
+        // split band; accumulates |band| for the next advance. Off = skipped/bit-null.
+        if (susLimMidCfg_.active && ! frozen_)
+        {
+            const float b = susLimMidSplit_[i].band (v, susLimMidCfg_);
+            susLimMidAcc_ += std::abs (b);
+            v -= susLimMidRed_ * b;
+        }
+        if (susLimLowCfg_.active && ! frozen_)
+        {
+            const float b = susLimLowSplit_[i].band (v, susLimLowCfg_);
+            susLimLowAcc_ += std::abs (b);
+            v -= susLimLowRed_ * b;
         }
         // per-line loop allpass diffusers (modulated) — the in-loop density.
         // Two nested allpasses (opposite mod sign) double the echo density.
@@ -500,28 +551,18 @@ private:
     float octaveDecayRef_ = 0.0f;
     bool  octaveActive_   = false;
 
-    // Low accumulation limiter state (setLowAccumLimiter). Per-line one-pole
-    // low split + per-line low-band envelope (fast attack, ~1 s release).
-    bool  limActive_    = false;
-    float limThreshLin_ = 0.01f;     // linear envelope threshold
-    float limMaxCut_    = 0.0f;      // max per-pass low-band gain cut (0..0.5)
-    float limSplitHz_   = 90.0f;
-    float limLpCoeff_   = 0.0f, limAtkCoeff_ = 0.0f, limRelCoeff_ = 0.0f;
-    float limLp_[kN]  = {};
-    float limEnv_[kN] = {};
+    // HF-sustain shelf state (setHFSustain).
+    float hfSusHz_ = 10000.0f, hfSusDb_ = 0.0f, hfSusGain_ = 0.0f, hfSusCoeff_ = 0.0f;
+    float hfSusLp_[kN] = {};
 
-    void updateLimiterCoeffs()
-    {
-        const float sr = sr_;
-        limLpCoeff_  = 1.0f - std::exp (-6.2831853f * limSplitHz_ / sr);
-        // SLOW time constants — the point is to track the CHARGE, not the note:
-        // a 600 ms attack means a noiseburst/impulse can't engage the limiter
-        // (T60 gates untouched), and a 6 s release means engagement grows with
-        // the accumulated low energy across a sustained passage, so the cut is
-        // larger late than early — flattening the charge, not just the level.
-        limAtkCoeff_ = 1.0f - std::exp (-1.0f / (0.600f * sr));
-        limRelCoeff_ = 1.0f - std::exp (-1.0f / (6.0f   * sr));
-    }
+    // Sustain-band limiter state (setSustainLimiterMid/Low). Shared detector per
+    // slot across the 8 lines, per-line band splitters, input-keyed release.
+    SustainBandLimiter::Config   susLimMidCfg_, susLimLowCfg_;
+    SustainBandLimiter::Detector susLimMidDet_, susLimLowDet_;
+    SustainBandLimiter::Splitter susLimMidSplit_[kN], susLimLowSplit_[kN];
+    SustainBandLimiter::InputKey susLimKey_;
+    float susLimMidRed_ = 0.0f, susLimLowRed_ = 0.0f;
+    float susLimMidAcc_ = 0.0f, susLimLowAcc_ = 0.0f;
 
     // FORK B — Jot output tonal-correction (stereo). Identity unless opted in.
     OctaveBandDamping        tcL_, tcR_;

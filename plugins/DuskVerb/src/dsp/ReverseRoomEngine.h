@@ -122,13 +122,25 @@ private:
     int   holdCounter_ = 0;        // samples remaining in Hold before Closing
     int   holdSamples_ = 0;        // = holdMs_ * sr (base hold, retriggerable)
     float holdMs_      = 340.0f;   // BASE hold ms (≈ impulse; short input) (swept)
-    float closeTauMs_  = 30.0f;    // close slew tau. 2026-07-04: the re-measured anchor FADES ~40 dB over 200 ms after the peak (tau ~45 ms), not a 3 ms cliff — 30 ms reads subtle, not chopped.
+    float closeTauMs_  = 8.0f;     // close slew tau. 2026-07-08: 30->8 WITH the onset-window close — the anchor's post-peak fall is a cliff once the window owns the timing (tail_t60 +255%->+24%). The old "30 ms reads subtle" note predates the window.
 
     // DURATION-DEPENDENT hold: hold grows with how long input has been present in
     // this burst, so an impulse cuts fast (impulse tail_t60 0.094s) while
     // sustained holds long enough that the per-octave GEQ decay (≤0.47s) shows as
     // the measured per-band T60 instead of being truncated by the gate.
     int   inputActiveSamps_ = 0;   // samples input has been present this burst
+    // ONSET-KEYED window close (2026-07-08): the Lex reverse gate is a FIXED
+    // WINDOW from burst ONSET — close begins T_window after the burst STARTS,
+    // regardless of input length. A fixed input-off hold cannot satisfy both
+    // stimuli (impulse needs >=334 ms of hold for the swell to complete,
+    // noiseburst needs ~250 ms; duration-scaled hold moves the WRONG way).
+    // When onsetWindowSamps_ > 0 and a SHORT burst (input ended inside the
+    // window) is older than the window, it forces Closing immediately instead
+    // of serving the remaining hold. Long sustained bursts keep the legacy
+    // hold/release (they need the full per-band T60 tail). 0 = off.
+    float onsetWindowMs_    = 470.0f; // 2026-07-08 baked (sweep 420-540): t30 +93%->+4%, t60 +255%->+24%, RT 22->19.
+    int   onsetWindowSamps_ = 0;   // = onsetWindowMs_ * sr (0 = disabled)
+    int   onsetAgeSamps_    = 0;   // samples since burst onset (counts while not Idle, capped at window+1)
     int   holdMaxSamps_     = 0;   // = holdMaxMs_ * sr (ceiling)
     float holdPerSec_       = 60.0f;  // +ms hold per second of input presence
     float holdMaxMs_        = 450.0f; // hold ceiling (sustained). 2026-07-04 600->450: on the 22.6 s piano stem the gate held ~0.5 s of loud low-mid past where the Lex reverse had closed (piano-tail gate +21 dB); 450 tracks the anchor's release without touching the noiseburst T60s (hold there is duration-scaled ~346 ms, under both caps).
