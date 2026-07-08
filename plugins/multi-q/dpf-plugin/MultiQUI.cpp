@@ -19,6 +19,7 @@
 
 #include "DistrhoUI.hpp"
 #include "MultiQParams.hpp"
+#include "MultiQProgramPresets.hpp"  // Digital factory presets (header dropdown)
 #include "MultiQAccess.hpp"   // same-process meter/analyzer bridge (weak accessors)
 #include "FourKEQDSP.hpp"
 #include "MultiQFilters.hpp"  // amb:: analog-matched designers + MqBiquadCoeffs (Digital curve)
@@ -166,11 +167,17 @@ namespace
         IM_COL32(0xaa, 0x66, 0xff, 255), // 6 HighSh purple
         IM_COL32(0xff, 0x66, 0xcc, 255), // 7 LPF    pink
     };
-    const char* kDigitalBandShort[8] = { "HPF", "L.SHELF", "LOW", "L-MID", "MID", "H-MID", "H.SHELF", "LPF" };
+    // Band names EXACTLY as the JUCE original (EQBand.h kBandConfigs .name).
+    const char* kDigitalBandShort[8] = { "HPF", "Low Shelf", "Low", "Low Mid", "Mid", "High Mid", "High Shelf", "LPF" };
 
-    // Digital response plot rect + band-strip band (design coords).
-    constexpr float DGX0 = 44.f, DGY0 = 104.f, DGX1 = 916.f, DGY1 = 430.f;
-    constexpr float DSTRIP_Y0 = 446.f, DSTRIP_Y1 = 662.f, DSTRIP_X0 = 44.f, DSTRIP_X1 = 916.f;
+    // Digital response plot rect + one-row band strip + bottom detail panel
+    // (design coords). Graph ~top 45%, strips one row, detail panel bottom ~27%.
+    // IN/OUT meters flank the graph (thin vertical strips just inside the chassis
+    // margins); strips + detail span nearly full width (edge-to-edge cells).
+    constexpr float DGX0 = 44.f, DGY0 = 104.f, DGX1 = 916.f, DGY1 = 408.f;
+    constexpr float DINX0 = 16.f, DINX1 = 34.f, DOUTX0 = 926.f, DOUTX1 = 944.f;
+    constexpr float DSTRIP_Y0 = 416.f, DSTRIP_Y1 = 470.f, DSTRIP_X0 = 10.f, DSTRIP_X1 = 950.f;
+    constexpr float DPX0 = 10.f, DPY0 = 476.f, DPX1 = 950.f, DPY1 = 662.f;
 
     // Butterworth per-stage Q tables (inlined from core ButterworthQ so the UI
     // graph matches the DSP edge-filter cascade exactly, without pulling in the
@@ -271,7 +278,8 @@ protected:
         ImGui::Begin("MultiQ2", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                     ImGuiWindowFlags_NoBackground);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(30, 30, 33, 255)); // chassis fills window
@@ -296,16 +304,18 @@ protected:
         else
         {
             const int mode = (int)std::lround(values[kParamEqType]);
-            drawSimpleHeader(dl);
-            drawCharSelector(dl);
+            drawSimpleHeader(dl, mode == kDigitalModeIndex ? "Dusk Audio" : "DUSK AUDIO");
             if (showCredits)
             {
                 ImGui::SetCursorScreenPos(ImVec2(0, 0));
                 ImGui::InvisibleButton("modalblock", ImVec2(winW, winH));
             }
-            if (mode == kDigitalModeIndex)   drawDigital(dl);
-            else if (mode == kTubeModeIndex) drawTube(dl);
-            else                             drawPlaceholder(dl, mode); // Match: later phase
+            // Digital gets the full JUCE-style header (A/B, character dropdown,
+            // preset, Save, Auto Gain, mode, range, Oversample, Bypass); Match/Tube
+            // keep the shared 4-segment EQ-TYPE character selector.
+            if (mode == kDigitalModeIndex)   { drawDigitalHeader(dl); drawDigital(dl); }
+            else if (mode == kTubeModeIndex) { drawCharSelector(dl); drawTube(dl); }
+            else                             { drawCharSelector(dl); drawPlaceholder(dl, mode); } // Match: later phase
         }
 
         if (showCredits)
@@ -418,20 +428,21 @@ private:
                      [&]{ toggleParam(kSpectrumPrePost); });
     }
 
-    // Simple header for the non-British character placeholders (title only).
-    void drawSimpleHeader(ImDrawList* dl)
+    // Simple header for the non-British character skins (title only). `brand` lets
+    // Digital use title-case "Dusk Audio" while British/Tube keep "DUSK AUDIO".
+    void drawSimpleHeader(ImDrawList* dl, const char* brand = "DUSK AUDIO")
     {
         dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 88), kHeader);
         dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 3), IM_COL32(150, 150, 152, 255));
         dl->AddLine(panel.P(0, 88), panel.P(kDesignW, 88), IM_COL32(60, 60, 63, 255), 1.5f * sc());
-        drawTitle(dl);
+        drawTitle(dl, brand);
     }
 
-    void drawTitle(ImDrawList* dl)
+    void drawTitle(ImDrawList* dl, const char* brand = "DUSK AUDIO")
     {
         panel.text(dl, 28, 28, 25, pal().white, "Multi-Q 2", -1, true);
         static const char* kSub[4] = {
-            "Universal Equalizer - Digital", "Universal Equalizer - Match",
+            "Universal EQ", "Universal Equalizer - Match",
             "Console-Style Equalizer - British", "Passive Program Equalizer - Tube" };
         const int m = (int)std::lround(values[kParamEqType]);
         panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255),
@@ -444,7 +455,7 @@ private:
             if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             if (ImGui::IsItemClicked()) { showCredits = true; creditsArmed = false; }
         }
-        panel.text(dl, kDesignW - 26, 68, 10.5f, IM_COL32(140, 142, 146, 255), "DUSK AUDIO", 1, true);
+        panel.text(dl, kDesignW - 26, 68, 10.5f, IM_COL32(140, 142, 146, 255), brand, 1, true);
     }
 
     void drawPlaceholder(ImDrawList* dl, int mode)
@@ -486,62 +497,6 @@ private:
         editParameter(id, true); values[id] = nv; setParameterValue(id, nv); editParameter(id, false);
     }
 
-    // Log-scaled continuous knob for a plain float param (freq/Q), rendered with
-    // the brushed-metal body. Owns drag / shift-fine / wheel / dbl-click-type /
-    // Cmd-reset gestures. Reuses stepDragT/stepModReset_ (one active knob only).
-    void logKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
-                 uint32_t pid, float minV, float maxV, const char* fmt, const char* suffix)
-    {
-        const float s = sc();
-        const ImVec2 c = panel.P(cx, cy);
-        const float RR = R * s;
-        const float lmin = std::log10(minV), lmax = std::log10(maxV);
-        auto toT = [&](float v) { return clamp01((std::log10(std::max(minV, v)) - lmin) / (lmax - lmin)); };
-        auto toV = [&](float t) { return std::pow(10.0f, lmin + t * (lmax - lmin)); };
-        float t = toT(values[pid]);
-
-        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
-        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
-        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-        const bool editing = panel.isEditingValue(id);
-        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
-        auto apply = [&](float tt) { const float v = toV(tt); values[pid] = v; setParameterValue(pid, v); };
-        if (!editing)
-        {
-            if (ImGui::IsItemActivated())
-            {
-                if (modKey) { editParameter(pid, true); values[pid] = mqDef(pid); setParameterValue(pid, mqDef(pid)); editParameter(pid, false); t = toT(values[pid]); stepModReset_ = true; }
-                else { editParameter(pid, true); stepDragT = t; stepModReset_ = false; }
-            }
-            if (act && !stepModReset_)
-            {
-                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-                stepDragT = clamp01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
-                t = stepDragT; apply(t);
-            }
-            if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(pid, false); stepModReset_ = false; }
-            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) { panel.openValueEdit(id, values[pid]); editParameter(pid, false); }
-            else if (hov && !act) { const float wh = ImGui::GetIO().MouseWheel; if (wh != 0.f) { t = clamp01(t + wh * 0.02f); editParameter(pid, true); apply(t); editParameter(pid, false); } }
-        }
-
-        drawMetalKnobBody(dl, c, RR, t, IM_COL32(150, 152, 156, 255), IM_COL32(245, 245, 245, 255));
-
-        float typed;
-        if (panel.valueEdit(id, cx, cy, R, typed))
-        {
-            typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
-            editParameter(pid, true); values[pid] = typed; setParameterValue(pid, typed); editParameter(pid, false);
-        }
-        else if ((hov || act) && !editing)
-        {
-            char b[24];
-            const bool isHz = (suffix[0] == 'H') || (suffix[0] == ' ' && suffix[1] == 'H');
-            if (isHz && values[pid] >= 1000.f) std::snprintf(b, sizeof(b), "%.2f kHz", values[pid] / 1000.f);
-            else { char t2[16]; std::snprintf(t2, sizeof(t2), fmt, values[pid]); std::snprintf(b, sizeof(b), "%s%s", t2, suffix); }
-            panel.valueBubble(dl, cx, cy, R, b);
-        }
-    }
-
     // Stepped choice box: caption above, current label inside, click cycles.
     void stepSelector(ImDrawList* dl, const char* id, float cx, float cyTop, float w, float h,
                       const char* caption, uint32_t pid, bool enabled = true)
@@ -567,7 +522,7 @@ private:
     //========================================================================
     // DIGITAL — interactive log-frequency curve editor + 8 band strips
     //========================================================================
-    static float digRangeDb(int idx) { static const float R[3] = { 12.f, 24.f, 36.f }; return R[idx < 0 ? 0 : (idx > 2 ? 2 : idx)]; }
+    static float digRangeDb(int idx) { static const float R[5] = { 6.f, 12.f, 18.f, 24.f, 30.f }; return R[idx < 0 ? 0 : (idx > 4 ? 4 : idx)]; }
     float digY(float db) const
     {
         const float r = digRangeDb(digRangeIdx);
@@ -623,13 +578,15 @@ private:
     }
 
     // Linear magnitude of one enabled Digital band (matches computeBandCoeffs).
-    double digitalBandMag(int b, double freq, double sr) const
+    // gainOffset shifts the band's gain (dB) — used to draw the live dynamic curve
+    // (each dyn-enabled band offset by its current dynamic-EQ gain).
+    double digitalBandMag(int b, double freq, double sr, float gainOffset = 0.f) const
     {
         if (values[mqidx::enabled(b)] < 0.5f) return 1.0;
         if (b == 0) return digitalEdgeMag(0, freq, sr, true);
         if (b == 7) return digitalEdgeMag(7, freq, sr, false);
         duskaudio::MqBiquadCoeffs c;
-        const float gain = values[mqidx::gain(b)];
+        const float gain = values[mqidx::gain(b)] + gainOffset;
         const float q    = values[mqidx::q(b)];
         const float fc   = values[mqidx::freq(b)];
         const int shape  = (int)std::lround(values[mqidx::shape(b)]);
@@ -665,6 +622,45 @@ private:
         return (float)db;
     }
 
+    // Composite response with each dyn-enabled band offset by its live dynamic-EQ
+    // gain (the moving "dynamic" curve). Matches JUCE getFrequencyResponseWithDynamics.
+    float digitalResponseDbDyn(float freq) const
+    {
+        const double sr = digitalSampleRate();
+        double mag = 1.0;
+        for (int b = 0; b < 8; ++b)
+        {
+            const float dg = values[mqidx::dynEnabled(b)] > 0.5f ? smoothedDynGain_[b] : 0.f;
+            mag *= digitalBandMag(b, freq, sr, dg);
+        }
+        double db = 20.0 * std::log10(std::max(mag, 1e-6));
+        db += values[kParamMasterGain];
+        return (float)db;
+    }
+
+    // Per-frame read + smoothing of the DSP's live per-band dynamic-EQ gain
+    // (read-only meter tap through the same-process bridge). Mirrors JUCE
+    // EQGraphicDisplay::smoothedDynamicGains.
+    void updateDynGains()
+    {
+        float raw[8] = {};
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        bool have = false;
+        if (multiQGetBandDynGain != nullptr) // weak: null in the split LV2 UI
+            if (void* inst = getPluginInstancePointer())
+            {
+                have = true;
+                for (int b = 0; b < 8; ++b) raw[b] = multiQGetBandDynGain(inst, b);
+            }
+        const float dt = std::min(std::max(ImGui::GetIO().DeltaTime, 0.f), 0.1f);
+        const float sm = 1.0f - std::exp(-dt / 0.05f); // ~50 ms UI smoothing
+        for (int b = 0; b < 8; ++b)
+            smoothedDynGain_[b] += ((have ? raw[b] : 0.f) - smoothedDynGain_[b]) * sm;
+       #else
+        for (int b = 0; b < 8; ++b) smoothedDynGain_[b] = 0.f;
+       #endif
+    }
+
     // Does band b's control node carry gain (draggable in Y)? Matches JUCE
     // getControlPointPosition: only peaking-shaped nodes sit off the 0 dB line.
     bool digBandCarriesGain(int b) const
@@ -690,24 +686,38 @@ private:
             dl->AddLine(panel.P(x, DGY0), panel.P(x, DGY1), IM_COL32(38, 41, 45, 255), 1.f * s);
             panel.text(dl, x, DGY1 - 13, 8.5f, IM_COL32(120, 124, 130, 255), kGridFL[i], 0);
         }
-        // dB grid
+        // faint musical note markers (C1..C8) along the BOTTOM of the plot,
+        // just above the frequency-axis labels (matches JUCE placement)
         {
-            const float R = digRangeDb(digRangeIdx);
-            const float ticks[5] = { -R, -0.5f * R, 0.f, 0.5f * R, R };
-            for (int i = 0; i < 5; ++i)
+            static const float kNoteHz[8] = { 32.70f, 65.41f, 130.81f, 261.63f, 523.25f, 1046.50f, 2093.00f, 4186.01f };
+            static const char* kNoteL[8]  = { "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8" };
+            for (int i = 0; i < 8; ++i)
             {
-                const float y = digY(ticks[i]);
+                const float x = DGX0 + flog(kNoteHz[i]) * (DGX1 - DGX0);
+                dl->AddLine(panel.P(x, DGY1 - 27), panel.P(x, DGY1 - 15), IM_COL32(60, 56, 76, 150), 1.f * s);
+                panel.text(dl, x, DGY1 - 26, 8.f, IM_COL32(112, 108, 130, 210), kNoteL[i], 0);
+            }
+        }
+        // dB grid — horizontal lines every 6 dB (matches JUCE +24..-24 ladder)
+        {
+            const int R = (int)digRangeDb(digRangeIdx);
+            for (int db = -R; db <= R; db += 6)
+            {
+                const float y = digY((float)db);
                 dl->AddLine(panel.P(DGX0, y), panel.P(DGX1, y),
-                            ticks[i] == 0.f ? IM_COL32(64, 68, 74, 255) : IM_COL32(30, 33, 37, 255), 1.f * s);
-                char b[8]; std::snprintf(b, sizeof(b), "%+d", (int)ticks[i]);
+                            db == 0 ? IM_COL32(64, 68, 74, 255) : IM_COL32(30, 33, 37, 255), 1.f * s);
+                char b[8]; std::snprintf(b, sizeof(b), "%+d", db);
                 float ly = y - 6.f; ly = ly < DGY0 + 1.f ? DGY0 + 1.f : (ly > DGY1 - 13.f ? DGY1 - 13.f : ly);
-                panel.text(dl, DGX0 + 5, ly, 10.f, IM_COL32(150, 154, 160, 255), ticks[i] == 0.f ? "0" : b, -1);
+                panel.text(dl, DGX0 + 5, ly, 9.5f, IM_COL32(150, 154, 160, 255), db == 0 ? "0" : b, -1);
             }
         }
 
         // live spectrum analyzer behind the response curves (dim, subtle)
         if (showFft)
             drawSpectrum(dl, DGX0, DGY0, DGX1, DGY1);
+
+        // read + smooth the live per-band dynamic-EQ gains for the moving overlay
+        updateDynGains();
 
         // per-band ghost curves (dim) then composite (bright)
         const double sr = digitalSampleRate();
@@ -735,6 +745,45 @@ private:
             pts.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), y));
         }
         dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(236, 236, 236, 255), 0, 2.2f * s);
+
+        // animated DYNAMIC response overlay: recompute the composite with each
+        // dyn-enabled band shifted by its live dyn-gain, and draw it (orange, with
+        // a translucent fill between static and dynamic) so the band visibly moves
+        // as it compresses. Mirrors JUCE EQGraphicDisplay's dynamic curve.
+        {
+            bool anyDyn = false;
+            for (int b = 0; b < 8; ++b)
+                if (values[mqidx::enabled(b)] > 0.5f && values[mqidx::dynEnabled(b)] > 0.5f
+                    && std::abs(smoothedDynGain_[b]) > 0.05f) { anyDyn = true; break; }
+            if (anyDyn)
+            {
+                std::vector<ImVec2> dp; dp.reserve(N);
+                for (int i = 0; i < N; ++i)
+                {
+                    const float lx = (float)i / (N - 1);
+                    dp.push_back(panel.P(DGX0 + lx * (DGX1 - DGX0), digY(digitalResponseDbDyn(freqAt(lx)))));
+                }
+                for (size_t i = 0; i + 1 < dp.size(); ++i)
+                    dl->AddQuadFilled(pts[i], pts[i + 1], dp[i + 1], dp[i], IM_COL32(255, 136, 68, 45));
+                dl->AddPolyline(dp.data(), (int)dp.size(), IM_COL32(255, 150, 90, 235), 0, 2.0f * s);
+            }
+        }
+
+        // DYN threshold: dashed horizontal line + "T: xx dB" for the selected band
+        // when its dynamics are enabled (matches JUCE EQGraphicDisplay).
+        if (values[mqidx::dynEnabled(selectedBand_)] > 0.5f)
+        {
+            const float thr = values[mqidx::dynThreshold(selectedBand_)];
+            const float ty = digY(thr);
+            if (ty > DGY0 + 1.f && ty < DGY1 - 1.f)
+            {
+                const ImU32 tc = IM_COL32(255, 136, 68, 210);
+                for (float x = DGX0; x < DGX1; x += 14.f)
+                    dl->AddLine(panel.P(x, ty), panel.P(std::min(x + 8.f, DGX1), ty), tc, 1.4f * s);
+                char tb[24]; std::snprintf(tb, sizeof(tb), "T: %d dB", (int)std::lround(thr));
+                panel.text(dl, DGX1 - 6, ty - 13, 9.5f, tc, tb, 1, true);
+            }
+        }
         dl->PopClipRect();
 
         // ---- draggable band handles ----
@@ -758,6 +807,7 @@ private:
                 editParameter(mqidx::freq(b), true);
                 if (yDrag) editParameter(mqidx::gain(b), true);
                 dragBand_ = b;
+                selectedBand_ = b;   // selecting a handle drives the detail panel
             }
             if (act && dragBand_ == b)
             {
@@ -779,12 +829,29 @@ private:
                 if (yDrag) editParameter(mqidx::gain(b), false);
                 dragBand_ = -1;
             }
+            // Wheel over a band handle adjusts that band's Q (JUCE
+            // EQGraphicDisplay::mouseWheelMove: newQ = Q * 1.15^(wheel*3)).
+            if (hov && !act)
+            {
+                const float wh = ImGui::GetIO().MouseWheel;
+                if (wh != 0.f)
+                {
+                    float qv = values[mqidx::q(b)] * std::pow(1.15f, wh * 3.0f);
+                    qv = qv < 0.1f ? 0.1f : (qv > 100.f ? 100.f : qv);
+                    editParameter(mqidx::q(b), true);
+                    values[mqidx::q(b)] = qv; setParameterValue(mqidx::q(b), qv);
+                    editParameter(mqidx::q(b), false);
+                    selectedBand_ = b;
+                }
+            }
             const ImU32 col = kDigitalBandCol[b];
-            const float rr = (hov || act) ? 8.f * s : 6.5f * s;
+            const bool sel = (b == selectedBand_);
+            const float rr = (hov || act || sel) ? 8.5f * s : 6.5f * s;
+            if (sel) dl->AddCircleFilled(hc, rr + 5.f * s, (col & 0x00FFFFFF) | 0x55000000, 24); // selected glow
             dl->AddCircleFilled(hc, rr + 1.5f * s, IM_COL32(0, 0, 0, 200), 20);
             dl->AddCircleFilled(hc, rr, col, 20);
-            dl->AddCircle(hc, rr, IM_COL32(255, 255, 255, (hov || act) ? 230 : 120), 20, 1.6f * s);
-            panel.text(dl, hx, hy - 1.f, 8.f, IM_COL32(20, 20, 22, 255), std::to_string(b + 1).c_str(), 0, true);
+            dl->AddCircle(hc, rr, IM_COL32(255, 255, 255, (hov || act || sel) ? 235 : 120), 20, sel ? 2.0f * s : 1.6f * s);
+            panel.text(dl, hx, hy - 5.f, 9.f, IM_COL32(20, 20, 22, 255), std::to_string(b + 1).c_str(), 0, true);
             if (hov || act)
             {
                 char bub[32];
@@ -796,95 +863,483 @@ private:
             }
         }
 
-        // range selector (top-right)
-        ImGui::SetCursorScreenPos(panel.P(DGX1 - 66, DGY0 + 4));
-        ImGui::SetNextItemWidth(62.f * s);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(30, 32, 36, 210));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
-        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(206, 208, 212, 255));
-        static const char* kDR[3] = { "+/-12 dB", "+/-24 dB", "+/-36 dB" };
-        if (ImGui::BeginCombo("##digrange", kDR[digRangeIdx], ImGuiComboFlags_NoArrowButton))
-        {
-            for (int i = 0; i < 3; ++i) if (ImGui::Selectable(kDR[i], i == digRangeIdx)) digRangeIdx = i;
-            ImGui::EndCombo();
-        }
-        ImGui::PopStyleColor(4);
-
+        drawDigitalMeters(dl);
         drawDigitalStrips(dl);
+        drawDetailPanel(dl);
     }
 
+    //========================================================================
+    // IN/OUT meters flanking the Digital graph (thin vertical strips). Reuses the
+    // same same-process bridge accessors + green->yellow->red look as British.
+    //========================================================================
+    void drawDigitalMeters(ImDrawList* dl)
+    {
+        float inL = 0, inR = 0, outL = 0, outR = 0;
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiQGetInputPeakL != nullptr) // weak: null in the split LV2 UI
+            if (void* inst = getPluginInstancePointer())
+            {
+                inL  = multiQGetInputPeakL(inst);  inR  = multiQGetInputPeakR(inst);
+                outL = multiQGetOutputPeakL(inst); outR = multiQGetOutputPeakR(inst);
+            }
+       #endif
+        panel.text(dl, 0.5f * (DINX0 + DINX1),  DGY0 - 13, 9.f, IM_COL32(160, 162, 166, 255), "IN",  0, true);
+        panel.text(dl, 0.5f * (DOUTX0 + DOUTX1), DGY0 - 13, 9.f, IM_COL32(160, 162, 166, 255), "OUT", 0, true);
+        digMeterPair(dl, DINX0, DINX1, inL, inR);
+        digMeterPair(dl, DOUTX0, DOUTX1, outL, outR);
+    }
+
+    void digMeterPair(ImDrawList* dl, float x0, float x1, float l, float r)
+    {
+        dl->AddRectFilled(panel.P(x0 - 2, DGY0 - 2), panel.P(x1 + 2, DGY1 + 2), IM_COL32(60, 60, 63, 255), 2.f * sc());
+        dl->AddRectFilled(panel.P(x0, DGY0), panel.P(x1, DGY1), IM_COL32(14, 16, 18, 255));
+        const float mid = 0.5f * (x0 + x1);
+        digMeterBar(dl, x0 + 1, mid - 0.5f, l);
+        digMeterBar(dl, mid + 0.5f, x1 - 1, r);
+    }
+
+    void digMeterBar(ImDrawList* dl, float x0, float x1, float lin)
+    {
+        const float db = 20.f * std::log10(lin > 1e-5f ? lin : 1e-5f);
+        float t = (db + 60.f) / 60.f; t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const float yFill = DGY1 - t * (DGY1 - DGY0);
+        const ImU32 col = db > -1.5f ? IM_COL32(226, 70, 55, 255)
+                        : db > -10.f ? IM_COL32(224, 196, 72, 255) : IM_COL32(96, 196, 112, 255);
+        dl->AddRectFilled(panel.P(x0, yFill), panel.P(x1, DGY1), col);
+        for (int i = 1; i < 16; ++i)
+        {
+            const float y = DGY0 + (float)i / 16.f * (DGY1 - DGY0);
+            dl->AddLine(panel.P(x0, y), panel.P(x1, y), IM_COL32(14, 16, 18, 200), 1.f * sc());
+        }
+    }
+
+    // Format a frequency the JUCE way (BandDetailPanel::formatFreq): int Hz below
+    // 1 kHz, 2-dec kHz to 10 kHz, 1-dec kHz above (e.g. "80 Hz", "2.00 kHz", "12.0 kHz").
+    static void formatFreqShort(char* buf, size_t n, float f)
+    {
+        if (f >= 10000.f)     std::snprintf(buf, n, "%.1f kHz", f / 1000.f);
+        else if (f >= 1000.f) std::snprintf(buf, n, "%.2f kHz", f / 1000.f);
+        else                  std::snprintf(buf, n, "%.0f Hz", f);
+    }
+
+    // One-row band strip: full-width edge-to-edge cells, each with a band-colour
+    // ACCENT BAR along its top edge, "N:Name" bold, freq below, + a small enable
+    // indicator (top-right). Click the cell to SELECT (drives the detail panel);
+    // click the enable indicator to toggle the band. Selected cell = brighter bg.
     void drawDigitalStrips(ImDrawList* dl)
     {
         const float s = sc();
-        dl->AddRectFilled(panel.P(DSTRIP_X0 - 3, DSTRIP_Y0 - 3), panel.P(DSTRIP_X1 + 3, DSTRIP_Y1 + 3), kPanel, 4.f * s);
         const float cw = (DSTRIP_X1 - DSTRIP_X0) / 8.f;
         for (int b = 0; b < 8; ++b)
         {
             const float x0 = DSTRIP_X0 + b * cw, x1 = x0 + cw;
             const float cx = 0.5f * (x0 + x1);
             const bool en = values[mqidx::enabled(b)] > 0.5f;
+            const bool selCell = (b == selectedBand_);
             const ImU32 col = kDigitalBandCol[b];
-            if (b > 0) dl->AddLine(panel.P(x0, DSTRIP_Y0 + 4), panel.P(x0, DSTRIP_Y1 - 4), IM_COL32(20, 20, 22, 255), 1.2f * s);
-            // colour accent bar (top)
-            dl->AddRectFilled(panel.P(x0 + 5, DSTRIP_Y0 + 6), panel.P(x1 - 5, DSTRIP_Y0 + 10),
-                              en ? col : (col & 0x00FFFFFF) | 0x40000000, 1.5f * s);
-            // name + enable dot
-            panel.text(dl, x0 + 10, DSTRIP_Y0 + 15, 9.5f, en ? IM_COL32(224, 224, 226, 255) : IM_COL32(120, 122, 126, 255), kDigitalBandShort[b], -1, true);
+
+            // full-cell background (edge-to-edge; selected brighter)
+            const ImVec2 c0 = panel.P(x0, DSTRIP_Y0), c1 = panel.P(x1, DSTRIP_Y1);
+            dl->AddRectFilled(c0, c1, selCell ? IM_COL32(50, 52, 58, 255) : IM_COL32(28, 28, 32, 255));
+            if (b > 0) dl->AddLine(panel.P(x0, DSTRIP_Y0), panel.P(x0, DSTRIP_Y1), IM_COL32(16, 16, 18, 255), 1.f * s);
+
+            // band-colour accent bar along the TOP edge (dim when disabled)
+            dl->AddRectFilled(panel.P(x0, DSTRIP_Y0), panel.P(x1, DSTRIP_Y0 + 4),
+                              en ? col : (col & 0x00FFFFFF) | 0x40000000);
+
+            // click cell -> select band (enable indicator region handled below)
+            char cid[16]; std::snprintf(cid, sizeof(cid), "strip%d", b);
+            ImGui::SetCursorScreenPos(c0);
+            ImGui::InvisibleButton(cid, ImVec2(c1.x - c0.x, c1.y - c0.y));
+            if (ImGui::IsItemClicked())
             {
-                const ImVec2 dc = panel.P(x1 - 12, DSTRIP_Y0 + 19);
-                ImGui::SetCursorScreenPos(ImVec2(dc.x - 7 * s, dc.y - 7 * s));
-                char eid[16]; std::snprintf(eid, sizeof(eid), "den%d", b);
-                ImGui::InvisibleButton(eid, ImVec2(14 * s, 14 * s));
-                if (ImGui::IsItemClicked()) toggleParam(mqidx::enabled(b));
-                dl->AddCircleFilled(dc, 5.f * s, en ? col : IM_COL32(58, 58, 62, 255), 16);
-                dl->AddCircle(dc, 5.f * s, IM_COL32(0, 0, 0, 160), 16, 1.f * s);
+                const ImVec2 md = invP(ImGui::GetMousePos());
+                if (md.x >= x1 - 18 && md.y <= DSTRIP_Y0 + 20)
+                    toggleParam(mqidx::enabled(b));
+                else
+                    selectedBand_ = b;
             }
 
-            // knob row: freq, gain(or none), Q
-            const float ky = DSTRIP_Y0 + 52;
-            const float kr = 11.f;
-            char kid[24];
-            std::snprintf(kid, sizeof(kid), "df%d", b);
-            logKnob(dl, kid, x0 + 22, ky, kr, mqidx::freq(b), 20.f, 20000.f, "%.0f", " Hz");
-            panel.text(dl, x0 + 22, ky + kr + 5.f, 8.5f, IM_COL32(150, 152, 156, 255), "FREQ", 0, true);
-            if (!mqidx::isEdge(b))
-            {
-                std::snprintf(kid, sizeof(kid), "dg%d", b);
-                panel.knob(kid, mqidx::gain(b), -24.f, 24.f, cx, ky, kr, values[mqidx::gain(b)], mqDef(mqidx::gain(b)),
-                           false, false, "%.1f", " dB", 0);
-                panel.text(dl, cx, ky + kr + 5.f, 8.5f, IM_COL32(150, 152, 156, 255), "GAIN", 0, true);
-            }
-            std::snprintf(kid, sizeof(kid), "dq%d", b);
-            logKnob(dl, kid, x1 - 22, ky, kr, mqidx::q(b), 0.1f, 100.f, "%.2f", "");
-            panel.text(dl, x1 - 22, ky + kr + 5.f, 8.5f, IM_COL32(150, 152, 156, 255), "Q", 0, true);
+            // "N:Name" (bold) + freq below, centred
+            char nm[24]; std::snprintf(nm, sizeof(nm), "%d:%s", b + 1, kDigitalBandShort[b]);
+            panel.text(dl, cx, DSTRIP_Y0 + 14, 10.5f,
+                       en ? IM_COL32(230, 230, 232, 255) : IM_COL32(128, 130, 134, 255), nm, 0, true);
+            char fb[24]; formatFreqShort(fb, sizeof(fb), values[mqidx::freq(b)]);
+            panel.text(dl, cx, DSTRIP_Y0 + 33, 10.f, IM_COL32(178, 180, 184, 255), fb, 0);
 
-            // shape (or slope for edge bands)
-            const float selW = cw - 16.f;
-            char sid[24];
-            if (mqidx::isEdge(b))
+            // small enable indicator (top-right)
+            const ImVec2 dc = panel.P(x1 - 10, DSTRIP_Y0 + 12);
+            dl->AddCircleFilled(dc, 3.8f * s, en ? col : IM_COL32(58, 58, 62, 255), 14);
+            dl->AddCircle(dc, 3.8f * s, IM_COL32(0, 0, 0, 160), 14, 1.f * s);
+        }
+    }
+
+    //========================================================================
+    // DIGITAL — bottom band-detail panel for the SELECTED band. Mirrors the JUCE
+    // BandDetailPanel: band badge + FREQ/Q/GAIN(or SLOPE) + INV/PH/SOLO/routing
+    // + PAN + DYNAMICS (THRESH/ATTACK/RELEASE/RANGE/RATIO + DYN). Knob value-arcs
+    // + badge use the band colour; the dynamics section dims when DYN is off.
+    //========================================================================
+    enum DetFmt { FMT_FREQ, FMT_GAIN, FMT_Q, FMT_MS, FMT_DB, FMT_RATIO, FMT_PAN };
+
+    void fmtDetail(char* buf, size_t n, int fmt, float v) const
+    {
+        switch (fmt)
+        {
+            case FMT_FREQ:  formatFreqShort(buf, n, v); break;
+            case FMT_GAIN:  std::snprintf(buf, n, "%+.1f dB", v); break;
+            case FMT_Q:     std::snprintf(buf, n, "%.2f", v); break;
+            case FMT_MS:    if (v >= 1000.f) std::snprintf(buf, n, "%.1f s", v / 1000.f);
+                            else             std::snprintf(buf, n, "%.0f ms", v); break;
+            case FMT_DB:    std::snprintf(buf, n, "%d dB", (int)std::lround(v)); break;
+            case FMT_RATIO: std::snprintf(buf, n, "%.1f:1", v); break;
+            case FMT_PAN:   { const int p = (int)std::lround(std::fabs(v) * 100.f);
+                              if (p == 0) std::snprintf(buf, n, "C");
+                              else std::snprintf(buf, n, "%d%s", p, v < 0.f ? "L" : "R"); } break;
+            default:        std::snprintf(buf, n, "%.1f", v); break;
+        }
+    }
+
+    // Band-coloured rotary. logScale drags in log space (freq/Q/attack/release/
+    // ratio); linear otherwise (gain/threshold/range/pan). Value drawn inside the
+    // cap (JUCE F6 style); label above; dim greys the whole knob (DYN off).
+    void detailKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
+                    uint32_t pid, float minV, float maxV, bool logScale,
+                    ImU32 capCol, const char* label, int fmt, bool dim)
+    {
+        const float s = sc();
+        const ImVec2 c = panel.P(cx, cy);
+        const float RR = R * s;
+        const float lmin = std::log10(std::max(1e-4f, minV)), lmax = std::log10(std::max(1e-4f, maxV));
+        auto toT = [&](float v) {
+            if (logScale) return clamp01((std::log10(std::max(minV, v)) - lmin) / (lmax - lmin));
+            return clamp01((v - minV) / (maxV - minV));
+        };
+        auto toV = [&](float t) {
+            if (logScale) return std::pow(10.f, lmin + t * (lmax - lmin));
+            return minV + t * (maxV - minV);
+        };
+        float t = toT(values[pid]);
+
+        ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
+        ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
+        const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+        const bool editing = panel.isEditingValue(id);
+        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        auto apply = [&](float tt) { const float v = toV(tt); values[pid] = v; setParameterValue(pid, v); };
+        if (!editing)
+        {
+            if (ImGui::IsItemActivated())
             {
-                std::snprintf(sid, sizeof(sid), "dslope%d", b);
-                stepSelector(dl, sid, cx, DSTRIP_Y0 + 108, selW, 18.f, "SLOPE", (uint32_t)mqidx::slope(b));
+                if (modKey) { editParameter(pid, true); values[pid] = mqDef(pid); setParameterValue(pid, mqDef(pid)); editParameter(pid, false); t = toT(values[pid]); stepModReset_ = true; }
+                else { editParameter(pid, true); stepDragT = t; stepModReset_ = false; }
             }
-            else
+            if (act && !stepModReset_)
             {
-                std::snprintf(sid, sizeof(sid), "dshape%d", b);
-                stepSelector(dl, sid, cx, DSTRIP_Y0 + 108, selW, 18.f, "SHAPE", (uint32_t)mqidx::shape(b));
-                std::snprintf(sid, sizeof(sid), "dsat%d", b);
-                stepSelector(dl, sid, cx, DSTRIP_Y0 + 146, selW, 18.f, "SAT", (uint32_t)mqidx::satType(b));
+                const float sp = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                stepDragT = clamp01(stepDragT - ImGui::GetIO().MouseDelta.y * sp);
+                t = stepDragT; apply(t);
             }
-            // dyn toggle
-            char yid[24]; std::snprintf(yid, sizeof(yid), "ddyn%d", b);
-            const bool dyn = values[mqidx::dynEnabled(b)] > 0.5f;
-            panelButton(dl, yid, cx - 0.5f * selW, DSTRIP_Y1 - 26, cx + 0.5f * selW, DSTRIP_Y1 - 8,
-                        dyn ? "DYN ON" : "DYN",
-                        dyn ? kGreenBtn : IM_COL32(50, 50, 54, 255),
-                        [this, b] { toggleParam(mqidx::dynEnabled(b)); });
+            if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(pid, false); stepModReset_ = false; }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) { panel.openValueEdit(id, values[pid]); editParameter(pid, false); }
+            // Wheel is its OWN branch (never gated by the double-click check) so a
+            // scroll frame is never skipped; works even when the knob is dimmed.
+            if (hov && !act) { const float wh = ImGui::GetIO().MouseWheel; if (wh != 0.f) { t = clamp01(t + wh * 0.02f); editParameter(pid, true); apply(t); editParameter(pid, false); } }
         }
 
-        // stepSelector caption for SAT row on edge bands is skipped; note: edge
-        // bands carry no gain/shape/sat/dyn-gain — only slope + freq + Q + dyn.
+        // label above
+        panel.text(dl, cx, cy - R - 16.f, 10.5f,
+                   dim ? IM_COL32(120, 122, 126, 255) : IM_COL32(176, 178, 182, 255), label, 0, true);
+
+        // band-coloured value arc around the knob
+        {
+            const float aS = duskdpf::DuskPanel::knobAngle(0.f);
+            const float aE = duskdpf::DuskPanel::knobAngle(t);
+            const float ar = RR + 5.f * s;
+            const int seg = 34;
+            ImVec2 prev(c.x + std::sin(aS) * ar, c.y - std::cos(aS) * ar);
+            const ImU32 arcCol = dim ? IM_COL32(96, 98, 102, 255) : capCol;
+            for (int i = 1; i <= seg; ++i)
+            {
+                const float a = aS + (aE - aS) * (float)i / seg;
+                const ImVec2 p(c.x + std::sin(a) * ar, c.y - std::cos(a) * ar);
+                dl->AddLine(prev, p, arcCol, 3.2f * s);
+                prev = p;
+            }
+        }
+        drawMetalKnobBody(dl, c, RR, t, IM_COL32(46, 48, 52, 255),
+                          dim ? IM_COL32(150, 152, 156, 255) : capCol);
+
+        float typed;
+        if (panel.valueEdit(id, cx, cy, R, typed))
+        {
+            typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
+            editParameter(pid, true); values[pid] = typed; setParameterValue(pid, typed); editParameter(pid, false);
+        }
+        else
+        {
+            char b[24]; fmtDetail(b, sizeof(b), fmt, values[pid]);
+            panel.text(dl, cx, cy - 6.f, 11.f,
+                       dim ? IM_COL32(150, 148, 142, 200) : IM_COL32(232, 224, 216, 255), b, 0, true);
+        }
+    }
+
+    // Compact click-to-cycle choice box (routing / slope) for the detail panel.
+    void detailSelector(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                        uint32_t pid, bool dim)
+    {
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (!dim && ImGui::IsItemClicked()) cycleChoice(pid);
+        dl->AddRectFilled(b0, b1, IM_COL32(30, 30, 34, 255), 3.f * s);
+        dl->AddRect(b0, b1, hov && !dim ? IM_COL32(150, 152, 156, 220) : IM_COL32(84, 84, 90, 200), 3.f * s, 0, 1.2f * s);
+        const int i = choiceIdx(pid);
+        const char* lbl = kMqParams[pid].choices ? kMqParams[pid].choices[i] : "";
+        panel.text(dl, 0.5f * (x0 + x1) - 3.f, y0 + 0.30f * (y1 - y0), 9.5f,
+                   dim ? IM_COL32(120, 122, 126, 255) : IM_COL32(210, 212, 216, 255), lbl, 0, true);
+        const ImVec2 ac = panel.P(x1 - 8.f, 0.5f * (y0 + y1));
+        dl->AddTriangleFilled(ImVec2(ac.x - 3.f * s, ac.y - 2.f * s), ImVec2(ac.x + 3.f * s, ac.y - 2.f * s),
+                              ImVec2(ac.x, ac.y + 2.5f * s), IM_COL32(170, 172, 176, 255));
+    }
+
+    // Phase-invert button drawing a circle-slash icon (font atlas lacks "Ø").
+    template <class Fn>
+    void phaseButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
+                     bool on, Fn onClick)
+    {
+        const float s = sc();
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) onClick();
+        dl->AddRectFilled(b0, b1, on ? IM_COL32(60, 74, 96, 255) : IM_COL32(46, 46, 50, 255), 4.f * s);
+        dl->AddRect(b0, b1, hov ? IM_COL32(200, 200, 205, 220) : IM_COL32(90, 90, 96, 200), 4.f * s, 0, 1.2f * s);
+        const ImVec2 c(0.5f * (b0.x + b1.x), 0.5f * (b0.y + b1.y));
+        const float r = 4.6f * s;
+        const ImU32 gc = on ? pal().white : IM_COL32(180, 182, 186, 255);
+        dl->AddCircle(c, r, gc, 16, 1.4f * s);
+        dl->AddLine(ImVec2(c.x - r * 0.8f, c.y + r * 0.8f), ImVec2(c.x + r * 0.8f, c.y - r * 0.8f), gc, 1.4f * s);
+    }
+
+    void drawBandBadge(ImDrawList* dl, float x0, float y0, float x1, float y1, int b)
+    {
+        const float s = sc();
+        const ImVec2 p0 = panel.P(x0, y0), p1 = panel.P(x1, y1);
+        const bool en = values[mqidx::enabled(b)] > 0.5f;
+        const ImU32 col = kDigitalBandCol[b];
+        dl->AddRectFilled(p0, p1, en ? ((col & 0x00FFFFFF) | 0x55000000) : IM_COL32(40, 40, 44, 255), 8.f * s);
+        dl->AddRect(p0, p1, en ? col : IM_COL32(70, 70, 74, 255), 8.f * s, 0, 2.f * s);
+        panel.text(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1) - 15.f, 30.f,
+                   en ? pal().white : IM_COL32(120, 122, 126, 255), std::to_string(b + 1).c_str(), 0, true);
+    }
+
+    void drawDetailPanel(ImDrawList* dl)
+    {
+        const float s = sc();
+        const int b = selectedBand_;
+        const ImU32 col = kDigitalBandCol[b];
+        const bool edge = mqidx::isEdge(b);
+        const bool dyn = values[mqidx::dynEnabled(b)] > 0.5f;
+
+        // panel background + top divider
+        dl->AddRectFilled(panel.P(DPX0 - 3, DPY0 - 3), panel.P(DPX1 + 3, DPY1 + 3), IM_COL32(26, 26, 28, 255), 4.f * s);
+        dl->AddLine(panel.P(DPX0, DPY0 - 3), panel.P(DPX1, DPY0 - 3), IM_COL32(58, 58, 62, 255), 1.2f * s);
+
+        // section backgrounds (EQ | PAN | DYNAMICS), spread across the full width
+        dl->AddRectFilled(panel.P(92, DPY0 + 4), panel.P(392, DPY1 - 4), IM_COL32(34, 34, 37, 255), 4.f * s);
+        dl->AddRectFilled(panel.P(398, DPY0 + 4), panel.P(486, DPY1 - 4), IM_COL32(30, 34, 40, 255), 4.f * s);
+        dl->AddRectFilled(panel.P(494, DPY0 + 4), panel.P(DPX1 - 4, DPY1 - 4),
+                          dyn ? IM_COL32(40, 35, 30, 255) : IM_COL32(30, 30, 33, 255), 4.f * s);
+        panel.text(dl, 98,  DPY0 + 8, 8.5f, IM_COL32(120, 122, 126, 255), "EQ", -1, true);
+        panel.text(dl, 500, DPY0 + 8, 8.5f, dyn ? IM_COL32(255, 136, 68, 255) : IM_COL32(96, 96, 100, 255), "DYNAMICS", -1, true);
+
+        const float cy = DPY0 + 92.f;   // knob-row centre
+        const float R  = 32.f;          // big F6-style knobs
+
+        // band badge (left)
+        drawBandBadge(dl, 14, cy - 34, 82, cy + 34, b);
+
+        // ---- EQ knobs ----
+        detailKnob(dl, "dpfreq", 128, cy, R, mqidx::freq(b), 20.f, 20000.f, true, col, "FREQ", FMT_FREQ, false);
+        detailKnob(dl, "dpq",    206, cy, R, mqidx::q(b),    0.1f, 100.f,   true, col, "Q",    FMT_Q,    false);
+        if (edge)
+        {
+            panel.text(dl, 284, cy - R - 15.f, 10.f, IM_COL32(176, 178, 182, 255), "SLOPE", 0, true);
+            detailSelector(dl, "dpslope", 252, cy - 13, 316, cy + 13, (uint32_t)mqidx::slope(b), false);
+        }
+        else
+        {
+            const bool inv = values[mqidx::invert(b)] > 0.5f;
+            detailKnob(dl, "dpgain", 284, cy, R, mqidx::gain(b), -24.f, 24.f, false, col,
+                       inv ? "GAIN (INV)" : "GAIN", FMT_GAIN, false);
+        }
+
+        // ---- INV / PH / SOLO / routing column ----
+        {
+            const float bx0 = 322.f, bx1 = 390.f;
+            const float bhw = 0.5f * (bx1 - bx0) - 2.f;
+            const bool inv = values[mqidx::invert(b)] > 0.5f;
+            const bool ph  = values[mqidx::phaseInvert(b)] > 0.5f;
+            panelButton(dl, "dpinv", bx0, cy - 33, bx0 + bhw, cy - 12, "INV",
+                        inv ? IM_COL32(150, 90, 40, 255) : IM_COL32(46, 46, 50, 255),
+                        [this, b]{ toggleParam(mqidx::invert(b)); });
+            phaseButton(dl, "dpph", bx0 + bhw + 4, cy - 33, bx1, cy - 12, ph,
+                        [this, b]{ toggleParam(mqidx::phaseInvert(b)); });
+            panelButton(dl, "dpsolo", bx0, cy - 8, bx1, cy + 13, "SOLO",
+                        soloState_[b] ? IM_COL32(150, 140, 40, 255) : IM_COL32(46, 46, 50, 255),
+                        [this, b]{ soloState_[b] = !soloState_[b]; });
+            detailSelector(dl, "dproute", bx0, cy + 17, bx1, cy + 34, (uint32_t)mqidx::routing(b), false);
+        }
+
+        // ---- PAN (boxed area) ----
+        detailKnob(dl, "dppan", 442, cy, R, mqidx::pan(b), -1.f, 1.f, false, col, "PAN", FMT_PAN, false);
+
+        // ---- DYNAMICS ----
+        detailKnob(dl, "dpth", 548, cy, R, mqidx::dynThreshold(b), -48.f, 0.f,   false, col, "THRESH",  FMT_DB,    !dyn);
+        detailKnob(dl, "dpat", 626, cy, R, mqidx::dynAttack(b),    0.1f, 500.f,  true,  col, "ATTACK",  FMT_MS,    !dyn);
+        detailKnob(dl, "dprl", 704, cy, R, mqidx::dynRelease(b),   10.f, 5000.f, true,  col, "RELEASE", FMT_MS,    !dyn);
+        detailKnob(dl, "dprg", 782, cy, R, mqidx::dynRange(b),     0.f, 24.f,    false, col, "RANGE",   FMT_DB,    !dyn);
+        detailKnob(dl, "dprt", 860, cy, R, mqidx::dynRatio(b),     1.f, 100.f,   true,  col, "RATIO",   FMT_RATIO, !dyn);
+        panelButton(dl, "dpdyn", 898, cy - 14, 944, cy + 14, dyn ? "DYN ON" : "DYN",
+                    dyn ? IM_COL32(52, 90, 150, 255) : IM_COL32(46, 46, 50, 255),
+                    [this, b]{ toggleParam(mqidx::dynEnabled(b)); });
+    }
+
+    // Apply a Digital factory preset (pi<0 = Init/defaults). Resets the Digital-
+    // relevant params to layout defaults, then applies the preset's sparse
+    // (paramIndex,value) overrides — matching the shell's loadProgram semantics.
+    void applyDigitalPreset(int pi)
+    {
+        auto setP = [&](uint32_t id, float v) {
+            editParameter(id, true); values[id] = v; setParameterValue(id, v); editParameter(id, false); };
+        for (uint32_t i = 0; i <= 81; ++i)    setP(i, kMqParams[i].def);   // 8 EQ bands
+        for (uint32_t i = 138; i <= 185; ++i) setP(i, kMqParams[i].def);   // per-band dynamics
+        setP(kParamMasterGain,     mqDef(kParamMasterGain));
+        setP(kParamHqEnabled,      mqDef(kParamHqEnabled));
+        setP(kParamProcessingMode, mqDef(kParamProcessingMode));
+        setP(kParamQCoupleMode,    mqDef(kParamQCoupleMode));
+        if (pi >= 0 && pi < mqprog::kNumDigitalPrograms)
+        {
+            const mqprog::Program& prog = mqprog::kDigitalPrograms[pi];
+            for (int i = 0; i < prog.count; ++i) setP(prog.pairs[i].idx, prog.pairs[i].val);
+        }
+        digPreset_ = pi;
+    }
+
+    //========================================================================
+    // DIGITAL header — A/B, character dropdown, preset, Save, Auto Gain, mode,
+    // graph range, Oversample, Bypass (JUCE MultiQEditor header layout).
+    //========================================================================
+    void drawDigitalHeader(ImDrawList* dl)
+    {
+        const float s = sc();
+        const ImU32 btnBg = IM_COL32(46, 46, 50, 255);
+        const float y0 = 30.f, y1 = 52.f;
+
+        // A/B compare — VISUAL ONLY (no A/B state param in the DPF core yet).
+        {
+            const ImVec2 b0 = panel.P(178, y0), b1 = panel.P(202, y1);
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::InvisibleButton("abbtn", ImVec2(b1.x - b0.x, b1.y - b0.y));
+            if (ImGui::IsItemClicked()) abIsA_ = !abIsA_;
+            dl->AddRectFilled(b0, b1, abIsA_ ? kGreenBtn : IM_COL32(60, 60, 64, 255), 4.f * s);
+            dl->AddRect(b0, b1, IM_COL32(90, 90, 96, 220), 4.f * s, 0, 1.2f * s);
+            panel.text(dl, 190, y0 + 5.f, 11.f, pal().white, abIsA_ ? "A" : "B", 0, true);
+        }
+
+        // Character dropdown (Digital/Match/British/Tube) -> kParamEqType.
+        headerCombo(dl, "##charsel", 208, y0, 300, y1, kParamEqType, mqp::kEqType, 4);
+
+        // Preset dropdown — Digital factory presets (mqprog::kDigitalPrograms).
+        {
+            const char* cur = (digPreset_ >= 0 && digPreset_ < mqprog::kNumDigitalPrograms)
+                                  ? mqprog::kDigitalPrograms[digPreset_].name : "Init";
+            ImGui::SetCursorScreenPos(panel.P(306, y0));
+            ImGui::SetNextItemWidth(134.f * s);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, btnBg);
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+            ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(210, 212, 216, 255));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f * s, 4.f * s));
+            if (ImGui::BeginCombo("##dppreset", cur))
+            {
+                if (ImGui::Selectable("Init", digPreset_ < 0)) applyDigitalPreset(-1);
+                for (int i = 0; i < mqprog::kNumDigitalPrograms; ++i)
+                    if (ImGui::Selectable(mqprog::kDigitalPrograms[i].name, i == digPreset_))
+                        applyDigitalPreset(i);
+                ImGui::EndCombo();
+            }
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(4);
+        }
+
+        // Save — VISUAL ONLY (no user-preset store wired in the DPF shell yet).
+        headerButton(dl, "dpsave", 446, y0, 492, y1, "Save", IM_COL32(52, 78, 120, 255), pal().white, []{});
+
+        // ---- right group ----
+        headerButton(dl, "dpautog", 500, y0, 574, y1, "Auto Gain",
+                     values[kAutoGain] > 0.5f ? kGreenBtn : btnBg, pal().white,
+                     [&]{ toggleParam(kAutoGain); });
+        // Processing mode (Stereo/Left/Right/Mid/Side)
+        headerCombo(dl, "##pmode", 580, y0, 648, y1, kParamProcessingMode, mqp::kProcMode, 5);
+        // Graph range (UI-local +/-6/12/18/24/30) — wide enough to show "+/-24 dB"
+        {
+            static const char* kDR[5] = { "+/-6 dB", "+/-12 dB", "+/-18 dB", "+/-24 dB", "+/-30 dB" };
+            ImGui::SetCursorScreenPos(panel.P(652, y0));
+            ImGui::SetNextItemWidth(96.f * s);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, btnBg);
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+            ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(210, 212, 216, 255));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f * s, 4.f * s));
+            if (ImGui::BeginCombo("##digrange", kDR[digRangeIdx]))
+            {
+                for (int i = 0; i < 5; ++i) if (ImGui::Selectable(kDR[i], i == digRangeIdx)) digRangeIdx = i;
+                ImGui::EndCombo();
+            }
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(4);
+        }
+        // Oversample (Off/2x/4x) — cycling button keeps the "Oversample: xx" caption.
+        {
+            char osb[24]; std::snprintf(osb, sizeof(osb), "Oversample: %s", mqp::kOversampling[choiceIdx(kOversampling)]);
+            headerButton(dl, "dpos", 752, y0, 846, y1, osb, btnBg, pal().white, [&]{ cycleChoice(kOversampling); });
+        }
+        // Bypass
+        headerButton(dl, "dpbyp", 852, y0, 916, y1, values[kBypass] > 0.5f ? "BYPASSED" : "BYPASS",
+                     values[kBypass] > 0.5f ? IM_COL32(150, 60, 48, 255) : btnBg, pal().white,
+                     [&]{ toggleParam(kBypass); });
+    }
+
+    // Small styled ImGui combo bound to a choice param (character / mode).
+    void headerCombo(ImDrawList* /*dl*/, const char* id, float x0, float y0, float x1, float y1,
+                     uint32_t pid, const char* const* labels, int n)
+    {
+        const float s = sc();
+        ImGui::SetCursorScreenPos(panel.P(x0, y0));
+        ImGui::SetNextItemWidth((x1 - x0) * s);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(46, 46, 50, 255));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(210, 212, 216, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f * s, 4.f * s));
+        const int cur = choiceIdx(pid);
+        if (ImGui::BeginCombo(id, labels[cur]))
+        {
+            for (int i = 0; i < n; ++i)
+                if (ImGui::Selectable(labels[i], i == cur))
+                {
+                    editParameter(pid, true); values[pid] = (float)i; setParameterValue(pid, (float)i); editParameter(pid, false);
+                }
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+        (void)y1;
     }
 
     //========================================================================
@@ -1366,20 +1821,42 @@ private:
 
         float buf[kFftSize]; ring->snapshot(buf, kFftSize);
         float mag[kFftSize / 2 + 1]; fft.magnitude(buf, mag);
-        const float dt = ImGui::GetIO().DeltaTime;
-        const float smooth = 1.0f - std::exp(-dt * 12.0f);
+        // Analyzer ballistics: FAST attack (rise almost instantly to a new peak),
+        // SLOW release (fall gently). This is what kills the per-bin jitter that a
+        // symmetric time-constant produces on broadband material. Mirrors the JUCE
+        // FFTAnalyzer asymmetric temporal smoothing (attack coeff << release coeff).
+        const float dt = std::min(std::max(ImGui::GetIO().DeltaTime, 0.f), 0.1f);
+        const float atkCoeff = 1.0f - std::exp(-dt * 45.0f);   // ~22 ms attack
+        const float relCoeff = 1.0f - std::exp(-dt / 0.40f);   // ~400 ms release
         // Rings fill at the DSP base rate; map bins with the host rate so the
         // spectrum lines up with the log-frequency response curve at any rate.
         const double sr = getSampleRate();
         const float binHz = (float)((sr > 1.0 ? sr : 48000.0) / kFftSize);
         const int half = kFftSize / 2;
         constexpr float kSpecTop = -6.0f, kSpecBot = -84.0f; // dBFS window shown
+        // SPATIAL smoothing: triangular-weighted average across +/-2 neighbour bins
+        // (weight = 1 - |j|/(W+1)), the same kernel JUCE FFTAnalyzer uses. This is
+        // what tames broadband per-bin variance so the trace doesn't crawl.
+        constexpr int kW = 2;
+        float raw[kFftSize / 2 + 1];
+        for (int k = 0; k <= half; ++k) raw[k] = 20.0f * std::log10(mag[k] > 1e-7f ? mag[k] : 1e-7f);
         std::vector<ImVec2> curve; curve.reserve((size_t)half);
         for (int k = 1; k <= half; ++k)
         {
             const float freq = (float)k * binHz;
-            const float db = 20.0f * std::log10(mag[k] > 1e-7f ? mag[k] : 1e-7f);
-            specDb[(size_t)k] += (db - specDb[(size_t)k]) * smooth;
+            float sum = 0.0f, wsum = 0.0f;
+            for (int j = -kW; j <= kW; ++j)
+            {
+                const int idx = k + j;
+                if (idx >= 0 && idx <= half)
+                {
+                    const float w = 1.0f - std::abs((float)j) / (float)(kW + 1);
+                    sum += raw[idx] * w; wsum += w;
+                }
+            }
+            const float db = wsum > 0.0f ? sum / wsum : raw[k];
+            float& sdb = specDb[(size_t)k];
+            sdb += (db - sdb) * (db > sdb ? atkCoeff : relCoeff);
             if (freq < kFMin || freq > kFMax) continue;
             float ny = (kSpecTop - specDb[(size_t)k]) / (kSpecTop - kSpecBot);
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
@@ -1609,7 +2086,7 @@ private:
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) { editParameter(enId, false); editParameter(freqId, false); } stepModReset_ = false; }
             if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0))
             { panel.openValueEdit(id, values[freqId]); editParameter(enId, false); editParameter(freqId, false); }
-            else if (hov && !act)
+            if (hov && !act)   // independent wheel branch (never skipped)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
                 if (wh != 0.f)
@@ -1755,7 +2232,7 @@ private:
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(paramId, false); stepModReset_ = false; }
             if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0))
             { panel.openValueEdit(id, values[paramId]); editParameter(paramId, false); }
-            else if (hov && !act)
+            if (hov && !act)   // independent wheel branch (never skipped)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
                 if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
@@ -1897,8 +2374,13 @@ private:
     bool presetOpen = false;
     bool showFft = true;
     int  graphRangeIdx = 2;
-    int  digRangeIdx = 1;      // Digital plot +/- range: 0=12,1=24,2=36 dB
+    int  digRangeIdx = 3;      // Digital plot +/- range idx into {6,12,18,24,30}
     int  dragBand_ = -1;       // Digital: band whose handle is being dragged
+    int  selectedBand_ = 4;    // Digital: selected band for the detail panel (default Mid)
+    bool abIsA_ = true;        // Digital A/B compare — visual only (no DSP param yet)
+    bool soloState_[8] = {};   // Digital per-band SOLO — visual only (no DSP param yet)
+    int  digPreset_ = -1;      // Digital: selected factory preset index (-1 = Init/none)
+    float smoothedDynGain_[8] = {}; // Digital: smoothed live per-band dyn-EQ gain (dB)
     float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f;
     bool  stepModReset_ = false;

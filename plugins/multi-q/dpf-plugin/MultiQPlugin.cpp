@@ -11,6 +11,7 @@
 #include "DistrhoPlugin.hpp"
 #include "MultiQAccess.hpp"
 #include "MultiQParams.hpp"
+#include "MultiQProgramPresets.hpp"  // Digital factory presets (host programs)
 #include "MultiQDSP.hpp"
 
 #include <atomic>
@@ -23,7 +24,7 @@ class MultiQPlugin : public Plugin
 {
 public:
     MultiQPlugin()
-        : Plugin(kParamCount, 1 /* one "Default" program */, 0 /* no state */)
+        : Plugin(kParamCount, 1 + mqprog::kNumDigitalPrograms /* Default + Digital presets */, 0 /* no state */)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i].store(kMqParams[i].def, std::memory_order_relaxed);
@@ -35,6 +36,7 @@ public:
     float outPeakLForUI() const noexcept { return dsp.getOutputPeakL(); }
     float outPeakRForUI() const noexcept { return dsp.getOutputPeakR(); }
     const duskaudio::SpectrumRing* outSpecForUI() const noexcept { return &dsp.outputSpectrum(); }
+    float bandDynGainForUI(int band) const noexcept { return dsp.getBandDynamicGain(band); }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -109,20 +111,31 @@ protected:
     }
 
     //--- programs (factory presets) --------------------------------------------
-    // Phase 2 ships a single "Default" program (all params to their layout
-    // defaults). Factory presets from MultiQPresets.h land with the Phase-3 UI.
+    // Program 0 = "Default" (all params to layout defaults); programs 1..N = the
+    // Digital factory presets ported from MultiQPresets.h (see MultiQProgramPresets.hpp).
     void initProgramName(uint32_t index, String& programName) override
     {
-        if (index == 0)
-            programName = "Default";
+        if (index == 0) { programName = "Default"; return; }
+        const uint32_t pi = index - 1;
+        if (pi < (uint32_t)mqprog::kNumDigitalPrograms)
+            programName = mqprog::kDigitalPrograms[pi].name;
     }
 
     void loadProgram(uint32_t index) override
     {
-        if (index != 0)
-            return;
+        // Every program starts from layout defaults, then a Digital preset applies
+        // its sparse (paramIndex,value) overrides on top.
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i].store(kMqParams[i].def, std::memory_order_relaxed);
+        if (index == 0)
+            return;
+        const uint32_t pi = index - 1;
+        if (pi >= (uint32_t)mqprog::kNumDigitalPrograms)
+            return;
+        values[kParamEqType].store(0.0f, std::memory_order_relaxed); // Digital character
+        const mqprog::Program& prog = mqprog::kDigitalPrograms[pi];
+        for (int i = 0; i < prog.count; ++i)
+            values[prog.pairs[i].idx].store(prog.pairs[i].val, std::memory_order_relaxed);
     }
 
     //--- lifecycle -------------------------------------------------------------
@@ -286,4 +299,8 @@ float multiQGetOutputPeakR(void* p) noexcept { return p ? asMq(p)->outPeakRForUI
 const duskaudio::SpectrumRing* multiQGetOutputSpectrum(void* p) noexcept
 {
     return p ? asMq(p)->outSpecForUI() : nullptr;
+}
+float multiQGetBandDynGain(void* p, int band) noexcept
+{
+    return p ? asMq(p)->bandDynGainForUI(band) : 0.0f;
 }

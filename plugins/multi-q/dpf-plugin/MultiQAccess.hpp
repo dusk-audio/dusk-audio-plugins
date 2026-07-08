@@ -24,3 +24,8 @@ DUSK_ACCESS_DECL(float, multiQGetOutputPeakR);
 
 // Pointer to the DSP's lock-free post-processing analyzer ring (null out-of-process).
 DUSK_ACCESS_DECL(const duskaudio::SpectrumRing*, multiQGetOutputSpectrum);
+
+// Live per-band dynamic-EQ gain (dB) for the UI's animated response overlay.
+// Declared by hand (the DUSK_ACCESS_DECL macro carries only the void* instance
+// pointer; this one needs the extra band index). Read-only meter tap.
+DUSK_WEAK float multiQGetBandDynGain(void* pluginInstancePointer, int band) noexcept;

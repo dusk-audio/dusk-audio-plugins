@@ -245,7 +245,10 @@ public:
                 openValueEdit(id, value * dispMul + dispAdd); // double-click: type a value
                 host->endEdit(param);     // close the gesture the press opened
             }
-            else if (hovered && !active)
+            // Wheel is its own branch (not gated by the double-click check) so a
+            // scroll frame is never dropped — requires the host window to carry
+            // ImGuiWindowFlags_NoScrollWithMouse so the window doesn't eat it.
+            if (hovered && !active)
             {
                 const float wheel = ImGui::GetIO().MouseWheel;
                 if (wheel != 0.0f)

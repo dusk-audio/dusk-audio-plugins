@@ -128,6 +128,11 @@ public:
     // SpectrumRing snapshot protocol / FourKEQ analyzer).
     const SpectrumRing& outputSpectrum() const noexcept { return analyzerRing; }
 
+    // Live per-band dynamic-EQ gain (dB) for the UI's animated response overlay.
+    // Read-only tap of the dynamics meter the DSP already maintains; never touches
+    // processed audio (bit-identity preserved).
+    float getBandDynamicGain(int band) const noexcept { return dynamicEQ.getCurrentDynamicGain(band); }
+
 private:
     // Framework-free cascaded biquad (variable-slope HPF/LPF). Direct-form II
     // transposed, coefficients set directly (no per-sample smoothing), NaN-guard
