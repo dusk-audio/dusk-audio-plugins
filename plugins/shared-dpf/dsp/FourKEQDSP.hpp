@@ -97,7 +97,8 @@ public:
     // flip mid-crossfade.
     int getLatencySamples() const noexcept
     {
-        return lastSmoothedPower.load(std::memory_order_relaxed) <= 0.001f ? 0 : reportedLatency;
+        return lastSmoothedPower.load(std::memory_order_relaxed) <= 0.001f
+                   ? 0 : reportedLatency.load(std::memory_order_relaxed);
     }
 
     //--- parameters (atomic, any thread) --------------------------------------
@@ -173,7 +174,9 @@ private:
     double baseSampleRate = 44100.0;
     int    maxBlock = 512;
     int    curFactor = 2;
-    int    reportedLatency = 0;
+    // Read by getLatencySamples() (host/main thread), written in prepare()/processChunk()
+    // (audio thread) → atomic to avoid a cross-thread data race, like lastSmoothedPower.
+    std::atomic<int> reportedLatency{0};
 
     std::array<ChannelFilters, kMaxChannels> ch;
     Oversampler          os[kMaxChannels];

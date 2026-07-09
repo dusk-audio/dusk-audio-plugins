@@ -28,7 +28,7 @@ public:
         : Plugin(kParamCount,
                  1 + mqprog::kNumDigitalPrograms + mqprog::kNumBritishPrograms + mqprog::kNumTubePrograms
                      /* Default + Digital + British + Tube presets */,
-                 1 /* one state: the Match learned/correction blob */)
+                 2 /* states: the Match learned/correction blob + the UI preset selection */)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i].store(kMqParams[i].def, std::memory_order_relaxed);
@@ -77,7 +77,9 @@ public:
         const float maxCutDB    = limitCut ? -6.0f : 0.0f;
         const bool ok = dsp.matchProcessor().computeCorrection(
             smoothing, applyAmount, maxBoostDB, maxCutDB, /*minimumPhase*/ true);
-        updateLatency();
+        // No setLatency() here — this runs on the message thread. run()'s per-block
+        // updateLatency() reports any Match-FIR latency change (DPF contract: setLatency
+        // is confined to run()/activate()).
         return ok;
     }
     void matchClearForUI() noexcept { dsp.matchProcessor().requestClear(); }
@@ -92,6 +94,10 @@ public:
     void matchGetCurrentDbForUI(float* out, int n)    const noexcept { dsp.matchProcessor().getCurrentSpectrumDB(out, n); }
     void matchGetReferenceDbForUI(float* out, int n)  const noexcept { dsp.matchProcessor().getReferenceSpectrumDB(out, n); }
     void matchGetCorrectionDbForUI(float* out, int n) const noexcept { dsp.matchProcessor().getCorrectionCurveDB(out, n); }
+
+    // Persisted UI dropdown selection ("d,b,t"), read back by the editor on open so
+    // the preset dropdown reflects the loaded preset (see initState index 1).
+    const char* uiPresetsForUI() const noexcept { return uiPresetsStr.c_str(); }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -212,7 +218,11 @@ protected:
         if (prog == nullptr)
             return;
         for (int i = 0; i < prog->count; ++i)
-            values[prog->pairs[i].idx].store(prog->pairs[i].val, std::memory_order_relaxed);
+        {
+            const uint32_t idx = prog->pairs[i].idx;
+            if (idx < kParamCount)  // guard: a malformed generated preset must not write OOB
+                values[idx].store(prog->pairs[i].val, std::memory_order_relaxed);
+        }
     }
 
     //--- state (Match learned spectra + correction FIR) ------------------------
@@ -224,30 +234,48 @@ protected:
     // re-activates the convolver on the next processed block.
     void initState(uint32_t index, State& state) override
     {
-        if (index != 0) return;
-        state.key          = "matchData";
-        state.label        = "Match EQ Data";
-        state.defaultValue = "";
-        state.hints        = kStateIsHostReadable | kStateIsBase64Blob;
+        if (index == 0)
+        {
+            state.key          = "matchData";
+            state.label        = "Match EQ Data";
+            state.defaultValue = "";
+            state.hints        = kStateIsHostReadable | kStateIsBase64Blob;
+        }
+        else if (index == 1)
+        {
+            // The UI dropdown selections (digital,british,tube preset indices) are
+            // editor state, not host params. Persist them so the dropdown shows the
+            // loaded preset again after the editor is closed and reopened. The UI
+            // pushes it on apply (UI::setState) and reads it back via the bridge.
+            state.key          = "uiPresets";
+            state.label        = "UI Preset Selection";
+            state.defaultValue = "";
+            state.hints        = kStateIsHostReadable;
+        }
     }
 
     String getState(const char* key) const override
     {
         if (std::strcmp(key, "matchData") == 0)
             return String(dsp.matchProcessor().serialize().c_str());
+        if (std::strcmp(key, "uiPresets") == 0)
+            return String(uiPresetsStr.c_str());
         return String();
     }
 
     void setState(const char* key, const char* value) override
     {
+        if (std::strcmp(key, "uiPresets") == 0)
+        {
+            uiPresetsStr = value != nullptr ? value : "";
+            return;
+        }
         if (std::strcmp(key, "matchData") != 0)
             return;
         matchStateStr = value != nullptr ? value : "";
         if (dspPrepared && !matchStateStr.empty())
-        {
             dsp.matchProcessor().deserialize(matchStateStr);
-            updateLatency();
-        }
+        // No setLatency() here (message thread). run() reports any FIR latency change.
     }
 
     //--- lifecycle -------------------------------------------------------------
@@ -265,13 +293,18 @@ protected:
     void sampleRateChanged(double newSampleRate) override
     {
         dsp.prepare(newSampleRate, (int)getBufferSize());
-        updateLatency();
+        // prepare() re-inits the Match processor (its reset() wipes the correction
+        // FIR), so restore the learned state like activate() does. setLatency() is
+        // left to run() (DPF contract — not called from this lifecycle path).
+        if (!matchStateStr.empty())
+            dsp.matchProcessor().deserialize(matchStateStr);
     }
 
     void bufferSizeChanged(uint32_t newBufferSize) override
     {
         dsp.prepare(getSampleRate(), (int)newBufferSize);
-        updateLatency();
+        if (!matchStateStr.empty())
+            dsp.matchProcessor().deserialize(matchStateStr);
     }
 
     //--- audio -----------------------------------------------------------------
@@ -401,6 +434,7 @@ private:
     std::atomic<int>  soloBand{-1};    // -1 = no solo (UI-driven, see setSoloForUI)
     std::atomic<bool> deltaSolo{false};
     std::string matchStateStr;         // cached Match blob (applied once DSP prepared)
+    std::string uiPresetsStr;          // persisted UI dropdown selection "d,b,t" (see initState)
     bool dspPrepared = false;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQPlugin)
@@ -463,3 +497,6 @@ bool multiQMatchHasCorrection(void* p) noexcept                 { return p ? asM
 void multiQMatchGetCurrentDb(void* p, float* out, int n) noexcept    { if (p) asMq(p)->matchGetCurrentDbForUI(out, n); }
 void multiQMatchGetReferenceDb(void* p, float* out, int n) noexcept  { if (p) asMq(p)->matchGetReferenceDbForUI(out, n); }
 void multiQMatchGetCorrectionDb(void* p, float* out, int n) noexcept { if (p) asMq(p)->matchGetCorrectionDbForUI(out, n); }
+
+// Persisted UI preset-dropdown selection ("d,b,t"), read by the editor on open.
+const char* multiQGetUiPresets(void* p) noexcept { return p ? asMq(p)->uiPresetsForUI() : ""; }

@@ -73,17 +73,9 @@ namespace
     constexpr ImU32 kAmber   = IM_COL32(150, 96, 32, 255);
     constexpr ImU32 kGreenBtn = IM_COL32(48, 108, 56, 255);
 
-    constexpr float kDefaults[kParamCount] = {
-        20.f, 0.f, 20000.f, 0.f,
-        0.f, 100.f, 0.f, 0.f, 600.f, 0.7f, 0.f, 2000.f, 0.7f, 0.f, 8000.f, 0.f,
-        0.f,            // eq type
-        0.f,            // bypass
-        0.f, 0.f, 0.f,  // in/out gain, sat
-        0.f, 0.f, 0.f,  // os, ms, spectrum pre/post
-        1.f,            // auto gain
-        1.f,            // show graph
-        0.f, 0.f,       // out peaks
-    };
+    // Alias the plugin's shared defaults table (FourKEQParams.hpp) so the UI and
+    // the DSP shell never drift out of sync — one source of truth, no duplicate list.
+    constexpr const float* kDefaults = kParamDefaults;
 
     const int   kGridF[]  = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     const char* kGridFL[] = { "20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
@@ -1119,12 +1111,24 @@ private:
     void drawMeters(ImDrawList* dl)
     {
         float inL = 0, inR = 0, outL = 0, outR = 0;
+        bool haveDirect = false;
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
         if (fourKEQGetInputPeakL != nullptr)
             if (void* inst = getPluginInstancePointer())
             { inL = fourKEQGetInputPeakL(inst); inR = fourKEQGetInputPeakR(inst);
-              outL = fourKEQGetOutputPeakL(inst); outR = fourKEQGetOutputPeakR(inst); }
+              outL = fourKEQGetOutputPeakL(inst); outR = fourKEQGetOutputPeakR(inst);
+              haveDirect = true; }
        #endif
+        if (! haveDirect)
+        {
+            // Out-of-process (no direct access): the OUTPUT peaks are mirrored via
+            // output parameters, which parameterChanged() keeps current — use them
+            // so the OUT meter still moves. INPUT peaks have no output-parameter
+            // fallback, so the IN meter reads 0 here; input metering requires
+            // same-process (direct-access) hosting.
+            outL = values[kOutPeakL];
+            outR = values[kOutPeakR];
+        }
         panel.text(dl, 0.5f * (INX0 + INX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "IN", 0, true);
         panel.text(dl, 0.5f * (OUTX0 + OUTX1), cY(MET_LBL_Y), 10.f, IM_COL32(160, 162, 166, 255), "OUT", 0, true);
         meterPair(dl, INX0, INX1, inL, inR);   // bars update every frame (smooth)

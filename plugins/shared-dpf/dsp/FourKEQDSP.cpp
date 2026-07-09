@@ -72,7 +72,7 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
     const double osRate = baseSampleRate * curFactor;
 
     for (auto& o : os) { o.setFactor(curFactor); o.reset(); }
-    reportedLatency = (int)std::lround(os[0].latency());
+    reportedLatency.store((int)std::lround(os[0].latency()), std::memory_order_relaxed);
 
     consoleSat.setSampleRate(osRate);
     consoleSat.reset();
@@ -243,7 +243,7 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
         consoleSat.setSampleRate(baseSampleRate * curFactor);
         consoleSat.reset();
         xfmrLpCoef = 1.0f - std::exp(-kDuskTwoPi * 180.0f / (float)(baseSampleRate * curFactor));
-        reportedLatency = (int)std::lround(os[0].latency());
+        reportedLatency.store((int)std::lround(os[0].latency()), std::memory_order_relaxed);
     }
     const double osRate = baseSampleRate * curFactor;
 

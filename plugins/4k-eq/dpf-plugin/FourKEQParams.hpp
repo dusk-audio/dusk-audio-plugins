@@ -34,6 +34,29 @@ enum ParamId
 static constexpr const char* kEqTypeLabels[2]      = { "Brown", "Black" };
 static constexpr const char* kOversampleLabels[3]  = { "1x", "2x", "4x" };
 
+// Per-parameter defaults (mirrors the rng() def in FourKEQPlugin::initParameter,
+// index order = ParamId). The single source of truth for both the plugin's
+// values[] seed and the UI's initial mirror — so neither has to construct a
+// throwaway Parameter (which would repeat setup and re-allocate the kEqType /
+// kOversampling enum arrays) just to read a default.
+static constexpr float kParamDefaults[kParamCount] = {
+    20.f,   0.f,        // kHpfFreq, kHpfEnabled
+    20000.f, 0.f,       // kLpfFreq, kLpfEnabled
+    0.f, 100.f, 0.f,    // kLfGain, kLfFreq, kLfBell
+    0.f, 600.f, 0.7f,   // kLmGain, kLmFreq, kLmQ
+    0.f, 2000.f, 0.7f,  // kHmGain, kHmFreq, kHmQ
+    0.f, 8000.f, 0.f,   // kHfGain, kHfFreq, kHfBell
+    0.f,                // kEqType (Brown)
+    0.f,                // kBypass
+    0.f, 0.f, 0.f,      // kInputGain, kOutputGain, kSaturation
+    0.f,                // kOversampling (1x)
+    0.f,                // kMsMode
+    0.f,                // kSpectrumPrePost
+    1.f,                // kAutoGain (on)
+    1.f,                // kShowGraph (shown)
+    0.f, 0.f,           // kOutPeakL, kOutPeakR (output meters)
+};
+
 // Factory presets: same values as the JUCE FourKEQPresets. A preset sets the
 // tone controls; HPF/LPF are auto-enabled when their frequency departs from the
 // neutral 20 Hz / 20 kHz endpoints (JUCE left the enable toggles untouched,

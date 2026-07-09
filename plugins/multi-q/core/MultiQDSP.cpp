@@ -430,6 +430,10 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         britishEQ.setInputGainDb(b.inputGain);
         britishEQ.setOutputGainDb(b.outputGain);
         britishEQ.setOversampling(p.oversampling);
+        // British/Tube characters route through stereo-coupled cores that expose only
+        // Mid/Side processing (no per-channel Left/Right split like the Digital path's
+        // effectiveRouting). Processing-mode Left(1)/Right(2) therefore fall back to
+        // full-stereo here, matching the JUCE build's British/Tube behaviour.
         britishEQ.setMsMode(p.processingMode == 3 || p.processingMode == 4);
         britishEQ.setBypass(false);
         britishEQ.setAutoGain(false);
@@ -444,7 +448,9 @@ void MultiQDSP::process(const float* const* inputs, float* const* outputs,
         if (isStereo) for (int i = 0; i < numSamples; ++i) procR[i] = inputs[1][i];
 
         // Global M/S encode (Mid=3 / Side=4). Mirrors MultiQ.cpp:942-946 — the tube
-        // then processes the mid and side components, and we decode afterwards.
+        // then processes the mid and side components, and we decode afterwards. Like
+        // British (above), Left/Right processing modes fall back to full-stereo — the
+        // tube core is stereo-coupled and exposes no per-channel L/R routing.
         const bool tubeMS = isStereo && (p.processingMode == 3 || p.processingMode == 4);
         if (tubeMS)
             for (int i = 0; i < numSamples; ++i)

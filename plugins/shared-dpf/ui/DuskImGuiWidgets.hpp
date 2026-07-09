@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <utility>   // std::swap (RealFFT::transform) — don't rely on transitive headers
 #include <vector>
 
 #include "DuskImGuiFont.hpp"  // CrispFontSet — nearest-size face per label
@@ -177,7 +178,19 @@ public:
         const bool deactivated = ImGui::IsItemDeactivated();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(2);
-        if (entered || committed) { outValue = (float) std::atof(valueEditBuf_); valueEditId_.clear(); return true; }
+        if (entered || committed)
+        {
+            // Strict parse: reject empty / non-numeric input (std::atof silently
+            // turns those into 0, committing a bogus value). Only apply when the
+            // whole trimmed buffer is a valid number.
+            char* end = nullptr;
+            const float parsed = std::strtof(valueEditBuf_, &end);
+            bool valid = (end != valueEditBuf_);
+            while (valid && *end != '\0') { if (*end != ' ' && *end != '\t') valid = false; ++end; }
+            valueEditId_.clear();
+            if (valid) { outValue = parsed; return true; }
+            return false;
+        }
         if (deactivated) valueEditId_.clear(); // Escape / click-away without an edit
         return false;
     }
@@ -455,7 +468,15 @@ class RealFFT
 public:
     void prepare(int size)
     {
-        n = size;
+        // transform() is radix-2 in place — force a valid power-of-two >= 2 so an
+        // odd/small request can never corrupt the butterfly or window math.
+        n = size < 2 ? 2 : size;
+        if ((n & (n - 1)) != 0)   // round down to the nearest power of two
+        {
+            int p = 1;
+            while ((p << 1) <= n) p <<= 1;
+            n = p;
+        }
         re.assign((size_t)n, 0.0f);
         im.assign((size_t)n, 0.0f);
         window.assign((size_t)n, 0.0f);

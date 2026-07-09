@@ -1,0 +1,85 @@
+name: DPF AU test (Tape Echo)
+
+# Proves the DPF-based Tape Echo builds an Audio Unit on macOS and passes auval.
+# AU only compiles on macOS, so this runs on a macOS runner only.
+# Triggers: manual dispatch, or a dpf-specific tag (does NOT match the JUCE 'v*'
+# release trigger in build.yml).
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'tape-echo-dpf-v*'
+
+jobs:
+  build-au-macos:
+    name: Build + auval Tape Echo AU (macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          path: DPF
+          submodules: recursive
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          path: DPF-Widgets
+          submodules: recursive
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Configure
+        working-directory: plugins/tape-echo/dpf-plugin
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
+
+      - name: Build
+        working-directory: plugins/tape-echo/dpf-plugin
+        run: cmake --build build --config Release
+
+      - name: Locate AU component
+        id: findau
+        working-directory: plugins/tape-echo/dpf-plugin
+        run: |
+          COMP=$(find build -name '*.component' -type d | head -1)
+          if [ -z "$COMP" ]; then
+            echo "::error::No .component was built"
+            find build -maxdepth 3 -type d
+            exit 1
+          fi
+          echo "component=${COMP}" >> "$GITHUB_OUTPUT"
+          echo "Found AU: ${COMP}"
+          echo "--- Info.plist ---"
+          plutil -p "${COMP}/Contents/Info.plist" || cat "${COMP}/Contents/Info.plist"
+
+      - name: Install component for auval
+        working-directory: plugins/tape-echo/dpf-plugin
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "${{ steps.findau.outputs.component }}" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+
+      - name: Validate with auval
+        run: |
+          echo "--- registered audio-effect components matching Dusk ---"
+          auval -a | grep -i -E "dusk|tape|DsTE" || echo "(not listed yet; validating by code)"
+          echo "--- auval -v aufx DsTE Dusk ---"
+          auval -v aufx DsTE Dusk
+
+      - name: Upload AU component
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TapeEcho-AU-macos-arm64
+          path: plugins/tape-echo/dpf-plugin/build/bin/*.component
+          if-no-files-found: warn

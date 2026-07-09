@@ -62,7 +62,14 @@ static void writeWavF32(const char* path, const std::vector<float>& interleaved,
 
 int main(int argc, char** argv) {
     // args: --clap PATH --out WAV --mix N [--signal noise|impulse] [--param "Name=val"]...
+    //       --dump-params        print each param (index, name, stepped, choice
+    //                            labels) as a stable table to stdout and exit.
+    //                            Diff two dumps (JUCE vs DPF .clap) to prove the
+    //                            parameter lists match by name/order/choices —
+    //                            catches silent reorders the count static_assert
+    //                            in MultiQParams.hpp cannot.
     std::string clapPath, outPath, signal = "noise";
+    bool dumpParams = false;
     // params set by DISPLAY TEXT (converted via the plugin's text_to_value, so
     // callers pass human values like "Band 2 Gain=6" regardless of normalisation).
     std::vector<std::pair<std::string,std::string>> textParams;
@@ -71,6 +78,7 @@ int main(int argc, char** argv) {
         if (a == "--clap" && i+1 < argc) clapPath = argv[++i];
         else if (a == "--out" && i+1 < argc) outPath = argv[++i];
         else if (a == "--signal" && i+1 < argc) signal = argv[++i];
+        else if (a == "--dump-params") dumpParams = true;
         else if (a == "--param" && i+1 < argc) {
             std::string kv = argv[++i]; auto eq = kv.find('=');
             textParams.push_back({kv.substr(0,eq), kv.substr(eq+1)});
@@ -85,6 +93,7 @@ int main(int argc, char** argv) {
     if (!entry) { fprintf(stderr, "no clap_entry\n"); return 1; }
     entry->init(clapPath.c_str());
     auto* factory = (const clap_plugin_factory_t*)entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
+    if (!factory) { fprintf(stderr, "no plugin factory\n"); return 1; }
     uint32_t n = factory->get_plugin_count(factory);
     if (n == 0) { fprintf(stderr, "no plugins\n"); return 1; }
     const clap_plugin_descriptor_t* desc = factory->get_plugin_descriptor(factory, 0);
@@ -105,6 +114,48 @@ int main(int argc, char** argv) {
     auto* params = (const clap_plugin_params_t*)plug->get_extension(plug, CLAP_EXT_PARAMS);
     if (!params) { fprintf(stderr, "no params ext\n"); return 1; }
     uint32_t pc = params->count(plug);
+
+    // --dump-params: emit a stable, framework-neutral parameter table for A/B
+    // diffing (JUCE MultiQ.clap vs DPF multi_q_2.clap). We deliberately print
+    // only cross-framework-comparable fields: index order, display name, whether
+    // the param is stepped (choice/bool), and the enumerated choice labels
+    // (value_to_text over the integer range). Raw min/max/skew are NOT printed —
+    // clap-juce-extensions and DPF normalise ranges differently, and any range
+    // mismatch that actually matters shows up in the audio null test instead.
+    if (dumpParams) {
+        printf("# param dump: %s (%u params)\n", desc->name ? desc->name : "?", pc);
+        for (uint32_t i = 0; i < pc; ++i) {
+            clap_param_info_t info{};
+            if (!params->get_info(plug, i, &info)) { printf("%u\t<get_info failed>\n", i); continue; }
+            const bool stepped = (info.flags & CLAP_PARAM_IS_STEPPED) != 0;
+            printf("%u\t%s\tstepped=%d", i, info.name, stepped ? 1 : 0);
+            // Enumerate value_to_text over the integer range regardless of the
+            // stepped flag: clap-juce-extensions omits CLAP_PARAM_IS_STEPPED for
+            // AudioParameterChoice, so we can't trust it to decide which params
+            // are choices. The runner compares choice labels only on indices the
+            // DPF dump marks stepped, so continuous small-range params printed
+            // here (e.g. Gain -24..24) are ignored downstream.
+            const long lo = (long)std::lround(info.min_value);
+            const long hi = (long)std::lround(info.max_value);
+            if (hi > lo && hi - lo <= 64) {
+                printf("\tchoices=[");
+                for (long v = lo; v <= hi; ++v) {
+                    char buf[256] = {0};
+                    if (params->value_to_text(plug, info.id, (double)v, buf, sizeof(buf)))
+                        printf("%s%s", (v == lo ? "" : "|"), buf);
+                    else
+                        printf("%s?", (v == lo ? "" : "|"));
+                }
+                printf("]");
+            }
+            printf("\n");
+        }
+        plug->destroy(plug);
+        entry->deinit();
+        dlclose(lib);
+        return 0;
+    }
+
     auto findId = [&](const std::string& name, clap_id& out, double& mn, double& mx) -> bool {
         for (uint32_t i = 0; i < pc; ++i) {
             clap_param_info_t info{};

@@ -75,3 +75,9 @@ DUSK_WEAK bool multiQMatchHasCorrection(void* pluginInstancePointer) noexcept;
 DUSK_WEAK void multiQMatchGetCurrentDb(void* pluginInstancePointer, float* out, int n) noexcept;
 DUSK_WEAK void multiQMatchGetReferenceDb(void* pluginInstancePointer, float* out, int n) noexcept;
 DUSK_WEAK void multiQMatchGetCorrectionDb(void* pluginInstancePointer, float* out, int n) noexcept;
+
+// Persisted UI preset-dropdown selection, encoded "digital,british,tube" (indices,
+// -1 = none). The editor pushes it with UI::setState("uiPresets", ...) on apply and
+// reads it back here on open so the dropdown survives an editor close/reopen and a
+// host save/reload. Null/empty out-of-process (split LV2 UI).
+DUSK_WEAK const char* multiQGetUiPresets(void* pluginInstancePointer) noexcept;

@@ -4,15 +4,15 @@
 //
 // MultiQDSP.hpp — framework-free Multi-Q DSP core (zero JUCE/DPF).
 //
-// Phase 2b scope: the DIGITAL character path — 8-band EQ (variable-slope HPF,
-// low/high shelves, 4 parametric bands, variable-slope LPF), per-band shape,
-// Q-coupling, invert, phase-invert, pan, per-band channel routing (Stereo/L/R/
-// Mid/Side), per-band saturation, enable crossfades, delta-solo, and Match-mode
-// band-bypass. Ported line-for-line from MultiQ::processBlock's Digital branch.
-//
-// NOT yet ported (later sub-phases): per-band dynamic EQ (DynamicEQProcessor),
-// British/Tube characters, output limiter, auto-gain, oversampling, analyzer,
-// Match FIR correction. Those are stubbed / passthrough here.
+// Full port of MultiQ::processBlock. The DIGITAL character path — 8-band EQ
+// (variable-slope HPF, low/high shelves, 4 parametric bands, variable-slope LPF),
+// per-band shape, Q-coupling, invert, phase-invert, pan, per-band channel routing
+// (Stereo/L/R/Mid/Side), per-band saturation, enable crossfades, delta-solo, and
+// Match-mode band-bypass — plus per-band dynamic EQ (MultiQDynamics), the British
+// (FourKEQDSP) and Tube (MultiQTube) characters, output limiter, auto-gain, 2x/4x
+// oversampling, the analyzer taps, and the Match FIR correction (MultiQMatch).
+// Ported line-for-line from the JUCE build so the two null-match (see
+// tests/run_ab_parity.sh).
 
 #pragma once
 
@@ -55,7 +55,7 @@ public:
         std::array<float, NUM_BANDS> bandSatDrive { {0.3f,0.3f,0.3f,0.3f,0.3f,0.3f,0.3f,0.3f} };
         std::array<int,   NUM_BANDS> bandSlope    { {1,0,0,0,0,0,0,1} }; // only [0]/[7] used
 
-        // dynamics per band [8] — accepted but not yet processed (Phase 2b-2)
+        // dynamics per band [8] — processed via MultiQDynamics (see process())
         std::array<bool,  NUM_BANDS> bandDynEnabled {};
         std::array<float, NUM_BANDS> bandDynThreshold { {-20,-20,-20,-20,-20,-20,-20,-20} };
         std::array<float, NUM_BANDS> bandDynAttack  { {10,10,10,10,10,10,10,10} };

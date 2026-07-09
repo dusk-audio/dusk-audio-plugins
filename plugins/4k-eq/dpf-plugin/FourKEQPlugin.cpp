@@ -17,13 +17,12 @@ public:
     FourKEQPlugin()
         : Plugin(kParamCount, kNumFactoryPresets, 0)
     {
-        // Seed the value mirror with the parameter defaults.
+        // Seed the value mirror from the shared defaults table. (Calling
+        // initParameter() here would repeat the full parameter setup and
+        // re-allocate the kEqType / kOversampling enumeration arrays each pass
+        // just to read ranges.def — the table is the single source of truth.)
         for (uint32_t i = 0; i < kParamCount; ++i)
-        {
-            Parameter p;
-            initParameter(i, p);
-            values[i] = p.ranges.def;
-        }
+            values[i] = kParamDefaults[i];
     }
 
     //--- same-process accessors for the UI bridge -----------------------------
