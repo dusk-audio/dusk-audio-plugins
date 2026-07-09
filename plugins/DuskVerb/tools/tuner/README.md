@@ -3,8 +3,8 @@
 Tooling for matching each anchored DuskVerb preset to its commercial anchor
 (Valhalla VintageVerb, Lexicon, Valhalla Shimmer). The operating picture,
 fleet map, engine workstreams, and traps live in
-`HANDOFF_2026-07-06_opus48.md` — read it first. This README is just the
-tool index + the day-to-day flow.
+`HANDOFF_2026-07-06_opus48.md`; read it first. This README is just the
+tool index plus the day-to-day flow.
 
 ## Core scripts
 
@@ -14,7 +14,7 @@ tool index + the day-to-day flow.
 | `full_check.py` | PASS/FAIL gate harness for one preset vs its anchor dir. `--json` emits the machine-readable failing-gate list. The Optuna objective and the scoreboard both call this. |
 | `preset_vs_external_optuna.py` | Optuna sweep. Objective = `full_check.py --json` n_fail (+ margin). Warm-start via `--enqueue-json`. Cold-start use only. |
 | `tune_preset.py` | Thin cold-start wrapper around the Optuna sweep. NOT the primary path — see its docstring. `--self-test` proves parse_best still tracks the sweep output. |
-| `calibrate_octave_t60.py` | Rewrites `BEGIN/END_OCTAVE_T60_MAP` blocks. MANDATORY after any engine delay-line change. |
+| `calibrate_octave_t60.py` | Renders + measures the per-octave release-T60 vs the anchor and prints a `ROW: { ... }` payload to hand-paste into `kAccurateHallT60ByName` / `kDenseHallOctaveT60ByName` (it does NOT rewrite the source). Re-run after any engine delay-line change. |
 | `metrics_external.py` | Peak-aligned, noise-floor-gated metrics used by full_check. Edit only when adding a metric. |
 | `wav_audit.py` | Independent cross-validator (no shared code) to confirm metrics_external isn't lying. |
 

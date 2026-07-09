@@ -3,6 +3,7 @@
 #include "DspUtils.h"
 #include "FDNReverb.h"
 #include "DenseHallReverb.h"
+#include "SustainBandLimiter.h"
 
 #include <array>
 #include <cmath>
@@ -78,6 +79,25 @@ public:
     void setFeedbackHpfHz     (float hz);      // feedback-loop HPF corner; lower = the low cascade survives (default 60; ~35 keeps killing the 12 Hz grain rumble)
     void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Matches Valhalla Black Hole's moving stereo field.
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
+    void setModeSmear         (float depthSamples, float rateHz);  // deep+slow FDN mode-smear on the reverb tail (anti-boing); depth 0 = off/bit-null
+    // In-loop sustained-energy limiter in the internal reverb tank(s) (SustainBandLimiter.h).
+    // The shimmer's OWN pitch loop is untouched (needs a ratio-keyed detector — later).
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
+    // RATIO-KEYED loop hi limiter (P5, 2026-07-08): Black Hole's pitch loop regenerates
+    // air endlessly on sustained input (piano air +36.9 dB vs anchor). An absolute
+    // threshold is impossible (sustained pink is 19 dB hotter in 4-16k than the piano's
+    // air content), so the detector keys on REGENERATION: env(wet-hi)/env(input-hi).
+    // Pink: input-hi large -> ratio small -> off. Piano: input has ~no air while the
+    // loop regenerates -> ratio large -> duck the hi band per pass (PeakCut crossfade).
+    // Long attack (~1.5 s) duration-guards the 2 s sine1k render (BH sits at -2.00 on
+    // that gate). maxCutDb 0 = bit-null.
+    void setLoopHiLimiter (float loHz, float hiHz, float ratioThrDb, float maxCutDb,
+                           float atkMs, float relFastMs, float relSlowMs);
+    // Duck the tail noise while the INPUT sustains (piano-air leak fix); 0 = bit-null.
+    void setNoiseSustainDuck  (float amt);
     void setUseDenseReverb    (bool on);     // route the tank through DenseHallReverb (dense diffusion → smooth, non-metallic HF tail) instead of the sparse 16-line FDN. false = legacy FDN (bit-identical).
     void setUseTailSpin       (bool on);     // 2-stage modulated-allpass spin-comb on the FDN wet output — smears the metallic HF while keeping the FDN's cascade/width/HF (for Deep Blue Day). false = untouched.
     void setTailNoise         (float gain, float hpHz = 250.0f, float lpHz = 7000.0f);  // envelope-tracked band-limited noise floor on the output — the 'ocean' fade Valhalla has; masks the sparse-mode ring. Band corners shape its color. 0 = off/bit-null.
@@ -371,6 +391,18 @@ private:
         }
     };
     StereoMod stereoMod_;
+
+    // Tail-noise sustain duck (setNoiseSustainDuck).
+    SustainBandLimiter::InputKey noiseDuckKey_;
+    float noiseDuckAmt_ = 0.0f, noiseDuckG_ = 1.0f, noiseDuckSlew_ = 0.0f;
+
+    // Ratio-keyed loop hi limiter state (setLoopHiLimiter).
+    SustainBandLimiter::Config  loopHiCfg_;
+    SustainBandLimiter::Detector loopHiDet_;
+    SustainBandLimiter::PeakCut loopHiCutL_, loopHiCutR_;
+    float loopHiWetEnv_ = 0.0f, loopHiInEnv_ = 0.0f;   // one-pole |HP| envelopes
+    float loopHiHpWetL_ = 0.0f, loopHiHpWetR_ = 0.0f, loopHiHpInL_ = 0.0f, loopHiHpInR_ = 0.0f;
+    float loopHiHpCoeff_ = 0.0f, loopHiEnvAtk_ = 0.0f, loopHiEnvRel_ = 0.0f;
 
     // Tail spin-comb — a 2-stage cascade of MODULATED Schroeder allpasses on the
     // WET output (allpass = magnitude-flat → no comb notches, only the slow spin

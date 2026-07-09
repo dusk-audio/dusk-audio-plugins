@@ -1,5 +1,10 @@
 # DuskVerb tuning handoff — next session
 
+> **HISTORICAL / SUPERSEDED.** This document is archival. The current operating picture is
+> `HANDOFF_2026-07-06_opus48.md` plus the newest `scoreboard_2026-07-07.{md,json}`. This file
+> is kept only for its walls/levers detail; its numbers and next-targets are stale, do not act
+> on them.
+
 Paste this as the opening prompt when resuming preset-vs-anchor calibration.
 
 ---

@@ -56,8 +56,62 @@ public:
     void setHiMidMultiply (float mult);
     void setAirMultiply (float mult);
     void clearBuffers();
+    // Wet-output stereo chorus/ensemble (anti-phase modulated delay + auto-pan) —
+    // the ShimmerEngine::StereoMod design, ported 2026-07-08 for 79 Vocal Chamber's
+    // missing "phasey/fizzy" VVV character (Marc's ear; the osc_p2p gate is blind to
+    // it, and raw tank modDepth smears T60/ripple instead). depth 0 = bypass/bit-null.
+    void setStereoMod (float rateHz, float depth);
 
 private:
+    // StereoMod — verbatim port of ShimmerEngine::StereoMod (see there for design notes).
+    struct StereoMod
+    {
+        std::vector<float> bufL, bufR; int mask = 0, w = 0;
+        float phase = 0.0f, inc = 0.0f, depthSamp = 0.0f, baseSamp = 0.0f, blend = 0.0f, panDepth = 0.0f;
+        bool active = false;
+        void prepare (double sr)
+        {
+            int n = 1; while (n < static_cast<int> (0.06 * sr)) n <<= 1;
+            bufL.assign (static_cast<size_t> (n), 0.0f); bufR.assign (static_cast<size_t> (n), 0.0f);
+            mask = n - 1; w = 0; phase = 0.0f;
+        }
+        void clear() { std::fill (bufL.begin(), bufL.end(), 0.0f); std::fill (bufR.begin(), bufR.end(), 0.0f); w = 0; phase = 0.0f; }
+        void setParams (float rateHz, float depth01, double sr)
+        {
+            inc       = 6.283185307f * rateHz / static_cast<float> (sr);
+            baseSamp  = 0.012f * static_cast<float> (sr);
+            const float d = std::clamp (depth01, 0.0f, 1.0f);
+            depthSamp = d * 0.008f * static_cast<float> (sr);
+            blend     = d;
+            panDepth  = d * 0.9f;
+            active    = d > 1.0e-4f;
+        }
+        inline float readInterp (const std::vector<float>& b, float d) const
+        {
+            const float rp = static_cast<float> (w) - d;
+            int i0 = static_cast<int> (std::floor (rp));
+            const float fr = rp - static_cast<float> (i0);
+            const int a = i0 & mask, c = (i0 + 1) & mask;
+            return b[static_cast<size_t> (a)] + fr * (b[static_cast<size_t> (c)] - b[static_cast<size_t> (a)]);
+        }
+        inline void process (float& l, float& r)
+        {
+            bufL[static_cast<size_t> (w)] = l; bufR[static_cast<size_t> (w)] = r;
+            const float lfo = std::sin (phase);
+            phase += inc; if (phase > 6.283185307f) phase -= 6.283185307f;
+            const float yL = readInterp (bufL, baseSamp + depthSamp * lfo);
+            const float yR = readInterp (bufR, baseSamp - depthSamp * lfo);
+            const float cL = (1.0f - 0.5f * blend) * l + 0.5f * blend * yL;
+            const float cR = (1.0f - 0.5f * blend) * r + 0.5f * blend * yR;
+            const float pan = panDepth * lfo;
+            l = cL * (1.0f + pan);
+            r = cR * (1.0f - pan);
+            w = (w + 1) & mask;
+        }
+    };
+    StereoMod stereoMod_;
+    float stereoModRate_ = 0.8f, stereoModDepth_ = 0.0f;
+
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float kSafetyClip = 32.0f;  // Raised from 4.0 to avoid THD from hard clipping at hot inputs

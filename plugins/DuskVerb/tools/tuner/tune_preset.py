@@ -252,6 +252,12 @@ def main():
     if not args.anchor_rendered:
         ap.error("--anchor-rendered is required")
 
+    # Lower-bound guard: zero/negative would launch an empty or malformed sweep.
+    if args.trials < 1:
+        ap.error(f"--trials must be >= 1 (got {args.trials})")
+    if args.workers < 1:
+        ap.error(f"--workers must be >= 1 (got {args.workers})")
+
     if args.trials > MAX_TRIALS:
         print(f"!! clamping --trials {args.trials} -> {MAX_TRIALS} (OOM ceiling)")
         args.trials = MAX_TRIALS
