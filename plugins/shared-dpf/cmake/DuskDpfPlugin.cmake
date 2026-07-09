@@ -63,7 +63,11 @@ function(dusk_dpf_install_local plugin_name)
         set(_vst3 "$ENV{HOME}/.vst3")
         set(_lv2  "$ENV{HOME}/.lv2")
     endif()
-    set(_bin "${CMAKE_BINARY_DIR}/bin")
+    # DPF writes artefacts to ${PROJECT_BINARY_DIR}/bin (per-project). This
+    # equals CMAKE_BINARY_DIR for a standalone dpf-plugin build, but under a
+    # top-level add_subdirectory it's the plugin's own binary dir — use the
+    # project dir so the install works in both cases.
+    set(_bin "${PROJECT_BINARY_DIR}/bin")
 
     if(TARGET ${plugin_name}-clap)
         # macOS emits a .clap BUNDLE (directory, like VST3/LV2); Linux/Windows a

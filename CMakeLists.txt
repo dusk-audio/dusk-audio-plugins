@@ -138,3 +138,30 @@ option(BUILD_DUSKVERB_RENDER "Build DuskVerb plugin-host render tool" OFF)
 if(BUILD_DUSKVERB_RENDER)
     add_subdirectory(tests/duskverb_render)
 endif()
+
+# DPF/ImGui plugin variants (4K EQ 2, Multi-Q 2, TapeMachine 2, Tape Echo).
+# Each plugins/<name>/dpf-plugin is a standalone DISTRHO/DPF project (own
+# project()/dpf_add_plugin producing CLAP/VST3/LV2/JACK targets like
+# four_k_eq_2, multi_q_2, tape_machine_2, tape_echo — distinct from the JUCE
+# targets). They share one DPF subdirectory via the NOT-TARGET-dpf guard in
+# shared-dpf/cmake/DuskDpfPlugin.cmake, so adding them all here is safe.
+# Requires sibling ../DPF and ../DPF-Widgets checkouts; auto-disables with a
+# warning if absent, mirroring BUILD_CLAP, so the JUCE build never breaks.
+option(BUILD_DPF_PLUGINS "Build the DPF/ImGui plugin variants (4K EQ 2, Multi-Q 2, TapeMachine 2, Tape Echo)" ON)
+if(BUILD_DPF_PLUGINS)
+    set(_dpf_path        "${CMAKE_CURRENT_SOURCE_DIR}/../DPF")
+    set(_dpfwidgets_path "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets")
+    if(EXISTS "${_dpf_path}/CMakeLists.txt" AND EXISTS "${_dpfwidgets_path}/opengl/DearImGui.cpp")
+        message(STATUS "DPF plugins: using ${_dpf_path} + ${_dpfwidgets_path}")
+        add_subdirectory(plugins/4k-eq/dpf-plugin)
+        add_subdirectory(plugins/multi-q/dpf-plugin)
+        add_subdirectory(plugins/TapeMachine/dpf-plugin)
+        add_subdirectory(plugins/tape-echo/dpf-plugin)
+    else()
+        message(WARNING "BUILD_DPF_PLUGINS=ON but DPF/DPF-Widgets not found "
+            "(expected ${_dpf_path} and ${_dpfwidgets_path}) — disabling DPF plugins. "
+            "Clone https://github.com/DISTRHO/DPF and https://github.com/DISTRHO/DPF-Widgets "
+            "as siblings of the repo.")
+        set(BUILD_DPF_PLUGINS OFF CACHE BOOL "Build the DPF/ImGui plugin variants" FORCE)
+    endif()
+endif()
