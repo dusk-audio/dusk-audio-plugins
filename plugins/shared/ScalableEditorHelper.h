@@ -210,10 +210,14 @@ private:
         {
             juce::PropertiesFile::Options options;
             options.applicationName = "DuskAudio";
-            options.folderName = "DuskAudio";
             options.filenameSuffix = ".settings";
             options.osxLibrarySubFolder = "Application Support";
-            appProps.setStorageParameters(options);
+            #if JUCE_LINUX
+               options.folderName = ".config/DuskAudio";
+            #else
+               options.folderName = "DuskAudio";
+            #endif
+               appProps.setStorageParameters(options);
             initialized = true;
         }
 
