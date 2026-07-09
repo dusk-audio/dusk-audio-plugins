@@ -175,6 +175,46 @@ private:
 
 
 // =====================================================================
+// MultiSineLFO — two incommensurate summed sines (continuous, quasi-periodic).
+// Unlike RandomWalkLFO (which holds a random target for a full period → weak net
+// excursion per window), this traverses the FULL ±depth range continuously every
+// cycle, so it smears a tail mode across the whole band inside one analysis window
+// (the mode-smear / anti-boing use). The two rates are incommensurate (f, 1.37f) so
+// the sum never settles into a periodic warble; the seed decorrelates the starting
+// phase per line. Same setDepth/setRate/next interface as RandomWalkLFO.
+struct MultiSineLFO
+{
+    void prepare (float sampleRate, std::uint32_t seed = 0xC0FFEEu)
+    {
+        sampleRate_ = sampleRate;
+        const float twoPi = 6.28318530718f;
+        ph0_ = static_cast<float> (seed & 0xFFFFu)          * (1.0f / 65536.0f) * twoPi;
+        ph1_ = static_cast<float> ((seed >> 16) & 0xFFFFu)  * (1.0f / 65536.0f) * twoPi;
+        setRate (1.0f);
+    }
+    void setRate (float hz)
+    {
+        const float twoPi = 6.28318530718f;
+        const float f = std::max (hz, 0.001f);
+        inc0_ = twoPi * f          / sampleRate_;
+        inc1_ = twoPi * f * 1.37f  / sampleRate_;   // incommensurate 2nd partial
+    }
+    void setDepth (float d) { depth_ = std::max (d, 0.0f); }
+    float next()
+    {
+        const float twoPi = 6.28318530718f;
+        ph0_ += inc0_; if (ph0_ >= twoPi) ph0_ -= twoPi;
+        ph1_ += inc1_; if (ph1_ >= twoPi) ph1_ -= twoPi;
+        // 0.5·(sin+sin) ∈ [-1,1]; ×depth = peak excursion in samples.
+        return depth_ * 0.5f * (std::sin (ph0_) + std::sin (ph1_));
+    }
+private:
+    float sampleRate_ = 44100.0f;
+    float ph0_ = 0.0f, ph1_ = 0.0f, inc0_ = 0.0f, inc1_ = 0.0f, depth_ = 0.0f;
+};
+
+
+// =====================================================================
 // CoherentSineLFO — single master sine generator with phase-tap readout.
 //
 // Phase 2 modulation topology (2026-05-28). The existing RandomWalkLFO

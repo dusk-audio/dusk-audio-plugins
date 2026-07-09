@@ -62,6 +62,8 @@ QuadTank::QuadTank()
 // -----------------------------------------------------------------------
 void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 {
+    stereoMod_.prepare (sampleRate);
+    stereoMod_.setParams (stereoModRate_, stereoModDepth_, sampleRate);
     sampleRate_ = sampleRate;
     sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, std::max (sizeRangeMax_, 1.5f));
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
@@ -324,8 +326,14 @@ void QuadTank::process (const float* inputL, const float* inputR,
         constexpr float kOutputScale = 0.35f;  // ~1/sqrt(8)
         const float outputGain = kOutputScale * lateGainScale_;
 
-        outputL[i] = std::clamp (outL * outputGain, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (outR * outputGain, -kSafetyClip, kSafetyClip);
+        float qoL = outL * outputGain;
+        float qoR = outR * outputGain;
+        // Wet-output stereo chorus/ensemble (setStereoMod); inactive = bit-null.
+        if (stereoMod_.active) stereoMod_.process (qoL, qoR);
+        // Safety clamp AFTER the modulation so its modulated-delay peaks can't push
+        // the output past kSafetyClip.
+        outputL[i] = std::clamp (qoL, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (qoR, -kSafetyClip, kSafetyClip);
     }
 }
 
@@ -541,6 +549,7 @@ void QuadTank::setStructuralHFDamping (float hz)
 
 void QuadTank::clearBuffers()
 {
+    stereoMod_.clear();
     for (int t = 0; t < kNumTanks; ++t)
     {
         auto& tank = tanks_[t];
@@ -724,4 +733,11 @@ void QuadTank::setModulationTopology (DspUtils::ModulationTopology t)
     modulationTopology_ = t;
     if (modulationTopology_ == DspUtils::ModulationTopology::CoherentLoop)
         coherentLfo_.setRate (modRateHz_);
+}
+
+void QuadTank::setStereoMod (float rateHz, float depth)
+{
+    stereoModRate_  = rateHz;
+    stereoModDepth_ = depth;
+    stereoMod_.setParams (rateHz, depth, sampleRate_);
 }

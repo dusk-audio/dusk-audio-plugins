@@ -263,6 +263,12 @@ void DattorroPlateVintage::setOctaveDecayRef    (float v) { tank_.setOctaveDecay
 void DattorroPlateVintage::setTonalCorrDb     (int b, float v) { tank_.setTonalCorrDb (b, v); }
 void DattorroPlateVintage::setBloomAttackMs     (float v) { tank_.setBloomAttackMs     (v); }
 void DattorroPlateVintage::setBloomExp          (float v) { tank_.setBloomExp          (v); }
+void DattorroPlateVintage::setSustainLimiterMid (float lo, float hi, float thr, float cut,
+                                                 float atk, float relF, float relS)
+{ tank_.setSustainLimiterMid (lo, hi, thr, cut, atk, relF, relS); }
+void DattorroPlateVintage::setSustainLimiterLow (float lo, float hi, float thr, float cut,
+                                                 float atk, float relF, float relS)
+{ tank_.setSustainLimiterLow (lo, hi, thr, cut, atk, relF, relS); }
 void DattorroPlateVintage::setFreeze            (bool  v) { dfFrozen_ = v; tank_.setFreeze (v); }
 
 void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz)

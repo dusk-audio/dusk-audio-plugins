@@ -309,4 +309,31 @@ You are operating within a constrained context window and strict system prompts.
 ## Private Tools Repo
 
 Calibration and testing scripts are in `~/projects/dusk-audio-tools/` (private repo).
-Symlinked into the plugin tree at `plugins/DuskVerb/tests/reference_comparison/`.
+DuskVerb tuning scripts live in `plugins/DuskVerb/tools/tuner/` (see its README).
+
+## Scientific Method Overrides (added 2026-07-06, from the Fable 5 DuskVerb session)
+
+These behaviors produced the session's best results. Apply them to ALL diagnostic and DSP work:
+
+1. **Measure before believing.** Any root-cause attribution found in memory, docs, comments, or
+   handoffs is a HYPOTHESIS. Run the control experiment before building on it (a wrong THD
+   attribution survived weeks until a byte-identical render with the suspect param zeroed
+   falsified it in one minute).
+2. **A suspiciously clean wrong number is an arithmetic bug, not a tuning problem.** Uniform
+   -50%, exactly 2x, all-bands-identical error: grep for hardcoded divisors/counts before
+   sweeping any parameter.
+3. **One knob per iteration, fresh measurement between.** No claim without a fresh render.
+   Never batch-tune conflicting gates blind.
+4. **Negative results with root cause are deliverables.** "It didn't work because X, here is the
+   evidence" beats a forced marginal win. Document dead ends where the next session will look.
+5. **When two gates conflict, stop optimizing.** Ask what physical mechanism produces BOTH
+   readings; the answer is usually a missing lever or a measurement artifact, not a trade-off.
+6. **State the hypothesis and its falsifying experiment BEFORE editing** anything structural.
+7. **Bit-null means byte-compared renders**, not "should be unaffected". Never-worse means
+   re-measured baseline on the CURRENT build, not a remembered number.
+8. **Agent briefs must carry: mandatory reading list, verification obligations, hard scope
+   walls, report format.** One build/render lock holder at a time; file-disjoint agents may
+   run parallel. Loose briefs produce slop.
+
+NOTE: an old `plugins/DuskVerb/tests/reference_comparison/` symlink no longer exists;
+tuning scripts live in `plugins/DuskVerb/tools/tuner/` (see its README).

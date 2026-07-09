@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "DspUtils.h"   // cubicHermite (HF-lossless read) + MultiSineLFO (mode-smear)
+#include "SustainBandLimiter.h"
+
 // ParallelMultibandTank — DuskVerb's decoupling engine (2026-07-04).
 //
 // WHY: every recirculating tank in the fleet shares one structural wall —
@@ -158,7 +161,17 @@ public:
         }
         lfoPh_ = 0.0f;
         lfoInc_ = 6.2831853f * 0.61f / sr_;   // gentle 0.61 Hz wander (bands 2+ only)
+        for (int b = 0; b < kBands; ++b)
+            for (int l = 0; l < kLines; ++l)
+                smearLfo_[b][l].prepare (sr_, 0xA5C3E97Bu + static_cast<std::uint32_t> ((b * kLines + l) * 3571));
+        // Sustain-band limiter: re-derive coeffs at the new sample rate + key prepare.
+        susLimMidCfg_.updateCoeffs (sr_);
+        susLimLowCfg_.updateCoeffs (sr_);
+        susLimKey_.prepare (sr_);
+        updateSusLimSlots();
         prepared_ = true;
+        setModeSmear (smearDepthSamples_, smearRateHz_);   // AFTER prepared_ — the setter early-returns
+                                                           // while prepared_ is false (LFO depth/rate skipped)
         clear();
         updateGains();
     }
@@ -181,6 +194,8 @@ public:
                 for (int f = 0; f < 8; ++f)
                     outZ_[c][b][f][0] = outZ_[c][b][f][1] = 0.0f;
         }
+        for (int b = 0; b < kBands; ++b) susLimDet_[b].clear();
+        susLimKey_.clear();
     }
 
     // ── Per-band config ─────────────────────────────────────────────────────
@@ -208,6 +223,42 @@ public:
     }
     void setFreeze (bool f) { frozen_ = f; if (prepared_) updateGains(); }
 
+    // Deep+slow per-band mode-smear (anti-boing): wanders each band's mini-FDN read
+    // taps across a band so an isolated comb mode (e.g. Medium Drum's 257 Hz band-2
+    // ring) averages out. depth 0 = off = smear LFOs not advanced → readLine exc stays
+    // the un-smeared value → bit-null. Clamped to the kMaxExc headroom.
+    void setModeSmear (float depthSamples, float rateHz)
+    {
+        smearDepthSamples_ = std::clamp (depthSamples, 0.0f, 256.0f);
+        smearRateHz_       = std::clamp (rateHz, 0.001f, 5.0f);
+        smearActive_       = smearDepthSamples_ > 1.0e-3f;
+        if (! prepared_) return;
+        for (int b = 0; b < kBands; ++b)
+            for (int l = 0; l < kLines; ++l)
+            {
+                smearLfo_[b][l].setDepth (smearDepthSamples_);
+                smearLfo_[b][l].setRate  (smearRateHz_ * (0.85f + 0.02f * static_cast<float> (b * kLines + l)));
+            }
+    }
+
+    // ── In-loop sustained-energy limiter (SustainBandLimiter.h) ────────────
+    // The band IS the spectral slice, so no split filters: the config's [loHz,hiHz]
+    // maps to whole band indices (slot 1 = MID law A, slot 2 = LOW law B); the cut is
+    // a per-band gDyn multiplier on the decay gain. maxCutDb 0 → slot cleared →
+    // g_[b] × 1.0 (bit-exact identity) and detectors never advance → bit-null.
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs)
+    {
+        susLimMidCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sr_);
+        updateSusLimSlots();
+    }
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs)
+    {
+        susLimLowCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sr_);
+        updateSusLimSlots();
+    }
+
     // ── Process ─────────────────────────────────────────────────────────────
     void process (const float* inL, const float* inR, float* outL, float* outR, int n)
     {
@@ -216,6 +267,11 @@ public:
         {
             lfoPh_ += lfoInc_; if (lfoPh_ > 6.2831853f) lfoPh_ -= 6.2831853f;
             const float wob = std::sin (lfoPh_);
+
+            // Sustain-band limiter input-presence key (one per instance/sample).
+            bool susPresent = false;
+            if (susLimAnyActive_ && ! frozen_)
+                susPresent = susLimKey_.advance (std::fabs (inL[s]) + std::fabs (inR[s]));
 
             // Complementary band split, per channel.
             float bandsL[kBands], bandsR[kBands];
@@ -230,22 +286,53 @@ public:
                 const float exc = (b >= 2) ? wob * kExcSamp[b] : 0.0f;
 
                 // 8-line mini-FDN: read (modulated), Hadamard-8, damp+gain, write.
+                // Each line gets its OWN deep+slow mode-smear excursion (fully
+                // decorrelated → strong median fill). Advanced only when active →
+                // depth 0 leaves the read at the un-smeared exc → bit-null.
                 float x[kLines];
                 for (int l = 0; l < kLines; ++l)
-                    x[l] = readLine (b, l, (l & 1) ? -exc : exc);
+                {
+                    const float base = (l & 1) ? -exc : exc;
+                    const float sm   = smearActive_ ? smearLfo_[b][l].next() : 0.0f;
+                    x[l] = readLine (b, l, base + sm);
+                }
                 // inject band input into lines 0/1 (L) and 2/3 (R), sign-alternated
                 x[0] += bandsL[b]; x[1] -= bandsL[b];
                 x[2] += bandsR[b]; x[3] -= bandsR[b];
                 hadamard8 (x);
-                for (int l = 0; l < kLines; ++l)
+                // Sustain-band limiter: per-band gDyn on the decay gain, same-sample
+                // detector from the post-Hadamard line energy (the CHARGE). Slot 0 takes
+                // the ORIGINAL loop verbatim — branching AROUND the hot loop (not inside
+                // it) keeps its codegen/FP-contraction untouched → bit-null (the
+                // gb-local variant measurably drifted; see the bitnull-codegen memory).
+                if (susLimSlot_[b] == 0 || frozen_)
                 {
-                    // in-loop damping is unnecessary per band (the band IS the
-                    // spectral slice); just the decay gain + densifier APs.
-                    float v = x[l] * g_[b];
-                    v = allpass (b, l, 0, v);
-                    v = allpass (b, l, 1, v);
-                    v = allpass (b, l, 2, v);
-                    writeLine (b, l, v);
+                    for (int l = 0; l < kLines; ++l)
+                    {
+                        // in-loop damping is unnecessary per band (the band IS the
+                        // spectral slice); just the decay gain + densifier APs.
+                        float v = x[l] * g_[b];
+                        v = allpass (b, l, 0, v);
+                        v = allpass (b, l, 1, v);
+                        v = allpass (b, l, 2, v);
+                        writeLine (b, l, v);
+                    }
+                }
+                else
+                {
+                    const auto& cfg = (susLimSlot_[b] == 1) ? susLimMidCfg_ : susLimLowCfg_;
+                    float mag = 0.0f;
+                    for (int l = 0; l < kLines; ++l) mag += std::fabs (x[l]);
+                    const float red = susLimDet_[b].advance (mag * (1.0f / 8.0f), cfg, susPresent);
+                    const float gb  = g_[b] * (1.0f - red);
+                    for (int l = 0; l < kLines; ++l)
+                    {
+                        float v = x[l] * gb;
+                        v = allpass (b, l, 0, v);
+                        v = allpass (b, l, 1, v);
+                        v = allpass (b, l, 2, v);
+                        writeLine (b, l, v);
+                    }
                 }
                 // band output taps: decorrelated L/R combinations across four
                 // lines each (incl. two feedback-only lines: denser output),
@@ -269,7 +356,7 @@ public:
 
 private:
     static constexpr int kLines  = 8;
-    static constexpr int kMaxExc = 16;
+    static constexpr int kMaxExc = 272;   // was 16; headroom for the deep mode-smear excursion (clamped ≤256)
     static constexpr float kExcSamp[kBands] = { 0.0f, 0.0f, 1.5f, 2.0f, 0.0f, 0.0f };   // 2026-07-04 b4/b5 4,5 -> 2,1; 2026-07-06 -> 0,0: ANY wander through LINEAR-interp reads is a per-pass HF loss (measured: 8k realized -24% below command even at ±2 samples). exc==0 takes integer reads (fr=0) = zero interp loss; the top bands are noise-like and need no wander. b2/b3 2,3 -> 1.5,2 with the 8-line tanks: 8 modulated lines pushed tail mod-ripple over gate (+1.6/+1.9 dB).
 
     struct BQ { float b0 = 0, b1 = 0, b2 = 0, a1 = 0, a2 = 0; };
@@ -310,14 +397,14 @@ private:
 
     float readLine (int b, int l, float exc)
     {
-        // linear-interpolated modulated read
+        // Cubic-Hermite modulated read (HF-lossless — so a deep mode-smear excursion
+        // no longer bleeds HF the way the old linear interp did). At exc=0 the read is
+        // integer (fr=0) and cubic Hermite returns the exact sample, so this is
+        // byte-identical to the previous linear read for the un-smeared (exc=0) path.
         const float rpos = static_cast<float> (wp_[b][l]) - (static_cast<float> (len_[b][l]) + exc);
         const int   i0   = static_cast<int> (std::floor (rpos));
         const float fr   = rpos - static_cast<float> (i0);
-        const int   m    = mask_[b][l];
-        const float a = buf_[b][l][static_cast<size_t> (i0 & m)];
-        const float c = buf_[b][l][static_cast<size_t> ((i0 + 1) & m)];
-        return a + fr * (c - a);
+        return DspUtils::cubicHermite (buf_[b][l].data(), mask_[b][l], i0, fr);
     }
     void writeLine (int b, int l, float v)
     {
@@ -385,6 +472,31 @@ private:
     // density comes from the third AP stage on the top bands instead.
     static constexpr float kApCoeff[kBands] = { 0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f };
 
+    // Sustain-band limiter state (see the public setters). slot: 0 none / 1 mid / 2 low.
+    void updateSusLimSlots()
+    {
+        static constexpr float kBandLo[kBands] = { 20.f, 120.f, 350.f, 1000.f, 3000.f, 8000.f };
+        static constexpr float kBandHi[kBands] = { 120.f, 350.f, 1000.f, 3000.f, 8000.f, 20000.f };
+        susLimAnyActive_ = false;
+        for (int b = 0; b < kBands; ++b)
+        {
+            susLimSlot_[b] = 0;
+            if (susLimMidCfg_.active
+                && std::max (susLimMidCfg_.loHz, kBandLo[b]) < std::min (susLimMidCfg_.hiHz, kBandHi[b]))
+                susLimSlot_[b] = 1;
+            else if (susLimLowCfg_.active
+                && std::max (susLimLowCfg_.loHz, kBandLo[b]) < std::min (susLimLowCfg_.hiHz, kBandHi[b]))
+                susLimSlot_[b] = 2;
+            if (susLimSlot_[b] != 0) susLimAnyActive_ = true;
+            susLimDet_[b].clear();
+        }
+    }
+    SustainBandLimiter::Config   susLimMidCfg_, susLimLowCfg_;
+    SustainBandLimiter::Detector susLimDet_[kBands];
+    SustainBandLimiter::InputKey susLimKey_;
+    std::uint8_t susLimSlot_[kBands] = {};
+    bool susLimAnyActive_ = false;
+
     float sr_ = 48000.0f, sizeScale_ = 1.0f, decayScale_ = 1.0f;
     bool  prepared_ = false, frozen_ = false;
 
@@ -422,4 +534,7 @@ private:
     int   outNb_[kBands] = {};
     float outZ_[2][kBands][8][2] = {};
     float lfoPh_ = 0.0f, lfoInc_ = 0.0f;
+    DspUtils::MultiSineLFO smearLfo_[kBands][kLines];   // per-LINE mode-smear wander (anti-boing, fully decorrelated)
+    float smearDepthSamples_ = 0.0f, smearRateHz_ = 0.08f;
+    bool  smearActive_ = false;
 };

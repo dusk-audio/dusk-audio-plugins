@@ -362,16 +362,18 @@ def band_rms_db(p, lo, hi):
     return float(20*np.log10(np.sqrt(np.mean(y[pk:]**2))+1e-30))
 
 
-def osc_envelope_p2p(p):
-    """Detrended 5ms-smoothed log-envelope peak-to-peak from 50ms-1.5s post-peak.
-    Returns None if the signal drops below -80 dBFS in the measurement window
-    (envelope becomes noise; the metric is meaningless)."""
+def osc_envelope_p2p(p, input_off_s=None):
+    """Detrended 5ms-smoothed log-envelope peak-to-peak from 50ms-1.5s post-peak
+    (input_off_s=None) or post-input-OFF on a sustained-pink release (input_off_s
+    set — a NO-ONSET tail so a transient-triggered ER bus can't skew the tail
+    modulation, same reason as the RT60 move). Returns None if the signal drops
+    below -80 dBFS in the window (envelope becomes noise; metric meaningless)."""
     x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim>1 else x
     env = np.abs(hilbert(m))
     win = max(int(0.005*sr), 1)
     env_sm = np.convolve(env, np.ones(win)/win, mode='same')
     env_db = 20*np.log10(env_sm + 1e-30)
-    pidx = int(np.argmax(env_db))
+    pidx = int(input_off_s * sr) if input_off_s is not None else int(np.argmax(env_db))
     ts = np.arange(0.05, 1.5, 0.005)
     arr = np.array([env_db[pidx+int(t*sr)] for t in ts if pidx+int(t*sr) < len(env_db)])
     if len(arr) < 30: return None
@@ -544,19 +546,32 @@ def _sine1k_thd_pct (p, f0=1000.0):
     return float(100.0 * harm / fund)
 
 
-def _t60_band_schroeder (p, lo, hi):
-    """Per-band T60 via Schroeder backward integration on the post-peak
-    noiseburst tail. Bandpass → cumulative reverse energy → log-scale slope
-    fit between -5 and -25 dB → T60 = -60 / slope. Returns seconds or None
-    if the band's decay never crosses -25 dB (noise floor) in the 4 s window."""
+def _t60_band_schroeder (p, lo, hi, input_off_s=None):
+    """Per-band T60 via Schroeder backward integration. Bandpass → cumulative
+    reverse energy → log-scale slope fit between -5 and -25 dB → T60 = -60 / slope.
+
+    Two source windows:
+      • input_off_s=None (default): the post-PEAK noiseburst tail (legacy).
+      • input_off_s set: the input-OFF release of a sustained-pink render — the
+        ISO interrupted-noise RT60, and a NO-ONSET tail. This is what the tail
+        gates use so a transient-triggered early-reflection bus (TransientDuck),
+        which fires on the noiseburst's silence→noise onset and would corrupt the
+        peak-aligned fit, is long closed by input-off and cannot skew the decay.
+    Returns seconds or None if the band never crosses -25 dB (noise floor)."""
     import soundfile as sf
     x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
     nyq = sr * 0.49
     sos = butter(4, [max(lo, 10.0), min(hi, nyq)], 'band', fs=sr, output='sos')
     y = sosfiltfilt(sos, m)
-    peak = int(np.argmax(np.abs(y)))
-    tail = y[peak : peak + int(sr * 4.0)]
-    if len(tail) < int(sr * 0.5):
+    if input_off_s is not None:
+        off = int(input_off_s * sr)
+        if off >= len(y):
+            return None
+        tail = y[off:]              # input-off release: no onset in this window
+    else:
+        peak = int(np.argmax(np.abs(y)))
+        tail = y[peak : peak + int(sr * 4.0)]
+    if len(tail) < int(sr * 0.3):
         return None
     sq  = tail ** 2
     edc = np.cumsum(sq[::-1])[::-1]
@@ -906,6 +921,26 @@ def tail_resonance_prominence(p, lo=200.0, hi=2000.0, tail_s=1.0):
         return 0.0, 0.0
     prom = 20.0 * np.log10(np.max(Tb) / (np.median(Tb) + 1e-30) + 1e-30)
     return float(prom), float(f[band][int(np.argmax(Tb))])
+
+
+def anchor_impulse_degenerate(p, tail_s=1.0):
+    """True if this impulse render's tail (peak+0.2s .. +tail_s) is >70 dB below
+    the peak — i.e. a DRY-CONTAMINATED / tail-less impulse (a dry click at t≈0
+    with the wet reverb tail buried, or a dead render). The boing gates run on
+    the impulse and compare DV vs anchor; if the ANCHOR impulse is degenerate its
+    boing floor-guards to a phantom 0.0 (tail_resonance_prominence line ~914) and
+    DV then scores against that phantom (+25 dB of pure artifact). 2026-07-07:
+    the Live Room anchor impulse was exactly this (peak @1 ms dry click, tail
+    −84 dB → phantom 0 → a fake 'structurally unreachable 0 dB boing wall' that
+    sent us chasing a denser-FDN engine). Gate against a degenerate anchor is
+    meaningless → SKIP + warn to re-render. Mirrors the floor-guard threshold."""
+    x, sr = sf.read(p); m = x.mean(axis=1) if x.ndim > 1 else x
+    env = np.abs(hilbert(m)); pk = int(np.argmax(env)); t0 = pk + int(0.2 * sr)
+    tail = m[t0:t0 + int(tail_s * sr)]
+    if len(tail) < 2048:
+        return True
+    tail_rms = float(np.sqrt(np.mean(tail ** 2))); pk_amp = float(env[pk]) + 1e-30
+    return 20.0 * np.log10(tail_rms / pk_amp + 1e-12) < -70.0
 
 
 def tail_resonance_top3(p, lo=200.0, hi=2000.0, tail_s=1.0):
@@ -1294,6 +1329,10 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
     # ─── Band-region absolute energy (noiseburst — the broadband stimulus) ───
     print("\n── BAND-REGION ABSOLUTE ENERGY (noiseburst, post-peak) ──")
     dv = find_stim(dv_dir, 'noiseburst'); lx = find_stim(lex_dir, 'noiseburst')
+    # Sustained-pink render (loaded early so the tail-character gates — env_p2p,
+    # stereo_corr, RT60 — can measure the input-OFF release; reassigned identically
+    # near the ss-energy block below).
+    sus_dv = find_stim(dv_dir, 'sustained'); sus_lx = find_stim(lex_dir, 'sustained')
     if dv and lx:
         for lab, lo, hi, gate_key in [
             ('sub-bass <100 Hz',   20,   100, 'sub_lt_100_dB'),
@@ -1355,13 +1394,24 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             print(f"  {'cent_500 (Hz)':30s}  SKIPPED (Lex 500-1500ms below noise floor)")
 
         print("\n── ENVELOPE / STEREO ──")
-        # env_p2p uses 50-decay_seek_s window. If Lex falls below floor in that
-        # window, comparison is against noise — skip.
-        if windowed_above_floor(lx, 0.05, 1.50):
-            d, p, line = check('env_p2p (dB)', m_dv.get('env_res_p2p'), m_lx.get('env_res_p2p'), GATES['env_p2p_dB']); print(line)
+        # env_p2p is a TAIL-MODULATION gate (tank envelope oscillation). Measure it
+        # on the sustained-pink INPUT-OFF release when it exists — a no-onset tail
+        # where a transient-triggered ER bus is duck-closed, so the discrete early
+        # reflections (a transient-only, front-of-hit feature) don't skew the
+        # sustained tail modulation. Falls back to the noiseburst. Same rationale as
+        # the RT60 move above. (stereo_corr stays on the noiseburst: the release is
+        # too short a window for a stable L/R correlation — a release-based version
+        # broadly false-flagged the fleet.)
+        if sus_dv and sus_lx:
+            ep_dv = osc_envelope_p2p(sus_dv, sustained_pink_seconds)
+            ep_lx = osc_envelope_p2p(sus_lx, sustained_pink_seconds)
+        else:
+            ep_dv, ep_lx = m_dv.get('env_res_p2p'), m_lx.get('env_res_p2p')
+        if ep_dv is not None and ep_lx is not None:
+            d, p, line = check('env_p2p (dB)', ep_dv, ep_lx, GATES['env_p2p_dB']); print(line)
             if p == 'FAIL': fails.append(line.strip())
         else:
-            print(f"  {'env_p2p (dB)':30s}  SKIPPED (Lex tail below noise floor)")
+            print(f"  {'env_p2p (dB)':30s}  SKIPPED (tail below noise floor)")
         d, p, line = check('stereo_corr', m_dv.get('stereo_corr'), m_lx.get('stereo_corr'), GATES['stereo_corr']); print(line)
         if p == 'FAIL': fails.append(line.strip())
 
@@ -1428,15 +1478,24 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                 if not passing: fails.append(line.strip())
 
             # ── TAIL RESONANCE ('boing'/springy pitched-mode) — one-directional ──
-            tr_dv, trf_dv = tail_resonance_prominence(imp_dv)
-            tr_lx, trf_lx = tail_resonance_prominence(imp_lx)
-            tr_excess = tr_dv - tr_lx                 # DV ringing MORE than anchor = defect
-            passing = tr_excess <= GATES['tail_resonance_dB']
-            line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
-                    f"REF={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
-                    f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
-            print(line)
-            if not passing: fails.append(line.strip())
+            # Skip-guard: a DRY/tail-less ANCHOR impulse floor-guards its boing to a
+            # phantom 0.0, so DV would score against pure artifact (the Live Room
+            # anchor bug, 2026-07-07). Do NOT count either boing gate then — WARN so
+            # the anchor gets re-rendered. Mirrors the cent_500/hf-tail skip-guards.
+            _boing_anchor_bad = anchor_impulse_degenerate(imp_lx)
+            if _boing_anchor_bad:
+                print(f"  {'tail resonance (boing)':30s}  SKIPPED — ANCHOR IMPULSE DRY/TAIL-LESS "
+                      f"(re-render {name!r} anchor impulse 100% wet)")
+            else:
+                tr_dv, trf_dv = tail_resonance_prominence(imp_dv)
+                tr_lx, trf_lx = tail_resonance_prominence(imp_lx)
+                tr_excess = tr_dv - tr_lx             # DV ringing MORE than anchor = defect
+                passing = tr_excess <= GATES['tail_resonance_dB']
+                line = (f"  {'tail resonance (boing)':30s}  DV={tr_dv:5.1f}dB@{trf_dv:4.0f}  "
+                        f"REF={tr_lx:5.1f}dB@{trf_lx:4.0f}  Δ={tr_excess:+5.1f}  "
+                        f"gate≤+{GATES['tail_resonance_dB']}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
 
             # ── FIRST ARRIVAL (absolute, pre-alignment) ──
             def _first_arrival_ms (path):
@@ -1452,13 +1511,16 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             if not _pass: fails.append (line.strip())
 
             # ── Top-3 modal prominence (anti-mode-hop companion) ──
-            t3_dv = tail_resonance_top3(imp_dv); t3_lx = tail_resonance_top3(imp_lx)
-            t3_excess = t3_dv - t3_lx
-            passing = t3_excess <= GATES['tail_resonance_top3_dB']
-            line = (f"  {'tail resonance top-3 (boing)':30s}  DV={t3_dv:5.1f}dB  REF={t3_lx:5.1f}dB  "
-                    f"Δ={t3_excess:+5.1f}  gate≤+{GATES['tail_resonance_top3_dB']}  {'✓' if passing else '✗'}")
-            print(line)
-            if not passing: fails.append(line.strip())
+            if _boing_anchor_bad:
+                print(f"  {'tail resonance top-3 (boing)':30s}  SKIPPED — ANCHOR IMPULSE DRY/TAIL-LESS")
+            else:
+                t3_dv = tail_resonance_top3(imp_dv); t3_lx = tail_resonance_top3(imp_lx)
+                t3_excess = t3_dv - t3_lx
+                passing = t3_excess <= GATES['tail_resonance_top3_dB']
+                line = (f"  {'tail resonance top-3 (boing)':30s}  DV={t3_dv:5.1f}dB  REF={t3_lx:5.1f}dB  "
+                        f"Δ={t3_excess:+5.1f}  gate≤+{GATES['tail_resonance_top3_dB']}  {'✓' if passing else '✗'}")
+                print(line)
+                if not passing: fails.append(line.strip())
 
             # ── IMPULSE RMS (transient/hit loudness — sustained gates miss it) ──
             ir_dv = impulse_rms_db(imp_dv); ir_lx = impulse_rms_db(imp_lx)
@@ -2127,10 +2189,23 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
             print(line)
             if not passing: fails.append(line.strip())
 
-    # ─── Per-band RT60 (Schroeder backward integration, noiseburst tail) ───
-    if dv and lx:
+    # ─── Per-band RT60 (Schroeder backward integration) ───
+    # Measured on the sustained-pink INPUT-OFF release (ISO interrupted-noise
+    # RT60, a NO-ONSET tail) when a sustained render exists, else the noiseburst
+    # peak tail. The release source is duck-closed, so a transient-triggered ER
+    # bus can't corrupt the decay fit (see _t60_band_schroeder). Both DV and the
+    # anchor use the identical window → consistent.
+    # Use the sustained-release path only when BOTH sides have a sustained render,
+    # else t60_off would offset one side and not the other — measuring DV's release
+    # tail against the anchor's noiseburst peak tail (or vice-versa).
+    use_sus    = bool(sus_dv and sus_lx)
+    t60_src_dv = sus_dv if use_sus else dv
+    t60_src_lx = sus_lx if use_sus else lx
+    t60_off    = sustained_pink_seconds if use_sus else None
+    if t60_src_dv and t60_src_lx:
         rt_gate = GATES['t60_band_pct']
-        print(f"\n── PER-BAND RT60 (Schroeder backward int, ±{rt_gate:.0f}% JND gate) ──")
+        src_lbl = 'sustained-release' if use_sus else 'noiseburst'
+        print(f"\n── PER-BAND RT60 (Schroeder backward int, {src_lbl}, ±{rt_gate:.0f}% JND gate) ──")
         for (lo, hi, b_lab) in [(44,   88,    '63 Hz'),
                                  (88,   177,   '125 Hz'),
                                  (177,  355,   '250 Hz'),
@@ -2140,8 +2215,8 @@ def audit(dv_dir, lex_dir, name='preset', category='', sustained_pink_seconds=4.
                                  (2840, 5680,  '4 kHz'),
                                  (5680, 11360, '8 kHz'),
                                  (11360, 18000, '16 kHz')]:
-            dv_t = _t60_band_schroeder (dv, lo, hi)
-            lx_t = _t60_band_schroeder (lx, lo, hi)
+            dv_t = _t60_band_schroeder (t60_src_dv, lo, hi, t60_off)
+            lx_t = _t60_band_schroeder (t60_src_lx, lo, hi, t60_off)
             if dv_t is None or lx_t is None or lx_t <= 0.05:
                 print(f"  {f'T60 {b_lab}':30s}  SKIPPED (band below noise floor)")
                 continue

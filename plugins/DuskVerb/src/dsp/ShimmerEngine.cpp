@@ -221,6 +221,9 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     stereoMod_.setParams (stereoModRate_, stereoModDepth_, sampleRate);
     tailSpin_.prepare (sampleRate);
     tailNoise_.prepare (sampleRate);
+    noiseDuckKey_.prepare (sampleRate);
+    noiseDuckSlew_ = 1.0f - std::exp (-1.0f / (0.050f * static_cast<float> (sampleRate)));
+    noiseDuckG_ = 1.0f;
     tailNoise_.setGain (noiseGain_);
 
     // Hall reverb baseline: long, lush, slightly dark (period-correct
@@ -274,6 +277,23 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     hfShelfR_.setHPCutoff (hfSustainHz_, sr);
     hfShelfL_.clear(); hfShelfR_.clear();
 
+    // Loop-hi limiter: re-derive every SR-dependent coeff from the stored config
+    // so a sample-rate change keeps the ratio-keyed air duck in sync (same
+    // re-apply-in-prepare pattern as the hfShelf + noiseDuck paths above).
+    // loopHiCfg_ retains the user params; only the SR-derived coeffs go stale.
+    // On the normal render path setLoopHiLimiter runs after prepare and overwrites
+    // these, so this is inert (bit-null) there; it only bites on a bare SR change.
+    loopHiCfg_.updateCoeffs (sampleRate_);
+    loopHiCutL_.design (loopHiCfg_.loHz, loopHiCfg_.hiHz, loopHiCfg_.maxCutDb, sampleRate_);
+    loopHiCutR_.design (loopHiCfg_.loHz, loopHiCfg_.hiHz, loopHiCfg_.maxCutDb, sampleRate_);
+    const float srLoopHi = static_cast<float> (sampleRate_ > 1000.0 ? sampleRate_ : 48000.0);
+    loopHiHpCoeff_ = 1.0f - std::exp (-kTwoPi * loopHiCfg_.loHz / srLoopHi);
+    loopHiEnvAtk_  = 1.0f - std::exp (-1.0f / (0.030f * srLoopHi));   // 30 ms envelope attack
+    loopHiEnvRel_  = 1.0f - std::exp (-1.0f / (0.300f * srLoopHi));   // 300 ms release
+    loopHiDet_.clear();
+    loopHiWetEnv_ = loopHiInEnv_ = 0.0f;
+    loopHiHpWetL_ = loopHiHpWetR_ = loopHiHpInL_ = loopHiHpInR_ = 0.0f;
+
     updatePitchRatio();
     prepared_ = true;
 }
@@ -305,6 +325,14 @@ void ShimmerEngine::clearBuffers()
     fbHpfL_.clear(); fbHpfR_.clear();
     fbLpfL_.clear(); fbLpfR_.clear();
     hfShelfL_.clear(); hfShelfR_.clear();
+    // Noise-duck + ratio-keyed loop-hi limiter state — reset so a stale reduction
+    // (or a held-open duck) can't carry across a reset / preset swap.
+    noiseDuckKey_.clear();
+    noiseDuckG_ = 1.0f;
+    loopHiDet_.clear();
+    loopHiWetEnv_ = loopHiInEnv_ = 0.0f;
+    loopHiHpWetL_ = loopHiHpWetR_ = loopHiHpInL_ = loopHiHpInR_ = 0.0f;
+    loopHiCutL_.clear(); loopHiCutR_.clear();
 }
 
 // ============================================================================
@@ -381,9 +409,48 @@ void ShimmerEngine::setFreeze (bool frozen)
     denseReverb_.setFreeze (frozen);
 }
 
+void ShimmerEngine::setModeSmear (float depthSamples, float rateHz)
+{
+    reverb_.setModeSmear (depthSamples, rateHz);   // Black Hole + Deep Blue Day use the FDN reverb_
+}
+void ShimmerEngine::setSustainLimiterMid (float lo, float hi, float thr, float cut,
+                                          float atk, float relF, float relS)
+{
+    // In-loop sustained-energy limiter in the internal reverb tank(s); the shimmer's
+    // OWN pitch feedback loop is untouched (its air-band runaway needs a ratio-keyed
+    // detector — a separate, later feature). maxCutDb 0 = bit-null.
+    reverb_.setSustainLimiterMid      (lo, hi, thr, cut, atk, relF, relS);
+    denseReverb_.setSustainLimiterMid (lo, hi, thr, cut, atk, relF, relS);
+}
+void ShimmerEngine::setSustainLimiterLow (float lo, float hi, float thr, float cut,
+                                          float atk, float relF, float relS)
+{
+    reverb_.setSustainLimiterLow      (lo, hi, thr, cut, atk, relF, relS);
+    denseReverb_.setSustainLimiterLow (lo, hi, thr, cut, atk, relF, relS);
+}
+void ShimmerEngine::setLoopHiLimiter (float loHz, float hiHz, float ratioThrDb, float maxCutDb,
+                                      float atkMs, float relFastMs, float relSlowMs)
+{
+    loopHiCfg_.set (loHz, hiHz, ratioThrDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    loopHiCutL_.design (loopHiCfg_.loHz, loopHiCfg_.hiHz, loopHiCfg_.maxCutDb, sampleRate_);
+    loopHiCutR_.design (loopHiCfg_.loHz, loopHiCfg_.hiHz, loopHiCfg_.maxCutDb, sampleRate_);
+    const float sr = static_cast<float> (sampleRate_ > 1000.0 ? sampleRate_ : 48000.0);
+    loopHiHpCoeff_ = 1.0f - std::exp (-kTwoPi * loopHiCfg_.loHz / sr);
+    loopHiEnvAtk_  = 1.0f - std::exp (-1.0f / (0.030f * sr));   // 30 ms envelope attack
+    loopHiEnvRel_  = 1.0f - std::exp (-1.0f / (0.300f * sr));   // 300 ms release
+    loopHiDet_.clear();
+    loopHiWetEnv_ = loopHiInEnv_ = 0.0f;
+    loopHiHpWetL_ = loopHiHpWetR_ = loopHiHpInL_ = loopHiHpInR_ = 0.0f;
+}
+
 void ShimmerEngine::setUseDenseReverb (bool on) { useDenseReverb_ = on; }
 void ShimmerEngine::setUseTailSpin    (bool on) { useTailSpin_ = on; }
 void ShimmerEngine::setTailNoise      (float gain, float hpHz, float lpHz) { noiseGain_ = gain; tailNoise_.setGain (gain); tailNoise_.setBand (hpHz, lpHz); }
+void ShimmerEngine::setNoiseSustainDuck (float amt)
+{
+    noiseDuckAmt_ = std::clamp (amt, 0.0f, 1.0f);
+    noiseDuckG_ = 1.0f;
+}
 void ShimmerEngine::setUpVoiceScale (float v1, float v2)
 {
     voice1Scale_ = std::clamp (v1, 0.0f, 4.0f);
@@ -524,6 +591,30 @@ void ShimmerEngine::process (const float* inL, const float* inR,
             bandedR += hfSustainGain_ * hfShelfR_.processHP (bandedR);
         }
 
+        // RATIO-KEYED loop hi limiter (setLoopHiLimiter): duck the regenerating air
+        // band when wet-hi grossly exceeds input-hi (piano: input has no air, the
+        // pitch loop makes it; pink: input-hi large -> ratio small -> off). Inactive
+        // -> skipped -> bit-null.
+        if (loopHiCfg_.active)
+        {
+            // one-pole HP envelopes (wet = the banded fb; input = this sample's dry)
+            loopHiHpWetL_ += loopHiHpCoeff_ * (bandedL - loopHiHpWetL_);
+            loopHiHpWetR_ += loopHiHpCoeff_ * (bandedR - loopHiHpWetR_);
+            const float wetHi = 0.5f * (std::abs (bandedL - loopHiHpWetL_)
+                                      + std::abs (bandedR - loopHiHpWetR_));
+            loopHiHpInL_ += loopHiHpCoeff_ * (inL[n] - loopHiHpInL_);
+            loopHiHpInR_ += loopHiHpCoeff_ * (inR[n] - loopHiHpInR_);
+            const float inHi = 0.5f * (std::abs (inL[n] - loopHiHpInL_)
+                                     + std::abs (inR[n] - loopHiHpInR_));
+            loopHiWetEnv_ += (wetHi > loopHiWetEnv_ ? loopHiEnvAtk_ : loopHiEnvRel_) * (wetHi - loopHiWetEnv_);
+            loopHiInEnv_  += (inHi  > loopHiInEnv_  ? loopHiEnvAtk_ : loopHiEnvRel_) * (inHi  - loopHiInEnv_);
+            const float ratio = loopHiWetEnv_ / std::max (loopHiInEnv_, 1.0e-4f);
+            const bool present = loopHiInEnv_ > 1.0e-4f || loopHiWetEnv_ > 1.0e-4f;
+            const float red = loopHiDet_.advanceUnit (ratio, loopHiCfg_, present);
+            bandedL -= red * loopHiCutL_.band (bandedL);
+            bandedR -= red * loopHiCutR_.band (bandedR);
+        }
+
         // Apply user feedback gain × kFeedbackLoopAttn, then softClip
         // as a runaway safety net.
         const float fbL = DspUtils::softClip (bandedL * fb * kFeedbackLoopAttn,
@@ -598,7 +689,27 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         if (stereoMod_.active) stereoMod_.process (oL, oR);
         // Tail noise floor — envelope-tracked to the wet, fades with the decay (Valhalla's
         // dense noise-like fade; masks the sparse-mode ring). gain 0 → skipped → bit-null.
-        if (tailNoise_.active()) tailNoise_.process (wL, wR, oL, oR);
+        // NOISE SUSTAIN-DUCK (2026-07-08): the noise's gentle LP leaks 8-16 kHz; on a
+        // 22 s sustained stem the envelope-tracked noise runs continuously → measured
+        // +24 dB of Black Hole's piano-air +36.9. Duck the noise while INPUT sustains
+        // (the piano-air window); it returns within ~250 ms of input-off, so the
+        // release-measured benefits (T60-16k lift, cent_500, spec_L1) survive.
+        // duckAmt 0 → the legacy call → bit-null.
+        if (tailNoise_.active())
+        {
+            if (noiseDuckAmt_ > 0.0f)
+            {
+                const bool present = noiseDuckKey_.advance (std::abs (inL[n]) + std::abs (inR[n]));
+                const float tgt = present ? (1.0f - noiseDuckAmt_) : 1.0f;
+                noiseDuckG_ += noiseDuckSlew_ * (tgt - noiseDuckG_);
+                float nl = 0.0f, nr = 0.0f;
+                tailNoise_.process (wL, wR, nl, nr);
+                oL += noiseDuckG_ * nl;
+                oR += noiseDuckG_ * nr;
+            }
+            else
+                tailNoise_.process (wL, wR, oL, oR);
+        }
         // Output limiter. h==1 → plain tanh (bit-null). h>1 → h*tanh(x/h): the
         // knee moves to ±h so long-decay buildup (Deep Blue Day) stays linear
         // and doesn't emit odd-harmonic (3k/5k) grit on sustained tones.

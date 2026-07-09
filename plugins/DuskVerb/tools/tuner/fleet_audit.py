@@ -211,8 +211,17 @@ def render_and_check(name, no_render=False):
             shutil.copy(src, f"{lex}/anchor_{s}.wav")
     if not os.path.exists(f"{lex}/anchor_noiseburst.wav"):
         return f"NO_ANCHOR {name} {adir}", False
-    fc = subprocess.run([sys.executable, FC, dv, lex, "--name", name, "--json"],
-                        capture_output=True, text=True, timeout=200)
+    try:
+        fc = subprocess.run([sys.executable, FC, dv, lex, "--name", name, "--json"],
+                            capture_output=True, text=True, timeout=200)
+    except subprocess.TimeoutExpired:
+        return f"FC_TIMEOUT {name}", False
+    # full_check exits 1 whenever gates fail (the normal case), so returncode is
+    # NOT an error signal — key on the JSON_RESULT line, which it emits on both a
+    # clean and a failing run. Its absence means a crash/abort, which must report
+    # as a FAILED status (ok=False), never pass through as an empty (0-fail) result.
+    if "JSON_RESULT" not in fc.stdout:
+        return f"FC_ERROR {name} (rc={fc.returncode})\n{fc.stderr[-400:]}", False
     return fc.stdout, True
 
 
@@ -239,9 +248,10 @@ def check_anchor(name):
     for s in stims:
         p = f"{adir}/{apref}_{s}.wav"
         if not os.path.exists(p):
-            # Optional stimuli (piano) skip like render_and_check/full_check;
-            # only a required stimulus miss is FATAL (aborts the fleet).
-            if s in OPTIONAL_STIM:
+            # Optional stimuli (piano, and sinelong which full_check also skips)
+            # skip like render_and_check/full_check; only a required stimulus
+            # miss is FATAL (aborts the fleet).
+            if s in OPTIONAL_STIM or s == "sinelong":
                 problems.append(f"optional anchor stimulus {os.path.basename(p)} absent — skipped")
             else:
                 problems.append(f"FATAL: missing anchor stimulus {os.path.basename(p)}")

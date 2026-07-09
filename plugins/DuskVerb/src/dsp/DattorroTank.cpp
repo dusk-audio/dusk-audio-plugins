@@ -251,6 +251,14 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.delay1Lfo.prepare (static_cast<float> (sampleRate), 0x87654321u ^ 0xA5A5A5A5u);
     rightTank_.delay2Lfo.prepare (static_cast<float> (sampleRate), 0x87654321u ^ 0x5A5A5A5Au);
 
+    // Mode-smear LFOs — distinct seeds again so the deep+slow wander is decorrelated
+    // from the mode-breaking delay LFOs AND across taps/tanks. Depth/rate applied by
+    // setModeSmear() below (re-applied here at the new sample rate).
+    leftTank_ .smearLfo1.prepare (static_cast<float> (sampleRate), 0x12345678u ^ 0xDEADBEEFu);
+    leftTank_ .smearLfo2.prepare (static_cast<float> (sampleRate), 0x12345678u ^ 0xBEEFDEADu);
+    rightTank_.smearLfo1.prepare (static_cast<float> (sampleRate), 0x87654321u ^ 0xDEADBEEFu);
+    rightTank_.smearLfo2.prepare (static_cast<float> (sampleRate), 0x87654321u ^ 0xBEEFDEADu);
+
     // Per-density-AP jitter LFOs — distinct seeds per stage and per L/R tank
     // so every AP wanders independently. Rate is set later in updateJitterDepth
     // (called from updateDelayLengths) based on actual delaySamples.
@@ -273,6 +281,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     // any more — the white-noise modulation has been replaced by the
     // smoothstep-interpolated delay LFOs).
     setModDepth (lastModDepthRaw_);
+    setModeSmear (smearDepthSamples_, smearRateHz_);   // re-apply smear depth/rate at the new sample rate
 
     // Re-apply structural HF damping for new sample rate
     if (lastStructHFHz_ > 0.0f)
@@ -281,6 +290,18 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     // Re-realize the in-loop mode notch at the new sample rate (also clears state)
     if (notchActive_)
         setModeNotch (mnHz_, mnCutDb_, mnQ_);
+
+    // Re-derive the HF-sustain shelf at the new sample rate.
+    setHFSustain (hfSusDb_, hfSusHz_);
+
+    // Sustain-band limiter: re-derive coeffs at the new sample rate + clear state.
+    susLimMidCfg_.updateCoeffs (sampleRate);
+    susLimLowCfg_.updateCoeffs (sampleRate);
+    susLimMidDet_.clear();  susLimLowDet_.clear();
+    susLimMidSplitL_.clear(); susLimMidSplitR_.clear();
+    susLimLowSplitL_.clear(); susLimLowSplitR_.clear();
+    susLimKey_.prepare (sampleRate);
+    susLimMidRed_ = susLimLowRed_ = susLimMidAcc_ = susLimLowAcc_ = 0.0f;
 
     // Recompute soft-onset coefficient for the new sample rate
     if (softOnsetMs_ > 0.0f)
@@ -367,6 +388,25 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                     input, std::clamp (kInputDiffuserCoeff[k] * inputDiffCoeffScale_, 0.0f, 0.85f));
         }
 
+        // --- Sustain-band limiter: advance the SHARED (both-tank) detectors once per
+        // sample from the PREVIOUS sample's summed |band| (one-sample latency is
+        // negligible at the detector taus). Input-keyed release protects the T60 fit.
+        // Inactive → untouched → bit-null.
+        if ((susLimMidCfg_.active || susLimLowCfg_.active) && ! frozen_)
+        {
+            const bool present = susLimKey_.advance (std::fabs (input));
+            if (susLimMidCfg_.active)
+            {
+                susLimMidRed_ = susLimMidDet_.advance (0.5f * susLimMidAcc_, susLimMidCfg_, present);
+                susLimMidAcc_ = 0.0f;
+            }
+            if (susLimLowCfg_.active)
+            {
+                susLimLowRed_ = susLimLowDet_.advance (0.5f * susLimLowAcc_, susLimLowCfg_, present);
+                susLimLowAcc_ = 0.0f;
+            }
+        }
+
         // ------------------------------------------------------------------
         // Process both tanks. Each receives the other's cross-feed state.
         // Order: left first, then right. The one-sample delay in cross-feed
@@ -403,7 +443,10 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             // rate FM sidebands (the "tape hiss" that per-sample white-noise
             // jitter generated).
             float jitter1 = frozen_ ? 0.0f : tank.delay1Lfo.next();
-            float del1Read = tank.delay1Samples + jitter1 * modReduction_;
+            // Deep+slow mode-smear on top of the shallow mode-breaking jitter. Only
+            // advanced when active AND not frozen → depth 0 leaves the read byte-exact.
+            float smear1 = (smearActive_ && ! frozen_) ? tank.smearLfo1.next() : 0.0f;
+            float del1Read = tank.delay1Samples + jitter1 * modReduction_ + smear1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
             tank.delay1.write (ap1Out);
@@ -443,13 +486,41 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                 damped = y;
             }
 
+            // --- Sustain-band limiter (in-loop; SustainBandLimiter.h): applies the
+            // shared reduction (advanced at sample top) to this tank's split band;
+            // accumulates |band| for the next advance. Inactive → bit-null. ---
+            if (susLimMidCfg_.active && ! frozen_)
+            {
+                auto& sp = (&tank == &leftTank_) ? susLimMidSplitL_ : susLimMidSplitR_;
+                const float b = sp.band (damped, susLimMidCfg_);
+                susLimMidAcc_ += std::fabs (b);
+                damped -= susLimMidRed_ * b;
+            }
+            if (susLimLowCfg_.active && ! frozen_)
+            {
+                auto& sp = (&tank == &leftTank_) ? susLimLowSplitL_ : susLimLowSplitR_;
+                const float b = sp.band (damped, susLimLowCfg_);
+                susLimLowAcc_ += std::fabs (b);
+                damped -= susLimLowRed_ * b;
+            }
+
+            // --- Per-pass HF-sustain shelf (setHFSustain): cancels the compounding
+            // interpolation/AA HF loss that cliffs the top octave. 0 dB = skipped/bit-null.
+            if (hfSusGain_ > 0.0f && ! frozen_)
+            {
+                float& lp = (&tank == &leftTank_) ? hfSusLpL_ : hfSusLpR_;
+                lp += hfSusCoeff_ * (damped - lp);
+                damped += hfSusGain_ * (damped - lp);
+            }
+
             // --- Static allpass (decay diffusion 2) ---
             float coeff2 = frozen_ ? 0.0f : decayDiff2_;
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 (with smooth random-walk modulation) ---
             float jitter2 = frozen_ ? 0.0f : tank.delay2Lfo.next();
-            float del2Read = tank.delay2Samples + jitter2 * modReduction_;
+            float smear2 = (smearActive_ && ! frozen_) ? tank.smearLfo2.next() : 0.0f;
+            float del2Read = tank.delay2Samples + jitter2 * modReduction_ + smear2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
             // Denormal prevention: tiny alternating bias
@@ -680,6 +751,26 @@ void DattorroTank::setModRate (float hz)
     modRateHz_ = hz;
     if (prepared_)
         updateLFORates();
+}
+
+void DattorroTank::setModeSmear (float depthSamples, float rateHz)
+{
+    // Clamp depth to the same 512-sample ceiling FDNReverb uses: the read offset
+    // (delaySamples + jitter + smear) must stay inside the per-line buffer slack
+    // so a deep excursion never reads stale/wrapped history. Buffers reserve
+    // maxDelay×(size 4x) + 2·maxModExcursion, so 512 is safely inside for the
+    // baked depths (≤300) at any runtime size.
+    smearDepthSamples_ = std::clamp (depthSamples, 0.0f, 512.0f);
+    smearRateHz_       = std::clamp (rateHz, 0.001f, 5.0f);
+    smearActive_       = smearDepthSamples_ > 1.0e-3f;
+    if (! prepared_)
+        return;
+    // Slightly detune the two taps (like the mode-breaking LFOs) so the L/R + tap
+    // paths never trace the same wander. Depth is a peak excursion in samples.
+    leftTank_ .smearLfo1.setDepth (smearDepthSamples_); leftTank_ .smearLfo1.setRate (smearRateHz_);
+    leftTank_ .smearLfo2.setDepth (smearDepthSamples_); leftTank_ .smearLfo2.setRate (smearRateHz_ * 1.11f);
+    rightTank_.smearLfo1.setDepth (smearDepthSamples_); rightTank_.smearLfo1.setRate (smearRateHz_ * 0.93f);
+    rightTank_.smearLfo2.setDepth (smearDepthSamples_); rightTank_.smearLfo2.setRate (smearRateHz_ * 1.04f);
 }
 
 void DattorroTank::setLimiter (float thresholdDb, float releaseMs)
@@ -966,6 +1057,31 @@ void DattorroTank::setModeNotch (float hz, float cutDb, float q)
     notchActive_ = true;
 }
 
+void DattorroTank::setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                                         float atkMs, float relFastMs, float relSlowMs)
+{
+    susLimMidCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    susLimMidDet_.clear();
+    susLimMidRed_ = susLimMidAcc_ = 0.0f;
+}
+
+void DattorroTank::setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                                         float atkMs, float relFastMs, float relSlowMs)
+{
+    susLimLowCfg_.set (loHz, hiHz, threshDb, maxCutDb, atkMs, relFastMs, relSlowMs, sampleRate_);
+    susLimLowDet_.clear();
+    susLimLowRed_ = susLimLowAcc_ = 0.0f;
+}
+
+void DattorroTank::setHFSustain (float db, float cornerHz)
+{
+    hfSusDb_    = std::clamp (db, 0.0f, 6.0f);
+    hfSusHz_    = std::clamp (cornerHz, 2000.0f, 18000.0f);
+    hfSusGain_  = std::pow (10.0f, hfSusDb_ / 20.0f) - 1.0f;   // 0 dB -> 0 -> bit-null
+    hfSusCoeff_ = 1.0f - std::exp (-kTwoPi * hfSusHz_ / static_cast<float> (sampleRate_));
+    hfSusLpL_ = hfSusLpR_ = 0.0f;
+}
+
 void DattorroTank::setStructuralHFDamping (float hz)
 {
     lastStructHFHz_ = hz;
@@ -1042,6 +1158,28 @@ void DattorroTank::clearBuffers()
     // In-loop mode-notch biquad state (mirrors the reset in setModeNotch) — else
     // stale notch samples survive an algorithm/preset swap that calls clearBuffers.
     mnZ1L_ = mnZ2L_ = mnZ1R_ = mnZ2R_ = 0.0f;
+    // HF-sustain shelf one-pole state.
+    hfSusLpL_ = hfSusLpR_ = 0.0f;
+    // Sustain-band limiter: detectors, per-channel splitters, presence key,
+    // slewed reduction + accumulators — all in-loop state that must not carry
+    // across an algorithm/preset swap.
+    susLimMidDet_.clear(); susLimLowDet_.clear();
+    susLimMidSplitL_.clear(); susLimMidSplitR_.clear();
+    susLimLowSplitL_.clear(); susLimLowSplitR_.clear();
+    susLimKey_.clear();
+    susLimMidRed_ = susLimLowRed_ = 0.0f;
+    susLimMidAcc_ = susLimLowAcc_ = 0.0f;
+    // Mode-smear LFOs — reseed to prepare()'s deterministic phase (the clearTank
+    // lambda above already does this for the mode-breaking LFOs), then re-apply
+    // depth/rate (prepare(seed) leaves depth at 0).
+    {
+        const float sr = static_cast<float> (sampleRate_);
+        leftTank_ .smearLfo1.prepare (sr, 0x12345678u ^ 0xDEADBEEFu);
+        leftTank_ .smearLfo2.prepare (sr, 0x12345678u ^ 0xBEEFDEADu);
+        rightTank_.smearLfo1.prepare (sr, 0x87654321u ^ 0xDEADBEEFu);
+        rightTank_.smearLfo2.prepare (sr, 0x87654321u ^ 0xBEEFDEADu);
+        setModeSmear (smearDepthSamples_, smearRateHz_);
+    }
     bloomEnv_     = bloomActive_ ? 0.0f : 1.0f;
     bloomRampPos_ = bloomActive_ ? 0.0f : 1.0f;
     bloomQuietSamples_ = bloomRearmSamples_;  // armed: first onset triggers the swell

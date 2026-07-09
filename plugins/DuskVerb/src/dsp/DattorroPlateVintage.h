@@ -67,6 +67,11 @@ public:
     void setTonalCorrDb       (int band, float dB);
     void setBloomAttackMs     (float ms);
     void setBloomExp          (float e);
+    // In-loop sustained-energy limiter (SustainBandLimiter.h in the tank); 0 = bit-null.
+    void setSustainLimiterMid (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
+    void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
+                               float atkMs, float relFastMs, float relSlowMs);
     void setFreeze            (bool frozen);
 
     // HDP-compat no-ops. The Dattorro architecture has no in-loop bass
