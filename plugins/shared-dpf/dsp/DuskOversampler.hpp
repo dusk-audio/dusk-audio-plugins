@@ -129,4 +129,36 @@ private:
     HalfbandFIR<15, 4>  upB, downB;   // 2x  <-> 4x
 };
 
+//==============================================================================
+// Local 2x wrapper for ONE memoryless nonlinearity: a single (non-nested)
+// halfband up/down stage so the nonlinearity runs at twice the surrounding
+// rate. High-order harmonics that would fold in-band at the surrounding rate
+// land below the doubled Nyquist instead, and the down-halfband removes them.
+// Use it to anti-alias a waveshaper / saturator / limiter cheaply, without
+// raising the whole plugin's oversampling factor:
+//     y = stage.process(x, [](float s){ return myShaper(s); });
+// Stage-B taps: passband edge ~0.12*fs (far above audio at any musical rate);
+// stopband -75 dB. ~4 taps up + 4 down + 2 nonlinearity evals per sample.
+// Unlike ADAA (DuskADAA.hpp) it needs no antiderivative and does not interact
+// with a surrounding nested-halfband oversampler's group delay.
+//==============================================================================
+class Local2xStage
+{
+public:
+    void reset() noexcept { up.reset(); down.reset(); }
+
+    template <class Fn>
+    float process (float x, Fn&& f) noexcept
+    {
+        up.push (x);        const float u0 = 2.0f * up.out (hbtaps::kB);
+        up.push (0.0f);     const float u1 = 2.0f * up.out (hbtaps::kB);
+        down.push (f (u0));
+        down.push (f (u1));
+        return down.out (hbtaps::kB);
+    }
+
+private:
+    HalfbandFIR<15, 4> up, down;
+};
+
 } // namespace duskaudio

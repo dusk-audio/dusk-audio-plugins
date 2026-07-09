@@ -73,7 +73,7 @@ public:
 
         duskdpf::Palette pal;
         pal.white    = kColInk;
-        pal.whiteDim = kColInkDim;
+        pal.whiteDim = IM_COL32(70, 68, 64, 255);   // darker than kColInkDim so knob readouts stay legible on the gray panel
         panel.setPalette(pal);
 
         scanUserPresets();
@@ -253,13 +253,12 @@ private:
     }
 
     // small silver chevron button (< or >) for preset stepping
-    bool chevron(ImDrawList* dl, const char* id, float cx, float cy, bool left, const char* tip)
+    bool chevron(ImDrawList* dl, const char* id, float cx, float cy, bool left)
     {
         const ImVec2 b0 = P(cx - 9, cy - 10), b1 = P(cx + 9, cy + 10);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
-        if (tip != nullptr && hov) ImGui::SetTooltip("%s", tip);
         dl->AddRectFilled(b0, b1, hov ? IM_COL32(214, 214, 216, 255) : IM_COL32(224, 224, 226, 255), 2.0f * s);
         dl->AddRect(b0, b1, IM_COL32(120, 121, 123, 255), 2.0f * s, 0, 1.0f * s);
         const ImVec2 c = P(cx, cy); const float d = 4.0f * s;
@@ -270,12 +269,11 @@ private:
 
     // small silver text button
     bool textButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
-                    const char* label, const char* tip)
+                    const char* label)
     {
         const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-        if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
         dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
                                     IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
         dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.2f * s);
@@ -312,13 +310,6 @@ private:
         {   // machine badge (accent-tinted) + non-standard indicator
             const char* badge = isA800() ? "A800" : "ATR-102";
             const bool std = comboIsStd();
-            ImGui::SetCursorScreenPos(P(193, 16));
-            ImGui::InvisibleButton("badge", ImVec2(50.0f * s, 18.0f * s));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(std ? "Tape machine: %s"
-                                      : "Tape machine: %s\nCurrent speed / EQ / tape combo is non-standard for\n"
-                                        "this machine (still fully modelled - nothing is disabled).",
-                                  isA800() ? "A800 - tight, clean, punchy" : "ATR-102 - warm, wide, silky");
             dl->AddRectFilled(P(193, 16), P(243, 34), accentCol(), 3.0f * s);
             dl->AddRect(P(193, 16), P(243, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
             text(dl, 218, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
@@ -329,7 +320,7 @@ private:
         //   < [combo] >  INIT  SAVE          (all on the 18..38 band)
         const char* cur = currentPreset >= 0 ? kTmPresets[currentPreset].name
                         : (!currentUserName.empty() ? currentUserName.c_str() : "Presets...");
-        if (chevron(dl, "##pv", 298, 28, true, "Previous preset")) stepPreset(-1);
+        if (chevron(dl, "##pv", 298, 28, true)) stepPreset(-1);
         ImGui::SetCursorScreenPos(P(311, 18));
         ImGui::SetNextItemWidth(200.0f * s);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
@@ -348,14 +339,16 @@ private:
                 if (lastCat == nullptr || std::strcmp(lastCat, kTmPresets[i].category) != 0)
                 {
                     lastCat = kTmPresets[i].category;
-                    ImGui::TextDisabled("%s", lastCat);
+                    // Labelled divider (not a greyed row) so category headers read
+                    // as group headings, not disabled/unselectable presets.
+                    ImGui::SeparatorText(lastCat);
                 }
                 if (ImGui::Selectable(kTmPresets[i].name, i == currentPreset))
                     applyPreset(i);
             }
             if (!userPresets.empty())
             {
-                ImGui::TextDisabled("User");
+                ImGui::SeparatorText("User");
                 for (const auto& up : userPresets)
                     if (ImGui::Selectable(up.first.c_str(), currentPreset < 0 && up.first == currentUserName))
                         loadUserPreset(up.second, up.first);
@@ -363,18 +356,18 @@ private:
             ImGui::EndCombo();
         }
         ImGui::PopStyleColor(8);
-        if (chevron(dl, "##nx", 524, 28, false, "Next preset")) stepPreset(+1);
-        if (textButton(dl, "##init", 545, 18, 581, 38, "INIT", "Reset all controls to their defaults")) initDefaults();
-        if (textButton(dl, "##save", 587, 18, 623, 38, "SAVE", "Save the current settings as a user preset"))
+        if (chevron(dl, "##nx", 524, 28, false)) stepPreset(+1);
+        if (textButton(dl, "##init", 545, 18, 581, 38, "INIT")) initDefaults();
+        if (textButton(dl, "##save", 587, 18, 623, 38, "SAVE"))
         {
             std::snprintf(saveBuf, sizeof(saveBuf), "%s", currentUserName.c_str());
             ImGui::OpenPopup("Save Preset");
         }
         drawSaveModal();
 
-        // bypass, right-anchored, clear of the top-right corner screw (~x784)
-        tmButton(dl, "bypass", kParamBypass, 680, 18, 768, 38, "BYPASS",
-                 "Bypass the plugin (host-integrated).");
+        // bypass, tucked closer to INIT/SAVE (SAVE ends ~623) while staying clear
+        // of the top-right corner screw (~x784).
+        tmButton(dl, "bypass", kParamBypass, 640, 18, 728, 38, "BYPASS");
     }
 
     // Meter source IN|OUT switch. Removed from the UI by request; kept intact (the
@@ -498,15 +491,23 @@ private:
 
         // over lamp (right). Only meaningful on the OUTPUT source, where it means a
         // true >= 0 dBFS digital clip. On INPUT, being in the red is desirable tape
-        // drive, so the lamp is disabled (clipEnabled == false).
-        if (clipEnabled && level > 1.0f) clipHold = 1.2f;
-        else if (clipHold > 0.0f) clipHold -= ImGui::GetIO().DeltaTime;
-        const bool over = clipEnabled && clipHold > 0.0f;
+        // drive, so the lamp is disabled (clipEnabled == false). LATCHES on clip and
+        // stays lit until clicked, so a clip that already passed is still visible.
+        if (clipEnabled && level > 1.0f) clipHold = 1.0f;
+        const bool over = clipEnabled && clipHold > 0.5f;
         const ImVec2 lp = P(fx1 - 15, pivotY - L * 0.20f);
-        if (over) dl->AddCircleFilled(lp, 8.0f * s, IM_COL32(230, 60, 40, 70), 20);   // glow
-        dl->AddCircleFilled(lp, 5.0f * s, over ? IM_COL32(232, 60, 40, 255) : IM_COL32(96, 40, 32, 255), 16);
+        if (clipEnabled)
+        {
+            char cid[8]; std::snprintf(cid, sizeof(cid), "clip%s", label);
+            ImGui::SetCursorScreenPos(ImVec2(lp.x - 8.0f * s, lp.y - 8.0f * s));
+            ImGui::InvisibleButton(cid, ImVec2(16.0f * s, 16.0f * s));
+            if (ImGui::IsItemClicked()) clipHold = 0.0f;
+        }
+        if (over) dl->AddCircleFilled(lp, 8.0f * s, IM_COL32(230, 60, 40, 80), 20);   // glow
+        dl->AddCircleFilled(lp, 5.0f * s, over ? IM_COL32(236, 62, 40, 255) : IM_COL32(58, 46, 44, 255), 16);
+        dl->AddCircle(lp, 5.0f * s, IM_COL32(0, 0, 0, 90), 16, 1.0f * s);
         dl->AddCircleFilled(ImVec2(lp.x - 1.4f * s, lp.y - 1.6f * s), 1.6f * s,
-                            IM_COL32(255, 200, 180, over ? 210 : 90), 10);
+                            IM_COL32(255, 200, 180, over ? 220 : 55), 10);
 
         // VU legend + channel tag
         text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
@@ -536,7 +537,7 @@ private:
     // cx = column centre; w = combo width (sized to fit its widest option +
     // the dropdown arrow). The combo is centred under its (centred) label.
     void selector(ImDrawList* dl, const char* id, uint32_t param, float cx, float y,
-                  float w, const char* title, const char* tip)
+                  float w, const char* title)
     {
         const TmParam& d = kTmParams[param];
         const bool std = selectorIsStd(param);
@@ -555,12 +556,6 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(178, 179, 181, 255));
         ImGui::PushStyleColor(ImGuiCol_Text, kColInk);
         const bool open = ImGui::BeginCombo(id, d.choices[cur]);   // arrow -> reads as a dropdown
-        if (ImGui::IsItemHovered())
-        {
-            if (!std) ImGui::SetTooltip("%s\n(non-standard for the %s - still fully modelled)",
-                                        tip ? tip : "", isA800() ? "A800" : "ATR-102");
-            else if (tip != nullptr) ImGui::SetTooltip("%s", tip);
-        }
         if (open)
         {
             for (int i = 0; i < d.numChoices; ++i)
@@ -577,39 +572,40 @@ private:
     void drawSelectors(ImDrawList* dl)
     {
         const float y = 216.0f;
-        // id, param, column-centre, width (fits widest option + arrow), title, tooltip
-        struct Sel { const char* id; uint32_t p; float cx, w; const char* t; const char* tip; };
+        // id, param, column-centre, width (fits widest option + arrow), title
+        struct Sel { const char* id; uint32_t p; float cx, w; const char* t; };
         static const Sel ss[6] = {
-            { "##machine", kParamTapeMachine,  83.f, 100.f, "MACHINE",
-              "Tape machine model: Swiss 800 (tighter/cleaner) or Classic 102 (warmer)." },
-            { "##speed",   kParamTapeSpeed,   210.f,  82.f, "TAPE SPEED",
-              "Tape speed. Faster = extended lows/highs, less head bump and noise." },
-            { "##type",    kParamTapeType,    337.f,  90.f, "TAPE TYPE",
-              "Tape formulation: affects saturation, headroom and noise floor." },
-            { "##path",    kParamSignalPath,  463.f,  78.f, "SIGNAL PATH",
-              "Repro = full tape path; Sync = repro w/ extra HF loss; Input = electronics only; Thru = bypass." },
-            { "##eq",      kParamEqStandard,  590.f,  70.f, "EQ STANDARD",
-              "Record/repro EQ curve: NAB (US), CCIR/IEC (EU), or AES (30 IPS)." },
-            { "##os",      kParamOversampling,717.f,  62.f, "OVERSAMPLING",
-              "Anti-alias oversampling. Higher = cleaner saturation, more CPU." },
+            { "##machine", kParamTapeMachine,  83.f, 100.f, "MACHINE" },
+            { "##speed",   kParamTapeSpeed,   210.f,  82.f, "TAPE SPEED" },
+            { "##type",    kParamTapeType,    337.f,  90.f, "TAPE TYPE" },
+            { "##path",    kParamSignalPath,  463.f,  78.f, "SIGNAL PATH" },
+            { "##eq",      kParamEqStandard,  590.f,  70.f, "EQ STANDARD" },
+            { "##os",      kParamOversampling,717.f,  62.f, "OVERSAMPLING" },
         };
         for (const Sel& e : ss)
-            selector(dl, e.id, e.p, e.cx, y, e.w, e.t, e.tip);
+            selector(dl, e.id, e.p, e.cx, y, e.w, e.t);
     }
 
     //--- knob rows -------------------------------------------------------------
-    // Persistent value readout, right-click reset + tooltip inherited from the
-    // shared knob. dispAdd shifts the read-out (BIAS shows relative over/under).
-    void knob(ImDrawList* dl, const char* id, uint32_t param, float cx, float cy,
+    // Persistent value readout, right-click reset. dispAdd shifts the read-out
+    // (BIAS shows relative over/under).
+    bool knob(ImDrawList* dl, const char* id, uint32_t param, float cx, float cy,
               const char* l1, const char* fmt, const char* suffix,
-              const char* tip, float dispAdd = 0.0f)
+              float dispAdd = 0.0f)
     {
         const TmParam& d = kTmParams[param];
         panel.knobLabel(dl, cx, cy - 50.0f, l1);
-        panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, values[param], d.def,
+        return panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, values[param], d.def,
                    false, true, fmt, suffix, 0, false,
-                   /*persistent*/ true, tip, /*rightClickReset*/ true, 1.0f, dispAdd,
+                   /*persistent*/ true, nullptr, /*rightClickReset*/ true, 1.0f, dispAdd,
                    /*hover name*/ l1);
+    }
+
+    // Set a parameter from the UI (value + host notify), keeping values[] in sync.
+    void applyParam(uint32_t param, float v)
+    {
+        values[param] = v;
+        editParameter(param, true); setParameterValue(param, v); editParameter(param, false);
     }
 
     // Machine-aware accent: A800 (Swiss 800) cooler blue-grey, ATR-102 (Classic
@@ -639,10 +635,13 @@ private:
     }
     static constexpr ImU32 kColNonStd = IM_COL32(162, 118, 52, 255); // muted amber
 
-    // Centred small-caps section header with an accent underline.
+    // Centred small-caps section header with an accent underline. Engraved
+    // (light highlight below + dark ink on top) so it reads clearly on the
+    // mid-gray panel instead of the old low-contrast dim ink.
     void sectionHeader(ImDrawList* dl, float cx, float y, const char* txt)
     {
-        text(dl, cx, y, 9.5f, kColInkDim, txt, 0, true);
+        text(dl, cx, y + 1.0f, 9.5f, kColPanelHi, txt, 0, true);   // engrave highlight
+        text(dl, cx, y, 9.5f, kColInk, txt, 0, true);
         ImFont* f = labelFont ? labelFont : ImGui::GetFont();
         const float w = f->CalcTextSizeA(9.5f * s, FLT_MAX, 0, txt).x;
         const ImVec2 c = P(cx, y + 13.0f);
@@ -667,57 +666,70 @@ private:
             dl->AddLine(P(dx, cellTop), P(dx, cellBot), IM_COL32(150, 151, 153, 170), 1.0f * s);
         dl->AddLine(P(26, cellBot), P(774, cellBot), IM_COL32(150, 151, 153, 140), 1.0f * s);
 
-        // GAIN STAGING
-        knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB",
-             "Drive into the tape stage. Higher = more saturation.");
-        knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB",
-             "Make-up gain after the tape stage.");
+        // GAIN STAGING — with GAIN LINK (autoComp) on, INPUT and OUTPUT lock
+        // inversely (output = -input): drive the tape harder without the level
+        // rising. Either knob drives the other.
+        const bool gainLinked = values[kParamAutoComp] > 0.5f;
+        const bool inCh  = knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB");
+        const bool outCh = knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB");
+        if (gainLinked)
+        {
+            const TmParam& og = kTmParams[kParamOutputGain];
+            const TmParam& ig = kTmParams[kParamInputGain];
+            auto cl = [](float v, float lo, float hi){ return v < lo ? lo : (v > hi ? hi : v); };
+            if (inCh)       applyParam(kParamOutputGain, cl(-values[kParamInputGain],  og.min, og.max));
+            else if (outCh) applyParam(kParamInputGain,  cl(-values[kParamOutputGain], ig.min, ig.max));
+        }
         text(dl, 115, ty, 9.0f, kColInk, "GAIN LINK", 0, true);
-        tmButton(dl, "autocomp", kParamAutoComp, 82, ty + 10, 148, ty + 30, "ON",
-                 "Auto gain compensation: output tracks input so level stays matched.");
+        tmButton(dl, "autocomp", kParamAutoComp, 82, ty + 10, 148, ty + 30, "", true);
 
-        // TAPE CHARACTER
-        knob(dl, "bias",  kParamBias,       257.0f, cy, "BIAS",  "%+.0f", "%",
-             "Tape bias vs. optimal calibration. Under-bias = grittier, more distortion.", -50.0f);
-        knob(dl, "noise", kParamNoiseAmount,353.0f, cy, "NOISE", "%.0f", "%",
-             "Tape hiss level. 0% = clean/silent.");
+        // TAPE CHARACTER — BIAS fades into the panel when AUTO BIAS (autoCal) is
+        // on (the DSP then computes bias from tape+speed and ignores the knob). A
+        // soft panel-toned disc veil reads as "inactive" without a hard grey box.
+        const bool biasAuto = values[kParamAutoCal] > 0.5f;
+        knob(dl, "bias",  kParamBias,       257.0f, cy, "BIAS",  "%+.0f", "%", -50.0f);
+        if (biasAuto)
+            dl->AddCircleFilled(P(257.0f, cy), 33.0f * s, IM_COL32(190, 188, 183, 140), 48); // panel-toned veil = inactive
+        knob(dl, "noise", kParamNoiseAmount,353.0f, cy, "NOISE", "%.0f", "%");
         text(dl, 305, ty, 9.0f, kColInk, "AUTO BIAS", 0, true);
-        tmButton(dl, "autocal", kParamAutoCal, 272, ty + 10, 338, ty + 30, "ON",
-                 "Auto bias calibration for the selected tape and speed (disables the BIAS knob).");
+        tmButton(dl, "autocal", kParamAutoCal, 272, ty + 10, 338, ty + 30, "", true);
 
         // TRANSPORT
-        knob(dl, "wow",  kParamWow,     447.0f, cy, "WOW",     "%.0f", "%",
-             "Slow pitch drift (~0.5 Hz) from the transport.");
-        knob(dl, "flut", kParamFlutter, 543.0f, cy, "FLUTTER", "%.0f", "%",
-             "Faster pitch modulation (tape/motor flutter).");
+        knob(dl, "wow",  kParamWow,     447.0f, cy, "WOW",     "%.0f", "%");
+        knob(dl, "flut", kParamFlutter, 543.0f, cy, "FLUTTER", "%.0f", "%");
 
         // FILTERS
-        knob(dl, "hp", kParamHighpassFreq, 637.0f, cy, "HIGHPASS", "%.0f", " Hz",
-             "High-pass filter on the output.");
-        knob(dl, "lp", kParamLowpassFreq,  733.0f, cy, "LOWPASS",  "%.0f", " Hz",
-             "Low-pass filter on the output (tape HF roll-off).");
+        knob(dl, "hp", kParamHighpassFreq, 637.0f, cy, "HIGHPASS", "%.0f", " Hz");
+        knob(dl, "lp", kParamLowpassFreq,  733.0f, cy, "LOWPASS",  "%.0f", " Hz");
     }
 
     void tmButton(ImDrawList* dl, const char* id, uint32_t param, float x0, float y0,
-                  float x1, float y1, const char* label, const char* tip = nullptr)
+                  float x1, float y1, const char* label, bool stateLabel = false)
     {
         const bool on = values[param] > 0.5f;
         const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-        if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
         if (ImGui::IsItemClicked())
         {
             const float nv = on ? 0.0f : 1.0f;
             editParameter(param, true); values[param] = nv;
             setParameterValue(param, nv); editParameter(param, false);
         }
-        dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
-                                    IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
-        dl->AddRect(b0, b1, IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.4f * s);
+        // ON reads as a recessed, lit cap (warm border + red pilot + red text);
+        // OFF as a raised light cap with dim "OFF" text — the two are now
+        // unmistakable instead of both showing a static "ON".
+        if (on)
+            dl->AddRectFilledMultiColor(b0, b1, IM_COL32(188, 186, 188, 255), IM_COL32(188, 186, 188, 255),
+                                        IM_COL32(214, 212, 212, 255), IM_COL32(214, 212, 212, 255));
+        else
+            dl->AddRectFilledMultiColor(b0, b1, IM_COL32(226, 226, 228, 255), IM_COL32(226, 226, 228, 255),
+                                        IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
+        dl->AddRect(b0, b1, on ? IM_COL32(150, 84, 74, 255) : IM_COL32(90, 90, 92, 255), 2.0f * s, 0, 1.4f * s);
         if (on) dl->AddCircleFilled(P(x0 + 8.0f, 0.5f * (y0 + y1)), 2.6f * s, kColRed, 12);
+        const char* lbl = stateLabel ? (on ? "ON" : "OFF") : label;
         text(dl, 0.5f * (x0 + x1) + 5.0f, y0 + 0.32f * (y1 - y0), 10.0f,
-             on ? kColRed : kColInk, label, 0, true);
+             on ? kColRed : kColInkDim, lbl, 0, true);
     }
 
     //--- state -----------------------------------------------------------------

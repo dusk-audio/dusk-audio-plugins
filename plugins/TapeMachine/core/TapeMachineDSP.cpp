@@ -69,9 +69,13 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     // Initial (snap) values matching PluginProcessor::prepareToPlay.
     const float inGainDb = pInputGainDb.load (std::memory_order_relaxed);
     inGain.snap  (dbToGain (inGainDb));
-    outGain.snap (pAutoComp.load (std::memory_order_relaxed)
-                      ? dbToGain (-inGainDb + 3.08f)             // comp at inGainDb==0
-                      : dbToGain (pOutputGainDb.load (std::memory_order_relaxed)));
+    {
+        const float calDb = static_cast<float> (clampI (pCalibration.load (std::memory_order_relaxed), 0, 3)) * 3.0f;
+        const float kFixed = (pMachine.load (std::memory_order_relaxed) == 0) ? 6.3f : 5.5f;   // Swiss800 : Classic102
+        outGain.snap (pAutoComp.load (std::memory_order_relaxed)
+                          ? dbToGain (-inGainDb + calDb + kFixed)     // gain-link makeup
+                          : dbToGain (pOutputGainDb.load (std::memory_order_relaxed)));
+    }
     const float initSat = std::clamp (((inGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
     smSat.snap     (initSat);
     smWow.snap     (pWow.load (std::memory_order_relaxed));
@@ -234,14 +238,15 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     float targetOutputGain;
     if (pAutoComp.load (std::memory_order_relaxed))
     {
-        float compressionCompensation;
-        if (inputGainDb <= 0.0f)
-            compressionCompensation = 0.0066667f * inputGainDb * inputGainDb
-                                    + 0.346667f  * inputGainDb + 3.08f;
-        else
-            compressionCompensation = 0.0498611f * inputGainDb * inputGainDb
-                                    + 0.0925f    * inputGainDb + 3.08f;
-        targetOutputGain = dbToGain (-inputGainDb + compressionCompensation);
+        // Gain link ("LINK"): output = -input so the two gain knobs lock inversely
+        // (drive the tape harder without the level rising), plus a fixed makeup for
+        // the tape's insertion loss so the net through-level stays ~unity. The old
+        // quadratic compensation cancelled the retired 3-band J-A's heavy dynamic
+        // compression; the waveshaper tape is ~unity-slope, so the makeup collapses
+        // to a constant that just tracks the calibration trim.
+        const float calDb = static_cast<float> (clampI (pCalibration.load (std::memory_order_relaxed), 0, 3)) * 3.0f;
+        const float kFixed = (machine == TapeCore::Swiss800) ? 6.3f : 5.5f;
+        targetOutputGain = dbToGain (-inputGainDb + calDb + kFixed);
     }
     else
     {
@@ -378,7 +383,10 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- crosstalk (base rate — deviation from JUCE's OS-rate placement) ------
     if (nCh >= 2)
     {
-        const float crosstalkAmount = (machine == TapeCore::Swiss800) ? 0.005f : 0.015f;
+        // A800: the UAD stereo instance models no L/R adjacent-track bleed, so the
+        // A800 crosstalk is essentially nil. Classic102 matches the UAD ATR-102's
+        // modelled "Crosstalk On" bleed (~-51 dB L->R).
+        const float crosstalkAmount = (machine == TapeCore::Swiss800) ? 0.0006f : 0.0027f;
         for (int n = 0; n < nSamples; ++n)
         {
             const float tempL = outputs[0][n];

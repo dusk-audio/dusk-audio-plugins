@@ -1,12 +1,5 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-//
-// TapeMachineDSP.hpp — framework-free (no-JUCE) port of the TapeMachine
-// tape-emulation DSP core, for the DPF build. This is a TRANSLATION of
-// Source/ImprovedTapeEmulation.{h,cpp} + the driving logic in
-// Source/PluginProcessor.cpp (prepareToPlay / processBlock / updateFilters).
-// Every formula, constant, coefficient and per-sample stage order is preserved
-// from the JUCE original. Substitutions and judgment calls are recorded in
-// core/PORT_NOTES.md.
+// TapeMachineDSP.hpp — framework-free (no-JUCE) port of the TapeMachine DSP core.
 
 #pragma once
 
@@ -40,14 +33,7 @@ inline float  dbToGain (float db)  noexcept { return db > -100.0f ? std::pow (10
 inline double dbToGainD(double db) noexcept { return db > -100.0  ? std::pow (10.0,  db * 0.05)  : 0.0;  }
 
 //==============================================================================
-// DBiquad — DOUBLE-precision transposed-direct-form-II biquad.
-//
-// The JUCE original uses juce::dsp::IIR::Filter<double> for headBump / hfLoss1 /
-// hfLoss2 / gapLoss / dcBlocker ("double for low-freq precision"), processing
-// with static_cast<double>(signal). The shared duskaudio::Biquad is float-only,
-// so this is a double copy of the exact same designer formulas the shared
-// Biquad uses (which the shared header states match juce::dsp::IIR). Kept in
-// double so the low-frequency high-Q head-bump stays stable at 4x rates.
+// DBiquad — DOUBLE-precision transposed-direct-form-II biquad (double for LF high-Q stability at 4x).
 //==============================================================================
 struct DBiquadCoeffs { double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0; };
 
@@ -212,19 +198,8 @@ private:
 };
 
 //==============================================================================
-// Soft Limiter (verbatim).
+// Local2xStage now lives in shared DuskOversampler.hpp (resolves unqualified here).
 //==============================================================================
-class SoftLimiter
-{
-public:
-    static constexpr float threshold = 0.95f;
-    float process (float x) const
-    {
-        if (x > threshold)  return threshold;
-        if (x < -threshold) return -threshold;
-        return x;
-    }
-};
 
 //==============================================================================
 // Saturation Split Filter — 2-pole Butterworth lowpass (verbatim).
@@ -262,179 +237,6 @@ private:
     float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
     float a1 = 0.0f, a2 = 0.0f;
     float z1 = 0.0f, z2 = 0.0f;
-};
-
-//==============================================================================
-// 3-Band Splitter (verbatim).
-//==============================================================================
-class ThreeBandSplitter
-{
-public:
-    void prepare (double sampleRate)
-    {
-        lr200.prepare (sampleRate, 200.0f);
-        lr5000.prepare (sampleRate, 5000.0f);
-    }
-    void reset() { lr200.reset(); lr5000.reset(); }
-
-    void split (float input, float& bass, float& mid, float& treble)
-    {
-        float lp200Out  = lr200.process (input);
-        float lp5000Out = lr5000.process (input);
-        bass   = lp200Out;
-        mid    = lp5000Out - lp200Out;
-        treble = input - lp5000Out;
-    }
-
-private:
-    struct LR2Filter
-    {
-        struct OnePoleLP
-        {
-            float state = 0.0f, coeff = 0.0f;
-            void prepare (double sampleRate, float cutoffHz)
-            {
-                float g = std::tan (kPiF * cutoffHz / static_cast<float> (sampleRate));
-                coeff = g / (1.0f + g);
-                state = 0.0f;
-            }
-            void reset() { state = 0.0f; }
-            float process (float input)
-            {
-                float v = (input - state) * coeff;
-                float output = v + state;
-                state = output + v;
-                return output;
-            }
-        };
-        OnePoleLP stage1, stage2;
-        void prepare (double sampleRate, float cutoffHz) { stage1.prepare (sampleRate, cutoffHz); stage2.prepare (sampleRate, cutoffHz); }
-        void reset() { stage1.reset(); stage2.reset(); }
-        float process (float input) { return stage2.process (stage1.process (input)); }
-    };
-
-    LR2Filter lr200, lr5000;
-};
-
-//==============================================================================
-// Jiles-Atherton Tape Hysteresis (verbatim RK4 J-A model).
-//==============================================================================
-class JilesAthertonHysteresis
-{
-public:
-    struct TapeFormulationParams
-    {
-        float Ms = 280.0f;    float a = 720.0f;   float alpha = 0.016f;
-        float k = 640.0f;     float c = 0.50f;
-    };
-
-    void prepare (double /*sampleRate*/, int /*oversamplingFactor*/ = 1) { prevM = 0.0f; prevH = 0.0f; }
-    void reset() { prevM = 0.0f; prevH = 0.0f; }
-    void setFormulation (TapeFormulationParams params) { currentParams = params; }
-    void setMachineType (bool isPrecision) { precisionMode = isPrecision; }
-
-    float processSample (float input, float drive, float biasLinearization)
-    {
-        if (drive < 0.001f) { prevM = 0.0f; prevH = 0.0f; return input; }
-
-        const float biasFactor = 1.0f + 0.6f * (0.5f - biasLinearization);
-        const float machineFactor = precisionMode ? 0.92f : 1.08f;
-        const float effectiveDrive = drive * biasFactor * machineFactor;
-
-        const float Ms    = currentParams.Ms;
-        const float a     = currentParams.a;
-        const float alpha = currentParams.alpha;
-        const float k     = currentParams.k;
-        const float c     = currentParams.c;
-
-        const float H  = input * effectiveDrive * fieldScale;
-        const float dH = H - prevH;
-        const float delta = (dH >= 0.0f) ? 1.0f : -1.0f;
-
-        auto dMdH = [&] (float Hx, float Mx) -> float
-        {
-            const float He     = Hx + alpha * Mx;
-            const float q      = He / a;
-            const float Man    = Ms * langevin (q);
-            const float dManHe = (Ms / a) * langevinDeriv (q);
-            const float Mdiff  = Man - Mx;
-            const bool  sameDir = (delta > 0.0f) ? (Mdiff > 0.0f) : (Mdiff < 0.0f);
-            const float deltaM = sameDir ? 1.0f : 0.0f;
-
-            float kap = (1.0f - c) * delta * k - alpha * Mdiff;
-            if (std::abs (kap) < 1e-4f) kap = (kap < 0.0f ? -1e-4f : 1e-4f);
-            const float irr = deltaM * Mdiff / kap;
-
-            const float num = (1.0f - c) * irr + c * dManHe;
-            float den = 1.0f - alpha * c * dManHe;
-            if (std::abs (den) < 1e-4f) den = (den < 0.0f ? -1e-4f : 1e-4f);
-            return num / den;
-        };
-
-        const float k1 = dMdH (prevH,             prevM);
-        const float k2 = dMdH (prevH + 0.5f * dH, prevM + 0.5f * dH * k1);
-        const float k3 = dMdH (prevH + 0.5f * dH, prevM + 0.5f * dH * k2);
-        const float k4 = dMdH (prevH + dH,        prevM + dH * k3);
-        float M = prevM + (dH / 6.0f) * (k1 + 2.0f * k2 + 2.0f * k3 + k4);
-
-        if (! std::isfinite (M)) { prevM = 0.0f; prevH = H; return input; }
-        const float Mlim = 1.5f * Ms;
-        M = (M > Mlim) ? Mlim : (M < -Mlim ? -Mlim : M);
-
-        prevM = M;
-        prevH = H;
-
-        const float loopOut   = M * 3.0f * a / (Ms * effectiveDrive * fieldScale);
-        const float anhystOut = 3.0f * langevin (H / a) * a / (effectiveDrive * fieldScale);
-        const float loopWeight = (1.0f - biasLinearization) * 0.5f;
-        const float output = anhystOut + loopWeight * (loopOut - anhystOut);
-        return std::isfinite (output) ? output : input;
-    }
-
-private:
-    TapeFormulationParams currentParams;
-    bool precisionMode = false;
-    float prevM = 0.0f, prevH = 0.0f;
-    static constexpr float fieldScale = 3200.0f;
-
-public:
-    static float langevin (float x)
-    {
-        if (std::abs (x) < 1e-4f) return x / 3.0f;
-        float ax = std::abs (x);
-        if (ax > 2.5f)
-        {
-            float sign = (x >= 0.0f) ? 1.0f : -1.0f;
-            return sign * (1.0f - 1.0f / ax);
-        }
-        float x2 = x * x;
-        float pade = x * (315.0f + 105.0f * x2) / (945.0f + 420.0f * x2 + 63.0f * x2 * x2);
-        if (ax <= 1.5f) return pade;
-        float sign = (x >= 0.0f) ? 1.0f : -1.0f;
-        float asympt = sign * (1.0f - 1.0f / ax);
-        float t = (ax - 1.5f);
-        return pade * (1.0f - t) + asympt * t;
-    }
-
-    static float langevinDeriv (float x)
-    {
-        const float ax = std::abs (x);
-        if (ax < 1.0e-4f) return 1.0f / 3.0f;
-        const float x2 = x * x;
-        const float N  = 315.0f * x + 105.0f * x * x2;
-        const float D  = 945.0f + 420.0f * x2 + 63.0f * x2 * x2;
-        const float Np = 315.0f + 315.0f * x2;
-        const float Dp = 840.0f * x + 252.0f * x * x2;
-        const float padeP = (Np * D - N * Dp) / (D * D);
-        if (ax <= 1.5f) return padeP;
-        const float asymptP = 1.0f / x2;
-        if (ax >= 2.5f) return asymptP;
-        const float s      = (x >= 0.0f) ? 1.0f : -1.0f;
-        const float pade   = N / D;
-        const float asympt = s - 1.0f / x;
-        const float t      = ax - 1.5f;
-        return padeP * (1.0f - t) + asymptP * t + s * (asympt - pade);
-    }
 };
 
 //==============================================================================
@@ -569,7 +371,8 @@ struct ImprovedNoiseGenerator
         tiltState = 0.0f;
     }
 
-    float generateNoise (float noiseFloor, float modulationAmount, float signal)
+    // Signal-independent idle tape hiss (pink + scrape), ~unit RMS; caller scales it.
+    float idleHiss() noexcept
     {
         float white = whiteDist (rng);
         b0 = 0.99886f * b0 + white * 0.0555179f;
@@ -578,32 +381,20 @@ struct ImprovedNoiseGenerator
         b3 = 0.86650f * b3 + white * 0.3104856f;
         b4 = 0.55000f * b4 + white * 0.5329522f;
         b5 = -0.7616f * b5 - white * 0.0168980f;
-
         float pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362f) * 0.11f;
         b6 = white * 0.115926f;
-
         tiltState += (pink - tiltState) * tiltCoeff;
-        float tiltedNoise = pink - tiltState * 0.5f;
-
-        float absSignal = std::abs (signal);
-        envelope += (absSignal - envelope) * envelopeCoeff;
-        float modNoise = tiltedNoise * (1.0f + envelope * modulationAmount * 8.0f);
-
-        float scrapeWhite = whiteDist (rng);
-        float scrapeOut = scrapeBP_b0 * scrapeWhite + scrapeBP_z1;
-        scrapeBP_z1 = scrapeBP_b1 * scrapeWhite - scrapeBP_a1 * scrapeOut + scrapeBP_z2;
-        scrapeBP_z2 = scrapeBP_b2 * scrapeWhite - scrapeBP_a2 * scrapeOut;
-
-        float totalNoise = modNoise * noiseFloor + scrapeOut * noiseFloor * 0.15f;
-        return totalNoise;
+        float tilted = pink - tiltState * 0.5f;
+        float sw = whiteDist (rng);
+        float so = scrapeBP_b0 * sw + scrapeBP_z1;
+        scrapeBP_z1 = scrapeBP_b1 * sw - scrapeBP_a1 * so + scrapeBP_z2;
+        scrapeBP_z2 = scrapeBP_b2 * sw - scrapeBP_a2 * so;
+        return tilted + so * 0.15f;
     }
 };
 
 //==============================================================================
 // Wow & Flutter processor — shared between channels for stereo coherence.
-// Verbatim Thiran-allpass fractional-delay port. The delay buffer is sized for
-// the MAX oversampling rate once, so an oversampling-factor change never
-// reallocates on the audio thread (see PORT_NOTES). RNG is deterministic.
 //==============================================================================
 class WowFlutterProcessor
 {
@@ -627,10 +418,7 @@ public:
 
     void setSeed (std::uint32_t s) { rng.seed (s); }
 
-    // sampleRate  = ACTIVE oversampled rate (drives coeffs / phase timing).
-    // osFactor    = ACTIVE oversampling factor.
-    // maxSampleRate = highest oversampled rate the plugin can run at; the buffer
-    //   is sized from THIS so factor changes never reallocate (only re-zero).
+    // maxSampleRate sizes the buffer once so OS-factor changes never reallocate (only re-zero).
     void prepare (double sampleRate, int osFactor, double maxSampleRate)
     {
         oversamplingFactor = std::max (1, osFactor);
@@ -732,73 +520,6 @@ public:
         writeIndex = (writeIndex + 1) % std::max (1, bufferSize);
         return output;
     }
-};
-
-//==============================================================================
-// Transformer saturation model (verbatim).
-//==============================================================================
-class TransformerSaturation
-{
-public:
-    void prepare (double sampleRate)
-    {
-        dcBlockCoeff = 1.0f - (20.0f * kPiF / static_cast<float> (sampleRate));
-        lfResonanceCoeff = 1.0f - std::exp (-2.0f * kPiF * 50.0f / static_cast<float> (sampleRate));
-        float targetDecayRate = 220.5f;
-        hystDecay = 1.0f - (targetDecayRate / static_cast<float> (sampleRate));
-        hystDecay = std::clamp (hystDecay, 0.95f, 0.9999f);
-        reset();
-    }
-
-    void reset() { dcState = 0.0f; hystState = 0.0f; prevInput = 0.0f; lfResonanceState = 0.0f; }
-
-    float process (float input, float driveAmount, bool isOutputStage)
-    {
-        float signal = input;
-
-        float dcBlocked = signal - dcState;
-        dcState = signal * (1.0f - dcBlockCoeff) + dcState * dcBlockCoeff;
-        signal = dcBlocked;
-
-        float asymmetryCoeff = 0.80f * driveAmount;
-        if (asymmetryCoeff > 0.0001f)
-            signal = signal * (1.0f + asymmetryCoeff * signal);
-
-        float absSignal = std::abs (signal);
-        float saturationThreshold = isOutputStage ? 0.92f : 0.95f;
-        if (absSignal > saturationThreshold)
-        {
-            float excess = absSignal - saturationThreshold;
-            float headroom = 1.0f - saturationThreshold;
-            float limited = saturationThreshold + headroom * (1.0f - std::exp (-excess * 2.0f / headroom));
-            signal = (signal >= 0.0f ? 1.0f : -1.0f) * limited;
-        }
-
-        if (isOutputStage && driveAmount > 0.01f)
-        {
-            float resonanceQ = 0.15f * driveAmount;
-            lfResonanceState += (signal - lfResonanceState) * lfResonanceCoeff;
-            signal += lfResonanceState * resonanceQ;
-        }
-
-        float hystAmount = isOutputStage ? 0.005f : 0.002f;
-        hystAmount *= driveAmount;
-        float hystDelta = signal - prevInput;
-        hystState = hystState * hystDecay + hystDelta * hystAmount;
-        signal += hystState;
-        prevInput = signal;
-
-        return signal;
-    }
-
-private:
-    float dcState = 0.0f;
-    float dcBlockCoeff = 0.9995f;
-    float hystState = 0.0f;
-    float hystDecay = 0.995f;
-    float prevInput = 0.0f;
-    float lfResonanceState = 0.0f;
-    float lfResonanceCoeff = 0.002f;
 };
 
 //==============================================================================
@@ -925,11 +646,7 @@ private:
 };
 
 //==============================================================================
-// TapeCore — per-channel tape emulation. Direct port of ImprovedTapeEmulation
-// (Source/ImprovedTapeEmulation.{h,cpp}). One instance per channel. All filter
-// coefficient recompute (updateFilters) is plain float/double math and is
-// RT-safe, so — unlike the JUCE original, which allocated ref-counted
-// Coefficients on the audio thread — the internal dirty-check is kept as-is.
+// TapeCore — per-channel tape emulation (direct port of ImprovedTapeEmulation).
 //==============================================================================
 class TapeCore
 {
@@ -950,8 +667,7 @@ public:
         motorFlutter.setSeed (seedBase + 3u);
     }
 
-    // osRate = oversampled sample rate; osFactor = oversampling factor;
-    // maxOsRate = highest oversampled rate (wow/flutter buffer sizing).
+    // osRate/osFactor = oversampled rate/factor; maxOsRate sizes the wow/flutter buffer.
     void prepare (double osRate, int osFactor, double maxOsRate)
     {
         if (osRate <= 0.0) osRate = 44100.0;
@@ -960,15 +676,10 @@ public:
         currentSampleRate = osRate;
         currentOversamplingFactor = osFactor;
         baseSampleRate = osRate / static_cast<double> (osFactor);
+        m_humPhaseInc = 2.0f * kPiF * 60.0f / static_cast<float> (currentSampleRate);
 
         double antiAliasingCutoff = baseSampleRate * 0.45;
         antiAliasingFilter.prepare (osRate, antiAliasingCutoff);
-
-        threeBandSplitter.prepare (osRate);
-
-        hysteresisBass.prepare (osRate, osFactor);
-        hysteresisMid.prepare (osRate, osFactor);
-        hysteresisTreble.prepare (osRate, osFactor);
 
         preEmphasisEQ.prepare (osRate);
         deEmphasisEQ.prepare (osRate);
@@ -978,8 +689,6 @@ public:
 
         perChannelWowFlutter.prepare (osRate, osFactor, maxOsRate);
 
-        inputTransformer.prepare (osRate);
-        outputTransformer.prepare (osRate);
         playbackHead.prepare (osRate);
         motorFlutter.prepare (osRate, osFactor);
 
@@ -1003,12 +712,8 @@ public:
         preEmphasisEQ.setPreEmphasis (125.0f, 50.0f);
         deEmphasisEQ.setDeEmphasis   (50.0f, 125.0f);
         phaseSmear.setMachineCharacter (true);
-        saturator.updateCoefficients (0.1f, 10.0f, osRate);
 
-        // Force a full updateFilters() on the next processSample so the machine-
-        // specific coefficients replace the neutral defaults above (also after an
-        // oversampling-factor change). See PORT_NOTES: the JUCE original left
-        // m_last* stale here, leaving neutral coeffs after an OS switch.
+        // Force a full updateFilters() next processSample so machine coeffs replace these neutral defaults.
         m_lastMachine = static_cast<TapeMachine> (-1);
         m_lastSpeed   = static_cast<TapeSpeed> (-1);
         m_lastType    = static_cast<TapeType> (-1);
@@ -1022,21 +727,38 @@ public:
         gapLossFilter.reset(); biasFilter.reset(); dcBlocker.reset();
         recordHeadFilter1.reset(); recordHeadFilter2.reset();
         antiAliasingFilter.reset();
-        threeBandSplitter.reset(); softClipSplitFilter.reset();
-        hysteresisBass.reset(); hysteresisMid.reset(); hysteresisTreble.reset();
+        softClipSplitFilter.reset();
         preEmphasisEQ.reset(); deEmphasisEQ.reset(); phaseSmear.reset();
         improvedNoiseGen.reset();
-        saturator.envelope = 0.0f;
 
         if (! perChannelWowFlutter.delayBuffer.empty())
             std::fill (perChannelWowFlutter.delayBuffer.begin(), perChannelWowFlutter.delayBuffer.end(), 0.0f);
         perChannelWowFlutter.writeIndex = 0;
         perChannelWowFlutter.allpassState = 0.0f;
 
-        inputTransformer.reset(); outputTransformer.reset();
         playbackHead.reset(); motorFlutter.reset();
+        m_a800LimOs.reset(); m_a800ShaperOs.reset();
+        m_classicLimOs.reset(); m_classicShaperOs.reset();
         crosstalkBuffer = 0.0f;
+        m_humPhase = 0.0f;
     }
+
+    // Constant idle noise: pink hiss + 60 Hz mains hum, scaled by Noise; hiss/humScale = per-machine floor (matched to UAD at 100).
+    float idleNoise (float noiseAmount, float hissScale, float humScale) noexcept
+    {
+        const float frac = noiseAmount * 0.01f;                 // 0..1
+        const float hiss = improvedNoiseGen.idleHiss() * hissScale;
+        m_humPhase += m_humPhaseInc;
+        if (m_humPhase > 2.0f * kPiF) m_humPhase -= 2.0f * kPiF;
+        const float hum = (std::sin (m_humPhase) * 0.7f
+                         + std::sin (2.0f * m_humPhase) * 0.35f
+                         + std::sin (3.0f * m_humPhase) * 0.12f) * humScale;
+        return (hiss + hum) * frac;
+    }
+    // A800 (UAD Studer A800) idle floor — exact constants preserved (byte-identical).
+    float a800IdleNoise (float noiseAmount) noexcept { return idleNoise (noiseAmount, 0.00042f, 0.000085f); }
+    // Classic102 (UAD Ampex ATR-102) "Hiss & Hum": louder + more hum-dominated.
+    float classicIdleNoise (float noiseAmount) noexcept { return idleNoise (noiseAmount, kClassicHiss, kClassicHum); }
 
     float processSample (float input,
                          TapeMachine machine, TapeSpeed speed, TapeType type,
@@ -1046,7 +768,15 @@ public:
                          EQStandard eqStandard, SignalPath signalPath)
     {
         if (signalPath == Thru) return input;
-        if (std::abs (input) < denormalPrevention) return 0.0f;
+        if (std::abs (input) < denormalPrevention)
+        {
+            // Idle tape noise must persist through silence (only thing added on the near-silent path).
+            if (noiseEnabled && noiseAmount > 0.001f
+                && (signalPath == Repro || signalPath == Sync))
+                return (machine == Swiss800) ? a800IdleNoise (noiseAmount)
+                                             : classicIdleNoise (noiseAmount);
+            return 0.0f;
+        }
 
         if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
             std::abs (biasAmount - m_lastBias) > 0.01f || eqStandard != m_lastEqStandard)
@@ -1058,7 +788,6 @@ public:
             m_cachedMachineChars = getMachineCharacteristics (machine);
             m_cachedTapeChars = getTapeCharacteristics (type);
             m_cachedSpeedChars = getSpeedCharacteristics (speed);
-            m_hasTransformers = (machine == Classic102);
             m_gapWidth = (machine == Swiss800) ? 2.5f : 3.5f;
         }
 
@@ -1066,14 +795,12 @@ public:
         const auto& speedChars = m_cachedSpeedChars;
 
         const bool processTape = (signalPath == Repro || signalPath == Sync);
-        const float playbackGapWidth = (signalPath == Sync) ? m_gapWidth * 2.0f : m_gapWidth;
+        // A800 Sync ~= Repro (barely wider gap); Classic102 uses the original 2x gap.
+        const float syncGapMult = (machine == Swiss800) ? 1.0f : 2.0f;
+        const float playbackGapWidth = (signalPath == Sync) ? m_gapWidth * syncGapMult : m_gapWidth;
 
         float calibrationGain = dbToGain (calibrationLevel);
         float signal = input * 0.95f / calibrationGain;
-
-        float transformerDrive = m_hasTransformers ? saturationDepth * 0.3f : 0.0f;
-        if (m_hasTransformers)
-            signal = inputTransformer.process (signal, transformerDrive, false);
 
         signal = preEmphasisEQ.processSample (signal);
 
@@ -1082,7 +809,10 @@ public:
             if (biasAmount > 0.0f)
                 signal = biasFilter.process (signal);
 
-            signal = preSaturationLimiter.process (signal);
+            // Smooth-knee soft limit (+-0.95 ceiling) at a local 2x so its upper harmonics don't fold.
+            signal = (machine == Swiss800)
+                   ? m_a800LimOs.process (signal, a800SoftLimit)
+                   : m_classicLimOs.process (signal, a800SoftLimit);
 
             if (currentOversamplingFactor > 1)
             {
@@ -1093,16 +823,18 @@ public:
             float tapeFormScale = 2.0f * (1.0f - tapeChars.saturationPoint) + 0.6f;
             float drive = computeDrive (saturationDepth, tapeFormScale);
 
-            if (drive > 0.001f)
+            if (machine == Swiss800)
             {
-                float bass, mid, treble;
-                threeBandSplitter.split (signal, bass, mid, treble);
-                auto ratios = getBandDriveRatios (machine);
-                float biasLin = biasAmount;
-                float bassSat   = hysteresisBass.processSample (bass, drive * ratios.bass, biasLin);
-                float midSat    = hysteresisMid.processSample (mid, drive * ratios.mid, biasLin);
-                float trebleSat = hysteresisTreble.processSample (treble, drive * ratios.treble, biasLin);
-                signal = bassSat + midSat + trebleSat;
+                // A800 measured transfer-curve waveshaper (fitted to UAD A800); m_a800Drive sets the operating point.
+                if (drive > 0.001f)
+                    signal = m_a800ShaperOs.process (signal,
+                        [this] (float v) noexcept { return a800Saturate (v); });
+            }
+            else if (drive > 0.001f)
+            {
+                // Classic102 measured transfer-curve waveshaper (fitted to UAD ATR-102); m_classicDrive sets the operating point.
+                signal = m_classicShaperOs.process (signal,
+                    [this] (float v) noexcept { return classicSaturate (v); });
             }
 
             {
@@ -1148,14 +880,11 @@ public:
         signal = deEmphasisEQ.processSample (signal);
         signal = phaseSmear.processSample (signal);
 
-        if (m_hasTransformers)
-            signal = outputTransformer.process (signal, transformerDrive * 0.5f, true);
-
         if (processTape && noiseEnabled && noiseAmount > 0.001f)
         {
-            float noiseLevel = dbToGain (tapeChars.noiseFloor) * speedChars.noiseReduction * noiseAmount;
-            float noise = improvedNoiseGen.generateNoise (noiseLevel, tapeChars.modulationNoise, signal);
-            signal += noise;
+            // Both decks add constant idle hiss+hum (a modelled constant floor).
+            signal += (machine == Swiss800) ? a800IdleNoise (noiseAmount)
+                                            : classicIdleNoise (noiseAmount);
         }
 
         signal = static_cast<float> (dcBlocker.process (static_cast<double> (signal)));
@@ -1192,10 +921,17 @@ private:
         float headBumpMultiplier, hfExtension, noiseReduction, flutterRate, wowRate;
     };
 
-    JilesAthertonHysteresis hysteresisBass, hysteresisMid, hysteresisTreble;
     TapeEQFilter preEmphasisEQ, deEmphasisEQ;
     PhaseSmearingFilter phaseSmear;
     ImprovedNoiseGenerator improvedNoiseGen;
+    float m_humPhase = 0.0f;        // A800 idle mains-hum oscillator phase
+    float m_humPhaseInc = 0.0f;     // cached 60 Hz phase step (set in prepare)
+    float m_a800Drive = 1.0f;       // cached waveshaper drive (set in updateFilters)
+    float m_a800DriveInv = 1.0f;    // cached 1/drive makeup
+    Local2xStage m_a800LimOs, m_a800ShaperOs;   // A800 nonlinearities run at local 2x
+    float m_classicDrive = 1.0f;    // cached Classic102 waveshaper drive
+    float m_classicDriveInv = 1.0f; // cached 1/drive makeup
+    Local2xStage m_classicLimOs, m_classicShaperOs; // Classic102 NLs run at local 2x
 
     DBiquad headBumpFilter;                 // juce IIR<double> in source
     DBiquad hfLossFilter1, hfLossFilter2;   // juce IIR<double>
@@ -1205,33 +941,13 @@ private:
     Biquad  recordHeadFilter1, recordHeadFilter2; // juce IIR<float>
 
     ChebyshevAntiAliasingFilter antiAliasingFilter;
-    SoftLimiter preSaturationLimiter;
-    ThreeBandSplitter threeBandSplitter;
     SaturationSplitFilter softClipSplitFilter;
 
-    TransformerSaturation inputTransformer, outputTransformer;
     PlaybackHeadResponse playbackHead;
     MotorFlutter motorFlutter;
     WowFlutterProcessor perChannelWowFlutter;
 
     float crosstalkBuffer = 0.0f;
-
-    // TapeSaturator: DEAD CODE in the source (process() is never called in the
-    // chain). Kept only so updateFilters()/prepare() stay structurally faithful;
-    // updateCoefficients() has no audible effect. See PORT_NOTES rule 10.
-    struct TapeSaturator
-    {
-        float envelope = 0.0f, attackCoeff = 0.0f, releaseCoeff = 0.0f;
-        void updateCoefficients (float attackMs, float releaseMs, double sampleRate)
-        {
-            if (sampleRate <= 0.0) sampleRate = 44100.0;
-            attackMs = std::max (0.001f, attackMs);
-            releaseMs = std::max (0.001f, releaseMs);
-            attackCoeff = std::exp (-1.0f / (attackMs * 0.001f * static_cast<float> (sampleRate)));
-            releaseCoeff = std::exp (-1.0f / (releaseMs * 0.001f * static_cast<float> (sampleRate)));
-        }
-    };
-    TapeSaturator saturator;
 
     TapeMachine m_lastMachine = static_cast<TapeMachine> (-1);
     TapeSpeed   m_lastSpeed = static_cast<TapeSpeed> (-1);
@@ -1242,17 +958,9 @@ private:
     MachineCharacteristics m_cachedMachineChars{};
     TapeCharacteristics m_cachedTapeChars{};
     SpeedCharacteristics m_cachedSpeedChars{};
-    bool m_hasTransformers = false;
     float m_gapWidth = 3.0f;
 
     static constexpr float denormalPrevention = 1e-8f;
-
-    struct BandDriveRatios { float bass, mid, treble; };
-    BandDriveRatios getBandDriveRatios (TapeMachine machine) const
-    {
-        if (machine == Swiss800) return { 0.55f, 1.0f, 0.20f };
-        return { 0.65f, 1.0f, 0.30f };
-    }
 
     float computeDrive (float saturationDepth, float tapeFormulationScale) const
     {
@@ -1260,16 +968,73 @@ private:
         return 0.62f * std::exp (1.8f * saturationDepth) * tapeFormulationScale;
     }
 
-    JilesAthertonHysteresis::TapeFormulationParams getJAParams (TapeType type) const
+    // UAD A800 static transfer curve, fitted from measured harmonics (order-7, 0.27% residual); tanh knee beyond |x|=0.7.
+    static constexpr float kSc1 = 0.9785282f, kSc2 = -0.002712386f, kSc3 = -0.4368902f,
+                           kSc4 = 0.02030713f, kSc5 = 0.9183201f, kSc6 = -0.02517527f,
+                           kSc7 = -0.8957437f;
+    static constexpr float kSx0 = 0.7f, kSP0 = 0.61627f, kSS0 = 0.69974f, kSknee = 0.5f;
+    static constexpr float kSkneeInv = 1.0f / kSknee;   // avoid a per-sample divide
+
+    static inline float a800Shaper (float x) noexcept
     {
-        switch (type)
-        {
-            case Type456: return { 280.0f, 720.0f, 0.016f, 640.0f, 0.50f };
-            case TypeGP9: return { 320.0f, 800.0f, 0.012f, 700.0f, 0.60f };
-            case Type911: return { 270.0f, 700.0f, 0.018f, 620.0f, 0.48f };
-            case Type250: return { 240.0f, 680.0f, 0.020f, 580.0f, 0.45f };
-            default:      return { 280.0f, 720.0f, 0.016f, 640.0f, 0.50f };
-        }
+        const float ax = std::abs (x);
+        if (ax <= kSx0)
+            return x * (kSc1 + x * (kSc2 + x * (kSc3 + x * (kSc4 + x * (kSc5 + x * (kSc6 + x * kSc7))))));
+        const float sgn = (x < 0.0f) ? -1.0f : 1.0f;
+        return sgn * (kSP0 + kSS0 * kSknee * std::tanh ((ax - kSx0) * kSkneeInv));
+    }
+
+    // A800 input-stage limit: +-0.95 ceiling, linear to 0.8 then a value+slope-matched tanh knee (fold products stay below the UAD floor).
+    static constexpr float kLimKnee = 0.8f, kLimCeil = 0.95f;
+    static constexpr float kLimRange = kLimCeil - kLimKnee;
+    static constexpr float kLimRangeInv = 1.0f / kLimRange;
+
+    static inline float a800SoftLimit (float x) noexcept
+    {
+        const float ax = std::abs (x);
+        if (ax <= kLimKnee) return x;
+        const float sgn = (x < 0.0f) ? -1.0f : 1.0f;
+        return sgn * (kLimKnee + kLimRange * std::tanh ((ax - kLimKnee) * kLimRangeInv));
+    }
+
+    // One full A800 saturation eval: fitted curve + a small x^2 even-order term (adds back the 2nd the static curve under-captures).
+    inline float a800Saturate (float x) const noexcept
+    {
+        float sh = a800Shaper (x * m_a800Drive) * m_a800DriveInv;
+        sh += 0.006f * (sh * sh);
+        return sh;
+    }
+
+    // UAD ATR-102 static transfer curve (Classic102), fitted from measured harmonics (order-7, 0.32% residual); near-linear, tanh knee beyond |x|=0.7.
+    static constexpr float kCc1 = 1.02853f, kCc2 = -0.00514981f, kCc3 = 0.374527f,
+                           kCc4 = 0.0389256f, kCc5 = -1.64805f, kCc6 = -0.0488357f,
+                           kCc7 = 1.55593f;
+    static constexpr float kCx0 = 0.7f, kCP0 = 0.700657f, kCS0 = 0.878915f, kCknee = 0.5f;
+    static constexpr float kCkneeInv = 1.0f / kCknee;
+
+    static inline float classicShaper (float x) noexcept
+    {
+        const float ax = std::abs (x);
+        if (ax <= kCx0)
+            return x * (kCc1 + x * (kCc2 + x * (kCc3 + x * (kCc4 + x * (kCc5 + x * (kCc6 + x * kCc7))))));
+        const float sgn = (x < 0.0f) ? -1.0f : 1.0f;
+        return sgn * (kCP0 + kCS0 * kCknee * std::tanh ((ax - kCx0) * kCkneeInv));
+    }
+
+    // Classic102 drive base — sets the operating point on the fitted curve (tuned so THD/harmonics match the ATR-102).
+    static constexpr float kClassicDriveBase = 1.4f;
+    // Small x^2 even-order term: adds back the ATR 2nd the fitted curve under-captures (tuned to ~-56 dB).
+    static constexpr float kClassicEven = 0.017f;
+    // Classic102 idle floor: louder + more hum-dominated than the A800 (tuned to the ATR "Hiss & Hum On").
+    static constexpr float kClassicHiss = 0.00018f;
+    static constexpr float kClassicHum  = 0.00012f;
+
+    // One full Classic102 saturation evaluation (at the shaper-local 2x rate).
+    inline float classicSaturate (float x) const noexcept
+    {
+        float sh = classicShaper (x * m_classicDrive) * m_classicDriveInv;
+        if (kClassicEven != 0.0f) sh += kClassicEven * (sh * sh);
+        return sh;
     }
 
     static float softClip (float input, float threshold)
@@ -1302,7 +1067,8 @@ private:
                 break;
             case Classic102:
                 chars.headBumpFreq = 62.0f; chars.headBumpGain = 4.5f; chars.headBumpQ = 1.4f;
-                chars.hfRolloffFreq = 18000.0f; chars.hfRolloffSlope = -18.0f;
+                chars.hfRolloffFreq = 21000.0f; chars.hfRolloffSlope = -18.0f; // ATR flat to ~15k
+                chars.saturationKnee = 0.85f;
                 chars.saturationKnee = 0.85f;
                 chars.saturationHarmonics[0] = 0.008f; chars.saturationHarmonics[1] = 0.032f;
                 chars.saturationHarmonics[2] = 0.003f; chars.saturationHarmonics[3] = 0.004f;
@@ -1312,6 +1078,28 @@ private:
                 break;
         }
         return chars;
+    }
+
+    // Per-machine/speed head-bump target; gain is PRE tape-emphasis (updateFilters multiplies by lfEmphasis * 0.8).
+    struct HeadBump { float freq, gain, q; };
+    HeadBump getHeadBump (TapeMachine machine, TapeSpeed speed) const noexcept
+    {
+        if (machine == Swiss800)
+        {
+            switch (speed)   // Studer A800 measured bump @30 Hz: +1.4/+2.8/+2.4 at
+            {                // 7.5/15/30 IPS (keeps a strong LF bump even at 30).
+                case Speed_7_5_IPS: return { 27.0f, 4.80f, 0.9f };
+                case Speed_15_IPS:  return { 30.0f, 6.20f, 0.9f };
+                case Speed_30_IPS:  return { 50.0f, 5.20f, 0.6f };  // broad bump (+2.5 @100)
+            }
+        }
+        switch (speed)   // Classic102 (ATR-102) measured bump @30 Hz: +2.3 (7.5),
+        {                // +3.0 (15), and a -4.7 LF DIP at 30 IPS (negative gain).
+            case Speed_7_5_IPS: return { 32.0f,  4.40f, 1.3f };
+            case Speed_15_IPS:  return { 32.0f,  5.10f, 1.3f };
+            case Speed_30_IPS:  return { 31.0f, -3.70f, 2.0f };
+        }
+        return { 32.0f, 5.10f, 1.3f };
     }
 
     TapeCharacteristics getTapeCharacteristics (TapeType type)
@@ -1406,72 +1194,85 @@ private:
         preEmphasisEQ.setPreEmphasis (preEQ_tauNum, preEQ_tauDen);
         deEmphasisEQ.setDeEmphasis   (preEQ_tauDen, preEQ_tauNum);
 
-        auto jaParams = getJAParams (type);
         bool isPrecision = (machine == Swiss800);
-
-        hysteresisBass.setFormulation (jaParams);   hysteresisBass.setMachineType (isPrecision);
-        hysteresisMid.setFormulation (jaParams);    hysteresisMid.setMachineType (isPrecision);
-        hysteresisTreble.setFormulation (jaParams); hysteresisTreble.setMachineType (isPrecision);
 
         phaseSmear.setMachineCharacter (isPrecision);
 
         improvedNoiseGen.prepare (currentSampleRate, static_cast<int> (speed));
 
-        float headBumpFreq = machineChars.headBumpFreq;
-        float headBumpGain = machineChars.headBumpGain * speedChars.headBumpMultiplier;
-        float headBumpQ = machineChars.headBumpQ;
+        const HeadBump hb = getHeadBump (machine, speed);
+        float headBumpFreq = hb.freq;
+        float headBumpGain = hb.gain * tapeChars.lfEmphasis * 0.8f;
+        float headBumpQ    = hb.q;
 
-        switch (speed)
-        {
-            case Speed_7_5_IPS:
-                headBumpFreq = machineChars.headBumpFreq * 0.65f;
-                headBumpGain *= 1.4f; headBumpQ *= 1.3f;
-                break;
-            case Speed_15_IPS:
-                break;
-            case Speed_30_IPS:
-                headBumpFreq = machineChars.headBumpFreq * 1.5f;
-                headBumpGain *= 0.7f; headBumpQ *= 0.8f;
-                break;
-        }
-
-        headBumpGain *= tapeChars.lfEmphasis * 0.8f;
-
-        headBumpFreq = std::clamp (headBumpFreq, 30.0f, 120.0f);
+        // A800 clamps wider (lower freq, higher gain); Classic102 allows a low bump
+        // that survives the LF highpass, and a NEGATIVE gain (LF dip) for 30 IPS
+        // where the ATR rolls the low end off instead of bumping it.
+        const float bumpFreqMin = (machine == Swiss800) ? 20.0f : 28.0f;
+        const float bumpGainMax = (machine == Swiss800) ? 7.0f : 6.5f;
+        const float bumpGainMin = (machine == Swiss800) ? 1.5f : -6.0f;
+        headBumpFreq = std::clamp (headBumpFreq, bumpFreqMin, 120.0f);
         headBumpQ    = std::clamp (headBumpQ, 0.7f, 2.0f);
-        headBumpGain = std::clamp (headBumpGain, 1.5f, 5.0f);
+        headBumpGain = std::clamp (headBumpGain, bumpGainMin, bumpGainMax);
 
         headBumpFilter.setCoeffs (DBiquad::peak (currentSampleRate,
             static_cast<double> (headBumpFreq), static_cast<double> (headBumpGain),
             static_cast<double> (headBumpQ)));
 
         float maxFilterFreq = static_cast<float> (currentSampleRate * 0.45);
-        float hfCutoff = machineChars.hfRolloffFreq * speedChars.hfExtension * tapeChars.hfLoss;
+        // Both UAD decks keep HF far more extended than the shared 0.7/1.0/1.3
+        // per-speed rolloff. ATR-102: ~flat to 15 kHz at every speed. Studer A800:
+        // bright at 15/30 IPS, ~-2 dB @15k at 7.5 IPS.
+        float hfExt = speedChars.hfExtension;
+        if (machine == Classic102)
+            hfExt = (speed == Speed_7_5_IPS) ? 1.30f : (speed == Speed_30_IPS ? 0.90f : 1.1f);
+        else // Swiss800
+            hfExt = (speed == Speed_7_5_IPS) ? 1.10f : (speed == Speed_30_IPS ? 1.50f : 1.5f);
+        float hfCutoff = machineChars.hfRolloffFreq * hfExt * tapeChars.hfLoss;
         hfCutoff = std::min (hfCutoff, maxFilterFreq);
         hfLossFilter1.setCoeffs (DBiquad::lowPass (currentSampleRate, static_cast<double> (hfCutoff), 0.707));
 
+        // ATR-102 tracks nearly flat to ~15 kHz, so Classic102's HF-loss shelves are scaled right down.
+        const float hfLossScale = (machine == Swiss800) ? 0.3f : 0.2f;
+
         float hfShelfFreq = std::min (hfCutoff * 0.6f, maxFilterFreq);
         hfLossFilter2.setCoeffs (DBiquad::shelf (currentSampleRate, static_cast<double> (hfShelfFreq),
-            static_cast<double> (-2.0f * tapeChars.hfLoss), 0.5, true));
+            static_cast<double> (-2.0f * tapeChars.hfLoss * hfLossScale), 0.5, true));
 
         float gapLossFreq = speed == Speed_7_5_IPS ? 8000.0f : (speed == Speed_30_IPS ? 15000.0f : 12000.0f);
-        float gapLossAmount = speed == Speed_7_5_IPS ? -3.0f : (speed == Speed_30_IPS ? -0.5f : -1.5f);
+        float gapLossAmount = (speed == Speed_7_5_IPS ? -3.0f : (speed == Speed_30_IPS ? -0.5f : -1.5f)) * hfLossScale;
         gapLossFilter.setCoeffs (DBiquad::shelf (currentSampleRate, static_cast<double> (gapLossFreq),
             static_cast<double> (gapLossAmount), 0.707, true));
 
-        float biasFreq = 6000.0f + (biasAmount * 4000.0f);
-        biasFilter.setCoeffs (Biquad::shelf (currentSampleRate, biasFreq, biasAmount * 3.0f, 0.707f, true));
+        // Both decks brighten HF when under-biased and flatten when over-biased (bias shelf).
+        float biasFreq, biasGainDb;
+        if (machine == Swiss800) { biasFreq = 8000.0f; biasGainDb = -(biasAmount - 0.5f) * 8.0f + 1.0f; }
+        else                     { biasFreq = 7000.0f; biasGainDb = (0.5f - biasAmount) * 5.0f + 1.5f; }
+        biasFilter.setCoeffs (Biquad::shelf (currentSampleRate, biasFreq, biasGainDb, 0.707f, true));
 
-        saturator.updateCoefficients (machineChars.compressionAttack,
-                                      machineChars.compressionRelease, currentSampleRate);
+        // DC blocker: Classic102 at 15 Hz; A800 at 25 Hz but 12 Hz at 30 IPS, where
+        // the Studer keeps a broad LF bump right down to 30 Hz that a 25 Hz corner
+        // would eat. Both keep the low bump alive without the LF highpass swallowing it.
+        double dcBlockFreq;
+        if (machine == Swiss800) dcBlockFreq = (speed == Speed_30_IPS) ? 12.0 : 25.0;
+        else                     dcBlockFreq = 15.0;
+        dcBlocker.setCoeffs (DBiquad::highPass (currentSampleRate, dcBlockFreq, 0.707));
+
+        // Cache the A800 waveshaper drive (block-constant): base x per-tape feel x bias factor; hoisted out of the audio loop.
+        const float tapeFormScale = 2.0f * (1.0f - tapeChars.saturationPoint) + 0.6f;
+        const float biasDrive = std::clamp (std::exp (4.0f * (0.5f - biasAmount)), 0.2f, 5.0f);
+        m_a800Drive = 2.8f * tapeFormScale * biasDrive;
+        m_a800DriveInv = 1.0f / m_a800Drive;
+
+        // Classic102 waveshaper drive: same staging as the A800 but a STEEPER bias curve (the ATR is far more bias-sensitive).
+        const float classicBiasDrive = std::clamp (std::exp (6.5f * (0.5f - biasAmount)), 0.15f, 9.0f);
+        m_classicDrive = kClassicDriveBase * tapeFormScale * classicBiasDrive;
+        m_classicDriveInv = 1.0f / m_classicDrive;
     }
 };
 
 //==============================================================================
-// TapeMachineDSP — framework-free equivalent of the JUCE PluginProcessor's
-// audio path. Public API is fixed by the DPF shell contract. Parameters are
-// stored in std::atomic (memory_order_relaxed) and are safe to set from any
-// thread; coefficient recompute happens at the top of processBlock().
+// TapeMachineDSP — framework-free equivalent of the JUCE PluginProcessor audio path.
 //==============================================================================
 class TapeMachineDSP
 {

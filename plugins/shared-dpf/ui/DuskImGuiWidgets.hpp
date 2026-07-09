@@ -355,8 +355,12 @@ public:
         }
         else if ((hovered || active) && valueEditId_ != id)
         {
+            // Hover/drag read-out ALWAYS shows the value (the knob's name is
+            // already labelled above it). Drawn to the FOREGROUND draw list so it
+            // is never occluded by knobs / dividers drawn after this one.
+            (void) name;
             char buf[48], num[32];
-            if (active && name != nullptr)
+            if (active)
             {
                 // Dragging: show the value at the fine-drag step's resolution so
                 // shift-fine can land on values the resting readout rounds away
@@ -377,17 +381,11 @@ public:
                     char f2[8]; std::snprintf(f2, sizeof(f2), plus ? "%%+.%df" : "%%.%df", d);
                     std::snprintf(num, sizeof(num), f2, value * dispMul + dispAdd);
                 }
-                std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-                valueBubble(dl, cx, cy, radius, buf);
             }
-            else if (name != nullptr && !active)   // hovering only -> parameter name
-                valueBubble(dl, cx, cy, radius, name);
-            else                                    // legacy callers (no name): caller fmt, unchanged
-            {
+            else   // hovering only -> value at resting precision
                 std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
-                std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-                valueBubble(dl, cx, cy, radius, buf);
-            }
+            std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
+            valueBubble(ImGui::GetForegroundDrawList(), cx, cy, radius, buf);
         }
         if (persistent && valueEditId_ != id)
         {

@@ -34,11 +34,7 @@ public:
 protected:
     //--- metadata --------------------------------------------------------------
     const char* getLabel() const override    { return "TapeMachine2"; }
-    const char* getDescription() const override
-    {
-        return "Reel-to-reel tape machine emulation: Jiles-Atherton tape "
-               "saturation, head/gap EQ, wow & flutter, hiss, NAB/CCIR/AES.";
-    }
+    const char* getDescription() const override { return ""; }
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
