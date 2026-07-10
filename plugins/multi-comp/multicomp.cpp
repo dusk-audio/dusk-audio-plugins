@@ -4033,12 +4033,8 @@ public:
             }
         }
 
-        // Store dry signal for mix
+        // Whether a dry blend is needed (parallel mix < 100%).
         bool needsDry = (mixPercent < 100.0f);
-        if (needsDry)
-        {
-            tempBuffer.makeCopyOf(buffer);
-        }
 
         // Split the input signal into 4 bands using crossover filters
         splitIntoBands(buffer, numSamples, channels);
@@ -4046,6 +4042,22 @@ public:
         // Split sidechain into matching bands so each compressor only reacts to SC energy in its range
         if (hasExternalSidechain && sidechainBuffer != nullptr)
             splitSidechainIntoBands(*sidechainBuffer, numSamples, channels);
+
+        // Phase-matched dry capture (issue #114). The LR4 crossover tree recombines
+        // as an ALLPASS (magnitude-flat, but 360 deg of phase rotation per crossover),
+        // so the wet band-sum below is phase-shifted vs the raw input at 200/2k/8k Hz.
+        // Blending a flat-phase raw dry against that allpass wet combs at the crossover
+        // frequencies (the reported comb filtering). The correct dry reference is the
+        // SUM OF THE (uncompressed) SPLIT BANDS — identical allpass phase to the wet —
+        // captured here, before per-band compression overwrites the band buffers.
+        if (needsDry)
+        {
+            tempBuffer.setSize(channels, numSamples, false, false, /*avoidReallocating*/ true);
+            tempBuffer.clear();
+            for (int band = 0; band < NUM_BANDS; ++band)
+                for (int ch = 0; ch < channels; ++ch)
+                    tempBuffer.addFrom(ch, 0, bandBuffers[band], ch, 0, numSamples);
+        }
 
         // Process each band through its compressor
         for (int band = 0; band < NUM_BANDS; ++band)
