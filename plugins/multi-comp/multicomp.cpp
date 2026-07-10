@@ -3812,17 +3812,21 @@ public:
             bandGainReduction[band] = 0.0f;
         }
 
-        // Allocate band buffers
+        // Allocate band buffers with the same 8x oversized-block safety margin the
+        // main processor uses for its scratch buffers: hosts (Logic bounce, offline
+        // render) may deliver blocks larger than samplesPerBlock, and splitIntoBands
+        // writes numSamples into these — undersizing overflows them.
+        allocatedBlockSize = maxBlockSize * kOversizeFactor;
         for (int band = 0; band < NUM_BANDS; ++band)
         {
-            bandBuffers[band].setSize(numCh, maxBlockSize);
+            bandBuffers[band].setSize(numCh, allocatedBlockSize);
             bandBuffers[band].clear();
-            scBandBuffers[band].setSize(numCh, maxBlockSize);
+            scBandBuffers[band].setSize(numCh, allocatedBlockSize);
             scBandBuffers[band].clear();
         }
 
-        // Temp buffer for crossover processing
-        tempBuffer.setSize(numCh, maxBlockSize);
+        // Temp buffer for crossover processing (dry capture + scratch)
+        tempBuffer.setSize(numCh, allocatedBlockSize);
         tempBuffer.clear();
 
         // Initialize crossover frequencies
@@ -3998,6 +4002,16 @@ public:
 
         if (numSamples <= 0 || channels <= 0)
             return;
+
+        // Last-resort memory-safety net: bandBuffers/tempBuffer hold
+        // allocatedBlockSize samples; a block larger than that (beyond the 8x
+        // margin — pathological) would overflow splitIntoBands. Bail rather than
+        // corrupt memory.
+        if (numSamples > allocatedBlockSize)
+        {
+            jassertfalse;   // host block exceeds 8x the prepared size
+            return;
+        }
 
         // Issue #79 — derive the active mask, enforce minimum-2 invariant,
         // rebuild the split chain only when the mask changed (cheap; just
@@ -4455,6 +4469,11 @@ private:
     double sampleRate = 0.0;
     int numChannels = 2;
     int maxBlockSize = 512;
+    // Oversized-block safety: bandBuffers/scBandBuffers/tempBuffer are allocated
+    // this many times the prepared block size (matches the main processor's
+    // safeBlockSize idiom) so a larger host block can't overflow the split.
+    static constexpr int kOversizeFactor = 8;
+    int allocatedBlockSize = 512 * kOversizeFactor;
 
 public:
     void updateSampleRate(double newSampleRate)
@@ -5044,6 +5063,9 @@ UniversalCompressor::UniversalCompressor()
 
 UniversalCompressor::~UniversalCompressor()
 {
+    // Cancel any pending deferred latency update before teardown.
+    cancelPendingUpdate();
+
     // Explicitly reset all compressors in reverse order
     transientShaper.reset();
     truePeakDetector.reset();
@@ -5258,6 +5280,10 @@ void UniversalCompressor::releaseResources()
 
 void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
+    // Mark that we're inside process() so any latency recompute defers the host
+    // notification to the message thread (never setLatencySamples mid-process).
+    ScopedProcessFlag processFlag(inProcessBlock_);
+
     // Improved denormal prevention - more efficient than ScopedNoDenormals
     #if JUCE_INTEL
         _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
@@ -5440,13 +5466,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
 
         // We're committed to the minimal path now (the switch above
-        // already routed unsupported modes to fastPathFallthrough). Force
-        // host PDC to 0 since this path skips global lookahead AND
-        // internal oversampling — otherwise the host applies a phantom
-        // delay offset that doesn't match actual output and causes phase
-        // issues on parallel buses.
+        // already routed unsupported modes to fastPathFallthrough). This path
+        // skips global lookahead AND internal oversampling, so PDC must be 0 —
+        // computeLatencySamples() already returns 0 while minimal is active.
+        // updateLatencyReport() defers the actual setLatencySamples() to the
+        // message thread (never from the audio thread — issue #106 / CLAP).
         if (getLatencySamples() != 0)
-            setLatencySamples(0);
+            updateLatencyReport();
 
         // Keep the global-lookahead ring + the bypass-fade delay line warm
         // by feeding raw input through them, even though we don't use
@@ -7013,10 +7039,21 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     return CompressorMode::Opto; // Default fallback
 }
 
-void UniversalCompressor::updateLatencyReport()
+int UniversalCompressor::computeLatencySamples() const
 {
-    int latency = 0;
     const auto mode = getCurrentMode();
+
+    // Minimal-processing fast path (Opto/FET/VCA only) skips internal
+    // oversampling AND all lookahead, so it reports ZERO latency. Computing it
+    // here (message thread) keeps the reported PDC in sync WITHOUT the audio
+    // thread ever having to force it to 0 mid-process.
+    const bool minimalEffective =
+        minimalProcessingMode.load(std::memory_order_relaxed)
+        && (mode == CompressorMode::Opto || mode == CompressorMode::FET || mode == CompressorMode::VCA);
+    if (minimalEffective)
+        return 0;
+
+    int latency = 0;
 
     // Multiband runs at native rate (no oversampling), so exclude anti-aliasing latency
     const bool usesOversamplingPath = (mode != CompressorMode::Multiband);
@@ -7045,7 +7082,29 @@ void UniversalCompressor::updateLatencyReport()
         latency += digitalLookaheadSamples;
     }
 
-    setLatencySamples(latency);
+    return latency;
+}
+
+void UniversalCompressor::updateLatencyReport()
+{
+    const int latency = computeLatencySamples();
+    pendingLatencySamples_.store(latency, std::memory_order_relaxed);
+
+    // setLatencySamples() must not run on the audio thread during process() — the
+    // CLAP wrapper turns it into a host latency-changed / restart request, which
+    // is illegal mid-process (clap-validator: "Activated != Processing"; issue
+    // #106 lineage). Apply immediately when on the message thread; otherwise
+    // defer to the AsyncUpdater. PDC is a host-side compensation, so applying it
+    // a message-loop tick later than the audio-thread detection is fine.
+    if (inProcessBlock_.load(std::memory_order_relaxed))
+        triggerAsyncUpdate();          // inside process() — defer to the message thread
+    else
+        setLatencySamples(latency);    // prepare / param change — apply immediately
+}
+
+void UniversalCompressor::handleAsyncUpdate()
+{
+    setLatencySamples(pendingLatencySamples_.load(std::memory_order_relaxed));
 }
 
 juce::AudioProcessorParameter* UniversalCompressor::getBypassParameter() const

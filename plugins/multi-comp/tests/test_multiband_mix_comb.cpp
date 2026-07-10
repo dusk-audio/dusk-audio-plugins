@@ -46,13 +46,18 @@ static void processWithPlugin(UniversalCompressor& plugin, juce::AudioBuffer<flo
     }
 }
 
+static bool g_paramError = false;   // set if any requested parameter is missing
+
 static void setParam(UniversalCompressor& plugin, const juce::String& paramID, float value)
 {
     auto& params = plugin.getParameters();
     if (auto* param = params.getParameter(paramID))
         param->setValueNotifyingHost(params.getParameterRange(paramID).convertTo0to1(value));
     else
-        std::cerr << "WARN: param '" << paramID << "' not found\n";
+    {
+        std::cerr << "ERROR: param '" << paramID << "' not found — test config invalid\n";
+        g_paramError = true;   // a missing param would silently produce a false PASS
+    }
 }
 
 static void configUnityMultiband(UniversalCompressor& plugin, float mixPercent)
@@ -141,10 +146,20 @@ int main()
     std::cout << "  peak sample delta        : " << peakDelta << "\n";
 
     // Phase-correct dry -> the two renders are identical to the float/smoother
-    // floor. Old raw-dry comb leaves a residual only ~6 dB below signal.
-    const float kNullDb = -60.0f;
-    const bool pass = nullDb < kNullDb;
+    // floor. Old raw-dry comb leaves a residual only ~6 dB below signal, and a
+    // clearly audible per-sample delta (~0.3). Enforce BOTH a deep null and a
+    // near-zero peak sample delta so neither metric can mask a regression.
+    const float kNullDb    = -60.0f;
+    const float kPeakDelta = 1.0e-4f;
+    if (g_paramError)
+    {
+        std::cout << "  RESULT: FAIL (one or more parameters were missing — see errors above)\n";
+        return 2;
+    }
+    const bool pass = (nullDb < kNullDb) && (peakDelta < kPeakDelta);
     std::cout << "  RESULT: " << (pass ? "PASS" : "FAIL")
-              << " (need null < " << kNullDb << " dB rel signal)\n";
+              << " (need null < " << kNullDb << " dB rel signal AND peak delta < "
+              << std::scientific << std::setprecision(1) << kPeakDelta << ")\n"
+              << std::defaultfloat;
     return pass ? 0 : 1;
 }
