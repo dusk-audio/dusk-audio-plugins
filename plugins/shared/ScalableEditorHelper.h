@@ -210,9 +210,26 @@ private:
         {
             juce::PropertiesFile::Options options;
             options.applicationName = "DuskAudio";
-            options.folderName = "DuskAudio";
             options.filenameSuffix = ".settings";
             options.osxLibrarySubFolder = "Application Support";
+           #if JUCE_LINUX
+            options.folderName = ".config/DuskAudio";
+
+            // Older builds stored settings in ~/DuskAudio; move them so
+            // existing users keep their saved window sizes.
+            auto oldFile = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                               .getChildFile("DuskAudio")
+                               .getChildFile("DuskAudio.settings");
+            auto newFile = options.getDefaultFile();
+            if (oldFile.existsAsFile() && !newFile.exists())
+            {
+                newFile.getParentDirectory().createDirectory();
+                if (oldFile.moveFileTo(newFile))
+                    oldFile.getParentDirectory().deleteFile(); // rmdir: only removes ~/DuskAudio if now empty
+            }
+           #else
+            options.folderName = "DuskAudio";
+           #endif
             appProps.setStorageParameters(options);
             initialized = true;
         }
