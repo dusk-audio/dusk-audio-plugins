@@ -1,5 +1,8 @@
 # 09 — Multi-Synth UI Specification (Dear ImGui / ImDrawList)
 
+> Product name: **Sunset Circuits** (renamed from Multi-Synth pre-release; slug `sunset-circuits`).
+> Filename and internal class/namespace names kept for history; shipping product is Sunset Circuits.
+
 **Companion to** `09-multi-synth.md` (design authority) and `09-multi-synth-inventory.md`
 (read-only ground truth). This file is the **implementation blueprint** for
 `dpf-plugin/MultiSynthUI.cpp`. It expands the "UI spec" section of `09-multi-synth.md`
@@ -601,7 +604,7 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 - **Single source of truth**: the `struct PrismAlgo { struct Op{ uint8_t gx, gy; bool
   carrier; } ops[4]; struct Edge{ uint8_t from, to; } edges[6]; uint8_t nEdges; uint8_t
   fbOp; }` and its `static const PrismAlgo kPrismAlgos[8]` table live in
-  `plugins/multi-synth/core/FMAlgorithms.hpp`, which is also the FMEngine algorithm table.
+  `plugins/sunset-circuits/core/FMAlgorithms.hpp`, which is also the FMEngine algorithm table.
   The UI includes that core header directly and renders from `kPrismAlgos` — it never
   redefines the struct or hardcodes topology separately.
 - **Render one diagram** into a rect: place each op as a rounded square (~22 px) at its
@@ -626,7 +629,7 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 | 7 | Tri+FM | 4→3 | 1, 2, 3 | One modulated tone plus two clean carriers |
 | 8 | Additive | (none) | 1, 2, 3, 4 | Additive / organ — four parallel carriers |
 
-  `plugins/multi-synth/core/FMAlgorithms.hpp` `kPrismAlgos` is the single source of truth
+  `plugins/sunset-circuits/core/FMAlgorithms.hpp` `kPrismAlgos` is the single source of truth
   for this table — the rows above must mirror it exactly.
   Op 4 is the feedback op in all algorithms (`fbOp = 3`, zero-based). ASCII of a few:
 ```
