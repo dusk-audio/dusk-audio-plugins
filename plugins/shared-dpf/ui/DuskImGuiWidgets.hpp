@@ -115,8 +115,15 @@ public:
     // JUCE-style pop-out: a light rounded pill with a little pointer, placed to
     // the RIGHT of the knob (flips left near the window edge). Shown while a knob
     // is hovered/dragged instead of a cramped label above it.
-    void valueBubble(ImDrawList* dl, float cx, float cy, float r, const char* txt) const
+    // NOTE: the passed `dl` (the caller's window draw list) is intentionally
+    // ignored. The UI is split into non-overlapping layer windows to stay under
+    // ImGui's 64k-vertex-per-window limit, so anything on a window draw list is
+    // overdrawn by widgets submitted later in that same window (e.g. an adjacent
+    // knob paints over a hovered knob's bubble). Drawing on the FOREGROUND list
+    // -- composited after every window -- guarantees the bubble wins the z-order.
+    void valueBubble(ImDrawList* /*windowDl*/, float cx, float cy, float r, const char* txt) const
     {
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
         const float fs = 12.0f * s;
         ImFont* font = pickFont(fs);
         const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, txt);
@@ -133,18 +140,33 @@ public:
         if (!left) { bmin = ImVec2(kc.x + r * s + gap, kc.y - halfH); bmax = ImVec2(bmin.x + bw, kc.y + halfH); }
         else       { const float rx = kc.x - r * s - gap; bmin = ImVec2(rx - bw, kc.y - halfH); bmax = ImVec2(rx, kc.y + halfH); }
 
+        // The foreground list clips to the whole viewport, not the current window
+        // (which used to clip the bubble). Shift the pill back on-screen if a knob
+        // near a viewport edge would push it past the edge.
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const float pad = 2.0f * s;
+        const float vx0 = vp->Pos.x + pad, vy0 = vp->Pos.y + pad;
+        const float vx1 = vp->Pos.x + vp->Size.x - pad, vy1 = vp->Pos.y + vp->Size.y - pad;
+        float dx = 0.0f, dy = 0.0f;
+        if      (bmin.x < vx0) dx = vx0 - bmin.x;
+        else if (bmax.x > vx1) dx = vx1 - bmax.x;
+        if      (bmin.y < vy0) dy = vy0 - bmin.y;
+        else if (bmax.y > vy1) dy = vy1 - bmax.y;
+        bmin.x += dx; bmax.x += dx; bmin.y += dy; bmax.y += dy;
+
         const float rad = halfH;
         const ImU32 bg = IM_COL32(246, 247, 249, 255), edge = IM_COL32(0, 0, 0, 70), ink = IM_COL32(22, 22, 24, 255);
-        // pointer tail toward the knob
+        // pointer tail toward the knob, kept attached to the (possibly shifted) pill
+        const float ty = kc.y < bmin.y + tail ? bmin.y + tail : (kc.y > bmax.y - tail ? bmax.y - tail : kc.y);
         if (!left)
-            dl->AddTriangleFilled(ImVec2(bmin.x - tail, kc.y), ImVec2(bmin.x + 1.0f * s, kc.y - tail),
-                                  ImVec2(bmin.x + 1.0f * s, kc.y + tail), bg);
+            dl->AddTriangleFilled(ImVec2(bmin.x - tail, ty), ImVec2(bmin.x + 1.0f * s, ty - tail),
+                                  ImVec2(bmin.x + 1.0f * s, ty + tail), bg);
         else
-            dl->AddTriangleFilled(ImVec2(bmax.x + tail, kc.y), ImVec2(bmax.x - 1.0f * s, kc.y - tail),
-                                  ImVec2(bmax.x - 1.0f * s, kc.y + tail), bg);
+            dl->AddTriangleFilled(ImVec2(bmax.x + tail, ty), ImVec2(bmax.x - 1.0f * s, ty - tail),
+                                  ImVec2(bmax.x - 1.0f * s, ty + tail), bg);
         dl->AddRectFilled(bmin, bmax, bg, rad);
         dl->AddRect(bmin, bmax, edge, rad, 0, 1.0f * s);
-        dl->AddText(font, fs, ImVec2(bmin.x + padX, kc.y - ts.y * 0.5f), ink, txt);
+        dl->AddText(font, fs, ImVec2(bmin.x + padX, 0.5f * (bmin.y + bmax.y) - ts.y * 0.5f), ink, txt);
     }
 
     // Open the inline editor on the knob `id`, seeded with its current value.
