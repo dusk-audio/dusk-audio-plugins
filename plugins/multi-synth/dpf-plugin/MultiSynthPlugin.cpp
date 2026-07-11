@@ -214,21 +214,24 @@ private:
         switch (status)
         {
         case 0x90: // note on (velocity 0 == note off)
+            if (ev.size < 3) return; // need note + velocity
             if (ev.data[2] == 0) dsp.noteOff(ev.data[1]);
             else                 dsp.noteOn(ev.data[1], (float)ev.data[2] / 127.0f);
             break;
-        case 0x80: // note off
+        case 0x80: // note off (size >= 2 already guaranteed)
             dsp.noteOff(ev.data[1]);
             break;
         case 0xB0: // control change
+            if (ev.size < 3) return; // need controller + value
             if (ev.data[1] == 1)                         dsp.modWheel((float)ev.data[2] / 127.0f);
             else if (ev.data[1] == 120 || ev.data[1] == 123) dsp.allNotesOff(); // all sound / all notes off
             break;
-        case 0xD0: // channel pressure (aftertouch)
+        case 0xD0: // channel pressure (aftertouch, size >= 2 already guaranteed)
             dsp.aftertouch((float)ev.data[1] / 127.0f);
             break;
         case 0xE0: // pitch bend (14-bit, centred at 8192)
         {
+            if (ev.size < 3) return; // need both data bytes
             const int v = (int)ev.data[1] | ((int)ev.data[2] << 7);
             dsp.pitchBend((float)(v - 8192) / 8192.0f);
             break;
