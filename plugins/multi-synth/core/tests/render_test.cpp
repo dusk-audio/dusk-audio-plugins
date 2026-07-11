@@ -91,6 +91,7 @@ int main(int argc, char** argv)
     double sampleRate = 48000.0;
     float  vel = 1.0f;
     double releaseTime = -1.0;
+    bool   releaseProvided = false;
     double tempo = 120.0;
     bool   playing = true;
     double songPosStart = 0.0;
@@ -126,9 +127,9 @@ int main(int argc, char** argv)
             const double t = std::atof(val.substr(0, c1).c_str());
             const std::string name = val.substr(c1 + 1, c2 - c1 - 1);
             const float v = (float)std::atof(val.substr(c2 + 1).c_str());
-            if (!(std::isfinite(t) && t >= 0.0))
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
             {
-                std::fprintf(stderr, "bad setat time: %g\n", t);
+                std::fprintf(stderr, "bad setat time: %g (want 0 <= t <= %g)\n", t, seconds);
                 return 1;
             }
             const int sidx = msynth::MultiSynthDSP::paramIndexForName(name.c_str());
@@ -137,7 +138,7 @@ int main(int argc, char** argv)
             continue;
         }
         if (key == "vel")      { vel = (float)std::atof(val.c_str()); continue; }
-        if (key == "release")  { releaseTime = std::atof(val.c_str()); continue; }
+        if (key == "release")  { releaseTime = std::atof(val.c_str()); releaseProvided = true; continue; }
         if (key == "tempo")    { tempo = std::atof(val.c_str()); continue; }
         if (key == "playing")  { playing = std::atoi(val.c_str()) != 0; continue; }
         if (key == "songpos")  { songPosStart = std::atof(val.c_str()); haveSongPos = true; continue; }
@@ -177,6 +178,14 @@ int main(int argc, char** argv)
     if (!(std::isfinite(sampleRate) && sampleRate >= 8000.0 && sampleRate <= 768000.0))
     {
         std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
+        return 1;
+    }
+    // A provided release must be finite and within the render window: NaN would
+    // otherwise slip past the (releaseTime >= 0.0) gate to "never release", and a
+    // huge value overflows the later (int)(releaseTime * sampleRate) cast.
+    if (releaseProvided && !(std::isfinite(releaseTime) && releaseTime >= 0.0 && releaseTime <= seconds))
+    {
+        std::fprintf(stderr, "invalid release: %g (want 0 <= release <= %g)\n", releaseTime, seconds);
         return 1;
     }
     const double framesD = seconds * sampleRate;
