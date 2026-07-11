@@ -137,6 +137,13 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
         return 1;
     }
+    // The engine rate, the frame math, and the (int) WAV header rate must agree
+    // exactly, so require a whole number.
+    if (sampleRate != std::floor(sampleRate))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (must be a whole number)\n", sampleRate);
+        return 1;
+    }
     // Release validation: NaN slips past the (releaseTime >= 0.0) gate below (NaN
     // comparisons are false), so reject non-finite explicitly; a finite release
     // point must fall within the render window.
