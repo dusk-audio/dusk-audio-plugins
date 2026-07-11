@@ -158,7 +158,7 @@ protected:
         // always rendered behind every window (so it can't occlude the layers).
         dl = ImGui::GetBackgroundDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(6, 6, 7, 255));
-        dl->AddRectFilled(P(0, 0), P(kDesignW, kDesignH), live.bg);
+        drawChassis();
         drawWoodCheeks();
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
@@ -276,11 +276,15 @@ private:
                  lerpC(a.text, b.text, t), lerpC(a.textPanel, b.textPanel, t),
                  lerpC(a.ledOn, b.ledOn, t), lerpC(a.ledOff, b.ledOff, t) };
     }
-    ImU32 metalCol() const // panel lightened ~halfway toward white for the bevel
+    ImU32 metalCol() const // bevel frame: lighten dark panels, darken light panels
     {
         auto ch = [](ImU32 c, int sh) { return (int)((c >> sh) & 255); };
-        auto U = [&](int sh) { int v = ch(live.panel, sh); return v + (255 - v) / 2; };
-        return IM_COL32(U(IM_COL32_R_SHIFT), U(IM_COL32_G_SHIFT), U(IM_COL32_B_SHIFT), 255);
+        const int r = ch(live.panel, IM_COL32_R_SHIFT), g = ch(live.panel, IM_COL32_G_SHIFT), b = ch(live.panel, IM_COL32_B_SHIFT);
+        const int lum = (r * 30 + g * 59 + b * 11) / 100;
+        if (lum > 150) // light panel (Acid silver): darker frame so the bevel reads with contrast
+            return IM_COL32((int)(r * 0.42f), (int)(g * 0.42f), (int)(b * 0.42f), 255);
+        auto U = [&](int v) { return v + (255 - v) / 2; };
+        return IM_COL32(U(r), U(g), U(b), 255);
     }
 
     void text(float x, float y, float sz, ImU32 col, const char* t, int align, bool bold = false)
@@ -290,8 +294,17 @@ private:
     {
         dl->AddRectFilled(P(x0 - 3, y0 - 3), P(x1 + 3, y1 + 3), mulA(metalCol(), alpha), 8.0f * s);
         dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(live.panel, alpha), 6.0f * s);
+        // engraved bevel: light top-edge highlight + dark bottom-edge shade
+        dl->AddLine(P(x0 + 2, y0 + 1), P(x1 - 2, y0 + 1),
+                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.22f), alpha), 1.0f * s);
+        dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1),
+                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.35f), alpha), 1.0f * s);
     }
-    void sectionTitle(float x, float y, const char* t) { text(x, y, 11.0f, live.accent, t, -1, true); }
+    void sectionTitle(float x, float y, const char* t)
+    {
+        text(x + 0.6f, y + 1.0f, 11.0f, withA(IM_COL32(0, 0, 0, 255), 120), t, -1, true); // engraved shadow
+        text(x, y, 11.0f, live.accent, t, -1, true);
+    }
     void drawX(float cx, float cy, float r, ImU32 col) // close/clear glyph (no exotic font glyph)
     { dl->AddLine(P(cx - r, cy - r), P(cx + r, cy + r), col, 1.6f * s);
       dl->AddLine(P(cx - r, cy + r), P(cx + r, cy - r), col, 1.6f * s); }
@@ -315,15 +328,210 @@ private:
         if (n >= 2) dl->AddPolyline(pts, n, live.accent, 0, 2.4f * s);
     }
 
+    ImU32 whiteDimCol() const { return lerpC(live.textPanel, live.panel, 0.38f); }
+
+    // Chrome knob body (matches duskdpf::DuskPanel's chrome exactly) so the local
+    // skew/ratio knobs are visually identical to the shared linear knobs.
+    void drawKnobChrome(ImVec2 c, float R, float t, bool ticks = true)
+    {
+        if (ticks)
+        for (int i = 0; i <= 10; ++i)
+        {
+            const float a = duskdpf::DuskPanel::knobAngle((float)i / 10.0f);
+            const ImVec2 dir(std::sin(a), -std::cos(a));
+            dl->AddLine(ImVec2(c.x + dir.x * (R + 2.5f * s), c.y + dir.y * (R + 2.5f * s)),
+                        ImVec2(c.x + dir.x * (R + 6.5f * s), c.y + dir.y * (R + 6.5f * s)),
+                        whiteDimCol(), 1.3f * s);
+        }
+        dl->AddCircleFilled(c, R, IM_COL32(70, 70, 73, 255), 48);
+        dl->AddCircleFilled(c, R * 0.97f, IM_COL32(128, 128, 132, 255), 48);
+        for (int i = 0; i < 24; ++i)
+        {
+            const float a = (float)i / 24.0f * 2.0f * kPi;
+            const ImVec2 dir(std::sin(a), -std::cos(a));
+            dl->AddLine(ImVec2(c.x + dir.x * R * 0.82f, c.y + dir.y * R * 0.82f),
+                        ImVec2(c.x + dir.x * R * 0.97f, c.y + dir.y * R * 0.97f),
+                        IM_COL32(55, 55, 58, 130), 1.4f * s);
+        }
+        const float capR = R * 0.72f;
+        dl->AddCircleFilled(c, capR, IM_COL32(96, 97, 100, 255), 40);
+        dl->AddCircleFilled(ImVec2(c.x - capR * 0.15f, c.y - capR * 0.20f), capR * 0.93f, IM_COL32(176, 178, 182, 255), 40);
+        dl->AddCircleFilled(ImVec2(c.x - capR * 0.25f, c.y - capR * 0.32f), capR * 0.55f, IM_COL32(225, 227, 231, 150), 40);
+        dl->AddCircleFilled(c, capR * 0.42f, IM_COL32(158, 160, 164, 255), 40);
+        dl->AddCircle(c, capR, IM_COL32(20, 20, 20, 255), 40, 1.4f * s);
+        const float a = duskdpf::DuskPanel::knobAngle(t);
+        const ImVec2 dir(std::sin(a), -std::cos(a));
+        dl->AddLine(ImVec2(c.x + dir.x * capR * 0.15f, c.y + dir.y * capR * 0.15f),
+                    ImVec2(c.x + dir.x * capR * 0.95f, c.y + dir.y * capR * 0.95f),
+                    IM_COL32(25, 25, 27, 255), 3.0f * s);
+    }
+
+    // Format a value for a knob bubble/readout; auto-switch " Hz" to kHz >= 1000.
+    void fmtVal(char* buf, int n, uint32_t p, const char* fmt, const char* suffix, float dmul, float dadd)
+    {
+        if (suffix && std::strcmp(suffix, " Hz") == 0 && values[p] >= 1000.0f)
+        { std::snprintf(buf, n, "%.2f kHz", values[p] / 1000.0f); return; }
+        char num[32]; std::snprintf(num, sizeof(num), fmt, values[p] * dmul + dadd);
+        std::snprintf(buf, n, "%s%s", num, suffix ? suffix : "");
+    }
+
+    // Local log-taper knob (spec feel-fix): maps the vertical drag and pointer
+    // position through log space for LOG-skew params (freq/time), so the low end
+    // of the range gets proportional resolution. Reuses the shared panel's value
+    // bubble + inline editor; the shared DuskPanel::knob is left untouched.
+    bool knobSkewed(const char* id, uint32_t p, float cx, float cy, float r,
+                    const char* fmt, const char* suffix, bool bipolar, bool persist,
+                    float dmul, float dadd, bool ticks = true)
+    {
+        const ParamDef& d = kParamDefs[p];
+        const bool logv = (d.kind == PK_LOG && d.min > 0.0f);
+        const float lmin = logv ? std::log(d.min) : d.min;
+        const float lmax = logv ? std::log(d.max) : d.max;
+        const float lrange = lmax - lmin;
+        auto toL   = [&](float v){ v = v < d.min ? d.min : (v > d.max ? d.max : v); return logv ? std::log(v) : v; };
+        auto fromL = [&](float L){ float v = logv ? std::exp(L) : L; return v < d.min ? d.min : (v > d.max ? d.max : v); };
+
+        const float R = r * s;
+        const ImVec2 c = P(cx, cy);
+        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active  = ImGui::IsItemActive();
+        const bool modKey  = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        const bool editing = panel.isEditingValue(id);
+        bool changed = false;
+
+        if (tips[p] && tips[p][0] && hovered && !active) ImGui::SetTooltip("%s", tips[p]);
+        if (!editing)
+        {
+            if (ImGui::IsItemActivated())
+            {
+                if (modKey) { beginEdit(p); values[p] = d.def; setParam(p, d.def); endEdit(p); changed = true; skewReset = true; }
+                else        { beginEdit(p); skewL = toL(values[p]); skewReset = false; }
+            }
+            if (active && !skewReset)
+            {
+                const float speed = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
+                skewL -= ImGui::GetIO().MouseDelta.y * speed * lrange;
+                if (skewL < lmin) skewL = lmin; if (skewL > lmax) skewL = lmax;
+                const float nv = fromL(skewL);
+                if (nv != values[p]) { values[p] = nv; setParam(p, nv); changed = true; }
+            }
+            if (ImGui::IsItemDeactivated()) { if (!skewReset) endEdit(p); skewReset = false; }
+            if (!modKey && (hovered || active) && ImGui::IsMouseDoubleClicked(0))
+            { panel.openValueEdit(id, values[p] * dmul + dadd); endEdit(p); }
+            if (hovered && !active)
+            {
+                const float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f)
+                {
+                    float L = toL(values[p]) + wheel * lrange * 0.02f;
+                    if (L < lmin) L = lmin; if (L > lmax) L = lmax;
+                    const float nv = fromL(L);
+                    if (nv != values[p]) { beginEdit(p); values[p] = nv; setParam(p, nv); endEdit(p); changed = true; }
+                }
+            }
+        }
+
+        const float t = lrange > 0.0f ? (toL(values[p]) - lmin) / lrange : 0.0f;
+        drawKnobChrome(c, R, t, ticks);
+        accentArc(cx, cy, r, t, bipolar);
+
+        float typed;
+        if (panel.valueEdit(id, cx, cy, r, typed))
+        {
+            typed = (typed - dadd) / (dmul != 0.0f ? dmul : 1.0f);
+            typed = typed < d.min ? d.min : (typed > d.max ? d.max : typed);
+            if (typed != values[p]) { beginEdit(p); values[p] = typed; setParam(p, typed); endEdit(p); changed = true; }
+        }
+        else if ((hovered || active) && !panel.isEditingValue(id))
+        {
+            if (active) { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd); panel.valueBubble(dl, cx, cy, r, buf); }
+            else        panel.valueBubble(dl, cx, cy, r, d.name);
+        }
+        if (persist && !panel.isEditingValue(id))
+        { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd); text(cx, cy + r + 8.0f, 9.5f, whiteDimCol(), buf, 0); }
+        return changed;
+    }
+
+    // Prism op-ratio snap list (classic FM ratios); plain drag snaps, Shift = fine.
+    static const float* ratioList(int& n) { static const float L[] = { 0.25f, 0.5f, 0.75f, 1, 1.5f, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }; n = 20; return L; }
+    static float snapRatio(float v)
+    { int n; const float* L = ratioList(n); float best = L[0], bd = 1e9f;
+      for (int i = 0; i < n; ++i) { float dd = std::fabs(L[i] - v); if (dd < bd) { bd = dd; best = L[i]; } } return best; }
+
+    bool knobRatio(const char* id, uint32_t p, float cx, float cy, float r, bool ticks = true)
+    {
+        const ParamDef& d = kParamDefs[p];               // 0.25..16 LOG
+        const float lmin = std::log(d.min), lmax = std::log(d.max), lrange = lmax - lmin;
+        const float R = r * s; const ImVec2 c = P(cx, cy);
+        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active  = ImGui::IsItemActive();
+        const bool modKey  = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        const bool editing = panel.isEditingValue(id);
+        bool changed = false;
+        if (tips[p] && tips[p][0] && hovered && !active) ImGui::SetTooltip("%s", tips[p]);
+        if (!editing)
+        {
+            if (ImGui::IsItemActivated())
+            {
+                if (modKey) { beginEdit(p); values[p] = d.def; setParam(p, d.def); endEdit(p); changed = true; skewReset = true; }
+                else        { beginEdit(p); skewL = std::log(values[p] < d.min ? d.min : values[p]); skewReset = false; }
+            }
+            if (active && !skewReset)
+            {
+                const bool fine = ImGui::GetIO().KeyShift;
+                skewL -= ImGui::GetIO().MouseDelta.y * (fine ? 0.0016f : 0.006f) * lrange;
+                if (skewL < lmin) skewL = lmin; if (skewL > lmax) skewL = lmax;
+                float nv = std::exp(skewL);
+                if (!fine) nv = snapRatio(nv);           // snap to the classic list on plain drag
+                nv = nv < d.min ? d.min : (nv > d.max ? d.max : nv);
+                if (nv != values[p]) { values[p] = nv; setParam(p, nv); changed = true; }
+            }
+            if (ImGui::IsItemDeactivated()) { if (!skewReset) endEdit(p); skewReset = false; }
+            if (!modKey && (hovered || active) && ImGui::IsMouseDoubleClicked(0))
+            { panel.openValueEdit(id, values[p]); endEdit(p); }
+            if (hovered && !active)
+            {
+                const float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f)
+                {
+                    int n; const float* L = ratioList(n);
+                    int idx = 0; float bd = 1e9f;
+                    for (int i = 0; i < n; ++i) { float dd = std::fabs(L[i] - values[p]); if (dd < bd) { bd = dd; idx = i; } }
+                    idx += wheel > 0 ? 1 : -1; if (idx < 0) idx = 0; if (idx > n - 1) idx = n - 1;
+                    if (L[idx] != values[p]) { beginEdit(p); values[p] = L[idx]; setParam(p, L[idx]); endEdit(p); changed = true; }
+                }
+            }
+        }
+        const float t = (std::log(values[p] < d.min ? d.min : values[p]) - lmin) / lrange;
+        drawKnobChrome(c, R, t, ticks);
+        accentArc(cx, cy, r, t, false);
+        float typed;
+        if (panel.valueEdit(id, cx, cy, r, typed))
+        {
+            typed = typed < d.min ? d.min : (typed > d.max ? d.max : typed);
+            if (typed != values[p]) { beginEdit(p); values[p] = typed; setParam(p, typed); endEdit(p); changed = true; }
+        }
+        else if ((hovered || active) && !panel.isEditingValue(id))
+        { char buf[24]; std::snprintf(buf, sizeof buf, "%.2f\xC3\x97", values[p]); panel.valueBubble(dl, cx, cy, r, buf); }
+        return changed;
+    }
+
     // Chrome knob bound to a param, deriving range/name/tooltip from metadata.
+    // LOG-skew params route through the local log-taper knob (spec feel-fix).
     bool knob(const char* id, uint32_t p, float cx, float cy, float r,
               const char* fmt = "%.2f", const char* suffix = "",
               bool bipolar = false, bool stepped = false, bool persist = false,
-              float dmul = 1.0f, float dadd = 0.0f)
+              float dmul = 1.0f, float dadd = 0.0f, bool ticks = true)
     {
         const ParamDef& d = kParamDefs[p];
+        if (d.kind == PK_LOG && d.min > 0.0f && !stepped)
+            return knobSkewed(id, p, cx, cy, r, fmt, suffix, bipolar, persist, dmul, dadd, ticks);
         const bool ch = panel.knob(id, p, d.min, d.max, cx, cy, r, values[p], defaults[p],
-                                   stepped, true, fmt, suffix, 0, false, persist,
+                                   stepped, ticks, fmt, suffix, 0, false, persist,
                                    tips[p], false, dmul, dadd, d.name);
         const float t = (d.max > d.min) ? (values[p] - d.min) / (d.max - d.min) : 0.0f;
         accentArc(cx, cy, r, t, bipolar);
@@ -409,7 +617,8 @@ private:
             ImGui::SetCursorScreenPos(p0);
             ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
             if (ImGui::IsItemClicked() && !sel) setChoice(kParamMode, i);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kModeNames[i]);
+            // (no hover tooltip — the rocker already shows its mode name, and an
+            //  extra tooltip rendered as a stray label under the active button)
             dl->AddRectFilled(p0, p1, IM_COL32(24, 24, 27, 255), 5.0f * s);
             if (sel)
             {
@@ -488,6 +697,20 @@ private:
     void pushParam(uint32_t i, float v)
     { editParameter(i, true); values[i] = v; setParameterValue(i, v); editParameter(i, false); }
 
+    // Brushed-metal chassis: subtle vertical gradient + noise-free procedural
+    // brushing lines, all derived from live.bg so it crossfades with the mode
+    // palette (spec §4 / defect 8). Drawn into the background draw list.
+    void drawChassis()
+    {
+        const ImU32 top = lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.05f);
+        const ImU32 bot = lerpC(live.bg, IM_COL32(0, 0, 0, 255), 0.18f);
+        dl->AddRectFilledMultiColor(P(0, 0), P(kDesignW, kDesignH), top, top, bot, bot);
+        const ImU32 lite = withA(lerpC(live.bg, IM_COL32(255, 255, 255, 255), 0.5f), 8);
+        const ImU32 dark = withA(IM_COL32(0, 0, 0, 255), 10);
+        for (int x = 0; x < (int)kDesignW; x += 3)
+            dl->AddLine(P((float)x, 0), P((float)x, kDesignH), (x & 1) ? lite : dark, 1.0f);
+    }
+
     void drawWoodCheeks()
     {
         // Oracle decorative wood side cheeks; alpha follows how "Oracle" the blend is.
@@ -555,38 +778,44 @@ private:
 
     void drawMixerVoice()
     {
-        // MIXER / CHARACTER + VOICE — expanded to a 5x3 compact grid to house
-        // the unison/portamento/velocity/pitchbend/oversampling params the region
-        // map left unallocated (see report — deviation, all params reachable).
+        // CHARACTER (row 1) + VOICE (rows 2-3): 5-column grid with guaranteed
+        // label-above-knob clearance and a divider between the two sub-groups.
+        // All unison/porta/velocity/PB/oversampling params reachable (defect 2).
         panelBox(16, 414, 340, 542);
         sectionTitle(24, 418, "VOICE / CHARACTER");
-        const float col0 = 48.0f, colStep = 61.0f;
-        const float row1 = 466.0f, row2 = 500.0f, row3 = 534.0f;
-        const float labOff = 22.0f;
+        const float col0 = 46.0f, colStep = 62.0f;
+        const float row1 = 456.0f, row2 = 492.0f, row3 = 528.0f;
+        const float labOff = 24.0f;
+        const float kr = 10.0f, comboHW = 29.0f, comboH = 9.0f;
         auto CX = [&](int c) { return col0 + c * colStep; };
+        auto cLabel = [&](float cx, float y, const char* t) { text(cx, y, 9.0f, live.textPanel, t, 0, true); };
 
-        // Row 1 — mixer / character
-        klabel(CX(0), row1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, CX(0), row1, 12, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(1), row1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, CX(1), row1, 12, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(2), row1 - labOff, "VNTG");  knob("vntg", kParamVintage, CX(2), row1, 12, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(3), row1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, CX(3), row1, 12, "%+.0f", " ct", true);
-        text(CX(4), row1 - labOff, 9.0f, live.textPanel, "OVERSMP", 0, true);
-        comboBox("ovs", kParamOversampling, CX(4) - 27, row1 - 8, CX(4) + 27, row1 + 10, kOversmp, 3);
+        // Row 1 — CHARACTER: noise / analog / vintage / tune / oversampling
+        klabel(CX(0), row1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, CX(0), row1, kr, "%.0f", " %", false, false, false, 100.0f);
+        klabel(CX(1), row1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, CX(1), row1, kr, "%.0f", " %", false, false, false, 100.0f);
+        klabel(CX(2), row1 - labOff, "VNTG");  knob("vntg", kParamVintage, CX(2), row1, kr, "%.0f", " %", false, false, false, 100.0f);
+        klabel(CX(3), row1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, CX(3), row1, kr, "%+.0f", " ct", true);
+        cLabel(CX(4), row1 - labOff, "OVERSMP");
+        comboBox("ovs", kParamOversampling, CX(4) - comboHW, row1 - comboH, CX(4) + comboHW, row1 + comboH, kOversmp, 3, curMode == 5);
 
-        // Row 2 — unison / portamento
-        klabel(CX(0), row2 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, CX(0), row2, 12, "%.0f", "", false, true);
-        klabel(CX(1), row2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, CX(1), row2, 12, "%.0f", " ct");
-        klabel(CX(2), row2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, CX(2), row2, 12, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(3), row2 - labOff, "PORTA"); knob("porta", kParamPortaTime, CX(3), row2, 12, "%.2f", " s");
-        ledButton("legato", kParamLegato, CX(4) - 26, row2 - 8, CX(4) + 26, row2 + 10, "LEGATO");
+        // divider between CHARACTER and VOICE sub-groups
+        dl->AddLine(P(24, 467), P(332, 467), withA(live.textPanel, 40), 1.0f * s);
 
-        // Row 3 — velocity / pitch-bend / glide
-        text(CX(0), row3 - labOff, 9.0f, live.textPanel, "GLIDE", 0, true);
-        comboBox("glide", kParamGlideMode, CX(0) - 27, row3 - 8, CX(0) + 27, row3 + 10, kGlide, 2);
-        klabel(CX(1), row3 - labOff, "VEL"); knob("vels", kParamVelSens, CX(1), row3, 12, "%.0f", " %", false, false, false, 100.0f);
-        text(CX(2), row3 - labOff, 9.0f, live.textPanel, "V.CRV", 0, true);
-        comboBox("vcrv", kParamVelCurve, CX(2) - 27, row3 - 8, CX(2) + 27, row3 + 10, kVelCurve, 4);
-        klabel(CX(3), row3 - labOff, "PB"); knob("pb", kParamPbRange, CX(3), row3, 12, "%.0f", " st", false, true);
+        // Row 2 — VOICE: unison voices / detune / spread / porta / glide
+        klabel(CX(0), row2 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, CX(0), row2, kr, "%.0f", "", false, true);
+        klabel(CX(1), row2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, CX(1), row2, kr, "%.0f", " ct");
+        klabel(CX(2), row2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, CX(2), row2, kr, "%.0f", " %", false, false, false, 100.0f);
+        klabel(CX(3), row2 - labOff, "PORTA"); knob("porta", kParamPortaTime, CX(3), row2, kr, "%.2f", " s");
+        cLabel(CX(4), row2 - labOff, "GLIDE");
+        comboBox("glide", kParamGlideMode, CX(4) - comboHW, row2 - comboH, CX(4) + comboHW, row2 + comboH, kGlide, 2, curMode == 5);
+
+        // Row 3 — VOICE: legato / velocity / vel-curve / pitch-bend
+        cLabel(CX(0), row3 - labOff, "LEGATO");
+        ledButton("legato", kParamLegato, CX(0) - comboHW, row3 - comboH, CX(0) + comboHW, row3 + comboH, "", curMode == 5);
+        klabel(CX(1), row3 - labOff, "VEL"); knob("vels", kParamVelSens, CX(1), row3, kr, "%.0f", " %", false, false, false, 100.0f);
+        cLabel(CX(2), row3 - labOff, "V.CRV");
+        comboBox("vcrv", kParamVelCurve, CX(2) - comboHW, row3 - comboH, CX(2) + comboHW, row3 + comboH, kVelCurve, 4, curMode == 5);
+        klabel(CX(3), row3 - labOff, "PB"); knob("pb", kParamPbRange, CX(3), row3, kr, "%.0f", " st", false, true);
     }
 
     //========================================================================
@@ -596,10 +825,19 @@ private:
     {
         panelBox(348, 60, 752, 300);
         sectionTitle(356, 64, "FILTER");
-        drawFilterCurve(360, 74, 742, 180);
+        drawFilterCurve(360, 74, 742, 156);
 
-        klabel(426, 190, "CUTOFF");
-        knob("cutoff", kParamFilterCutoff, 426, 244, 54, "%.0f", " Hz", false, false, true);
+        // Oversized cutoff knob with a static CUTOFF label + persistent kHz readout
+        // (defect 7). knobSkewed handles the log drag; readout drawn manually so it
+        // stays inside the panel rather than under it.
+        klabel(426, 159, "CUTOFF");
+        knob("cutoff", kParamFilterCutoff, 426, 234, 54, "%.0f", " Hz");
+        char rb[24];
+        const float fc = values[kParamFilterCutoff];
+        if (fc >= 1000.0f) std::snprintf(rb, sizeof rb, "%.2f kHz", fc / 1000.0f);
+        else               std::snprintf(rb, sizeof rb, "%.0f Hz", fc);
+        text(426, 290, 10.0f, live.accent, rb, 0, true);
+
         klabel(556, 206, "RES");    knob("res", kParamFilterRes, 556, 232, 30, "%.0f", " %", false, false, false, 100.0f);
         klabel(636, 206, "ENV AMT");knob("fenvamt", kParamFilterEnvAmt, 636, 232, 30, "%+.0f", " %", true, false, false, 100.0f);
         if (curMode == 0) // Cosmos HP
@@ -950,41 +1188,45 @@ private:
         panelBox(16, 60, 340, 410);
         sectionTitle(24, 64, "OPERATOR MATRIX");
         const msynth::PrismAlgo& alg = msynth::kPrismAlgos[clampAlgo()];
-        const char* fields[9] = { "RAT", "FIN", "LVL", "VEL", "KEY", "A", "D", "S", "R" };
-        // 8 shown compact knobs per row (Ratio,Level,Vel,A,D,S,R,Fine) + KeyScale small
+        // Each operator gets its own block with two grouped sub-rows of compact,
+        // tickless knobs so every control is legible (defect 3):
+        //   sub-row 1: RATIO · FINE · LEVEL | VEL · KEY
+        //   sub-row 2: A · D · S · R        (+ FB on op 4)
+        const float cxc[5] = { 96.0f, 150.0f, 204.0f, 258.0f, 312.0f };
+        const float kr = 11.0f;
         for (int op = 0; op < 4; ++op)
         {
-            const float y = 100.0f + op * 74.0f;
+            const float top = 92.0f + op * 78.0f;
+            const float cy1 = top + 22.0f, cy2 = top + 56.0f;
             const bool carrier = (alg.carrierMask >> op) & 1;
+            const uint32_t base = kParamOp1Ratio + op * 9;
+
+            if (op > 0) dl->AddLine(P(22, top - 6), P(332, top - 6), withA(live.textPanel, 30), 1.0f * s);
+            // op number + carrier/modulator LED
+            panel.led(dl, 34, top + 34, carrier, 3.4f);
             char lab[8]; std::snprintf(lab, sizeof(lab), "OP %d", op + 1);
-            text(28, y - 30, 10.0f, carrier ? live.accent : live.textPanel, lab, -1, true);
-            panel.led(dl, 66, y - 25, carrier, 3.0f);
-            // 8 compact knobs across x 40..322
-            const int order[8] = { 0, 1, 2, 3, 5, 6, 7, 8 }; // Ratio,Fine,Level,Vel,A,D,S,R
-            for (int j = 0; j < 8; ++j)
-            {
-                const int fld = order[j];
-                const float cx = 46.0f + j * 38.0f;
-                char id[24]; std::snprintf(id, sizeof(id), "op%df%d", op, fld);
-                const uint32_t p = kParamOp1Ratio + op * 9 + fld;
-                text(cx, y - 20, 8.0f, live.textPanel, fields[fld], 0, false);
-                if (fld == 0)      knob(id, p, cx, y, 14, "%.2f", "\xC3\x97");
-                else if (fld == 1) knob(id, p, cx, y, 14, "%+.0f", " ct", true);
-                else if (fld == 2 || fld == 7) knob(id, p, cx, y, 14, "%.0f", " %", false, false, false, 100.0f);
-                else if (fld == 3) knob(id, p, cx, y, 14, "%.0f", " %", false, false, false, 100.0f);
-                else               knob(id, p, cx, y, 14, "%.0f", " ms", false, false, false, 1000.0f);
-            }
-            // KeyScale (bipolar mini) at far right
-            char kid[24]; std::snprintf(kid, sizeof(kid), "op%dks", op);
-            text(322, y - 20, 8.0f, live.textPanel, "KEY", 0, false);
-            knob(kid, kParamOp1KeyScale + op * 9, 322, y, 12, "%+.0f", " %", true, false, false, 100.0f);
-            // Op4 hosts feedback
-            if (op == 3)
-            { text(322, y + 18, 8.0f, live.accent, "FB", 0, true); }
+            text(48, top + 28, 10.0f, carrier ? live.accent : live.textPanel, lab, -1, true);
+            text(48, top + 42, 7.5f, withA(live.textPanel, 150), carrier ? "carrier" : "mod", -1, false);
+            // group divider between LEVEL and VEL in sub-row 1
+            dl->AddLine(P(231, top + 10), P(231, top + 34), withA(live.textPanel, 30), 1.0f * s);
+
+            auto L = [&](float cx, float y, const char* t) { text(cx, y - 20.0f, 8.0f, live.textPanel, t, 0, true); };
+            char id[24];
+            // sub-row 1
+            L(cxc[0], cy1, "RATIO"); std::snprintf(id, sizeof(id), "op%dR", op); knobRatio(id, base + 0, cxc[0], cy1, kr, false);
+            L(cxc[1], cy1, "FINE");  std::snprintf(id, sizeof(id), "op%dF", op); knob(id, base + 1, cxc[1], cy1, kr, "%+.0f", " ct", true, false, false, 1.0f, 0.0f, false);
+            L(cxc[2], cy1, "LEVEL"); std::snprintf(id, sizeof(id), "op%dL", op); knob(id, base + 2, cxc[2], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            L(cxc[3], cy1, "VEL");   std::snprintf(id, sizeof(id), "op%dV", op); knob(id, base + 3, cxc[3], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            L(cxc[4], cy1, "KEY");   std::snprintf(id, sizeof(id), "op%dK", op); knob(id, base + 4, cxc[4], cy1, kr, "%+.0f", " %", true, false, false, 100.0f, 0.0f, false);
+            // sub-row 2
+            L(cxc[0], cy2, "A"); std::snprintf(id, sizeof(id), "op%dA", op); knob(id, base + 5, cxc[0], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false);
+            L(cxc[1], cy2, "D"); std::snprintf(id, sizeof(id), "op%dD", op); knob(id, base + 6, cxc[1], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false);
+            L(cxc[2], cy2, "S"); std::snprintf(id, sizeof(id), "op%dS", op); knob(id, base + 7, cxc[2], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            L(cxc[3], cy2, "R"); std::snprintf(id, sizeof(id), "op%dRl", op); knob(id, base + 8, cxc[3], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false);
+            if (op == 3) // feedback op hosts the FB knob, aligned in the KEY column
+            { text(cxc[4], cy2 - 20.0f, 8.0f, live.accent, "FB", 0, true);
+              knob("prismfb", kParamPrismFB, cxc[4], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false); }
         }
-        // Feedback knob (op4) sits just below the strip
-        klabel(300, 372, "FEEDBACK");
-        knob("prismfb", kParamPrismFB, 300, 396, 12, "%.0f", " %", false, false, false, 100.0f);
     }
 
     int clampAlgo() const { int a = (int)std::lround(values[kParamPrismAlgo]); return a < 0 ? 0 : (a > 7 ? 7 : a); }
@@ -1224,8 +1466,10 @@ private:
        #endif
         const float dt = ImGui::GetIO().DeltaTime;
         vuL = ballistic(vuL, lL, dt); vuR = ballistic(vuR, lR, dt);
-        drawVUbar(1024, 324, 1048, 520, vuL, clipL);
-        drawVUbar(1056, 324, 1080, 520, vuR, clipR);
+        // bars start below the title so the per-channel clip LEDs (drawn at y0-8)
+        // clear the "OUTPUT" header (defect 5)
+        drawVUbar(1024, 338, 1048, 520, vuL, clipL);
+        drawVUbar(1056, 338, 1080, 520, vuR, clipR);
         text(1036, 524, 9.0f, live.textPanel, "L", 0);
         text(1068, 524, 9.0f, live.textPanel, "R", 0);
 
@@ -1276,38 +1520,46 @@ private:
         panelBox(16, 548, 700, 692);
         sectionTitle(24, 552, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
 
-        // arp transport row (region map left these unplaced — see report)
-        ledButton("arpon", kParamArpOn, 120, 552, 176, 570, "ARP");
-        text(190, 554, 9.0f, live.textPanel, "MODE", -1, true);
-        comboBox("arpmode", kParamArpMode, 224, 552, 316, 572, kArpMode, 7);
-        text(326, 554, 9.0f, live.textPanel, "RATE", -1, true);
-        comboBox("arprate", kParamArpRate, 358, 552, 424, 572, kDivName, 14);
-        klabel(452, 552, "OCT");   knob("arpoct", kParamArpOctave, 452, 566, 9, "%.0f", "", false, true);
-        klabel(486, 552, "GATE");  knob("arpgate", kParamArpGate, 486, 566, 9, "%.0f", " %", false, false, false, 100.0f);
-        klabel(520, 552, "SWING"); knob("arpswing", kParamArpSwing, 520, 566, 9, "%.0f", " %", false, false, false, 100.0f);
-        ledButton("arplatch", kParamArpLatch, 548, 556, 596, 574, "LATCH");
-        text(608, 554, 9.0f, live.textPanel, "VEL", -1, true);
-        comboBox("arpvel", kParamArpVelMode, 634, 552, 694, 572, kArpVel, 3);
+        // --- transport header (y 550..584): spaced so nothing collides (defect 4).
+        // Mini-knobs get their label above and body below within the taller band.
+        const bool acid = (curMode == 5);
+        ledButton("arpon", kParamArpOn, 162, 560, 212, 580, "ARP");
+        text(220, 552, 9.0f, live.textPanel, "MODE", -1, true);
+        comboBox("arpmode", kParamArpMode, 218, 562, 300, 580, kArpMode, 7, acid);
+        text(312, 552, 9.0f, live.textPanel, "RATE", -1, true);
+        comboBox("arprate", kParamArpRate, 310, 562, 372, 580, kDivName, 14, acid);
+        const float hy = 574.0f;
+        klabel(398, 553, "OCT");   knob("arpoct", kParamArpOctave, 398, hy, 9, "%.0f", "", false, true);
+        klabel(432, 553, "GATE");  knob("arpgate", kParamArpGate, 432, hy, 9, "%.0f", " %", false, false, false, 100.0f);
+        klabel(470, 553, "SWING"); knob("arpswing", kParamArpSwing, 470, hy, 9, "%.0f", " %", false, false, false, 100.0f);
+        ledButton("arplatch", kParamArpLatch, 500, 560, 548, 580, "LATCH");
+        text(560, 552, 9.0f, live.textPanel, "VEL", -1, true);
+        comboBox("arpvel", kParamArpVelMode, 556, 562, 628, 580, kArpVel, 3, acid);
 
-        const float lx0 = 24, lx1 = 692, laneW = lx1 - lx0;
-        const float cw = laneW / 16.0f;
         const int step = liveStep();
 
-        if (curMode == 5)
+        if (acid)
         {
-            // 3-lane acid expansion
-            drawStepRow(lx0, 592, cw, 24, kParamArpStep0, step, false); // gate/on
-            drawPitchLane(lx0, 604, cw, 44, step);                      // pitch
-            drawAccentSlideLanes(lx0, 652, cw, step);                   // accent + slide
-            text(24, 594, 8.0f, live.textPanel, "GATE", -1);
-            text(24, 646, 8.0f, live.textPanel, "PITCH", -1);
-            text(24, 674, 8.0f, live.textPanel, "ACC/SLD", -1);
+            // 3-lane acid pattern sequencer with a left label gutter (x18..58) so
+            // lane names never overlap the first cell (defect 6).
+            const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
+            drawLaneLabel(58, 590, 606, "GATE");
+            drawStepRow(gx, 590, cw, 16, kParamArpStep0, step, false);
+            drawLaneLabel(58, 612, 652, "PITCH");
+            drawPitchLane(gx, 612, cw, 40, step);
+            drawLaneLabel(58, 658, 672, "ACC");
+            drawLaneLabel(58, 676, 690, "SLIDE");
+            drawAccentSlideLanes(gx, 658, cw, step);
         }
         else
         {
-            drawStepRow(lx0, 606, cw, 60, kParamArpStep0, step, true);
+            const float gx = 24.0f, cw = (692.0f - gx) / 16.0f;
+            drawStepRow(gx, 590, cw, 96, kParamArpStep0, step, true);
         }
     }
+    // Right-aligned lane label sitting in the acid sequencer's left gutter.
+    void drawLaneLabel(float xRight, float y0, float y1, const char* t)
+    { text(xRight, 0.5f * (y0 + y1) - 5.0f, 8.5f, live.textPanel, t, 1, true); }
     void drawStepRow(float x0, float y0, float cw, float h, uint32_t base, int step, bool tall)
     {
         for (int i = 0; i < 16; ++i)
@@ -1331,17 +1583,18 @@ private:
     }
     void drawPitchLane(float x0, float y0, float cw, float h, int step)
     {
-        const float cy0 = y0 + 6, cy1 = y0 + h;
+        const float cy0 = y0, cy1 = y0 + h;
         const float midY = 0.5f * (cy0 + cy1);
-        dl->AddLine(P(x0, midY), P(x0 + 16 * cw, midY), IM_COL32(255, 255, 255, 40), 1.0f * s);
         for (int i = 0; i < 16; ++i)
         {
-            const float cx0 = x0 + i * cw + 2, cx1 = x0 + (i + 1) * cw - 2;
+            const float cx0 = x0 + i * cw + 1.5f, cx1 = x0 + (i + 1) * cw - 1.5f;
             const uint32_t p = kParamSeqPitch0 + i;
             char id[16]; std::snprintf(id, sizeof(id), "pit%d", i);
             const ImVec2 b0 = P(cx0, cy0), b1 = P(cx1, cy1);
             ImGui::SetCursorScreenPos(b0);
             ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+            // cell background so the lane never reads as dead black (defect 6)
+            dl->AddRectFilled(b0, b1, IM_COL32(26, 28, 32, 255), 2.0f * s);
             const bool active = ImGui::IsItemActive();
             if (active)
             {
@@ -1355,22 +1608,28 @@ private:
             if (!ImGui::GetIO().KeyCtrl && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
             { beginEdit(p); values[p] = 0; setParam(p, 0); endEdit(p); }
             if (ImGui::IsItemHovered())
-            { char t[16]; std::snprintf(t, sizeof(t), "%+d st", (int)values[p]); ImGui::SetTooltip("%s", t); }
+            { char t[24]; std::snprintf(t, sizeof(t), "Step %d: %+d st", i + 1, (int)values[p]); ImGui::SetTooltip("%s", t); }
+            // filled bar from the 0-centre line to the value
             const float t01 = (values[p] + 24.0f) / 48.0f;
             const float vy = cy1 - (cy1 - cy0) * t01;
-            const ImU32 col = i == step ? live.ledOn : withA(live.accent, 200);
-            if (values[p] >= 0) dl->AddRectFilled(P(cx0, vy), P(cx1, midY), col, 1.0f * s);
-            else                dl->AddRectFilled(P(cx0, midY), P(cx1, vy), col, 1.0f * s);
+            const ImU32 col = i == step ? live.ledOn : withA(live.accent, 210);
+            if (values[p] > 0)      dl->AddRectFilled(P(cx0, vy), P(cx1, midY), col, 1.0f * s);
+            else if (values[p] < 0) dl->AddRectFilled(P(cx0, midY), P(cx1, vy), col, 1.0f * s);
+            // per-step numeric value, always visible
+            char nb[8]; std::snprintf(nb, sizeof(nb), "%+d", (int)values[p]);
+            text(0.5f * (cx0 + cx1), cy0 + 2.0f, 8.0f, IM_COL32(232, 235, 240, 255), nb, 0, true);
+            if (i == step) dl->AddRect(b0, b1, live.ledOn, 2.0f * s, 0, 1.4f * s);
         }
+        // 0-centre gridline on top
+        dl->AddLine(P(x0, midY), P(x0 + 16 * cw, midY), IM_COL32(255, 255, 255, 90), 1.0f * s);
     }
     void drawAccentSlideLanes(float x0, float y0, float cw, int step)
     {
         for (int i = 0; i < 16; ++i)
         {
-            const float cx0 = x0 + i * cw + 2, cx1 = x0 + (i + 1) * cw - 2;
-            // accent (amber) top 18, slide (cyan) bottom 18
-            drawMiniCell(cx0, y0, cx1, y0 + 16, kParamSeqAccent0 + i, i, step, IM_COL32(240, 200, 40, 255));
-            drawMiniCell(cx0, y0 + 20, cx1, y0 + 36, kParamSeqSlide0 + i, i, step, IM_COL32(60, 200, 230, 255));
+            const float cx0 = x0 + i * cw + 1.5f, cx1 = x0 + (i + 1) * cw - 1.5f;
+            drawMiniCell(cx0, y0,      cx1, y0 + 14, kParamSeqAccent0 + i, i, step, IM_COL32(240, 200, 40, 255));
+            drawMiniCell(cx0, y0 + 18, cx1, y0 + 32, kParamSeqSlide0 + i, i, step, IM_COL32(60, 200, 230, 255));
         }
     }
     void drawMiniCell(float x0, float y0, float x1, float y1, uint32_t p, int i, int step, ImU32 onCol)
@@ -1661,6 +1920,10 @@ private:
     // misc animation
     float  shPhase = 0.0f;
     bool   pitchDragging = false;
+
+    // local skew/ratio-knob drag state (one knob active at a time, like the shared knob)
+    float  skewL = 0.0f;
+    bool   skewReset = false;
 
    #ifdef MSYNTH_FRAME_PROFILE
     double profLogic[100] = {}, profTotal[100] = {};
