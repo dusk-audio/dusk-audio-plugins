@@ -1527,12 +1527,13 @@ private:
     {
         dl->AddRectFilled(P(x0 - 2, y0 - 2), P(x1 + 2, y1 + 2), IM_COL32(30, 30, 32, 255), 2.0f * s);
         dl->AddRectFilled(P(x0, y0), P(x1, y1), IM_COL32(10, 10, 11, 255));
-        const float dB = 20.0f * std::log10(lvl > 1e-5f ? lvl : 1e-5f);
+        // lvl is ALREADY dBFS (core stores 20*log10 peak, -60..+6); do not re-log.
+        const float dB = lvl;
         float h = (dB + 40.0f) / 46.0f; h = h < 0 ? 0 : (h > 1 ? 1 : h);
         const float top = y1 - (y1 - y0) * h;
         // segmented coloring
         const float dt = ImGui::GetIO().DeltaTime;
-        if (lvl > 0.999f) clipHold = 0.5f; else clipHold -= dt; if (clipHold < 0) clipHold = 0;
+        if (lvl >= 0.0f) clipHold = 0.5f; else clipHold -= dt; if (clipHold < 0) clipHold = 0;
         for (float yy = y1; yy > top; yy -= 3.0f)
         {
             const float segDb = -40.0f + 46.0f * (y1 - yy) / (y1 - y0);
@@ -1970,7 +1971,7 @@ private:
     float  scope[msynth::MultiSynthDSP::kScopeSize] = {};
 
     // VU ballistics
-    float  vuL = 0, vuR = 0, clipL = 0, clipR = 0;
+    float  vuL = -60.0f, vuR = -60.0f, clipL = 0, clipR = 0; // vu smoothed in dBFS
 
     // keyboard
     int    baseMidi = 48;   // C3
