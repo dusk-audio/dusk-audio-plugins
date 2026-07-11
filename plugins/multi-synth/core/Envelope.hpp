@@ -42,7 +42,15 @@ public:
 
     void setCurve(EnvelopeCurve c) noexcept { curve = c; }
 
-    void noteOn() noexcept  { stage = Stage::Attack; attackPhase = 0.0f; }
+    void noteOn() noexcept
+    {
+        stage = Stage::Attack;
+        // Seed the attack phase from the CURRENT level (curve inverse) so a
+        // retrigger/voice-steal resumes the attack from currentValue instead
+        // of snapping back to 0. Without this, stealing a voice mid-sustain
+        // produced a render-proven ~0.6 -> 0.0 discontinuity (a click).
+        attackPhase = (currentValue > 0.0f) ? curveInverse(currentValue) : 0.0f;
+    }
     void noteOff() noexcept
     {
         if (stage != Stage::Idle)
@@ -114,6 +122,30 @@ private:
             }
             case EnvelopeCurve::Linear:
             default: return p;
+        }
+    }
+
+    // Inverse of applyCurve: given a value v in [0,1], return the attack phase
+    // p such that applyCurve(p) == v. Each branch inverts the matching forward
+    // curve; all branches are monotonically increasing on [0,1] so the inverse
+    // is well defined. v is clamped to [0, 0.999] before the log/sqrt to keep
+    // AnalogRC's argument strictly positive and avoid a degenerate p at v~=1.
+    float curveInverse(float v) const noexcept
+    {
+        v = clampf(v, 0.0f, 0.999f);
+        switch (curve)
+        {
+            case EnvelopeCurve::Exponential: return std::sqrt(v);          // forward p*p
+            case EnvelopeCurve::Logarithmic: return v * v;                 // forward sqrt(p)
+            case EnvelopeCurve::AnalogRC:
+            {
+                constexpr float tau = 1.0f / 3.0f;
+                constexpr float oneMinusE3 = 1.0f - 0.049787068f;          // 1 - e^-3
+                // forward: v = (1 - exp(-p/tau)) / (1 - e^-3)
+                return -tau * std::log(1.0f - v * oneMinusE3);
+            }
+            case EnvelopeCurve::Linear:
+            default: return v;                                             // forward p
         }
     }
 

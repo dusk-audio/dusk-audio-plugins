@@ -106,6 +106,11 @@ int main(int argc, char** argv)
     struct Scheduled { double time; int idx; float val; };
     std::vector<Scheduled> scheduled;
 
+    // Scheduled note events (noteon=<sec>:<note> / noteoff=<sec>:<note>). Fired at
+    // the first block starting at/after <sec>; used for retrigger/steal tests.
+    struct SchedNote { double time; int note; bool on; };
+    std::vector<SchedNote> schedNotes;
+
     for (int a = 6; a < argc; ++a)
     {
         std::string kv = argv[a];
@@ -135,6 +140,25 @@ int main(int argc, char** argv)
             const int sidx = msynth::MultiSynthDSP::paramIndexForName(name.c_str());
             if (sidx < 0) { std::fprintf(stderr, "setat unknown param: %s\n", name.c_str()); return 1; }
             scheduled.push_back({ t, sidx, v });
+            continue;
+        }
+        if (key == "noteon" || key == "noteoff")
+        {
+            // <sec>:<note>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad %s (want <sec>:<note>): %s\n", key.c_str(), val.c_str());
+                return 1;
+            }
+            const double t = std::atof(val.substr(0, c1).c_str());
+            const int nn = std::atoi(val.substr(c1 + 1).c_str());
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad %s time: %g (want 0 <= t <= %g)\n", key.c_str(), t, seconds);
+                return 1;
+            }
+            schedNotes.push_back({ t, nn, key == "noteon" });
             continue;
         }
         if (key == "vel")      { vel = (float)std::atof(val.c_str()); continue; }
@@ -218,6 +242,7 @@ int main(int argc, char** argv)
 
     // Frame at which each scheduled change fires (first block starting >= it).
     std::vector<char> schedDone(scheduled.size(), 0);
+    std::vector<char> schedNoteDone(schedNotes.size(), 0);
 
     bool released = false;
     for (int pos = 0; pos < totalFrames; )
@@ -233,6 +258,19 @@ int main(int argc, char** argv)
             {
                 synth.setParameter(scheduled[s].idx, scheduled[s].val);
                 schedDone[s] = 1;
+            }
+        }
+
+        // Apply any scheduled note events whose time has arrived.
+        for (size_t s = 0; s < schedNotes.size(); ++s)
+        {
+            if (schedNoteDone[s]) continue;
+            const int frame = (int)(schedNotes[s].time * sampleRate);
+            if (pos >= frame)
+            {
+                if (schedNotes[s].on) synth.noteOn(schedNotes[s].note, vel);
+                else                  synth.noteOff(schedNotes[s].note);
+                schedNoteDone[s] = 1;
             }
         }
 
