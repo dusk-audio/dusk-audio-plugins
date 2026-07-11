@@ -87,7 +87,18 @@ public:
         for (int i = 0; i < 4; ++i)
         {
             const float y = s[i] + g * (in - s[i]);
-            s[i] = std::tanh(y * stageNonlinearity) / std::tanh(stageNonlinearity);
+            // Per-stage soft saturation with UNITY small-signal gain. The former
+            // normaliser was tanh(y*k)/tanh(k), whose small-signal gain is
+            // k/tanh(k) > 1 — that makes each stage a bistable latch (fixed point
+            // s=0 has loop gain >1), so at low cutoff (small g, little AC to keep
+            // the integrator moving) every stage rails to a constant +-1, i.e.
+            // pure DC, which the output DC blocker then removes -> the voice
+            // decays to silence on any sustained note below ~2.5 kHz. Dividing by
+            // stageNonlinearity instead of tanh(stageNonlinearity) restores unity
+            // small-signal gain (stable) while keeping the knob a real saturation
+            // amount (higher k = harder knee). Matches the proven LadderFilter/
+            // AcidFilter approach (plain bounded tanh, gain <= 1).
+            s[i] = std::tanh(y * stageNonlinearity) / stageNonlinearity;
             in = s[i];
         }
 
