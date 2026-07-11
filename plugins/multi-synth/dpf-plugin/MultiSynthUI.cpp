@@ -101,6 +101,17 @@ public:
         setGeometryConstraints((uint32_t)(kDesignW * 0.5f), (uint32_t)(kDesignH * 0.5f), true);
 
         static const float kFontSizes[] = { 9.f, 10.f, 11.f, 12.f, 13.f, 15.f, 20.f, 26.f };
+        // The crisp font atlas is baked once here at the current scale factor.
+        // U6 (skipped, documented limitation): rebuilding it on a live DPI change
+        // is not safe with this DPF ImGui wrapper — the wrapper captures the scale
+        // factor at construction and never fires a scale-change hook, and an
+        // external io.Fonts->Clear()/Build() would (a) dangle the ImFont* faces
+        // held in fontSet and (b) leave the GL backend on a stale font texture
+        // (ImGui_ImplOpenGL3_NewFrame only recreates it after an explicit
+        // ImGui_ImplOpenGL3_DestroyFontsTexture, which the wrapper does not
+        // expose). Net effect: text is slightly blurry after a monitor-DPI change
+        // until the plugin window is reopened. Fixing it properly needs a DPF /
+        // shared-dpf change (out of scope here).
         fontSet = duskdpf::loadCrispFontSet(kFontSizes, 8, getScaleFactor());
         panel.setFontSet(fontSet);
 
@@ -118,6 +129,15 @@ protected:
     {
         if (index < kParamCount)
             values[index] = value;
+    }
+
+    // U1: the host loaded a factory program (preset). Reflect it in the name
+    // display; the preset's actual parameter values arrive via parameterChanged
+    // and drive the mode crossfade, so nothing else is needed here.
+    void programLoaded(uint32_t index) override
+    {
+        if (index < (uint32_t)kNumFactoryPresets)
+            currentPreset = (int)index;
     }
 
     void onImGuiDisplay() override
@@ -561,13 +581,48 @@ private:
         return ch;
     }
 
+    // A knob a mode renders but does not use: drawn dimmed (~45% alpha) and inert
+    // (no drag), with a tooltip explaining why. Value arc still reflects the stored
+    // setting so switching to a mode that DOES use it shows the current value. (U2)
+    void inertKnob(const char* id, uint32_t p, float cx, float cy, float r, bool bipolar,
+                   const char* whyTip)
+    {
+        const ParamDef& d = kParamDefs[p];
+        const float t = (d.max > d.min) ? (values[p] - d.min) / (d.max - d.min) : 0.0f;
+        const int A = 115; // ~45% alpha, matching the other dead-control affordances
+        const ImVec2 c = P(cx, cy);
+        const float R = r * s;
+        dl->AddCircleFilled(c, R, withA(IM_COL32(40, 40, 43, 255), A), 28);
+        dl->AddCircle(c, R, withA(IM_COL32(90, 90, 94, 255), A), 28, 1.4f * s);
+        // value arc (dimmed) + indicator
+        const float t0 = bipolar ? 0.5f : 0.0f;
+        const int N = 20; ImVec2 pts[N + 1];
+        for (int i = 0; i <= N; ++i)
+        {
+            const float tt = t0 + (t - t0) * (float)i / (float)N;
+            const float ang = duskdpf::DuskPanel::knobAngle(tt);
+            pts[i] = ImVec2(c.x + std::sin(ang) * (R + 3.0f * s), c.y - std::cos(ang) * (R + 3.0f * s));
+        }
+        dl->AddPolyline(pts, N + 1, withA(live.accent, A), 0, 2.2f * s);
+        const float ia = duskdpf::DuskPanel::knobAngle(t);
+        dl->AddLine(c, ImVec2(c.x + std::sin(ia) * R * 0.8f, c.y - std::cos(ia) * R * 0.8f),
+                    withA(live.text, A), 2.0f * s);
+        ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
+        ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", whyTip);
+    }
+
     void setChoice(uint32_t p, int v)
     { const float nv = (float)v; beginEdit(p); values[p] = nv; setParam(p, nv); endEdit(p); }
 
+    // forceDisplayIdx >= 0 overrides the CLOSED preview label (used when the engine
+    // forces a fixed waveform in a mode) while the dropdown still selects/writes
+    // the real param for other modes (U2).
     void comboBox(const char* id, uint32_t p, float x0, float y0, float x1, float y1,
-                  const char* const* opts, int nopts, bool acid = false)
+                  const char* const* opts, int nopts, bool acid = false, int forceDisplayIdx = -1)
     {
         int idx = (int)std::lround(values[p]); idx = idx < 0 ? 0 : (idx >= nopts ? nopts - 1 : idx);
+        const int shownIdx = (forceDisplayIdx >= 0 && forceDisplayIdx < nopts) ? forceDisplayIdx : idx;
         ImGui::SetCursorScreenPos(P(x0, y0));
         ImGui::SetNextItemWidth((x1 - x0) * s);
         ImFont* f = panel.pickFont(12.0f * s);
@@ -579,7 +634,7 @@ private:
         ImGui::PushStyleColor(ImGuiCol_Header,   withA(live.accent, 150));
         ImGui::PushStyleColor(ImGuiCol_Text,     IM_COL32(235, 238, 242, 255));
         char cid[40]; std::snprintf(cid, sizeof(cid), "##%s", id);
-        if (ImGui::BeginCombo(cid, opts[idx]))
+        if (ImGui::BeginCombo(cid, opts[shownIdx]))
         {
             for (int i = 0; i < nopts; ++i)
                 if (ImGui::Selectable(opts[i], i == idx)) setChoice(p, i);
@@ -712,6 +767,9 @@ private:
     {
         if (idx < 0 || idx >= kNumFactoryPresets) return;
         currentPreset = idx;
+        // NOTE (U1): DPF's DistrhoUI has no API for a UI to ask the host to load a
+        // program (only the host->UI programLoaded callback exists), so we mirror
+        // the shell's loadProgram by pushing the preset's parameters directly.
         // Mirror the shell's loadProgram: default -> baseline -> preset overrides.
         for (uint32_t i = 0; i < kNumCoreParams; ++i) pushParam(i, kParamDefs[i].def);
         for (int r = 0; r < kBaselineRows; ++r)
@@ -774,9 +832,27 @@ private:
         // OSC 2
         panelBox(16, 182, 340, 300);
         sectionTitle(24, 186, "OSC 2");
-        comboBox("o2w", kParamOsc2Wave, 150, 186, 332, 206, kWave5, 5, curMode == 5);
-        klabel(56, 218, "SEMI");   knob("o2semi", kParamOsc2Semi, 56, 258, 18, "%+.0f", " st", true, true);
-        klabel(114, 218, "DETUNE");knob("o2det", kParamOsc2Detune, 114, 258, 18, "%+.0f", " ct", true);
+        // Cosmos (mode 0) forces OSC 2 to a Pulse locked to OSC 1's frequency and
+        // detune, so the combo shows "Pulse" and SEMI/DETUNE are inert here (PW +
+        // LEVEL stay live). The wave param remains selectable to store a choice for
+        // the other modes. Pulse is index 4 in kWave5. (U2)
+        const bool cosmosOsc2 = (curMode == 0);
+        comboBox("o2w", kParamOsc2Wave, 150, 186, 332, 206, kWave5, 5, curMode == 5,
+                 cosmosOsc2 ? 4 : -1);
+        klabel(56, 218, "SEMI");
+        klabel(114, 218, "DETUNE");
+        if (cosmosOsc2)
+        {
+            inertKnob("o2semi", kParamOsc2Semi, 56, 258, 18, true,
+                      "Inactive in Cosmos: OSC 2 tracks OSC 1's pitch.");
+            inertKnob("o2det",  kParamOsc2Detune, 114, 258, 18, true,
+                      "Inactive in Cosmos: OSC 2 uses OSC 1's detune.");
+        }
+        else
+        {
+            knob("o2semi", kParamOsc2Semi, 56, 258, 18, "%+.0f", " st", true, true);
+            knob("o2det", kParamOsc2Detune, 114, 258, 18, "%+.0f", " ct", true);
+        }
         klabel(172, 218, "PW");    knob("o2pw", kParamOsc2PW, 172, 258, 18, "%.0f", " %", false, false, false, 100.0f);
         klabel(230, 218, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, 258, 18, "%.0f", " %", false, false, false, 100.0f);
 
@@ -1666,17 +1742,35 @@ private:
             const bool active = ImGui::IsItemActive();
             if (active)
             {
-                float v = values[p] - ImGui::GetIO().MouseDelta.y * (48.0f / ((cy1 - cy0) * s));
-                v = v < -24 ? -24 : (v > 24 ? 24 : v);
-                if (!ImGui::GetIO().KeyShift) v = std::round(v);
-                if (v != values[p]) { if (!pitchDragging) { beginEdit(p); pitchDragging = true; }
-                                      values[p] = v; setParam(p, v); }
+                float raw = values[p] - ImGui::GetIO().MouseDelta.y * (48.0f / ((cy1 - cy0) * s));
+                raw = raw < -24 ? -24 : (raw > 24 ? 24 : raw);
+                // Shift = fine scrub: keep the sub-integer value internally for a
+                // smooth drag, but ALWAYS push the ROUNDED integer. seqPitch is an
+                // INT param; pushing a fraction lets the engine truncate toward
+                // zero, which is asymmetric for negatives (-1.6 -> -1, not -2). (U5)
+                const float fine = ImGui::GetIO().KeyShift ? raw : std::round(raw);
+                if (fine != values[p])
+                {
+                    if (!pitchDragging) { beginEdit(p); pitchDragging = true; }
+                    values[p] = fine;
+                    setParam(p, std::round(fine));
+                }
             }
-            if (ImGui::IsItemDeactivated() && pitchDragging) { endEdit(p); pitchDragging = false; }
-            if (!ImGui::GetIO().KeyCtrl && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
+            if (ImGui::IsItemDeactivated() && pitchDragging)
+            {
+                values[p] = std::round(values[p]); // snap the internal value on release
+                setParam(p, values[p]);
+                endEdit(p);
+                pitchDragging = false;
+            }
+            // Double-click reset to 0 — but NOT while a drag is in progress, so the
+            // reset branch can't open a second (nested) beginEdit on the frame a
+            // drag just began. (U5)
+            if (!pitchDragging && !ImGui::GetIO().KeyCtrl && ImGui::IsItemHovered()
+                && ImGui::IsMouseDoubleClicked(0))
             { beginEdit(p); values[p] = 0; setParam(p, 0); endEdit(p); }
             if (ImGui::IsItemHovered())
-            { char t[24]; std::snprintf(t, sizeof(t), "Step %d: %+d st", i + 1, (int)values[p]); ImGui::SetTooltip("%s", t); }
+            { char t[24]; std::snprintf(t, sizeof(t), "Step %d: %+d st", i + 1, (int)std::lround(values[p])); ImGui::SetTooltip("%s", t); }
             // filled bar from the 0-centre line to the value
             const float t01 = (values[p] + 24.0f) / 48.0f;
             const float vy = cy1 - (cy1 - cy0) * t01;
@@ -1684,7 +1778,7 @@ private:
             if (values[p] > 0)      dl->AddRectFilled(P(cx0, vy), P(cx1, midY), col, 1.0f * s);
             else if (values[p] < 0) dl->AddRectFilled(P(cx0, midY), P(cx1, vy), col, 1.0f * s);
             // per-step numeric value, always visible
-            char nb[8]; std::snprintf(nb, sizeof(nb), "%+d", (int)values[p]);
+            char nb[8]; std::snprintf(nb, sizeof(nb), "%+d", (int)std::lround(values[p]));
             text(0.5f * (cx0 + cx1), cy0 + 2.0f, 8.0f, IM_COL32(232, 235, 240, 255), nb, 0, true);
             if (i == step) dl->AddRect(b0, b1, live.ledOn, 2.0f * s, 0, 1.4f * s);
         }
