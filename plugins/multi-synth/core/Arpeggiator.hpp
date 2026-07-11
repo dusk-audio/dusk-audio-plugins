@@ -111,9 +111,13 @@ public:
 
         ++sampleCounter;
 
+        // Symmetric swing: the even step (leading into the offbeat) lengthens and
+        // the odd step shortens by the same amount, so each pair still lasts two
+        // grid steps and downbeats stay on the tempo grid.
         double effStep = samplesPerStep;
-        if (currentStep % 2 == 1 && swing > 0.0f)
-            effStep *= (1.0 + (double)swing * 0.5);
+        if (swing > 0.0f)
+            effStep *= (currentStep % 2 == 0) ? (1.0 + (double)swing * 0.5)
+                                              : (1.0 - (double)swing * 0.5);
         const double gateSamples = effStep * (double)gateLength;
 
         if (sampleCounter == 1)
