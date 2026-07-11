@@ -154,7 +154,7 @@ void MultiSynthDSP::reset()
     dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
-    scope.fill(0.0f);
+    for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
 }
 
@@ -536,7 +536,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
 
         // Scope ring (mono sum).
         const int wp = scopeWritePos.load(std::memory_order_relaxed);
-        scope[(size_t)wp] = (sL + (outR ? sR : sL)) * 0.5f;
+        scope[(size_t)wp].store((sL + (outR ? sR : sL)) * 0.5f, std::memory_order_relaxed);
         scopeWritePos.store((wp + 1) % kScopeSize, std::memory_order_relaxed);
 
         // Peak metering with release.

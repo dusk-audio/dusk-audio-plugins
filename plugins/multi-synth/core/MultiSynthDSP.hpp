@@ -151,9 +151,17 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
-    // 512-sample mono scope ring; writePos is the next index to be written.
-    const float* getScopeBuffer() const noexcept { return scope.data(); }
-    int   getScopeWritePos() const noexcept { return scopeWritePos.load(std::memory_order_relaxed); }
+    // 512-sample mono scope ring (audio thread writes, UI reads). Copies the ring
+    // oldest->newest into dst using relaxed loads ordered from the write position;
+    // returns the number of samples written (<= maxN, <= kScopeSize).
+    int copyScope(float* dst, int maxN) const noexcept
+    {
+        const int n = maxN < kScopeSize ? maxN : kScopeSize;
+        const int wp = scopeWritePos.load(std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i)
+            dst[i] = scope[(size_t)((wp + i) % kScopeSize)].load(std::memory_order_relaxed);
+        return n;
+    }
 
 private:
     static float clamp01(float v) noexcept { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
@@ -239,7 +247,7 @@ private:
     std::atomic<float> outLevelR { -60.0f };
     std::atomic<int>   arpStep { 0 };
     std::atomic<int>   arpTotalSteps { 0 };
-    std::array<float, kScopeSize> scope {};
+    std::array<std::atomic<float>, kScopeSize> scope {};
     std::atomic<int>   scopeWritePos { 0 };
     float meterL = 0.0f, meterR = 0.0f, meterDecay = 0.9999f;
 };
