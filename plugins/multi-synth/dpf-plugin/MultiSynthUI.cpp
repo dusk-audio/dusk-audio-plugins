@@ -917,7 +917,8 @@ private:
             if (fcMode == 0) { const float wh = f / (fcHP < 20 ? 20 : fcHP); mag *= wh / std::sqrt(1.0f + wh * wh); }
             float db = 20.0f * std::log10(mag > 1e-6f ? mag : 1e-6f);
             db = db < -24.0f ? -24.0f : (db > 18.0f ? 18.0f : db);
-            const float ny = 0.5f - db / dbRange; // +18 near top, -24 near bottom
+            // Map clamped dB to normalized Y: 0 at +18 (top), 1 at -24 (bottom).
+            const float ny = (18.0f - db) / dbRange;
             fcX[i] = rx0 + lx * (rx1 - rx0);
             fcY[i] = ry0 + ny * (ry1 - ry0);
         }
@@ -1434,16 +1435,22 @@ private:
             for (int i = 1; i < count / 4; ++i)
                 if (scope[i - 1] <= 0.0f && scope[i] > 0.0f) { start = i; break; }
             const int nPts = std::min(count - start, 204);
-            const float halfH = 0.5f * (ry1 - ry0) * 0.9f;
-            ImVec2 pts[204];
-            const float midYpx = P(0, midY).y;
-            for (int i = 0; i < nPts; ++i)
+            // Need at least two points for a polyline; the (nPts-1) divisor and
+            // AddPolyline both misbehave with a single point. The flat baseline
+            // is already drawn above, so just skip the trace in that case.
+            if (nPts >= 2)
             {
-                const float x = rx0 + (rx1 - rx0) * (float)i / (float)(nPts - 1);
-                float v = scope[start + i]; if (v > 1) v = 1; if (v < -1) v = -1;
-                pts[i] = ImVec2(P(x, 0).x, midYpx - v * halfH * s);
+                const float halfH = 0.5f * (ry1 - ry0) * 0.9f;
+                ImVec2 pts[204];
+                const float midYpx = P(0, midY).y;
+                for (int i = 0; i < nPts; ++i)
+                {
+                    const float x = rx0 + (rx1 - rx0) * (float)i / (float)(nPts - 1);
+                    float v = scope[start + i]; if (v > 1) v = 1; if (v < -1) v = -1;
+                    pts[i] = ImVec2(P(x, 0).x, midYpx - v * halfH * s);
+                }
+                dl->AddPolyline(pts, nPts, live.accent, 0, 1.6f * s);
             }
-            dl->AddPolyline(pts, nPts, live.accent, 0, 1.6f * s);
         }
         dl->PopClipRect();
         dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180), 4.0f * s, 0, 1.2f * s);
