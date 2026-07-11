@@ -234,28 +234,36 @@ int main(int argc, char** argv)
         const int bars = barsArg > 0 ? barsArg : 4;
         // Sustained chord over the first half; a melodic phrase then a closing
         // chord over the second half. Scaled by bars; bars=4 reproduces the
-        // original event times exactly (byte-identical render).
+        // original event times exactly (byte-identical render). All second-half
+        // events are clamped to the phrase-half boundary so nothing spills past
+        // the render window at small bar counts.
         const double chordEnd = 0.5 * bars * secPerBar - 0.1 * secPerBeat;
         for (int n : maj7) events.push_back({ S(0.0), true, n, vel });
         for (int n : maj7) events.push_back({ S(chordEnd), false, n, 0.0f });
         // Melodic phrase (fixed six-eighth line) starting at the half-way point.
         const double t0 = 0.5 * bars * secPerBar;
+        const double bound = t0 + bars * secPerBeat; // phrase-half boundary (== cOff)
+        double maxOff = 0.0;
         const int phrase[6] = { root + 12, root + 16, root + 19, root + 16, root + 12, root + 7 };
         for (int i = 0; i < 6; ++i)
         {
             const double on = t0 + i * secPerBeat * 0.5;      // eighth notes
-            const double off = on + secPerBeat * 0.45;
+            if (on >= bound) continue;                        // note-on past the boundary
+            double off = on + secPerBeat * 0.45;
+            if (off > bound) off = bound;                     // clamp off to the boundary
             events.push_back({ S(on), true, phrase[i], vel });
             events.push_back({ S(off), false, phrase[i], 0.0f });
+            if (off > maxOff) maxOff = off;
         }
-        // Closing chord in the last beat of the phrase half (t0 spans `bars` beats;
-        // at bars=4 this is t0+3..t0+4, matching the original).
+        // Closing chord in the last beat of the phrase half (cOn = bound - one beat
+        // is always < bound; cOff == bound). At bars=4 this is t0+3..t0+4.
         const double cOn = t0 + (bars - 1) * secPerBeat;
-        const double cOff = t0 + bars * secPerBeat;
+        const double cOff = bound;
         const int close[3] = { root, root + 4, root + 7 };
         for (int n : close) events.push_back({ S(cOn), true, n, vel });
         for (int n : close) events.push_back({ S(cOff), false, n, 0.0f });
-        lastOff = cOff;
+        if (cOff > maxOff) maxOff = cOff;
+        lastOff = maxOff;
     }
     else if (perf == "single")
     {
