@@ -134,6 +134,12 @@ generated from one X-macro list in `MultiSynthParams.hpp` so shell + UI + preset
 it. Total: **222 core params** (134 ported + 38 Prism + 2 acid globals + 48 step) plus 2
 output params `outLevelL/R` (meters fallback; real path = weak-symbol bridge).
 
+**Delay time ceiling**: the delay line buffer is 2 s (`sr * 2.0` samples). In
+tempo-sync mode a slow BPM with a long division can ask for more than 2 s
+(e.g. a dotted-1/2 below ~90 BPM); the requested delay is clamped to the buffer
+length, so at very slow tempi long divisions stop tracking tempo and hold at 2 s.
+Free (ms) mode is already capped at the 2000 ms knob maximum.
+
 ## Factory presets
 
 Port all 40 (inventory §5) as a **static value table** (not procedural), then add ≥12
