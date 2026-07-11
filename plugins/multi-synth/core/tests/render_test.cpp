@@ -24,6 +24,11 @@
 //   hold=n,n,n          extra held notes (played in addition to <midinote>);
 //                       useful for arpeggiator/chord tests
 //   sr=<hz>             sample rate (default 48000)
+//   setat=<sec>:<name>:<value>
+//                       schedule a parameter change: at the first block that
+//                       starts at/after <sec>, call setParameter(name, value).
+//                       Repeatable (pass multiple setat= args) — used to
+//                       reproduce preset-switch / arp-toggle stuck-note bugs.
 
 #include "MultiSynthDSP.hpp"
 
@@ -95,6 +100,11 @@ int main(int argc, char** argv)
     struct Override { int idx; float val; };
     std::vector<Override> overrides;
 
+    // Scheduled parameter changes (setat=<sec>:<name>:<value>). Applied at the
+    // first block starting at/after <sec>; multiple allowed.
+    struct Scheduled { double time; int idx; float val; };
+    std::vector<Scheduled> scheduled;
+
     for (int a = 6; a < argc; ++a)
     {
         std::string kv = argv[a];
@@ -103,6 +113,29 @@ int main(int argc, char** argv)
         const std::string key = kv.substr(0, eq);
         const std::string val = kv.substr(eq + 1);
 
+        if (key == "setat")
+        {
+            // <sec>:<name>:<value>
+            const auto c1 = val.find(':');
+            const auto c2 = (c1 == std::string::npos) ? std::string::npos : val.find(':', c1 + 1);
+            if (c1 == std::string::npos || c2 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad setat (want <sec>:<name>:<value>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = std::atof(val.substr(0, c1).c_str());
+            const std::string name = val.substr(c1 + 1, c2 - c1 - 1);
+            const float v = (float)std::atof(val.substr(c2 + 1).c_str());
+            if (!(std::isfinite(t) && t >= 0.0))
+            {
+                std::fprintf(stderr, "bad setat time: %g\n", t);
+                return 1;
+            }
+            const int sidx = msynth::MultiSynthDSP::paramIndexForName(name.c_str());
+            if (sidx < 0) { std::fprintf(stderr, "setat unknown param: %s\n", name.c_str()); return 1; }
+            scheduled.push_back({ t, sidx, v });
+            continue;
+        }
         if (key == "vel")      { vel = (float)std::atof(val.c_str()); continue; }
         if (key == "release")  { releaseTime = std::atof(val.c_str()); continue; }
         if (key == "tempo")    { tempo = std::atof(val.c_str()); continue; }
@@ -174,10 +207,25 @@ int main(int argc, char** argv)
     std::vector<float> interleaved((size_t)totalFrames * 2, 0.0f);
     std::vector<float> bufL((size_t)blockSize), bufR((size_t)blockSize);
 
+    // Frame at which each scheduled change fires (first block starting >= it).
+    std::vector<char> schedDone(scheduled.size(), 0);
+
     bool released = false;
     for (int pos = 0; pos < totalFrames; )
     {
         int n = std::min(blockSize, totalFrames - pos);
+
+        // Apply any scheduled parameter changes whose time has arrived.
+        for (size_t s = 0; s < scheduled.size(); ++s)
+        {
+            if (schedDone[s]) continue;
+            const int frame = (int)(scheduled[s].time * sampleRate);
+            if (pos >= frame)
+            {
+                synth.setParameter(scheduled[s].idx, scheduled[s].val);
+                schedDone[s] = 1;
+            }
+        }
 
         if (!released && releaseFrame >= 0 && pos >= releaseFrame)
         {
