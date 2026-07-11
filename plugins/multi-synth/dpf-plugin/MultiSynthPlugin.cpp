@@ -86,7 +86,8 @@ protected:
             return;
         }
         // Output params: peak meters (fallback path; real path = access bridge).
-        p.hints  = kParameterIsAutomatable | kParameterIsOutput;
+        // Output-only: not automatable (host writes to output params are discarded).
+        p.hints  = kParameterIsOutput;
         p.ranges.min = -60.0f;
         p.ranges.max = 6.0f;
         p.ranges.def = -60.0f;
