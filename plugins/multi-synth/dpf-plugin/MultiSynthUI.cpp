@@ -93,8 +93,10 @@ public:
     {
         for (uint32_t i = 0; i < kNumCoreParams; ++i)
             defaults[i] = values[i] = kParamDefs[i].def;
-        defaults[kParamOutLevelL] = values[kParamOutLevelL] = 0.0f;
-        defaults[kParamOutLevelR] = values[kParamOutLevelR] = 0.0f;
+        // Meters default to silence (-60 dBFS); 0.0f would read as 0 dBFS (full
+        // bar + clip LED) on the fallback path before the host pushes real values.
+        defaults[kParamOutLevelL] = values[kParamOutLevelL] = -60.0f;
+        defaults[kParamOutLevelR] = values[kParamOutLevelR] = -60.0f;
 
         setGeometryConstraints((uint32_t)(kDesignW * 0.5f), (uint32_t)(kDesignH * 0.5f), true);
 
