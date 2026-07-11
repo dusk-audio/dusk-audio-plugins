@@ -86,6 +86,13 @@ DPF-Widgets checkout: `~/projects/DPF-Widgets` (DearImGui wrapper).
    band-limited signal may run at base rate; measure to justify.
 9. **pluginval timeout**: use `--timeout-ms 120000`; the 30 s default
    fails spuriously under load.
+   **pluginval editor tests under headless Xvfb are unreliable**: pluginval's
+   JUCE host intermittently segfaults in `juce::XEmbedComponent` while
+   reparenting ANY DPF plugin's editor window (verified identical crash frame
+   across multi-synth / multi-q / tapemachine DPF builds — not a plugin bug).
+   For CI use `--skip-gui-tests` under Xvfb; real editor-lifecycle validation
+   needs a GL-capable desktop session. A green run with DISPLAY unset does NOT
+   exercise the embed path.
 10. **Do not use pedalboard for anything, ever** (project rule).
 
 ## Validation methodology (required for every port)
