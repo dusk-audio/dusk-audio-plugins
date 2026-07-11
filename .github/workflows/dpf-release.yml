@@ -130,8 +130,8 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DPF_INSTALL_LOCAL=OFF \
-            -DDPF_PATH="${{ github.workspace }}/DPF" \
-            -DDPFWIDGETS_PATH="${{ github.workspace }}/DPF-Widgets"
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -225,8 +225,8 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_DPF_INSTALL_LOCAL=OFF \
-            -DDPF_PATH="${{ github.workspace }}/DPF" \
-            -DDPFWIDGETS_PATH="${{ github.workspace }}/DPF-Widgets"
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
 
       - name: Build (VST3 + CLAP + LV2)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -280,6 +280,21 @@ jobs:
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Pre-fetch Khronos GL headers for DPF
+        shell: pwsh
+        run: |
+          # DPF's MSVC path downloads GL/glext.h + KHR/khrplatform.h from
+          # khronos.org at configure time; that registry URL has moved and the
+          # fetch silently yields a broken header (NanoVG.cpp then fails with
+          # missing PFNGL*PROC typedefs). Pre-populate from the canonical Khronos
+          # GitHub registry so DPF's `if(NOT EXISTS)` skips the broken download.
+          $gl = "${{ github.workspace }}/DPF/khronos/GL"
+          $khr = "${{ github.workspace }}/DPF/khronos/KHR"
+          New-Item -ItemType Directory -Force -Path $gl, $khr | Out-Null
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api/GL/glext.h" -OutFile "$gl/glext.h"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h" -OutFile "$khr/khrplatform.h"
+          Write-Host "glext.h size: $((Get-Item "$gl/glext.h").Length) bytes"
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
