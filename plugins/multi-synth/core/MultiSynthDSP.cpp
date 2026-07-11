@@ -149,13 +149,14 @@ void MultiSynthDSP::reset()
     effects.reset();
     cosmosChorus.reset();
     arp.reset();
-    acidVoice.reset(); acidSeq.reset(); acidLiveHeld = 0;
+    acidVoice.reset(); acidSeq.reset(); acidHeldCount = 0;
     decimL.reset(); decimR.reset();
     dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
+    scopeCount.store(0, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -183,7 +184,7 @@ void MultiSynthDSP::allNotesOff() noexcept
     arp.reset();
     acidVoice.noteOff();
     acidSeq.noteOff(0); acidSeq.clearLatch(); acidSeq.reset();
-    acidLiveHeld = 0;
+    acidHeldCount = 0;
 }
 
 //==============================================================================
@@ -193,17 +194,49 @@ void MultiSynthDSP::allNotesOff() noexcept
 void MultiSynthDSP::acidNoteOn(int note, float velocity01) noexcept
 {
     if (p(pArpOn) > 0.5f) { acidSeq.noteOn(note); return; }
-    const bool accent = velocity01 > kAcidAccentVel;
-    const bool slide  = acidLiveHeld > 0;   // overlapping notes -> legato glide
-    ++acidLiveHeld;
-    acidVoice.noteOn(midiToHz((float)note), accent, slide, clamp01(velocity01));
+    const float vel = clamp01(velocity01);
+    // Remove any existing entry for this note (re-press moves it to the top).
+    int w = 0;
+    for (int r = 0; r < acidHeldCount; ++r)
+        if (acidHeld[r].note != note) acidHeld[w++] = acidHeld[r];
+    acidHeldCount = w;
+    const bool slide = acidHeldCount > 0;   // a note was already sounding -> legato glide
+    // Push on top, dropping the oldest if the stack is full.
+    if (acidHeldCount >= 16)
+    {
+        for (int r = 1; r < 16; ++r) acidHeld[r - 1] = acidHeld[r];
+        acidHeldCount = 15;
+    }
+    acidHeld[acidHeldCount++] = { note, vel };
+    const bool accent = vel > kAcidAccentVel;
+    acidVoice.noteOn(midiToHz((float)note), accent, slide, vel);
 }
 
 void MultiSynthDSP::acidNoteOff(int note) noexcept
 {
     if (p(pArpOn) > 0.5f) { acidSeq.noteOff(note); return; }
-    if (acidLiveHeld > 0) --acidLiveHeld;
-    if (acidLiveHeld == 0) acidVoice.noteOff();
+    if (acidHeldCount <= 0) return;
+    const bool wasTop = acidHeld[acidHeldCount - 1].note == note;
+    // Remove the entry for this note (ignore if not held).
+    int w = 0;
+    bool removed = false;
+    for (int r = 0; r < acidHeldCount; ++r)
+    {
+        if (!removed && acidHeld[r].note == note) { removed = true; continue; }
+        acidHeld[w++] = acidHeld[r];
+    }
+    if (!removed) return;
+    acidHeldCount = w;
+    if (wasTop && acidHeldCount > 0)
+    {
+        // Return to the now-top held note (legato via slide-tie, no retrigger).
+        const HeldNote& t = acidHeld[acidHeldCount - 1];
+        acidVoice.noteOn(midiToHz((float)t.note), t.vel > kAcidAccentVel, /*slide=*/true, t.vel);
+    }
+    else if (acidHeldCount == 0)
+    {
+        acidVoice.noteOff();
+    }
 }
 
 //==============================================================================
@@ -548,6 +581,8 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         const int wp = scopeWritePos.load(std::memory_order_relaxed);
         scope[(size_t)wp].store((sL + (outR ? sR : sL)) * 0.5f, std::memory_order_relaxed);
         scopeWritePos.store((wp + 1) % kScopeSize, std::memory_order_relaxed);
+        const int sc = scopeCount.load(std::memory_order_relaxed);
+        if (sc < kScopeSize) scopeCount.store(sc + 1, std::memory_order_relaxed);
 
         // Peak metering with release.
         const float aL = std::abs(sL), aR = std::abs(sR);
