@@ -40,6 +40,7 @@
 #define DISTRHO_PLUGIN_WANT_TIMEPOS       1   // BPM for arp/seq/delay/LFO sync
 #define DISTRHO_PLUGIN_WANT_PROGRAMS      1   // factory presets (see MultiSynthParams)
 #define DISTRHO_PLUGIN_WANT_STATE         0
+#define DISTRHO_PLUGIN_WANT_LATENCY       1   // report oversampling halfband delay (E1)
 // Same-process meter/scope access for the Phase-4 UI (weak-symbol bridge). With
 // MONOLITHIC LV2 (see CMakeLists) this resolves in every format.
 #define DISTRHO_PLUGIN_WANT_DIRECT_ACCESS 1
