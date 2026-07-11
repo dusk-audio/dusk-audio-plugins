@@ -97,7 +97,12 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     junoChorus.prepare(hostRate, maxBlockSize);
     arp.prepare(hostRate);
     meterDecay = std::exp(-1.0f / (0.3f * (float)hostRate));
-    applyOsFactor(2);
+    dcBlockL.setSampleRate(hostRate);
+    dcBlockR.setSampleRate(hostRate);
+    // Full voice init at the default internal rate; later factor changes use the
+    // musical-state-preserving setSampleRate path (see applyOsFactor).
+    voices.prepare(hostRate * (double)osFactor);
+    decimL.setFactor(osFactor); decimR.setFactor(osFactor);
     reset();
 }
 
@@ -105,7 +110,8 @@ void MultiSynthDSP::applyOsFactor(int factor)
 {
     osFactor = (factor == 4) ? 4 : (factor == 2 ? 2 : 1);
     const double internalRate = hostRate * (double)osFactor;
-    voices.prepare(internalRate);      // allocation-free re-prepare at new rate
+    // Allocation-free rate change that preserves active notes and their pitch.
+    voices.setSampleRate(internalRate);
     decimL.setFactor(osFactor); decimL.reset();
     decimR.setFactor(osFactor); decimR.reset();
 }
@@ -117,6 +123,7 @@ void MultiSynthDSP::reset()
     junoChorus.reset();
     arp.reset();
     decimL.reset(); decimR.reset();
+    dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
     scope.fill(0.0f);
@@ -378,6 +385,10 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         const float side = (sL - sR) * 0.5f;
         sL = mid + side * stereoWidth;
         sR = mid - side * stereoWidth;
+
+        // Output DC blocker (reverb combs / filter nonlinearity leave a little DC).
+        sL = dcBlockL.process(sL);
+        sR = dcBlockR.process(sR);
 
         sL = softLimit(sL);
         sR = softLimit(sR);

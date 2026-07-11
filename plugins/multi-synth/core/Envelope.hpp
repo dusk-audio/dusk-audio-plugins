@@ -29,6 +29,8 @@ public:
     enum class Stage { Idle, Attack, Decay, Sustain, Release };
 
     void prepare(double sampleRate) noexcept { sr = (float)sampleRate; }
+    // Change rate WITHOUT resetting the current stage/phase.
+    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; }
 
     void setParameters(float attack, float decay, float sustain, float release) noexcept
     {
@@ -126,6 +128,7 @@ class LFO
 {
 public:
     void prepare(double sampleRate) noexcept { sr = (float)sampleRate; phase = 0.0f; }
+    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; }
 
     void setRate(float rateHz) noexcept   { rate = rateHz; }
     void setShape(LFOShape s) noexcept    { shape = s; }
