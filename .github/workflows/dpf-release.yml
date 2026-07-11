@@ -98,7 +98,7 @@ jobs:
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
           apt-get update
           apt-get install -y --no-install-recommends \
-            cmake ninja-build pkg-config zip \
+            cmake ninja-build pkg-config zip unzip \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libdbus-1-dev
@@ -193,7 +193,7 @@ jobs:
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
           apt-get update
           apt-get install -y --no-install-recommends \
-            cmake ninja-build pkg-config zip \
+            cmake ninja-build pkg-config zip unzip \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libdbus-1-dev
