@@ -28,3 +28,9 @@ add_executable(preset_render
 
 target_include_directories(preset_render PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DPF_PLUGIN})
 target_compile_options(preset_render PRIVATE -O2 -Wall -Wextra)
+
+# user_preset_test — unit gate for dpf-plugin/UserPresetStore.hpp (file-based user
+# preset library). Header-only; pulls MultiSynthParams.hpp for the symbol table.
+add_executable(user_preset_test user_preset_test.cpp)
+target_include_directories(user_preset_test PRIVATE ${DPF_PLUGIN})
+target_compile_options(user_preset_test PRIVATE -O2 -Wall -Wextra)
