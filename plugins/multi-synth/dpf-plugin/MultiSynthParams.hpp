@@ -268,15 +268,16 @@ static constexpr ParamDef kParamDefs[kNumCoreParams] =
 };
 
 // ---------------------------------------------------------------------------
-// Factory presets (40) - mechanical conversion of the JUCE applyFactoryPreset
-// procedure to a static override table. loadProgram() resets every param to
-// its default, applies the shared baseline, then the per-preset overrides.
-// Every preset ships at 2x oversampling (baseline oversampling=1); the pitch
-// bug is fixed so 2x is correct. Re-voicing by ear is Phase 5.
+// Factory presets (40) - static override table. loadProgram() resets every
+// param to its default, applies the shared baseline, then the per-preset
+// overrides. Every preset ships at 2x oversampling (baseline oversampling=1);
+// the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40
+// (unity-gain filter fix + level/intent) and appended new preset banks; see
+// docs/dpf-migration/09-multi-synth-presets.md for the per-preset change log.
 // ---------------------------------------------------------------------------
 struct PresetRow { int index; float value; };
 
-static constexpr PresetRow kPresetBaseline[] = { { kParamMasterVol, -6.0f }, { kParamOsc1Wave, 0.0f }, { kParamOsc2Wave, 0.0f }, { kParamOsc1Detune, 0.0f }, { kParamOsc2Detune, 7.0f }, { kParamOsc1Level, 0.8f }, { kParamOsc2Level, 0.6f }, { kParamNoiseLevel, 0.0f }, { kParamFilterCutoff, 8000.0f }, { kParamFilterRes, 0.3f }, { kParamFilterEnvAmt, 0.5f }, { kParamAmpA, 0.01f }, { kParamAmpD, 0.2f }, { kParamAmpS, 0.8f }, { kParamAmpR, 0.3f }, { kParamCrossMod, 0.0f }, { kParamRingMod, 0.0f }, { kParamPmFenvOscA, 0.0f }, { kParamPmFenvFilt, 0.0f }, { kParamPmOscBOscA, 0.0f }, { kParamPmOscBPWM, 0.0f }, { kParamArpOn, 0.0f }, { kParamDriveOn, 0.0f }, { kParamChorusOn, 0.0f }, { kParamDelayOn, 0.0f }, { kParamReverbOn, 0.0f }, { kParamUnisonVoices, 1.0f }, { kParamPortaTime, 0.0f }, { kParamAnalogAmt, 0.2f }, { kParamVintage, 0.0f }, { kParamOversampling, 1.0f } };
+static constexpr PresetRow kPresetBaseline[] = { { kParamMasterVol, 0.0f }, { kParamOsc1Wave, 0.0f }, { kParamOsc2Wave, 0.0f }, { kParamOsc1Detune, 0.0f }, { kParamOsc2Detune, 7.0f }, { kParamOsc1Level, 0.8f }, { kParamOsc2Level, 0.6f }, { kParamNoiseLevel, 0.0f }, { kParamFilterCutoff, 8000.0f }, { kParamFilterRes, 0.3f }, { kParamFilterEnvAmt, 0.5f }, { kParamAmpA, 0.01f }, { kParamAmpD, 0.2f }, { kParamAmpS, 0.8f }, { kParamAmpR, 0.3f }, { kParamCrossMod, 0.0f }, { kParamRingMod, 0.0f }, { kParamPmFenvOscA, 0.0f }, { kParamPmFenvFilt, 0.0f }, { kParamPmOscBOscA, 0.0f }, { kParamPmOscBPWM, 0.0f }, { kParamArpOn, 0.0f }, { kParamDriveOn, 0.0f }, { kParamChorusOn, 0.0f }, { kParamDelayOn, 0.0f }, { kParamReverbOn, 0.0f }, { kParamUnisonVoices, 1.0f }, { kParamPortaTime, 0.0f }, { kParamAnalogAmt, 0.2f }, { kParamVintage, 0.0f }, { kParamOversampling, 1.0f } };
 
 static constexpr PresetRow kP00[] = { { kParamMode, 0.0f }, { kParamOsc1Wave, 0.0f }, { kParamOsc2Wave, 4.0f }, { kParamOsc2Detune, 8.0f }, { kParamFilterCutoff, 2500.0f }, { kParamFilterRes, 0.15f }, { kParamFilterEnvAmt, 0.3f }, { kParamAmpA, 0.4f }, { kParamAmpD, 0.6f }, { kParamAmpS, 0.85f }, { kParamAmpR, 1.8f }, { kParamCosmosChorus, 3.0f }, { kParamAnalogAmt, 0.3f }, { kParamReverbOn, 1.0f }, { kParamReverbSize, 0.6f }, { kParamReverbMix, 0.2f } };
 static constexpr PresetRow kP01[] = { { kParamMode, 0.0f }, { kParamFilterCutoff, 5000.0f }, { kParamFilterRes, 0.35f }, { kParamAmpA, 0.005f }, { kParamAmpD, 0.25f }, { kParamAmpS, 0.5f }, { kParamAmpR, 0.6f }, { kParamCosmosChorus, 1.0f }, { kParamArpOn, 1.0f }, { kParamArpRate, 3.0f }, { kParamArpGate, 0.6f }, { kParamDelayOn, 1.0f }, { kParamDelayMix, 0.2f } };

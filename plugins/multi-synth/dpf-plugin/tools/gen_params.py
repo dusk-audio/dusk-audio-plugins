@@ -147,7 +147,10 @@ sym2def  = {p[1]: p[5] for p in P}
 # JUCE switch). loadProgram resets all params to default, applies this, then the
 # per-preset overrides. Oversampling forced to 1 (2x) here.
 BASE = {
- "masterVol":-6, "osc1Wave":0, "osc2Wave":0, "osc1Detune":0, "osc2Detune":7,
+ # masterVol raised -6 -> 0 dB in Phase 5: the FourPoleOTA unity-gain fix removed
+ # a spurious ~8-15 dB of passband gain, so the whole fleet needed level restored
+ # to a usable instrument output (hottest preset still peaks below -1 dBFS).
+ "masterVol":0, "osc1Wave":0, "osc2Wave":0, "osc1Detune":0, "osc2Detune":7,
  "osc1Level":0.8, "osc2Level":0.6, "noiseLevel":0, "filterCutoff":8000,
  "filterRes":0.3, "filterEnvAmt":0.5, "ampA":0.01, "ampD":0.2, "ampS":0.8,
  "ampR":0.3, "crossMod":0, "ringMod":0, "pmFenvOscA":0, "pmFenvFilt":0,
@@ -249,11 +252,12 @@ w("#undef X\n#undef LIN\n#undef LOG\n#undef INT\n#undef BOOL\n};\n\n")
 
 # Factory presets.
 w("// ---------------------------------------------------------------------------\n")
-w("// Factory presets (40) - mechanical conversion of the JUCE applyFactoryPreset\n")
-w("// procedure to a static override table. loadProgram() resets every param to\n")
-w("// its default, applies the shared baseline, then the per-preset overrides.\n")
-w("// Every preset ships at 2x oversampling (baseline oversampling=1); the pitch\n")
-w("// bug is fixed so 2x is correct. Re-voicing by ear is Phase 5.\n")
+w(f"// Factory presets ({len(PRESETS)}) - static override table. loadProgram() resets every\n")
+w("// param to its default, applies the shared baseline, then the per-preset\n")
+w("// overrides. Every preset ships at 2x oversampling (baseline oversampling=1);\n")
+w("// the pitch bug is fixed so 2x is correct. Phase 5 re-voiced the original 40\n")
+w("// (unity-gain filter fix + level/intent) and appended new preset banks; see\n")
+w("// docs/dpf-migration/09-multi-synth-presets.md for the per-preset change log.\n")
 w("// ---------------------------------------------------------------------------\n")
 w("struct PresetRow { int index; float value; };\n\n")
 def rows(name, d):
