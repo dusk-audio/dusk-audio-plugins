@@ -16,6 +16,12 @@ on:
   push:
     tags:
       - 'sunset-circuits-v*'
+    # TEMPORARY (Phase 3 CI loop): workflow_dispatch only fires for workflows on
+    # the default branch, so while this lives on the feature branch we drive the
+    # cross-platform compile loop via branch pushes. Remove this branches: block
+    # before merging to main — tags + workflow_dispatch are the shipping triggers.
+    branches:
+      - 'multi-synth/dpf-core'
   workflow_dispatch:
 
 # DPF / DPF-Widgets pinned to the SHAs validated locally for this release. Bump
