@@ -29,8 +29,10 @@ def worst_image_db(sig, sr, f0):
     lo = np.searchsorted(f, 50.0)
     hi = np.searchsorted(f, 15000.0)
     for k in range(lo, hi):
-        # skip near integer harmonics of f0
-        if abs(f[k] / f0 - round(f[k] / f0)) * f0 < tol:
+        # skip only near true integer harmonics (h >= 1); h == 0 must NOT be
+        # treated as a harmonic, else the 50..tol Hz alias bins get masked
+        h = round(f[k] / f0)
+        if h >= 1 and abs(f[k] - h * f0) < tol:
             continue
         db = 20.0 * np.log10(X[k] / (fund + 1e-20) + 1e-20)
         if db > worst:
