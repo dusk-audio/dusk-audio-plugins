@@ -110,6 +110,8 @@ public:
         const float dcOut = output - dcState + dcCoeff * dcPrev;
         dcPrev = dcOut;
         dcState = output;
+        if (isBad(dcPrev)) dcPrev = 0.0f;
+        if (isBad(dcState)) dcState = 0.0f;
         return dcOut;
     }
 
