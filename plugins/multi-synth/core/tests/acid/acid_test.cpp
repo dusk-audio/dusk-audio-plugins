@@ -16,6 +16,8 @@
 //       keys: sr seconds wave cutoff res drive envMod decay sustain accentAmt
 //             slideTime gain off(=noteOff time, s)
 //             events="t:midi:accent:slide;t:midi:accent:slide;..."
+//               (all four fields required per event; t finite in [0,seconds]
+//                and nondecreasing; midi 0..127; accent/slide 0 or 1)
 //
 //   acid_test seq    <out.wav> [key=value ...]
 //       Runs AcidSequencer -> AcidVoice.
@@ -28,6 +30,7 @@
 
 #include "AcidEngine.hpp"
 
+#include <cerrno>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -87,12 +90,39 @@ double parseNum(const char* key, const std::string& v)
     return d;
 }
 
+// Strict string->long: reject empty, trailing garbage, or out-of-range.
+long parseInt(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty integer value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    errno = 0;
+    const long n = std::strtol(start, &end, 10);
+    if (end == start || *end != '\0' || errno == ERANGE)
+    {
+        std::fprintf(stderr, "invalid integer value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return n;
+}
+
 // Range-check render extents before any DSP prepare/allocation.
 void validateExtents(double sr, double seconds)
 {
     if (!(sr >= 8000.0 && sr <= 768000.0))
     {
         std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sr);
+        std::exit(2);
+    }
+    // The WAV header stores the rate as (int); the DSP runs at the double rate.
+    // Require a whole number so the two agree exactly.
+    if (sr != std::floor(sr))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (must be a whole number)\n", sr);
         std::exit(2);
     }
     if (!(std::isfinite(seconds) && seconds >= 0.0 && seconds <= 3600.0))
@@ -270,16 +300,50 @@ int runVoice(const Args& g, const char* out)
     const std::string evstr = g.str("events", "");
     if (!evstr.empty())
     {
+        double prevT = 0.0;
+        bool havePrev = false;
         for (auto& e : split(evstr, ';'))
         {
             if (e.empty()) continue;
             auto f = split(e, ':');
+            if (f.size() != 4)
+            {
+                std::fprintf(stderr, "invalid event '%s': expected exactly t:midi:accent:slide\n",
+                             e.c_str());
+                std::exit(2);
+            }
             NoteEvent ne{};
-            ne.t      = f.size() > 0 ? std::atof(f[0].c_str()) : 0.0;
-            ne.midi   = f.size() > 1 ? std::atoi(f[1].c_str()) : 48;
-            ne.accent = f.size() > 2 ? (std::atoi(f[2].c_str()) != 0) : false;
-            ne.slide  = f.size() > 3 ? (std::atoi(f[3].c_str()) != 0) : false;
+            ne.t = parseNum("events.t", f[0]);
+            const long midi   = parseInt("events.midi", f[1]);
+            const long accent = parseInt("events.accent", f[2]);
+            const long slide  = parseInt("events.slide", f[3]);
+            if (!(std::isfinite(ne.t) && ne.t >= 0.0 && ne.t <= seconds))
+            {
+                std::fprintf(stderr, "invalid event time %g (want 0 <= t <= %g)\n", ne.t, seconds);
+                std::exit(2);
+            }
+            if (havePrev && ne.t < prevT)
+            {
+                std::fprintf(stderr, "event times must be nondecreasing: %g after %g\n", ne.t, prevT);
+                std::exit(2);
+            }
+            if (midi < 0 || midi > 127)
+            {
+                std::fprintf(stderr, "invalid event midi %ld (want 0..127)\n", midi);
+                std::exit(2);
+            }
+            if (accent < 0 || accent > 1 || slide < 0 || slide > 1)
+            {
+                std::fprintf(stderr, "invalid event accent/slide %ld/%ld (want 0 or 1)\n",
+                             accent, slide);
+                std::exit(2);
+            }
+            ne.midi   = (int)midi;
+            ne.accent = (accent != 0);
+            ne.slide  = (slide != 0);
             events.push_back(ne);
+            prevT = ne.t;
+            havePrev = true;
         }
     }
     const double offT = g.num("off", -1.0);
