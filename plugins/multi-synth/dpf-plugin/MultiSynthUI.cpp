@@ -1482,7 +1482,8 @@ private:
             if (void* const inst = getPluginInstancePointer())
                 if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
                     // Copy the ring (oldest->newest) into our preallocated buffer via
-                    // the race-free bridge API; no raw ring pointer / writePos math.
+                    // the data-race-free bridge API (may tear, fine for a scope);
+                    // no raw ring pointer / writePos math.
                     count = d->copyScope(scope, msynth::MultiSynthDSP::kScopeSize);
        #endif
         if (count > 0)

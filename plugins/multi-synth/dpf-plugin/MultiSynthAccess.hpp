@@ -9,7 +9,8 @@
 //
 // The scalar accessors below back the Phase-4 UI meters/step LEDs; the DSP
 // pointer accessor lets the UI pull the scope ring once per frame via the
-// race-free MultiSynthDSP::copyScope(dst, maxN) (relaxed atomic loads).
+// data-race-free MultiSynthDSP::copyScope(dst, maxN) (relaxed atomic loads;
+// may tear across the write cursor, which is fine for a visualizer).
 
 #pragma once
 
