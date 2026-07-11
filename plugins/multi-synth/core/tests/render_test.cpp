@@ -42,6 +42,12 @@ namespace
 void writeFloatWav(const char* path, const std::vector<float>& interleavedStereo, int sampleRate)
 {
     const uint32_t numFrames = (uint32_t)(interleavedStereo.size() / 2);
+    // Stereo float RIFF limit: 36 + numFrames*8 must fit in uint32 -> (UINT32_MAX-36)/8.
+    if (numFrames > 536870907u)
+    {
+        std::fprintf(stderr, "render exceeds RIFF WAV frame limit\n");
+        std::exit(2);
+    }
     const uint16_t channels = 2;
     const uint16_t bits = 32;
     const uint32_t byteRate = (uint32_t)sampleRate * channels * (bits / 8);
@@ -141,9 +147,10 @@ int main(int argc, char** argv)
         return 1;
     }
     const double framesD = seconds * sampleRate;
-    if (framesD > (double)INT_MAX)
+    // Stereo float RIFF limit: (UINT32_MAX-36)/8 frames.
+    if (framesD > 536870907.0)
     {
-        std::fprintf(stderr, "render too long: %g frames exceeds INT_MAX\n", framesD);
+        std::fprintf(stderr, "render too long: %g frames exceeds RIFF WAV limit\n", framesD);
         return 1;
     }
 
