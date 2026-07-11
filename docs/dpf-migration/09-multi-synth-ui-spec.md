@@ -611,20 +611,22 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   brightness, others dimmed to ~50%. Below them, the **large** diagram of the active algo.
 - **The 8 algorithms** (must match engine; `a→b` = a modulates b; carriers reach output):
 
-| # | Edges | Carriers | Character |
-|---|---|---|---|
-| 1 | 4→3, 3→2, 2→1 | 1 | Serial stack — brightest, bell/metallic |
-| 2 | 4→2, 3→2, 2→1 | 1 | Two modulators into one — rich, vocal |
-| 3 | 4→3, 3→1, 2→1 | 1 | Branch — modulated tone plus edge |
-| 4 | 4→3, 3→2, 2→1, 4→1 | 1 | Serial with a bright bypass mod |
-| 5 | 4→1, 3→1, 2→1 | 1 | Three modulators, one carrier — dense |
-| 6 | 4→3 | 3, 2, 1 | One modulated tone plus two clean carriers |
-| 7 | 4→3, 2→1 | 3, 1 | Two 2-op stacks — classic tine e-piano |
-| 8 | (none) | 1, 2, 3, 4 | Additive / organ — four parallel carriers |
+| # | Name | Edges | Carriers | Character |
+|---|---|---|---|---|
+| 1 | Serial | 4→3, 3→2, 2→1 | 1 | Serial stack — brightest, bell/metallic |
+| 2 | Stack-2M | 4→2, 3→2, 2→1 | 1 | Two modulators into one — rich, vocal |
+| 3 | Branch | 4→2, 4→3, 2→1, 3→1 | 1 | One mod fans into two, both into the carrier |
+| 4 | Y-Split | 4→3, 3→1, 3→2 | 1, 2 | Serial mod chain splitting into two carriers |
+| 5 | Dual | 2→1, 4→3 | 1, 3 | Two 2-op stacks — classic tine e-piano |
+| 6 | Twin+1 | 3→1, 3→2 | 1, 2, 4 | One mod into two carriers plus a clean standalone carrier |
+| 7 | Tri+FM | 4→3 | 1, 2, 3 | One modulated tone plus two clean carriers |
+| 8 | Additive | (none) | 1, 2, 3, 4 | Additive / organ — four parallel carriers |
 
+  `plugins/multi-synth/core/FMAlgorithms.hpp` `kPrismAlgos` is the single source of truth
+  for this table — the rows above must mirror it exactly.
   Op 4 is the feedback op in all algorithms (`fbOp = 3`, zero-based). ASCII of a few:
 ```
-  Alg 1 (serial)      Alg 7 (dual stack)       Alg 8 (additive)
+  Alg 1 (serial)      Alg 5 (dual stack)       Alg 8 (additive)
      [4]                 [4]   [2]              [4][3][2][1]
       |                   |     |                | | | |
      [3]                 [3]   [1]               =========  (output bus)
