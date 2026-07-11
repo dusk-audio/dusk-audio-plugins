@@ -174,5 +174,5 @@ calibration.db-wal
 .claude/
 plugins/neural-amp/
 
-# Multi-synth core test build artifacts
-plugins/multi-synth/core/tests/build/
+# Sunset Circuits (multi-synth) core test build artifacts
+plugins/sunset-circuits/core/tests/build/
