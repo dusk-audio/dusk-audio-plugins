@@ -296,6 +296,22 @@ jobs:
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h" -OutFile "$khr/khrplatform.h"
           Write-Host "glext.h size: $((Get-Item "$gl/glext.h").Length) bytes"
 
+      - name: Patch DPF-Widgets for MSVC
+        shell: pwsh
+        run: |
+          # DPF-Widgets' DearImGui.cpp uses the GNU 'Elvis operator' (a ?: b),
+          # which MSVC does not accept. Rewrite the two occurrences to explicit
+          # ternaries so the pinned checkout compiles under cl. Deterministic
+          # (fresh pinned checkout each run); safe to drop when DPF-Widgets fixes
+          # this upstream.
+          $f = "${{ github.workspace }}/DPF-Widgets/opengl/DearImGui.cpp"
+          $c = Get-Content -Raw $f
+          $c = $c -replace 'self->getWidth\(\) \?: 640 \* scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor'
+          $c = $c -replace 'self->getHeight\(\) \?: 480 \* scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor'
+          Set-Content -NoNewline $f $c
+          if (Select-String -Path $f -Pattern '\?:' -Quiet) { Write-Error "Elvis operator still present"; exit 1 }
+          Write-Host "Patched DearImGui.cpp"
+
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
