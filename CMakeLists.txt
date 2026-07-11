@@ -118,7 +118,7 @@ if(BUILD_DUSKVERB)
 endif()
 
 if(BUILD_MULTI_SYNTH)
-    add_subdirectory(plugins/multi-synth)
+    add_subdirectory(plugins/sunset-circuits)
 endif()
 
 option(BUILD_DUSKAMP "Build DuskAmp plugin" ON)
