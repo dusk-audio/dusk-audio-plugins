@@ -5,7 +5,7 @@
 // MultiSynthPlugin.cpp — thin DPF shell around the framework-free MultiSynthDSP
 // core. Owns the parameter table (generated from MultiSynthParams.hpp), MIDI
 // event routing (split-block rendering at each event offset), transport tempo
-// forwarding, and the 40 factory programs. All DSP lives in the core.
+// forwarding, and the factory programs (kNumFactoryPresets). All DSP in the core.
 
 #include "DistrhoPlugin.hpp"
 #include "MultiSynthAccess.hpp"
@@ -108,7 +108,7 @@ protected:
         dsp.setParameter((int)index, value);
     }
 
-    //--- programs (40 factory presets) -----------------------------------------
+    //--- programs (factory presets; count = kNumFactoryPresets) -----------------
     void initProgramName(uint32_t index, String& programName) override
     {
         if (index < (uint32_t)kNumFactoryPresets)
