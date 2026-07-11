@@ -164,8 +164,10 @@ class SampleAndHold
 {
 public:
     void prepare(double sampleRate) noexcept { sr = (float)sampleRate; phase = 0.0f; }
-    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; }
-    void setRate(float rateHz) noexcept      { dt = rateHz / sr; }
+    // Recompute dt from the stored rate so a sample-rate change (oversampling
+    // switch) keeps the same S&H rate in Hz.
+    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = rate / sr; }
+    void setRate(float rateHz) noexcept      { rate = rateHz; dt = rate / sr; }
 
     float process(float noiseInput) noexcept
     {
@@ -182,6 +184,7 @@ public:
 
 private:
     float sr = 44100.0f;
+    float rate = 1.0f;
     float dt = 0.01f;
     float phase = 0.0f;
     float heldValue = 0.0f;
