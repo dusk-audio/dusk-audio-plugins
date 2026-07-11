@@ -2,7 +2,7 @@
 # Build the render harness and run every Multi-Synth core gate.
 set -e
 cd "$(dirname "$0")"
-cmake -B build -GNinja >/dev/null
+cmake -B build -GNinja >/dev/null 2>&1 || cmake -B build >/dev/null
 cmake --build build >/dev/null
 echo "== render_test built =="
 
