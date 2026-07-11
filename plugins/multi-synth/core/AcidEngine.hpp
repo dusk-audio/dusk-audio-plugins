@@ -448,7 +448,11 @@ private:
     {
         Event ev;
 
-        const double effBpm = (bpm > 0.0 && transportPlaying) ? bpm : 120.0;
+        // C7: free-run tempo no longer requires the transport to be playing so a
+        // stopped-transport audition steps at the host BPM. 120 remains only the
+        // fallback for an invalid (<=0) BPM.
+        (void)transportPlaying;
+        const double effBpm = (bpm > 0.0) ? bpm : 120.0;
         const double samplesPerStep = sr * 60.0 / effBpm * getBeatsPerStep(rateDivision);
 
         ++sampleCounter;
@@ -532,10 +536,17 @@ private:
             const double onsetBeat = (double)globalStep * bps + swingOff;
             if (songBeat >= onsetBeat)
             {
+                // C8: a forward seek can land past this step's own gate-off beat;
+                // firing the note-on there produces a blip. Skip the note-on in
+                // that case, but mark the step fired either way so the grid moves on.
+                const double durB = bps * ((globalStep & 1) ? (1.0 - (double)swing * 0.5)
+                                                            : (1.0 + (double)swing * 0.5));
+                const bool pastGate = songBeat >= onsetBeat + (double)gateLength * durB;
+
                 const int idx = (int)(globalStep % 16);
                 currentStep = idx;
                 const Step& st = steps[(size_t)idx];
-                if (st.on)
+                if (st.on && !pastGate)
                 {
                     ev.noteOn = true;
                     ev.freq   = midiToHz((float)clampi(rootNote + st.pitch, 0, 127));
