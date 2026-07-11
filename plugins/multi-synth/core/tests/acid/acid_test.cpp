@@ -41,6 +41,12 @@ namespace
 {
 void writeFloatWavMono(const char* path, const std::vector<float>& mono, int sampleRate)
 {
+    // Mono float RIFF limit: 36 + numFrames*4 must fit in uint32 -> (UINT32_MAX-36)/4.
+    if (mono.size() > 1073741814u)
+    {
+        std::fprintf(stderr, "render exceeds RIFF WAV frame limit\n");
+        std::exit(2);
+    }
     const uint32_t numFrames = (uint32_t)mono.size();
     const uint16_t channels = 1;
     const uint16_t bits = 32;
@@ -94,9 +100,10 @@ void validateExtents(double sr, double seconds)
         std::fprintf(stderr, "invalid seconds: %g (want 0 <= seconds <= 3600)\n", seconds);
         std::exit(2);
     }
-    if (seconds * sr > (double)INT_MAX)
+    // Mono float RIFF limit: (UINT32_MAX-36)/4 frames.
+    if (seconds * sr > 1073741814.0)
     {
-        std::fprintf(stderr, "render too long: %g frames exceeds INT_MAX\n", seconds * sr);
+        std::fprintf(stderr, "render too long: %g frames exceeds RIFF WAV limit\n", seconds * sr);
         std::exit(2);
     }
 }
