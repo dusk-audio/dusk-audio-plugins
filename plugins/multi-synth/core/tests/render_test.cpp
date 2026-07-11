@@ -17,6 +17,10 @@
 //   release=<sec>       call noteOff at this time (default: no release)
 //   tempo=<bpm>         host tempo (default 120)
 //   playing=<0|1>       transport playing flag (default 1)
+//   songpos=<beats>     host song position at frame 0, in beats. When set, the
+//                       harness acts as the DAW host: it calls setSongPosition
+//                       before each processBlock so the arp/acid step clock
+//                       phase-locks to the host grid. Unset = free-run (default).
 //   hold=n,n,n          extra held notes (played in addition to <midinote>);
 //                       useful for arpeggiator/chord tests
 //   sr=<hz>             sample rate (default 48000)
@@ -78,6 +82,8 @@ int main(int argc, char** argv)
     double releaseTime = -1.0;
     double tempo = 120.0;
     bool   playing = true;
+    double songPosStart = 0.0;
+    bool   haveSongPos = false;
     std::vector<int> holdNotes;
 
     struct Override { int idx; float val; };
@@ -95,6 +101,7 @@ int main(int argc, char** argv)
         if (key == "release")  { releaseTime = std::atof(val.c_str()); continue; }
         if (key == "tempo")    { tempo = std::atof(val.c_str()); continue; }
         if (key == "playing")  { playing = std::atoi(val.c_str()) != 0; continue; }
+        if (key == "songpos")  { songPosStart = std::atof(val.c_str()); haveSongPos = true; continue; }
         if (key == "sr")       { sampleRate = std::atof(val.c_str()); continue; }
         if (key == "hold")
         {
@@ -177,6 +184,12 @@ int main(int argc, char** argv)
         {
             n = releaseFrame - pos; // shorten so the next iteration starts at releaseFrame
         }
+
+        // Host phase-lock: feed the song position for THIS block's start frame
+        // (pos = frames already rendered), so the block-start beat is correct
+        // across the release split. Unset songpos leaves the engine free-running.
+        if (haveSongPos)
+            synth.setSongPosition(songPosStart + (double)pos / sampleRate * tempo / 60.0, true);
 
         synth.processBlock(bufL.data(), bufR.data(), n);
         for (int i = 0; i < n; ++i)

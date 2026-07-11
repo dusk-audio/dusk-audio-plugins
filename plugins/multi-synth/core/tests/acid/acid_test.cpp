@@ -343,12 +343,27 @@ int runSeq(const Args& g, const char* out)
 
     seq.noteOn(g.intv("root", 36)); // default C2
 
+    // Host phase-lock: when songpos is given the harness acts as the DAW host,
+    // feeding an advancing song-beat cursor and hostLocked=true. loopbeats>0
+    // wraps the cursor (simulates a transport loop) to exercise wrap re-sync.
+    // Without songpos the sequencer free-runs (every existing gate preserved).
+    const bool   locked    = g.has("songpos");
+    const double startBeat = g.num("songpos", 0.0);
+    const double loopBeats  = g.num("loopbeats", 0.0);
+    const double beatsPerFrame = bpm / 60.0 / sr;
+
     const int N = (int)(seconds * sr);
     std::vector<float> mono((size_t)N, 0.0f);
 
     for (int i = 0; i < N; ++i)
     {
-        const auto ev = seq.advanceSample(bpm, playing);
+        double songBeat = 0.0;
+        if (locked)
+        {
+            songBeat = startBeat + (double)i * beatsPerFrame;
+            if (loopBeats > 0.0) songBeat = std::fmod(songBeat, loopBeats);
+        }
+        const auto ev = seq.advanceSample(bpm, playing, songBeat, locked);
         if (ev.noteOff) voice.noteOff();
         if (ev.noteOn)  voice.noteOn(ev.freq, ev.accent, ev.slide, 1.0f);
         mono[(size_t)i] = voice.processSample();
@@ -387,7 +402,7 @@ int main(int argc, char** argv)
     {
         g.validate({"sr","seconds","bpm","playing","rate","gate","swing","latch","root","wave",
                     "cutoff","res","drive","envMod","decay","sustain","accentAmt","slideTime",
-                    "gain","on","pitches","accents","slides"});
+                    "gain","on","pitches","accents","slides","songpos","loopbeats"});
         return runSeq(g, out);
     }
 
