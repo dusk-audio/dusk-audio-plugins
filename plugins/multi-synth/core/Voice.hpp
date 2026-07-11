@@ -436,7 +436,13 @@ private:
 
         o.osc1.setFrequency(freq1);
         o.osc1.setWaveform(params.osc1Wave);
-        o.osc1.setPulseWidth(params.osc1PulseWidth + pwm1);
+        // Oracle poly-mod OscB->PW: folded into the pre-render pulse-width set using
+        // the 1-sample-delayed osc2 value. (The old Oracle-branch setPulseWidth ran
+        // AFTER this call, so it was overwritten here on the next sample -> dead.)
+        float pw1 = params.osc1PulseWidth + pwm1;
+        if (params.mode == SynthMode::Oracle && params.polyModOscBPWM > 0.0f)
+            pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * 0.3f;
+        o.osc1.setPulseWidth(pw1);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
         // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency.
@@ -482,7 +488,8 @@ private:
                 // Poly-mod (affects next sample via applyFM, matching original).
                 if (params.polyModFEnvOscA > 0.0f) o.osc1.applyFM(filtVal * params.polyModFEnvOscA * 0.03f);
                 if (params.polyModOscBOscA > 0.0f) o.osc1.applyFM(osc2Sample * params.polyModOscBOscA * 0.03f);
-                if (params.polyModOscBPWM > 0.0f)  o.osc1.setPulseWidth(params.osc1PulseWidth + osc2Sample * params.polyModOscBPWM * 0.3f);
+                // (OscB->PW poly-mod is applied to osc1's pulse width up in renderOscSet's
+                //  pre-render set, using the 1-sample-delayed osc2 value.)
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + noiseSample;
                 activeGain = params.osc1Level + params.osc2Level + params.noiseLevel;
@@ -629,14 +636,36 @@ public:
     // Rate change preserving active notes/pitch (oversampling-factor switch).
     void setSampleRate(double sampleRate) noexcept { for (auto& v : voices) v.setSampleRate(sampleRate); }
 
-    // modeMaxVoices: nominal polyphony for the current mode.
-    void setModeVoices(int modeMaxVoices) noexcept { modeVoices = clampi(modeMaxVoices, 1, kMaxPolyphony); }
-    void setUnison(int count) noexcept { unisonCount = clampi(count, 1, kMaxUnison); }
+    // modeMaxVoices: nominal polyphony for the current mode. On an actual change,
+    // retire voices that fall outside the new limit so they can't become zombies
+    // that resume sounding if the limit later grows again.
+    void setModeVoices(int modeMaxVoices) noexcept
+    {
+        const int v = clampi(modeMaxVoices, 1, kMaxPolyphony);
+        if (v == modeVoices) return;
+        modeVoices = v;
+        retireAbove();
+    }
+    void setUnison(int count) noexcept
+    {
+        const int c = clampi(count, 1, kMaxUnison);
+        if (c == unisonCount) return;
+        unisonCount = c;
+        retireAbove();
+    }
 
     int effectivePoly() const noexcept
     {
         const int byUnison = kMaxOscVoices / unisonCount;
         return clampi(byUnison < modeVoices ? byUnison : modeVoices, 1, kMaxPolyphony);
+    }
+
+    // Reset every voice at or above the current effective polyphony so a later
+    // limit increase cannot revive a voice that was silently dropped.
+    void retireAbove() noexcept
+    {
+        const int poly = effectivePoly();
+        for (int i = poly; i < kMaxPolyphony; ++i) voices[(size_t)i].reset();
     }
 
     SynthVoice* noteOn(int note, float velocity, const VoiceParameters& params) noexcept
