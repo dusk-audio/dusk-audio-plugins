@@ -31,7 +31,7 @@ preset names, or docs. Modes use codenames; docs describe hardware generically
 | 2 | **Mono** | 70s Japanese aggressive mono | 1 | 2 VCO + sub, fat driven OTA LPF, ring mod, hard sync |
 | 3 | **Modular** | 70s semi-modular | 2 | 3 VCO, transistor-ladder LPF, FM, S&H, spring reverb |
 | 4 | **Prism** | mid-80s 4-op FM digital | 8 | 4 operators, 8 algorithms, per-op ratio/level/ADSR, op feedback |
-| 5 | **Acid** | silver 303 bass box | 1 | 1 VCO (saw/square), 18dB diode-ladder scream filter, accent + slide, 16-step pitch pattern sequencer |
+| 5 | **Acid** | silver acid bass box | 1 | 1 VCO (saw/square), 18dB diode-ladder scream filter, accent + slide, 16-step pitch pattern sequencer |
 
 Modes 0–3 exist in the JUCE code; port them. Modes 4–5 are new engines.
 
@@ -127,11 +127,12 @@ Reuse `plugins/shared-dpf/dsp/` (`DuskSmoothed`, `DuskOversampler` HalfbandFIR,
 ## Parameter plan
 
 Keep every existing param id/range (inventory §1) except where fixes demand behavior
-changes. Add: 34 Prism params (`prismAlgo`, `prismFB`, `op{1-4}{Ratio,Fine,Level,Vel,
-KeyScale,A,D,S,R}` — trim Fine/KeyScale if param count hurts, keep the rest), 3 acid
-globals + 48 step params (`seqPitch/Accent/Slide 0-15`). DPF param table generated
-from one X-macro list in `MultiSynthParams.hpp` so shell + UI + presets share it.
-Output params: `outLevelL/R` (meters fallback; real path = weak-symbol bridge).
+changes. Add: 38 Prism params (`prismAlgo`, `prismFB`, and 4 ops × 9 fields =
+`op{1-4}{Ratio,Fine,Level,Vel,KeyScale,A,D,S,R}`), 2 acid globals (`acidAccentAmt`,
+`acidSlideTime`) + 48 step params (`seqPitch/Accent/Slide 0-15`). DPF param table
+generated from one X-macro list in `MultiSynthParams.hpp` so shell + UI + presets share
+it. Total: **222 core params** (134 ported + 38 Prism + 2 acid globals + 48 step) plus 2
+output params `outLevelL/R` (meters fallback; real path = weak-symbol bridge).
 
 ## Factory presets
 
@@ -147,7 +148,9 @@ authored against the octave-bug — re-voice by ear/measurement, don't trust old
 ## UI spec (the "amazing" part)
 
 Fixed design space **1240 × 780**, uniformly scaled (tape-echo pattern), ImDrawList
-custom rendering only (combos allowed). Load bold TTF at 30 × scaleFactor (playbook §4).
+custom rendering only (stock rendering widgets limited to combos + `InputText`;
+`ImGui::InvisibleButton` allowed for interaction/hit-targets, it draws nothing). Load
+bold TTF at 30 × scaleFactor (playbook §4).
 
 **Concept: one chassis, six personalities.** Dark instrument panel with brushed-metal
 frame and subtle wood side cheeks. The **mode selector is the hero**: six backlit
