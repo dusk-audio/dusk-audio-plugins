@@ -2,6 +2,7 @@
 # Generates MultiSynthParams.hpp for the DPF shell. The param order MUST match
 # the core msynth::Param enum exactly (indices are shared 1:1).
 import io
+import os
 
 L, LOG, I, B = "LIN", "LOG", "INT", "BOOL"
 
@@ -398,5 +399,6 @@ w("};\n")
 w("static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets)/sizeof(kFactoryPresets[0]));\n")
 w("static constexpr int kBaselineRows = (int)(sizeof(kPresetBaseline)/sizeof(PresetRow));\n")
 
-open("/home/marc/projects/plugins/plugins/multi-synth/dpf-plugin/MultiSynthParams.hpp","w").write(out.getvalue())
+_out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "MultiSynthParams.hpp")
+open(_out_path, "w").write(out.getvalue())
 print(f"core params = {NCORE}, presets = {len(PRESETS)}")
