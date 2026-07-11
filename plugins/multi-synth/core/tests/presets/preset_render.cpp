@@ -203,12 +203,15 @@ int main(int argc, char** argv)
     {
         const int root = noteArg > -1000 ? noteArg : 60; // C4
         const int maj7[4] = { root, root + 4, root + 7, root + 11 }; // Cmaj7
-        // 2-bar sustained chord.
-        const double chordEnd = 2.0 * secPerBar - 0.1 * secPerBeat;
+        const int bars = barsArg > 0 ? barsArg : 4;
+        // Sustained chord over the first half; a melodic phrase then a closing
+        // chord over the second half. Scaled by bars; bars=4 reproduces the
+        // original event times exactly (byte-identical render).
+        const double chordEnd = 0.5 * bars * secPerBar - 0.1 * secPerBeat;
         for (int n : maj7) events.push_back({ S(0.0), true, n, vel });
         for (int n : maj7) events.push_back({ S(chordEnd), false, n, 0.0f });
-        // 2-bar melodic phrase: ascending line then a closing chord.
-        const double t0 = 2.0 * secPerBar;
+        // Melodic phrase (fixed six-eighth line) starting at the half-way point.
+        const double t0 = 0.5 * bars * secPerBar;
         const int phrase[6] = { root + 12, root + 16, root + 19, root + 16, root + 12, root + 7 };
         for (int i = 0; i < 6; ++i)
         {
@@ -217,9 +220,10 @@ int main(int argc, char** argv)
             events.push_back({ S(on), true, phrase[i], vel });
             events.push_back({ S(off), false, phrase[i], 0.0f });
         }
-        // Closing chord on the last beat of bar 4.
-        const double cOn = t0 + 3.0 * secPerBeat;
-        const double cOff = t0 + 4.0 * secPerBeat;
+        // Closing chord in the last beat of the phrase half (t0 spans `bars` beats;
+        // at bars=4 this is t0+3..t0+4, matching the original).
+        const double cOn = t0 + (bars - 1) * secPerBeat;
+        const double cOff = t0 + bars * secPerBeat;
         const int close[3] = { root, root + 4, root + 7 };
         for (int n : close) events.push_back({ S(cOn), true, n, vel });
         for (int n : close) events.push_back({ S(cOff), false, n, 0.0f });
@@ -243,10 +247,16 @@ int main(int argc, char** argv)
             { 0,  0.0, 1.1 }, { 12, 1.0, 1.1 }, { 7, 2.0, 1.1 }, { 15, 3.0, 1.6 },
             { 10, 4.5, 1.1 }, { 3, 5.5, 1.1 }, { 0, 6.5, 2.5 },
         };
+        // Optional bars= truncation: drop notes that start at/after the limit and
+        // clamp every note-off (and lastOff) to it. Default (bars<=0) leaves the
+        // phrase untouched -> byte-identical render.
+        const double barLimit = barsArg > 0 ? barsArg * secPerBar : 1.0e30;
         for (const N& x : line)
         {
             const double on = x.onBeat * secPerBeat;
-            const double off = (x.onBeat + x.lenBeats) * secPerBeat;
+            if (on >= barLimit) continue;
+            double off = (x.onBeat + x.lenBeats) * secPerBeat;
+            if (off > barLimit) off = barLimit;
             events.push_back({ S(on), true, root + x.semi, vel });
             events.push_back({ S(off), false, root + x.semi, 0.0f });
             lastOff = std::max(lastOff, off);
