@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 
 START_NAMESPACE_DISTRHO
 
@@ -119,6 +120,7 @@ protected:
 
     void onImGuiDisplay() override
     {
+        const auto _t0 = std::chrono::high_resolution_clock::now();
         const float winW = (float)getWidth();
         const float winH = (float)getHeight();
         s   = std::min(winW / kDesignW, winH / kDesignH);
@@ -161,6 +163,23 @@ protected:
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
 
+        // The MOD MATRIX is a modal. DPF's ImGui integration does not render an
+        // overlapping window on top of the base layers, so while the modal is open
+        // it REPLACES the base panels (single window, no overlap) over a dark
+        // scrim, rather than floating above them. Closing it restores the panels.
+        if (showMod)
+        {
+            dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
+            beginLayerScreen("MSmodal", 0, 0, winW, winH, true);
+            drawModMatrixOverlay();
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+           #ifdef MSYNTH_FRAME_PROFILE
+            profileFrame(_t0);
+           #endif
+            return;
+        }
+
         beginLayer("MStop", 0, 0, kDesignW, 55);
         drawTopBar();
         ImGui::End();
@@ -190,15 +209,31 @@ protected:
         drawKeyboard();
         ImGui::End();
 
-        if (showMod)
-        {
-            beginLayerScreen("MSoverlay", 0, 0, winW, winH, true);
-            drawModMatrixOverlay();
-            ImGui::End();
-        }
-
         ImGui::PopStyleVar(2);
+       #ifdef MSYNTH_FRAME_PROFILE
+        profileFrame(_t0);
+       #else
+        (void)_t0;
+       #endif
     }
+
+   #ifdef MSYNTH_FRAME_PROFILE
+    void profileFrame(std::chrono::high_resolution_clock::time_point t0)
+    {
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        if (profN >= 0 && profN < 100)
+        { profLogic[profN] = ms; profTotal[profN] = ImGui::GetIO().DeltaTime * 1000.0; }
+        if (++profN == 100)
+        {
+            double a[100], b[100];
+            std::memcpy(a, profLogic, sizeof a); std::memcpy(b, profTotal, sizeof b);
+            std::sort(a, a + 100); std::sort(b, b + 100);
+            std::fprintf(stderr, "MSYNTH_FRAME logic_median=%.3fms total_median=%.3fms (100 frames)\n",
+                         a[50], b[50]);
+        }
+    }
+   #endif
 
     // Begin a borderless, transparent layer window over a design-space rect.
     void beginLayer(const char* name, float dx0, float dy0, float dx1, float dy1, bool inputs = true)
@@ -257,6 +292,9 @@ private:
         dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(live.panel, alpha), 6.0f * s);
     }
     void sectionTitle(float x, float y, const char* t) { text(x, y, 11.0f, live.accent, t, -1, true); }
+    void drawX(float cx, float cy, float r, ImU32 col) // close/clear glyph (no exotic font glyph)
+    { dl->AddLine(P(cx - r, cy - r), P(cx + r, cy + r), col, 1.6f * s);
+      dl->AddLine(P(cx - r, cy + r), P(cx + r, cy - r), col, 1.6f * s); }
     void klabel(float cx, float topY, const char* l) { text(cx, topY, 10.0f, live.textPanel, l, 0, true); }
 
     // Mode-accent value arc drawn just outside the shared knob body (spec §3.1).
@@ -344,8 +382,9 @@ private:
         dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 3.0f * s);
         dl->AddRect(b0, b1, on ? withA(live.accent, 255) : IM_COL32(90, 90, 94, 255), 3.0f * s, 0, 1.4f * s);
         panel.led(dl, x0 + 8.0f, 0.5f * (y0 + y1), on, 3.2f);
+        // label sits on the dark button, so always draw it light regardless of skin
         text(0.5f * (x0 + x1) + 8.0f, y0 + 0.30f * (y1 - y0), 10.0f,
-             on ? live.textPanel : lerpC(live.textPanel, live.panel, 0.4f), label, 0, on);
+             on ? IM_COL32(238, 238, 240, 255) : IM_COL32(150, 150, 154, 255), label, 0, on);
     }
 
     //========================================================================
@@ -357,8 +396,8 @@ private:
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
 
-        text(18, 12, 20.0f, live.text, "MULTI-SYNTH", -1, true);
-        text(1222, 8, 13.0f, live.text, "Dusk Audio", 1, true);
+        text(18, 8, 20.0f, live.text, "MULTI-SYNTH", -1, true);
+        text(20, 32, 11.0f, live.accent, "Dusk Audio", -1, true);
 
         // Mode rockers ×6 (spec §8.1)
         for (int i = 0; i < 6; ++i)
@@ -417,7 +456,7 @@ private:
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save user preset (coming soon)");
         dl->AddRectFilled(s0, s1, IM_COL32(38, 38, 41, 255), 4.0f * s);
         dl->AddRect(s0, s1, IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.2f * s);
-        text(1204, 20, 15.0f, live.accent, "\xE2\x98\x85", 0, true); // ★
+        text(1204, 21, 9.0f, live.accent, "SAVE", 0, true);
     }
 
     bool chevron(const char* id, float x0, float y0, float x1, float y1, bool right)
@@ -509,8 +548,8 @@ private:
         }
         else
         {
-            sectionTitle(24, 308, curMode == 5 ? "OSC 3 / SUB" : "OSC 3 / SUB");
-            text(178, 360, 15.0f, lerpC(live.textPanel, live.panel, 0.5f), "—", 0, false);
+            sectionTitle(24, 308, "OSC 3 / SUB");
+            text(178, 356, 11.0f, lerpC(live.textPanel, live.panel, 0.4f), "(not used in this mode)", 0, false);
         }
     }
 
@@ -824,8 +863,7 @@ private:
     {
         text(768, 332, 11.0f, mulA(live.accent, a), "POLY-MOD", -1, true);
         const uint32_t pp[4] = { kParamPmFenvOscA, kParamPmOscBOscA, kParamPmOscBPWM, kParamPmFenvFilt };
-        const char* labs[4] = { "FE\xE2\x86\x92" "OA", "OB\xE2\x86\x92" "OA",
-                                "OB\xE2\x86\x92" "PW", "FE\xE2\x86\x92" "FIL" };
+        const char* labs[4] = { "FE>OA", "OB>OA", "OB>PW", "FE>FIL" };
         const float cx[4] = { 820, 940, 820, 940 };
         const float cy[4] = { 380, 380, 440, 440 };
         for (int i = 0; i < 4; ++i)
@@ -1073,19 +1111,19 @@ private:
         dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 4.0f * s);
         dl->AddRect(b0, b1, showMod ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.4f * s);
         panel.led(dl, 782, 511, showMod, 4.0f);
-        text(886, 502, 12.0f, live.textPanel, "MOD MATRIX", 0, true);
+        text(886, 502, 12.0f, IM_COL32(238, 238, 240, 255), "MOD MATRIX", 0, true);
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d active", activeModSlots());
         text(886, 518, 9.0f, live.accent, cnt, 0);
     }
     void drawModMatrixOverlay()
     {
         if (!showMod) return;
-        const float winW = (float)getWidth(), winH = (float)getHeight();
-        // scrim
-        ImGui::SetCursorScreenPos(ImVec2(0, 0));
-        ImGui::InvisibleButton("modscrim", ImVec2(winW, winH));
+        // scrim covers the overlay window (which is the near-full-screen layer)
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        ImGui::SetCursorScreenPos(wp);
+        ImGui::InvisibleButton("modscrim", ws);
         if (ImGui::IsItemClicked()) showMod = false;
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 150));
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
         // modal
         panelBox(220, 120, 1020, 660);
         text(240, 130, 15.0f, live.accent, "MODULATION MATRIX", -1, true);
@@ -1095,7 +1133,7 @@ private:
         ImGui::InvisibleButton("modclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
         if (ImGui::IsItemClicked()) showMod = false;
         dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
-        text(1000, 133, 13.0f, live.text, "\xE2\x9C\x95", 0, true);
+        drawX(1000, 140, 5.0f, live.text);
         text(240, 156, 10.0f, live.textPanel, "SOURCE", -1, true);
         text(500, 156, 10.0f, live.textPanel, "DEST", -1, true);
         text(790, 156, 10.0f, live.textPanel, "AMOUNT", 0, true);
@@ -1106,7 +1144,8 @@ private:
             char id[24];
             std::snprintf(id, sizeof(id), "msrc%d", r);
             comboBox(id, kParamModSrc0 + r, 240, y + 8, 470, y + 34, kModSrc, 11);
-            text(482, y + 12, 14.0f, live.accent, "\xE2\x86\x92", 0, true);
+            { const float ay = y + 21; dl->AddLine(P(478, ay), P(492, ay), live.accent, 2.0f * s);
+              dl->AddTriangleFilled(P(492, ay - 4), P(492, ay + 4), P(497, ay), live.accent); }
             std::snprintf(id, sizeof(id), "mdst%d", r);
             comboBox(id, kParamModDst0 + r, 500, y + 8, 760, y + 34, kModDst, 13);
             std::snprintf(id, sizeof(id), "mamt%d", r);
@@ -1120,7 +1159,7 @@ private:
             { setChoice(kParamModSrc0 + r, 0); setChoice(kParamModDst0 + r, 0);
               pushParam(kParamModAmt0 + r, 0.0f); }
             dl->AddRect(x0, x1, IM_COL32(120, 120, 124, 255), 3.0f * s, 0, 1.0f * s);
-            text(984, y + 13, 11.0f, live.textPanel, "\xE2\x9C\x95", 0);
+            drawX(984, y + 20, 4.0f, live.textPanel);
         }
     }
 
@@ -1622,6 +1661,11 @@ private:
     // misc animation
     float  shPhase = 0.0f;
     bool   pitchDragging = false;
+
+   #ifdef MSYNTH_FRAME_PROFILE
+    double profLogic[100] = {}, profTotal[100] = {};
+    int    profN = -20; // skip warmup frames
+   #endif
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiSynthUI)
 };
