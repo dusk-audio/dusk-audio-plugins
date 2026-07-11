@@ -54,7 +54,12 @@ def part_b():
         m = (f > fc - tol) & (f < fc + tol)
         return np.max(X[m]) if np.any(m) else 0.0
 
-    thresh = 0.05 * np.max(X)     # 5% of the global peak = "dominant"
+    peak = float(np.max(X))
+    if not (np.isfinite(peak) and peak > 1e-9):
+        print(f"[B] serial algo1 sidebands: spectrum is silent (peak={peak:.2e})  -> FAIL")
+        return False
+
+    thresh = 0.05 * peak          # 5% of the global peak = "dominant"
     hits = [(fc, peak_near(fc)) for fc in expected]
     n_dom = sum(1 for _, a in hits if a >= thresh)
     ok = n_dom >= 3
@@ -62,7 +67,7 @@ def part_b():
     print(f"[B] serial algo1 sidebands (f_c={F0:.0f}, f_m={fm:.0f}):")
     for fc, amp in hits:
         mark = "*" if amp >= thresh else " "
-        print(f"      {mark} {fc:6.0f} Hz  amp {amp/np.max(X):5.2f} of peak")
+        print(f"      {mark} {fc:6.0f} Hz  amp {amp/peak:5.2f} of peak")
     print(f"    dominant sideband bins: {n_dom} (need >=3)  -> {'PASS' if ok else 'FAIL'}")
     return ok
 
