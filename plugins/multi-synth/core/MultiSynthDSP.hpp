@@ -160,6 +160,10 @@ public:
     // NEWEST min(maxN, valid) samples oldest->newest into dst using relaxed loads;
     // returns the number of samples written (<= maxN, <= kScopeSize). Before the
     // ring is full only the valid samples are returned (no stale/zero tail).
+    // Data-race-free (every slot is a relaxed std::atomic, so per-element loads
+    // are well defined), but NOT a coherent snapshot: a concurrent write can
+    // update slots mid-copy, so the buffer may tear across the write cursor.
+    // That is fine for a visualizer — a torn frame is imperceptible.
     int copyScope(float* dst, int maxN) const noexcept
     {
         const int valid = scopeCount.load(std::memory_order_relaxed);
