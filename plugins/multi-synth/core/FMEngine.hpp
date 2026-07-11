@@ -201,9 +201,11 @@ public:
             if (carrierMask & (1u << i))
                 out += env * o.carrierGain * s;
 
-            // Advance phase.
+            // Advance phase. Full wrap via floor handles a pathological
+            // inc >= 1 (very high ratio x OS); identical to a single subtraction
+            // for the normal inc < 1 case (floor is exactly 1 when 1 <= phase < 2). (C3)
             o.phase += o.inc;
-            if (o.phase >= 1.0f) o.phase -= 1.0f;
+            if (o.phase >= 1.0f) o.phase -= std::floor(o.phase);
             else if (o.phase < 0.0f) o.phase += 1.0f;
         }
 

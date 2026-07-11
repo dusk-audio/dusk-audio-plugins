@@ -122,10 +122,13 @@ public:
 
         const float prevPhase = phase;
         phase += effectiveDt;
+        // Full wrap via floor handles pathological dt > 1 (extreme freq/OS);
+        // for the normal dt < 1 case this is identical to a single subtraction
+        // (floor(phase) is exactly 1 when 1 <= phase < 2). (C3)
         if (phase >= 1.0f)
-            phase -= 1.0f;
+            phase -= std::floor(phase);
 
-        lastCrossed = (prevPhase > phase); // wrapped this sample
+        lastCrossed = (prevPhase > phase); // wrapped at least once this sample
 
         return sample;
     }
