@@ -27,6 +27,8 @@
 #include "FMEngine.hpp"
 
 #include <cctype>
+#include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -123,6 +125,18 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Validate the render extents now that key overrides (e.g. sr=) are applied.
+    if (!std::isfinite(seconds) || seconds <= 0.0 || seconds > 3600.0)
+    {
+        std::fprintf(stderr, "invalid seconds: %g (want 0 < seconds <= 3600)\n", seconds);
+        return 1;
+    }
+    if (!(sampleRate >= 8000.0 && sampleRate <= 768000.0))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
+        return 1;
+    }
+
     const float freqHz = 440.0f * std::pow(2.0f, (midiNote - 69) / 12.0f);
 
     msynth::FMVoiceEngine eng;
@@ -141,7 +155,13 @@ int main(int argc, char** argv)
 
     eng.noteOn(freqHz, velocity);
 
-    const int totalFrames  = (int)(seconds * sampleRate);
+    const double framesD = seconds * sampleRate;
+    if (framesD > (double)INT_MAX)
+    {
+        std::fprintf(stderr, "render too long: %g frames exceeds INT_MAX\n", framesD);
+        return 1;
+    }
+    const int totalFrames  = (int)framesD;
     const int releaseFrame = releaseTime >= 0.0 ? (int)(releaseTime * sampleRate) : -1;
 
     std::vector<float> mono((size_t)totalFrames, 0.0f);

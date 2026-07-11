@@ -5,8 +5,10 @@ Part A — purity: algo 8 (all-parallel), a single carrier op at ratio 1.0 with 
 modulators must be a clean sine: THD < 1%.
 
 Part B — sidebands: algo 1 (serial) with carrier ratio 1 and a modulator (op2)
-at a known ratio must show the classic FM sidebands at f_c +/- n*f_m. At least 3
-of the first expected sideband bins must dominate the spectrum (loose tolerance).
+at a NON-INTEGER ratio (2.37) must show the classic FM sidebands at f_c +/- n*f_m.
+Because the ratio is non-integer the sidebands are not harmonics of F0, so plain
+distortion cannot fake them. At least 3 of the expected non-harmonic sideband bins
+must dominate the spectrum (tight peak-search tolerance).
 """
 import sys
 import numpy as np
@@ -30,8 +32,9 @@ def part_a():
 
 
 def part_b():
-    # Algo 1 serial: op2 -> op1. carrier ratio 1, modulator ratio 2, strong level.
-    fm_ratio = 2.0
+    # Algo 1 serial: op2 -> op1. carrier ratio 1, modulator ratio 2.37 (NON-integer)
+    # so the sidebands are not harmonics of F0 and cannot be faked by distortion.
+    fm_ratio = 2.37
     sr, x = render(1, NOTE, 1.0, "spec_sidebands",
                    op1Ratio=1, op1Level=1, op1A=0.002, op1D=1.0, op1S=1.0,
                    op2Ratio=fm_ratio, op2Level=0.9, op2A=0.002, op2D=1.0, op2S=1.0,
@@ -40,12 +43,14 @@ def part_b():
     f, X = spectrum(seg, sr)
     fm = F0 * fm_ratio
 
-    # Expected first sidebands: f_c, f_c +/- fm, f_c +/- 2fm ...
-    expected = [F0 + k * fm for k in (-2, -1, 0, 1, 2)] + [F0 - 2 * fm]
-    expected = sorted({round(e) for e in expected if e > 20.0})
+    # Expected sidebands |f_c +/- k*f_m|, k = -3..3; keep only bins above 20 Hz that
+    # are NOT near an integer harmonic of F0 (|f/F0 - round(f/F0)| > 0.1).
+    expected = [abs(F0 + k * fm) for k in range(-3, 4)]
+    expected = sorted({round(e) for e in expected
+                       if e > 20.0 and abs(e / F0 - round(e / F0)) > 0.1})
 
     def peak_near(fc):
-        tol = fm * 0.25
+        tol = fm * 0.05
         m = (f > fc - tol) & (f < fc + tol)
         return np.max(X[m]) if np.any(m) else 0.0
 
