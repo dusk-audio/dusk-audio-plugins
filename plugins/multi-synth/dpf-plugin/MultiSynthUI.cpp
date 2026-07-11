@@ -18,7 +18,7 @@
 
 #include "MultiSynthAccess.hpp"
 #include "MultiSynthParams.hpp"
-#include "MultiSynthDSP.hpp"      // MultiSynthDSP::getScopeBuffer / kScopeSize
+#include "MultiSynthDSP.hpp"      // MultiSynthDSP::copyScope / kScopeSize
 #include "FMAlgorithms.hpp"       // msynth::kPrismAlgos — single source of truth
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
@@ -1423,13 +1423,9 @@ private:
         if (multiSynthGetDSP != nullptr)
             if (void* const inst = getPluginInstancePointer())
                 if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
-                {
-                    const float* buf = d->getScopeBuffer();
-                    const int wp = d->getScopeWritePos();
-                    const int N = msynth::MultiSynthDSP::kScopeSize;
-                    for (int i = 0; i < N; ++i) scope[i] = buf[(wp + i) % N];
-                    count = N;
-                }
+                    // Copy the ring (oldest->newest) into our preallocated buffer via
+                    // the race-free bridge API; no raw ring pointer / writePos math.
+                    count = d->copyScope(scope, msynth::MultiSynthDSP::kScopeSize);
        #endif
         if (count > 0)
         {
@@ -1710,7 +1706,7 @@ private:
         for (int i = 0; i < 21; ++i)
         {
             const float x = kx0 + i * w;
-            const int note = baseMidi + (i / 7) * 12 + whiteSemi[i % 7];
+            const int note = clampMidi(baseMidi + (i / 7) * 12 + whiteSemi[i % 7]);
             char id[16]; std::snprintf(id, sizeof(id), "wk%d", i);
             keyHit(id, x + 1, yTop, x + w - 1, yBot, note);
             const bool lit = (kbNote == note);
@@ -1724,7 +1720,7 @@ private:
             const int deg = i % 7;
             if (deg == 2 || deg == 6) continue; // no black after E or B
             const float boundary = kx0 + (i + 1) * w;
-            const int note = baseMidi + (i / 7) * 12 + whiteSemi[deg] + 1;
+            const int note = clampMidi(baseMidi + (i / 7) * 12 + whiteSemi[deg] + 1);
             char id[16]; std::snprintf(id, sizeof(id), "bk%d", i);
             const float x0 = boundary - bw * 0.5f, x1 = boundary + bw * 0.5f;
             keyHit(id, x0, yTop, x1, yBlackBot, note);
@@ -1744,8 +1740,10 @@ private:
         if (hov && ImGui::IsMouseClicked(0)) pressKey(note);
         else if (hov && ImGui::IsMouseDown(0) && kbNote != note && kbNote >= 0) pressKey(note); // glissando
     }
+    static int clampMidi(int n) noexcept { return n < 0 ? 0 : (n > 127 ? 127 : n); }
     void pressKey(int note)
     {
+        note = clampMidi(note);               // defensive: never emit an out-of-range note
         if (kbNote == note) return;
         if (kbNote >= 0) sendNote(0, (uint8_t)kbNote, 0);
         sendNote(0, (uint8_t)note, 100);
@@ -1756,7 +1754,8 @@ private:
         const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-        if (ImGui::IsItemClicked()) { baseMidi += delta; if (baseMidi < 12) baseMidi = 12; if (baseMidi > 96) baseMidi = 96; }
+        // Cap baseMidi at 84 so the top generated key (base + 35) stays <= 127 MIDI.
+        if (ImGui::IsItemClicked()) { baseMidi += delta; if (baseMidi < 12) baseMidi = 12; if (baseMidi > 84) baseMidi = 84; }
         dl->AddRectFilled(b0, b1, IM_COL32(38, 38, 41, 255), 3.0f * s);
         dl->AddRect(b0, b1, IM_COL32(90, 90, 94, 255), 3.0f * s, 0, 1.0f * s);
         text(0.5f * (x0 + x1), y0 + 8, 9.0f, live.text, lab, 0, true);

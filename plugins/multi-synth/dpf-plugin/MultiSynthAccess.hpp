@@ -8,8 +8,8 @@
 // required UI-side null guard. Strong definitions live in MultiSynthPlugin.cpp.
 //
 // The scalar accessors below back the Phase-4 UI meters/step LEDs; the DSP
-// pointer accessor gives the UI direct read access to the scope ring buffer
-// (MultiSynthDSP::getScopeBuffer / getScopeWritePos) without copying per frame.
+// pointer accessor lets the UI pull the scope ring once per frame via the
+// race-free MultiSynthDSP::copyScope(dst, maxN) (relaxed atomic loads).
 
 #pragma once
 
