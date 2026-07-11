@@ -2,24 +2,26 @@
 // Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
-// DistrhoPluginInfo.h — DPF compile-time configuration for Multi-Synth.
+// DistrhoPluginInfo.h — DPF compile-time configuration for Sunset Circuits.
 //
-// Multi-Synth was never released as a JUCE product, so there is no legacy build
-// to disambiguate from: the display name stays plain "Multi-Synth" (design doc
-// 09-multi-synth.md). New IDs are chosen distinct from every JUCE PLUGIN_CODE
-// and every existing DPF d_cconst in the repo (see the collision check in the
-// commit message): VST3 code DsMs, CLAP id com.duskaudio.multi-synth (repo
-// com.duskaudio.<slug> convention, matching tape-echo), LV2 URI per design doc.
+// Product name: "Sunset Circuits" (renamed from Multi-Synth pre-release; slug
+// sunset-circuits). Internal C++ class/namespace names (MultiSynthDSP, msynth,
+// etc.) stay stable. Sunset Circuits was never released, so there is no legacy
+// build to disambiguate from: new IDs are chosen distinct from every JUCE
+// PLUGIN_CODE and every existing DPF d_cconst in the repo (collision-grepped:
+// existing DsFq/DsTM/DsMq/DsMs/DsTE, none collide): VST3 code DsSC, CLAP id
+// com.duskaudio.sunset-circuits (repo com.duskaudio.<slug> convention, matching
+// tape-echo), LV2 URI dusk-audio.github.io/plugins/sunset-circuits.
 
 #pragma once
 
 #define DISTRHO_PLUGIN_BRAND        "Dusk Audio"
-#define DISTRHO_PLUGIN_NAME         "Multi-Synth"
-#define DISTRHO_PLUGIN_URI          "https://dusk-audio.github.io/plugins/multi-synth"
-#define DISTRHO_PLUGIN_CLAP_ID      "com.duskaudio.multi-synth"
+#define DISTRHO_PLUGIN_NAME         "Sunset Circuits"
+#define DISTRHO_PLUGIN_URI          "https://dusk-audio.github.io/plugins/sunset-circuits"
+#define DISTRHO_PLUGIN_CLAP_ID      "com.duskaudio.sunset-circuits"
 
 #define DISTRHO_PLUGIN_BRAND_ID     Dusk
-#define DISTRHO_PLUGIN_UNIQUE_ID    DsMs
+#define DISTRHO_PLUGIN_UNIQUE_ID    DsSC
 
 // Instrument: no audio inputs, stereo out, MIDI in.
 #define DISTRHO_PLUGIN_NUM_INPUTS   0

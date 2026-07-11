@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
 // MultiSynthDSP.hpp — top-level Multi-Synth engine (framework-free C++17).
+// Product name: Sunset Circuits (internal class/namespace names stay stable).
 //
 // Zero JUCE/DPF includes. One class wrapping the whole instrument: voices,
 // mod matrix, arpeggiator, effects. The DPF shell owns MIDI parsing and the
