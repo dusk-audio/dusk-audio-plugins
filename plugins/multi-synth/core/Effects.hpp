@@ -160,7 +160,6 @@ public:
         for (int c = 0; c < 2; ++c)
         {
             bufL[c].assign((size_t)maxDelay, 0.0f);
-            bufR[c].assign((size_t)maxDelay, 0.0f);
             bufSize[c] = maxDelay; writePos[c] = 0; lfoPhase[c] = 0.0f;
         }
         lpCoeff = std::exp(-kTwoPi * 10000.0f / sr);
@@ -191,7 +190,8 @@ public:
 
             const float mono = (left + right) * 0.5f;
             bufL[c][(size_t)writePos[c]] = mono;
-            bufR[c][(size_t)writePos[c]] = mono;
+            // (bufR removed: the wet signal is derived from this mono line; the
+            // right channel is the phase-inverted copy below, not a second buffer.)
 
             float wet = readBuf(bufL[c], bufSize[c], writePos[c], delay);
             wet = wet * (1.0f - lpCoeff) + (c == 0 ? lpStateL : lpStateR) * lpCoeff;
@@ -219,7 +219,6 @@ public:
         for (int c = 0; c < 2; ++c)
         {
             std::fill(bufL[c].begin(), bufL[c].end(), 0.0f);
-            std::fill(bufR[c].begin(), bufR[c].end(), 0.0f);
             writePos[c] = 0; lfoPhase[c] = 0.0f;
         }
         lpStateL = lpStateR = 0.0f;
@@ -238,7 +237,7 @@ private:
 
     float sr = 44100.0f;
     CosmosChorusMode mode = CosmosChorusMode::Off;
-    std::vector<float> bufL[2], bufR[2];
+    std::vector<float> bufL[2];
     int bufSize[2] = { 1, 1 }, writePos[2] = { 0, 0 };
     float lfoPhase[2] = { 0.0f, 0.0f };
     float lpCoeff = 0.0f, lpStateL = 0.0f, lpStateR = 0.0f;
@@ -258,6 +257,11 @@ public:
         bufSize = maxSamples; writePos = 0;
         fbLPF_L = fbLPF_R = 0.0f;
         fbLPCoeff = std::exp(-kTwoPi * fbLPFFreq / sr); // constant: fbLPFFreq is fixed
+        // One-pole glide (~20 ms) on the effective delay length. Absorbs the jump
+        // when the sync division / time knob changes AND gives a tape-style pitch
+        // swoop on a tempo ramp; steady-state it reaches the target exactly. (E2)
+        delayGlideCoeff = 1.0f - std::exp(-1.0f / (0.020f * sr));
+        smoothedDelay = -1.0f; // sentinel: snap to the first target (no startup sweep)
         fbHP_L.setCutoff(fbHPFFreq, sampleRate);
         fbHP_R.setCutoff(fbHPFFreq, sampleRate);
         fbHP_L.reset();
@@ -291,16 +295,27 @@ public:
         }
         delaySamples = clampf(delaySamples, 1.0f, (float)(bufSize - 1));
 
-        const float wetL = readBuf(bufL, delaySamples);
-        const float wetR = readBuf(bufR, delaySamples);
+        // Glide the effective read length toward the target (E2). Snap on the
+        // first block so a fresh delay doesn't sweep up from zero.
+        if (smoothedDelay < 0.0f) smoothedDelay = delaySamples;
+        else                      smoothedDelay += (delaySamples - smoothedDelay) * delayGlideCoeff;
+        const float readLen = clampf(smoothedDelay, 1.0f, (float)(bufSize - 1));
+
+        const float wetL = readBuf(bufL, readLen);
+        const float wetR = readBuf(bufR, readLen);
 
         float fbL = applyFeedbackFilter(wetL, true);
         float fbR = applyFeedbackFilter(wetR, false);
         if (tapeChar) { fbL = std::tanh(fbL * 1.1f); fbR = std::tanh(fbR * 1.1f); }
 
+        // Continuous soft limiter (E3): identity for |x|<=1.5, then a tanh knee.
+        // Continuous at |x|=1.5 (tanh(0)=0 -> f=1.5, matching the identity branch)
+        // and asymptotically saturating at 2.0; the old form stepped ~0.35 there.
         auto softClamp = [](float x) noexcept {
-            if (std::abs(x) > 1.5f) return std::tanh(x * 0.67f) * 1.5f;
-            return x;
+            const float ax = std::abs(x);
+            if (ax <= 1.5f) return x;
+            const float lim = 1.5f + 0.5f * std::tanh((ax - 1.5f) * 2.0f);
+            return x >= 0.0f ? lim : -lim;
         };
         if (pingPong)
         {
@@ -324,6 +339,7 @@ public:
         std::fill(bufR.begin(), bufR.end(), 0.0f);
         writePos = 0;
         fbLPF_L = fbLPF_R = 0.0f;
+        smoothedDelay = -1.0f; // re-snap to the next target after a reset
         fbHP_L.reset();
         fbHP_R.reset();
     }
@@ -358,6 +374,8 @@ private:
     int bufSize = 1, writePos = 0;
     float fbLPF_L = 0.0f, fbLPF_R = 0.0f;
     float fbLPCoeff = 0.0f;                 // cached in prepare (fbLPFFreq is fixed)
+    float smoothedDelay = -1.0f;            // glided effective read length (E2); <0 = snap
+    float delayGlideCoeff = 0.0f;           // one-pole ~20 ms coeff (cached in prepare)
     duskaudio::OnePoleHP fbHP_L, fbHP_R;    // proper one-pole HP in the feedback path
 };
 
@@ -487,6 +505,10 @@ public:
         preL.assign((size_t)maxPreDelay, 0.0f);
         preR.assign((size_t)maxPreDelay, 0.0f);
         preSize = maxPreDelay; prePos = 0;
+        // One-pole glide (~20 ms) on the pre-delay read offset (E4) so a moved
+        // Pre-Delay knob swoops instead of clicking; steady-state is exact.
+        preDelayGlideCoeff = 1.0f - std::exp(-1.0f / (0.020f * sr));
+        smoothedPd = -1.0f; // sentinel: snap to the first target
         updateParams();
     }
 
@@ -504,14 +526,20 @@ public:
 
         if (preDelayMs > 0.1f)
         {
-            int pd = (int)(preDelayMs * sr / 1000.0f);
-            pd = clampi(pd, 0, preSize - 1);
+            const float targetPd = clampf(preDelayMs * sr / 1000.0f, 0.0f, (float)(preSize - 1));
+            if (smoothedPd < 0.0f) smoothedPd = targetPd;             // snap on first use
+            else                   smoothedPd += (targetPd - smoothedPd) * preDelayGlideCoeff;
+            const int pd = clampi((int)smoothedPd, 0, preSize - 1);
             preL[(size_t)prePos] = left;
             preR[(size_t)prePos] = right;
             const int readPos = (prePos - pd + preSize) % preSize;
             left  = preL[(size_t)readPos];
             right = preR[(size_t)readPos];
             prePos = (prePos + 1) % preSize;
+        }
+        else
+        {
+            smoothedPd = -1.0f; // re-snap when the pre-delay re-engages
         }
 
         reverb.processStereo(&left, &right, 1);
@@ -525,6 +553,7 @@ public:
         std::fill(preL.begin(), preL.end(), 0.0f);
         std::fill(preR.begin(), preR.end(), 0.0f);
         prePos = 0;
+        smoothedPd = -1.0f;
     }
 
 private:
@@ -542,6 +571,8 @@ private:
     float sr = 44100.0f;
     bool  enabled = false;
     float roomSize = 0.5f, decay = 2.0f, damping = 0.3f, mix = 0.2f, preDelayMs = 0.0f;
+    float smoothedPd = -1.0f;          // glided pre-delay read offset (E4); <0 = snap
+    float preDelayGlideCoeff = 0.0f;   // one-pole ~20 ms coeff (cached in prepare)
     Freeverb reverb;
     std::vector<float> preL, preR;
     int preSize = 1, prePos = 0;
