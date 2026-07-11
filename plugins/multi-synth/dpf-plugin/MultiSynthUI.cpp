@@ -145,46 +145,77 @@ protected:
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2(winW, winH));
-        ImGui::Begin("MultiSynth", nullptr,
-                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground |
-                     ImGuiWindowFlags_NoScrollWithMouse);
 
-        dl = ImGui::GetWindowDrawList();
+        // The DPF DearImGui backend has no VtxOffset support, so a single window
+        // draw list corrupts past 65535 vertices (ImDrawIdx is 16-bit). This UI's
+        // ~200 chrome primitives blow past that, so the frame is split into a few
+        // non-overlapping, borderless layer windows — each keeps its own draw list
+        // well under budget, and because they don't overlap, hover/input is clean.
 
-        // 1. chassis
+        // background: drawn into ImGui's dedicated background draw list, which is
+        // always rendered behind every window (so it can't occlude the layers).
+        dl = ImGui::GetBackgroundDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(6, 6, 7, 255));
         dl->AddRectFilled(P(0, 0), P(kDesignW, kDesignH), live.bg);
-        // 2. Oracle wood cheeks (fade with the blend)
         drawWoodCheeks();
+        dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
+        dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
 
+        beginLayer("MStop", 0, 0, kDesignW, 55);
         drawTopBar();
+        ImGui::End();
 
-        // LEFT column: Prism swaps oscillators for the operator matrix.
-        if (curMode == 4) drawPrismOps();
+        beginLayer("MSleft", 0, 55, 346, 545);
+        if (curMode == 4) drawPrismOps();   // Prism swaps oscillators for the op matrix
         else              drawOscPanels();
         drawMixerVoice();
+        ImGui::End();
 
+        beginLayer("MScenter", 346, 55, 756, 545);
         drawFilter();
         drawEnvelopes();
+        ImGui::End();
 
+        beginLayer("MSright", 756, 55, kDesignW, 545);
         drawLFOs();
         drawModeSubPanelRegion();
         drawModMatrixBar();
         drawScope();
         drawOutputVU();
+        ImGui::End();
 
+        beginLayer("MSbottom", 0, 545, kDesignW, kDesignH);
         drawSequencer();
         drawFXStrip();
         drawKeyboard();
-
-        drawModMatrixOverlay();
-
         ImGui::End();
+
+        if (showMod)
+        {
+            beginLayerScreen("MSoverlay", 0, 0, winW, winH, true);
+            drawModMatrixOverlay();
+            ImGui::End();
+        }
+
         ImGui::PopStyleVar(2);
+    }
+
+    // Begin a borderless, transparent layer window over a design-space rect.
+    void beginLayer(const char* name, float dx0, float dy0, float dx1, float dy1, bool inputs = true)
+    { beginLayerScreen(name, org.x + dx0 * s, org.y + dy0 * s, org.x + dx1 * s, org.y + dy1 * s, inputs); }
+
+    void beginLayerScreen(const char* name, float x0, float y0, float x1, float y1, bool inputs)
+    {
+        ImGui::SetNextWindowPos(ImVec2(x0, y0));
+        ImGui::SetNextWindowSize(ImVec2(x1 - x0, y1 - y0));
+        ImGuiWindowFlags f = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoFocusOnAppearing;
+        if (!inputs) f |= ImGuiWindowFlags_NoInputs;
+        ImGui::Begin(name, nullptr, f);
+        dl = ImGui::GetWindowDrawList();
     }
 
 private:
