@@ -1,5 +1,8 @@
 # Multi-Synth JUCE → DPF Port: Read-Only Inventory
 
+> Product name: **Sunset Circuits** (renamed from Multi-Synth pre-release; slug `sunset-circuits`).
+> Filename and internal class/namespace names kept for history; shipping product is Sunset Circuits.
+
 Plugin: `Multi-Synth` (slug `multi-synth`), 4-mode virtual-analog polysynth. All DSP lives in header-only classes under namespace `MultiSynthDSP`. The two `.cpp` DSP files (`MultiSynthVoice.cpp`, `Arpeggiator.cpp`) are **empty stubs** ("header-only for now; exists for CMake"). This makes the DSP core easy to lift framework-free — the only real coupling is to JUCE utility symbols and `juce::Reverb`.
 
 DPF target pattern (from tape-echo template): a framework-free `TapeEchoDSP` class with `prepare(sr, maxBlock)`, `reset()`, `processBlock(in, out, nCh, nSamples)`, atomic `setX()` setters, `getOutputLevel()`. Params live in a shared `TapeEchoParams.hpp` enum + factory-preset table. Shared DSP primitives in `plugins/shared-dpf/dsp/` (`DuskSmoothed.hpp`, `DuskFilters.hpp`, `DuskOversampler.hpp` with `HalfbandFIR`). The port should mirror this: a `MultiSynthDSP` engine class + `MultiSynthParams.hpp`.

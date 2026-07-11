@@ -1,5 +1,9 @@
 # 09 — Multi-Synth: JUCE → DPF port + design finalization
 
+> Product name: **Sunset Circuits** (renamed from Multi-Synth pre-release; slug `sunset-circuits`).
+> This filename and the internal C++ class/namespace names (`MultiSynthDSP`, `msynth`, etc.) are
+> kept for history and code stability; the shipping product is Sunset Circuits.
+
 **Read `00-OVERVIEW.md` in full first.** This document is the design authority for the
 Multi-Synth DPF port. The companion file `09-multi-synth-inventory.md` is the exhaustive
 read-only inventory of the existing JUCE implementation (parameters, DSP, JUCE deps,
@@ -12,10 +16,11 @@ and modular synths, late-70s American poly, early-80s Japanese poly, mid-80s FM
 digital, and the silver acid box. Six modes, one instrument. Never released, so there
 is **no backwards-compatibility constraint** — fix everything, redesign freely.
 
-**Display name**: "Multi-Synth" (family-consistent with Multi-Q / Multi-Comp).
-**Brand**: Dusk Audio. **New IDs** (do not reuse JUCE `MSyn` VST3 code; pick a fresh
-4-char code, fresh CLAP id `studio.dusk.multi-synth`, LV2 URI
-`https://dusk-audio.github.io/plugins/multi-synth`). JUCE version stays buildable for
+**Display name**: "Sunset Circuits" (slug `sunset-circuits`; renamed from the working
+title Multi-Synth pre-release). **Brand**: Dusk Audio. **IDs** (distinct from the JUCE
+`MSyn` VST3 code, collision-grepped against every repo DPF `d_cconst`): VST3 code `DsSC`,
+CLAP id `com.duskaudio.sunset-circuits`, LV2 URI
+`https://dusk-audio.github.io/plugins/sunset-circuits`. JUCE version stays buildable for
 A/B validation only.
 
 **Trademark rule (hard)**: no third-party brand/model names anywhere in code, UI,
@@ -38,7 +43,7 @@ Modes 0–3 exist in the JUCE code; port them. Modes 4–5 are new engines.
 ## Architecture (per playbook, non-negotiable)
 
 ```
-plugins/multi-synth/
+plugins/sunset-circuits/
 ├── core/                     # framework-free C++17, zero JUCE/DPF includes
 │   ├── MultiSynthDSP.hpp/cpp # top engine: prepare/reset/processBlock + atomic setters
 │   ├── Oscillator.hpp        # polyBLEP oscs, sub, S&H, pink noise (ported)

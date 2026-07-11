@@ -1,10 +1,13 @@
 # 09 — Multi-Synth: Phase 5 preset re-voice + audit log
 
+> Product name: **Sunset Circuits** (renamed from Multi-Synth pre-release; slug `sunset-circuits`).
+> Filename and internal class/namespace names kept for history; shipping product is Sunset Circuits.
+
 Companion to `09-multi-synth.md` (design authority) and `09-multi-synth-inventory.md`
 (JUCE inventory). This file is the **per-preset change log** for the Phase 5
 re-voice, plus the new preset banks and the validation numbers.
 
-The preset table is generated from `plugins/multi-synth/dpf-plugin/tools/gen_params.py`
+The preset table is generated from `plugins/sunset-circuits/dpf-plugin/tools/gen_params.py`
 (the `BASE` baseline + `PRESETS` list) into `MultiSynthParams.hpp`. Do not hand-edit
 the generated header; edit the generator and re-run it.
 
