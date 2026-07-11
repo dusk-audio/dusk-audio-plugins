@@ -113,6 +113,11 @@ int main(int argc, char** argv)
         overrides.push_back({ idx, (float)std::atof(val.c_str()) });
     }
 
+    if (osFactor != 1 && osFactor != 2 && osFactor != 4)
+    {
+        std::fprintf(stderr, "invalid osfactor: %d (must be 1, 2, or 4)\n", osFactor);
+        return 1;
+    }
     const int osIdx = (osFactor == 4) ? 2 : (osFactor == 2 ? 1 : 0);
     const int blockSize = 512;
 
@@ -138,9 +143,9 @@ int main(int argc, char** argv)
     {
         const int n = std::min(blockSize, totalFrames - pos);
 
-        if (!released && releaseFrame >= 0 && pos + n > releaseFrame)
+        if (!released && releaseFrame >= 0 && pos >= releaseFrame)
         {
-            // Release on a block boundary at/after the requested time.
+            // Release on the first block that STARTS at/after the requested time.
             synth.noteOff(midiNote);
             for (int hn : holdNotes) synth.noteOff(hn);
             released = true;
