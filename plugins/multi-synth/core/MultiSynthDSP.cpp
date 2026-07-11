@@ -323,7 +323,9 @@ void MultiSynthDSP::snapshotParameters() noexcept
     vp.unisonSpread = p(pUnisonSpread);
 
     const float pbRange = p(pPbRange);
-    vp.pitchBendSemis = pitchBendNorm.load(std::memory_order_relaxed) * pbRange;
+    const float pbNorm = pitchBendNorm.load(std::memory_order_relaxed);
+    vp.pitchBendSemis = pbNorm * pbRange;      // oscillator base frequency
+    vp.pitchBendNorm  = pbNorm;                // normalized ±1 mod source (C2)
     vp.masterTuneSemis = p(pMasterTune) / 100.0f;
     vp.modWheel = modWheelValue.load(std::memory_order_relaxed);
     vp.aftertouch = aftertouchValue.load(std::memory_order_relaxed);
@@ -638,6 +640,14 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     {
         arpStep.store(arp.getCurrentStep(), std::memory_order_relaxed);
         arpTotalSteps.store(arp.getTotalSteps(), std::memory_order_relaxed);
+    }
+    else
+    {
+        // Neither the acid sequencer nor the arp is running: publish the idle
+        // sentinel so the observable matches the "-1 when idle" bridge contract
+        // and the UI step playhead clears (C5). -1 highlights no step.
+        arpStep.store(-1, std::memory_order_relaxed);
+        arpTotalSteps.store(0, std::memory_order_relaxed);
     }
 
     auto toDb = [](float lin) noexcept { return lin > 1.0e-6f ? 20.0f * std::log10(lin) : -60.0f; };

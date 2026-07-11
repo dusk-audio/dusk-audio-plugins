@@ -109,7 +109,8 @@ struct VoiceParameters
     float unisonSpread = 1.0f;
 
     // Global pitch (fix #2) — set per block from bend/tune.
-    float pitchBendSemis = 0.0f;
+    float pitchBendSemis = 0.0f;   // applied to the oscillator base frequency
+    float pitchBendNorm  = 0.0f;   // normalized ±1 for the mod matrix source (C2)
     float masterTuneSemis = 0.0f;
 
     // Performance controllers (mod sources).
@@ -344,6 +345,11 @@ public:
         const float noiseSample = pinkNoise.processSample() * params.noiseLevel;
 
         const int uCount = clampi(unisonCount, 1, kMaxUnison);
+        // The R filter runs only on the multi-voice path; when unison count grows
+        // from 1 -> >1 mid-note its state is stale (last touched at the previous
+        // note-on). Reset it before first use to avoid a startup transient (C4b).
+        if (uCount > 1 && prevUCount == 1) filterR.reset();
+        prevUCount = uCount;
         const float uGain = 1.0f / std::sqrt((float)uCount);
         const float maxDetune = params.unisonDetune * (1.0f + clampf(uniDetMod, -0.9f, 4.0f));
 
@@ -390,19 +396,25 @@ public:
         // (non-self-oscillating) Cosmos LPF so the section stays in circuit.
         const FilterMode filtMode = (params.mode == SynthMode::Prism)
             ? FilterMode::Cosmos : (FilterMode)clampi((int)params.mode, 0, 3);
-        filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, params.filterHPCutoff);
+        // Prism routes through the Cosmos filter model but has no dedicated HP
+        // control, so feed a neutral 20 Hz HP (U3). Modes 1-3 ignore the HP arg.
+        const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
+        filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, hpCut);
 
         float sL, sR;
         if (uCount == 1)
         {
             const float filtered = filterL.process(preL);
-            const float angle = (panMod + 1.0f) * 0.25f * kPi; // == JUCE single-voice pan
+            // Clamp panMod to the valid pan range before the constant-power angle
+            // math; the multi-voice path already clamps its totalPan (C4a).
+            const float sPan = clampf(panMod, -1.0f, 1.0f);
+            const float angle = (sPan + 1.0f) * 0.25f * kPi; // == JUCE single-voice pan
             sL = filtered * std::cos(angle);
             sR = filtered * std::sin(angle);
         }
         else
         {
-            filterR.setMode(filtMode); filterR.setParameters(envCutoff, envRes, params.filterHPCutoff);
+            filterR.setMode(filtMode); filterR.setParameters(envCutoff, envRes, hpCut);
             sL = filterL.process(preL);
             sR = filterR.process(preR);
         }
@@ -564,7 +576,9 @@ private:
                 // just the carrier-count headroom trim.
                 const float detFreq = freq1 * std::pow(2.0f, detCents / 1200.0f);
                 fm[(size_t)u].setFrequency(detFreq);
-                mix = fm[(size_t)u].processSample() * fmCarrierTrim;
+                // Wire noise into Prism so the always-visible NOISE knob is honest
+                // (U4). noiseLevel defaults to 0, so existing presets are bit-null.
+                mix = fm[(size_t)u].processSample() * fmCarrierTrim + noiseSample;
                 activeGain = 0.0f;
                 break;
             }
@@ -592,7 +606,11 @@ private:
         state.setSourceValue(ModSource::Velocity, currentVelocity);
         state.setSourceValue(ModSource::KeyTracking, (float)(currentNote - 60) / 60.0f);
         state.setSourceValue(ModSource::Random, randomPerNote);
-        state.setSourceValue(ModSource::PitchBend, params.pitchBendSemis);
+        // PitchBend mod source is a normalized ±1 value (C2). Feeding the raw
+        // ±24 semitone value here broke the ±1 source convention and made every
+        // PitchBend->pitch route double-scale. The semitone value is still used
+        // for the oscillator base frequency above.
+        state.setSourceValue(ModSource::PitchBend, params.pitchBendNorm);
 
         sampleAndHold.setRate(params.shRate);
         state.setSourceValue(ModSource::SampleAndHold, sampleAndHold.process(rng.nextBipolar()));
@@ -613,6 +631,7 @@ private:
     float baseLfo1Rate = 1.0f, baseLfo2Rate = 0.5f;
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
     float effectsMixMod = 0.0f;
+    int   prevUCount = 1; // detects the 1 -> >1 unison transition (C4b)
 
     OscSet osc[kMaxUnison];
     FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice
