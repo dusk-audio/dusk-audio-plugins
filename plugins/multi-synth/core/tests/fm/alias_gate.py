@@ -29,6 +29,9 @@ def worst_image_dbc(sig, sr, f0):
     hi = np.searchsorted(f, sr * 0.49)
     fund_bin = np.argmin(np.abs(f - f0))
     fund = X[fund_bin]
+    # A silent/broken render must not report a clean -200 dBc.
+    if not np.isfinite(fund) or fund <= 0 or not np.all(np.isfinite(X)):
+        return float("nan"), float("nan")
     tol = f0 * 0.03
     worst, worst_f = -200.0, 0.0
     for k in range(lo, hi):
