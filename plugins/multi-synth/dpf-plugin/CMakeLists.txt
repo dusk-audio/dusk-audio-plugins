@@ -2,8 +2,8 @@
 # Third-party components (DPF — ISC; Dear ImGui — MIT; and others) are attributed
 # in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 #
-# Standalone CMake for the DPF-based Multi-Synth plugin (Phase 3: DSP shell only;
-# the ImGui UI arrives in Phase 4, hence DISTRHO_PLUGIN_HAS_UI 0 / no FILES_UI).
+# Standalone CMake for the DPF-based Multi-Synth plugin (Phase 4: DSP shell +
+# Dear ImGui UI — DISTRHO_PLUGIN_HAS_UI 1, UI_TYPE opengl, FILES_UI wired below).
 #   cmake -B build -GNinja [-DDPF_PATH=/path/to/DPF]
 #   cmake --build build
 
@@ -24,9 +24,13 @@ dpf_add_plugin(multi_synth
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
     # fail to load. Also gives the Phase-4 meter/scope bridge direct access.
     MONOLITHIC
+    UI_TYPE opengl
     FILES_DSP
         MultiSynthPlugin.cpp
-        ../core/MultiSynthDSP.cpp)
+        ../core/MultiSynthDSP.cpp
+    FILES_UI
+        MultiSynthUI.cpp
+        ${DUSK_DPF_UI_SOURCES})
 
 target_include_directories(multi_synth PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
