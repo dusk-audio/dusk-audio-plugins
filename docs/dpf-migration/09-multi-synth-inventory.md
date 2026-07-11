@@ -153,9 +153,9 @@ Combo orderings match `ModSource`/`ModDest` enums exactly. **Destinations LFO1Ra
 
 ### FilterEngine.h
 Four 4-pole (24 dB/oct) models, all built on **`FourPoleOTA`** (4 cascaded one-pole LP `y = s + g·(in−s)` with per-stage `tanh` nonlinearity, `g = tan(π·fc/sr)`, resonance feedback from 4th pole `tanh(s[3]·feedback)`, input saturation, `bassComp` mix-back, first-order ~5 Hz DC blocker, NaN guards). Tuning knobs `maxFeedback / saturationStrength / stageNonlinearity / bassComp`:
-- **Cosmos** (`CosmosFilter`, Juno IR3109-style): `FourPoleOTA` LPF (maxFb 3.0 = no self-osc, sat 0.8, stage 0.9, bassComp 0) + **`SimpleHPF`** (first-order, non-resonant). Resonance clamped to 0.75.
-- **Oracle** (`OracleFilter`, CEM3320-style): maxFb 4.2 (self-osc >~0.95), sat 1.2, stage 1.1, bassComp 0.15.
-- **Mono** (`MonoFilter`, BA662-style OTA): maxFb 4.0, sat 1.8, stage 1.5, bassComp 0.2; extra drive `1 + res·1.5`.
+- **Cosmos** (`CosmosFilter`, classic Japanese-poly filter chip style): `FourPoleOTA` LPF (maxFb 3.0 = no self-osc, sat 0.8, stage 0.9, bassComp 0) + **`SimpleHPF`** (first-order, non-resonant). Resonance clamped to 0.75.
+- **Oracle** (`OracleFilter`, classic American-poly filter chip style): maxFb 4.2 (self-osc >~0.95), sat 1.2, stage 1.1, bassComp 0.15.
+- **Mono** (`MonoFilter`, classic Japanese-mono OTA chip style): maxFb 4.0, sat 1.8, stage 1.5, bassComp 0.2; extra drive `1 + res·1.5`.
 - **Modular** (`LadderFilter`, transistor ladder): **separate** implementation — polynomial `g` fit, `tanh` per stage, feedback `res·3.8`, returns `s[3]`; no DC blocker, no bassComp.
 - **`SynthFilter`** dispatches by `FilterMode` (== `SynthMode` cast in voice via `setMode(static_cast<FilterMode>(mode))`).
 
@@ -169,8 +169,10 @@ Four 4-pole (24 dB/oct) models, all built on **`FourPoleOTA`** (4 cascaded one-p
 
 ### EffectsEngine.h
 - **`DriveEffect`** — gain `1+drive·10`, saturate (SoftClip `tanh` / HardClip `jlimit` / Tube asymmetric `1−exp(−x)` pos, `−0.8·(1−exp(x))` neg), output comp `1/(1+drive·2)`, parallel mix.
-- **`ChorusEffect`** — generic BBD, single sine LFO, base 7 ms ± 3 ms·depth, 30 ms buffer, linear interp, optional stereo phase offset. (Post-FX chorus, distinct from Juno chorus.)
+- **`ChorusEffect`** — generic BBD, single sine LFO, base 7 ms ± 3 ms·depth, 30 ms buffer, linear interp, optional stereo phase offset. (Post-FX chorus, distinct from the vintage dual-BBD chorus.)
 - **`JunoChorusEffect`** — **two independent BBD lines**, triangle LFOs at fixed 0.513 Hz (I) / 0.863 Hz (II), ~3 ms ± 2 ms, one-pole 10 kHz BBD lowpass, inverted-phase stereo (L=+wet, R=−wet). Modes Off/I/II/Both. Blend: dry·0.7 + wet·(0.5 or 0.35 for Both).
+
+> **Note on code identifiers:** literal symbols such as `JunoChorusEffect` and `junoChorus` are quoted verbatim from the original JUCE sources this inventory documents; the DPF port renamed them. They are kept as-is here so the inventory stays factually accurate about the JUCE code.
 - **`DelayEffect`** — 2 s stereo buffer, tempo-sync via `getBeatsPerStep(ArpRateDivision)`, feedback LPF+HPF one-poles in loop, optional ping-pong (cross-feed), optional tape character (`tanh(x·1.1)`), soft-clamp feedback.
 - **`ReverbEffect`** — wraps **`juce::Reverb`** (Freeverb). Pre-delay circular buffer (≤200 ms). Maps decay→roomSize. **This is the one nontrivial external DSP dependency to replace for DPF.**
 - **`SpringReverb`** — thin wrapper reusing `ReverbEffect` with fixed small/dark settings (0.3 size, 1.5 decay, 0.6 damp). Auto-enabled in Modular at mix 0.15. **Not a real dispersive spring** (tape-echo has a proper `SpringReverb` in `TapeEchoDSP.hpp` that could be reused/ported instead).
@@ -182,7 +184,7 @@ Four 4-pole (24 dB/oct) models, all built on **`FourPoleOTA`** (4 cascaded one-p
 - Per-sample per-voice a fresh `ModulationState` (stack `std::array`, no heap) is built and `matrix.process`'d.
 
 ### Oversampling strategy (**critical**)
-`prepareToPlay`: `internalSampleRate = sampleRate * 4.0`; **all voices/oscillators/envelopes/LFOs/filters are prepared at this fixed 4× rate**, regardless of the `oversampling` param. Effects + Juno chorus + arp run at native rate.
+`prepareToPlay`: `internalSampleRate = sampleRate * 4.0`; **all voices/oscillators/envelopes/LFOs/filters are prepared at this fixed 4× rate**, regardless of the `oversampling` param. Effects + dual-BBD chorus + arp run at native rate.
 
 `processBlock`: `osFactor` = 1/2/4 from the param (default **2**). For each output sample it renders `osFactor` internal voice samples, sums them, and multiplies by `1/osFactor` (a plain box-average — **no half-band/FIR decimation filter**, unlike tape-echo's `HalfbandFIR`).
 
@@ -217,7 +219,7 @@ Replacement priority: (1) `juce::Reverb` (write/port a Freeverb, or reuse the ta
 |---|---|---|---|---|
 | Poly (`setMaxVoices`) | 6 | 5 | 1 | 2 (duophonic) |
 | Osc config | 1 DCO: osc1=Saw + osc2 forced Pulse @ same freq + sub | osc1+osc2 (+ poly-mod) | osc1+osc2 + sub | osc1+osc2+osc3 |
-| Filter | IR3109-style LPF+HPF, res≤0.75, no self-osc | CEM3320-style LPF, self-osc | BA662-style LPF, fat/driven | transistor ladder |
+| Filter | Japanese-poly LPF+HPF, res≤0.75, no self-osc | American-poly LPF, self-osc | Japanese-mono OTA LPF, fat/driven | transistor ladder |
 | Sub-osc | yes (`subLevel`/`subWave`) | no | yes | no (osc3 instead) |
 | Special DSP | chorus I/II/Both (`junoChorus`) | poly-mod: FEnv→OscA freq, OscB→OscA freq, OscB→PW, FEnv→Filter | hard sync, ring mod | osc3, hard sync, FM (osc1→osc2), ring mod, S&H mod source, auto spring reverb (mix 0.15) |
 | Cross-mod | forced off (comment) | not used | n/a | n/a |
