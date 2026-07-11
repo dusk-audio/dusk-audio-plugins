@@ -68,6 +68,11 @@ target_compile_definitions(sunset_circuits PUBLIC
 if(UNIX AND NOT APPLE)
     foreach(_fmt clap vst3 lv2 jack)
         if(TARGET sunset_circuits-${_fmt})
+            # --no-as-needed (emitted before the link libraries) forces librt /
+            # libpthread to stay on the line even though they appear before the
+            # dgl archive that references shm_*/pthread_*; being shared libs they
+            # then resolve those refs regardless of archive order.
+            target_link_options(sunset_circuits-${_fmt} PRIVATE "LINKER:--no-as-needed")
             target_link_libraries(sunset_circuits-${_fmt} PRIVATE rt pthread)
         endif()
     endforeach()

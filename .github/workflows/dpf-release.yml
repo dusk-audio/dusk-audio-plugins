@@ -305,11 +305,11 @@ jobs:
           # (fresh pinned checkout each run); safe to drop when DPF-Widgets fixes
           # this upstream.
           $f = "${{ github.workspace }}/DPF-Widgets/opengl/DearImGui.cpp"
-          $c = Get-Content -Raw $f
-          $c = $c -replace 'self->getWidth\(\) \?: 640 \* scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor'
-          $c = $c -replace 'self->getHeight\(\) \?: 480 \* scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor'
-          Set-Content -NoNewline $f $c
-          if (Select-String -Path $f -Pattern '\?:' -Quiet) { Write-Error "Elvis operator still present"; exit 1 }
+          $c = [System.IO.File]::ReadAllText($f)
+          $c = $c.Replace('self->getWidth() ?: 640 * scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor')
+          $c = $c.Replace('self->getHeight() ?: 480 * scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor')
+          [System.IO.File]::WriteAllText($f, $c)
+          if ($c.Contains('?:')) { Write-Error "Elvis operator still present"; exit 1 }
           Write-Host "Patched DearImGui.cpp"
 
       - name: Configure
