@@ -18,6 +18,11 @@ echo "########## fm suite ##########"
 (cd fm && ./run_all.sh) || fail=1
 
 echo
+echo "########## preset audit ##########"
+# preset_render is built by the cmake step above (target in tests/CMakeLists.txt).
+python3 presets/preset_audit.py || fail=1
+
+echo
 echo "########## alias_gate (report only) ##########"
 python3 alias_gate.py || echo "alias_gate exited nonzero (report-only, not fatal)"
 
