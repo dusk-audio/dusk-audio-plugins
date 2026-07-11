@@ -92,7 +92,7 @@ Reuse `plugins/shared-dpf/dsp/` (`DuskSmoothed`, `DuskOversampler` HalfbandFIR,
 
 ### Prism (FMEngine.hpp)
 - 4 operators, sine core (phase accumulator + sine LUT or std::sin at first).
-- 8 algorithms (classic 4-op set): 1) 4→3→2→1 serial; 2) (4→3)+(2)→1... use the
+- 8 algorithms (classic 4-op set): 1) 4→3→2→1 serial; 2) 4→2, 3→2, 2→1... use the
   standard OPM/4-op algorithm chart: serial, 3-into-1 variants, dual stacks 2×(2op),
   1 modulator 3 carriers, all-parallel (organ). Document each with an ASCII diagram.
 - Per op: `ratio` (0.25–16, snap list 0.25/0.5/1/2/…14 + fine ±99c as separate param),
