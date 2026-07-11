@@ -46,7 +46,15 @@ public:
 
     void prepare(double sampleRate) noexcept { sr = sampleRate; rng.seed(0xA17E5EEDu); reset(); }
 
-    void setEnabled(bool on) noexcept { if (on != enabled) { enabled = on; if (!on) reset(); } }
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        // Defensive: preserve any pending note across the disable-reset so that IF
+        // advanceSample ever runs while disabled it still emits the note-off (the
+        // engine also releases the voice on the arp-off transition — primary path).
+        if (!on) { const int pending = lastPlayedNote; reset(); lastPlayedNote = pending; }
+    }
     bool isEnabled() const noexcept { return enabled; }
 
     void setMode(ArpMode m) noexcept { if (m != mode) { mode = m; dirty = true; } }
