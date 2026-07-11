@@ -175,7 +175,18 @@ PRESETS = [
  ("Screaming Lead", {"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
  ("Sub Thunder", {"mode":2,"osc1Wave":3,"osc2Wave":3,"filterCutoff":400,"subLevel":1.0,"noiseLevel":0.02}),
  ("Sync Sweep", {"mode":2,"osc2Semi":7,"filterCutoff":800,"filterRes":0.6,"filterEnvAmt":0.7,"filtA":0.01,"filtD":0.4,"ringMod":0.3,"delayOn":1,"delayMix":0.2}),
- ("Upside Down", {"mode":3,"fmAmount":0.4,"osc3Wave":3,"osc3Level":0.4,"filterCutoff":1500,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":1.5,"ampS":0.9,"ampR":4.0,"noiseLevel":0.08,"reverbOn":1,"reverbDecay":6.0,"reverbMix":0.4,"vintage":0.5}),
+ # Flagship (design-doc mandate): Oracle mode, two slightly detuned saws, arp
+ # Up-Down 1/8 with latch so holding a Cmaj-ish chord instantly plays the famous
+ # 80s sci-fi title-sequence arpeggio. Filter ~2 kHz with slight env, a subtle
+ # slow LFO on cutoff, and a touch of tempo-synced delay. Verified at 132 BPM in
+ # docs/dpf-migration/09-multi-synth-presets.md (grid dev / pitch cycle / centroid).
+ ("Upside Down", {"mode":1,"osc1Wave":0,"osc2Wave":0,"osc1Detune":0,"osc2Detune":8,"osc2Level":0.8,
+   "filterCutoff":2000,"filterRes":0.3,"filterEnvAmt":0.25,"filtA":0.01,"filtD":0.3,"filtS":0.5,
+   "ampA":0.005,"ampD":0.3,"ampS":0.7,"ampR":0.4,
+   "arpOn":1,"arpMode":2,"arpRate":3,"arpOctave":1,"arpGate":0.6,"arpLatch":1,
+   "lfo1Rate":0.3,"lfo1Shape":0,"modSrc0":1,"modDst0":5,"modAmt0":0.15,
+   "delayOn":1,"delaySync":1,"delayDiv":3,"delayMix":0.2,"delayFB":0.3,
+   "reverbOn":1,"reverbSize":0.5,"reverbMix":0.15,"stereoWidth":0.7}),
  ("Sci-Fi Computer", {"mode":3,"fmAmount":0.6,"hardSync":1,"osc2Semi":19,"filterCutoff":3000,"ampA":0.001,"ampD":0.08,"ampS":0.0,"arpOn":1,"arpRate":4,"arpMode":4,"arpGate":0.2}),
  ("Horror Drone", {"mode":3,"ringMod":0.6,"fmAmount":0.2,"osc2Semi":-5,"osc3Wave":0,"osc3Level":0.5,"filterCutoff":800,"filterRes":0.65,"ampA":3.0,"ampS":1.0,"ampR":5.0,"reverbOn":1,"reverbDecay":10.0,"reverbMix":0.5,"vintage":0.7}),
  ("Voltage Ghost", {"mode":3,"fmAmount":0.8,"hardSync":1,"osc2Semi":12,"filterCutoff":2500,"filterEnvAmt":0.4,"filtA":0.5,"filtD":2.0,"filtS":0.2,"ampA":0.8,"ampR":3.0,"vintage":0.5,"delayOn":1,"delayTape":1,"delayMix":0.3}),
@@ -200,6 +211,116 @@ PRESETS = [
  ("Init Oracle", {"mode":1}),
  ("Init Mono", {"mode":2}),
  ("Init Modular", {"mode":3}),
+
+ # ===================== Phase 5 new preset banks =========================
+ # --- Prism (mode 4, 4-op FM) --------------------------------------------
+ # Glass Keys: dual-stack tine e-piano (algo 4). Stack A = body (op2 1:1 -> op1
+ # carrier); Stack B = tine (op4 ratio 14 fast-decay -> op3 carrier), keyScale
+ # rolls the tine off up the keyboard. Percussive amp with a little sustain.
+ ("Glass Keys", {"mode":4,"prismAlgo":4,"prismFB":0,
+   "op1Ratio":1,"op1Level":1.0,"op1A":0.001,"op1D":2.0,"op1S":0.4,"op1R":0.4,
+   "op2Ratio":1,"op2Level":0.45,"op2A":0.001,"op2D":1.2,"op2S":0.2,"op2R":0.3,
+   "op3Ratio":1,"op3Level":0.85,"op3A":0.001,"op3D":1.5,"op3S":0.25,"op3R":0.4,
+   "op4Ratio":14,"op4Level":0.7,"op4KeyScale":-0.35,"op4A":0.001,"op4D":0.12,"op4S":0.0,"op4R":0.2,
+   "filterCutoff":14000,"filterEnvAmt":0,"ampA":0.001,"ampD":2.5,"ampS":0.25,"ampR":0.5,
+   "chorusOn":1,"chorusMix":0.25}),
+ # Solid Bass: serial FM bass (algo 0, 4->3->2->1) with a touch of op4 feedback
+ # for grit; filter-env pluck for punch.
+ ("Solid Bass", {"mode":4,"prismAlgo":0,"prismFB":0.15,
+   "op1Ratio":1,"op1Level":1.0,"op1A":0.001,"op1D":0.5,"op1S":0.6,"op1R":0.2,
+   "op2Ratio":1,"op2Level":0.5,"op2A":0.001,"op2D":0.3,"op2S":0.2,"op2R":0.2,
+   "op3Ratio":1,"op3Level":0.35,"op3A":0.001,"op3D":0.25,"op3S":0.1,"op3R":0.2,
+   "op4Ratio":2,"op4Level":0.4,"op4A":0.001,"op4D":0.2,"op4S":0.1,"op4R":0.2,
+   "filterCutoff":4000,"filterRes":0.2,"filterEnvAmt":0.35,"filtA":0.001,"filtD":0.3,"filtS":0.2,
+   "ampA":0.001,"ampD":0.6,"ampS":0.6,"ampR":0.2}),
+ # Crystal Bells: additive (algo 8) inharmonic partials with staggered decays
+ # (higher partials die first) + long release; open filter, reverb tail.
+ ("Crystal Bells", {"mode":4,"prismAlgo":7,"prismFB":0,
+   "op1Ratio":1.0,"op1Level":1.0,"op1A":0.001,"op1D":4.0,"op1S":0.0,"op1R":3.0,
+   "op2Ratio":2.76,"op2Level":0.5,"op2A":0.001,"op2D":3.0,"op2S":0.0,"op2R":2.5,
+   "op3Ratio":5.4,"op3Level":0.3,"op3A":0.001,"op3D":2.0,"op3S":0.0,"op3R":1.8,
+   "op4Ratio":8.93,"op4Level":0.15,"op4A":0.001,"op4D":1.2,"op4S":0.0,"op4R":1.2,
+   "filterCutoff":16000,"filterEnvAmt":0,"ampA":0.001,"ampD":5.0,"ampS":0.0,"ampR":3.5,
+   "reverbOn":1,"reverbSize":0.7,"reverbDecay":4.0,"reverbMix":0.3}),
+ # Brass Machine: serial FM (algo 0) with strong op4 self-feedback growl and a
+ # brass-style attack swell on the amp + modulator.
+ ("Brass Machine", {"mode":4,"prismAlgo":0,"prismFB":0.6,
+   "op1Ratio":1,"op1Level":1.0,"op1A":0.06,"op1D":0.3,"op1S":0.8,"op1R":0.3,
+   "op2Ratio":1,"op2Level":0.7,"op2A":0.1,"op2D":0.4,"op2S":0.6,"op2R":0.3,
+   "op3Ratio":1,"op3Level":0.5,"op3A":0.08,"op3D":0.4,"op3S":0.5,"op3R":0.3,
+   "op4Ratio":1,"op4Level":0.6,"op4A":0.05,"op4D":0.3,"op4S":0.5,"op4R":0.3,
+   "filterCutoff":5000,"filterRes":0.1,"filterEnvAmt":0.4,"filtA":0.05,"filtD":0.4,"filtS":0.5,
+   "ampA":0.08,"ampD":0.3,"ampS":0.75,"ampR":0.3}),
+
+ # --- Acid (mode 5, diode-ladder box + 16-step sequencer) ----------------
+ # Silver Squelch: classic saw line, high res, mid env; accents on 1/5/9/13,
+ # slides into steps 4 and 8. A rolling one-bar 16th pattern.
+ ("Silver Squelch", {"mode":5,"arpOn":1,"osc1Wave":0,"filterCutoff":500,"filterRes":0.82,
+   "filterEnvAmt":0.6,"ampD":0.3,"ampS":0.0,"acidAccentAmt":0.8,"acidSlideTime":60,
+   "arpRate":4,"arpGate":0.55,
+   "seqPitch2":12,"seqPitch5":3,"seqPitch7":12,"seqPitch10":7,"seqPitch12":5,"seqPitch14":-5,
+   "seqAccent0":1,"seqAccent4":1,"seqAccent8":1,"seqAccent12":1,
+   "seqSlide3":1,"seqSlide7":1}),
+ # Rubber Bass: square wave, low res, tight fast decay -> round rubbery bounce.
+ ("Rubber Bass", {"mode":5,"arpOn":1,"osc1Wave":1,"filterCutoff":420,"filterRes":0.3,
+   "filterEnvAmt":0.5,"ampD":0.14,"ampS":0.0,"acidAccentAmt":0.5,"acidSlideTime":50,
+   "arpRate":4,"arpGate":0.45,
+   "seqPitch4":12,"seqPitch6":7,"seqPitch11":3,"seqPitch12":-5,
+   "seqAccent0":1,"seqAccent6":1,"seqAccent10":1}),
+ # Night Crawler: slow 1/8 dark pattern, heavy slide (long glide) for a
+ # creeping, portamento-drenched bassline.
+ ("Night Crawler", {"mode":5,"arpOn":1,"osc1Wave":0,"filterCutoff":320,"filterRes":0.62,
+   "filterEnvAmt":0.4,"ampD":0.45,"ampS":0.0,"acidAccentAmt":0.6,"acidSlideTime":150,
+   "arpRate":3,"arpGate":0.75,
+   "seqPitch2":-2,"seqPitch4":3,"seqPitch6":-5,"seqPitch9":5,"seqPitch11":-7,"seqPitch13":2,
+   "seqSlide2":1,"seqSlide4":1,"seqSlide6":1,"seqSlide9":1,"seqSlide11":1,"seqSlide13":1,
+   "seqAccent0":1,"seqAccent8":1}),
+ # Screamer: near-self-oscillating res 0.95, maxed accent, drive on -> the
+ # aggressive overdriven scream.
+ ("Screamer", {"mode":5,"arpOn":1,"osc1Wave":0,"filterCutoff":600,"filterRes":0.95,
+   "filterEnvAmt":0.7,"ampD":0.25,"ampS":0.0,"acidAccentAmt":1.0,"acidSlideTime":55,
+   "driveOn":1,"driveAmt":0.55,"driveType":0,"arpRate":4,"arpGate":0.5,
+   "seqPitch3":12,"seqPitch7":12,"seqPitch9":7,"seqPitch11":10,"seqPitch15":-12,
+   "seqAccent0":1,"seqAccent2":1,"seqAccent5":1,"seqAccent8":1,"seqAccent11":1,"seqAccent14":1,
+   "seqSlide7":1,"seqSlide11":1}),
+
+ # --- Flagship-quality patches across the remaining modes -----------------
+ # Aurora Drift: huge Cosmos DCO pad, dual chorus (Both), slow swell, wide.
+ ("Aurora Drift", {"mode":0,"osc1Wave":0,"osc2Wave":4,"osc2Detune":12,"osc2PW":0.4,"subLevel":0.35,
+   "filterCutoff":3000,"filterRes":0.2,"filterEnvAmt":0.2,"ampA":1.2,"ampD":1.0,"ampS":0.9,"ampR":3.0,
+   "cosmosChorus":3,"reverbOn":1,"reverbSize":0.8,"reverbDecay":4.0,"reverbMix":0.3,"stereoWidth":0.9}),
+ # Regal Brass: Oracle self-osc filter + poly-mod brass with 2-voice unison.
+ ("Regal Brass", {"mode":1,"osc2Semi":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.6,
+   "filtA":0.04,"filtD":0.3,"filtS":0.4,"ampA":0.02,"ampD":0.3,"ampS":0.8,"ampR":0.35,
+   "pmFenvFilt":0.35,"pmFenvOscA":0.1,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
+ # Siren Lead: Mono screaming sync lead (hard sync + osc2 up an octave), driven,
+ # slap of delay, portamento glide.
+ ("Siren Lead", {"mode":2,"hardSync":1,"osc2Semi":12,"filterCutoff":4000,"filterRes":0.5,
+   "filterEnvAmt":0.6,"filtA":0.01,"filtD":0.3,"filtS":0.3,"ampA":0.005,"ampS":0.8,"ampR":0.3,
+   "portaTime":0.05,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delaySync":1,"delayDiv":3,"delayMix":0.25,"delayFB":0.35}),
+ # Nebula Static: Modular sci-fi texture — S&H modulating cutoff, third osc,
+ # slow evolving pad, auto spring reverb + hall.
+ ("Nebula Static", {"mode":3,"osc3Wave":3,"osc3Level":0.5,"shRate":6.0,
+   "modSrc0":10,"modDst0":5,"modAmt0":0.6,"modSrc1":10,"modDst1":6,"modAmt1":0.3,
+   "filterCutoff":1500,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.6,"ampD":1.0,"ampS":0.8,"ampR":3.0,
+   "reverbOn":1,"reverbSize":0.6,"reverbDecay":6.0,"reverbMix":0.35,"vintage":0.3}),
+ # Glass Cathedral: Prism dual-stack pad — mellow FM, long amp swell, chorus +
+ # big reverb for a glassy cathedral wash.
+ ("Glass Cathedral", {"mode":4,"prismAlgo":4,"prismFB":0,
+   "op1Ratio":1,"op1Level":0.9,"op1A":0.8,"op1D":2.0,"op1S":0.7,"op1R":2.5,
+   "op2Ratio":2,"op2Level":0.35,"op2A":1.0,"op2D":2.0,"op2S":0.6,"op2R":2.5,
+   "op3Ratio":1,"op3Level":0.7,"op3A":0.8,"op3D":2.0,"op3S":0.7,"op3R":2.5,
+   "op4Ratio":3,"op4Level":0.25,"op4KeyScale":-0.2,"op4A":1.0,"op4D":2.0,"op4S":0.6,"op4R":2.5,
+   "filterCutoff":9000,"filterEnvAmt":0,"ampA":1.0,"ampD":2.0,"ampS":0.85,"ampR":3.5,
+   "chorusOn":1,"chorusMix":0.3,"reverbOn":1,"reverbSize":0.85,"reverbDecay":6.0,"reverbMix":0.35,"stereoWidth":0.85}),
+ # Neon Sequence: Acid + ping-pong tempo-delay groove; resonant saw line with a
+ # pattern that steps around the root, delay widening the space.
+ ("Neon Sequence", {"mode":5,"arpOn":1,"osc1Wave":0,"filterCutoff":520,"filterRes":0.75,
+   "filterEnvAmt":0.6,"ampD":0.3,"ampS":0.0,"acidAccentAmt":0.7,"acidSlideTime":60,
+   "arpRate":4,"arpGate":0.5,
+   "seqPitch1":12,"seqPitch4":7,"seqPitch6":3,"seqPitch9":10,"seqPitch12":5,"seqPitch14":-5,
+   "seqAccent0":1,"seqAccent4":1,"seqAccent8":1,"seqAccent12":1,"seqSlide6":1,"seqSlide14":1,
+   "delayOn":1,"delaySync":1,"delayDiv":3,"delayMix":0.3,"delayFB":0.4,"delayPP":1}),
 ]
 
 def fl(v):
