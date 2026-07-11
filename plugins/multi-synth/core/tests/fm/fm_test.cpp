@@ -84,6 +84,7 @@ int main(int argc, char** argv)
     double sampleRate  = 48000.0;
     float  velocity    = 1.0f;
     double releaseTime = -1.0;
+    bool   releaseProvided = false;
     float  feedback    = 0.0f;
 
     OpCfg ops[4];
@@ -99,7 +100,7 @@ int main(int argc, char** argv)
 
         if (key == "sr")      { sampleRate  = v; continue; }
         if (key == "vel")     { velocity    = v; continue; }
-        if (key == "release") { releaseTime = v; continue; }
+        if (key == "release") { releaseTime = v; releaseProvided = true; continue; }
         if (key == "fb")      { feedback    = v; continue; }
 
         // op<N><Param>
@@ -136,6 +137,19 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
         return 1;
     }
+    // Release validation: NaN slips past the (releaseTime >= 0.0) gate below (NaN
+    // comparisons are false), so reject non-finite explicitly; a finite release
+    // point must fall within the render window.
+    if (releaseProvided && !std::isfinite(releaseTime))
+    {
+        std::fprintf(stderr, "invalid release: %g (must be finite)\n", releaseTime);
+        return 1;
+    }
+    if (releaseProvided && releaseTime >= 0.0 && releaseTime > seconds)
+    {
+        std::fprintf(stderr, "invalid release: %g (must be <= seconds %g)\n", releaseTime, seconds);
+        return 1;
+    }
 
     const float freqHz = 440.0f * std::pow(2.0f, (midiNote - 69) / 12.0f);
 
@@ -156,9 +170,10 @@ int main(int argc, char** argv)
     eng.noteOn(freqHz, velocity);
 
     const double framesD = seconds * sampleRate;
-    if (framesD > (double)INT_MAX)
+    // Mono float RIFF limit: (UINT32_MAX-36)/4 frames.
+    if (framesD > 1073741814.0)
     {
-        std::fprintf(stderr, "render too long: %g frames exceeds INT_MAX\n", framesD);
+        std::fprintf(stderr, "render too long: %g frames exceeds RIFF WAV limit\n", framesD);
         return 1;
     }
     const int totalFrames  = (int)framesD;
