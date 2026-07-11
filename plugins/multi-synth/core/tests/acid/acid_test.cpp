@@ -28,6 +28,8 @@
 
 #include "AcidEngine.hpp"
 
+#include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -60,6 +62,45 @@ void writeFloatWavMono(const char* path, const std::vector<float>& mono, int sam
     std::fclose(f);
 }
 
+// Strict string->double: reject empty, trailing garbage, or non-finite results.
+double parseNum(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    const double d = std::strtod(start, &end);
+    if (end == start || *end != '\0' || !std::isfinite(d))
+    {
+        std::fprintf(stderr, "invalid numeric value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return d;
+}
+
+// Range-check render extents before any DSP prepare/allocation.
+void validateExtents(double sr, double seconds)
+{
+    if (!(sr >= 8000.0 && sr <= 768000.0))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sr);
+        std::exit(2);
+    }
+    if (!(std::isfinite(seconds) && seconds >= 0.0 && seconds <= 3600.0))
+    {
+        std::fprintf(stderr, "invalid seconds: %g (want 0 <= seconds <= 3600)\n", seconds);
+        std::exit(2);
+    }
+    if (seconds * sr > (double)INT_MAX)
+    {
+        std::fprintf(stderr, "render too long: %g frames exceeds INT_MAX\n", seconds * sr);
+        std::exit(2);
+    }
+}
+
 // Minimal key=value map over argv[3..].
 struct Args
 {
@@ -71,7 +112,11 @@ struct Args
         {
             std::string s = argv[a];
             const auto eq = s.find('=');
-            if (eq == std::string::npos) continue;
+            if (eq == std::string::npos)
+            {
+                std::fprintf(stderr, "malformed argument (expected key=value): %s\n", s.c_str());
+                std::exit(2);
+            }
             kv.emplace_back(s.substr(0, eq), s.substr(eq + 1));
         }
     }
@@ -87,7 +132,7 @@ struct Args
     }
     double num(const char* k, double def) const
     {
-        for (auto& p : kv) if (p.first == k) return std::atof(p.second.c_str());
+        for (auto& p : kv) if (p.first == k) return parseNum(k, p.second);
         return def;
     }
     int intv(const char* k, int def) const { return (int)num(k, (double)def); }
@@ -149,6 +194,7 @@ int runFilter(const Args& g, const char* out)
 {
     const double sr = g.num("sr", 48000.0);
     const double seconds = g.num("seconds", 1.0);
+    validateExtents(sr, seconds);
     const int    src = g.intv("src", 0);        // 0 noise, 1 saw
     const float  oscHz = (float)g.num("oscHz", 55.0);
     const float  cutoff = (float)g.num("cutoff", 1000.0);
@@ -198,6 +244,7 @@ int runVoice(const Args& g, const char* out)
 {
     const double sr = g.num("sr", 48000.0);
     const double seconds = g.num("seconds", 2.0);
+    validateExtents(sr, seconds);
 
     msynth::AcidVoice voice;
     voice.prepare(sr);
@@ -256,6 +303,7 @@ int runSeq(const Args& g, const char* out)
 {
     const double sr = g.num("sr", 48000.0);
     const double seconds = g.num("seconds", 4.0);
+    validateExtents(sr, seconds);
     const double bpm = g.num("bpm", 120.0);
     const bool   playing = g.intv("playing", 1) != 0;
 
