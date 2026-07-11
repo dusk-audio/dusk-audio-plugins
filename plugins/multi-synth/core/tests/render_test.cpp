@@ -1,0 +1,160 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+//
+// render_test — offline renderer for the Multi-Synth core validation harness.
+//
+//   render_test <mode> <midinote> <seconds> <osfactor> <out.wav> [key=value ...]
+//
+// Positional:
+//   mode      0..5   (Cosmos/Oracle/Mono/Modular/Prism/Acid)
+//   midinote  MIDI note number to play (e.g. 69 = A440)
+//   seconds   render length
+//   osfactor  1 | 2 | 4   (oversampling)
+//   out.wav   output path (float32 stereo WAV)
+//
+// key=value overrides any engine parameter by name (see paramIndexForName), plus
+// these special keys:
+//   vel=<0..1>          note-on velocity (default 1.0)
+//   release=<sec>       call noteOff at this time (default: no release)
+//   tempo=<bpm>         host tempo (default 120)
+//   playing=<0|1>       transport playing flag (default 1)
+//   hold=n,n,n          extra held notes (played in addition to <midinote>);
+//                       useful for arpeggiator/chord tests
+//   sr=<hz>             sample rate (default 48000)
+
+#include "MultiSynthDSP.hpp"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace
+{
+void writeFloatWav(const char* path, const std::vector<float>& interleavedStereo, int sampleRate)
+{
+    const uint32_t numFrames = (uint32_t)(interleavedStereo.size() / 2);
+    const uint16_t channels = 2;
+    const uint16_t bits = 32;
+    const uint32_t byteRate = (uint32_t)sampleRate * channels * (bits / 8);
+    const uint16_t blockAlign = channels * (bits / 8);
+    const uint32_t dataBytes = numFrames * blockAlign;
+
+    FILE* f = std::fopen(path, "wb");
+    if (!f) { std::fprintf(stderr, "cannot open %s\n", path); std::exit(2); }
+
+    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
+    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+
+    std::fwrite("RIFF", 1, 4, f); u32(36 + dataBytes); std::fwrite("WAVE", 1, 4, f);
+    std::fwrite("fmt ", 1, 4, f); u32(16); u16(3 /* IEEE float */); u16(channels);
+    u32((uint32_t)sampleRate); u32(byteRate); u16(blockAlign); u16(bits);
+    std::fwrite("data", 1, 4, f); u32(dataBytes);
+    std::fwrite(interleavedStereo.data(), sizeof(float), interleavedStereo.size(), f);
+    std::fclose(f);
+}
+} // namespace
+
+int main(int argc, char** argv)
+{
+    if (argc < 6)
+    {
+        std::fprintf(stderr, "usage: render_test <mode> <midinote> <seconds> <osfactor> <out.wav> [key=value ...]\n");
+        return 1;
+    }
+
+    const int   mode     = std::atoi(argv[1]);
+    const int   midiNote = std::atoi(argv[2]);
+    const double seconds  = std::atof(argv[3]);
+    const int   osFactor = std::atoi(argv[4]);
+    const char* outPath  = argv[5];
+
+    double sampleRate = 48000.0;
+    float  vel = 1.0f;
+    double releaseTime = -1.0;
+    double tempo = 120.0;
+    bool   playing = true;
+    std::vector<int> holdNotes;
+
+    struct Override { int idx; float val; };
+    std::vector<Override> overrides;
+
+    for (int a = 6; a < argc; ++a)
+    {
+        std::string kv = argv[a];
+        const auto eq = kv.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = kv.substr(0, eq);
+        const std::string val = kv.substr(eq + 1);
+
+        if (key == "vel")      { vel = (float)std::atof(val.c_str()); continue; }
+        if (key == "release")  { releaseTime = std::atof(val.c_str()); continue; }
+        if (key == "tempo")    { tempo = std::atof(val.c_str()); continue; }
+        if (key == "playing")  { playing = std::atoi(val.c_str()) != 0; continue; }
+        if (key == "sr")       { sampleRate = std::atof(val.c_str()); continue; }
+        if (key == "hold")
+        {
+            std::string s = val; size_t pos = 0;
+            while (pos < s.size())
+            {
+                size_t comma = s.find(',', pos);
+                std::string tok = s.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+                if (!tok.empty()) holdNotes.push_back(std::atoi(tok.c_str()));
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+            continue;
+        }
+
+        const int idx = msynth::MultiSynthDSP::paramIndexForName(key.c_str());
+        if (idx < 0) { std::fprintf(stderr, "unknown param: %s\n", key.c_str()); return 1; }
+        overrides.push_back({ idx, (float)std::atof(val.c_str()) });
+    }
+
+    const int osIdx = (osFactor == 4) ? 2 : (osFactor == 2 ? 1 : 0);
+    const int blockSize = 512;
+
+    msynth::MultiSynthDSP synth;
+    synth.prepare(sampleRate, blockSize);
+    synth.setParameter(msynth::pMode, (float)mode);
+    synth.setParameter(msynth::pOversampling, (float)osIdx);
+    for (const auto& o : overrides) synth.setParameter(o.idx, o.val);
+    synth.setTempo(tempo, playing);
+
+    // Trigger note(s). noteOn routes to the arp internally when arpOn is set.
+    synth.noteOn(midiNote, vel);
+    for (int n : holdNotes) synth.noteOn(n, vel);
+
+    const int totalFrames = (int)(seconds * sampleRate);
+    const int releaseFrame = releaseTime >= 0.0 ? (int)(releaseTime * sampleRate) : -1;
+
+    std::vector<float> interleaved((size_t)totalFrames * 2, 0.0f);
+    std::vector<float> bufL((size_t)blockSize), bufR((size_t)blockSize);
+
+    bool released = false;
+    for (int pos = 0; pos < totalFrames; pos += blockSize)
+    {
+        const int n = std::min(blockSize, totalFrames - pos);
+
+        if (!released && releaseFrame >= 0 && pos + n > releaseFrame)
+        {
+            // Release on a block boundary at/after the requested time.
+            synth.noteOff(midiNote);
+            for (int hn : holdNotes) synth.noteOff(hn);
+            released = true;
+        }
+
+        synth.processBlock(bufL.data(), bufR.data(), n);
+        for (int i = 0; i < n; ++i)
+        {
+            interleaved[(size_t)((pos + i) * 2 + 0)] = bufL[(size_t)i];
+            interleaved[(size_t)((pos + i) * 2 + 1)] = bufR[(size_t)i];
+        }
+    }
+
+    writeFloatWav(outPath, interleaved, (int)sampleRate);
+    std::fprintf(stderr, "wrote %s  (%d frames @ %.0f Hz, os=%dx)\n", outPath, totalFrames, sampleRate, osFactor);
+    return 0;
+}
