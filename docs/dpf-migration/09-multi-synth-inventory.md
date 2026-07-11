@@ -251,13 +251,13 @@ Applied procedurally in `applyFactoryPreset` (sets host params, not a data table
 |---|---|---|---|---|---|---|
 | 0 | Neon Nights | Cosmos | | 20 | Midnight Drive | Cosmos |
 | 1 | Glass Highway | Cosmos | | 21 | Starfield | Cosmos |
-| 2 | Velvet Fog | Cosmos | | 22 | Prophet Brass | Oracle |
+| 2 | Velvet Fog | Cosmos | | 22 | Poly Brass | Oracle |
 | 3 | Sunset Strip | Cosmos | | 23 | Glass Bells | Oracle |
 | 4 | Crystal Rain | Cosmos | | 24 | Acid Machine | Mono |
 | 5 | Brass Section | Oracle | | 25 | Thunder Sub | Mono |
 | 6 | Wooden Keys | Oracle | | 26 | Voltage Seq | Modular |
 | 7 | Poly Mod Bells | Oracle | | 27 | Alien Transmission | Modular |
-| 8 | Dark Prophet | Oracle | | 28 | Warm Keys | Cosmos |
+| 8 | Dark Oracle | Oracle | | 28 | Warm Keys | Cosmos |
 | 9 | Stab Machine | Oracle | | 29 | Analog Strings | Oracle |
 | 10 | Pulsing Darkness | Mono | | 30 | Wobble Bass | Mono |
 | 11 | Acid Squelch | Mono | | 31 | Tape Lead | Mono |
