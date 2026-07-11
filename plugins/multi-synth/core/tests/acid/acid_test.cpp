@@ -91,6 +91,22 @@ struct Args
         return def;
     }
     int intv(const char* k, int def) const { return (int)num(k, (double)def); }
+
+    // Reject any key not in the subcommand's allowed set (the header promises
+    // "unknown keys abort with an error").
+    void validate(const std::vector<std::string>& allowed) const
+    {
+        for (auto& p : kv)
+        {
+            bool ok = false;
+            for (auto& a : allowed) if (p.first == a) { ok = true; break; }
+            if (!ok)
+            {
+                std::fprintf(stderr, "unknown key: %s\n", p.first.c_str());
+                std::exit(2);
+            }
+        }
+    }
 };
 
 std::vector<std::string> split(const std::string& s, char sep)
@@ -308,9 +324,24 @@ int main(int argc, char** argv)
     Args g;
     g.parse(argc, argv, 3);
 
-    if (cmd == "filter") return runFilter(g, out);
-    if (cmd == "voice")  return runVoice(g, out);
-    if (cmd == "seq")    return runSeq(g, out);
+    if (cmd == "filter")
+    {
+        g.validate({"sr","seconds","src","oscHz","cutoff","res","drive","sweep","cutlo","cuthi"});
+        return runFilter(g, out);
+    }
+    if (cmd == "voice")
+    {
+        g.validate({"sr","seconds","wave","cutoff","res","drive","envMod","decay","sustain",
+                    "accentAmt","slideTime","gain","off","events"});
+        return runVoice(g, out);
+    }
+    if (cmd == "seq")
+    {
+        g.validate({"sr","seconds","bpm","playing","rate","gate","swing","latch","root","wave",
+                    "cutoff","res","drive","envMod","decay","sustain","accentAmt","slideTime",
+                    "gain","on","pitches","accents","slides"});
+        return runSeq(g, out);
+    }
 
     std::fprintf(stderr, "unknown subcommand: %s\n", cmd.c_str());
     return 1;
