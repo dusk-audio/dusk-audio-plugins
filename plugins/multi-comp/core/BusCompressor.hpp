@@ -159,8 +159,9 @@ inline void BusCompressor::prepare (double sampleRate, int numChannels, int bloc
     calibrateHardwareGain();
 }
 
-// Lightweight sample rate update — only recalculates filter coefficients,
-// no memory allocation. Safe to call from audio thread when oversampling changes.
+// Control-thread only: recalibrates the emulation chain (thousands of samples
+// of warmup + measurement sine through the transformers) — far too heavy for
+// the audio callback. The top level calls it from prepare() only.
 inline void BusCompressor::updateSampleRate (double newSampleRate)
 {
     if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
