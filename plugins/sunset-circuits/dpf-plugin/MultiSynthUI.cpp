@@ -2,7 +2,8 @@
 // Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
-// MultiSynthUI.cpp — Dear ImGui / ImDrawList UI for Multi-Synth, implementing
+// MultiSynthUI.cpp — Dear ImGui / ImDrawList UI for Sunset Circuits (internal
+// class/namespace names stay stable), implementing
 // docs/dpf-migration/09-multi-synth-ui-spec.md: fixed 1240x780 design space
 // (uniformly scaled, tape-echo pattern), six crossfaded mode skins, custom
 // filter / ADSR / scope / VU displays, dual LFOs, mod-matrix overlay, 4-op FM
@@ -682,7 +683,7 @@ private:
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
 
-        text(18, 8, 20.0f, live.text, "MULTI-SYNTH", -1, true);
+        text(18, 8, 20.0f, live.text, "SUNSET CIRCUITS", -1, true);
         text(20, 32, 11.0f, live.accent, "Dusk Audio", -1, true);
 
         // Mode rockers ×6 (spec §8.1)

@@ -3,7 +3,8 @@
 // others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
 // MultiSynthPlugin.cpp — thin DPF shell around the framework-free MultiSynthDSP
-// core. Owns the parameter table (generated from MultiSynthParams.hpp), MIDI
+// core. Product name: Sunset Circuits (internal class/namespace names stay).
+// Owns the parameter table (generated from MultiSynthParams.hpp), MIDI
 // event routing (split-block rendering at each event offset), transport tempo
 // forwarding, and the factory programs (kNumFactoryPresets). All DSP in the core.
 
@@ -51,18 +52,19 @@ public:
 
 protected:
     //--- metadata --------------------------------------------------------------
-    const char* getLabel() const override    { return "MultiSynth"; }
+    const char* getLabel() const override    { return "SunsetCircuits"; }
     const char* getDescription() const override
     {
-        return "Six vintage synthesizers in one instrument: DCO poly, American "
-               "poly with poly-mod, aggressive mono, semi-modular, 4-op FM, and "
-               "an acid bass box with a 16-step pattern sequencer.";
+        return "Sunset Circuits: six vintage synthesizers in one instrument. "
+               "DCO poly, American poly with poly-mod, aggressive mono, "
+               "semi-modular, 4-op FM, and an acid bass box with a 16-step "
+               "pattern sequencer.";
     }
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
     uint32_t    getVersion() const override  { return d_version(0, 1, 0); }
-    int64_t     getUniqueId() const override { return d_cconst('D', 's', 'M', 's'); } // DsMs — matches DISTRHO_PLUGIN_UNIQUE_ID
+    int64_t     getUniqueId() const override { return d_cconst('D', 's', 'S', 'C'); } // DsSC — matches DISTRHO_PLUGIN_UNIQUE_ID
 
     //--- parameters ------------------------------------------------------------
     void initParameter(uint32_t index, Parameter& p) override
