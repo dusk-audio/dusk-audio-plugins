@@ -31,6 +31,12 @@
 #include <algorithm>
 #include <chrono>
 
+// Single-sourced from CMake project(VERSION) via SC_VERSION_STRING; fallback keeps
+// an ad-hoc compile (no build defs) valid. Shown in the nameplate hover tooltip.
+#ifndef SC_VERSION_STRING
+ #define SC_VERSION_STRING "1.0.0"
+#endif
+
 START_NAMESPACE_DISTRHO
 
 namespace
@@ -701,6 +707,15 @@ private:
 
         text(18, 8, 20.0f, live.text, "SUNSET CIRCUITS", -1, true);
         text(20, 32, 11.0f, live.accent, "Dusk Audio", -1, true);
+
+        // Nameplate hover shows the single-sourced build version (SC_VERSION_STRING).
+        {
+            const ImVec2 np0 = P(14, 4), np1 = P(290, 50);
+            ImGui::SetCursorScreenPos(np0);
+            ImGui::InvisibleButton("nameplate", ImVec2(np1.x - np0.x, np1.y - np0.y));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Sunset Circuits v%s", SC_VERSION_STRING);
+        }
 
         // Mode rockers ×6 (spec §8.1)
         for (int i = 0; i < 6; ++i)

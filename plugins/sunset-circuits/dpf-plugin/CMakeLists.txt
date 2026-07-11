@@ -8,7 +8,21 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(SunsetCircuitsDPF VERSION 0.1.0)
+
+# Single-source version: mirror the JUCE fleet pattern (cmake/PluginVersion.cmake).
+# Priority: CI PLUGIN_VERSION_OVERRIDE env -> exact git tag sunset-circuits-vX.Y.Z ->
+# SUNSETCIRCUITS_DEFAULT_VERSION fallback below. The parsed value feeds project(),
+# the C++ getVersion()/d_version(...) (via SC_VERSION_* compile defs) and the UI
+# nameplate tooltip, so the tag, binary, and displayed version can never drift.
+# Works standalone (CMAKE_SOURCE_DIR = this dir, inside the git repo) or nested.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/PluginVersion.cmake")
+set(SUNSETCIRCUITS_DEFAULT_VERSION "1.0.0")
+get_plugin_version("sunset-circuits" SUNSETCIRCUITS_VERSION)
+if(NOT SUNSETCIRCUITS_VERSION OR SUNSETCIRCUITS_VERSION STREQUAL "0.0.0")
+    set(SUNSETCIRCUITS_VERSION ${SUNSETCIRCUITS_DEFAULT_VERSION})
+endif()
+
+project(SunsetCircuitsDPF VERSION ${SUNSETCIRCUITS_VERSION})
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +50,15 @@ target_include_directories(sunset_circuits PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DPF_INCLUDE_DIRS})   # shared-dpf dsp/ui + DPF-Widgets opengl
+
+# Version reaches both the DSP shell (getVersion()/d_version) and the UI nameplate
+# tooltip. PUBLIC on the base target propagates to the -dsp and -ui static libs
+# (they link sunset_circuits PUBLIC), so every format binary sees the same value.
+target_compile_definitions(sunset_circuits PUBLIC
+    SC_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    SC_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    SC_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+    SC_VERSION_STRING="${PROJECT_VERSION}")
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
