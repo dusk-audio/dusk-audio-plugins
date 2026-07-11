@@ -100,6 +100,15 @@ public:
             op[i].env.noteOff();
     }
 
+    // Per-sample base-frequency update WITHOUT retriggering: pitch bend, master
+    // tune, portamento, drift, vibrato and unison detune flow through here while
+    // the note sustains. Key-level scaling stays pinned to the note-on note.
+    void setFrequency(float freqHz) noexcept
+    {
+        baseFreq = maxf(0.0f, freqHz);
+        recomputeIncrements();
+    }
+
     // Voice is alive while ANY carrier envelope is still running.
     bool isActive() const noexcept
     {

@@ -54,6 +54,25 @@ const ParamDef kParamDefs[] = {
     { pDelayFB, "delayFB", 0.3f }, { pDelayMix, "delayMix", 0.3f }, { pDelayPP, "delayPP", 0 }, { pDelayTape, "delayTape", 0 },
     { pReverbOn, "reverbOn", 0 }, { pReverbSize, "reverbSize", 0.5f }, { pReverbDecay, "reverbDecay", 2.0f },
     { pReverbDamp, "reverbDamp", 0.3f }, { pReverbMix, "reverbMix", 0.2f }, { pReverbPD, "reverbPD", 20.0f },
+
+    // --- Prism (4-op FM). Default = algo 4 (dual stacks): op1/op3 carriers,
+    //     op2/op4 modulators. ADSR defaults mirror FMVoiceEngine's ctor. ---
+    { pPrismAlgo, "prismAlgo", 4 }, { pPrismFB, "prismFB", 0 },
+    { pOp1Ratio, "op1Ratio", 1.0f }, { pOp1Fine, "op1Fine", 0 }, { pOp1Level, "op1Level", 1.0f },
+    { pOp1Vel, "op1Vel", 0 }, { pOp1KeyScale, "op1KeyScale", 0 },
+    { pOp1A, "op1A", 0.005f }, { pOp1D, "op1D", 0.4f }, { pOp1S, "op1S", 0.7f }, { pOp1R, "op1R", 0.4f },
+    { pOp2Ratio, "op2Ratio", 1.0f }, { pOp2Fine, "op2Fine", 0 }, { pOp2Level, "op2Level", 0.5f },
+    { pOp2Vel, "op2Vel", 0 }, { pOp2KeyScale, "op2KeyScale", 0 },
+    { pOp2A, "op2A", 0.005f }, { pOp2D, "op2D", 0.4f }, { pOp2S, "op2S", 0.7f }, { pOp2R, "op2R", 0.4f },
+    { pOp3Ratio, "op3Ratio", 1.0f }, { pOp3Fine, "op3Fine", 0 }, { pOp3Level, "op3Level", 0.8f },
+    { pOp3Vel, "op3Vel", 0 }, { pOp3KeyScale, "op3KeyScale", 0 },
+    { pOp3A, "op3A", 0.005f }, { pOp3D, "op3D", 0.4f }, { pOp3S, "op3S", 0.7f }, { pOp3R, "op3R", 0.4f },
+    { pOp4Ratio, "op4Ratio", 1.0f }, { pOp4Fine, "op4Fine", 0 }, { pOp4Level, "op4Level", 0.5f },
+    { pOp4Vel, "op4Vel", 0 }, { pOp4KeyScale, "op4KeyScale", 0 },
+    { pOp4A, "op4A", 0.005f }, { pOp4D, "op4D", 0.4f }, { pOp4S, "op4S", 0.7f }, { pOp4R, "op4R", 0.4f },
+
+    // --- Acid globals (per-step seqPitch/Accent/Slide resolved by prefix below) ---
+    { pAcidAccentAmt, "acidAccentAmt", 0.7f }, { pAcidSlideTime, "acidSlideTime", 60.0f },
 };
 
 char stepScratch[8]; // not thread-shared: only used at construction / lookup
@@ -71,10 +90,13 @@ int MultiSynthDSP::paramIndexForName(const char* name) noexcept
         return (n >= 0 && n < count) ? base + n : -1;
     };
     int r;
-    if ((r = match("arpStep", pArpStep0, 16)) >= 0) return r;
-    if ((r = match("modSrc",  pModSrc0,  8))  >= 0) return r;
-    if ((r = match("modDst",  pModDst0,  8))  >= 0) return r;
-    if ((r = match("modAmt",  pModAmt0,  8))  >= 0) return r;
+    if ((r = match("arpStep",   pArpStep0,   16)) >= 0) return r;
+    if ((r = match("modSrc",    pModSrc0,     8)) >= 0) return r;
+    if ((r = match("modDst",    pModDst0,     8)) >= 0) return r;
+    if ((r = match("modAmt",    pModAmt0,     8)) >= 0) return r;
+    if ((r = match("seqPitch",  pSeqPitch0,  16)) >= 0) return r;
+    if ((r = match("seqAccent", pSeqAccent0, 16)) >= 0) return r;
+    if ((r = match("seqSlide",  pSeqSlide0,  16)) >= 0) return r;
     return -1;
 }
 
@@ -102,6 +124,10 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     // Full voice init at the default internal rate; later factor changes use the
     // musical-state-preserving setSampleRate path (see applyOsFactor).
     voices.prepare(hostRate * (double)osFactor);
+    // Acid voice runs at the internal (oversampled) rate; the sequencer clocks
+    // at host rate (its samplesPerStep must match the per-host-sample advance).
+    acidVoice.prepare(hostRate * (double)osFactor);
+    acidSeq.prepare(hostRate);
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
     reset();
 }
@@ -112,6 +138,7 @@ void MultiSynthDSP::applyOsFactor(int factor)
     const double internalRate = hostRate * (double)osFactor;
     // Allocation-free rate change that preserves active notes and their pitch.
     voices.setSampleRate(internalRate);
+    acidVoice.setSampleRate(internalRate); // host-rate sequencer unaffected
     decimL.setFactor(osFactor); decimL.reset();
     decimR.setFactor(osFactor); decimR.reset();
 }
@@ -122,6 +149,7 @@ void MultiSynthDSP::reset()
     effects.reset();
     junoChorus.reset();
     arp.reset();
+    acidVoice.reset(); acidSeq.reset(); acidLiveHeld = 0;
     decimL.reset(); decimR.reset();
     dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
@@ -133,12 +161,18 @@ void MultiSynthDSP::reset()
 //==============================================================================
 void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
 {
+    if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
+    // Keep voiceParams.mode current even for a frame-0 note that arrives before
+    // the block's snapshot runs — the voice needs it to trigger the right osc
+    // section (Prism retriggers its 4 operator envelopes at note-on).
+    voiceParams.mode = (SynthMode)clampi((int)p(pMode), 0, 5);
     if (p(pArpOn) > 0.5f) { arp.setEnabled(true); arp.noteOn(note, clampi((int)(velocity01 * 127.0f), 1, 127)); }
     else voices.noteOn(note, clamp01(velocity01), voiceParams);
 }
 
 void MultiSynthDSP::noteOff(int note) noexcept
 {
+    if (isAcidMode()) { acidNoteOff(note); return; }
     if (p(pArpOn) > 0.5f) arp.noteOff(note);
     else voices.noteOff(note);
 }
@@ -147,6 +181,29 @@ void MultiSynthDSP::allNotesOff() noexcept
 {
     voices.allNotesOff();
     arp.reset();
+    acidVoice.noteOff();
+    acidSeq.noteOff(0); acidSeq.clearLatch(); acidSeq.reset();
+    acidLiveHeld = 0;
+}
+
+//==============================================================================
+// Acid (mode 5) note routing. With the sequencer on (arpOn) the player holds a
+// root note and the 16-step pattern transposes from it; with it off, live mono
+// play glides (legato) and MIDI velocity > 100 accents.
+void MultiSynthDSP::acidNoteOn(int note, float velocity01) noexcept
+{
+    if (p(pArpOn) > 0.5f) { acidSeq.noteOn(note); return; }
+    const bool accent = velocity01 > kAcidAccentVel;
+    const bool slide  = acidLiveHeld > 0;   // overlapping notes -> legato glide
+    ++acidLiveHeld;
+    acidVoice.noteOn(midiToHz((float)note), accent, slide, clamp01(velocity01));
+}
+
+void MultiSynthDSP::acidNoteOff(int note) noexcept
+{
+    if (p(pArpOn) > 0.5f) { acidSeq.noteOff(note); return; }
+    if (acidLiveHeld > 0) --acidLiveHeld;
+    if (acidLiveHeld == 0) acidVoice.noteOff();
 }
 
 //==============================================================================
@@ -202,6 +259,24 @@ void MultiSynthDSP::snapshotParameters() noexcept
     vp.polyModFEnvFilt = p(pPmFenvFilt);
     vp.polyModOscBOscA = p(pPmOscBOscA);
     vp.polyModOscBPWM = p(pPmOscBPWM);
+
+    // Prism (4-op FM) params — op blocks are 9 contiguous fields each.
+    vp.prismAlgo = clampi((int)p(pPrismAlgo), 0, 7);
+    vp.prismFB   = p(pPrismFB);
+    for (int i = 0; i < 4; ++i)
+    {
+        const int b = pOp1Ratio + i * kOpParamStride;
+        auto& o = vp.op[i];
+        o.ratio    = p((Param)(b + 0));
+        o.fine     = p((Param)(b + 1));
+        o.level    = p((Param)(b + 2));
+        o.vel      = p((Param)(b + 3));
+        o.keyScale = p((Param)(b + 4));
+        o.a        = p((Param)(b + 5));
+        o.d        = p((Param)(b + 6));
+        o.s        = p((Param)(b + 7));
+        o.r        = p((Param)(b + 8));
+    }
 
     vp.portamentoTime = p(pPortaTime);
     vp.legatoMode = p(pLegato) > 0.5f;
@@ -274,10 +349,12 @@ void MultiSynthDSP::snapshotParameters() noexcept
     const LFOShape lfo1Shape = (LFOShape)clampi((int)p(pLfo1Shape), 0, 4);
     const LFOShape lfo2Shape = (LFOShape)clampi((int)p(pLfo2Shape), 0, 4);
     const float lfo1Fade = p(pLfo1Fade), lfo2Fade = p(pLfo2Fade);
+    const bool prismMode = (vp.mode == SynthMode::Prism);
     for (int v = 0; v < kMaxPolyphony; ++v)
     {
         voices.getVoice(v)->setLFO1Params(lfo1Shape, lfo1Rate, lfo1Fade);
         voices.getVoice(v)->setLFO2Params(lfo2Shape, lfo2Rate, lfo2Fade);
+        if (prismMode) voices.getVoice(v)->updateFMParams(vp);
     }
 
     // --- Mod matrix ---
@@ -290,6 +367,45 @@ void MultiSynthDSP::snapshotParameters() noexcept
         slot.amount = p((Param)(pModAmt0 + i));
         if (slot.destination == ModDest::EffectsMix && slot.source != ModSource::None && slot.amount != 0.0f)
             hasEffectsMixRouting = true;
+    }
+
+    // --- Acid (mode 5): mono voice + pattern sequencer ---
+    // Shared-knob mapping (documented for the UI/manual):
+    //   filterCutoff -> cutoff, filterRes -> resonance, filterEnvAmt -> envMod
+    //   (magnitude; acid sweep is always upward), ampD -> decay, ampS -> sustain,
+    //   osc1Wave -> waveform, osc1PW -> pulse width, driveAmt -> filter input
+    //   drive (mapped 1 + 4*driveAmt so the 0..1 knob spans clean..screaming).
+    // Acid globals: acidAccentAmt -> accent depth, acidSlideTime -> glide time.
+    if (vp.mode == SynthMode::Acid)
+    {
+        acidVoice.setWaveform(vp.osc1Wave);
+        acidVoice.setPulseWidth(vp.osc1PulseWidth);
+        acidVoice.setCutoff(vp.filterCutoff);
+        acidVoice.setResonance(vp.filterResonance);
+        acidVoice.setEnvMod(clampf(std::abs(vp.filterEnvAmount), 0.0f, 1.0f));
+        acidVoice.setDecay(vp.ampDecay);
+        acidVoice.setSustain(vp.ampSustain);
+        acidVoice.setDrive(1.0f + 4.0f * clamp01(p(pDriveAmt)));
+        acidVoice.setAccentAmount(clamp01(p(pAcidAccentAmt)));
+        acidVoice.setSlideTime(p(pAcidSlideTime));
+
+        // Sequencer clocks off the arp controls; per-step rows are the arpStep
+        // mutes (on/off) plus the acid-only seqPitch/Accent/Slide lanes.
+        acidSeqEnabled = arpEnabled;
+        acidSeq.setEnabled(arpEnabled);
+        acidSeq.setRate((ArpRateDivision)clampi((int)p(pArpRate), 0, (int)ArpRateDivision::NumDivisions - 1));
+        acidSeq.setGate(p(pArpGate));
+        acidSeq.setSwing(p(pArpSwing));
+        acidSeq.setLatch(p(pArpLatch) > 0.5f);
+        for (int i = 0; i < 16; ++i)
+            acidSeq.setStep(i, p((Param)(pArpStep0 + i)) > 0.5f,
+                            (int)p((Param)(pSeqPitch0 + i)),
+                            p((Param)(pSeqAccent0 + i)) > 0.5f,
+                            p((Param)(pSeqSlide0 + i)) > 0.5f);
+    }
+    else
+    {
+        acidSeqEnabled = false;
     }
 
     // --- engine-level cached controls ---
@@ -324,25 +440,47 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         return x >= 0.0f ? limited : -limited;
     };
 
+    const bool acidMode = (voiceParams.mode == SynthMode::Acid);
+
     for (int i = 0; i < nSamples; ++i)
     {
-        // Arp advances at host rate; triggers its own generated notes.
-        if (arpEnabled)
-        {
-            const auto ev = arp.advanceSample(bpm, playing);
-            if (ev.noteOffValid) voices.noteOff(ev.offNote);
-            if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
-        }
-
         // Render osFactor internal samples, then decimate to host rate (fix #1).
         float iL[4], iR[4];
         float fxAccum = 0.0f;
-        for (int os = 0; os < osFactor; ++os)
+
+        if (acidMode)
         {
-            float l, r, fx;
-            voices.renderInternalSample(voiceParams, modMatrix, l, r, fx);
-            iL[os] = l; iR[os] = r; fxAccum += fx;
+            // Mono acid path: the sequencer (when enabled) or live legato play
+            // drives a single AcidVoice; the poly allocator/arp are bypassed.
+            if (acidSeqEnabled)
+            {
+                const auto ev = acidSeq.advanceSample(bpm, playing);
+                if (ev.noteOff) acidVoice.noteOff();
+                if (ev.noteOn)  acidVoice.noteOn(ev.freq, ev.accent, ev.slide, 1.0f);
+            }
+            for (int os = 0; os < osFactor; ++os)
+            {
+                const float m = acidVoice.processSample();
+                iL[os] = m; iR[os] = m;
+            }
         }
+        else
+        {
+            // Arp advances at host rate; triggers its own generated notes.
+            if (arpEnabled)
+            {
+                const auto ev = arp.advanceSample(bpm, playing);
+                if (ev.noteOffValid) voices.noteOff(ev.offNote);
+                if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
+            }
+            for (int os = 0; os < osFactor; ++os)
+            {
+                float l, r, fx;
+                voices.renderInternalSample(voiceParams, modMatrix, l, r, fx);
+                iL[os] = l; iR[os] = r; fxAccum += fx;
+            }
+        }
+
         float sL = decimL.process(iL);
         float sR = decimR.process(iR);
         const float fxMod = fxAccum / (float)osFactor;
@@ -407,7 +545,12 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         meterR = aR > meterR ? aR : meterR * meterDecay;
     }
 
-    if (arpEnabled)
+    if (acidMode && acidSeqEnabled)
+    {
+        arpStep.store(acidSeq.getCurrentStep(), std::memory_order_relaxed);
+        arpTotalSteps.store(16, std::memory_order_relaxed);
+    }
+    else if (arpEnabled)
     {
         arpStep.store(arp.getCurrentStep(), std::memory_order_relaxed);
         arpTotalSteps.store(arp.getTotalSteps(), std::memory_order_relaxed);

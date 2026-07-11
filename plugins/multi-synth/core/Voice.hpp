@@ -27,6 +27,7 @@
 #include "FilterEngine.hpp"
 #include "Envelope.hpp"
 #include "ModMatrix.hpp"
+#include "FMEngine.hpp"        // Prism mode (mode 4): 4-op FM osc section
 #include "DuskSmoothed.hpp"
 
 namespace msynth
@@ -81,6 +82,17 @@ struct VoiceParameters
     bool  hardSync = false;
     float fmAmount = 0.0f;
 
+    // Prism (mode 4) 4-op FM. algo 0..7, feedback 0..1; op[] carries the 4
+    // operators' {ratio, fine cents, level, velSens, keyScale, ADSR}.
+    int   prismAlgo = 4;
+    float prismFB = 0.0f;
+    struct FMOpParams
+    {
+        float ratio = 1.0f, fine = 0.0f, level = 0.0f, vel = 0.0f, keyScale = 0.0f;
+        float a = 0.005f, d = 0.4f, s = 0.7f, r = 0.4f;
+    };
+    FMOpParams op[FMVoiceEngine::kNumOps];
+
     float polyModFEnvOscA = 0.0f, polyModFEnvFilt = 0.0f, polyModOscBOscA = 0.0f, polyModOscBPWM = 0.0f;
 
     float portamentoTime = 0.0f;
@@ -120,6 +132,8 @@ public:
             osc[u].sub.prepare(sampleRate);  osc[u].sub.seedNoise(seed + 11u * (uint32_t)u + 4u);
             lastOsc2[u] = 0.0f;
         }
+        for (int u = 0; u < kMaxUnison; ++u)
+            fm[u].prepare(sampleRate);
         pinkNoise.seed(seed + 77u);
         filterL.prepare(sampleRate);
         filterR.prepare(sampleRate);
@@ -151,6 +165,7 @@ public:
             osc[u].osc2.setSampleRate(sampleRate);
             osc[u].osc3.setSampleRate(sampleRate);
             osc[u].sub.setSampleRate(sampleRate);
+            fm[u].setSampleRate(sampleRate); // preserves the held FM note
         }
         filterL.setSampleRate(sampleRate);
         filterR.setSampleRate(sampleRate);
@@ -173,6 +188,7 @@ public:
         {
             osc[u].osc1.resetPhase(); osc[u].osc2.resetPhase();
             osc[u].osc3.resetPhase(); osc[u].sub.resetPhase();
+            fm[u].reset();
             lastOsc2[u] = 0.0f;
         }
         lfoRateMod1 = lfoRateMod2 = 0.0f;
@@ -224,7 +240,40 @@ public:
                 osc[u].osc3.resetPhase(); osc[u].sub.resetPhase();
                 lastOsc2[u] = 0.0f;
             }
+            // Prism: retrigger every operator envelope. Base freq/keyscaling use
+            // the played note here; per-sample bend/porta/detune flow through
+            // fm[u].setFrequency() during rendering.
+            if (params.mode == SynthMode::Prism)
+                for (int u = 0; u < kMaxUnison; ++u)
+                    fm[u].noteOn(targetFreq, velocity);
         }
+    }
+
+    // Push the per-block Prism (FM) parameters to every unison operator bank and
+    // cache the carrier-count headroom trim. Called once per block by the engine
+    // (only in Prism mode) — never in the per-sample render path.
+    void updateFMParams(const VoiceParameters& params) noexcept
+    {
+        const int algo = clampi(params.prismAlgo, 0, 7);
+        for (int u = 0; u < kMaxUnison; ++u)
+        {
+            fm[u].setAlgorithm(algo);
+            fm[u].setFeedback(params.prismFB);
+            for (int i = 0; i < FMVoiceEngine::kNumOps; ++i)
+            {
+                const auto& o = params.op[i];
+                fm[u].setOpRatio(i, o.ratio);
+                fm[u].setOpFine(i, o.fine);
+                fm[u].setOpLevel(i, o.level);
+                fm[u].setOpVelSens(i, o.vel);
+                fm[u].setOpKeyScale(i, o.keyScale);
+                fm[u].setOpADSR(i, o.a, o.d, o.s, o.r);
+            }
+        }
+        // Summed carriers are NOT normalised inside FMVoiceEngine (peak can reach
+        // ~2.5 with 4 carriers), so trim by 1/sqrt(numCarriers) per voice.
+        const int nc = popcount8(kPrismAlgos[algo].carrierMask);
+        fmCarrierTrim = nc > 0 ? 1.0f / std::sqrt((float)nc) : 1.0f;
     }
 
     void noteOff() noexcept { ampEnv.noteOff(); filtEnv.noteOff(); }
@@ -248,9 +297,10 @@ public:
         outL = outR = 0.0f;
         if (!active) return;
 
-        // Modes 4/5 are Phase-2 engines; render silence but keep the voice
-        // lifecycle honest so it frees on note-off.
-        const bool stubMode = (params.mode == SynthMode::Prism || params.mode == SynthMode::Acid);
+        // Acid (mode 5) is rendered by the engine's dedicated mono path, not the
+        // poly voice; if it ever reaches here, render silence but keep lifecycle
+        // honest so the voice frees on note-off. Prism (mode 4) renders below.
+        const bool silentMode = (params.mode == SynthMode::Acid);
 
         // --- envelopes ---
         ampEnv.setParameters(params.ampAttack, params.ampDecay, params.ampSustain, params.ampRelease);
@@ -260,7 +310,7 @@ public:
         const float ampVal = ampEnv.processSample();
         const float filtVal = filtEnv.processSample();
         if (!ampEnv.isActive()) { active = false; return; }
-        if (stubMode) return;
+        if (silentMode) return;
 
         // --- modulation state ---
         ModulationState modState;
@@ -328,11 +378,16 @@ public:
         const float envModTotal = clampf((filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f, -2.0f, 2.0f);
         float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
-        envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
+        // 0.4x internal-rate ceiling (fix): the OTA one-pole g = tan(pi*fc/sr)
+        // misbehaves near Nyquist at 1x OS; 0.4x keeps every model well-behaved.
+        envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.40f);
         const float envRes = clampf(params.filterResonance + resMod, 0.0f, 1.0f);
 
-        const FilterMode fm = (FilterMode)(int)params.mode;
-        filterL.setMode(fm); filterL.setParameters(envCutoff, envRes, params.filterHPCutoff);
+        // Prism has no analog filter model of its own; route it through the clean
+        // (non-self-oscillating) Cosmos LPF so the section stays in circuit.
+        const FilterMode filtMode = (params.mode == SynthMode::Prism)
+            ? FilterMode::Cosmos : (FilterMode)clampi((int)params.mode, 0, 3);
+        filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, params.filterHPCutoff);
 
         float sL, sR;
         if (uCount == 1)
@@ -344,7 +399,7 @@ public:
         }
         else
         {
-            filterR.setMode(fm); filterR.setParameters(envCutoff, envRes, params.filterHPCutoff);
+            filterR.setMode(filtMode); filterR.setParameters(envCutoff, envRes, params.filterHPCutoff);
             sL = filterL.process(preL);
             sR = filterR.process(preR);
         }
@@ -363,6 +418,13 @@ private:
     {
         if (isBad(x)) return 0.0f;
         return clampf(x, -4.0f, 4.0f);
+    }
+
+    static int popcount8(uint8_t v) noexcept
+    {
+        int c = 0;
+        for (; v; v &= (uint8_t)(v - 1)) ++c;
+        return c;
     }
 
     // One unison sub-voice's oscillator mix (pre-filter, mode-normalized).
@@ -480,7 +542,21 @@ private:
                 break;
             }
 
-            default: break;
+            case SynthMode::Prism:
+            {
+                // 4-op FM replaces the analog osc bank. Per-sample frequency
+                // (freq1 already carries bend/tune/porta/drift/Osc1Pitch mod)
+                // plus this unison sub-voice's detune; the FM output is already
+                // envelope-shaped internally, so no activeGain normalisation —
+                // just the carrier-count headroom trim.
+                const float detFreq = freq1 * std::pow(2.0f, detCents / 1200.0f);
+                fm[(size_t)u].setFrequency(detFreq);
+                mix = fm[(size_t)u].processSample() * fmCarrierTrim;
+                activeGain = 0.0f;
+                break;
+            }
+
+            default: break; // Acid handled by the engine's mono path
         }
 
         lastOsc2[(size_t)u] = osc2Sample;
@@ -526,6 +602,8 @@ private:
     float effectsMixMod = 0.0f;
 
     OscSet osc[kMaxUnison];
+    FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice
+    float  fmCarrierTrim = 1.0f;       // 1/sqrt(numCarriers), set by updateFMParams
     float  lastOsc2[kMaxUnison] = {};
     PinkNoiseGenerator pinkNoise;
     SampleAndHold sampleAndHold;

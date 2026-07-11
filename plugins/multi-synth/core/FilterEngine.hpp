@@ -68,7 +68,9 @@ public:
 
     void setParameters(float cutoffHz, float resonance, float driveAmount = 1.0f) noexcept
     {
-        float fc = clampf(cutoffHz, 10.0f, sr * 0.45f);
+        // 0.4x-rate ceiling: g = tan(pi*fc/sr) grows unbounded toward Nyquist and
+        // the zero-delay one-pole misbehaves at very high cutoff (worst at 1x OS).
+        float fc = clampf(cutoffHz, 10.0f, sr * 0.40f);
         g = std::tan(kPi * fc / sr);
         g = clampf(g, 0.0f, 12.0f);
         res = clampf(resonance, 0.0f, 1.0f);
@@ -192,7 +194,7 @@ public:
 
     void setParameters(float cutoffHz, float resonance) noexcept
     {
-        const float fc = clampf(cutoffHz, 10.0f, sr * 0.45f);
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
         const float r  = clampf(resonance, 0.0f, 1.0f);
         float wc = kTwoPi * fc / sr;
         wc = clampf(wc, 0.0f, 1.5f);

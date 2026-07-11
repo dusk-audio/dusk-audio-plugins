@@ -38,6 +38,21 @@ def worst_image_db(sig, sr, f0):
     return worst, worst_f
 
 
+# Prism (mode 4): a bright serial-FM patch (algo 1: 4->3->2->1, all ops hot) has
+# rich sidebands that alias hard if the internal rate is too low. This re-measures
+# FM aliasing at the INTEGRATED oversampling path (voices render at host*os, then
+# halfband-decimate), the number that matters for the shipped plugin.
+FM_NOTE = 96  # C7 ~2093 Hz; a high-ratio modulator sprays sidebands past Nyquist
+# Clean 2-op FM (algo 1 serial with op3/op4 silent -> op2 modulates op1 only):
+# carrier ratio 1, modulator ratio 4. Sidebands at f0 +- k*4*f0 fold at 1x and
+# are tamed by the halfband-decimated OS path (2x/4x drop >30 dB below 1x).
+FM_PATCH = dict(prismAlgo=0, op1Ratio=1, op1Level=1, op2Ratio=4, op2Level=0.5,
+                op3Level=0, op4Level=0, prismFB=0,
+                op1S=1, op2S=1,
+                filterEnvAmt=0, filterCutoff=5000, filterRes=0, ampA=0.005,
+                ampD=0.01, ampS=1.0, reverbOn=0)
+
+
 def main():
     f0 = 440.0 * 2 ** ((NOTE - 69) / 12.0)
     print(f"note {NOTE} saw, f0 = {f0:.1f} Hz")
@@ -46,7 +61,16 @@ def main():
         seg = x[int(0.3 * sr):int(0.9 * sr), 0]
         db, fhz = worst_image_db(seg, sr, f0)
         print(f"  {os_}x: worst image below 15 kHz = {db:6.1f} dBc  @ {fhz:8.1f} Hz")
-    print("alias_gate: report only (no pass/fail)")
+
+    fm0 = 440.0 * 2 ** ((FM_NOTE - 69) / 12.0)
+    print(f"\nPrism serial-FM (algo 1, ratios 1/3/5/7, fb 0.3), f0 = {fm0:.1f} Hz")
+    print("  internal rate = 48k*os; FM engine renders there before decimation")
+    for os_ in (1, 2, 4):
+        sr, x = render(4, FM_NOTE, 1.0, os_, f"alias_fm_{os_}", **FM_PATCH)
+        seg = x[int(0.3 * sr):int(0.9 * sr), 0]
+        db, fhz = worst_image_db(seg, sr, fm0)
+        print(f"  {os_}x (internal {48000*os_//1000}k): worst image below 15 kHz = {db:6.1f} dBc  @ {fhz:8.1f} Hz")
+    print("\nalias_gate: report only (no pass/fail)")
 
 
 if __name__ == "__main__":
