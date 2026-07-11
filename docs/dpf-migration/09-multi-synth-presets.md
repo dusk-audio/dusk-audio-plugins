@@ -86,7 +86,7 @@ filter-gain correction; "unchanged" override rows.
 | 5 | Brass Section | Oracle | level | poly-mod brass, filter-env bite — fits |
 | 6 | Wooden Keys | Oracle | level | mellow keys — fits |
 | 7 | Poly Mod Bells | Oracle | level | bell f0 394, poly-mod inharmonic — fits |
-| 8 | Dark Prophet | Oracle | level | dark sustained pad — fits |
+| 8 | Dark Oracle | Oracle | level | dark sustained pad — fits |
 | 9 | Stab Machine | Oracle | level | short percussive stab — fits |
 | 10 | Pulsing Darkness | Mono | level | pulsing arp bass; arpeggiates (93) |
 | 11 | Acid Squelch | Mono | level | resonant squelch line — fits |
@@ -100,7 +100,7 @@ filter-gain correction; "unchanged" override rows.
 | 19 | Retro Sequence | Modular | level | tape-delay arp; arpeggiates (88) |
 | 20 | Midnight Drive | Cosmos | level | driven chorus pad — fits |
 | 21 | Starfield | Cosmos | level | octave arp sparkle; arpeggiates (90) |
-| 22 | Prophet Brass | Oracle | level | poly-mod brass — fits |
+| 22 | Poly Brass | Oracle | level | poly-mod brass — fits |
 | 23 | Glass Bells | Oracle | level | bright bell f0 1486, long decay — fits |
 | 24 | Acid Machine | Mono | level | glide acid arp; arpeggiates (50) |
 | 25 | Thunder Sub | Mono | level | square-sub sub-bass f0 49 — fits |
