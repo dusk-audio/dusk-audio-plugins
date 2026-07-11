@@ -41,7 +41,7 @@ def preset_count():
     try:
         return int(msg.split("[0,")[1].split(")")[0])
     except Exception:
-        return 40
+        raise RuntimeError(f"could not parse preset range from preset_render: {msg!r}")
 
 
 def render(index, **kw):

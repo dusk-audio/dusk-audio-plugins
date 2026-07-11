@@ -20,14 +20,14 @@ THD_LIMIT = 1.0             # percent
 
 
 def part_a():
-    # Algo 8 parallel; only op1 carries (level 1), others silent.
-    sr, x = render(8, NOTE, 1.0, "spec_sine",
+    # Additive algo, index 7 (valid range 0..7); only op1 carries (level 1), others silent.
+    sr, x = render(7, NOTE, 1.0, "spec_sine",
                    op1Ratio=1, op1Level=1, op1A=0.002, op1D=0.5, op1S=1.0,
                    op2Level=0, op3Level=0, op4Level=0)
     seg = x[int(0.2 * sr):int(0.9 * sr)]
     thd = thd_pct(seg, sr, F0)
     ok = thd < THD_LIMIT
-    print(f"[A] pure sine (algo8, 1 carrier): THD = {thd:.3f}%  (limit {THD_LIMIT}%)  -> {'PASS' if ok else 'FAIL'}")
+    print(f"[A] pure sine (additive algo 7, 1 carrier): THD = {thd:.3f}%  (limit {THD_LIMIT}%)  -> {'PASS' if ok else 'FAIL'}")
     return ok
 
 

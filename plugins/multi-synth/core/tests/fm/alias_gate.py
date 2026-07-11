@@ -32,8 +32,10 @@ def worst_image_dbc(sig, sr, f0):
     tol = f0 * 0.03
     worst, worst_f = -200.0, 0.0
     for k in range(lo, hi):
-        # skip integer harmonics of f0 (legitimate partials)
-        if abs(f[k] / f0 - round(f[k] / f0)) * f0 < tol:
+        # skip integer harmonics of f0 (legitimate partials); h>=1 guard keeps
+        # sub-f0 bins (h==0) from being masked as "harmonics"
+        h = round(f[k] / f0)
+        if h >= 1 and abs(f[k] - h * f0) < tol:
             continue
         db = 20.0 * np.log10(X[k] / (fund + 1e-20) + 1e-20)
         if db > worst:
