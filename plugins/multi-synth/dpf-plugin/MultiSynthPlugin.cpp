@@ -154,6 +154,25 @@ protected:
             lastBpm = tp.bbt.beatsPerMinute;
         dsp.setTempo(lastBpm, tp.playing);
 
+        // Host phase-lock: song position in beats at frame 0 of this buffer.
+        // Prefer BBT (bar/beat/tick); fall back to the transport frame counter.
+        // The DSP only locks when the transport is playing (see processBlock).
+        double songBeat = 0.0;
+        bool   songValid = false;
+        if (tp.bbt.valid)
+        {
+            songBeat = (double)(tp.bbt.bar - 1) * (double)tp.bbt.beatsPerBar
+                     + (double)(tp.bbt.beat - 1)
+                     + (tp.bbt.ticksPerBeat > 0.0 ? tp.bbt.tick / tp.bbt.ticksPerBeat : 0.0);
+            songValid = true;
+        }
+        else
+        {
+            songBeat = (double)tp.frame / getSampleRate() * lastBpm / 60.0;
+            songValid = true;
+        }
+        const double beatsPerFrame = lastBpm / 60.0 / getSampleRate();
+
         float* const outL = outputs[0];
         float* const outR = outputs[1];
 
@@ -164,6 +183,9 @@ protected:
             const uint32_t evFrame = ev.frame < frames ? ev.frame : frames;
             if (evFrame > frameOffset)
             {
+                // Set the song position for THIS segment's start frame so the grid
+                // stays continuous across MIDI-split sub-blocks (no false wrap).
+                dsp.setSongPosition(songBeat + (double)frameOffset * beatsPerFrame, songValid);
                 dsp.processBlock(outL + frameOffset, outR + frameOffset,
                                  (int)(evFrame - frameOffset));
                 frameOffset = evFrame;
@@ -171,8 +193,11 @@ protected:
             handleMidi(ev);
         }
         if (frameOffset < frames)
+        {
+            dsp.setSongPosition(songBeat + (double)frameOffset * beatsPerFrame, songValid);
             dsp.processBlock(outL + frameOffset, outR + frameOffset,
                              (int)(frames - frameOffset));
+        }
     }
 
 private:
