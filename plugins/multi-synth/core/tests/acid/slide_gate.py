@@ -38,8 +38,8 @@ def main():
 
     def cross(freqs, times, level):
         for i in range(1, len(freqs)):
-            if (freqs[i - 1] < level) != (freqs[i] < level):
-                # linear interp of the crossing time
+            if freqs[i - 1] < level <= freqs[i]:
+                # linear interp of the crossing time (upward crossings only)
                 a, b = freqs[i - 1], freqs[i]
                 frac = (level - a) / (b - a + 1e-20)
                 return times[i - 1] + frac * (times[i] - times[i - 1])
