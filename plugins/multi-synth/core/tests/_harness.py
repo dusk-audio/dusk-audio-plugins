@@ -14,8 +14,14 @@ def render(mode, note, seconds, osfactor, name, **params):
     """Render a note and return (samplerate, stereo float array [N,2])."""
     path = os.path.join(OUT, name + ".wav")
     args = [BIN, str(mode), str(note), str(seconds), str(osfactor), path]
+    # setat is repeatable (dicts can't hold duplicate keys) so accept a list.
+    setat = params.pop("setat", None)
     for k, v in params.items():
         args.append(f"{k}={v}")
+    if setat is not None:
+        items = setat if isinstance(setat, (list, tuple)) else [setat]
+        for s in items:
+            args.append(f"setat={s}")
     subprocess.run(args, check=True, stderr=subprocess.DEVNULL)
     x, sr = sf.read(path, always_2d=True)
     return sr, x
