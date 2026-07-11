@@ -14,6 +14,10 @@ for g in pitch env reverb arp acid; do
 done
 
 echo
+echo "########## fm suite ##########"
+(cd fm && ./run_all.sh) || fail=1
+
+echo
 echo "########## alias_gate (report only) ##########"
 python3 alias_gate.py
 
