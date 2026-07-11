@@ -60,6 +60,19 @@ target_compile_definitions(sunset_circuits PUBLIC
     SC_VERSION_PATCH=${PROJECT_VERSION_PATCH}
     SC_VERSION_STRING="${PROJECT_VERSION}")
 
+# On older glibc (Ubuntu 20.04 / glibc 2.31, our release baseline) shm_open/
+# shm_unlink live in librt and pthread_* in libpthread as separate objects that
+# pugl (DPF's windowing) references; newer glibc folded them into libc, so a
+# modern dev box links without them. Link them explicitly on Linux so the release
+# containers link too. Applied to the final module targets where pugl resolves.
+if(UNIX AND NOT APPLE)
+    foreach(_fmt clap vst3 lv2 jack)
+        if(TARGET sunset_circuits-${_fmt})
+            target_link_libraries(sunset_circuits-${_fmt} PRIVATE rt pthread)
+        endif()
+    endforeach()
+endif()
+
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
 dusk_dpf_install_local(sunset_circuits)
