@@ -145,6 +145,11 @@ public:
     void allNotesOff() noexcept;
     void setTempo(double bpm, bool playing) noexcept
     { hostBpm.store(bpm, std::memory_order_relaxed); transportPlaying.store(playing, std::memory_order_relaxed); }
+    // Host song position at the start of the next processBlock segment, in beats.
+    // When valid AND the transport is playing, the arp/acid step clock phase-locks
+    // to this grid (see processBlock); otherwise the free-run clock is used.
+    void setSongPosition(double beats, bool valid) noexcept
+    { songPosBeats.store(beats, std::memory_order_relaxed); songPosValid.store(valid, std::memory_order_relaxed); }
 
     //--- observables (read from any thread) -----------------------------------
     float getOutputLevelL() const noexcept { return outLevelL.load(std::memory_order_relaxed); }
@@ -241,6 +246,8 @@ private:
     std::atomic<float> aftertouchValue { 0.0f };
     std::atomic<double> hostBpm { 120.0 };
     std::atomic<bool> transportPlaying { false };
+    std::atomic<double> songPosBeats { 0.0 };
+    std::atomic<bool> songPosValid { false };
 
     // observables
     std::atomic<float> outLevelL { -60.0f };

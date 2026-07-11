@@ -429,6 +429,16 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
 
     const double bpm = hostBpm.load(std::memory_order_relaxed);
     const bool playing = transportPlaying.load(std::memory_order_relaxed);
+
+    // Host phase-lock: when the transport is playing AND a valid song position is
+    // available, derive the arp/acid step clock statelessly from song position in
+    // beats. The block starts at songPosBeats and the cursor advances one host
+    // sample at a time (the arp/acid advance per host sample). When not locked,
+    // the engines keep their free-run counter clock.
+    const bool   hostLocked     = playing && songPosValid.load(std::memory_order_relaxed);
+    double       songBeat       = songPosBeats.load(std::memory_order_relaxed);
+    const double beatsPerSample = (bpm > 0.0 ? bpm : 120.0) / (60.0 * hostRate);
+
     const float panAngle = (masterPan + 1.0f) * 0.25f * kPi;
     const float panL = std::cos(panAngle), panR = std::sin(panAngle);
 
@@ -454,7 +464,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
             // drives a single AcidVoice; the poly allocator/arp are bypassed.
             if (acidSeqEnabled)
             {
-                const auto ev = acidSeq.advanceSample(bpm, playing);
+                const auto ev = acidSeq.advanceSample(bpm, playing, songBeat, hostLocked);
                 if (ev.noteOff) acidVoice.noteOff();
                 if (ev.noteOn)  acidVoice.noteOn(ev.freq, ev.accent, ev.slide, 1.0f);
             }
@@ -469,7 +479,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
             // Arp advances at host rate; triggers its own generated notes.
             if (arpEnabled)
             {
-                const auto ev = arp.advanceSample(bpm, playing);
+                const auto ev = arp.advanceSample(bpm, playing, songBeat, hostLocked);
                 if (ev.noteOffValid) voices.noteOff(ev.offNote);
                 if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
             }
@@ -543,6 +553,9 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         const float aL = std::abs(sL), aR = std::abs(sR);
         meterL = aL > meterL ? aL : meterL * meterDecay;
         meterR = aR > meterR ? aR : meterR * meterDecay;
+
+        // Advance the host-locked song-beat cursor one host sample.
+        songBeat += beatsPerSample;
     }
 
     if (acidMode && acidSeqEnabled)

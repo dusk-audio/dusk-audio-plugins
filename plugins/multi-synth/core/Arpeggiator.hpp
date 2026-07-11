@@ -94,7 +94,15 @@ public:
     }
 
     // Advance the arp by one host sample; returns note events for this sample.
-    StepEvent advanceSample(double bpm, bool transportPlaying) noexcept
+    //
+    // hostLocked = the DAW transport is playing AND a valid song position is
+    // available (see MultiSynthDSP::setSongPosition). When locked, the step clock
+    // is derived STATELESSLY from songBeat (song position in beats) so steps land
+    // on the absolute host beat grid and re-sync on loop-wrap. When not locked
+    // (stopped / no song position) the existing free-run counter path is used,
+    // byte-for-byte unchanged.
+    StepEvent advanceSample(double bpm, bool transportPlaying,
+                            double songBeat, bool hostLocked) noexcept
     {
         StepEvent ev;
 
@@ -106,6 +114,47 @@ public:
 
         if (dirty) rebuildPattern();
         if (patternSize == 0) return ev;
+
+        // Clean clock switch: kill any sounding note and reset BOTH clocks so the
+        // engine cannot leave a stuck note or a stale grid across a lock change.
+        if (hostLocked != wasLocked)
+        {
+            wasLocked = hostLocked;
+            sampleCounter = 0;
+            lockedInited = false;
+            lastFiredGlobalStep = kNoStep;
+            prevSongBeat = -1.0e18;
+            if (lastPlayedNote >= 0) { ev.noteOffValid = true; ev.offNote = lastPlayedNote; lastPlayedNote = -1; }
+            return ev;
+        }
+
+        if (hostLocked) return advanceLocked(songBeat);
+        return advanceFree(bpm, transportPlaying);
+    }
+
+    void reset() noexcept
+    {
+        currentStep = 0;
+        sampleCounter = 0;
+        lastPlayedNote = -1;
+        wasLocked = false;
+        lockedInited = false;
+        lastFiredGlobalStep = kNoStep;
+        prevSongBeat = -1.0e18;
+        if (!latch) { heldCount = 0; orderCount = 0; }
+        dirty = true;
+    }
+
+private:
+    // Sentinel for "no step fired yet"; every real global step index is >= 0.
+    static constexpr long long kNoStep = -1;
+
+    // ------------------------------------------------------------------ free-run
+    // Original counter-based clock (transport stopped or no host song position).
+    // Behaviour is unchanged from before the host-lock feature.
+    StepEvent advanceFree(double bpm, bool transportPlaying) noexcept
+    {
+        StepEvent ev;
 
         const double effBpm = (bpm > 0.0 && transportPlaying) ? bpm : 120.0;
         const double samplesPerStep = sr * 60.0 / effBpm * getBeatsPerStep(rateDivision);
@@ -157,16 +206,82 @@ public:
         return ev;
     }
 
-    void reset() noexcept
+    // -------------------------------------------------------------- host-locked
+    // Stateless grid clock. Step k spans [k*bps, (k+1)*bps) in song beats. With
+    // swing s the even step onset stays on the grid (k*bps) and the odd step
+    // onset is delayed to k*bps + s*0.5*bps, its span shortened to (1-s*0.5)*bps,
+    // exactly reproducing the free-run swing intervals while pinning even onsets
+    // to the host grid. Notes fire once per NOT-YET-FIRED step; a backward jump
+    // in songBeat (loop wrap) clears the fired marker so the grid re-fires.
+    StepEvent advanceLocked(double songBeat) noexcept
     {
-        currentStep = 0;
-        sampleCounter = 0;
-        lastPlayedNote = -1;
-        if (!latch) { heldCount = 0; orderCount = 0; }
-        dirty = true;
+        StepEvent ev;
+
+        // Loop-wrap: song position regressed -> let the grid re-fire from here.
+        if (songBeat < prevSongBeat - 1.0e-9) lastFiredGlobalStep = kNoStep;
+        prevSongBeat = songBeat;
+
+        // Before the transport reaches beat 0: silent (no negative-modulo grid).
+        if (songBeat < 0.0)
+        {
+            if (lastPlayedNote >= 0) { ev.noteOffValid = true; ev.offNote = lastPlayedNote; lastPlayedNote = -1; }
+            return ev;
+        }
+
+        const double bps = getBeatsPerStep(rateDivision);
+        const long long globalStep = (long long)std::floor(songBeat / bps);
+
+        // Quantized start: notes pressed mid-step wait for the NEXT boundary by
+        // marking the current step already fired (strict hard-sync quantize).
+        if (!lockedInited) { lastFiredGlobalStep = globalStep; lockedInited = true; }
+
+        // Fire the step's note-on once, at/after its (swing-adjusted) onset.
+        if (globalStep != lastFiredGlobalStep)
+        {
+            const double swingOff  = (globalStep & 1) ? (double)swing * 0.5 * bps : 0.0;
+            const double onsetBeat = (double)globalStep * bps + swingOff;
+            if (songBeat >= onsetBeat)
+            {
+                const int idx = (int)(globalStep % patternSize);
+                currentStep = idx;
+                const int patIdx = (mode == ArpMode::Random) ? rng.nextInt(patternSize) : idx;
+                const NoteInfo note = pattern[(size_t)patIdx];
+                const bool stepActive = stepPattern[(size_t)(idx % 16)];
+
+                if (stepActive)
+                {
+                    if (lastPlayedNote >= 0 && lastPlayedNote != note.note)
+                    { ev.noteOffValid = true; ev.offNote = lastPlayedNote; }
+                    ev.noteOnValid = true;
+                    ev.onNote = note.note;
+                    ev.onVel = getVelocity(note.velocity, idx);
+                    lastPlayedNote = note.note;
+                }
+                else if (lastPlayedNote >= 0)
+                {
+                    ev.noteOffValid = true; ev.offNote = lastPlayedNote; lastPlayedNote = -1;
+                }
+                lastFiredGlobalStep = globalStep;
+            }
+        }
+
+        // Gate-off for the sounding note (belongs to lastFiredGlobalStep).
+        if (lastPlayedNote >= 0 && !ev.noteOnValid && lastFiredGlobalStep >= 0)
+        {
+            const long long g = lastFiredGlobalStep;
+            const double swOff = (g & 1) ? (double)swing * 0.5 * bps : 0.0;
+            const double onB   = (double)g * bps + swOff;
+            const double durB  = bps * ((g & 1) ? (1.0 - (double)swing * 0.5)
+                                                : (1.0 + (double)swing * 0.5));
+            if (songBeat >= onB + (double)gateLength * durB)
+            {
+                ev.noteOffValid = true; ev.offNote = lastPlayedNote; lastPlayedNote = -1;
+            }
+        }
+
+        return ev;
     }
 
-private:
     struct NoteInfo { int note = 60; int velocity = 100; };
 
     static void removeNote(std::array<NoteInfo, kMaxHeld>& arr, int& count, int noteNumber) noexcept
@@ -289,6 +404,12 @@ private:
     long long sampleCounter = 0;
     int lastPlayedNote = -1;
     Xorshift rng;
+
+    // Host-locked (song-position) clock state.
+    bool      wasLocked = false;          // previous lock state (transition guard)
+    bool      lockedInited = false;       // quantized-start done for this lock span
+    long long lastFiredGlobalStep = kNoStep;
+    double    prevSongBeat = -1.0e18;     // for backward-jump (loop-wrap) detection
 };
 
 } // namespace msynth
