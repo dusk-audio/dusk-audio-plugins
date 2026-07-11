@@ -445,8 +445,11 @@ private:
         o.osc1.setPulseWidth(pw1);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
-        // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency.
-        if (params.crossMod > 0.0f)
+        // Cross mod (fix #4): osc2 (previous sample) -> osc1 frequency. The UI and
+        // design expose cross-mod only in Cosmos and Oracle, so gate it to those
+        // modes; every preset keeps crossMod=0 elsewhere, so renders are unchanged.
+        if (params.crossMod > 0.0f
+            && (params.mode == SynthMode::Cosmos || params.mode == SynthMode::Oracle))
             o.osc1.applyFM(lastOsc2[(size_t)u] * params.crossMod * 0.03f);
 
         float osc1Sample = 0.0f, osc2Sample = 0.0f, osc3Sample = 0.0f, subSample = 0.0f;
