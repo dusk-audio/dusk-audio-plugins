@@ -24,6 +24,8 @@
 #include "MultiSynthDSP.hpp"
 
 #include <algorithm>
+#include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -118,6 +120,26 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "invalid osfactor: %d (must be 1, 2, or 4)\n", osFactor);
         return 1;
     }
+
+    // Validate render extents (now that sr= override is applied) before any
+    // prepare/allocation.
+    if (!(std::isfinite(seconds) && seconds > 0.0 && seconds <= 3600.0))
+    {
+        std::fprintf(stderr, "invalid seconds: %g (want 0 < seconds <= 3600)\n", seconds);
+        return 1;
+    }
+    if (!(std::isfinite(sampleRate) && sampleRate >= 8000.0 && sampleRate <= 768000.0))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
+        return 1;
+    }
+    const double framesD = seconds * sampleRate;
+    if (framesD > (double)INT_MAX)
+    {
+        std::fprintf(stderr, "render too long: %g frames exceeds INT_MAX\n", framesD);
+        return 1;
+    }
+
     const int osIdx = (osFactor == 4) ? 2 : (osFactor == 2 ? 1 : 0);
     const int blockSize = 512;
 
@@ -132,23 +154,28 @@ int main(int argc, char** argv)
     synth.noteOn(midiNote, vel);
     for (int n : holdNotes) synth.noteOn(n, vel);
 
-    const int totalFrames = (int)(seconds * sampleRate);
+    const int totalFrames = (int)framesD;
     const int releaseFrame = releaseTime >= 0.0 ? (int)(releaseTime * sampleRate) : -1;
 
     std::vector<float> interleaved((size_t)totalFrames * 2, 0.0f);
     std::vector<float> bufL((size_t)blockSize), bufR((size_t)blockSize);
 
     bool released = false;
-    for (int pos = 0; pos < totalFrames; pos += blockSize)
+    for (int pos = 0; pos < totalFrames; )
     {
-        const int n = std::min(blockSize, totalFrames - pos);
+        int n = std::min(blockSize, totalFrames - pos);
 
         if (!released && releaseFrame >= 0 && pos >= releaseFrame)
         {
-            // Release on the first block that STARTS at/after the requested time.
+            // Sample-exact release: earlier iterations split the block so this
+            // one starts precisely on releaseFrame.
             synth.noteOff(midiNote);
             for (int hn : holdNotes) synth.noteOff(hn);
             released = true;
+        }
+        else if (!released && releaseFrame > pos && releaseFrame < pos + n)
+        {
+            n = releaseFrame - pos; // shorten so the next iteration starts at releaseFrame
         }
 
         synth.processBlock(bufL.data(), bufR.data(), n);
@@ -157,6 +184,7 @@ int main(int argc, char** argv)
             interleaved[(size_t)((pos + i) * 2 + 0)] = bufL[(size_t)i];
             interleaved[(size_t)((pos + i) * 2 + 1)] = bufR[(size_t)i];
         }
+        pos += n;
     }
 
     writeFloatWav(outPath, interleaved, (int)sampleRate);
