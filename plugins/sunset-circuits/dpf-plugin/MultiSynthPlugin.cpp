@@ -55,6 +55,11 @@ public:
             values[i].store(d, std::memory_order_relaxed);
             dsp.setParameter((int)i, d);
         }
+        // Report the default-state latency from construction so a host that
+        // queries getLatency() before activate() (e.g. at plugin scan/load)
+        // gets the correct 2x value (12 samples) rather than 0 — otherwise PDC
+        // is misaligned until the first activate(). (E1)
+        updateLatency();
     }
 
     // Same-process accessors for the Phase-4 UI bridge (MultiSynthAccess.hpp).
