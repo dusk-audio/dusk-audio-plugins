@@ -164,7 +164,12 @@ private:
     {
         StepEvent ev;
 
-        const double effBpm = (bpm > 0.0 && transportPlaying) ? bpm : 120.0;
+        // C7: free-run tempo no longer requires the transport to be playing — a
+        // stopped-transport audition still steps at the host BPM (render-proven:
+        // 160 BPM was playing 250 ms steps instead of 187.5). 120 remains the
+        // fallback only for an invalid (<=0) BPM.
+        (void)transportPlaying;
+        const double effBpm = (bpm > 0.0) ? bpm : 120.0;
         const double samplesPerStep = sr * 60.0 / effBpm * getBeatsPerStep(rateDivision);
 
         ++sampleCounter;
@@ -187,7 +192,11 @@ private:
 
             if (stepActive)
             {
-                if (lastPlayedNote >= 0 && lastPlayedNote != note.note)
+                // C6: always release the pending note before a new note-on, even
+                // when it is the same pitch (consecutive same-pitch steps at gate
+                // 1.0 used to stack voices with no release). C1's seeded retrigger
+                // keeps the immediate re-attack click-free.
+                if (lastPlayedNote >= 0)
                 { ev.noteOffValid = true; ev.offNote = lastPlayedNote; }
                 ev.noteOnValid = true;
                 ev.onNote = note.note;
@@ -250,15 +259,23 @@ private:
             const double onsetBeat = (double)globalStep * bps + swingOff;
             if (songBeat >= onsetBeat)
             {
+                // C8: a forward seek can land past this step's own gate-off beat;
+                // firing the note-on there produces a blip. Skip the note-on in
+                // that case, but mark the step fired either way so the grid moves on.
+                const double durB = bps * ((globalStep & 1) ? (1.0 - (double)swing * 0.5)
+                                                            : (1.0 + (double)swing * 0.5));
+                const bool pastGate = songBeat >= onsetBeat + (double)gateLength * durB;
+
                 const int idx = (int)(globalStep % patternSize);
                 currentStep = idx;
                 const int patIdx = (mode == ArpMode::Random) ? rng.nextInt(patternSize) : idx;
                 const NoteInfo note = pattern[(size_t)patIdx];
-                const bool stepActive = stepPattern[(size_t)(idx % 16)];
+                const bool stepActive = stepPattern[(size_t)(idx % 16)] && !pastGate;
 
                 if (stepActive)
                 {
-                    if (lastPlayedNote >= 0 && lastPlayedNote != note.note)
+                    // C6: always release the pending note before the new note-on.
+                    if (lastPlayedNote >= 0)
                     { ev.noteOffValid = true; ev.offNote = lastPlayedNote; }
                     ev.noteOnValid = true;
                     ev.onNote = note.note;
