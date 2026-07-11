@@ -13,8 +13,11 @@ tooltip: they are all here. Anything genuinely deferred is called out as **[v2]*
 - Fixed design space **1240 × 780**, uniformly scaled (tape-echo pattern): `s =
   min(winW/1240, winH/780)`, `org = (0.5*(winW-1240*s), 0.5*(winH-780*s))`, every draw
   goes through `P(x,y) = org + (x,y)*s`.
-- **All rendering is custom `ImDrawList`.** The only stock ImGui widgets permitted are
-  `BeginCombo`/`Selectable` (dropdowns) and `InputText` (the shared inline value editor).
+- **All rendering is custom `ImDrawList`.** The only stock ImGui *rendering* widgets
+  permitted are `BeginCombo`/`Selectable` (dropdowns) and `InputText` (the shared inline
+  value editor). `ImGui::InvisibleButton` is explicitly permitted for interaction /
+  hit-targets (it draws nothing — all visuals are still custom `ImDrawList`), and is used
+  pervasively for that purpose in §8.
 - Fonts via `duskdpf::loadCrispFontSet` at design sizes `× getScaleFactor()`; bold TTF
   with the shared candidate/fallback list (`DuskImGuiFont.hpp`). Never a bare
   `loadCrispFont` for a UI this size — build a multi-size set (see §9).
@@ -128,8 +131,8 @@ knob is its pivot; radius is design-space.
 Every param from inventory §1, plus the new Prism/Acid params from `09-multi-synth.md`,
 maps to exactly one on-screen control. The DPF param enum is generated from the X-macro
 list in `MultiSynthParams.hpp`; the UI includes that header and indexes `values[kParamX]`
-exactly like `TapeEchoUI`. Total ≈ **180 params** (134 ported + 34 Prism + 3 acid globals
-+ 48 seq step rows − overlaps). Controls:
+exactly like `TapeEchoUI`. Total **222 core params** (134 ported + 38 Prism + 2 acid
+globals + 48 seq step rows). Controls:
 
 - **Knob** (chrome, `DuskPanel::knob`): all continuous floats + stepped ints (`stepped=true`).
 - **Combo** (`BeginCombo`): all Choice params (waves, curves, shapes, modes, drive type,
