@@ -862,10 +862,10 @@ private:
         else               std::snprintf(rb, sizeof rb, "%.0f Hz", fc);
         text(426, 290, 10.0f, live.accent, rb, 0, true);
 
-        klabel(556, 206, "RES");    knob("res", kParamFilterRes, 556, 232, 30, "%.0f", " %", false, false, false, 100.0f);
-        klabel(636, 206, "ENV AMT");knob("fenvamt", kParamFilterEnvAmt, 636, 232, 30, "%+.0f", " %", true, false, false, 100.0f);
+        klabel(556, 184, "RES");    knob("res", kParamFilterRes, 556, 232, 30, "%.0f", " %", false, false, false, 100.0f);
+        klabel(636, 184, "ENV AMT");knob("fenvamt", kParamFilterEnvAmt, 636, 232, 30, "%+.0f", " %", true, false, false, 100.0f);
         if (curMode == 0) // Cosmos HP
-        { klabel(712, 206, "HP"); knob("hp", kParamFilterHP, 712, 232, 30, "%.0f", " Hz"); }
+        { klabel(712, 184, "HP"); knob("hp", kParamFilterHP, 712, 232, 30, "%.0f", " Hz"); }
     }
 
     void drawFilterCurve(float rx0, float ry0, float rx1, float ry1)
@@ -971,7 +971,7 @@ private:
         {
             char id[16]; std::snprintf(id, sizeof(id), "%s%s", pfx, labs[i]);
             const float cx = x0 + i * 46.0f;
-            klabel(cx, 480, labs[i]);
+            klabel(cx, 460, labs[i]);
             if (i == 2) knob(id, baseA + i, cx, 500, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
             else        knob(id, baseA + i, cx, 500, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
         }
@@ -1708,7 +1708,7 @@ private:
         ledButton("choon", kParamChorusOn, 916, 556, 958, 572, "ON");
         klabel(866, 588, "RATE");  knob("chorate", kParamChorusRate, 866, 620, 16, "%.2f", " Hz");
         klabel(910, 588, "DEPTH"); knob("chodep", kParamChorusDepth, 910, 620, 16, "%.0f", " %", false, false, false, 100.0f);
-        klabel(940, 654, "MIX");   knob("chomix", kParamChorusMix, 940, 664, 12, "%.0f", " %", false, false, false, 100.0f);
+        klabel(940, 640, "MIX");   knob("chomix", kParamChorusMix, 940, 664, 12, "%.0f", " %", false, false, false, 100.0f);
 
         // Delay
         panelBox(968, 552, 1094, 688);
@@ -1720,7 +1720,7 @@ private:
                     comboBox("dlydiv", kParamDelayDiv, 1036, 590, 1088, 606, kDivName, 14); }
         else      { klabel(1000, 598, "TIME"); knob("dlytime", kParamDelayTime, 1000, 626, 14, "%.0f", " ms", false, false, false, 1.0f, 0.0f, true, true); }
         klabel(1046, 598, "FB");  knob("dlyfb", kParamDelayFB, 1046, 626, 14, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1000, 654, "MIX"); knob("dlymix", kParamDelayMix, 1000, 664, 12, "%.0f", " %", false, false, false, 100.0f);
+        klabel(1000, 640, "MIX"); knob("dlymix", kParamDelayMix, 1000, 664, 12, "%.0f", " %", false, false, false, 100.0f);
         ledButton("dlypp", kParamDelayPP, 1040, 656, 1064, 672, "P-P", true);
         ledButton("dlytape", kParamDelayTape, 1068, 656, 1092, 672, "TAPE", true);
 
@@ -1739,8 +1739,8 @@ private:
         klabel(1124, 588, "SIZE");  knob("rvbsize", kParamReverbSize, 1124, 618, 14, "%.0f", " %", false, false, false, 100.0f);
         klabel(1160, 588, "DECAY"); knob("rvbdec", kParamReverbDecay, 1160, 618, 14, "%.1f", " s");
         klabel(1196, 588, "DAMP");  knob("rvbdamp", kParamReverbDamp, 1196, 618, 14, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1124, 652, "MIX");   knob("rvbmix", kParamReverbMix, 1124, 664, 12, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1180, 652, "PRE");   knob("rvbpd", kParamReverbPD, 1180, 664, 12, "%.0f", " ms", false, false, false, 1.0f, 0.0f, true, true);
+        klabel(1124, 640, "MIX");   knob("rvbmix", kParamReverbMix, 1124, 664, 12, "%.0f", " %", false, false, false, 100.0f);
+        klabel(1180, 640, "P-DLY"); knob("rvbpd", kParamReverbPD, 1180, 664, 12, "%.0f", " ms", false, false, false, 1.0f, 0.0f, true, true);
     }
 
     //========================================================================
