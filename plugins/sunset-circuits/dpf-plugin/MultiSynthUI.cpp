@@ -745,7 +745,11 @@ private:
         if (ImGui::BeginCombo("##presets", preview))
         {
             for (int i = 0; i < kNumFactoryPresets; ++i)
-                if (ImGui::Selectable(kFactoryPresets[i].name, i == currentPreset)) applyPreset(i);
+            {
+                const bool sel = i == currentPreset;
+                if (ImGui::Selectable(kFactoryPresets[i].name, sel)) applyPreset(i);
+                if (sel) ImGui::SetItemDefaultFocus();   // auto-scroll to selection on open
+            }
             const auto& users = presetStore.list();
             if (!users.empty())
             {
@@ -755,6 +759,7 @@ private:
                     ImGui::PushID(u);   // user names may duplicate factory names
                     const bool sel = currentPreset == kNumFactoryPresets + u;
                     if (ImGui::Selectable(users[u].name.c_str(), sel)) applyUserPreset(u);
+                    if (sel) ImGui::SetItemDefaultFocus();
                     ImGui::PopID();
                 }
             }
