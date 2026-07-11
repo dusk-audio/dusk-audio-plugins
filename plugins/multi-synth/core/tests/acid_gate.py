@@ -52,13 +52,34 @@ def main():
     print(f"[accent]  peak accent-on {pk_on:.3f} vs off {pk_off:.3f} -> +{accent_db:.1f} dB (need > 1)")
     ok &= accent_ok
 
-    # 3. Slide: a pattern with slide steps + pitch offsets must stay finite and
-    #    sounding (glide ties suppress note-off gaps -> continuous energy).
+    # 3. Slide: slide steps TIE gate-ends (they suppress the note-off between
+    #    steps), so with a nonzero sustain the envelope FLOOR between plucks stays
+    #    elevated. The same pattern WITHOUT slides note-offs at each gate-end and
+    #    decays into silence in the gaps. Render both (identical except the seqSlide
+    #    flags), compare the 10th-percentile of the short-window RMS envelope over
+    #    the steady middle third: slide-on must exceed slide-off by a solid factor.
+    #    Zeroing the seqSlide params makes the two renders identical -> ratio ~0 and
+    #    the gate FAILS (verified during development), so it truly exercises slide.
     slide_steps = {f"seqSlide{i}": 1 for i in range(16)}
     pitch_steps = {f"seqPitch{i}": (12 if i % 2 else 0) for i in range(16)}
-    _, xs = render(5, 48, 2.0, 2, "acid_slide", **BASE, **steps, **slide_steps, **pitch_steps)
-    slide_ok = (not has_nan_inf(xs)) and float(np.sqrt(np.mean(xs[:, 0] ** 2))) > 1e-3
-    print(f"[slide]   finite+sounding={slide_ok}")
+    slide_base = {**BASE, "ampS": 0.3}   # nonzero sustain so ties keep the note sounding
+    _, xs_on  = render(5, 48, 2.0, 2, "acid_slide_on",  **slide_base, **steps, **slide_steps, **pitch_steps)
+    _, xs_off = render(5, 48, 2.0, 2, "acid_slide_off", **slide_base, **steps, **pitch_steps)
+
+    def env_floor(sig):
+        _, env = rms_envelope(sig, sr, win_ms=5.0)
+        mid = env[len(env) // 3: 2 * len(env) // 3]   # steady middle third
+        return float(np.percentile(mid, 10))
+
+    finite_slide = (not has_nan_inf(xs_on)) and (not has_nan_inf(xs_off))
+    sounding = float(np.sqrt(np.mean(xs_on[:, 0] ** 2))) > 1e-3
+    floor_on = env_floor(xs_on[:, 0])
+    floor_off = env_floor(xs_off[:, 0])
+    ratio = floor_on / (floor_off + 1e-12)
+    SLIDE_MIN_RATIO = 2.0
+    slide_ok = finite_slide and sounding and ratio >= SLIDE_MIN_RATIO
+    print(f"[slide]   env floor on {floor_on:.4f} vs off {floor_off:.4f} -> {ratio:.1f}x "
+          f"(need >= {SLIDE_MIN_RATIO:.0f}x, finite+sounding={finite_slide and sounding})")
     ok &= slide_ok
 
     print(f"acid_gate: {'PASS' if ok else 'FAIL'}")
