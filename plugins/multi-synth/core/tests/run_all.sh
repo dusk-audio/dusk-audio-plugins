@@ -7,7 +7,7 @@ cmake --build build >/dev/null
 echo "== render_test built =="
 
 fail=0
-for g in pitch env reverb arp; do
+for g in pitch env reverb arp acid; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1

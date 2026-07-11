@@ -72,7 +72,7 @@ public:
     void setParameters(float cutoffHz, float resonance, float driveAmount = 1.0f) noexcept
     {
         lastCutoff = cutoffHz;
-        const float fc = clampf(cutoffHz, 10.0f, sr * 0.45f);
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
         g = std::tan(kPi * fc / sr);
         g = clampf(g, 0.0f, 12.0f);
         res = clampf(resonance, 0.0f, 1.0f);
@@ -237,7 +237,7 @@ public:
         // Filter env-mod (brighter with accent), exponential cutoff sweep.
         const float envModEff = envMod * (1.0f + accentCharge * kAccentEnv);
         float cut = cutoffHz * std::exp2(e * envModEff * kEnvOctaves);
-        cut = clampf(cut, 20.0f, sr * 0.45f);
+        cut = clampf(cut, 20.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
         const float resEff = clampf(resonance + accentCharge * kAccentRes, 0.0f, 0.99f);
         filter.setParameters(cut, resEff, drive);
 

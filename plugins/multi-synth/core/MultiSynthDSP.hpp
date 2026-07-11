@@ -40,6 +40,7 @@
 #include "Voice.hpp"
 #include "Effects.hpp"
 #include "Arpeggiator.hpp"
+#include "AcidEngine.hpp"      // Acid mode (mode 5): mono voice + pattern sequencer
 #include "DuskOversampler.hpp" // HalfbandFIR + hbtaps
 #include "DuskFilters.hpp"     // DCBlocker (output hygiene)
 
@@ -87,8 +88,26 @@ enum Param : int
     pModSrc0, pModSrc7 = pModSrc0 + 7,
     pModDst0, pModDst7 = pModDst0 + 7,
     pModAmt0, pModAmt7 = pModAmt0 + 7,
+    // ---- Phase 3 engine params (modes 4/5) ----
+    // Prism (4-op FM). op params are 4 contiguous blocks of 9 fields each
+    // (Ratio,Fine,Level,Vel,KeyScale,A,D,S,R) so op N field F = pOp1Ratio + N*9 + F.
+    pPrismAlgo, pPrismFB,
+    pOp1Ratio, pOp1Fine, pOp1Level, pOp1Vel, pOp1KeyScale, pOp1A, pOp1D, pOp1S, pOp1R,
+    pOp2Ratio, pOp2Fine, pOp2Level, pOp2Vel, pOp2KeyScale, pOp2A, pOp2D, pOp2S, pOp2R,
+    pOp3Ratio, pOp3Fine, pOp3Level, pOp3Vel, pOp3KeyScale, pOp3A, pOp3D, pOp3S, pOp3R,
+    pOp4Ratio, pOp4Fine, pOp4Level, pOp4Vel, pOp4KeyScale, pOp4A, pOp4D, pOp4S, pOp4R,
+    // Acid globals + 16-step pattern rows (seqPitch/Accent/Slide; the on/off
+    // row reuses the existing arpStep0-15 mutes).
+    pAcidAccentAmt, pAcidSlideTime,
+    pSeqPitch0,  pSeqPitch15  = pSeqPitch0  + 15,
+    pSeqAccent0, pSeqAccent15 = pSeqAccent0 + 15,
+    pSeqSlide0,  pSeqSlide15  = pSeqSlide0  + 15,
     kNumParams
 };
+
+// Fields per Prism op block (Ratio,Fine,Level,Vel,KeyScale,A,D,S,R): op N field
+// F lives at pOp1Ratio + N*kOpParamStride + F.
+static constexpr int kOpParamStride = 9;
 
 class MultiSynthDSP
 {
@@ -143,6 +162,15 @@ private:
     void snapshotParameters() noexcept;   // atomics -> voiceParams + subsystems
     void applyOsFactor(int factor);       // (re)prepare voices at internalRate
 
+    // --- Acid mode (mode 5) helpers ---
+    // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
+    // AcidVoice + AcidSequencer replace the whole poly/arp path (mono).
+    bool  isAcidMode() const noexcept { return (int)p(pMode) == (int)SynthMode::Acid; }
+    void  acidNoteOn(int note, float velocity01) noexcept;
+    void  acidNoteOff(int note) noexcept;
+    // 100/127: MIDI velocity > 100 accents a live-played acid note (design doc).
+    static constexpr float kAcidAccentVel = 100.0f / 127.0f;
+
     // Streaming stereo decimator: generate `factor` internal samples, get one
     // host sample. Halfband stage assignment mirrors DuskOversampler.
     struct Decimator
@@ -179,6 +207,13 @@ private:
     EffectsChain effects;
     JunoChorusEffect junoChorus;
     Decimator decimL, decimR;
+
+    // Acid mode (mode 5): mono, poly path bypassed. Voice runs at the internal
+    // (oversampled) rate; the sequencer clocks at host rate (see processBlock).
+    AcidVoice     acidVoice;
+    AcidSequencer acidSeq;
+    bool acidSeqEnabled = false;  // sequencer active this block (mode 5 + arpOn)
+    int  acidLiveHeld   = 0;      // live (non-sequencer) held-note count (mono legato)
 
     VoiceParameters voiceParams;
 
