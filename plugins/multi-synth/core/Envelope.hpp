@@ -107,7 +107,10 @@ private:
             case EnvelopeCurve::AnalogRC:
             {
                 constexpr float tau = 1.0f / 3.0f;
-                return 1.0f - std::exp(-p / tau);
+                // Normalize so the RC curve reaches exactly 1 at p==1 (raw form
+                // reaches only 1-e^-3 = 0.9502, causing a ~5% jump into decay).
+                constexpr float norm = 1.0f / (1.0f - 0.049787068f); // 0.049787068 = e^-3
+                return (1.0f - std::exp(-p / tau)) * norm;
             }
             case EnvelopeCurve::Linear:
             default: return p;
