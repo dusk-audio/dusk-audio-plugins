@@ -256,7 +256,12 @@ public:
         bufL.assign((size_t)maxSamples, 0.0f);
         bufR.assign((size_t)maxSamples, 0.0f);
         bufSize = maxSamples; writePos = 0;
-        fbLPF_L = fbLPF_R = fbHPF_L = fbHPF_R = 0.0f;
+        fbLPF_L = fbLPF_R = 0.0f;
+        fbLPCoeff = std::exp(-kTwoPi * fbLPFFreq / sr); // constant: fbLPFFreq is fixed
+        fbHP_L.setCutoff(fbHPFFreq, sampleRate);
+        fbHP_R.setCutoff(fbHPFFreq, sampleRate);
+        fbHP_L.reset();
+        fbHP_R.reset();
     }
 
     void setEnabled(bool on) noexcept { enabled = on; }
@@ -318,7 +323,9 @@ public:
         std::fill(bufL.begin(), bufL.end(), 0.0f);
         std::fill(bufR.begin(), bufR.end(), 0.0f);
         writePos = 0;
-        fbLPF_L = fbLPF_R = fbHPF_L = fbHPF_R = 0.0f;
+        fbLPF_L = fbLPF_R = 0.0f;
+        fbHP_L.reset();
+        fbHP_R.reset();
     }
 
 private:
@@ -334,16 +341,12 @@ private:
 
     float applyFeedbackFilter(float sample, bool isLeft) noexcept
     {
+        // One-pole LP (cached coeff) then a proper one-pole HP. The old HP was a
+        // 2-tap FIR (out = out - prev*hpCoeff) with ~2x gain at Nyquist inside the
+        // feedback loop, boosting HF on every pass; OnePoleHP has unity passband.
         float& lpState = isLeft ? fbLPF_L : fbLPF_R;
-        float& hpState = isLeft ? fbHPF_L : fbHPF_R;
-        const float lpCoeff = std::exp(-kTwoPi * fbLPFFreq / sr);
-        lpState = sample * (1.0f - lpCoeff) + lpState * lpCoeff;
-        float out = lpState;
-        const float hpCoeff = std::exp(-kTwoPi * fbHPFFreq / sr);
-        const float prev = hpState;
-        hpState = out;
-        out = out - prev * hpCoeff;
-        return out;
+        lpState = sample * (1.0f - fbLPCoeff) + lpState * fbLPCoeff;
+        return (isLeft ? fbHP_L : fbHP_R).process(lpState);
     }
 
     float sr = 44100.0f;
@@ -353,7 +356,9 @@ private:
     float feedback = 0.3f, mix = 0.3f, fbLPFFreq = 8000.0f, fbHPFFreq = 80.0f;
     std::vector<float> bufL, bufR;
     int bufSize = 1, writePos = 0;
-    float fbLPF_L = 0.0f, fbLPF_R = 0.0f, fbHPF_L = 0.0f, fbHPF_R = 0.0f;
+    float fbLPF_L = 0.0f, fbLPF_R = 0.0f;
+    float fbLPCoeff = 0.0f;                 // cached in prepare (fbLPFFreq is fixed)
+    duskaudio::OnePoleHP fbHP_L, fbHP_R;    // proper one-pole HP in the feedback path
 };
 
 //==============================================================================
