@@ -247,6 +247,17 @@ private:
     bool  hasEffectsMixRouting = false;
     bool  arpEnabled = false;
 
+    // Preset/mode transition tracking (stuck-note fix). snapshotParameters()
+    // compares these against the current snapshot: a mode change or an arp /
+    // acid-sequencer disable while a note is held would otherwise strand the
+    // sounding voice (its note-off routes through the new path, or the disabled
+    // subsystem stops advancing), so we release it. haveLastSnap suppresses a
+    // spurious release on the very first block (before any real transition).
+    bool      haveLastSnap = false;
+    SynthMode lastSnapMode = SynthMode::Cosmos;
+    bool      lastArpEnabled = false;
+    bool      lastAcidSeqEnabled = false;
+
     float prevVintageL = 0.0f, prevVintageR = 0.0f;
     Xorshift vintageRng;
     duskaudio::DCBlocker dcBlockL, dcBlockR; // output hygiene (removes reverb/nonlinearity DC)
