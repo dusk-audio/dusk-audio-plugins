@@ -598,12 +598,12 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   positive up, negative down. Hover shows `%+d st`. Double-click resets to 0.
 
 ### 8.6 Algorithm diagram widget (Prism)
-- **Single source of truth**: a `struct PrismAlgo { struct Op{ uint8_t gx, gy; bool
+- **Single source of truth**: the `struct PrismAlgo { struct Op{ uint8_t gx, gy; bool
   carrier; } ops[4]; struct Edge{ uint8_t from, to; } edges[6]; uint8_t nEdges; uint8_t
-  fbOp; }`; `static const PrismAlgo kPrismAlgos[8]` **must equal** the FMEngine algorithm
-  table (define once in a shared header the engine and UI both include, e.g.
-  `MultiSynthParams.hpp`). The UI only renders from it — it never hardcodes topology
-  separately.
+  fbOp; }` and its `static const PrismAlgo kPrismAlgos[8]` table live in
+  `plugins/multi-synth/core/FMAlgorithms.hpp`, which is also the FMEngine algorithm table.
+  The UI includes that core header directly and renders from `kPrismAlgos` — it never
+  redefines the struct or hardcodes topology separately.
 - **Render one diagram** into a rect: place each op as a rounded square (~22 px) at its
   `(gx,gy)` grid cell (grid origin top-left, gy=0 top); draw `edges` as lines
   `from`→`to` with a small arrowhead at the destination; draw a thick **output bus** line
@@ -651,7 +651,11 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 - **Visual feedback**: pressed keys and **incoming MIDI notes from the host** light in
   `accent` — read active notes from the bridge `multiSynthGetActiveNotes` [optional; else
   only local presses light].
-- OCT−/OCT+ buttons shift `baseMidi` by 12 (clamp 12..96); show current octave label.
+- OCT−/OCT+ buttons shift `baseMidi` by 12; show current octave label. The keyboard spans
+  21 keys and the top key sits at `baseMidi + keyIndexToSemitone(20)` (= base + 35), so
+  `baseMidi` must stay ≤ 127 − 35 = 92 to keep the top key in MIDI range. With ±12 octave
+  steps landing on the C3 default the effective ceiling is `baseMidi` 84 (top key 119).
+  Clamp `baseMidi` to 12..84.
 
 ### 8.8 MOD matrix overlay
 - Toggled by the MOD MATRIX bar button; `showMod` bool. When open, draw a full-window

@@ -187,4 +187,4 @@ Peak/RMS in dBFS; f0 = loudest-segment fundamental (Hz); DC = dBFS below RMS.
 - Peak range −6.8 dBFS (Screamer) … −32.9 dBFS (Glass Highway / Arp Factory).
 - 0 clipped samples anywhere; 0 non-finite; every preset audibly non-silent.
 - All 9 arp presets among the original 40 produce 50–96 note onsets over 4 bars
-  (they arpeggiate); all 6 acid presets run their pattern sequencers.
+  (they arpeggiate); all 5 acid presets run their pattern sequencers.
