@@ -29,6 +29,15 @@ add_executable(preset_render
 target_include_directories(preset_render PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DPF_PLUGIN})
 target_compile_options(preset_render PRIVATE -O2 -Wall -Wextra)
 
+# cpu_bench — offline worst-case CPU profiler (Phase 5 QA). Times the
+# processBlock loop only; reports engine cost as %% of real time at 48 kHz.
+add_executable(cpu_bench
+    cpu_bench.cpp
+    ${CORE_DIR}/MultiSynthDSP.cpp)
+
+target_include_directories(cpu_bench PRIVATE ${CORE_DIR} ${SHARED_DSP})
+target_compile_options(cpu_bench PRIVATE -O2 -Wall -Wextra)
+
 # user_preset_test — unit gate for dpf-plugin/UserPresetStore.hpp (file-based user
 # preset library). Header-only; pulls MultiSynthParams.hpp for the symbol table.
 add_executable(user_preset_test user_preset_test.cpp)

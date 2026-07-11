@@ -342,7 +342,18 @@ These are host samples and are independent of the sample rate. If other tracks s
 
 ### CPU
 
-Detailed CPU figures are pending final profiling and will be added here. (TBD: worst-case measurements for an 8-voice Prism patch, an 8-voice unison Cosmos patch, 4x oversampling, and all effects engaged, to be recorded during pre-release QA.)
+CPU cost scales with the number of sounding voices, the oversampling factor, and how many effects are engaged. The oscillators, filter, and FM operators run at the oversampled rate, so 4x costs roughly twice what 2x costs for the same patch; the effects run once at the host rate regardless.
+
+The figures below are single-core measurements taken at 48 kHz with a 512-sample buffer, expressed as a percentage of one CPU core. They come from an offline profile of the engine's processing loop on an Intel Core i7-8809G (4 cores, 3.1 GHz base), so treat them as a guide; a faster or slower machine will scale the numbers accordingly, and a smaller buffer raises the per-block overhead slightly.
+
+| Patch | Oversampling | CPU (one core) |
+|---|---|---|
+| 8-voice Prism FM with drive, chorus, delay, and reverb | 4x | about 50% |
+| 6-voice Cosmos with 8x unison, dual chorus, and all effects | 2x | about 22% |
+| 4-voice Oracle pad with reverb | 2x | about 15% |
+| Acid sequence with drive, delay, and reverb | 2x | about 3% |
+
+The first row is close to the worst case the instrument can produce: a full 8-voice FM patch, every effect on, at the highest oversampling factor. Even there it uses about half of one core, so a typical session runs several instances comfortably. If you need more headroom, drop from 4x to 2x oversampling first, since that is where most of the voice cost lives, then thin out effects you are not using.
 
 ## Factory Presets
 
