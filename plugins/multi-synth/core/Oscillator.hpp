@@ -3,10 +3,11 @@
 // Oscillator.hpp — band-limited (polyBLEP) oscillators, sub-oscillator, ring/
 // cross modulation helpers, sample & hold, and a pink-noise generator.
 //
-// Framework-free port of the JUCE OscillatorEngine.h. The polyBLEP residual and
-// every waveform formula are carried over verbatim; the only substantive change
-// is that noise uses a per-instance xorshift PRNG (SynthCommon) instead of
-// std::mt19937/random_device. Prepared at the INTERNAL (oversampled) rate by the
+// Framework-free port of the JUCE OscillatorEngine.h. Every waveform formula is
+// carried over verbatim; substantive changes are (1) noise uses a per-instance
+// xorshift PRNG (SynthCommon) instead of std::mt19937/random_device, and (2) the
+// polyBLEP trailing-edge sign was corrected (the JUCE original's -1 form was a
+// bug; see polyBlep). Prepared at the INTERNAL (oversampled) rate by the
 // voice — dt = freq / internalRate — so pitch is correct at every OS factor.
 
 #pragma once
@@ -26,7 +27,9 @@ enum class Waveform
     Noise    // white noise
 };
 
-// PolyBLEP residual for antialiased edges (verbatim from JUCE original).
+// PolyBLEP residual for antialiased edges (adapted from the JUCE original;
+// the trailing-edge sign was fixed here — the original returned n*n+n+n-1,
+// the corrupted form inherited verbatim, instead of the canonical (n+1)^2).
 inline float polyBlep(float t, float dt) noexcept
 {
     if (t < dt)
@@ -37,7 +40,7 @@ inline float polyBlep(float t, float dt) noexcept
     if (t > 1.0f - dt)
     {
         const float n = (t - 1.0f) / dt;
-        return n * n + n + n - 1.0f;
+        return n * n + n + n + 1.0f;
     }
     return 0.0f;
 }
@@ -59,7 +62,7 @@ public:
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
     void setDetune(float cents) noexcept     { detuneRatio = std::pow(2.0f, cents / 1200.0f); }
 
-    void hardSync() noexcept   { phase = 0.0f; }
+    void hardSync() noexcept   { phase = 0.0f; triState = 0.0f; }
     float getPhase() const noexcept { return phase; }
     bool  didCross() const noexcept { return lastCrossed; }
     void  resetPhase() noexcept { phase = 0.0f; triState = 0.0f; }
