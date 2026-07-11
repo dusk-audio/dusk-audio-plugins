@@ -116,7 +116,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     maxBlock = maxBlockSize;
     osFactor = 2;
     effects.prepare(hostRate, maxBlockSize);
-    junoChorus.prepare(hostRate, maxBlockSize);
+    cosmosChorus.prepare(hostRate, maxBlockSize);
     arp.prepare(hostRate);
     meterDecay = std::exp(-1.0f / (0.3f * (float)hostRate));
     dcBlockL.setSampleRate(hostRate);
@@ -147,7 +147,7 @@ void MultiSynthDSP::reset()
 {
     voices.reset();
     effects.reset();
-    junoChorus.reset();
+    cosmosChorus.reset();
     arp.reset();
     acidVoice.reset(); acidSeq.reset(); acidLiveHeld = 0;
     decimL.reset(); decimR.reset();
@@ -334,8 +334,8 @@ void MultiSynthDSP::snapshotParameters() noexcept
     baseReverbMix = p(pReverbMix); effects.reverb.setMix(baseReverbMix);
     effects.reverb.setPreDelay(p(pReverbPD));
 
-    junoChorus.setMode(vp.mode == SynthMode::Cosmos
-        ? (JunoChorusMode)clampi((int)p(pCosmosChorus), 0, 3) : JunoChorusMode::Off);
+    cosmosChorus.setMode(vp.mode == SynthMode::Cosmos
+        ? (CosmosChorusMode)clampi((int)p(pCosmosChorus), 0, 3) : CosmosChorusMode::Off);
 
     const bool isModular = (vp.mode == SynthMode::Modular);
     effects.springReverb.setEnabled(isModular);
@@ -488,7 +488,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         constexpr float kVoiceGain = 0.7f;
         sL *= kVoiceGain; sR *= kVoiceGain;
 
-        junoChorus.process(sL, sR);
+        cosmosChorus.process(sL, sR);
 
         // EffectsMix mod (fix #5): scale effect wet mixes by the mean per-voice
         // routing amount. Only pays per-sample setter cost when routed.

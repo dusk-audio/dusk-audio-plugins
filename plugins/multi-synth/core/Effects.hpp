@@ -148,9 +148,9 @@ private:
 //==============================================================================
 // Vintage dual-BBD chorus (Cosmos mode). Two lines, fixed triangle LFOs,
 // inverted-phase stereo, ~10 kHz BBD rolloff. Verbatim tunings.
-enum class JunoChorusMode { Off = 0, I, II, Both };
+enum class CosmosChorusMode { Off = 0, I, II, Both };
 
-class JunoChorusEffect
+class CosmosChorusEffect
 {
 public:
     void prepare(double sampleRate, int) noexcept
@@ -167,11 +167,11 @@ public:
         lpStateL = lpStateR = 0.0f;
     }
 
-    void setMode(JunoChorusMode m) noexcept { mode = m; }
+    void setMode(CosmosChorusMode m) noexcept { mode = m; }
 
     void process(float& left, float& right) noexcept
     {
-        if (mode == JunoChorusMode::Off) return;
+        if (mode == CosmosChorusMode::Off) return;
         const float dryL = left, dryR = right;
         float wetL = 0.0f, wetR = 0.0f;
         int numActive = 0;
@@ -179,8 +179,8 @@ public:
         for (int c = 0; c < 2; ++c)
         {
             bool active = false;
-            if (c == 0 && (mode == JunoChorusMode::I  || mode == JunoChorusMode::Both)) active = true;
-            if (c == 1 && (mode == JunoChorusMode::II || mode == JunoChorusMode::Both)) active = true;
+            if (c == 0 && (mode == CosmosChorusMode::I  || mode == CosmosChorusMode::Both)) active = true;
+            if (c == 1 && (mode == CosmosChorusMode::II || mode == CosmosChorusMode::Both)) active = true;
             if (!active) continue;
             ++numActive;
 
@@ -237,7 +237,7 @@ private:
     }
 
     float sr = 44100.0f;
-    JunoChorusMode mode = JunoChorusMode::Off;
+    CosmosChorusMode mode = CosmosChorusMode::Off;
     std::vector<float> bufL[2], bufR[2];
     int bufSize[2] = { 1, 1 }, writePos[2] = { 0, 0 };
     float lfoPhase[2] = { 0.0f, 0.0f };
