@@ -205,7 +205,7 @@ private:
     ModMatrix modMatrix;
     Arpeggiator arp;
     EffectsChain effects;
-    JunoChorusEffect junoChorus;
+    CosmosChorusEffect cosmosChorus;
     Decimator decimL, decimR;
 
     // Acid mode (mode 5): mono, poly path bypassed. Voice runs at the internal

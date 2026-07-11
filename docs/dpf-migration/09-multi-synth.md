@@ -49,7 +49,7 @@ plugins/multi-synth/
 │   ├── FMEngine.hpp          # NEW: 4-op FM (Prism)
 │   ├── AcidEngine.hpp        # NEW: 303 voice + pattern sequencer (Acid)
 │   ├── Arpeggiator.hpp       # ported, allocation-free rework
-│   ├── Effects.hpp           # drive/chorus/juno-chorus/delay (ported), Freeverb (new, replaces juce::Reverb)
+│   ├── Effects.hpp           # drive/chorus/vintage-chorus/delay (ported), Freeverb (new, replaces juce::Reverb)
 │   └── tests/                # offline render harness (see Validation)
 └── dpf-plugin/
     ├── DistrhoPluginInfo.h
