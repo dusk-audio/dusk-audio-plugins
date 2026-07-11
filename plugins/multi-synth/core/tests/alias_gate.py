@@ -63,7 +63,7 @@ def main():
         print(f"  {os_}x: worst image below 15 kHz = {db:6.1f} dBc  @ {fhz:8.1f} Hz")
 
     fm0 = 440.0 * 2 ** ((FM_NOTE - 69) / 12.0)
-    print(f"\nPrism serial-FM (algo 1, ratios 1/3/5/7, fb 0.3), f0 = {fm0:.1f} Hz")
+    print(f"\nPrism 2-op FM (algo 1 serial, carrier ratio 1 / modulator ratio 4, fb 0), f0 = {fm0:.1f} Hz")
     print("  internal rate = 48k*os; FM engine renders there before decimation")
     for os_ in (1, 2, 4):
         sr, x = render(4, FM_NOTE, 1.0, os_, f"alias_fm_{os_}", **FM_PATCH)
