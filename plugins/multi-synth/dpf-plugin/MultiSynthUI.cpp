@@ -1398,13 +1398,19 @@ private:
     void drawModMatrixOverlay()
     {
         if (!showMod) return;
-        // scrim covers the overlay window (which is the near-full-screen layer)
+        // Dark scrim behind the modal. NOTE: we deliberately do NOT submit a
+        // full-window InvisibleButton for the scrim. In Dear ImGui the first
+        // overlapping item to be submitted claims the hover (no AllowOverlap), so a
+        // scrim button drawn before the panel swallows every click meant for the
+        // combos / knobs / ✕ and dismisses the overlay on the first interaction
+        // (the reported "modal goes away when I select something" bug). Instead the
+        // panel widgets are submitted normally and the scrim close is a manual
+        // geometric hit-test done AFTER them, guarded so it yields to the panel rect
+        // and to any open combo popup.
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
-        ImGui::SetCursorScreenPos(wp);
-        ImGui::InvisibleButton("modscrim", ws);
-        if (ImGui::IsItemClicked()) showMod = false;
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
         // modal
+        const ImVec2 pMin = P(220 - 3, 120 - 3), pMax = P(1020 + 3, 660 + 3);
         panelBox(220, 120, 1020, 660);
         text(240, 130, 15.0f, live.accent, "MODULATION MATRIX", -1, true);
         // close ✕
@@ -1442,6 +1448,17 @@ private:
             dl->AddRect(x0, x1, IM_COL32(120, 120, 124, 255), 3.0f * s, 0, 1.0f * s);
             drawX(984, y + 20, 4.0f, live.textPanel);
         }
+
+        // Scrim close: dismiss the overlay only on a click in the dark area OUTSIDE
+        // the panel rect, and only when no combo popup is open (so choosing a
+        // Source / Dest / clearing a slot never dismisses the modal). Clicks inside
+        // the panel are handled by the widgets above and never reach here.
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        const bool insidePanel = mp.x >= pMin.x && mp.x <= pMax.x
+                              && mp.y >= pMin.y && mp.y <= pMax.y;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !insidePanel
+            && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+            showMod = false;
     }
 
     //========================================================================
