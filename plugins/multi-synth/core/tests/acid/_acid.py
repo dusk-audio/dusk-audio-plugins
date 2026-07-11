@@ -67,8 +67,12 @@ def peak_hz(sig, sr, f_lo=20.0):
     return (k + delta) * sr / len(sig)
 
 
-def f0_track(sig, sr, win_ms=15.0, hop_ms=2.0, f_lo=40.0):
-    """Windowed fundamental-frequency track (autocorrelation-free FFT peak)."""
+def peak_track(sig, sr, win_ms=15.0, hop_ms=2.0, f_lo=40.0):
+    """Windowed dominant spectral peak per window — NOT a fundamental estimator.
+
+    Returns the strongest FFT bin per window; a harmonic can dominate the
+    fundamental, so do not treat the result as an f0 track.
+    """
     win = max(64, int(sr * win_ms / 1000.0))
     hop = max(1, int(sr * hop_ms / 1000.0))
     times, freqs = [], []
