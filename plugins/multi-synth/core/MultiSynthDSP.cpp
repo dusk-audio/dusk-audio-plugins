@@ -464,7 +464,9 @@ void MultiSynthDSP::snapshotParameters() noexcept
             voices.allNotesOff();
             acidVoice.noteOff();
             acidHeldCount = 0;   // drop the live-acid held-note stack
-            arp.reset();
+            arp.clearLatch();    // drop latched held notes (else they re-trigger
+            arp.reset();         // in the new mode and drone; reset() keeps them
+            acidSeq.clearLatch();// while latch is on)
             acidSeq.reset();
         }
         else
