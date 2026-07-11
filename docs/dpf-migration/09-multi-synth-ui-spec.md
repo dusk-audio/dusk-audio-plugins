@@ -58,7 +58,7 @@ knob is its pivot; radius is design-space.
 | OSC 1 | `(16,60)–(340,178)` | wave combo, Detune, PW, Level knobs |
 | OSC 2 | `(16,182)–(340,300)` | wave combo, Semi (stepped knob), Detune, PW, Level |
 | OSC 3 / SUB | `(16,304)–(340,410)` | **mode-variant** (see §4): Modular→osc3 wave+level; Cosmos/Mono→sub wave+level; else dimmed/hidden |
-| MIXER / CHARACTER | `(16,414)–(340,542)` | Noise Level, Analog, Vintage, Master Tune |
+| VOICE / CHARACTER | `(16,414)–(340,542)` | Noise Level, Analog, Vintage, Master Tune |
 
 **CENTER column — Filter + Envelopes — `x 348..752`**
 | Panel | Rect | Contents |
@@ -115,7 +115,7 @@ knob is its pivot; radius is design-space.
 │ OSC3 / SUB    ├───────────────┬───────────────┤│ (chorus/polymod/algo…) │  ▮▮              │ 304
 │ (mode variant)│   AMP ENV     │  FILTER ENV   ││                        │                  │ ..
 │───────────────┤  /\___ ADSR   │  /\___ ADSR   │├────────────────────────┤                  │ 542
-│ MIXER/CHAR    │  A D S R  crv │  A D S R  crv ││ [   MOD MATRIX   ]     │                  │
+│ VOICE/CHAR    │  A D S R  crv │  A D S R  crv ││ [   MOD MATRIX   ]     │                  │
 ├───────────────┴───────────────┴───────────────┴┴────────────────────┬───┴──────────────────┤
 │  SEQUENCER  [1][2][3][4][5][6][7][8][9]..[16]                        │ DRV │ CHO │ DLY │ REV │ 548
 │  (Acid: +pitch lane  +accent lane  +slide lane)                      │     │     │     │     │ ..692
@@ -306,7 +306,8 @@ Store as a `Palette` per mode (extend `duskdpf::Palette` with `background`, `pan
 
 ### 4.2 Oracle (mode 1) — 5-voice poly, poly-mod
 - **Inline**: `crossMod` visible; no sub, no HP; filter self-oscillates (res arc reaches
-  peak). OSC3/SUB panel dimmed (label "—").
+  peak). The OSC3/SUB panel is inactive in this mode and shows a dimmed
+  "(not used in this mode)" note.
 - **MODE SUB-PANEL** = **POLY-MOD**: four r18 knobs in a 2×2 grid with a routing glyph:
   `pmFenvOscA` (FEnv→OscA freq), `pmOscBOscA` (OscB→OscA freq), `pmOscBPWM` (OscB→PW),
   `pmFenvFilt` (FEnv→Filter). Draw tiny source→dest arrows between labels. Title "POLY-MOD".
