@@ -15,6 +15,19 @@
 
 #include <atomic>
 
+// Version is injected by CMake (SC_VERSION_* compile defs from project(VERSION),
+// which is single-sourced through get_plugin_version). These fallbacks only apply
+// to an ad-hoc compile with no build definitions and keep getVersion() valid.
+#ifndef SC_VERSION_MAJOR
+ #define SC_VERSION_MAJOR 1
+#endif
+#ifndef SC_VERSION_MINOR
+ #define SC_VERSION_MINOR 0
+#endif
+#ifndef SC_VERSION_PATCH
+ #define SC_VERSION_PATCH 0
+#endif
+
 START_NAMESPACE_DISTRHO
 
 // The DPF parameter index must equal the core msynth::Param index 1:1, so
@@ -63,7 +76,7 @@ protected:
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override  { return d_version(0, 1, 0); }
+    uint32_t    getVersion() const override  { return d_version(SC_VERSION_MAJOR, SC_VERSION_MINOR, SC_VERSION_PATCH); }
     int64_t     getUniqueId() const override { return d_cconst('D', 's', 'S', 'C'); } // DsSC — matches DISTRHO_PLUGIN_UNIQUE_ID
 
     //--- parameters ------------------------------------------------------------
