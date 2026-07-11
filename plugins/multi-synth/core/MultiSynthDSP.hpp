@@ -156,15 +156,20 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
-    // 512-sample mono scope ring (audio thread writes, UI reads). Copies the ring
-    // oldest->newest into dst using relaxed loads ordered from the write position;
-    // returns the number of samples written (<= maxN, <= kScopeSize).
+    // 512-sample mono scope ring (audio thread writes, UI reads). Copies the
+    // NEWEST min(maxN, valid) samples oldest->newest into dst using relaxed loads;
+    // returns the number of samples written (<= maxN, <= kScopeSize). Before the
+    // ring is full only the valid samples are returned (no stale/zero tail).
     int copyScope(float* dst, int maxN) const noexcept
     {
-        const int n = maxN < kScopeSize ? maxN : kScopeSize;
+        const int valid = scopeCount.load(std::memory_order_relaxed);
+        int n = maxN < kScopeSize ? maxN : kScopeSize;
+        if (n > valid) n = valid;
+        if (n <= 0) return 0;
         const int wp = scopeWritePos.load(std::memory_order_relaxed);
+        const int start = (wp - n + kScopeSize) % kScopeSize; // wp>=0 so one wrap suffices
         for (int i = 0; i < n; ++i)
-            dst[i] = scope[(size_t)((wp + i) % kScopeSize)].load(std::memory_order_relaxed);
+            dst[i] = scope[(size_t)((start + i) % kScopeSize)].load(std::memory_order_relaxed);
         return n;
     }
 
@@ -226,7 +231,13 @@ private:
     AcidVoice     acidVoice;
     AcidSequencer acidSeq;
     bool acidSeqEnabled = false;  // sequencer active this block (mode 5 + arpOn)
-    int  acidLiveHeld   = 0;      // live (non-sequencer) held-note count (mono legato)
+    // Last-note-priority held-note stack for live (non-sequencer) mono acid play.
+    // Releasing the sounding note while an older note is still held returns to that
+    // older note (a bare counter would leave the wrong pitch playing). RT-safe:
+    // fixed array, no allocation.
+    struct HeldNote { int note; float vel; };
+    HeldNote acidHeld[16] {};
+    int      acidHeldCount = 0;
 
     VoiceParameters voiceParams;
 
@@ -256,6 +267,7 @@ private:
     std::atomic<int>   arpTotalSteps { 0 };
     std::array<std::atomic<float>, kScopeSize> scope {};
     std::atomic<int>   scopeWritePos { 0 };
+    std::atomic<int>   scopeCount { 0 };  // saturating count of valid samples (<= kScopeSize)
     float meterL = 0.0f, meterR = 0.0f, meterDecay = 0.9999f;
 };
 
