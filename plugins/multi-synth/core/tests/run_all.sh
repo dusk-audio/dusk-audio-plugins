@@ -19,7 +19,7 @@ echo "########## fm suite ##########"
 
 echo
 echo "########## alias_gate (report only) ##########"
-python3 alias_gate.py
+python3 alias_gate.py || echo "alias_gate exited nonzero (report-only, not fatal)"
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL PASS/FAIL GATES GREEN"; else echo "SOME GATES FAILED"; fi
