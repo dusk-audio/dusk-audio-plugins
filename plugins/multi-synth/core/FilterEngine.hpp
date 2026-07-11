@@ -237,6 +237,11 @@ public:
 
     void setMode(FilterMode m) noexcept { mode = m; }
 
+    // Rate change for oversampling-factor switches. Re-prepares the models
+    // (recomputes rate-dependent constants; resets filter state — a brief,
+    // acceptable transient. Pitch lives in the oscillators, not here).
+    void setSampleRate(double sampleRate) noexcept { prepare(sampleRate); }
+
     void setParameters(float cutoff, float resonance, float hpCutoff = 20.0f) noexcept
     {
         switch (mode)

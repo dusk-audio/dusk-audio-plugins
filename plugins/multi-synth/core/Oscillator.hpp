@@ -53,6 +53,8 @@ public:
     }
 
     void setFrequency(float freqHz) noexcept { freq = freqHz; dt = freq / sr; }
+    // Change rate WITHOUT resetting phase (for oversampling-factor changes).
+    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; }
     void setWaveform(Waveform w) noexcept    { waveform = w; }
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
     void setDetune(float cents) noexcept     { detuneRatio = std::pow(2.0f, cents / 1200.0f); }
@@ -143,6 +145,7 @@ class SubOscillator
 {
 public:
     void prepare(double sampleRate) noexcept { osc.prepare(sampleRate); }
+    void setSampleRate(double sampleRate) noexcept { osc.setSampleRate(sampleRate); }
     void setFrequency(float freqHz) noexcept { osc.setFrequency(freqHz * 0.5f); }
     void setWaveform(Waveform w) noexcept    { osc.setWaveform(w); }
     void setDetune(float cents) noexcept     { osc.setDetune(cents); }
@@ -161,6 +164,7 @@ class SampleAndHold
 {
 public:
     void prepare(double sampleRate) noexcept { sr = (float)sampleRate; phase = 0.0f; }
+    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; }
     void setRate(float rateHz) noexcept      { dt = rateHz / sr; }
 
     float process(float noiseInput) noexcept

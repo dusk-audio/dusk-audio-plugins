@@ -138,6 +138,30 @@ public:
         portaFreq.snap(440.0f);
     }
 
+    // Change the internal (oversampled) rate WITHOUT resetting musical state:
+    // oscillator phases, envelope stages, portamento value and active status
+    // are all preserved so an oversampling-factor switch never changes pitch or
+    // cuts a held note (the filters reset — a brief, inaudible transient).
+    void setSampleRate(double sampleRate) noexcept
+    {
+        sr = sampleRate;
+        for (int u = 0; u < kMaxUnison; ++u)
+        {
+            osc[u].osc1.setSampleRate(sampleRate);
+            osc[u].osc2.setSampleRate(sampleRate);
+            osc[u].osc3.setSampleRate(sampleRate);
+            osc[u].sub.setSampleRate(sampleRate);
+        }
+        filterL.setSampleRate(sampleRate);
+        filterR.setSampleRate(sampleRate);
+        ampEnv.setSampleRate(sampleRate);
+        filtEnv.setSampleRate(sampleRate);
+        lfo1.setSampleRate(sampleRate);
+        lfo2.setSampleRate(sampleRate);
+        sampleAndHold.setSampleRate(sampleRate);
+        portaFreq.prepare(sampleRate, 0.1f); // updates coeff; keeps current/target value
+    }
+
     void reset() noexcept
     {
         active = false;
@@ -524,6 +548,8 @@ public:
             voices[(size_t)i].prepare(sampleRate, 0x1000u + 0x1000u * (uint32_t)i);
     }
     void reset() noexcept { for (auto& v : voices) v.reset(); }
+    // Rate change preserving active notes/pitch (oversampling-factor switch).
+    void setSampleRate(double sampleRate) noexcept { for (auto& v : voices) v.setSampleRate(sampleRate); }
 
     // modeMaxVoices: nominal polyphony for the current mode.
     void setModeVoices(int modeMaxVoices) noexcept { modeVoices = clampi(modeMaxVoices, 1, kMaxPolyphony); }

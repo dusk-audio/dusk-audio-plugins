@@ -41,6 +41,7 @@
 #include "Effects.hpp"
 #include "Arpeggiator.hpp"
 #include "DuskOversampler.hpp" // HalfbandFIR + hbtaps
+#include "DuskFilters.hpp"     // DCBlocker (output hygiene)
 
 #include <array>
 #include <atomic>
@@ -189,6 +190,7 @@ private:
 
     float prevVintageL = 0.0f, prevVintageR = 0.0f;
     Xorshift vintageRng;
+    duskaudio::DCBlocker dcBlockL, dcBlockR; // output hygiene (removes reverb/nonlinearity DC)
 
     // MIDI / transport state
     std::atomic<float> pitchBendNorm { 0.0f };
