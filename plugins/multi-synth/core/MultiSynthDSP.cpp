@@ -305,7 +305,7 @@ void MultiSynthDSP::snapshotParameters() noexcept
     arp.setLatch(p(pArpLatch) > 0.5f);
     arp.setVelocityMode((ArpVelocityMode)clampi((int)p(pArpVelMode), 0, 2));
     arp.setFixedVelocity((int)p(pArpFixedVel));
-    for (int i = 0; i < 16; ++i) arp.setStepMute(i, p((Param)(pArpStep0 + i)) > 0.5f);
+    for (int i = 0; i < 16; ++i) arp.setStepActive(i, p((Param)(pArpStep0 + i)) > 0.5f);
 
     // --- Effects ---
     effects.drive.setEnabled(p(pDriveOn) > 0.5f);

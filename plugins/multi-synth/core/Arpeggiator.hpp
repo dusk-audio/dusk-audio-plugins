@@ -61,7 +61,8 @@ public:
     void setFixedVelocity(int v) noexcept { fixedVel = clampi(v, 1, 127); }
     void setAccentPattern(ArpAccentPattern p) noexcept { accentPattern = p; }
 
-    void setStepMute(int step, bool active) noexcept
+    // true = step plays; the JUCE original called this setStepMute with inverted-sounding naming
+    void setStepActive(int step, bool active) noexcept
     {
         if (step >= 0 && step < 16) stepPattern[(size_t)step] = active;
     }
