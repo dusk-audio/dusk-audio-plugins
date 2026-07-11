@@ -34,6 +34,7 @@
 #include "MultiSynthParams.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -135,6 +136,23 @@ int main(int argc, char** argv)
         overrides.push_back({ idx, (float)std::atof(val.c_str()) });
     }
 
+    // Validate render extents before any prepare/allocation.
+    if (!std::isfinite(tempo) || tempo < 20.0 || tempo > 999.0)
+    {
+        std::fprintf(stderr, "invalid tempo: %g (want 20..999)\n", tempo);
+        return 1;
+    }
+    if (!std::isfinite(sampleRate) || sampleRate < 8000.0 || sampleRate > 768000.0)
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
+        return 1;
+    }
+    if (!std::isfinite(tailSec) || tailSec < 0.0 || tailSec > 600.0)
+    {
+        std::fprintf(stderr, "invalid tail: %g (want 0..600)\n", tailSec);
+        return 1;
+    }
+
     const int blockSize = 128; // fine enough for ~2.7 ms MIDI-event granularity
 
     msynth::MultiSynthDSP synth;
@@ -166,7 +184,17 @@ int main(int argc, char** argv)
 
     const double secPerBeat = 60.0 / tempo;
     const double secPerBar  = 4.0 * secPerBeat;
-    auto S = [&](double sec) { return (int)(sec * sampleRate); }; // seconds -> frame
+    // seconds -> frame, checked: rejects non-finite times or overflow past the
+    // stereo float RIFF frame limit (guards bars= abuse driving event times to inf).
+    auto S = [&](double sec) -> int {
+        const double frames = sec * sampleRate;
+        if (!std::isfinite(frames) || frames > 536870907.0)
+        {
+            std::fprintf(stderr, "event time out of range: %g s -> %g frames\n", sec, frames);
+            std::exit(2);
+        }
+        return (int)frames;
+    };
 
     std::vector<NoteEvent> events;
     double lastOff = 0.0;
