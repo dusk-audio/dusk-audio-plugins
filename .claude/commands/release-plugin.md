@@ -30,6 +30,14 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | Multi-Q | multi-q | plugins/multi-q | (inline) | multiq |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
 | GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
+| Sunset Circuits | sunset-circuits | plugins/sunset-circuits/dpf-plugin | SUNSETCIRCUITS (DPF) | sunset |
+
+**Sunset Circuits is a DPF plugin, not JUCE.** Its version var lives in the
+`dpf-plugin/` CMakeLists (`plugins/sunset-circuits/dpf-plugin/CMakeLists.txt`),
+not the plugin root, and its release CI is `.github/workflows/dpf-release.yml`
+(triggered by the `sunset-circuits-v*` tag), separate from the JUCE `build.yml`.
+Everything else (website flow, tag format `sunset-circuits-vX.Y.Z`, changelog,
+push rules) is identical to the JUCE plugins.
 
 ## Paths
 
@@ -61,6 +69,8 @@ For EACH plugin specified:
 1. **Find current version** from CMakeLists.txt:
    - Most plugins: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`
    - Multi-Q uses: `project(MultiQ VERSION X.Y.Z)`
+   - Sunset Circuits (DPF): `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` in
+     `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt`
 2. **Determine new version**:
    - If explicit version provided: use it
    - If omitted: auto-increment patch (1.0.2 → 1.0.3)
@@ -92,6 +102,17 @@ set(<VAR>_DEFAULT_VERSION "<new-version>")
 ```
 project(MultiQ VERSION <new-version>)
 ```
+
+**Sunset Circuits** (DPF plugin — version var in the `dpf-plugin/` CMakeLists,
+which single-sources the version into `project(VERSION)`, the C++ `getVersion()`
+via `SC_VERSION_*` compile defs, and the UI nameplate tooltip):
+```
+sed -i.bak 's/set(SUNSETCIRCUITS_DEFAULT_VERSION "[^"]*")/set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")/' \
+  plugins/sunset-circuits/dpf-plugin/CMakeLists.txt && rm plugins/sunset-circuits/dpf-plugin/CMakeLists.txt.bak
+```
+Stage `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt` in Step 5 (the
+`git add plugins/*/CMakeLists.txt` glob does NOT match the nested dpf-plugin
+path, so add it explicitly).
 
 **Manual front matter** (issue #80) — only if `manuals/<slug>.md` exists. Uses the portable `sed -i.bak ... && rm` form so this works on both macOS BSD sed and Linux GNU sed:
 ```bash
@@ -195,6 +216,8 @@ If pandoc or xelatex is not installed locally, this step fails. The skill should
 **Plugins repo** - Stage and commit all changed CMakeLists.txt files plus any bumped manual front matter:
 ```bash
 git add plugins/*/CMakeLists.txt
+# Sunset Circuits (DPF): its CMakeLists is nested, not matched by the glob above.
+git add plugins/sunset-circuits/dpf-plugin/CMakeLists.txt 2>/dev/null || true
 # Issue #80: include any manual front-matter bumps from Step 3
 git add manuals/*.md 2>/dev/null || true
 git commit -m "<summary of version bumps>"

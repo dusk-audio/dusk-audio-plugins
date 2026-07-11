@@ -15,6 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
+# DPF / DPF-Widgets SHAs — keep in sync with .github/workflows/dpf-release.yml.
+DPF_SHA="4238e1c7f0351bbe488d79f0899c540543ac7583"
+DPFWIDGETS_SHA="730da6397904da66d99667c1cb30fc77fc3d794a"
+
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
     case "$1" in
@@ -54,6 +58,96 @@ get_plugin_name() {
     esac
 }
 
+# Is this shortcut the DPF-based Sunset Circuits plugin? (built out-of-graph)
+is_sunset() {
+    case "$1" in
+        sunset|sunset-circuits|sc) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Build Sunset Circuits (DPF) in the container. Unlike the JUCE plugins this does
+# NOT use the top-level JUCE build graph: it clones DISTRHO/DPF + DPF-Widgets at
+# the pinned SHAs inside the container and builds plugins/sunset-circuits/dpf-plugin
+# standalone (mirrors .github/workflows/dpf-release.yml). Produces VST3/CLAP/LV2.
+build_sunset() {
+    echo "=== Building Sunset Circuits (DPF) ==="
+    echo "Using: $CONTAINER_CMD  (DPF ${DPF_SHA:0:12}, DPF-Widgets ${DPFWIDGETS_SHA:0:12})"
+
+    if ! $CONTAINER_CMD image inspect "$IMAGE_NAME" &>/dev/null; then
+        echo "Building container image..."
+        $CONTAINER_CMD build $SECURITY_OPTS -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile.build" "$SCRIPT_DIR"
+    fi
+
+    mkdir -p "$OUTPUT_DIR"
+
+    $CONTAINER_CMD run --rm $SECURITY_OPTS \
+        -v "$PROJECT_DIR:/src:ro" \
+        -v "$OUTPUT_DIR:/output:Z" \
+        "$IMAGE_NAME" \
+        bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            DPF_SHA="'"$DPF_SHA"'"
+            DPFWIDGETS_SHA="'"$DPFWIDGETS_SHA"'"
+
+            # DPF opengl UI deps not baked into the JUCE image.
+            apt-get update
+            apt-get install -y --no-install-recommends \
+                ninja-build libxext-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
+
+            # Shallow-fetch each dependency at its exact pinned SHA.
+            fetch_sha() {
+                local url="$1" sha="$2" dir="$3"
+                mkdir -p "$dir" && cd "$dir"
+                git init -q
+                git remote add origin "$url"
+                git fetch -q --depth 1 origin "$sha"
+                git checkout -q FETCH_HEAD
+                git submodule update -q --init --recursive --depth 1 || true
+                cd /tmp
+            }
+            cd /tmp
+            fetch_sha https://github.com/DISTRHO/DPF.git         "$DPF_SHA"        /tmp/dpf
+            fetch_sha https://github.com/DISTRHO/DPF-Widgets.git  "$DPFWIDGETS_SHA" /tmp/dpf-widgets
+
+            cmake -S /src/plugins/sunset-circuits/dpf-plugin -B /tmp/scbuild -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DDUSK_DPF_INSTALL_LOCAL=OFF \
+                -DDPF_PATH=/tmp/dpf \
+                -DDPFWIDGETS_PATH=/tmp/dpf-widgets
+            cmake --build /tmp/scbuild \
+                --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 \
+                -j"$(nproc)"
+
+            echo "Copying artefacts to output..."
+            cp -r /tmp/scbuild/bin/sunset_circuits.vst3 /output/
+            cp -r /tmp/scbuild/bin/sunset_circuits.lv2  /output/
+            cp    /tmp/scbuild/bin/sunset_circuits.clap /output/
+            echo "=== Sunset Circuits build complete ==="
+        '
+
+    echo ""
+    echo "=== Installing Sunset Circuits to standard locations ==="
+    mkdir -p "$HOME/.vst3" "$HOME/.lv2" "$HOME/.clap"
+    if [ -d "$OUTPUT_DIR/sunset_circuits.vst3" ]; then
+        rm -rf "$HOME/.vst3/sunset_circuits.vst3"
+        cp -r "$OUTPUT_DIR/sunset_circuits.vst3" "$HOME/.vst3/"
+        echo "  VST3: sunset_circuits.vst3 -> ~/.vst3/"
+    fi
+    if [ -d "$OUTPUT_DIR/sunset_circuits.lv2" ]; then
+        rm -rf "$HOME/.lv2/sunset_circuits.lv2"
+        cp -r "$OUTPUT_DIR/sunset_circuits.lv2" "$HOME/.lv2/"
+        echo "  LV2:  sunset_circuits.lv2 -> ~/.lv2/"
+    fi
+    if [ -f "$OUTPUT_DIR/sunset_circuits.clap" ]; then
+        cp "$OUTPUT_DIR/sunset_circuits.clap" "$HOME/.clap/"
+        echo "  CLAP: sunset_circuits.clap -> ~/.clap/"
+    fi
+    echo ""
+    echo "=== Done. ==="
+}
+
 # Show help
 show_help() {
     echo "Usage: $0 [plugin]"
@@ -77,7 +171,8 @@ show_help() {
     echo "  spectrumanalyzer, spectrum-analyzer, spectrum, span, fft   Spectrum Analyzer"
     echo "  duskverb, dusk-verb, reverb   DuskVerb"
     echo "  duskamp, dusk-amp, amp   DuskAmp"
-    echo "  multisynth, multi-synth, synth   Multi-Synth"
+    echo "  multisynth, multi-synth, synth   Multi-Synth (legacy JUCE, unreleased)"
+    echo "  sunset, sunset-circuits, sc   Sunset Circuits (DPF: VST3/CLAP/LV2)"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"
@@ -88,11 +183,18 @@ show_help() {
 # Parse arguments
 BUILD_TARGET=""
 PLUGIN_SHORTNAME=""
+BUILD_SUNSET=0
 if [ $# -gt 0 ]; then
     case "$1" in
         --help|-h)
             show_help
             exit 0
+            ;;
+        sunset|sunset-circuits|sc)
+            # DPF plugin — handled by build_sunset() after the container backend
+            # is selected below (out-of-graph, no JUCE required).
+            BUILD_SUNSET=1
+            echo "Building Sunset Circuits (DPF)"
             ;;
         *)
             # Look up the target
@@ -139,6 +241,13 @@ fi
 # Create output directory
 OUTPUT_DIR="$PROJECT_DIR/release"
 mkdir -p "$OUTPUT_DIR"
+
+# Sunset Circuits is a DPF plugin built out-of-graph (no JUCE) — dispatch here,
+# before the JUCE_DIR check, so it doesn't require a JUCE checkout.
+if [ "$BUILD_SUNSET" -eq 1 ]; then
+    build_sunset
+    exit 0
+fi
 
 # Verify JUCE directory exists
 JUCE_DIR="$PROJECT_DIR/../JUCE"
