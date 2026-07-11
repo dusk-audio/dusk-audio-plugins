@@ -107,6 +107,7 @@ protected:
         if (index >= kNumCoreParams) return; // output params are not settable
         values[index].store(value, std::memory_order_relaxed);
         dsp.setParameter((int)index, value);
+        if (index == kParamOversampling) updateLatency(); // E1
     }
 
     //--- programs (factory presets; count = kNumFactoryPresets) -----------------
@@ -129,6 +130,7 @@ protected:
         const FactoryPreset& pr = kFactoryPresets[index];
         for (int r = 0; r < pr.nRows; ++r)
             setParameterValue((uint32_t)pr.rows[r].index, pr.rows[r].value);
+        updateLatency(); // a preset may change oversampling (E1)
     }
 
     //--- lifecycle -------------------------------------------------------------
@@ -136,6 +138,7 @@ protected:
     {
         dsp.prepare(getSampleRate(), (int)getBufferSize());
         pushAllParams();
+        updateLatency(); // E1
     }
 
     void deactivate() override { dsp.reset(); }
@@ -160,18 +163,32 @@ protected:
         // The DSP only locks when the transport is playing (see processBlock).
         double songBeat = 0.0;
         bool   songValid = false;
-        if (tp.bbt.valid)
+        if (tp.bbt.valid && tp.bbt.ticksPerBeat > 0.0)
         {
+            // BBT bar/beat/tick are in meter-denominator units (bbt.beatType is
+            // the time-signature denominator; beat runs 1..beatsPerBar), while the
+            // core's getBeatsPerStep speaks quarter-notes. Convert denominator
+            // beats to quarter-note beats so 6/8, 3/4 etc. sync correctly (S1).
             songBeat = (double)(tp.bbt.bar - 1) * (double)tp.bbt.beatsPerBar
                      + (double)(tp.bbt.beat - 1)
-                     + (tp.bbt.ticksPerBeat > 0.0 ? tp.bbt.tick / tp.bbt.ticksPerBeat : 0.0);
+                     + tp.bbt.tick / tp.bbt.ticksPerBeat;
+            if (tp.bbt.beatType > 0.0f) songBeat *= 4.0 / (double)tp.bbt.beatType;
             songValid = true;
         }
         else
         {
+            // No BBT, OR BBT with no sub-beat tick resolution (ticksPerBeat <= 0).
+            // In the latter case BBT is block-constant within a beat, so songBeat
+            // would jump backward at each buffer start and machine-gun the arp/
+            // acid backward-jump (loop-wrap) detector. The transport frame counter
+            // is monotonic, so derive songBeat from it instead (S2).
             songBeat = (double)tp.frame / getSampleRate() * lastBpm / 60.0;
             songValid = true;
         }
+        // lastBpm comes from bbt.beatsPerMinute, which the DPF header states only
+        // as "number of beats per minute" with no meter qualifier; it is the
+        // musical (quarter-note) BPM by universal DAW convention, matching the
+        // quarter-note songBeat above, so it is used as-is (no beatType scaling).
         const double beatsPerFrame = lastBpm / 60.0 / getSampleRate();
 
         float* const outL = outputs[0];
@@ -206,6 +223,30 @@ private:
     {
         for (uint32_t i = 0; i < kNumCoreParams; ++i)
             dsp.setParameter((int)i, values[i].load(std::memory_order_relaxed));
+    }
+
+    // E1: report the oversampling group delay to the host so it can compensate.
+    // The oversampling param is 0=1x, 1=2x, 2=4x. The added latency (in host
+    // samples) is the halfband decimator group delay, measured by cross-
+    // correlating the same note-onset rendered at each factor (see the core
+    // Decimator: downA = HalfbandFIR<47,12> for 2x<->1x, downB = <15,4> for
+    // 4x<->2x). Those group delays are rate-independent in samples:
+    //   1x -> 0        (oversampling bypassed, no filter)
+    //   2x -> 12       (downA only: 12 host samples)
+    //   4x -> 14       (downA 12 + downB 4-at-2x = 2 host samples)
+    // Values verified by measurement; changing the halfband taps requires
+    // re-measuring these three ints.
+    static uint32_t latencyForOsParam(float osParamValue) noexcept
+    {
+        const int os = (int)(osParamValue + 0.5f);
+        if (os >= 2) return 14u; // 4x
+        if (os == 1) return 12u; // 2x
+        return 0u;               // 1x
+    }
+
+    void updateLatency()
+    {
+        setLatency(latencyForOsParam(values[kParamOversampling].load(std::memory_order_relaxed)));
     }
 
     void handleMidi(const MidiEvent& ev) noexcept
