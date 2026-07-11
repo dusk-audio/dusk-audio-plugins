@@ -82,8 +82,81 @@ def main():
     print(f"[swing] even {even_iv*1000:.1f} ms / odd {odd_iv*1000:.1f} ms  "
           f"worst dev {worst*1000:.2f} ms  {'PASS' if swing_ok else 'FAIL'} (tol +-{2*TOL_S*1000:.0f} ms)")
 
+    ok = host_locked_grid() and ok
+    ok = host_locked_swing() and ok
+    ok = loop_wrap() and ok
+
     print(f"seq_gate: {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)
+
+
+# The 15 ms-release detector adds a constant ~2 ms latency to every absolute
+# onset time (it cancels in interval measurements). Absolute-grid checks below
+# therefore allow +-3 ms; interval checks keep the tight +-1..2 ms tolerances.
+SPB = 60.0 / BPM               # seconds per beat (0.5 s at 120 BPM)
+ABS_TOL_S = 0.003
+
+
+def host_locked_grid():
+    # Song position 0.31 beats at frame 0, 1/16, strict quantize -> first onset on
+    # the next 1/16 grid boundary (beat 0.5 -> 0.19 beats past songpos = 95 ms);
+    # every later onset 125 ms apart on the absolute host grid.
+    SONGPOS = 0.31
+    first_s = (0.25 - (SONGPOS % 0.25)) * SPB     # to next 1/16 boundary = 95 ms
+    sr, x = render("seq", "seq_locked", songpos=SONGPOS, swing=0.0, **PATCH)
+    on = detect_onsets(x, sr)
+    if len(on) < 6:
+        print(f"[locked] FAIL (only {len(on)} onsets)")
+        return False
+    first_dev = abs(on[0] - first_s)
+    worst = float(np.max(np.abs(np.diff(on) - STEP_S)))
+    ok = (first_dev <= ABS_TOL_S) and (worst <= TOL_S)
+    print(f"[locked] onsets {len(on)}  first {on[0]*1000:.1f} ms "
+          f"(grid {first_s*1000:.1f} ms, dev {first_dev*1000:.2f}, tol +-{ABS_TOL_S*1000:.0f})  "
+          f"step worst dev {worst*1000:.2f} ms  {'PASS' if ok else 'FAIL'} (tol +-{TOL_S*1000:.0f} ms)")
+    return ok
+
+
+def host_locked_swing():
+    # Locked + swing 0.5: EVEN-step onsets pin to the absolute 0.5-beat grid; ODD
+    # steps are delayed to k*0.25 + 0.0625 beats. Every onset must match a valid
+    # grid-onset position {0.5*m} U {0.3125 + 0.5*m}.
+    sr, x = render("seq", "seq_locked_swing", songpos=0.0, swing=0.5, **PATCH)
+    on = detect_onsets(x, sr)
+    if len(on) < 6:
+        print(f"[lock+swing] FAIL (only {len(on)} onsets)")
+        return False
+    worst = 0.0
+    for t in on:
+        b = t / SPB
+        d_even = abs(b - round(b / 0.5) * 0.5)
+        d_odd = abs(b - (0.3125 + round((b - 0.3125) / 0.5) * 0.5))
+        worst = max(worst, min(d_even, d_odd) * SPB)
+    ok = worst <= ABS_TOL_S
+    print(f"[lock+swing] onsets {len(on)}  worst off-grid {worst*1000:.2f} ms  "
+          f"{'PASS' if ok else 'FAIL'} (tol +-{ABS_TOL_S*1000:.0f} ms)")
+    return ok
+
+
+def loop_wrap():
+    # Transport loop of 4 beats (2.0 s). The cursor wraps 4 -> 0 and the grid
+    # re-syncs: onsets stay on the 1/16 grid across the wrap and no step is
+    # stuck/dropped (max inter-onset gap <= one step).
+    sr, x = render("seq", "seq_wrap", songpos=0.0, loopbeats=4.0, swing=0.0,
+                   **{**PATCH, "seconds": 4.0})
+    on = detect_onsets(x, sr)
+    if len(on) < 10:
+        print(f"[wrap] FAIL (only {len(on)} onsets)")
+        return False
+    off_grid = float(np.max([abs(t / SPB - round(t / SPB / 0.25) * 0.25) * SPB for t in on]))
+    max_gap = float(np.max(np.diff(on)))
+    have_pre = bool(np.any(on < 2.0))
+    have_post = bool(np.any(on > 2.0))
+    ok = (off_grid <= ABS_TOL_S) and (max_gap <= STEP_S + 2 * TOL_S) and have_pre and have_post
+    print(f"[wrap] onsets {len(on)}  worst off-grid {off_grid*1000:.2f} ms  "
+          f"max gap {max_gap*1000:.1f} ms (<= {(STEP_S+2*TOL_S)*1000:.1f})  "
+          f"pre/post-wrap {have_pre}/{have_post}  {'PASS' if ok else 'FAIL'}")
+    return ok
 
 
 if __name__ == "__main__":

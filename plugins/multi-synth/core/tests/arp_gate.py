@@ -40,21 +40,52 @@ def detect_onsets(sig, sr, thresh_frac=0.3, min_gap_s=0.1):
     return np.array(onsets) / sr
 
 
-def main():
+def free_run():
     sr, x = render(0, 60, 2.0, 2, "arp", tempo=BPM, playing=1, hold="64,67", **PATCH)
     onsets = detect_onsets(x[:, 0], sr)
     if len(onsets) < 4:
-        print(f"arp_gate: FAIL (only {len(onsets)} onsets detected)")
-        sys.exit(1)
+        print(f"[free]  FAIL (only {len(onsets)} onsets detected)")
+        return False
 
     intervals = np.diff(onsets[1:])   # ignore the first (step 1) as spec allows
     worst = float(np.max(np.abs(intervals - STEP_S)))
-    print(f"onsets detected: {len(onsets)}  (first at {onsets[0]*1000:.1f} ms)")
-    print(f"step interval: ideal {STEP_S*1000:.1f} ms, "
-          f"measured mean {np.mean(intervals)*1000:.2f} ms, worst dev {worst*1000:.2f} ms")
-    passed = worst <= TOL_S
-    print(f"arp_gate: {'PASS' if passed else 'FAIL'} (tol +-{TOL_S*1000:.0f} ms)")
-    sys.exit(0 if passed else 1)
+    ok = worst <= TOL_S
+    print(f"[free]  onsets {len(onsets)}  (first at {onsets[0]*1000:.1f} ms)  "
+          f"ideal {STEP_S*1000:.1f} ms  worst dev {worst*1000:.2f} ms  "
+          f"{'PASS' if ok else 'FAIL'} (tol +-{TOL_S*1000:.0f} ms)")
+    return ok
+
+
+def host_locked():
+    # Host phase-lock: song position 0.31 beats at frame 0, note pressed at t=0,
+    # 120 BPM 1/8. Strict quantize -> nothing sounds until the next 1/8 grid
+    # boundary of the SONG position: beat 0.5 - 0.31 = 0.19 beats -> 95 ms. Every
+    # later onset lands on the absolute host grid (250 ms apart).
+    SONGPOS = 0.31
+    FIRST_S = (0.5 - SONGPOS) * 60.0 / BPM   # 0.095 s
+    FIRST_TOL_S = 0.002
+    sr, x = render(0, 60, 2.0, 2, "arp_locked", tempo=BPM, playing=1,
+                   songpos=SONGPOS, hold="64,67", **PATCH)
+    onsets = detect_onsets(x[:, 0], sr)
+    if len(onsets) < 4:
+        print(f"[locked] FAIL (only {len(onsets)} onsets detected)")
+        return False
+
+    first_dev = abs(onsets[0] - FIRST_S)
+    intervals = np.diff(onsets)
+    worst = float(np.max(np.abs(intervals - STEP_S)))
+    ok = (first_dev <= FIRST_TOL_S) and (worst <= TOL_S)
+    print(f"[locked] onsets {len(onsets)}  first {onsets[0]*1000:.1f} ms "
+          f"(grid {FIRST_S*1000:.1f} ms, dev {first_dev*1000:.2f} ms, tol +-{FIRST_TOL_S*1000:.0f})  "
+          f"step worst dev {worst*1000:.2f} ms  {'PASS' if ok else 'FAIL'} (tol +-{TOL_S*1000:.0f} ms)")
+    return ok
+
+
+def main():
+    ok = free_run()
+    ok = host_locked() and ok
+    print(f"arp_gate: {'PASS' if ok else 'FAIL'}")
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":
