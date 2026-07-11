@@ -963,7 +963,10 @@ private:
         comboBox("filtcrv", kParamFiltCurve, 564, 516, 740, 540, kEnvCurve, 4);
     }
 
-    // ADSR knob row: A,D,S,R at r18, spaced 46 px, y=500. base = param index of A.
+    // ADSR knob row: A,D,S,R at r18, spaced 46 px. Labels top at y=446, knob
+    // centers at y=484 so the r18+arc3 knob bottom (=505) clears the Curve combo
+    // top (y=516) by 11px, and the label bottom (~456) clears the knob top
+    // (=463) by 7px. base = param index of A.
     void drawADSRKnobs(float x0, uint32_t baseA, const char* pfx)
     {
         const char* labs[4] = { "A", "D", "S", "R" };
@@ -971,9 +974,9 @@ private:
         {
             char id[16]; std::snprintf(id, sizeof(id), "%s%s", pfx, labs[i]);
             const float cx = x0 + i * 46.0f;
-            klabel(cx, 460, labs[i]);
-            if (i == 2) knob(id, baseA + i, cx, 500, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
-            else        knob(id, baseA + i, cx, 500, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
+            klabel(cx, 446, labs[i]);
+            if (i == 2) knob(id, baseA + i, cx, 484, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
+            else        knob(id, baseA + i, cx, 484, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
         }
     }
 
