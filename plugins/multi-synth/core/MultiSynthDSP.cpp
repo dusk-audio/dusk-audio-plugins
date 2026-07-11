@@ -154,6 +154,7 @@ void MultiSynthDSP::reset()
     dcBlockL.reset(); dcBlockR.reset();
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
+    haveLastSnap = false;   // first snapshot after (re)prepare must not spuriously release
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
     scopeCount.store(0, std::memory_order_relaxed);
@@ -446,6 +447,39 @@ void MultiSynthDSP::snapshotParameters() noexcept
     masterPan = p(pMasterPan);
     stereoWidth = p(pStereoWidth);
     vintage = p(pVintage);
+
+    // --- Preset/mode transition handling (stuck-note fix) ---------------------
+    // A factory-preset load can change the mode, or disable the arp / acid
+    // sequencer, WHILE notes are held. The note-routing path then changes out
+    // from under the sounding voice, so its key-up never reaches it and it drones
+    // forever. Detect the transition here and release the stranded voice(s).
+    // Release (not hard-mute) so envelopes enter Release and tails ring out with
+    // no click. Browsing presets WITHIN the same mode is untouched — held notes
+    // stay seamless, which is the correct, desired behaviour.
+    if (haveLastSnap)
+    {
+        if (vp.mode != lastSnapMode)
+        {
+            // Mode changed: every note started under the old mode is unreachable.
+            voices.allNotesOff();
+            acidVoice.noteOff();
+            acidHeldCount = 0;   // drop the live-acid held-note stack
+            arp.reset();
+            acidSeq.reset();
+        }
+        else
+        {
+            // Same mode: only the specific disabled subsystem's voice is stranded.
+            if (lastArpEnabled && !arpEnabled && vp.mode != SynthMode::Acid)
+                voices.allNotesOff();          // release the arp-triggered voice
+            if (lastAcidSeqEnabled && !acidSeqEnabled)
+                acidVoice.noteOff();           // release the gated acid voice
+        }
+    }
+    haveLastSnap = true;
+    lastSnapMode = vp.mode;
+    lastArpEnabled = arpEnabled;
+    lastAcidSeqEnabled = acidSeqEnabled;
 }
 
 //==============================================================================
