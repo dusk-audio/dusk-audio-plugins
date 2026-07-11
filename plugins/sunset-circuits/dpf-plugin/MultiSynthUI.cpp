@@ -19,6 +19,7 @@
 
 #include "MultiSynthAccess.hpp"
 #include "MultiSynthParams.hpp"
+#include "UserPresetStore.hpp"    // file-based user preset library (UI-side only)
 #include "MultiSynthDSP.hpp"      // MultiSynthDSP::copyScope / kScopeSize
 #include "FMAlgorithms.hpp"       // msynth::kPrismAlgos — single source of truth
 #include "DuskImGuiFont.hpp"
@@ -118,6 +119,8 @@ public:
 
         buildTooltips();
 
+        presetStore.refresh();   // scan the user preset dir once at construction
+
         curMode = clampMode((int)std::lround(values[kParamMode]));
         prevMode = curMode;
         live = kPalettes[curMode];
@@ -190,6 +193,19 @@ protected:
         // overlapping window on top of the base layers, so while the modal is open
         // it REPLACES the base panels (single window, no overlap) over a dark
         // scrim, rather than floating above them. Closing it restores the panels.
+        if (showSaveModal)
+        {
+            dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
+            beginLayerScreen("MSsave", 0, 0, winW, winH, true);
+            drawSaveModalOverlay();
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+           #ifdef MSYNTH_FRAME_PROFILE
+            profileFrame(_t0);
+           #endif
+            return;
+        }
+
         if (showMod)
         {
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
@@ -711,11 +727,11 @@ private:
                  sel ? live.text : lerpC(live.text, live.bg, 0.35f), kModeNames[i], 0, sel);
         }
 
-        // Preset prev / combo / next / save
-        const char* preview = (currentPreset >= 0 && currentPreset < kNumFactoryPresets)
-                                  ? kFactoryPresets[currentPreset].name : "Presets";
+        // Preset prev / combo / next / save. currentPreset is a combined index:
+        // factory [0..kNumFactoryPresets) then user [kNumFactoryPresets..total).
+        const char* preview = presetName(currentPreset);
         if (chevron("presetPrev", 952, 14, 978, 42, false, "Previous preset"))
-            applyPreset(currentPreset <= 0 ? kNumFactoryPresets - 1 : currentPreset - 1);
+            applyCombined(currentPreset < 0 ? comboTotal() - 1 : currentPreset - 1);
 
         ImGui::SetCursorScreenPos(P(982, 14));
         ImGui::SetNextItemWidth(168.0f * s);
@@ -730,23 +746,114 @@ private:
         {
             for (int i = 0; i < kNumFactoryPresets; ++i)
                 if (ImGui::Selectable(kFactoryPresets[i].name, i == currentPreset)) applyPreset(i);
+            const auto& users = presetStore.list();
+            if (!users.empty())
+            {
+                ImGui::Separator();
+                for (int u = 0; u < (int)users.size(); ++u)
+                {
+                    ImGui::PushID(u);   // user names may duplicate factory names
+                    const bool sel = currentPreset == kNumFactoryPresets + u;
+                    if (ImGui::Selectable(users[u].name.c_str(), sel)) applyUserPreset(u);
+                    ImGui::PopID();
+                }
+            }
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select a factory preset");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select a factory or user preset");
         ImGui::PopStyleColor(4); ImGui::PopStyleVar(); ImGui::PopFont();
 
         if (chevron("presetNext", 1154, 14, 1180, 42, true, "Next preset"))
-            applyPreset(currentPreset < 0 ? 0 : (currentPreset + 1) % kNumFactoryPresets);
+            applyCombined(currentPreset < 0 ? 0 : currentPreset + 1);
 
-        // Save ★ (v2 = user-preset bridge; visual affordance only for now)
+        // Save ★ — opens the user-preset save modal (writes the current patch).
         const ImVec2 s0 = P(1186, 14), s1 = P(1222, 42);
         ImGui::SetCursorScreenPos(s0);
         ImGui::InvisibleButton("presetSave", ImVec2(s1.x - s0.x, s1.y - s0.y));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save user preset (coming soon)");
-        // Dead [v2] control: dimmed fill + text (~45% alpha) to read as disabled.
-        dl->AddRectFilled(s0, s1, withA(IM_COL32(38, 38, 41, 255), 115), 4.0f * s);
-        dl->AddRect(s0, s1, withA(IM_COL32(90, 90, 94, 255), 115), 4.0f * s, 0, 1.2f * s);
-        text(1204, 21, 9.0f, withA(live.accent, 115), "SAVE", 0, true);
+        const bool saveClicked = ImGui::IsItemClicked();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save the current patch as a user preset");
+        dl->AddRectFilled(s0, s1, IM_COL32(38, 38, 41, 255), 4.0f * s);
+        dl->AddRect(s0, s1, ImGui::IsItemHovered() ? live.accent : IM_COL32(90, 90, 94, 255),
+                    4.0f * s, 0, 1.2f * s);
+        text(1204, 21, 9.0f, live.accent, "SAVE", 0, true);
+        if (saveClicked) openSaveModal();
+    }
+
+    //========================================================================
+    // User preset helpers (combined factory+user index space)
+    //========================================================================
+    int userCount()  const { return (int)presetStore.list().size(); }
+    int comboTotal() const { return kNumFactoryPresets + userCount(); }
+
+    const char* presetName(int combined) const
+    {
+        if (combined >= 0 && combined < kNumFactoryPresets)
+            return kFactoryPresets[combined].name;
+        const int u = combined - kNumFactoryPresets;
+        if (u >= 0 && u < userCount()) return presetStore.list()[u].name.c_str();
+        return "Presets";
+    }
+
+    // Recall by combined index (wraps). Factory -> applyPreset; user -> file load.
+    void applyCombined(int idx)
+    {
+        const int total = comboTotal();
+        if (total <= 0) return;
+        idx = ((idx % total) + total) % total;
+        if (idx < kNumFactoryPresets) applyPreset(idx);
+        else                          applyUserPreset(idx - kNumFactoryPresets);
+    }
+
+    // Load user preset u through the same reset-then-apply path as applyPreset:
+    // the store fills a temp array with defaults then overrides parsed symbols,
+    // and we push all core params so missing symbols land on their defaults.
+    void applyUserPreset(int u)
+    {
+        const auto& L = presetStore.list();
+        if (u < 0 || u >= (int)L.size()) return;
+        float tmp[kNumCoreParams];
+        if (!presetStore.loadInto(L[u].path, tmp, (int)kNumCoreParams)) return;
+        for (uint32_t i = 0; i < kNumCoreParams; ++i) pushParam(i, tmp[i]);
+        currentPreset = kNumFactoryPresets + u;
+    }
+
+    void openSaveModal()
+    {
+        showSaveModal = true;
+        saveModalJustOpened = true;
+        overwriteConfirm = false;
+        deleteConfirm = false;
+        saveNameBuf[0] = '\0';
+    }
+
+    // Write values[] to disk, refresh the list, and select the new preset.
+    void commitSave()
+    {
+        const std::string nm = scpreset::sanitize(saveNameBuf);
+        if (nm.empty()) return;
+        if (presetStore.save(saveNameBuf, values, (int)kNumCoreParams))
+        {
+            presetStore.refresh();
+            const auto& L = presetStore.list();
+            for (int u = 0; u < (int)L.size(); ++u)
+                if (L[u].name == nm) { currentPreset = kNumFactoryPresets + u; break; }
+        }
+        showSaveModal = false;
+        overwriteConfirm = false;
+    }
+
+    void commitDelete()
+    {
+        if (currentPreset >= kNumFactoryPresets)
+        {
+            const int u = currentPreset - kNumFactoryPresets;
+            const auto& L = presetStore.list();
+            if (u >= 0 && u < (int)L.size()) presetStore.remove(L[u].path);
+            presetStore.refresh();
+            currentPreset = -1;
+        }
+        showSaveModal = false;
+        deleteConfirm = false;
     }
 
     bool chevron(const char* id, float x0, float y0, float x1, float y1, bool right, const char* tip = nullptr)
@@ -1540,6 +1647,102 @@ private:
             showMod = false;
     }
 
+    // Stock ImGui button styled to the mode accent; returns true on click.
+    bool modalButton(const char* label, float x0, float y0, float w, float h, bool accent)
+    {
+        ImGui::SetCursorScreenPos(P(x0, y0));
+        ImGui::PushStyleColor(ImGuiCol_Button,        accent ? withA(live.accent, 200) : IM_COL32(48, 48, 52, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accent ? live.accent            : IM_COL32(70, 70, 74, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  accent ? live.accent            : IM_COL32(90, 90, 94, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(240, 242, 246, 255));
+        const bool c = ImGui::Button(label, ImVec2(w * s, h * s));
+        ImGui::PopStyleColor(4);
+        return c;
+    }
+
+    // Compact centered "save user preset" modal. Same replace-panels pattern as
+    // the mod matrix (DPF ImGui can't float an overlapping window). InputText for
+    // the name; inline overwrite / delete confirm states.
+    void drawSaveModalOverlay()
+    {
+        if (!showSaveModal) return;
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
+
+        const float x0 = 420, y0 = 285, x1 = 820, y1 = 495;
+        const ImVec2 pMin = P(x0 - 3, y0 - 3), pMax = P(x1 + 3, y1 + 3);
+        panelBox(x0, y0, x1, y1);
+        text(x0 + 20, y0 + 14, 15.0f, live.accent, "SAVE USER PRESET", -1, true);
+
+        // close ✕
+        const ImVec2 c0 = P(x1 - 32, y0 + 8), c1 = P(x1 - 8, y0 + 32);
+        ImGui::SetCursorScreenPos(c0);
+        ImGui::InvisibleButton("saveclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
+        if (ImGui::IsItemClicked()) showSaveModal = false;
+        dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
+        drawX(x1 - 20, y0 + 20, 5.0f, live.text);
+
+        ImFont* f = panel.pickFont(13.0f * s);
+        ImGui::PushFont(f);
+
+        text(x0 + 20, y0 + 50, 10.0f, live.textPanel, "NAME", -1, true);
+        ImGui::SetCursorScreenPos(P(x0 + 20, y0 + 66));
+        ImGui::SetNextItemWidth((x1 - x0 - 40) * s);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(238, 240, 244, 255));
+        if (saveModalJustOpened) { ImGui::SetKeyboardFocusHere(); saveModalJustOpened = false; }
+        const bool enter = ImGui::InputText("##presetname", saveNameBuf, sizeof(saveNameBuf),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::PopStyleColor(2);
+
+        const std::string nm = scpreset::sanitize(saveNameBuf);
+        const bool valid  = !nm.empty();
+        const bool exists = valid && presetStore.exists(saveNameBuf);
+
+        const float by = y0 + 150;   // button row baseline
+        if (overwriteConfirm)
+        {
+            text(x0 + 20, y0 + 108, 11.0f, live.text, "A preset with that name exists. Overwrite?", -1);
+            if (modalButton("OVERWRITE", x0 + 20,  by, 120, 30, true))  commitSave();
+            if (modalButton("CANCEL",    x0 + 152, by, 120, 30, false)) overwriteConfirm = false;
+        }
+        else if (deleteConfirm)
+        {
+            char msg[160];
+            std::snprintf(msg, sizeof msg, "Delete user preset \"%s\"?", presetName(currentPreset));
+            text(x0 + 20, y0 + 108, 11.0f, live.text, msg, -1);
+            if (modalButton("DELETE", x0 + 20,  by, 120, 30, true))  commitDelete();
+            if (modalButton("CANCEL", x0 + 152, by, 120, 30, false)) deleteConfirm = false;
+        }
+        else
+        {
+            if (!valid)
+                text(x0 + 20, y0 + 108, 10.0f, whiteDimCol(), "Enter a name to save.", -1);
+            else if (exists)
+                text(x0 + 20, y0 + 108, 10.0f, whiteDimCol(), "Name in use — saving will ask to overwrite.", -1);
+
+            const bool doSave = modalButton("SAVE", x0 + 20, by, 120, 30, true) || (enter && valid);
+            if (doSave && valid) { if (exists) overwriteConfirm = true; else commitSave(); }
+            if (modalButton("CANCEL", x0 + 152, by, 120, 30, false)) showSaveModal = false;
+
+            // DELETE affordance only when a user preset is currently recalled.
+            if (currentPreset >= kNumFactoryPresets)
+                if (modalButton("DELETE", x1 - 20 - 120, by, 120, 30, false)) deleteConfirm = true;
+        }
+
+        ImGui::PopFont();
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showSaveModal = false;
+
+        // Scrim close: click in the dark area outside the panel, no popup open.
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        const bool insidePanel = mp.x >= pMin.x && mp.x <= pMax.x
+                              && mp.y >= pMin.y && mp.y <= pMax.y;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !insidePanel
+            && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+            showSaveModal = false;
+    }
+
     //========================================================================
     // Scope + Output/VU
     //========================================================================
@@ -2069,8 +2272,19 @@ private:
     float  modeBlend = 1.0f;
     MSPal  fromPal{}, live{};
 
+    // currentPreset is a COMBINED index: 0..kNumFactoryPresets-1 select factory
+    // presets; kNumFactoryPresets + n selects user preset n in presetStore.list().
+    // -1 = nothing recalled. programLoaded() (host->UI) only ever maps to factory.
     int    currentPreset = -1;
     bool   showMod = false;
+
+    // user preset library + save modal state
+    scpreset::Store presetStore;
+    bool   showSaveModal = false;
+    bool   saveModalJustOpened = false;
+    bool   overwriteConfirm = false;
+    bool   deleteConfirm = false;
+    char   saveNameBuf[128] = {};
 
     // filter-curve cache
     static constexpr int kFcN = 180;
