@@ -36,8 +36,9 @@ namespace msynth
 // instead of four, and a diode-style (tanh-clipped) resonance feedback path:
 //
 //   * Each stage is the same naive zero-delay one-pole used by the OTA/ladder
-//     models: y = s + g*(in - s), s = tanh(y), with g = tan(pi*fc/sr). Three of
-//     them cascade to give the canonical 18 dB/oct slope. tanh(y) keeps each
+//     models: y = s + g*(in - s), s = tanh(y), with the exact bilinear coefficient
+//     g = gw/(1+gw) where gw = tan(pi*fc/sr) (always < 1 -> stable at the ceiling).
+//     Three of them cascade to give the canonical 18 dB/oct slope. tanh(y) keeps each
 //     stage output bounded to +-1 and gives unity small-signal gain (so at res 0
 //     the response is a clean linear 3-pole rolloff — see slope_gate).
 //   * Resonance feeds the third stage's output back to the input through a tanh
@@ -73,8 +74,11 @@ public:
     {
         lastCutoff = cutoffHz;
         const float fc = clampf(cutoffHz, 10.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
-        g = std::tan(kPi * fc / sr);
-        g = clampf(g, 0.0f, 12.0f);
+        // Exact bilinear one-pole coefficient: gw = tan(pi*fc/sr), g = gw/(1+gw).
+        // g is always < 1 so the small-signal pole stays stable even at the 0.4x
+        // ceiling (a naive g = tan(...) reaches ~3.08 there -> |1-g| > 1).
+        const float gw = std::tan(kPi * fc / sr);
+        g = gw / (1.0f + gw);
         res = clampf(resonance, 0.0f, 1.0f);
         feedback = res * kMaxFeedback;
         drive = maxf(0.1f, driveAmount);
