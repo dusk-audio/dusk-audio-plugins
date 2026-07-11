@@ -173,3 +173,6 @@ calibration.db-shm
 calibration.db-wal
 .claude/
 plugins/neural-amp/
+
+# Multi-synth core test build artifacts
+plugins/multi-synth/core/tests/build/

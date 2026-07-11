@@ -1,0 +1,210 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+//
+// MultiSynthDSP.hpp — top-level Multi-Synth engine (framework-free C++17).
+//
+// Zero JUCE/DPF includes. One class wrapping the whole instrument: voices,
+// mod matrix, arpeggiator, effects. The DPF shell owns MIDI parsing and the
+// parameter table; it forwards everything through the thread-safe atomic API
+// below.
+//
+// ============================ THREADING CONTRACT ============================
+// prepare()/reset() run on the message/setup thread (they allocate). Everything
+// else (setParameter, note/controller/tempo events, processBlock) is called
+// from the audio thread. Parameters are plain atomics (relaxed); processBlock
+// snapshots them once per block into a VoiceParameters struct — no atomic loads
+// or string lookups in the render path.
+//
+// ======================== SAMPLE-ACCURATE MIDI =============================
+// Note/controller/pitch-bend/tempo events carry NO explicit sample offset. The
+// shell achieves sample accuracy by SPLITTING the block at each MIDI event
+// offset and calling processBlock() for each segment, applying the events that
+// fall on a boundary in between. e.g. for events at offsets 0, 130, 400 in a
+// 512-frame block:
+//     apply events@0;   processBlock(out+0,   130);
+//     apply events@130; processBlock(out+130, 270);
+//     apply events@400; processBlock(out+400, 112);
+// The arpeggiator advances per host sample INSIDE processBlock and triggers its
+// own generated notes sample-accurately, so it needs no external event stream.
+//
+// ============================ OVERSAMPLING (fix #1) =========================
+// Voices render at internalRate = hostRate * osFactor (1/2/4, default 2x). Every
+// oscillator/envelope/LFO/S&H/filter time constant derives from internalRate,
+// so pitch and all envelope/LFO times are CORRECT at every factor (the JUCE
+// build was an octave low at anything but 4x). Decimation back to hostRate uses
+// cascaded polyphase halfband FIRs (shared DuskOversampler taps), not a box
+// average. Effects, the vintage BBD chorus and the arpeggiator run at hostRate.
+// Changing the factor re-prepares the voices at block start (allocation-free).
+
+#pragma once
+
+#include "Voice.hpp"
+#include "Effects.hpp"
+#include "Arpeggiator.hpp"
+#include "DuskOversampler.hpp" // HalfbandFIR + hbtaps
+
+#include <array>
+#include <atomic>
+
+namespace msynth
+{
+
+//==============================================================================
+// Flat parameter index. The shell's param table (Phase 3) maps onto these; the
+// test harness resolves them by name (see paramIndexForName).
+enum Param : int
+{
+    // Global
+    pMode = 0, pMasterTune, pMasterVol, pMasterPan, pStereoWidth, pOversampling, pAnalogAmt, pVintage,
+    // Oscillators
+    pOsc1Wave, pOsc1Detune, pOsc1PW, pOsc1Level,
+    pOsc2Wave, pOsc2Detune, pOsc2PW, pOsc2Level, pOsc2Semi,
+    pOsc3Wave, pOsc3Level, pSubLevel, pSubWave, pNoiseLevel,
+    // Filter + envelopes
+    pFilterCutoff, pFilterRes, pFilterHP, pFilterEnvAmt,
+    pAmpA, pAmpD, pAmpS, pAmpR, pAmpCurve,
+    pFiltA, pFiltD, pFiltS, pFiltR, pFiltCurve,
+    // Mode-specific
+    pCrossMod, pRingMod, pHardSync, pFMAmount,
+    pPmFenvOscA, pPmFenvFilt, pPmOscBOscA, pPmOscBPWM, pShRate, pCosmosChorus,
+    // LFOs
+    pLfo1Rate, pLfo1Shape, pLfo1Fade, pLfo1Sync,
+    pLfo2Rate, pLfo2Shape, pLfo2Fade, pLfo2Sync,
+    // Unison / porta / velocity
+    pUnisonVoices, pUnisonDetune, pUnisonSpread,
+    pPortaTime, pLegato, pGlideMode, pVelSens, pVelCurve, pPbRange,
+    // Arp
+    pArpOn, pArpMode, pArpOctave, pArpRate, pArpGate, pArpSwing, pArpLatch,
+    pArpVelMode, pArpFixedVel,
+    pArpStep0, // 16 contiguous step mutes
+    pArpStep15 = pArpStep0 + 15,
+    // FX
+    pDriveOn, pDriveType, pDriveAmt, pDriveMix,
+    pChorusOn, pChorusRate, pChorusDepth, pChorusMix,
+    pDelayOn, pDelaySync, pDelayTime, pDelayDiv, pDelayFB, pDelayMix, pDelayPP, pDelayTape,
+    pReverbOn, pReverbSize, pReverbDecay, pReverbDamp, pReverbMix, pReverbPD,
+    // Mod matrix (8 slots x 3)
+    pModSrc0, pModSrc7 = pModSrc0 + 7,
+    pModDst0, pModDst7 = pModDst0 + 7,
+    pModAmt0, pModAmt7 = pModAmt0 + 7,
+    kNumParams
+};
+
+class MultiSynthDSP
+{
+public:
+    static constexpr int kScopeSize = 512;
+
+    MultiSynthDSP();
+
+    //--- lifecycle (message thread; allocates) --------------------------------
+    void prepare(double sampleRate, int maxBlockSize);
+    void reset();
+
+    //--- render (audio thread; RT-safe) ---------------------------------------
+    void processBlock(float* outL, float* outR, int nSamples) noexcept;
+
+    //--- parameters (any thread) ----------------------------------------------
+    void setParameter(int index, float value) noexcept
+    {
+        if (index >= 0 && index < kNumParams)
+            params[(size_t)index].store(value, std::memory_order_relaxed);
+    }
+    float getParameter(int index) const noexcept
+    {
+        return (index >= 0 && index < kNumParams) ? params[(size_t)index].load(std::memory_order_relaxed) : 0.0f;
+    }
+    // Name lookup for the test harness / shell param mapping. Returns -1 if unknown.
+    static int paramIndexForName(const char* name) noexcept;
+
+    //--- MIDI / transport (audio thread; see contract above) ------------------
+    void noteOn(int note, float velocity01) noexcept;
+    void noteOff(int note) noexcept;
+    void pitchBend(float norm) noexcept   { pitchBendNorm.store(clampf(norm, -1.0f, 1.0f), std::memory_order_relaxed); }
+    void modWheel(float v01) noexcept     { modWheelValue.store(clamp01(v01), std::memory_order_relaxed); }
+    void aftertouch(float v01) noexcept   { aftertouchValue.store(clamp01(v01), std::memory_order_relaxed); }
+    void allNotesOff() noexcept;
+    void setTempo(double bpm, bool playing) noexcept
+    { hostBpm.store(bpm, std::memory_order_relaxed); transportPlaying.store(playing, std::memory_order_relaxed); }
+
+    //--- observables (read from any thread) -----------------------------------
+    float getOutputLevelL() const noexcept { return outLevelL.load(std::memory_order_relaxed); }
+    float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
+    int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
+    int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
+    // 512-sample mono scope ring; writePos is the next index to be written.
+    const float* getScopeBuffer() const noexcept { return scope.data(); }
+    int   getScopeWritePos() const noexcept { return scopeWritePos.load(std::memory_order_relaxed); }
+
+private:
+    static float clamp01(float v) noexcept { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+    float p(Param e) const noexcept { return params[(size_t)e].load(std::memory_order_relaxed); }
+
+    void snapshotParameters() noexcept;   // atomics -> voiceParams + subsystems
+    void applyOsFactor(int factor);       // (re)prepare voices at internalRate
+
+    // Streaming stereo decimator: generate `factor` internal samples, get one
+    // host sample. Halfband stage assignment mirrors DuskOversampler.
+    struct Decimator
+    {
+        int factor = 2;
+        duskaudio::HalfbandFIR<47, 12> downA; // 2x -> 1x
+        duskaudio::HalfbandFIR<15, 4>  downB; // 4x -> 2x
+        void setFactor(int f) noexcept { factor = (f == 4) ? 4 : (f == 2 ? 2 : 1); }
+        void reset() noexcept { downA.reset(); downB.reset(); }
+        float process(const float* s) noexcept
+        {
+            if (factor == 1) return s[0];
+            if (factor == 2)
+            {
+                downA.push(s[0]); downA.push(s[1]);
+                return downA.out(duskaudio::hbtaps::kA);
+            }
+            downB.push(s[0]); downB.push(s[1]); const float a = downB.out(duskaudio::hbtaps::kB);
+            downB.push(s[2]); downB.push(s[3]); const float b = downB.out(duskaudio::hbtaps::kB);
+            downA.push(a); downA.push(b);
+            return downA.out(duskaudio::hbtaps::kA);
+        }
+    };
+
+    double hostRate = 44100.0;
+    int    maxBlock = 512;
+    int    osFactor = 2;
+
+    std::array<std::atomic<float>, kNumParams> params;
+
+    VoiceAllocator voices;
+    ModMatrix modMatrix;
+    Arpeggiator arp;
+    EffectsChain effects;
+    JunoChorusEffect junoChorus;
+    Decimator decimL, decimR;
+
+    VoiceParameters voiceParams;
+
+    // block-cached engine-level controls
+    float masterGain = 1.0f, masterPan = 0.0f, stereoWidth = 0.5f, vintage = 0.0f;
+    float baseDriveMix = 1.0f, baseChorusMix = 0.5f, baseDelayMix = 0.3f, baseReverbMix = 0.2f;
+    bool  hasEffectsMixRouting = false;
+    bool  arpEnabled = false;
+
+    float prevVintageL = 0.0f, prevVintageR = 0.0f;
+    Xorshift vintageRng;
+
+    // MIDI / transport state
+    std::atomic<float> pitchBendNorm { 0.0f };
+    std::atomic<float> modWheelValue { 0.0f };
+    std::atomic<float> aftertouchValue { 0.0f };
+    std::atomic<double> hostBpm { 120.0 };
+    std::atomic<bool> transportPlaying { false };
+
+    // observables
+    std::atomic<float> outLevelL { -60.0f };
+    std::atomic<float> outLevelR { -60.0f };
+    std::atomic<int>   arpStep { 0 };
+    std::atomic<int>   arpTotalSteps { 0 };
+    std::array<float, kScopeSize> scope {};
+    std::atomic<int>   scopeWritePos { 0 };
+    float meterL = 0.0f, meterR = 0.0f, meterDecay = 0.9999f;
+};
+
+} // namespace msynth
