@@ -19,7 +19,9 @@ def render(cmd, name, **params):
     args = [BIN, cmd, path]
     for k, v in params.items():
         args.append(f"{k}={v}")
-    subprocess.run(args, check=True, stderr=subprocess.DEVNULL)
+    res = subprocess.run(args, timeout=120, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"acid_test failed ({res.returncode}): {res.stderr.strip()}")
     x, sr = sf.read(path)
     if x.ndim > 1:
         x = x[:, 0]
