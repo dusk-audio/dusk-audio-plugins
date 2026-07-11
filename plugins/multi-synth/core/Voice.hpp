@@ -233,6 +233,9 @@ public:
         {
             ampEnv.noteOn();
             filtEnv.noteOn();
+            // Per-note LFO retrigger (resets phase + fade-in + S&H target). Legato
+            // notes keep the running LFO. Without this the LFO fade-in is inert.
+            lfo1.retrigger(); lfo2.retrigger();
             filterR.reset(); // keep the (usually idle) R filter fresh for unison
             for (int u = 0; u < kMaxUnison; ++u)
             {
