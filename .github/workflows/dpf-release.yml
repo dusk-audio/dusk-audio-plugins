@@ -1,0 +1,525 @@
+name: Build Sunset Circuits (DPF)
+
+# Release + CI-debug workflow for the DPF-based Sunset Circuits synth.
+#
+# The DPF ports live outside the JUCE release build graph (build.yml), so they
+# need their own matrix: this checks out DISTRHO/DPF + DISTRHO/DPF-Widgets at
+# pinned SHAs and builds plugins/sunset-circuits/dpf-plugin (VST3 + CLAP + LV2
+# everywhere, plus a notarizable AU on macOS with an auval pass).
+#
+# Triggers:
+#   - push tag 'sunset-circuits-v*'  -> full release (signs+notarizes mac, cuts a
+#                                       GitHub Release from the platform zips).
+#   - workflow_dispatch              -> the cross-platform compile/debug loop
+#                                       (unsigned; no Release job output).
+on:
+  push:
+    tags:
+      - 'sunset-circuits-v*'
+  workflow_dispatch:
+
+# DPF / DPF-Widgets pinned to the SHAs validated locally for this release. Bump
+# both together and re-run the dispatch matrix before tagging.
+env:
+  DPF_SHA: 4238e1c7f0351bbe488d79f0899c540543ac7583
+  DPFWIDGETS_SHA: 730da6397904da66d99667c1cb30fc77fc3d794a
+  PLUGIN_DIR: plugins/sunset-circuits/dpf-plugin
+  SLUG: sunset-circuits
+
+jobs:
+  # Parse the release version out of the tag; empty on workflow_dispatch, which
+  # lets the DPF CMakeLists fall back to SUNSETCIRCUITS_DEFAULT_VERSION (1.0.0).
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_release: ${{ steps.v.outputs.is_release }}
+    steps:
+      - name: Parse tag
+        id: v
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION=""
+          IS_RELEASE="false"
+          if [[ "$GITHUB_REF" == refs/tags/sunset-circuits-v* ]]; then
+            IS_RELEASE="true"
+            RAW="${TAG#sunset-circuits-v}"
+            if [[ "$RAW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              VERSION="$RAW"
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "is_release=$IS_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION:-<default 1.0.0>}  is_release: $IS_RELEASE"
+
+  build-linux-x64:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ubuntu:20.04  # glibc 2.31, matching the JUCE fleet (build.yml)
+    env:
+      PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Install base tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates software-properties-common wget gpg
+
+      - name: Install GCC 11 toolchain
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # gcc-11 is not in focal's base repos; the toolchain PPA add is
+          # occasionally flaky, so retry (mirrors build.yml).
+          add_toolchain() { timeout 120 add-apt-repository -y ppa:ubuntu-toolchain-r/test && timeout 180 apt-get update; }
+          add_toolchain || { echo "PPA attempt 1 failed; retry in 15s"; sleep 15; add_toolchain; } \
+                        || { echo "PPA attempt 2 failed; retry in 30s"; sleep 30; add_toolchain; }
+          apt-get install -y gcc-11 g++-11
+          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+          update-alternatives --install /usr/bin/cc  cc  /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-11 100
+          g++ --version
+
+      - name: Install modern CMake + Ninja + DPF deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config \
+            libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libdbus-1-dev
+          cmake --version
+          ninja --version
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_SHA }}
+          path: DPF
+          submodules: recursive
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_SHA }}
+          path: DPF-Widgets
+          submodules: recursive
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DDPF_PATH="${{ github.workspace }}/DPF" \
+            -DDPFWIDGETS_PATH="${{ github.workspace }}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j"$(nproc)"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          mkdir -p out/VST3 out/CLAP out/LV2
+          cp -r build/bin/sunset_circuits.vst3 out/VST3/
+          cp    build/bin/sunset_circuits.clap out/CLAP/
+          cp -r build/bin/sunset_circuits.lv2  out/LV2/
+          test -f "out/VST3/sunset_circuits.vst3/Contents/x86_64-linux/sunset_circuits.so"
+          test -f "out/LV2/sunset_circuits.lv2/manifest.ttl"
+          ( cd out && zip -r "../${SLUG}-linux.zip" . )
+          echo "=== contents ==="; unzip -l "${SLUG}-linux.zip"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SLUG }}-linux
+          path: ${{ env.PLUGIN_DIR }}/${{ env.SLUG }}-linux.zip
+          retention-days: 30
+
+  build-linux-arm64:
+    needs: setup
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    container:
+      image: ubuntu:22.04  # glibc 2.35, matching build.yml's arm job
+    env:
+      PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Install base tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates software-properties-common wget gpg
+
+      - name: Install GCC 11 toolchain
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # Ubuntu 22.04 ships gcc-11 natively — no PPA needed.
+          apt-get install -y gcc-11 g++-11
+          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+          update-alternatives --install /usr/bin/cc  cc  /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-11 100
+          g++ --version
+
+      - name: Install modern CMake + Ninja + DPF deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config \
+            libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libdbus-1-dev
+          cmake --version
+          ninja --version
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_SHA }}
+          path: DPF
+          submodules: recursive
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_SHA }}
+          path: DPF-Widgets
+          submodules: recursive
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DDPF_PATH="${{ github.workspace }}/DPF" \
+            -DDPFWIDGETS_PATH="${{ github.workspace }}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j"$(nproc)"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          mkdir -p out/VST3 out/CLAP out/LV2
+          cp -r build/bin/sunset_circuits.vst3 out/VST3/
+          cp    build/bin/sunset_circuits.clap out/CLAP/
+          cp -r build/bin/sunset_circuits.lv2  out/LV2/
+          test -f "out/VST3/sunset_circuits.vst3/Contents/aarch64-linux/sunset_circuits.so"
+          test -f "out/LV2/sunset_circuits.lv2/manifest.ttl"
+          ( cd out && zip -r "../${SLUG}-linux-arm64.zip" . )
+          echo "=== contents ==="; unzip -l "${SLUG}-linux-arm64.zip"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SLUG }}-linux-arm64
+          path: ${{ env.PLUGIN_DIR }}/${{ env.SLUG }}-linux-arm64.zip
+          retention-days: 30
+
+  build-windows:
+    needs: setup
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_SHA }}
+          path: DPF
+          submodules: recursive
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_SHA }}
+          path: DPF-Widgets
+          submodules: recursive
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DDUSK_DPF_INSTALL_LOCAL=OFF `
+            -DDPF_PATH="${{ github.workspace }}/DPF" `
+            -DDPFWIDGETS_PATH="${{ github.workspace }}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/VST3, out/CLAP, out/LV2 | Out-Null
+          Copy-Item -Recurse build/bin/sunset_circuits.vst3 out/VST3/
+          Copy-Item          build/bin/sunset_circuits.clap out/CLAP/
+          Copy-Item -Recurse build/bin/sunset_circuits.lv2  out/LV2/
+          Compress-Archive -Path out/* -DestinationPath "$env:SLUG-windows.zip" -Force
+          Write-Host "=== contents ==="
+          Get-ChildItem -Recurse out | Select-Object FullName
+
+      - name: Install pluginval
+        shell: pwsh
+        run: |
+          # pluginval ships a ready-to-run Windows binary in its GitHub releases;
+          # trivially installable, so we run a headless VST3 validation here.
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval -Force
+          Get-ChildItem -Recurse pluginval -Filter pluginval.exe | Select-Object -First 1
+
+      - name: Validate VST3 (pluginval, headless)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          $pv = Get-ChildItem -Recurse "$env:GITHUB_WORKSPACE/pluginval" -Filter pluginval.exe | Select-Object -First 1
+          $vst3 = (Resolve-Path "build/bin/sunset_circuits.vst3").Path
+          # --skip-gui-tests: the DPF headless editor lifecycle is validated in a
+          # real host during QA (docs/dpf-migration landmine 9), not by a headless
+          # runner with no display.
+          & $pv.FullName --strictness-level 5 --skip-gui-tests --validate $vst3
+          if ($LASTEXITCODE -ne 0) { Write-Error "pluginval failed ($LASTEXITCODE)"; exit $LASTEXITCODE }
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SLUG }}-windows
+          path: ${{ env.PLUGIN_DIR }}/${{ env.SLUG }}-windows.zip
+          retention-days: 30
+
+  build-macos:
+    needs: setup
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_SHA }}
+          path: DPF
+          submodules: recursive
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_SHA }}
+          path: DPF-Widgets
+          submodules: recursive
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Configure (Universal Binary)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
+            -DDPF_PATH="${{ github.workspace }}/DPF" \
+            -DDPFWIDGETS_PATH="${{ github.workspace }}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2 + AU)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 sunset_circuits-au -j"$(sysctl -n hw.ncpu)"
+
+      - name: Verify universal binary
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          BIN="build/bin/sunset_circuits.vst3/Contents/MacOS/sunset_circuits"
+          lipo -info "$BIN"
+          lipo -info "$BIN" | grep -q "arm64" && lipo -info "$BIN" | grep -q "x86_64" \
+            && echo "Universal confirmed" || { echo "::error::VST3 not universal"; exit 1; }
+
+      - name: Install AU + auval
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          COMP=$(find build -name '*.component' -type d | head -1)
+          if [ -z "$COMP" ]; then echo "::error::No AU component built"; exit 1; fi
+          echo "AU: $COMP"
+          plutil -p "$COMP/Contents/Info.plist" || cat "$COMP/Contents/Info.plist"
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "$COMP" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "--- registered Dusk instruments ---"
+          auval -a | grep -i -E "dusk|DsSC" || echo "(not listed yet; validating by code)"
+          # Sunset Circuits is an instrument -> AU type 'aumu'; subtype DsSC, manufacturer Dusk.
+          auval -v aumu DsSC Dusk
+
+      - name: Import Code Signing Certificate
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/') }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
+          security import certificate.p12 -P "$MACOS_CERTIFICATE_PWD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          rm certificate.p12
+
+      - name: Code Sign Plugins
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/') }}
+        working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          for plugin in build/bin/sunset_circuits.vst3 build/bin/sunset_circuits.component build/bin/sunset_circuits.clap; do
+            if [ -d "$plugin" ]; then
+              echo "Signing: $plugin"
+              codesign --force --deep --sign "$MACOS_SIGNING_IDENTITY" --options runtime --timestamp "$plugin"
+              codesign --verify --verbose "$plugin"
+            fi
+          done
+
+      - name: Notarize Plugins
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/') }}
+        working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          mkdir -p notarize_staging
+          for plugin in build/bin/sunset_circuits.vst3 build/bin/sunset_circuits.component build/bin/sunset_circuits.clap; do
+            [ -d "$plugin" ] && cp -R "$plugin" notarize_staging/
+          done
+          ditto -c -k --keepParent notarize_staging plugins-macos-notarize.zip
+          xcrun notarytool submit plugins-macos-notarize.zip \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          for plugin in notarize_staging/*.vst3 notarize_staging/*.component notarize_staging/*.clap; do
+            [ -d "$plugin" ] && xcrun stapler staple "$plugin"
+          done
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          mkdir -p out/VST3 out/CLAP out/LV2 out/AU
+          # Prefer notarized+stapled bundles when present.
+          if [ -d notarize_staging ]; then
+            cp -r notarize_staging/sunset_circuits.vst3      out/VST3/ 2>/dev/null || true
+            cp -r notarize_staging/sunset_circuits.clap      out/CLAP/ 2>/dev/null || true
+            cp -r notarize_staging/sunset_circuits.component out/AU/   2>/dev/null || true
+          fi
+          [ -e out/VST3/sunset_circuits.vst3 ]      || cp -r build/bin/sunset_circuits.vst3      out/VST3/
+          [ -e out/CLAP/sunset_circuits.clap ]      || cp -r build/bin/sunset_circuits.clap      out/CLAP/
+          [ -e out/AU/sunset_circuits.component ]   || cp -r build/bin/sunset_circuits.component out/AU/
+          cp -r build/bin/sunset_circuits.lv2 out/LV2/
+          ( cd out && zip -r "../${SLUG}-macos.zip" . )
+          echo "=== contents ==="; unzip -l "${SLUG}-macos.zip"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SLUG }}-macos
+          path: ${{ env.PLUGIN_DIR }}/${{ env.SLUG }}-macos.zip
+          retention-days: 30
+
+  # Assemble the GitHub Release from the four platform zips (tags only).
+  release:
+    needs: [setup, build-linux-x64, build-linux-arm64, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: needs.setup.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository (for tag message)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble release notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#sunset-circuits-v}"
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
+          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          {
+            echo "## Sunset Circuits v${VERSION}"
+            echo ""
+            if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
+            echo "### Installation"
+            echo ""
+            echo "Each zip contains \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS) \`AU/\` folders."
+            echo ""
+            echo "**Linux (x86_64 / ARM64):** copy \`.vst3\` to \`~/.vst3/\`, \`.lv2\` to \`~/.lv2/\`, \`.clap\` to \`~/.clap/\`."
+            echo ""
+            echo "**Windows:** copy \`.vst3\` to \`C:\\Program Files\\Common Files\\VST3\\\`, \`.clap\` to \`C:\\Program Files\\Common Files\\CLAP\\\`."
+            echo ""
+            echo "**macOS:** copy \`.vst3\` to \`~/Library/Audio/Plug-Ins/VST3/\`, \`.component\` to \`~/Library/Audio/Plug-Ins/Components/\`, \`.clap\` to \`~/Library/Audio/Plug-Ins/CLAP/\`."
+          } > release_body.md
+          echo "=== staged zips ==="; find artifacts -name '*.zip'
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+          body_path: release_body.md
+          draft: false
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
