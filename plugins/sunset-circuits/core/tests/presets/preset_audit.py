@@ -143,7 +143,9 @@ def main():
 
     if as_json:
         print(json.dumps(rows, indent=2))
-        return
+        # Still enforce the pass/fail contract: nonzero exit if any row failed.
+        fails = sum(1 for r in rows if not r["pass"])
+        sys.exit(1 if fails else 0)
 
     print(f"{'#':>3} {'name':<20}{'peak':>8}{'rms':>8}{'cent':>8}{'f0':>9}"
           f"{'clip':>5}{'dc':>7}  result")

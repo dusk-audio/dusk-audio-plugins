@@ -280,8 +280,19 @@ public:
         fmCarrierTrim = nc > 0 ? 1.0f / std::sqrt((float)nc) : 1.0f;
     }
 
-    void noteOff() noexcept { ampEnv.noteOff(); filtEnv.noteOff(); }
-    void setSteal() noexcept { ampEnv.noteOff(); }
+    // Note-off also releases every Prism operator envelope, so per-op release
+    // times shape the FM timbre during the tail (the amp env still gates the
+    // voice). Harmless outside Prism: an idle FMVoiceEngine renders nothing.
+    void noteOff() noexcept
+    {
+        ampEnv.noteOff(); filtEnv.noteOff();
+        for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
+    }
+    void setSteal() noexcept
+    {
+        ampEnv.noteOff();
+        for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
+    }
 
     bool isActive() const noexcept { return active; }
     bool isReleasing() const noexcept { return ampEnv.getStage() == ADSREnvelope::Stage::Release; }

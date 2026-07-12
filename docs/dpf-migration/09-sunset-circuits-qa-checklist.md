@@ -46,7 +46,8 @@ Reproduce: `core/tests/build/cpu_bench all 10`.
 
 Installed hosts on this box: `ardour9`, `lv2info`, `lv2ls`, `amidi`, `aconnect`,
 `pluginval`. No `jalv` or `carla` are installed, so the DSP was hosted through a
-small `lilv`-based host (`scratchpad/lv2_smoke.c`, the same library `jalv` uses).
+small `lilv`-based host (tracked at
+`plugins/sunset-circuits/dpf-plugin/tools/lv2_smoke.c`, the same library `jalv` uses).
 
 Results:
 
@@ -199,6 +200,9 @@ editor lifecycle testing.
 ### Ear pass (final sign-off)
 
 - [ ] All 54 presets auditioned; each is musical, on-brand, and free of clicks,
-      clipping, or aliasing artifacts at 2x.
+      clipping, or AUDIBLE aliasing at 2x. (Zero aliasing at 2x is not physical;
+      the bar is inaudibility in normal use. Engineering guide: alias_gate's
+      report shows worst images around -47 dBc at 2x — anything that stands out
+      by ear on a preset is a fail regardless of the number.)
 - [ ] Spot-check exposed leads and bright FM at 4x for clean high end.
 - [ ] The six flagship demos in the demo pack sound as intended.

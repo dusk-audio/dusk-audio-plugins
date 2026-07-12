@@ -109,6 +109,11 @@ via `SC_VERSION_*` compile defs, and the UI nameplate tooltip):
 ```
 sed -i.bak 's/set(SUNSETCIRCUITS_DEFAULT_VERSION "[^"]*")/set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")/' \
   plugins/sunset-circuits/dpf-plugin/CMakeLists.txt && rm plugins/sunset-circuits/dpf-plugin/CMakeLists.txt.bak
+# Verify the replacement actually landed — a silently unmatched sed must stop
+# the release before commit/tag.
+grep -q 'set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")' \
+  plugins/sunset-circuits/dpf-plugin/CMakeLists.txt \
+  || { echo "ERROR: Sunset Circuits version bump did not apply"; exit 1; }
 ```
 Stage `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt` in Step 5 (the
 `git add plugins/*/CMakeLists.txt` glob does NOT match the nested dpf-plugin
@@ -217,7 +222,9 @@ If pandoc or xelatex is not installed locally, this step fails. The skill should
 ```bash
 git add plugins/*/CMakeLists.txt
 # Sunset Circuits (DPF): its CMakeLists is nested, not matched by the glob above.
-git add plugins/sunset-circuits/dpf-plugin/CMakeLists.txt 2>/dev/null || true
+# No error suppression — the file is always tracked (adding it unchanged is a
+# no-op), and a real git add failure must stop the release before commit/tag.
+git add plugins/sunset-circuits/dpf-plugin/CMakeLists.txt
 # Issue #80: include any manual front-matter bumps from Step 3
 git add manuals/*.md 2>/dev/null || true
 git commit -m "<summary of version bumps>"

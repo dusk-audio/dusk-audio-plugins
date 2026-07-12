@@ -161,7 +161,9 @@ authored against the octave-bug — re-voice by ear/measurement, don't trust old
 Fixed design space **1240 × 780**, uniformly scaled (tape-echo pattern), ImDrawList
 custom rendering only (stock rendering widgets limited to combos + `InputText`;
 `ImGui::InvisibleButton` allowed for interaction/hit-targets, it draws nothing). Load
-bold TTF at 30 × scaleFactor (playbook §4).
+the bold TTF as a multi-size `CrispFontSet` — design sizes {9, 10, 11, 12, 13, 15,
+20, 26} × scaleFactor per the UI spec §9, which is the source of truth for the font
+contract (a single-size load is not enough for a panel this dense).
 
 **Concept: one chassis, six personalities.** Dark instrument panel with brushed-metal
 frame and subtle wood side cheeks. The **mode selector is the hero**: six backlit
@@ -206,6 +208,12 @@ shift-drag fine, mouse wheel. Every control gets a tooltip. Meters/scope read vi
 7. LV2: MONOLITHIC (direct access), lv2ls + instantiation.
 8. Xvfb UI sweep: drag every control, screenshot, verify readouts.
 9. Arp/seq timing: render at 120 BPM 1/8, onset grid within ±1 ms after step 1.
+   Host phase-lock (implemented; gated in `core/tests` arp/acid seq gates): with the
+   transport running and a song position reported, onsets land on the ABSOLUTE host
+   beat grid (quantized start), re-sync cleanly across a loop wrap, and non-4/4
+   meters (e.g. 6/8) step at the correct rate (BBT beats normalized ×4/beatType).
+   With the transport stopped the clock free-runs at the host tempo. Transitions
+   between locked and free-running release any sounding note (stuck-note gate).
 
 ## Process
 

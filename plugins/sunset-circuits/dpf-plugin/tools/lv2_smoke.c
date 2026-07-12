@@ -184,6 +184,11 @@ int main(int argc, char** argv) {
     // --- MIDI -> audio smoke: inject a note-on and confirm non-silent output.
     if (atomInIdx >= 0) {
         ctrl[oversamplingIdx] = 1.0f; // 2x
+        // Prime the oversampling change with one empty run() so the engine's
+        // re-preparation and latency update settle BEFORE the note is injected;
+        // injecting into the same block as a factor switch could race the
+        // re-prepare and eat the note (false SILENT fail).
+        lilv_instance_run(inst, BLOCK);
         const LV2_URID midiEventURID = map_uri(NULL, "http://lv2plug.in/ns/ext/midi#MidiEvent");
         uint8_t* buf = atomBuf[atomInIdx & 63];
         LV2_Atom_Sequence* seq = (LV2_Atom_Sequence*)buf;

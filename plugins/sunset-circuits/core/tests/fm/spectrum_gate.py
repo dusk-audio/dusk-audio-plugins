@@ -49,8 +49,12 @@ def part_b():
     expected = sorted({round(e) for e in expected
                        if e > 20.0 and abs(e / F0 - round(e / F0)) > 0.1})
 
+    # Tolerance a few FFT bins wide (not fm*0.05 ~= 52 Hz, which could graze an
+    # F0 harmonic); the expected bins are already excluded near integer harmonics.
+    binw = f[1] - f[0]
+    tol = 4 * binw
+
     def peak_near(fc):
-        tol = fm * 0.05
         m = (f > fc - tol) & (f < fc + tol)
         return np.max(X[m]) if np.any(m) else 0.0
 

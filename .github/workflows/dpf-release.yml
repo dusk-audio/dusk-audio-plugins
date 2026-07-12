@@ -16,12 +16,6 @@ on:
   push:
     tags:
       - 'sunset-circuits-v*'
-    # TEMPORARY (Phase 3 CI loop): workflow_dispatch only fires for workflows on
-    # the default branch, so while this lives on the feature branch we drive the
-    # cross-platform compile loop via branch pushes. Remove this branches: block
-    # before merging to main — tags + workflow_dispatch are the shipping triggers.
-    branches:
-      - 'multi-synth/dpf-core'
   workflow_dispatch:
 
 # DPF / DPF-Widgets pinned to the SHAs validated locally for this release. Bump
@@ -40,6 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       is_release: ${{ steps.v.outputs.is_release }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - name: Parse tag
         id: v
@@ -47,20 +42,27 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION=""
           IS_RELEASE="false"
+          PRERELEASE="false"
           if [[ "$GITHUB_REF" == refs/tags/sunset-circuits-v* ]]; then
-            IS_RELEASE="true"
             RAW="${TAG#sunset-circuits-v}"
             # Accept X.Y.Z with an optional prerelease suffix (-alpha, -beta.2,
             # -rc1, ...). CMake's project(VERSION) only takes the numeric core,
-            # so export that; the full tag still drives release naming and the
-            # prerelease flag in the release job.
+            # so export that; the validated suffix drives the prerelease flag in
+            # the release job. A malformed tag fails HERE, before any build or
+            # publish step, instead of silently shipping the default version.
             if [[ "$RAW" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9.]+)?$ ]]; then
+              IS_RELEASE="true"
               VERSION="${BASH_REMATCH[1]}"
+              if [[ -n "${BASH_REMATCH[2]}" ]]; then PRERELEASE="true"; fi
+            else
+              echo "::error::malformed release tag '$TAG' (want sunset-circuits-vX.Y.Z or sunset-circuits-vX.Y.Z-<suffix>)"
+              exit 1
             fi
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "is_release=$IS_RELEASE" >> "$GITHUB_OUTPUT"
-          echo "Version: ${VERSION:-<default 1.0.0>}  is_release: $IS_RELEASE"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION:-<default 1.0.0>}  is_release: $IS_RELEASE  prerelease: $PRERELEASE"
 
   build-linux-x64:
     needs: setup
@@ -293,12 +295,25 @@ jobs:
           # fetch silently yields a broken header (NanoVG.cpp then fails with
           # missing PFNGL*PROC typedefs). Pre-populate from the canonical Khronos
           # GitHub registry so DPF's `if(NOT EXISTS)` skips the broken download.
+          # Pinned to immutable registry commits + SHA-256 verified, so a moved
+          # branch or tampered/truncated download fails loudly here rather than
+          # compiling (or shipping) against an unvetted header.
           $gl = "${{ github.workspace }}/DPF/khronos/GL"
           $khr = "${{ github.workspace }}/DPF/khronos/KHR"
           New-Item -ItemType Directory -Force -Path $gl, $khr | Out-Null
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api/GL/glext.h" -OutFile "$gl/glext.h"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h" -OutFile "$khr/khrplatform.h"
-          Write-Host "glext.h size: $((Get-Item "$gl/glext.h").Length) bytes"
+          $glRev  = "9d527dbc81bb76e35ba284fe385ed8a5ddb90cbc"  # KhronosGroup/OpenGL-Registry
+          $khrRev = "3d7796b3721d93976b6bfe536aa97bbc4bce8667"  # KhronosGroup/EGL-Registry
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/$glRev/api/GL/glext.h" -OutFile "$gl/glext.h"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/$khrRev/api/KHR/khrplatform.h" -OutFile "$khr/khrplatform.h"
+          $expected = @{
+            "$gl/glext.h"        = "B381ABF98F9705E4B3EFACB6850D2A86982B3039F66CCE88FF7F0350F46F04BF"
+            "$khr/khrplatform.h" = "7B1E01AAA7AD8F6FC34B5C7BDF79EBF5189BB09E2C4D2E79FC5D350623D11E83"
+          }
+          foreach ($f in $expected.Keys) {
+            $h = (Get-FileHash -Algorithm SHA256 $f).Hash
+            if ($h -ne $expected[$f]) { Write-Error "checksum mismatch for ${f}: $h"; exit 1 }
+          }
+          Write-Host "glext.h size: $((Get-Item "$gl/glext.h").Length) bytes (checksums OK)"
 
       - name: Patch DPF-Widgets for MSVC
         shell: pwsh
@@ -350,7 +365,14 @@ jobs:
         run: |
           # pluginval ships a ready-to-run Windows binary in its GitHub releases;
           # trivially installable, so we run a headless VST3 validation here.
+          # SHA-256 pinned: release assets are practically immutable but the tag
+          # is not cryptographically so — verify before executing anything.
           Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Windows.zip" -OutFile pluginval.zip
+          $h = (Get-FileHash -Algorithm SHA256 pluginval.zip).Hash
+          if ($h -ne "4D83BDE21AEBAF4D52EC0CA6D9F0C7119AD4181288EB82DA103FADE31A8523AD") {
+            Write-Error "pluginval_Windows.zip checksum mismatch: $h"
+            exit 1
+          }
           Expand-Archive pluginval.zip -DestinationPath pluginval -Force
           Get-ChildItem -Recurse pluginval -Filter pluginval.exe | Select-Object -First 1
 
@@ -359,21 +381,28 @@ jobs:
         shell: pwsh
         run: |
           $pv = Get-ChildItem -Recurse "$env:GITHUB_WORKSPACE/pluginval" -Filter pluginval.exe | Select-Object -First 1
+          if (-not $pv) { Write-Error "pluginval.exe not found after install"; exit 1 }
           $vst3 = (Resolve-Path "build/bin/sunset_circuits.vst3").Path
-          # --skip-gui-tests: no display on the runner. NOTE: pluginval crashes on
-          # DPF's headless plugin teardown (the known DPF editor-lifecycle issue,
-          # docs/dpf-migration/00-OVERVIEW.md landmine 9) after the bus/layout
-          # tests pass; this smoke check is therefore NON-FATAL. Authoritative
-          # validation is the real-DAW matrix in Phase 5 (and strictness-8
-          # pluginval on Linux, which completes cleanly). We still run it to
-          # capture the log and catch a hard load failure.
-          & $pv.FullName --strictness-level 5 --skip-gui-tests --validate $vst3
+          # --skip-gui-tests: no display on the runner. pluginval crashes on DPF's
+          # headless plugin teardown (the known DPF editor-lifecycle issue,
+          # docs/dpf-migration/00-OVERVIEW.md landmine 9) AFTER the tests pass, so
+          # a non-zero exit is tolerated ONLY when the log shows tests actually
+          # ran and none failed. A missing executable, a plugin that fails to
+          # load, or a real test failure all fail the job — we must never release
+          # an unloadable VST3. Authoritative validation is the real-DAW matrix
+          # in Phase 5 (and strictness-8 pluginval on Linux, which exits cleanly).
+          $log = & $pv.FullName --strictness-level 5 --skip-gui-tests --validate $vst3 2>&1 | Out-String
+          Write-Host $log
           if ($LASTEXITCODE -eq 0) {
             Write-Host "pluginval: SUCCESS"
-          } else {
-            Write-Host "::warning::pluginval exited non-zero (DPF headless teardown, known issue, non-fatal)"
+            exit 0
           }
-          exit 0
+          if ($log -match 'Starting test' -and $log -notmatch 'FAILED') {
+            Write-Host "::warning::pluginval exited non-zero after tests ran clean (DPF headless teardown, known issue, non-fatal)"
+            exit 0
+          }
+          Write-Error "pluginval reported a real failure (load error or failed test)"
+          exit 1
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -572,4 +601,6 @@ jobs:
           generate_release_notes: true
           body_path: release_body.md
           draft: false
-          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
+          # Derived from the validated tag suffix in the setup job (any
+          # -<suffix> after X.Y.Z), not from a substring scan of the ref.
+          prerelease: ${{ needs.setup.outputs.prerelease == 'true' }}
