@@ -229,25 +229,24 @@ protected:
         drawTopBar();
         ImGui::End();
 
-        // Layer seam raised 545 -> 521 so the SEQUENCER panel (drawn from its
-        // outer bevel at y=521 for the 8c106e6 taller-strip top of 524) is NOT
-        // clipped by the MSbottom window's top edge. The old 545 seam sliced off
-        // the top ~24 px of the sequencer panel fill, leaving its transport header
-        // band floating on the window background (glaring on the Acid silver panel,
-        // invisibly dark-on-dark elsewhere). Upper panels all end at y<=518 (outer
-        // bevel 521), so the layers abut cleanly at 521 with no clipping either way.
-        beginLayer("MSleft", 0, 55, 346, 521);
+        // Layer seam at y=545. The lower body ROW of the upper three layers (VOICE/
+        // CHARACTER, AMP/FILTER ENV, MOD bar, OUTPUT) ends at y=542, so its outer
+        // bevel reaches 542+3=545 and abuts the seam exactly. The SEQUENCER panel in
+        // MSbottom starts at y=548 (bevel top 545), so the two layers meet cleanly at
+        // 545 with no clipping either way. This +24 shift grew the lower body row
+        // (osc panels shrank to feed it) and trimmed the sequencer's height to match.
+        beginLayer("MSleft", 0, 55, 346, 545);
         if (curMode == 4) drawPrismOps();   // Prism swaps oscillators for the op matrix
         else              drawOscPanels();
         drawMixerVoice();
         ImGui::End();
 
-        beginLayer("MScenter", 346, 55, 756, 521);
+        beginLayer("MScenter", 346, 55, 756, 545);
         drawFilter();
         drawEnvelopes();
         ImGui::End();
 
-        beginLayer("MSright", 756, 55, kDesignW, 521);
+        beginLayer("MSright", 756, 55, kDesignW, 545);
         drawLFOs();
         drawModeSubPanelRegion();
         drawModMatrixBar();
@@ -255,7 +254,7 @@ protected:
         drawOutputVU();
         ImGui::End();
 
-        beginLayer("MSbottom", 0, 521, kDesignW, kDesignH);
+        beginLayer("MSbottom", 0, 545, kDesignW, kDesignH);
         drawSequencer();
         drawFXStrip();
         drawKeyboard();
@@ -953,8 +952,9 @@ private:
     //========================================================================
     void drawOscPanels()
     {
-        // OSC 1
-        panelBox(16, 60, 340, 178);
+        // OSC 1 — panel shrunk (bottom 178 -> 172) to feed the grown VOICE/CHARACTER
+        // panel below; internals unchanged.
+        panelBox(16, 60, 340, 172);
         sectionTitle(24, 64, "OSC 1");
         comboBox("o1w", kParamOsc1Wave, 150, 64, 332, 84, kWave5, 5, curMode == 5);
         klabel(60, 96, "DETUNE");  knob("o1det", kParamOsc1Detune, 60, 138, 20, "%+.0f", " ct", true);
@@ -964,104 +964,134 @@ private:
         if (curMode == 0 || curMode == 1)
         { klabel(285, 96, "X-MOD"); knob("xmod", kParamCrossMod, 285, 138, 20, "%.0f", " %", false, false, false, 100.0f); }
 
-        // OSC 2
-        panelBox(16, 182, 340, 300);
-        sectionTitle(24, 186, "OSC 2");
+        // OSC 2 — panel 176..288 (was 182..300); internals shifted -6.
+        panelBox(16, 176, 340, 288);
+        sectionTitle(24, 180, "OSC 2");
         // Cosmos (mode 0) forces OSC 2 to a Pulse locked to OSC 1's frequency and
         // detune, so the combo shows "Pulse" and SEMI/DETUNE are inert here (PW +
         // LEVEL stay live). The wave param remains selectable to store a choice for
         // the other modes. Pulse is index 4 in kWave5. (U2)
         const bool cosmosOsc2 = (curMode == 0);
-        comboBox("o2w", kParamOsc2Wave, 150, 186, 332, 206, kWave5, 5, curMode == 5,
+        comboBox("o2w", kParamOsc2Wave, 150, 180, 332, 200, kWave5, 5, curMode == 5,
                  cosmosOsc2 ? 4 : -1);
-        klabel(56, 218, "SEMI");
-        klabel(114, 218, "DETUNE");
+        klabel(56, 212, "SEMI");
+        klabel(114, 212, "DETUNE");
         if (cosmosOsc2)
         {
-            inertKnob("o2semi", kParamOsc2Semi, 56, 258, 18, true,
+            inertKnob("o2semi", kParamOsc2Semi, 56, 252, 18, true,
                       "Inactive in Cosmos: OSC 2 tracks OSC 1's pitch.");
-            inertKnob("o2det",  kParamOsc2Detune, 114, 258, 18, true,
+            inertKnob("o2det",  kParamOsc2Detune, 114, 252, 18, true,
                       "Inactive in Cosmos: OSC 2 uses OSC 1's detune.");
         }
         else
         {
-            knob("o2semi", kParamOsc2Semi, 56, 258, 18, "%+.0f", " st", true, true);
-            knob("o2det", kParamOsc2Detune, 114, 258, 18, "%+.0f", " ct", true);
+            knob("o2semi", kParamOsc2Semi, 56, 252, 18, "%+.0f", " st", true, true);
+            knob("o2det", kParamOsc2Detune, 114, 252, 18, "%+.0f", " ct", true);
         }
-        klabel(172, 218, "PW");    knob("o2pw", kParamOsc2PW, 172, 258, 18, "%.0f", " %", false, false, false, 100.0f);
-        klabel(230, 218, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, 258, 18, "%.0f", " %", false, false, false, 100.0f);
+        klabel(172, 212, "PW");    knob("o2pw", kParamOsc2PW, 172, 252, 18, "%.0f", " %", false, false, false, 100.0f);
+        klabel(230, 212, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, 252, 18, "%.0f", " %", false, false, false, 100.0f);
 
-        // OSC 3 / SUB (mode-variant)
-        panelBox(16, 304, 340, 410);
+        // OSC 3 / SUB (mode-variant) — panel 292..372 (h80, was 304..410).
+        panelBox(16, 292, 340, 372);
+        // Short panel (h80): r14 knobs with labels lifted to y319 so the label ink
+        // (ink bottom 326.75) clears both the combo bottom (316, 4px) and the knob arc
+        // top (332 = centre-17, 5px), and the knob body bottom (363) clears the panel
+        // inner floor (369) by 6px.
         if (curMode == 3) // Modular -> osc3
         {
-            sectionTitle(24, 308, "OSC 3");
-            comboBox("o3w", kParamOsc3Wave, 150, 308, 332, 328, kWave4, 4, false);
-            klabel(90, 340, "LEVEL");  knob("o3lvl", kParamOsc3Level, 90, 380, 20, "%.0f", " %", false, false, false, 100.0f);
-            klabel(240, 340, "FM AMT"); knob("fmamt", kParamFMAmount, 240, 380, 20, "%.0f", " %", false, false, false, 100.0f);
+            sectionTitle(24, 296, "OSC 3");
+            comboBox("o3w", kParamOsc3Wave, 150, 296, 332, 316, kWave4, 4, false);
+            klabel(90, 319, "LEVEL");  knob("o3lvl", kParamOsc3Level, 90, 349, 14, "%.0f", " %", false, false, false, 100.0f);
+            klabel(240, 319, "FM AMT"); knob("fmamt", kParamFMAmount, 240, 349, 14, "%.0f", " %", false, false, false, 100.0f);
         }
         else if (curMode == 0 || curMode == 2) // Cosmos / Mono -> sub
         {
-            sectionTitle(24, 308, "SUB OSC");
-            comboBox("subw", kParamSubWave, 150, 308, 332, 328, kSubWave, 2, curMode == 5);
-            klabel(178, 340, "LEVEL"); knob("sublvl", kParamSubLevel, 178, 380, 20, "%.0f", " %", false, false, false, 100.0f);
+            sectionTitle(24, 296, "SUB OSC");
+            comboBox("subw", kParamSubWave, 150, 296, 332, 316, kSubWave, 2, curMode == 5);
+            klabel(178, 319, "LEVEL"); knob("sublvl", kParamSubLevel, 178, 349, 14, "%.0f", " %", false, false, false, 100.0f);
         }
         else
         {
-            sectionTitle(24, 308, "OSC 3 / SUB");
-            text(178, 356, 11.0f, lerpC(live.textPanel, live.panel, 0.4f), "(not used in this mode)", 0, false);
+            sectionTitle(24, 296, "OSC 3 / SUB");
+            text(178, 340, 11.0f, lerpC(live.textPanel, live.panel, 0.4f), "(not used in this mode)", 0, false);
         }
     }
 
     void drawMixerVoice()
     {
         // VOICE / CHARACTER — all 14 controls (10 knobs, 3 combos, 1 legato toggle).
+        // Ten knobs sit in a 2-row x 5-col grid at the left; the three combos and the
+        // LEGATO lamp stack in a right-hand column (x 246..336) wide enough that
+        // "S-Curve"/"Linear" never clip. Two geometries share this one body:
         //
-        // Defect-2 fix: the 8c106e6 tightening to y=518 left only ~86 px of body
-        // height, and THREE knob rows cannot fit here — with a label above each row
-        // and >=4 px daylight to the accent arc (R+3), three rows demand r<=3.6 px
-        // knobs (unusable). So the grid is TWO rows. Ten knobs are balanced 5-and-5;
-        // the wide combos ride at the right of each row at their real ~56/64 px width
-        // (so "S-Curve"/"Linear" never clip). r7.5 knobs keep the shared tick ring
-        // (drawn out to R+6.5), and the spacing clears even THAT ring, not just the
-        // arc. Geometry (measured on the Acid silver palette, the hardest contrast):
-        //   r7.5 knobs, tick ring reaches R+6.5 -> ±14 px; font-8 labels ~6.4 px ink.
-        //   row centres 456 / 499, labels top at y = centre-25.
-        //   Row1: label ink 432..437.4 | tick top 442      -> 4.6 px daylight.
-        //   Gap:  row1 tick bottom 470  | row2 label 475.2  -> 5.2 px daylight.
-        //   Row2: label ink 476..480.4  | tick top 485      -> 4.6 px daylight.
-        //   Row2 tick bottom 513 clears the 516 panel inner floor by ~3 px; the
-        //   row1 labels clear the section title (ink bottom ~426) by ~5 px.
-        panelBox(16, 414, 340, 518);
-        sectionTitle(24, 417, "VOICE / CHARACTER");
-        const float yc1 = 456.0f, yc2 = 499.0f;   // the two row centres
-        const float labOff = 25.0f;                // label top above row centre
-        const float kr = 7.5f, comboH = 9.0f;      // knob radius / combo half-height
-        auto KX = [](int c) { return 40.0f + c * 40.0f; };  // knob columns 40..200
-        auto vLabel = [&](float cx, float y, const char* t) { text(cx, y, 8.0f, live.textPanel, t, 0, true); };
-        auto vCombo = [&](const char* id, uint32_t p, float cx, float hw, float cy,
-                          const char* const* opts, int n, const char* lab)
-        { vLabel(cx, cy - labOff, lab);
-          comboBox(id, p, cx - hw, cy - comboH, cx + hw, cy + comboH, opts, n, curMode == 5); };
+        //   B  (modes 0-3,5): panel 376..542 (h166). r13 knobs — tick ring reaches
+        //      R+6.5 -> ±19.5. font-10 knob labels (ink = 0.675*size = 6.75, ink top
+        //      = y+1). row centres 430 / 494, label top = centre-32.
+        //        Row1: label ink 399..405.75 | ring top 410.5 -> 4.75 px daylight.
+        //        Gap : row1 ring bottom 449.5 | row2 label top 463 -> 13.5 px.
+        //        Row2: label ink 463..469.75 | ring top 474.5 -> 4.75 px.
+        //        Row2 ring bottom 513.5 clears the 539 inner floor by 25.5 px.
+        //        Row1 labels clear the title (11 px, ink bottom 386.4) by 12.6 px.
+        //        Column spacing 45 >= ring diameter 39 + 4 = 43 (6 px gap).
+        //        Right column left edge 246 clears the row's ring (x 241.5) by 4.5 px.
+        //   C  (Prism, mode 4): panel 412..542 (h130). r11 knobs -> ring ±17.5.
+        //      font-9 knob labels (ink 6.075). row centres 460 / 514, label top
+        //      = centre-30.
+        //        Row1: label ink 431..437.075 | ring top 442.5 -> 5.425 px.
+        //        Row2 ring bottom 531.5 clears the 539 inner floor by 7.5 px.
+        //        Row1 labels clear the title (ink bottom 423.4) by 7.6 px.
+        // Verified on the Acid silver palette (mode 5, the hardest contrast).
+        const bool prism  = (curMode == 4);
+        const float pTop  = prism ? 412.0f : 376.0f;
+        const float titleY= prism ? 415.0f : 379.0f;
+        const float yc1   = prism ? 460.0f : 430.0f;   // knob row centres
+        const float yc2   = prism ? 514.0f : 494.0f;
+        const float kr    = prism ? 11.0f  : 13.0f;    // knob radius
+        const float labOff= prism ? 30.0f  : 32.0f;    // knob label top above centre
+        const float kFont = prism ? 9.0f   : 10.0f;    // knob label font
+        const float KX0 = 42.0f, KDX = 45.0f;          // knob columns 42..222
+        const float comboH = 9.0f;                     // combo/led half-height
+        // Right-hand column: 4 stacked items (OVERSMP, GLIDE, LEGATO, V.CRV). Body
+        // centres chosen so each label (baseline at centre-itemLabOff) clears the body
+        // above it, and the last body bottom clears the 539 inner floor.
+        const float colCx = 291.0f, colHw = 45.0f;     // right column centre / half-width
+        const float itemLabOff = 19.0f;                // item label baseline above body centre
+        const float iFont = prism ? 8.5f : 9.0f;
+        const float is0 = prism ? 436.0f : 416.0f;
+        const float is1 = prism ? 464.0f : 452.0f;
+        const float is2 = prism ? 492.0f : 488.0f;
+        const float is3 = prism ? 520.0f : 524.0f;
 
-        // Row 1 — CHARACTER (noise/analog/vintage/tune) + oversampling + unison voices.
+        panelBox(16, pTop, 340, 542);
+        sectionTitle(24, titleY, "VOICE / CHARACTER");
+        auto KX = [&](int c) { return KX0 + c * KDX; };
+        auto vLabel = [&](float cx, float y, const char* t) { text(cx, y, kFont, live.textPanel, t, 0, true); };
+        auto iLabel = [&](float cx, float cy, const char* t) { text(cx, cy - itemLabOff, iFont, live.textPanel, t, 0, true); };
+        auto iCombo = [&](const char* id, uint32_t p, float cy,
+                          const char* const* opts, int n, const char* lab)
+        { iLabel(colCx, cy, lab);
+          comboBox(id, p, colCx - colHw, cy - comboH, colCx + colHw, cy + comboH, opts, n, curMode == 5); };
+
+        // Row 1 — CHARACTER (noise/analog/vintage/tune) + unison voices.
         vLabel(KX(0), yc1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, KX(0), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(1), yc1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, KX(1), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(2), yc1 - labOff, "VNTG");  knob("vntg", kParamVintage, KX(2), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(3), yc1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
         vLabel(KX(4), yc1 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, KX(4), yc1, kr, "%.0f", "", false, true);
-        vCombo("ovs",   kParamOversampling, 248.0f, 28.0f, yc1, kOversmp, 3, "OVERSMP");
-        vCombo("glide", kParamGlideMode,    308.0f, 28.0f, yc1, kGlide,   2, "GLIDE");
 
-        // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend) + legato + vel-curve.
+        // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend).
         vLabel(KX(0), yc2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, KX(0), yc2, kr, "%.0f", " ct");
         vLabel(KX(1), yc2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, KX(1), yc2, kr, "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(2), yc2 - labOff, "PORTA"); knob("porta", kParamPortaTime, KX(2), yc2, kr, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
         vLabel(KX(3), yc2 - labOff, "VEL");   knob("vels", kParamVelSens, KX(3), yc2, kr, "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(4), yc2 - labOff, "PB");    knob("pb", kParamPbRange, KX(4), yc2, kr, "%.0f", " st", false, true);
-        vLabel(244.0f, yc2 - labOff, "LEGATO");
-        ledButton("legato", kParamLegato, 244.0f - 24.0f, yc2 - comboH, 244.0f + 24.0f, yc2 + comboH, "", curMode == 5);
-        vCombo("vcrv", kParamVelCurve, 306.0f, 32.0f, yc2, kVelCurve, 4, "V.CRV");
+
+        // Right column — 3 combos + LEGATO lamp.
+        iCombo("ovs",   kParamOversampling, is0, kOversmp, 3, "OVERSMP");
+        iCombo("glide", kParamGlideMode,    is1, kGlide,   2, "GLIDE");
+        iLabel(colCx, is2, "LEGATO");
+        ledButton("legato", kParamLegato, colCx - colHw, is2 - comboH, colCx + colHw, is2 + comboH, "", curMode == 5);
+        iCombo("vcrv",  kParamVelCurve,     is3, kVelCurve, 4, "V.CRV");
     }
 
     //========================================================================
@@ -1172,23 +1202,25 @@ private:
 
     void drawEnvelopes()
     {
-        panelBox(348, 304, 548, 518);
+        panelBox(348, 304, 548, 542);
         sectionTitle(356, 308, "AMP ENV");
-        drawADSR(356, 320, 540, 396, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
+        drawADSR(356, 320, 540, 420, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
         drawADSRKnobs(380, kParamAmpA, "amp");
-        comboBox("ampcrv", kParamAmpCurve, 360, 492, 536, 516, kEnvCurve, 4);
+        comboBox("ampcrv", kParamAmpCurve, 360, 514, 536, 538, kEnvCurve, 4);
 
-        panelBox(552, 304, 752, 518);
+        panelBox(552, 304, 752, 542);
         sectionTitle(560, 308, "FILTER ENV");
-        drawADSR(560, 320, 744, 396, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
+        drawADSR(560, 320, 744, 420, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
         drawADSRKnobs(584, kParamFiltA, "filt");
-        comboBox("filtcrv", kParamFiltCurve, 564, 492, 740, 516, kEnvCurve, 4);
+        comboBox("filtcrv", kParamFiltCurve, 564, 514, 740, 538, kEnvCurve, 4);
     }
 
-    // ADSR knob row: A,D,S,R at r18, spaced 46 px. Panel tightened to end at y=518
-    // (was 542). Labels top at y=424, knob centers at y=462 so the r18+arc3 knob
-    // bottom (=483) clears the Curve combo top (y=492) by 9px, and the knob+arc top
-    // (=441) clears the label bottom (~434) by 7px. base = param index of A.
+    // ADSR knob row: A,D,S,R at r18, spaced 46 px. Panel now ends at y=542 (was 518);
+    // the +24 shift grew the envelope display (bottom 396 -> 420) and moved the knob
+    // row + Curve combo down in step. Labels top at y=448, knob centers at y=486 so
+    // the r18+arc3 knob bottom (=507) clears the Curve combo top (y=514) by 7px, and
+    // the knob+arc top (=465) clears the label bottom (~455) by 10px; the combo
+    // bottom (538) clears the panel inner floor (539) by 1px. base = param index of A.
     void drawADSRKnobs(float x0, uint32_t baseA, const char* pfx)
     {
         const char* labs[4] = { "A", "D", "S", "R" };
@@ -1196,9 +1228,9 @@ private:
         {
             char id[16]; std::snprintf(id, sizeof(id), "%s%s", pfx, labs[i]);
             const float cx = x0 + i * 46.0f;
-            klabel(cx, 424, labs[i]);
-            if (i == 2) knob(id, baseA + i, cx, 462, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
-            else        knob(id, baseA + i, cx, 462, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
+            klabel(cx, 448, labs[i]);
+            if (i == 2) knob(id, baseA + i, cx, 486, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
+            else        knob(id, baseA + i, cx, 486, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
         }
     }
 
@@ -1444,19 +1476,29 @@ private:
     //========================================================================
     void drawPrismOps()
     {
-        panelBox(16, 60, 340, 410);
+        panelBox(16, 60, 340, 408);
         sectionTitle(24, 64, "OPERATOR MATRIX");
         const msynth::PrismAlgo& alg = msynth::kPrismAlgos[clampAlgo()];
-        // Each operator gets its own block with two grouped sub-rows of compact,
-        // tickless knobs so every control is legible (defect 3):
+        // Each operator gets its own block with two grouped sub-rows of larger,
+        // tickless knobs (r13, accent-arc STROKE spans R+1.8..R+4.2 -> reach ±17.2)
+        // so every control is legible (defect 3):
         //   sub-row 1: RATIO · FINE · LEVEL | VEL · KEY
         //   sub-row 2: A · D · S · R        (+ FB on op 4)
+        // Strip pitch 80: top = 84 + op*80, sub-row centres cy1 = top+18, cy2 = top+58
+        // (40 apart). Labels font 9.5 (ink ~6.4 px from y+1) at centre-22, and they are
+        // drawn AFTER the knobs: at mid-range values the accent arc passes through 12
+        // o'clock, i.e. through the label's bottom ink band (arc band top+40.8..+42.2
+        // vs row-2 ink top+37..+43.4) — label-last ordering keeps the letter ink on
+        // top instead of letting the arc slice it (the round-2 illegibility). Row-1
+        // arc bottom band ends top+35.2, 1.8 px above the row-2 ink top (top+37).
+        // Columns cxc spacing 54 >= arc-reach diameter 34.4 + 4. Last strip bottom
+        // (84+3*80+58+17.2 = 399.2) clears the panel inner floor (405) by ~6 px.
         const float cxc[5] = { 96.0f, 150.0f, 204.0f, 258.0f, 312.0f };
-        const float kr = 11.0f;
+        const float kr = 13.0f;
         for (int op = 0; op < 4; ++op)
         {
-            const float top = 92.0f + op * 78.0f;
-            const float cy1 = top + 22.0f, cy2 = top + 56.0f;
+            const float top = 84.0f + op * 80.0f;
+            const float cy1 = top + 18.0f, cy2 = top + 58.0f;
             const bool carrier = (alg.carrierMask >> op) & 1;
             const uint32_t base = kParamOp1Ratio + op * 9;
 
@@ -1467,24 +1509,27 @@ private:
             text(48, top + 28, 10.0f, carrier ? live.accent : live.textPanel, lab, -1, true);
             text(48, top + 42, 7.5f, withA(live.textPanel, 150), carrier ? "carrier" : "mod", -1, false);
             // group divider between LEVEL and VEL in sub-row 1
-            dl->AddLine(P(231, top + 10), P(231, top + 34), withA(live.textPanel, 30), 1.0f * s);
+            dl->AddLine(P(231, top + 8), P(231, top + 32), withA(live.textPanel, 30), 1.0f * s);
 
-            auto L = [&](float cx, float y, const char* t) { text(cx, y - 20.0f, 8.0f, live.textPanel, t, 0, true); };
             char id[24];
-            // sub-row 1
-            L(cxc[0], cy1, "RATIO"); std::snprintf(id, sizeof(id), "op%dR", op); knobRatio(id, base + 0, cxc[0], cy1, kr, false);
-            L(cxc[1], cy1, "FINE");  std::snprintf(id, sizeof(id), "op%dF", op); knob(id, base + 1, cxc[1], cy1, kr, "%+.0f", " ct", true, false, false, 1.0f, 0.0f, false);
-            L(cxc[2], cy1, "LEVEL"); std::snprintf(id, sizeof(id), "op%dL", op); knob(id, base + 2, cxc[2], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            L(cxc[3], cy1, "VEL");   std::snprintf(id, sizeof(id), "op%dV", op); knob(id, base + 3, cxc[3], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            L(cxc[4], cy1, "KEY");   std::snprintf(id, sizeof(id), "op%dK", op); knob(id, base + 4, cxc[4], cy1, kr, "%+.0f", " %", true, false, false, 100.0f, 0.0f, false);
-            // sub-row 2
-            L(cxc[0], cy2, "A"); std::snprintf(id, sizeof(id), "op%dA", op); knob(id, base + 5, cxc[0], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
-            L(cxc[1], cy2, "D"); std::snprintf(id, sizeof(id), "op%dD", op); knob(id, base + 6, cxc[1], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
-            L(cxc[2], cy2, "S"); std::snprintf(id, sizeof(id), "op%dS", op); knob(id, base + 7, cxc[2], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            L(cxc[3], cy2, "R"); std::snprintf(id, sizeof(id), "op%dRl", op); knob(id, base + 8, cxc[3], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
+            // knobs first ...
+            std::snprintf(id, sizeof(id), "op%dR", op); knobRatio(id, base + 0, cxc[0], cy1, kr, false);
+            std::snprintf(id, sizeof(id), "op%dF", op); knob(id, base + 1, cxc[1], cy1, kr, "%+.0f", " ct", true, false, false, 1.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dL", op); knob(id, base + 2, cxc[2], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dV", op); knob(id, base + 3, cxc[3], cy1, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dK", op); knob(id, base + 4, cxc[4], cy1, kr, "%+.0f", " %", true, false, false, 100.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dA", op); knob(id, base + 5, cxc[0], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
+            std::snprintf(id, sizeof(id), "op%dD", op); knob(id, base + 6, cxc[1], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
+            std::snprintf(id, sizeof(id), "op%dS", op); knob(id, base + 7, cxc[2], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            std::snprintf(id, sizeof(id), "op%dRl", op); knob(id, base + 8, cxc[3], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
             if (op == 3) // feedback op hosts the FB knob, aligned in the KEY column
-            { text(cxc[4], cy2 - 20.0f, 8.0f, live.accent, "FB", 0, true);
-              knob("prismfb", kParamPrismFB, cxc[4], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false); }
+                knob("prismfb", kParamPrismFB, cxc[4], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            // ... labels after, so their ink paints over the value arcs (see above)
+            auto L = [&](float cx, float y, const char* t) { text(cx, y - 22.0f, 9.5f, live.textPanel, t, 0, true); };
+            L(cxc[0], cy1, "RATIO"); L(cxc[1], cy1, "FINE"); L(cxc[2], cy1, "LEVEL");
+            L(cxc[3], cy1, "VEL");   L(cxc[4], cy1, "KEY");
+            L(cxc[0], cy2, "A"); L(cxc[1], cy2, "D"); L(cxc[2], cy2, "S"); L(cxc[3], cy2, "R");
+            if (op == 3) text(cxc[4], cy2 - 22.0f, 9.5f, live.accent, "FB", 0, true);
         }
     }
 
@@ -1604,18 +1649,20 @@ private:
     }
     void drawModMatrixBar()
     {
-        panelBox(760, 466, 1000, 518);
-        const ImVec2 b0 = P(768, 474), b1 = P(992, 510);
+        // Panel extended 518 -> 542 (+24 lower-body shift); the clickable button grows
+        // vertically, centred in the taller panel (mid 504).
+        panelBox(760, 466, 1000, 542);
+        const ImVec2 b0 = P(768, 474), b1 = P(992, 534);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("modbar", ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) showMod = !showMod;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the modulation matrix");
         dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 4.0f * s);
         dl->AddRect(b0, b1, showMod ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.4f * s);
-        panel.led(dl, 782, 492, showMod, 4.0f);
-        text(886, 480, 12.0f, IM_COL32(238, 238, 240, 255), "MOD MATRIX", 0, true);
+        panel.led(dl, 782, 504, showMod, 4.0f);
+        text(886, 496, 12.0f, IM_COL32(238, 238, 240, 255), "MOD MATRIX", 0, true);
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d active", activeModSlots());
-        text(886, 498, 9.0f, live.accent, cnt, 0);
+        text(886, 514, 9.0f, live.accent, cnt, 0);
     }
     void drawModMatrixOverlay()
     {
@@ -1832,7 +1879,7 @@ private:
 
     void drawOutputVU()
     {
-        panelBox(1004, 304, 1224, 518);
+        panelBox(1004, 304, 1224, 542);
         sectionTitle(1012, 308, "OUTPUT");
 
         float lL = values[kParamOutLevelL], lR = values[kParamOutLevelR];
@@ -1845,10 +1892,10 @@ private:
         vuL = ballistic(vuL, lL, dt); vuR = ballistic(vuR, lR, dt);
         // bars start below the title so the per-channel clip LEDs (drawn at y0-8)
         // clear the "OUTPUT" header (defect 5)
-        drawVUbar(1024, 338, 1048, 498, vuL, clipL);
-        drawVUbar(1056, 338, 1080, 498, vuR, clipR);
-        text(1036, 502, 9.0f, live.textPanel, "L", 0);
-        text(1068, 502, 9.0f, live.textPanel, "R", 0);
+        drawVUbar(1024, 338, 1048, 520, vuL, clipL);
+        drawVUbar(1056, 338, 1080, 520, vuR, clipR);
+        text(1036, 524, 9.0f, live.textPanel, "L", 0);
+        text(1068, 524, 9.0f, live.textPanel, "R", 0);
 
         klabel(1130, 336, "VOLUME"); knob("mvol", kParamMasterVol, 1130, 372, 24, "%+.1f", " dB", true, false, true, 1.0f, 0.0f, true, false, true);
         klabel(1108, 440, "PAN");    knob("mpan", kParamMasterPan, 1108, 476, 20, "%+.0f", " %", true, false, false, 100.0f);
@@ -1895,53 +1942,56 @@ private:
     }
     void drawSequencer()
     {
-        // Panel top raised 548 -> 524 (+24 px reclaimed from the lower body row) so
-        // the transport gets a taller header band (y 528..572) with r15 mini-knobs
-        // and legible labels, and the step lanes get the remaining extra height.
-        panelBox(16, 524, 700, 692);
-        sectionTitle(24, 528, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
+        // Panel top 548 (was 524): the lower body row above grew +24, so the
+        // sequencer gives that height back at the top. The transport header (y
+        // 552..586) keeps its r15 mini-knobs and legible labels; the step lanes
+        // occupy the remaining y 600..692.
+        panelBox(16, 548, 700, 692);
+        sectionTitle(24, 552, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
 
-        // --- transport header (y 528..572): larger controls, generous spacing so
-        // nothing collides (defect 4). Mini-knobs r15, labels at y=528 above bodies.
+        // --- transport header (y 552..586): mini-knobs r15, labels at y=552 above
+        // bodies (defect 4).
         const bool acid = (curMode == 5);
-        ledButton("arpon", kParamArpOn, 162, 534, 214, 558, "ARP");
-        text(220, 528, 9.5f, live.textPanel, "MODE", -1, true);
-        comboBox("arpmode", kParamArpMode, 218, 540, 300, 562, kArpMode, 7, acid);
-        text(312, 528, 9.5f, live.textPanel, "RATE", -1, true);
-        comboBox("arprate", kParamArpRate, 310, 540, 372, 562, kDivName, 14, acid);
-        const float hy = 555.0f;   // mini-knob centres; r15 body spans 540..570
-        klabel(398, 528, "OCT");   knob("arpoct", kParamArpOctave, 398, hy, 15, "%.0f", "", false, true);
-        klabel(440, 528, "GATE");  knob("arpgate", kParamArpGate, 440, hy, 15, "%.0f", " %", false, false, false, 100.0f);
-        klabel(482, 528, "SWING"); knob("arpswing", kParamArpSwing, 482, hy, 15, "%.0f", " %", false, false, false, 100.0f);
-        ledButton("arplatch", kParamArpLatch, 522, 534, 574, 558, "LATCH");
-        text(588, 528, 9.5f, live.textPanel, "VEL", -1, true);
-        comboBox("arpvel", kParamArpVelMode, 584, 540, 656, 562, kArpVel, 3, acid);
+        ledButton("arpon", kParamArpOn, 162, 558, 214, 582, "ARP");
+        text(220, 552, 9.5f, live.textPanel, "MODE", -1, true);
+        comboBox("arpmode", kParamArpMode, 218, 564, 300, 586, kArpMode, 7, acid);
+        text(312, 552, 9.5f, live.textPanel, "RATE", -1, true);
+        comboBox("arprate", kParamArpRate, 310, 564, 372, 586, kDivName, 14, acid);
+        const float hy = 579.0f;   // mini-knob centres; r15 body spans 564..594
+        klabel(398, 552, "OCT");   knob("arpoct", kParamArpOctave, 398, hy, 15, "%.0f", "", false, true);
+        klabel(440, 552, "GATE");  knob("arpgate", kParamArpGate, 440, hy, 15, "%.0f", " %", false, false, false, 100.0f);
+        klabel(482, 552, "SWING"); knob("arpswing", kParamArpSwing, 482, hy, 15, "%.0f", " %", false, false, false, 100.0f);
+        ledButton("arplatch", kParamArpLatch, 522, 558, 574, 582, "LATCH");
+        text(588, 552, 9.5f, live.textPanel, "VEL", -1, true);
+        comboBox("arpvel", kParamArpVelMode, 584, 564, 656, 586, kArpVel, 3, acid);
         // Fixed-velocity value knob: only meaningful (and only shown) when the VEL
         // mode is Fixed (=1). Sits right of the combo, matching the OCT/GATE/SWING
         // minis; clears the VEL combo (ends x656) and the panel edge (x700).
         if ((int)std::lround(values[kParamArpVelMode]) == 1)
-        { klabel(680, 528, "VEL"); knob("arpfvel", kParamArpFixedVel, 680, hy, 15, "%.0f", "", false, true); }
+        { klabel(680, 552, "VEL"); knob("arpfvel", kParamArpFixedVel, 680, hy, 15, "%.0f", "", false, true); }
 
         const int step = liveStep();
 
         if (acid)
         {
             // 3-lane acid pattern sequencer with a left label gutter (x18..58) so
-            // lane names never overlap the first cell (defect 6). Lanes occupy the
-            // taller step region y 578..690; the pitch lane grows for finer drag.
+            // lane names never overlap the first cell (defect 6). Lane heights are
+            // balanced so ACC/SLIDE stay real click targets (h15 cells, not slits):
+            // GATE 600..616 (h16), PITCH 620..654 (h34 — the per-cell "+0" readout
+            // keeps it precise, so it doesn't need more), ACC 658..673, SLIDE 677..692.
             const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
-            drawLaneLabel(58, 578, 596, "GATE");
-            drawStepRow(gx, 578, cw, 18, kParamArpStep0, step, false);
-            drawLaneLabel(58, 600, 648, "PITCH");
-            drawPitchLane(gx, 600, cw, 48, step);
-            drawLaneLabel(58, 654, 670, "ACC");
-            drawLaneLabel(58, 672, 688, "SLIDE");
-            drawAccentSlideLanes(gx, 654, cw, step);
+            drawLaneLabel(58, 600, 616, "GATE");
+            drawStepRow(gx, 600, cw, 16, kParamArpStep0, step, false);
+            drawLaneLabel(58, 620, 654, "PITCH");
+            drawPitchLane(gx, 620, cw, 34, step);
+            drawLaneLabel(58, 658, 673, "ACC");
+            drawLaneLabel(58, 677, 692, "SLIDE");
+            drawAccentSlideLanes(gx, 658, cw, step);
         }
         else
         {
             const float gx = 24.0f, cw = (692.0f - gx) / 16.0f;
-            drawStepRow(gx, 576, cw, 110, kParamArpStep0, step, true);
+            drawStepRow(gx, 604, cw, 76, kParamArpStep0, step, true);
         }
     }
     // Right-aligned lane label sitting in the acid sequencer's left gutter.
@@ -2031,11 +2081,16 @@ private:
     }
     void drawAccentSlideLanes(float x0, float y0, float cw, int step)
     {
+        // Rows: ACC y0..y0+15, SLIDE y0+19..y0+34 (h15 each — real click targets).
+        // The 4-step group dividers match the gate row's idiom so the off-state
+        // cells read as a lane, not as loose slits on the panel.
         for (int i = 0; i < 16; ++i)
         {
             const float cx0 = x0 + i * cw + 1.5f, cx1 = x0 + (i + 1) * cw - 1.5f;
-            drawMiniCell(cx0, y0,      cx1, y0 + 16, kParamSeqAccent0 + i, i, step, IM_COL32(240, 200, 40, 255));
-            drawMiniCell(cx0, y0 + 18, cx1, y0 + 34, kParamSeqSlide0 + i, i, step, IM_COL32(60, 200, 230, 255));
+            if ((i % 4) == 0)
+                dl->AddLine(P(cx0 - 1.5f, y0), P(cx0 - 1.5f, y0 + 34), IM_COL32(255, 255, 255, 40), 1.2f * s);
+            drawMiniCell(cx0, y0,      cx1, y0 + 15, kParamSeqAccent0 + i, i, step, IM_COL32(240, 200, 40, 255));
+            drawMiniCell(cx0, y0 + 19, cx1, y0 + 34, kParamSeqSlide0 + i, i, step, IM_COL32(60, 200, 230, 255));
         }
     }
     void drawMiniCell(float x0, float y0, float x1, float y1, uint32_t p, int i, int step, ImU32 onCol)
