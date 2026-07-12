@@ -2067,7 +2067,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             // (wipes inline comments) — durable rationale lives in this header.
             // Vocal Plate + Ambience recalibrated 2026-06-16 vs the TRUSTED screenshot
             // anchors → octave 9/9 within ±5% (was Vocal Plate 6/9 / Ambience 16k −37%).
-            // BEGIN_OCTAVE_T60_MAP (maintained by tools/tuner/calibrate_octave_t60.py)
+            // BEGIN_OCTAVE_T60_MAP (maintained by dusk-audio-tools/tools/duskverb/tuner/calibrate_octave_t60.py)
             { "Vocal Plate", {{ 0.5178f, 0.3889f, 0.5765f, 0.7117f, 0.7290f, 0.6968f, 0.6444f, 0.6090f, 0.4767f }} },  // 2026-07-06 RECALIBRATED for the #1 release-T60 gate (calibrate_octave_t60.py, 6 iters to <2%): 22->19, all 9 T60 close. The old row was noiseburst-calibrated; the anchor's own T60 is stimulus-dependent (63: 0.88s noiseburst vs 0.55s release), which the release gate now reads.
             { "Ambience", {{ 1.0987f, 1.7066f, 0.9606f, 0.8100f, 0.7838f, 0.8200f, 0.7964f, 0.8640f, 0.9799f }} },  // 2026-07-06 RECALIBRATED for the #1 release-T60 gate (calibrate_octave_t60.py): 21->20.
             { "Tiled Room", {{ 0.6370f, 0.5615f, 0.6482f, 0.7510f, 0.6489f, 0.6736f, 0.6699f, 0.4520f, 0.1680f }} },  // algo-13 composite tail IS accurateHall_ → live (removing it regressed 14→17). 16k 0.168s = the bright tiled-room top.
@@ -2170,7 +2170,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     // ring on a bright, long-HF preset. A 4-stage allpass cascade on the wet
     // tail smears them into a denser wash. Unlisted presets → disabled (the
     // process() call is skipped → bit-null). amount / lfoScale / delayScale
-    // tuned by tools/tuner/outdiff_kurtosis_sweep.py.
+    // tuned by dusk-audio-tools/tools/duskverb/tuner/outdiff_kurtosis_sweep.py.
     {
         struct OutDiffConfig { float amount, lfoScale, delayScale; };
         // constexpr std::array + linear scan (NOT std::map) — RT-safe on the audio
@@ -2857,7 +2857,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     {
         struct TankFeedConfig { float lowFc, lowDb, highFc, highDb; };
         static constexpr std::array<std::pair<std::string_view, TankFeedConfig>, 1> kTankFeedEQByName = {{
-            // BEGIN_TANKFEED_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
+            // BEGIN_TANKFEED_MAP (maintained by dusk-audio-tools/tools/duskverb/tuner/mdr_progenitor_sweep.py)
             { "Medium Drum Room", { 250.0f, -0.16244f, 3736.08f, -0.84836f } },
             // END_TANKFEED_MAP
         }};
@@ -2884,7 +2884,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     {
         struct DensityJitterConfig { float fraction; };
         static constexpr std::array<std::pair<std::string_view, DensityJitterConfig>, 2> kDensityJitterByName = {{
-            // BEGIN_DENSJIT_MAP (maintained by tools/tuner/mdr_progenitor_sweep.py)
+            // BEGIN_DENSJIT_MAP (maintained by dusk-audio-tools/tools/duskverb/tuner/mdr_progenitor_sweep.py)
             { "Medium Drum Room", { 0.00474f } },
             // END_DENSJIT_MAP
             { "Vintage Gold Plate", { 0.0f } },   // 2026-06-13: kill the 2% density wander — it was the audible tail chorus (renamed from "Studio Plate")
