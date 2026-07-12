@@ -1011,41 +1011,45 @@ private:
         // CHARACTER (row 1) + VOICE (rows 2-3): 5-column grid with guaranteed
         // label-above-knob clearance and a divider between the two sub-groups.
         // All unison/porta/velocity/PB/oversampling params reachable (defect 2).
-        panelBox(16, 414, 340, 542);
-        sectionTitle(24, 418, "VOICE / CHARACTER");
+        // Panel tightened to end at y=518 (was 542) to free 24 px for the taller
+        // sequencer strip. Three rows compress into 414..518: 18 px controls
+        // (r9 knobs / comboH9 combos) with font-8 labels give ~2 px gaps top-to-
+        // bottom with no overlap (this panel was the tightest; verify in screenshots).
+        panelBox(16, 414, 340, 518);
+        sectionTitle(24, 417, "VOICE / CHARACTER");
         const float col0 = 46.0f, colStep = 62.0f;
-        const float row1 = 456.0f, row2 = 492.0f, row3 = 528.0f;
-        const float labOff = 24.0f;
-        const float kr = 10.0f, comboHW = 29.0f, comboH = 9.0f;
+        const float row1 = 449.0f, row2 = 479.0f, row3 = 508.0f;
+        const float labOff = 19.0f;
+        const float kr = 9.0f, comboHW = 29.0f, comboH = 9.0f;
         auto CX = [&](int c) { return col0 + c * colStep; };
-        auto cLabel = [&](float cx, float y, const char* t) { text(cx, y, 9.0f, live.textPanel, t, 0, true); };
+        auto vLabel = [&](float cx, float y, const char* t) { text(cx, y, 8.0f, live.textPanel, t, 0, true); };
 
         // Row 1 — CHARACTER: noise / analog / vintage / tune / oversampling
-        klabel(CX(0), row1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, CX(0), row1, kr, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(1), row1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, CX(1), row1, kr, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(2), row1 - labOff, "VNTG");  knob("vntg", kParamVintage, CX(2), row1, kr, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(3), row1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, CX(3), row1, kr, "%+.0f", " ct", true);
-        cLabel(CX(4), row1 - labOff, "OVERSMP");
+        vLabel(CX(0), row1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, CX(0), row1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(CX(1), row1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, CX(1), row1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(CX(2), row1 - labOff, "VNTG");  knob("vntg", kParamVintage, CX(2), row1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(CX(3), row1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, CX(3), row1, kr, "%+.0f", " ct", true);
+        vLabel(CX(4), row1 - labOff, "OVERSMP");
         comboBox("ovs", kParamOversampling, CX(4) - comboHW, row1 - comboH, CX(4) + comboHW, row1 + comboH, kOversmp, 3, curMode == 5);
 
         // divider between CHARACTER and VOICE sub-groups
-        dl->AddLine(P(24, 467), P(332, 467), withA(live.textPanel, 40), 1.0f * s);
+        dl->AddLine(P(24, 459), P(332, 459), withA(live.textPanel, 40), 1.0f * s);
 
         // Row 2 — VOICE: unison voices / detune / spread / porta / glide
-        klabel(CX(0), row2 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, CX(0), row2, kr, "%.0f", "", false, true);
-        klabel(CX(1), row2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, CX(1), row2, kr, "%.0f", " ct");
-        klabel(CX(2), row2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, CX(2), row2, kr, "%.0f", " %", false, false, false, 100.0f);
-        klabel(CX(3), row2 - labOff, "PORTA"); knob("porta", kParamPortaTime, CX(3), row2, kr, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
-        cLabel(CX(4), row2 - labOff, "GLIDE");
+        vLabel(CX(0), row2 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, CX(0), row2, kr, "%.0f", "", false, true);
+        vLabel(CX(1), row2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, CX(1), row2, kr, "%.0f", " ct");
+        vLabel(CX(2), row2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, CX(2), row2, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(CX(3), row2 - labOff, "PORTA"); knob("porta", kParamPortaTime, CX(3), row2, kr, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
+        vLabel(CX(4), row2 - labOff, "GLIDE");
         comboBox("glide", kParamGlideMode, CX(4) - comboHW, row2 - comboH, CX(4) + comboHW, row2 + comboH, kGlide, 2, curMode == 5);
 
         // Row 3 — VOICE: legato / velocity / vel-curve / pitch-bend
-        cLabel(CX(0), row3 - labOff, "LEGATO");
+        vLabel(CX(0), row3 - labOff, "LEGATO");
         ledButton("legato", kParamLegato, CX(0) - comboHW, row3 - comboH, CX(0) + comboHW, row3 + comboH, "", curMode == 5);
-        klabel(CX(1), row3 - labOff, "VEL"); knob("vels", kParamVelSens, CX(1), row3, kr, "%.0f", " %", false, false, false, 100.0f);
-        cLabel(CX(2), row3 - labOff, "V.CRV");
+        vLabel(CX(1), row3 - labOff, "VEL"); knob("vels", kParamVelSens, CX(1), row3, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(CX(2), row3 - labOff, "V.CRV");
         comboBox("vcrv", kParamVelCurve, CX(2) - comboHW, row3 - comboH, CX(2) + comboHW, row3 + comboH, kVelCurve, 4, curMode == 5);
-        klabel(CX(3), row3 - labOff, "PB"); knob("pb", kParamPbRange, CX(3), row3, kr, "%.0f", " st", false, true);
+        vLabel(CX(3), row3 - labOff, "PB"); knob("pb", kParamPbRange, CX(3), row3, kr, "%.0f", " st", false, true);
     }
 
     //========================================================================
@@ -1156,23 +1160,23 @@ private:
 
     void drawEnvelopes()
     {
-        panelBox(348, 304, 548, 542);
+        panelBox(348, 304, 548, 518);
         sectionTitle(356, 308, "AMP ENV");
-        drawADSR(356, 320, 540, 404, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
+        drawADSR(356, 320, 540, 396, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
         drawADSRKnobs(380, kParamAmpA, "amp");
-        comboBox("ampcrv", kParamAmpCurve, 360, 516, 536, 540, kEnvCurve, 4);
+        comboBox("ampcrv", kParamAmpCurve, 360, 492, 536, 516, kEnvCurve, 4);
 
-        panelBox(552, 304, 752, 542);
+        panelBox(552, 304, 752, 518);
         sectionTitle(560, 308, "FILTER ENV");
-        drawADSR(560, 320, 744, 404, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
+        drawADSR(560, 320, 744, 396, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
         drawADSRKnobs(584, kParamFiltA, "filt");
-        comboBox("filtcrv", kParamFiltCurve, 564, 516, 740, 540, kEnvCurve, 4);
+        comboBox("filtcrv", kParamFiltCurve, 564, 492, 740, 516, kEnvCurve, 4);
     }
 
-    // ADSR knob row: A,D,S,R at r18, spaced 46 px. Labels top at y=446, knob
-    // centers at y=484 so the r18+arc3 knob bottom (=505) clears the Curve combo
-    // top (y=516) by 11px, and the label bottom (~456) clears the knob top
-    // (=463) by 7px. base = param index of A.
+    // ADSR knob row: A,D,S,R at r18, spaced 46 px. Panel tightened to end at y=518
+    // (was 542). Labels top at y=424, knob centers at y=462 so the r18+arc3 knob
+    // bottom (=483) clears the Curve combo top (y=492) by 9px, and the knob+arc top
+    // (=441) clears the label bottom (~434) by 7px. base = param index of A.
     void drawADSRKnobs(float x0, uint32_t baseA, const char* pfx)
     {
         const char* labs[4] = { "A", "D", "S", "R" };
@@ -1180,9 +1184,9 @@ private:
         {
             char id[16]; std::snprintf(id, sizeof(id), "%s%s", pfx, labs[i]);
             const float cx = x0 + i * 46.0f;
-            klabel(cx, 446, labs[i]);
-            if (i == 2) knob(id, baseA + i, cx, 484, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
-            else        knob(id, baseA + i, cx, 484, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
+            klabel(cx, 424, labs[i]);
+            if (i == 2) knob(id, baseA + i, cx, 462, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
+            else        knob(id, baseA + i, cx, 462, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
         }
     }
 
@@ -1280,7 +1284,7 @@ private:
 
     void drawModeSubPanelRegion()
     {
-        panelBox(760, 328, 1000, 478);
+        panelBox(760, 328, 1000, 462);
         if (modeBlend < 1.0f)
         {
             const float outA = 1.0f - std::min(1.0f, modeBlend * 2.0f);
@@ -1339,7 +1343,7 @@ private:
         // Clear routing labels (the font lacks a reliable arrow glyph, so "->").
         const char* labs[4] = { "F.ENV->OSC1", "OSC2->OSC1", "OSC2->PW", "F.ENV->FILT" };
         const float cx[4] = { 820, 940, 820, 940 };
-        const float cy[4] = { 386, 386, 446, 446 };
+        const float cy[4] = { 386, 386, 436, 436 };  // row2 raised so r18 knobs clear the 462 panel bottom
         for (int i = 0; i < 4; ++i)
         {
             text(cx[i], cy[i] - 28, 9.0f, mulA(live.textPanel, a), labs[i], 0, true);
@@ -1370,7 +1374,7 @@ private:
         if (it) ledButton("modsync", kParamHardSync, 786, 430, 862, 450, "SYNC");
         else { const ImVec2 c = P(796, 440); dl->AddCircleFilled(c, 8 * s, mulA(values[kParamHardSync] > 0.5f ? live.ledOn : IM_COL32(150, 152, 158, 255), a), 16); }
         // animated S&H staircase mini-scope (shrunk to the right column for room)
-        const float rx0 = 884, ry0 = 360, rx1 = 988, ry1 = 456;
+        const float rx0 = 884, ry0 = 360, rx1 = 988, ry1 = 448;  // shortened so the lower jacks (ry1+8) clear the 462 panel bottom
         dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), mulA(IM_COL32(10, 14, 12, 255), a), 3.0f * s);
         const float rate = values[kParamShRate];
         shPhase += ImGui::GetIO().DeltaTime * rate;
@@ -1391,7 +1395,7 @@ private:
             { dl->AddCircleFilled(P(jx, jy), 5 * s, mulA(IM_COL32(30, 32, 30, 255), a), 16);
               dl->AddCircleFilled(P(jx, jy), 2.4f * s, mulA(IM_COL32(70, 74, 70, 255), a), 12); }
     }
-    void drawSubPrism(float a, bool it) { drawAlgoWidget(760, 328, 1000, 478, a, it); }
+    void drawSubPrism(float a, bool it) { drawAlgoWidget(760, 328, 1000, 462, a, it); }
     void drawSubAcid(float a, bool it)
     {
         text(768, 332, 11.0f, mulA(live.accent, a), "ACID", -1, true);
@@ -1588,18 +1592,18 @@ private:
     }
     void drawModMatrixBar()
     {
-        panelBox(760, 482, 1000, 540);
-        const ImVec2 b0 = P(768, 490), b1 = P(992, 532);
+        panelBox(760, 466, 1000, 518);
+        const ImVec2 b0 = P(768, 474), b1 = P(992, 510);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("modbar", ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) showMod = !showMod;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the modulation matrix");
         dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 4.0f * s);
         dl->AddRect(b0, b1, showMod ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.4f * s);
-        panel.led(dl, 782, 511, showMod, 4.0f);
-        text(886, 502, 12.0f, IM_COL32(238, 238, 240, 255), "MOD MATRIX", 0, true);
+        panel.led(dl, 782, 492, showMod, 4.0f);
+        text(886, 480, 12.0f, IM_COL32(238, 238, 240, 255), "MOD MATRIX", 0, true);
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d active", activeModSlots());
-        text(886, 518, 9.0f, live.accent, cnt, 0);
+        text(886, 498, 9.0f, live.accent, cnt, 0);
     }
     void drawModMatrixOverlay()
     {
@@ -1816,7 +1820,7 @@ private:
 
     void drawOutputVU()
     {
-        panelBox(1004, 304, 1224, 542);
+        panelBox(1004, 304, 1224, 518);
         sectionTitle(1012, 308, "OUTPUT");
 
         float lL = values[kParamOutLevelL], lR = values[kParamOutLevelR];
@@ -1829,10 +1833,10 @@ private:
         vuL = ballistic(vuL, lL, dt); vuR = ballistic(vuR, lR, dt);
         // bars start below the title so the per-channel clip LEDs (drawn at y0-8)
         // clear the "OUTPUT" header (defect 5)
-        drawVUbar(1024, 338, 1048, 520, vuL, clipL);
-        drawVUbar(1056, 338, 1080, 520, vuR, clipR);
-        text(1036, 524, 9.0f, live.textPanel, "L", 0);
-        text(1068, 524, 9.0f, live.textPanel, "R", 0);
+        drawVUbar(1024, 338, 1048, 498, vuL, clipL);
+        drawVUbar(1056, 338, 1080, 498, vuR, clipR);
+        text(1036, 502, 9.0f, live.textPanel, "L", 0);
+        text(1068, 502, 9.0f, live.textPanel, "R", 0);
 
         klabel(1130, 336, "VOLUME"); knob("mvol", kParamMasterVol, 1130, 372, 24, "%+.1f", " dB", true, false, true, 1.0f, 0.0f, true, false, true);
         klabel(1108, 440, "PAN");    knob("mpan", kParamMasterPan, 1108, 476, 20, "%+.0f", " %", true, false, false, 100.0f);
@@ -1879,49 +1883,53 @@ private:
     }
     void drawSequencer()
     {
-        panelBox(16, 548, 700, 692);
-        sectionTitle(24, 552, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
+        // Panel top raised 548 -> 524 (+24 px reclaimed from the lower body row) so
+        // the transport gets a taller header band (y 528..572) with r15 mini-knobs
+        // and legible labels, and the step lanes get the remaining extra height.
+        panelBox(16, 524, 700, 692);
+        sectionTitle(24, 528, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
 
-        // --- transport header (y 550..584): spaced so nothing collides (defect 4).
-        // Mini-knobs get their label above and body below within the taller band.
+        // --- transport header (y 528..572): larger controls, generous spacing so
+        // nothing collides (defect 4). Mini-knobs r15, labels at y=528 above bodies.
         const bool acid = (curMode == 5);
-        ledButton("arpon", kParamArpOn, 162, 560, 212, 580, "ARP");
-        text(220, 552, 9.0f, live.textPanel, "MODE", -1, true);
-        comboBox("arpmode", kParamArpMode, 218, 562, 300, 580, kArpMode, 7, acid);
-        text(312, 552, 9.0f, live.textPanel, "RATE", -1, true);
-        comboBox("arprate", kParamArpRate, 310, 562, 372, 580, kDivName, 14, acid);
-        const float hy = 574.0f;
-        klabel(398, 553, "OCT");   knob("arpoct", kParamArpOctave, 398, hy, 9, "%.0f", "", false, true);
-        klabel(432, 553, "GATE");  knob("arpgate", kParamArpGate, 432, hy, 9, "%.0f", " %", false, false, false, 100.0f);
-        klabel(470, 553, "SWING"); knob("arpswing", kParamArpSwing, 470, hy, 9, "%.0f", " %", false, false, false, 100.0f);
-        ledButton("arplatch", kParamArpLatch, 500, 560, 548, 580, "LATCH");
-        text(560, 552, 9.0f, live.textPanel, "VEL", -1, true);
-        comboBox("arpvel", kParamArpVelMode, 556, 562, 628, 580, kArpVel, 3, acid);
+        ledButton("arpon", kParamArpOn, 162, 534, 214, 558, "ARP");
+        text(220, 528, 9.5f, live.textPanel, "MODE", -1, true);
+        comboBox("arpmode", kParamArpMode, 218, 540, 300, 562, kArpMode, 7, acid);
+        text(312, 528, 9.5f, live.textPanel, "RATE", -1, true);
+        comboBox("arprate", kParamArpRate, 310, 540, 372, 562, kDivName, 14, acid);
+        const float hy = 555.0f;   // mini-knob centres; r15 body spans 540..570
+        klabel(398, 528, "OCT");   knob("arpoct", kParamArpOctave, 398, hy, 15, "%.0f", "", false, true);
+        klabel(440, 528, "GATE");  knob("arpgate", kParamArpGate, 440, hy, 15, "%.0f", " %", false, false, false, 100.0f);
+        klabel(482, 528, "SWING"); knob("arpswing", kParamArpSwing, 482, hy, 15, "%.0f", " %", false, false, false, 100.0f);
+        ledButton("arplatch", kParamArpLatch, 522, 534, 574, 558, "LATCH");
+        text(588, 528, 9.5f, live.textPanel, "VEL", -1, true);
+        comboBox("arpvel", kParamArpVelMode, 584, 540, 656, 562, kArpVel, 3, acid);
         // Fixed-velocity value knob: only meaningful (and only shown) when the VEL
         // mode is Fixed (=1). Sits right of the combo, matching the OCT/GATE/SWING
-        // minis; clears the LATCH button (ends x548) and the panel edge (x700).
+        // minis; clears the VEL combo (ends x656) and the panel edge (x700).
         if ((int)std::lround(values[kParamArpVelMode]) == 1)
-        { klabel(660, 553, "VEL"); knob("arpfvel", kParamArpFixedVel, 660, hy, 9, "%.0f", "", false, true); }
+        { klabel(680, 528, "VEL"); knob("arpfvel", kParamArpFixedVel, 680, hy, 15, "%.0f", "", false, true); }
 
         const int step = liveStep();
 
         if (acid)
         {
             // 3-lane acid pattern sequencer with a left label gutter (x18..58) so
-            // lane names never overlap the first cell (defect 6).
+            // lane names never overlap the first cell (defect 6). Lanes occupy the
+            // taller step region y 578..690; the pitch lane grows for finer drag.
             const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
-            drawLaneLabel(58, 590, 606, "GATE");
-            drawStepRow(gx, 590, cw, 16, kParamArpStep0, step, false);
-            drawLaneLabel(58, 612, 652, "PITCH");
-            drawPitchLane(gx, 612, cw, 40, step);
-            drawLaneLabel(58, 658, 672, "ACC");
-            drawLaneLabel(58, 676, 690, "SLIDE");
-            drawAccentSlideLanes(gx, 658, cw, step);
+            drawLaneLabel(58, 578, 596, "GATE");
+            drawStepRow(gx, 578, cw, 18, kParamArpStep0, step, false);
+            drawLaneLabel(58, 600, 648, "PITCH");
+            drawPitchLane(gx, 600, cw, 48, step);
+            drawLaneLabel(58, 654, 670, "ACC");
+            drawLaneLabel(58, 672, 688, "SLIDE");
+            drawAccentSlideLanes(gx, 654, cw, step);
         }
         else
         {
             const float gx = 24.0f, cw = (692.0f - gx) / 16.0f;
-            drawStepRow(gx, 590, cw, 96, kParamArpStep0, step, true);
+            drawStepRow(gx, 576, cw, 110, kParamArpStep0, step, true);
         }
     }
     // Right-aligned lane label sitting in the acid sequencer's left gutter.
@@ -2014,8 +2022,8 @@ private:
         for (int i = 0; i < 16; ++i)
         {
             const float cx0 = x0 + i * cw + 1.5f, cx1 = x0 + (i + 1) * cw - 1.5f;
-            drawMiniCell(cx0, y0,      cx1, y0 + 14, kParamSeqAccent0 + i, i, step, IM_COL32(240, 200, 40, 255));
-            drawMiniCell(cx0, y0 + 18, cx1, y0 + 32, kParamSeqSlide0 + i, i, step, IM_COL32(60, 200, 230, 255));
+            drawMiniCell(cx0, y0,      cx1, y0 + 16, kParamSeqAccent0 + i, i, step, IM_COL32(240, 200, 40, 255));
+            drawMiniCell(cx0, y0 + 18, cx1, y0 + 34, kParamSeqSlide0 + i, i, step, IM_COL32(60, 200, 230, 255));
         }
     }
     void drawMiniCell(float x0, float y0, float x1, float y1, uint32_t p, int i, int step, ImU32 onCol)
