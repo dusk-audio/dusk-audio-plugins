@@ -53,27 +53,32 @@ knob is its pivot; radius is design-space.
 | Preset ▶ next | `(1154,14)–(1180,42)` | |
 | Save ★ | `(1186,14)–(1222,42)` | opens user-preset save [v2 = writes via UserPreset bridge] |
 
-### 1.2 Body — `y 60..518`
+### 1.2 Body — `y 60..542`
 
-> **Layout revision (lower body row):** the four lower-body panels that used to end
-> at `y=542` now end at **`y=518`**, freeing 24 px for a taller SEQUENCER strip
-> (§1.3). Upper panels (OSC 1/2, FILTER, LFO 1/2, SCOPE) are unchanged, as is the
-> OSC 3 / SUB panel (which already ended at `410`). Bone structure is preserved.
+> **Layout revision (2026-07, legibility pass):** the oscillator panels were too tall
+> for their content while VOICE / CHARACTER was cramped (r7.5 knobs, font-8 labels).
+> The lower body ROW (VOICE/CHARACTER, AMP/FILTER ENV, MOD bar, OUTPUT) now ends at
+> **`y=542`** (was 518), and the osc panels shrank to feed it: OSC 1 `178→172`, OSC 2
+> `300→288` (internals −6), OSC 3/SUB `410→372` (h80, r14 knobs). VOICE / CHARACTER
+> grew to `(16,376)–(340,542)` (h166) with **r13 knobs** and **font-10 labels**. The
+> layer seam moved `521→545` and the SEQUENCER strip gave back the 24 px at its top
+> (§1.3). Upper panels (OSC 1/2 internals, FILTER, LFO 1/2, SCOPE) are otherwise
+> unchanged.
 
 **LEFT column — Oscillators / Mixer — `x 16..340`**
 | Panel | Rect | Contents |
 |---|---|---|
-| OSC 1 | `(16,60)–(340,178)` | wave combo, Detune, PW, Level knobs |
-| OSC 2 | `(16,182)–(340,300)` | wave combo, Semi (stepped knob), Detune, PW, Level |
-| OSC 3 / SUB | `(16,304)–(340,410)` | **mode-variant** (see §4): Modular→osc3 wave+level; Cosmos/Mono→sub wave+level; else dimmed/hidden |
-| VOICE / CHARACTER | `(16,414)–(340,518)` | **2 rows** (r7.5 knobs w/ tick ring, comboH9 combos, font-8 labels); row centres `y{456,499}`, labels `y−25`. Knob columns `x=40+40·c` (c=0..4). Row1: Noise/Analog/Vntg/Tune/UniV + OverSmp combo `x248` (hw28) + Glide combo `x308` (hw28). Row2: UniDT/UniSP/Porta/Vel/PB + Legato LED `x244` (hw24) + V.Crv combo `x306` (hw32). Clearances ≥4.6 px label-to-tick-ring, verified on the Acid silver palette. (3 rows are geometrically impossible here at ≥4 px daylight; see §1.6.) |
+| OSC 1 | `(16,60)–(340,172)` | wave combo, Detune, PW, Level knobs (internals unchanged) |
+| OSC 2 | `(16,176)–(340,288)` | wave combo, Semi (stepped knob), Detune, PW, Level (internals shifted −6) |
+| OSC 3 / SUB | `(16,292)–(340,372)` (h80) | **mode-variant** (see §4): title/combo `y296` (`296..316`), knob label `y319`, knob centre `y349` **r14**; Modular→osc3 wave+level+FM Amt; Cosmos/Mono→sub wave+level; else dimmed text `y340` |
+| VOICE / CHARACTER | `(16,376)–(340,542)` (h166) | **2 rows** of **r13 knobs** (tick ring reaches R+6.5 → ±19.5) with **font-10 labels**. Knob columns `x=42+45·c` (c=0..4 → 42..222); row centres `y{430,494}`, labels top `y−32`. Row1: Noise/Analog/Vntg/Tune/UniV. Row2: UniDT/UniSP/Porta/Vel/PB. Right-hand column `x=291` (hw45): 4 stacked items (label baseline `centre−19`, comboH9) — OverSmp `y416`, Glide `y452`, Legato LED `y488`, V.Crv `y524`. Clearances (per drawMixerVoice comment): row1 label ink 399..405.75 vs ring top 410.5 = **4.75 px**; row2 ring bottom 513.5 vs inner floor 539 = **25.5 px**; column spacing 45 ≥ ring-Ø 39 + 4. Verified on the Acid silver palette. Prism (mode 4) uses the compact variant, see §4.5. |
 
 **CENTER column — Filter + Envelopes — `x 348..752`**
 | Panel | Rect | Contents |
 |---|---|---|
 | FILTER | `(348,60)–(752,300)` | curve display `(360,74)–(742,180)`; **oversized cutoff** center `(426,244)` r**54**; Res `(556,232)` r30; Env Amt `(636,232)` r30; HP `(712,232)` r30 (Cosmos only) |
-| AMP ENV | `(348,304)–(548,518)` | ADSR display `(356,320)–(540,396)`; knobs A/D/S/R centers `x{380,426,472,518} y=462` r18 (labels `y=424`); Curve combo `(360,492)–(536,516)` |
-| FILTER ENV | `(552,304)–(752,518)` | ADSR display `(560,320)–(744,396)`; knobs centers `x{584,630,676,722} y=462` r18 (labels `y=424`); Curve combo `(564,492)–(740,516)` |
+| AMP ENV | `(348,304)–(548,542)` | ADSR display `(356,320)–(540,420)`; knobs A/D/S/R centers `x{380,426,472,518} y=486` r18 (labels `y=448`); Curve combo `(360,514)–(536,538)` |
+| FILTER ENV | `(552,304)–(752,542)` | ADSR display `(560,320)–(744,420)`; knobs centers `x{584,630,676,722} y=486` r18 (labels `y=448`); Curve combo `(564,514)–(740,538)` |
 
 **RIGHT column — LFOs / Mode sub-panel / Scope / Output — `x 760..1224`**
 | Panel | Rect | Contents |
@@ -81,14 +86,14 @@ knob is its pivot; radius is design-space.
 | LFO 1 | `(760,60)–(1000,190)` | Rate, Fade knobs; Shape combo; Sync toggle |
 | LFO 2 | `(760,194)–(1000,324)` | same |
 | MODE SUB-PANEL | `(760,328)–(1000,462)` | **morphs per mode** (§4): chorus / poly-mod / ring+sync / S&H / algo thumbnails / acid globals |
-| MOD MATRIX bar | `(760,466)–(1000,518)` | "MOD MATRIX" LED-button `(768,474)–(992,510)` → opens overlay (§1.4); shows count of active slots |
+| MOD MATRIX bar | `(760,466)–(1000,542)` | "MOD MATRIX" LED-button `(768,474)–(992,534)` (grown, centred mid 504; LED `y504`, text `y496`, count `y514`) → opens overlay (§1.4); shows count of active slots |
 | SCOPE | `(1004,60)–(1224,300)` | oscilloscope from ring buffer |
-| OUTPUT / VU | `(1004,304)–(1224,518)` | stereo VU bars `y 338..498` + Master Vol, Pan, Width knobs |
+| OUTPUT / VU | `(1004,304)–(1224,542)` | stereo VU bars `y 338..520` (L/R labels `y524`) + Master Vol, Pan, Width knobs |
 
-### 1.3 Bottom strip — `y 524..692`
+### 1.3 Bottom strip — `y 548..692`
 | Panel | Rect | Contents |
 |---|---|---|
-| SEQUENCER | `(16,524)–(700,692)` | taller transport header `y 528..572` (r15 mini-knobs OCT/GATE/SWING centres `x{398,440,482} y=555`; ARP/LATCH LED-buttons; MODE/RATE/VEL combos `y 540..562`; Fixed-VEL knob `x680` when VEL=Fixed) + step lanes. **Acid** expands to 3 lanes (§4.6) |
+| SEQUENCER | `(16,548)–(700,692)` | transport header `y 552..586` (r15 mini-knobs OCT/GATE/SWING centres `x{398,440,482} y=579`; ARP LED `162,558..214,582`; LATCH LED `522,558..574,582`; MODE/RATE/VEL combos `y 564..586`; labels `y552`; Fixed-VEL knob `x680` when VEL=Fixed) + step lanes. Non-acid step row `y 604..680` (h76). **Acid** expands to 3 lanes (§4.6) |
 | FX · Drive | `(708,552)–(834,688)` | enable LED-button, Type combo, Amount, Mix |
 | FX · Chorus | `(838,552)–(964,688)` | enable, Rate, Depth, Mix |
 | FX · Delay | `(968,552)–(1094,688)` | enable, Sync toggle, Time/Div (context knob), FB, Mix, PingPong+Tape LED-buttons |
@@ -120,12 +125,13 @@ knob is its pivot; radius is design-space.
 │  OSC 2        │        ( CUTOFF )   Res EnvA HP│  rate fade shape sync  ├──────────────────┤ 300
 │  wave semi ...│         big r54               │├────────────────────────┤   OUTPUT / VU    │
 │───────────────┤                               ││  MODE SUB-PANEL        │  ▮▮   vol pan wid │
-│ OSC3 / SUB    ├───────────────┬───────────────┤│ (chorus/polymod/algo…) │  ▮▮              │ 304
+│ OSC3 / SUB    ├───────────────┬───────────────┤│ (chorus/polymod/algo…) │  ▮▮              │ 292
 │ (mode variant)│   AMP ENV     │  FILTER ENV   ││                        │                  │ ..
-│───────────────┤  /\___ ADSR   │  /\___ ADSR   │├────────────────────────┤                  │ 542
-│ VOICE/CHAR    │  A D S R  crv │  A D S R  crv ││ [   MOD MATRIX   ]     │                  │ ..518
+│───────────────┤  /\___ ADSR   │  /\___ ADSR   │├────────────────────────┤                  │
+│ VOICE/CHAR    │  A D S R  crv │  A D S R  crv ││ [   MOD MATRIX   ]     │                  │ ..542
+│ (2×5 r13)     │               │               ││                        │                  │
 ├───────────────┴───────────────┴───────────────┴┴────────────────────┬───┴──────────────────┤
-│  SEQUENCER  [1][2][3][4][5][6][7][8][9]..[16]                        │ DRV │ CHO │ DLY │ REV │ 524
+│  SEQUENCER  [1][2][3][4][5][6][7][8][9]..[16]                        │ DRV │ CHO │ DLY │ REV │ 548
 │  (Acid: +pitch lane  +accent lane  +slide lane)                      │     │     │     │     │ ..692
 ├─────────────────────────────────────────────────────────────────────┴─────┴─────┴─────┴─────┤
 │OCT│ ▌▐▌▐▌▌▐▌▐▌▐▌  ▌▐▌▐▌▌▐▌▐▌▐▌  ▌▐▌▐▌▌▐▌▐▌▐▌   (3-octave clickable keyboard → MIDI notes)   │ 700..780
@@ -336,13 +342,24 @@ Store as a `Palette` per mode (extend `duskdpf::Palette` with `background`, `pan
 ### 4.5 Prism (mode 4) — 4-operator FM
 This mode **re-skins the LEFT column** into an **OPERATOR MATRIX** and puts the
 **algorithm widget** in the MODE SUB-PANEL. Standard oscillator panels (OSC1/2/3/SUB) are
-hidden while Prism is active; MIXER/CHARACTER panel stays (noise/analog/vintage/tune).
+hidden while Prism is active; the VOICE / CHARACTER panel stays but uses its **compact
+variant** `(16,412)–(340,542)` (h130): **r11 knobs** (ring ±17.5), **font-9 labels**, row
+centres `y{460,514}` (labels top `y−30`), same 5-column layout `x=42+45·c` and the same
+4-item right column at `x291` (items at `y{436,464,492,520}`). Row1 label ink 431..437.075
+vs ring top 442.5 = 5.4 px; row2 ring bottom 531.5 vs inner floor 539 = 7.5 px.
 
-- **Operator strips** — 4 stacked rows in `(16,60)–(340,410)`, each row `~86` tall:
-  row *i* at `y = 62 + i*87`. Each strip: "OP n" label + LED (carrier lit brighter), and
-  compact r16 knobs: **Ratio**, **Fine**, **Level**, **Vel**, **A**, **D**, **S**, **R**
-  (8 knobs, centers spaced ~38 px across x 40..330), + Key Scale as a small bipolar
-  knob at the far right. Op 4 strip additionally hosts the **Feedback** (`prismFB`) knob.
+- **Operator strips** — 4 stacked rows in `(16,60)–(340,408)`, strip pitch **80**:
+  `top = 84 + op*80`, sub-row centres `cy1 = top+18`, `cy2 = top+58`. Each strip: "OP n"
+  label + LED (carrier lit brighter) in the left gutter, and **tickless r13 knobs**
+  (accent-arc stroke spans R+1.8..R+4.2 → reach ±17.2) in two sub-rows — sub-row 1 (cy1):
+  **Ratio · Fine · Level | Vel · Key** (LEVEL|VEL divider `x231`, `top+8..top+32`);
+  sub-row 2 (cy2): **A · D · S · R**. Op 4 strip hosts the **Feedback** (`prismFB`) knob
+  in the KEY column of sub-row 2. Columns `cxc = {96,150,204,258,312}` (spacing 54 ≥
+  arc-reach Ø 34.4 + 4). Knob labels **font 9.5** at `centre−22`, **drawn AFTER the
+  knobs**: at mid-range values the accent arc passes through 12 o'clock — through the
+  label's bottom ink band — so label-last ordering keeps the letter ink on top (drawing
+  labels first lets the arc slice the glyphs illegible). Last strip bottom
+  `84+3·80+58+17.2 = 399.2` clears the panel inner floor (405) by ~6 px.
   - **Ratio** is a **stepped knob** over a snap list `{0.25,0.5,0.75,1,1.5,2,3,4,5,6,7,8,
     9,10,11,12,13,14}` — display `%.2f×`; **Fine** is `±99 ct` bipolar. (Per
     `09-multi-synth.md`, Fine/KeyScale may be trimmed if param budget hurts — if trimmed,
@@ -359,17 +376,19 @@ hidden while Prism is active; MIXER/CHARACTER panel stays (noise/analog/vintage/
 - **MODE SUB-PANEL** = **ACID GLOBALS**: `acidAccentAmt` r22 knob + `acidSlideTime` r22
   knob + a big **ACCENT** indicator LED that pulses on accented steps (from bridge step
   index). Title "ACID".
-- **SEQUENCER expands to 3 lanes** in `(16,524)–(700,692)` (cells start at `x=62` after a
+- **SEQUENCER expands to 3 lanes** in `(16,548)–(700,692)` (cells start at `x=62` after a
   left label gutter `x18..58`):
-  - **Gate/On lane** (top, y 578..596): the 16 `arpStep*` on/off cells (also used as
+  - **Gate/On lane** (top, y 600..616, h16): the 16 `arpStep*` on/off cells (also used as
     step-mute in other modes).
-  - **Pitch lane** (middle, y 600..648, grown for finer drag resolution): 16 vertical
-    **drag columns**, value `seqPitch*` ∈ −24..+24 st. Each column: click-drag vertically
-    sets pitch; a filled bar from the center (0 st) up/down; numeric `%+d` shown on hover;
-    center gridline at 0.
-  - **Accent + Slide lanes** (bottom, y 654..688 split into two 16 px rows — accent
-    654..670, slide 672..688): 16 small LED-cells each for `seqAccent*` (amber) and
-    `seqSlide*` (cyan).
+  - **Pitch lane** (middle, y 620..654, h34): 16 vertical **drag columns**, value
+    `seqPitch*` ∈ −24..+24 st. Each column: click-drag vertically sets pitch (drag scale
+    `48/(h·s)` picks up the lane height automatically); a filled bar from the center
+    (0 st) up/down; numeric `%+d` always shown; center gridline at 0. (h34 is enough —
+    the per-cell readout keeps edits precise; the height went to ACC/SLIDE instead.)
+  - **Accent + Slide lanes** (bottom, two **h15** rows — accent y 658..673, slide
+    y 677..692): 16 cells each for `seqAccent*` (amber) and `seqSlide*` (cyan), same
+    dark-cell fill idiom as the gate row plus 4-step group dividers spanning both rows,
+    so the off state reads as a lane of real click targets.
   - The **live step index** from the bridge highlights the current column across all lanes.
 - In **modes 0–4** the pitch/accent/slide lanes are **hidden**; the sequencer shows only
   the single on/off row (classic arp step-mutes).
