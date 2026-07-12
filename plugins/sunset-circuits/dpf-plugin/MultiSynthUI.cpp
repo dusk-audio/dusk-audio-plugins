@@ -1215,12 +1215,13 @@ private:
         comboBox("filtcrv", kParamFiltCurve, 564, 514, 740, 538, kEnvCurve, 4);
     }
 
-    // ADSR knob row: A,D,S,R at r18, spaced 46 px. Panel now ends at y=542 (was 518);
-    // the +24 shift grew the envelope display (bottom 396 -> 420) and moved the knob
-    // row + Curve combo down in step. Labels top at y=448, knob centers at y=486 so
-    // the r18+arc3 knob bottom (=507) clears the Curve combo top (y=514) by 7px, and
-    // the knob+arc top (=465) clears the label bottom (~455) by 10px; the combo
-    // bottom (538) clears the panel inner floor (539) by 1px. base = param index of A.
+    // ADSR knob row: A,D,S,R at r18, spaced 46 px. The label+knob block is centered
+    // in the band between the envelope display (bottom y=420) and the Curve combo
+    // (top y=514): labels top y=436, knob centers y=474, so the block spans
+    // 436..498.5 (tick ring reaches R+6.5 = ±24.5) leaving 16 px above the labels
+    // and 15.5 px below the ring — visually centered. Label ink bottom (~445)
+    // clears the ring top (449.5) by 4.5 px; the combo bottom (538) clears the
+    // panel inner floor (539) by 1 px. base = param index of A.
     void drawADSRKnobs(float x0, uint32_t baseA, const char* pfx)
     {
         const char* labs[4] = { "A", "D", "S", "R" };
@@ -1228,9 +1229,9 @@ private:
         {
             char id[16]; std::snprintf(id, sizeof(id), "%s%s", pfx, labs[i]);
             const float cx = x0 + i * 46.0f;
-            klabel(cx, 448, labs[i]);
-            if (i == 2) knob(id, baseA + i, cx, 486, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
-            else        knob(id, baseA + i, cx, 486, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
+            klabel(cx, 436, labs[i]);
+            if (i == 2) knob(id, baseA + i, cx, 474, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
+            else        knob(id, baseA + i, cx, 474, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
         }
     }
 
@@ -2169,6 +2170,21 @@ private:
         octButton("octdn", 16, 700, 48, 738, "OCT-", -12, "Shift keyboard octave down");
         octButton("octup", 16, 742, 48, 780, "OCT+", +12, "Shift keyboard octave up");
 
+        // Held-note mask from the engine (spec §8.7): lights keys the player is
+        // holding on a hardware MIDI keyboard (or via the host), not just local
+        // mouse presses. Null bridge (split LV2 UI) -> mask stays 0, local-only.
+        uint64_t heldLo = 0, heldHi = 0;
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiSynthGetDSP != nullptr)
+            if (void* const inst = getPluginInstancePointer())
+                if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
+                    d->getHeldNotes(heldLo, heldHi);
+       #endif
+        auto held = [&](int n) {
+            return n >= 0 && n < 128
+                && (((n < 64 ? heldLo : heldHi) >> (n & 63)) & 1ull) != 0;
+        };
+
         const float kx0 = 52.0f, kx1 = 1224.0f;
         const float w = (kx1 - kx0) / 21.0f;
         const int whiteSemi[7] = { 0, 2, 4, 5, 7, 9, 11 };
@@ -2182,7 +2198,7 @@ private:
             const int note = clampMidi(baseMidi + (i / 7) * 12 + whiteSemi[i % 7]);
             char id[16]; std::snprintf(id, sizeof(id), "wk%d", i);
             keyHit(id, x + 1, yTop, x + w - 1, yBot, note);
-            const bool lit = (kbNote == note);
+            const bool lit = (kbNote == note) || held(note);
             dl->AddRectFilled(P(x + 1, yTop), P(x + w - 1, yBot),
                               lit ? withA(live.accent, 220) : IM_COL32(238, 238, 240, 255), 2.0f * s);
             dl->AddRect(P(x + 1, yTop), P(x + w - 1, yBot), IM_COL32(60, 60, 64, 255), 2.0f * s, 0, 1.0f * s);
@@ -2197,7 +2213,7 @@ private:
             char id[16]; std::snprintf(id, sizeof(id), "bk%d", i);
             const float x0 = boundary - bw * 0.5f, x1 = boundary + bw * 0.5f;
             keyHit(id, x0, yTop, x1, yBlackBot, note);
-            const bool lit = (kbNote == note);
+            const bool lit = (kbNote == note) || held(note);
             dl->AddRectFilled(P(x0, yTop), P(x1, yBlackBot),
                               lit ? withA(live.accent, 240) : IM_COL32(18, 18, 20, 255), 2.0f * s);
             dl->AddRect(P(x0, yTop), P(x1, yBlackBot), IM_COL32(0, 0, 0, 255), 2.0f * s, 0, 1.0f * s);

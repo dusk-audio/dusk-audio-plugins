@@ -157,6 +157,16 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
+    // Held-note bitmask over MIDI 0..127 (bit n set between noteOn(n) and
+    // noteOff(n)/allNotesOff, regardless of arp/acid routing — it tracks the
+    // player's KEY state, not the sounding voices). Audio thread updates it with
+    // relaxed atomic RMW; the UI reads it each frame to light the on-screen
+    // keyboard while a hardware MIDI keyboard is played.
+    void getHeldNotes(uint64_t& lo, uint64_t& hi) const noexcept
+    {
+        lo = heldNotesLo.load(std::memory_order_relaxed);
+        hi = heldNotesHi.load(std::memory_order_relaxed);
+    }
     // 512-sample mono scope ring (audio thread writes, UI reads). Copies the
     // NEWEST min(maxN, valid) samples oldest->newest into dst using relaxed loads;
     // returns the number of samples written (<= maxN, <= kScopeSize). Before the
@@ -284,6 +294,7 @@ private:
     std::array<std::atomic<float>, kScopeSize> scope {};
     std::atomic<int>   scopeWritePos { 0 };
     std::atomic<int>   scopeCount { 0 };  // saturating count of valid samples (<= kScopeSize)
+    std::atomic<uint64_t> heldNotesLo { 0 }, heldNotesHi { 0 };  // key-state mask, see getHeldNotes()
     float meterL = 0.0f, meterR = 0.0f, meterDecay = 0.9999f;
 };
 
