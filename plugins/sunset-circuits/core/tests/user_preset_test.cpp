@@ -11,6 +11,7 @@
 
 #include "UserPresetStore.hpp"
 
+#include <cmath>      // std::round
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,7 @@
 #include <fstream>
 #include <random>
 #include <string>
+#include <vector>
 #include <unistd.h>   // getpid, setenv
 
 namespace fs = std::filesystem;

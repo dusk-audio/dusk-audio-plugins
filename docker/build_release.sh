@@ -132,6 +132,15 @@ build_sunset() {
         '
 
     echo ""
+    # Hard artifact check: the container exits nonzero on any build failure
+    # (set -e inside), but guard against a silently-empty output dir so the
+    # install section below can never no-op its way to a bogus success.
+    for a in sunset_circuits.vst3 sunset_circuits.lv2 sunset_circuits.clap; do
+        if [ ! -e "$OUTPUT_DIR/$a" ]; then
+            echo "ERROR: expected artifact missing: $OUTPUT_DIR/$a"
+            exit 1
+        fi
+    done
     echo "=== Installing Sunset Circuits to standard locations ==="
     mkdir -p "$HOME/.vst3" "$HOME/.lv2" "$HOME/.clap"
     if [ -d "$OUTPUT_DIR/sunset_circuits.vst3" ]; then
