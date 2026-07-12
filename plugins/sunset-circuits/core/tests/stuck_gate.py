@@ -16,6 +16,8 @@ Scenarios (48k, 2x OS, 4 s, sustained patch ampS=1 ampR=0.3, no reverb/delay):
   a. mode-switch : note held, setat 1.0:mode:1   -> final 1 s silent, note sounded
   b. arp-off     : arp on, chord held, setat 1.0:arpOn:0 -> final 1 s silent
   c. control     : note held, no switch          -> final 1 s LOUD (not killed)
+  d. latch-off   : latched arp chord, keys released at 0.5 s (LOUD mid, latch keeps
+                   playing), setat 1.5:arpLatch:0 -> final 1 s silent (pattern stops)
 
 Note: scenario (a) switches between two POLY modes (Cosmos 0 -> Oracle 1). A
 switch INTO Acid (mode 5) leaves the poly voice stuck in the allocator but

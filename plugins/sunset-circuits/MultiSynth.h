@@ -24,7 +24,10 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.0; }
+    // Cover the longest reachable tail: reverb decay up to 20 s (ReverbEffect
+    // clamps 0.1..20) plus the 2 s delay buffer. Report with margin so hosts
+    // don't truncate a long verb/delay wash on transport stop.
+    double getTailLengthSeconds() const override { return 22.0; }
 
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -78,8 +81,12 @@ private:
     // Juno-style chorus for Cosmos mode (I / II / Both)
     MultiSynthDSP::JunoChorusEffect junoChorus;
 
-    // Internal sample rate for voice rendering (prepared at 4x for max oversampling)
+    // Internal sample rate for voice rendering. Voices are prepared at
+    // hostSampleRate * osFactor and re-prepared when the oversampling setting
+    // changes, so the voice rate always matches the per-output step count.
+    double hostSampleRate = 44100.0;
     double internalSampleRate = 176400.0;
+    int preparedOsFactor = 4;
 
     // Performance state
     float modWheelValue = 0.0f;

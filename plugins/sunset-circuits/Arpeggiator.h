@@ -5,7 +5,6 @@
 #include <array>
 #include <vector>
 #include <algorithm>
-#include <random>
 
 namespace MultiSynthDSP
 {
@@ -90,13 +89,13 @@ public:
     void setEnabled(bool on) { enabled = on; if (!on) reset(); }
     bool isEnabled() const { return enabled; }
 
-    void setMode(ArpMode m) { mode = m; }
-    void setOctaveRange(int range) { octaveRange = juce::jlimit(1, 4, range); }
+    void setMode(ArpMode m) { if (m != mode) patternDirty = true; mode = m; }
+    void setOctaveRange(int range) { int r = juce::jlimit(1, 4, range); if (r != octaveRange) patternDirty = true; octaveRange = r; }
     void setRate(ArpRateDivision r) { rateDivision = r; }
     void setGate(float g) { gateLength = juce::jlimit(0.01f, 1.0f, g); }
     void setSwing(float s) { swing = juce::jlimit(0.0f, 1.0f, s); }
     void setLatch(bool on) { latch = on; }
-    void clearLatch() { if (latch) { heldNotes.clear(); playedOrder.clear(); } }
+    void clearLatch() { if (latch) { heldNotes.clear(); playedOrder.clear(); patternDirty = true; } }
 
     void setVelocityMode(ArpVelocityMode m) { velMode = m; }
     void setFixedVelocity(int vel) { fixedVel = juce::jlimit(1, 127, vel); }
@@ -115,7 +114,7 @@ public:
     }
 
     int getCurrentStep() const { return currentStep; }
-    int getTotalSteps() const { return static_cast<int>(buildPattern().size()); }
+    int getTotalSteps() const { return static_cast<int>(getPattern().size()); }
 
     // Call this for each incoming MIDI note on
     void noteOn(int noteNumber, int velocity)
@@ -132,6 +131,7 @@ public:
         {
             heldNotes.push_back(note);
             playedOrder.push_back(note);
+            patternDirty = true;
         }
     }
 
@@ -150,6 +150,7 @@ public:
                 std::remove_if(playedOrder.begin(), playedOrder.end(),
                     [noteNumber](const NoteInfo& n) { return n.note == noteNumber; }),
                 playedOrder.end());
+            patternDirty = true;
         }
     }
 
@@ -183,7 +184,7 @@ public:
         double samplesPerBeat = sr * 60.0 / effectiveBpm;
         double samplesPerStep = samplesPerBeat * beatsPerStep;
 
-        auto pattern = buildPattern();
+        const auto& pattern = getPattern();
         if (pattern.empty())
             return events;
 
@@ -241,7 +242,14 @@ public:
                 sampleCounter = 0;
                 currentStep++;
                 if (currentStep >= static_cast<int>(pattern.size()))
+                {
                     currentStep = 0;
+                    // Random: a completed cycle earns a fresh shuffle on the NEXT
+                    // block's getPattern(); the order stays fixed within this cycle
+                    // (setting the flag here doesn't invalidate `pattern` mid-block).
+                    if (mode == ArpMode::Random)
+                        patternDirty = true;
+                }
             }
         }
 
@@ -254,6 +262,7 @@ public:
         sampleCounter = 0;
         lastPlayedNote = -1;
         goingUp = true;
+        patternDirty = true;
         if (!latch)
         {
             heldNotes.clear();
@@ -268,24 +277,39 @@ private:
         int velocity = 100;
     };
 
-    std::vector<NoteInfo> buildPattern() const
+    // Cached pattern access. buildPattern() used to allocate a fresh vector on
+    // EVERY processBlock() and getTotalSteps() call (audio thread) and, in Random
+    // mode, constructed+seeded a std::default_random_engine from the wall clock and
+    // re-shuffled every block. Now the pattern is cached and rebuilt only when the
+    // held notes / mode / octave range change (patternDirty), reusing the buffer's
+    // capacity; Random shuffles with a pre-seeded member juce::Random and re-shuffles
+    // only when a cycle completes (see processBlock), so it stays stable per cycle.
+    const std::vector<NoteInfo>& getPattern() const
     {
+        if (patternDirty)
+        {
+            rebuildPattern();
+            patternDirty = false;
+        }
+        return cachedPattern;
+    }
+
+    void rebuildPattern() const
+    {
+        cachedPattern.clear(); // keeps capacity — no per-block heap churn
+
         if (heldNotes.empty())
-            return {};
+            return;
 
         // Sort notes for Up/Down patterns
         auto sorted = heldNotes;
         std::sort(sorted.begin(), sorted.end(),
             [](const NoteInfo& a, const NoteInfo& b) { return a.note < b.note; });
 
-        std::vector<NoteInfo> pattern;
-
         // Expand across octaves
         for (int oct = 0; oct < octaveRange; ++oct)
-        {
             for (auto& n : sorted)
-                pattern.push_back({ n.note + oct * 12, n.velocity });
-        }
+                cachedPattern.push_back({ n.note + oct * 12, n.velocity });
 
         switch (mode)
         {
@@ -294,56 +318,57 @@ private:
                 break;
 
             case ArpMode::Down:
-                std::reverse(pattern.begin(), pattern.end());
+                std::reverse(cachedPattern.begin(), cachedPattern.end());
                 break;
 
             case ArpMode::UpDown:
             {
-                if (pattern.size() > 1)
+                if (cachedPattern.size() > 1)
                 {
-                    auto down = pattern;
+                    auto down = cachedPattern;
                     std::reverse(down.begin(), down.end());
                     // Skip first and last to avoid doubles
                     for (size_t i = 1; i < down.size() - 1; ++i)
-                        pattern.push_back(down[i]);
+                        cachedPattern.push_back(down[i]);
                 }
                 break;
             }
 
             case ArpMode::DownUp:
             {
-                std::reverse(pattern.begin(), pattern.end());
-                if (pattern.size() > 1)
+                std::reverse(cachedPattern.begin(), cachedPattern.end());
+                if (cachedPattern.size() > 1)
                 {
-                    auto up = heldNotes;
-                    std::sort(up.begin(), up.end(),
-                        [](const NoteInfo& a, const NoteInfo& b) { return a.note < b.note; });
-                    // Expand octaves for up portion
+                    // Up portion = the same ascending, octave-expanded set.
                     std::vector<NoteInfo> upExpanded;
                     for (int oct = 0; oct < octaveRange; ++oct)
-                        for (auto& n : up)
+                        for (auto& n : sorted)
                             upExpanded.push_back({ n.note + oct * 12, n.velocity });
                     for (size_t i = 1; i < upExpanded.size() - 1; ++i)
-                        pattern.push_back(upExpanded[i]);
+                        cachedPattern.push_back(upExpanded[i]);
                 }
                 break;
             }
 
             case ArpMode::Random:
             {
-                // Shuffle pattern
-                auto rng = std::default_random_engine(
-                    static_cast<unsigned>(std::chrono::system_clock::now().time_since_epoch().count()));
-                std::shuffle(pattern.begin(), pattern.end(), rng);
+                // Fisher-Yates with the pre-seeded member RNG (no per-call engine
+                // construction, no wall-clock seeding on the audio thread).
+                for (int i = static_cast<int>(cachedPattern.size()) - 1; i > 0; --i)
+                {
+                    const int j = rng.nextInt(i + 1);
+                    std::swap(cachedPattern[static_cast<size_t>(i)],
+                              cachedPattern[static_cast<size_t>(j)]);
+                }
                 break;
             }
 
             case ArpMode::Order:
             {
-                pattern.clear();
+                cachedPattern.clear();
                 for (int oct = 0; oct < octaveRange; ++oct)
                     for (auto& n : playedOrder)
-                        pattern.push_back({ n.note + oct * 12, n.velocity });
+                        cachedPattern.push_back({ n.note + oct * 12, n.velocity });
                 break;
             }
 
@@ -354,8 +379,6 @@ private:
                 break;
             }
         }
-
-        return pattern;
     }
 
     int getVelocity(int originalVel, int step) const
@@ -410,6 +433,13 @@ private:
 
     std::vector<NoteInfo> heldNotes;
     std::vector<NoteInfo> playedOrder;
+
+    // Cached arp pattern — rebuilt only when held notes / mode / octave change, so
+    // processBlock() and getTotalSteps() never allocate per call. mutable so the
+    // const accessors (getPattern/getTotalSteps) can lazily rebuild.
+    mutable std::vector<NoteInfo> cachedPattern;
+    mutable bool patternDirty = true;
+    mutable juce::Random rng; // pre-seeded once (default ctor); Random-mode shuffle
 
     int currentStep = 0;
     long long sampleCounter = 0;

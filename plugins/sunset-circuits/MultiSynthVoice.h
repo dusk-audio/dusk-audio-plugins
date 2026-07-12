@@ -253,6 +253,16 @@ public:
         osc2.setPulseWidth(params.osc2PulseWidth + modState.getDestValue(ModDest::Osc2PWM) * 0.4f);
         osc2.setDetune(params.osc2Detune);
 
+        // Cosmos: osc2 is the pulse half of a single DCO — same frequency as osc1,
+        // Pulse wave. Configure it BEFORE the single render below so it is advanced
+        // exactly once per sample (the old code re-rendered it in the Cosmos case,
+        // stepping osc2's phase twice → an octave up + aliasing).
+        if (params.mode == SynthMode::Cosmos)
+        {
+            osc2.setFrequency(freq1);
+            osc2.setWaveform(Waveform::Pulse);
+        }
+
         // Generate oscillator samples
         float osc1Sample = osc1.processSample();
         float osc2Sample = osc2.processSample();
@@ -265,12 +275,9 @@ public:
         {
             case SynthMode::Cosmos:
             {
-                // Juno-60: Single DCO (saw + pulse simultaneously) + sub-oscillator
-                // osc1 = saw, osc2 repurposed as pulse component of same DCO (same freq!)
-                osc2.setFrequency(freq1); // Same frequency as osc1 (it's the same DCO)
-                osc2.setWaveform(Waveform::Pulse);
-                osc2.setPulseWidth(params.osc2PulseWidth + modState.getDestValue(ModDest::Osc2PWM) * 0.4f);
-                osc2Sample = osc2.processSample();
+                // Juno-60: single DCO (saw + pulse simultaneously) + sub-oscillator.
+                // osc2 was already configured as the pulse component (same freq as
+                // osc1) and rendered once above; do not render it again here.
 
                 // Sub-oscillator (square, one octave down)
                 subOsc.setFrequency(baseFreq);

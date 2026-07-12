@@ -641,9 +641,13 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   under all carriers joining to a single node; draw a **feedback loop** (small arc arrow)
   on `fbOp`, its thickness scaled by `prismFB`. Carriers: brighter fill + accent border;
   modulators: dim fill. Op label "1".."4" centered.
-- **Thumbnails**: 8 mini-diagrams in a 4×2 grid across the sub-panel top (each ~64×48),
-  each an `InvisibleButton` setting `prismAlgo`; active one gets accent border + full
-  brightness, others dimmed to ~50%. Below them, the **large** diagram of the active algo.
+- **Thumbnails**: 8 mini-diagrams in a **4×2 grid** across the sub-panel top, sized to
+  fit the 240 px-wide sub-panel: **each 50×38**, 6 px gaps, 8 px side padding
+  (`4·50 + 3·6 + 2·8 = 234 ≤ 240` inner width; two rows `2·38 + 6 = 82` inside the
+  134 px-tall panel). Thumbnail *k* (row `r=k/4`, col `c=k%4`) top-left at
+  `(768 + c·56, 336 + r·44)`. Each is an `InvisibleButton` setting `prismAlgo`; active
+  one gets accent border + full brightness, others dimmed to ~50%. Below the two rows
+  (from `y≈426`), the **large** diagram of the active algo fills the remaining panel.
 - **The 8 algorithms** (must match engine; `a→b` = a modulates b; carriers reach output):
 
 | # | Name | Edges | Carriers | Character |

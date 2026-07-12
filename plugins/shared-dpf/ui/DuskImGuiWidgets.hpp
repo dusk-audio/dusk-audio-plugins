@@ -154,6 +154,12 @@ public:
         else if (bmax.y > vy1) dy = vy1 - bmax.y;
         bmin.x += dx; bmax.x += dx; bmin.y += dy; bmax.y += dy;
 
+        // The viewport shift above can move the pill to the opposite side of the knob
+        // from where `left` was chosen against the window edge. Re-derive the pointer
+        // side from the FINAL pill position relative to the knob so the tail always
+        // attaches to the edge that faces the knob (main-viewport space throughout).
+        left = kc.x > 0.5f * (bmin.x + bmax.x);
+
         const float rad = halfH;
         const ImU32 bg = IM_COL32(246, 247, 249, 255), edge = IM_COL32(0, 0, 0, 70), ink = IM_COL32(22, 22, 24, 255);
         // pointer tail toward the knob, kept attached to the (possibly shifted) pill

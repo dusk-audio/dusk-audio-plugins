@@ -387,9 +387,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
 //==============================================================================
 void MultiSynthProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Prepare voices at 4x (maximum oversampling rate) so all filter states
-    // are valid regardless of the user's oversampling setting (1x/2x/4x).
-    internalSampleRate = sampleRate * 4.0;
+    // Prepare voices at the CURRENT oversampling rate so the voice step rate
+    // matches the per-output sample count in processBlock (rendering osFactor
+    // internal samples per output). A stale fixed-4x prep made 1x/2x play a
+    // full octave(s) flat. processBlock re-prepares when the setting changes.
+    hostSampleRate = sampleRate;
+    const int osIdx = static_cast<int>(*apvts.getRawParameterValue(ParamIDs::OVERSAMPLING));
+    preparedOsFactor = (osIdx == 0) ? 1 : (osIdx == 1) ? 2 : 4;
+    internalSampleRate = sampleRate * preparedOsFactor;
     voiceAllocator.prepare(internalSampleRate);
     arpeggiator.prepare(sampleRate); // Arp runs at native rate (tempo-synced)
     effects.prepare(sampleRate, samplesPerBlock); // Effects at native rate
@@ -692,6 +697,17 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int osFactor = (osIdx == 0) ? 1 : (osIdx == 1) ? 2 : 4;
     float osDiv = 1.0f / static_cast<float>(osFactor);
 
+    // Keep the voice rate in sync with osFactor: re-prepare at hostSampleRate*osFactor
+    // when the user changes oversampling (rare, non-realtime). prepare() only writes
+    // scalar state on these voices (no heap), so this is RT-safe. Without this the
+    // voices would step osFactor samples/output at a mismatched prepared rate.
+    if (osFactor != preparedOsFactor)
+    {
+        preparedOsFactor = osFactor;
+        internalSampleRate = hostSampleRate * osFactor;
+        voiceAllocator.prepare(internalSampleRate);
+    }
+
     float peakL = 0.0f, peakR = 0.0f;
 
     for (int i = 0; i < buffer.getNumSamples(); ++i)
@@ -825,7 +841,14 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             param->setValueNotifyingHost(param->convertTo0to1(value));
     };
 
-    // Reset to defaults first
+    // Reset EVERY parameter to its layout default first, so nothing leaks between
+    // presets or sessions (mod-matrix slots, LFO/arp/filter-env, OSC2_SEMI, SUB_LEVEL,
+    // UNISON_DETUNE/SPREAD, STEREO_WIDTH, DELAY_TAPE, COSMOS_CHORUS_MODE, etc. are only
+    // set by *some* presets — an unlisted one would otherwise inherit the prior patch).
+    for (auto* p : getParameters())
+        p->setValueNotifyingHost(p->getDefaultValue());
+
+    // Then establish the preset baseline (intentional non-default starting points).
     setParam(ParamIDs::MASTER_VOL, -6.0f); // Healthy headroom with new gain staging
     setParam(ParamIDs::OSC1_WAVE, 0); // Saw
     setParam(ParamIDs::OSC2_WAVE, 0);

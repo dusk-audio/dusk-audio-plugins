@@ -53,11 +53,12 @@ public:
         sr = (float)sampleRate;
         phase = 0.0f;
         triState = 0.0f;
+        updateTriLeak();
     }
 
     void setFrequency(float freqHz) noexcept { freq = freqHz; dt = freq / sr; }
     // Change rate WITHOUT resetting phase (for oversampling-factor changes).
-    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; }
+    void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; dt = freq / sr; updateTriLeak(); }
     void setWaveform(Waveform w) noexcept    { waveform = w; }
     void setPulseWidth(float pw) noexcept    { pulseWidth = clampf(pw, 0.05f, 0.95f); }
     void setDetune(float cents) noexcept     { detuneRatio = std::pow(2.0f, cents / 1200.0f); }
@@ -106,7 +107,10 @@ public:
                 float sq = phase < 0.5f ? 1.0f : -1.0f;
                 sq += polyBlep(phase, effectiveDt);
                 sq -= polyBlep(std::fmod(phase + 0.5f, 1.0f), effectiveDt);
-                triState = 0.999f * triState + effectiveDt * sq * 4.0f; // leaky integrator
+                // Leaky integrator; leak derived from sr so the DC-block corner
+                // (~7 Hz) is constant across oversampling factors (a fixed 0.999
+                // per-sample leak would move the corner up with the OS rate).
+                triState = triLeak * triState + effectiveDt * sq * 4.0f;
                 sample = triState;
                 break;
             }
@@ -134,6 +138,10 @@ public:
     }
 
 private:
+    // ~7 Hz DC-block corner for the triangle leaky integrator, independent of sr.
+    static constexpr float kTriLeakHz = 7.0f;
+    void updateTriLeak() noexcept { triLeak = std::exp(-kTwoPi * kTriLeakHz / sr); }
+
     float sr = 44100.0f;
     float freq = 440.0f;
     float dt = 0.01f;
@@ -141,6 +149,7 @@ private:
     float pulseWidth = 0.5f;
     float detuneRatio = 1.0f;
     float triState = 0.0f;
+    float triLeak = 0.999f;
     bool  lastCrossed = false;
     Waveform waveform = Waveform::Saw;
     Xorshift rng;

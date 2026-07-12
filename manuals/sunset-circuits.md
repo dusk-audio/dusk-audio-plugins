@@ -263,17 +263,24 @@ A classic starting patch is LFO 1 to Cutoff for a filter wobble, or Key Track to
 
 ## User Presets
 
-Beyond the 54 factory presets, Sunset Circuits keeps a personal preset library you build yourself. It is stored as files on disk, independent of any DAW session, so your patches follow you between projects and hosts.
+> **Planned for v2 — not in the current pre-release.** A personal on-disk preset
+> library (the **star** save button, a user section in the preset menu, and the
+> `.scpreset` file format described below) is designed but not yet available in this
+> build. The current pre-release ships the 54 factory presets only; user save and load
+> arrive in a later release once the UserPreset storage bridge lands. The rest of this
+> section documents the planned behavior.
 
-### Saving a preset
+Beyond the 54 factory presets, Sunset Circuits **will** keep a personal preset library you build yourself, stored as files on disk independent of any DAW session, so your patches follow you between projects and hosts.
 
-Click the **star** button in the top bar next to the preset browser. A name-entry box appears; type a name and confirm. The current state of all parameters is written to a file, and the new preset appears in the preset menu below a separator, in its own user section under the factory presets. If a preset with that name already exists you are asked to confirm the overwrite. You can delete a user preset from the same modal.
+### Saving a preset (v2)
 
-Loading a user preset works exactly like a factory preset: pick it from the menu, or step to it with the previous and next arrows, and every parameter (including the mode) is restored.
+You **will** click the **star** button in the top bar next to the preset browser. A name-entry box appears; type a name and confirm. The current state of all parameters is written to a file, and the new preset appears in the preset menu below a separator, in its own user section under the factory presets. If a preset with that name already exists you are asked to confirm the overwrite. You can delete a user preset from the same modal.
 
-### File location
+Loading a user preset **will** work exactly like a factory preset: pick it from the menu, or step to it with the previous and next arrows, and every parameter (including the mode) is restored.
 
-User presets are plain files in a per-user application-data folder:
+### File location (v2)
+
+User presets **will** be plain files in a per-user application-data folder:
 
 ```
 Linux:   ~/.config/DuskAudio/SunsetCircuits/presets/
@@ -283,9 +290,9 @@ Windows: %APPDATA%\DuskAudio\SunsetCircuits\presets\
 
 On Linux, if `XDG_CONFIG_HOME` is set it is used in place of `~/.config`. Each preset is one file named after the preset with the extension `.scpreset`.
 
-### The .scpreset format
+### The .scpreset format (v2)
 
-A `.scpreset` file is versioned plain text: a header line, a `name=` line, and one `symbol=value` line per parameter. It is human-readable and safe to back up, copy between machines, or share. Because it is plain text, you can inspect or hand-edit a patch if you want, though the plugin is the intended way to create them. When loading, any parameter the file does not mention keeps its factory default, and any symbol the plugin does not recognize is skipped, so presets stay forward-compatible as the instrument grows. A file with an unknown format version is rejected rather than loaded incorrectly.
+A `.scpreset` file **will be** versioned plain text: a header line, a `name=` line, and one `symbol=value` line per parameter. It is human-readable and safe to back up, copy between machines, or share. Because it is plain text, you can inspect or hand-edit a patch if you want, though the plugin is the intended way to create them. When loading, any parameter the file does not mention keeps its factory default, and any symbol the plugin does not recognize is skipped, so presets stay forward-compatible as the instrument grows. A file with an unknown format version is rejected rather than loaded incorrectly.
 
 ## Effects
 
