@@ -83,6 +83,22 @@ def main():
     if not c_ok:
         fails.append("c")
 
+    # (d) latch-off: latched arp chord, all keys released at 0.5 s (release= sends
+    #     noteOff for the root AND the hold notes; latch keeps the pattern playing
+    #     — proven by the LOUD mid window), then arpLatch 1->0 at 1.5 s with no
+    #     keys physically down -> the pattern must STOP (the engine prunes latched
+    #     notes against the held-key mask). Regression guard: latched notes used
+    #     to play forever after latch-off; only toggling the arp cleared them.
+    sr, x = render(0, 60, seconds, 2, "stuck_latch", arpOn=1, arpRate=3, arpLatch=1,
+                   hold="64,67", release=0.5, setat="1.5:arpLatch:0", **PATCH)
+    d_mid = window_db(x, sr, 1.0, 1.4)
+    d_final = window_db(x, sr, seconds - 1.0, seconds)
+    d_ok = (d_mid > LOUD_DB) and (d_final < SILENT_DB)
+    print(f"(d) latch-off   : mid {d_mid:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"final {d_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if d_ok else 'FAIL'}")
+    if not d_ok:
+        fails.append("d")
+
     print(f"stuck_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
 

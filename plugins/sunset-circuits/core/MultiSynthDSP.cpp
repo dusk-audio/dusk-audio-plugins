@@ -348,7 +348,19 @@ void MultiSynthDSP::snapshotParameters() noexcept
     arp.setRate((ArpRateDivision)clampi((int)p(pArpRate), 0, (int)ArpRateDivision::NumDivisions - 1));
     arp.setGate(p(pArpGate));
     arp.setSwing(p(pArpSwing));
-    arp.setLatch(p(pArpLatch) > 0.5f);
+    const bool latchOn = p(pArpLatch) > 0.5f;
+    if (lastArpLatch && !latchOn)
+    {
+        // Latch just turned off: prune latched notes whose keys are no longer
+        // physically down (heldNotes tracks key state). Keys still held keep
+        // playing; with none held the arp/acid pattern stops cleanly.
+        const uint64_t lo = heldNotesLo.load(std::memory_order_relaxed);
+        const uint64_t hi = heldNotesHi.load(std::memory_order_relaxed);
+        arp.retainHeld(lo, hi);
+        acidSeq.retainHeld(lo, hi);
+    }
+    lastArpLatch = latchOn;
+    arp.setLatch(latchOn);
     arp.setVelocityMode((ArpVelocityMode)clampi((int)p(pArpVelMode), 0, 2));
     arp.setFixedVelocity((int)p(pArpFixedVel));
     for (int i = 0; i < 16; ++i) arp.setStepActive(i, p((Param)(pArpStep0 + i)) > 0.5f);

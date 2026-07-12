@@ -64,6 +64,25 @@ public:
     void setSwing(float s) noexcept { swing = clampf(s, 0.0f, 1.0f); }
     void setLatch(bool on) noexcept { latch = on; }
     void clearLatch() noexcept { if (latch) { heldCount = 0; orderCount = 0; dirty = true; } }
+    // Latch released: keep only the notes whose MIDI bit is set in the
+    // physically-held key mask (engine's heldNotes); everything that was
+    // released while latched drops out, so the arp stops if no keys are down.
+    // (Without this, turning LATCH off left the latched notes in held[] forever
+    // — the only escape was toggling the arp itself.)
+    void retainHeld(uint64_t maskLo, uint64_t maskHi) noexcept
+    {
+        auto down = [&](int n) noexcept {
+            return n >= 0 && n < 128 && ((((n < 64) ? maskLo : maskHi) >> (n & 63)) & 1ull) != 0;
+        };
+        int w = 0;
+        for (int i = 0; i < heldCount; ++i)
+            if (down(held[(size_t)i].note)) held[(size_t)w++] = held[(size_t)i];
+        if (w != heldCount) { heldCount = w; dirty = true; }
+        w = 0;
+        for (int i = 0; i < orderCount; ++i)
+            if (down(order[(size_t)i].note)) order[(size_t)w++] = order[(size_t)i];
+        if (w != orderCount) { orderCount = w; dirty = true; }
+    }
 
     void setVelocityMode(ArpVelocityMode m) noexcept { velMode = m; }
     void setFixedVelocity(int v) noexcept { fixedVel = clampi(v, 1, 127); }
