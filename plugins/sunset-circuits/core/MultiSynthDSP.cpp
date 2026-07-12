@@ -158,11 +158,16 @@ void MultiSynthDSP::reset()
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
     scopeCount.store(0, std::memory_order_relaxed);
+    heldNotesLo.store(0, std::memory_order_relaxed);
+    heldNotesHi.store(0, std::memory_order_relaxed);
 }
 
 //==============================================================================
 void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
 {
+    if (note >= 0 && note < 128)
+        (note < 64 ? heldNotesLo : heldNotesHi)
+            .fetch_or(1ull << (note & 63), std::memory_order_relaxed);
     if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
     // Keep voiceParams.mode current even for a frame-0 note that arrives before
     // the block's snapshot runs — the voice needs it to trigger the right osc
@@ -174,6 +179,9 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
 
 void MultiSynthDSP::noteOff(int note) noexcept
 {
+    if (note >= 0 && note < 128)
+        (note < 64 ? heldNotesLo : heldNotesHi)
+            .fetch_and(~(1ull << (note & 63)), std::memory_order_relaxed);
     if (isAcidMode()) { acidNoteOff(note); return; }
     if (p(pArpOn) > 0.5f) arp.noteOff(note);
     else voices.noteOff(note);
@@ -181,6 +189,8 @@ void MultiSynthDSP::noteOff(int note) noexcept
 
 void MultiSynthDSP::allNotesOff() noexcept
 {
+    heldNotesLo.store(0, std::memory_order_relaxed);
+    heldNotesHi.store(0, std::memory_order_relaxed);
     voices.allNotesOff();
     arp.reset();
     acidVoice.noteOff();
