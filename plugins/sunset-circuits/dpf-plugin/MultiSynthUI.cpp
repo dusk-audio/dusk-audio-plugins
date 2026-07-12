@@ -2127,32 +2127,50 @@ private:
         sectionTitle(714, 556, "DRIVE");
         ledButton("drvon", kParamDriveOn, 786, 556, 828, 572, "ON");
         comboBox("drvtype", kParamDriveType, 716, 580, 828, 600, kDriveType, 3);
-        klabel(748, 606, "AMT"); knob("drvamt", kParamDriveAmt, 748, 640, 16, "%.0f", " %", false, false, false, 100.0f);
-        klabel(796, 606, "MIX"); knob("drvmix", kParamDriveMix, 796, 640, 16, "%.0f", " %", false, false, false, 100.0f);
+        // Tickless like the rest of the FX strip, centered in the body below the combo.
+        klabel(748, 612, "AMT"); knob("drvamt", kParamDriveAmt, 748, 646, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabel(796, 612, "MIX"); knob("drvmix", kParamDriveMix, 796, 646, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
 
-        // Chorus
+        // Chorus — three tickless r14 knobs in ONE balanced row (the old layout
+        // orphaned a smaller MIX bottom-right over dead space). Tickless reach is
+        // R+3.2 = ±17.2, so x {863,901,939} (38 apart) clears the inner walls
+        // (845.8 >= 844, 956.2 <= 958) and each neighbor by 3.6 px.
         panelBox(838, 552, 964, 688);
         sectionTitle(844, 556, "CHORUS");
         ledButton("choon", kParamChorusOn, 916, 556, 958, 572, "ON");
-        klabel(866, 588, "RATE");  knob("chorate", kParamChorusRate, 866, 620, 16, "%.2f", " Hz");
-        klabel(910, 588, "DEPTH"); knob("chodep", kParamChorusDepth, 910, 620, 16, "%.0f", " %", false, false, false, 100.0f);
-        klabel(940, 640, "MIX");   knob("chomix", kParamChorusMix, 940, 664, 12, "%.0f", " %", false, false, false, 100.0f);
+        klabel(863, 598, "RATE");  knob("chorate", kParamChorusRate, 863, 636, 14, "%.2f", " Hz", false, false, false, 1.0f, 0.0f, false);
+        klabel(901, 598, "DEPTH"); knob("chodep", kParamChorusDepth, 901, 636, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabel(939, 598, "MIX");   knob("chomix", kParamChorusMix, 939, 636, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
 
-        // Delay
+        // Delay — row structure instead of the old jumble (the DIV combo used to
+        // end at y=606 with the FB label starting at 598 UNDER it): SYNC + the
+        // context DIV combo share the top row (578..598); the knob row (labels
+        // 608, centres 642) holds FB+MIX when synced or TIME+FB+MIX when free;
+        // P-P and TAPE ride a bottom row of their own (664..680).
         panelBox(968, 552, 1094, 688);
         sectionTitle(974, 556, "DELAY");
         ledButton("dlyon", kParamDelayOn, 1046, 556, 1088, 572, "ON");
         const bool sync = values[kParamDelaySync] > 0.5f;
-        ledButton("dlysync", kParamDelaySync, 974, 578, 1030, 594, "SYNC");
-        if (sync) { text(1036, 580, 8.0f, live.textPanel, "DIV", -1);
-                    comboBox("dlydiv", kParamDelayDiv, 1036, 590, 1088, 606, kDivName, 14); }
-        else      { klabel(1000, 598, "TIME"); knob("dlytime", kParamDelayTime, 1000, 626, 14, "%.0f", " ms", false, false, false, 1.0f, 0.0f, true, true); }
-        klabel(1046, 598, "FB");  knob("dlyfb", kParamDelayFB, 1046, 626, 14, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1000, 640, "MIX"); knob("dlymix", kParamDelayMix, 1000, 664, 12, "%.0f", " %", false, false, false, 100.0f);
-        ledButton("dlypp", kParamDelayPP, 1040, 656, 1064, 672, "P-P", true);
-        ledButton("dlytape", kParamDelayTape, 1068, 656, 1092, 672, "TAPE", true);
+        ledButton("dlysync", kParamDelaySync, 976, 578, 1032, 596, "SYNC");
+        if (sync)
+        {
+            comboBox("dlydiv", kParamDelayDiv, 1038, 578, 1088, 598, kDivName, 14);
+            klabel(1013, 608, "FB");  knob("dlyfb", kParamDelayFB, 1013, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            klabel(1049, 608, "MIX"); knob("dlymix", kParamDelayMix, 1049, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        }
+        else
+        {
+            klabel(993, 608, "TIME");  knob("dlytime", kParamDelayTime, 993, 642, 14, "%.0f", " ms", false, false, false, 1.0f, 0.0f, false, true);
+            klabel(1031, 608, "FB");   knob("dlyfb", kParamDelayFB, 1031, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            klabel(1069, 608, "MIX");  knob("dlymix", kParamDelayMix, 1069, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        }
+        ledButton("dlypp", kParamDelayPP, 995, 664, 1031, 680, "P-P", true);
+        ledButton("dlytape", kParamDelayTape, 1037, 664, 1073, 680, "TAPE", true);
 
-        // Reverb
+        // Reverb — aligned two-row grid: SIZE/DECAY/DAMP r13 (labels 590, centres
+        // 620), MIX/P-DLY r12 (labels 642, centres 668); row-2 label ink (..649.6)
+        // clears the row-1 knob bottoms (636.2) and the row-2 knob tops (652.8),
+        // and the row-2 knob bottoms (683.2) clear the inner floor (685).
         panelBox(1098, 552, 1224, 688);
         sectionTitle(1104, 556, "REVERB");
         ledButton("rvbon", kParamReverbOn, 1176, 556, 1218, 572, "ON");
@@ -2164,11 +2182,11 @@ private:
             dl->AddRect(P(1104, 573), P(1158, 585), live.accent, 3.0f * s, 0, 1.0f * s);
             text(1131, 575, 8.0f, live.accent, "SPRING", 0, true);
         }
-        klabel(1124, 588, "SIZE");  knob("rvbsize", kParamReverbSize, 1124, 618, 14, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1160, 588, "DECAY"); knob("rvbdec", kParamReverbDecay, 1160, 618, 14, "%.1f", " s");
-        klabel(1196, 588, "DAMP");  knob("rvbdamp", kParamReverbDamp, 1196, 618, 14, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1124, 640, "MIX");   knob("rvbmix", kParamReverbMix, 1124, 664, 12, "%.0f", " %", false, false, false, 100.0f);
-        klabel(1180, 640, "P-DLY"); knob("rvbpd", kParamReverbPD, 1180, 664, 12, "%.0f", " ms", false, false, false, 1.0f, 0.0f, true, true);
+        klabel(1123, 590, "SIZE");  knob("rvbsize", kParamReverbSize, 1123, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabel(1161, 590, "DECAY"); knob("rvbdec", kParamReverbDecay, 1161, 620, 13, "%.1f", " s", false, false, false, 1.0f, 0.0f, false);
+        klabel(1199, 590, "DAMP");  knob("rvbdamp", kParamReverbDamp, 1199, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabel(1142, 642, "MIX");   knob("rvbmix", kParamReverbMix, 1142, 668, 12, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabel(1180, 642, "P-DLY"); knob("rvbpd", kParamReverbPD, 1180, 668, 12, "%.0f", " ms", false, false, false, 1.0f, 0.0f, false, true);
     }
 
     //========================================================================
