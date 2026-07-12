@@ -46,7 +46,7 @@ knob is its pivot; radius is design-space.
 | Element | Rect / center | Notes |
 |---|---|---|
 | Chassis header fill | `(0,0)–(1240,54)` | `bg` darkened 10%, 3 px metal top edge, 1.5 px hairline at y=54 |
-| Nameplate "MULTI-SYNTH" | text box `(18,10)–(250,44)` | 20 px bold, `text`; sub "Dusk Audio" 13 px right-aligned at x=1222,y=8 |
+| Nameplate "SUNSET CIRCUITS" | text box `(18,10)–(250,44)` | 20 px bold, `text`; sub "Dusk Audio" 13 px right-aligned at x=1222,y=8 |
 | Mode rockers ×6 | strip `(300,8)–(940,48)` | rocker *i* at `x=306+i*106`, width **100**, `y 10..46` (§4) |
 | Preset ◀ prev | `(952,14)–(978,42)` | LED-button style |
 | Preset combo | `(982,14)–(1150,42)` | styled `BeginCombo`, per-mode accent header (§8) |
@@ -111,7 +111,7 @@ knob is its pivot; radius is design-space.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ MULTI-SYNTH   [COSMOS][ORACLE][MONO][MODULAR][PRISM][ACID]   ◀ [ Preset ▾ ] ▶  ★  Dusk  │ 0..54
+│ SUNSET CIRCUITS [COSMOS][ORACLE][MONO][MODULAR][PRISM][ACID]   ◀ [ Preset ▾ ] ▶  ★  Dusk  │ 0..54
 ├───────────────┬───────────────────────────────┬─────────────────────────────────────────┤
 │  OSC 1        │        FILTER                  │  LFO 1                 │   SCOPE          │
 │  wave det pw  │  ┌────filter-curve────────┐    │  rate fade shape sync  │   /\  /\  /\     │
