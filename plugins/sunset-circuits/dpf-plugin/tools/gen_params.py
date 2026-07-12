@@ -166,14 +166,14 @@ PRESETS = [
  ("Velvet Fog", {"mode":0,"filterCutoff":1200,"filterRes":0.25,"filterEnvAmt":0.15,"ampA":1.0,"ampS":0.9,"ampR":2.5,"cosmosChorus":2,"vintage":0.5}),
  ("Sunset Strip", {"mode":0,"osc2Detune":15,"filterCutoff":3500,"ampA":0.25,"ampS":0.8,"ampR":1.5,"cosmosChorus":3,"analogAmt":0.35}),
  ("Crystal Rain", {"mode":0,"filterCutoff":6000,"filterRes":0.2,"ampA":0.003,"ampD":0.12,"ampS":0.2,"ampR":0.35,"cosmosChorus":3,"arpOn":1,"arpRate":4,"arpGate":0.3,"delayOn":1,"delayMix":0.25,"reverbOn":1,"reverbMix":0.2}),
- ("Brass Section", {"mode":1,"filterCutoff":2000,"filterRes":0.4,"filterEnvAmt":0.7,"filtA":0.05,"filtD":0.3,"filtS":0.3,"ampA":0.01,"ampD":0.3,"ampS":0.7,"pmFenvFilt":0.3}),
- ("Wooden Keys", {"mode":1,"filterCutoff":3000,"filterRes":0.2,"ampA":0.005,"ampD":0.4,"ampS":0.5,"ampR":0.3}),
+ ("Brass Section", {"masterVol":-3.0,"mode":1,"filterCutoff":2000,"filterRes":0.4,"filterEnvAmt":0.7,"filtA":0.05,"filtD":0.3,"filtS":0.3,"ampA":0.01,"ampD":0.3,"ampS":0.7,"pmFenvFilt":0.3}),
+ ("Wooden Keys", {"masterVol":-1.5,"mode":1,"filterCutoff":3000,"filterRes":0.2,"ampA":0.005,"ampD":0.4,"ampS":0.5,"ampR":0.3}),
  ("Poly Mod Bells", {"mode":1,"osc2Wave":2,"osc2Semi":7,"pmOscBOscA":0.5,"pmFenvOscA":0.4,"filterCutoff":5000,"ampA":0.005,"ampD":1.0,"ampS":0.0,"ampR":1.5,"reverbOn":1,"reverbMix":0.35,"reverbDecay":3.0}),
  ("Dark Oracle", {"mode":1,"filterCutoff":1200,"filterRes":0.5,"filterEnvAmt":0.3,"ampA":0.5,"ampS":0.85,"ampR":1.5,"vintage":0.3,"pmFenvFilt":0.2}),
  ("Stab Machine", {"mode":1,"filterCutoff":4000,"filterEnvAmt":0.6,"ampA":0.001,"ampD":0.15,"ampS":0.0,"ampR":0.1,"pmFenvOscA":0.3}),
  ("Pulsing Darkness", {"mode":2,"osc1Wave":4,"osc2Wave":0,"osc2Semi":-12,"filterCutoff":600,"filterRes":0.55,"filterEnvAmt":0.5,"subLevel":0.9,"filtA":0.001,"filtD":0.15,"filtS":0.05,"arpOn":1,"arpRate":3,"vintage":0.3}),
  ("Acid Squelch", {"mode":2,"filterCutoff":400,"filterRes":0.85,"filterEnvAmt":0.95,"filtA":0.001,"filtD":0.15,"filtS":0.0,"subLevel":0.7,"portaTime":0.08,"ampD":0.3,"ampS":0.0,"ampR":0.15}),
- ("Screaming Lead", {"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
+ ("Screaming Lead", {"masterVol":-3.0,"mode":2,"filterCutoff":6000,"filterRes":0.3,"ampA":0.005,"portaTime":0.1,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delayMix":0.2}),
  ("Sub Thunder", {"mode":2,"osc1Wave":3,"osc2Wave":3,"filterCutoff":400,"subLevel":1.0,"noiseLevel":0.02}),
  ("Sync Sweep", {"mode":2,"osc2Semi":7,"filterCutoff":800,"filterRes":0.6,"filterEnvAmt":0.7,"filtA":0.01,"filtD":0.4,"ringMod":0.3,"delayOn":1,"delayMix":0.2}),
  # Flagship (design-doc mandate): Oracle mode, two slightly detuned saws, arp
@@ -203,13 +203,13 @@ PRESETS = [
  ("Warm Keys", {"mode":0,"osc1Wave":2,"osc2Wave":3,"filterCutoff":4000,"ampA":0.005,"ampD":0.8,"ampS":0.3,"ampR":0.5,"cosmosChorus":1,"velCurve":2}),
  ("Analog Strings", {"mode":1,"filterCutoff":3000,"filterRes":0.15,"ampA":0.8,"ampS":0.9,"ampR":1.5,"unisonVoices":4,"unisonDetune":12,"stereoWidth":0.7,"chorusOn":1,"chorusMix":0.3}),
  ("Wobble Bass", {"mode":2,"filterCutoff":600,"filterRes":0.6,"subLevel":0.8,"lfo1Rate":4.0,"lfo1Shape":0,"modSrc0":1,"modDst0":5,"modAmt0":0.6}),
- ("Tape Lead", {"mode":2,"filterCutoff":5000,"filterRes":0.25,"ampA":0.005,"portaTime":0.12,"glideMode":1,"driveOn":1,"driveAmt":0.25,"delayOn":1,"delayTape":1,"delayMix":0.25,"delayFB":0.4}),
+ ("Tape Lead", {"masterVol":-2.0,"mode":2,"filterCutoff":5000,"filterRes":0.25,"ampA":0.005,"portaTime":0.12,"glideMode":1,"driveOn":1,"driveAmt":0.25,"delayOn":1,"delayTape":1,"delayMix":0.25,"delayFB":0.4}),
  ("Drone Machine", {"mode":3,"fmAmount":0.3,"osc3Level":0.6,"osc3Wave":3,"filterCutoff":1200,"filterRes":0.55,"ampA":3.0,"ampS":1.0,"ampR":5.0,"lfo1Rate":0.1,"modSrc0":1,"modDst0":5,"modAmt0":0.4,"reverbOn":1,"reverbDecay":12.0,"reverbMix":0.5,"vintage":0.6}),
  ("Arp Factory", {"mode":0,"filterCutoff":4500,"filterRes":0.3,"filterEnvAmt":0.4,"filtD":0.2,"ampA":0.003,"ampD":0.15,"ampS":0.4,"ampR":0.3,"cosmosChorus":3,"arpOn":1,"arpMode":2,"arpRate":4,"arpOctave":3,"arpGate":0.5,"arpSwing":0.3,"delayOn":1,"delayMix":0.2}),
- ("Fat Fifth", {"mode":1,"osc2Semi":7,"filterCutoff":3500,"filterRes":0.2,"ampA":0.01,"ampS":0.8,"unisonVoices":3,"unisonDetune":8,"stereoWidth":0.65}),
+ ("Fat Fifth", {"masterVol":-3.5,"mode":1,"osc2Semi":7,"filterCutoff":3500,"filterRes":0.2,"ampA":0.01,"ampS":0.8,"unisonVoices":3,"unisonDetune":8,"stereoWidth":0.65}),
  ("Noise Sweep", {"mode":3,"osc1Level":0.0,"osc2Level":0.0,"noiseLevel":1.0,"filterCutoff":500,"filterRes":0.7,"filterEnvAmt":0.8,"filtA":0.5,"filtD":2.0,"filtS":0.1,"ampA":0.3,"ampS":0.7,"ampR":3.0,"reverbOn":1,"reverbMix":0.4}),
  ("Init Cosmos", {"mode":0,"cosmosChorus":3}),
- ("Init Oracle", {"mode":1}),
+ ("Init Oracle", {"masterVol":-4.0,"mode":1}),
  ("Init Mono", {"mode":2}),
  ("Init Modular", {"mode":3}),
 
@@ -218,7 +218,7 @@ PRESETS = [
  # Glass Keys: dual-stack tine e-piano (algo 4). Stack A = body (op2 1:1 -> op1
  # carrier); Stack B = tine (op4 ratio 14 fast-decay -> op3 carrier), keyScale
  # rolls the tine off up the keyboard. Percussive amp with a little sustain.
- ("Glass Keys", {"mode":4,"prismAlgo":4,"prismFB":0,
+ ("Glass Keys", {"masterVol":-2.0,"mode":4,"prismAlgo":4,"prismFB":0,
    "op1Ratio":1,"op1Level":1.0,"op1A":0.001,"op1D":2.0,"op1S":0.4,"op1R":0.4,
    "op2Ratio":1,"op2Level":0.45,"op2A":0.001,"op2D":1.2,"op2S":0.2,"op2R":0.3,
    "op3Ratio":1,"op3Level":0.85,"op3A":0.001,"op3D":1.5,"op3S":0.25,"op3R":0.4,
@@ -245,7 +245,7 @@ PRESETS = [
    "reverbOn":1,"reverbSize":0.7,"reverbDecay":4.0,"reverbMix":0.3}),
  # Brass Machine: serial FM (algo 0) with strong op4 self-feedback growl and a
  # brass-style attack swell on the amp + modulator.
- ("Brass Machine", {"mode":4,"prismAlgo":0,"prismFB":0.6,
+ ("Brass Machine", {"masterVol":-2.0,"mode":4,"prismAlgo":0,"prismFB":0.6,
    "op1Ratio":1,"op1Level":1.0,"op1A":0.06,"op1D":0.3,"op1S":0.8,"op1R":0.3,
    "op2Ratio":1,"op2Level":0.7,"op2A":0.1,"op2D":0.4,"op2S":0.6,"op2R":0.3,
    "op3Ratio":1,"op3Level":0.5,"op3A":0.08,"op3D":0.4,"op3S":0.5,"op3R":0.3,
@@ -278,7 +278,7 @@ PRESETS = [
    "seqAccent0":1,"seqAccent8":1}),
  # Screamer: near-self-oscillating res 0.95, maxed accent, drive on -> the
  # aggressive overdriven scream.
- ("Screamer", {"mode":5,"arpOn":1,"osc1Wave":0,"filterCutoff":600,"filterRes":0.95,
+ ("Screamer", {"masterVol":-4.0,"mode":5,"arpOn":1,"osc1Wave":0,"filterCutoff":600,"filterRes":0.95,
    "filterEnvAmt":0.7,"ampD":0.25,"ampS":0.0,"acidAccentAmt":1.0,"acidSlideTime":55,
    "driveOn":1,"driveAmt":0.55,"driveType":0,"arpRate":4,"arpGate":0.5,
    "seqPitch3":12,"seqPitch7":12,"seqPitch9":7,"seqPitch11":10,"seqPitch15":-12,
@@ -291,12 +291,12 @@ PRESETS = [
    "filterCutoff":3000,"filterRes":0.2,"filterEnvAmt":0.2,"ampA":1.2,"ampD":1.0,"ampS":0.9,"ampR":3.0,
    "cosmosChorus":3,"reverbOn":1,"reverbSize":0.8,"reverbDecay":4.0,"reverbMix":0.3,"stereoWidth":0.9}),
  # Regal Brass: Oracle self-osc filter + poly-mod brass with 2-voice unison.
- ("Regal Brass", {"mode":1,"osc2Semi":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.6,
+ ("Regal Brass", {"masterVol":-3.5,"mode":1,"osc2Semi":0,"filterCutoff":1800,"filterRes":0.35,"filterEnvAmt":0.6,
    "filtA":0.04,"filtD":0.3,"filtS":0.4,"ampA":0.02,"ampD":0.3,"ampS":0.8,"ampR":0.35,
    "pmFenvFilt":0.35,"pmFenvOscA":0.1,"unisonVoices":2,"unisonDetune":6,"stereoWidth":0.6}),
  # Siren Lead: Mono screaming sync lead (hard sync + osc2 up an octave), driven,
  # slap of delay, portamento glide.
- ("Siren Lead", {"mode":2,"hardSync":1,"osc2Semi":12,"filterCutoff":4000,"filterRes":0.5,
+ ("Siren Lead", {"masterVol":-3.0,"mode":2,"hardSync":1,"osc2Semi":12,"filterCutoff":4000,"filterRes":0.5,
    "filterEnvAmt":0.6,"filtA":0.01,"filtD":0.3,"filtS":0.3,"ampA":0.005,"ampS":0.8,"ampR":0.3,
    "portaTime":0.05,"driveOn":1,"driveAmt":0.4,"delayOn":1,"delaySync":1,"delayDiv":3,"delayMix":0.25,"delayFB":0.35}),
  # Nebula Static: Modular sci-fi texture — S&H modulating cutoff, third osc,
@@ -307,7 +307,7 @@ PRESETS = [
    "reverbOn":1,"reverbSize":0.6,"reverbDecay":6.0,"reverbMix":0.35,"vintage":0.3}),
  # Glass Cathedral: Prism dual-stack pad — mellow FM, long amp swell, chorus +
  # big reverb for a glassy cathedral wash.
- ("Glass Cathedral", {"mode":4,"prismAlgo":4,"prismFB":0,
+ ("Glass Cathedral", {"masterVol":-3.0,"mode":4,"prismAlgo":4,"prismFB":0,
    "op1Ratio":1,"op1Level":0.9,"op1A":0.8,"op1D":2.0,"op1S":0.7,"op1R":2.5,
    "op2Ratio":2,"op2Level":0.35,"op2A":1.0,"op2D":2.0,"op2S":0.6,"op2R":2.5,
    "op3Ratio":1,"op3Level":0.7,"op3A":0.8,"op3D":2.0,"op3S":0.7,"op3R":2.5,

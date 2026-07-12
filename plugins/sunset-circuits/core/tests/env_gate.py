@@ -45,10 +45,15 @@ def crossing(t, env, level, rising, t0, t1):
 # --- C1 retrigger-click gate ---------------------------------------------------
 CLICK_WIN = 0.02   # +-20 ms window around the retrigger
 CLICK_MAX = 0.25   # calibrated: pre-fix 0.4504, post-fix 0.1227 (see module docstring)
+# masterVol -2: with the engine's +8 dB output makeup this nets the same +6 dB
+# total gain that CLICK_MAX was calibrated at. (The old masterVol=15 clamped to
+# +6; +6 plus the makeup drove the sine into the output softLimit knee at 0.9,
+# whose flattening inflated max|delta| to 0.31 — a test-config artifact, not a
+# retrigger click.)
 CLICK_PATCH = dict(osc1Wave=3, osc2Level=0, subLevel=0, noiseLevel=0, analogAmt=0,
                    filterEnvAmt=0, filterCutoff=12000, filterRes=0, reverbOn=0,
                    driveOn=0, chorusOn=0, delayOn=0, cosmosChorus=0, ampCurve=0,
-                   ampA=0.01, ampD=0.01, ampS=1.0, ampR=0.3, masterVol=15,
+                   ampA=0.01, ampD=0.01, ampS=1.0, ampR=0.3, masterVol=-2,
                    noteon="0.5:62")
 
 

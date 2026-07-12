@@ -467,7 +467,14 @@ void MultiSynthDSP::snapshotParameters() noexcept
     }
 
     // --- engine-level cached controls ---
-    masterGain = std::pow(10.0f, p(pMasterVol) / 20.0f);
+    // +8 dB output makeup: commercial soft synths ship factory presets peaking
+    // around -6..0 dBFS (chords ~-3); without makeup this engine's fleet median
+    // was -14 dBFS and users heard it as "way quieter than Diva". The makeup is
+    // applied with masterGain at the FINAL output (post-FX), so it scales level
+    // only — drive/delay/reverb tone is untouched. Hot presets are trimmed via
+    // their masterVol rows so the audit ceiling (peak <= -1 dBFS) still holds.
+    constexpr float kOutputMakeup = 2.51188643f; // +8 dB
+    masterGain = kOutputMakeup * std::pow(10.0f, p(pMasterVol) / 20.0f);
     masterPan = p(pMasterPan);
     stereoWidth = p(pStereoWidth);
     vintage = p(pVintage);
