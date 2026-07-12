@@ -72,14 +72,17 @@ def main():
         return float(np.percentile(mid, 10))
 
     finite_slide = (not has_nan_inf(xs_on)) and (not has_nan_inf(xs_off))
-    sounding = float(np.sqrt(np.mean(xs_on[:, 0] ** 2))) > 1e-3
+    # BOTH renders must actually sound: a broken slide-off render (silence) would
+    # make floor_off ~ 0 and the ratio spuriously huge -> false PASS.
+    sounding = (float(np.sqrt(np.mean(xs_on[:, 0] ** 2))) > 1e-3
+                and float(np.sqrt(np.mean(xs_off[:, 0] ** 2))) > 1e-3)
     floor_on = env_floor(xs_on[:, 0])
     floor_off = env_floor(xs_off[:, 0])
     ratio = floor_on / (floor_off + 1e-12)
     SLIDE_MIN_RATIO = 2.0
     slide_ok = finite_slide and sounding and ratio >= SLIDE_MIN_RATIO
     print(f"[slide]   env floor on {floor_on:.4f} vs off {floor_off:.4f} -> {ratio:.1f}x "
-          f"(need >= {SLIDE_MIN_RATIO:.0f}x, finite+sounding={finite_slide and sounding})")
+          f"(need >= {SLIDE_MIN_RATIO:.0f}x, finite={finite_slide}, both sounding={sounding})")
     ok &= slide_ok
 
     print(f"acid_gate: {'PASS' if ok else 'FAIL'}")

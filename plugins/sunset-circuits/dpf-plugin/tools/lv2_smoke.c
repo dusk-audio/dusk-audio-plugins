@@ -33,6 +33,10 @@ static LV2_URID map_uri(LV2_URID_Map_Handle h, const char* uri) {
     (void)h;
     for (uint32_t i = 0; i < g_nUris; ++i)
         if (strcmp(g_uris[i], uri) == 0) return i + 1;
+    if (g_nUris >= MAX_URIS) {
+        fprintf(stderr, "map_uri: URI table full (%d), cannot map %s\n", MAX_URIS, uri);
+        return 0; // LV2_URID 0 = invalid/failure per the URID spec
+    }
     g_uris[g_nUris] = strdup(uri);
     return ++g_nUris;
 }
