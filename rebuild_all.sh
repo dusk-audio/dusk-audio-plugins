@@ -102,11 +102,12 @@ echo "  • Build Type: ${BUILD_TYPE}"
 echo "  • Parallel Jobs: ${NUM_JOBS}"
 echo "  • Build Directory: ${BUILD_DIR}"
 
-# Auto-detect ccache (always used if available)
+# Auto-detect ccache. NOTE: ccache is wired into the build via
+# CMAKE_<LANG>_COMPILER_LAUNCHER in cmake/GlobalSettings.cmake — do NOT prefix the
+# compiler (CC="ccache cc"). CMake treats -DCMAKE_C_COMPILER as a single path and
+# fails to resolve the two-word value "ccache cc".
 if command_exists ccache; then
-    export CC="ccache ${CC:-cc}"
-    export CXX="ccache ${CXX:-c++}"
-    print_success "ccache detected - compilation caching enabled"
+    print_success "ccache detected - compilation caching enabled (via CMake launcher)"
 else
     print_warning "ccache not found - builds will be slower without caching"
     echo "  Install: brew install ccache (macOS) / sudo apt install ccache (Linux)"

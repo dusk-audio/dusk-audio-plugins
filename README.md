@@ -1,6 +1,8 @@
 # Dusk Audio Plugins
 
-A collection of professional audio VST3/AU/LV2 plugins built with JUCE. Several titles (4K EQ, Spectrum Analyzer) also ship in CLAP format.
+A collection of professional audio VST3/AU/LV2 plugins. Several titles (4K EQ, Spectrum Analyzer) also ship in CLAP format.
+
+> **Framework:** most plugins are built with **JUCE**. The project is migrating to **[DPF](https://github.com/DISTRHO/DPF)** (DISTRHO Plugin Framework) with a Dear ImGui UI — **Sunset Circuits** is the first DPF-native title, and the intent is to migrate *all* plugins to DPF over time. During the transition the two build systems coexist: JUCE plugins build through the top-level CMake graph, DPF plugins build out-of-graph (see [Building](#building)).
 
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
@@ -117,12 +119,26 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - 2x/4x oversampling on nonlinear stages
 - See the [v5 roadmap](https://github.com/dusk-audio/plugins) for the path to commercial-tier quality
 
+### Sunset Circuits - PRE-RELEASE (DPF)
+Six vintage synth circuits in one instrument, and the first **DPF-native** plugin (Dear ImGui UI):
+- Six mode "circuits": Cosmos (DCO poly), Oracle (poly-mod), Mono, Modular (semi-modular + spring), Prism (4-operator FM), Acid (bass box + pattern sequencer)
+- Per-mode panel skins, signature controls, and sub-panels sharing one fixed layout
+- Arpeggiator / 16-step sequencer, 8-slot mod matrix, dual LFOs, unison, effects chain (drive/chorus/delay/reverb)
+- 54 factory presets across all six modes; 1x/2x/4x oversampled voices
+- VST3/CLAP/LV2 formats
+
 ## Building
+
+> **Two build systems during the DPF migration.** JUCE plugins build through the
+> top-level CMake graph (`./rebuild_all.sh`, `./docker/build_release.sh <name>`).
+> DPF plugins (currently **Sunset Circuits**) build **out-of-graph** — they pin
+> DISTRHO/DPF + DPF-Widgets at fixed SHAs and build their own `dpf-plugin/` CMake
+> project. `./rebuild_all.sh` does **not** build DPF plugins; use the DPF path below.
 
 ### Recommended: Docker/Podman Build
 For consistent, distributable binaries:
 ```bash
-# Build all plugins
+# Build all JUCE plugins
 ./docker/build_release.sh
 
 # Build a single plugin (production-ready)
@@ -140,16 +156,32 @@ For consistent, distributable binaries:
 ./docker/build_release.sh groovemind   # GrooveMind
 ./docker/build_release.sh duskamp      # DuskAmp
 
+# DPF plugin (out-of-graph — clones DPF + DPF-Widgets in the container)
+./docker/build_release.sh sunset       # Sunset Circuits (VST3/CLAP/LV2)
+
 # Show all available shortcuts
 ./docker/build_release.sh --help
 ```
 
-### Local Development Build
+### Local Development Build (JUCE plugins)
 ```bash
-./rebuild_all.sh              # Standard build
-./rebuild_all.sh --fast       # Use ccache and ninja if available
+./rebuild_all.sh              # Standard build (all JUCE plugins)
+./rebuild_all.sh --fast       # Ninja + ccache + unity build (much faster rebuilds)
 ./rebuild_all.sh --debug      # Debug build
 ```
+ccache is auto-detected and wired via `CMAKE_<LANG>_COMPILER_LAUNCHER` in
+`cmake/GlobalSettings.cmake` — no manual `CC`/`CXX` setup needed.
+
+### Local Development Build (DPF plugins)
+DPF plugins build out-of-graph against pinned DPF SHAs. For an incremental local
+build of Sunset Circuits (after the first configure):
+```bash
+cmake --build plugins/sunset-circuits/dpf-plugin/build -j$(nproc)
+```
+The container/CI path (`./docker/build_release.sh sunset`, `.github/workflows/dpf-release.yml`)
+is the reproducible way to build DPF plugins from clean — it pins DISTRHO/DPF and
+DPF-Widgets at known-good SHAs. As more plugins migrate, each gains its own
+`dpf-plugin/` directory built the same way.
 
 ### Build Individual Plugin
 ```bash
