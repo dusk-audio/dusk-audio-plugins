@@ -1237,24 +1237,27 @@ void MultiSynthEditor::refreshPresetList()
 
     // Add factory presets with mode group headers
     // Cosmos: 0-4, Oracle: 5-9, Mono: 10-14, Modular: 15-19, New: 20-35, Init: 36-39
+    // Every fixed-range loop also guards i < factory.size(): if the factory table
+    // is ever shorter than the hardcoded section ranges, factory[i] must not read
+    // out of bounds.
     presetBox.addSectionHeading("Cosmos");
-    for (int i = 0; i <= 4; ++i)
+    for (int i = 0; i <= 4 && i < factory.size(); ++i)
         presetBox.addItem(factory[i], i + 1);
 
     presetBox.addSectionHeading("Oracle");
-    for (int i = 5; i <= 9; ++i)
+    for (int i = 5; i <= 9 && i < factory.size(); ++i)
         presetBox.addItem(factory[i], i + 1);
 
     presetBox.addSectionHeading("Mono");
-    for (int i = 10; i <= 14; ++i)
+    for (int i = 10; i <= 14 && i < factory.size(); ++i)
         presetBox.addItem(factory[i], i + 1);
 
     presetBox.addSectionHeading("Modular");
-    for (int i = 15; i <= 19; ++i)
+    for (int i = 15; i <= 19 && i < factory.size(); ++i)
         presetBox.addItem(factory[i], i + 1);
 
     presetBox.addSectionHeading("Multi-Mode");
-    for (int i = 20; i <= 35; ++i)
+    for (int i = 20; i <= 35 && i < factory.size(); ++i)
         presetBox.addItem(factory[i], i + 1);
 
     presetBox.addSectionHeading("Init");
