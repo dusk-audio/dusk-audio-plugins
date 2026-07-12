@@ -27,7 +27,7 @@ def onset_count(sig, sr):
 def main():
     ok = True
 
-    # 1. Pattern renders: 2 s @ 120 BPM 1/8 -> ~16 eighth-notes; every step on.
+    # 1. Pattern renders: 2 s @ 120 BPM 1/8 -> ~8 eighth-notes; every step on.
     steps = {f"arpStep{i}": 1 for i in range(16)}
     sr, x = render(5, 48, 2.0, 2, "acid_pat", **BASE, **steps)
     mono = x[:, 0]

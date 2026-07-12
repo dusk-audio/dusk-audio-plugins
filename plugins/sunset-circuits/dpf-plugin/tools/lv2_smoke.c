@@ -100,8 +100,10 @@ int main(int argc, char** argv) {
     // Buffers.
     float*  ctrl  = calloc(nPorts, sizeof(float)); // one control slot per port index
     float** audio = calloc(nPorts, sizeof(float*));
-    // Atom buffers (one 4 KB slot per atom port), initialised as empty sequences.
-    uint8_t* atomBuf[64] = {0};
+    // Atom buffers (one 4 KB slot per atom port), indexed by REAL port index —
+    // this plugin has 200+ ports, so a fixed 64-slot table masked with (i & 63)
+    // could alias two atom ports onto one buffer.
+    uint8_t** atomBuf = calloc(nPorts, sizeof(uint8_t*));
 
     int oversamplingIdx = -1, latencyIdx = -1, atomInIdx = -1;
     LilvNode* defsNode = NULL;
@@ -135,7 +137,7 @@ int main(int argc, char** argv) {
             if (strcmp(s, "lv2_latency") == 0)  latencyIdx = (int)i;
         } else if (isAtom) {
             uint8_t* buf = calloc(4096, 1);
-            atomBuf[i & 63] = buf;
+            atomBuf[i] = buf;
             LV2_Atom_Sequence* seq = (LV2_Atom_Sequence*)buf;
             seq->atom.size = sizeof(LV2_Atom_Sequence_Body);
             seq->atom.type = map_uri(NULL, LV2_ATOM__Sequence);
@@ -190,7 +192,7 @@ int main(int argc, char** argv) {
         // re-prepare and eat the note (false SILENT fail).
         lilv_instance_run(inst, BLOCK);
         const LV2_URID midiEventURID = map_uri(NULL, "http://lv2plug.in/ns/ext/midi#MidiEvent");
-        uint8_t* buf = atomBuf[atomInIdx & 63];
+        uint8_t* buf = atomBuf[atomInIdx];
         LV2_Atom_Sequence* seq = (LV2_Atom_Sequence*)buf;
         // Build a sequence containing one note-on at frame 0.
         seq->atom.type = map_uri(NULL, LV2_ATOM__Sequence);
