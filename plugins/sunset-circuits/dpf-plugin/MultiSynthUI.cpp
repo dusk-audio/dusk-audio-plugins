@@ -1525,12 +1525,22 @@ private:
             std::snprintf(id, sizeof(id), "op%dRl", op); knob(id, base + 8, cxc[3], cy2, kr, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, false, true);
             if (op == 3) // feedback op hosts the FB knob, aligned in the KEY column
                 knob("prismfb", kParamPrismFB, cxc[4], cy2, kr, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            // ... labels after, so their ink paints over the value arcs (see above)
-            auto L = [&](float cx, float y, const char* t) { text(cx, y - 22.0f, 9.5f, live.textPanel, t, 0, true); };
+            // ... labels after, each on a small panel-colored chip: at high values
+            // the accent arc passes through 12 o'clock, i.e. straight through the
+            // label band, and letter-ink-over-arc alone still reads as "covered"
+            // (the arc line crosses the glyphs). The chip masks the arc under the
+            // whole label so the text always sits on a clean plate.
+            auto L = [&](float cx, float y, const char* t, bool accent = false)
+            {
+                const float hw = 0.5f * ((float)std::strlen(t) * 5.3f + 5.0f);
+                dl->AddRectFilled(P(cx - hw, y - 23.0f), P(cx + hw, y - 13.0f),
+                                  live.panel, 2.0f * s);
+                text(cx, y - 22.0f, 9.5f, accent ? live.accent : live.textPanel, t, 0, true);
+            };
             L(cxc[0], cy1, "RATIO"); L(cxc[1], cy1, "FINE"); L(cxc[2], cy1, "LEVEL");
             L(cxc[3], cy1, "VEL");   L(cxc[4], cy1, "KEY");
             L(cxc[0], cy2, "A"); L(cxc[1], cy2, "D"); L(cxc[2], cy2, "S"); L(cxc[3], cy2, "R");
-            if (op == 3) text(cxc[4], cy2 - 22.0f, 9.5f, live.accent, "FB", 0, true);
+            if (op == 3) L(cxc[4], cy2, "FB", true);
         }
     }
 
