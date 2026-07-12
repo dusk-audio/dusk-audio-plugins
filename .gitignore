@@ -122,9 +122,6 @@ docs/_build/
 *.ogg
 *.flac
 
-# GrooveMind training data directories
-groovemind-training/
-
 # Python / NumPy / calibration artifacts
 *.npz
 *.npy

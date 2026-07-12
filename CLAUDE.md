@@ -309,7 +309,10 @@ You are operating within a constrained context window and strict system prompts.
 ## Private Tools Repo
 
 Calibration and testing scripts are in `~/projects/dusk-audio-tools/` (private repo).
-DuskVerb tuning scripts live in `plugins/DuskVerb/tools/tuner/` (see its README).
+DuskVerb tuning/analysis scripts live in `~/projects/dusk-audio-tools/tools/duskverb/`
+(tuner in `tools/duskverb/tuner/`); GrooveMind training in `training/groovemind/`. The
+tuner scripts locate this plugins checkout via `DUSK_PLUGIN_REPO` (default
+`~/projects/plugins`); see the tools repo README.
 
 ## Scientific Method Overrides (added 2026-07-06, from the Fable 5 DuskVerb session)
 
@@ -336,4 +339,5 @@ These behaviors produced the session's best results. Apply them to ALL diagnosti
    run parallel. Loose briefs produce slop.
 
 NOTE: an old `plugins/DuskVerb/tests/reference_comparison/` symlink no longer exists;
-tuning scripts live in `plugins/DuskVerb/tools/tuner/` (see its README).
+tuning scripts now live in the private tools repo at
+`~/projects/dusk-audio-tools/tools/duskverb/tuner/` (see the tools repo README).
