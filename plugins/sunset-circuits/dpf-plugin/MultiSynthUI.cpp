@@ -229,18 +229,25 @@ protected:
         drawTopBar();
         ImGui::End();
 
-        beginLayer("MSleft", 0, 55, 346, 545);
+        // Layer seam raised 545 -> 521 so the SEQUENCER panel (drawn from its
+        // outer bevel at y=521 for the 8c106e6 taller-strip top of 524) is NOT
+        // clipped by the MSbottom window's top edge. The old 545 seam sliced off
+        // the top ~24 px of the sequencer panel fill, leaving its transport header
+        // band floating on the window background (glaring on the Acid silver panel,
+        // invisibly dark-on-dark elsewhere). Upper panels all end at y<=518 (outer
+        // bevel 521), so the layers abut cleanly at 521 with no clipping either way.
+        beginLayer("MSleft", 0, 55, 346, 521);
         if (curMode == 4) drawPrismOps();   // Prism swaps oscillators for the op matrix
         else              drawOscPanels();
         drawMixerVoice();
         ImGui::End();
 
-        beginLayer("MScenter", 346, 55, 756, 545);
+        beginLayer("MScenter", 346, 55, 756, 521);
         drawFilter();
         drawEnvelopes();
         ImGui::End();
 
-        beginLayer("MSright", 756, 55, kDesignW, 545);
+        beginLayer("MSright", 756, 55, kDesignW, 521);
         drawLFOs();
         drawModeSubPanelRegion();
         drawModMatrixBar();
@@ -248,7 +255,7 @@ protected:
         drawOutputVU();
         ImGui::End();
 
-        beginLayer("MSbottom", 0, 545, kDesignW, kDesignH);
+        beginLayer("MSbottom", 0, 521, kDesignW, kDesignH);
         drawSequencer();
         drawFXStrip();
         drawKeyboard();
@@ -1008,48 +1015,53 @@ private:
 
     void drawMixerVoice()
     {
-        // CHARACTER (row 1) + VOICE (rows 2-3): 5-column grid with guaranteed
-        // label-above-knob clearance and a divider between the two sub-groups.
-        // All unison/porta/velocity/PB/oversampling params reachable (defect 2).
-        // Panel tightened to end at y=518 (was 542) to free 24 px for the taller
-        // sequencer strip. Three rows compress into 414..518: 18 px controls
-        // (r9 knobs / comboH9 combos) with font-8 labels give ~2 px gaps top-to-
-        // bottom with no overlap (this panel was the tightest; verify in screenshots).
+        // VOICE / CHARACTER — all 14 controls (10 knobs, 3 combos, 1 legato toggle).
+        //
+        // Defect-2 fix: the 8c106e6 tightening to y=518 left only ~86 px of body
+        // height, and THREE knob rows cannot fit here — with a label above each row
+        // and >=4 px daylight to the accent arc (R+3), three rows demand r<=3.6 px
+        // knobs (unusable). So the grid is TWO rows. Ten knobs are balanced 5-and-5;
+        // the wide combos ride at the right of each row at their real ~56/64 px width
+        // (so "S-Curve"/"Linear" never clip). r7.5 knobs keep the shared tick ring
+        // (drawn out to R+6.5), and the spacing clears even THAT ring, not just the
+        // arc. Geometry (measured on the Acid silver palette, the hardest contrast):
+        //   r7.5 knobs, tick ring reaches R+6.5 -> ±14 px; font-8 labels ~6.4 px ink.
+        //   row centres 456 / 499, labels top at y = centre-25.
+        //   Row1: label ink 432..437.4 | tick top 442      -> 4.6 px daylight.
+        //   Gap:  row1 tick bottom 470  | row2 label 475.2  -> 5.2 px daylight.
+        //   Row2: label ink 476..480.4  | tick top 485      -> 4.6 px daylight.
+        //   Row2 tick bottom 513 clears the 516 panel inner floor by ~3 px; the
+        //   row1 labels clear the section title (ink bottom ~426) by ~5 px.
         panelBox(16, 414, 340, 518);
         sectionTitle(24, 417, "VOICE / CHARACTER");
-        const float col0 = 46.0f, colStep = 62.0f;
-        const float row1 = 449.0f, row2 = 479.0f, row3 = 508.0f;
-        const float labOff = 19.0f;
-        const float kr = 9.0f, comboHW = 29.0f, comboH = 9.0f;
-        auto CX = [&](int c) { return col0 + c * colStep; };
+        const float yc1 = 456.0f, yc2 = 499.0f;   // the two row centres
+        const float labOff = 25.0f;                // label top above row centre
+        const float kr = 7.5f, comboH = 9.0f;      // knob radius / combo half-height
+        auto KX = [](int c) { return 40.0f + c * 40.0f; };  // knob columns 40..200
         auto vLabel = [&](float cx, float y, const char* t) { text(cx, y, 8.0f, live.textPanel, t, 0, true); };
+        auto vCombo = [&](const char* id, uint32_t p, float cx, float hw, float cy,
+                          const char* const* opts, int n, const char* lab)
+        { vLabel(cx, cy - labOff, lab);
+          comboBox(id, p, cx - hw, cy - comboH, cx + hw, cy + comboH, opts, n, curMode == 5); };
 
-        // Row 1 — CHARACTER: noise / analog / vintage / tune / oversampling
-        vLabel(CX(0), row1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, CX(0), row1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(CX(1), row1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, CX(1), row1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(CX(2), row1 - labOff, "VNTG");  knob("vntg", kParamVintage, CX(2), row1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(CX(3), row1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, CX(3), row1, kr, "%+.0f", " ct", true);
-        vLabel(CX(4), row1 - labOff, "OVERSMP");
-        comboBox("ovs", kParamOversampling, CX(4) - comboHW, row1 - comboH, CX(4) + comboHW, row1 + comboH, kOversmp, 3, curMode == 5);
+        // Row 1 — CHARACTER (noise/analog/vintage/tune) + oversampling + unison voices.
+        vLabel(KX(0), yc1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, KX(0), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(1), yc1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, KX(1), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(2), yc1 - labOff, "VNTG");  knob("vntg", kParamVintage, KX(2), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(3), yc1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
+        vLabel(KX(4), yc1 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, KX(4), yc1, kr, "%.0f", "", false, true);
+        vCombo("ovs",   kParamOversampling, 248.0f, 28.0f, yc1, kOversmp, 3, "OVERSMP");
+        vCombo("glide", kParamGlideMode,    308.0f, 28.0f, yc1, kGlide,   2, "GLIDE");
 
-        // divider between CHARACTER and VOICE sub-groups
-        dl->AddLine(P(24, 459), P(332, 459), withA(live.textPanel, 40), 1.0f * s);
-
-        // Row 2 — VOICE: unison voices / detune / spread / porta / glide
-        vLabel(CX(0), row2 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, CX(0), row2, kr, "%.0f", "", false, true);
-        vLabel(CX(1), row2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, CX(1), row2, kr, "%.0f", " ct");
-        vLabel(CX(2), row2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, CX(2), row2, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(CX(3), row2 - labOff, "PORTA"); knob("porta", kParamPortaTime, CX(3), row2, kr, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
-        vLabel(CX(4), row2 - labOff, "GLIDE");
-        comboBox("glide", kParamGlideMode, CX(4) - comboHW, row2 - comboH, CX(4) + comboHW, row2 + comboH, kGlide, 2, curMode == 5);
-
-        // Row 3 — VOICE: legato / velocity / vel-curve / pitch-bend
-        vLabel(CX(0), row3 - labOff, "LEGATO");
-        ledButton("legato", kParamLegato, CX(0) - comboHW, row3 - comboH, CX(0) + comboHW, row3 + comboH, "", curMode == 5);
-        vLabel(CX(1), row3 - labOff, "VEL"); knob("vels", kParamVelSens, CX(1), row3, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(CX(2), row3 - labOff, "V.CRV");
-        comboBox("vcrv", kParamVelCurve, CX(2) - comboHW, row3 - comboH, CX(2) + comboHW, row3 + comboH, kVelCurve, 4, curMode == 5);
-        vLabel(CX(3), row3 - labOff, "PB"); knob("pb", kParamPbRange, CX(3), row3, kr, "%.0f", " st", false, true);
+        // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend) + legato + vel-curve.
+        vLabel(KX(0), yc2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, KX(0), yc2, kr, "%.0f", " ct");
+        vLabel(KX(1), yc2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, KX(1), yc2, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(2), yc2 - labOff, "PORTA"); knob("porta", kParamPortaTime, KX(2), yc2, kr, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
+        vLabel(KX(3), yc2 - labOff, "VEL");   knob("vels", kParamVelSens, KX(3), yc2, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(4), yc2 - labOff, "PB");    knob("pb", kParamPbRange, KX(4), yc2, kr, "%.0f", " st", false, true);
+        vLabel(244.0f, yc2 - labOff, "LEGATO");
+        ledButton("legato", kParamLegato, 244.0f - 24.0f, yc2 - comboH, 244.0f + 24.0f, yc2 + comboH, "", curMode == 5);
+        vCombo("vcrv", kParamVelCurve, 306.0f, 32.0f, yc2, kVelCurve, 4, "V.CRV");
     }
 
     //========================================================================

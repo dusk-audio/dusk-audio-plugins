@@ -66,7 +66,7 @@ knob is its pivot; radius is design-space.
 | OSC 1 | `(16,60)–(340,178)` | wave combo, Detune, PW, Level knobs |
 | OSC 2 | `(16,182)–(340,300)` | wave combo, Semi (stepped knob), Detune, PW, Level |
 | OSC 3 / SUB | `(16,304)–(340,410)` | **mode-variant** (see §4): Modular→osc3 wave+level; Cosmos/Mono→sub wave+level; else dimmed/hidden |
-| VOICE / CHARACTER | `(16,414)–(340,518)` | 3 compressed rows (r9 knobs / comboH9 combos, font-8 labels); row centres `y{449,479,508}`, labels `y−19`, divider `y=459`. Noise/Analog/Vintage/Tune + Unison/Porta/Glide + Legato/Vel/V.Crv/PB |
+| VOICE / CHARACTER | `(16,414)–(340,518)` | **2 rows** (r7.5 knobs w/ tick ring, comboH9 combos, font-8 labels); row centres `y{456,499}`, labels `y−25`. Knob columns `x=40+40·c` (c=0..4). Row1: Noise/Analog/Vntg/Tune/UniV + OverSmp combo `x248` (hw28) + Glide combo `x308` (hw28). Row2: UniDT/UniSP/Porta/Vel/PB + Legato LED `x244` (hw24) + V.Crv combo `x306` (hw32). Clearances ≥4.6 px label-to-tick-ring, verified on the Acid silver palette. (3 rows are geometrically impossible here at ≥4 px daylight; see §1.6.) |
 
 **CENTER column — Filter + Envelopes — `x 348..752`**
 | Panel | Rect | Contents |
