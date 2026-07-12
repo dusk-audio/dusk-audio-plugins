@@ -1960,26 +1960,34 @@ private:
         panelBox(16, 548, 700, 692);
         sectionTitle(24, 552, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
 
-        // --- transport header (y 552..586): mini-knobs r15, labels at y=552 above
-        // bodies (defect 4).
+        // --- transport header (y 552..596). Mini-knobs are r14 WITH the tick ring
+        // (reach R+6.5 = ±20.5), so centres must sit >= 45 apart — the old r15 row
+        // at 42 px spacing had the rings visibly interpenetrating. OCT/GATE/SWING
+        // at x {404,452,500} (48 apart, 7 px ring daylight); knob centres y=578 so
+        // the ring bottom (598.5) clears the acid GATE lane top (600). The row
+        // spreads across the strip: ARP | MODE | RATE | knobs | LATCH | VEL, with
+        // the conditional Fixed-VEL knob filling the right-end slack.
         const bool acid = (curMode == 5);
-        ledButton("arpon", kParamArpOn, 162, 558, 214, 582, "ARP");
+        ledButton("arpon", kParamArpOn, 160, 558, 212, 582, "ARP");
         text(220, 552, 9.5f, live.textPanel, "MODE", -1, true);
-        comboBox("arpmode", kParamArpMode, 218, 564, 300, 586, kArpMode, 7, acid);
-        text(312, 552, 9.5f, live.textPanel, "RATE", -1, true);
-        comboBox("arprate", kParamArpRate, 310, 564, 372, 586, kDivName, 14, acid);
-        const float hy = 579.0f;   // mini-knob centres; r15 body spans 564..594
-        klabel(398, 552, "OCT");   knob("arpoct", kParamArpOctave, 398, hy, 15, "%.0f", "", false, true);
-        klabel(440, 552, "GATE");  knob("arpgate", kParamArpGate, 440, hy, 15, "%.0f", " %", false, false, false, 100.0f);
-        klabel(482, 552, "SWING"); knob("arpswing", kParamArpSwing, 482, hy, 15, "%.0f", " %", false, false, false, 100.0f);
-        ledButton("arplatch", kParamArpLatch, 522, 558, 574, 582, "LATCH");
-        text(588, 552, 9.5f, live.textPanel, "VEL", -1, true);
-        comboBox("arpvel", kParamArpVelMode, 584, 564, 656, 586, kArpVel, 3, acid);
-        // Fixed-velocity value knob: only meaningful (and only shown) when the VEL
-        // mode is Fixed (=1). Sits right of the combo, matching the OCT/GATE/SWING
-        // minis; clears the VEL combo (ends x656) and the panel edge (x700).
-        if ((int)std::lround(values[kParamArpVelMode]) == 1)
-        { klabel(680, 552, "VEL"); knob("arpfvel", kParamArpFixedVel, 680, hy, 15, "%.0f", "", false, true); }
+        comboBox("arpmode", kParamArpMode, 218, 564, 302, 586, kArpMode, 7, acid);
+        text(314, 552, 9.5f, live.textPanel, "RATE", -1, true);
+        comboBox("arprate", kParamArpRate, 312, 564, 376, 586, kDivName, 14, acid);
+        const float hy = 578.0f;
+        klabel(404, 552, "OCT");   knob("arpoct", kParamArpOctave, 404, hy, 14, "%.0f", "", false, true);
+        klabel(452, 552, "GATE");  knob("arpgate", kParamArpGate, 452, hy, 14, "%.0f", " %", false, false, false, 100.0f);
+        klabel(500, 552, "SWING"); knob("arpswing", kParamArpSwing, 500, hy, 14, "%.0f", " %", false, false, false, 100.0f);
+        ledButton("arplatch", kParamArpLatch, 532, 558, 584, 582, "LATCH");
+        text(596, 552, 9.5f, live.textPanel, "VEL", -1, true);
+        // The VEL combo is context-sized: "As Played" needs ~74 px of text+arrow,
+        // so the combo runs wide (592..678) — except in Fixed mode, where the text
+        // is short and the width is given to the Fixed-velocity value knob instead
+        // (combo 592..650; knob at x=674 r14, ring 653.5..694.5, inside the 697
+        // inner wall and 3.5 px right of the combo).
+        const bool velFixed = (int)std::lround(values[kParamArpVelMode]) == 1;
+        comboBox("arpvel", kParamArpVelMode, 592, 564, velFixed ? 650.0f : 678.0f, 586, kArpVel, 3, acid);
+        if (velFixed)
+        { klabel(674, 552, "FIX"); knob("arpfvel", kParamArpFixedVel, 674, hy, 14, "%.0f", "", false, true); }
 
         const int step = liveStep();
 
