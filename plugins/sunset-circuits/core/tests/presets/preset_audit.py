@@ -142,7 +142,9 @@ def main():
     rows = [audit_one(i) for i in indices]
 
     if as_json:
-        print(json.dumps(rows, indent=2))
+        # numpy scalars (np.bool_/np.float64) leak into the rows; .item() them.
+        print(json.dumps(rows, indent=2,
+                         default=lambda o: o.item() if hasattr(o, "item") else str(o)))
         # Still enforce the pass/fail contract: nonzero exit if any row failed.
         fails = sum(1 for r in rows if not r["pass"])
         sys.exit(1 if fails else 0)

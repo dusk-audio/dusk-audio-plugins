@@ -741,7 +741,15 @@ public:
     {
         outL = outR = 0.0f;
         const int poly = effectivePoly();
-        const float voiceGain = 1.0f / (1.0f + std::log2((float)poly));
+        // Constant-power headroom referenced to a 4-voice sum: 2/sqrt(poly),
+        // clamped to unity. The old 1/(1+log2(poly)) cost a 6-voice mode 11 dB
+        // even when ONE note sounded, which made every poly preset audibly
+        // quieter than the mono/acid modes (fleet audit: poly peaks -21..-33
+        // dBFS vs mono -7..-9). With this curve the loudest poly preset peaks
+        // ~-7 dBFS under the audit performances (rule: peak <= -1), mono/acid
+        // are untouched (poly=1 -> 1.0), and sqrt still tracks uncorrelated
+        // voice summing as polyphony grows.
+        const float voiceGain = std::min(1.0f, 2.0f / std::sqrt((float)poly));
 
         float fxSum = 0.0f; int activeN = 0;
         for (int v = 0; v < poly; ++v)

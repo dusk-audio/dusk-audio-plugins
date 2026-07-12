@@ -389,6 +389,15 @@ public:
             held = false;
     }
     void clearLatch() noexcept { if (latch) held = false; }
+    // Latch released: drop the root unless its key is physically down (engine
+    // heldNotes mask) — mirrors Arpeggiator::retainHeld.
+    void retainHeld(uint64_t maskLo, uint64_t maskHi) noexcept
+    {
+        const int n = rootNote;
+        const bool down = n >= 0 && n < 128
+            && ((((n < 64) ? maskLo : maskHi) >> (n & 63)) & 1ull) != 0;
+        if (!down) held = false;
+    }
 
     // Advance one sample; returns the note event (if any) for this sample.
     //

@@ -261,6 +261,7 @@ private:
     float baseDriveMix = 1.0f, baseChorusMix = 0.5f, baseDelayMix = 0.3f, baseReverbMix = 0.2f;
     bool  hasEffectsMixRouting = false;
     bool  arpEnabled = false;
+    bool  lastArpLatch = false;   // detects the latch 1->0 edge (prune latched notes)
 
     // Preset/mode transition tracking (stuck-note fix). snapshotParameters()
     // compares these against the current snapshot: a mode change or an arp /
