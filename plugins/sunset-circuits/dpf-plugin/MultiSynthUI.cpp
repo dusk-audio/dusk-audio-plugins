@@ -2226,7 +2226,7 @@ private:
         tips[kParamLfo1Rate] = tips[kParamLfo2Rate] = "Speed of the LFO.";
         tips[kParamLfo1Shape] = tips[kParamLfo2Shape] = "Waveform of the LFO.";
         tips[kParamLfo1Fade] = tips[kParamLfo2Fade] = "Time for the LFO to fade in after a note.";
-        tips[kParamLfo1Sync] = tips[kParamLfo2Sync] = "Lock the LFO speed to host tempo.";
+        tips[kParamLfo1Sync] = tips[kParamLfo2Sync] = "Scale the LFO speed with the host tempo.";
         tips[kParamUnisonVoices] = "Stacked detuned voices per note.";
         tips[kParamUnisonDetune] = "Spread of detuning across unison voices, in cents.";
         tips[kParamUnisonSpread] = "Stereo spread of unison voices.";

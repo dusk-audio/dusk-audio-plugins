@@ -172,7 +172,21 @@ struct Args
         for (auto& p : kv) if (p.first == k) return parseNum(k, p.second);
         return def;
     }
-    int intv(const char* k, int def) const { return (int)num(k, (double)def); }
+    int intv(const char* k, int def) const
+    {
+        for (auto& p : kv)
+            if (p.first == k)
+            {
+                const long n = parseInt(k, p.second);
+                if (n < INT_MIN || n > INT_MAX)
+                {
+                    std::fprintf(stderr, "integer out of range for key '%s': %s\n", k, p.second.c_str());
+                    std::exit(2);
+                }
+                return (int)n;
+            }
+        return def;
+    }
 
     // Reject any key not in the subcommand's allowed set (the header promises
     // "unknown keys abort with an error").
@@ -209,7 +223,8 @@ std::vector<int> parseIntList(const std::string& s)
 {
     std::vector<int> out;
     if (s.empty()) return out;
-    for (auto& t : split(s, ',')) if (!t.empty()) out.push_back(std::atoi(t.c_str()));
+    // Strict: an empty token ("1,,0") or non-integer token ("12,nope") aborts.
+    for (auto& t : split(s, ',')) out.push_back((int)parseInt("(list)", t));
     return out;
 }
 
@@ -240,6 +255,27 @@ int runFilter(const Args& g, const char* out)
     const bool   sweep = g.intv("sweep", 0) != 0;
     const float  cutlo = (float)g.num("cutlo", 200.0);
     const float  cuthi = (float)g.num("cuthi", 2000.0);
+
+    // The log sweep divides by cutlo and raises (cuthi/cutlo) to a power, so both
+    // must be positive and cuthi must not fall below cutlo. Validate up front.
+    if (sweep)
+    {
+        if (!(cutlo > 0.0f))
+        {
+            std::fprintf(stderr, "invalid cutlo: %g (want > 0 for sweep)\n", (double)cutlo);
+            std::exit(2);
+        }
+        if (!(cuthi > 0.0f))
+        {
+            std::fprintf(stderr, "invalid cuthi: %g (want > 0 for sweep)\n", (double)cuthi);
+            std::exit(2);
+        }
+        if (!(cuthi >= cutlo))
+        {
+            std::fprintf(stderr, "invalid sweep range: cuthi %g < cutlo %g\n", (double)cuthi, (double)cutlo);
+            std::exit(2);
+        }
+    }
 
     msynth::AcidFilter filter;
     filter.prepare(sr);
@@ -394,7 +430,14 @@ int runSeq(const Args& g, const char* out)
     msynth::AcidSequencer seq;
     seq.prepare(sr);
     seq.setEnabled(true);
-    seq.setRate((msynth::ArpRateDivision)g.intv("rate", (int)msynth::ArpRateDivision::Sixteenth));
+    // ArpRateDivision has 14 entries (Whole=0 .. TripletSixteenth=13, NumDivisions=14).
+    const int rate = g.intv("rate", (int)msynth::ArpRateDivision::Sixteenth);
+    if (rate < 0 || rate > 13)
+    {
+        std::fprintf(stderr, "invalid rate: %d (want 0..13)\n", rate);
+        std::exit(2);
+    }
+    seq.setRate((msynth::ArpRateDivision)rate);
     seq.setGate((float)g.num("gate", 0.5));
     seq.setSwing((float)g.num("swing", 0.0));
     seq.setLatch(g.intv("latch", 0) != 0);
@@ -403,6 +446,25 @@ int runSeq(const Args& g, const char* out)
     const std::vector<int> pitches = parseIntList(g.str("pitches", ""));
     const std::vector<int> accents = parseIntList(g.str("accents", ""));
     const std::vector<int> slides  = parseIntList(g.str("slides", ""));
+    // Validate step domains before any setStep/noteOn.
+    for (int p : pitches)
+        if (p < -24 || p > 24)
+        {
+            std::fprintf(stderr, "invalid pitch %d (want -24..24)\n", p);
+            std::exit(2);
+        }
+    for (int a : accents)
+        if (a != 0 && a != 1)
+        {
+            std::fprintf(stderr, "invalid accent %d (want 0 or 1)\n", a);
+            std::exit(2);
+        }
+    for (int s : slides)
+        if (s != 0 && s != 1)
+        {
+            std::fprintf(stderr, "invalid slide %d (want 0 or 1)\n", s);
+            std::exit(2);
+        }
     for (int i = 0; i < 16; ++i)
     {
         const bool on = (i < (int)onStr.size()) ? (onStr[(size_t)i] == '1') : true;
@@ -412,7 +474,13 @@ int runSeq(const Args& g, const char* out)
         seq.setStep(i, on, p, ac, sl);
     }
 
-    seq.noteOn(g.intv("root", 36)); // default C2
+    const int root = g.intv("root", 36); // default C2
+    if (root < 0 || root > 127)
+    {
+        std::fprintf(stderr, "invalid root %d (want 0..127)\n", root);
+        std::exit(2);
+    }
+    seq.noteOn(root);
 
     // Host phase-lock: when songpos is given the harness acts as the DAW host,
     // feeding an advancing song-beat cursor and hostLocked=true. loopbeats>0

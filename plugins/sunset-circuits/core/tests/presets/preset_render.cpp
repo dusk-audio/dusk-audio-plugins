@@ -34,6 +34,7 @@
 #include "MultiSynthParams.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -69,6 +70,45 @@ void writeFloatWav(const char* path, const std::vector<float>& interleavedStereo
 
 struct NoteEvent { int frame; bool on; int note; float vel; };
 
+// Strict string->double: reject empty, trailing garbage, or non-finite results.
+double parseNum(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    const double d = std::strtod(start, &end);
+    if (end == start || *end != '\0' || !std::isfinite(d))
+    {
+        std::fprintf(stderr, "invalid numeric value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return d;
+}
+
+// Strict string->long: reject empty, trailing garbage, or out-of-range.
+long parseInt(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty integer value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    errno = 0;
+    const long n = std::strtol(start, &end, 10);
+    if (end == start || *end != '\0' || errno == ERANGE)
+    {
+        std::fprintf(stderr, "invalid integer value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return n;
+}
+
 std::vector<int> parseNoteList(const std::string& val)
 {
     std::vector<int> out;
@@ -77,7 +117,14 @@ std::vector<int> parseNoteList(const std::string& val)
     {
         size_t comma = val.find(',', pos);
         std::string tok = val.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
-        if (!tok.empty()) out.push_back(std::atoi(tok.c_str()));
+        // Strict: reject empty/garbage tokens; each note must be a MIDI 0..127.
+        const long n = parseInt("hold", tok);
+        if (n < 0 || n > 127)
+        {
+            std::fprintf(stderr, "invalid hold note %ld (want 0..127)\n", n);
+            std::exit(2);
+        }
+        out.push_back((int)n);
         if (comma == std::string::npos) break;
         pos = comma + 1;
     }
@@ -93,7 +140,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const int   presetIndex = std::atoi(argv[1]);
+    const int   presetIndex = (int)parseInt("presetIndex", argv[1]);
     const char* outPath     = argv[2];
 
     if (presetIndex < 0 || presetIndex >= kNumFactoryPresets)
@@ -123,17 +170,53 @@ int main(int argc, char** argv)
         const std::string val = kv.substr(eq + 1);
 
         if (key == "perf")  { perf = val; continue; }
-        if (key == "note")  { noteArg = std::atoi(val.c_str()); continue; }
+        if (key == "note")
+        {
+            const long n = parseInt("note", val);
+            if (n < 0 || n > 127)
+            {
+                std::fprintf(stderr, "invalid note: %ld (want 0..127)\n", n);
+                return 1;
+            }
+            noteArg = (int)n; continue;
+        }
         if (key == "hold")  { holdNotes = parseNoteList(val); continue; }
-        if (key == "bars")  { barsArg = std::atoi(val.c_str()); continue; }
-        if (key == "tempo") { tempo = std::atof(val.c_str()); continue; }
-        if (key == "sr")    { sampleRate = std::atof(val.c_str()); continue; }
-        if (key == "vel")   { vel = (float)std::atof(val.c_str()); continue; }
-        if (key == "tail")  { tailSec = std::atof(val.c_str()); continue; }
+        if (key == "bars")
+        {
+            const long b = parseInt("bars", val);
+            if (b < 1 || b > 10000)
+            {
+                std::fprintf(stderr, "invalid bars: %ld (want 1..10000)\n", b);
+                return 1;
+            }
+            barsArg = (int)b; continue;
+        }
+        if (key == "tempo") { tempo = parseNum("tempo", val); continue; }
+        if (key == "sr")    { sampleRate = parseNum("sr", val); continue; }
+        if (key == "vel")
+        {
+            vel = (float)parseNum("vel", val);
+            if (vel < 0.0f || vel > 1.0f)
+            {
+                std::fprintf(stderr, "invalid vel: %g (want 0..1)\n", (double)vel);
+                return 1;
+            }
+            continue;
+        }
+        if (key == "tail")  { tailSec = parseNum("tail", val); continue; }
 
         const int idx = msynth::MultiSynthDSP::paramIndexForName(key.c_str());
         if (idx < 0) { std::fprintf(stderr, "unknown param: %s\n", key.c_str()); return 1; }
-        overrides.push_back({ idx, (float)std::atof(val.c_str()) });
+        overrides.push_back({ idx, (float)parseNum(key.c_str(), val) });
+    }
+
+    // Validate the performance name (unknown value must error, not fall to mono).
+    if (perf != "auto" && perf != "chord" && perf != "mono" && perf != "arp" &&
+        perf != "acid" && perf != "hold" && perf != "single")
+    {
+        std::fprintf(stderr, "unknown perf: %s (want auto|chord|mono|arp|acid|hold|single)\n",
+                     perf.c_str());
+        return 1;
     }
 
     // Validate render extents before any prepare/allocation.
@@ -145,6 +228,13 @@ int main(int argc, char** argv)
     if (!std::isfinite(sampleRate) || sampleRate < 8000.0 || sampleRate > 768000.0)
     {
         std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
+        return 1;
+    }
+    // The DSP runs at the double rate but the WAV header stores (int)sampleRate;
+    // require a whole number so the two agree exactly.
+    if (sampleRate != std::floor(sampleRate))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (must be a whole number)\n", sampleRate);
         return 1;
     }
     if (!std::isfinite(tailSec) || tailSec < 0.0 || tailSec > 600.0)

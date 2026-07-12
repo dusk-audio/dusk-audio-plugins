@@ -37,11 +37,24 @@ int main()
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root, ec);
-    ::setenv("XDG_CONFIG_HOME", root.c_str(), 1);
+    if (::setenv("XDG_CONFIG_HOME", root.c_str(), 1) != 0)
+    {
+        std::fprintf(stderr, "FATAL: setenv(XDG_CONFIG_HOME) failed — aborting "
+                             "before touching any preset directory\n");
+        return 1;
+    }
 
     const fs::path expectDir =
         root / "DuskAudio" / "SunsetCircuits" / "presets";
     CHECK(presetDir() == expectDir, "presetDir resolves under XDG_CONFIG_HOME");
+    if (presetDir() != expectDir)
+    {
+        // Isolation failed: every later step writes/overwrites/DELETES presets,
+        // which must never run against the user's real config directory.
+        std::fprintf(stderr, "FATAL: preset dir not isolated (%s) — aborting\n",
+                     presetDir().c_str());
+        return 1;
+    }
 
     const int N = (int)kNumCoreParams;
     std::fprintf(stderr, "kNumCoreParams = %d\n", N);

@@ -96,7 +96,9 @@ build_sunset() {
             apt-get install -y --no-install-recommends \
                 ninja-build libxext-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
 
-            # Shallow-fetch each dependency at its exact pinned SHA.
+            # Shallow-fetch each dependency at its exact pinned SHA. Submodule
+            # failures are NOT suppressed: DPF requires its pugl submodule, and a
+            # hollow checkout must fail here, not as a confusing CMake error.
             fetch_sha() {
                 local url="$1" sha="$2" dir="$3"
                 mkdir -p "$dir" && cd "$dir"
@@ -104,12 +106,14 @@ build_sunset() {
                 git remote add origin "$url"
                 git fetch -q --depth 1 origin "$sha"
                 git checkout -q FETCH_HEAD
-                git submodule update -q --init --recursive --depth 1 || true
+                git submodule update -q --init --recursive --depth 1
                 cd /tmp
             }
             cd /tmp
             fetch_sha https://github.com/DISTRHO/DPF.git         "$DPF_SHA"        /tmp/dpf
             fetch_sha https://github.com/DISTRHO/DPF-Widgets.git  "$DPFWIDGETS_SHA" /tmp/dpf-widgets
+            test -n "$(ls -A /tmp/dpf/dgl/src/pugl-upstream 2>/dev/null)" \
+                || { echo "ERROR: DPF pugl submodule missing after fetch"; exit 1; }
 
             cmake -S /src/plugins/sunset-circuits/dpf-plugin -B /tmp/scbuild -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \

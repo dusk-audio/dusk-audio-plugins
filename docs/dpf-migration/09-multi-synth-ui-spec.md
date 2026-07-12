@@ -353,8 +353,9 @@ hidden while Prism is active; MIXER/CHARACTER panel stays (noise/analog/vintage/
 - **Inline**: FILTER stays in circuit (presets open it) so FM can be filtered — no hiding.
 
 ### 4.6 Acid (mode 5) — bass box + pattern sequencer
-- **Skin**: silver panel palette. OSC1 restricted display to Saw/Square in its combo
-  (others still allowed per design — don't fight the user; show all, default saw).
+- **Skin**: silver panel palette. The OSC1 wave combo shows ALL waveforms; Saw is the
+  default (the classic acid voice is saw or square, but don't fight the user — every
+  wave stays selectable).
 - **MODE SUB-PANEL** = **ACID GLOBALS**: `acidAccentAmt` r22 knob + `acidSlideTime` r22
   knob + a big **ACCENT** indicator LED that pulses on accented steps (from bridge step
   index). Title "ACID".
@@ -477,7 +478,7 @@ substituted. Store in `kTooltips[kParamCount]`.
 | `lfo1Rate` / `lfo2Rate` | Speed of LFO N. |
 | `lfo1Shape` / `lfo2Shape` | Waveform of LFO N. |
 | `lfo1Fade` / `lfo2Fade` | Time for LFO N to fade in after a note. |
-| `lfo1Sync` / `lfo2Sync` | Lock LFO N speed to host tempo. |
+| `lfo1Sync` / `lfo2Sync` | Scale LFO N speed with the host tempo (rate × BPM/120 — tempo-relative rate, not beat-phase locking). |
 
 ### Unison / Portamento / Velocity
 | Param | Tooltip |
@@ -685,7 +686,10 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   `× getScaleFactor()` (playbook §4). `panel.setFontSet(set)`; `pickFont` chooses nearest.
   Fallback to the ImGui default when no TTF is found (shared loader handles it).
 - **Window flags**: `NoTitleBar|NoResize|NoMove|NoCollapse|NoScrollbar|NoBackground|
-  NoScrollWithMouse` (the last so knob wheel works, per shared knob comment).
+  NoScrollWithMouse` (the last so knob wheel works, per shared knob comment). These
+  apply to the fullscreen ImGui surface INSIDE the plugin window — the native window
+  itself stays resizable via `setGeometryConstraints` below (`NoResize` here prevents
+  ImGui's own drag-corner on the surface, which must always fill the window).
 - **Geometry constraints**: `setGeometryConstraints(1240/2, 780/2, true)` (keep aspect),
   default size 1240×780.
 - **Target < 2 ms/frame.** Expensive elements and their caching:

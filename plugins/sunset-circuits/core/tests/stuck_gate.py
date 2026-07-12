@@ -43,7 +43,10 @@ def rms_db(sig):
 def window_db(x, sr, t0, t1):
     a = max(0, int(t0 * sr))
     b = min(x.shape[0], int(t1 * sr))
-    return rms_db(x[a:b, 0])
+    # Evaluate BOTH channels and return the MAX per-channel RMS dB: a stuck note
+    # panned to either side must trip the silence checks, and the LOUD checks
+    # still pass when either channel is loud.
+    return max(rms_db(x[a:b, ch]) for ch in range(x.shape[1]))
 
 
 def main():

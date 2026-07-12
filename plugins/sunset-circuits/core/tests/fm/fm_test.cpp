@@ -27,6 +27,7 @@
 #include "FMEngine.hpp"
 
 #include <cctype>
+#include <cerrno>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -61,6 +62,45 @@ void writeFloatWavMono(const char* path, const std::vector<float>& mono, int sam
     std::fclose(f);
 }
 
+// Strict string->double: reject empty, trailing garbage, or non-finite results.
+double parseNum(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    const double d = std::strtod(start, &end);
+    if (end == start || *end != '\0' || !std::isfinite(d))
+    {
+        std::fprintf(stderr, "invalid numeric value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return d;
+}
+
+// Strict string->long: reject empty, trailing garbage, or out-of-range.
+long parseInt(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty integer value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    errno = 0;
+    const long n = std::strtol(start, &end, 10);
+    if (end == start || *end != '\0' || errno == ERANGE)
+    {
+        std::fprintf(stderr, "invalid integer value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return n;
+}
+
 struct OpCfg
 {
     float ratio = 1.0f, fine = 0.0f, level = 0.0f, vel = 0.0f, key = 0.0f;
@@ -76,9 +116,21 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const int    algo     = std::atoi(argv[1]);
-    const int    midiNote = std::atoi(argv[2]);
-    const double seconds  = std::atof(argv[3]);
+    const long   algoL    = parseInt("algo", argv[1]);
+    if (algoL < 0 || algoL > 7)
+    {
+        std::fprintf(stderr, "invalid algo: %ld (want 0..7)\n", algoL);
+        return 1;
+    }
+    const int    algo     = (int)algoL;
+    const long   midiL    = parseInt("midinote", argv[2]);
+    if (midiL < 0 || midiL > 127)
+    {
+        std::fprintf(stderr, "invalid midinote: %ld (want 0..127)\n", midiL);
+        return 1;
+    }
+    const int    midiNote = (int)midiL;
+    const double seconds  = parseNum("seconds", argv[3]);
     const char*  outPath  = argv[4];
 
     double sampleRate  = 48000.0;
@@ -96,12 +148,21 @@ int main(int argc, char** argv)
         const auto eq = kv.find('=');
         if (eq == std::string::npos) continue;
         const std::string key = kv.substr(0, eq);
-        const float v = (float)std::atof(kv.substr(eq + 1).c_str());
+        const double d = parseNum(key.c_str(), kv.substr(eq + 1)); // strict + finite
+        const float v = (float)d;
 
-        if (key == "sr")      { sampleRate  = v; continue; }
-        if (key == "vel")     { velocity    = v; continue; }
-        if (key == "release") { releaseTime = v; releaseProvided = true; continue; }
-        if (key == "fb")      { feedback    = v; continue; }
+        if (key == "sr")      { sampleRate  = d; continue; }
+        if (key == "vel")
+        {
+            if (v < 0.0f || v > 1.0f) { std::fprintf(stderr, "invalid vel: %g (want 0..1)\n", (double)v); return 1; }
+            velocity = v; continue;
+        }
+        if (key == "release") { releaseTime = d; releaseProvided = true; continue; }
+        if (key == "fb")
+        {
+            if (v < 0.0f || v > 1.0f) { std::fprintf(stderr, "invalid fb: %g (want 0..1)\n", (double)v); return 1; }
+            feedback = v; continue;
+        }
 
         // op<N><Param>
         if (key.size() > 3 && key[0] == 'o' && key[1] == 'p' && std::isdigit((unsigned char)key[2]))
@@ -110,15 +171,17 @@ int main(int argc, char** argv)
             const std::string p = key.substr(3);
             if (n < 0 || n > 3) { std::fprintf(stderr, "bad op index: %s\n", key.c_str()); return 1; }
             OpCfg& o = ops[n];
-            if      (p == "Ratio")    o.ratio = v;
+            // Ratio must be > 0; ADSR times must be >= 0. Fine/Level/Vel/KeyScale
+            // are finite-only here (FMEngine setters clamp them engine-side).
+            if      (p == "Ratio")    { if (!(v > 0.0f)) { std::fprintf(stderr, "invalid %s: %g (want > 0)\n", key.c_str(), (double)v); return 1; } o.ratio = v; }
             else if (p == "Fine")     o.fine  = v;
             else if (p == "Level")    o.level = v;
             else if (p == "Vel")      o.vel   = v;
             else if (p == "KeyScale") o.key   = v;
-            else if (p == "A")        o.a     = v;
-            else if (p == "D")        o.d     = v;
-            else if (p == "S")        o.s     = v;
-            else if (p == "R")        o.r     = v;
+            else if (p == "A")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.a = v; }
+            else if (p == "D")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.d = v; }
+            else if (p == "S")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.s = v; }
+            else if (p == "R")        { if (v < 0.0f) { std::fprintf(stderr, "invalid %s: %g (want >= 0)\n", key.c_str(), (double)v); return 1; } o.r = v; }
             else { std::fprintf(stderr, "unknown op param: %s\n", key.c_str()); return 1; }
             continue;
         }
@@ -150,6 +213,13 @@ int main(int argc, char** argv)
     if (releaseProvided && !std::isfinite(releaseTime))
     {
         std::fprintf(stderr, "invalid release: %g (must be finite)\n", releaseTime);
+        return 1;
+    }
+    // A negative release would otherwise fall through to releaseFrame = -1
+    // ("never release") silently; reject it explicitly.
+    if (releaseProvided && releaseTime < 0.0)
+    {
+        std::fprintf(stderr, "invalid release: %g (want >= 0)\n", releaseTime);
         return 1;
     }
     if (releaseProvided && releaseTime >= 0.0 && releaseTime > seconds)

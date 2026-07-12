@@ -7,7 +7,9 @@ magnitude rolloff between 2 kHz and 8 kHz must land in 15..21 dB/oct.
 import sys
 from _acid import render, rolloff_slope_db_oct, has_nan_inf
 
-LO, HI = 15.0, 21.0
+# The fitted slope is SIGNED (negative for a lowpass rolloff). Require it to sit
+# in the -21..-15 dB/oct band so a positive/flat slope (a broken filter) fails.
+LO, HI = -21.0, -15.0
 
 
 def main():
@@ -16,9 +18,9 @@ def main():
     if has_nan_inf(x):
         print("slope_gate: FAIL (NaN/Inf)")
         sys.exit(1)
-    slope = abs(rolloff_slope_db_oct(x, sr, 2000.0, 8000.0))
+    slope = rolloff_slope_db_oct(x, sr, 2000.0, 8000.0)
     passed = LO <= slope <= HI
-    print(f"fitted rolloff 2-8 kHz: -{slope:.2f} dB/oct  (target {LO:.0f}..{HI:.0f})")
+    print(f"fitted rolloff 2-8 kHz: {slope:+.2f} dB/oct  (target {LO:.0f}..{HI:.0f})")
     print(f"slope_gate: {'PASS' if passed else 'FAIL'}")
     sys.exit(0 if passed else 1)
 

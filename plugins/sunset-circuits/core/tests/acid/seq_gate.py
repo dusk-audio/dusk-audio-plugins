@@ -46,11 +46,15 @@ def detect_onsets(sig, sr, thresh_frac=0.3, min_gap_s=0.03):
 def main():
     ok = True
 
+    # 2.0 s @ 120 BPM, 1/16 = 0.125 s/step; all 16 steps on => exactly one full
+    # pattern fills the render, so exactly 16 onsets must be detected (one-to-one).
+    EXPECT = 16
+
     # --- Straight grid ---
     sr, x = render("seq", "seq_grid", swing=0.0, **PATCH)
     on = detect_onsets(x, sr)
-    if len(on) < 6:
-        print(f"seq_gate: FAIL (only {len(on)} onsets)")
+    if len(on) != EXPECT:
+        print(f"seq_gate: FAIL (grid: {len(on)} onsets, expected {EXPECT})")
         sys.exit(1)
     intervals = np.diff(on[1:])           # ignore step-1 settling
     worst = float(np.max(np.abs(intervals - STEP_S)))
@@ -67,8 +71,9 @@ def main():
     # Each pair sums to 2*STEP_S (250 ms), keeping downbeats on the grid.
     sr, xs = render("seq", "seq_swing", swing=0.5, **PATCH)
     ons = detect_onsets(xs, sr)
-    if len(ons) < 6:
-        print(f"seq_gate: FAIL (swing: only {len(ons)} onsets)")
+    # Swing redistributes onset spacing but not onset COUNT: still 16 per pattern.
+    if len(ons) != EXPECT:
+        print(f"seq_gate: FAIL (swing: {len(ons)} onsets, expected {EXPECT})")
         sys.exit(1)
     iv = np.diff(ons)
     even_iv = STEP_S * 1.25      # step k even -> leads into the offbeat, lengthened
@@ -105,8 +110,13 @@ def host_locked_grid():
     first_s = (0.25 - (SONGPOS % 0.25)) * SPB     # to next 1/16 boundary = 95 ms
     sr, x = render("seq", "seq_locked", songpos=SONGPOS, swing=0.0, **PATCH)
     on = detect_onsets(x, sr)
-    if len(on) < 6:
-        print(f"[locked] FAIL (only {len(on)} onsets)")
+    # One-to-one onset count on the absolute host grid: onsets land at
+    # first_s + k*STEP_S for every k whose onset falls before the 2.0 s render
+    # end (less a small detector-latency slack). = 1 + floor((2.0-first_s-slack)/STEP_S).
+    DET_SLACK = 0.005
+    expected = 1 + int(np.floor((2.0 - first_s - DET_SLACK) / STEP_S))
+    if len(on) != expected:
+        print(f"[locked] FAIL ({len(on)} onsets, expected {expected})")
         return False
     first_dev = abs(on[0] - first_s)
     worst = float(np.max(np.abs(np.diff(on) - STEP_S)))
@@ -145,8 +155,12 @@ def loop_wrap():
     sr, x = render("seq", "seq_wrap", songpos=0.0, loopbeats=4.0, swing=0.0,
                    **{**PATCH, "seconds": 4.0})
     on = detect_onsets(x, sr)
-    if len(on) < 10:
-        print(f"[wrap] FAIL (only {len(on)} onsets)")
+    # 4.0 s / 0.125 s = 32 grid slots from t~=0; the transport wrap at beat 4
+    # (2.0 s) re-syncs the step clock and merges the onset straddling the wrap
+    # boundary, so 31 onsets are detected (stable across repeated runs — verified).
+    EXPECT_WRAP = 31
+    if len(on) != EXPECT_WRAP:
+        print(f"[wrap] FAIL ({len(on)} onsets, expected {EXPECT_WRAP})")
         return False
     off_grid = float(np.max([abs(t / SPB - round(t / SPB / 0.25) * 0.25) * SPB for t in on]))
     max_gap = float(np.max(np.diff(on)))

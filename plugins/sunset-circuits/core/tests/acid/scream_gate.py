@@ -10,6 +10,11 @@ import numpy as np
 from _acid import render, has_nan_inf
 
 CEIL_DBFS = 6.0
+# Calibrated lower bound so a SILENT render (peak ~ -inf dBFS) fails instead of
+# passing the finite + ceiling checks. Measured peak on this patch is -11.11 dBFS;
+# a floor ~19 dB below that (rounded) has ample margin above real output yet well
+# above any silent/near-silent render.
+MIN_DBFS = -30.0
 
 
 def main():
@@ -19,8 +24,10 @@ def main():
     peak = float(np.max(np.abs(x)))
     peak_db = 20.0 * np.log10(peak + 1e-20)
     bounded = peak_db < CEIL_DBFS
-    passed = finite and bounded
-    print(f"finite: {finite}   peak: {peak:.4f} ({peak_db:+.2f} dBFS)   ceil {CEIL_DBFS:+.0f} dBFS")
+    audible = peak_db > MIN_DBFS
+    passed = finite and bounded and audible
+    print(f"finite: {finite}   peak: {peak:.4f} ({peak_db:+.2f} dBFS)   "
+          f"floor {MIN_DBFS:+.0f} / ceil {CEIL_DBFS:+.0f} dBFS")
     print(f"scream_gate: {'PASS' if passed else 'FAIL'}")
     sys.exit(0 if passed else 1)
 

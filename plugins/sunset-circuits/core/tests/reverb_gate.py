@@ -35,17 +35,24 @@ def rt60(sig, sr):
 def main():
     sr, x1 = render(0, 60, 5.0, 2, "rev_d1", reverbDecay=1, **PATCH)
     sr, x8 = render(0, 60, 5.0, 2, "rev_d8", reverbDecay=8, **PATCH)
-    s1, s8 = x1[:, 0], x8[:, 0]
 
-    nan_ok = not (has_nan_inf(s1) or has_nan_inf(s8))
-    dc1, dc8 = dc_db(s1), dc_db(s8)
-    dc_ok = dc1 < -60.0 and dc8 < -60.0
-    r1, r8 = rt60(s1, sr), rt60(s8, sr)
-    grows = np.isfinite(r1) and np.isfinite(r8) and r8 > r1 * 1.2
+    # Check BOTH stereo channels; a failure in either channel fails the gate.
+    # Decay-growth is evaluated per channel (both channels must lengthen).
+    nch = min(x1.shape[1], x8.shape[1])
+    nan_ok, dc_ok, grows = True, True, True
+    for ch in range(nch):
+        s1, s8 = x1[:, ch], x8[:, ch]
+        ch_nan = not (has_nan_inf(s1) or has_nan_inf(s8))
+        dc1, dc8 = dc_db(s1), dc_db(s8)
+        ch_dc = dc1 < -60.0 and dc8 < -60.0
+        r1, r8 = rt60(s1, sr), rt60(s8, sr)
+        ch_grows = np.isfinite(r1) and np.isfinite(r8) and r8 > r1 * 1.2
+        nan_ok = nan_ok and ch_nan
+        dc_ok = dc_ok and ch_dc
+        grows = grows and ch_grows
+        print(f"[ch{ch}] RT60 decay=1 -> {r1:.2f}s, decay=8 -> {r8:.2f}s (grows: {ch_grows})  "
+              f"DC {dc1:.1f}/{dc8:.1f} dB (<-60: {ch_dc})  finite: {ch_nan}")
 
-    print(f"RT60 estimate: decay=1 -> {r1:.2f}s,  decay=8 -> {r8:.2f}s  (grows: {grows})")
-    print(f"DC offset: decay=1 {dc1:.1f} dB, decay=8 {dc8:.1f} dB  (< -60 dB: {dc_ok})")
-    print(f"finite output (no NaN/inf): {nan_ok}")
     passed = nan_ok and dc_ok and grows
     print(f"reverb_gate: {'PASS' if passed else 'FAIL'}")
     sys.exit(0 if passed else 1)

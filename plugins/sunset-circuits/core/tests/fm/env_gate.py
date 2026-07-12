@@ -5,7 +5,7 @@ On an e-piano-style patch (algo 5 dual stack) the tine modulator has a fast deca
 while the carrier sustains. The audible result: the tone is bright at note onset
 and mellows as the modulator's phase-mod depth collapses. We measure the spectral
 centroid in an early window (~0.05 s) and a late window (~1.0 s); the centroid
-must fall by more than 30%, proving per-op envelopes shape brightness over time.
+must fall by at least 30%, proving per-op envelopes shape brightness over time.
 """
 import sys
 import numpy as np

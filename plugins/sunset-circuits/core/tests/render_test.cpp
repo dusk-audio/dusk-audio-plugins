@@ -33,6 +33,7 @@
 #include "MultiSynthDSP.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -44,6 +45,45 @@
 
 namespace
 {
+// Strict string->double: reject empty, trailing garbage, or non-finite results.
+double parseNum(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    const double d = std::strtod(start, &end);
+    if (end == start || *end != '\0' || !std::isfinite(d))
+    {
+        std::fprintf(stderr, "invalid numeric value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return d;
+}
+
+// Strict string->long: reject empty, trailing garbage, or out-of-range.
+long parseInt(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty integer value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    errno = 0;
+    const long n = std::strtol(start, &end, 10);
+    if (end == start || *end != '\0' || errno == ERANGE)
+    {
+        std::fprintf(stderr, "invalid integer value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return n;
+}
+
 void writeFloatWav(const char* path, const std::vector<float>& interleavedStereo, int sampleRate)
 {
     const uint32_t numFrames = (uint32_t)(interleavedStereo.size() / 2);
@@ -62,15 +102,28 @@ void writeFloatWav(const char* path, const std::vector<float>& interleavedStereo
     FILE* f = std::fopen(path, "wb");
     if (!f) { std::fprintf(stderr, "cannot open %s\n", path); std::exit(2); }
 
-    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
-    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+    // Checked write: a short fwrite (disk full, quota) must fail, not truncate.
+    auto w = [&](const void* p, size_t sz, size_t n) {
+        if (std::fwrite(p, sz, n, f) != n)
+        {
+            std::fprintf(stderr, "short write to %s\n", path);
+            std::exit(2);
+        }
+    };
+    auto u32 = [&](uint32_t v) { w(&v, 4, 1); };
+    auto u16 = [&](uint16_t v) { w(&v, 2, 1); };
 
-    std::fwrite("RIFF", 1, 4, f); u32(36 + dataBytes); std::fwrite("WAVE", 1, 4, f);
-    std::fwrite("fmt ", 1, 4, f); u32(16); u16(3 /* IEEE float */); u16(channels);
+    w("RIFF", 1, 4); u32(36 + dataBytes); w("WAVE", 1, 4);
+    w("fmt ", 1, 4); u32(16); u16(3 /* IEEE float */); u16(channels);
     u32((uint32_t)sampleRate); u32(byteRate); u16(blockAlign); u16(bits);
-    std::fwrite("data", 1, 4, f); u32(dataBytes);
-    std::fwrite(interleavedStereo.data(), sizeof(float), interleavedStereo.size(), f);
-    std::fclose(f);
+    w("data", 1, 4); u32(dataBytes);
+    w(interleavedStereo.data(), sizeof(float), interleavedStereo.size());
+    // fclose flushes buffered data; an EOF here means a deferred write failed.
+    if (std::fclose(f) != 0)
+    {
+        std::fprintf(stderr, "error closing %s\n", path);
+        std::exit(2);
+    }
 }
 } // namespace
 
@@ -82,10 +135,23 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const int   mode     = std::atoi(argv[1]);
-    const int   midiNote = std::atoi(argv[2]);
-    const double seconds  = std::atof(argv[3]);
-    const int   osFactor = std::atoi(argv[4]);
+    const long  modeL    = parseInt("mode", argv[1]);
+    if (modeL < 0 || modeL > 5)
+    {
+        std::fprintf(stderr, "invalid mode: %ld (want 0..5)\n", modeL);
+        return 1;
+    }
+    const int   mode     = (int)modeL;
+    const long  midiL    = parseInt("midinote", argv[2]);
+    if (midiL < 0 || midiL > 127)
+    {
+        std::fprintf(stderr, "invalid midinote: %ld (want 0..127)\n", midiL);
+        return 1;
+    }
+    const int   midiNote = (int)midiL;
+    const double seconds  = parseNum("seconds", argv[3]);
+    const long  osL      = parseInt("osfactor", argv[4]);
+    const int   osFactor = (osL >= INT_MIN && osL <= INT_MAX) ? (int)osL : 0;
     const char* outPath  = argv[5];
 
     double sampleRate = 48000.0;
@@ -131,7 +197,7 @@ int main(int argc, char** argv)
             }
             const double t = std::atof(val.substr(0, c1).c_str());
             const std::string name = val.substr(c1 + 1, c2 - c1 - 1);
-            const float v = (float)std::atof(val.substr(c2 + 1).c_str());
+            const float v = (float)parseNum("setat.value", val.substr(c2 + 1));
             if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
             {
                 std::fprintf(stderr, "bad setat time: %g (want 0 <= t <= %g)\n", t, seconds);
@@ -151,22 +217,54 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "bad %s (want <sec>:<note>): %s\n", key.c_str(), val.c_str());
                 return 1;
             }
-            const double t = std::atof(val.substr(0, c1).c_str());
-            const int nn = std::atoi(val.substr(c1 + 1).c_str());
+            const double t = parseNum("noteev.time", val.substr(0, c1));
+            const long nnL = parseInt("noteev.note", val.substr(c1 + 1));
             if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
             {
                 std::fprintf(stderr, "bad %s time: %g (want 0 <= t <= %g)\n", key.c_str(), t, seconds);
                 return 1;
             }
-            schedNotes.push_back({ t, nn, key == "noteon" });
+            if (nnL < 0 || nnL > 127)
+            {
+                std::fprintf(stderr, "bad %s note: %ld (want 0..127)\n", key.c_str(), nnL);
+                return 1;
+            }
+            schedNotes.push_back({ t, (int)nnL, key == "noteon" });
             continue;
         }
-        if (key == "vel")      { vel = (float)std::atof(val.c_str()); continue; }
+        if (key == "vel")
+        {
+            vel = (float)parseNum("vel", val);
+            if (vel < 0.0f || vel > 1.0f)
+            {
+                std::fprintf(stderr, "invalid vel: %g (want 0..1)\n", (double)vel);
+                return 1;
+            }
+            continue;
+        }
         if (key == "release")  { releaseTime = std::atof(val.c_str()); releaseProvided = true; continue; }
-        if (key == "tempo")    { tempo = std::atof(val.c_str()); continue; }
-        if (key == "playing")  { playing = std::atoi(val.c_str()) != 0; continue; }
-        if (key == "songpos")  { songPosStart = std::atof(val.c_str()); haveSongPos = true; continue; }
-        if (key == "sr")       { sampleRate = std::atof(val.c_str()); continue; }
+        if (key == "tempo")
+        {
+            tempo = parseNum("tempo", val);
+            if (tempo < 20.0 || tempo > 999.0)
+            {
+                std::fprintf(stderr, "invalid tempo: %g (want 20..999)\n", tempo);
+                return 1;
+            }
+            continue;
+        }
+        if (key == "playing")
+        {
+            const long p = parseInt("playing", val);
+            if (p != 0 && p != 1)
+            {
+                std::fprintf(stderr, "invalid playing: %ld (want 0 or 1)\n", p);
+                return 1;
+            }
+            playing = (p != 0); continue;
+        }
+        if (key == "songpos")  { songPosStart = parseNum("songpos", val); haveSongPos = true; continue; }
+        if (key == "sr")       { sampleRate = parseNum("sr", val); continue; }
         if (key == "hold")
         {
             std::string s = val; size_t pos = 0;
@@ -174,7 +272,13 @@ int main(int argc, char** argv)
             {
                 size_t comma = s.find(',', pos);
                 std::string tok = s.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
-                if (!tok.empty()) holdNotes.push_back(std::atoi(tok.c_str()));
+                const long hn = parseInt("hold", tok);
+                if (hn < 0 || hn > 127)
+                {
+                    std::fprintf(stderr, "invalid hold note %ld (want 0..127)\n", hn);
+                    return 1;
+                }
+                holdNotes.push_back((int)hn);
                 if (comma == std::string::npos) break;
                 pos = comma + 1;
             }
@@ -183,7 +287,7 @@ int main(int argc, char** argv)
 
         const int idx = msynth::MultiSynthDSP::paramIndexForName(key.c_str());
         if (idx < 0) { std::fprintf(stderr, "unknown param: %s\n", key.c_str()); return 1; }
-        overrides.push_back({ idx, (float)std::atof(val.c_str()) });
+        overrides.push_back({ idx, (float)parseNum(key.c_str(), val) });
     }
 
     if (osFactor != 1 && osFactor != 2 && osFactor != 4)
@@ -202,6 +306,13 @@ int main(int argc, char** argv)
     if (!(std::isfinite(sampleRate) && sampleRate >= 8000.0 && sampleRate <= 768000.0))
     {
         std::fprintf(stderr, "invalid sample rate: %g (want 8000..768000)\n", sampleRate);
+        return 1;
+    }
+    // The (int)sampleRate WAV-header value, the frame math, and the DSP rate must
+    // all agree exactly, so require a whole number.
+    if (sampleRate != std::floor(sampleRate))
+    {
+        std::fprintf(stderr, "invalid sample rate: %g (must be a whole number)\n", sampleRate);
         return 1;
     }
     // A provided release must be finite and within the render window: NaN would
