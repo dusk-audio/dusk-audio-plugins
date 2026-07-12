@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -233,7 +234,12 @@ public:
             char* endp = nullptr;
             const float v = std::strtof(val.c_str(), &endp);
             if (endp == val.c_str()) continue;   // not a number; skip
-            out[idx] = v;
+            // The format is documented as safe to hand-edit: strtof happily
+            // parses "nan"/"inf", which would feed the DSP directly. Reject
+            // non-finite values (keep the default) and clamp the rest to the
+            // param's declared range.
+            if (!std::isfinite(v)) continue;
+            out[idx] = std::max(kParamDefs[idx].min, std::min(kParamDefs[idx].max, v));
         }
         return true;
     }

@@ -412,6 +412,11 @@ int runSeq(const Args& g, const char* out)
     const double seconds = g.num("seconds", 4.0);
     validateExtents(sr, seconds);
     const double bpm = g.num("bpm", 120.0);
+    if (bpm < 20.0 || bpm > 999.0)
+    {
+        std::fprintf(stderr, "invalid bpm: %g (want 20..999)\n", bpm);
+        std::exit(2);
+    }
     const bool   playing = g.intv("playing", 1) != 0;
 
     msynth::AcidVoice voice;

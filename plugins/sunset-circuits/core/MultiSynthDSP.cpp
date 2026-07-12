@@ -628,11 +628,15 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         sL *= masterGain * panL;
         sR *= masterGain * panR;
 
-        // Stereo width (mid/side).
+        // Stereo width (mid/side). The 0..1 param maps to a 0..2 side factor so
+        // the 0.5 DEFAULT is unity (image preserved): 0 = mono, 0.5 = as
+        // rendered, 1 = double-width. The old side*width mapping silently
+        // halved every preset's stereo image at the default setting.
         const float mid = (sL + sR) * 0.5f;
         const float side = (sL - sR) * 0.5f;
-        sL = mid + side * stereoWidth;
-        sR = mid - side * stereoWidth;
+        const float widthFactor = 2.0f * stereoWidth;
+        sL = mid + side * widthFactor;
+        sR = mid - side * widthFactor;
 
         // Output DC blocker (reverb combs / filter nonlinearity leave a little DC).
         sL = dcBlockL.process(sL);
