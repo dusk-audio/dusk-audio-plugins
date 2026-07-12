@@ -50,8 +50,12 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/sunset-circuits-v* ]]; then
             IS_RELEASE="true"
             RAW="${TAG#sunset-circuits-v}"
-            if [[ "$RAW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              VERSION="$RAW"
+            # Accept X.Y.Z with an optional prerelease suffix (-alpha, -beta.2,
+            # -rc1, ...). CMake's project(VERSION) only takes the numeric core,
+            # so export that; the full tag still drives release naming and the
+            # prerelease flag in the release job.
+            if [[ "$RAW" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9.]+)?$ ]]; then
+              VERSION="${BASH_REMATCH[1]}"
             fi
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
