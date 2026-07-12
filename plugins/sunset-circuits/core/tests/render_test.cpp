@@ -195,7 +195,7 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "bad setat (want <sec>:<name>:<value>): %s\n", val.c_str());
                 return 1;
             }
-            const double t = std::atof(val.substr(0, c1).c_str());
+            const double t = parseNum("setat.time", val.substr(0, c1));
             const std::string name = val.substr(c1 + 1, c2 - c1 - 1);
             const float v = (float)parseNum("setat.value", val.substr(c2 + 1));
             if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
@@ -242,7 +242,7 @@ int main(int argc, char** argv)
             }
             continue;
         }
-        if (key == "release")  { releaseTime = std::atof(val.c_str()); releaseProvided = true; continue; }
+        if (key == "release")  { releaseTime = parseNum("release", val); releaseProvided = true; continue; }
         if (key == "tempo")
         {
             tempo = parseNum("tempo", val);

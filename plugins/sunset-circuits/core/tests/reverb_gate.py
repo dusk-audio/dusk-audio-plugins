@@ -22,6 +22,8 @@ def rt60(sig, sr):
     peak = np.argmax(db)
     # fit the decaying region from just after the peak down ~35 dB
     start = peak + 3
+    if start >= len(db):     # peak at the very end -> no decay segment to fit
+        return float("nan")
     seg_t, seg_db = t[start:], db[start:]
     top = seg_db[0]
     mask = seg_db > (top - 35.0)

@@ -22,7 +22,14 @@ def render(mode, note, seconds, osfactor, name, **params):
         items = setat if isinstance(setat, (list, tuple)) else [setat]
         for s in items:
             args.append(f"setat={s}")
-    subprocess.run(args, check=True, stderr=subprocess.DEVNULL)
+    # Capture stderr so a failing render surfaces the binary's diagnostics
+    # instead of a bare CalledProcessError; 120 s timeout matches _acid.py.
+    try:
+        subprocess.run(args, check=True, capture_output=True, timeout=120)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"render_test failed (rc={e.returncode}): "
+            f"{e.stderr.decode(errors='replace').strip()}") from e
     x, sr = sf.read(path, always_2d=True)
     return sr, x
 

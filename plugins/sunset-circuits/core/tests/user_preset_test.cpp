@@ -135,6 +135,24 @@ int main()
         CHECK(vp[kParamFilterRes] == 0.9f, "known symbol applied despite unknown");
     }
 
+    // ---- 4b. hand-edited hostile values: nan/inf rejected, range clamped ----
+    {
+        fs::path f = expectDir / "Hostile.scpreset";
+        { std::ofstream os(f, std::ios::trunc);
+          os << "# SunsetCircuits preset v1\nname=Hostile\n";
+          os << "filterCutoff=nan\n";        // non-finite -> keep default
+          os << "filterRes=inf\n";           // non-finite -> keep default
+          os << "masterVol=99999\n"; }       // out of range -> clamp to max
+        std::vector<float> vp(N, -1.0f);
+        CHECK(store.loadInto(f, vp.data(), N), "load hostile file (returns true)");
+        CHECK(vp[kParamFilterCutoff] == kParamDefs[kParamFilterCutoff].def,
+              "nan value rejected, default kept");
+        CHECK(vp[kParamFilterRes] == kParamDefs[kParamFilterRes].def,
+              "inf value rejected, default kept");
+        CHECK(vp[kParamMasterVol] == kParamDefs[kParamMasterVol].max,
+              "out-of-range value clamped to param max");
+    }
+
     // ---- 5. name sanitization ----------------------------------------------
     CHECK(sanitize("a/b\\c:d") == "abcd", "strip path/reserved chars");
     CHECK(sanitize("  Lead  ") == "Lead", "trim surrounding whitespace");

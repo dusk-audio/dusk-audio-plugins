@@ -9,8 +9,10 @@
    note-ons 0.5 s apart, ampS=1) used to snap the amp envelope to 0 and re-attack
    from scratch, a render-proven amplitude discontinuity. The C1 seed-from-current
    fix resumes the attack from the current level. Metric: max |sample-to-sample
-   delta| in a +-20 ms window around the retrigger, at masterVol=15 (loud, so the
-   click is well above the noise floor). Measured pre-fix 0.4504, post-fix 0.1227
+   delta| in a +-20 ms window around the retrigger, at masterVol=-2 (with the
+   engine's +8 dB output makeup this nets the +6 dB total gain the threshold was
+   calibrated at, keeping the sine below the output softLimit knee — see the
+   CLICK_PATCH comment). Measured pre-fix 0.4504, post-fix 0.1227
    -- the ~0.12 residual is the oscillator PHASE reset (a shared single-sample
    transient outside C1's scope, present pre and post). Threshold 0.25 sits
    cleanly between the two; C1 removes the amplitude-collapse component.

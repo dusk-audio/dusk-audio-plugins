@@ -33,7 +33,7 @@ def worst_image_dbc(sig, sr, f0):
     if not np.isfinite(fund) or fund <= 0 or not np.all(np.isfinite(X)):
         return float("nan"), float("nan")
     tol = f0 * 0.03
-    worst, worst_f = -200.0, 0.0
+    worst, worst_f = -np.inf, 0.0
     for k in range(lo, hi):
         # skip integer harmonics of f0 (legitimate partials); h>=1 guard keeps
         # sub-f0 bins (h==0) from being masked as "harmonics"
@@ -43,6 +43,8 @@ def worst_image_dbc(sig, sr, f0):
         db = 20.0 * np.log10(X[k] / (fund + 1e-20) + 1e-20)
         if db > worst:
             worst, worst_f = db, f[k]
+    if not np.isfinite(worst):   # no non-harmonic candidate bins at all
+        return float("nan"), float("nan")
     return worst, worst_f
 
 

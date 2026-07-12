@@ -390,7 +390,9 @@ jobs:
           # ran and none failed. A missing executable, a plugin that fails to
           # load, or a real test failure all fail the job — we must never release
           # an unloadable VST3. Authoritative validation is the real-DAW matrix
-          # in Phase 5 (and strictness-8 pluginval on Linux, which exits cleanly).
+          # in Phase 5 plus the strictness-8 pluginval run performed LOCALLY on
+          # Linux before tagging (QA checklist Part 1) — the Linux CI jobs here
+          # build and package only.
           $log = & $pv.FullName --strictness-level 5 --skip-gui-tests --validate $vst3 2>&1 | Out-String
           Write-Host $log
           if ($LASTEXITCODE -eq 0) {
