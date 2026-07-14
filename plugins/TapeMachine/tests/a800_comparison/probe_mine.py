@@ -18,7 +18,7 @@ OUT = os.path.join(HERE, "renders", "deep_atr")
 MINE = dp.MINE
 # Classic102 reference config (== deep_probe MINE_BASE with machine idx 1)
 BASE = [("Tape Machine", "1"), ("Tape Speed", "1"), ("Tape Type", "0"),
-        ("EQ Standard", "0"), ("Signal Path", "0"), ("Calibration", "2"),
+        ("EQ Standard", "0"), ("Signal Path", "0"), ("Calibration", "1"),  # idx1 = +6 dB after cal remap
         ("Noise Amount", "0"), ("Oversampling", "2"), ("Wow", "0"), ("Flutter", "0")]
 
 

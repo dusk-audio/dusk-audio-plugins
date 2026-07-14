@@ -1,4 +1,9 @@
-# TapeMachine screenshots
+# Legacy TapeMachine 1 screenshots
+
+These images document the JUCE TapeMachine 1.x interface and are intentionally
+not used by the TapeMachine 2 manual. TapeMachine 2 has a distinct brushed-metal
+DPF interface, a 20-preset two-column browser, and an Advanced panel. Capture a
+new `tapemachine-2` screenshot set before adding UI images back to the manual.
 
 | Filename | What it shows |
 | --- | --- |

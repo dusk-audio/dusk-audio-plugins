@@ -12,7 +12,7 @@ from compare_a800 import freq_response  # noqa: E402
 
 OUT = os.path.join(HERE, "renders", "deep_atr")
 BASE = [("Tape Machine", "1"), ("Tape Speed", "1"), ("Tape Type", "0"), ("EQ Standard", "0"),
-        ("Calibration", "2"), ("Noise Amount", "0"), ("Oversampling", "2"), ("Wow", "0"), ("Flutter", "0")]
+        ("Calibration", "1"), ("Noise Amount", "0"), ("Oversampling", "2"), ("Wow", "0"), ("Flutter", "0")]  # idx1 = +6 dB after cal remap
 FREQS = [30, 50, 80, 100, 200, 1000, 2000, 5000, 10000, 15000]
 SWEEP = os.path.join(HERE, "stimuli", "sweep.wav")
 

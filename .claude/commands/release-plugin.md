@@ -26,6 +26,7 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | 4K EQ | 4k-eq | plugins/4k-eq | FOURKEQ | 4keq |
 | Multi-Comp | multi-comp | plugins/multi-comp | MULTICOMP | compressor |
 | TapeMachine | tapemachine | plugins/TapeMachine | TAPEMACHINE | tape |
+| TapeMachine 2 | tapemachine-2 | plugins/TapeMachine/dpf-plugin | (inline) | tape |
 | Tape Echo | tape-echo | plugins/tape-echo | TAPEECHO | tapeecho |
 | Multi-Q | multi-q | plugins/multi-q | (inline) | multiq |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
@@ -61,6 +62,7 @@ For EACH plugin specified:
 1. **Find current version** from CMakeLists.txt:
    - Most plugins: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`
    - Multi-Q uses: `project(MultiQ VERSION X.Y.Z)`
+   - TapeMachine 2 uses: `project(TapeMachine2DPF VERSION X.Y.Z)` in `plugins/TapeMachine/dpf-plugin/CMakeLists.txt` (the version is plumbed into the code via compile definitions, so no other file needs editing)
 2. **Determine new version**:
    - If explicit version provided: use it
    - If omitted: auto-increment patch (1.0.2 → 1.0.3)
@@ -91,6 +93,11 @@ set(<VAR>_DEFAULT_VERSION "<new-version>")
 **Multi-Q** (uses inline project version):
 ```
 project(MultiQ VERSION <new-version>)
+```
+
+**TapeMachine 2** (uses inline project version in `plugins/TapeMachine/dpf-plugin/CMakeLists.txt`):
+```
+project(TapeMachine2DPF VERSION <new-version>)
 ```
 
 **Manual front matter** (issue #80) — only if `manuals/<slug>.md` exists. Uses the portable `sed -i.bak ... && rm` form so this works on both macOS BSD sed and Linux GNU sed:
@@ -228,6 +235,10 @@ TAGEOF
 
 git tag -a <slug>-v<version> --cleanup=verbatim -F /tmp/tag_message.txt
 ```
+
+The `<slug>-v<version>` form produces the tag each plugin's CI release workflow
+listens for (e.g. TapeMachine 2 → `tapemachine-2-v<version>`, matched by
+`.github/workflows/tapemachine2-release.yml`'s `tapemachine-2-v*` trigger).
 
 ### Step 7: Push Everything
 

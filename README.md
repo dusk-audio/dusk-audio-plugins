@@ -1,10 +1,10 @@
 # Dusk Audio Plugins
 
-A collection of professional audio VST3/AU/LV2 plugins built with JUCE. Several titles (4K EQ, Spectrum Analyzer) also ship in CLAP format.
+A collection of professional audio VST3/AU/LV2 plugins built with JUCE or DPF. Several titles also ship in CLAP format.
 
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
-> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are currently released and recommended for production use. All other plugins are in active development.
+> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are currently released and recommended for production use. **TapeMachine 2** is the DPF-based successor release. All other plugins are in active development.
 
 ## Plugins
 
@@ -32,16 +32,19 @@ Multi-mode compressor with seven classic compression styles plus 4-band multiban
 
 **Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
 
-### TapeMachine - RELEASED
-Analog tape machine emulation featuring:
-- Two tape machine models with distinct characters
-- Four tape formulations: Type 456, GP9, Type 911, Type 250
-- Tape speeds: 7.5, 15, 30 IPS
-- Advanced saturation and hysteresis modeling
-- Separate Wow & Flutter controls
-- 15 factory presets across 5 categories (Subtle, Warm, Character, Lo-Fi, Mastering)
-- Dual stereo VU meters with animated reels
-- 2x/4x oversampling for alias-free processing
+### TapeMachine 2 - RELEASED
+DPF-based Studer A800 and Ampex ATR-102-inspired tape processing featuring:
+- Swiss 800 and Classic 102 deck models with distinct plugin identity from TapeMachine 1.x
+- Type 456, GP9, 900, and 250 tape formulations
+- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on Classic 102
+- Repro, Sync, Input, and Thru paths with NAB/CCIR EQ
+- Input drive, linked output compensation, bias/calibration, wow, flutter, noise, and filters
+- Classic 102 head-width, crosstalk, transport, and transformer controls
+- Four-band Advanced reproduce EQ and 20 UAD-matched factory presets
+- Fixed, fitted 2x nonlinear core
+- macOS AU/VST3/CLAP/LV2 universal builds and Linux VST3/CLAP/LV2 builds
+
+See the [TapeMachine 2 README](plugins/TapeMachine/README.md) and [manual](manuals/tapemachine-2.md).
 
 ### Multi-Q - RELEASED
 Universal EQ with multiple modes:
@@ -128,7 +131,7 @@ For consistent, distributable binaries:
 # Build a single plugin (production-ready)
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
-./docker/build_release.sh tape         # TapeMachine
+./docker/build_release.sh tape         # Legacy JUCE TapeMachine 1.x
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh chord        # Chord Analyzer
 
@@ -170,6 +173,13 @@ cmake --build . --target GrooveMind_All
 cmake --build . --target DuskAmp_All
 ```
 
+TapeMachine 2 uses its standalone DPF build rather than the top-level JUCE build:
+
+```bash
+cmake -S plugins/TapeMachine/dpf-plugin -B plugins/TapeMachine/dpf-plugin/build -G Ninja
+cmake --build plugins/TapeMachine/dpf-plugin/build
+```
+
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`
 - **macOS VST3**: `~/Library/Audio/Plug-Ins/VST3/`
@@ -179,7 +189,7 @@ cmake --build . --target DuskAmp_All
 
 ## Installing Unsigned Binaries
 
-These plugins are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/plugins/releases). Both macOS Gatekeeper and Windows SmartScreen will block first-run by default — that's normal for unsigned builds.
+Some legacy releases are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/plugins/releases). TapeMachine 2 macOS production releases are Developer ID signed and Apple-notarized; the instructions below apply only to unsigned legacy artifacts.
 
 ### macOS
 

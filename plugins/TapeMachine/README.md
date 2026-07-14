@@ -1,124 +1,100 @@
-# TapeMachine
+# TapeMachine 2
 
-**Professional analog tape emulation for your DAW**
+TapeMachine 2 is Dusk Audio's DPF-based tape processor, modeled against the
+UAD Studer A800 and Ampex ATR-102. It replaces the JUCE TapeMachine 1.x line
+with a distinct plugin identity, so both versions can coexist in old sessions.
 
-TapeMachine brings the warmth, saturation, and character of classic reel-to-reel tape machines to your productions. Calibrated against real vintage hardware measurements, it delivers authentic tape sound from subtle warmth to full saturation.
+## Highlights
 
-## Features
+- **Swiss 800** tracking/mix deck modeled against the Studer A800
+- **Classic 102** mastering deck modeled against the Ampex ATR-102
+- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on Classic 102
+- Type 456, GP9, 900, and 250 tape formulations
+- Repro, Sync, Input, and Thru signal paths
+- NAB and CCIR equalization
+- Input drive with linked output compensation
+- Manual or automatic bias, four calibration levels, wow, flutter, tape noise,
+  high-pass, and low-pass filtering
+- Classic 102 head-width, crosstalk, wow/flutter-enable, and transformer controls
+- Advanced four-band reproduce-head EQ
+- 20 factory presets fitted to matching UAD factory presets
+- User preset save/load support
 
-### Two Classic Machines
-- **Swiss800**: Clean, punchy, transformerless design with tight low end and extended highs. The studio workhorse.
-- **Classic102**: Rich transformer coloration with pronounced head bump and vintage character. The mastering classic.
+The nonlinear core is permanently tuned at 2× oversampling. A hidden legacy
+oversampling parameter remains only so older state layouts round-trip safely;
+it is not a user-facing quality control.
 
-### Four Tape Formulations
-- **Type 456**: Warm and punchy — perfect for rock, pop, and mix bus
-- **GP9**: Clean with extended headroom — ideal for mastering and classical
-- **Type 911**: European character with early saturation — great for warmth
-- **Type 250**: Vintage saturation — perfect for lo-fi and creative effects
+## Factory presets
 
-### Signal Path Modes
-- **Repro**: Full tape processing (the classic sound)
-- **Sync**: Record head playback with extra HF rolloff (for overdub workflows)
-- **Input**: Electronics only — hear just the transformers and EQ coloration
-- **Thru**: Clean bypass for A/B comparison
+Classic 102:
 
-### Professional Controls
-- **Input/Output Gain** with automatic level compensation
-- **Saturation** control for dialing in the perfect amount of tape warmth
-- **Bias** adjustment for fine-tuning the tape response
-- **Wow & Flutter** for authentic pitch modulation (or creative wobble)
-- **Tape Noise** with adjustable amount and vintage-style enable switch
-- **High-pass/Low-pass filters** for shaping your sound
-- **Mix** control for parallel processing
+- Big 456 Master
+- Nice 456 Master
+- Jazz Vision Master
+- Clean 900 Master
+- Fat 456 Master
+- GP9 Drum Bus
+- Massive Bass
+- Bright & Sizzly
+- Sunbaked Cassette
+- Analog Warmth
 
-### 15 Factory Presets
-Professionally designed starting points across five categories:
-- **Subtle**: Gentle Warmth, Transparent Glue, Mastering Touch
-- **Warm**: Classic Analog, Vintage Warmth, Tube Console
-- **Character**: 70s Rock, Tape Saturation, Cassette Deck
-- **Lo-Fi**: Lo-Fi Warble, Worn Tape, Dusty Reel
-- **Mastering**: Master Bus Glue, Analog Sheen, Vintage Master
+Swiss 800:
 
-### Quality Options
-- **Tape Speed**: 7.5, 15, and 30 IPS with appropriate EQ curves
-- **EQ Standard**: NAB (American), CCIR (European), or AES (modern)
-- **Oversampling**: 1x, 2x, or 4x for pristine anti-aliasing
+- Classic Rock Crisp
+- Modern Rock
+- Drum Bus
+- Hi-Fi Shine
+- Lush Film
+- Jazz Warmth
+- Thick Saturation
+- Hip-Hop Punch
+- Vocal Presence
+- Old Tape
 
-### Vintage Interface
-- Animated tape reels that respond to playback
-- Dual VU meters with authentic ballistics
-- Premium dark theme with metal textures
+## Formats and platforms
 
-## System Requirements
+| Platform | Formats |
+| --- | --- |
+| macOS 10.15+ | AU, VST3, CLAP, LV2; universal arm64/x86_64 |
+| Linux x86_64 | VST3, CLAP, LV2 |
 
-- **Formats**: VST3, LV2, AU (macOS), Standalone
-- **Platforms**: Linux, macOS, Windows
-- **Linux**: glibc 2.31+ (Ubuntu 20.04+, Debian 11+, Fedora 34+)
+TapeMachine 2 does not currently ship a Windows or Standalone build.
 
-## Installation
+## Build
 
-### Linux
-Copy to your plugin folders:
-- VST3: `~/.vst3/TapeMachine.vst3`
-- LV2: `~/.lv2/TapeMachine.lv2`
+DPF and DPF-Widgets are expected beside this repository by default. Override
+their paths when needed.
 
-### macOS
-- VST3: `/Library/Audio/Plug-Ins/VST3/`
-- AU: `/Library/Audio/Plug-Ins/Components/`
+```sh
+cmake -S plugins/TapeMachine/dpf-plugin \
+  -B plugins/TapeMachine/dpf-plugin/build \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DDPF_PATH=/path/to/DPF \
+  -DDPFWIDGETS_PATH=/path/to/DPF-Widgets
 
-### Windows
-- VST3: `C:\Program Files\Common Files\VST3\`
+cmake --build plugins/TapeMachine/dpf-plugin/build --target \
+  tape_machine_2-vst3 tape_machine_2-clap tape_machine_2-lv2
+```
 
----
+On macOS, add `tape_machine_2-au`. Local installation after building is enabled
+by default; configure with `-DDUSK_DPF_INSTALL_LOCAL=OFF` for packaging or CI.
 
-## Technical Details
+## Validation
 
-For those interested in what's under the hood:
+The macOS AU must pass:
 
-### Signal Chain (14 stages)
-1. Input metering and gain staging
-2. Input transformer saturation (Classic102 only)
-3. Pre-emphasis EQ (NAB/CCIR/AES record curve)
-4. Bias filter and pre-saturation limiting
-5. **3-band Langevin waveshaper** — physically-modeled tape saturation
-6. Gap loss and HF rolloff
-7. Wow & Flutter modulation
-8. Head bump resonance
-9. Playback head response
-10. De-emphasis EQ (complementary playback curve)
-11. Phase smearing (analog electronics modeling)
-12. Output transformer (Classic102 only)
-13. Tape noise (pink noise + modulation)
-14. DC blocking and anti-aliasing
+```sh
+auval -v aufx DsTM Dusk
+```
 
-### Saturation Model
-The core uses the **Langevin function** from magnetic hysteresis theory, providing physically-accurate odd-harmonic distortion. Even harmonics come from transformer asymmetry modeling (Classic102 only).
+The proprietary UAD comparison harness is documented in
+[`tests/a800_comparison/README.md`](tests/a800_comparison/README.md). It validates
+frequency response, THD, and aliasing for all 20 matching factory presets.
 
-- 3-band processing at 200Hz and 5kHz crossovers
-- Calibrated to match published vintage hardware THD measurements
-- Pade [2,2] approximation for CPU efficiency
+## Licensing
 
-### Harmonic Targets (calibrated against real hardware)
-
-| Machine | H2 | H3 | THD @ 0VU |
-|---------|-----|-----|-----------|
-| Swiss800 | negligible | -50 to -54dB | ~0.3% |
-| Classic102 | -52 to -58dB | -46 to -50dB | ~0.5% |
-
-### EQ Standards
-
-| Standard | Character |
-|----------|-----------|
-| **NAB** | American standard — most HF pre-emphasis, warmest saturation character |
-| **CCIR** | European standard — moderate emphasis, balanced response |
-| **AES** | Modern standard — minimal emphasis, most transparent |
-
----
-
-## Credits
-
-- Developed with the JUCE Framework
-- DSP based on Jiles-Atherton magnetic hysteresis theory
-- Pink noise algorithm by Paul Kellett
-
-**Dusk Audio**
+TapeMachine 2 is GPL-3.0-or-later. See the repository `LICENSE` and
+[`plugins/shared-dpf/THIRD_PARTY_LICENSES.md`](../shared-dpf/THIRD_PARTY_LICENSES.md)
+for DPF, DPF-Widgets, and per-format notices.

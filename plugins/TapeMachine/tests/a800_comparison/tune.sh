@@ -15,7 +15,7 @@ SPEEDS=("$@"); [ ${#SPEEDS[@]} -eq 0 ] && SPEEDS=(15 30)
 echo ">> building tape_machine_2-au ..."
 ( cd "$REPO/plugins/TapeMachine/dpf-plugin" && cmake --build build --target tape_machine_2-au -j8 >/dev/null )
 
-run(){ "$BIN" "$@" 2>&1 | grep -viE "TODO|^\[dpf\]|Thrift|@info|@warn|Timers" >/dev/null || true; }
+run(){ "$BIN" "$@" 2>&1 | grep -viE "TODO|^\[dpf\]|Thrift|@info|@warn|Timers"; return "${PIPESTATUS[0]}"; }
 render(){ local dest="$1" inp="$2"; shift 2; local t; t="$(mktemp -d)"
   run --au "$MINE" --input-wav "$inp" --slug s --output-dir "$t" --prerun-seconds 2 "$@"
   mv "$t/s_stem.wav" "$dest"; rm -rf "$t"; }

@@ -53,7 +53,7 @@ else:
 
 # 456 / NAB / 15 IPS / Repro / +6 cal, on each plugin
 MINE_BASE = [("Tape Machine", _mine_machine), ("Tape Speed", "1"), ("Tape Type", "0"),
-             ("EQ Standard", "0"), ("Signal Path", "0"), ("Calibration", "2"),
+             ("EQ Standard", "0"), ("Signal Path", "0"), ("Calibration", "1"),  # idx1 = +6 dB after cal remap
              ("Noise Amount", "0"), ("Oversampling", "2"), ("Wow", "0"), ("Flutter", "0")]
 UAD_BASE = [("IPS", "15 IPS"), ("Tape Type", "456"), ("Emphasis EQ", "NAB")]
 
@@ -66,14 +66,17 @@ def render(plugin, params, inp, dest, nparams=None):
         cmd += ["--param", f"{n}={v}"]
     for n, v in (nparams or []):
         cmd += ["--nparam", f"{n}={v}"]
-    subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     stem = os.path.join(tmp, "s_stem.wav")
-    ok = os.path.exists(stem)
-    if ok:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        shutil.move(stem, dest)
+    # Fail loudly on a bad exit / missing stem instead of returning False and leaving a
+    # STALE destination file for the analysis to silently pick up.
+    if proc.returncode != 0 or not os.path.exists(stem):
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise RuntimeError(f"render failed -> {dest} rc={proc.returncode}\n{proc.stderr[-600:]}")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.move(stem, dest)
     shutil.rmtree(tmp, ignore_errors=True)
-    return ok
+    return dest
 
 
 def load(path, stereo=False):
@@ -182,10 +185,22 @@ def aliasing(path, freqs=(5000, 8000, 11000, 15000, 19000), seg=1.0):
 def phase_response(in_wav, out_wav):
     x, _ = load(os.path.join(STIM, in_wav)); y, _ = load(out_wav)
     n = min(len(x), len(y))
-    H = np.fft.rfft(y[:n]) / (np.fft.rfft(x[:n]) + 1e-12)
+    x, y = x[:n], y[:n]
+    # Remove the plugin's latency (integer lag) before deriving phase, then report phase
+    # RELATIVE to 1 kHz — the pure-delay term otherwise dominates the raw angle (mirrors
+    # det_probe.py's latency-align + 1 kHz-relative group-delay approach).
+    s0, s1 = int(n * 0.1), int(n * 0.9)
+    xw, yw = x[s0:s1], y[s0:s1]
+    L = len(xw)
+    nf = 1 << int(np.ceil(np.log2(2 * L)))
+    xc = np.fft.irfft(np.fft.rfft(xw, nf) * np.conj(np.fft.rfft(yw, nf)), nf)
+    lag = int(np.argmax(xc)); lag = lag - nf if lag > nf // 2 else lag
+    y = np.roll(y, lag)
+    H = np.fft.rfft(y) / (np.fft.rfft(x) + 1e-12)
     f = np.fft.rfftfreq(n, 1 / SR)
     ph = np.unwrap(np.angle(H))
-    return {hz: float(np.degrees(ph[np.argmin(np.abs(f - hz))])) for hz in (100, 1000, 10000)}
+    ref = ph[np.argmin(np.abs(f - 1000.0))]      # 1 kHz reference (residual dispersion only)
+    return {hz: float(np.degrees(ph[np.argmin(np.abs(f - hz))] - ref)) for hz in (100, 1000, 10000)}
 
 
 # ---- driver -----------------------------------------------------------------
@@ -255,17 +270,11 @@ def main():
                      [("Auto Calibration", "0")]
                 render(MINE, mb, stim, os.path.join(OUT, f"bias_{name}_{sfx}_m.wav"),
                        nparams=[("Bias", mnorm)])
-                tmp = tempfile.mkdtemp()
-                cmd = [BIN, "--au", UAD, "--input-wav", os.path.join(STIM, stim),
-                       "--slug", "s", "--output-dir", tmp, "--prerun-seconds", "2"]
-                for bp in UAD_BIAS_PARAMS:
-                    cmd += ["--nparam", f"{bp}={unorm}"]
-                for n, v in UAD_BASE + UAD_BIAS_EXTRA:
-                    cmd += ["--param", f"{n}={v}"]
-                subprocess.run(cmd, capture_output=True, text=True)
-                if os.path.exists(os.path.join(tmp, "s_stem.wav")):
-                    shutil.move(os.path.join(tmp, "s_stem.wav"), os.path.join(OUT, f"bias_{name}_{sfx}_u.wav"))
-                shutil.rmtree(tmp, ignore_errors=True)
+                # Route the UAD bias render through render() too so it gets the same
+                # checked (raise-on-failure) behaviour instead of a bare subprocess.run.
+                render(UAD, UAD_BASE + UAD_BIAS_EXTRA, stim,
+                       os.path.join(OUT, f"bias_{name}_{sfx}_u.wav"),
+                       nparams=[(bp, unorm) for bp in UAD_BIAS_PARAMS])
             P[f"bias_{name}_{sfx}_m"] = os.path.join(OUT, f"bias_{name}_{sfx}_m.wav")
             P[f"bias_{name}_{sfx}_u"] = os.path.join(OUT, f"bias_{name}_{sfx}_u.wav")
 

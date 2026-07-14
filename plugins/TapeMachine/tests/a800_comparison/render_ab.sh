@@ -55,7 +55,7 @@ for spd in "${SPEEDS[@]}"; do
     echo "  TapeMachine  $st"
     render "$MINE" "$OUT/tapemachine/$spd/$st.wav" "$inp" "$PRERUN" \
       --param "Tape Machine=0" --param "Tape Speed=$midx" --param "Tape Type=0" \
-      --param "EQ Standard=0" --param "Signal Path=0" --param "Calibration=2" \
+      --param "EQ Standard=0" --param "Signal Path=0" --param "Calibration=1" \
       --param "Wow=$wow" --param "Flutter=$flut" --param "Noise Amount=0" --param "Oversampling=2"
     # UAD A800: defaults already match (456/NAB/Repro/+6/unity); only IPS varies.
     echo "  UAD A800     $st"
@@ -66,7 +66,7 @@ for spd in "${SPEEDS[@]}"; do
   echo "  TapeMachine  hiss"
   render "$MINE" "$OUT/tapemachine/$spd/hiss.wav" "$STIM/silence.wav" "$PRERUN" \
     --param "Tape Machine=0" --param "Tape Speed=$midx" --param "Tape Type=0" \
-    --param "EQ Standard=0" --param "Signal Path=0" --param "Calibration=2" \
+    --param "EQ Standard=0" --param "Signal Path=0" --param "Calibration=1" \
     --param "Wow=0" --param "Flutter=0" --param "Noise Amount=50" --param "Oversampling=2"
   echo "  UAD A800     hiss"
   render "$UAD" "$OUT/uad/$spd/hiss.wav" "$STIM/silence.wav" "$PRERUN" \

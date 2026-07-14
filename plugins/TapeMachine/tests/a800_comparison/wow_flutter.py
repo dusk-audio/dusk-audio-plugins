@@ -106,9 +106,14 @@ def measure_wow_flutter(path, carrier_hz=3150.0, trim_sec=1.5):
         good = ~np.isnan(d)
         d = np.interp(np.arange(len(d)), np.where(good)[0], d[good])
         factor = max(1, int(round(sr / FS_LO)))
-        for f in _factor_stages(factor):
+        stages = _factor_stages(factor)
+        for f in stages:
             d = decimate(d, f, ftype="iir", zero_phase=True)
-        fs_lo = sr / factor
+        # Derive fs_lo from the ACTUAL product of stages: _factor_stages truncates for
+        # factors with a prime part > 13 (e.g. 17 -> [2, 8] = 16), so sr/factor would be
+        # wrong and mis-place the wow/flutter band edges + _spectrum_fmod.
+        actual_factor = int(np.prod(stages))
+        fs_lo = sr / actual_factor
         d = d - np.mean(d)
         wow = _band_rms(d, fs_lo, 0.5, 6.0)
         flutter = _band_rms(d, fs_lo, 6.0, 100.0)

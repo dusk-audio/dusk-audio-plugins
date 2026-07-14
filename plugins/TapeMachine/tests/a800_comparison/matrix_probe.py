@@ -8,7 +8,8 @@ can see WHERE our single-config tuning fails to generalize.
   python3 matrix_probe.py tape    # sweep the 3 tapes  (NAB/15/Repro/+6)
   python3 matrix_probe.py eq      # NAB vs AES         (456/15/Repro/+6)
   python3 matrix_probe.py cal     # cal sweep          (456/NAB/15/Repro)
-  python3 matrix_probe.py full    # the 3x3x2 speed x tape x eq matrix
+  python3 matrix_probe.py head    # ATR Head Width 1/4"/1/2"/1" (ATR only)
+  python3 matrix_probe.py full    # the speed x tape x eq matrix
 """
 import os
 import sys
@@ -30,13 +31,16 @@ FRq = [30, 50, 100, 1000, 5000, 10000, 15000]
 # (Swiss800 idx 0 vs UAD Studer A800). Selects UAD, our machine idx, EQ set,
 # and the UAD param names (studer has no Wow&Flutter toggle; Path "Repro").
 MACHINE = os.environ.get("MATRIX_MACHINE", "ATR102")
-SPEED = {"7.5": ("0", "7.5 IPS"), "15": ("1", "15 IPS"), "30": ("2", "30 IPS")}
-CAL = {"+3": ("1", "+3 dB"), "+6": ("2", "+6 dB"), "+9": ("3", "+9 dB")}
+SPEED = {"7.5": ("0", "7.5 IPS"), "15": ("1", "15 IPS"), "30": ("2", "30 IPS"),
+         "3.75": ("3", "3.75 IPS")}  # 3.75 IPS: our idx 3; ATR only (Studer has no 3.75)
+# cal remap: idx 0/1/2/3 = +3/+6/+7.5/+9 dB (UAD Cal Level labels unchanged)
+CAL = {"+3": ("0", "+3 dB"), "+6": ("1", "+6 dB"), "+7.5": ("2", "+7.5 dB"), "+9": ("3", "+9 dB")}
 if MACHINE == "A800":
     UAD = "/Library/Audio/Plug-Ins/Components/uaudio_studer_a800.component"
     OUT = os.path.join(HERE, "renders", "matrix_a800")
     MINE_MACHINE = "0"
-    TAPE = {"456": ("0", "456"), "GP9": ("1", "GP9"), "250": ("3", "250")}
+    # our tape idx -> UAD label (both decks expose 250/456/900/GP9)
+    TAPE = {"456": ("0", "456"), "GP9": ("1", "GP9"), "900": ("2", "900"), "250": ("3", "250")}
     EQ = {"NAB": ("0", "NAB"), "CCIR": ("1", "CCIR")}
     UAD_PATH = "Repro"
     UAD_WF = []                                  # studer has no W&F / Hiss&Hum toggle
@@ -44,8 +48,9 @@ else:
     UAD = "/Library/Audio/Plug-Ins/Components/uaudio_ampex_atr-102_tape.component"
     OUT = os.path.join(HERE, "renders", "matrix_atr")
     MINE_MACHINE = "1"
-    TAPE = {"456": ("0", "456"), "GP9": ("1", "900"), "250": ("3", "250")}
-    EQ = {"NAB": ("0", "NAB"), "AES": ("2", "AES")}
+    # our tape idx -> UAD label (both decks expose 250/456/900/GP9)
+    TAPE = {"456": ("0", "456"), "GP9": ("1", "GP9"), "900": ("2", "900"), "250": ("3", "250")}
+    EQ = {"NAB": ("0", "NAB"), "CCIR": ("1", "CCIR")}   # both decks: NAB/CCIR (no AES)
     UAD_PATH = "REPRO"
     UAD_WF = [("Wow & Flutter", "Off"), ("Hiss & Hum", "Off")]
 
@@ -109,23 +114,45 @@ def show(label, sp, tp, eq, cal):
           f"   {mthd-uthd:+.2f}")
 
 
+# Head Width (ATR only): mine takes the choice index via --param; the UAD takes a
+# 0..1 --nparam (0=1/4", 0.5=1/2", 1=1"). Reference config 15/456/NAB/+6.
+HEAD = {"1/4": ("0", "0"), "1/2": ("1", "0.5"), "1": ("2", "1.0")}
+
+
+def show_head(hw):
+    mp = mine_params("15", "456", "NAB", "+6") + [("Head Width", HEAD[hw][0])]
+    ms = render(MINE, mp, "sweep.wav", "m_sw")
+    us = render(UAD, uad_params("15", "456", "NAB", "+6"), "sweep.wav", "u_sw",
+                nparams=[("Head Width", HEAD[hw][1])])
+    mfr, ufr = fr_at(ms), fr_at(us)
+    print(f"\n=== Head Width {hw}\" / 15 / 456 / NAB / +6  (mine vs UAD {MACHINE}, W&F off) ===")
+    print("  freq " + " ".join(f"{f:>6}" for f in FRq))
+    print("  mine " + " ".join(f"{v:+6.1f}" for v in mfr))
+    print("  UAD  " + " ".join(f"{v:+6.1f}" for v in ufr))
+    print("  diff " + " ".join(f"{m-u:+6.1f}" for m, u in zip(mfr, ufr)))
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "speed"
     if mode == "speed":
-        for sp in ("7.5", "15", "30"):
+        speeds = ("7.5", "15", "30") + (("3.75",) if MACHINE != "A800" else ())  # 3.75 ATR only
+        for sp in speeds:
             show(f"{sp} IPS / 456 / NAB / +6", sp, "456", "NAB", "+6")
     elif mode == "tape":
-        for tp in ("456", "GP9", "250"):
+        for tp in ("456", "GP9", "900", "250"):
             show(f"15 / {tp} / NAB / +6", "15", tp, "NAB", "+6")
     elif mode == "eq":
         for eq in EQ:
             show(f"15 / 456 / {eq} / +6", "15", "456", eq, "+6")
     elif mode == "cal":
-        for cal in ("+3", "+6", "+9"):
+        for cal in ("+3", "+6", "+7.5", "+9"):
             show(f"15 / 456 / NAB / {cal}", "15", "456", "NAB", cal)
+    elif mode == "head":   # Ampex ATR only (the Studer has no Head Width)
+        for hw in ("1/4", "1/2", "1"):
+            show_head(hw)
     elif mode == "full":
         for sp in ("7.5", "15", "30"):
-            for tp in ("456", "GP9", "250"):
+            for tp in ("456", "GP9", "900", "250"):
                 for eq in EQ:
                     show(f"{sp}/{tp}/{eq}/+6", sp, tp, eq, "+6")
 
