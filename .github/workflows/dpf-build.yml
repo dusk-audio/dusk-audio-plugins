@@ -14,18 +14,16 @@ name: DPF Plugins (build + release)
 #   - workflow_dispatch                          -> build one (input) or all.
 #   - push tag '<plugin>-v*'                      -> build + release THAT plugin.
 #
-# ---------------------------------------------------------------------------
-# MIGRATION (do this in order):
-#   1. Ship TapeMachine 2 on the existing tapemachine2-release.yml.
-#   2. Delete tapemachine2-release.yml, then UNCOMMENT the 'tapemachine-2-v*'
-#      line under on.push.tags below. (Kept commented now so a TM2 release tag
-#      does not double-trigger both workflows -> double build + double release.)
-#   3. Delete dpf-au-test.yml once tape-echo releases through here.
-# ---------------------------------------------------------------------------
+# This is the SINGLE pipeline for all DPF plugins. It supersedes the old
+# per-plugin DPF workflows (tapemachine2-release.yml, dpf-au-test.yml) — both
+# deleted. TapeMachine 2 (DPF) is the main plugin going forward; the original
+# JUCE TapeMachine stays on build.yml for maintenance releases only ('tapemachine-v*').
+# Tip: before tagging a release, run this via workflow_dispatch (build-only, no
+# release) once to smoke the pipeline for that plugin.
 on:
   push:
     tags:
-      # - 'tapemachine-2-v*'   # ENABLE only after deleting tapemachine2-release.yml (see MIGRATION)
+      - 'tapemachine-2-v*'
       - '4k-eq-2-v*'
       - 'tape-echo-2-v*'
       - 'multi-q-2-v*'
@@ -40,7 +38,7 @@ on:
           - 'all'
           - 'tapemachine-2'
           - '4k-eq-2'
-          - 'tape-echo'
+          - 'tape-echo-2'
           - 'multi-q-2'
   pull_request:
     paths:
@@ -91,7 +89,7 @@ jobs:
           [
             {"key":"tapemachine-2","dir":"plugins/TapeMachine/dpf-plugin","base":"tape_machine_2","project":"TapeMachine2DPF","au":"DsTM","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
             {"key":"4k-eq-2","dir":"plugins/4k-eq/dpf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
-            {"key":"tape-echo","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","name":"Tape Echo","tag":"tape-echo-2-v","asset":"tape-echo-2"},
+            {"key":"tape-echo-2","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
             {"key":"multi-q-2","dir":"plugins/multi-q/dpf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
           ]
           JSON
@@ -317,20 +315,6 @@ jobs:
             vtool -show-build "$binary" | grep -q "minos 10.15"
           done
 
-      - name: Install component for auval
-        working-directory: ${{ env.PLUGIN_DIR }}
-        run: |
-          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
-          cp -R "${{ steps.findau.outputs.component }}" "$HOME/Library/Audio/Plug-Ins/Components/"
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-
-      - name: Validate with auval (gate)
-        run: |
-          echo "--- registered components matching this plugin ---"
-          auval -a | grep -i -E "dusk|${AU_SUBTYPE}" || echo "(not listed yet; validating by code)"
-          echo "--- auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANUFACTURER} ---"
-          auval -v "${AU_TYPE}" "${AU_SUBTYPE}" "${AU_MANUFACTURER}"
-
       - name: Require Apple signing configuration for releases
         if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED != 'true' }}
         run: |
@@ -338,7 +322,7 @@ jobs:
           exit 1
 
       - name: Import code-signing certificate
-        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
@@ -357,7 +341,7 @@ jobs:
           rm "$RUNNER_TEMP/dpf-certificate.p12"
 
       - name: Sign macOS plugin bundles
-        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
         working-directory: ${{ env.PLUGIN_DIR }}
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
@@ -394,6 +378,25 @@ jobs:
           xcrun stapler staple "build/bin/${PLUGIN_BASE}.component"
           xcrun stapler staple "build/bin/${PLUGIN_BASE}.vst3"
           xcrun stapler staple "build/bin/${PLUGIN_BASE}.clap"
+
+      # Validate the finalized bundle: on a release this is the signed + stapled
+      # AU we actually ship; on PR/dispatch it is the unsigned build. Reinstall
+      # from build/bin (signed/stapled in place above) so auval gates the shipped
+      # artifact, not a stale pre-signing copy.
+      - name: Install component for auval
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/$(basename "${{ steps.findau.outputs.component }}")"
+          cp -R "${{ steps.findau.outputs.component }}" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+
+      - name: Validate with auval (gate)
+        run: |
+          echo "--- registered components matching this plugin ---"
+          auval -a | grep -i -E "dusk|${AU_SUBTYPE}" || echo "(not listed yet; validating by code)"
+          echo "--- auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANUFACTURER} ---"
+          auval -v "${AU_TYPE}" "${AU_SUBTYPE}" "${AU_MANUFACTURER}"
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -481,11 +484,18 @@ jobs:
           } > release_body.md
           echo "=== collected artifacts ==="
           find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \)
+          # Hash by published asset basename (Publish Release uploads dist/**/*.zip
+          # flattened to basenames), not by the dist/<artifact-dir>/… path, so
+          # SHA256SUMS entries match the actual release asset filenames. Basenames
+          # are unique: a release tag builds a single plugin.
+          : > dist/SHA256SUMS
           find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 \
-            | sort -z | xargs -0 shasum -a 256 > dist/SHA256SUMS
+            | sort -z | while IFS= read -r -d '' f; do
+                ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
+              done >> dist/SHA256SUMS
 
       - name: Publish Release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1 (v0.1.15)
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
           files: |
             dist/**/*.zip

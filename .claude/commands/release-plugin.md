@@ -26,9 +26,12 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | 4K EQ | 4k-eq | plugins/4k-eq | FOURKEQ | 4keq |
 | Multi-Comp | multi-comp | plugins/multi-comp | MULTICOMP | compressor |
 | TapeMachine | tapemachine | plugins/TapeMachine | TAPEMACHINE | tape |
-| TapeMachine 2 | tapemachine-2 | plugins/TapeMachine/dpf-plugin | (inline) | tape |
+| TapeMachine 2 | tapemachine-2 | plugins/TapeMachine/dpf-plugin | (inline: TapeMachine2DPF) | tape |
+| 4K EQ 2 | 4k-eq-2 | plugins/4k-eq/dpf-plugin | (inline: FourKEQ2DPF) | 4keq |
 | Tape Echo | tape-echo | plugins/tape-echo | TAPEECHO | tapeecho |
-| Multi-Q | multi-q | plugins/multi-q | (inline) | multiq |
+| Tape Echo 2 | tape-echo-2 | plugins/tape-echo/dpf-plugin | (inline: TapeEchoDPF) | tapeecho |
+| Multi-Q | multi-q | plugins/multi-q | (inline: MultiQ) | multiq |
+| Multi-Q 2 | multi-q-2 | plugins/multi-q/dpf-plugin | (inline: MultiQ2DPF) | multiq |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
 | GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
 
@@ -60,9 +63,17 @@ Do NOT proceed with any further steps. Do NOT offer to release anyway.
 For EACH plugin specified:
 
 1. **Find current version** from CMakeLists.txt:
-   - Most plugins: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`
-   - Multi-Q uses: `project(MultiQ VERSION X.Y.Z)`
-   - TapeMachine 2 uses: `project(TapeMachine2DPF VERSION X.Y.Z)` in `plugins/TapeMachine/dpf-plugin/CMakeLists.txt` (the version is plumbed into the code via compile definitions, so no other file needs editing)
+   - Most JUCE plugins: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`
+   - Multi-Q (JUCE) uses: `project(MultiQ VERSION X.Y.Z)`
+   - **DPF "-2" plugins** use an inline `project(<Project> VERSION X.Y.Z)` in
+     `plugins/<dir>/dpf-plugin/CMakeLists.txt` (version is plumbed into the code via
+     compile definitions, so no other file needs editing). Project tokens:
+     - tapemachine-2 → `project(TapeMachine2DPF …)`
+     - 4k-eq-2 → `project(FourKEQ2DPF …)`
+     - tape-echo-2 → `project(TapeEchoDPF …)`
+     - multi-q-2 → `project(MultiQ2DPF …)`
+     The DPF version guard in `dpf-build.yml` rejects the release if the tag version
+     does not equal this `project()` version — so bump it here exactly.
 2. **Determine new version**:
    - If explicit version provided: use it
    - If omitted: auto-increment patch (1.0.2 → 1.0.3)
@@ -95,10 +106,15 @@ set(<VAR>_DEFAULT_VERSION "<new-version>")
 project(MultiQ VERSION <new-version>)
 ```
 
-**TapeMachine 2** (uses inline project version in `plugins/TapeMachine/dpf-plugin/CMakeLists.txt`):
+**DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`):
 ```
-project(TapeMachine2DPF VERSION <new-version>)
+project(TapeMachine2DPF VERSION <new-version>)   # tapemachine-2
+project(FourKEQ2DPF     VERSION <new-version>)   # 4k-eq-2
+project(TapeEchoDPF     VERSION <new-version>)   # tape-echo-2
+project(MultiQ2DPF      VERSION <new-version>)   # multi-q-2
 ```
+Bump only the one being released. This `project()` version must equal the tag version
+or `dpf-build.yml`'s guard fails the release.
 
 **Manual front matter** (issue #80) — only if `manuals/<slug>.md` exists. Uses the portable `sed -i.bak ... && rm` form so this works on both macOS BSD sed and Linux GNU sed:
 ```bash
@@ -202,6 +218,10 @@ If pandoc or xelatex is not installed locally, this step fails. The skill should
 **Plugins repo** - Stage and commit all changed CMakeLists.txt files plus any bumped manual front matter:
 ```bash
 git add plugins/*/CMakeLists.txt
+# DPF "-2" plugins keep their CMakeLists.txt one level deeper, under dpf-plugin/.
+# The glob above does NOT reach it, so stage it explicitly or the version bump is
+# left uncommitted and the tag points at the un-bumped version (guard fails).
+git add plugins/*/dpf-plugin/CMakeLists.txt 2>/dev/null || true
 # Issue #80: include any manual front-matter bumps from Step 3
 git add manuals/*.md 2>/dev/null || true
 git commit -m "<summary of version bumps>"
@@ -237,8 +257,13 @@ git tag -a <slug>-v<version> --cleanup=verbatim -F /tmp/tag_message.txt
 ```
 
 The `<slug>-v<version>` form produces the tag each plugin's CI release workflow
-listens for (e.g. TapeMachine 2 → `tapemachine-2-v<version>`, matched by
-`.github/workflows/tapemachine2-release.yml`'s `tapemachine-2-v*` trigger).
+listens for:
+- **JUCE plugins** (4k-eq, multi-comp, tapemachine, tape-echo, multi-q, convolution-reverb, …)
+  → matched by `.github/workflows/build.yml` (`<slug>-v*` triggers).
+- **DPF "-2" plugins** (tapemachine-2, 4k-eq-2, tape-echo-2, multi-q-2)
+  → matched by `.github/workflows/dpf-build.yml`, whose registry maps each `<slug>-v*`
+  tag to the right `plugins/<dir>/dpf-plugin` build. e.g. `tapemachine-2-v2.0.1`
+  triggers a TapeMachine 2 build + release.
 
 ### Step 7: Push Everything
 
