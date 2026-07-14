@@ -1725,7 +1725,13 @@ private:
                 static_cast<double> (-2.0f * tapeChars.hfLoss * hfLossScale), 0.5, true));
         }
 
+        const bool wasSlow900Presence = m_slow900Presence;
         m_slow900Presence = (machine == Classic102 && speed == Speed_3_75_IPS && type == Type900);
+        // Clear retained biquad state on any activation/deactivation transition so a stale
+        // filter history cannot fire a transient when the Classic 102 / 3.75 IPS / Type 900
+        // combination is re-enabled after being off.
+        if (m_slow900Presence != wasSlow900Presence)
+            slow900PresencePeak.reset();
         slow900PresencePeak.setCoeffs (DBiquad::peak (currentSampleRate,
             std::min (2700.0f, maxFilterFreq), m_slow900Presence ? 5.8 : 0.0, 1.6));
 
