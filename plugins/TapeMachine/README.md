@@ -1,23 +1,23 @@
 # TapeMachine 2
 
-TapeMachine 2 is Dusk Audio's DPF-based tape processor, modeled against the
-UAD Studer A800 and Ampex ATR-102. It replaces the JUCE TapeMachine 1.x line
-with a distinct plugin identity, so both versions can coexist in old sessions.
+TapeMachine 2 is Dusk Audio's DPF-based tape processor with distinct tracking
+and mastering deck models. It replaces the JUCE TapeMachine 1.x line with a
+distinct plugin identity, so both versions can coexist in old sessions.
 
 ## Highlights
 
-- **Swiss 800** tracking/mix deck modeled against the Studer A800
-- **Classic 102** mastering deck modeled against the Ampex ATR-102
-- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on Classic 102
+- **Swiss** tracking/mix deck with a clean, extended response
+- **American** mastering deck with additional transport and electronics controls
+- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on American
 - Type 456, GP9, 900, and 250 tape formulations
 - Repro, Sync, Input, and Thru signal paths
 - NAB and CCIR equalization
 - Input drive with linked output compensation
 - Manual or automatic bias, four calibration levels, wow, flutter, tape noise,
   high-pass, and low-pass filtering
-- Classic 102 head-width, crosstalk, wow/flutter-enable, and transformer controls
+- American head-width, crosstalk, wow/flutter-enable, and transformer controls
 - Advanced four-band reproduce-head EQ
-- 20 factory presets fitted to matching UAD factory presets
+- 20 calibrated factory presets
 - User preset save/load support
 
 The nonlinear core is permanently tuned at 2× oversampling. A hidden legacy
@@ -26,7 +26,7 @@ it is not a user-facing quality control.
 
 ## Factory presets
 
-Classic 102:
+American:
 
 - Big 456 Master
 - Nice 456 Master
@@ -39,7 +39,7 @@ Classic 102:
 - Sunbaked Cassette
 - Analog Warmth
 
-Swiss 800:
+Swiss:
 
 - Classic Rock Crisp
 - Modern Rock
@@ -89,9 +89,9 @@ The macOS AU must pass:
 auval -v aufx DsTM Dusk
 ```
 
-The proprietary UAD comparison harness is documented in
-[`tests/a800_comparison/README.md`](tests/a800_comparison/README.md). It validates
-frequency response, THD, and aliasing for all 20 matching factory presets.
+Release validation covers frequency response, harmonic behavior, aliasing,
+factory presets, supported formats, and Audio Unit host conformance. Proprietary
+comparison tooling and calibration data are maintained outside this repository.
 
 ## Licensing
 

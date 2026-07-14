@@ -133,7 +133,7 @@ namespace Constants {
     constexpr float BUS_SIDECHAIN_HP_FREQ = 60.0f; // Hz
     constexpr float BUS_MAX_REDUCTION_DB = 20.0f;
     constexpr float BUS_OVEREASY_KNEE_WIDTH = 10.0f; // dB
-    constexpr float BUS_RMS_TIME = 0.005f;           // 5ms RMS averaging (SSL-style smooth sidechain)
+    constexpr float BUS_RMS_TIME = 0.005f;           // 5ms RMS averaging (British-style smooth sidechain)
 
     // Studio FET constants - cleaner than Vintage FET
     constexpr float STUDIO_FET_THRESHOLD_DB = -10.0f;
@@ -1666,7 +1666,7 @@ public:
         }
 
         // Hardware emulation components (FET compressor style)
-        // Input transformer (console-style)
+        // Input transformer (British-style)
         inputTransformer.prepare(sampleRate, numChannels);
         inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFETCompressor().inputTransformer);
         inputTransformer.setEnabled(true);
@@ -2552,7 +2552,7 @@ public:
         }
 
         // Hardware emulation components (VCA bus compressor style)
-        // Input transformer (console-style)
+        // Input transformer (British-style)
         inputTransformer.prepare(sampleRate, numChannels);
         inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getConsoleBus().inputTransformer);
         inputTransformer.setEnabled(true);
@@ -2606,7 +2606,7 @@ private:
         return std::abs (d.hpState2);
     }
 
-    // RMS averaging of the rectified sidechain — the SSL bus detector averages
+    // RMS averaging of the rectified sidechain — the British bus detector averages
     // (RMS), it is not a peak follower; this is what gives the smooth "glue".
     float busRms (Detector& d, float rectified)
     {
@@ -2617,7 +2617,7 @@ private:
     }
 
     // Over-easy (soft-knee) gain computer over BUS_OVEREASY_KNEE_WIDTH dB — the
-    // SSL bus knee, replacing the old hard knee.
+    // British bus knee, replacing the old hard knee.
     float busReduction (float detectionLevel, float thresholdLin, float ratio)
     {
         const float overThreshDb = juce::Decibels::gainToDecibels (
@@ -2650,7 +2650,7 @@ public:
 
         auto& detector = detectors[channel];
 
-        // Hardware emulation: Input transformer (console-style)
+        // Hardware emulation: Input transformer (British-style)
         // Adds subtle saturation and frequency-dependent coloration
         float transformedInput = inputTransformer.processSample(input, channel);
 
@@ -2658,7 +2658,7 @@ public:
         // Uses parallel detection path with feedback design (sidechain taps compressed output)
 
         // Sidechain detection: external or feedback (HP-filtered previous output),
-        // RMS-averaged for the SSL-style smooth/averaging response.
+        // RMS-averaged for the British-style smooth/averaging response.
         const float rectified = useExternalSidechain ? std::abs (sidechainSignal)
                                                       : busHpRectify (detector);
         float detectionLevel = busRms (detector, rectified);
@@ -2669,7 +2669,7 @@ public:
 
         float thresholdLin = juce::Decibels::decibelsToGain(threshold);
 
-        // Over-easy (soft-knee) gain computer — the SSL "glue" knee.
+        // Over-easy (soft-knee) gain computer — the console "glue" knee.
         float reduction = busReduction (detectionLevel, thresholdLin, actualRatio);
         
         // Bus Compressor attack and release times
@@ -2711,13 +2711,13 @@ public:
         
         if (targetGain < detector.envelope)
         {
-            // Attack phase — exponential envelope for authentic SSL snap
+            // Attack phase — exponential envelope for authentic console snap
             float attackCoeff = std::exp(-1.0f / juce::jmax(1.0f, attackTime * static_cast<float>(sampleRate)));
             detector.envelope = targetGain + (detector.envelope - targetGain) * attackCoeff;
         }
         else
         {
-            // Release phase — exponential envelope for smooth SSL recovery
+            // Release phase — exponential envelope for smooth console recovery
             float releaseCoeff = std::exp(-1.0f / juce::jmax(1.0f, releaseTime * static_cast<float>(sampleRate)));
             detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
         }
@@ -2773,12 +2773,12 @@ public:
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
 
-    // Stereo-linked bus processing — true SSL G-bus behaviour: the sidechain is
+    // Stereo-linked bus processing — true British bus behaviour: the sidechain is
     // shared across the L/R pair so an asymmetric stereo signal never pulls the
     // image. The per-channel process() above runs in a channel-outer loop and so
     // can't share feedback state; this processes the L/R pair in lockstep.
     // Each channel's detection is blended toward the pair's max by
-    // stereoLinkAmount: 100% = both see the max → identical gain (full SSL link),
+    // stereoLinkAmount: 100% = both see the max → identical gain (full console link),
     // less = the channels partially diverge (matching the continuous link knob
     // the other modes honour). Feedback topology is preserved.
     void processStereoLinked (float* dataL, float* dataR, int numSamples,
@@ -2819,7 +2819,7 @@ public:
 
         // Advance one channel's envelope from its (link-blended) detection and
         // return the gain. At link=100% both channels get the same detection and
-        // converge to identical gain (true SSL link); below they partially diverge.
+        // converge to identical gain (true console link); below they partially diverge.
         auto advance = [&] (Detector& d, float detUsed) -> float
         {
             const float reduction = busReduction (detUsed, thresholdLin, ratio);
@@ -6100,7 +6100,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             float leftLevel = std::abs(leftSCFiltered[i]);
             float rightLevel = std::abs(rightSCFiltered[i]);
 
-            // max(L,R) for all modes (original SSL 4000 behavior)
+            // max(L,R) for all modes (original classic console behavior)
             float linkedLevel = juce::jmax(leftLevel, rightLevel);
 
             // Blend independent and linked based on stereoLinkAmount
@@ -6477,7 +6477,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 case CompressorMode::Bus:
                     if (useStereoLink && osNumChannels >= 2 && channel == 0)
                     {
-                        // True SSL stereo link (oversampled path): shared sidechain
+                        // True console stereo link (oversampled path): shared sidechain
                         // drives both VCAs. No compensationGain here (postGain=1).
                         busCompressor->processStereoLinked(
                             oversampledBlock.getChannelPointer(static_cast<size_t>(0)), oversampledBlock.getChannelPointer(static_cast<size_t>(1)), osNumSamples,
@@ -6608,7 +6608,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 case CompressorMode::Bus:
                     if (useStereoLink && numChannels >= 2 && channel == 0)
                     {
-                        // True SSL stereo link: one shared sidechain drives both
+                        // True console stereo link: one shared sidechain drives both
                         // VCAs (processes L+R together; the channel==1 pass below
                         // is a no-op). compensationGain applied inside as postGain.
                         busCompressor->processStereoLinked(

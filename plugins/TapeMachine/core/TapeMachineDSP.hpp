@@ -90,7 +90,7 @@ public:
 
     // 1st-order (6 dB/oct) high-pass, bilinear. Gentle DC blocker whose passband
     // phase/group-delay is far lower than a 2nd-order Butterworth of the same corner —
-    // matches the UAD decks, which keep a broad LF bump nearly flat to ~10-15 Hz.
+    // matches the reference decks, which keep a broad LF bump nearly flat to ~10-15 Hz.
     static DBiquadCoeffs highPass1 (double fs, double freq) noexcept
     {
         const double k = std::tan (kPiD * freq / fs);
@@ -302,10 +302,10 @@ public:
 
     void setMachineCharacter (bool isPrecision)
     {
-        // LF smear stages (old 60/250 Hz Swiss, 40/150 Hz ATR) are NEUTRALIZED (fully
+        // LF smear stages (old 60/250 Hz Swiss, 40/150 Hz Classic) are NEUTRALIZED (fully
         // bypassed — no coeff, no z^-1 state): their allpass dispersion put ~5 ms of extra
-        // group delay at 30-125 Hz that the UAD decks do not have (det_probe GD; +8-14 dB
-        // 32 Hz sustain ring on drums, program_probe). Only the HF character stages remain.
+        // group delay at 30-125 Hz that the reference decks do not have (private calibration analysis GD; +8-14 dB
+        // 32 Hz sustain ring on drums, private calibration analysis). Only the HF character stages remain.
         float breakFreqs[NUM_STAGES];
         if (isPrecision) { breakFreqs[0] = 2000.0f; breakFreqs[1] = 8000.0f; }
         else             { breakFreqs[0] = 1200.0f; breakFreqs[1] = 6000.0f; }
@@ -375,7 +375,7 @@ struct ImprovedNoiseGenerator
         tiltCoeff = 1.0f - std::exp (-2.0f * kPiF * tiltFreq / static_cast<float> (sampleRate));
         envelopeCoeff = 1.0f - std::exp (-2.0f * kPiF * 100.0f / static_cast<float> (sampleRate));
 
-        float fc = 8500.0f, Q = 1.1f;   // HF-rise "scrape" band; fills the UAD hiss rise up to 10 kHz
+        float fc = 8500.0f, Q = 1.1f;   // HF-rise "scrape" band; fills the reference hiss rise up to 10 kHz
         float w0 = 2.0f * kPiF * fc / static_cast<float> (sampleRate);
         float cosw0 = std::cos (w0), sinw0 = std::sin (w0);
         float alpha = sinw0 / (2.0f * Q);
@@ -415,7 +415,7 @@ struct ImprovedNoiseGenerator
         float so = scrapeBP_b0 * sw + scrapeBP_z1;
         scrapeBP_z1 = scrapeBP_b1 * sw - scrapeBP_a1 * so + scrapeBP_z2;
         scrapeBP_z2 = scrapeBP_b2 * sw - scrapeBP_a2 * so;
-        return tilted + so * 0.42f;                 // more 1-4 kHz scrape energy (worst UAD deficit band)
+        return tilted + so * 0.42f;                 // more 1-4 kHz scrape energy (worst reference deficit band)
     }
 };
 
@@ -443,14 +443,14 @@ public:
     static constexpr int RANDOM_UPDATE_INTERVAL = 64;
 
     // Overall pitch-modulation depth per unit wow/flutter amount (in delay samples).
-    // Calibrated so mine's 1 kHz FM deviation matches the UAD ATR-102's Wow & Flutter
-    // control AND its modulation *spectrum* (wf_spectrum_probe): the ATR texture is a slow
+    // Calibrated so mine's 1 kHz FM deviation matches the reference American's Wow & Flutter
+    // control AND its modulation *spectrum* (private calibration analysis): the Classic texture is a slow
     // deep smooth drift, so wow (0.1-4 Hz) dominates, flutter (4-30) is secondary, scrape
     // (30-200) is small. The absolute/spectral anchor is Sunbaked (3.75 IPS, wow18/flut12):
-    // wow 1.09x / flutter 0.90x / scrape 1.37x of UAD, wow peak 0.45 vs 0.50 Hz, FMdev in
-    // wf_probe tol. TapeMachineDSP.cpp applies a per-speed wfDepthScale (ATR speed curve,
+    // wow 1.09x / flutter 0.90x / scrape 1.37x of reference, wow peak 0.45 vs 0.50 Hz, FMdev in
+    // private calibration analysis tol. TapeMachineDSP.cpp applies a per-speed wfDepthScale (Classic speed curve,
     // 3.25/1.76/1.0/0.68 at 3.75/7.5/15/30 IPS, 15 IPS = 1.0) ON TOP, so the effective depth
-    // is speed-dependent like the UAD. Re-anchored (2.49/0.389) after the 2026-07-11 spectral
+    // is speed-dependent like the reference. Re-anchored (2.49/0.389) after the 2026-07-11 spectral
     // RESHAPE (wow slowed to peak ~0.5 Hz; flutter given a steeper 2-pole rolloff so scrape is
     // no longer hot) dropped raw FMdev ~4.6x. NOTE: scale the OVERALL depth here, not the *4
     // random-walk boosts — the boosts set the noise:sine ratio that keeps the modulation
@@ -514,10 +514,10 @@ public:
 
         // Real tape W&F is NOT a pure sine: wow is a quasi-periodic capstan drift and
         // flutter is random (scrape). A pure-sine modulation makes the pitch swing at one
-        // fixed rate -> a visible periodic "pulse" on a test tone that the UAD (random
+        // fixed rate -> a visible periodic "pulse" on a test tone that the reference (random
         // wobble) doesn't have. So drive the delay mostly with band-limited NOISE (a random
         // walk), keeping only a small residual sine for the periodic capstan component.
-        // The modulation SPECTRUM is shaped to the UAD ATR (slow deep smooth drift):
+        // The modulation SPECTRUM is shaped to the reference Classic (slow deep smooth drift):
         //   wow  band (0.1-4 Hz):  sample-hold @ ~wowRate*2.5 + a 2 Hz one-pole -> peak ~0.5 Hz.
         //   flut band (4-30 Hz):   randomCurrent2 = two cascaded 13 Hz poles -> populates 4-30
         //                          but rolls off -12 dB/oct so the scrape band (30-200) stays
@@ -721,12 +721,12 @@ private:
 class TapeCore
 {
 public:
-    enum TapeMachine { Swiss800 = 0, Classic102 };
+    enum TapeMachine { Swiss = 0, American };
     // 3.75 IPS appended (idx 3) NOT inserted — every switch(speed) and the harness
-    // assume 0/1/2 = 7.5/15/30. Classic 102-only; non-standard on the Swiss 800.
+    // assume 0/1/2 = 7.5/15/30. American-only; non-standard on the Swiss.
     enum TapeSpeed   { Speed_7_5_IPS = 0, Speed_15_IPS, Speed_30_IPS, Speed_3_75_IPS };
-    enum TapeType    { Type456 = 0, TypeGP9, Type900, Type250 };
-    enum EQStandard  { NAB = 0, CCIR };   // both UAD decks expose only NAB/CCIR (no AES)
+    enum TapeType    { FormulaClassic = 0, FormulaHighOutput, FormulaModern, FormulaVintage };
+    enum EQStandard  { NAB = 0, CCIR };   // both reference decks expose only NAB/CCIR (no AES)
     enum SignalPath  { Repro = 0, Sync, Input, Thru };
 
     TapeCore() { reset(); }
@@ -782,7 +782,7 @@ public:
         reproLmfPeak.setCoeffs   (DBiquad::peak  (osRate,  160.0, 0.0, 0.9));
         reproHmfPeak.setCoeffs   (DBiquad::peak  (osRate, static_cast<double> (safeFreq (5000.0f)), 0.0, 0.8));
         reproHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (9000.0f)), 0.0, 0.5, true));
-        slow900PresencePeak.setCoeffs (DBiquad::peak (osRate,
+        slowModernPresencePeak.setCoeffs (DBiquad::peak (osRate,
             static_cast<double> (safeFreq (2700.0f)), 0.0, 1.6));
         transformerLfShelf.setCoeffs (DBiquad::shelf (osRate, 48.0, 0.0, 0.7, false)); // neutral until setTransformerOff
         // Emphasis-rebalance G / 1-G pair — neutral defaults; updateFilters sets the per-machine values.
@@ -818,7 +818,7 @@ public:
         gapLossFilter.reset(); biasFilter.reset(); dcBlocker.reset();
         headWidthFilter.reset(); driveHfShelf.reset(); levelHfShelf.reset(); levelLfShelf.reset();
         reproLfShelf.reset(); reproLmfPeak.reset(); reproHmfPeak.reset(); reproHfShelf.reset();
-        slow900PresencePeak.reset();
+        slowModernPresencePeak.reset();
         transformerLfShelf.reset();
         emphLfPre.reset(); emphHfPre.reset(); emphHfPost.reset(); emphLfPost.reset();
         aliasHfPre.reset(); aliasHfPost.reset();
@@ -847,7 +847,7 @@ public:
     }
 
     // Drive-linked HF restore. The memoryless waveshaper compresses HF as it is
-    // driven (measured: ~-2.7 dB @10-15k at +8 dB drive, Swiss); the UAD models the
+    // driven (measured: ~-2.7 dB @10-15k at +8 dB drive, Swiss); the reference models the
     // opposite — a record HF EQ that BRIGHTENS with level. A post-shaper high-shelf
     // whose gain tracks drive^2 cancels the compression so hot presets stay bright.
     // gainDb 0 (reference drive: inGain 0 @ +6 cal) => neutral => reference unchanged.
@@ -859,8 +859,8 @@ public:
     }
 
     // Signal-level FR compensation. Above the -12 dBFS reference operating level the
-    // memoryless tape core's FR drifts vs the UAD: the HF droops (waveshaper HF
-    // compression) and the deep lows thicken (rel-1k). Measured mine-minus-UAD at 0 dBFS
+    // memoryless tape core's FR drifts vs the reference: the HF droops (waveshaper HF
+    // compression) and the deep lows thicken (rel-1k). Measured mine-minus-reference at 0 dBFS
     // (~0 at/below -12): HF ~-5 dB @8-15k, LF ~+3 (Swiss)/+5 (Classic) dB @30 Hz. Two
     // level-keyed filters cancel it: an HF high-shelf RESTORE (~5.5 kHz corner — the droop
     // is small at 3-5 kHz but ~5 dB by 8 kHz, so a 5.5 kHz corner balances 3k..15k better
@@ -875,15 +875,15 @@ public:
         // Per-machine shelf geometry selected HERE (block start), not in the lazy
         // updateFilters() inside processSample: after a machine change the first block's
         // coeffs would otherwise be built from the previous machine's geometry. The
-        // Classic 102's HF droop is deeper at 8 kHz+ and near-flat at 3-5 kHz, so it uses
-        // a steeper, higher-Q shelf than the Swiss 800's broad one; LF cut is slightly narrower.
+        // American's HF droop is deeper at 8 kHz+ and near-flat at 3-5 kHz, so it uses
+        // a steeper, higher-Q shelf than the Swiss's broad one; LF cut is slightly narrower.
         double hfFc, hfQ, lfFc, lfQ;
-        if (machine == Swiss800) { hfFc = 7900.0; hfQ = 0.45; lfFc = 32.0; lfQ = 1.4; }
+        if (machine == Swiss) { hfFc = 7900.0; hfQ = 0.45; lfFc = 32.0; lfQ = 1.4; }
         else                     { hfFc = 6000.0; hfQ = 0.55; lfFc = 30.0; lfQ = 1.6; }
         const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
-        // Neutral HF compensation (0 dB — always so on the Swiss 800, where kLevelHfSwiss
+        // Neutral HF compensation (0 dB — always so on the Swiss, where kLevelHfSwiss
         // == 0): a 0 dB shelf is an identity transfer function but a TDF-II biquad still
-        // holds z1/z2, so a prior Classic 102 shelf state would linger as a decaying
+        // holds z1/z2, so a prior American shelf state would linger as a decaying
         // transient after a machine switch. Reset it so it can't remain active. Nonzero
         // HF keeps normal (stateful) shelf processing.
         if (hfDb == 0.0f)
@@ -893,7 +893,7 @@ public:
     }
 
     // Advanced repro-head EQ: a post-tape 4-band shaper (LF low-shelf 80 Hz, low-mid
-    // peak 160 Hz, high-mid/presence peak 5 kHz, HF high-shelf 9 kHz) modelling the UAD
+    // peak 160 Hz, high-mid/presence peak 5 kHz, HF high-shelf 9 kHz) modelling the reference
     // decks' Repro EQ section. Per-preset trims that reproduce the factory presets'
     // baked repro EQ shape. 0 dB on all => neutral => reference unchanged. Block-rate.
     void setReproEq (float lfDb, float lmfDb, float hmfDb, float hfDb) noexcept
@@ -905,7 +905,7 @@ public:
         reproHfShelf.setCoeffs  (DBiquad::shelf (fs, 9000.0, static_cast<double> (hfDb),  0.5, true));
     }
 
-    // Transformer Off (Classic 102 only): bypassing the ATR-102 output transformer EXTENDS
+    // Transformer Off (American only): bypassing the American output transformer EXTENDS
     // the deep bass (the transformer rolls off the lows — measured On->Off = +3.4/+1.0/+0.4 dB
     // @30/60/100 Hz, flat above ~200 Hz) and THINS the 2nd harmonic (measured On->Off = -8 dB).
     // Modelled as a low-shelf LF restore + an even-order (2nd) scale. lfGainDb 0 + evenScale 1
@@ -914,7 +914,7 @@ public:
     {
         const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
         transformerLfShelf.setCoeffs (DBiquad::shelf (fs, 48.0, static_cast<double> (lfGainDb), 0.7, false));
-        m_classicEvenScale = evenScale;
+        m_americanEvenScale = evenScale;
         // Skip the shelf entirely when the transformer is On (lfGainDb 0): a 0 dB shelf is only
         // an identity by pole/zero cancellation, not bit-exact, so gating the call (not just
         // zeroing the gain) is what keeps the default/reference render byte-identical.
@@ -924,9 +924,9 @@ public:
         m_transformerBypass = transformerOff;
     }
 
-    // Constant idle noise: pink hiss + 60 Hz mains hum, scaled by Noise; hiss/humScale = per-machine floor (matched to UAD at 100).
-    // h1/h2/h3 = mains-hum harmonic weights: the Studer hum is nearly pure fundamental + a little 3rd (symmetric
-    // odd-harmonic waveform: 120 Hz absent, 180 Hz ~-20 dB); the ATR hum carries a strong 2nd (60 Hz ~= 120 Hz).
+    // Constant idle noise: pink hiss + 60 Hz mains hum, scaled by Noise; hiss/humScale = per-machine floor (matched to reference at 100).
+    // h1/h2/h3 = mains-hum harmonic weights: the Swiss hum is nearly pure fundamental + a little 3rd (symmetric
+    // odd-harmonic waveform: 120 Hz absent, 180 Hz ~-20 dB); the Classic hum carries a strong 2nd (60 Hz ~= 120 Hz).
     float idleNoise (float noiseAmount, float hissScale, float humScale,
                      float h1, float h2, float h3) noexcept
     {
@@ -939,11 +939,11 @@ public:
                          + std::sin (3.0f * m_humPhase) * h3) * humScale;
         return (hiss + hum) * frac;
     }
-    // Swiss 800 (UAD Studer A800) idle floor — matched to Studer noise-max; hum is odd-harmonic
+    // Swiss (reference tracking deck) idle floor — matched to Swiss noise-max; hum is odd-harmonic
     // (120 Hz absent, 180 Hz ~-20 dB) so h2~0, h3 small.
-    float a800IdleNoise (float noiseAmount) noexcept { return idleNoise (noiseAmount, kA800Hiss, kA800Hum, 0.7f, 0.003f, 0.08f); }
-    // Classic102 (UAD Ampex ATR-102) "Hiss & Hum": brighter hiss + strong-2nd hum (60~=120 Hz), 180 Hz absent.
-    float classicIdleNoise (float noiseAmount) noexcept { return idleNoise (noiseAmount, kClassicHiss, kClassicHum, 0.7f, 0.7f, 0.002f); }
+    float swissIdleNoise (float noiseAmount) noexcept { return idleNoise (noiseAmount, kSwissHiss, kSwissHum, 0.7f, 0.003f, 0.08f); }
+    // American (reference mastering deck) "Hiss & Hum": brighter hiss + strong-2nd hum (60~=120 Hz), 180 Hz absent.
+    float americanIdleNoise (float noiseAmount) noexcept { return idleNoise (noiseAmount, kAmericanHiss, kAmericanHum, 0.7f, 0.7f, 0.002f); }
 
     float processSample (float input,
                          TapeMachine machine, TapeSpeed speed, TapeType type,
@@ -973,27 +973,27 @@ public:
             m_cachedMachineChars = getMachineCharacteristics (machine);
             m_cachedTapeChars = getTapeCharacteristics (type);
             m_cachedSpeedChars = getSpeedCharacteristics (speed);
-            m_gapWidth = (machine == Swiss800) ? 2.5f : 3.5f;
+            m_gapWidth = (machine == Swiss) ? 2.5f : 3.5f;
         }
 
         const auto& tapeChars = m_cachedTapeChars;
         const auto& speedChars = m_cachedSpeedChars;
 
         const bool processTape = (signalPath == Repro || signalPath == Sync);
-        // Swiss 800 Sync ~= Repro (barely wider gap); Classic102 uses the original 2x gap.
-        const float syncGapMult = (machine == Swiss800) ? 1.0f : 2.0f;
+        // Swiss Sync ~= Repro (barely wider gap); American uses the original 2x gap.
+        const float syncGapMult = (machine == Swiss) ? 1.0f : 2.0f;
         const float playbackGapWidth = (signalPath == Sync) ? m_gapWidth * syncGapMult : m_gapWidth;
 
         // Cal Level sets the tape's reference operating flux. Higher cal records the
-        // tape HOTTER for the same 0 VU, so it saturates EARLIER (UAD spec + measured:
-        // UAD THD RISES with cal). Model it as a flux scale RELATIVE to the +6 dB
+        // tape HOTTER for the same 0 VU, so it saturates EARLIER (reference spec + measured:
+        // reference THD RISES with cal). Model it as a flux scale RELATIVE to the +6 dB
         // reference at which the waveshapers were fitted, so +6 stays byte-identical and
         // cal moves saturation in the correct direction. kCalFlux (dB drive per dB cal)
-        // tunes the slope to each deck's UAD THD-vs-cal curve; calRestore inverts the
+        // tunes the slope to each deck's reference THD-vs-cal curve; calRestore inverts the
         // flux + baseline so the tape CORE stays level-neutral (cal changes saturation
         // onset, not output level).
         constexpr float kCalRefDb = 6.0f;
-        const float kCalFlux    = (machine == Swiss800) ? 0.58f : 1.30f;
+        const float kCalFlux    = (machine == Swiss) ? 0.58f : 1.30f;
         const float baseAtten   = dbToGain (kCalRefDb);
         const float fluxScale   = dbToGain ((calibrationLevel - kCalRefDb) * kCalFlux);
         const float calRestore  = baseAtten / fluxScale;
@@ -1015,8 +1015,8 @@ public:
                 signal = recordHeadFilter2.process (signal);
             }
 
-            // Measured transfer-curve waveshaper (ADAA inside LocalAAStage); m_a800Drive/
-            // m_classicDrive set the operating point. Run UNCONDITIONALLY: gating it on a
+            // Measured transfer-curve waveshaper (ADAA inside LocalAAStage); m_swissDrive/
+            // m_americanDrive set the operating point. Run UNCONDITIONALLY: gating it on a
             // drive threshold (old code) froze the LocalAAStage delay lines + ADAA prev-
             // state at the very bottom of the input-gain range, so crossing that boundary
             // flushed stale FIR history as a click. At tiny input the shaper is near-linear.
@@ -1030,10 +1030,10 @@ public:
             signal = static_cast<float> (emphHfPre.process (static_cast<double> (signal)));
             signal = static_cast<float> (aliasHfPre.process (static_cast<double> (signal)));
 
-            if (machine == Swiss800)
-                signal = m_shaper2x.process (signal, [this] (float v) noexcept { return adaaSatA800 (v); });
+            if (machine == Swiss)
+                signal = m_shaper2x.process (signal, [this] (float v) noexcept { return adaaSatSwiss (v); });
             else
-                signal = m_shaper2x.process (signal, [this] (float v) noexcept { return adaaSatClassic (v); });
+                signal = m_shaper2x.process (signal, [this] (float v) noexcept { return adaaSatAmerican (v); });
 
             // 1-G (post-shaper half): HF-peak boost + LF-shelf cut = exact inverse of G, so the
             // linear FR is preserved while the shaper-born 5th/IMD products are lifted.
@@ -1052,7 +1052,7 @@ public:
 
             if (wowFlutterAmount > 0.0f)
             {
-                float motorQuality = (machine == Swiss800) ? 0.2f : 0.6f;
+                float motorQuality = (machine == Swiss) ? 0.2f : 0.6f;
                 float motorFlutterMod = motorFlutter.calculateFlutter (motorQuality * wowFlutterAmount);
 
                 if (sharedWowFlutterMod != nullptr)
@@ -1076,41 +1076,41 @@ public:
             signal = static_cast<float> (hfLossFilter2.process (static_cast<double> (signal)));
 
             // Drive-linked HF restore (neutral at reference drive; cancels the
-            // waveshaper's HF compression so hot presets stay bright like the UAD).
+            // waveshaper's HF compression so hot presets stay bright like the reference).
             signal = static_cast<float> (driveHfShelf.process (static_cast<double> (signal)));
 
             // Signal-level FR compensation (HF restore + LF cut; both neutral at 0 dB =
             // flux <= -12 dBFS ref). Cancels the core's level-dependent HF droop / LF
-            // thickening so the FR-vs-level surface matches the UAD on real program. Run
+            // thickening so the FR-vs-level surface matches the reference on real program. Run
             // unconditionally like the repro EQ (0 dB ~= identity to ~1e-6 dB); the
             // reference/preset gate signals stay at 0 dB so their FR holds.
             signal = static_cast<float> (levelHfShelf.process (static_cast<double> (signal)));
             signal = static_cast<float> (levelLfShelf.process (static_cast<double> (signal)));
 
-            // Advanced repro-head EQ trims (neutral at 0 dB; reproduce the UAD factory
+            // Advanced repro-head EQ trims (neutral at 0 dB; reproduce the reference factory
             // presets' baked Repro HF/LF EQ so each preset's FR matches).
             signal = static_cast<float> (reproLfShelf.process (static_cast<double> (signal)));
             signal = static_cast<float> (reproLmfPeak.process (static_cast<double> (signal)));
             signal = static_cast<float> (reproHmfPeak.process (static_cast<double> (signal)));
             signal = static_cast<float> (reproHfShelf.process (static_cast<double> (signal)));
 
-            // The ATR-102's 3.75 IPS / 900 formulation has a narrow reproduce-head
+            // The American's 3.75 IPS / modern formulation has a narrow reproduce-head
             // presence resonance around 3 kHz before its steep 5 kHz shoulder. The
             // general 5 kHz HMF band cannot create that opposing peak/drop shape.
-            if (m_slow900Presence)
-                signal = static_cast<float> (slow900PresencePeak.process (static_cast<double> (signal)));
+            if (m_slowModernPresence)
+                signal = static_cast<float> (slowModernPresencePeak.process (static_cast<double> (signal)));
 
             // Transformer-Off LF restore (neutral unless Transformer switched Off on the
-            // Classic 102): the ATR output transformer rolls off the deep bass, so bypassing
+            // American): the output transformer rolls off the deep bass, so bypassing
             // it boosts the lows back. 0 dB (Transformer On, default) => identity => reference
-            // and the whole Swiss 800 path stay byte-identical (the call is skipped, not just
+            // and the whole Swiss path stay byte-identical (the call is skipped, not just
             // zeroed, since a 0 dB shelf is not bit-exact).
             if (m_transformerBypass)
                 signal = static_cast<float> (transformerLfShelf.process (static_cast<double> (signal)));
 
-            // Classic 102 Classic 102 head-width HF peak. Only runs for Classic102 at a non-1/2" width,
-            // so the tuned 1/2" reference and the whole Swiss 800 path stay byte-identical.
-            if (machine == Classic102 && headWidth != 1)
+            // American head-width HF peak. Only runs for American at a non-1/2" width,
+            // so the tuned 1/2" reference and the whole Swiss path stay byte-identical.
+            if (machine == American && headWidth != 1)
                 signal = static_cast<float> (headWidthFilter.process (static_cast<double> (signal)));
 
             // Sync (record-head monitor) differs from Repro only by the wider head gap
@@ -1125,7 +1125,7 @@ public:
 
         // Restore the calibration attenuation applied to the input above, and apply the
         // small per-machine unity trim, so the tape CORE is level-neutral: cal changes
-        // saturation onset but not output level (the UAD spec: "cal sets the reference
+        // saturation onset but not output level (the reference spec: "cal sets the reference
         // flux level without disturbing unity gain"), and knobs-at-0 pass -12 dBFS ->
         // -12 dBFS whether or not the gain link is engaged. Added before the noise floor
         // so the modelled hiss/hum stays at its absolute (cal-independent) level.
@@ -1134,8 +1134,8 @@ public:
         if (processTape && noiseEnabled && noiseAmount > 0.001f)
         {
             // Both decks add constant idle hiss+hum (a modelled constant floor).
-            signal += (machine == Swiss800) ? a800IdleNoise (noiseAmount)
-                                            : classicIdleNoise (noiseAmount);
+            signal += (machine == Swiss) ? swissIdleNoise (noiseAmount)
+                                            : americanIdleNoise (noiseAmount);
         }
 
         signal = static_cast<float> (dcBlocker.process (static_cast<double> (signal)));
@@ -1175,15 +1175,15 @@ private:
     TapeEQFilter preEmphasisEQ, deEmphasisEQ;
     PhaseSmearingFilter phaseSmear;
     ImprovedNoiseGenerator improvedNoiseGen;
-    float m_humPhase = 0.0f;        // Swiss 800 idle mains-hum oscillator phase
+    float m_humPhase = 0.0f;        // Swiss idle mains-hum oscillator phase
     float m_humPhaseInc = 0.0f;     // cached 60 Hz phase step (set in prepare)
-    float m_a800Drive = 1.0f;       // cached waveshaper drive (set in updateFilters)
-    float m_a800DriveInv = 1.0f;    // cached 1/drive makeup
-    float m_classicDrive = 1.0f;    // cached Classic102 waveshaper drive
-    float m_classicDriveInv = 1.0f; // cached 1/drive makeup
-    float m_classicEvenScale = 1.0f; // Classic 102 even-order (2nd) scale: 1 = Transformer On (default), <1 thins the 2nd when Transformer Off
-    bool  m_transformerBypass = false; // true only when Transformer Off (Classic 102): applies the LF-restore shelf
-    bool  m_slow900Presence = false; // true only for measured Classic102 3.75 IPS / Type900 resonance
+    float m_swissDrive = 1.0f;       // cached waveshaper drive (set in updateFilters)
+    float m_swissDriveInv = 1.0f;    // cached 1/drive makeup
+    float m_americanDrive = 1.0f;    // cached American waveshaper drive
+    float m_americanDriveInv = 1.0f; // cached 1/drive makeup
+    float m_americanEvenScale = 1.0f; // American even-order (2nd) scale: 1 = Transformer On (default), <1 thins the 2nd when Transformer Off
+    bool  m_transformerBypass = false; // true only when Transformer Off (American): applies the LF-restore shelf
+    bool  m_slowModernPresence = false; // true only for measured American 3.75 IPS / FormulaModern resonance
     float m_limPrev = 0.0f;         // ADAA soft-limit state (per channel)
     float m_shaperPrev = 0.0f;      // ADAA waveshaper state (per channel)
     LocalAAStage m_lim2x, m_shaper2x;  // soft-limit + shaper: deep local-4x AA (mixed-rate: filters at 2x core, NL alias-free)
@@ -1191,12 +1191,12 @@ private:
     DBiquad headBumpFilter;                 // juce IIR<double> in source
     DBiquad hfLossFilter1, hfLossFilter2;   // juce IIR<double>
     DBiquad gapLossFilter;                  // juce IIR<double>
-    DBiquad headWidthFilter;                // Classic102 head-width HF peak (neutral otherwise)
+    DBiquad headWidthFilter;                // American head-width HF peak (neutral otherwise)
     DBiquad driveHfShelf;                   // drive-linked HF restore (neutral at reference drive)
     DBiquad levelHfShelf;                   // signal-level HF restore (neutral at 0 dB; keyed on instantaneous flux)
     DBiquad levelLfShelf;                   // signal-level LF cut (neutral at 0 dB; keyed on instantaneous flux)
     DBiquad reproLfShelf, reproLmfPeak, reproHmfPeak, reproHfShelf; // advanced repro-head 4-band EQ (neutral at 0 dB)
-    DBiquad slow900PresencePeak;             // measured ATR 3.75 IPS / 900 presence resonance
+    DBiquad slowModernPresencePeak;             // measured Classic 3.75 IPS / modern formulation presence resonance
     DBiquad transformerLfShelf;             // Transformer-Off LF restore (neutral at 0 dB = Transformer On)
     // Emphasis-rebalance G / 1-G pair wrapping ONLY the shaper (per-machine, always active).
     // G = emphLfPre (LF-shelf boost) + emphHfPre (HF-peak NOTCH); 1-G = emphHfPost (HF-peak
@@ -1246,16 +1246,16 @@ private:
         return 0.62f * std::exp (1.8f * saturationDepth) * tapeFormulationScale;
     }
 
-    // UAD Studer A800 static transfer curve, fitted from measured multi-level harmonics
-    // (order-11, 0.22% residual, curve_probe.py 2026-07-10); value+slope-matched tanh knee
+    // reference tracking deck static transfer curve, fitted from measured multi-level harmonics
+    // (order-11, 0.22% residual, private calibration analysis 2026-07-10); value+slope-matched tanh knee
     // beyond |x|=0.80 (the accelerating in-band IMD lives at |x|<=0.71, fully polynomial —
     // the knee only bounds full-scale peaks so it can't compress the distortion growth).
     // 2026-07-12 HARMONIC-DISTRIBUTION campaign: the poly's EVEN coeffs (c2,c4,c6,c8,c10) are
     // ZEROED. Reason: at the real drive (~2.35x) they get drive-amplified and fought the explicit
     // even term, producing a level-dependent cancellation that COLLAPSED mine's 2nd below -12 dBFS
-    // (measured 2f -110 @-18 vs UAD's clean 1 dB/dB -73). Zeroing them removes even harmonics
+    // (measured 2f -110 @-18 vs reference's clean 1 dB/dB -73). Zeroing them removes even harmonics
     // WITHOUT touching odd (even/odd poly bases are orthogonal over a symmetric sine, so 3f/5f/7f
-    // are byte-unchanged); the 2nd is regenerated cleanly by the level-persistent kA800Even*x^2
+    // are byte-unchanged); the 2nd is regenerated cleanly by the level-persistent kSwissEven*x^2
     // term below. Even contribution at the knee x0=0.8 was only 7.4e-4 (<0.2% fit resid) so P0/S0
     // stay — the odd knee continuation is preserved.
     static constexpr float kSc1 = 0.9793873f, kSc2 = 0.0f, kSc3 = -0.6470817f, kSc4 = 0.0f;
@@ -1264,7 +1264,7 @@ private:
     static constexpr float kSx0 = 0.8f, kSP0 = 0.684929f, kSS0 = 0.602271f, kSknee = 0.5f;
     static constexpr float kSkneeInv = 1.0f / kSknee;   // avoid a per-sample divide
 
-    static inline float a800Shaper (float x) noexcept
+    static inline float swissShaper (float x) noexcept
     {
         const float ax = std::abs (x);
         if (ax <= kSx0)
@@ -1274,12 +1274,12 @@ private:
         return sgn * (kSP0 + kSS0 * kSknee * std::tanh ((ax - kSx0) * kSkneeInv));
     }
 
-    // Swiss 800 input-stage limit: +-0.95 ceiling, linear to 0.8 then a value+slope-matched tanh knee (fold products stay below the UAD floor).
+    // Swiss input-stage limit: +-0.95 ceiling, linear to 0.8 then a value+slope-matched tanh knee (fold products stay below the reference floor).
     static constexpr float kLimKnee = 0.8f, kLimCeil = 0.95f;
     static constexpr float kLimRange = kLimCeil - kLimKnee;
     static constexpr float kLimRangeInv = 1.0f / kLimRange;
 
-    static inline float a800SoftLimit (float x) noexcept
+    static inline float swissSoftLimit (float x) noexcept
     {
         const float ax = std::abs (x);
         if (ax <= kLimKnee) return x;
@@ -1287,20 +1287,20 @@ private:
         return sgn * (kLimKnee + kLimRange * std::tanh ((ax - kLimKnee) * kLimRangeInv));
     }
 
-    // UAD Ampex ATR-102 static transfer curve (Classic102), fitted from measured multi-level
-    // harmonics (order-11, 0.21% residual, curve_probe.py 2026-07-10); reproduces the ATR's
+    // reference mastering deck static transfer curve (American), fitted from measured multi-level
+    // harmonics (order-11, 0.21% residual, private calibration analysis 2026-07-10); reproduces the Classic's
     // 5th-harmonic-heavy, super-linearly accelerating distortion (5th ~= 3rd at -6 dBFS, both
     // grow with level). value+slope-matched tanh knee beyond |x|=0.78 bounds full-scale peaks.
-    // 2026-07-12: EVEN coeffs (c2,c4,c6,c8,c10) ZEROED — same rationale as the A800 above
+    // 2026-07-12: EVEN coeffs (c2,c4,c6,c8,c10) ZEROED — same rationale as the Swiss above
     // (drive-amplified poly even fought the explicit even -> 2nd collapsed below -12 dBFS).
-    // Odd (5th-heavy) behaviour byte-unchanged; 2nd regenerated cleanly by kClassicEven*x^2.
+    // Odd (5th-heavy) behaviour byte-unchanged; 2nd regenerated cleanly by kAmericanEven*x^2.
     static constexpr float kCc1 = 1.025164f, kCc2 = 0.0f, kCc3 = 0.7539777f, kCc4 = 0.0f;
     static constexpr float kCc5 = -5.338438f, kCc6 = 0.0f, kCc7 = 15.2137f, kCc8 = 0.0f;
     static constexpr float kCc9 = -21.00829f, kCc10 = 0.0f, kCc11 = 11.08413f;
     static constexpr float kCx0 = 0.78f, kCP0 = 0.765386f, kCS0 = 0.765175f, kCknee = 0.5f;
     static constexpr float kCkneeInv = 1.0f / kCknee;
 
-    static inline float classicShaper (float x) noexcept
+    static inline float americanShaper (float x) noexcept
     {
         const float ax = std::abs (x);
         if (ax <= kCx0)
@@ -1310,23 +1310,23 @@ private:
         return sgn * (kCP0 + kCS0 * kCknee * std::tanh ((ax - kCx0) * kCkneeInv));
     }
 
-    // Classic102 drive base — sets the operating point on the fitted curve. Raised 1.4->2.5
-    // (2026-07-10 reshape) so the shaper operates at UNITY input scale like the UAD extraction
+    // American drive base — sets the operating point on the fitted curve. Raised 1.4->2.5
+    // (2026-07-10 reshape) so the shaper operates at UNITY input scale like the reference extraction
     // (was under-driven to arg~0.56x input, hiding the 5th/acceleration); now arg~input*1.0.
-    static constexpr float kClassicDriveBase = 2.5f;
+    static constexpr float kAmericanDriveBase = 2.5f;
     // Level-persistent x^2 even-order term (2026-07-12 harmonic-distribution campaign): applied
     // to the RAW shaper-input midpoint (NOT the driven/saturating output sh), so the 2nd tracks a
-    // clean 1 dB/dB law down to the noise floor — matching the UAD decks' 2nd (which persists at
+    // clean 1 dB/dB law down to the noise floor — matching the reference decks' 2nd (which persists at
     // ~1 dB/dB from -3 to -30 dBFS) instead of collapsing below -12 like the old kEven*sh^2 did.
-    // Tuned so ladder_probe 2f matches UAD (~-56 ATR / ~-61 A800 @-6 dBFS) AND holds the shape
+    // Tuned so private calibration analysis 2f matches reference (~-56 Classic / ~-61 Swiss @-6 dBFS) AND holds the shape
     // down-level. Even harmonics >2 come only from this + the (now odd-only) knee, i.e. minimal.
-    static constexpr float kClassicEven = 0.0118f;
-    static constexpr float kA800Even = 0.0069f;   // +1.2 dB vs 0.0060: restores the 2f gate against
+    static constexpr float kAmericanEven = 0.0118f;
+    static constexpr float kSwissEven = 0.0069f;   // +1.2 dB vs 0.0060: restores the 2f gate against
                                                   // the floor's ~+0.9 dB fundamental-gain shift (below)
     // Low-level odd-harmonic FLOOR (2026-07-12 brightness campaign): a smooth scale-covariant
     // power-law nonlinearity f(s)=g*s*(s^2+eps^2)^((p-1)/2), added in PARALLEL to the shaper
     // (ADAA'd). A memoryless polynomial shaper's odd harmonics scale as s^n, so mine's 3f/5f/7f
-    // COLLAPSE below -12 dBFS (5f -125 dBc @-30) while the UAD decks keep a slowly-decaying floor
+    // COLLAPSE below -12 dBFS (5f -125 dBc @-30) while the reference decks keep a slowly-decaying floor
     // (5f -71 dBc @-30). A covariant (homogeneous) nonlinearity has ~level-INVARIANT relative
     // harmonics (flat dBc), so it dominates the fast-dying poly at low level and reproduces that
     // floor, while the steep poly still dominates at/above -6 dBFS (reference gate byte-preserved
@@ -1335,17 +1335,17 @@ private:
     // p<1 is compressive => negative-going odd harmonics + a ~uniform fundamental gain (the -kLin*s
     // term below nulls it near the operating point). Values MODELLED offline (floor_model.py:
     // candidate 1 DC-bias & parallel-cubic both proven incapable of a covariant floor) then tuned
-    // on the built plugin vs ladder_probe. A800 fits 3f AND 5f/7f; ATR fits 5f/7f (its positive-c3
+    // on the built plugin vs private calibration analysis. Swiss fits 3f AND 5f/7f; Classic fits 5f/7f (its positive-c3
     // shaper's 3f conflicts with the floor's negative 3f in the -12/-24 transition, rule-5 residual).
-    // *** MEASURED SCOPE — CONTROL EXPERIMENT (2026-07-12, sustain_probe.py + program_probe, floor-on
+    // *** MEASURED SCOPE — CONTROL EXPERIMENT (2026-07-12, private calibration analysis + private calibration analysis, floor-on
     // vs floor-off rebuild): this floor CLOSES the tone-ladder harmonic deficit (a fidelity match to
-    // UAD's measured decay) BUT does NOT reduce the audible program brightness the campaign targeted.
+    // reference's measured decay) BUT does NOT reduce the audible program brightness the campaign targeted.
     // The harmonics it restores sit at <= -63 dBFS absolute (near-inaudible); the drum-program LTAS
     // is unchanged floor-on vs -off (+1.5/+0.9 HF both); and on sustained tonal program it marginally
     // RAISES 4-8k presence (+0.2..0.8 dB). The user's brightness is the 10-16k rising FR tilt
-    // (hot-level / repro FR) — a different axis this floor does not touch. Kept as a UAD-harmonic
+    // (hot-level / repro FR) — a different axis this floor does not touch. Kept as a reference-harmonic
     // fidelity match pending the user's DAW A/B; one-line disable = set both kFloorG to 0.0f and
-    // kA800Even back to 0.0060f. See the campaign report for the full control evidence. ***
+    // kSwissEven back to 0.0060f. See the campaign report for the full control evidence. ***
     // kFloorLin: a LINEAR term subtracted from the floor (f = g*s*[(s^2+eps^2)^((p-1)/2) - kLin]).
     // The covariant floor's ~level-flat fundamental gain (p near 1 => near-linear) persists at HIGH
     // drive, where it injects clean fundamental that DILUTES the saturated shaper's THD (~10% rel;
@@ -1355,21 +1355,21 @@ private:
     // keeping the low-level warmth (fund shift +0.75->~0 @ref, +0.98->+0.32 @-30). Tuned vs
     // preset_validate THD (harmonics invariant to it, so free to tune).
     static constexpr float kFloorEps      = 0.006f;
-    static constexpr float kA800FloorG    = 0.070f, kA800FloorP    = 0.88f, kA800FloorLin    = 1.05f;
-    // ATR floor: the ATR shaper's positive-c3 3f partially cancels the floor's negative 3f in
+    static constexpr float kSwissFloorG    = 0.070f, kSwissFloorP    = 0.88f, kSwissFloorLin    = 1.05f;
+    // Classic floor: the Classic shaper's positive-c3 3f partially cancels the floor's negative 3f in
     // the -12/-24 transition (a moving null — LOWERING g just relocates it, measured), so g is
-    // set for the best 5f/7f-floor fidelity (deficits of 40-110 dB vs UAD) with BOUNDED 3f-transition
-    // thinning (worst ~-20 dB @-24). rule-5 residual: UAD's ATR 3f is itself in a measured level-null.
-    static constexpr float kClassicFloorG = 0.017f, kClassicFloorP = 0.80f, kClassicFloorLin = 1.10f;
-    // Swiss 800 idle floor — hum scale sets the ceiling (Noise=100% ~ Studer noise-max); hiss set lower
+    // set for the best 5f/7f-floor fidelity (deficits of 40-110 dB vs reference) with BOUNDED 3f-transition
+    // thinning (worst ~-20 dB @-24). rule-5 residual: reference's Classic 3f is itself in a measured level-null.
+    static constexpr float kAmericanFloorG = 0.017f, kAmericanFloorP = 0.80f, kAmericanFloorLin = 1.10f;
+    // Swiss idle floor — hum scale sets the ceiling (Noise=100% ~ Swiss noise-max); hiss set lower
     // than the hum so the fit (which matches the hum-dominated overall level) also lands the broadband hiss.
-    static constexpr float kA800Hiss = 0.0046f;
-    static constexpr float kA800Hum  = 0.0037f;
-    // Classic102 idle floor: brighter hiss + strong-2nd hum. Headroom set so the lo-fi ATR presets
+    static constexpr float kSwissHiss = 0.0046f;
+    static constexpr float kSwissHum  = 0.0037f;
+    // American idle floor: brighter hiss + strong-2nd hum. Headroom set so the lo-fi Classic presets
     // (3.75 IPS + cassette LP, which cut the bright hiss ~5 dB harder than the 15 IPS reference) still
-    // reach the UAD Hiss&Hum idle level within the per-preset Noise-knob fit.
-    static constexpr float kClassicHiss = 0.000525f;
-    static constexpr float kClassicHum  = 0.00027f;
+    // reach the reference Hiss&Hum idle level within the per-preset Noise-knob fit.
+    static constexpr float kAmericanHiss = 0.000525f;
+    static constexpr float kAmericanHum  = 0.00027f;
 
     // ---- Antiderivative anti-aliasing (ADAA) --------------------------------
     // 1st-order ADAA replaces the point evaluation y=f(x) with the mean of f over
@@ -1407,9 +1407,9 @@ private:
         const double Fb = polyAD11 (x < 0.0 ? -x0 : x0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11);
         return Fb + P0 * (ax - x0) + S0 * knee * knee * logCosh ((ax - x0) * kneeInv);
     }
-    static inline double a800ShaperAD (double x) noexcept
+    static inline double swissShaperAD (double x) noexcept
     { return shaperAD (x, kSc1, kSc2, kSc3, kSc4, kSc5, kSc6, kSc7, kSc8, kSc9, kSc10, kSc11, kSx0, kSP0, kSS0, kSknee, kSkneeInv); }
-    static inline double classicShaperAD (double x) noexcept
+    static inline double americanShaperAD (double x) noexcept
     { return shaperAD (x, kCc1, kCc2, kCc3, kCc4, kCc5, kCc6, kCc7, kCc8, kCc9, kCc10, kCc11, kCx0, kCP0, kCS0, kCknee, kCkneeInv); }
     // Antiderivative of the soft-limit (linear |x|<=knee, tanh knee beyond).
     static inline double softLimitAD (double x) noexcept
@@ -1444,39 +1444,39 @@ private:
     {
         const float sp = m_limPrev; m_limPrev = s;
         const double dx = (double) s - (double) sp;
-        if (std::abs (dx) < kAdaaEps) return a800SoftLimit (0.5f * (s + sp));
+        if (std::abs (dx) < kAdaaEps) return swissSoftLimit (0.5f * (s + sp));
         return (float) ((softLimitAD (s) - softLimitAD (sp)) / dx);
     }
     // ADAA waveshaper: G(s)=(dInv/d)*F(s*d) so ADAA runs in the pre-drive signal domain;
     // the small even-order term is applied to the (already anti-aliased) output.
-    inline float adaaSatA800 (float s) noexcept
+    inline float adaaSatSwiss (float s) noexcept
     {
         const float sp = m_shaperPrev; m_shaperPrev = s;
         const double dx = (double) s - (double) sp;
         float sh;
         if (std::abs (dx) < kAdaaEps)
-            sh = a800Shaper (0.5f * (s + sp) * m_a800Drive) * m_a800DriveInv;
+            sh = swissShaper (0.5f * (s + sp) * m_swissDrive) * m_swissDriveInv;
         else
-            sh = (float) ((double) m_a800DriveInv / m_a800Drive
-                 * (a800ShaperAD ((double) s * m_a800Drive) - a800ShaperAD ((double) sp * m_a800Drive)) / dx);
+            sh = (float) ((double) m_swissDriveInv / m_swissDrive
+                 * (swissShaperAD ((double) s * m_swissDrive) - swissShaperAD ((double) sp * m_swissDrive)) / dx);
         // Even term on the RAW input midpoint (drive-independent, level-persistent 2nd).
         const float sm = 0.5f * (s + sp);
-        // Covariant low-level harmonic floor (ADAA'd; slowly-decaying 3f/5f/7f like the UAD).
-        return sh + kA800Even * (sm * sm) + adaaFloor (s, sp, kA800FloorG, kA800FloorP, kA800FloorLin);
+        // Covariant low-level harmonic floor (ADAA'd; slowly-decaying 3f/5f/7f like the reference).
+        return sh + kSwissEven * (sm * sm) + adaaFloor (s, sp, kSwissFloorG, kSwissFloorP, kSwissFloorLin);
     }
-    inline float adaaSatClassic (float s) noexcept
+    inline float adaaSatAmerican (float s) noexcept
     {
         const float sp = m_shaperPrev; m_shaperPrev = s;
         const double dx = (double) s - (double) sp;
         float sh;
         if (std::abs (dx) < kAdaaEps)
-            sh = classicShaper (0.5f * (s + sp) * m_classicDrive) * m_classicDriveInv;
+            sh = americanShaper (0.5f * (s + sp) * m_americanDrive) * m_americanDriveInv;
         else
-            sh = (float) ((double) m_classicDriveInv / m_classicDrive
-                 * (classicShaperAD ((double) s * m_classicDrive) - classicShaperAD ((double) sp * m_classicDrive)) / dx);
+            sh = (float) ((double) m_americanDriveInv / m_americanDrive
+                 * (americanShaperAD ((double) s * m_americanDrive) - americanShaperAD ((double) sp * m_americanDrive)) / dx);
         const float sm = 0.5f * (s + sp);
-        return sh + kClassicEven * m_classicEvenScale * (sm * sm)
-                  + adaaFloor (s, sp, kClassicFloorG, kClassicFloorP, kClassicFloorLin);
+        return sh + kAmericanEven * m_americanEvenScale * (sm * sm)
+                  + adaaFloor (s, sp, kAmericanFloorG, kAmericanFloorP, kAmericanFloorLin);
     }
 
     static float softClip (float input, float threshold)
@@ -1497,7 +1497,7 @@ private:
         MachineCharacteristics chars{};
         switch (machine)
         {
-            case Swiss800:
+            case Swiss:
                 chars.headBumpFreq = 48.0f; chars.headBumpGain = 3.0f; chars.headBumpQ = 1.0f;
                 chars.hfRolloffFreq = 22000.0f; chars.hfRolloffSlope = -12.0f;
                 chars.saturationKnee = 0.92f;
@@ -1507,9 +1507,9 @@ private:
                 chars.compressionRatio = 0.03f; chars.compressionAttack = 0.08f; chars.compressionRelease = 40.0f;
                 chars.phaseShift = 0.015f; chars.crosstalkAmount = -70.0f;
                 break;
-            case Classic102:
+            case American:
                 chars.headBumpFreq = 62.0f; chars.headBumpGain = 4.5f; chars.headBumpQ = 1.4f;
-                chars.hfRolloffFreq = 21000.0f; chars.hfRolloffSlope = -18.0f; // Classic 102 flat to ~15k
+                chars.hfRolloffFreq = 21000.0f; chars.hfRolloffSlope = -18.0f; // American flat to ~15k
                 chars.saturationKnee = 0.85f;
                 chars.saturationKnee = 0.85f;
                 chars.saturationHarmonics[0] = 0.008f; chars.saturationHarmonics[1] = 0.032f;
@@ -1526,22 +1526,22 @@ private:
     struct HeadBump { float freq, gain, q; };
     HeadBump getHeadBump (TapeMachine machine, TapeSpeed speed) const noexcept
     {
-        if (machine == Swiss800)
+        if (machine == Swiss)
         {
-            switch (speed)   // Swiss 800 measured bump @30 Hz: +1.4/+2.8/+2.4 at
+            switch (speed)   // Swiss measured bump @30 Hz: +1.4/+2.8/+2.4 at
             {                // 7.5/15/30 IPS (keeps a strong LF bump even at 30).
                 case Speed_7_5_IPS:  return { 27.0f, 4.80f, 0.9f };
                 case Speed_15_IPS:   return { 30.0f, 6.20f, 0.9f };
                 case Speed_30_IPS:   return { 50.0f, 5.20f, 0.6f };  // broad bump (+2.5 @100)
-                case Speed_3_75_IPS: return { 24.0f, 4.40f, 0.9f };  // non-std on Swiss 800; extrapolated
+                case Speed_3_75_IPS: return { 24.0f, 4.40f, 0.9f };  // non-std on Swiss; extrapolated
             }
         }
-        switch (speed)   // Classic102 (Classic 102) measured bump @30 Hz: +2.3 (7.5),
+        switch (speed)   // American (American) measured bump @30 Hz: +2.3 (7.5),
         {                // +3.0 (15), and a -4.7 LF DIP at 30 IPS (negative gain).
             case Speed_7_5_IPS:  return { 32.0f,  4.40f, 1.3f };
             case Speed_15_IPS:   return { 32.0f,  5.10f, 1.3f };
             case Speed_30_IPS:   return { 31.0f, -3.70f, 2.0f };
-            case Speed_3_75_IPS: return { 33.0f,  2.50f, 1.2f };  // 3.75 IPS: tuned vs Classic 102 (modest LF bump)
+            case Speed_3_75_IPS: return { 33.0f,  2.50f, 1.2f };  // 3.75 IPS: tuned vs American (modest LF bump)
         }
         return { 32.0f, 5.10f, 1.3f };
     }
@@ -1551,31 +1551,31 @@ private:
         TapeCharacteristics chars{};
         switch (type)
         {
-            case Type456:
+            case FormulaClassic:
                 chars.coercivity = 0.78f; chars.retentivity = 0.82f; chars.saturationPoint = 0.88f;
                 chars.hysteresisAmount = 0.12f; chars.hysteresisAsymmetry = 0.02f;
                 chars.noiseFloor = -60.0f; chars.modulationNoise = 0.025f; chars.lfEmphasis = 1.12f; chars.hfLoss = 0.92f;
                 break;
-            case TypeGP9:
+            case FormulaHighOutput:
                 chars.coercivity = 0.92f; chars.retentivity = 0.95f; chars.saturationPoint = 0.64f;
                 chars.hysteresisAmount = 0.06f; chars.hysteresisAsymmetry = 0.01f;
                 chars.noiseFloor = -64.0f; chars.modulationNoise = 0.015f; chars.lfEmphasis = 1.05f; chars.hfLoss = 0.96f;
                 break;
-            case Type900:
-                // Classic 102/Quantegy 900 Grand Master: higher output/lower noise than
-                // 456, just under GP9 (UAD orders 250<456<900<GP9). Starting row
-                // interpolated 456<->GP9; retuned vs the UAD 900 (matrix_probe tape).
+            case FormulaModern:
+                // American/modern high-output formula: higher output/lower noise than
+                // classic formulation, just under high-output formula (reference orders 250<classic formulation<modern formulation<high-output formula). Starting row
+                // interpolated classic formulation<->high-output formula; retuned vs the reference modern formulation (private calibration analysis tape).
                 chars.coercivity = 0.85f; chars.retentivity = 0.89f; chars.saturationPoint = 0.72f;
                 chars.hysteresisAmount = 0.09f; chars.hysteresisAsymmetry = 0.015f;
                 chars.noiseFloor = -62.0f; chars.modulationNoise = 0.018f; chars.lfEmphasis = 1.08f; chars.hfLoss = 0.94f;
                 break;
-            case Type250:
+            case FormulaVintage:
                 chars.coercivity = 0.70f; chars.retentivity = 0.75f; chars.saturationPoint = 0.80f;
                 chars.hysteresisAmount = 0.18f; chars.hysteresisAsymmetry = 0.035f;
                 chars.noiseFloor = -55.0f; chars.modulationNoise = 0.035f; chars.lfEmphasis = 1.18f; chars.hfLoss = 0.87f;
                 break;
             default:
-                chars = getTapeCharacteristics (Type456);
+                chars = getTapeCharacteristics (FormulaClassic);
                 break;
         }
         return chars;
@@ -1644,7 +1644,7 @@ private:
         preEmphasisEQ.setPreEmphasis (preEQ_tauNum, preEQ_tauDen);
         deEmphasisEQ.setDeEmphasis   (preEQ_tauDen, preEQ_tauNum);
 
-        bool isPrecision = (machine == Swiss800);
+        bool isPrecision = (machine == Swiss);
 
         phaseSmear.setMachineCharacter (isPrecision);
 
@@ -1664,26 +1664,26 @@ private:
         float headBumpGain = hb.gain * tapeChars.lfEmphasis * 0.8f;
         float headBumpQ    = hb.q;
 
-        // CCIR/IEC has no LF pre-emphasis (unlike NAB's 3180 us LF boost), so the Classic 102
+        // CCIR/IEC has no LF pre-emphasis (unlike NAB's 3180 us LF boost), so the American
         // reads ~5-6 dB thinner in the lows under CCIR — a dip, not a bump. Trim the
-        // Classic102 head-bump gain (into the negative, floored by the -6 clamp below).
-        // The Swiss 800's CCIR low end already matches, so Swiss 800 is left alone. NOT at 30 IPS,
-        // where the Classic 102's NAB and CCIR low ends converge (both ~-4.7 dB @30 Hz — short
+        // American head-bump gain (into the negative, floored by the -6 clamp below).
+        // The Swiss's CCIR low end already matches, so Swiss is left alone. NOT at 30 IPS,
+        // where the American's NAB and CCIR low ends converge (both ~-4.7 dB @30 Hz — short
         // wavelengths, minimal LF pre-emphasis either way, so the trim would over-cut).
-        if (machine == Classic102 && eqStandard == CCIR && speed != Speed_30_IPS)
+        if (machine == American && eqStandard == CCIR && speed != Speed_30_IPS)
             headBumpGain -= 5.5f;
 
-        // Classic 102 Classic 102 Head Width: the 1" head stack rolls off the deep lows (~-1.6 dB
+        // American Head Width: the 1" head stack rolls off the deep lows (~-1.6 dB
         // @30 Hz vs 1/2") but leaves 50 Hz+ intact — a sub-40 Hz shelf, so it's done
         // with a raised dc-blocker below (not a head-bump trim, which would eat 50 Hz).
-        // HF is the headWidthFilter above. Classic102 only (the Swiss 800 has no head width).
+        // HF is the headWidthFilter above. American only (the Swiss has no head width).
 
-        // Swiss 800 clamps wider (lower freq, higher gain); Classic102 allows a low bump
+        // Swiss clamps wider (lower freq, higher gain); American allows a low bump
         // that survives the LF highpass, and a NEGATIVE gain (LF dip) for 30 IPS
-        // where the Classic 102 rolls the low end off instead of bumping it.
-        const float bumpFreqMin = (machine == Swiss800) ? 20.0f : 28.0f;
-        const float bumpGainMax = (machine == Swiss800) ? 7.0f : 6.5f;
-        const float bumpGainMin = (machine == Swiss800) ? 1.5f : -6.0f;
+        // where the American rolls the low end off instead of bumping it.
+        const float bumpFreqMin = (machine == Swiss) ? 20.0f : 28.0f;
+        const float bumpGainMax = (machine == Swiss) ? 7.0f : 6.5f;
+        const float bumpGainMin = (machine == Swiss) ? 1.5f : -6.0f;
         headBumpFreq = std::clamp (headBumpFreq, bumpFreqMin, 120.0f);
         headBumpQ    = std::clamp (headBumpQ, 0.7f, 2.0f);
         headBumpGain = std::clamp (headBumpGain, bumpGainMin, bumpGainMax);
@@ -1693,24 +1693,24 @@ private:
             static_cast<double> (headBumpQ)));
 
         float maxFilterFreq = static_cast<float> (currentSampleRate * 0.45);
-        // Both UAD decks keep HF far more extended than the shared 0.7/1.0/1.3
-        // per-speed rolloff. Classic 102: ~flat to 15 kHz at every speed. Swiss 800:
+        // Both reference decks keep HF far more extended than the shared 0.7/1.0/1.3
+        // per-speed rolloff. American: ~flat to 15 kHz at every speed. Swiss:
         // bright at 15/30 IPS, ~-2 dB @15k at 7.5 IPS.
         float hfExt = speedChars.hfExtension;
-        if (machine == Classic102)
-            hfExt = (speed == Speed_3_75_IPS) ? 0.45f      // 3.75 IPS: heavy HF gap-loss (~9k LP), tuned vs Classic 102
+        if (machine == American)
+            hfExt = (speed == Speed_3_75_IPS) ? 0.45f      // 3.75 IPS: heavy HF gap-loss (~9k LP), tuned vs American
                   : (speed == Speed_7_5_IPS) ? 1.30f : (speed == Speed_30_IPS ? 0.90f : 1.1f);
-        else // Swiss800 (3.75 non-standard — reuse the 7.5 value)
+        else // Swiss (3.75 non-standard — reuse the 7.5 value)
             hfExt = (speed == Speed_3_75_IPS) ? 1.10f
                   : (speed == Speed_7_5_IPS) ? 1.10f : (speed == Speed_30_IPS ? 1.50f : 1.5f);
         float hfCutoff = machineChars.hfRolloffFreq * hfExt * tapeChars.hfLoss;
         hfCutoff = std::min (hfCutoff, maxFilterFreq);
         hfLossFilter1.setCoeffs (DBiquad::lowPass (currentSampleRate, static_cast<double> (hfCutoff), 0.707));
 
-        // Classic 102 tracks nearly flat to ~15 kHz, so Classic102's HF-loss shelves are scaled right down.
-        const float hfLossScale = (machine == Swiss800) ? 0.3f : 0.2f;
+        // American tracks nearly flat to ~15 kHz, so American's HF-loss shelves are scaled right down.
+        const float hfLossScale = (machine == Swiss) ? 0.3f : 0.2f;
 
-        // 3.75 IPS: the Classic 102 keeps a flat ~5 kHz shoulder then drops off a cliff past
+        // 3.75 IPS: the American keeps a flat ~5 kHz shoulder then drops off a cliff past
         // 10 kHz. hfLossFilter1's 2-pole gives the shoulder; hfLossFilter2 here adds
         // the extra top-octave cliff (high-shelf ~11 kHz) that a single 2-pole can't.
         if (speed == Speed_3_75_IPS)
@@ -1725,17 +1725,17 @@ private:
                 static_cast<double> (-2.0f * tapeChars.hfLoss * hfLossScale), 0.5, true));
         }
 
-        const bool wasSlow900Presence = m_slow900Presence;
-        m_slow900Presence = (machine == Classic102 && speed == Speed_3_75_IPS && type == Type900);
+        const bool wasSlow900Presence = m_slowModernPresence;
+        m_slowModernPresence = (machine == American && speed == Speed_3_75_IPS && type == FormulaModern);
         // Clear retained biquad state on any activation/deactivation transition so a stale
-        // filter history cannot fire a transient when the Classic 102 / 3.75 IPS / Type 900
+        // filter history cannot fire a transient when the American / 3.75 IPS / Modern
         // combination is re-enabled after being off.
-        if (m_slow900Presence != wasSlow900Presence)
-            slow900PresencePeak.reset();
-        slow900PresencePeak.setCoeffs (DBiquad::peak (currentSampleRate,
-            std::min (2700.0f, maxFilterFreq), m_slow900Presence ? 5.8 : 0.0, 1.6));
+        if (m_slowModernPresence != wasSlow900Presence)
+            slowModernPresencePeak.reset();
+        slowModernPresencePeak.setCoeffs (DBiquad::peak (currentSampleRate,
+            std::min (2700.0f, maxFilterFreq), m_slowModernPresence ? 5.8 : 0.0, 1.6));
 
-        // Classic 102 Classic 102 Head Width HF character (Classic102 only; neutral at 1/2" so the
+        // American Head Width HF character (American only; neutral at 1/2" so the
         // reference stays byte-identical and the filter is skipped in the chain). Both
         // 1/4" and 1" read brighter than 1/2" through the upper mids: a peak ~7.5 kHz
         // that tapers by 15 kHz. 1" is the hotter, LF-lighter head (see the LF trim above).
@@ -1758,45 +1758,45 @@ private:
 
         // Both decks brighten HF when under-biased and flatten when over-biased (bias shelf).
         float biasFreq, biasGainDb;
-        if (machine == Swiss800) { biasFreq = 8000.0f; biasGainDb = -(biasAmount - 0.5f) * 8.0f + 1.0f; }
+        if (machine == Swiss) { biasFreq = 8000.0f; biasGainDb = -(biasAmount - 0.5f) * 8.0f + 1.0f; }
         else                     { biasFreq = 7000.0f; biasGainDb = (0.5f - biasAmount) * 5.0f + 1.5f; }
         biasFilter.setCoeffs (Biquad::shelf (currentSampleRate, biasFreq, biasGainDb, 0.707f, true));
 
-        // DC blocker: 1st-order (6 dB/oct). Both UAD decks keep a broad LF head bump nearly
+        // DC blocker: 1st-order (6 dB/oct). Both reference decks keep a broad LF head bump nearly
         // flat down to ~10-15 Hz, then roll off gently below — a 2nd-order Butterworth corner
         // (old 25 Hz Swiss / 15 Hz Classic) ate that bump and added ~5-7 ms of excess group
-        // delay at 30 Hz vs the UAD (measured, det_probe), which doubled the kick 10-90%
+        // delay at 30 Hz vs the reference (measured, private calibration analysis), which doubled the kick 10-90%
         // attack time (9.3 vs 4.2 ms). A gentle 1st-order corner (Swiss 18 Hz / Classic 10 Hz)
-        // restores the UAD's kick attack and 20-30 Hz magnitude while still killing DC and
-        // leaving the driven-preset 30 Hz levels (GP9 joint4 fits) within their gate.
-        // Swiss 800 30 IPS keeps the original 2nd-order 12 Hz corner: that exception exists so
+        // restores the reference's kick attack and 20-30 Hz magnitude while still killing DC and
+        // leaving the driven-preset 30 Hz levels (high-output formula calibration) within their gate.
+        // Swiss 30 IPS keeps the original 2nd-order 12 Hz corner: that exception exists so
         // the broad 30 IPS head bump reaches 30 Hz, its GD@50-80 Hz is already low (no kick
-        // penalty), and the driven-GP9 30 IPS preset fit depends on its exact 30 Hz level.
-        if (machine == Swiss800 && speed == Speed_30_IPS)
+        // penalty), and the driven-high-output formula 30 IPS preset fit depends on its exact 30 Hz level.
+        if (machine == Swiss && speed == Speed_30_IPS)
             dcBlocker.setCoeffs (DBiquad::highPass (currentSampleRate, 12.0, 0.707));
         else
         {
-            double dcBlockFreq = (machine == Swiss800) ? 18.0 : 10.0;
-            // Classic 102 1" head: raise the corner to shed the deep lows (matches the UAD)
+            double dcBlockFreq = (machine == Swiss) ? 18.0 : 10.0;
+            // American 1" head: raise the corner to shed the deep lows (matches the reference)
             // without touching 50 Hz+. 1/4" and 1/2" keep the base corner.
-            if (machine == Classic102 && headWidth == 2) dcBlockFreq = 20.0;
+            if (machine == American && headWidth == 2) dcBlockFreq = 20.0;
             dcBlocker.setCoeffs (DBiquad::highPass1 (currentSampleRate, dcBlockFreq));
         }
 
         // Per-machine unity trim for the level-neutral tape core (see m_machineMakeupGain):
-        // +0.4 dB (Swiss800) / -0.5 dB (Classic102) lands -12 dBFS in -> -12 dBFS out.
-        m_machineMakeupGain = dbToGain (machine == Swiss800 ? 0.4f : -0.5f);
+        // +0.4 dB (Swiss) / -0.5 dB (American) lands -12 dBFS in -> -12 dBFS out.
+        m_machineMakeupGain = dbToGain (machine == Swiss ? 0.4f : -0.5f);
 
-        // Cache the Swiss 800 waveshaper drive (block-constant): base x per-tape feel x bias factor; hoisted out of the audio loop.
+        // Cache the Swiss waveshaper drive (block-constant): base x per-tape feel x bias factor; hoisted out of the audio loop.
         const float tapeFormScale = 2.0f * (1.0f - tapeChars.saturationPoint) + 0.6f;
         const float biasDrive = std::clamp (std::exp (4.0f * (0.5f - biasAmount)), 0.2f, 5.0f);
-        m_a800Drive = 2.8f * tapeFormScale * biasDrive;
-        m_a800DriveInv = 1.0f / m_a800Drive;
+        m_swissDrive = 2.8f * tapeFormScale * biasDrive;
+        m_swissDriveInv = 1.0f / m_swissDrive;
 
-        // Classic102 waveshaper drive: same staging as the Swiss 800 but a STEEPER bias curve (the Classic 102 is far more bias-sensitive).
-        const float classicBiasDrive = std::clamp (std::exp (6.5f * (0.5f - biasAmount)), 0.15f, 9.0f);
-        m_classicDrive = kClassicDriveBase * tapeFormScale * classicBiasDrive;
-        m_classicDriveInv = 1.0f / m_classicDrive;
+        // American waveshaper drive: same staging as the Swiss but a STEEPER bias curve (the American is far more bias-sensitive).
+        const float americanBiasDrive = std::clamp (std::exp (6.5f * (0.5f - biasAmount)), 0.15f, 9.0f);
+        m_americanDrive = kAmericanDriveBase * tapeFormScale * americanBiasDrive;
+        m_americanDriveInv = 1.0f / m_americanDrive;
 
         // Emphasis-rebalance G / 1-G pair (per-machine, always active). Values chosen via the
         // emphasis_model.py sweep methodology (which validated a high-shelf lever); the shipped
@@ -1806,11 +1806,11 @@ private:
         // de-emphasis attenuates. G (pre-shaper) = LF-shelf BOOST + HF-peak NOTCH; 1-G
         // (post-shaper) = HF-peak BOOST + LF-shelf CUT — the exact inverse, so the linear FR
         // is preserved (verified numerically) while the shaper-born products are re-weighted.
-        // A800's 3rd is strong (not nulled) so its HF peak is gentler to protect the 3rd/THD;
-        // the ATR's 3rd sits in a level-dependent null so it tolerates a hotter peak.
+        // Swiss's 3rd is strong (not nulled) so its HF peak is gentler to protect the 3rd/THD;
+        // the Classic's 3rd sits in a level-dependent null so it tolerates a hotter peak.
         const double fsE = currentSampleRate;
-        const float  emphLfDb = (machine == Swiss800) ? 2.0f : 3.0f;   // LF drive boost (IMD lever)
-        const float  emphHfDbBase = (machine == Swiss800) ? 3.0f : 4.0f;   // HF peak boost (5th lever)
+        const float  emphLfDb = (machine == Swiss) ? 2.0f : 3.0f;   // LF drive boost (IMD lever)
+        const float  emphHfDbBase = (machine == Swiss) ? 3.0f : 4.0f;   // HF peak boost (5th lever)
         constexpr double kEmphLfFc = 150.0, kEmphLfQ = 0.5;
         constexpr double kEmphHfFc = 5000.0, kEmphHfQ = 2.0;
         // The HF peak lifts the 5th-region harmonics; at the reference bias (biasDrive == 1) it
@@ -1820,7 +1820,7 @@ private:
         // the reference 5th/IMD win is preserved but the under-bias overshoot is not made worse.
         // The LF shelf is NOT faded: it drives 150 Hz, which does not affect the 1 kHz under-bias
         // THD, and the IMD is measured at the reference bias anyway.
-        const float biasDriveForEmph = (machine == Swiss800) ? biasDrive : classicBiasDrive;
+        const float biasDriveForEmph = (machine == Swiss) ? biasDrive : americanBiasDrive;
         const float emphHfDb = emphHfDbBase * std::clamp (1.0f / biasDriveForEmph, 0.0f, 1.0f);
         emphLfPre.setCoeffs  (DBiquad::shelf (fsE, kEmphLfFc,  emphLfDb, kEmphLfQ, false));
         emphLfPost.setCoeffs (DBiquad::shelf (fsE, kEmphLfFc, -emphLfDb, kEmphLfQ, false));
@@ -1869,8 +1869,8 @@ public:
     void setOutputGainDb(float db) noexcept { pOutputGainDb.store (db, std::memory_order_relaxed); }
     void setAutoComp    (bool b)   noexcept { pAutoComp.store (b, std::memory_order_relaxed); }
     void setOversampling(int idx)  noexcept { pOversampling.store (clampI (idx, 0, 2), std::memory_order_relaxed); }
-    void setHeadWidth   (int idx)  noexcept { pHeadWidth.store (clampI (idx, 0, 2), std::memory_order_relaxed); } // Classic 102 Classic 102 only
-    // ATR-102 front-panel toggles (Classic 102 only; ignored on the Swiss 800). All default On.
+    void setHeadWidth   (int idx)  noexcept { pHeadWidth.store (clampI (idx, 0, 2), std::memory_order_relaxed); } // American only
+    // American front-panel toggles (American only; ignored on the Swiss). All default On.
     void setCrosstalk        (bool b) noexcept { pCrosstalk.store (b, std::memory_order_relaxed); }
     void setWowFlutterEnabled(bool b) noexcept { pWowFlutterOn.store (b, std::memory_order_relaxed); }
     void setTransformer      (bool b) noexcept { pTransformer.store (b, std::memory_order_relaxed); }
@@ -1899,7 +1899,7 @@ public:
 
 private:
     static int clampI (int v, int lo, int hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
-    // Oversampling is PINNED at 2x. The UAD decks this emulates have no OS control, and the
+    // Oversampling is PINNED at 2x. The reference decks this emulates have no OS control, and the
     // 4x mode is un-tuned (~0.3-0.5 dB dark in the top octave — the IIR chain and all 20
     // factory presets were joint-fit at the 2x core). The Oversampling parameter is retained
     // for state round-trip (old sessions with 1x/4x load fine) but IGNORED by the DSP: this is
@@ -1917,7 +1917,7 @@ private:
     std::atomic<float> pNoiseAmount{0.0f}, pWow{7.0f}, pFlutter{3.0f}, pOutputGainDb{0.0f};
     std::atomic<float> pReproLf{0.0f}, pReproLmf{0.0f}, pReproHmf{0.0f}, pReproHf{0.0f}; // advanced repro-head 4-band EQ (0 = neutral)
     std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
-    // ATR-102 front-panel toggles — default On = the state the Classic 102 tuning captured.
+    // American front-panel toggles — default On = the state the American tuning captured.
     std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
 
     // --- config ---
@@ -1943,7 +1943,7 @@ private:
     // --- signal-level envelope detector (shared max(L,R), PRE input gain) ---
     // Peak detector (instant attack, ~30 ms release) at base rate over the RAW (pre-gain)
     // input; feeds the level-keyed HF-restore / LF-cut EQ so mine's FR-vs-level surface
-    // tracks the UAD. The input gain is folded back in analytically (smInGainDb) rather than
+    // tracks the reference. The input gain is folded back in analytically (smInGainDb) rather than
     // scaled onto |x| here, so the anchor holds under gain automation (see cpp detector).
     float m_levelEnv = 0.0f;         // persistent linear peak state (across blocks) — PRE gain
     float m_levelRelCoeff = 0.0f;    // per-sample release decay (set in prepare)

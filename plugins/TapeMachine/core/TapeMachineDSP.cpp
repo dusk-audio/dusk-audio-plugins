@@ -26,41 +26,41 @@ static constexpr float kParamTau = 0.0067f; // ~20 ms settle (wow / flutter / no
 // the shelves are neutral at the -12 preset-validation anchor by construction.
 //
 // BRIGHTNESS FIX (2026-07-12): the HF-restore gains were originally fit to the
-// level_probe SINGLE-TONE delta surface (HF ~+5 dB @8-15k @0 dBFS). That target was an
+// private calibration analysis SINGLE-TONE delta surface (HF ~+5 dB @8-15k @0 dBFS). That target was an
 // artifact: a lone loud HF *tone* self-compresses in the shaper (~5 dB @0 dBFS) and the
 // shelf restored it -> good single-tone match. But on BROADBAND program the HF partials
 // ride LOW on dominant LF/mid energy, are NOT self-compressed, yet this shelf (keyed on
 // the loud broadband peak) still boosted them -> the audible +2.8..+4.3 dB rising
 // 10-16k tilt on loud sustained material (falsified by the control: forcing these to 0
 // collapsed the tilt to <=0.6 dB, and the "dull drums" the shelf supposedly fixed were
-// not dull without it). broadband_hf_probe measured the TRUE broadband HF loss vs UAD:
-// FLAT and tiny across all levels -- A800 ~+0.4 dB (already slightly bright -> no
-// restore), Classic102 ~-0.5..-0.9 dB (slightly dark -> a small level-keyed lift).
+// not dull without it). private calibration analysis measured the TRUE broadband HF loss vs reference:
+// FLAT and tiny across all levels -- Swiss ~+0.4 dB (already slightly bright -> no
+// restore), American ~-0.5..-0.9 dB (slightly dark -> a small level-keyed lift).
 // Swiss set to 0; Classic to a small value (a broad 6k high-shelf can't flatten the
 // residual S-tilt fully -- 2.50 minimises the worst band while keeping the top octave
-// safe). See a800-comparison-harness memory (brightness campaign) for the full tables.
+// safe). See private comparison harness memory (brightness campaign) for the full tables.
 static constexpr float kRampPow        = 1.30f;  // flux->factor gamma over the -12..0 window
-static constexpr float kLevelHfSwiss   = 0.00f;  // Swiss800  level-keyed HF restore (broadband HF loss ~0)
-static constexpr float kLevelHfClassic = 2.50f;  // Classic102 level-keyed HF restore (small; ATR runs ~0.5 dB dark)
-static constexpr float kLevelLfSwiss   = 2.90f;  // Swiss800  LF-cut peak dB at full flux (@32 Hz Q1.4)
-static constexpr float kLevelLfClassic = 5.60f;  // Classic102 LF-cut peak dB at full flux (@30 Hz Q1.6)
+static constexpr float kLevelHfSwiss   = 0.00f;  // Swiss  level-keyed HF restore (broadband HF loss ~0)
+static constexpr float kLevelHfAmerican = 2.50f;  // American level-keyed HF restore (small; Classic runs ~0.5 dB dark)
+static constexpr float kLevelLfSwiss   = 2.90f;  // Swiss  LF-cut peak dB at full flux (@32 Hz Q1.4)
+static constexpr float kLevelLfAmerican = 5.60f;  // American LF-cut peak dB at full flux (@30 Hz Q1.6)
 
 // Below-anchor decay of the KNOB-keyed driveHfComp (the "crest sizzle" fix). The static
 // driveHfComp restores the HF the shaper compresses AT the -12 dBFS operating flux, but it
 // is CONSTANT with signal level: below the anchor the shaper stops compressing HF (linear
 // regime) yet the static restore stays fully bright, so on quiet passages / the tail of a
-// drum hit mine reads +3-4 dB brighter @8-15k than the UAD (whose record brightness FADES,
+// drum hit mine reads +3-4 dB brighter @8-15k than the reference (whose record brightness FADES,
 // and actually DARKENS the HF, as flux drops below -12). This multiplies driveHfCompDb by a
 // signal-flux-keyed factor that is EXACTLY 1.0 at/above the anchor (neutrality: every preset
-// FR fit was validated at the -12 dBFS gate, and driveHfComp is ~0 for all reference/ATR/
+// FR fit was validated at the -12 dBFS gate, and driveHfComp is ~0 for all reference/Classic/
 // low-drive presets, so those are untouched either way) and decays below it, crossing 0 into
-// a small negative floor so the shelf actively CUTS HF at low flux to follow the UAD's
-// measured low-level darkening. Fit to the level_probe below-anchor drift on Drum Bus + Old
-// Tape (both A800, drift ~+2.8/-6, +3.6/-12, +3.9/-18 dB below anchor @10k). tau in dB.
+// a small negative floor so the shelf actively CUTS HF at low flux to follow the reference's
+// measured low-level darkening. Fit to the private calibration analysis below-anchor drift on Drum Bus + Old
+// Tape (both Swiss, drift ~+2.8/-6, +3.6/-12, +3.9/-18 dB below anchor @10k). tau in dB.
 static constexpr float kDriveDecayDepth = 1.75f; // floor depth: factor -> (1-depth) as flux drops far below anchor
 static constexpr float kDriveDecayTau   = 5.0f;  // dB below anchor for the decay's e-fold
 
-// Calibration trim in dB, indexed by the Calibration choice (matches the UAD
+// Calibration trim in dB, indexed by the Calibration choice (matches the reference
 // Cal Level labels +3/+6/+7.5/+9). Was a uniform pCalibration*3; the +7.5 rung
 // breaks the arithmetic progression, so it is a table now.
 static inline float calibrationDbFromIndex (int idx) noexcept
@@ -77,10 +77,10 @@ static inline float autoCalBiasFromTypeSpeed (TapeCore::TapeType type, TapeCore:
     float optimalBias = 0.5f;
     switch (type)
     {
-        case TapeCore::Type456: optimalBias = 0.50f; break;
-        case TapeCore::TypeGP9: optimalBias = 0.55f; break;
-        case TapeCore::Type900: optimalBias = 0.54f; break;
-        case TapeCore::Type250: optimalBias = 0.45f; break;
+        case TapeCore::FormulaClassic: optimalBias = 0.50f; break;
+        case TapeCore::FormulaHighOutput: optimalBias = 0.55f; break;
+        case TapeCore::FormulaModern: optimalBias = 0.54f; break;
+        case TapeCore::FormulaVintage: optimalBias = 0.45f; break;
     }
     switch (speed)
     {
@@ -156,11 +156,11 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
         const auto initMachine = static_cast<TapeCore::TapeMachine> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1));
         const auto initType    = static_cast<TapeCore::TapeType>    (clampI (pType.load  (std::memory_order_relaxed), 0, 3));
         // Normalize speed the same way processBlock does before autoCalBiasFromTypeSpeed:
-        // the Swiss 800 has no 3.75 IPS, so coerce it to 15 IPS. Without this the snap uses
-        // the un-coerced 3.75 target and smBias ramps on the first block for a Swiss 800+3.75
+        // the Swiss has no 3.75 IPS, so coerce it to 15 IPS. Without this the snap uses
+        // the un-coerced 3.75 target and smBias ramps on the first block for a Swiss+3.75
         // preset/automation recall.
         int initSpeedIdx = clampI (pSpeed.load (std::memory_order_relaxed), 0, 3);
-        if (initMachine == TapeCore::Swiss800 && initSpeedIdx == TapeCore::Speed_3_75_IPS)
+        if (initMachine == TapeCore::Swiss && initSpeedIdx == TapeCore::Speed_3_75_IPS)
             initSpeedIdx = TapeCore::Speed_15_IPS;
         const auto initSpeed = static_cast<TapeCore::TapeSpeed> (initSpeedIdx);
         smBias.snap    (pAutoCal.load (std::memory_order_relaxed)
@@ -396,21 +396,21 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- block-constant parameter reads --------------------------------------
     const auto machine = static_cast<TapeCore::TapeMachine> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1));
     int speedIdx = clampI (pSpeed.load (std::memory_order_relaxed), 0, 3);
-    // 3.75 IPS is an Classic 102 Classic 102-only speed; the Swiss 800 has no 3.75. Coerce it
-    // to 15 IPS on the Swiss 800 so preset/automation recall of Swiss 800+3.75 stays valid
-    // (the UI hard-hides 3.75 from the Swiss 800's dropdown).
-    if (machine == TapeCore::Swiss800 && speedIdx == TapeCore::Speed_3_75_IPS)
+    // 3.75 IPS is an American-only speed; the Swiss model has no 3.75. Coerce it
+    // to 15 IPS on the Swiss so preset/automation recall of Swiss+3.75 stays valid
+    // (the UI hard-hides 3.75 from the Swiss's dropdown).
+    if (machine == TapeCore::Swiss && speedIdx == TapeCore::Speed_3_75_IPS)
         speedIdx = TapeCore::Speed_15_IPS;
     const auto speed   = static_cast<TapeCore::TapeSpeed> (speedIdx);
     const auto type    = static_cast<TapeCore::TapeType>    (clampI (pType.load (std::memory_order_relaxed), 0, 3));
-    // AES removed (neither UAD deck has it); a stale AES(2) from an old preset -> NAB.
+    // AES removed (neither reference deck has it); a stale AES(2) from an old preset -> NAB.
     int eqIdx = pEqStandard.load (std::memory_order_relaxed);
     if (eqIdx < 0 || eqIdx > 1) eqIdx = 0;
     const auto eq      = static_cast<TapeCore::EQStandard>  (eqIdx);
 
-    // ATR-102 front-panel toggles (Classic 102 only; ignored on the Swiss 800 so its whole
+    // American front-panel toggles (American only; ignored on the Swiss so its whole
     // path stays byte-identical regardless of the stored values). All default On = current.
-    const bool isClassic     = (machine == TapeCore::Classic102);
+    const bool isClassic     = (machine == TapeCore::American);
     const bool crosstalkOn   = pCrosstalk.load (std::memory_order_relaxed);
     const bool wfEnabled     = pWowFlutterOn.load (std::memory_order_relaxed);
     const bool transformerOn = pTransformer.load (std::memory_order_relaxed);
@@ -426,7 +426,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         // rising); unity/cal-neutrality are handled inside the tape core
         // (m_machineMakeupGain + cal restore). The Output knob remains a small ADDITIVE
         // makeup trim on top of the inverse (default 0 -> pure inverse -> byte-identical
-        // unity). Factory presets use it to carry the UAD preset's own non-unity output
+        // unity). Factory presets use it to carry the reference preset's own non-unity output
         // level (a post-tape LINEAR gain: shifts loudness but not THD/FR/aliasing).
         targetOutputGain = dbToGain (-inputGainDb + pOutputGainDb.load (std::memory_order_relaxed));
     }
@@ -440,9 +440,9 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
 
     const float saturationAmount = std::clamp (((inputGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
     smSat.setTarget     (saturationAmount);
-    // ATR Wow & Flutter master enable: when Off on the Classic 102, zero the W&F depth (the
-    // knobs are our superset control; the discrete UAD toggle simply gates them). On (default)
-    // or the Swiss 800 => the knob values pass through unchanged (byte-identical).
+    // American Wow & Flutter master enable: when Off, zero the W&F depth (the
+    // knobs are our superset control; the discrete reference toggle simply gates them). On (default)
+    // or the Swiss => the knob values pass through unchanged (byte-identical).
     float wowPct = pWow.load (std::memory_order_relaxed);
     float flutPct = pFlutter.load (std::memory_order_relaxed);
     if (isClassic && ! wfEnabled) { wowPct = 0.0f; flutPct = 0.0f; }
@@ -455,7 +455,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     const bool noiseEnabled = pNoiseAmount.load (std::memory_order_relaxed) > 0.05f;
 
     const float calibrationDb = calibrationDbFromIndex (pCalibration.load (std::memory_order_relaxed));
-    // Head Width (Classic 102 Classic 102 only; the DSP ignores it on the Swiss 800). 1 = 1/2" reference.
+    // Head Width (American only; the DSP ignores it on the Swiss model). 1 = 1/2" reference.
     const int headWidth = clampI (pHeadWidth.load (std::memory_order_relaxed), 0, 2);
 
     // Bias: auto-cal (from type/speed) or manual — block target, matches JUCE. Auto-cal uses
@@ -480,7 +480,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // (The old detector scaled |x| by the raw per-block targetInputGain while knobFluxDb used
     // the smoothed gain, so a gain move broke the anchor and chirped the HF.) SHARED across
     // L/R (max of |L|,|R|): a per-channel detector would tilt the stereo image whenever one
-    // channel is louder (mid/side spectral shift); the UAD record path is mono-linked, so a
+    // channel is louder (mid/side spectral shift); the reference record path is mono-linked, so a
     // shared level for the tonal EQ keeps L/R spectrally matched. Representative = the peak the
     // detector reaches this block (persistent state carries the release tail across blocks),
     // so a drum hit shifts the tone ON the hit, not a block later.
@@ -501,11 +501,11 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // Drive-linked HF restore + signal-level FR compensation. The memoryless tape core's
     // FR drifts with RECORD FLUX (signal level + input-gain + cal + bias): above the
     // -12 dBFS reference operating level the HF droops (waveshaper HF compression) and the
-    // deep lows thicken (rel-1k) MORE than the UAD does; at/below -12 dBFS the deltas
+    // deep lows thicken (rel-1k) MORE than the reference does; at/below -12 dBFS the deltas
     // vanish. `driveHfCompDb` (unchanged) is the KNOB-keyed static HF restore that keeps
     // every factory preset's FR valid at the -12 dBFS gate level. On top of that a
     // SIGNAL-level term (levelFactor) adds the level-dependent HF restore / LF cut the
-    // static shelf can't, so the FR-vs-level surface matches the UAD on real program.
+    // static shelf can't, so the FR-vs-level surface matches the reference on real program.
     //
     // Track the SMOOTHED saturation (not the raw knob): the compression it cancels ramps
     // over ~kSatTau via smSat, so a shelf snapped from the instant inputGainDb would jump
@@ -520,13 +520,13 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // smoother (smSat), not the raw audio-level gain. Matching the 20 ms audio gain instead
     // would slide the shelf ahead of the compression during a gain move and chirp the HF.
     const float smInGainDb   = smSat.value() * 0.01f * 24.0f - 12.0f;   // undo saturationAmount mapping
-    const float kCalFluxDb   = (machine == TapeCore::Swiss800 ? 0.58f : 1.30f) * (calibrationDb - 6.0f);
+    const float kCalFluxDb   = (machine == TapeCore::Swiss ? 0.58f : 1.30f) * (calibrationDb - 6.0f);
     // Under-bias flux: a low Bias knob (Auto Cal off) drives the shaper HOT (biasDrive>1),
     // which the memoryless curve compresses in HF — but the real decks BRIGHTEN when
     // under-biased. Fold the bias-drive dB into driveAboveRef so the HF-restore shelf tracks
     // it and flips the direction. Mirrors the core biasDrive (exp curve); 0 dB at bias 0.5 so
     // the reference/auto-cal path is unchanged. Over-bias (biasDrive<1) clamps to 0 below.
-    const float biasDriveExp = (machine == TapeCore::Swiss800)
+    const float biasDriveExp = (machine == TapeCore::Swiss)
                                    ? std::clamp (std::exp (4.0f * (0.5f - smBiasAmount)), 0.2f, 5.0f)
                                    : std::clamp (std::exp (6.5f * (0.5f - smBiasAmount)), 0.15f, 9.0f);
     const float biasFluxDb   = 20.0f * std::log10 (biasDriveExp);
@@ -534,18 +534,18 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // ALSO the flux the signal reaches at exactly -12 dBFS input (see the anchor below).
     const float knobFluxDb    = smInGainDb + kCalFluxDb + biasFluxDb;
     const float driveAboveRef = std::max (0.0f, knobFluxDb);
-    const float kDriveHfCoeff = (machine == TapeCore::Swiss800) ? 0.040f : 0.020f;
-    // Under-bias BRIGHTENING (measured on both UAD decks: low bias => HF RISES +4..5 dB
+    const float kDriveHfCoeff = (machine == TapeCore::Swiss) ? 0.040f : 0.020f;
+    // Under-bias BRIGHTENING (measured on both reference decks: low bias => HF RISES +4..5 dB
     // @10k — less HF self-erasure): the quadratic drive term alone only cancels the
     // shaper's HF compression (nets ~flat at low bias), so a linear bias-flux term pushes
     // the response positive like the hardware. 0 at/above optimal bias => reference and
     // auto-cal paths unchanged.
-    const float kBiasHf       = (machine == TapeCore::Swiss800) ? 0.40f : 0.35f;
+    const float kBiasHf       = (machine == TapeCore::Swiss) ? 0.40f : 0.35f;
     const float driveHfCompDb = std::min (12.0f, kDriveHfCoeff * driveAboveRef * driveAboveRef
                                                  + kBiasHf * std::max (0.0f, biasFluxDb));
 
     // Signal-level term. ANCHOR / RECONCILIATION (keeps every preset FR fit valid by
-    // construction): the UAD spec operating level is -12 dBFS (= 0 VU). The record flux above
+    // construction): the reference spec operating level is -12 dBFS (= 0 VU). The record flux above
     // the -12 ref = the PRE-gain signal level (envDbPre) + the SMOOTHED input gain (smInGainDb)
     // + 12. Both signalFluxDb and knobFluxDb carry the SAME smInGainDb term, so the input gain
     // cancels by construction: a mid-automation gain move can NOT shift the anchor (the old
@@ -553,7 +553,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // == -12, so signalFluxDb == smInGainDb + kCal + bias == knobFluxDb and the increment below
     // is EXACTLY 0 -> the static-only compensation the fits were done against is reproduced
     // bit-for-bit. Above -12 dBFS the increment grows (and reaches "full" sooner for hot presets,
-    // i.e. it slides along the flux axis with inGain, exactly as the level_probe surface does).
+    // i.e. it slides along the flux axis with inGain, exactly as the private calibration analysis surface does).
     // ramp() = flux mapped 0..1 over the -12..0 dBFS window, gamma kRampPow so -6 dBFS lands at
     // ~40% of full (matches the measured surface).
     const float signalFluxDb = envDbPre + smInGainDb + 12.0f + kCalFluxDb + biasFluxDb;
@@ -577,8 +577,8 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         m_levelFactorSm += blockCoeff * (levelFactorTarget - m_levelFactorSm);
     }
     const float levelFactor  = m_levelFactorSm;
-    const float kLevelHfGain = (machine == TapeCore::Swiss800) ? kLevelHfSwiss   : kLevelHfClassic;
-    const float kLevelLfGain = (machine == TapeCore::Swiss800) ? kLevelLfSwiss   : kLevelLfClassic;
+    const float kLevelHfGain = (machine == TapeCore::Swiss) ? kLevelHfSwiss   : kLevelHfAmerican;
+    const float kLevelLfGain = (machine == TapeCore::Swiss) ? kLevelLfSwiss   : kLevelLfAmerican;
     const float levelHfDb    = std::min (9.0f, kLevelHfGain * levelFactor);   // HF restore (>=0)
     const float levelLfDb    = -kLevelLfGain * levelFactor;                   // LF cut (<=0)
 
@@ -590,12 +590,12 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // level-comp anchor above). NEUTRALITY PROOF: at/above the anchor belowAnchorDb >= 0 so
     // decayTarget == 1.0 and driveHfCompDb is unmultiplied -> every preset-FR fit (validated at
     // the -12 dBFS sweep) and the -6 dBFS THD step are reproduced bit-for-bit; and for every
-    // reference / ATR / low-drive preset driveHfCompDb is ~0 (driveAboveRef == 0 + no under-bias),
+    // reference / Classic / low-drive preset driveHfCompDb is ~0 (driveAboveRef == 0 + no under-bias),
     // so the factor multiplies zero and changes nothing regardless of level. The decay ONLY bites
     // BELOW -12 dBFS AND only on hot presets (Old Tape, Drum Bus, Thick Sat...) whose static
-    // restore would otherwise stay fully bright while the UAD's record brightness has faded. The
+    // restore would otherwise stay fully bright while the reference's record brightness has faded. The
     // floor is NEGATIVE (factor -> 1 - kDriveDecayDepth ~= -0.75) so the shelf actively cuts HF at
-    // low flux, matching the UAD's measured low-level HF darkening (the shaper compression that
+    // low flux, matching the reference's measured low-level HF darkening (the shaper compression that
     // the restore cancels has itself vanished, so the residual is a real record-HF-loss deficit).
     const float belowAnchorDb  = signalFluxDb - knobFluxDb;   // = envDbPre + 12; <0 below the -12 anchor
     const float decayTarget    = (belowAnchorDb >= 0.0f)
@@ -630,8 +630,8 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     coreL.setReproEq (rLf, rLmf, rHmf, rHf);
     coreR.setReproEq (rLf, rLmf, rHmf, rHf);
 
-    // ATR Transformer switch (Classic 102 only): Off bypasses the output transformer, which
-    // EXTENDS the deep bass (measured ATR On->Off = +3.4/+1.0/+0.4 dB @30/60/100 Hz, flat
+    // Classic Transformer switch (American only): Off bypasses the output transformer, which
+    // EXTENDS the deep bass (measured Classic On->Off = +3.4/+1.0/+0.4 dB @30/60/100 Hz, flat
     // above ~200 Hz) and THINS the added 2nd harmonic (measured -8 dB). Modelled as an LF
     // low-shelf restore + an even-order scale (setTransformerOff). On (default) or the Swiss
     // 800 => both neutral (0 dB / scale 1) => byte-identical. IMD (the transformer's dynamic
@@ -639,20 +639,20 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // under-produces it in both states (a documented residual; a faithful IMD match needs a
     // shaper re-fit, out of scope per the campaign rules).
     const bool transformerOff = isClassic && ! transformerOn;
-    const float kTransformerLfDb = 4.0f;   // low-shelf restore gain when bypassed (tuned: OFF @30 Hz mine +6.4 vs UAD +6.35)
-    const float kTransformerEven = 0.08f;  // even (2nd) scale when bypassed (tuned: OFF 2f mine ~-64 vs UAD -64.2)
+    const float kTransformerLfDb = 4.0f;   // low-shelf restore gain when bypassed (tuned: OFF @30 Hz mine +6.4 vs reference +6.35)
+    const float kTransformerEven = 0.08f;  // even (2nd) scale when bypassed (tuned: OFF 2f mine ~-64 vs reference -64.2)
     coreL.setTransformerOff (transformerOff ? kTransformerLfDb : 0.0f, transformerOff ? kTransformerEven : 1.0f);
     coreR.setTransformerOff (transformerOff ? kTransformerLfDb : 0.0f, transformerOff ? kTransformerEven : 1.0f);
 
     // Shared wow/flutter rates + per-speed DEPTH scale (block-constant, from speed).
-    // The UAD decks' W&F FM deviation at a fixed 1 kHz pitch scales strongly with tape
-    // speed: measured ATR-102 (W&F on, 456/NAB/+6) FMdev = 0.117/0.065/0.036/0.026 Hz at
+    // The reference decks' W&F FM deviation at a fixed 1 kHz pitch scales strongly with tape
+    // speed: measured American (W&F on, classic formulation/NAB/+6) FMdev = 0.117/0.065/0.036/0.026 Hz at
     // 3.75/7.5/15/30 IPS — slower tape means a given capstan wobble is a larger fraction of
     // the transport speed, so a larger pitch swing. wfDepthScale is that curve normalised to
-    // 15 IPS = 1.0. The Studer has NO W&F param (measured flat ~0.014 Hz = the demod floor),
+    // 15 IPS = 1.0. The Swiss has NO W&F param (measured flat ~0.014 Hz = the demod floor),
     // so this universal tape-physics curve is applied to BOTH machines. kWowDepth/kFlutterDepth
     // (TapeMachineDSP.hpp) were re-anchored (÷3.25) so the Sunbaked preset (3.75 IPS, the depth
-    // calibration anchor) still matches the UAD (FMdev ~0.20 Hz) after the 3.25x scale here.
+    // calibration anchor) still matches the reference (FMdev ~0.20 Hz) after the 3.25x scale here.
     float wowRate = 0.5f, flutterRate = 5.0f, wfDepthScale = 1.0f;
     switch (speed)
     {
@@ -754,12 +754,12 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- crosstalk (base rate — deviation from JUCE's OS-rate placement) ------
     if (nCh >= 2)
     {
-        // Swiss 800: the UAD stereo instance models no L/R adjacent-track bleed, so the
-        // Swiss 800 crosstalk is essentially nil. Classic102 matches the UAD Classic 102's
+        // Swiss: the reference stereo instance models no L/R adjacent-track bleed, so the
+        // Swiss crosstalk is essentially nil. American matches the reference American's
         // modelled "Crosstalk On" bleed (~-51 dB L->R).
-        // ATR Crosstalk switch (Classic 102 only): Off removes the modelled adjacent-track
-        // bleed. On (default) or the Swiss 800 => the current bleed (byte-identical).
-        float crosstalkAmount = (machine == TapeCore::Swiss800) ? 0.0006f : 0.0027f;
+        // Classic Crosstalk switch (American only): Off removes the modelled adjacent-track
+        // bleed. On (default) or the Swiss => the current bleed (byte-identical).
+        float crosstalkAmount = (machine == TapeCore::Swiss) ? 0.0006f : 0.0027f;
         if (isClassic && ! crosstalkOn) crosstalkAmount = 0.0f;
         for (int n = 0; n < nSamples; ++n)
         {

@@ -24,7 +24,7 @@ Multi-mode compressor with seven classic compression styles plus 4-band multiban
 - **Vintage Opto** – Classic 1960s tube optical leveling amplifier. Program-dependent attack/release with smooth, musical compression, including a T4B-style slow "afterglow" release on sustained material. Features "Peak Reduction" and "Gain" controls with optional Limit mode.
 - **Vintage FET** – Classic late-1960s FET limiting amplifier. All-discrete Class A design with ultra-fast attack times. Ratios (4:1, 8:1, 12:1, 20:1, plus All) re-derived from real hardware measurements, a new adjustable Threshold (-60 to 0 dB), gain-reduction-scaled harmonics, and "All Buttons" mode for extreme compression/distortion.
 - **Classic VCA** – Fast, precise 1970s VCA compressor. Known for its punchy, aggressive character with soft-knee compression. Great for drums and percussive sources.
-- **Bus Compressor** – Faithful stereo-linked SSL-style console bus compressor. The quintessential mix bus glue with fixed attack/release detents, Auto release, and gain-reduction-scaled harmonics. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
+- **Bus Compressor** – Faithful stereo-linked British bus compressor. The quintessential mix bus glue with fixed attack/release detents, Auto release, and gain-reduction-scaled harmonics. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
 - **Studio FET** – Later revision FET limiter. Cleaner character with approximately 30% of the harmonic content of the vintage version. More controlled transient response.
 - **Studio VCA** – Modern British dual VCA compressor. Clean, musical compression with RMS detection and soft knee. Excellent for vocals and mix bus applications.
 - **Digital** – Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection. Ideal for surgical dynamics control where transparency is paramount.
@@ -33,14 +33,14 @@ Multi-mode compressor with seven classic compression styles plus 4-band multiban
 **Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
 
 ### TapeMachine 2 - RELEASED
-DPF-based Studer A800 and Ampex ATR-102-inspired tape processing featuring:
-- Swiss 800 and Classic 102 deck models with distinct plugin identity from TapeMachine 1.x
+DPF-based tape processing with distinct tracking and mastering deck models:
+- Swiss and American models with distinct plugin identity from TapeMachine 1.x
 - Type 456, GP9, 900, and 250 tape formulations
-- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on Classic 102
+- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on American
 - Repro, Sync, Input, and Thru paths with NAB/CCIR EQ
 - Input drive, linked output compensation, bias/calibration, wow, flutter, noise, and filters
-- Classic 102 head-width, crosstalk, transport, and transformer controls
-- Four-band Advanced reproduce EQ and 20 UAD-matched factory presets
+- American head-width, crosstalk, transport, and transformer controls
+- Four-band Advanced reproduce EQ and 20 calibrated factory presets
 - Fixed, fitted 2x nonlinear core
 - macOS AU/VST3/CLAP/LV2 universal builds and Linux VST3/CLAP/LV2 builds
 

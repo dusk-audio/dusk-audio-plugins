@@ -59,8 +59,8 @@ public:
 
     enum TapeMachine
     {
-        Swiss800 = 0,
-        Classic102
+        Swiss = 0,
+        American
     };
 
     enum TapeSpeed
@@ -72,10 +72,10 @@ public:
 
     enum TapeType
     {
-        Type456 = 0,
-        GP9,
-        BASF911,
-        Type250
+        FormulaClassic = 0,
+        FormulaHighOutput,
+        FormulaBalanced,
+        FormulaVintage
     };
 
 private:
