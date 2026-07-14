@@ -159,6 +159,8 @@ private:
     void text(ImDrawList* dl, float x, float y, float sz, ImU32 c, const char* t, int align, bool bold = false)
     { panel.text(dl, x, y, sz, c, t, align, bold); }
 
+    // This UI is deliberately tooltip-free (user spec). No hover-help anywhere.
+
     float meterLevel(int ch)
     {
         const bool out = meterSource != 0;
@@ -334,7 +336,7 @@ private:
                                         IM_COL32(186, 186, 188, 255), IM_COL32(186, 186, 188, 255));
         dl->AddRect(b0, b1, active ? IM_COL32(150, 84, 74, 255) : IM_COL32(90, 90, 92, 255),
                     2.0f * s, 0, active ? 1.4f * s : 1.2f * s);
-        text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 9.5f, active ? kColRed : kColInk, label, 0, true);
+        text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.0f, active ? kColRed : kColInk, label, 0, true);
         return ImGui::IsItemClicked();
     }
 
@@ -362,8 +364,8 @@ private:
     // as the purpose only ("Master"/"Color"/"Mix"/"Lo-Fi") beneath the deck heading.
     static const char* presetPurpose(const char* category)
     {
-        if (std::strncmp(category, "Classic 102 ", 12) == 0) return category + 12;
-        if (std::strncmp(category, "Swiss 800 ",   10) == 0) return category + 10;
+        if (std::strncmp(category, "American ", 9) == 0) return category + 9;
+        if (std::strncmp(category, "Swiss ",    6) == 0) return category + 6;
         return category;   // "Lo-Fi"
     }
 
@@ -404,7 +406,7 @@ private:
         text(dl, 42, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
         {   // machine badge (accent-tinted). Options are hard-gated per machine, so
             // no non-standard state exists to flag.
-            const char* badge = isA800() ? "Swiss 800" : "Classic 102";
+            const char* badge = isSwiss() ? "Swiss" : "American";
             dl->AddRectFilled(P(193, 16), P(243, 34), accentCol(), 3.0f * s);
             dl->AddRect(P(193, 16), P(243, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
             text(dl, 218, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
@@ -417,8 +419,14 @@ private:
         if (chevron(dl, "##pv", 298, 28, true)) stepPreset(-1);
         ImGui::SetCursorScreenPos(P(311, 18));
         ImGui::SetNextItemWidth(200.0f * s);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
+        // Crisp combo text (a baked bold face, not the blurry ImGui default atlas) and a
+        // frame height locked to 20 px so the dropdown lines up flush with the hand-drawn
+        // header buttons (all on the 18..38 band). padY centres the text in that height.
+        ImGui::PushFont(panel.pickFont(11.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(6.0f * s, std::max(0.0f, 0.5f * (20.0f * s - ImGui::GetFontSize()))));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(218, 217, 213, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(232, 231, 227, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
         ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(150, 152, 156, 255));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(176, 178, 182, 255)); // silver hover (matches Header, not ImGui default blue)
@@ -459,9 +467,9 @@ private:
 
             // Two columns, one per deck (table order preserved within each), accent-tinted
             // to match each machine's badge. 10 factory presets per deck -> all 20 visible.
-            presetColumn(1, "CLASSIC 102", IM_COL32(176, 116, 70, 255), colW);   // warm copper deck
+            presetColumn(1, "AMERICAN", IM_COL32(176, 116, 70, 255), colW);   // warm copper deck
             ImGui::SameLine(0.0f, 14.0f * s);
-            presetColumn(0, "SWISS 800",   IM_COL32(96, 120, 150, 255), colW);   // cool blue deck
+            presetColumn(0, "SWISS",    IM_COL32(96, 120, 150, 255), colW);   // cool blue deck
 
             if (!userPresets.empty())
             {
@@ -473,6 +481,8 @@ private:
             ImGui::EndCombo();
         }
         ImGui::PopStyleColor(10);
+        ImGui::PopStyleVar();
+        ImGui::PopFont();
         if (chevron(dl, "##nx", 524, 28, false)) stepPreset(+1);
         if (textButton(dl, "##init", 545, 18, 581, 38, "INIT")) initDefaults();
         if (textButton(dl, "##save", 587, 18, 623, 38, "SAVE"))
@@ -484,13 +494,16 @@ private:
 
         // bypass, tucked closer to INIT/SAVE (SAVE ends ~623) while staying clear
         // of the top-right corner screw (~x784).
-        tmButton(dl, "bypass", kParamBypass, 628, 18, 704, 38, "BYPASS");
-        // ADVANCED: reveals the hidden back panel — Repro EQ + (Classic 102) transport
+        const bool bypassed = values[kParamBypass] > 0.5f;
+        tmButton(dl, "bypass", kParamBypass, 628, 18, 704, 38,
+                 bypassed ? "BYPASSED" : "BYPASS", false);
+        // ADVANCED: reveals the hidden back panel — Repro EQ + (American) transport
         // electronics. Wider cell than the old "EQ" for the longer label; still clears the
         // top-right corner screw (centre ~x784, head starts ~x779).
         // Toggle: opens the modal, latches active (engaged-cap styling) while open,
         // and closes it when clicked again. The scrim also dismisses on an outside click.
-        if (textButton(dl, "##adv", 710, 18, 776, 38, "ADVANCED", showAdvanced)) showAdvanced = !showAdvanced;
+        if (textButton(dl, "##adv", 710, 18, 776, 38, "ADVANCED", showAdvanced))
+            showAdvanced = !showAdvanced;
     }
 
     // Meter source IN|OUT switch. Removed from the UI by request; kept intact (the
@@ -515,17 +528,17 @@ private:
         dl->AddRect(P(mx0, my0), P(mx1, my1), IM_COL32(90, 90, 92, 255), 3.0f * s, 0, 1.2f * s);
     }
 
-    // Hidden advanced panel (UAD-style back panel): the Repro-head EQ trims plus (on the
-    // Classic 102) the transport-electronics switches, kept off the main face. A full-canvas
+    // Hidden advanced panel (reference-style back panel): the Repro-head EQ trims plus (on the
+    // American) the transport-electronics switches, kept off the main face. A full-canvas
     // scrim swallows clicks to the controls behind and closes on an OUTSIDE click.
     void drawAdvanced(ImDrawList* dl)
     {
-        // Classic 102 hosts the transport-electronics toggles below the EQ, so its card
-        // grows downward; the Swiss 800 has no such switches and keeps the shorter
+        // American hosts the transport-electronics toggles below the EQ, so its card
+        // grows downward; the Swiss has no such switches and keeps the shorter
         // EQ-only card with the EQ centred as before.
-        const bool classic = !isA800();
-        // Card ends just below its last content: the EQ readouts (Swiss 800) or the
-        // CROSSTALK/XFMR row (Classic 102). No CLOSE button — the scrim dismisses.
+        const bool classic = !isSwiss();
+        // Card ends just below its last content: the EQ readouts (Swiss) or the
+        // CROSSTALK/XFMR row (American). No CLOSE button — the scrim dismisses.
         const float cardBot = classic ? 426.0f : 356.0f;
 
         // scrim: dim the main panel + catch OUTSIDE clicks to dismiss. It covers the whole
@@ -594,7 +607,7 @@ private:
             text(dl, k.cx, 334, 9.5f, IM_COL32(206, 206, 210, 255), rb, 0);   // bright readout
         }
 
-        // Transport electronics — Classic 102 only (the Swiss 800 A800 has none of these
+        // Transport electronics — American only (the Swiss model has none of these
         // output-stage switches, mirroring the main-panel gating). Relocated here from the
         // main toggle row; wired via tmButton exactly as before so look + param handling
         // (edit / setParameterValue / values[] sync) are unchanged.
@@ -639,7 +652,7 @@ private:
                 float level, float peak, float& needle, float& clipHold, bool clipEnabled,
                 ImU32 accent, const char* label)
     {
-        // 0 VU = -12 dBFS: the UAD/Swiss 800/Classic 102 spec ("plug-in operates at an internal
+        // 0 VU = -12 dBFS: the reference/Swiss/American spec ("plug-in operates at an internal
         // level of -12 dBFS ... a -12 dBFS input equates to 0 dB on the meters").
         // The DSP now feeds a mean-abs (rectified) value, which reads 2/pi (-3.92 dB) below
         // peak for a sine. So a -12 dBFS sine arrives here as 0.15992 lin, and the offset is
@@ -699,7 +712,7 @@ private:
             dl->AddLine(pt(rt, a), pt(rt + (major ? 6.0f : 4.0f), a),
                         rz ? red : ink, (major ? 1.6f : 1.0f) * s);
             char b[6]; std::snprintf(b, sizeof(b), "%d", (int)std::abs(db));
-            num(L * 0.80f, a, b, rz ? red : ink, 9.5f);
+            num(L * 0.80f, a, b, rz ? red : ink, 10.0f);
         }
         // percentage row (0..100) across the black zone, closer to the pivot
         const float pct0 = std::pow(10.0f, -3.0f / 20.0f); // 0 VU == 100%
@@ -707,7 +720,7 @@ private:
         {
             const float aP = kVuA0 + (k / 5.0f) * pct0 * (kVuA1 - kVuA0);
             char b[6]; std::snprintf(b, sizeof(b), "%d", k * 20);
-            num(L * 0.60f, aP, b, IM_COL32(70, 60, 46, 255), 7.5f);
+            num(L * 0.60f, aP, b, IM_COL32(70, 60, 46, 255), 8.5f);
         }
         // - (left) and + (red, right) marks in the top corners
         text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
@@ -751,12 +764,12 @@ private:
         dl->AddCircleFilled(ImVec2(lp.x - 1.4f * s, lp.y - 1.6f * s), 1.6f * s,
                             IM_COL32(255, 205, 185, over ? 235 : 38), 10);             // specular dot
         // small screened label so the click-to-reset lamp reads as PEAK without a tooltip
-        text(dl, fx1 - 15, pivotY - L * 0.20f + 8.5f, 6.5f,
+        text(dl, fx1 - 15, pivotY - L * 0.20f + 8.5f, 7.5f,
              over ? red : IM_COL32(118, 98, 78, 210), "PEAK", 0, true);
 
         // VU legend + channel tag
         text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
-        text(dl, cx, pivotY - L * 0.46f + 13.0f, 8.5f, IM_COL32(90, 80, 64, 255), label, 0, true);
+        text(dl, cx, pivotY - L * 0.46f + 13.0f, 9.0f, IM_COL32(90, 80, 64, 255), label, 0, true);
 
         // black needle with soft shadow + mound pivot
         const float na = kVuA0 + needle * (kVuA1 - kVuA0);
@@ -779,8 +792,8 @@ private:
     }
 
     //--- selectors (single row of six) -----------------------------------------
-    // cx = column centre; w = combo width (sized to fit its widest option +
-    // the dropdown arrow). The combo is centred under its (centred) label.
+    // cx = column centre; w = uniform combo width (one grid width for all cells).
+    // The combo is centred under its (centred) label.
     // nVisible = how many of the param's choices to expose for the CURRENT machine
     // (hard per-machine gating: only the deck's real options are selectable — no
     // amber "non-standard" state; the dropdown simply omits unavailable options).
@@ -789,14 +802,24 @@ private:
     {
         const TmParam& d = kTmParams[param];
         if (nVisible <= 0 || nVisible > d.numChoices) nVisible = d.numChoices;
-        text(dl, cx, y, 9.0f, kColInk, title, 0, true);
+        // Engraved caption (bright lip below dark ink) so it matches the section headers.
+        text(dl, cx, y + 1.0f, 10.0f, kColPanelHi, title, 0, true);
+        text(dl, cx, y,        10.0f, kColInk,     title, 0, true);
         int cur = coerceChoice(param, (int)(values[param] + 0.5f));
         if (cur < 0) cur = 0; if (cur >= nVisible) cur = nVisible - 1;
 
-        ImGui::SetCursorScreenPos(P(cx - 0.5f * w, y + 13.0f));
+        // Combo sits 15 px below the label baseline: close under the caption without the box
+        // top clipping the bottom of the words (MACHINE, SIGNAL PATH, EQ STANDARD).
+        ImGui::SetCursorScreenPos(P(cx - 0.5f * w, y + 15.0f));
         ImGui::SetNextItemWidth(w * s);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(232, 232, 232, 255));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(244, 244, 244, 255));
+        // Crisp option text + a fixed 22 px frame height (was ImGui-default, which varied
+        // with the fallback font) so the six selectors share one clean, uniform row.
+        ImGui::PushFont(panel.pickFont(11.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(6.0f * s, std::max(0.0f, 0.5f * (22.0f * s - ImGui::GetFontSize()))));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * s);   // match the recessed-window frame
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(224, 224, 226, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(236, 236, 238, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(238, 238, 238, 255));
         ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(150, 152, 156, 255));
         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(198, 199, 201, 255));        // arrow bg
@@ -815,44 +838,79 @@ private:
             ImGui::EndCombo();
         }
         ImGui::PopStyleColor(8);
+        ImGui::PopStyleVar(2);
+        ImGui::PopFont();
+        // Recessed-window overlay: a metallic frame with a dark top-inner shadow and a bright
+        // bottom lip so the combo reads as an inset selector (matching the VU bezels + chrome
+        // knobs) instead of a flat web control. Edge draws only — never over the preview text
+        // or arrow. Drawn on the main window list AFTER the combo, so the popup still layers on top.
+        {
+            const float bx0 = cx - 0.5f * w, by0 = y + 15.0f, bx1 = cx + 0.5f * w, by1 = by0 + 22.0f;
+            dl->AddLine(P(bx0 + 3, by0 + 1.3f), P(bx1 - 3, by0 + 1.3f), IM_COL32(0, 0, 0, 55), 1.0f * s);        // top-inner shadow
+            dl->AddLine(P(bx0 + 3, by1 - 1.5f), P(bx1 - 3, by1 - 1.5f), IM_COL32(255, 255, 255, 120), 1.0f * s); // bottom lip
+            dl->AddRect(P(bx0, by0), P(bx1, by1), IM_COL32(88, 87, 85, 255), 3.0f * s, 0, 1.2f * s);             // frame
+        }
     }
 
     // Map an option the current machine doesn't offer to its valid effective index
-    // for DISPLAY ONLY, mirroring the DSP-side coercion (TapeMachineDSP: Swiss 800 has no
+    // for DISPLAY ONLY, mirroring the DSP-side coercion (TapeMachineDSP: Swiss has no
     // 3.75 IPS -> plays as 15). Returns a local value; the stored parameter is left
-    // untouched so automating Swiss 800 + 3.75 IPS is preserved, not overwritten with 15
-    // on every render / editor reopen. Currently only 3.75 IPS (Swiss 800).
+    // untouched so automating Swiss + 3.75 IPS is preserved, not overwritten with 15
+    // on every render / editor reopen. Currently only 3.75 IPS (Swiss).
     int coerceChoice(uint32_t param, int idx) const
     {
-        if (param == kParamTapeSpeed && isA800() && idx == 3)   // 3.75 IPS: Classic 102 only
+        if (param == kParamTapeSpeed && isSwiss() && idx == 3)   // 3.75 IPS: American only
             return 1;                                           // -> 15 IPS
         return idx;
+    }
+
+    // Recessed shelf behind the selector row: a slightly-darker inset with a dark top/left
+    // shadow and a bright bottom/right lip so the whole tape-config strip reads as a milled
+    // channel in the panel — grouping the six selectors and separating them from the knob
+    // section below. Drawn first, before the combos, so it sits behind them.
+    void drawSelectorShelf(ImDrawList* dl, float x0, float y0, float x1, float y1) const
+    {
+        dl->AddRectFilledMultiColor(P(x0, y0), P(x1, y1),
+            IM_COL32(178, 176, 171, 255), IM_COL32(178, 176, 171, 255),
+            IM_COL32(166, 164, 159, 255), IM_COL32(166, 164, 159, 255));
+        dl->AddLine(P(x0, y0), P(x1, y0), IM_COL32(118, 117, 114, 200), 1.2f * s);   // top score (in shadow)
+        dl->AddLine(P(x0, y0), P(x0, y1), IM_COL32(118, 117, 114, 150), 1.0f * s);   // left score
+        dl->AddLine(P(x0, y1), P(x1, y1), IM_COL32(228, 226, 221, 150), 1.2f * s);   // bottom lip (catches light)
+        dl->AddLine(P(x1, y0), P(x1, y1), IM_COL32(228, 226, 221, 110), 1.0f * s);   // right lip
+        dl->AddRect(P(x0, y0), P(x1, y1), IM_COL32(96, 95, 92, 180), 4.0f * s, 0, 1.0f * s);
     }
 
     void drawSelectors(ImDrawList* dl)
     {
         const float y = 216.0f;
-        const bool atr = !isA800();
-        // The selector row reflows per machine: the Classic 102 adds a HEAD WIDTH cell (6
-        // cells); the Swiss 800 omits it (5). TAPE SPEED exposes 3.75 IPS on the Classic 102 only.
+        const bool classic = !isSwiss();
+        // Shelf spans the VU-meter width exactly (left meter x0=68 .. right meter x1=732).
+        drawSelectorShelf(dl, 68.0f, 206.0f, 732.0f, 259.0f);
+
+        // The selector row reflows per machine: the American adds a HEAD WIDTH cell (6
+        // cells); the Swiss omits it (5). TAPE SPEED exposes 3.75 IPS on the American only.
         // No OVERSAMPLING cell: the OS param is pinned at the tuned 2x core (DSP ignores it),
-        // matching the UAD decks which have no OS control (see TapeMachineDSP::factorFromChoice).
-        struct Sel { const char* id; uint32_t p; float w; const char* t; int n; };
+        // matching the reference decks which have no OS control (see TapeMachineDSP::factorFromChoice).
+        struct Sel { const char* id; uint32_t p; const char* t; int n; };
         Sel cells[6];
         int nc = 0;
-        cells[nc++] = { "##machine", kParamTapeMachine,  96.f, "MACHINE",      2 };
-        cells[nc++] = { "##speed",   kParamTapeSpeed,    80.f, "TAPE SPEED",   atr ? 4 : 3 };
-        cells[nc++] = { "##type",    kParamTapeType,     84.f, "TAPE TYPE",    4 };
-        cells[nc++] = { "##path",    kParamSignalPath,   74.f, "SIGNAL PATH",  4 };
-        cells[nc++] = { "##eq",      kParamEqStandard,   60.f, "EQ STANDARD",  2 };
-        if (atr)
-            cells[nc++] = { "##hw",  kParamHeadWidth,    62.f, "HEAD WIDTH",   3 };
+        cells[nc++] = { "##machine", kParamTapeMachine, "MACHINE",     2 };
+        cells[nc++] = { "##speed",   kParamTapeSpeed,   "TAPE SPEED",  classic ? 4 : 3 };
+        cells[nc++] = { "##type",    kParamTapeType,    "TAPE TYPE",   4 };
+        cells[nc++] = { "##path",    kParamSignalPath,  "SIGNAL PATH", 4 };
+        cells[nc++] = { "##eq",      kParamEqStandard,  "EQ STANDARD", 2 };
+        if (classic)
+            cells[nc++] = { "##hw",  kParamHeadWidth,   "HEAD WIDTH",  3 };
 
-        const float x0 = 48.f, x1 = 752.f;   // even spacing across the panel width
+        // One uniform combo width (sized to the widest option, "American") so the row reads
+        // as an even grid instead of ragged per-option boxes. Centres are distributed inside
+        // the shelf (68..732) with an 8 px inner margin so no box touches the shelf border,
+        // in either the 5-cell (Swiss) or 6-cell (American) layout.
+        const float x0 = 76.f, x1 = 724.f, selW = 100.f;
         for (int i = 0; i < nc; ++i)
         {
             const float cx = x0 + (x1 - x0) * ((float)i + 0.5f) / (float)nc;
-            selector(dl, cells[i].id, cells[i].p, cx, y, cells[i].w, cells[i].t, cells[i].n);
+            selector(dl, cells[i].id, cells[i].p, cx, y, selW, cells[i].t, cells[i].n);
         }
     }
 
@@ -926,20 +984,20 @@ private:
                    /*hover name*/ l1, /*contextMenu*/ true, overrideText);
     }
 
-    // Machine-aware accent: Swiss 800 (Swiss 800) cooler blue-grey, Classic 102 (Classic
+    // Machine-aware accent: Swiss (Swiss) cooler blue-grey, American (Classic
     // 102) warmer copper. Derived live from the machine parameter.
-    bool isA800() const { return (int)(values[kParamTapeMachine] + 0.5f) == 0; }
+    bool isSwiss() const { return (int)(values[kParamTapeMachine] + 0.5f) == 0; }
     ImU32 accentCol() const
     {
-        return isA800() ? IM_COL32(96, 120, 150, 255)    // cool blue-grey
+        return isSwiss() ? IM_COL32(96, 120, 150, 255)    // cool blue-grey
                         : IM_COL32(176, 116, 70, 255);    // warm copper
     }
 
     // Authentic per-machine option matrix (HARD-gated — only real options selectable,
     // enforced by the selector nVisible + coerceChoice + the DSP-side coercion):
-    //   Swiss 800    : speed 7.5/15/30,      EQ NAB/CCIR, type 250/456/900/GP9, no Head Width
-    //   Classic 102 : speed 3.75/7.5/15/30, EQ NAB/CCIR, type 250/456/900/GP9, Head Width 1/4-1
-    // Only TAPE SPEED (3.75 Swiss 800-hidden) and Head Width (Swiss 800-hidden) differ; EQ/tape/cal
+    //   Swiss    : speed 7.5/15/30,      EQ NAB/CCIR, type 250/classic formulation/modern formulation/high-output formula, no Head Width
+    //   American : speed 3.75/7.5/15/30, EQ NAB/CCIR, type 250/classic formulation/modern formulation/high-output formula, Head Width 1/4-1
+    // Only TAPE SPEED (3.75 Swiss-hidden) and Head Width (Swiss-hidden) differ; EQ/tape/cal
     // are identical on both decks, so there is no "non-standard" state to flag.
 
     // Centred small-caps section header with an accent underline. Engraved
@@ -947,8 +1005,8 @@ private:
     // mid-gray panel instead of the old low-contrast dim ink.
     void sectionHeader(ImDrawList* dl, float cx, float y, const char* txt)
     {
-        text(dl, cx, y + 1.0f, 9.5f, kColPanelHi, txt, 0, true);   // engrave highlight
-        text(dl, cx, y, 9.5f, kColInk, txt, 0, true);
+        text(dl, cx, y + 1.0f, 10.5f, kColPanelHi, txt, 0, true);   // engrave highlight
+        text(dl, cx, y, 10.5f, kColInk, txt, 0, true);
         ImFont* f = labelFont ? labelFont : ImGui::GetFont();
         const float w = f->CalcTextSizeA(9.5f * s, FLT_MAX, 0, txt).x;
         const ImVec2 c = P(cx, y + 13.0f);
@@ -1002,7 +1060,7 @@ private:
         // GAIN STAGING — with GAIN LINK (autoComp) on, the DSP holds the output at the
         // inverse of the input (drive the tape harder without the level rising) and the
         // OUTPUT knob is an ADDITIVE makeup trim on top of that inverse (effective output
-        // gain = -input + trim; factory presets ship a fitted trim to match each UAD preset's
+        // gain = -input + trim; factory presets ship a fitted trim to match each reference preset's
         // own output loudness). The link lives entirely in the DSP so it works under host
         // automation. The OUTPUT knob's STORED value is the trim (what presets carry and what
         // a drag edits); to make the link VISIBLE — the user watches the needle, not only the
@@ -1015,7 +1073,7 @@ private:
         knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB",
              /*dispAdd*/ 0.0f, /*overrideText*/ nullptr,
              /*linked*/ gainLink, /*linkOffset*/ -values[kParamInputGain]);
-        text(dl, 115, ty, 9.0f, kColInk, "GAIN LINK", 0, true);
+        text(dl, 115, ty, 9.5f, kColInk, "GAIN LINK", 0, true);
         tmButton(dl, "autocomp", kParamAutoComp, 82, ty + 10, 148, ty + 30, "", true);
 
         // TAPE CHARACTER — BIAS fades into the panel when AUTO BIAS (autoCal) is
@@ -1029,12 +1087,20 @@ private:
         if (biasAuto)
             dl->AddCircleFilled(P(257.0f, cy), 33.0f * s, IM_COL32(190, 188, 183, 140), 48); // panel-toned veil = inactive
         knob(dl, "noise", kParamNoiseAmount,353.0f, cy, "NOISE", "%.0f", "%");
-        text(dl, 305, ty, 9.0f, kColInk, "AUTO BIAS", 0, true);
+        text(dl, 305, ty, 9.5f, kColInk, "AUTO BIAS", 0, true);
         tmButton(dl, "autocal", kParamAutoCal, 272, ty + 10, 338, ty + 30, "", true);
 
         // TRANSPORT
-        knob(dl, "wow",  kParamWow,     447.0f, cy, "WOW",     "%.0f", "%");
-        knob(dl, "flut", kParamFlutter, 543.0f, cy, "FLUTTER", "%.0f", "%");
+        const bool transportOn = isSwiss() || values[kParamWowFlutterOn] > 0.5f;
+        knob(dl, "wow",  kParamWow,     447.0f, cy, "WOW",     "%.0f", "%", 0.0f,
+             transportOn ? nullptr : "OFF");
+        knob(dl, "flut", kParamFlutter, 543.0f, cy, "FLUTTER", "%.0f", "%", 0.0f,
+             transportOn ? nullptr : "OFF");
+        if (!transportOn)
+        {
+            dl->AddCircleFilled(P(447.0f, cy), 33.0f * s, IM_COL32(190, 188, 183, 140), 48);
+            dl->AddCircleFilled(P(543.0f, cy), 33.0f * s, IM_COL32(190, 188, 183, 140), 48);
+        }
 
         // FILTERS — at their inactive extreme (HP at 20 Hz min, LP at 20 kHz max) the
         // filter does nothing, so the readout reads "OFF" instead of the frequency.
@@ -1046,16 +1112,16 @@ private:
         knob(dl, "hp", kParamHighpassFreq, 637.0f, cy, "HIGHPASS", "%.0f", " Hz", 0.0f, hpOff ? "OFF" : nullptr);
         knob(dl, "lp", kParamLowpassFreq,  733.0f, cy, "LOWPASS",  "%.0f", " Hz", 0.0f, lpOff ? "OFF" : nullptr);
 
-        // ATR-102 front-panel toggle — Classic 102 only (the Studer A800 has no such
-        // switch, so it is hidden on the Swiss 800). W&F stays on the main face as a
+        // American front-panel toggle — American only (the reference tracking deck has no such
+        // switch, so it is hidden on the Swiss). W&F stays on the main face as a
         // performance control under TRANSPORT (it gates the Wow/Flutter knobs). Crosstalk
         // and Transformer — calibration/output-electronics switches — now live in the
         // ADVANCED modal (see drawAdvanced). W&F's cell is column-anchored under TRANSPORT,
         // so no reflow is needed for the relocated buttons: FILTERS simply has no toggle
-        // row, exactly as the Swiss 800 already renders every column here.
-        if (!isA800())
+        // row, exactly as the Swiss already renders every column here.
+        if (!isSwiss())
         {
-            text(dl, 495, ty, 9.0f, kColInk, "W&F", 0, true);
+            text(dl, 495, ty, 9.5f, kColInk, "WOW / FLUTTER", 0, true);
             tmButton(dl, "wfenable", kParamWowFlutterOn, 462, ty + 10, 528, ty + 30, "", true);
         }
     }

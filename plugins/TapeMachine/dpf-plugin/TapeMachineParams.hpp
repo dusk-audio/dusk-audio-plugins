@@ -6,16 +6,15 @@
 // DSP shell (initParameter / setParameterValue) and the UI.
 //
 // Order mirrors the JUCE TapeMachine parameter layout exactly (values are host-
-// automation indices, not display strings). Trademark tape-stock / machine
-// names are kept verbatim per the product owner's decision (this plugin is an
-// approved exception to the migration's no-trademark guideline).
+// automation indices, not display strings). Public labels use Dusk Audio's
+// generic deck and formulation names.
 
 #pragma once
 
 enum ParamId
 {
-    kParamTapeMachine = 0, // choice: Swiss 800 / Classic 102
-    kParamTapeSpeed,       // choice: 7.5 / 15 / 30 / 3.75 IPS (3.75 appended, Classic 102-only)
+    kParamTapeMachine = 0, // choice: Swiss / American
+    kParamTapeSpeed,       // choice: 7.5 / 15 / 30 / 3.75 IPS (3.75 appended, American-only)
     kParamTapeType,        // choice: 456 / GP9 / 900 / 250
     kParamSignalPath,      // choice: Repro / Sync / Input / Thru
     kParamEqStandard,      // choice: NAB / CCIR
@@ -32,16 +31,16 @@ enum ParamId
     kParamOutputGain,      // -12..12 dB
     kParamAutoComp,        // choice: Off / On
     kParamOversampling,    // choice: 1x / 2x / 4x
-    kParamHeadWidth,       // choice: 1/4" / 1/2" / 1"  (Classic 102 only; ignored on Swiss 800)
-    // ATR-102 front-panel toggles (Classic 102 only; hidden + ignored on Swiss 800). Each
-    // defaults ON = the state the Classic 102 tuning captured, so defaults are byte-identical.
-    kParamCrosstalk,       // choice: Off / On  (ATR adjacent-track crosstalk bleed)
-    kParamWowFlutterOn,    // choice: Off / On  (ATR Wow & Flutter master enable; gates the W&F knobs)
-    kParamTransformer,     // choice: Off / On  (ATR output transformer: LF roll-off + 2nd-harmonic colour)
+    kParamHeadWidth,       // choice: 1/4" / 1/2" / 1"  (American only; ignored on Swiss)
+    // American front-panel toggles (American only; hidden + ignored on Swiss). Each
+    // defaults ON = the state the American tuning captured, so defaults are byte-identical.
+    kParamCrosstalk,       // choice: Off / On  (American adjacent-track crosstalk bleed)
+    kParamWowFlutterOn,    // choice: Off / On  (American Wow & Flutter master enable; gates the W&F knobs)
+    kParamTransformer,     // choice: Off / On  (American output transformer: LF roll-off + 2nd-harmonic colour)
     kParamBypass,          // host-designated bypass
     // Advanced Repro EQ appended AFTER bypass so the bypass host-param ID stays fixed as
     // more params are added later (host bypass automation survives version updates).
-    kParamReproLF,         // -12..12 dB repro-head LF shelf  (advanced; models the UAD Repro EQ)
+    kParamReproLF,         // -12..12 dB repro-head LF shelf  (advanced; models the reference Repro EQ)
     kParamReproLMF,        // -12..12 dB repro-head low-mid peak (advanced)
     kParamReproHMF,        // -12..12 dB repro-head high-mid/presence peak (advanced)
     kParamReproHF,         // -12..12 dB repro-head HF shelf  (advanced)
@@ -54,7 +53,7 @@ enum ParamId
 // ---- choice label tables (index == parameter value) ------------------------
 namespace tmparams
 {
-    static constexpr const char* kTapeMachine[] = { "Swiss 800", "Classic 102" };
+    static constexpr const char* kTapeMachine[] = { "Swiss", "American" };
     static constexpr const char* kTapeSpeed[]   = { "7.5 IPS", "15 IPS", "30 IPS", "3.75 IPS" };
     static constexpr const char* kTapeType[]    = { "Type 456", "Type GP9", "Type 900", "Type 250" };
     static constexpr const char* kSignalPath[]  = { "Repro", "Sync", "Input", "Thru" };
@@ -62,7 +61,7 @@ namespace tmparams
     static constexpr const char* kCalibration[] = { "+3dB", "+6dB", "+7.5dB", "+9dB" };
     static constexpr const char* kOffOn[]       = { "Off", "On" };
     static constexpr const char* kOversampling[]= { "1x", "2x", "4x" };
-    static constexpr const char* kHeadWidth[]   = { "1/4\"", "1/2\"", "1\"" };   // Classic 102 head stack
+    static constexpr const char* kHeadWidth[]   = { "1/4\"", "1/2\"", "1\"" };   // American head stack
 
     template <int N> static constexpr int count(const char* const (&)[N]) { return N; }
 }
