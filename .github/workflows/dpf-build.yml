@@ -193,8 +193,11 @@ jobs:
         run: |
           # DPF's OpenGL (DGL) UI resolves these via pkg-config in Makefile.base.mk:
           # gl (mesa), x11, dbus-1 (optional file browser).
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # ForceIPv4 + retries: ports.ubuntu.com (arm64 mirror) intermittently fails
+          # IPv6 connects on GitHub runners, which aborts the job with apt exit 100.
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::ForceIPv4=true"
+          sudo apt-get update $APT_OPTS
+          sudo apt-get install -y --no-install-recommends $APT_OPTS \
             build-essential pkg-config ninja-build \
             libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
 
@@ -283,8 +286,11 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # ForceIPv4 + retries: ports.ubuntu.com (arm64 mirror) intermittently fails
+          # IPv6 connects on GitHub runners, which aborts the job with apt exit 100.
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::ForceIPv4=true"
+          sudo apt-get update $APT_OPTS
+          sudo apt-get install -y --no-install-recommends $APT_OPTS \
             build-essential pkg-config ninja-build \
             libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
 
@@ -577,21 +583,27 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - name: Stub unused DGL sources that don't build on Windows
+      - name: Patch DPF sources for MSVC / Windows
         shell: pwsh
         run: |
-          # This plugin's UI is ImGui (DPF-Widgets), NOT NanoVG or WebView. DPF compiles
-          # both of those DGL sources into the dgl-opengl static library, but on the GitHub
-          # Windows runner NanoVG fails to compile (its nanovg_gl.h needs modern-GL / glext
-          # symbols like glVertexAttribPointer / GL_ARRAY_BUFFER that the SDK's legacy
-          # <GL/gl.h> does not provide), and WebViewWin32 pulls in choc. An ImGui plugin
-          # never references either, and dgl-opengl is a STATIC lib, so their objects are
-          # dead code that only needs to COMPILE. Replacing them with empty translation
-          # units lets the target build; nothing links against the stubs.
+          # (1) Stub unused DGL sources. This plugin's UI is ImGui (DPF-Widgets), NOT NanoVG
+          # or WebView. DPF compiles both into the dgl-opengl STATIC library, but on the GitHub
+          # Windows runner NanoVG fails (nanovg_gl.h needs modern-GL/glext symbols like
+          # glVertexAttribPointer / GL_ARRAY_BUFFER that the SDK's legacy <GL/gl.h> lacks) and
+          # WebViewWin32 pulls in choc. An ImGui plugin references neither, and static-lib
+          # objects nothing references are never linked, so empty TUs just need to compile.
           '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
             | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/NanoVG.cpp"
           '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
             | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/WebViewWin32.cpp"
+          # (2) DPF-Widgets' DearImGui.cpp (the ImGui backend we DO compile) uses the GCC/Clang
+          # "Elvis operator" (a ?: b), which MSVC rejects (C2059). Rewrite the two occurrences
+          # as standard ternaries. getWidth()/getHeight() are side-effect-free getters.
+          $f = "$env:GITHUB_WORKSPACE/DPF-Widgets/opengl/DearImGui.cpp"
+          (Get-Content -Raw $f) `
+            -replace 'self->getWidth\(\) \?: 640 \* scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor' `
+            -replace 'self->getHeight\(\) \?: 480 \* scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor' `
+            | Set-Content -NoNewline $f
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
