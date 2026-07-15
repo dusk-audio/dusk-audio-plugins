@@ -38,32 +38,32 @@ installed for old-session compatibility.
 
 ### Machine
 
-- **Swiss** — the tracking and mix model. It supports 7.5, 15,
+- **Swiss** is the tracking and mix model. It supports 7.5, 15,
   and 30 IPS.
-- **American** — the mastering model. It adds 3.75 IPS, head
+- **American** is the mastering model. It adds 3.75 IPS, head
   width, crosstalk, a master wow/flutter switch, and transformer switching.
 
 ### Tape speed
 
-- **3.75 IPS** — American only; narrow bandwidth and the strongest slow-speed
-  character.
-- **7.5 IPS** — pronounced head and bandwidth character.
-- **15 IPS** — the general-purpose reference speed.
-- **30 IPS** — tighter low-frequency behavior and extended bandwidth.
+- **3.75 IPS** is American only; it has narrow bandwidth and the strongest
+  slow-speed character.
+- **7.5 IPS** gives pronounced head and bandwidth character.
+- **15 IPS** is the general-purpose reference speed.
+- **30 IPS** gives tighter low-frequency behavior and extended bandwidth.
 
 ### Tape type
 
-- **Type 456** — classic general-purpose formulation.
-- **Type GP9** — high-output formulation.
-- **Type 900** — clean modern formulation.
-- **Type 250** — older, more colored formulation.
+- **Type 456**: classic general-purpose formulation.
+- **Type GP9**: high-output formulation.
+- **Type 900**: clean modern formulation.
+- **Type 250**: older, more colored formulation.
 
 ### Signal path
 
-- **Repro** — complete record/tape/reproduce path.
-- **Sync** — playback through the sync-head geometry.
-- **Input** — electronics and EQ without tape saturation, modulation, or noise.
-- **Thru** — direct signal path for comparison.
+- **Repro**: complete record/tape/reproduce path.
+- **Sync**: playback through the sync-head geometry.
+- **Input**: electronics and EQ without tape saturation, modulation, or noise.
+- **Thru**: direct signal path for comparison.
 
 ### EQ and calibration
 
@@ -106,36 +106,36 @@ user-facing oversampling selector in TapeMachine 2.
 
 Click **Advanced** to open the reproduce-head controls:
 
-- **Low** — 80 Hz shelf, ±12 dB
-- **Lo-Mid** — 160 Hz peak, ±12 dB
-- **Hi-Mid** — 5 kHz peak, ±12 dB
-- **High** — 9 kHz shelf, ±12 dB
+- **Low**: 80 Hz shelf, ±12 dB
+- **Lo-Mid**: 160 Hz peak, ±12 dB
+- **Hi-Mid**: 5 kHz peak, ±12 dB
+- **High**: 9 kHz shelf, ±12 dB
 
 On American, the panel also exposes:
 
-- **Crosstalk** — adjacent-track bleed modeling
-- **XFMR** — output-transformer low-frequency and even-harmonic character
+- **Crosstalk**: adjacent-track bleed modeling
+- **XFMR**: output-transformer low-frequency and even-harmonic character
 
 These controls are part of the factory-preset fits. Resetting them to zero can
 substantially change a preset's match and saturation reading.
 
 ## Factory presets
 
-### American — mastering
+### American mastering
 
 - Big 456 Master
 - Nice 456 Master
 - Jazz Vision Master
 - Clean 900 Master
 
-### American — color
+### American color
 
 - Fat 456 Master
 - GP9 Drum Bus
 - Massive Bass
 - Bright & Sizzly
 
-### Swiss — mix
+### Swiss mix
 
 - Classic Rock Crisp
 - Modern Rock
@@ -144,7 +144,7 @@ substantially change a preset's match and saturation reading.
 - Lush Film
 - Jazz Warmth
 
-### Swiss — color
+### Swiss color
 
 - Thick Saturation
 - Hip-Hop Punch
@@ -152,9 +152,9 @@ substantially change a preset's match and saturation reading.
 
 ### Lo-fi
 
-- Sunbaked Cassette — American at 3.75 IPS
-- Analog Warmth — American at 3.75 IPS
-- Old Tape — Swiss at 7.5 IPS
+- Sunbaked Cassette: American at 3.75 IPS
+- Analog Warmth: American at 3.75 IPS
+- Old Tape: Swiss at 7.5 IPS
 
 The preset menu is split into American and Swiss columns. **Init** restores
 defaults. **Save** stores user presets in
