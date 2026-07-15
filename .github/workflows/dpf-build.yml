@@ -331,11 +331,13 @@ jobs:
             vtool -show-build "$binary" | grep -q "minos 10.15"
           done
 
-      - name: Require Apple signing configuration for releases
+      # Signing + notarization are OPTIONAL, matching build.yml (the JUCE pipeline):
+      # they run only when MACOS_SIGNING_ENABLED=true and the Apple secrets are set.
+      # Unset (the current repo default) => the release still ships, UNSIGNED, exactly
+      # like the JUCE plugins. To sign later, set the var + secrets; no workflow change.
+      - name: Warn if releasing unsigned
         if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED != 'true' }}
-        run: |
-          echo "::error::Production releases require MACOS_SIGNING_ENABLED=true and Apple signing/notarization secrets"
-          exit 1
+        run: echo "::warning::MACOS_SIGNING_ENABLED is not set — shipping an UNSIGNED macOS build (Gatekeeper will warn users on first launch)."
 
       - name: Import code-signing certificate
         if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
@@ -374,7 +376,7 @@ jobs:
           done
 
       - name: Notarize macOS release bundles
-        if: ${{ needs.plan.outputs.is_release == 'true' }}
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
         working-directory: ${{ env.PLUGIN_DIR }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -461,6 +463,7 @@ jobs:
       DISPLAY: ${{ needs.plan.outputs.rel_display }}
       ASSET: ${{ needs.plan.outputs.rel_asset }}
       BASE: ${{ needs.plan.outputs.rel_base }}
+      SIGNED: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
     steps:
       - name: Checkout repository (for tag message)
         uses: actions/checkout@v4
@@ -498,7 +501,11 @@ jobs:
             echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/Library/Audio/Plug-Ins/CLAP/\`"
             echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/Library/Audio/Plug-Ins/LV2/\`"
             echo ""
-            echo "> macOS AU, VST3, and CLAP bundles are Developer ID signed and Apple-notarized. The LV2 bundle is Developer ID signed."
+            if [ "$SIGNED" = "true" ]; then
+              echo "> macOS AU, VST3, and CLAP bundles are Developer ID signed and Apple-notarized. The LV2 bundle is Developer ID signed."
+            else
+              echo "> macOS bundles are **not** code-signed. On first launch macOS Gatekeeper will warn; either right-click the plugin and choose **Open**, or clear the quarantine flag: \`xattr -dr com.apple.quarantine <bundle>\`."
+            fi
           } > release_body.md
           echo "=== collected artifacts ==="
           find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \)

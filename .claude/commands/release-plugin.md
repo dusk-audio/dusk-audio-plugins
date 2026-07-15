@@ -160,8 +160,10 @@ fi
 **IMPORTANT**: Use `sed` for in-place edits. Do NOT use Python `yaml.dump` - it destroys comments and formatting.
 **IMPORTANT**: Both `_data/plugins.yml` AND `_plugins/<slug>.md` must be updated - the plugin pages read from the markdown files.
 
-If the plugin has `status: in-dev` and is being released for the first time, also update:
-- `status: in-dev` → `status: released`
+If the plugin has a pre-release status (`status: in-dev` **or** `status: coming-soon`) and is
+being released for the first time, also update (in `_data/plugins.yml`, and in `_plugins/<slug>.md`
+if it carries a `status:` field):
+- `status: in-dev` / `status: coming-soon` → `status: released`
 - `featured: false` → `featured: true`
 - Add `version: <new-version>` if missing
 
