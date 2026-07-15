@@ -83,9 +83,11 @@ For EACH plugin specified:
 
 ### Step 2: Gather Changelog
 
-**For patch bumps (auto-increment)**: Auto-generate changelog from git log since the last tag:
+**For patch bumps (auto-increment)**: Auto-generate changelog from git log since the last tag.
+`<Directory>` is the full path from the slug table's Directory column (it already includes
+the `plugins/` prefix — do NOT add it again; DPF "-2" plugins end in `/dpf-plugin`):
 ```bash
-git log <slug>-v<old-version>..HEAD --oneline -- plugins/<directory>/
+git log <slug>-v<old-version>..HEAD --oneline -- <Directory>/
 ```
 Summarize the commits into a concise changelog. If no plugin-specific commits exist, check for shared code changes:
 ```bash
@@ -108,12 +110,14 @@ set(<VAR>_DEFAULT_VERSION "<new-version>")
 project(MultiQ VERSION <new-version>)
 ```
 
-**DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`):
+**DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`).
+Use `<base-version>` — the numeric version with NO prerelease suffix. Any
+`-beta`/`-rc`/`-alpha` suffix belongs ONLY in the release tag, never in `project()`:
 ```
-project(TapeMachine2DPF VERSION <new-version>)   # tapemachine-2
-project(FourKEQ2DPF     VERSION <new-version>)   # 4k-eq-2
-project(TapeEchoDPF     VERSION <new-version>)   # tape-echo-2
-project(MultiQ2DPF      VERSION <new-version>)   # multi-q-2
+project(TapeMachine2DPF VERSION <base-version>)   # tapemachine-2
+project(FourKEQ2DPF     VERSION <base-version>)   # 4k-eq-2
+project(TapeEchoDPF     VERSION <base-version>)   # tape-echo-2
+project(MultiQ2DPF      VERSION <base-version>)   # multi-q-2
 ```
 Bump only the one being released. `dpf-build.yml`'s guard strips any
 `-beta`/`-rc`/`-alpha` suffix from the tag and compares the numeric BASE version to
@@ -220,13 +224,14 @@ If pandoc or xelatex is not installed locally, this step fails. The skill should
 
 **Plugins repo** - Stage and commit all changed CMakeLists.txt files plus any bumped manual front matter:
 ```bash
-git add plugins/*/CMakeLists.txt
-# DPF "-2" plugins keep their CMakeLists.txt one level deeper, under dpf-plugin/,
-# which the glob above does NOT reach. Stage EACH released DPF plugin's file
-# EXPLICITLY — no wildcard, no `|| true` — so unrelated dpf-plugin bumps are never
-# swept in and a missing/failed add aborts the release loudly:
-git add -- "$DPF_DIR/CMakeLists.txt"   # DPF_DIR = full Directory value from the slug table (e.g. plugins/TapeMachine/dpf-plugin); repeat per selected DPF plugin
-# Issue #80: include any manual front-matter bumps from Step 3
+# Stage ONLY each selected plugin's own CMakeLists.txt — no `plugins/*` wildcard,
+# no error suppression — so unrelated in-flight version bumps are never swept in and
+# a missing/failed add aborts the release loudly. PLUGIN_DIR = the full Directory
+# value from the slug table (JUCE e.g. plugins/4k-eq; DPF "-2" plugins e.g.
+# plugins/TapeMachine/dpf-plugin). Repeat this pair per selected plugin:
+PLUGIN_DIR="<Directory from the slug table>"
+git add -- "$PLUGIN_DIR/CMakeLists.txt"
+# Issue #80: include any manual front-matter bumps from Step 3 (only if present)
 git add manuals/*.md 2>/dev/null || true
 git commit -m "<summary of version bumps>"
 ```
