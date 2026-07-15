@@ -80,7 +80,7 @@ private:
 
         // Single-click on the inline TextBox should NOT focus it for editing
         // — value editing is exclusively double-click → ValueEditor popup,
-        // matching the DuskVerb pattern and premium-plugin convention
+        // matching the DuskVerb pattern and the premium-plugin convention for
         // commercial audio plug-ins.
         setTextBoxIsEditable(false);
 

@@ -61,6 +61,8 @@ jobs:
   # -------------------------------------------------------------------------
   plan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       plugins: ${{ steps.plan.outputs.plugins }}
       is_release: ${{ steps.plan.outputs.is_release }}
@@ -71,6 +73,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Resolve build set + release info
         id: plan
@@ -149,6 +153,8 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +166,8 @@ jobs:
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -168,6 +176,7 @@ jobs:
           ref: ${{ env.DPF_REF }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -176,6 +185,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Install Linux dependencies
         env:
@@ -235,6 +245,8 @@ jobs:
     needs: plan
     runs-on: macos-14  # ARM64 (M1)
     timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -247,6 +259,8 @@ jobs:
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -255,6 +269,7 @@ jobs:
           ref: ${{ env.DPF_REF }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -263,6 +278,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Install Ninja
         run: brew install ninja

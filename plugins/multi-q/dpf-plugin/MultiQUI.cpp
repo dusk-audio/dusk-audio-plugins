@@ -633,7 +633,7 @@ private:
         panel.text(dl, 15, 10, 23.f, IM_COL32(232, 232, 232, 255), "Multi-Q 2", -1, true);
         static const char* kSub[4] = {
             "Universal EQ", "Universal EQ - Match",
-            "British-style EQ - British", "Passive Program EQ - Tube" };
+            "British-style EQ", "Passive Program EQ - Tube" };
         const int m = (int)std::lround(values[kParamEqType]);
         panel.text(dl, 16, 34, 10.f, IM_COL32(128, 128, 128, 255),
                    kSub[(m >= 0 && m < 4) ? m : 0], -1);
