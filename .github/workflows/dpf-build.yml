@@ -577,6 +577,22 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Stub unused DGL sources that don't build on Windows
+        shell: pwsh
+        run: |
+          # This plugin's UI is ImGui (DPF-Widgets), NOT NanoVG or WebView. DPF compiles
+          # both of those DGL sources into the dgl-opengl static library, but on the GitHub
+          # Windows runner NanoVG fails to compile (its nanovg_gl.h needs modern-GL / glext
+          # symbols like glVertexAttribPointer / GL_ARRAY_BUFFER that the SDK's legacy
+          # <GL/gl.h> does not provide), and WebViewWin32 pulls in choc. An ImGui plugin
+          # never references either, and dgl-opengl is a STATIC lib, so their objects are
+          # dead code that only needs to COMPILE. Replacing them with empty translation
+          # units lets the target build; nothing links against the stubs.
+          '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
+            | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/NanoVG.cpp"
+          '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
+            | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/WebViewWin32.cpp"
+
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
