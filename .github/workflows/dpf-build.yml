@@ -193,13 +193,21 @@ jobs:
         run: |
           # DPF's OpenGL (DGL) UI resolves these via pkg-config in Makefile.base.mk:
           # gl (mesa), x11, dbus-1 (optional file browser).
-          # ForceIPv4 + retries: ports.ubuntu.com (arm64 mirror) intermittently fails
-          # IPv6 connects on GitHub runners, which aborts the job with apt exit 100.
-          APT_OPTS="-o Acquire::Retries=3 -o Acquire::ForceIPv4=true"
-          sudo apt-get update $APT_OPTS
-          sudo apt-get install -y --no-install-recommends $APT_OPTS \
-            build-essential pkg-config ninja-build \
-            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
+          # runners, aborting apt with exit 100. Retry the whole update+install a few times.
+          install_deps() {
+            sudo apt-get update -o Acquire::Retries=3 && \
+            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              build-essential pkg-config ninja-build \
+              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+          }
+          for i in 1 2 3 4 5; do
+            install_deps && break
+            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
+            sleep 15
+          done
+          # Final check: fail loudly if deps still missing after all retries.
+          dpkg -s libgl1-mesa-dev >/dev/null 2>&1 || { echo "::error::apt deps unavailable after retries"; exit 1; }
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -286,13 +294,21 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # ForceIPv4 + retries: ports.ubuntu.com (arm64 mirror) intermittently fails
-          # IPv6 connects on GitHub runners, which aborts the job with apt exit 100.
-          APT_OPTS="-o Acquire::Retries=3 -o Acquire::ForceIPv4=true"
-          sudo apt-get update $APT_OPTS
-          sudo apt-get install -y --no-install-recommends $APT_OPTS \
-            build-essential pkg-config ninja-build \
-            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
+          # runners, aborting apt with exit 100. Retry the whole update+install a few times.
+          install_deps() {
+            sudo apt-get update -o Acquire::Retries=3 && \
+            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              build-essential pkg-config ninja-build \
+              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+          }
+          for i in 1 2 3 4 5; do
+            install_deps && break
+            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
+            sleep 15
+          done
+          # Final check: fail loudly if deps still missing after all retries.
+          dpkg -s libgl1-mesa-dev >/dev/null 2>&1 || { echo "::error::apt deps unavailable after retries"; exit 1; }
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -586,16 +602,15 @@ jobs:
       - name: Patch DPF sources for MSVC / Windows
         shell: pwsh
         run: |
-          # (1) Stub unused DGL sources. This plugin's UI is ImGui (DPF-Widgets), NOT NanoVG
-          # or WebView. DPF compiles both into the dgl-opengl STATIC library, but on the GitHub
-          # Windows runner NanoVG fails (nanovg_gl.h needs modern-GL/glext symbols like
-          # glVertexAttribPointer / GL_ARRAY_BUFFER that the SDK's legacy <GL/gl.h> lacks) and
-          # WebViewWin32 pulls in choc. An ImGui plugin references neither, and static-lib
-          # objects nothing references are never linked, so empty TUs just need to compile.
+          # (1) Stub only NanoVG. Our UI is ImGui (DPF-Widgets), which never uses NanoVG, but
+          # DPF compiles NanoVG.cpp into the dgl-opengl STATIC lib where it FAILS on the Windows
+          # runner (nanovg_gl.h needs modern-GL/glext symbols like glVertexAttribPointer /
+          # GL_ARRAY_BUFFER that the SDK's legacy <GL/gl.h> lacks). Nothing references NanoVG, so
+          # an empty TU compiles and is never linked. Do NOT stub WebViewWin32.cpp: it compiles
+          # fine (only a harmless C4005 warning) and DGL's pugl.cpp references its
+          # webview_choc_* symbols unconditionally, so an empty stub breaks the link (LNK2019).
           '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
             | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/NanoVG.cpp"
-          '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
-            | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/WebViewWin32.cpp"
           # (2) DPF-Widgets' DearImGui.cpp (the ImGui backend we DO compile) uses the GCC/Clang
           # "Elvis operator" (a ?: b), which MSVC rejects (C2059). Rewrite the two occurrences
           # as standard ternaries. getWidth()/getHeight() are side-effect-free getters.
