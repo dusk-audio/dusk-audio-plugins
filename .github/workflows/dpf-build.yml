@@ -536,7 +536,11 @@ jobs:
   # -------------------------------------------------------------------------
   build-windows:
     needs: plan
-    runs-on: windows-latest
+    # Pinned to windows-2022 (VS 2022 / MSVC 14.4x / SDK 22621) on purpose: on
+    # windows-latest (now VS 2026 / MSVC 14.51 / SDK 26100) DPF's DGL fails to
+    # compile — NanoVG's PFNGL* extension typedefs and WebViewWin32's macros are
+    # not resolved by that toolchain's GL/Win headers. VS 2022 is what DPF targets.
+    runs-on: windows-2022
     timeout-minutes: 45
     permissions:
       contents: read
