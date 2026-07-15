@@ -239,6 +239,95 @@ jobs:
           retention-days: 30
 
   # -------------------------------------------------------------------------
+  # Linux ARM64: VST3 + CLAP + LV2 (identical to build-linux on an arm runner).
+  # -------------------------------------------------------------------------
+  build-linux-arm64:
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    env:
+      PLUGIN_DIR: ${{ matrix.plugin.dir }}
+      PLUGIN_BASE: ${{ matrix.plugin.base }}
+      ASSET: ${{ matrix.plugin.asset }}
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_REF }}
+          path: DPF
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_REF }}
+          path: DPF-Widgets
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config ninja-build \
+            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --config Release -j"$(nproc)" \
+            --target "${PLUGIN_BASE}-vst3" "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          STAGE="${ASSET}-linux-arm64"
+          mkdir -p "${STAGE}/VST3" "${STAGE}/CLAP" "${STAGE}/LV2"
+          cp -r "build/bin/${PLUGIN_BASE}.vst3" "${STAGE}/VST3/"
+          cp    "build/bin/${PLUGIN_BASE}.clap" "${STAGE}/CLAP/"
+          cp -r "build/bin/${PLUGIN_BASE}.lv2"  "${STAGE}/LV2/"
+          cp ../../../LICENSE "${STAGE}/LICENSE"
+          cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          echo "=== staged ==="; find "${STAGE}" -maxdepth 2
+          zip -r "${STAGE}.zip" "${STAGE}"
+          tar -czf "${STAGE}.tar.gz" "${STAGE}"
+
+      - name: Upload Linux ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux-arm64
+          path: |
+            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.zip
+            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
   # macOS: AU + VST3 + CLAP + LV2, with `auval` as a hard gate on the AU.
   # -------------------------------------------------------------------------
   build-macos:
@@ -442,18 +531,94 @@ jobs:
           retention-days: 30
 
   # -------------------------------------------------------------------------
-  # Windows: intentionally NOT wired yet (mirror tapemachine2-release.yml notes).
-  # DPF supports VST3/CLAP on Windows, but there is no build-verified DPF-on-MSVC
-  # CI in this repo to model on. To enable: add a build-windows job with the same
-  # matrix, ilammy/msvc-dev-cmd@v1 + Ninja + cl, drop the LV2 target, package
-  # VST3 + CLAP.
+  # Windows: VST3 + CLAP (MSVC + Ninja). AU is macOS-only; LV2 on DPF+MSVC is
+  # fiddly and disabled here, matching build.yml's Windows job.
   # -------------------------------------------------------------------------
+  build-windows:
+    needs: plan
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    env:
+      PLUGIN_DIR: ${{ matrix.plugin.dir }}
+      PLUGIN_BASE: ${{ matrix.plugin.base }}
+      ASSET: ${{ matrix.plugin.asset }}
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_REF }}
+          path: DPF
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_REF }}
+          path: DPF-Widgets
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DDUSK_DPF_INSTALL_LOCAL=OFF `
+            -DDPF_PATH="$env:GITHUB_WORKSPACE/DPF" `
+            -DDPFWIDGETS_PATH="$env:GITHUB_WORKSPACE/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
+            --target "$env:PLUGIN_BASE-vst3" "$env:PLUGIN_BASE-clap"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          $stage = "$env:ASSET-windows"
+          New-Item -ItemType Directory -Force -Path "$stage/VST3","$stage/CLAP" | Out-Null
+          Copy-Item -Recurse "build/bin/$env:PLUGIN_BASE.vst3" "$stage/VST3/"
+          Copy-Item "build/bin/$env:PLUGIN_BASE.clap" "$stage/CLAP/"
+          Copy-Item "../../../LICENSE" "$stage/LICENSE"
+          Copy-Item "../../shared-dpf/THIRD_PARTY_LICENSES.md" "$stage/THIRD_PARTY_LICENSES.md"
+          Get-ChildItem -Recurse "$stage" | Select-Object FullName
+          Compress-Archive -Path "$stage" -DestinationPath "$stage.zip" -Force
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-windows
+          path: ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-windows.zip
+          if-no-files-found: error
+          retention-days: 30
 
   # -------------------------------------------------------------------------
   # Release: only on a '<plugin>-v*' tag (single plugin in the matrix).
   # -------------------------------------------------------------------------
   release:
-    needs: [plan, build-linux, build-macos]
+    needs: [plan, build-linux, build-linux-arm64, build-windows, build-macos]
     runs-on: ubuntu-latest
     if: needs.plan.outputs.is_release == 'true'
     permissions:
@@ -488,18 +653,22 @@ jobs:
             if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
             echo "### Installation"
             echo ""
-            echo "Each zip contains \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\` folders."
+            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2)."
             echo ""
-            echo "**Linux (x86_64):**"
+            echo "**Linux (x86_64 and arm64):**"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/.vst3/\`"
             echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/.clap/\`"
             echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/.lv2/\`"
             echo ""
-            echo "**macOS (universal — arm64 runner build):**"
+            echo "**macOS (universal arm64/x86_64):**"
             echo "- AU: copy \`AU/${BASE}.component\` to \`~/Library/Audio/Plug-Ins/Components/\`"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/Library/Audio/Plug-Ins/VST3/\`"
             echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/Library/Audio/Plug-Ins/CLAP/\`"
             echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/Library/Audio/Plug-Ins/LV2/\`"
+            echo ""
+            echo "**Windows (x86_64):**"
+            echo "- VST3: copy \`VST3\\${BASE}.vst3\` to \`%COMMONPROGRAMFILES%\\VST3\\\`"
+            echo "- CLAP: copy \`CLAP\\${BASE}.clap\` to \`%COMMONPROGRAMFILES%\\CLAP\\\`"
             echo ""
             if [ "$SIGNED" = "true" ]; then
               echo "> macOS AU, VST3, and CLAP bundles are Developer ID signed and Apple-notarized. The LV2 bundle is Developer ID signed."
