@@ -401,10 +401,12 @@ jobs:
       # artifact, not a stale pre-signing copy.
       - name: Install component for auval
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          COMPONENT: ${{ steps.findau.outputs.component }}
         run: |
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
-          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/$(basename "${{ steps.findau.outputs.component }}")"
-          cp -R "${{ steps.findau.outputs.component }}" "$HOME/Library/Audio/Plug-Ins/Components/"
+          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$COMPONENT")"
+          cp -R "$COMPONENT" "$HOME/Library/Audio/Plug-Ins/Components/"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
 
       - name: Validate with auval (gate)

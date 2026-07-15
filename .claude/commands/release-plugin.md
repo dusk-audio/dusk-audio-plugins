@@ -72,8 +72,10 @@ For EACH plugin specified:
      - 4k-eq-2 → `project(FourKEQ2DPF …)`
      - tape-echo-2 → `project(TapeEchoDPF …)`
      - multi-q-2 → `project(MultiQ2DPF …)`
-     The DPF version guard in `dpf-build.yml` rejects the release if the tag version
-     does not equal this `project()` version — so bump it here exactly.
+     The DPF version guard in `dpf-build.yml` strips any `-beta`/`-rc`/`-alpha` suffix
+     from the tag, then rejects the release unless the tag's numeric BASE version equals
+     this `project()` VERSION — so bump it here to match exactly (e.g. tag
+     `tapemachine-2-v2.0.1-rc1` requires `project(TapeMachine2DPF VERSION 2.0.1)`).
 2. **Determine new version**:
    - If explicit version provided: use it
    - If omitted: auto-increment patch (1.0.2 → 1.0.3)
@@ -113,8 +115,9 @@ project(FourKEQ2DPF     VERSION <new-version>)   # 4k-eq-2
 project(TapeEchoDPF     VERSION <new-version>)   # tape-echo-2
 project(MultiQ2DPF      VERSION <new-version>)   # multi-q-2
 ```
-Bump only the one being released. This `project()` version must equal the tag version
-or `dpf-build.yml`'s guard fails the release.
+Bump only the one being released. `dpf-build.yml`'s guard strips any
+`-beta`/`-rc`/`-alpha` suffix from the tag and compares the numeric BASE version to
+this `project()` VERSION — they must match exactly or the release fails.
 
 **Manual front matter** (issue #80) — only if `manuals/<slug>.md` exists. Uses the portable `sed -i.bak ... && rm` form so this works on both macOS BSD sed and Linux GNU sed:
 ```bash
@@ -218,10 +221,11 @@ If pandoc or xelatex is not installed locally, this step fails. The skill should
 **Plugins repo** - Stage and commit all changed CMakeLists.txt files plus any bumped manual front matter:
 ```bash
 git add plugins/*/CMakeLists.txt
-# DPF "-2" plugins keep their CMakeLists.txt one level deeper, under dpf-plugin/.
-# The glob above does NOT reach it, so stage it explicitly or the version bump is
-# left uncommitted and the tag points at the un-bumped version (guard fails).
-git add plugins/*/dpf-plugin/CMakeLists.txt 2>/dev/null || true
+# DPF "-2" plugins keep their CMakeLists.txt one level deeper, under dpf-plugin/,
+# which the glob above does NOT reach. Stage EACH released DPF plugin's file
+# EXPLICITLY — no wildcard, no `|| true` — so unrelated dpf-plugin bumps are never
+# swept in and a missing/failed add aborts the release loudly:
+git add -- "$DPF_DIR/CMakeLists.txt"   # DPF_DIR = full Directory value from the slug table (e.g. plugins/TapeMachine/dpf-plugin); repeat per selected DPF plugin
 # Issue #80: include any manual front-matter bumps from Step 3
 git add manuals/*.md 2>/dev/null || true
 git commit -m "<summary of version bumps>"
