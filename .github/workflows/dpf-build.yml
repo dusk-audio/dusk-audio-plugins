@@ -531,15 +531,16 @@ jobs:
           retention-days: 30
 
   # -------------------------------------------------------------------------
-  # Windows: VST3 + CLAP (MSVC + Ninja). AU is macOS-only; LV2 on DPF+MSVC is
-  # fiddly and disabled here, matching build.yml's Windows job.
+  # Windows: VST3 + CLAP. AU is macOS-only; LV2 on DPF+Windows is disabled.
+  #
+  # Uses the Visual Studio generator (-G "Visual Studio 17 2022" -A x64), which is
+  # exactly how DPF's OWN CI builds Windows (DPF/.github/workflows/cmake.yml). The
+  # earlier Ninja + cl approach (mirrored from the JUCE job) does NOT set up DGL's
+  # OpenGL / glext include environment, so NanoVG fails with undeclared GLchar /
+  # PFNGL* — a generator problem, not an SDK problem. The VS generator resolves it.
   # -------------------------------------------------------------------------
   build-windows:
     needs: plan
-    # Pinned to windows-2022 (VS 2022 / MSVC 14.4x / SDK 22621) on purpose: on
-    # windows-latest (now VS 2026 / MSVC 14.51 / SDK 26100) DPF's DGL fails to
-    # compile — NanoVG's PFNGL* extension typedefs and WebViewWin32's macros are
-    # not resolved by that toolchain's GL/Win headers. VS 2022 is what DPF targets.
     runs-on: windows-2022
     timeout-minutes: 45
     permissions:
@@ -576,15 +577,11 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
         shell: pwsh
         run: |
-          cmake -B build -G Ninja `
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
             -DDUSK_DPF_INSTALL_LOCAL=OFF `
             -DDPF_PATH="$env:GITHUB_WORKSPACE/DPF" `
@@ -603,8 +600,14 @@ jobs:
         run: |
           $stage = "$env:ASSET-windows"
           New-Item -ItemType Directory -Force -Path "$stage/VST3","$stage/CLAP" | Out-Null
-          Copy-Item -Recurse "build/bin/$env:PLUGIN_BASE.vst3" "$stage/VST3/"
-          Copy-Item "build/bin/$env:PLUGIN_BASE.clap" "$stage/CLAP/"
+          # The VS generator is multi-config, so artifacts may land under build/bin
+          # or build/bin/Release. Locate them rather than assuming the path.
+          $vst3 = Get-ChildItem -Path build -Recurse -Directory -Filter "$env:PLUGIN_BASE.vst3" | Select-Object -First 1
+          $clap = Get-ChildItem -Path build -Recurse -File      -Filter "$env:PLUGIN_BASE.clap" | Select-Object -First 1
+          if (-not $vst3) { throw "VST3 bundle $env:PLUGIN_BASE.vst3 not found under build/" }
+          if (-not $clap) { throw "CLAP $env:PLUGIN_BASE.clap not found under build/" }
+          Copy-Item -Recurse $vst3.FullName "$stage/VST3/"
+          Copy-Item $clap.FullName "$stage/CLAP/"
           Copy-Item "../../../LICENSE" "$stage/LICENSE"
           Copy-Item "../../shared-dpf/THIRD_PARTY_LICENSES.md" "$stage/THIRD_PARTY_LICENSES.md"
           Get-ChildItem -Recurse "$stage" | Select-Object FullName
