@@ -12,8 +12,8 @@ tagline: tracking and mastering tape color in one processor
 TapeMachine 2 combines two tape-deck models in one stereo effect. **Swiss**
 provides tracking and mix coloration, while **American** provides a mastering
 deck topology with additional transport and electronics options. The machine,
-speed, tape formulation, equalization, calibration, bias, and signal path all
-change the modeled recording and playback chain.
+speed, tape formulation, equalization, bias, and signal path all change the
+modeled recording and playback chain.
 
 The factory bank contains 20 calibrated presets. They are useful starting
 points, but Input, Bias, transport modulation, filters, and the Advanced
@@ -53,10 +53,10 @@ installed for old-session compatibility.
 
 ### Tape type
 
-- **Type 456**: classic general-purpose formulation.
-- **Type GP9**: high-output formulation.
-- **Type 900**: clean modern formulation.
-- **Type 250**: older, more colored formulation.
+- **456**: classic general-purpose formulation.
+- **GP9**: high-output formulation.
+- **900**: clean modern formulation.
+- **250**: older, more colored formulation.
 
 ### Signal path
 
@@ -65,12 +65,9 @@ installed for old-session compatibility.
 - **Input**: electronics and EQ without tape saturation, modulation, or noise.
 - **Thru**: direct signal path for comparison.
 
-### EQ and calibration
+### EQ and bias
 
 - **EQ Standard** selects NAB or CCIR.
-- **Calibration** selects +3, +6, +7.5, or +9 dB. In this model, higher
-  calibration drives the modeled tape flux harder for the same input while the
-  output remains level-compensated.
 - **Auto Bias** derives bias from the current tape and speed. Turn it off to use
   the Bias knob manually.
 

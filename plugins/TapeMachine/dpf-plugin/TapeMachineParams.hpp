@@ -55,7 +55,7 @@ namespace tmparams
 {
     static constexpr const char* kTapeMachine[] = { "Swiss", "American" };
     static constexpr const char* kTapeSpeed[]   = { "7.5 IPS", "15 IPS", "30 IPS", "3.75 IPS" };
-    static constexpr const char* kTapeType[]    = { "Type 456", "Type GP9", "Type 900", "Type 250" };
+    static constexpr const char* kTapeType[]    = { "456", "GP9", "900", "250" };
     static constexpr const char* kSignalPath[]  = { "Repro", "Sync", "Input", "Thru" };
     static constexpr const char* kEqStandard[]  = { "NAB", "CCIR" };   // both decks: NAB/CCIR only
     static constexpr const char* kCalibration[] = { "+3dB", "+6dB", "+7.5dB", "+9dB" };
