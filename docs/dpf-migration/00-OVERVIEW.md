@@ -146,7 +146,7 @@ pluginval --strictness-level 8 --timeout-ms 120000 --validate ~/.vst3/<Name>.vst
   Note: the completed tape-echo DPF port still displays plain "Tape Echo" —
   rename its DISTRHO_PLUGIN_NAME to "Tape Echo 2" as a first task.
 - No third-party trademarks anywhere in names, strings, UI, or docs
-  (no Roland/RE-201/SSL/Neve/Pultec/Studer etc. — describe hardware
+  (no Roland/RE-201/British/Neve/Pultec/tracking deck etc. — describe hardware
   generically).
 - The user's ear is final sign-off. Self-verify everything measurable first;
   hand off renders/screenshots, never claims.

@@ -348,11 +348,11 @@ inline HardwareUnitProfile createConsoleBus()
     return profile;
 }
 
-// Studer A800
+// tracking tape deck
 inline TapeProfile createStuderA800()
 {
     return TapeProfile::create(
-        "Studer A800", "Ampex 456",
+        "tracking tape deck", "classic tape",
         0.65f, 0.35f, 0.15f,      // saturation onset, amount, hysteresis
         1.5f, 2.0f, 80.0f,        // bass boost, head bump, head bump freq
         16000.0f,                  // HF rolloff
@@ -361,11 +361,11 @@ inline TapeProfile createStuderA800()
     );
 }
 
-// Ampex ATR-102
+// mastering tape deck
 inline TapeProfile createAmpexATR102()
 {
     return TapeProfile::create(
-        "Ampex ATR-102", "Ampex 456",
+        "mastering tape deck", "classic tape",
         0.7f, 0.3f, 0.12f,         // saturation onset, amount, hysteresis
         1.0f, 1.5f, 100.0f,        // bass boost, head bump, head bump freq
         18000.0f,                   // HF rolloff

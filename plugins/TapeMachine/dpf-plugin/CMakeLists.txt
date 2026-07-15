@@ -33,4 +33,12 @@ target_include_directories(tape_machine_2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DPF_INCLUDE_DIRS})
 
+# Single source of truth for the plugin version: the project() VERSION above is
+# plumbed into getVersion() via these macros (see TapeMachinePlugin.cpp). Bumped
+# by the /release-plugin skill (slug tapemachine-2).
+target_compile_definitions(tape_machine_2 PRIVATE
+    TM2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    TM2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    TM2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
+
 dusk_dpf_install_local(tape_machine_2)

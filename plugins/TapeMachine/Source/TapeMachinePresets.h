@@ -18,9 +18,9 @@ struct Preset
     juce::String category;
 
     // Machine settings
-    int tapeMachine = 0;     // 0=Swiss800 (Type A), 1=Classic102 (Type B)
+    int tapeMachine = 0;     // 0=Swiss (Type A), 1=American (Type B)
     int tapeSpeed = 1;       // 0=7.5 IPS, 1=15 IPS, 2=30 IPS
-    int tapeType = 0;        // 0=Type456, 1=GP9, 2=Type911, 3=Type250
+    int tapeType = 0;        // 0=FormulaClassic, 1=high-output formula, 2=FormulaBalanced, 3=FormulaVintage
 
     // Gain and saturation
     float inputGain = 0.0f;  // -12 to +12 dB (drives saturation)
@@ -61,9 +61,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Gentle Warmth",          // name
         "Subtle",                 // category
-        0,                        // tapeMachine: Swiss800 (Type A - cleaner)
+        0,                        // tapeMachine: Swiss (Type A - cleaner)
         2,                        // tapeSpeed: 30 IPS (cleanest)
-        3,                        // tapeType: Type250 (professional)
+        3,                        // tapeType: FormulaVintage (professional)
         2.0f,                     // inputGain: Light drive
         0.0f,                     // outputGain
         50.0f,                    // bias: Neutral
@@ -79,9 +79,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Transparent Glue",
         "Subtle",
-        0,                        // tapeMachine: Swiss800 (clean precision)
+        0,                        // tapeMachine: Swiss (clean precision)
         2,                        // tapeSpeed: 30 IPS
-        1,                        // tapeType: GP9 (modern formulation)
+        1,                        // tapeType: high-output formula (modern formulation)
         3.0f,                     // inputGain: Light saturation
         0.0f,
         55.0f,                    // bias: Slightly hot
@@ -97,9 +97,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Mastering Touch",
         "Subtle",
-        0,                        // Swiss800
+        0,                        // Swiss
         2,                        // 30 IPS
-        3,                        // Type250
+        3,                        // FormulaVintage
         1.0f,                     // inputGain: Very light
         0.0f,
         50.0f,
@@ -118,9 +118,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Classic Analog",
         "Warm",
-        1,                        // tapeMachine: Classic102 (Type B - warmer)
+        1,                        // tapeMachine: American (Type B - warmer)
         1,                        // tapeSpeed: 15 IPS (classic)
-        0,                        // tapeType: Type456 (high output, warm)
+        0,                        // tapeType: FormulaClassic (high output, warm)
         5.0f,                     // inputGain: Moderate drive
         0.0f,
         50.0f,
@@ -136,9 +136,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Vintage Warmth",
         "Warm",
-        1,                        // Classic102
+        1,                        // American
         0,                        // 7.5 IPS (more saturation, more wow/flutter character)
-        0,                        // Type456
+        0,                        // FormulaClassic
         6.0f,                     // inputGain: Push it
         0.0f,
         45.0f,                    // bias: Slightly under-biased for more harmonics
@@ -154,9 +154,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Tube Console",
         "Warm",
-        1,                        // Classic102 (vintage warmth)
+        1,                        // American (vintage warmth)
         1,                        // 15 IPS
-        2,                        // Type911 (German precision with warmth)
+        2,                        // FormulaBalanced (German precision with warmth)
         7.0f,                     // inputGain: Solid drive
         0.0f,
         48.0f,
@@ -175,9 +175,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "70s Rock",
         "Character",
-        1,                        // Classic102 (vintage character)
+        1,                        // American (vintage character)
         1,                        // 15 IPS
-        0,                        // Type456
+        0,                        // FormulaClassic
         8.0f,                     // inputGain: Drive hard
         0.0f,
         42.0f,                    // bias: Under-biased for grit
@@ -193,9 +193,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Tape Saturation",
         "Character",
-        1,                        // Classic102
+        1,                        // American
         1,                        // 15 IPS
-        0,                        // Type456
+        0,                        // FormulaClassic
         10.0f,                    // inputGain: Heavy drive
         0.0f,
         40.0f,                    // bias: Under-biased
@@ -211,9 +211,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Cassette Deck",
         "Character",
-        1,                        // Classic102
+        1,                        // American
         0,                        // 7.5 IPS (slower = more artifacts)
-        2,                        // Type911
+        2,                        // FormulaBalanced
         6.0f,
         0.0f,
         55.0f,
@@ -232,9 +232,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Lo-Fi Warble",
         "Lo-Fi",
-        1,                        // Classic102
+        1,                        // American
         0,                        // 7.5 IPS
-        0,                        // Type456
+        0,                        // FormulaClassic
         8.0f,
         0.0f,
         38.0f,                    // bias: Very under-biased
@@ -250,9 +250,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Worn Tape",
         "Lo-Fi",
-        1,                        // Classic102
+        1,                        // American
         0,                        // 7.5 IPS
-        2,                        // Type911
+        2,                        // FormulaBalanced
         5.0f,
         0.0f,
         35.0f,
@@ -268,9 +268,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Dusty Reel",
         "Lo-Fi",
-        1,                        // Classic102
+        1,                        // American
         0,                        // 7.5 IPS
-        0,                        // Type456
+        0,                        // FormulaClassic
         4.0f,
         0.0f,
         42.0f,
@@ -289,9 +289,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Master Bus Glue",
         "Mastering",
-        0,                        // Swiss800 (precision)
+        0,                        // Swiss (precision)
         2,                        // 30 IPS (cleanest)
-        3,                        // Type250 (professional)
+        3,                        // FormulaVintage (professional)
         2.0f,                     // inputGain: Very light
         0.0f,
         52.0f,
@@ -307,9 +307,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Analog Sheen",
         "Mastering",
-        0,                        // Swiss800 (precision for mastering)
+        0,                        // Swiss (precision for mastering)
         2,                        // 30 IPS
-        1,                        // GP9
+        1,                        // high-output formula
         3.0f,
         0.0f,
         50.0f,
@@ -325,9 +325,9 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Vintage Master",
         "Mastering",
-        0,                        // Swiss800
+        0,                        // Swiss
         1,                        // 15 IPS (more character)
-        0,                        // Type456
+        0,                        // FormulaClassic
         4.0f,
         0.0f,
         48.0f,

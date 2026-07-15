@@ -2,10 +2,16 @@
 // Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
 // others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
 //
-// TapeMachinePresets.hpp — factory presets, ported verbatim from the JUCE
-// TapeMachine build (plugins/TapeMachine/Source/TapeMachinePresets.h). Shared by
-// the DPF program interface (host preset menu) and the UI preset combo. Presets
-// only touch the parameters the JUCE presets set; everything else keeps default.
+// TapeMachinePresets.hpp — calibrated factory presets mapped onto TapeMachine 2's
+// parameters. Each preset captures its deck, speed, tape formula, EQ,
+// calibration, head width, drive, and reproduce-EQ settings.
+//
+// Gain link (Auto Compensation) is ON for every preset: driving the tape via Input
+// adds saturation while the output holds unity (-12 dBFS in -> -12 dBFS out), which
+// is how the reference operates at its calibrated -12 dBFS internal level. Each preset then
+// carries a small per-preset Output makeup trim (outTrim, applied on top of the link)
+// that matches the loudness of the reference preset it was curated from — the reference
+// presets dial their own record/repro levels, so their net output is not always unity.
 
 #pragma once
 
@@ -15,38 +21,73 @@ struct TmPreset
 {
     const char* name;
     const char* category;
-    int   tapeMachine, tapeSpeed, tapeType;
-    float inputGain, outputGain, bias;
-    bool  autoComp;
-    float highpassFreq, lowpassFreq, wow, flutter, noiseAmount;
-    bool  noiseEnabled;
+    int   tapeMachine;   // 0 Swiss (Swiss) / 1 American (American)
+    int   tapeSpeed;     // 0 7.5 / 1 15 / 2 30 / 3 3.75 IPS
+    int   tapeType;      // 0 456 / 1 GP9 / 2 900 / 3 250
+    int   eqStandard;    // 0 NAB / 1 CCIR
+    int   calibration;   // 0 +3 / 1 +6 / 2 +7.5 / 3 +9 dB
+    int   signalPath;    // 0 Repro / 1 Sync / 2 Input / 3 Thru
+    int   headWidth;     // 0 1/4" / 1 1/2" / 2 1"  (American only; ignored on Swiss)
+    float inputGain;     // dB — the tape "drive"/colour control
+    bool  autoCal;       // auto bias (calibrated) vs the manual bias value below
+    float bias;          // % (50 = optimal); used only when autoCal is false
+    float highpassFreq, lowpassFreq;
+    float wow, flutter, noiseAmount;
+    float reproLf, reproLmf, reproHmf, reproHf;  // advanced repro-head 4-band EQ (dB); 0 = neutral (rows may omit -> 0)
+    float outTrim;  // per-preset OUTPUT makeup trim (dB) applied on top of the gain-link
+                    // inverse (output = -input + outTrim); matches the reference preset's
+                    // own non-unity output level. Post-tape LINEAR gain: shifts loudness only,
+                    // transparent to THD/FR/aliasing. 0 = unity; every row sets it explicitly.
 };
 
+// Preset field order:
+//   name, category, machine, speed, type, eq, cal, path, head,
+//   inGain, autoCal, bias, hp, lp, wow, flutter, noise,
+//   reproLf, reproLmf, reproHmf, reproHf, outTrim
 static constexpr TmPreset kTmPresets[] =
 {
-    // name                 category      mch spd typ  in    out  bias  aComp  hp     lp      wow   flt   noise  nEn
-    { "Gentle Warmth",     "Subtle",      0,  2,  3,   2.f,  0.f, 50.f, true,  20.f,  20000.f, 3.f,  1.f,  0.f,   false },
-    { "Transparent Glue",  "Subtle",      0,  2,  1,   3.f,  0.f, 55.f, true,  20.f,  18000.f, 2.f,  1.f,  0.f,   false },
-    { "Mastering Touch",   "Subtle",      0,  2,  3,   1.f,  0.f, 50.f, true,  20.f,  20000.f, 1.f,  0.5f, 0.f,   false },
-    { "Classic Analog",    "Warm",        1,  1,  0,   5.f,  0.f, 50.f, true,  30.f,  16000.f, 7.f,  3.f,  5.f,   false },
-    { "Vintage Warmth",    "Warm",        1,  0,  0,   6.f,  0.f, 45.f, true,  40.f,  14000.f, 10.f, 5.f,  8.f,   false },
-    { "Tube Console",      "Warm",        1,  1,  2,   7.f,  0.f, 48.f, true,  25.f,  15000.f, 5.f,  2.f,  3.f,   false },
-    { "70s Rock",          "Character",   1,  1,  0,   8.f,  0.f, 42.f, true,  50.f,  12000.f, 12.f, 6.f,  10.f,  true  },
-    { "Tape Saturation",   "Character",   1,  1,  0,   10.f, 0.f, 40.f, true,  30.f,  14000.f, 8.f,  4.f,  5.f,   false },
-    { "Cassette Deck",     "Character",   1,  0,  2,   6.f,  0.f, 55.f, true,  60.f,  10000.f, 15.f, 8.f,  15.f,  true  },
-    { "Lo-Fi Warble",      "Lo-Fi",       1,  0,  0,   8.f,  0.f, 38.f, true,  80.f,  8000.f,  25.f, 12.f, 20.f,  true  },
-    { "Worn Tape",         "Lo-Fi",       1,  0,  2,   5.f,  0.f, 35.f, true,  100.f, 6000.f,  30.f, 15.f, 30.f,  true  },
-    { "Dusty Reel",        "Lo-Fi",       1,  0,  0,   4.f,  0.f, 42.f, true,  70.f,  9000.f,  20.f, 10.f, 40.f,  true  },
-    { "Master Bus Glue",   "Mastering",   0,  2,  3,   2.f,  0.f, 52.f, true,  20.f,  20000.f, 2.f,  1.f,  0.f,   false },
-    { "Analog Sheen",      "Mastering",   0,  2,  1,   3.f,  0.f, 50.f, true,  20.f,  18000.f, 3.f,  1.5f, 0.f,   false },
-    { "Vintage Master",    "Mastering",   0,  1,  0,   4.f,  0.f, 48.f, true,  25.f,  16000.f, 5.f,  2.f,  2.f,   false },
+    // Input gain controls drive while the reproduce-EQ bands shape the calibrated
+    // response. Higher calibration levels saturate more, and drive-linked HF
+    // compensation keeps hot presets balanced.
+    // ---- American: mixdown / mastering (2-bus glue) --------------------
+    { "Big 456 Master", "American Master", 1, 1, 0, 0, 0, 0, 1, 2.7f, true, 50.f, 20.f, 20000.f, 2.f, 1.f, 65.6f, 0.7f, 0.5f, -0.5f, 2.1f, 0.f },
+    { "Nice 456 Master", "American Master", 1, 2, 0, 0, 0, 0, 1, 2.6f, true, 50.f, 20.f, 20000.f, 1.f, 1.f, 62.1f, 1.1f, 0.4f, -3.f, 0.7f, 0.f },
+    { "Jazz Vision Master", "American Master", 1, 1, 0, 0, 0, 0, 1, -4.9f, true, 50.f, 20.f, 20000.f, 1.f, 1.f, 29.5f, -0.7f, 1.f, -1.1f, 6.9f, -0.3f },
+    { "Clean 900 Master", "American Master", 1, 1, 2, 1, 2, 0, 1, -12.f, true, 50.f, 20.f, 20000.f, 1.f, 1.f, 0.f, -2.3f, -0.2f, 4.5f, 4.7f, 0.f },
+
+    // ---- American: colour / character ----------------------------------
+    { "Fat 456 Master", "American Color", 1, 1, 0, 0, 0, 1, 1, 2.7f, true, 50.f, 45.f, 20000.f, 3.f, 2.f, 62.0f, 4.0f, 2.8f, 2.f, -0.3f, -0.5f },
+    { "GP9 Drum Bus", "American Color", 1, 2, 1, 0, 1, 0, 2, 6.8f, true, 50.f, 20.f, 20000.f, 3.f, 2.f, 44.9f, 2.5f, -0.6f, -3.6f, -0.1f, 1.4f },
+    { "Massive Bass", "American Color", 1, 1, 3, 0, 3, 0, 1, 7.8f, false, 72.f, 20.f, 20000.f, 3.f, 2.f, 96.7f, -0.7f, 0.4f, 0.6f, 1.6f, -1.0f },
+    { "Bright & Sizzly", "American Color", 1, 0, 1, 0, 0, 0, 0, -10.2f, false, 26.f, 20.f, 19000.f, 5.f, 3.f, 18.1f, -3.1f, 0.3f, -0.f, 0.8f, -0.8f },
+
+    // ---- Swiss: mix / tracking ----------------------------------------
+    { "Classic Rock Crisp", "Swiss Mix", 0, 1, 3, 0, 1, 0, 1, 0.0f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 2.6f, -0.3f, 0.2f, -0.9f, 0.5f, 0.4f },
+    { "Modern Rock", "Swiss Mix", 0, 1, 0, 0, 1, 0, 1, 5.0f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 4.0f, -0.2f, 0.2f, -1.f, 1.2f, 0.9f },
+    { "Drum Bus", "Swiss Mix", 0, 1, 1, 0, 1, 1, 1, 10.9f, false, 62.f, 20.f, 20000.f, 0.f, 0.f, 0.f, -1.7f, 0.4f, -0.4f, 7.4f, 1.5f },
+    { "Hi-Fi Shine", "Swiss Mix", 0, 2, 1, 0, 1, 0, 1, 5.1f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 0.f, 0.6f, 0.3f, -0.8f, 5.5f, 0.3f },
+    { "Lush Film", "Swiss Mix", 0, 1, 2, 0, 0, 1, 1, 3.1f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 0.f, -1.7f, 0.5f, -0.8f, 1.f, 0.9f },
+    { "Jazz Warmth", "Swiss Mix", 0, 2, 2, 0, 0, 0, 1, -9.1f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 0.f, 0.6f, 0.4f, 0.2f, -0.6f, 0.f },
+
+    // ---- Swiss: character / saturation --------------------------------
+    { "Thick Saturation", "Swiss Color", 0, 1, 1, 0, 3, 1, 1, 2.2f, false, 40.f, 20.f, 20000.f, 0.f, 0.f, 3.7f, -1.8f, 0.7f, 0.0f, 6.1f, -0.7f },
+    { "Hip-Hop Punch", "Swiss Color", 0, 1, 1, 0, 2, 1, 1, 6.8f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 6.3f, -0.1f, 0.5f, -0.6f, 7.8f, 0.f },
+    { "Vocal Presence", "Swiss Color", 0, 2, 2, 0, 3, 1, 1, 11.8f, false, 64.2f, 20.f, 20000.f, 0.f, 0.f, 0.f, 0.5f, 0.5f, -1.6f, 1.7f, 2.5f },
+
+    // ---- Lo-Fi (both decks) -------------------------------------------------
+    { "Sunbaked Cassette", "Lo-Fi", 1, 3, 2, 0, 0, 0, 0, 10.9f, false, 78.f, 39.f, 10000.f, 18.f, 12.f, 88.7f, 2.2f, -4.1f, -4.9f, -4.4f, -4.0f },
+    { "Analog Warmth", "Lo-Fi", 1, 3, 3, 0, 3, 0, 0, -12.f, false, 37.3f, 30.f, 12000.f, 14.f, 10.f, 25.1f, 3.1f, -0.1f, -7.5f, 9.1f, -0.4f },
+    // Old Tape is Swiss (machine 0); the reference tracking deck has NO wow/flutter, so its
+    // W&F is 0/0 by design (2026-07-12 authenticity decision) — loses the old 12/8 lo-fi wobble.
+    { "Old Tape", "Lo-Fi", 0, 0, 3, 0, 2, 1, 1, 2.5f, false, 42.f, 30.f, 12000.f, 0.f, 0.f, 24.5f, -6.2f, 1.2f, -2.4f, -10.9f, 0.9f },
 };
 
 static constexpr int kNumTmPresets = (int)(sizeof(kTmPresets) / sizeof(kTmPresets[0]));
 
 // Apply a preset by invoking setter(paramId, value) for each parameter it owns.
-// Used by both the plugin (loadProgram) and the UI (preset combo) so the two
-// stay in lockstep. Parameters not listed keep their current value.
+// Used by both the plugin (loadProgram) and the UI (preset combo) so the two stay
+// in lockstep. Gain link is forced on; Output Gain carries the preset's makeup trim
+// (added to the link's -input inverse). Parameters not listed keep their current value.
 template <class SetFn>
 inline void tmApplyPreset(int idx, SetFn&& set)
 {
@@ -55,14 +96,31 @@ inline void tmApplyPreset(int idx, SetFn&& set)
     set(kParamTapeMachine,  (float)p.tapeMachine);
     set(kParamTapeSpeed,    (float)p.tapeSpeed);
     set(kParamTapeType,     (float)p.tapeType);
+    set(kParamEqStandard,   (float)p.eqStandard);
+    set(kParamCalibration,  (float)p.calibration);
+    set(kParamSignalPath,   (float)p.signalPath);
+    set(kParamHeadWidth,    (float)p.headWidth);
+    // American front-panel toggles: every factory preset was curated from the reference
+    // default state (Crosstalk/W&F/Transformer all On), which is also the state the
+    // American tuning captured — force On so preset recall always uses the fitted path.
+    set(kParamCrosstalk,    1.0f);
+    set(kParamWowFlutterOn, 1.0f);
+    set(kParamTransformer,  1.0f);
     set(kParamInputGain,    p.inputGain);
-    set(kParamOutputGain,   p.outputGain);
+    set(kParamOutputGain,   p.outTrim);                 // makeup trim on top of the gain-link inverse
+    set(kParamAutoComp,     1.0f);                      // gain link on (unity + outTrim output)
+    set(kParamAutoCal,      p.autoCal ? 1.f : 0.f);
     set(kParamBias,         p.bias);
-    set(kParamAutoComp,     p.autoComp ? 1.f : 0.f);
     set(kParamHighpassFreq, p.highpassFreq);
     set(kParamLowpassFreq,  p.lowpassFreq);
     set(kParamWow,          p.wow);
     set(kParamFlutter,      p.flutter);
     set(kParamNoiseAmount,  p.noiseAmount);
-    set(kParamNoiseEnabled, p.noiseEnabled ? 1.f : 0.f);
+    // Sync the noise on/off toggle to the preset: a preset with noise must activate it
+    // regardless of the user's previous state; zero amount disables it.
+    set(kParamNoiseEnabled, p.noiseAmount > 0.0f ? 1.0f : 0.0f);
+    set(kParamReproLF,      p.reproLf);
+    set(kParamReproLMF,     p.reproLmf);
+    set(kParamReproHMF,     p.reproHmf);
+    set(kParamReproHF,      p.reproHf);
 }

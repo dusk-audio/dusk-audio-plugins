@@ -30,19 +30,26 @@ public:
     float getVuRForUI() const noexcept { return dsp.getVuR(); }
     float getInVuLForUI() const noexcept { return dsp.getInVuL(); }
     float getInVuRForUI() const noexcept { return dsp.getInVuR(); }
+    float getInPeakLForUI() const noexcept { return dsp.getInPeakL(); }
+    float getInPeakRForUI() const noexcept { return dsp.getInPeakR(); }
+    float getOutPeakLForUI() const noexcept { return dsp.getOutPeakL(); }
+    float getOutPeakRForUI() const noexcept { return dsp.getOutPeakR(); }
 
 protected:
     //--- metadata --------------------------------------------------------------
     const char* getLabel() const override    { return "TapeMachine2"; }
-    const char* getDescription() const override
-    {
-        return "Reel-to-reel tape machine emulation: Jiles-Atherton tape "
-               "saturation, head/gap EQ, wow & flutter, hiss, NAB/CCIR/AES.";
-    }
+    const char* getDescription() const override { return ""; }
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override  { return d_version(2, 0, 0); }
+    // Version comes from the CMake project() VERSION via compile definitions
+    // (single source of truth). Fallback keeps non-CMake builds compiling.
+#ifndef TM2_VERSION_MAJOR
+ #define TM2_VERSION_MAJOR 2
+ #define TM2_VERSION_MINOR 0
+ #define TM2_VERSION_PATCH 0
+#endif
+    uint32_t    getVersion() const override  { return d_version(TM2_VERSION_MAJOR, TM2_VERSION_MINOR, TM2_VERSION_PATCH); }
     int64_t     getUniqueId() const override { return d_cconst('D', 's', 'T', 'M'); } // matches DISTRHO_PLUGIN_UNIQUE_ID (DsTM)
 
     //--- parameters ------------------------------------------------------------
@@ -62,6 +69,11 @@ protected:
             break;
         case 'c': // discrete choice
             p.hints = kParameterIsAutomatable | kParameterIsInteger;
+            // Oversampling is pinned at the tuned 2x core (the DSP ignores this param — see
+            // TapeMachineDSP::factorFromChoice). Keep it in the layout so param indices and
+            // saved state round-trip, but hide it from host/user GUIs and drop automation.
+            if (index == kParamOversampling)
+                p.hints = kParameterIsInteger | kParameterIsHidden;
             break;
         default:  // 'f' linear / 'g' skewed float (UI owns the skew feel)
             p.hints = kParameterIsAutomatable;
@@ -150,7 +162,12 @@ protected:
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
-        updateLatency(); // oversampling factor changes reported latency
+        // Re-query latency each block: it changes on an oversampling-factor change AND on a
+        // bypass toggle (bypass = zero-delay passthrough -> latencySamples() returns 0).
+        // updateLatency() only forwards to setLatency() when the value actually changes, so
+        // the host re-runs PDC once per transition, never per block. DPF permits setLatency()
+        // from run() (see DistrhoPlugin.hpp setLatency docs).
+        updateLatency();
     }
 
 private:
@@ -177,6 +194,14 @@ private:
         case kParamOutputGain:  dsp.setOutputGainDb(v);          break;
         case kParamAutoComp:    dsp.setAutoComp(v > 0.5f);       break;
         case kParamOversampling:dsp.setOversampling(iv);         break;
+        case kParamHeadWidth:   dsp.setHeadWidth(iv);            break;
+        case kParamCrosstalk:   dsp.setCrosstalk(v > 0.5f);      break;
+        case kParamWowFlutterOn:dsp.setWowFlutterEnabled(v > 0.5f); break;
+        case kParamTransformer: dsp.setTransformer(v > 0.5f);    break;
+        case kParamReproLF:     dsp.setReproLf(v);              break;
+        case kParamReproLMF:    dsp.setReproLmf(v);             break;
+        case kParamReproHMF:    dsp.setReproHmf(v);             break;
+        case kParamReproHF:     dsp.setReproHf(v);              break;
         case kParamBypass:      dsp.setBypass(v > 0.5f);         break;
         }
     }
@@ -233,4 +258,24 @@ float tapeMachineGetInVuR(void* const pluginInstancePointer) noexcept
 {
     auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getInVuRForUI() : 0.0f;
+}
+float tapeMachineGetInPeakL(void* const pluginInstancePointer) noexcept
+{
+    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    return p != nullptr ? p->getInPeakLForUI() : 0.0f;
+}
+float tapeMachineGetInPeakR(void* const pluginInstancePointer) noexcept
+{
+    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    return p != nullptr ? p->getInPeakRForUI() : 0.0f;
+}
+float tapeMachineGetOutPeakL(void* const pluginInstancePointer) noexcept
+{
+    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    return p != nullptr ? p->getOutPeakLForUI() : 0.0f;
+}
+float tapeMachineGetOutPeakR(void* const pluginInstancePointer) noexcept
+{
+    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    return p != nullptr ? p->getOutPeakRForUI() : 0.0f;
 }

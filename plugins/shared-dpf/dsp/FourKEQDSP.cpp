@@ -19,7 +19,7 @@ static inline float clampf(float v, float lo, float hi) noexcept { return v < lo
 // Static coefficient designers (shared with the UI response curve)
 //==============================================================================
 // Mid-band Q voicing, applied ONCE (consolePeak no longer scales Q internally).
-// Matches the hardware topology confirmed by SSL/Waves docs:
+// Matches the hardware topology confirmed by console/Waves docs:
 //   E-series (Brown): CONSTANT-Q — bandwidth is fixed regardless of gain
 //                     ("as the boost grows the base of the mountain stays put").
 //   G-series (Black): PROPORTIONAL-Q — Q narrows as boost/cut increases, so the
@@ -323,7 +323,7 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
                     float& flux = xfmrFlux[(size_t)c];
                     flux += xfmrLpCoef * (x - flux);
                     const float lfHarm = std::tanh(flux * 1.6f) / 1.6f - flux;
-                    // Measured SSL 4000E nominal THD is ~0.0003-0.0007% — nearly
+                    // Measured British E-series nominal THD is ~0.0003-0.0007% — nearly
                     // clean; the audible colour comes from DRIVING it. So the
                     // always-on term is only a token analog trace (real iron is
                     // never perfectly linear), with the drive knob adding the

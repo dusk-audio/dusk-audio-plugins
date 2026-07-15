@@ -6,22 +6,21 @@
 // DSP shell (initParameter / setParameterValue) and the UI.
 //
 // Order mirrors the JUCE TapeMachine parameter layout exactly (values are host-
-// automation indices, not display strings). Trademark tape-stock / machine
-// names are kept verbatim per the product owner's decision (this plugin is an
-// approved exception to the migration's no-trademark guideline).
+// automation indices, not display strings). Public labels use Dusk Audio's
+// generic deck and formulation names.
 
 #pragma once
 
 enum ParamId
 {
-    kParamTapeMachine = 0, // choice: Swiss 800 / Classic 102
-    kParamTapeSpeed,       // choice: 7.5 / 15 / 30 IPS
-    kParamTapeType,        // choice: 456 / GP9 / 911 / 250
+    kParamTapeMachine = 0, // choice: Swiss / American
+    kParamTapeSpeed,       // choice: 7.5 / 15 / 30 / 3.75 IPS (3.75 appended, American-only)
+    kParamTapeType,        // choice: 456 / GP9 / 900 / 250
     kParamSignalPath,      // choice: Repro / Sync / Input / Thru
-    kParamEqStandard,      // choice: NAB / CCIR / AES
+    kParamEqStandard,      // choice: NAB / CCIR
     kParamInputGain,       // -12..12 dB  (this is the real tape-drive control)
     kParamBias,            // 0..100 % (50 = optimal)
-    kParamCalibration,     // choice: 0 / +3 / +6 / +9 dB
+    kParamCalibration,     // choice: +3 / +6 / +7.5 / +9 dB
     kParamAutoCal,         // choice: Off / On
     kParamHighpassFreq,    // 20..500 Hz (skew 0.5)
     kParamLowpassFreq,     // 3000..20000 Hz (skew 0.5)
@@ -32,7 +31,19 @@ enum ParamId
     kParamOutputGain,      // -12..12 dB
     kParamAutoComp,        // choice: Off / On
     kParamOversampling,    // choice: 1x / 2x / 4x
+    kParamHeadWidth,       // choice: 1/4" / 1/2" / 1"  (American only; ignored on Swiss)
+    // American front-panel toggles (American only; hidden + ignored on Swiss). Each
+    // defaults ON = the state the American tuning captured, so defaults are byte-identical.
+    kParamCrosstalk,       // choice: Off / On  (American adjacent-track crosstalk bleed)
+    kParamWowFlutterOn,    // choice: Off / On  (American Wow & Flutter master enable; gates the W&F knobs)
+    kParamTransformer,     // choice: Off / On  (American output transformer: LF roll-off + 2nd-harmonic colour)
     kParamBypass,          // host-designated bypass
+    // Advanced Repro EQ appended AFTER bypass so the bypass host-param ID stays fixed as
+    // more params are added later (host bypass automation survives version updates).
+    kParamReproLF,         // -12..12 dB repro-head LF shelf  (advanced; models the reference Repro EQ)
+    kParamReproLMF,        // -12..12 dB repro-head low-mid peak (advanced)
+    kParamReproHMF,        // -12..12 dB repro-head high-mid/presence peak (advanced)
+    kParamReproHF,         // -12..12 dB repro-head HF shelf  (advanced)
     // --- output-only (meters); kept as params for generic-UI fallback ---
     kParamVuL,             // output: L peak level for the VU meter
     kParamVuR,             // output: R peak level for the VU meter
@@ -42,14 +53,15 @@ enum ParamId
 // ---- choice label tables (index == parameter value) ------------------------
 namespace tmparams
 {
-    static constexpr const char* kTapeMachine[] = { "Swiss 800", "Classic 102" };
-    static constexpr const char* kTapeSpeed[]   = { "7.5 IPS", "15 IPS", "30 IPS" };
-    static constexpr const char* kTapeType[]    = { "Type 456", "Type GP9", "Type 911", "Type 250" };
+    static constexpr const char* kTapeMachine[] = { "Swiss", "American" };
+    static constexpr const char* kTapeSpeed[]   = { "7.5 IPS", "15 IPS", "30 IPS", "3.75 IPS" };
+    static constexpr const char* kTapeType[]    = { "Type 456", "Type GP9", "Type 900", "Type 250" };
     static constexpr const char* kSignalPath[]  = { "Repro", "Sync", "Input", "Thru" };
-    static constexpr const char* kEqStandard[]  = { "NAB", "CCIR", "AES" };
-    static constexpr const char* kCalibration[] = { "0dB", "+3dB", "+6dB", "+9dB" };
+    static constexpr const char* kEqStandard[]  = { "NAB", "CCIR" };   // both decks: NAB/CCIR only
+    static constexpr const char* kCalibration[] = { "+3dB", "+6dB", "+7.5dB", "+9dB" };
     static constexpr const char* kOffOn[]       = { "Off", "On" };
     static constexpr const char* kOversampling[]= { "1x", "2x", "4x" };
+    static constexpr const char* kHeadWidth[]   = { "1/4\"", "1/2\"", "1\"" };   // American head stack
 
     template <int N> static constexpr int count(const char* const (&)[N]) { return N; }
 }
@@ -73,10 +85,10 @@ static constexpr TmParam kTmParams[kParamCount] =
     // choice counts derive from their arrays via tmparams::count() so they can't
     // drift out of sync (guards initParameter / selector against OOB choice access).
     { "tapeMachine",  "Tape Machine", 'c', 0.f, 1.f,     0.f,  "",   tmparams::kTapeMachine, tmparams::count(tmparams::kTapeMachine) },
-    { "tapeSpeed",    "Tape Speed",   'c', 0.f, 2.f,     1.f,  "",   tmparams::kTapeSpeed,   tmparams::count(tmparams::kTapeSpeed) },
+    { "tapeSpeed",    "Tape Speed",   'c', 0.f, 3.f,     1.f,  "",   tmparams::kTapeSpeed,   tmparams::count(tmparams::kTapeSpeed) },
     { "tapeType",     "Tape Type",    'c', 0.f, 3.f,     0.f,  "",   tmparams::kTapeType,    tmparams::count(tmparams::kTapeType) },
     { "signalPath",   "Signal Path",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kSignalPath,  tmparams::count(tmparams::kSignalPath) },
-    { "eqStandard",   "EQ Standard",  'c', 0.f, 2.f,     0.f,  "",   tmparams::kEqStandard,  tmparams::count(tmparams::kEqStandard) },
+    { "eqStandard",   "EQ Standard",  'c', 0.f, 1.f,     0.f,  "",   tmparams::kEqStandard,  tmparams::count(tmparams::kEqStandard) },
     { "inputGain",    "Input Gain",   'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
     { "bias",         "Bias",         'f', 0.f, 100.f,   50.f, "%",  nullptr, 0 },
     { "calibration",  "Calibration",  'c', 0.f, 3.f,     0.f,  "",   tmparams::kCalibration, tmparams::count(tmparams::kCalibration) },
@@ -89,8 +101,16 @@ static constexpr TmParam kTmParams[kParamCount] =
     { "flutterAmount","Flutter",      'f', 0.f, 100.f,   3.f,  "%",  nullptr, 0 },
     { "outputGain",   "Output Gain",  'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
     { "autoComp",     "Auto Compensation",'c',0.f,1.f,   1.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
-    { "oversampling", "Oversampling", 'c', 0.f, 2.f,     2.f,  "",   tmparams::kOversampling,tmparams::count(tmparams::kOversampling) },
+    { "oversampling", "Oversampling", 'c', 0.f, 2.f,     1.f,  "",   tmparams::kOversampling,tmparams::count(tmparams::kOversampling) },
+    { "headWidth",    "Head Width",   'c', 0.f, 2.f,     1.f,  "",   tmparams::kHeadWidth,   tmparams::count(tmparams::kHeadWidth) },
+    { "crosstalk",    "Crosstalk",    'c', 0.f, 1.f,     1.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
+    { "wowFlutterOn", "Wow & Flutter",'c', 0.f, 1.f,     1.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
+    { "transformer",  "Transformer",  'c', 0.f, 1.f,     1.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
     { "bypass",       "Bypass",       'b', 0.f, 1.f,     0.f,  "",   tmparams::kOffOn,       tmparams::count(tmparams::kOffOn) },
+    { "reproLF",      "Repro LF",     'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
+    { "reproLMF",     "Repro LMF",    'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
+    { "reproHMF",     "Repro HMF",    'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
+    { "reproHF",      "Repro HF",     'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
     { "vuL",          "VU L",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
     { "vuR",          "VU R",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
 };

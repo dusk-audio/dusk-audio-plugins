@@ -34,7 +34,9 @@ inline const char* findCrispFontPath()
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",  // macOS 13+ (Arial lives here now)
+        "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",// macOS fallback bold face
+        "/Library/Fonts/Arial Bold.ttf",                      // older macOS (pre-Catalina layout)
         "C:/Windows/Fonts/segoeuib.ttf",   // Windows: Segoe UI Bold
         "C:/Windows/Fonts/arialbd.ttf",    // Windows: Arial Bold (fallback)
     };

@@ -95,7 +95,7 @@ Source applies crosstalk at the **oversampled** rate *between the tape core and
 the lowpass* (`PluginProcessor.cpp:1054`). The functor form processes channels
 independently, so — per the task's explicit allowance — crosstalk is applied at
 **base rate after** the per-channel oversampled chain (post LP + output gain).
-Bleed is −46 dB (Swiss800, 0.005) / −36 dB (Classic102, 0.015); the placement
+Bleed is −46 dB (Swiss, 0.005) / −36 dB (American, 0.015); the placement
 shift is inaudible and within A/B tolerance.
 
 ### 3.3 `SmoothedValue` is exponential, not linear
