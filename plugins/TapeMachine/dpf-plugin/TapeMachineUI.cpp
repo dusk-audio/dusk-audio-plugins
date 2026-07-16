@@ -332,8 +332,12 @@ private:
         for (size_t i = 0; i < userPresets.size(); ++i)
         {
             bool ok = true;
+            // Skip BYPASS (not saved) and OVERSAMPLING: the latter is a hidden,
+            // non-automatable param the host need not restore on reload, so it must not be
+            // part of preset identity — matching deriveFactoryPreset(), which skips it too.
             for (uint32_t id = 0; id < kParamVuL && ok; ++id)
-                if (id != kParamBypass && !paramMatches(id, userPresets[i].vals[id])) ok = false;
+                if (id != kParamBypass && id != kParamOversampling
+                    && !paramMatches(id, userPresets[i].vals[id])) ok = false;
             if (ok) return (int) i;
         }
         return -1;

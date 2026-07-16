@@ -738,12 +738,28 @@ jobs:
                 ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
               done >> dist/SHA256SUMS
 
+      - name: Fetch user manual PDF
+        run: |
+          # Bundle the per-plugin User Manual PDF into the release, matching the JUCE
+          # plugins on build.yml. Sourced from the dusk-audio.github.io repo's main branch;
+          # /release-plugin regenerates it on every tag so it tracks the released version.
+          # A missing PDF is non-fatal so a brand-new plugin without a published manual yet
+          # does not block the release.
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
+          if curl -fL --silent --show-error "$manual_url" -o "dist/${ASSET}-manual.pdf"; then
+            echo "bundled ${ASSET}-manual.pdf into the release"
+          else
+            rm -f "dist/${ASSET}-manual.pdf"
+            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
+          fi
+
       - name: Publish Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
           files: |
             dist/**/*.zip
             dist/**/*.tar.gz
+            dist/*-manual.pdf
             dist/SHA256SUMS
           generate_release_notes: true
           body_path: release_body.md
