@@ -46,22 +46,30 @@ namespace {
 class TapeMachineUI : public UI, public duskdpf::ParamHost
 {
 public:
-    void beginEdit(uint32_t idx) override { editParameter(idx, true); }
-    void endEdit(uint32_t idx) override   { editParameter(idx, false); }
+    // GAIN LINK is a MIRROR: the OUTPUT knob shows the opposed input (-input) and its
+    // gestures drive INPUT (the opposing gain). So the host edit-gesture markers must be
+    // raised on INPUT, not the untouched OUTPUT trim, while the link is engaged.
+    void beginEdit(uint32_t idx) override
+    { editParameter(outLinkActive_ && idx == kParamOutputGain ? kParamInputGain : idx, true); }
+    void endEdit(uint32_t idx) override
+    { editParameter(outLinkActive_ && idx == kParamOutputGain ? kParamInputGain : idx, false); }
     void setParam(uint32_t idx, float v) override
     {
-        // GAIN LINK: while the OUTPUT knob is driven in the EFFECTIVE domain
-        // (needle/readout show -input + trim), every host write it makes must be
-        // converted back to the stored TRIM (host param = clamp(effective -
-        // linkOffset)). Doing it here — the single point every gesture funnels
-        // through — means the host/DSP NEVER momentarily sees the effective value,
-        // so there is no double-write and no audible glitch, and it needs no change
-        // to the shared knob widget. Only active around the OUTPUT knob call.
+        // GAIN LINK mirror: the OUTPUT knob is drawn/edited as the opposed input (its
+        // readout shows -input). Route every write it makes to INPUT so the two gains
+        // always read as an opposed pair — input = clamp(-displayed). The preset's baked
+        // OUTPUT trim (the recall CALIBRATION) is neither read nor written here: it stays
+        // in the outputGain param and the DSP keeps applying -input + trim, so the
+        // calibrated level is preserved while the knobs stay in sync. UI-only, no DSP
+        // change. This is the single point every OUTPUT-knob gesture funnels through.
         if (outLinkActive_ && idx == kParamOutputGain)
         {
-            const TmParam& d = kTmParams[kParamOutputGain];
-            v -= outLinkOffset_;
-            v = v < d.min ? d.min : (v > d.max ? d.max : v);
+            const TmParam& in = kTmParams[kParamInputGain];
+            float input = -v;                             // displayed output = -input
+            input = input < in.min ? in.min : (input > in.max ? in.max : input);
+            values[kParamInputGain] = input;              // keep the UI cache in step this frame
+            setParameterValue(kParamInputGain, input);
+            return;                                       // never touch the baked OUTPUT trim
         }
         setParameterValue(idx, v);
     }
@@ -103,11 +111,15 @@ public:
 protected:
     void parameterChanged(uint32_t index, float value) override
     {
-        if (index < kParamCount)
-        {
-            values[index] = value;
-            if (index < kParamVuL) { currentPreset = -1; currentUserName.clear(); } // edit deselects preset
-        }
+        if (index >= kParamCount) return;
+        values[index] = value;
+        // Re-derive the active preset from the current values. Preset identity is UI-only
+        // state (not a DPF parameter), so it is lost across a project reload even though the
+        // host restores every parameter value; matching the restored values back to a preset
+        // recovers the selection. It also keeps the selection through a BYPASS toggle (no
+        // sound parameter changes) and clears it once an edit diverges from every preset.
+        if (index < kParamVuL && index != kParamBypass)
+            syncPresetSelection();
     }
 
     void onImGuiDisplay() override
@@ -219,14 +231,26 @@ private:
         for (fs::directory_iterator it(configDir(), ec), end; !ec && it != end; it.increment(ec))
         {
             if (it->path().extension() != ".tmpreset") continue;
+            UserPreset up;
+            up.path = it->path().string();
+            up.name = it->path().stem().string();
+            for (uint32_t i = 0; i < kParamVuL; ++i) up.vals[i] = kTmParams[i].def;
             std::ifstream f(it->path());
-            std::string line, name;
-            if (std::getline(f, line) && line.rfind("name=", 0) == 0) name = line.substr(5);
-            else name = it->path().stem().string();
-            userPresets.push_back({ name, it->path().string() });
+            std::string line;
+            while (std::getline(f, line))
+            {
+                const auto eq = line.find('=');
+                if (eq == std::string::npos) continue;
+                const std::string key = line.substr(0, eq);
+                if (key == "name") { up.name = line.substr(eq + 1); continue; }
+                const float v = (float) std::atof(line.c_str() + eq + 1);
+                for (uint32_t i = 0; i < kParamVuL; ++i)
+                    if (key == kTmParams[i].id) { up.vals[i] = v; break; }
+            }
+            userPresets.push_back(std::move(up));
         }
         std::sort(userPresets.begin(), userPresets.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
+                  [](const UserPreset& a, const UserPreset& b) { return a.name < b.name; });
     }
 
     void saveUserPreset(const char* rawName)
@@ -253,6 +277,13 @@ private:
     {
         std::ifstream f(path);
         if (!f) return;
+        // Default every parameter first, then overlay the file's values. This matches the
+        // cache built in scanUserPresets() (missing keys -> kTmParams[i].def), so an
+        // incomplete or legacy file loads to the exact values its cached identity records —
+        // otherwise a missing key would keep the current value and deriveUserPreset() could
+        // never match. BYPASS is left alone (never saved, and not part of preset identity).
+        for (uint32_t i = 0; i < kParamVuL; ++i)
+            if (i != kParamBypass) setP(i, kTmParams[i].def);
         std::string line;
         while (std::getline(f, line))
         {
@@ -266,6 +297,57 @@ private:
         }
         currentPreset = -1;
         currentUserName = name;
+    }
+
+    //--- preset identity recovery ----------------------------------------------
+    // The active preset is UI-only state; these re-derive it from the current parameter
+    // values so a project reload (which restores parameters but not the selection) shows
+    // the right preset again. Compares with a range-relative tolerance to absorb host
+    // parameter quantisation, and never compares BYPASS or the meter outputs.
+    bool paramMatches(uint32_t id, float v) const
+    {
+        const TmParam& d = kTmParams[id];
+        const float tol = std::max(1.0e-3f, (d.max - d.min) * 1.0e-4f);
+        return std::fabs(values[id] - v) <= tol;
+    }
+
+    int deriveFactoryPreset() const
+    {
+        for (int idx = 0; idx < kNumTmPresets; ++idx)
+        {
+            bool ok = true;
+            // Compare only the parameters a preset actually sets (see tmApplyPreset);
+            // Oversampling and the front-panel toggles it leaves alone must not disqualify.
+            tmApplyPreset(idx, [&](uint32_t id, float v)
+            {
+                if (ok && id < kParamVuL && id != kParamBypass && !paramMatches(id, v)) ok = false;
+            });
+            if (ok) return idx;
+        }
+        return -1;
+    }
+
+    int deriveUserPreset() const
+    {
+        for (size_t i = 0; i < userPresets.size(); ++i)
+        {
+            bool ok = true;
+            for (uint32_t id = 0; id < kParamVuL && ok; ++id)
+                if (id != kParamBypass && !paramMatches(id, userPresets[i].vals[id])) ok = false;
+            if (ok) return (int) i;
+        }
+        return -1;
+    }
+
+    // Recompute the active selection from the current values (factory takes precedence).
+    void syncPresetSelection()
+    {
+        const int f = deriveFactoryPreset();
+        if (f >= 0) { currentPreset = f; currentUserName.clear(); return; }
+        const int u = deriveUserPreset();
+        if (u >= 0) { currentPreset = -1; currentUserName = userPresets[(size_t) u].name; return; }
+        currentPreset = -1;
+        currentUserName.clear();
     }
 
     void drawPanel(ImDrawList* dl, float winW, float winH)
@@ -475,8 +557,8 @@ private:
             {
                 ImGui::SeparatorText("User");
                 for (const auto& up : userPresets)
-                    if (ImGui::Selectable(up.first.c_str(), currentPreset < 0 && up.first == currentUserName))
-                    { loadUserPreset(up.second, up.first); ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Selectable(up.name.c_str(), currentPreset < 0 && up.name == currentUserName))
+                    { loadUserPreset(up.path, up.name); ImGui::CloseCurrentPopup(); }
             }
             ImGui::EndCombo();
         }
@@ -924,55 +1006,27 @@ private:
     {
         const TmParam& d = kTmParams[param];
         panel.knobLabel(dl, cx, cy - 50.0f, l1);
-        // GAIN LINK path (OUTPUT knob only): the knob shows the EFFECTIVE output
-        // (-input + trim) while the STORED param stays the trim. We feed the shared
-        // knob a SYNTHETIC effective value; the host adapter (setParam override,
-        // gated by outLink*) converts every write it makes back to the trim, so the
-        // host/DSP never sees the effective value. As INPUT moves the pointer must
-        // physically ROTATE down to show the auto-compensation the DSP applies.
+        // GAIN LINK path (OUTPUT knob only): a MIRROR of INPUT. The knob shows the opposed
+        // input (-input) on the normal ±12 dB output scale, so the two gains always read as
+        // an opposed pair (+3 / -3). Its edits are routed to INPUT in the setParam adapter
+        // (input = -displayed). The preset's baked OUTPUT trim is the recall CALIBRATION: it
+        // is neither read nor shown here and stays in the outputGain param, so the DSP keeps
+        // applying -input + trim for the calibrated level while the knobs stay in sync.
+        // Because the readout is always -input, the two knobs cannot drift out of sync (an
+        // OUTPUT trim left behind by editing while UNLINKED is simply not shown under link).
+        // Moving INPUT rotates this needle; moving this knob rotates the INPUT needle. UI-only.
         if (linked)
         {
-            // TWO ranges, deliberately different (this is the fix for "output knob doesn't
-            // move when I turn input"):
-            //  - DRAG range [effLo,effHi] = reachable span = [d.min+linkOffset, d.max+linkOffset].
-            //    Clamps the drag domain to what the ±12 trim can actually reach at this input,
-            //    so a direct output-knob drag has no rubber-band. This span SLIDES with input.
-            //  - DISPLAY range [effDispLo,effDispHi] = FIXED full effective span, independent of
-            //    input. The pointer angle maps the effective value against THIS, so turning input
-            //    rotates the pointer (a sliding display range would cancel the slide — the old bug).
-            //    input at max -> most-negative eff (d.min - inMax); input at min -> most-positive
-            //    (d.max - inMin). With both gains ±12 dB this is a fixed [-24,+24].
-            const float effLo = d.min + linkOffset;
-            const float effHi = d.max + linkOffset;
-            const float inMin = kTmParams[kParamInputGain].min;
-            const float inMax = kTmParams[kParamInputGain].max;
-            const float effDispLo = d.min - inMax;   // input at max  -> lowest effective output
-            const float effDispHi = d.max - inMin;   // input at min  -> highest effective output
-            float eff = values[param] + linkOffset;                     // effective output
-            eff = eff < effLo ? effLo : (eff > effHi ? effHi : eff);    // stays in the reachable span
-            outLinkOffset_ = linkOffset;
+            float eff = linkOffset;          // displayed effective output = -input
             outLinkActive_ = true;
-            // defaultVal is passed in the EFFECTIVE domain as linkOffset (= -input), so a
-            // reset stores trim = clamp(linkOffset - linkOffset) = 0 (the param table
-            // default) and the pointer jumps to -input. linkOffset always lies within
-            // [effLo,effHi] (trim 0 is always reachable), so the reset target is inside the drag domain.
-            const bool ch = panel.knob(id, param, effLo, effHi, cx, cy, 32.0f, eff, linkOffset,
+            // defaultVal 0: a reset returns INPUT to 0 (input = -0) via the setParam redirect.
+            const bool ch = panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, eff, 0.0f,
                        false, true, fmt, suffix, 0, false,
                        /*persistent*/ true, nullptr, /*rightClickReset*/ false, 1.0f,
-                       /*dispAdd*/ 0.0f, l1, /*contextMenu*/ true, overrideText,
-                       /*hasExternalReadout*/ false, /*dispMin*/ effDispLo, /*dispMax*/ effDispHi);
+                       /*dispAdd*/ 0.0f, l1, /*contextMenu*/ true, overrideText);
             outLinkActive_ = false;
-            // Mirror the trim the adapter just stored, but ONLY on a real edit (ch) — when
-            // merely displaying a clamped effective we must not destructively re-clamp the
-            // preserved stored trim. ch is airtight: the shared knob reports changed only on
-            // an actual gesture (drag delta, wheel, reset, type-in), never on an idle frame,
-            // so no held-but-still frame re-fires the mirror.
-            if (ch)
-            {
-                float trim = eff - linkOffset;
-                trim = trim < d.min ? d.min : (trim > d.max ? d.max : trim);
-                values[param] = trim;
-            }
+            // The INPUT mirror is applied in the setParam adapter; the baked OUTPUT trim and
+            // the DSP are left untouched, so nothing to store back here.
             return ch;
         }
         // Interaction is owned entirely by the shared knob widget so every knob
@@ -1058,16 +1112,15 @@ private:
         dl->AddLine(P(26, cellBot), P(774, cellBot), IM_COL32(150, 151, 153, 140), 1.0f * s);
 
         // GAIN STAGING — with GAIN LINK (autoComp) on, the DSP holds the output at the
-        // inverse of the input (drive the tape harder without the level rising) and the
-        // OUTPUT knob is an ADDITIVE makeup trim on top of that inverse (effective output
-        // gain = -input + trim; factory presets ship a fitted trim to match each reference preset's
-        // own output loudness). The link lives entirely in the DSP so it works under host
-        // automation. The OUTPUT knob's STORED value is the trim (what presets carry and what
-        // a drag edits); to make the link VISIBLE — the user watches the needle, not only the
-        // number — we drive the whole knob in the EFFECTIVE domain when link is on: its needle
-        // AND readout show -input + trim, so moving INPUT rotates the OUTPUT needle live to
-        // compensate. The stored value stays the trim (converted back in the setParam adapter),
-        // so presets and the DSP are untouched. Link off -> plain output gain / trim.
+        // inverse of the input (drive the tape harder without the level rising): output gain
+        // = -input + trim, where trim is the outputGain param. Factory presets ship a fitted
+        // trim as recall CALIBRATION for each reference preset's loudness; the link lives in
+        // the DSP so it works under host automation. To make the link read clearly the OUTPUT
+        // knob MIRRORS input under link — its needle AND readout show -input (an opposed pair,
+        // e.g. +3 / -3) on the normal ±12 scale, and moving either knob moves the other the
+        // opposite way (the drag is routed to INPUT in the setParam adapter, linkOffset = -input).
+        // The baked trim is deliberately NOT shown or changed by the knob, so the calibration
+        // is preserved untouched while the knobs stay in sync. Link off -> plain output gain / trim.
         const bool gainLink = values[kParamAutoComp] > 0.5f;
         knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB");
         knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB",
@@ -1165,12 +1218,15 @@ private:
     float   needleL = 0.0f, needleR = 0.0f;
     float   clipHoldL = 0.0f, clipHoldR = 0.0f;   // PEAK-lamp hold timers (seconds); 0 = unlit
     bool    outLinkActive_ = false;   // set only while the OUTPUT knob is drawn under GAIN LINK
-    float   outLinkOffset_ = 0.0f;    // = -input; effective = trim + offset (see setParam / knob)
     ImVec2  advScrimPressPos = ImVec2(0, 0);       // where an Advanced-scrim press began (travel guard)
     int     meterSource = 0;      // 0 = input (record/tape-drive level, like the hardware VU), 1 = output
     int     currentPreset = -1;
     std::string currentUserName;  // non-empty when a user preset is active
-    std::vector<std::pair<std::string, std::string>> userPresets; // (name, path)
+    // A user preset caches its saved parameter values (indexed by param id, meters
+    // excluded) so the active selection can be re-derived from the current values after a
+    // project reload — see syncPresetSelection().
+    struct UserPreset { std::string name, path; float vals[kParamVuL]; };
+    std::vector<UserPreset> userPresets;
     char    saveBuf[64] = {};
     bool    openSaveModal = false;
     bool    showAdvanced = false;   // hidden advanced (Repro EQ) panel toggle
