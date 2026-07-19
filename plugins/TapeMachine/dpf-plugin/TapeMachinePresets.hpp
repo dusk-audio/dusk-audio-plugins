@@ -51,14 +51,33 @@ struct TmPreset
     float progHfTrim  = 0.0f; // hidden PROGRAM-BAND above-anchor top-octave trim (11 kHz; Phase C).
                     // Keyed off a 500 Hz low-corner program envelope (NOT the broadband detector),
                     // so they shape sustained-program HF yet stay bypassed on the 1 kHz THD tone =>
-                    // byte-identical THD. Only Drum Bus / Old Tape / Sunbaked carry nonzero values.
+                    // byte-identical THD. Both bands cut on presets that read bright and boost on
+                    // the ones that read dark; counts are stated so drift is easy to spot.
+                    // progHmfTrim nonzero on 7 of 20: Classic Rock Crisp -1, Modern Rock -2,
+                    //   Thick Saturation -8, Hip-Hop Punch -8, Old Tape -8, Drum Bus -14,
+                    //   Analog Warmth +8.
+                    // progHfTrim nonzero on 12 of 20: Bright & Sizzly -3, Nice 456 Master -5,
+                    //   Lush Film -5, Bass Bump -6, Classic Rock Crisp -6, Modern Rock -8,
+                    //   Thick Saturation -8, Drum Bus -14, Hip-Hop Punch -18, Old Tape -20,
+                    //   Vocal Presence +10, Analog Warmth +20.
+                    // Sunbaked Cassette carries NEITHER: its 78% over-bias + high cal put the
+                    // operating flux below the -12 anchor, so the above-anchor factor is 0 and
+                    // the mechanism cannot engage (see the in-table note on that row).
     float reproSubBell = 0.0f; // per-preset repro sub-bell (31 Hz Q2.5, dB). Fills the American-30
                     // head-bump's narrow LF dip WITHOUT lifting 50 Hz (a shelf would). Exact bypass
                     // at 0 in the DSP => byte-identical everywhere it is 0. Only GP9 Drum Bus is nonzero.
     float progLfTrim = 0.0f; // hidden PROGRAM-BAND deep-sub bloom restore (33 Hz low-shelf, dB; EAR-GREEN).
                     // Adds the reference decks' deep-sub program thickening (measured ref pink-minus-sweep
                     // ~+5 dB @25 Hz @15 IPS) that mine lacked. Keyed off the 500 Hz program envelope =>
-                    // neutral on the -12 dBFS sweep/THD tone (byte-identical). Nonzero on 15/7.5 IPS presets.
+                    // neutral on the -12 dBFS sweep/THD tone (byte-identical).
+                    // Nonzero on 13 of 20, and NOT speed-derived — it spans every speed, fitted
+                    // per preset on program pink: Nice 456 Master +5.0 (30 IPS), Lush Film +5.5,
+                    //   Classic Rock Crisp +7, Modern Rock +8, Fat 456 Master +9,
+                    //   Bright & Sizzly +15 (7.5 IPS), Hip-Hop Punch +15.5,
+                    //   Analog Warmth +15.5 (3.75 IPS), Bass Bump +16.5, Drum Bus +17.5,
+                    //   Big 456 Master +18, Thick Saturation +19, Old Tape +20.5 (7.5 IPS).
+                    // Zero on: Jazz Vision Master, Clean 900 Master, GP9 Drum Bus, Hi-Fi Shine,
+                    //   Jazz Warmth, Vocal Presence, Sunbaked Cassette.
 };
 
 // Preset field order:

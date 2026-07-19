@@ -54,11 +54,12 @@ enum ParamId
     // stay bypassed on the 1 kHz THD tone => byte-identical THD. Both default 0 = neutral.
     kParamProgHmfTrim,     // -24..24 dB program-band presence correction (6.3 kHz peak)
     kParamProgHfTrim,      // -24..24 dB program-band top-octave correction (11 kHz shelf)
-    // Per-preset repro sub-bell (31 Hz Q2.5). A visible/automatable repro-EQ band like the other
-    // four; appended here (after the trims) so the earlier param IDs stay fixed. Neutral at 0 dB
+    // Per-preset repro sub-bell (31 Hz Q2.5). HIDDEN calibration data, like the trims above: it has
+    // no Advanced-panel control, and automating it would desync a preset from its fitted response.
+    // Appended here (after the trims) so the earlier param IDs stay fixed. Neutral at 0 dB
     // (exact bypass in the DSP) => byte-identical on every preset that leaves it 0. Only GP9 Drum
     // Bus carries a nonzero value (fills the American-30 head-bump's narrow LF dip at ~31 Hz).
-    kParamReproSubBell,    // -12..12 dB repro-head sub-bell (advanced)
+    kParamReproSubBell,    // -12..12 dB repro-head sub-bell
     // Hidden PROGRAM-BAND deep-sub bloom restore (EAR-GREEN). Keyed off the SAME 500 Hz program
     // envelope as the prog trims => byte-null on the -12 dBFS sweep / 1 kHz THD tone. Adds the
     // reference decks' deep-sub program thickening (a 33 Hz low-shelf); mine lacked it so hot 15/7.5
