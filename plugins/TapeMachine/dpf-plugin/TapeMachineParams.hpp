@@ -62,8 +62,10 @@ enum ParamId
     kParamReproSubBell,    // -12..12 dB repro-head sub-bell
     // Hidden PROGRAM-BAND deep-sub bloom restore (EAR-GREEN). Keyed off the SAME 500 Hz program
     // envelope as the prog trims => byte-null on the -12 dBFS sweep / 1 kHz THD tone. Adds the
-    // reference decks' deep-sub program thickening (a 33 Hz low-shelf); mine lacked it so hot 15/7.5
-    // IPS presets read thin/bright. Default 0 = neutral. Appended after reproSubBell so its ID stays
+    // reference decks' deep-sub program thickening (a 33 Hz low-shelf); mine lacked it so hot presets
+    // read thin/bright. The gain is fitted per preset on program pink, NOT derived from tape speed —
+    // it is nonzero across every speed (see the progLfTrim notes in TapeMachinePresets.hpp for the
+    // full list). Default 0 = neutral. Appended after reproSubBell so its ID stays
     // fixed (only the output-meter IDs below shift).
     kParamProgLfTrim,      // -24..24 dB program-band deep-sub bloom (33 Hz low-shelf)
     // --- output-only (meters); kept as params for generic-UI fallback ---
@@ -143,3 +145,13 @@ static constexpr TmParam kTmParams[kParamCount] =
     { "vuL",          "VU L",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
     { "vuR",          "VU R",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
 };
+
+// The table is POSITIONAL: kTmParams[i] must describe ParamId i. Declaring it [kParamCount]
+// already rejects a surplus row (compile error), but a MISSING row is silently zero-filled from
+// the end — that row would reach initParameter with a null symbol/name. These anchors pin the
+// last three entries so an insertion that forgets its table row fails to compile instead.
+static_assert(kTmParams[kParamCount - 1].id != nullptr, "kTmParams has a zero-filled row (missing entry)");
+static_assert(kTmParams[kParamVuL].kind == 'o' && kTmParams[kParamVuR].kind == 'o',
+              "kTmParams out of sync with ParamId: meters must be last and kind 'o'");
+static_assert(kTmParams[kParamBypass].kind == 'b',
+              "kTmParams out of sync with ParamId: bypass row moved");

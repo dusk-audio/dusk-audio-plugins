@@ -1245,7 +1245,6 @@ private:
     struct UserPreset { std::string name, path; float vals[kParamVuL]; };
     std::vector<UserPreset> userPresets;
     char    saveBuf[64] = {};
-    bool    openSaveModal = false;
     bool    showAdvanced = false;   // hidden advanced (Repro EQ) panel toggle
     bool    showSupporters = false; // Patreon "Special Thanks" overlay (click the title nameplate)
 

@@ -1108,12 +1108,10 @@ public:
             m_lastBias = biasAmount; m_lastEqStandard = eqStandard; m_lastHeadWidth = headWidth;
 
             m_cachedMachineChars = getMachineCharacteristics (machine);
-            m_cachedTapeChars = getTapeCharacteristics (type);
             m_cachedSpeedChars = getSpeedCharacteristics (speed);
             m_gapWidth = (machine == Swiss) ? 2.5f : 3.5f;
         }
 
-        const auto& tapeChars = m_cachedTapeChars;
         const auto& speedChars = m_cachedSpeedChars;
 
         const bool processTape = (signalPath == Repro || signalPath == Sync);
@@ -1392,7 +1390,9 @@ private:
     bool    reproSubBellActive = false;     // EXACT bypass at 0 dB: an always-on 0-dB peak biquad is NOT bit-identity
                                             // (numerator==denominator cancels in exact math, not in float rounding), so
                                             // skip the process call entirely when the band is 0 => byte-identical to no band.
-    float   reproSubBellLast = 0.0f;        // last-configured sub-bell dB; reset filter state on any change (incl. (de)activation)
+    float   reproSubBellLast = 999.0f;      // last-configured sub-bell dB; reset filter state on any change (incl. (de)activation).
+                                            // 999 = the same "never configured" sentinel the other rebuild caches use, so the
+                                            // first setReproEq always rebuilds even if prepare() stops pre-seeding it.
     DBiquad slowModernPresencePeak;             // measured Classic 3.75 IPS / modern formulation presence resonance
     DBiquad transformerLfShelf;             // Transformer-Off LF restore (neutral at 0 dB = Transformer On)
     // Emphasis-rebalance G / 1-G pair wrapping ONLY the shaper (per-machine, always active).
@@ -1427,7 +1427,6 @@ private:
     int   m_lastHeadWidth = -1;
 
     MachineCharacteristics m_cachedMachineChars{};
-    TapeCharacteristics m_cachedTapeChars{};
     SpeedCharacteristics m_cachedSpeedChars{};
     float m_gapWidth = 3.0f;
     // Per-machine linear trim making the tape core unity-gain (compensates the input
