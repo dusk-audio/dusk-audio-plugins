@@ -778,10 +778,25 @@ public:
         driveHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (2500.0f)), 0.0, 0.5, true)); // neutral until setDriveHfComp
         levelHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (7900.0f)), 0.0, 0.45, true)); // neutral until setLevelComp
         levelLfShelf.setCoeffs   (DBiquad::peak  (osRate,   32.0, 0.0, 1.4)); // neutral until setLevelComp
+        presetLevelHmfPeak.setCoeffs (DBiquad::peak  (osRate, static_cast<double> (safeFreq (6300.0f)),  0.0, 1.0));
+        presetLevelHfShelf.setCoeffs (DBiquad::shelf (osRate, static_cast<double> (safeFreq (11000.0f)), 0.0, 0.7, true));
+        // The two lines above reinstalled NEUTRAL preset-EQ coeffs. Invalidate the rebuild
+        // cache so the next setPresetLevelEq() re-applies the active preset correction (at the
+        // new fs) even when the preset params are unchanged — otherwise its "hmfDb/hfDb changed"
+        // guard sees identical values against the stale cache and leaves the filters neutral,
+        // silently dropping the correction until a parameter finally changes.
+        presetLevelLastHmf = presetLevelLastHf = 999.0f;
+        // Same lifecycle for the program-keyed pair: prepare() rebuilds at the new fs but does
+        // NOT reinstall prog coeffs, so invalidate the rebuild cache too — otherwise the next
+        // setProgEq()'s "hmfDb/hfDb changed" guard sees unchanged trims against the stale cache
+        // and leaves progHmfPeak/progHfShelf on the OLD sample rate's coeffs.
+        progLastHmf = progLastHf = 999.0f;
         reproLfShelf.setCoeffs   (DBiquad::shelf (osRate,   80.0, 0.0, 0.5, false)); // 4-band repro EQ, neutral until setReproEq
         reproLmfPeak.setCoeffs   (DBiquad::peak  (osRate,  160.0, 0.0, 0.9));
         reproHmfPeak.setCoeffs   (DBiquad::peak  (osRate, static_cast<double> (safeFreq (5000.0f)), 0.0, 0.8));
         reproHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (9000.0f)), 0.0, 0.5, true));
+        reproSubBellPeak.setCoeffs (DBiquad::peak (osRate, 31.0, 0.0, 2.5)); reproSubBellActive = false; // neutral until setReproEq
+        reproSubBellLast = 999.0f;   // invalidate rebuild cache (same fs-staleness fix as progLast above)
         slowModernPresencePeak.setCoeffs (DBiquad::peak (osRate,
             static_cast<double> (safeFreq (2700.0f)), 0.0, 1.6));
         transformerLfShelf.setCoeffs (DBiquad::shelf (osRate, 48.0, 0.0, 0.7, false)); // neutral until setTransformerOff
@@ -817,7 +832,11 @@ public:
         headBumpFilter.reset(); hfLossFilter1.reset(); hfLossFilter2.reset();
         gapLossFilter.reset(); biasFilter.reset(); dcBlocker.reset();
         headWidthFilter.reset(); driveHfShelf.reset(); levelHfShelf.reset(); levelLfShelf.reset();
+        presetLevelHmfPeak.reset(); presetLevelHfShelf.reset();
+        progHmfPeak.reset(); progHfShelf.reset();
+        progLfShelf.reset(); progLfLastDb = 999.0f; progLfConfigured = false;
         reproLfShelf.reset(); reproLmfPeak.reset(); reproHmfPeak.reset(); reproHfShelf.reset();
+        reproSubBellPeak.reset();
         slowModernPresencePeak.reset();
         transformerLfShelf.reset();
         emphLfPre.reset(); emphHfPre.reset(); emphHfPost.reset(); emphLfPost.reset();
@@ -892,17 +911,135 @@ public:
         levelLfShelf.setCoeffs (DBiquad::peak  (fs, lfFc, static_cast<double> (lfDb), lfQ));
     }
 
+    // Factory-preset correction for response changes above the -12 dBFS calibration
+    // anchor. Keep the filter coefficients fixed at the preset's full correction and
+    // crossfade dry/wet with levelFactor; modulating a cutting biquad's coefficients at
+    // block rate stores release energy and can brighten decays instead of attenuating them.
+    // A zero/zero preset bypasses both filters exactly, preserving the original path.
+    void setPresetLevelEq (float hmfDb, float hfDb, float hmfMix, float hfMix) noexcept
+    {
+        presetLevelHmfMix = std::clamp (hmfMix, 0.0f, 1.0f);
+        presetLevelHfMix = std::clamp (hfMix, 0.0f, 1.0f);
+        const bool configured = (hmfDb != 0.0f || hfDb != 0.0f);
+        if (! configured)
+        {
+            if (presetLevelEqConfigured)
+            {
+                presetLevelHmfPeak.reset();
+                presetLevelHfShelf.reset();
+                presetLevelLastHmf = presetLevelLastHf = 999.0f;
+            }
+            presetLevelEqConfigured = false;
+            return;
+        }
+        if (hmfDb != presetLevelLastHmf || hfDb != presetLevelLastHf)
+        {
+            const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
+            presetLevelHmfPeak.reset();
+            presetLevelHfShelf.reset();
+            presetLevelHmfPeak.setCoeffs (DBiquad::peak  (fs, 6300.0, static_cast<double> (hmfDb), 1.0));
+            presetLevelHfShelf.setCoeffs (DBiquad::shelf (fs, 11000.0, static_cast<double> (hfDb), 0.7, true));
+            presetLevelLastHmf = hmfDb;
+            presetLevelLastHf = hfDb;
+        }
+        presetLevelEqConfigured = true;
+    }
+
+    // Program-keyed above-anchor correction (Phase C wall-breaker). SAME fixed-coeff /
+    // level-crossfade idiom as setPresetLevelEq (identical 6.3 kHz peak + 11 kHz shelf
+    // geometry), but the mix is driven by the PROGRAM-BAND (500 Hz low-corner) envelope
+    // factor instead of the broadband one: a lone 1 kHz THD tone is LP-attenuated below the
+    // -12 anchor => progFactor 0 => mix 0 => the crossfade is EXACTLY dry => THD byte-identical
+    // BY CONSTRUCTION (the broadband trim ate the shaper-born harmonics; this cannot). A
+    // zero/zero preset skips both filters exactly (progEqConfigured false), preserving the path.
+    void setProgEq (float hmfDb, float hfDb, float hmfMix, float hfMix) noexcept
+    {
+        progHmfMix = std::clamp (hmfMix, 0.0f, 1.0f);
+        progHfMix = std::clamp (hfMix, 0.0f, 1.0f);
+        const bool configured = (hmfDb != 0.0f || hfDb != 0.0f);
+        if (! configured)
+        {
+            if (progEqConfigured)
+            {
+                progHmfPeak.reset();
+                progHfShelf.reset();
+                progLastHmf = progLastHf = 999.0f;
+            }
+            progEqConfigured = false;
+            return;
+        }
+        if (hmfDb != progLastHmf || hfDb != progLastHf)
+        {
+            const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
+            progHmfPeak.reset();
+            progHfShelf.reset();
+            progHmfPeak.setCoeffs (DBiquad::peak  (fs, 6300.0, static_cast<double> (hmfDb), 1.0));
+            progHfShelf.setCoeffs (DBiquad::shelf (fs, 11000.0, static_cast<double> (hfDb), 0.7, true));
+            progLastHmf = hmfDb;
+            progLastHf = hfDb;
+        }
+        progEqConfigured = true;
+    }
+
+    // Fixed deep-sub bloom shape (low-shelf); per-preset GAIN comes from progLfTrim (the reference
+    // bloom magnitude varies per preset, not cleanly per speed).
+    static constexpr double kProgLfFc = 33.0;   // low-shelf corner (Hz)
+    static constexpr double kProgLfQ  = 0.5;    // shelf Q
+
+    // Program-keyed deep-sub bloom band (EAR-GREEN campaign). The reference decks thicken the deep
+    // sub (25-50 Hz) on program hotter than the -12 anchor (a tape LF enhancement mine lacked =>
+    // hot presets read thin/bright; measured reference pink-minus-sweep @25 Hz ~= +5 dB @15 IPS,
+    // +3.6 @7.5 IPS, ~0 @30 IPS). SAME fixed-coeff / progFactor-crossfade idiom as setProgEq: a lone
+    // 1 kHz THD/alias tone and the -12 dBFS FR sweep read progFactor 0 => mix 0 => EXACTLY dry =>
+    // THD/FR/alias byte-identical BY CONSTRUCTION. lfDb 0 (30 IPS, Thru, all clean presets) => exact
+    // bypass. Gain is per-preset data (progLfTrim), fitted on program pink.
+    void setProgLf (float lfDb, float lfMix) noexcept
+    {
+        progLfMix = std::clamp (lfMix, 0.0f, 1.0f);
+        const bool configured = (lfDb != 0.0f);
+        if (! configured)
+        {
+            if (progLfConfigured)
+            {
+                progLfShelf.reset();
+                progLfLastDb = 999.0f;
+            }
+            progLfConfigured = false;
+            return;
+        }
+        if (lfDb != progLfLastDb)
+        {
+            const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
+            progLfShelf.reset();
+            progLfShelf.setCoeffs (DBiquad::shelf (fs, kProgLfFc, static_cast<double> (lfDb), kProgLfQ, false));
+            progLfLastDb = lfDb;
+        }
+        progLfConfigured = true;
+    }
+
     // Advanced repro-head EQ: a post-tape 4-band shaper (LF low-shelf 80 Hz, low-mid
     // peak 160 Hz, high-mid/presence peak 5 kHz, HF high-shelf 9 kHz) modelling the reference
     // decks' Repro EQ section. Per-preset trims that reproduce the factory presets'
     // baked repro EQ shape. 0 dB on all => neutral => reference unchanged. Block-rate.
-    void setReproEq (float lfDb, float lmfDb, float hmfDb, float hfDb) noexcept
+    void setReproEq (float lfDb, float lmfDb, float hmfDb, float hfDb, float subBellDb) noexcept
     {
         const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
         reproLfShelf.setCoeffs  (DBiquad::shelf (fs,   80.0, static_cast<double> (lfDb),  0.5, false));
         reproLmfPeak.setCoeffs  (DBiquad::peak  (fs,  160.0, static_cast<double> (lmfDb), 0.9));
         reproHmfPeak.setCoeffs  (DBiquad::peak  (fs, 5000.0, static_cast<double> (hmfDb), 0.8));
         reproHfShelf.setCoeffs  (DBiquad::shelf (fs, 9000.0, static_cast<double> (hfDb),  0.5, true));
+        // Per-preset repro sub-bell (31 Hz Q2.5): fills the American-30 head-bump's narrow LF dip
+        // for GP9 Drum Bus without lifting 50 Hz (a shelf would). EXACT bypass at 0 dB — see
+        // reproSubBellActive: skipping the process call keeps every non-GP9 preset byte-identical.
+        const bool subBellActive = (subBellDb != 0.0f);
+        if (subBellDb != reproSubBellLast)
+        {
+            reproSubBellPeak.reset();   // clear stale state across any change, incl. (de)activation transitions
+            if (subBellActive)
+                reproSubBellPeak.setCoeffs (DBiquad::peak (fs, 31.0, static_cast<double> (subBellDb), 2.5));
+            reproSubBellLast = subBellDb;
+        }
+        reproSubBellActive = subBellActive;
     }
 
     // Transformer Off (American only): bypassing the American output transformer EXTENDS
@@ -971,12 +1108,10 @@ public:
             m_lastBias = biasAmount; m_lastEqStandard = eqStandard; m_lastHeadWidth = headWidth;
 
             m_cachedMachineChars = getMachineCharacteristics (machine);
-            m_cachedTapeChars = getTapeCharacteristics (type);
             m_cachedSpeedChars = getSpeedCharacteristics (speed);
             m_gapWidth = (machine == Swiss) ? 2.5f : 3.5f;
         }
 
-        const auto& tapeChars = m_cachedTapeChars;
         const auto& speedChars = m_cachedSpeedChars;
 
         const bool processTape = (signalPath == Repro || signalPath == Sync);
@@ -1086,6 +1221,39 @@ public:
             // reference/preset gate signals stay at 0 dB so their FR holds.
             signal = static_cast<float> (levelHfShelf.process (static_cast<double> (signal)));
             signal = static_cast<float> (levelLfShelf.process (static_cast<double> (signal)));
+            if (presetLevelEqConfigured)
+            {
+                const double hmfDry = static_cast<double> (signal);
+                const double hmfWet = presetLevelHmfPeak.process (hmfDry);
+                signal = static_cast<float> (hmfDry + static_cast<double> (presetLevelHmfMix) * (hmfWet - hmfDry));
+                const double hfDry = static_cast<double> (signal);
+                const double hfWet = presetLevelHfShelf.process (hfDry);
+                signal = static_cast<float> (hfDry + static_cast<double> (presetLevelHfMix) * (hfWet - hfDry));
+            }
+            // Program-keyed above-anchor pair (Phase C). Parallel to the preset-level pair
+            // above but crossfaded by the PROGRAM-BAND envelope factor (progHmfMix/progHfMix),
+            // so it engages on sustained sub-500 Hz program yet stays EXACTLY dry (mix 0) on a
+            // lone 1 kHz THD tone -> THD byte-identical. Same fixed-coeff idiom; a zero/zero
+            // preset skips it entirely (progEqConfigured false).
+            if (progEqConfigured)
+            {
+                const double phmfDry = static_cast<double> (signal);
+                const double phmfWet = progHmfPeak.process (phmfDry);
+                signal = static_cast<float> (phmfDry + static_cast<double> (progHmfMix) * (phmfWet - phmfDry));
+                const double phfDry = static_cast<double> (signal);
+                const double phfWet = progHfShelf.process (phfDry);
+                signal = static_cast<float> (phfDry + static_cast<double> (progHfMix) * (phfWet - phfDry));
+            }
+            // Program-level deep-sub bloom restore (EAR-GREEN): adds the reference's speed-dependent
+            // deep-sub thickening on program above the -12 anchor. Crossfaded by progLfMix (=progFactor)
+            // so it is EXACTLY dry on the -12 sweep / 1 kHz THD tone => byte-identical there; 30 IPS /
+            // Thru leave the gain 0 => progLfConfigured false => skipped entirely.
+            if (progLfConfigured)
+            {
+                const double plfDry = static_cast<double> (signal);
+                const double plfWet = progLfShelf.process (plfDry);
+                signal = static_cast<float> (plfDry + static_cast<double> (progLfMix) * (plfWet - plfDry));
+            }
 
             // Advanced repro-head EQ trims (neutral at 0 dB; reproduce the reference factory
             // presets' baked Repro HF/LF EQ so each preset's FR matches).
@@ -1093,6 +1261,10 @@ public:
             signal = static_cast<float> (reproLmfPeak.process (static_cast<double> (signal)));
             signal = static_cast<float> (reproHmfPeak.process (static_cast<double> (signal)));
             signal = static_cast<float> (reproHfShelf.process (static_cast<double> (signal)));
+            // Per-preset repro sub-bell (31 Hz Q2.5). Gated: skipped entirely at 0 dB so every
+            // preset that leaves it neutral (all but GP9 Drum Bus) renders byte-identical.
+            if (reproSubBellActive)
+                signal = static_cast<float> (reproSubBellPeak.process (static_cast<double> (signal)));
 
             // The American's 3.75 IPS / modern formulation has a narrow reproduce-head
             // presence resonance around 3 kHz before its steep 5 kHz shoulder. The
@@ -1195,7 +1367,32 @@ private:
     DBiquad driveHfShelf;                   // drive-linked HF restore (neutral at reference drive)
     DBiquad levelHfShelf;                   // signal-level HF restore (neutral at 0 dB; keyed on instantaneous flux)
     DBiquad levelLfShelf;                   // signal-level LF cut (neutral at 0 dB; keyed on instantaneous flux)
+    DBiquad presetLevelHmfPeak;             // per-preset above-anchor 6.3 kHz correction
+    DBiquad presetLevelHfShelf;             // per-preset above-anchor 11 kHz correction
+    bool presetLevelEqConfigured = false;   // exact bypass for presets with zero correction data
+    float presetLevelHmfMix = 0.0f;         // raw above-anchor factor (THD-sensitive band)
+    float presetLevelHfMix = 0.0f;          // expanded above-anchor factor (THD-safe band)
+    float presetLevelLastHmf = 999.0f, presetLevelLastHf = 999.0f;
+    // Program-keyed above-anchor pair (Phase C wall-breaker): same 6.3k/11k geometry as the
+    // preset-level pair, but crossfaded by the PROGRAM-BAND (500 Hz low-corner) envelope factor
+    // so it never engages on a lone 1 kHz THD tone (byte-identical THD by construction).
+    DBiquad progHmfPeak;                    // program-keyed 6.3 kHz peak
+    DBiquad progHfShelf;                    // program-keyed 11 kHz high-shelf
+    bool progEqConfigured = false;          // exact bypass for presets with zero prog trims
+    float progHmfMix = 0.0f, progHfMix = 0.0f;   // program-band factor mix (0 at/below the -12 anchor)
+    float progLastHmf = 999.0f, progLastHf = 999.0f;
+    DBiquad progLfShelf;                    // program-keyed deep-sub bloom (~33 Hz low-shelf)
+    bool progLfConfigured = false;          // exact bypass at 30 IPS / Thru (0 dB gain)
+    float progLfMix = 0.0f;                 // = progFactor mix (0 at/below the -12 anchor)
+    float progLfLastDb = 999.0f;
     DBiquad reproLfShelf, reproLmfPeak, reproHmfPeak, reproHfShelf; // advanced repro-head 4-band EQ (neutral at 0 dB)
+    DBiquad reproSubBellPeak;               // per-preset repro sub-bell (31 Hz Q2.5); fills a narrow head-bump LF dip
+    bool    reproSubBellActive = false;     // EXACT bypass at 0 dB: an always-on 0-dB peak biquad is NOT bit-identity
+                                            // (numerator==denominator cancels in exact math, not in float rounding), so
+                                            // skip the process call entirely when the band is 0 => byte-identical to no band.
+    float   reproSubBellLast = 999.0f;      // last-configured sub-bell dB; reset filter state on any change (incl. (de)activation).
+                                            // 999 = the same "never configured" sentinel the other rebuild caches use, so the
+                                            // first setReproEq always rebuilds even if prepare() stops pre-seeding it.
     DBiquad slowModernPresencePeak;             // measured Classic 3.75 IPS / modern formulation presence resonance
     DBiquad transformerLfShelf;             // Transformer-Off LF restore (neutral at 0 dB = Transformer On)
     // Emphasis-rebalance G / 1-G pair wrapping ONLY the shaper (per-machine, always active).
@@ -1230,7 +1427,6 @@ private:
     int   m_lastHeadWidth = -1;
 
     MachineCharacteristics m_cachedMachineChars{};
-    TapeCharacteristics m_cachedTapeChars{};
     SpeedCharacteristics m_cachedSpeedChars{};
     float m_gapWidth = 3.0f;
     // Per-machine linear trim making the tape core unity-gain (compensates the input
@@ -1878,6 +2074,17 @@ public:
     void setReproLmf    (float db) noexcept { pReproLmf.store (db, std::memory_order_relaxed); }
     void setReproHmf    (float db) noexcept { pReproHmf.store (db, std::memory_order_relaxed); }
     void setReproHf     (float db) noexcept { pReproHf.store  (db, std::memory_order_relaxed); }
+    void setReproSubBell(float db) noexcept { pReproSubBell.store (db, std::memory_order_relaxed); } // per-preset 31 Hz Q2.5 sub-bell
+    void setLevelHmfTrim(float db) noexcept { pLevelHmfTrim.store (db, std::memory_order_relaxed); }
+    void setLevelHfTrim (float db) noexcept { pLevelHfTrim.store  (db, std::memory_order_relaxed); }
+    // Clamped to the declared param range: DuskSVF::setResonance only guards the LOW side
+    // (Q < 0.05), so an out-of-range value from a malformed state file or a host that does not
+    // fix values to the declared range would drive R2 -> 0 and leave an undamped resonator at
+    // the LP cutoff. This is the only param whose failure mode is self-oscillation.
+    void setLpQ         (float q)  noexcept { pLpQ.store (std::clamp (q, 0.5f, 2.5f), std::memory_order_relaxed); } // lowpass resonance (preset data)
+    void setProgHmfTrim (float db) noexcept { pProgHmfTrim.store (db, std::memory_order_relaxed); } // program-keyed above-anchor presence (Phase C)
+    void setProgHfTrim  (float db) noexcept { pProgHfTrim.store  (db, std::memory_order_relaxed); } // program-keyed above-anchor top-octave (Phase C)
+    void setProgLfTrim  (float db) noexcept { pProgLfTrim.store  (db, std::memory_order_relaxed); } // program-keyed deep-sub bloom (EAR-GREEN)
     void setBypass      (bool b)   noexcept { pBypass.store (b, std::memory_order_relaxed); }
 
     float getVuL() const noexcept { return vuL.load (std::memory_order_relaxed); }
@@ -1916,6 +2123,11 @@ private:
     std::atomic<float> pHighpassHz{20.0f}, pLowpassHz{20000.0f};
     std::atomic<float> pNoiseAmount{0.0f}, pWow{7.0f}, pFlutter{3.0f}, pOutputGainDb{0.0f};
     std::atomic<float> pReproLf{0.0f}, pReproLmf{0.0f}, pReproHmf{0.0f}, pReproHf{0.0f}; // advanced repro-head 4-band EQ (0 = neutral)
+    std::atomic<float> pReproSubBell{0.0f}; // per-preset repro sub-bell 31 Hz Q2.5 (0 = neutral, exact bypass)
+    std::atomic<float> pLevelHmfTrim{0.0f}, pLevelHfTrim{0.0f}; // hidden per-preset above-anchor HF curve
+    std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
+    std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
+    std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
     std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
     // American front-panel toggles — default On = the state the American tuning captured.
     std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
@@ -1948,6 +2160,14 @@ private:
     float m_levelEnv = 0.0f;         // persistent linear peak state (across blocks) — PRE gain
     float m_levelRelCoeff = 0.0f;    // per-sample release decay (set in prepare)
 
+    // Program-band (low-corner) envelope for the Phase C prog-trim pair: a 500 Hz 2-pole LP
+    // per channel feeds a peak follower (instant attack, shared 30 ms m_levelRelCoeff release)
+    // so a 1 kHz THD tone reads well below the -12 anchor (the LP attenuates 1 kHz ~-12 dB) =>
+    // progFactor 0 => byte-identical THD; sustained sub-500 Hz program still engages the trim.
+    DBiquad m_progLpL, m_progLpR;    // per-channel 500 Hz 2-pole LP (base rate; on the RAW pre-gain input)
+    float m_progEnv = 0.0f;          // persistent linear peak state (across blocks) — PRE gain, program band
+    float m_progFactorSm = 0.0f;     // persistent smoothed program-band factor (0..1); shares the level-comp coeffs
+
     // Level-comp factor smoother (block-rate, applied once per block): FAST attack so the
     // tone shifts ON a transient, slower release tracking the 30 ms detector. Prevents a
     // multi-dB shelf-gain step (biquad coeff discontinuity / zipper / click) when the factor
@@ -1963,7 +2183,7 @@ private:
     float m_driveDecaySm = 1.0f;     // persistent smoothed driveHfComp decay factor (~-0.75..1)
 
     // --- dirty tracking ---
-    float lastHpFreq = -1.0f, lastLpFreq = -1.0f;
+    float lastHpFreq = -1.0f, lastLpFreq = -1.0f, lastLpQ = -1.0f;
     int   lastFactor = -1;
 
     // --- scratch (allocated in prepare) ---

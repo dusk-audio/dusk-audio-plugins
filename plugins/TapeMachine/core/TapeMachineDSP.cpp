@@ -123,13 +123,15 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
 
     const float hpFreq = pHighpassHz.load (std::memory_order_relaxed);
     const float lpFreq = pLowpassHz.load (std::memory_order_relaxed);
+    const float lpQ    = pLpQ.load (std::memory_order_relaxed);   // preset LP resonance (0.707 = historic fixed Q)
     hpL.prepare (currentOsRate, hpFreq, 0.707f); hpL.setType (DuskSVF::Type::highpass); hpL.reset();
     hpR.prepare (currentOsRate, hpFreq, 0.707f); hpR.setType (DuskSVF::Type::highpass); hpR.reset();
-    lpL.prepare (currentOsRate, lpFreq, 0.707f); lpL.setType (DuskSVF::Type::lowpass);  lpL.reset();
-    lpR.prepare (currentOsRate, lpFreq, 0.707f); lpR.setType (DuskSVF::Type::lowpass);  lpR.reset();
+    lpL.prepare (currentOsRate, lpFreq, lpQ);   lpL.setType (DuskSVF::Type::lowpass);  lpL.reset();
+    lpR.prepare (currentOsRate, lpFreq, lpQ);   lpR.setType (DuskSVF::Type::lowpass);  lpR.reset();
     bypassLowpass = (lpFreq >= 19000.0f);
     lastHpFreq = hpFreq;
     lastLpFreq = lpFreq;
+    lastLpQ    = lpQ;
 
     // Smoothers: param smoothers configured at BASE rate but advanced at the
     // oversampled rate (matches the JUCE structure — see PORT_NOTES). Output gain
@@ -198,12 +200,20 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     // hit, not a block later) while smoothing the |x| ripple of low tones.
     m_levelRelCoeff = std::exp (-1.0f / (0.030f * static_cast<float> (baseSampleRate)));
     m_levelEnv = 0.0f;
+    // Program-band envelope LP (Phase C): 500 Hz 2-pole Butterworth per channel, base rate.
+    // Corner chosen so the hottest THD step (-3 dBFS 1 kHz) reads ~-15 dBFS after the LP,
+    // a >3 dB margin below the -12 anchor => progFactor floored to 0 => byte-identical THD.
+    m_progLpL.setCoeffs (DBiquad::lowPass (baseSampleRate, 500.0, 0.70710678));
+    m_progLpR.setCoeffs (DBiquad::lowPass (baseSampleRate, 500.0, 0.70710678));
+    m_progLpL.reset(); m_progLpR.reset();
+    m_progEnv = 0.0f;
     // Level-comp factor smoother: fast attack (~4 ms) so tone shifts ON a transient, slower
     // release (~30 ms) tracking the detector. Per-sample coeffs (1-exp form); the block-rate
     // update raises (1-coeff) to nSamples so the effective TC is block-size-independent.
     m_levelFactAtkCoeff = 1.0f - std::exp (-1.0f / (0.004f * static_cast<float> (baseSampleRate)));
     m_levelFactRelCoeff = 1.0f - std::exp (-1.0f / (0.030f * static_cast<float> (baseSampleRate)));
     m_levelFactorSm = 0.0f;
+    m_progFactorSm = 0.0f;    // program-band factor starts neutral (bypassed until sub-500 Hz program engages)
     m_driveDecaySm  = 1.0f;   // neutral (no below-anchor decay until the signal drops below -12)
     vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     inPeakStateL = inPeakStateR = 0.0f;
@@ -239,6 +249,9 @@ void TapeMachineDSP::reset()
     hpL.reset(); hpR.reset(); lpL.reset(); lpR.reset();
     m_levelEnv = 0.0f;
     m_levelFactorSm = 0.0f;
+    m_progLpL.reset(); m_progLpR.reset();
+    m_progEnv = 0.0f;
+    m_progFactorSm = 0.0f;
     m_driveDecaySm  = 1.0f;
     vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     inPeakStateL = inPeakStateR = 0.0f;
@@ -292,15 +305,17 @@ void TapeMachineDSP::applyFactor (int newFactor)
 
     const float hpFreq = pHighpassHz.load (std::memory_order_relaxed);
     const float lpFreq = pLowpassHz.load (std::memory_order_relaxed);
+    const float lpQ    = pLpQ.load (std::memory_order_relaxed);
     hpL.prepare (currentOsRate, hpFreq, 0.707f); hpL.setType (DuskSVF::Type::highpass);
     hpR.prepare (currentOsRate, hpFreq, 0.707f); hpR.setType (DuskSVF::Type::highpass);
-    lpL.prepare (currentOsRate, lpFreq, 0.707f); lpL.setType (DuskSVF::Type::lowpass);
-    lpR.prepare (currentOsRate, lpFreq, 0.707f); lpR.setType (DuskSVF::Type::lowpass);
+    lpL.prepare (currentOsRate, lpFreq, lpQ);   lpL.setType (DuskSVF::Type::lowpass);
+    lpR.prepare (currentOsRate, lpFreq, lpQ);   lpR.setType (DuskSVF::Type::lowpass);
 
     outGain.prepare (currentOsRate, kGainTau);   // re-config OS-rate ramp coeff
 
     lastHpFreq = -1.0f;   // force SVF cutoff refresh below
     lastLpFreq = -1.0f;
+    lastLpQ    = -1.0f;
     lastFactor = newFactor;
 }
 
@@ -382,15 +397,18 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- tone SVF coefficient refresh (dirty) --------------------------------
     const float hpFreq = pHighpassHz.load (std::memory_order_relaxed);
     const float lpFreq = pLowpassHz.load (std::memory_order_relaxed);
+    const float lpQ    = pLpQ.load (std::memory_order_relaxed);   // preset LP resonance (HP stays fixed 0.707)
     bypassLowpass = (lpFreq >= 19000.0f);
-    if (std::abs (hpFreq - lastHpFreq) > 0.01f || std::abs (lpFreq - lastLpFreq) > 0.01f)
+    if (std::abs (hpFreq - lastHpFreq) > 0.01f || std::abs (lpFreq - lastLpFreq) > 0.01f
+        || std::abs (lpQ - lastLpQ) > 0.0001f)
     {
         hpL.setType (DuskSVF::Type::highpass); hpL.setCutoff (hpFreq); hpL.setResonance (0.707f);
         hpR.setType (DuskSVF::Type::highpass); hpR.setCutoff (hpFreq); hpR.setResonance (0.707f);
-        lpL.setType (DuskSVF::Type::lowpass);  lpL.setCutoff (lpFreq); lpL.setResonance (0.707f);
-        lpR.setType (DuskSVF::Type::lowpass);  lpR.setCutoff (lpFreq); lpR.setResonance (0.707f);
+        lpL.setType (DuskSVF::Type::lowpass);  lpL.setCutoff (lpFreq); lpL.setResonance (lpQ);
+        lpR.setType (DuskSVF::Type::lowpass);  lpR.setCutoff (lpFreq); lpR.setResonance (lpQ);
         lastHpFreq = hpFreq;
         lastLpFreq = lpFreq;
+        lastLpQ    = lpQ;
     }
 
     // --- block-constant parameter reads --------------------------------------
@@ -498,6 +516,30 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         envDbPre = 20.0f * std::log10 (std::max (blockPk, 1e-9f));   // PRE-gain level in dBFS
     }
 
+    // --- program-band envelope (Phase C: SAME pre-gain node, 500 Hz-LP'd per channel) --------
+    // Each raw sample is 2-pole-LP'd at 500 Hz BEFORE rectification so the follower tracks
+    // sub-500 Hz PROGRAM energy, not a lone HF/mid tone (filtering the already-rectified peak
+    // would leak the tone's DC term and defeat the anchor). Keyed by the identical anchor law
+    // below (progFluxDb), so a lone 1 kHz THD/alias tone reads below the -12 anchor and the
+    // prog trims stay bypassed; sustained low-corner program pushes progFactor positive.
+    float progEnvDbPre;
+    {
+        float pe = m_progEnv, progBlockPk = m_progEnv;
+        for (int n = 0; n < nSamples; ++n)
+        {
+            float a = std::abs (static_cast<float> (m_progLpL.process (static_cast<double> (inputs[0][n]))));
+            if (nCh >= 2)
+            {
+                const float aR = std::abs (static_cast<float> (m_progLpR.process (static_cast<double> (inputs[1][n]))));
+                if (aR > a) a = aR;
+            }
+            if (a > pe) pe = a; else pe *= m_levelRelCoeff;
+            if (pe > progBlockPk) progBlockPk = pe;
+        }
+        m_progEnv = pe;
+        progEnvDbPre = 20.0f * std::log10 (std::max (progBlockPk, 1e-9f));   // PRE-gain program-band level
+    }
+
     // Drive-linked HF restore + signal-level FR compensation. The memoryless tape core's
     // FR drifts with RECORD FLUX (signal level + input-gain + cal + bias): above the
     // -12 dBFS reference operating level the HF droops (waveshaper HF compression) and the
@@ -563,6 +605,13 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         return std::pow (t, kRampPow);
     };
     const float levelFactorTarget = std::max (0.0f, ramp (signalFluxDb) - ramp (knobFluxDb));
+    // Program-band factor (Phase C): identical anchor construction as levelFactor, but keyed off
+    // the 500 Hz-LP'd program envelope (progEnvDbPre). At/below the -12 anchor the increment is 0
+    // (a lone 1 kHz THD tone lands there) so the prog trims stay bypassed; sustained sub-500 Hz
+    // program pushes it positive and engages them. Reuses the SAME ramp/knobFluxDb, so the
+    // input-gain/cal/bias terms cancel at the anchor exactly like the level-comp factor.
+    const float progFluxDb = progEnvDbPre + smInGainDb + 12.0f + kCalFluxDb + biasFluxDb;
+    const float progFactorTarget = std::max (0.0f, ramp (progFluxDb) - ramp (knobFluxDb));
     // Smooth the factor before it drives the shelf coeffs. A raw per-block factor jumps several
     // dB on a drum hit -> a biquad coeff discontinuity (zipper / click). One-pole with a FAST
     // (~4 ms) attack so the tone still shifts ON the hit (Phase A showed the transient window
@@ -577,6 +626,16 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         m_levelFactorSm += blockCoeff * (levelFactorTarget - m_levelFactorSm);
     }
     const float levelFactor  = m_levelFactorSm;
+    // Smooth the program-band factor with the SAME fast-attack/slow-release coeffs (block-size-
+    // independent). At/below the -12 anchor the target is a steady 0, so it sits at 0 and the
+    // prog crossfade stays exactly dry (byte-identical THD/sweep/alias).
+    {
+        const float perSampleCoeff = (progFactorTarget > m_progFactorSm)
+                                         ? m_levelFactAtkCoeff : m_levelFactRelCoeff;
+        const float blockCoeff = 1.0f - std::pow (1.0f - perSampleCoeff, static_cast<float> (nSamples));
+        m_progFactorSm += blockCoeff * (progFactorTarget - m_progFactorSm);
+    }
+    const float progFactor = m_progFactorSm;
     const float kLevelHfGain = (machine == TapeCore::Swiss) ? kLevelHfSwiss   : kLevelHfAmerican;
     const float kLevelLfGain = (machine == TapeCore::Swiss) ? kLevelLfSwiss   : kLevelLfAmerican;
     const float levelHfDb    = std::min (9.0f, kLevelHfGain * levelFactor);   // HF restore (>=0)
@@ -621,14 +680,38 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     coreR.setDriveHfComp (driveHfCompFinal);
     coreL.setLevelComp (machine, levelHfDb, levelLfDb);
     coreR.setLevelComp (machine, levelHfDb, levelLfDb);
+    const float presetLevelHmfDb = pLevelHmfTrim.load (std::memory_order_relaxed);
+    const float presetLevelHfDb  = pLevelHfTrim.load  (std::memory_order_relaxed);
+    const float presetLevelHfFactor = std::pow (levelFactor, 0.25f);
+    coreL.setPresetLevelEq (presetLevelHmfDb, presetLevelHfDb, levelFactor, presetLevelHfFactor);
+    coreR.setPresetLevelEq (presetLevelHmfDb, presetLevelHfDb, levelFactor, presetLevelHfFactor);
+    // Program-band above-anchor trims (Phase C wall-breaker; re-based on PROGRAM in the EAR-GREEN
+    // pass): the SAME 6.3k/11k pair as the preset-level EQ, but crossfaded by the PROGRAM-BAND factor
+    // so a lone 1 kHz THD tone stays exactly dry (progFactor 0). Mix = pow(progFactor, 0.25) (the
+    // shipped expansion idiom), shared by both bands. Most factory presets now carry a nonzero HF
+    // trim (cut on bright presets, positive boost on the dark ones); a 0/0 preset gets setProgEq
+    // bypassed exactly (byte-identical). Same idiom drives the deep-sub bloom below.
+    const float progHmfDb = pProgHmfTrim.load (std::memory_order_relaxed);
+    const float progHfDb  = pProgHfTrim.load  (std::memory_order_relaxed);
+    const float progMix   = std::pow (progFactor, 0.25f);
+    coreL.setProgEq (progHmfDb, progHfDb, progMix, progMix);
+    coreR.setProgEq (progHmfDb, progHfDb, progMix, progMix);
+    // Program-level deep-sub bloom restore (EAR-GREEN): the reference decks thicken the deep sub
+    // (25-50 Hz) on program above the -12 anchor (a tape LF enhancement mine lacked). Same progMix
+    // crossfade => byte-null on the -12 sweep / 1 kHz THD tone. Per-preset gain (progLfTrim); 0 on
+    // clean / 30-IPS presets => exact bypass.
+    const float progLfDb = pProgLfTrim.load (std::memory_order_relaxed);
+    coreL.setProgLf (progLfDb, progMix);
+    coreR.setProgLf (progLfDb, progMix);
 
     // Advanced repro-head 4-band EQ (block-constant; 0 dB = neutral).
     const float rLf  = pReproLf.load  (std::memory_order_relaxed);
     const float rLmf = pReproLmf.load (std::memory_order_relaxed);
     const float rHmf = pReproHmf.load (std::memory_order_relaxed);
     const float rHf  = pReproHf.load  (std::memory_order_relaxed);
-    coreL.setReproEq (rLf, rLmf, rHmf, rHf);
-    coreR.setReproEq (rLf, rLmf, rHmf, rHf);
+    const float rSub = pReproSubBell.load (std::memory_order_relaxed); // per-preset 31 Hz Q2.5 sub-bell (0 = exact bypass)
+    coreL.setReproEq (rLf, rLmf, rHmf, rHf, rSub);
+    coreR.setReproEq (rLf, rLmf, rHmf, rHf, rSub);
 
     // Classic Transformer switch (American only): Off bypasses the output transformer, which
     // EXTENDS the deep bass (measured Classic On->Off = +3.4/+1.0/+0.4 dB @30/60/100 Hz, flat
@@ -754,12 +837,13 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- crosstalk (base rate — deviation from JUCE's OS-rate placement) ------
     if (nCh >= 2)
     {
-        // Swiss: the reference stereo instance models no L/R adjacent-track bleed, so the
-        // Swiss crosstalk is essentially nil. American matches the reference American's
-        // modelled "Crosstalk On" bleed (~-51 dB L->R).
-        // Classic Crosstalk switch (American only): Off removes the modelled adjacent-track
-        // bleed. On (default) or the Swiss => the current bleed (byte-identical).
-        float crosstalkAmount = (machine == TapeCore::Swiss) ? 0.0006f : 0.0027f;
+        // Swiss: the reference stereo instance models NO L/R adjacent-track bleed (measured:
+        // an L-only tone leaves the R channel at digital silence), so Swiss crosstalk is 0.
+        // American: the reference "Crosstalk On" bleed measures -51..-55 dB L->R across presets;
+        // 0.00224 (~-53 dB) is the single-scalar midpoint that lands every On preset within tol.
+        // Crosstalk switch (American only): Off removes the bleed (the reference's On/Off per
+        // preset is honoured by the preset table); On => the modelled bleed.
+        float crosstalkAmount = (machine == TapeCore::Swiss) ? 0.0f : 0.00224f;
         if (isClassic && ! crosstalkOn) crosstalkAmount = 0.0f;
         for (int n = 0; n < nSamples; ++n)
         {

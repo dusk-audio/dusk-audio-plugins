@@ -34,7 +34,7 @@ American:
 - Clean 900 Master
 - Fat 456 Master
 - GP9 Drum Bus
-- Massive Bass
+- Bass Bump
 - Bright & Sizzly
 - Sunbaked Cassette
 - Analog Warmth

@@ -80,6 +80,20 @@ protected:
             break;
         }
 
+        // Hidden factory-calibration data. These carry per-preset correction values fitted by the
+        // parity campaign, not user controls: exposing them lets a user desync a preset from its
+        // fit (and automating one blanks the preset-name display, since deriveFactoryPreset stops
+        // matching). reproSubBell belongs here too — it has no UI control on the Advanced panel,
+        // and only GP9 Drum Bus sets it nonzero.
+        // NOTE: DPF honours kParameterIsHidden in the LV2 exporter ONLY; the VST3 and CLAP
+        // backends never read the flag, so these still appear in those hosts' parameter lists.
+        // The assignment REPLACES kParameterIsAutomatable on purpose, which at least drops the
+        // automate flag there.
+        if (index == kParamLevelHmfTrim || index == kParamLevelHfTrim || index == kParamLpQ
+            || index == kParamProgHmfTrim || index == kParamProgHfTrim || index == kParamProgLfTrim
+            || index == kParamReproSubBell)
+            p.hints = kParameterIsHidden;
+
         p.name   = d.name;
         p.symbol = d.id;
         p.unit   = d.unit;
@@ -202,6 +216,13 @@ private:
         case kParamReproLMF:    dsp.setReproLmf(v);             break;
         case kParamReproHMF:    dsp.setReproHmf(v);             break;
         case kParamReproHF:     dsp.setReproHf(v);              break;
+        case kParamLevelHmfTrim:dsp.setLevelHmfTrim(v);         break;
+        case kParamLevelHfTrim: dsp.setLevelHfTrim(v);          break;
+        case kParamLpQ:         dsp.setLpQ(v);                  break;
+        case kParamProgHmfTrim: dsp.setProgHmfTrim(v);         break;
+        case kParamProgHfTrim:  dsp.setProgHfTrim(v);          break;
+        case kParamProgLfTrim:  dsp.setProgLfTrim(v);          break;
+        case kParamReproSubBell:dsp.setReproSubBell(v);         break;
         case kParamBypass:      dsp.setBypass(v > 0.5f);         break;
         }
     }
