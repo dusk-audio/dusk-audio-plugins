@@ -129,7 +129,7 @@ substantially change a preset's match and saturation reading.
 
 - Fat 456 Master
 - GP9 Drum Bus
-- Massive Bass
+- Bass Bump
 - Bright & Sizzly
 
 ### Swiss mix

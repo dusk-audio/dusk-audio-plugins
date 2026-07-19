@@ -14,6 +14,7 @@
 #include "TapeMachinePresets.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
+#include "DuskSupportersOverlay.hpp"   // shared DPF Patreon "Special Thanks" overlay (click title)
 
 #include <cmath>
 #include <cstdio>
@@ -147,7 +148,12 @@ protected:
         // input — the manual dl-> draws (knobs, meters, text use explicit colours) are unaffected,
         // so the background still renders normally under the scrim's dim. drawAdvanced runs OUTSIDE
         // the disabled scope so the card, scrim and EQ knobs stay live.
-        if (showAdvanced) ImGui::BeginDisabled();
+        // A modal (Advanced panel OR the Patreon overlay) disables the background widgets so clicks
+        // land on the scrim, not a knob/combo underneath. Captured BEFORE drawHeader so the Begin/End
+        // stay balanced even when a title-click flips showSupporters on mid-frame (the overlay then
+        // draws below, and the header is disabled from the next frame).
+        const bool modalOpen = showAdvanced || showSupporters;
+        if (modalOpen) ImGui::BeginDisabled();
         drawHeader(dl);
         // The PEAK lamp is a digital-CLIP indicator: peakLevel(ch) reads the DSP's final-OUTPUT
         // sample-peak hold, and the lamp lights when the output crosses 0 dBFS (see drawVU),
@@ -159,8 +165,10 @@ protected:
         drawVU(dl, 412, 62, 732, 198, meterLevel(1), peakLevel(1), needleR, clipHoldR, clipEnabled, accent, "R");
         drawSelectors(dl);
         drawControls(dl);
-        if (showAdvanced) ImGui::EndDisabled();
+        if (modalOpen) ImGui::EndDisabled();
         if (showAdvanced) drawAdvanced(dl);
+        if (showSupporters)
+            duskdpf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters, "TapeMachine 2", "");
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -497,6 +505,11 @@ private:
             dl->AddRect(P(193, 16), P(243, 34), IM_COL32(0, 0, 0, 90), 3.0f * s, 0, 1.0f * s);
             text(dl, 218, 20, 8.5f, IM_COL32(18, 18, 20, 255), badge, 0, true);
         }
+        // The title nameplate is a click target -> Patreon "Special Thanks" overlay (matches the
+        // JUCE plugins' click-title-to-see-supporters behaviour). Input-only; the visuals above stay.
+        ImGui::SetCursorScreenPos(P(30, 12));
+        if (ImGui::InvisibleButton("##titlecredits", ImVec2(217.0f * s, 28.0f * s)))
+            showSupporters = true;
 
         // preset browser, centred between the title and the (right-anchored) bypass:
         //   < [combo] >  INIT  SAVE          (all on the 18..38 band)
@@ -1234,6 +1247,7 @@ private:
     char    saveBuf[64] = {};
     bool    openSaveModal = false;
     bool    showAdvanced = false;   // hidden advanced (Repro EQ) panel toggle
+    bool    showSupporters = false; // Patreon "Special Thanks" overlay (click the title nameplate)
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineUI)
 };

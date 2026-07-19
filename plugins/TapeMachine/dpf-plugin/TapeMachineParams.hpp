@@ -44,6 +44,27 @@ enum ParamId
     kParamReproLMF,        // -12..12 dB repro-head low-mid peak (advanced)
     kParamReproHMF,        // -12..12 dB repro-head high-mid/presence peak (advanced)
     kParamReproHF,         // -12..12 dB repro-head HF shelf  (advanced)
+    // Hidden factory-preset calibration data. Both gains are multiplied by the
+    // above-anchor level factor in the DSP, so 0 VU / -12 dBFS remains neutral.
+    kParamLevelHmfTrim,    // -24..24 dB full-factor presence correction
+    kParamLevelHfTrim,     // -24..24 dB full-factor top-octave correction
+    kParamLpQ,             // 0.5..2.5 lowpass resonance Q (cassette head-resonance peak at the LP cliff)
+    // Hidden program-band above-anchor trims (Phase C). Keyed off a 500 Hz low-corner program
+    // envelope (not the broadband detector), so they engage on sustained low-corner program yet
+    // stay bypassed on the 1 kHz THD tone => byte-identical THD. Both default 0 = neutral.
+    kParamProgHmfTrim,     // -24..24 dB program-band presence correction (6.3 kHz peak)
+    kParamProgHfTrim,      // -24..24 dB program-band top-octave correction (11 kHz shelf)
+    // Per-preset repro sub-bell (31 Hz Q2.5). A visible/automatable repro-EQ band like the other
+    // four; appended here (after the trims) so the earlier param IDs stay fixed. Neutral at 0 dB
+    // (exact bypass in the DSP) => byte-identical on every preset that leaves it 0. Only GP9 Drum
+    // Bus carries a nonzero value (fills the American-30 head-bump's narrow LF dip at ~31 Hz).
+    kParamReproSubBell,    // -12..12 dB repro-head sub-bell (advanced)
+    // Hidden PROGRAM-BAND deep-sub bloom restore (EAR-GREEN). Keyed off the SAME 500 Hz program
+    // envelope as the prog trims => byte-null on the -12 dBFS sweep / 1 kHz THD tone. Adds the
+    // reference decks' deep-sub program thickening (a 33 Hz low-shelf); mine lacked it so hot 15/7.5
+    // IPS presets read thin/bright. Default 0 = neutral. Appended after reproSubBell so its ID stays
+    // fixed (only the output-meter IDs below shift).
+    kParamProgLfTrim,      // -24..24 dB program-band deep-sub bloom (33 Hz low-shelf)
     // --- output-only (meters); kept as params for generic-UI fallback ---
     kParamVuL,             // output: L peak level for the VU meter
     kParamVuR,             // output: R peak level for the VU meter
@@ -111,6 +132,13 @@ static constexpr TmParam kTmParams[kParamCount] =
     { "reproLMF",     "Repro LMF",    'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
     { "reproHMF",     "Repro HMF",    'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
     { "reproHF",      "Repro HF",     'f', -12.f, 12.f,  0.f,  "dB", nullptr, 0 },
+    { "levelHmfTrim", "Level HMF Trim",'f',-24.f, 24.f,  0.f,  "dB", nullptr, 0 },
+    { "levelHfTrim",  "Level HF Trim", 'f',-24.f, 24.f,  0.f,  "dB", nullptr, 0 },
+    { "lpQ",          "Lowpass Q",    'f', 0.5f, 2.5f,   0.707f,"",  nullptr, 0 },
+    { "progHmfTrim",  "Prog HMF Trim",'f',-24.f, 24.f,  0.f,  "dB", nullptr, 0 },
+    { "progHfTrim",   "Prog HF Trim", 'f',-24.f, 24.f,  0.f,  "dB", nullptr, 0 },
+    { "reproSubBell", "Repro Sub Bell",'f',-12.f, 12.f,  0.f,  "dB", nullptr, 0 },
+    { "progLfTrim",   "Prog LF Trim", 'f',-24.f, 24.f,  0.f,  "dB", nullptr, 0 },
     { "vuL",          "VU L",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
     { "vuR",          "VU R",         'o', 0.f, 2.f,     0.f,  "",   nullptr, 0 },
 };
