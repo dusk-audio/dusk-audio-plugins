@@ -161,6 +161,16 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     xtalkLpL_     = 0.0f;
     xtalkLpR_     = 0.0f;
 
+    // Post-tank stereo image steer (issue #123, agent 8): dry-balance follower +
+    // applied-gain smoother one-pole coeffs. exp(-1/(tau·sr)): larger tau →
+    // coeff nearer 1 → slower. State resets to unity gain / zero envelope. These
+    // writes touch ONLY the new members, so the disabled path is unaffected.
+    psAtkCoeff_  = std::exp (-1.0f / (0.080f * static_cast<float> (sampleRate)));   // 80 ms attack (softens the L<->R balance flip in the alternating-source case)
+    psRelCoeff_  = std::exp (-1.0f / (0.350f * static_cast<float> (sampleRate)));   // 350 ms release (tail "remembers" the source side, then centers)
+    psGainCoeff_ = std::exp (-1.0f / (0.020f * static_cast<float> (sampleRate)));   // 20 ms applied-gain smoother: click-free (a bounded one-pole, no zipper) yet fast enough that a single hard-pan reaches full tilt inside the measured tail window (preserves the ILD table)
+    psEnvL_ = psEnvR_ = 0.0f;
+    psGainL_ = psGainR_ = 1.0f;
+
     // Per-band Width tilt — one-pole LP coeffs at the 300 Hz / 5 kHz crossovers.
     wbLp1Coeff_ = std::exp (-kTwoPi *  300.0f / static_cast<float> (sampleRate));
     wbLp2Coeff_ = std::exp (-kTwoPi * 5000.0f / static_cast<float> (sampleRate));
@@ -181,6 +191,11 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     // Force-apply algorithm 0 on first prepare (don't bypass via early-return).
     currentAlgorithm_ = -1;
     setAlgorithm (0);
+
+    // #123 post-tank steer env hook (DUSKVERB_POSTSTEER; offline measurement
+    // harness only). Must run AFTER the steer state reset above; the per-engine
+    // DUSKVERB_STEREOBIAS hook runs earlier in prepare. Unset → bit-null.
+    applyPostSteerOverride();
 }
 
 void DuskVerbEngine::clearAllBuffers()
@@ -661,6 +676,30 @@ void DuskVerbEngine::setPmbStereoImageBias (float amount)
     // actually carries the input side. 0 = off = bit-identical. No preset calls
     // this yet; enablement waits on the ear pass.
     pmb_.setStereoImageBias (amount);
+}
+
+void DuskVerbEngine::setPostSteer (float amount)
+{
+    // Issue #123 (agent 8) — engine-agnostic post-tank source-side ILD steer on the
+    // FINAL wet. 0 = off = bit-identical. No preset calls this yet; enablement waits
+    // on the ear pass. Precompute psK_ so the hot loop only reads members.
+    psAmount_        = std::clamp (amount, 0.0f, 1.0f);
+    postSteerActive_ = psAmount_ > 1.0e-6f;
+    psK_             = kPostSteerKMax * psAmount_;
+}
+
+void DuskVerbEngine::applyPostSteerOverride()
+{
+    // Calibration hook (issue #123), same pattern as DUSKVERB_VELVET / DUSKVERB_REVERSE:
+    // lets the render harness measure the ILD table without wiring the feature into any
+    // preset path. Message thread only (called from prepare()), read once; absent env ⇒
+    // setPostSteer is never called ⇒ postSteerActive_ stays false ⇒ bit-identical default.
+    if (const char* ov = std::getenv ("DUSKVERB_POSTSTEER"))
+    {
+        const float amount = std::clamp (static_cast<float> (std::atof (ov)), 0.0f, 1.0f);
+        if (amount > 0.0f)
+            setPostSteer (amount);
+    }
 }
 
 void DuskVerbEngine::setDenseHallOctaveDecayRef (float seconds)
@@ -2241,6 +2280,41 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // by construction).
         wetL = perBandEDT_.processL (wetL);
         wetR = perBandEDT_.processR (wetR);
+
+        // ---- Post-tank stereo image steer (issue #123, agent 8) ----
+        // Constant-power L/R gain tilt on the FINAL wet, keyed off the CLEAN dry input
+        // still held in left[i]/right[i] here (the engine writes wet back only at the
+        // end of this loop; the pre-delay read and sus-limiter mutate their OWN buffers,
+        // never left/right — verified). Applied HERE, downstream of every engine and
+        // BEFORE the Mono Maker / width M/S stage, so the imposed ILD is then shaped by
+        // width exactly like any other stereo content. Engine-agnostic: works even on
+        // the mono-in tanks (Dattorro) where output-tap surgery cannot lean the image.
+        //
+        // Detector: per-sample amplitude-envelope followers on |dryL|,|dryR| (attack/
+        // release one-poles), balance b=(EL-ER)/(EL+ER+eps) clamped [-1,1]. Steer:
+        // gl=sqrt(1+k·b), gr=sqrt(1-k·b) (constant-power), k=kPostSteerKMax·amount,
+        // smoothed by a one-pole gain smoother (anti-zipper — the Vocal Hall AttackRamp
+        // distortion bug was an unsmoothed audio-rate gain; not repeated here). Time
+        // constants (attack/release/gain-smooth) live in prepare().
+        //
+        // postSteerActive_ false → this block is skipped → the left[i]/right[i] final
+        // write below is byte-identical to legacy (bit-null). Centered input →
+        // EL==ER exactly → b==0 → gl==gr==sqrt(1.0f)==1.0f → wet × 1.0f → byte-identical
+        // even with the feature ON (a stronger guarantee than the < -100 dB target).
+        if (postSteerActive_)
+        {
+            const float axl = std::fabs (left[i]);
+            const float axr = std::fabs (right[i]);
+            psEnvL_ = axl + ((axl > psEnvL_) ? psAtkCoeff_ : psRelCoeff_) * (psEnvL_ - axl);
+            psEnvR_ = axr + ((axr > psEnvR_) ? psAtkCoeff_ : psRelCoeff_) * (psEnvR_ - axr);
+            const float b   = std::clamp ((psEnvL_ - psEnvR_) / (psEnvL_ + psEnvR_ + 1.0e-9f), -1.0f, 1.0f);
+            const float glT = std::sqrt (std::max (0.0f, 1.0f + psK_ * b));
+            const float grT = std::sqrt (std::max (0.0f, 1.0f - psK_ * b));
+            psGainL_ = glT + psGainCoeff_ * (psGainL_ - glT);
+            psGainR_ = grT + psGainCoeff_ * (psGainR_ - grT);
+            wetL *= psGainL_;
+            wetR *= psGainR_;
+        }
 
         // Mono Maker — sums L+R below the cutoff to mono before width
         // processing. 1st-order matched-phase complementary split: HP = input
