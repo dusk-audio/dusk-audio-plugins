@@ -102,6 +102,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
         while (len < wantLen) len <<= 1;
         reflBuf_.assign (static_cast<size_t> (len), 0.0f);
         reflDryMono_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+        stereoCleanL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+        stereoCleanR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
         reflMask_ = len - 1;
         reflWritePos_ = 0;
         reflLpStateL_ = reflLpStateR_ = 0.0f;
@@ -181,6 +183,11 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     // Force-apply algorithm 0 on first prepare (don't bypass via early-return).
     currentAlgorithm_ = -1;
     setAlgorithm (0);
+
+    // #123 stereo-image bias: read the DUSKVERB_STEREOBIAS env override (offline
+    // measurement harness only) and forward it to the Dattorro tank. Message
+    // thread → getenv is safe here. Unset → amount left at 0 → bit-null.
+    applyStereoImageBiasOverride();
 }
 
 void DuskVerbEngine::clearAllBuffers()
@@ -1251,6 +1258,24 @@ void DuskVerbEngine::setDattorroModReduction (float reduction01)
     dattorroVintage_.setModReduction (reduction01);
 }
 
+// #123 stereo-image preservation — DattorroTank (algo 0) only. The DPV internal
+// tank (algo 1, dattorroVintage_) is intentionally NOT touched here: it is a
+// separate follow-up pass, so every algo-1 preset stays bit-null.
+void DuskVerbEngine::setDattorroStereoInput (float amount)
+{
+    dattorro_.setStereoInput (amount);
+}
+
+void DuskVerbEngine::applyStereoImageBiasOverride()
+{
+    // Offline sweep hook (mirrors the DUSKVERB_* getenv pattern the tuning
+    // harness uses in PluginProcessor). DUSKVERB_STEREOBIAS = "<amount>" enables
+    // the source-side lean on the Dattorro tank so the harness can measure it
+    // without preset/param wiring. Unset/empty → no call → default 0 → bit-null.
+    if (const char* env = std::getenv ("DUSKVERB_STEREOBIAS"); env != nullptr && env[0] != '\0')
+        setDattorroStereoInput (static_cast<float> (std::atof (env)));
+}
+
 // #87 boing fix — DattorroTank (algo 0) only; the short-room rooms are algo 0.
 // dattorroVintage_ (algo 1) is intentionally NOT touched → algo-1 presets bit-null.
 void DuskVerbEngine::setDattorroDensityRoomFill (bool enable)
@@ -1647,6 +1672,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // a clean discrete arrival, not the smeared/diffused tank input.
         reflDryMono_[static_cast<size_t> (i)] = 0.5f * (tankInL_[static_cast<size_t> (i)] + tankInR_[static_cast<size_t> (i)]);
 
+        // #123: snapshot the clean PRE-diffuser source stereo for the Dattorro
+        // stereo-input injection (centered source → L == R here → side 0).
+        stereoCleanL_[static_cast<size_t> (i)] = tankInL_[static_cast<size_t> (i)];
+        stereoCleanR_[static_cast<size_t> (i)] = tankInR_[static_cast<size_t> (i)];
+
         preDelayWritePos_ = (preDelayWritePos_ + 1) & preDelayMask_;
     }
 
@@ -1753,7 +1783,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     {
         case EngineType::Dattorro:
             dattorro_.process (tankInL_.data(), tankInR_.data(),
-                               tankOutL_.data(), tankOutR_.data(), numSamples);
+                               tankOutL_.data(), tankOutR_.data(), numSamples,
+                               stereoCleanL_.data(), stereoCleanR_.data());
             // Dense early-field: predelayed dry-mono → compact Schroeder reverb,
             // summed POST-tank to fill the thin post-onset shelf of the short rooms.
             // Off (gain 0) → skipped entirely → tankOut byte-identical (bit-null).

@@ -32,8 +32,13 @@ public:
     DattorroTank();
 
     void prepare (double sampleRate, int maxBlockSize);
+    // cleanL/cleanR (optional) carry the PRE-diffuser source stereo so the
+    // stereo-input injection derives `side` from true source provenance, not the
+    // input diffuser's decorrelation of a centered source (issue #123). Null (the
+    // default, and DPV's call) → no injection regardless → byte-identical legacy.
     void process (const float* inputL, const float* inputR,
-                  float* outputL, float* outputR, int numSamples);
+                  float* outputL, float* outputR, int numSamples,
+                  const float* cleanL = nullptr, const float* cleanR = nullptr);
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
@@ -111,6 +116,17 @@ public:
     //     toward still (toward the Lex/VVV near-static tail).
     void setDensityDepth (float depth01);
     void setModReduction (float reduction01);
+    // Stereo-input injection (issue #123, stereo-image preservation): the tank
+    // sums L+R to mono, discarding the source-side energy lean the reference
+    // (VVV) preserves. This feeds mono ± amount·side (side = clean pre-diffuser
+    // L−R, supplied by process()'s cleanL/cleanR) into the two cross-coupled
+    // branches. 0 = off/legacy mono sum = byte-identical; centered/mono input →
+    // side 0 → mono±0 == mono → tone unchanged when active.
+    // MEASURED WALL: this cannot reach the +2 dB tail-ILD target on this engine —
+    // the figure-8 cross-coupling homogenises the injected lean to ~0 dB (both
+    // signs). See the full evidence + numbers in setStereoInput()'s definition.
+    // Default 0 / opt-in (env only) pending a working approach.
+    void setStereoInput (float amount);
     // #87 boing fix (short rooms): when true, the 12-AP density cascade loads the
     // MID-PRIME hall-scale density bases (kLeft/RightDensityAPBaseHall, 307-1303
     // smp) instead of the short room bases, adding close-spaced coprime modes that
@@ -599,4 +615,13 @@ private:
     OutputTap customLeftTaps_[kNumOutputTaps] {};
     OutputTap customRightTaps_[kNumOutputTaps] {};
     bool useCustomTaps_ = false;
+
+    // Stereo-input injection state (setStereoInput, issue #123). Declared LAST
+    // so enabling the feature cannot shift the layout or codegen of any
+    // pre-existing member and perturb the disabled-path bit-null (the
+    // -ffast-math append-after-legacy discipline from 00_COMMON /
+    // DenseHallReverb.h). amount 0 → inactive → the process() injection block is
+    // skipped and `input` is never reassigned → byte-identical legacy path.
+    float stereoInputAmount_ = 0.0f;
+    bool  stereoInputActive_ = false;
 };

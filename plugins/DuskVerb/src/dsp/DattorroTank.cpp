@@ -331,10 +331,18 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 // -----------------------------------------------------------------------
 
 void DattorroTank::process (const float* inputL, const float* inputR,
-                            float* outputL, float* outputR, int numSamples)
+                            float* outputL, float* outputR, int numSamples,
+                            const float* cleanL, const float* cleanR)
 {
     if (! prepared_)
         return;
+
+    // Stereo-input injection uses the clean PRE-diffuser source stereo (cleanL/
+    // cleanR) so `side` is real source provenance. If the caller doesn't supply
+    // it (DPV, or any legacy call), fall back to disabling injection — never to
+    // the post-diffuser inputL/inputR, whose L−R is diffuser decorrelation and
+    // would break the centered-input null (issue #123).
+    const bool stereoInject = stereoInputActive_ && cleanL != nullptr && cleanR != nullptr;
 
     // Drive-style saturation: amount=0 → clean (threshold 1.0, no audible
     // effect on quiet tail); amount=1 → threshold 0.4 (aggressive, every loop
@@ -543,7 +551,23 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         float rightCrossFeed = rightTank_.crossFeedState;
         float leftCrossFeed = leftTank_.crossFeedState;
 
+        // Stereo-input injection (setStereoInput, issue #123). Disabled (default
+        // amount 0, or no clean-side supplied) → stereoInject false → stereoInj 0
+        // → the guards below are never taken and `input` is never reassigned, so
+        // the two processTank() calls run unmoved on the untouched legacy mono
+        // value → byte-identical. When active, +side biases the branch whose taps
+        // dominate outL (rightTank_) and −side the other, leaning the wet tail
+        // toward the source side. `side` is the CLEAN pre-diffuser source
+        // difference (raw ±term, no doubled AP cost, and — unlike the
+        // post-diffuser inputL−inputR — exactly 0 for a centered source →
+        // centered-input null holds). Frozen zeroes the input, so the guard also
+        // zeroes side.
+        const float stereoInj = (stereoInject && ! frozen_)
+            ? stereoInputAmount_ * (cleanL[i] - cleanR[i]) * 0.5f : 0.0f;
+        const float stereoMono = input;
+        if (stereoInj != 0.0f) input = stereoMono - stereoInj;   // leftTank_ → far side
         processTank (leftTank_, rightCrossFeed);
+        if (stereoInj != 0.0f) input = stereoMono + stereoInj;   // rightTank_ → source side
         processTank (rightTank_, leftCrossFeed);
 
         // ------------------------------------------------------------------
@@ -1028,6 +1052,34 @@ void DattorroTank::setModReduction (float reduction01)
 {
     // 1.0 = legacy modulation; <1.0 pulls AP1 + delay1/2 modulation toward still.
     modReduction_ = std::clamp (reduction01, 0.0f, 1.0f);
+}
+
+void DattorroTank::setStereoInput (float amount)
+{
+    // Inject mono ± amount·side into the two cross-coupled branches so a hard-
+    // panned source *would* lean the wet tail toward its side. 0 = off/legacy
+    // mono sum (bit-null). DEFAULT 0 — SEE THE MEASURED WALL BELOW.
+    //
+    // MEASURED WALL (issue #123, 2026-07-20, algo 0, hard-pan burst, 100% wet):
+    //   With the CLEAN pre-diffuser source `side` (cleanL−cleanR), the tail ILD
+    //   moves the WRONG way and asymptotes to ~0 for BOTH injection signs:
+    //     baseline +0.62 dB → amt +1 +0.31 → +2 +0.14 → +3 +0.08  (dilutes)
+    //     baseline +0.62 dB → amt −1 +0.30 → −2 +0.13 → −4 +0.05  (dilutes)
+    //   The figure-8 cross-coupling + the decorrelated 7-tap output HOMOGENISE
+    //   injected provenance within the tail (late-window ILD is ~−0.2..+0.1 dB
+    //   regardless of amount/sign): both branches contribute ~equally to both
+    //   output channels, so a branch-input asymmetry produces no tail ILD. The
+    //   natural +0.62 dB early lean is the parallel ER/width path, NOT the tank;
+    //   injection only erodes it. (An earlier +1.6 dB reading was the post-diffuser
+    //   inputL−inputR, i.e. diffuser decorrelation — not source provenance.)
+    //   => injection-side bias cannot reach the +2 dB target on this engine.
+    //   Left default-0 / opt-in (env only) so the plumbing + centered-null-safe
+    //   clean-side path survive for a future approach, without shipping a lever
+    //   that degrades the image. Reaching +2 dB here would require a post-tank
+    //   source-pan-keyed output balance (a cosmetic panner) — deferred to Marc's
+    //   ear-check rather than forced.
+    stereoInputAmount_ = std::clamp (amount, 0.0f, 4.0f);
+    stereoInputActive_ = stereoInputAmount_ > 1.0e-6f;
 }
 
 void DattorroTank::setModeNotch (float hz, float cutDb, float q)

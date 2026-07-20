@@ -225,6 +225,7 @@ public:
     // Plate density rework (algo 0 + algo 1). depth 0 / reduction 1.0 = legacy.
     void setDattorroDensity (float depth01);          // 0 legacy 3 APs -> >0 dense 6 APs
     void setDattorroModReduction (float reduction01); // 1.0 legacy mod -> <1.0 stiller tail
+    void setDattorroStereoInput (float amount);       // #123 source-side tail ILD; 0=off/bit-null. MEASURED WALL: homogenises to ~0 dB, can't reach +2 (see DattorroTank::setStereoInput)
     void setDattorroDensityRoomFill (bool enable);    // #87: hall density bases on room lines (boing fix, algo 0)
     void setDattorroMainLineDetune (float l1, float l2, float r1, float r2); // #87: per-line detune
     void setDattorroInputDiffusion (float scale01);   // input-diffuser coeff scale (1.0=canonical)
@@ -642,6 +643,11 @@ private:
     // 0 → off → bit-identical. Fed from tankIn (post-predelay dry).
     std::vector<float> reflBuf_;
     std::vector<float> reflDryMono_;   // clean pre-diffuser dry mono (the tap's CLEAN feed, snapshot in the pre-delay loop)
+    // #123: clean PRE-diffuser source stereo, snapshot in the pre-delay loop and
+    // passed to dattorro_.process so its stereo-input injection derives `side`
+    // from true source provenance (not the input diffuser's decorrelation of a
+    // centered source, which would break the centered-input null).
+    std::vector<float> stereoCleanL_, stereoCleanR_;
     int   reflMask_ = 0, reflWritePos_ = 0;
     int   reflDelayL_ = 0, reflDelayR_ = 0;   // samples
     float reflGain_ = 0.0f;                    // 0 = off (bit-null)
@@ -850,6 +856,12 @@ private:
 
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
+    // Stereo-image-bias env hook (issue #123). Reads DUSKVERB_STEREOBIAS (a bare
+    // amount, e.g. "1.0") once at prepare() on the MESSAGE thread and forwards it
+    // to dattorro_.setStereoInput() so the offline measurement harness can enable
+    // the source-side lean without preset/param wiring. Unset env → left at the
+    // default 0 → bit-null. Preset enablement is a later ear-check pass.
+    void applyStereoImageBiasOverride();
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
     void applyStereoImageBiasOverride();   // #123 DUSKVERB_STEREOBIAS calibration hook (prepare, message thread)
     void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
