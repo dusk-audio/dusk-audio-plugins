@@ -330,6 +330,8 @@ public:
                                   float atkMs, float relFastMs, float relSlowMs);
     // QuadTank wet-output stereo chorus/ensemble (79VC "phasey" character); depth 0 = bit-null.
     void setQuadStereoMod (float rateHz, float depth);
+    // QuadTank stereo-input injection (issue #123); amount 0 = OFF/default = bit-null.
+    void setQuadStereoInput (float amount);
     // Per-pass HF-sustain compensation shelf (top-octave cliff / "muffle" fix) —
     // Dattorro + DenseHall; 0 dB = bit-null.
     void setTankHFSustain (float db, float cornerHz);
@@ -856,14 +858,15 @@ private:
 
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
-    // Stereo-image-bias env hook (issue #123). Reads DUSKVERB_STEREOBIAS (a bare
-    // amount, e.g. "1.0") once at prepare() on the MESSAGE thread and forwards it
-    // to dattorro_.setStereoInput() so the offline measurement harness can enable
-    // the source-side lean without preset/param wiring. Unset env → left at the
-    // default 0 → bit-null. Preset enablement is a later ear-check pass.
+    // Stereo-image env hook (issue #123). Reads DUSKVERB_STEREOBIAS (a bare
+    // amount, e.g. "1.0") once at end of prepare() on the MESSAGE thread and
+    // forwards it to every engine exposing a lever (denseHall_/pmb_ output-tap
+    // bias 0..1; quad_/dattorro_ tank injection 0..4 — measured walls, env-only)
+    // so the offline measurement harness can enable the source-side lean without
+    // preset/param wiring. Unset env → defaults stay 0 → bit-null. Preset
+    // enablement is a later ear-check pass.
     void applyStereoImageBiasOverride();
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
-    void applyStereoImageBiasOverride();   // #123 DUSKVERB_STEREOBIAS calibration hook (prepare, message thread)
     void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
     void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
 };
