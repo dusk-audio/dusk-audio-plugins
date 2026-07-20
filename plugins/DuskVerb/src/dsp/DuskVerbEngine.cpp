@@ -683,8 +683,10 @@ void DuskVerbEngine::setPostSteer (float amount)
     // Issue #123 (agent 8) — engine-agnostic post-tank source-side ILD steer on the
     // FINAL wet. 0 = off = bit-identical. No preset calls this yet; enablement waits
     // on the ear pass. Precompute psK_ so the hot loop only reads members.
-    psAmount_        = std::clamp (amount, 0.0f, 1.0f);
-    postSteerActive_ = psAmount_ > 1.0e-6f;
+    // amount ∈ [-1,+1]: negative leans AWAY from the source side (de-steers presets whose
+    // engine already over-leans vs the anchor). psK_ tracks the sign.
+    psAmount_        = std::clamp (amount, -1.0f, 1.0f);
+    postSteerActive_ = std::abs (psAmount_) > 1.0e-6f;
     psK_             = kPostSteerKMax * psAmount_;
 }
 
@@ -696,8 +698,8 @@ void DuskVerbEngine::applyPostSteerOverride()
     // setPostSteer is never called ⇒ postSteerActive_ stays false ⇒ bit-identical default.
     if (const char* ov = std::getenv ("DUSKVERB_POSTSTEER"))
     {
-        const float amount = std::clamp (static_cast<float> (std::atof (ov)), 0.0f, 1.0f);
-        if (amount > 0.0f)
+        const float amount = std::clamp (static_cast<float> (std::atof (ov)), -1.0f, 1.0f);
+        if (std::abs (amount) > 0.0f)
             setPostSteer (amount);
     }
 }

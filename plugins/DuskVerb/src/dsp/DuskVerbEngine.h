@@ -873,10 +873,13 @@ private:
     // codegen stays byte-identical (Lessons #2). postSteerActive_ false → the whole
     // per-sample block is skipped → bit-null. Centered input → psEnvL_==psEnvR_ →
     // b==0 exactly → gl==gr==sqrt(1)==1.0f → wet × 1.0f → byte-identical even ON.
-    static constexpr float kPostSteerKMax = 0.34f;  // amount=1 tilt strength: pure-tilt ILD 10log10((1+k)/(1-k))=+3.05dB, lands algo14 L +2.8 / algo0 L +3.7 (both inside the +2.5..+4 target)
-    float psAmount_        = 0.0f;   // 0..1 from setPostSteer(); 0 = off
-    bool  postSteerActive_ = false;  // psAmount_ > 0
-    float psK_             = 0.0f;   // kPostSteerKMax * psAmount_ (precomputed)
+    // raised 2026-07-20 to reach the Cathedral anchor's +11.9 dB lean (k=0.875); at full
+    // k the opposite channel drops ~-10 dB — per-preset amounts are calibrated, presets
+    // never receive raw 1.0 blindly.
+    static constexpr float kPostSteerKMax = 0.9f;
+    float psAmount_        = 0.0f;   // -1..+1 from setPostSteer(); 0 = off (negative = lean away from source side)
+    bool  postSteerActive_ = false;  // |psAmount_| > 0
+    float psK_             = 0.0f;   // kPostSteerKMax * psAmount_ (precomputed; may be negative)
     float psAtkCoeff_      = 0.0f;   // dry-balance follower attack one-pole (tau set in prepare)
     float psRelCoeff_      = 0.0f;   // dry-balance follower release one-pole (tau set in prepare)
     float psGainCoeff_     = 0.0f;   // applied-gain smoother one-pole, anti-zipper (tau set in prepare)
