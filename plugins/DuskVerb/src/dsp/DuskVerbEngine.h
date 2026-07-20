@@ -344,6 +344,7 @@ public:
     void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
                                float atkMs, float relFastMs, float relSlowMs);
     void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
+    void setPmbStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     void setDenseHallStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical

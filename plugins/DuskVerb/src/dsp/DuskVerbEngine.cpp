@@ -650,6 +650,14 @@ void DuskVerbEngine::setPmbBand (int b, float t60s, float level, float direct, f
     pmb_.setBand (b, t60s, level, direct, width);
 }
 
+void DuskVerbEngine::setPmbStereoImageBias (float amount)
+{
+    // Issue #123 — route the ParallelMultiband band taps' side onto the line that
+    // actually carries the input side. 0 = off = bit-identical. No preset calls
+    // this yet; enablement waits on the ear pass.
+    pmb_.setStereoImageBias (amount);
+}
+
 void DuskVerbEngine::setDenseHallOctaveDecayRef (float seconds)
 {
     denseHall_.setOctaveDecayRef (seconds);
@@ -679,7 +687,10 @@ void DuskVerbEngine::applyStereoImageBiasOverride()
     {
         const float amount = std::clamp (static_cast<float> (std::atof (ov)), 0.0f, 1.0f);
         if (amount > 0.0f)
+        {
             denseHall_.setStereoImageBias (amount);
+            pmb_.setStereoImageBias (amount);
+        }
     }
 }
 
