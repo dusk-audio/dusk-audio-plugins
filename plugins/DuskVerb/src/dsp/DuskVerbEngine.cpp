@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -46,7 +47,6 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     diffuseER_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
     pmb_.prepare (sampleRate, maxBlockSize);
-    applyStereoImageBiasOverride();   // issue #123 calibration hook; no-op without the env var
     buildupDiffuser_.prepare (sampleRate, maxBlockSize);
     buildupBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     buildupBufR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -611,6 +611,11 @@ void DuskVerbEngine::setQuadStereoMod (float rateHz, float depth)
     quad_.setStereoMod (rateHz, depth);
 }
 
+void DuskVerbEngine::setQuadStereoInput (float amount)
+{
+    quad_.setStereoInput (amount);
+}
+
 void DuskVerbEngine::setTankHFSustain (float db, float cornerHz)
 {
     // Per-pass HF-sustain compensation (top-octave cliff fix) — Dattorro + DenseHall
@@ -685,11 +690,16 @@ void DuskVerbEngine::applyStereoImageBiasOverride()
     // env ⇒ nothing is called at all ⇒ the engines keep their bit-identical default.
     if (const char* ov = std::getenv ("DUSKVERB_STEREOBIAS"))
     {
-        const float amount = std::clamp (static_cast<float> (std::atof (ov)), 0.0f, 1.0f);
-        if (amount > 0.0f)
+        const float raw = static_cast<float> (std::atof (ov));
+        if (raw > 0.0f)
         {
+            // Tier-2 output-tap levers clamp to 0..1 here; the tank injection
+            // levers (measured walls, env-only, no preset) take the raw value
+            // and clamp to their own 0..4 range internally.
+            const float amount = std::clamp (raw, 0.0f, 1.0f);
             denseHall_.setStereoImageBias (amount);
             pmb_.setStereoImageBias (amount);
+            quad_.setStereoInput (raw);
         }
     }
 }

@@ -62,6 +62,13 @@ public:
     // it, and raw tank modDepth smears T60/ripple instead). depth 0 = bypass/bit-null.
     void setStereoMod (float rateHz, float depth);
 
+    // Stereo-input injection (issue #123). amount 0 = OFF/default = legacy mono sum
+    // (bit-null). Feeds mono + amount*side into two tanks and mono - amount*side into
+    // the other two, so a hard-panned source keeps a tail energy lean toward its side
+    // instead of collapsing to centre. Freeze zeros the side term. See setStereoInput
+    // in the .cpp for the pairing rationale and measured ILD ceiling.
+    void setStereoInput (float amount);
+
 private:
     // StereoMod — verbatim port of ShimmerEngine::StereoMod (see there for design notes).
     struct StereoMod
@@ -380,4 +387,12 @@ public:
 private:
 
     float readOutputTap (const OutputTap& tap) const;
+
+    // --- Stereo-input injection state (issue #123). Declared LAST so the disabled
+    // path compiles to the identical instruction stream for the legacy tankIn
+    // computation (see the -ffast-math bit-null trap in the stereo-image brief).
+    // stereoInputActive_ false (default) => the injection block is skipped and the
+    // side term is a compile-time-visible 0 => byte-identical to legacy.
+    bool  stereoInputActive_ = false;
+    float stereoInjectCoeff_[kNumTanks] = { 0.0f, 0.0f, 0.0f, 0.0f };
 };

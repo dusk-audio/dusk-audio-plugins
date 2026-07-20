@@ -329,6 +329,8 @@ public:
                                   float atkMs, float relFastMs, float relSlowMs);
     // QuadTank wet-output stereo chorus/ensemble (79VC "phasey" character); depth 0 = bit-null.
     void setQuadStereoMod (float rateHz, float depth);
+    // QuadTank stereo-input injection (issue #123); amount 0 = OFF/default = bit-null.
+    void setQuadStereoInput (float amount);
     // Per-pass HF-sustain compensation shelf (top-octave cliff / "muffle" fix) —
     // Dattorro + DenseHall; 0 dB = bit-null.
     void setTankHFSustain (float db, float cornerHz);
@@ -851,7 +853,6 @@ private:
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
-    void applyStereoImageBiasOverride();   // #123 DUSKVERB_STEREOBIAS calibration hook (prepare, message thread)
     void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
     void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
 };
