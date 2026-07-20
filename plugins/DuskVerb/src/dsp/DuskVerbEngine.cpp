@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace
@@ -45,6 +46,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     diffuseER_.prepare (sampleRate, maxBlockSize);
     denseHall_.prepare (sampleRate, maxBlockSize);
     pmb_.prepare (sampleRate, maxBlockSize);
+    applyStereoImageBiasOverride();   // issue #123 calibration hook; no-op without the env var
     buildupDiffuser_.prepare (sampleRate, maxBlockSize);
     buildupBufL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     buildupBufR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -657,6 +659,28 @@ void DuskVerbEngine::setDenseHallTonalCorrection (bool enabled)
 {
     // FORK B — DenseHall Jot output tonal-correction (decouple T60 from level).
     denseHall_.setTonalCorrection (enabled);
+}
+
+void DuskVerbEngine::setDenseHallStereoImageBias (float amount)
+{
+    // Issue #123 — restore the source-side energy lean a hard-panned input loses in
+    // the DenseHall output taps. 0 = off = bit-identical. No preset calls this yet;
+    // enablement waits on the ear pass.
+    denseHall_.setStereoImageBias (amount);
+}
+
+void DuskVerbEngine::applyStereoImageBiasOverride()
+{
+    // Calibration hook (issue #123), same pattern as DUSKVERB_VELVET / DUSKVERB_REVERSE:
+    // lets the render harness measure the ILD table without wiring the feature into
+    // any preset path. Message thread only (prepare), read once per prepare, absent
+    // env ⇒ nothing is called at all ⇒ the engines keep their bit-identical default.
+    if (const char* ov = std::getenv ("DUSKVERB_STEREOBIAS"))
+    {
+        const float amount = std::clamp (static_cast<float> (std::atof (ov)), 0.0f, 1.0f);
+        if (amount > 0.0f)
+            denseHall_.setStereoImageBias (amount);
+    }
 }
 
 void DuskVerbEngine::setReflectionTap (float ms, float gain, float lpFc)

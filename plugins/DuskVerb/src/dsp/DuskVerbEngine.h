@@ -346,6 +346,7 @@ public:
     void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
+    void setDenseHallStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
     void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
     void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at anchor-measured times; count 0 = off/bit-null
@@ -849,6 +850,7 @@ private:
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
+    void applyStereoImageBiasOverride();   // #123 DUSKVERB_STEREOBIAS calibration hook (prepare, message thread)
     void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
     void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
 };
