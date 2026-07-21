@@ -106,8 +106,8 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
 
     // Setup combo boxes
     setupComboBox(tapeMachineSelector, tapeMachineLabel, "MACHINE");
-    tapeMachineSelector.addItem("Swiss 800", 1);
-    tapeMachineSelector.addItem("Classic 102", 2);
+    tapeMachineSelector.addItem("Swiss", 1);
+    tapeMachineSelector.addItem("American", 2);
     tapeMachineAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "tapeMachine", tapeMachineSelector);
 
@@ -293,7 +293,7 @@ void TapeMachineAudioProcessorEditor::setupComboBox(juce::ComboBox& combo, juce:
     addAndMakeVisible(label);
 
     if (text == "MACHINE")
-        combo.setTooltip("Tape Machine Model\nSwiss 800: Clean, precise\nClassic 102: Warm, punchy");
+        combo.setTooltip("Tape Machine Model\nSwiss: Clean, precise\nAmerican: Warm, punchy");
     else if (text == "SPEED")
         combo.setTooltip("Tape Speed\n7.5 IPS: More warmth\n15 IPS: Balanced\n30 IPS: Extended HF");
     else if (text == "TAPE TYPE")

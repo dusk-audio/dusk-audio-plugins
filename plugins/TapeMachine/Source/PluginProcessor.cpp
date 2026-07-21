@@ -133,7 +133,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "tapeMachine", "Tape Machine",
-        juce::StringArray{"Swiss 800", "Classic 102"},
+        juce::StringArray{"Swiss", "American"},
         0));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
@@ -958,23 +958,23 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 // Optimal bias values based on tape type and speed
                 // These values are based on manufacturer recommendations
                 // Higher speed = slightly less bias needed
-                // GP9 tape = higher bias, Type 250 = lower bias
+                // high-output formula tape = higher bias, Vintage = lower bias
                 float optimalBias = 0.5f;  // Default 50%
 
                 // Tape type affects optimal bias
                 switch (emulationType)
                 {
-                    case ImprovedTapeEmulation::Type456:
-                        optimalBias = 0.50f;  // Type 456: standard bias
+                    case ImprovedTapeEmulation::FormulaClassic:
+                        optimalBias = 0.50f;  // Classic: standard bias
                         break;
-                    case ImprovedTapeEmulation::TypeGP9:
-                        optimalBias = 0.55f;  // GP9: slightly higher bias for extended HF
+                    case ImprovedTapeEmulation::FormulaHighOutput:
+                        optimalBias = 0.55f;  // high-output formula: slightly higher bias for extended HF
                         break;
-                    case ImprovedTapeEmulation::Type911:
-                        optimalBias = 0.52f;  // BASF 911: balanced
+                    case ImprovedTapeEmulation::FormulaBalanced:
+                        optimalBias = 0.52f;  // balanced formula: balanced
                         break;
-                    case ImprovedTapeEmulation::Type250:
-                        optimalBias = 0.45f;  // Type 250: lower bias for vintage character
+                    case ImprovedTapeEmulation::FormulaVintage:
+                        optimalBias = 0.45f;  // Vintage: lower bias for vintage character
                         break;
                 }
 
@@ -1042,10 +1042,10 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         float crosstalkAmount = 0.01f;  // Default -40dB
         switch (machine)
         {
-            case Swiss800:
+            case Swiss:
                 crosstalkAmount = 0.005f;  // -46dB (excellent separation)
                 break;
-            case Classic102:
+            case American:
                 crosstalkAmount = 0.015f;  // -36dB (vintage character)
                 break;
         }

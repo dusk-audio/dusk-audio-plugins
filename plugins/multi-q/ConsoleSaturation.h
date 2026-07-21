@@ -136,7 +136,7 @@ public:
         float b, c, d, e;
         if (consoleType == ConsoleType::ESeries)
         {
-            // E-Series (models SSL 4000E): asymmetric JFET input + Jensen transformer
+            // E-Series (models British E-series): asymmetric JFET input + Jensen transformer
             // → even-order (H2) dominant, warm/gritty character.
             // Distortion limited to H2 and H3 with negligible higher harmonics.
             b = 0.012f;    // H2 even — dominant (JFET square-law + transformer asymmetry)
@@ -146,7 +146,7 @@ public:
         }
         else
         {
-            // G-Series (models SSL 4000G): refined dbx 2150 VCA, more symmetric clipping
+            // G-Series (models British G-series): refined dbx 2150 VCA, more symmetric clipping
             // → odd-order (H3) dominant, smoother/polished character.
             // Cleaner overall with ~60% of E-Series THD.
             b = 0.003f;    // H2 even — present but secondary

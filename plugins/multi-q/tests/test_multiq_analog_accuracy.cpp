@@ -240,11 +240,11 @@ static void testDigitalFrequencyResponse()
 }
 
 // ==============================================================================
-// TEST 2: British Mode Harmonic Character (models SSL 4000 E/G)
+// TEST 2: British Mode Harmonic Character (models E/British G-series)
 // ==============================================================================
 static void testBritishHarmonics()
 {
-    std::cout << "\n=== British Mode Harmonic Character (SSL 4000 E/G model) ===\n";
+    std::cout << "\n=== British Mode Harmonic Character (E/British G-series model) ===\n";
 
     const double sampleRate = 44100.0;
     const int blockSize = 512;
@@ -253,7 +253,7 @@ static void testBritishHarmonics()
     const int measureLength = blockSize * 10;
     const float testFreq = 1000.0f;
 
-    // Test E-Series (Brown, models SSL 4000E) — even-harmonic dominant (H2 > H3)
+    // Test E-Series (Brown, models British E-series) — even-harmonic dominant (H2 > H3)
     {
         auto proc = std::make_unique<MultiQ>();
         proc->setRateAndBufferSizeDetails(sampleRate, blockSize);
@@ -285,7 +285,7 @@ static void testBritishHarmonics()
         }
     }
 
-    // Test G-Series (Black, models SSL 4000G) — odd-harmonic dominant (H3 > H2), cleaner overall
+    // Test G-Series (Black, models British G-series) — odd-harmonic dominant (H3 > H2), cleaner overall
     {
         auto proc = std::make_unique<MultiQ>();
         proc->setRateAndBufferSizeDetails(sampleRate, blockSize);

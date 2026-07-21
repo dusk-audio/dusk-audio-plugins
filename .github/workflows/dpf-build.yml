@@ -1,0 +1,767 @@
+name: DPF Plugins (build + release)
+
+# One reusable pipeline for ALL DPF (DISTRHO Plugin Framework) plugins. Replaces
+# the per-plugin ad-hoc DPF workflows (tapemachine2-release.yml, dpf-au-test.yml).
+#
+# DPF plugins are NOT JUCE — each is built by its own standalone CMake under
+# plugins/<name>/dpf-plugin, with DPF + DPF-Widgets checked out next to the repo.
+# They do not go through the JUCE pipeline in build.yml.
+#
+# A single registry (see the "plan" step) drives a dynamic matrix:
+#   - PR touching any dpf-plugin OR shared-dpf   -> build ALL DPF plugins (smoke).
+#     This is the shared-code safety net: shared-dpf/ is compiled into every DPF
+#     plugin, so a change there is verified against all of them.
+#   - workflow_dispatch                          -> build one (input) or all.
+#   - push tag '<plugin>-v*'                      -> build + release THAT plugin.
+#
+# This is the SINGLE pipeline for all DPF plugins. It supersedes the old
+# per-plugin DPF workflows (tapemachine2-release.yml, dpf-au-test.yml) — both
+# deleted. TapeMachine 2 (DPF) is the main plugin going forward; the original
+# JUCE TapeMachine stays on build.yml for maintenance releases only ('tapemachine-v*').
+# Tip: before tagging a release, run this via workflow_dispatch (build-only, no
+# release) once to smoke the pipeline for that plugin.
+on:
+  push:
+    tags:
+      - 'tapemachine-2-v*'
+      - '4k-eq-2-v*'
+      - 'tape-echo-2-v*'
+      - 'multi-q-2-v*'
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: 'Plugin to build (all = every DPF plugin)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'tapemachine-2'
+          - '4k-eq-2'
+          - 'tape-echo-2'
+          - 'multi-q-2'
+  pull_request:
+    paths:
+      - 'plugins/*/dpf-plugin/**'
+      - 'plugins/*/core/**'
+      - 'plugins/shared-dpf/**'
+      - '.github/workflows/dpf-build.yml'
+
+# Pinned DPF revisions — identical to tapemachine2-release.yml. Bump deliberately.
+env:
+  DPF_REF: 4238e1c7f0351bbe488d79f0899c540543ac7583
+  DPFWIDGETS_REF: 730da6397904da66d99667c1cb30fc77fc3d794a
+  AU_TYPE: aufx
+  AU_MANUFACTURER: Dusk
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Resolve which plugins to build + release info, from the plugin registry.
+  # Emits a JSON array consumed as the build matrix (fromJSON).
+  # -------------------------------------------------------------------------
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      plugins: ${{ steps.plan.outputs.plugins }}
+      is_release: ${{ steps.plan.outputs.is_release }}
+      version: ${{ steps.plan.outputs.version }}
+      rel_asset: ${{ steps.plan.outputs.rel_asset }}
+      rel_display: ${{ steps.plan.outputs.rel_display }}
+      rel_base: ${{ steps.plan.outputs.rel_base }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve build set + release info
+        id: plan
+        shell: bash
+        run: |
+          # ---- Plugin registry (single source of truth) -------------------
+          # key   : workflow_dispatch value + artifact base
+          # dir   : standalone CMake dir
+          # base  : dpf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
+          # project: project(<name> ...) token, for the tag<->CMake version guard
+          # au    : DISTRHO_PLUGIN_UNIQUE_ID (AU subtype code)
+          # name  : human display name
+          # tag   : release tag PREFIX (version is the suffix)
+          # asset : release/website asset base (asset zip = <asset>-<os>.zip)
+          cat > registry.json <<'JSON'
+          [
+            {"key":"tapemachine-2","dir":"plugins/TapeMachine/dpf-plugin","base":"tape_machine_2","project":"TapeMachine2DPF","au":"DsTM","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
+            {"key":"4k-eq-2","dir":"plugins/4k-eq/dpf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
+            {"key":"tape-echo-2","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
+            {"key":"multi-q-2","dir":"plugins/multi-q/dpf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
+          ]
+          JSON
+
+          IS_RELEASE=false
+          VERSION=""
+          REL_ASSET=""; REL_DISPLAY=""; REL_BASE=""
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # --- Release tag: build + release exactly the matching plugin ---
+            TAG="${GITHUB_REF#refs/tags/}"
+            ENTRY=$(jq -c --arg t "$TAG" 'map(select(.tag as $pfx | $t | startswith($pfx))) | .[0] // empty' registry.json)
+            if [ -z "$ENTRY" ]; then
+              echo "::error::Tag '$TAG' matches no DPF plugin in the registry"; exit 1
+            fi
+            IS_RELEASE=true
+            TAGPFX=$(jq -r '.tag'     <<<"$ENTRY")
+            PROJECT=$(jq -r '.project' <<<"$ENTRY")
+            PDIR=$(jq -r '.dir'       <<<"$ENTRY")
+            VERSION="${TAG#$TAGPFX}"
+            # Guard: tag version must equal the CMake project() version (ignoring a
+            # -beta/-rc suffix), else the release ships binaries whose embedded
+            # version disagrees with the tag.
+            CMAKE_VERSION=$(grep -m1 "project($PROJECT" "$PDIR/CMakeLists.txt" \
+              | sed -E 's/.*VERSION[[:space:]]+([0-9.]+).*/\1/')
+            TAG_BASE="${VERSION%%-*}"
+            if [ -z "$CMAKE_VERSION" ] || [ "$TAG_BASE" != "$CMAKE_VERSION" ]; then
+              echo "::error::Tag version '$VERSION' (base '$TAG_BASE') != CMake $PROJECT version '${CMAKE_VERSION:-<not found>}' in $PDIR/CMakeLists.txt"; exit 1
+            fi
+            MATRIX=$(jq -c -n --argjson e "$ENTRY" '[$e]')
+            REL_ASSET=$(jq -r '.asset'  <<<"$ENTRY")
+            REL_DISPLAY=$(jq -r '.name' <<<"$ENTRY")
+            REL_BASE=$(jq -r '.base'    <<<"$ENTRY")
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.plugin }}" != "all" ]; then
+            # --- Dispatch, single plugin ---
+            MATRIX=$(jq -c --arg k "${{ github.event.inputs.plugin }}" 'map(select(.key==$k))' registry.json)
+            if [ "$MATRIX" = "[]" ]; then echo "::error::unknown plugin '${{ github.event.inputs.plugin }}'"; exit 1; fi
+          else
+            # --- PR / dispatch-all: build every DPF plugin ---
+            MATRIX=$(jq -c '.' registry.json)
+          fi
+
+          {
+            echo "plugins=$MATRIX"
+            echo "is_release=$IS_RELEASE"
+            echo "version=$VERSION"
+            echo "rel_asset=$REL_ASSET"
+            echo "rel_display=$REL_DISPLAY"
+            echo "rel_base=$REL_BASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "=== plan ==="; echo "release=$IS_RELEASE version=$VERSION"; echo "$MATRIX" | jq .
+
+  # -------------------------------------------------------------------------
+  # Linux: VST3 + CLAP + LV2 (AU is macOS-only).
+  # -------------------------------------------------------------------------
+  build-linux:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    env:
+      PLUGIN_DIR: ${{ matrix.plugin.dir }}
+      PLUGIN_BASE: ${{ matrix.plugin.base }}
+      ASSET: ${{ matrix.plugin.asset }}
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_REF }}
+          path: DPF
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_REF }}
+          path: DPF-Widgets
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # DPF's OpenGL (DGL) UI resolves these via pkg-config in Makefile.base.mk:
+          # gl (mesa), x11, dbus-1 (optional file browser).
+          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
+          # runners, aborting apt with exit 100. Retry the whole update+install a few times.
+          install_deps() {
+            sudo apt-get update -o Acquire::Retries=3 && \
+            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              build-essential pkg-config ninja-build \
+              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+          }
+          for i in 1 2 3 4 5; do
+            install_deps && break
+            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
+            sleep 15
+          done
+          # Final check: fail loudly if deps still missing after all retries.
+          dpkg -s libgl1-mesa-dev >/dev/null 2>&1 || { echo "::error::apt deps unavailable after retries"; exit 1; }
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --config Release -j"$(nproc)" \
+            --target "${PLUGIN_BASE}-vst3" "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          # Asset names match the website layout links: <asset>-<os>.zip
+          STAGE="${ASSET}-linux"
+          mkdir -p "${STAGE}/VST3" "${STAGE}/CLAP" "${STAGE}/LV2"
+          cp -r "build/bin/${PLUGIN_BASE}.vst3" "${STAGE}/VST3/"
+          cp    "build/bin/${PLUGIN_BASE}.clap" "${STAGE}/CLAP/"
+          cp -r "build/bin/${PLUGIN_BASE}.lv2"  "${STAGE}/LV2/"
+          cp ../../../LICENSE "${STAGE}/LICENSE"
+          cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          echo "=== staged ==="; find "${STAGE}" -maxdepth 2
+          zip -r "${STAGE}.zip" "${STAGE}"
+          tar -czf "${STAGE}.tar.gz" "${STAGE}"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux
+          path: |
+            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux.zip
+            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # Linux ARM64: VST3 + CLAP + LV2 (identical to build-linux on an arm runner).
+  # -------------------------------------------------------------------------
+  build-linux-arm64:
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    env:
+      PLUGIN_DIR: ${{ matrix.plugin.dir }}
+      PLUGIN_BASE: ${{ matrix.plugin.base }}
+      ASSET: ${{ matrix.plugin.asset }}
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_REF }}
+          path: DPF
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_REF }}
+          path: DPF-Widgets
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
+          # runners, aborting apt with exit 100. Retry the whole update+install a few times.
+          install_deps() {
+            sudo apt-get update -o Acquire::Retries=3 && \
+            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              build-essential pkg-config ninja-build \
+              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+          }
+          for i in 1 2 3 4 5; do
+            install_deps && break
+            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
+            sleep 15
+          done
+          # Final check: fail loudly if deps still missing after all retries.
+          dpkg -s libgl1-mesa-dev >/dev/null 2>&1 || { echo "::error::apt deps unavailable after retries"; exit 1; }
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --config Release -j"$(nproc)" \
+            --target "${PLUGIN_BASE}-vst3" "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          STAGE="${ASSET}-linux-arm64"
+          mkdir -p "${STAGE}/VST3" "${STAGE}/CLAP" "${STAGE}/LV2"
+          cp -r "build/bin/${PLUGIN_BASE}.vst3" "${STAGE}/VST3/"
+          cp    "build/bin/${PLUGIN_BASE}.clap" "${STAGE}/CLAP/"
+          cp -r "build/bin/${PLUGIN_BASE}.lv2"  "${STAGE}/LV2/"
+          cp ../../../LICENSE "${STAGE}/LICENSE"
+          cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          echo "=== staged ==="; find "${STAGE}" -maxdepth 2
+          zip -r "${STAGE}.zip" "${STAGE}"
+          tar -czf "${STAGE}.tar.gz" "${STAGE}"
+
+      - name: Upload Linux ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-linux-arm64
+          path: |
+            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.zip
+            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # macOS: AU + VST3 + CLAP + LV2, with `auval` as a hard gate on the AU.
+  # -------------------------------------------------------------------------
+  build-macos:
+    needs: plan
+    runs-on: macos-14  # ARM64 (M1)
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    env:
+      PLUGIN_DIR: ${{ matrix.plugin.dir }}
+      PLUGIN_BASE: ${{ matrix.plugin.base }}
+      ASSET: ${{ matrix.plugin.asset }}
+      AU_SUBTYPE: ${{ matrix.plugin.au }}
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_REF }}
+          path: DPF
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_REF }}
+          path: DPF-Widgets
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
+
+      - name: Build (AU + VST3 + CLAP + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake --build build --config Release -j"$(sysctl -n hw.ncpu)" \
+            --target "${PLUGIN_BASE}-au" "${PLUGIN_BASE}-vst3" \
+                     "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
+
+      - name: Locate AU component
+        id: findau
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          COMP=$(find build/bin -name '*.component' -type d | head -1)
+          if [ -z "$COMP" ]; then
+            echo "::error::No .component was built"; find build -maxdepth 3 -type d; exit 1
+          fi
+          echo "component=${COMP}" >> "$GITHUB_OUTPUT"
+          echo "Found AU: ${COMP}"
+          plutil -p "${COMP}/Contents/Info.plist" || cat "${COMP}/Contents/Info.plist"
+
+      - name: Verify universal binaries and deployment target
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          binaries=(
+            "build/bin/${PLUGIN_BASE}.component/Contents/MacOS/${PLUGIN_BASE}"
+            "build/bin/${PLUGIN_BASE}.vst3/Contents/MacOS/${PLUGIN_BASE}"
+            "build/bin/${PLUGIN_BASE}.clap/Contents/MacOS/${PLUGIN_BASE}"
+            "build/bin/${PLUGIN_BASE}.lv2/${PLUGIN_BASE}.dylib"
+          )
+          for binary in "${binaries[@]}"; do
+            test -f "$binary"
+            archs=$(lipo -archs "$binary")
+            echo "$binary: $archs"
+            grep -qw arm64 <<<"$archs"
+            grep -qw x86_64 <<<"$archs"
+            vtool -show-build "$binary" | grep -q "minos 10.15"
+          done
+
+      # Signing + notarization are OPTIONAL, matching build.yml (the JUCE pipeline):
+      # they run only when MACOS_SIGNING_ENABLED=true and the Apple secrets are set.
+      # Unset (the current repo default) => the release still ships, UNSIGNED, exactly
+      # like the JUCE plugins. To sign later, set the var + secrets; no workflow change.
+      - name: Warn if releasing unsigned
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED != 'true' }}
+        run: echo "::warning::MACOS_SIGNING_ENABLED is not set — shipping an UNSIGNED macOS build (Gatekeeper will warn users on first launch)."
+
+      - name: Import code-signing certificate
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$MACOS_CERTIFICATE"; test -n "$MACOS_CERTIFICATE_PWD"; test -n "$KEYCHAIN_PASSWORD"
+          KEYCHAIN_PATH="$RUNNER_TEMP/dpf-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/dpf-certificate.p12"
+          security import "$RUNNER_TEMP/dpf-certificate.p12" -P "$MACOS_CERTIFICATE_PWD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm "$RUNNER_TEMP/dpf-certificate.p12"
+
+      - name: Sign macOS plugin bundles
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
+        working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          test -n "$MACOS_SIGNING_IDENTITY"
+          for plugin in \
+            "build/bin/${PLUGIN_BASE}.component" \
+            "build/bin/${PLUGIN_BASE}.vst3" \
+            "build/bin/${PLUGIN_BASE}.clap" \
+            "build/bin/${PLUGIN_BASE}.lv2"; do
+            codesign --force --deep --sign "$MACOS_SIGNING_IDENTITY" \
+              --options runtime --timestamp "$plugin"
+            codesign --verify --deep --strict --verbose=2 "$plugin"
+          done
+
+      - name: Notarize macOS release bundles
+        if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
+        working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          test -n "$APPLE_ID"; test -n "$APPLE_APP_PASSWORD"; test -n "$APPLE_TEAM_ID"
+          rm -rf notarize-staging && mkdir notarize-staging
+          cp -R "build/bin/${PLUGIN_BASE}.component" notarize-staging/
+          cp -R "build/bin/${PLUGIN_BASE}.vst3"      notarize-staging/
+          cp -R "build/bin/${PLUGIN_BASE}.clap"      notarize-staging/
+          cp -R "build/bin/${PLUGIN_BASE}.lv2"       notarize-staging/
+          ditto -c -k --keepParent notarize-staging notarize.zip
+          xcrun notarytool submit notarize.zip \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "build/bin/${PLUGIN_BASE}.component"
+          xcrun stapler staple "build/bin/${PLUGIN_BASE}.vst3"
+          xcrun stapler staple "build/bin/${PLUGIN_BASE}.clap"
+
+      # Validate the finalized bundle: on a release this is the signed + stapled
+      # AU we actually ship; on PR/dispatch it is the unsigned build. Reinstall
+      # from build/bin (signed/stapled in place above) so auval gates the shipped
+      # artifact, not a stale pre-signing copy.
+      - name: Install component for auval
+        working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          COMPONENT: ${{ steps.findau.outputs.component }}
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$COMPONENT")"
+          cp -R "$COMPONENT" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+
+      - name: Validate with auval (gate)
+        run: |
+          echo "--- registered components matching this plugin ---"
+          auval -a | grep -i -E "dusk|${AU_SUBTYPE}" || echo "(not listed yet; validating by code)"
+          echo "--- auval -v ${AU_TYPE} ${AU_SUBTYPE} ${AU_MANUFACTURER} ---"
+          auval -v "${AU_TYPE}" "${AU_SUBTYPE}" "${AU_MANUFACTURER}"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          STAGE="${ASSET}-macos"
+          mkdir -p "${STAGE}/AU" "${STAGE}/VST3" "${STAGE}/CLAP" "${STAGE}/LV2"
+          cp -r "build/bin/${PLUGIN_BASE}.component" "${STAGE}/AU/"
+          cp -r "build/bin/${PLUGIN_BASE}.vst3"      "${STAGE}/VST3/"
+          cp -r "build/bin/${PLUGIN_BASE}.clap"      "${STAGE}/CLAP/"
+          cp -r "build/bin/${PLUGIN_BASE}.lv2"       "${STAGE}/LV2/"
+          cp ../../../LICENSE "${STAGE}/LICENSE"
+          cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          echo "=== staged ==="; find "${STAGE}" -maxdepth 2 -type d
+          # ditto preserves macOS bundle metadata better than zip
+          ditto -c -k --keepParent "${STAGE}" "${STAGE}.zip"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-macos
+          path: ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-macos.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # Windows: VST3 + CLAP. AU is macOS-only; LV2 on DPF+Windows is disabled.
+  #
+  # Uses the Visual Studio generator (-G "Visual Studio 17 2022" -A x64), which is
+  # exactly how DPF's OWN CI builds Windows (DPF/.github/workflows/cmake.yml). The
+  # earlier Ninja + cl approach (mirrored from the JUCE job) does NOT set up DGL's
+  # OpenGL / glext include environment, so NanoVG fails with undeclared GLchar /
+  # PFNGL* — a generator problem, not an SDK problem. The VS generator resolves it.
+  # -------------------------------------------------------------------------
+  build-windows:
+    needs: plan
+    runs-on: windows-2022
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    env:
+      PLUGIN_DIR: ${{ matrix.plugin.dir }}
+      PLUGIN_BASE: ${{ matrix.plugin.base }}
+      ASSET: ${{ matrix.plugin.asset }}
+    steps:
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_REF }}
+          path: DPF
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_REF }}
+          path: DPF-Widgets
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Patch DPF sources for MSVC / Windows
+        shell: pwsh
+        run: |
+          # (1) Stub only NanoVG. Our UI is ImGui (DPF-Widgets), which never uses NanoVG, but
+          # DPF compiles NanoVG.cpp into the dgl-opengl STATIC lib where it FAILS on the Windows
+          # runner (nanovg_gl.h needs modern-GL/glext symbols like glVertexAttribPointer /
+          # GL_ARRAY_BUFFER that the SDK's legacy <GL/gl.h> lacks). Nothing references NanoVG, so
+          # an empty TU compiles and is never linked. Do NOT stub WebViewWin32.cpp: it compiles
+          # fine (only a harmless C4005 warning) and DGL's pugl.cpp references its
+          # webview_choc_* symbols unconditionally, so an empty stub breaks the link (LNK2019).
+          '// intentionally empty on Windows CI: unused by ImGui plugins (see workflow note)' `
+            | Set-Content "$env:GITHUB_WORKSPACE/DPF/dgl/src/NanoVG.cpp"
+          # (2) DPF-Widgets' DearImGui.cpp (the ImGui backend we DO compile) uses the GCC/Clang
+          # "Elvis operator" (a ?: b), which MSVC rejects (C2059). Rewrite the two occurrences
+          # as standard ternaries. getWidth()/getHeight() are side-effect-free getters.
+          $f = "$env:GITHUB_WORKSPACE/DPF-Widgets/opengl/DearImGui.cpp"
+          (Get-Content -Raw $f) `
+            -replace 'self->getWidth\(\) \?: 640 \* scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor' `
+            -replace 'self->getHeight\(\) \?: 480 \* scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor' `
+            | Set-Content -NoNewline $f
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DDUSK_DPF_INSTALL_LOCAL=OFF `
+            -DDPF_PATH="$env:GITHUB_WORKSPACE/DPF" `
+            -DDPFWIDGETS_PATH="$env:GITHUB_WORKSPACE/DPF-Widgets"
+
+      - name: Build (VST3 + CLAP)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS `
+            --target "$env:PLUGIN_BASE-vst3" "$env:PLUGIN_BASE-clap"
+
+      - name: Package
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: pwsh
+        run: |
+          $stage = "$env:ASSET-windows"
+          New-Item -ItemType Directory -Force -Path "$stage/VST3","$stage/CLAP" | Out-Null
+          # The VS generator is multi-config, so artifacts may land under build/bin
+          # or build/bin/Release. Locate them rather than assuming the path.
+          $vst3 = Get-ChildItem -Path build -Recurse -Directory -Filter "$env:PLUGIN_BASE.vst3" | Select-Object -First 1
+          $clap = Get-ChildItem -Path build -Recurse -File      -Filter "$env:PLUGIN_BASE.clap" | Select-Object -First 1
+          if (-not $vst3) { throw "VST3 bundle $env:PLUGIN_BASE.vst3 not found under build/" }
+          if (-not $clap) { throw "CLAP $env:PLUGIN_BASE.clap not found under build/" }
+          Copy-Item -Recurse $vst3.FullName "$stage/VST3/"
+          Copy-Item $clap.FullName "$stage/CLAP/"
+          Copy-Item "../../../LICENSE" "$stage/LICENSE"
+          Copy-Item "../../shared-dpf/THIRD_PARTY_LICENSES.md" "$stage/THIRD_PARTY_LICENSES.md"
+          Get-ChildItem -Recurse "$stage" | Select-Object FullName
+          Compress-Archive -Path "$stage" -DestinationPath "$stage.zip" -Force
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plugin.asset }}-windows
+          path: ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-windows.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # Release: only on a '<plugin>-v*' tag (single plugin in the matrix).
+  # -------------------------------------------------------------------------
+  release:
+    needs: [plan, build-linux, build-linux-arm64, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: needs.plan.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      DISPLAY: ${{ needs.plan.outputs.rel_display }}
+      ASSET: ${{ needs.plan.outputs.rel_asset }}
+      BASE: ${{ needs.plan.outputs.rel_base }}
+      SIGNED: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
+    steps:
+      - name: Checkout repository (for tag message)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Assemble release notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Changelog from the annotated tag message (skip first line = title).
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
+          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
+          {
+            echo "## ${DISPLAY} v${VERSION}"
+            echo ""
+            if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
+            echo "### Installation"
+            echo ""
+            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2)."
+            echo ""
+            echo "**Linux (x86_64 and arm64):**"
+            echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/.vst3/\`"
+            echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/.clap/\`"
+            echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/.lv2/\`"
+            echo ""
+            echo "**macOS (universal arm64/x86_64):**"
+            echo "- AU: copy \`AU/${BASE}.component\` to \`~/Library/Audio/Plug-Ins/Components/\`"
+            echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/Library/Audio/Plug-Ins/VST3/\`"
+            echo "- CLAP: copy \`CLAP/${BASE}.clap\` to \`~/Library/Audio/Plug-Ins/CLAP/\`"
+            echo "- LV2: copy \`LV2/${BASE}.lv2\` to \`~/Library/Audio/Plug-Ins/LV2/\`"
+            echo ""
+            echo "**Windows (x86_64):**"
+            echo "- VST3: copy \`VST3\\${BASE}.vst3\` to \`%COMMONPROGRAMFILES%\\VST3\\\`"
+            echo "- CLAP: copy \`CLAP\\${BASE}.clap\` to \`%COMMONPROGRAMFILES%\\CLAP\\\`"
+            echo ""
+            if [ "$SIGNED" = "true" ]; then
+              echo "> macOS AU, VST3, and CLAP bundles are Developer ID signed and Apple-notarized. The LV2 bundle is Developer ID signed."
+            else
+              echo "> macOS bundles are **not** code-signed. On first launch macOS Gatekeeper will warn; either right-click the plugin and choose **Open**, or clear the quarantine flag: \`xattr -dr com.apple.quarantine <bundle>\`."
+            fi
+          } > release_body.md
+          echo "=== collected artifacts ==="
+          find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \)
+          # Hash by published asset basename (Publish Release uploads dist/**/*.zip
+          # flattened to basenames), not by the dist/<artifact-dir>/… path, so
+          # SHA256SUMS entries match the actual release asset filenames. Basenames
+          # are unique: a release tag builds a single plugin.
+          : > dist/SHA256SUMS
+          find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 \
+            | sort -z | while IFS= read -r -d '' f; do
+                ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
+              done >> dist/SHA256SUMS
+
+      - name: Fetch user manual PDF
+        run: |
+          # Bundle the per-plugin User Manual PDF into the release, matching the JUCE
+          # plugins on build.yml. Sourced from the dusk-audio.github.io repo's main branch;
+          # /release-plugin regenerates it on every tag so it tracks the released version.
+          # A missing PDF is non-fatal so a brand-new plugin without a published manual yet
+          # does not block the release.
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
+          if curl -fL --silent --show-error "$manual_url" -o "dist/${ASSET}-manual.pdf"; then
+            echo "bundled ${ASSET}-manual.pdf into the release"
+          else
+            rm -f "dist/${ASSET}-manual.pdf"
+            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
+          fi
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
+        with:
+          files: |
+            dist/**/*.zip
+            dist/**/*.tar.gz
+            dist/*-manual.pdf
+            dist/SHA256SUMS
+          generate_release_notes: true
+          body_path: release_body.md
+          draft: false
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
