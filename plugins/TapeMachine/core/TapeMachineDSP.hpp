@@ -2146,8 +2146,12 @@ private:
     DuskSVF hpL, hpR, lpL, lpR;
 
     // --- smoothers ---
-    SmoothedValue inGain;                   // base-rate ramp (shared by L/R)
-    SmoothedValue outGain;                  // OS-rate ramp (shared by L/R)
+    // inGain/outGain hold dB, not linear gain (dbToGain applied per ramp sample): with
+    // the gain link on, dB-domain one-poles cancel exactly so in*out tracks the Output
+    // trim through a transition. Linear-domain smoothing of g and 1/g bulged the product
+    // by up to ~+13 dB on a large preset-switch gain step (pop over 0 dBFS).
+    SmoothedValue inGain;                   // base-rate ramp, dB (shared by L/R)
+    SmoothedValue outGain;                  // OS-rate ramp, dB (shared by L/R)
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;
 
     bool bypassLowpass = true;

@@ -144,13 +144,14 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     smFlutter.prepare (baseSampleRate, kParamTau);
     smNoise.prepare   (baseSampleRate, kParamTau);
 
-    // Initial (snap) values matching PluginProcessor::prepareToPlay.
+    // Initial (snap) values matching PluginProcessor::prepareToPlay. inGain/outGain
+    // hold dB (converted per sample in processBlock — see the smoothing note there).
     const float inGainDb = pInputGainDb.load (std::memory_order_relaxed);
-    inGain.snap  (dbToGain (inGainDb));
+    inGain.snap  (inGainDb);
     {
         outGain.snap (pAutoComp.load (std::memory_order_relaxed)
-                          ? dbToGain (-inGainDb + pOutputGainDb.load (std::memory_order_relaxed))  // gain link = inverse + Output trim
-                          : dbToGain (pOutputGainDb.load (std::memory_order_relaxed)));
+                          ? -inGainDb + pOutputGainDb.load (std::memory_order_relaxed)  // gain link = inverse + Output trim
+                          : pOutputGainDb.load (std::memory_order_relaxed));
     }
     const float initSat = std::clamp (((inGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
     smSat.snap     (initSat);
@@ -434,9 +435,8 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     const bool transformerOn = pTransformer.load (std::memory_order_relaxed);
 
     const float inputGainDb = pInputGainDb.load (std::memory_order_relaxed);
-    const float targetInputGain = dbToGain (inputGainDb);
 
-    float targetOutputGain;
+    float targetOutputGainDb;
     if (pAutoComp.load (std::memory_order_relaxed))
     {
         // Gain link ("LINK"): output = -input + Output-knob trim. The inverse of the
@@ -446,15 +446,24 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         // makeup trim on top of the inverse (default 0 -> pure inverse -> byte-identical
         // unity). Factory presets use it to carry the reference preset's own non-unity output
         // level (a post-tape LINEAR gain: shifts loudness but not THD/FR/aliasing).
-        targetOutputGain = dbToGain (-inputGainDb + pOutputGainDb.load (std::memory_order_relaxed));
+        targetOutputGainDb = -inputGainDb + pOutputGainDb.load (std::memory_order_relaxed);
     }
     else
     {
-        targetOutputGain = dbToGain (pOutputGainDb.load (std::memory_order_relaxed));
+        targetOutputGainDb = pOutputGainDb.load (std::memory_order_relaxed);
     }
 
-    inGain.setTarget (targetInputGain);
-    outGain.setTarget (targetOutputGain);
+    // inGain/outGain smooth in the dB DOMAIN (dbToGain applied per sample in the ramp
+    // loops below), NOT linear gain. With the gain link engaged the two one-poles share
+    // the same tau, so their dB trajectories cancel term-for-term and the in*out product
+    // tracks the Output trim exactly through the whole transition. Linear-domain smoothing
+    // of g and 1/g does NOT cancel: the product bulges to 1 + (r-1)^2/(4r) mid-ramp
+    // (r = gain-change ratio) — a 23.8 dB preset-switch input step transiently boosted
+    // the OUTPUT by ~+13 dB (audible pop over 0 dBFS on every large preset change).
+    // Static renders are bit-identical: after snap/convergence the smoother repeats the
+    // same dB value and dbToGain of it reproduces the identical linear gain per sample.
+    inGain.setTarget (inputGainDb);
+    outGain.setTarget (targetOutputGainDb);
 
     const float saturationAmount = std::clamp (((inputGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
     smSat.setTarget     (saturationAmount);
@@ -750,7 +759,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     const int osN = nSamples * factor;
 
     for (int n = 0; n < nSamples; ++n)
-        inGainArr[static_cast<size_t> (n)] = inGain.next();
+        inGainArr[static_cast<size_t> (n)] = dbToGain (inGain.next());   // dB-domain ramp (see smoothing note above)
 
     for (int i = 0; i < osN; ++i)
     {
@@ -770,7 +779,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         wowFlutArr[si]   = combined * 0.01f;
         noiseArr[si]     = nv * 100.0f;
         sharedModArr[si] = sm;
-        outGainArr[si]   = outGain.next();
+        outGainArr[si]   = dbToGain (outGain.next());   // dB-domain ramp (see smoothing note above)
     }
 
     // --- per-channel oversampled processing ----------------------------------
