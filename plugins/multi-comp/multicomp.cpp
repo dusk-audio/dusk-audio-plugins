@@ -5186,7 +5186,8 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Allocate interpolated sidechain for max 4x oversampling
     interpolatedSidechain.setSize(numChannels, safeBlockSize * 4);
     // Float staging for the double-precision processBlock overload
-    doubleConvBuffer.setSize(numChannels, safeBlockSize);
+    const int doubleConvChannels = juce::jmax(numChannels, getTotalNumInputChannels());
+    doubleConvBuffer.setSize(doubleConvChannels, safeBlockSize);
 
     // Phase-coherent dry/wet mixer (compensates FIR anti-aliasing latency)
     dryWetMixer.prepare(sampleRate, samplesPerBlock, numChannels, 4);  // max 4x oversampling
@@ -7017,29 +7018,39 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
 void UniversalCompressor::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
 {
-    // Convert double to float into the preallocated staging buffer, process,
-    // then convert back. avoidReallocating keeps this allocation-free unless
-    // the host exceeds the 8x-safe capacity from prepareToPlay (pathological).
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
-    doubleConvBuffer.setSize(numChannels, numSamples, false, false, /*avoidReallocating*/ true);
+    const int chunkCapacity = doubleConvBuffer.getNumSamples();
 
-    for (int ch = 0; ch < numChannels; ++ch)
+    // prepareToPlay owns the staging allocation. If the host supplies a larger
+    // block, process it in capacity-sized chunks without resizing on this thread.
+    if (numChannels <= 0 || numSamples <= 0 || chunkCapacity <= 0 ||
+        numChannels > doubleConvBuffer.getNumChannels())
+        return;
+
+    for (int offset = 0; offset < numSamples; offset += chunkCapacity)
     {
-        const double* src = buffer.getReadPointer(ch);
-        float* dst = doubleConvBuffer.getWritePointer(ch);
-        for (int i = 0; i < numSamples; ++i)
-            dst[i] = static_cast<float>(src[i]);
-    }
+        const int chunkSamples = juce::jmin(chunkCapacity, numSamples - offset);
 
-    processBlock(doubleConvBuffer, midiMessages);
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const double* src = buffer.getReadPointer(ch, offset);
+            float* dst = doubleConvBuffer.getWritePointer(ch);
+            for (int i = 0; i < chunkSamples; ++i)
+                dst[i] = static_cast<float>(src[i]);
+        }
 
-    for (int ch = 0; ch < numChannels; ++ch)
-    {
-        const float* src = doubleConvBuffer.getReadPointer(ch);
-        double* dst = buffer.getWritePointer(ch);
-        for (int i = 0; i < numSamples; ++i)
-            dst[i] = static_cast<double>(src[i]);
+        juce::AudioBuffer<float> floatChunk(doubleConvBuffer.getArrayOfWritePointers(),
+                                            numChannels, chunkSamples);
+        processBlock(floatChunk, midiMessages);
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* src = doubleConvBuffer.getReadPointer(ch);
+            double* dst = buffer.getWritePointer(ch, offset);
+            for (int i = 0; i < chunkSamples; ++i)
+                dst[i] = static_cast<double>(src[i]);
+        }
     }
 }
 
