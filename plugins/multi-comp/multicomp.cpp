@@ -5440,7 +5440,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         {
             case CompressorMode::Opto:
                 if (auto* a = parameters.getRawParameterValue ("opto_peak_reduction")) p0 = juce::jlimit (0.0f, 100.0f, a->load());
-                if (auto* a = parameters.getRawParameterValue ("opto_gain"))           p1 = juce::jlimit (-40.0f, 40.0f, (juce::jlimit (0.0f, 100.0f, a->load()) - 50.0f) * 0.8f);
+                if (auto* a = parameters.getRawParameterValue ("opto_gain"))           p1 = MultiComp::optoKnobToGainDb (a->load());
                 if (auto* a = parameters.getRawParameterValue ("opto_limit"))          p2 = a->load();
                 break;
             case CompressorMode::FET:
@@ -5745,15 +5745,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p3 = parameters.getRawParameterValue("opto_limit");
             if (p1 && p2 && p3) {
                 cachedParams[0] = juce::jlimit(0.0f, 100.0f, p1->load());  // Peak reduction 0-100
-                // Opto gain is 0-40dB range, parameter is 0-100
-                // Map 50 = unity gain (0dB), 0 = -40dB, 100 = +40dB
+                // Opto gain knob is 0-100 (50 = unity, 0.8 dB per unit).
                 // When auto-makeup is enabled, force gain to 0dB (unity)
-                if (autoMakeup)
-                    cachedParams[1] = 0.0f;
-                else {
-                    float gainParam = juce::jlimit(0.0f, 100.0f, p2->load());
-                    cachedParams[1] = juce::jlimit(-40.0f, 40.0f, (gainParam - 50.0f) * 0.8f);  // Bounded gain
-                }
+                cachedParams[1] = autoMakeup ? 0.0f : MultiComp::optoKnobToGainDb(p2->load());
                 cachedParams[2] = p3->load();
             } else validParams = false;
             break;
@@ -7331,8 +7325,10 @@ void UniversalCompressor::setCurrentProgram(int index)
         // Opto defaults
         if (auto* p = parameters.getParameter("opto_peak_reduction"))
             p->setValueNotifyingHost(parameters.getParameterRange("opto_peak_reduction").convertTo0to1(30.0f));
+        // 0 dB of makeup = knob 50, NOT knob 0 (which is -40 dB and mutes the mode)
         if (auto* p = parameters.getParameter("opto_gain"))
-            p->setValueNotifyingHost(parameters.getParameterRange("opto_gain").convertTo0to1(0.0f));
+            p->setValueNotifyingHost(parameters.getParameterRange("opto_gain")
+                .convertTo0to1(MultiComp::optoGainDbToKnob(0.0f)));
         if (auto* p = parameters.getParameter("opto_limit"))
             p->setValueNotifyingHost(0.0f);  // Compress
 

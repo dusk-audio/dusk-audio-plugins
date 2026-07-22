@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_core/juce_core.h>
+#include "OptoGainMapping.h"
 #include <vector>
 #include <map>
 
@@ -416,8 +417,12 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
         case 0: // Opto
             if (auto* p = params.getParameter("opto_peak_reduction"))
                 p->setValueNotifyingHost(params.getParameterRange("opto_peak_reduction").convertTo0to1(preset.peakReduction));
+            // preset.makeup is in dB; "opto_gain" is a 0-100 dial (50 = unity,
+            // 0.8 dB per unit). Writing the dB figure straight in landed 5 dB at
+            // knob 5 = -36 dB, which muted the Opto presets at 100% wet.
             if (auto* p = params.getParameter("opto_gain"))
-                p->setValueNotifyingHost(params.getParameterRange("opto_gain").convertTo0to1(preset.makeup));
+                p->setValueNotifyingHost(params.getParameterRange("opto_gain")
+                    .convertTo0to1(MultiComp::optoGainDbToKnob(preset.makeup)));
             if (auto* p = params.getParameter("opto_limit"))
                 p->setValueNotifyingHost(preset.limitMode ? 1.0f : 0.0f);
             break;
