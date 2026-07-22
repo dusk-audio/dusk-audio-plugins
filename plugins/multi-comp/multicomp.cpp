@@ -5277,17 +5277,10 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     }
 
     // Initialize RMS coefficient for ~200ms averaging window
-    // GR-based auto-gain: smooth the gain reduction with ~200ms time constant
-    // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
-    float grTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
-    int grBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
-    double safeSampleRate = juce::jlimit(8000.0, 384000.0, sampleRate);
-    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(grBlockSize);
-    grSmoothCoeff = 1.0f - std::exp(-1.0f / (blocksPerSecond * grTimeConstantSec));
-    grSmoothCoeff = juce::jlimit(0.001f, 0.999f, grSmoothCoeff);
-    smoothedGrDb = 0.0f;
+    // Auto-gain estimator. The window is long on purpose (see AutoGainMatcher.h):
+    // anything short enough to follow the compression envelope pumps.
+    autoGainMatcher.prepare(juce::jlimit(8000.0, 384000.0, sampleRate));
     lastCompressorMode = -1;  // Force mode change detection on first processBlock
-    primeGrAccumulator = true;  // Prime on first block
 
     // Initialize crossover frequency smoothers (~20ms smoothing to prevent zipper noise)
     smoothedCrossover1.reset(sampleRate, 0.02);
@@ -5622,8 +5615,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         bypassFadeRemaining = bypassFadeActualLength;
 
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
-        smoothedGrDb = 0.0f;
-        primeGrAccumulator = true;
+        autoGainMatcher.reset();
     }
 
     // Get stereo link and mix parameters with proper null checks
@@ -5725,10 +5717,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (currentModeInt != lastCompressorMode)
     {
         lastCompressorMode = currentModeInt;
-        // Flag to prime GR accumulator with first block's GR value (instant convergence)
-        primeGrAccumulator = true;
-        // Reset smoothed gain to unity to avoid sudden volume jumps
-        smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+        // Re-measure from scratch for the new mode. The estimator primes from the
+        // first block with signal, but the APPLIED gain still ramps there, so a
+        // mode or preset change no longer steps the level.
+        autoGainMatcher.reset();
         // Reset Digital mode's lookahead latency
         if (mode != CompressorMode::Digital)
             dryWetMixer.setProcessingLatency(0);
@@ -5941,6 +5933,11 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     inputMeter.store(inputDb, std::memory_order_relaxed);
     inputMeterL.store(inputDbL, std::memory_order_relaxed);
     inputMeterR.store(numChannels > 1 ? inputDbR : inputDbL, std::memory_order_relaxed);  // Mono: use same value for both
+
+    // Reference level for the auto-gain matcher. Taken here: after the bypass
+    // and minimal-path exits, but before the M/S encode and any processing, so
+    // it is directly comparable with the L/R output measured further down.
+    const float autoGainInputRms = blockRms(buffer, numChannels, numSamples);
 
     // Get sidechain HP filter frequency and update filter if changed (0 = Off/bypassed)
     auto* sidechainHpParam = parameters.getRawParameterValue("sidechain_hp");
@@ -6338,78 +6335,11 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             grHistoryWritePos.store((pos + 1) % GR_HISTORY_SIZE, std::memory_order_relaxed);
         }
 
-        // GR-based auto-gain for multiband mode
-        // Inverts the compressor's own gain reduction for deterministic compensation
-        {
-            float targetAutoGain = 1.0f;
-
-            if (autoMakeup)
-            {
-                // Use max band GR for compensation — the most-compressed band dominates
-                // perception, and for narrowband signals, only that band's GR matters
-                float avgGrDb = grMax;
-
-                // Smooth the GR to avoid pumping
-                if (primeGrAccumulator)
-                {
-                    smoothedGrDb = avgGrDb;
-                    primeGrAccumulator = false;
-                    float primedGain = juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 40.0f, -avgGrDb));
-                    float mbMixNorm = mbMix * 0.01f;
-                    primedGain = 1.0f + (primedGain - 1.0f) * mbMixNorm;
-                    smoothedAutoMakeupGain.setCurrentAndTargetValue(primedGain);
-                }
-                else
-                {
-                    smoothedGrDb += grSmoothCoeff * (avgGrDb - smoothedGrDb);
-                }
-
-                // Base compensation: invert the smoothed gain reduction
-                float autoGainDb = -smoothedGrDb;
-                autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-                targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
-
-                // Scale auto-gain by mix amount: dry signal doesn't need compensation
-                float mbMixNorm = mbMix * 0.01f;
-                targetAutoGain = 1.0f + (targetAutoGain - 1.0f) * mbMixNorm;
-            }
-
-            smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
-
-            if (smoothedAutoMakeupGain.isSmoothing())
-            {
-                const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
-                const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
-
-                for (int i = 0; i < samplesToProcess; ++i)
-                    smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
-
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    float* data = buffer.getWritePointer(ch);
-                    const float* gains = smoothedGainBuffer.data();
-                    for (int i = 0; i < samplesToProcess; ++i)
-                        data[i] *= gains[i];
-                }
-            }
-            else
-            {
-                float currentGain = smoothedAutoMakeupGain.getCurrentValue();
-                if (std::abs(currentGain - 1.0f) > 0.001f)
-                {
-                    for (int ch = 0; ch < numChannels; ++ch)
-                    {
-                        float* data = buffer.getWritePointer(ch);
-                        SIMDHelpers::applyGain(data, numSamples, currentGain);
-                    }
-                }
-            }
-        }
-
         // Convert M/S back to L/R before the early return — the normal-path
-        // decode further down is never reached from here. Decode BEFORE output
-        // metering and the bypass crossfade so both operate on L/R (the fade's
-        // dry reference in bypassFadeBuffer is raw L/R input).
+        // decode further down is never reached from here. Decode BEFORE the
+        // auto-gain (which matches against an L/R-domain input measurement),
+        // output metering and the bypass crossfade (whose dry reference in
+        // bypassFadeBuffer is raw L/R input).
         if (useMidSide && numChannels >= 2)
         {
             float* mid = buffer.getWritePointer(0);
@@ -6422,6 +6352,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 side[i] = m - s;  // Right = Mid - Side
             }
         }
+
+        applyAutoGain(buffer, numChannels, numSamples, autoGainInputRms, autoMakeup);
 
         // Update output meter AFTER auto-makeup gain is applied
         float outputLevel = 0.0f;
@@ -6817,95 +6749,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Combined gain reduction (min of both channels for display)
     float gainReduction = juce::jmin(grLeft, grRight);
 
-    // GR-based auto-gain: invert the compressor's gain reduction for deterministic compensation
-    // Industry-standard approach (FabFilter Pro-C, Waves CLA series)
-    {
-        float targetAutoGain = 1.0f;
-
-        if (autoMakeup)
-        {
-            // Average GR across channels (negative dB = compression)
-            float avgGrDb = (grLeft + grRight) * 0.5f;
-
-            // Smooth the GR to avoid pumping (~200ms time constant)
-            if (primeGrAccumulator)
-            {
-                smoothedGrDb = avgGrDb;
-                primeGrAccumulator = false;
-                // Set gain immediately without smoothing on first block
-                float autoGainDb = -avgGrDb;
-                if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
-                    autoGainDb -= cachedParams[0];  // Compensate for input gain knob
-                // Opto: tube harmonics add energy proportional to GR that autogain doesn't track
-                if (mode == CompressorMode::Opto)
-                    autoGainDb -= std::min(1.5f, std::abs(avgGrDb) * 0.25f);
-                autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-                float primedGain = juce::Decibels::decibelsToGain(autoGainDb);
-                primedGain = 1.0f + (primedGain - 1.0f) * mixAmount;
-                smoothedAutoMakeupGain.setCurrentAndTargetValue(primedGain);
-            }
-            else
-            {
-                smoothedGrDb += grSmoothCoeff * (avgGrDb - smoothedGrDb);
-            }
-
-            // Base compensation: invert the smoothed gain reduction
-            float autoGainDb = -smoothedGrDb;
-
-            // FET/StudioFET: also compensate for the input gain knob
-            // When user turns input down, auto-gain should restore the original level
-            if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
-                autoGainDb -= cachedParams[0];  // cachedParams[0] = fet_input parameter
-
-            // Opto: tube harmonics add energy proportional to GR that autogain doesn't track
-            if (mode == CompressorMode::Opto)
-                autoGainDb -= std::min(1.5f, std::abs(smoothedGrDb) * 0.25f);
-
-            autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-            targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
-
-            // Scale auto-gain by mix amount: dry signal doesn't need compensation
-            // At 100% wet = full auto-gain, at 100% dry = unity, at 50/50 = half
-            targetAutoGain = 1.0f + (targetAutoGain - 1.0f) * mixAmount;
-        }
-
-        // Update target and apply smoothed gain sample-by-sample
-        smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
-
-        if (smoothedAutoMakeupGain.isSmoothing())
-        {
-            // OPTIMIZED: Pre-fill gain curve array, then apply channel-by-channel
-            // This improves cache locality compared to the inner channel loop
-            const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
-            const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
-
-            // Pre-compute all smoothed gain values
-            for (int i = 0; i < samplesToProcess; ++i)
-                smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
-
-            // Apply gains channel-by-channel (cache-friendly)
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                float* data = buffer.getWritePointer(ch);
-                const float* gains = smoothedGainBuffer.data();
-                for (int i = 0; i < samplesToProcess; ++i)
-                    data[i] *= gains[i];
-            }
-        }
-        else
-        {
-            // No smoothing needed, apply constant gain efficiently
-            float currentGain = smoothedAutoMakeupGain.getCurrentValue();
-            if (std::abs(currentGain - 1.0f) > 0.001f)
-            {
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    float* data = buffer.getWritePointer(ch);
-                    SIMDHelpers::applyGain(data, numSamples, currentGain);
-                }
-            }
-        }
-    }
+    // Auto-gain: match the output level back to the input over a long window.
+    // See AutoGainMatcher.h for why this replaced GR inversion (which pumped and
+    // needed a per-mode fudge for the Opto's tube/transformer energy).
+    applyAutoGain(buffer, numChannels, numSamples, autoGainInputRms, autoMakeup);
 
     // Apply bypass crossfade (smooth transition from bypassed to active)
     if (bypassFadeRemaining > 0)
@@ -7076,6 +6923,71 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     return CompressorMode::Opto; // Default fallback
 }
 
+float UniversalCompressor::blockRms(const juce::AudioBuffer<float>& buffer, int numChannels, int numSamples)
+{
+    if (numSamples <= 0 || numChannels <= 0)
+        return 0.0f;
+
+    double sum = 0.0;
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        const float* data = buffer.getReadPointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+            sum += static_cast<double>(data[i]) * data[i];
+    }
+
+    return static_cast<float>(std::sqrt(sum / (static_cast<double>(numSamples) * numChannels)));
+}
+
+void UniversalCompressor::applyAutoGain(juce::AudioBuffer<float>& buffer, int numChannels, int numSamples,
+                                        float inRms, bool autoMakeupEnabled)
+{
+    float targetAutoGain = 1.0f;
+
+    if (autoMakeupEnabled)
+    {
+        // Measure what actually came out — post-compression, post-saturation,
+        // post dry/wet blend — and ask for the gain that matches the input. No
+        // mix scaling is needed: at 0% wet the output already equals the input,
+        // so the matcher naturally converges on unity.
+        const float outRms = blockRms(buffer, numChannels, numSamples);
+        targetAutoGain = autoGainMatcher.update(inRms, outRms, numSamples);
+    }
+    else
+    {
+        autoGainMatcher.reset();
+    }
+
+    smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
+
+    if (smoothedAutoMakeupGain.isSmoothing())
+    {
+        // Pre-fill the gain curve, then apply channel-by-channel (cache-friendly).
+        const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
+        const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
+
+        for (int i = 0; i < samplesToProcess; ++i)
+            smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = buffer.getWritePointer(ch);
+            const float* gains = smoothedGainBuffer.data();
+            for (int i = 0; i < samplesToProcess; ++i)
+                data[i] *= gains[i];
+        }
+    }
+    else
+    {
+        const float currentGain = smoothedAutoMakeupGain.getCurrentValue();
+        if (std::abs(currentGain - 1.0f) > 0.001f)
+        {
+            for (int ch = 0; ch < numChannels; ++ch)
+                SIMDHelpers::applyGain(buffer.getWritePointer(ch), numSamples, currentGain);
+        }
+    }
+}
+
 int UniversalCompressor::computeLatencySamples() const
 {
     const auto mode = getCurrentMode();
@@ -7225,11 +7137,10 @@ void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
 
 void UniversalCompressor::resetDSPState()
 {
-    // Reset smoothed auto-makeup gain and GR accumulator to neutral
+    // Reset smoothed auto-makeup gain and the level-matching estimator to neutral
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
-    smoothedGrDb = 0.0f;
+    autoGainMatcher.reset();
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
-    primeGrAccumulator = true;  // Prime accumulator on first block after reset
 
     bypassFadeRemaining = 0;
     bypassFadeBuffer.clear();

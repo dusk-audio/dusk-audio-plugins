@@ -5,6 +5,7 @@
 #include <array>
 #include <memory>
 #include "../shared/DryWetMixer.h"
+#include "AutoGainMatcher.h"
 
 enum class CompressorMode : int
 {
@@ -256,10 +257,10 @@ private:
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};
 
-    // GR-based auto-gain (industry-standard approach: invert the gain reduction)
-    float smoothedGrDb = 0.0f;          // Smoothed gain reduction in dB (negative = compression)
-    float grSmoothCoeff = 0.0f;         // One-pole filter coefficient for GR smoothing (~200ms)
-    bool primeGrAccumulator = true;     // Flag to instantly prime on mode change
+    // Auto-gain by slow in/out level matching (replaces GR inversion, which
+    // tracked the compression envelope closely enough to pump).
+    MultiComp::AutoGainMatcher autoGainMatcher;
+
     bool wasBypassedLastBlock = false;
     bool wasMinimalLastBlock  = false;  // Track minimal→standard transition for PDC restore
 
@@ -340,6 +341,15 @@ private:
     // Pure computation of the current reported latency (no host call) — shared by
     // updateLatencyReport() and the deferred async apply.
     int computeLatencySamples() const;
+
+    // RMS of a block across all channels, used by the auto-gain matcher.
+    static float blockRms(const juce::AudioBuffer<float>& buffer, int numChannels, int numSamples);
+
+    // Drives the auto-gain matcher and applies the smoothed makeup in place.
+    // Shared by the multiband path and the standard path — they used to carry
+    // near-identical copies of this logic.
+    void applyAutoGain(juce::AudioBuffer<float>& buffer, int numChannels, int numSamples,
+                       float inRms, bool autoMakeupEnabled);
     // Message-thread apply of the pending latency (AsyncUpdater callback).
     void handleAsyncUpdate() override;
     std::atomic<int> pendingLatencySamples_{0};

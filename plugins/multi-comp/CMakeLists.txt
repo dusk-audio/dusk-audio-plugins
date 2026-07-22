@@ -243,6 +243,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     # --- Mix-knob ramp / click gate ---
     multicomp_add_functional_test(MultiCompMixRampTest tests/test_mix_ramp_click.cpp)
+
+    # --- Auto-gain stability gate (pumping + static level match) ---
+    multicomp_add_functional_test(MultiCompAutoGainTest tests/test_autogain_stability.cpp)
 endif()
 
 # Optional: Build unit tests
