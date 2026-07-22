@@ -4508,6 +4508,48 @@ public:
     }
 };
 
+// juce::AudioParameterBool stores whatever normalized float the host hands it
+// and returns it raw from getValue() (JUCE: `value = newValue`), while Choice
+// and Int snap internally and the APVTS state round-trip snaps. Result: write
+// 0.4964, read 0.4964 live, read 0.0 after a save/load — hosts and pluginval
+// that compare those two reads see a bool "not restored" (the intermittent
+// level-10 failures). Snapping on set makes the live read match the round-trip.
+// (AudioParameterBool::setValue is private, so this is a sibling implementation
+// rather than a subclass. Nothing in the codebase casts to AudioParameterBool —
+// all access goes through the generic parameter/APVTS interfaces.)
+class SnappingBoolParameter : public juce::RangedAudioParameter
+{
+public:
+    SnappingBoolParameter(const juce::ParameterID& id, const juce::String& name, bool defaultVal)
+        : juce::RangedAudioParameter(id, name),
+          value(defaultVal ? 1.0f : 0.0f),
+          defaultValue(defaultVal ? 1.0f : 0.0f)
+    {
+    }
+
+    const juce::NormalisableRange<float>& getNormalisableRange() const override { return range; }
+    float getValue() const override        { return value.load(); }
+    void setValue(float newValue) override { value.store(newValue >= 0.5f ? 1.0f : 0.0f); }
+    float getDefaultValue() const override { return defaultValue; }
+    int getNumSteps() const override       { return 2; }
+    bool isDiscrete() const override       { return true; }
+    bool isBoolean() const override        { return true; }
+
+    juce::String getText(float v, int) const override { return v >= 0.5f ? "On" : "Off"; }
+    float getValueForText(const juce::String& text) const override
+    {
+        return (text.getIntValue() != 0
+                || text.equalsIgnoreCase("on")
+                || text.equalsIgnoreCase("yes")
+                || text.equalsIgnoreCase("true")) ? 1.0f : 0.0f;
+    }
+
+private:
+    const juce::NormalisableRange<float> range { 0.0f, 1.0f, 1.0f };
+    std::atomic<float> value;
+    const float defaultValue;
+};
+
 // Parameter layout creation
 juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createParameterLayout()
 {
@@ -4522,7 +4564,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
                           "Studio FET", "Studio VCA", "Digital", "Multiband"}, 0));
 
     // Global parameters
-    layout.add(std::make_unique<juce::AudioParameterBool>("bypass", "Bypass", false));
+    layout.add(std::make_unique<SnappingBoolParameter>("bypass", "Bypass", false));
 
     // Stereo linking control (0% = independent, 100% = fully linked)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -4570,7 +4612,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::StringArray{"Vintage (Warm)", "Modern (Clean)", "Pristine (Minimal)"}, 0));
 
     // External sidechain enable
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "sidechain_enable", "External Sidechain", false));
 
     // Global lookahead for all modes (not just Digital)
@@ -4580,7 +4622,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::AudioParameterFloatAttributes().withLabel("ms")));
 
     // Global sidechain listen (output sidechain signal for monitoring)
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "global_sidechain_listen", "SC Listen", false));
 
     // Stereo link mode (Stereo = max-level, Mid-Side = M/S processing, Dual Mono = independent)
@@ -4589,7 +4631,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::StringArray{"Stereo", "Mid-Side", "Dual Mono"}, 0));
 
     // Analog noise floor enable (optional for CPU savings)
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "noise_enable", "Analog Noise", true));
 
     // Oversampling factor (0 = Off, 1 = 2x, 2 = 4x)
@@ -4620,7 +4662,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     // True-Peak Detection for sidechain (ITU-R BS.1770 compliant)
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "true_peak_enable", "True Peak", false));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -4640,7 +4682,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "opto_gain", "Gain", 
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f)); // Unity gain at 50%
-    layout.add(std::make_unique<juce::AudioParameterBool>("opto_limit", "Limit Mode", false));
+    layout.add(std::make_unique<SnappingBoolParameter>("opto_limit", "Limit Mode", false));
     // FET parameters (Vintage FET style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "fet_input", "Input", 
@@ -4694,7 +4736,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "vca_output", "Output", 
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterBool>("vca_overeasy", "Over Easy", false));
+    layout.add(std::make_unique<SnappingBoolParameter>("vca_overeasy", "Over Easy", false));
 
     // VCA detector mode: "Adaptive" matches the donor's prior behaviour
     // (level-dependent RMS TC, 35 ms → 5 ms). "Classic" forces a fixed
@@ -4773,7 +4815,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "digital_output", "Output",
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "digital_adaptive", "Adaptive Release", false));  // Program-dependent release
     // SC Listen is now a global control (global_sidechain_listen) in header for all modes
 
@@ -4840,11 +4882,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
             juce::AudioParameterFloatAttributes().withLabel("dB")));
 
         // Band bypass
-        layout.add(std::make_unique<juce::AudioParameterBool>(
+        layout.add(std::make_unique<SnappingBoolParameter>(
             "mb_" + name + "_bypass", label + " Bypass", false));
 
         // Band solo
-        layout.add(std::make_unique<juce::AudioParameterBool>(
+        layout.add(std::make_unique<SnappingBoolParameter>(
             "mb_" + name + "_solo", label + " Solo", false));
 
         // Band enabled — when false, the band is removed from the multiband
@@ -4852,7 +4894,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         // unaffected. The UI enforces a minimum of 2 enabled bands; the DSP
         // layer also defends against <2 in case the param is driven by host
         // automation.
-        layout.add(std::make_unique<juce::AudioParameterBool>(
+        layout.add(std::make_unique<SnappingBoolParameter>(
             "mb_" + name + "_enabled", label + " Enabled", true));
     }
 

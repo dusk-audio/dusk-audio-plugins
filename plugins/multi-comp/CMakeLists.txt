@@ -246,6 +246,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     # --- Auto-gain stability gate (pumping + static level match) ---
     multicomp_add_functional_test(MultiCompAutoGainTest tests/test_autogain_stability.cpp)
+
+    # --- State-restore integrity (pluginval L10 bool-param flake, deterministic) ---
+    multicomp_add_functional_test(MultiCompStateRestoreTest tests/test_state_restore.cpp)
 endif()
 
 # Optional: Build unit tests
