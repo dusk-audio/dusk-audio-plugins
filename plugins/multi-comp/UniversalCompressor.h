@@ -345,6 +345,20 @@ private:
     // RMS of a block across all channels, used by the auto-gain matcher.
     static float blockRms(const juce::AudioBuffer<float>& buffer, int numChannels, int numSamples);
 
+    // Per-sample ramp for the mode-local mix parameters (bus_mix, digital_mix).
+    // They were passed block-constant into the per-sample process calls and
+    // stepped when automated — same click class as the global Mix knob. Values
+    // are in the active mode's own units (bus_mix 0-1, digital_mix 0-100);
+    // `span` names that full range so the ramp is 20 ms per full swing either
+    // way. Snapping on mode change covers the unit switch. The curve holds
+    // min(numSamples, size) fresh values; a longer (oversized-block) tail reads
+    // the last value and the ramp completes next block — same idiom as
+    // smoothedGainBuffer.
+    void fillModeMixCurve(float target, float span, double rate, int numSamples);
+    float modeMixCurrent = 0.0f;
+    bool modeMixSnap = true;            // snap on prepare/reset/mode change
+    alignas(64) std::array<float, 8192> modeMixCurve{};
+
     // Drives the auto-gain matcher and applies the smoothed makeup in place.
     // Shared by the multiband path and the standard path — they used to carry
     // near-identical copies of this logic.

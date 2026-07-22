@@ -4786,6 +4786,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_output", "Output",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
+    // DEAD PARAMETER: nothing reads "studio_vca_mix" — Studio VCA uses the
+    // global "mix". Kept in the layout because removing a parameter breaks
+    // session/state compatibility; do not wire it up without also deciding how
+    // it stacks with the global Mix (see bus_mix/digital_mix, which multiply).
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_mix", "Mix",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));  // Parallel compression
@@ -5323,6 +5327,7 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // anything short enough to follow the compression envelope pumps.
     autoGainMatcher.prepare(juce::jlimit(8000.0, 384000.0, sampleRate));
     lastCompressorMode = -1;  // Force mode change detection on first processBlock
+    modeMixSnap = true;       // Mode-local mix ramp starts settled
 
     // Initialize crossover frequency smoothers (~20ms smoothing to prevent zipper noise)
     smoothedCrossover1.reset(sampleRate, 0.02);
@@ -5763,6 +5768,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // first block with signal, but the APPLIED gain still ramps there, so a
         // mode or preset change no longer steps the level.
         autoGainMatcher.reset();
+        // Mode-local mix units differ per mode — snap rather than ramp across them.
+        modeMixSnap = true;
         // Reset Digital mode's lookahead latency
         if (mode != CompressorMode::Digital)
             dryWetMixer.setProcessingLatency(0);
@@ -6486,6 +6493,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             SIMDHelpers::interpolateSidechain(srcPtr, destPtr, numSamples, osNumSamples);
         }
 
+        // Ramp the mode-local mix (bus_mix / digital_mix) at the oversampled
+        // rate; one curve, reused by every channel.
+        if (mode == CompressorMode::Bus)
+            fillModeMixCurve(cachedParams[5], 1.0f,
+                             getSampleRate() * juce::jmax(1, osNumSamples / juce::jmax(1, numSamples)), osNumSamples);
+        else if (mode == CompressorMode::Digital)
+            fillModeMixCurve(cachedParams[6], 100.0f,
+                             getSampleRate() * juce::jmax(1, osNumSamples / juce::jmax(1, numSamples)), osNumSamples);
+
         // Process with cached parameters - now using pre-interpolated sidechain
         for (int channel = 0; channel < osNumChannels; ++channel)
         {
@@ -6517,6 +6533,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     {
                         // True console stereo link (oversampled path): shared sidechain
                         // drives both VCAs. No compensationGain here (postGain=1).
+                        // KNOWN GAP: this path has no mix argument, so bus_mix is
+                        // silently ignored whenever stereo link is engaged (the
+                        // per-channel branch below honours it). Pre-existing; no
+                        // UI binds bus_mix, so exposure is automation-only.
                         busCompressor->processStereoLinked(
                             oversampledBlock.getChannelPointer(static_cast<size_t>(0)), oversampledBlock.getChannelPointer(static_cast<size_t>(1)), osNumSamples,
                             cachedParams[0], cachedParams[1],
@@ -6533,7 +6553,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     else
                     {
                         for (int i = 0; i < osNumSamples; ++i)
-                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i], hasExternalSidechain);
+                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))], true, scData[i], hasExternalSidechain);
                     }
                     break;
                 case CompressorMode::StudioFET:
@@ -6556,7 +6576,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     for (int i = 0; i < osNumSamples; ++i)
                     {
                         data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
-                                                             cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                             cachedParams[3], cachedParams[4], cachedParams[5],
+                                                             modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))],
                                                              cachedParams[7], cachedParams[8] > 0.5f, scData[i]);
                     }
                     break;
@@ -6599,11 +6620,18 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             dryWetMixer.captureDryAtNormalRate(buffer);
             canMixNormal = true;
         }
-        
+
+        // Ramp the mode-local mix (bus_mix / digital_mix) at native rate;
+        // one curve, reused by every channel.
+        if (mode == CompressorMode::Bus)
+            fillModeMixCurve(cachedParams[5], 1.0f, getSampleRate(), numSamples);
+        else if (mode == CompressorMode::Digital)
+            fillModeMixCurve(cachedParams[6], 100.0f, getSampleRate(), numSamples);
+
         for (int channel = 0; channel < numChannels; ++channel)
         {
             float* data = buffer.getWritePointer(channel);
-            
+
             switch (mode)
             {
                 case CompressorMode::Opto:
@@ -6670,7 +6698,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                                 scSignal = linkedSidechain.getSample(channel, i);
                             else
                                 scSignal = filteredSidechain.getSample(channel, i);
-                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal, hasExternalSidechain) * compensationGain;
+                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))], false, scSignal, hasExternalSidechain) * compensationGain;
                         }
                     }
                     break;
@@ -6712,7 +6740,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
                         // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
                         data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
-                                                             cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                             cachedParams[3], cachedParams[4], cachedParams[5],
+                                                             modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))],
                                                              cachedParams[7], cachedParams[8] > 0.5f, scSignal) * compensationGain;
                     }
                     break;
@@ -6965,6 +6994,29 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     return CompressorMode::Opto; // Default fallback
 }
 
+void UniversalCompressor::fillModeMixCurve(float target, float span, double rate, int numSamples)
+{
+    if (modeMixSnap)
+    {
+        modeMixCurrent = target;
+        modeMixSnap = false;
+    }
+
+    const int n = juce::jmin(numSamples, static_cast<int>(modeMixCurve.size()));
+    const float maxStep = span / static_cast<float>(0.02 * juce::jmax(1.0, rate));   // 20 ms full swing
+
+    for (int i = 0; i < n; ++i)
+    {
+        if (modeMixCurrent != target)
+        {
+            const float diff = target - modeMixCurrent;
+            modeMixCurrent = (std::abs(diff) <= maxStep) ? target
+                                                         : modeMixCurrent + (diff > 0.0f ? maxStep : -maxStep);
+        }
+        modeMixCurve[static_cast<size_t>(i)] = modeMixCurrent;
+    }
+}
+
 float UniversalCompressor::blockRms(const juce::AudioBuffer<float>& buffer, int numChannels, int numSamples)
 {
     if (numSamples <= 0 || numChannels <= 0)
@@ -7183,6 +7235,7 @@ void UniversalCompressor::resetDSPState()
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
     autoGainMatcher.reset();
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
+    modeMixSnap = true;
 
     bypassFadeRemaining = 0;
     bypassFadeBuffer.clear();
