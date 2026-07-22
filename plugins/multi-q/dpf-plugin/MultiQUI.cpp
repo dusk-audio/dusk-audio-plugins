@@ -891,11 +891,12 @@ private:
     }
 
     // Shape-glyph drawn INSIDE a control node (JUCE drawBandControlPoint :1008-1101).
-    // Primitives only — no unicode: HPF "/¯", LPF "¯\", low/high shelf steps, notch
+    // Primitives only — no unicode: HPF "/", LPF "\", low/high shelf steps, notch
     // "V", bandpass "^", else the band number. cx/cy are the (design-space) node
     // centre, iconR the glyph half-extent, w the stroke width, col the ink colour.
-    // Coordinate offsets are copied verbatim from the JUCE Path builders (y grows
-    // down in both frameworks, so +y is below centre).
+    // The pass filters intentionally omit horizontal tails so they remain distinct
+    // from shelves. Coordinate offsets match the JUCE Path builders (y grows down
+    // in both frameworks, so +y is below centre).
     void digNodeGlyph(ImDrawList* dl, int b, float cx, float cy,
                       float iconR, float w, ImU32 col) const
     {
@@ -918,8 +919,8 @@ private:
         ImVec2 v[5]; int n = 0;
         switch (g)
         {
-            case 1: v[0]=pt(-0.6f,0.4f); v[1]=pt(-0.1f,0.4f); v[2]=pt(0.3f,-0.4f); v[3]=pt(0.6f,-0.4f); n=4; break; // HPF /¯
-            case 2: v[0]=pt(-0.6f,-0.4f);v[1]=pt(-0.3f,-0.4f);v[2]=pt(0.1f,0.4f);  v[3]=pt(0.6f,0.4f);  n=4; break; // LPF ¯\
+            case 1: v[0]=pt(-0.4f,0.4f); v[1]=pt(0.4f,-0.4f); n=2; break; // HPF /
+            case 2: v[0]=pt(-0.4f,-0.4f);v[1]=pt(0.4f,0.4f);  n=2; break; // LPF falling slope
             case 3: v[0]=pt(-0.6f,0.3f); v[1]=pt(-0.15f,0.3f);v[2]=pt(0.15f,-0.3f);v[3]=pt(0.6f,-0.3f); n=4; break; // low shelf
             case 4: v[0]=pt(-0.6f,-0.3f);v[1]=pt(-0.15f,-0.3f);v[2]=pt(0.15f,0.3f);v[3]=pt(0.6f,0.3f);  n=4; break; // high shelf
             case 5: v[0]=pt(-0.6f,-0.3f);v[1]=pt(-0.15f,-0.3f);v[2]=pt(0.f,0.5f);  v[3]=pt(0.15f,-0.3f);v[4]=pt(0.6f,-0.3f); n=5; break; // notch V
