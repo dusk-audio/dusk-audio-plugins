@@ -770,6 +770,16 @@ void DuskVerbEngine::setPostSteerProfile (float earlyLowK, float earlyMidK, floa
     postSteerActive_ = std::abs (psAmount_) > 1.0e-6f || psProfileActive_;
 }
 
+void DuskVerbEngine::setPostSteerPanRotation (float radians)
+{
+    psPanRotationRadians_ = std::clamp (radians, -0.25f * kTwoPi, 0.25f * kTwoPi);
+}
+
+void DuskVerbEngine::setPostSteerHardRightMirror (bool enabled)
+{
+    psMirrorHardRight_ = enabled;
+}
+
 void DuskVerbEngine::setPostSteerWander (float lowDepth, float midDepth, float highDepth,
                                          float rateHz, float decayMs, float phaseRadians)
 {
@@ -1189,6 +1199,8 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setBuildupAmount (0.0f); setBuildupTimeScale (1.0f); setBuildupPostTank (false);  // DenseHall tail buildup → bypass
     setPostSteerProfile (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                          0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    setPostSteerPanRotation (0.0f);
+    setPostSteerHardRightMirror (false);
     setPostSteerWander (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
     setPostSteer (0.0f);                                         // stereo-image calibration → off
 }
@@ -2561,6 +2573,30 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 wetL = sumL;
                 wetR = sumR;
             }
+            // A gain tilt alone cannot reproduce a mono-summing tank's
+            // hard-left versus hard-right transfer without also forcing a
+            // large ILD.  Rotate the final stereo vector in opposite
+            // directions for genuinely hard-panned sources so response
+            // identity and energy balance are independent.  The >0.999
+            // source-balance gate keeps decorrelated stereo programme and the
+            // fleet stimuli out of this path; centred input remains bit-null.
+            const float absBalance = std::abs (steerBalance);
+            if (std::abs (psPanRotationRadians_) > 1.0e-6f && absBalance > 0.999f)
+            {
+                const float hardPan = std::clamp ((absBalance - 0.999f) / 0.0009f, 0.0f, 1.0f);
+                const float angle = std::copysign (psPanRotationRadians_ * hardPan, steerBalance);
+                const float c = std::cos (angle);
+                const float s = std::sin (angle);
+                const float rotatedL = c * wetL - s * wetR;
+                wetR = s * wetL + c * wetR;
+                wetL = rotatedL;
+            }
+            // Some symmetric mono-summing tanks match the anchor by mirroring
+            // their final field for a hard-right source. A full swap preserves
+            // channel energy exactly, unlike a crossfade, and leaves the
+            // calibrated hard-left transfer untouched.
+            if (psMirrorHardRight_ && steerBalance < -0.999f)
+                std::swap (wetL, wetR);
             if (psWanderActive_ && psWanderStarted_
                 && std::abs (reflDryMono_[static_cast<size_t> (i)] + sourceSide_[static_cast<size_t> (i)])
                  + std::abs (reflDryMono_[static_cast<size_t> (i)] - sourceSide_[static_cast<size_t> (i)]) <= 1.0e-6f)

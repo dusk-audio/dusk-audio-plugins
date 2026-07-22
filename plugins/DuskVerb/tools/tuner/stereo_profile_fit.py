@@ -63,7 +63,8 @@ def time_envelope(n: int, sr: int, predelay_ms: float, hold_ms: float,
 
 
 def apply_profile(bands: np.ndarray, sign: float, sr: int, predelay_ms: float,
-                  params: np.ndarray) -> np.ndarray:
+                  params: np.ndarray, pan_rotation: bool = False,
+                  mirror_hard_right: bool = False) -> np.ndarray:
     early = params[:3]
     middle = params[3:6]
     late = params[6:9]
@@ -93,6 +94,14 @@ def apply_profile(bands: np.ndarray, sign: float, sr: int, predelay_ms: float,
         gr = smooth_gain(np.sqrt(np.maximum(0.0, 1.0 - sign * k)), sr)
         out[:, 0] += bands[band, :, 0] * gl
         out[:, 1] += bands[band, :, 1] * gr
+    if pan_rotation:
+        angle = sign * float(params[12])
+        c, s = math.cos(angle), math.sin(angle)
+        left = c * out[:, 0] - s * out[:, 1]
+        right = s * out[:, 0] + c * out[:, 1]
+        out = np.column_stack((left, right))
+    if mirror_hard_right and sign < 0.0:
+        out = out[:, ::-1].copy()
     return out
 
 
@@ -145,7 +154,11 @@ def load_set(root: Path, prefix: str):
     return data, int(sr)
 
 
-def fit_preset(preset: str, root: Path, thorough: bool = False) -> dict:
+def fit_preset(preset: str, root: Path, thorough: bool = False,
+               pan_rotation: bool = False,
+               initial_profile: list[float] | None = None,
+               pan_weight: float = 4.0,
+               mirror_hard_right: bool = False) -> dict:
     slug = preset.lower().replace(" ", "_").replace("'", "")
     dv, sr = load_set(root / slug / "dv", "dv")
     ref, ref_sr = load_set(root / slug / "ref", "ref")
@@ -158,8 +171,10 @@ def fit_preset(preset: str, root: Path, thorough: bool = False) -> dict:
     predelay = PREDELAY_MS[preset]
 
     def evaluate(p: np.ndarray):
-        left = apply_profile(bands_l, +1.0, sr, predelay, p)
-        right = apply_profile(bands_r, -1.0, sr, predelay, p)
+        left = apply_profile(bands_l, +1.0, sr, predelay, p, pan_rotation,
+                             mirror_hard_right)
+        right = apply_profile(bands_r, -1.0, sr, predelay, p, pan_rotation,
+                              mirror_hard_right)
         return (*metrics(left, right, dv["center"], sr), left, right)
 
     def trajectory_residual(candidate: np.ndarray, reference: np.ndarray) -> list[float]:
@@ -176,15 +191,22 @@ def fit_preset(preset: str, root: Path, thorough: bool = False) -> dict:
         return values.tolist()
 
     def residual(p: np.ndarray) -> np.ndarray:
-        left = apply_profile(bands_l, +1.0, sr, predelay, p)
-        right = apply_profile(bands_r, -1.0, sr, predelay, p)
+        left = apply_profile(bands_l, +1.0, sr, predelay, p, pan_rotation,
+                             mirror_hard_right)
+        right = apply_profile(bands_r, -1.0, sr, predelay, p, pan_rotation,
+                              mirror_hard_right)
         q, traj = quick_values(left, right, sr)
-        values = (3.0 * (q - ref_quick)).tolist()
+        weights = np.asarray([3.0, 3.0, 3.0, 3.0, 0.75 * pan_weight])
+        values = (weights * (q - ref_quick)).tolist()
         values.extend(trajectory_residual(traj, ref_quick_traj))
         return np.asarray(values, dtype=np.float64)
 
-    bounds = (np.array([-0.9999] * 9 + [0.0, math.log(15.0), 0.0]),
-              np.array([+0.9999] * 9 + [800.0, math.log(2000.0), math.log(30.0)]))
+    lower = [-0.9999] * 9 + [0.0, math.log(15.0), 0.0]
+    upper = [+0.9999] * 9 + [800.0, math.log(2000.0), math.log(30.0)]
+    if pan_rotation:
+        lower.append(-0.5 * math.pi)
+        upper.append(+0.5 * math.pi)
+    bounds = (np.array(lower), np.array(upper))
     starts = (
         np.array([0.9, 0.9, 0.9, -0.3, -0.3, -0.3, 0.0, 0.0, 0.0,
                   120.0, math.log(140.0), math.log(5.0)]),
@@ -197,6 +219,18 @@ def fit_preset(preset: str, root: Path, thorough: bool = False) -> dict:
             np.array([-0.8, 0.8, -0.8, 0.8, -0.8, 0.8, -0.2, 0.2, -0.2,
                       250.0, math.log(250.0), math.log(3.0)]),
         )
+    if pan_rotation:
+        angles = (0.65,) if not thorough else (-1.1, -0.55, 0.0, 0.55, 1.1)
+        starts = tuple(np.append(start, angle) for start in starts for angle in angles)
+    if initial_profile is not None:
+        expected = 13 if pan_rotation else 12
+        if len(initial_profile) != expected:
+            raise ValueError(f"initial profile must have {expected} values")
+        initial = np.asarray(initial_profile[:10] + [math.log(initial_profile[10]),
+                             math.log(initial_profile[11] / initial_profile[10])]
+                             + ([initial_profile[12]] if pan_rotation else []),
+                             dtype=np.float64)
+        starts = (initial,) + starts
     best = None
     for start in starts:
         result = least_squares(residual, start, bounds=bounds,
@@ -217,7 +251,7 @@ def fit_preset(preset: str, root: Path, thorough: bool = False) -> dict:
                   4.0 * (m.ild_low_db - ref_m.ild_low_db),
                   4.0 * (m.ild_mid_db - ref_m.ild_mid_db),
                   4.0 * (m.ild_high_db - ref_m.ild_high_db),
-                  4.0 * (m.pan_swap_db - ref_m.pan_swap_db)]
+                  pan_weight * (m.pan_swap_db - ref_m.pan_swap_db)]
         values.extend(trajectory_residual(traj, ref_traj))
         return np.asarray(values, dtype=np.float64)
 
@@ -231,14 +265,18 @@ def fit_preset(preset: str, root: Path, thorough: bool = False) -> dict:
     fast_ms = math.exp(float(p[10]))
     profile = ([float(v) for v in p[:9]] + [float(p[9]), fast_ms,
                fast_ms * math.exp(float(p[11]))])
+    if pan_rotation:
+        profile.append(float(p[12]))
     return {
         "preset": preset, "profile": profile, "fit_rms": score,
+        "mirror_hard_right": mirror_hard_right,
         "actual_stereo_reference": actual, "metrics": vars(m),
         "reference": vars(ref_m), "failures": failures,
     }
 
 
-def fit_wander_preset(preset: str, root: Path, base_profile: list[float]) -> dict:
+def fit_wander_preset(preset: str, root: Path, base_profile: list[float],
+                      thorough: bool = False) -> dict:
     """Add a damped image wander to a fitted profile.
 
     Lexicon's Blade Runner image crosses the centre repeatedly during the first
@@ -283,13 +321,15 @@ def fit_wander_preset(preset: str, root: Path, base_profile: list[float]) -> dic
     bounds = (np.array([-1.5, -1.5, -1.5, math.log(0.25), math.log(100.0), -math.pi]),
               np.array([+1.5, +1.5, +1.5, math.log(5.0), math.log(5000.0), +math.pi]))
     starts = []
-    for rate in (1.0, 1.7, 2.5):
+    rates = (0.5, 1.0, 1.7, 2.5, 4.0) if thorough else (1.0, 1.7, 2.5)
+    for rate in rates:
         for phase in (-0.5 * math.pi, 0.0, 0.5 * math.pi):
             starts.append(np.array([0.5, 0.5, 0.5, math.log(rate),
                                     math.log(900.0), phase]))
     best = None
     for start in starts:
-        result = least_squares(residual, start, bounds=bounds, max_nfev=180,
+        result = least_squares(residual, start, bounds=bounds,
+                               max_nfev=300 if thorough else 180,
                                x_scale="jac", ftol=5e-6, xtol=5e-6, gtol=5e-6)
         score = float(np.sqrt(np.mean(residual(result.x) ** 2)))
         if best is None or score < best[0]:
@@ -313,6 +353,14 @@ def main() -> int:
     parser.add_argument("--preset", action="append", choices=sorted(audit.PRESETS))
     parser.add_argument("--thorough", action="store_true",
                         help="use multiple starts and a longer authoritative refinement")
+    parser.add_argument("--pan-rotation", action="store_true",
+                        help="fit a source-keyed energy-preserving output rotation")
+    parser.add_argument("--initial-profile",
+                        help="comma-separated external profile used as an additional fit start")
+    parser.add_argument("--pan-weight", type=float, default=4.0,
+                        help="pan-swap residual weight during profile fitting")
+    parser.add_argument("--mirror-hard-right", action="store_true",
+                        help="mirror the fitted hard-right response after steering")
     parser.add_argument("--wander-from", type=Path,
                         help="fit damped image wander on top of a prior one-preset fit JSON")
     parser.add_argument("--json", type=Path)
@@ -322,12 +370,23 @@ def main() -> int:
         parser.error("--wander-from requires exactly one --preset")
     base_profile = None
     if args.wander_from:
-        base_profile = json.loads(args.wander_from.read_text())["results"][0]["profile"]
+        prior = json.loads(args.wander_from.read_text())["results"]
+        if not prior:
+            parser.error(f"--wander-from file {args.wander_from} has no results")
+        if prior[0].get("preset") != selected[0]:
+            parser.error(f"--wander-from file {args.wander_from} was fitted for "
+                         f"{prior[0].get('preset')!r}, not {selected[0]!r}")
+        base_profile = prior[0]["profile"]
+    initial_profile = ([float(value) for value in args.initial_profile.split(",")]
+                       if args.initial_profile else None)
     results = []
     for i, preset in enumerate(selected, 1):
         print(f"[{i}/{len(selected)}] {preset}", flush=True)
-        result = (fit_wander_preset(preset, args.root, base_profile)
-                  if base_profile is not None else fit_preset(preset, args.root, args.thorough))
+        result = (fit_wander_preset(preset, args.root, base_profile, args.thorough)
+                  if base_profile is not None else
+                  fit_preset(preset, args.root, args.thorough, args.pan_rotation,
+                             initial_profile, args.pan_weight,
+                             args.mirror_hard_right))
         results.append(result)
         profile = ",".join(f"{v:.6g}" for v in result["profile"])
         print(f"  {profile}  rms={result['fit_rms']:.3f}  "

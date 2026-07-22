@@ -2016,6 +2016,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                                     profile->middleK[0], profile->middleK[1], profile->middleK[2],
                                     profile->lateK[0], profile->lateK[1], profile->lateK[2],
                                     profile->holdMs, profile->fastReleaseMs, profile->slowReleaseMs);
+        engine.setPostSteerPanRotation (profile->panRotationRadians);
+        engine.setPostSteerHardRightMirror (profile->mirrorHardRight);
         engine.setPostSteerWander (profile->wanderDepth[0], profile->wanderDepth[1],
                                    profile->wanderDepth[2], profile->wanderRateHz,
                                    profile->wanderDecayMs, profile->wanderPhase);
@@ -2024,6 +2026,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     {
         engine.setPostSteerProfile (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        engine.setPostSteerPanRotation (0.0f);
+        engine.setPostSteerHardRightMirror (false);
         engine.setPostSteerWander (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
     }
     if (const char* profile = tuningEnv().poststeerprofile;
@@ -2032,12 +2036,17 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         float earlyL = 0.0f, earlyM = 0.0f, earlyH = 0.0f;
         float middleL = 0.0f, middleM = 0.0f, middleH = 0.0f;
         float lateL = 0.0f, lateM = 0.0f, lateH = 0.0f;
-        float holdMs = 0.0f, fastMs = 0.0f, slowMs = 0.0f;
-        if (std::sscanf (profile, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
+        float holdMs = 0.0f, fastMs = 0.0f, slowMs = 0.0f, panRotation = 0.0f;
+        const int parsed = std::sscanf (profile, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
                          &earlyL, &earlyM, &earlyH, &middleL, &middleM, &middleH,
-                         &lateL, &lateM, &lateH, &holdMs, &fastMs, &slowMs) == 12)
+                         &lateL, &lateM, &lateH, &holdMs, &fastMs, &slowMs, &panRotation);
+        if (parsed >= 12)
+        {
             engine.setPostSteerProfile (earlyL, earlyM, earlyH, middleL, middleM, middleH,
                                         lateL, lateM, lateH, holdMs, fastMs, slowMs);
+            engine.setPostSteerPanRotation (parsed == 13 ? panRotation : 0.0f);
+            engine.setPostSteerHardRightMirror (false);
+        }
     }
 
     // The Dattorro and Quad tanks historically summed their input to mono.

@@ -50,7 +50,8 @@ enum class InputPan
 };
 
 Render renderDattorro (float steerAmount, InputPan inputPan,
-                       float nativeStereoAmount = 0.0f, bool profileEnabled = false)
+                       float nativeStereoAmount = 0.0f, bool profileEnabled = false,
+                       float panRotationRadians = 0.0f, bool mirrorHardRight = false)
 {
     DuskVerbEngine engine;
     engine.prepare (kSampleRate, kBlockSize);
@@ -66,6 +67,8 @@ Render renderDattorro (float steerAmount, InputPan inputPan,
                                     0.4f, -0.3f, 0.2f,
                                     75.0f, 40.0f, 300.0f);
         engine.setPostSteerWander (-0.5f, 0.25f, 0.75f, 1.8f, 1500.0f, 0.2f);
+        engine.setPostSteerPanRotation (panRotationRadians);
+        engine.setPostSteerHardRightMirror (mirrorHardRight);
     }
 
     Render render { std::vector<float> (kRenderSamples, 0.0f),
@@ -113,6 +116,12 @@ void testPresetCalibrationWiring()
         DuskVerbStereoImage::kPresetCalibrations.end(),
         [] (const auto& calibration) { return calibration.hasMeasuredAnchor; });
     check (anchored == 18, "the calibration table distinguishes 18 anchors from two design-led presets");
+    check (std::none_of (DuskVerbStereoImage::kPresetCalibrations.begin(),
+                         DuskVerbStereoImage::kPresetCalibrations.end(),
+                         [] (const auto& calibration) {
+                             return std::abs (calibration.nativeStereoAmount) > 1.0e-6f;
+                         }),
+           "factory presets keep native tank-side injection disabled");
 
     DuskVerbEngine engine;
     engine.prepare (kSampleRate, kBlockSize);
@@ -142,7 +151,7 @@ void testCentredInputIsBitIdentical()
 {
     const auto off = renderDattorro (0.0f, InputPan::centre);
     const auto on = renderDattorro (0.97f, InputPan::centre);
-    const auto profiled = renderDattorro (0.0f, InputPan::centre, 0.0f, true);
+    const auto profiled = renderDattorro (0.0f, InputPan::centre, 0.0f, true, 0.7f, true);
     const auto nativeStereo = renderDattorro (0.0f, InputPan::centre, 2.0f, false);
     const auto bytes = static_cast<size_t> (kRenderSamples) * sizeof (float);
 
@@ -151,7 +160,7 @@ void testCentredInputIsBitIdentical()
            "centred input stays bit-identical with post-steer enabled");
     check (std::memcmp (off.left.data(), profiled.left.data(), bytes) == 0
                && std::memcmp (off.right.data(), profiled.right.data(), bytes) == 0,
-           "centred input stays bit-identical with profile and image wander enabled");
+           "centred input stays bit-identical with every calibrated final-image operation enabled");
     check (std::memcmp (off.left.data(), nativeStereo.left.data(), bytes) == 0
                && std::memcmp (off.right.data(), nativeStereo.right.data(), bytes) == 0,
            "centred input stays bit-identical with native tank-side injection enabled");
@@ -187,6 +196,19 @@ void testHardPannedInputRetainsSourceSide()
               << " dB off -> " << deSteeredIld << " dB on\n";
     check (leftOffIld - deSteeredIld >= 1.5f,
            "negative post-steer reduces an engine's existing source-side over-lean");
+
+    const auto profiled = renderDattorro (0.0f, InputPan::left, 0.0f, true);
+    const auto rotated = renderDattorro (0.0f, InputPan::left, 0.0f, true, 0.65f);
+    const auto bytes = static_cast<size_t> (kRenderSamples) * sizeof (float);
+    check (std::memcmp (profiled.left.data(), rotated.left.data(), bytes) != 0
+               || std::memcmp (profiled.right.data(), rotated.right.data(), bytes) != 0,
+           "hard-panned input activates the source-keyed output rotation");
+
+    const auto rightProfiled = renderDattorro (0.0f, InputPan::right, 0.0f, true);
+    const auto rightMirrored = renderDattorro (0.0f, InputPan::right, 0.0f, true, 0.0f, true);
+    check (std::memcmp (rightProfiled.left.data(), rightMirrored.right.data(), bytes) == 0
+               && std::memcmp (rightProfiled.right.data(), rightMirrored.left.data(), bytes) == 0,
+           "hard-right mirror swaps channels without changing their samples");
 }
 } // namespace
 

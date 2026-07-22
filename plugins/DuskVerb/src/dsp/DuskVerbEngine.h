@@ -358,6 +358,8 @@ public:
                               float middleLowK, float middleMidK, float middleHighK,
                               float lateLowK, float lateMidK, float lateHighK,
                               float holdMs, float fastReleaseMs, float slowReleaseMs);
+    void setPostSteerPanRotation (float radians);
+    void setPostSteerHardRightMirror (bool enabled);
     void setPostSteerWander (float lowDepth, float midDepth, float highDepth,
                              float rateHz, float decayMs, float phaseRadians);
     float getPostSteerAmount() const noexcept { return psAmount_; }
@@ -914,6 +916,8 @@ private:
     float psProfileGainCoeff_ = 0.0f;
     float psProfileGainL_[3] = { 1.0f, 1.0f, 1.0f };
     float psProfileGainR_[3] = { 1.0f, 1.0f, 1.0f };
+    float psPanRotationRadians_ = 0.0f;
+    bool  psMirrorHardRight_ = false;
     float psBandLp1Coeff_ = 0.0f, psBandLp2Coeff_ = 0.0f;
     float psBandLp1L_ = 0.0f, psBandLp1R_ = 0.0f;
     float psBandLp2L_ = 0.0f, psBandLp2R_ = 0.0f;

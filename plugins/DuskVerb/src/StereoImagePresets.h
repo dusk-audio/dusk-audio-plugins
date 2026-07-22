@@ -23,6 +23,8 @@ struct SteerProfile
     float holdMs;
     float fastReleaseMs;
     float slowReleaseMs;
+    float panRotationRadians = 0.0f;
+    bool mirrorHardRight = false;
     std::array<float, 3> wanderDepth { 0.0f, 0.0f, 0.0f };
     float wanderRateHz = 0.0f;
     float wanderDecayMs = 0.0f;
@@ -32,25 +34,27 @@ struct SteerProfile
 // Issue #123 anchor-matched calibration. Positive amounts retain the source-side
 // lean in the wet tail; negative amounts reduce an engine's existing over-lean.
 // A zero entry is intentional and documents that the preset already matches its
-// anchor (or is natively true stereo). Surf '63 Spring and 1981 Gated Snare do
+// anchor. Native tank injection remains disabled because it changes the
+// decorrelated-stereo fleet transfers; source provenance is restored only in
+// the final image stage. Surf '63 Spring and 1981 Gated Snare do
 // not have external anchors; the gated preset's 0.38 value retains the neutral
 // +3 dB source-side target used for its ear pass without claiming an anchor fit.
 inline constexpr std::array<PresetCalibration, 20> kPresetCalibrations = {{
     { "Vocal Plate",           0.35f, 0.00f,  2.90f, true  },
-    { "Vintage Vocal Plate",  -0.10f, 2.00f, -0.68f, true  },
-    { "Drum Plate",            0.12f, 1.00f,  1.81f, true  },
-    { "Vintage Gold Plate",    0.00f, 1.00f, -0.44f, true  },
+    { "Vintage Vocal Plate",  -0.10f, 0.00f, -0.68f, true  },
+    { "Drum Plate",            0.12f, 0.00f,  1.81f, true  },
+    { "Vintage Gold Plate",    0.00f, 0.00f, -0.44f, true  },
     { "Surf '63 Spring",       0.00f, 0.00f, 26.00f, false },
     { "Bright Hall",           0.48f, 0.00f,  4.85f, true  },
     { "Vocal Hall",            0.40f, 0.00f,  7.04f, true  },
     { "Cathedral Large Hall",  0.97f, 0.00f, 11.87f, true  },
     { "Blade Runner 224",      0.29f, 0.00f,  2.38f, true  },
-    { "79 Vocal Chamber",      0.00f, 1.10f,  0.11f, true  },
+    { "79 Vocal Chamber",      0.00f, 0.00f,  0.11f, true  },
     { "Large Chamber",         0.29f, 0.00f,  2.17f, true  },
-    { "Small Drum Room",       0.42f, 1.00f,  3.80f, true  },
+    { "Small Drum Room",       0.42f, 0.00f,  3.80f, true  },
     { "Medium Drum Room",     -0.32f, 0.00f,  2.41f, true  },
-    { "Live Room",            -0.34f, 1.00f,  0.44f, true  },
-    { "Tiled Room",            0.23f, 2.00f,  0.96f, true  },
+    { "Live Room",            -0.34f, 0.00f,  0.44f, true  },
+    { "Tiled Room",            0.23f, 0.00f,  0.96f, true  },
     { "Ambience",              0.29f, 0.00f,  5.32f, true  },
     { "1981 Gated Snare",      0.38f, 0.00f,  3.00f, false },
     { "Reverse Taps",          0.00f, 0.00f, -0.10f, true  },
@@ -59,18 +63,17 @@ inline constexpr std::array<PresetCalibration, 20> kPresetCalibrations = {{
 }};
 
 // Three-band, causal wet-image profiles fitted against the hard-left/right
-// anchor transfers. The three unlisted anchored presets (79 Vocal Chamber,
-// Vintage Gold Plate, and Black Hole) pass without steering. Centre input is
-// an exact bypass in the DSP stage.
-inline constexpr std::array<SteerProfile, 15> kSteerProfiles = {{
+// anchor transfers. Black Hole is the one anchored preset that passes without
+// steering. Centre input is an exact bypass in the DSP stage.
+inline constexpr std::array<SteerProfile, 17> kSteerProfiles = {{
     { "Vocal Plate",          {-0.999194f, -0.999860f, -0.999894f},
                               { 0.999900f,  0.999900f,  0.999900f},
                               {-0.198594f, -0.387628f, -0.076121f},
                                 3.325498f,  32.484969f,  213.060025f },
-    { "Drum Plate",           { 0.999115f, -0.964484f,  0.620021f},
-                              { 0.163756f, -0.999529f,  0.166394f},
-                              {-0.651113f,  0.812543f, -0.303058f},
-                              347.292363f,  19.817494f,  162.829810f },
+    { "Drum Plate",           { 0.947227f,  0.998064f,  0.999269f},
+                              { 0.484463f, -0.805081f, -0.996710f},
+                              { 0.671388f,  0.998899f,  0.987155f},
+                              187.033139f,  85.776716f,  774.194570f, 0.668532f },
     { "Bright Hall",          {-0.938968f,  0.333632f,  0.962742f},
                               {-0.999857f,  0.982228f, -0.999900f},
                               { 0.167645f, -0.999447f,  0.523451f},
@@ -86,21 +89,25 @@ inline constexpr std::array<SteerProfile, 15> kSteerProfiles = {{
     { "Blade Runner 224",     {-0.175468f,  0.999900f,  0.999900f},
                               {-0.999900f, -0.999900f, -0.999900f},
                               {-0.295770f, -0.044678f,  0.060637f},
-                              133.739919f,  52.643493f,  222.425826f,
+                              133.739919f,  52.643493f,  222.425826f, 0.0f, false,
                               {-0.681895f,  0.000003f,  1.496012f},
                                 1.878793f, 2068.029951f, 0.153856f },
-    { "Small Drum Room",      {-0.990000f,  0.900000f,  0.900000f},
-                              {-0.999000f, -0.999000f, -0.999000f},
-                              {-0.300000f, -0.300000f, -0.400000f},
-                               80.000000f,  15.000000f,   80.000000f },
+    { "79 Vocal Chamber",     { 0.713189f,  0.804158f,  0.973464f},
+                              {-0.999856f,  0.332188f, -0.593810f},
+                              { 0.999899f, -0.123397f,  0.263541f},
+                               43.306503f,  55.062665f, 1039.310324f, 0.636051f },
+    { "Small Drum Room",      { 0.999900f,  0.999900f,  0.999900f},
+                              {-0.735171f, -0.459336f, -0.981923f},
+                              {-0.804296f, -0.417391f,  0.426528f},
+                               60.345043f,  16.037267f,  292.452946f, 0.0f, true },
     { "Medium Drum Room",     { 0.999900f,  0.292492f, -0.999900f},
                               { 0.166396f,  0.968955f,  0.999900f},
                               {-0.999900f, -0.999900f,  0.999900f},
                               136.719830f, 100.546246f,  366.448283f },
-    { "Live Room",            { 0.972364f,  0.999900f, -0.712640f},
-                              { 0.982313f,  0.194656f, -0.999831f},
-                              {-0.523535f, -0.136194f,  0.759479f},
-                                2.098050f,  20.481730f,  202.218632f },
+    { "Live Room",            { 0.999900f,  0.999900f, -0.999900f},
+                              {-0.408853f, -0.517868f,  0.999270f},
+                              {-0.548337f, -0.406212f, -0.463270f},
+                              112.669409f,  93.065715f, 2790.370637f },
     { "Tiled Room",           {-0.951977f, -0.993095f,  0.999818f},
                               { 0.531915f,  0.174409f, -0.524205f},
                               { 0.809051f,  0.259909f, -0.173413f},
@@ -109,10 +116,14 @@ inline constexpr std::array<SteerProfile, 15> kSteerProfiles = {{
                               { 0.999900f,  0.035900f, -0.859175f},
                               {-0.999837f, -0.517147f,  0.999485f},
                                48.554750f, 192.573738f, 1232.075092f },
-    { "Vintage Vocal Plate",  {-0.248823f, -0.174873f, -0.114758f},
-                              { 0.993427f,  0.996914f,  0.355765f},
-                              {-0.996145f,  0.976762f, -0.999894f},
-                              533.636737f,  15.045375f,   42.930747f },
+    { "Vintage Vocal Plate",  {-0.983105f, -0.999900f, -0.999900f},
+                              {-0.996029f, -0.999900f, -0.737462f},
+                              {-0.998137f, -0.999900f, -0.534153f},
+                              127.269797f, 990.839420f, 15673.638796f, 0.722625f },
+    { "Vintage Gold Plate",   { 0.996742f,  0.999900f, -0.999886f},
+                              {-0.964123f,  0.991565f,  0.999900f},
+                              { 0.352246f,  0.999597f,  0.999900f},
+                              237.516126f,  74.286248f, 1084.571970f, 0.726260f },
     { "Large Chamber",        {-0.969331f, -0.803797f,  0.838036f},
                               {-0.998640f,  0.020109f,  0.999627f},
                               { 0.164799f, -0.282396f, -0.625336f},
