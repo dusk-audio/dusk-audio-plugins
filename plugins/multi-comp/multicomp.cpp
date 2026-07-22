@@ -5185,6 +5185,8 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     externalSidechain.setSize(numChannels, safeBlockSize);
     // Allocate interpolated sidechain for max 4x oversampling
     interpolatedSidechain.setSize(numChannels, safeBlockSize * 4);
+    // Float staging for the double-precision processBlock overload
+    doubleConvBuffer.setSize(numChannels, safeBlockSize);
 
     // Phase-coherent dry/wet mixer (compensates FIR anti-aliasing latency)
     dryWetMixer.prepare(sampleRate, samplesPerBlock, numChannels, 4);  // max 4x oversampling
@@ -6397,6 +6399,23 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             }
         }
 
+        // Convert M/S back to L/R before the early return — the normal-path
+        // decode further down is never reached from here. Decode BEFORE output
+        // metering and the bypass crossfade so both operate on L/R (the fade's
+        // dry reference in bypassFadeBuffer is raw L/R input).
+        if (useMidSide && numChannels >= 2)
+        {
+            float* mid = buffer.getWritePointer(0);
+            float* side = buffer.getWritePointer(1);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float m = mid[i];
+                float s = side[i];
+                mid[i] = m + s;   // Left = Mid + Side
+                side[i] = m - s;  // Right = Mid - Side
+            }
+        }
+
         // Update output meter AFTER auto-makeup gain is applied
         float outputLevel = 0.0f;
         float outputLevelL = 0.0f;
@@ -6998,28 +7017,29 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
 void UniversalCompressor::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
 {
-    // Convert double to float, process, then convert back
-    juce::AudioBuffer<float> floatBuffer(buffer.getNumChannels(), buffer.getNumSamples());
-    
-    // Convert double to float
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    // Convert double to float into the preallocated staging buffer, process,
+    // then convert back. avoidReallocating keeps this allocation-free unless
+    // the host exceeds the 8x-safe capacity from prepareToPlay (pathological).
+    const int numChannels = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
+    doubleConvBuffer.setSize(numChannels, numSamples, false, false, /*avoidReallocating*/ true);
+
+    for (int ch = 0; ch < numChannels; ++ch)
     {
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            floatBuffer.setSample(ch, i, static_cast<float>(buffer.getSample(ch, i)));
-        }
+        const double* src = buffer.getReadPointer(ch);
+        float* dst = doubleConvBuffer.getWritePointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+            dst[i] = static_cast<float>(src[i]);
     }
-    
-    // Process the float buffer
-    processBlock(floatBuffer, midiMessages);
-    
-    // Convert back to double
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+
+    processBlock(doubleConvBuffer, midiMessages);
+
+    for (int ch = 0; ch < numChannels; ++ch)
     {
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            buffer.setSample(ch, i, static_cast<double>(floatBuffer.getSample(ch, i)));
-        }
+        const float* src = doubleConvBuffer.getReadPointer(ch);
+        double* dst = buffer.getWritePointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+            dst[i] = static_cast<double>(src[i]);
     }
 }
 

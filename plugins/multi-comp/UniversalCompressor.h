@@ -289,6 +289,7 @@ private:
     juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal
     juce::AudioBuffer<float> externalSidechain;   // External sidechain input buffer
     juce::AudioBuffer<float> interpolatedSidechain;  // Pre-interpolated sidechain for oversampling
+    juce::AudioBuffer<float> doubleConvBuffer;       // Float staging for the double-precision processBlock overload
 
     // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
     // Replaces manual dryBuffer, oversampledDryBuffer, and delay line implementation
