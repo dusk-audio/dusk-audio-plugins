@@ -3775,6 +3775,9 @@ public:
         numChannels = numCh;
         this->maxBlockSize = maxBlockSize;
 
+        // Start the blend settled — a prepare is not a knob move.
+        mixRampCurrent = mixRampTarget;
+
         // Prepare crossover filters - LR4 requires separate filter instances per signal path
         // Each crossover has two cascaded stages (a and b) for 4th order response
         auto sz = static_cast<size_t>(numCh);
@@ -4047,8 +4050,12 @@ public:
             }
         }
 
-        // Whether a dry blend is needed (parallel mix < 100%).
-        bool needsDry = (mixPercent < 100.0f);
+        // The blend is ramped per sample (see mixRamp), so the dry reference is
+        // needed whenever the target is below 100% OR the ramp is still moving
+        // towards it — otherwise the tail of a move to 100% would have nothing
+        // to blend against and would step instead of finishing its fade.
+        mixRampTarget = juce::jlimit(0.0f, 1.0f, mixPercent * 0.01f);
+        bool needsDry = (mixRampTarget < 1.0f) || (mixRampCurrent != mixRampTarget);
 
         // Split the input signal into 4 bands using crossover filters
         splitIntoBands(buffer, numSamples, channels);
@@ -4132,19 +4139,28 @@ public:
             buffer.applyGain(outGain);
         }
 
-        // Mix with dry signal (parallel compression)
+        // Mix with dry signal (parallel compression), ramped per sample so
+        // moving the knob does not step the gain at every block boundary.
         if (needsDry)
         {
-            float wetAmount = mixPercent / 100.0f;
-            float dryAmount = 1.0f - wetAmount;
+            const float maxStep = static_cast<float>(1.0 / (kMixRampSeconds * juce::jmax(1.0, sampleRate)));
 
-            for (int ch = 0; ch < channels; ++ch)
+            for (int i = 0; i < numSamples; ++i)
             {
-                float* out = buffer.getWritePointer(ch);
-                const float* dry = tempBuffer.getReadPointer(ch);
-
-                for (int i = 0; i < numSamples; ++i)
+                if (mixRampCurrent != mixRampTarget)
                 {
+                    const float diff = mixRampTarget - mixRampCurrent;
+                    mixRampCurrent = (std::abs(diff) <= maxStep) ? mixRampTarget
+                                                                 : mixRampCurrent + (diff > 0.0f ? maxStep : -maxStep);
+                }
+
+                const float wetAmount = mixRampCurrent;
+                const float dryAmount = 1.0f - wetAmount;
+
+                for (int ch = 0; ch < channels; ++ch)
+                {
+                    float* out = buffer.getWritePointer(ch);
+                    const float* dry = tempBuffer.getReadPointer(ch);
                     out[i] = out[i] * wetAmount + dry[i] * dryAmount;
                 }
             }
@@ -4474,6 +4490,12 @@ private:
     // safeBlockSize idiom) so a larger host block can't overflow the split.
     static constexpr int kOversizeFactor = 8;
     int allocatedBlockSize = 512 * kOversizeFactor;
+
+    // Per-sample dry/wet ramp (matches DryWetMixer's 20 ms). Without it the
+    // blend stepped once per block and clicked while the knob moved.
+    static constexpr double kMixRampSeconds = 0.02;
+    float mixRampTarget = 1.0f;
+    float mixRampCurrent = 1.0f;
 
 public:
     void updateSampleRate(double newSampleRate)
@@ -5621,10 +5643,14 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         mixAmount = *mixParam * 0.01f; // Convert to 0-1
     }
 
-    // Track whether we need dry/wet mixing for parallel compression
-    // The actual dry capture happens at oversampled rate (in the oversampling section)
-    // for phase-coherent mixing that prevents comb filtering
-    bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
+    // Dry capture runs whenever we are in the normal processing path, not only
+    // when the knob sits between the endpoints. The mixer ramps the mix per
+    // sample (20 ms) and keeps its delay ring fed from the captured dry, so
+    // skipping capture at exactly 100 % wet would (a) leave the ring stale for
+    // the first blocks after the knob comes back down and (b) force a jump from
+    // "no mix" to "mid-ramp mix". At a settled 1.0 the blend multiplies dry by
+    // exactly 0, so this is bit-identical to the old wet-only output.
+    bool needsDryBuffer = true;
 
     // Save latency-aligned dry signal for bypass crossfade.
     // The wet path includes lookahead delay, so the dry reference must be delayed
@@ -5676,31 +5702,17 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
     }
 
-    // At 0% mix (100% dry), skip all processing. Keep the constant reported latency (do NOT zero it
-    // from the audio thread — see issue #106 in the bypass path) and time-align the dry output.
-    if (mixAmount <= 0.001f)
-    {
-        const int bypassChannels = buffer.getNumChannels();
-        const int bypassSamples = buffer.getNumSamples();
-
-        // Update meters to show input = output
-        for (int ch = 0; ch < bypassChannels; ++ch)
-        {
-            float rms = 0.0f;
-            const float* data = buffer.getReadPointer(ch);
-            for (int i = 0; i < bypassSamples; ++i)
-                rms += data[i] * data[i];
-            rms = std::sqrt(rms / static_cast<float>(bypassSamples));
-
-            if (ch == 0)
-                linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
-            else
-                linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
-        }
-        grMeter.store(0.0f, std::memory_order_relaxed);
-        emitLatencyAlignedDry(buffer);  // dry, delayed by the constant reported latency
-        return;
-    }
+    // NOTE: 0% mix (100% dry) deliberately runs the FULL processing path.
+    // There used to be an early return here that skipped everything and emitted
+    // dry via emitLatencyAlignedDry. It cost a click at both ends of the knob:
+    // skipping the chain starved the oversampler's FIR state, so coming back off
+    // 0% resumed from stale filter history (measured as a full-amplitude step),
+    // and with internal oversampling off the two dry sources were 218 samples
+    // apart. The blend at a settled 0% already yields exact dry through the
+    // normal path, correctly aligned, with every filter kept warm. Bypass still
+    // uses emitLatencyAlignedDry — there the host's PDC makes it the right
+    // answer, and no state has to survive the gap.
+    dryWetMixer.setTargetMix(mixAmount);
 
     // Internal oversampling — default true, but hosts that want a 1x default
     // (and an external/global quality switch) can flip it off via
@@ -6468,7 +6480,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // lookahead tracking section above. All other modes add zero group delay.
 
         // Capture dry at oversampled rate so both paths share the downsampling filter
-        bool needsOversampledDry = needsDryBuffer && (mixAmount < 0.999f);
+        bool needsOversampledDry = needsDryBuffer;
         if (needsOversampledDry)
         {
             // Use shared DryWetMixer for phase-coherent capture

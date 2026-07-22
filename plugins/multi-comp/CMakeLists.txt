@@ -240,6 +240,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     # --- Factory-preset level gate (catches units-mismatch mutes, e.g. opto_gain) ---
     multicomp_add_functional_test(MultiCompPresetLevelTest tests/test_preset_levels.cpp)
+
+    # --- Mix-knob ramp / click gate ---
+    multicomp_add_functional_test(MultiCompMixRampTest tests/test_mix_ramp_click.cpp)
 endif()
 
 # Optional: Build unit tests
