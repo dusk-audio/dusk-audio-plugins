@@ -198,6 +198,70 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     )
 
     add_dependencies(MultiCompBypassAutoGainTest MultiComp_All)
+
+    # --- Issue #114: Multiband dry/wet mix comb-filter regression test ---
+    add_executable(MultiCompMixCombTest
+        tests/test_multiband_mix_comb.cpp
+    )
+    target_include_directories(MultiCompMixCombTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
+    )
+    target_compile_definitions(MultiCompMixCombTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+    target_compile_features(MultiCompMixCombTest PRIVATE cxx_std_17)
+    target_link_libraries(MultiCompMixCombTest
+        PRIVATE
+            MultiComp
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+    add_dependencies(MultiCompMixCombTest MultiComp_All)
+
+    # --- Sidechain functional test (external SC keys compression) ---
+    add_executable(MultiCompSidechainTest
+        tests/test_sidechain.cpp
+    )
+    target_include_directories(MultiCompSidechainTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
+    )
+    target_compile_definitions(MultiCompSidechainTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+    target_compile_features(MultiCompSidechainTest PRIVATE cxx_std_17)
+    target_link_libraries(MultiCompSidechainTest
+        PRIVATE
+            MultiComp
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+    add_dependencies(MultiCompSidechainTest MultiComp_All)
 endif()
 
 # Optional: Build unit tests
