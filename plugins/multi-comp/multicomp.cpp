@@ -1036,8 +1036,12 @@ public:
         buffer.setSize(numChannels, maxLookaheadSamples);
         buffer.clear();
 
-        // Initialize write positions
-        writePositions.resize(static_cast<size_t>(numChannels), 0);
+        // Zero ALL write positions. resize(n, 0) only value-initializes NEW
+        // elements — after a re-prepare at a lower sample rate the buffer
+        // shrinks but the old indices survived, and the first processSample
+        // wrote past the end (ASan-confirmed heap overflow; pluginval's fuzz
+        // hit it as intermittent teardown heap corruption).
+        writePositions.assign(static_cast<size_t>(numChannels), 0);
 
         currentLookaheadSamples = 0;
     }
@@ -1070,6 +1074,11 @@ public:
         {
             int& writePos = writePositions[static_cast<size_t>(channel)];
             int bufferSize = maxLookaheadSamples;
+
+            // Safety net: never index with a position from a previous sizing
+            // (belt to prepare()'s assign-suspenders; costs one compare).
+            if (writePos >= bufferSize)
+                writePos = 0;
 
             // Read position is lookaheadSamples behind write position
             int readPos = (writePos - lookaheadSamples + bufferSize) % bufferSize;

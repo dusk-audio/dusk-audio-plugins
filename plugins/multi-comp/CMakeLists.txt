@@ -249,6 +249,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     # --- State-restore integrity (pluginval L10 bool-param flake, deterministic) ---
     multicomp_add_functional_test(MultiCompStateRestoreTest tests/test_state_restore.cpp)
+
+    # --- Parameter fuzz (pluginval "Fuzz parameters" replica; run under ASan) ---
+    multicomp_add_functional_test(MultiCompParamFuzzTest tests/test_param_fuzz.cpp)
 endif()
 
 # Optional: Build unit tests
