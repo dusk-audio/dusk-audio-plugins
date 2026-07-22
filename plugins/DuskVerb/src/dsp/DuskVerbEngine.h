@@ -329,6 +329,8 @@ public:
                                   float atkMs, float relFastMs, float relSlowMs);
     // QuadTank wet-output stereo chorus/ensemble (79VC "phasey" character); depth 0 = bit-null.
     void setQuadStereoMod (float rateHz, float depth);
+    // QuadTank stereo-input injection (issue #123); amount 0 = OFF/default = bit-null.
+    void setQuadStereoInput (float amount);
     // Per-pass HF-sustain compensation shelf (top-octave cliff / "muffle" fix) —
     // Dattorro + DenseHall; 0 dB = bit-null.
     void setTankHFSustain (float db, float cornerHz);
@@ -344,8 +346,14 @@ public:
     void setSustainLimiterLow (float loHz, float hiHz, float threshDb, float maxCutDb,
                                float atkMs, float relFastMs, float relSlowMs);
     void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
+    void setPmbStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
+    // #123 (agent 8) — engine-agnostic post-tank source-side ILD steer applied to
+    // the FINAL wet, keyed off the clean dry-input balance, BEFORE the Mono Maker /
+    // width stage. amount 0 = off = bit-identical. No preset calls it yet.
+    void setPostSteer (float amount);
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
+    void setDenseHallStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
     // FORK A: discrete early-reflection tap (the "duh-duh"). ms ~90-110, gain 0=off.
     void setReflectionTap (float ms, float gain, float lpFc = 11000.0f);  // lpFc: tap rolloff (11k=sharp tick, ~5-6k=fuller/softer)
     void setEarlyTapBank  (const float* timesMs, const float* gains, int count, float lpFc = 9000.0f);  // up to 8 discrete ER taps at anchor-measured times; count 0 = off/bit-null
@@ -848,7 +856,35 @@ private:
 
     void updateLoCutCoeffs (float hz);
     void updateHiCutCoeffs (float hz);
+    void applyStereoImageBiasOverride();   // #123 DUSKVERB_STEREOBIAS calibration hook (prepare, message thread)
     void recomputeTankFeedCoeffs();   // tank-feed shelf coeffs from stored Fc at sampleRate_
     void recomputeTankOnsetSamples(); // tank-onset sample count from tankOnsetMs_ at sampleRate_
     void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
+    void applyPostSteerOverride();    // #123 DUSKVERB_POSTSTEER calibration hook (prepare, message thread)
+
+    // ---- Post-tank stereo image steer (issue #123, agent 8) — declared LAST ----
+    // Engine-agnostic source-side energy lean on the FINAL wet, keyed off the clean
+    // dry-input L/R balance, downstream of every engine and BEFORE the Mono Maker /
+    // width M/S stage. Restores the +2..+4 dB tail ILD a hard-panned input loses in
+    // the tanks — the mechanism the per-engine output-tap reweighting could not
+    // reach (DenseHall ceilinged at +0.76 dB, PMB +0.20 dB).
+    //
+    // Declared LAST so existing member offsets are unchanged and the disabled path's
+    // codegen stays byte-identical (Lessons #2). postSteerActive_ false → the whole
+    // per-sample block is skipped → bit-null. Centered input → psEnvL_==psEnvR_ →
+    // b==0 exactly → gl==gr==sqrt(1)==1.0f → wet × 1.0f → byte-identical even ON.
+    // raised 2026-07-20 to reach the Cathedral anchor's +11.9 dB lean (k=0.875); at full
+    // k the opposite channel drops ~-10 dB — per-preset amounts are calibrated, presets
+    // never receive raw 1.0 blindly.
+    static constexpr float kPostSteerKMax = 0.9f;
+    float psAmount_        = 0.0f;   // -1..+1 from setPostSteer(); 0 = off (negative = lean away from source side)
+    bool  postSteerActive_ = false;  // |psAmount_| > 0
+    float psK_             = 0.0f;   // kPostSteerKMax * psAmount_ (precomputed; may be negative)
+    float psAtkCoeff_      = 0.0f;   // dry-balance follower attack one-pole (tau set in prepare)
+    float psRelCoeff_      = 0.0f;   // dry-balance follower release one-pole (tau set in prepare)
+    float psGainCoeff_     = 0.0f;   // applied-gain smoother one-pole, anti-zipper (tau set in prepare)
+    float psEnvL_          = 0.0f;   // dry-L amplitude envelope
+    float psEnvR_          = 0.0f;   // dry-R amplitude envelope
+    float psGainL_         = 1.0f;   // smoothed applied L gain (starts at unity)
+    float psGainR_         = 1.0f;   // smoothed applied R gain
 };

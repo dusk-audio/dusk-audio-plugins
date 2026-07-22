@@ -187,6 +187,12 @@ void QuadTank::process (const float* inputL, const float* inputR,
         if (frozen_)
             input = 0.0f;
 
+        // Stereo-input side term (issue #123). Zero (and branch-free-equivalent)
+        // when the feature is off or frozen, so the legacy mono path is unchanged.
+        const float side = (stereoInputActive_ && ! frozen_)
+                         ? (inputL[i] - inputR[i]) * 0.5f
+                         : 0.0f;
+
         // Phase 2: advance master sine ONCE per sample (not per tank).
         if (useCoherent)
             coherentLfo_.advance();
@@ -222,6 +228,10 @@ void QuadTank::process (const float* inputL, const float* inputR,
             const float otherCrossFeed = kCrossFeedFwd  * cf[prev]
                                        + kCrossFeedBack * cf[next];
             float tankIn = input + otherCrossFeed;
+            // Stereo-input injection appended AFTER the untouched legacy tankIn (see
+            // header). Skipped entirely when inactive => byte-identical to legacy.
+            if (stereoInputActive_)
+                tankIn += stereoInjectCoeff_[t] * side;
 
             // --- Modulated allpass (decay diffusion 1) ---
             // Phase 2: in CoherentLoop mode, read from master sine at this
@@ -404,6 +414,44 @@ void QuadTank::setMidMultiply (float mult)
 void QuadTank::setSaturation (float amount)
 {
     saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
+}
+
+void QuadTank::setStereoInput (float amount)
+{
+    // See header. amount 0 => inactive => bit-null (default; no preset enables it).
+    //
+    // DEAD LEVER — TWO INDEPENDENT WALLS (issue #123, measured 2026-07-20). The task
+    // was to feed mono + amount*side into two tanks and mono - amount*side into the
+    // other two, choosing the pairing by which tanks' taps dominate outL vs outR.
+    //
+    // WALL 1 (weak): a tap-ownership sweep (all 3 pairings + sign flip, algo 3,
+    // hard-L/R burst) showed ownership is effectively SYMMETRIC — every output channel
+    // taps 12 signed taps from all 4 tanks at equal power, AND the lossless
+    // bidirectional cross-feed (kCrossFeedFwd 0.733 + kCrossFeedBack 0.267, ρ=1)
+    // homogenizes the injected side across all 4 tanks within ~one loop pass. Tail ILD
+    // SATURATES at ~+0.23 dB even at amount=4 (L-pan ILD: a1 -0.16, a2 +0.13, a3 +0.21,
+    // a4 +0.23) — far short of the +2 dB target.
+    //
+    // WALL 2 (incorrect): this injection keys on (inputL - inputR) at the QuadTank
+    // input, which is DOWNSTREAM of the engine's tank input diffuser (DuskVerbEngine
+    // step 3, a Schroeder cascade with different L/R delays). That diffuser
+    // decorrelates even a centred/mono source into distinct L/R, so the "side" here is
+    // contaminated by diffuser decorrelation rather than being pure source side. With
+    // the feature ON a CENTRED burst changes by only -10.8 dB vs OFF (rule 2 requires
+    // <-100 dB) — it breaks the mono/centred-null guarantee. The output-tap
+    // constant-power fallback is likewise invalid: the legacy mono sum (input =
+    // (L+R)*0.5) discards source provenance inside the tank (baseline L-pan and R-pan
+    // ILD are identical -0.67 dB), so a static output bias would lean centred input too.
+    //
+    // Parked default-OFF (bit-null when off; NO preset enables it). Kept as a documented
+    // negative result + reproducible env lever (DUSKVERB_STEREOBIAS); the {1,2}|{0,3}
+    // sign pattern below is the best (correct-sign) pairing measured. A real fix needs
+    // BOTH a source-side signal captured PRE-diffuser and a cross-feed decoupling.
+    const float a = std::clamp (amount, 0.0f, 4.0f);
+    static constexpr float kSideSign[kNumTanks] = { -1.0f, +1.0f, +1.0f, -1.0f };  // {1,2}|{0,3}
+    for (int t = 0; t < kNumTanks; ++t)
+        stereoInjectCoeff_[t] = a * kSideSign[t];
+    stereoInputActive_ = a > 1.0e-6f;
 }
 
 void QuadTank::setTrebleMultiply (float mult)
