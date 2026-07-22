@@ -102,7 +102,7 @@ inline std::vector<Preset> getFactoryPresets()
         4.0f,                         // Unused (controlled by fetRatio)
         0.5f,                         // Attack: ~500µs
         60.0f,                        // Release: 60ms (Fast!)
-        4.0f,                         // Makeup
+        -11.0f,                       // Makeup: offsets the +20 input drive (was +4 = +16.5 dB hot)
         100.0f,                       // Mix
         100.0f,                       // HPF to prevent popping on plosives
         false,
@@ -174,7 +174,7 @@ inline std::vector<Preset> getFactoryPresets()
         20.0f,
         0.8f,                         // Attack: ~800µs (clamped to 1ms by ABI lag)
         150.0f,                       // Release: 150ms (lets the ABI plateau develop)
-        12.0f,
+        -8.0f,                        // Makeup: offsets the +24 input drive (was +12 = +21.1 dB hot)
         100.0f,
         60.0f,
         false,
@@ -222,7 +222,7 @@ inline std::vector<Preset> getFactoryPresets()
         4.0f,
         0.8f,                         // Attack: ~800µs (Slowest FET attack)
         250.0f,                       // Release: 250ms (Medium to reduce flutter)
-        5.0f,
+        -8.0f,                        // Makeup: offsets the +15 input drive (was +5 = +14.5 dB hot)
         100.0f,
         40.0f,
         false,
