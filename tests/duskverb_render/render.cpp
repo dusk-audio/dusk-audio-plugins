@@ -844,7 +844,11 @@ int main (int argc, char** argv)
     // headroom, render through the configured engine, write to
     // {outDir}/{slug}_stem.wav. Lets users A/B real-world stems against
     // Lexicon reference renders without going through a DAW.
-    juce::String inputWavPath;
+    // May be repeated. A single --input-wav keeps the legacy {slug}_stem.wav
+    // name; repeated inputs become {slug}_{input-file-stem}_stem.wav. Each is
+    // rendered after an independent reset + preroll, but through the same
+    // hosted plugin instance (important for slow yabridge reference audits).
+    std::vector<juce::String> inputWavPaths;
     juce::String programArg;            // factory program by name
     int          programIndex   = -1;   // factory program by index
     juce::String saveStatePath;         // dump getStateInformation bytes here after preset
@@ -902,7 +906,7 @@ int main (int argc, char** argv)
         else if (a == "--aupreset"  && i + 1 < argc) aupresetPath = argv[++i];
         else if (a == "--slug"      && i + 1 < argc) slugArg      = argv[++i];
         else if (a == "--output-dir" && i + 1 < argc) outDirArg   = argv[++i];
-        else if (a == "--input-wav"  && i + 1 < argc) inputWavPath= argv[++i];
+        else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
         else if (a == "--program-index" && i + 1 < argc)
                                                      programIndex = juce::String (argv[++i]).getIntValue();
@@ -1743,13 +1747,21 @@ int main (int argc, char** argv)
     plugin->reset();
     runPreroll (prerunSeconds);
 
-    // ---- Render 2b: arbitrary stem (--input-wav) ----
-    // Loads any user-supplied WAV, pads with 6 seconds of silence so the
-    // reverb tail fully decays, processes through the active engine,
-    // writes to {outDir}/{slug}_stem.wav. Independent of the built-in
-    // snare/sine/noiseburst test-signal slots.
-    if (inputWavPath.isNotEmpty())
+    // ---- Render 2b: arbitrary stems (--input-wav, repeatable) ----
+    // Loads each user-supplied WAV, pads with 6 seconds of silence so the
+    // reverb tail fully decays, and resets + prerolls between inputs. A single
+    // input preserves the legacy {slug}_stem.wav name; repeated inputs include
+    // the input filename stem so left/right/center reference captures can share
+    // one hosted plugin instance without sharing DSP state.
+    for (size_t inputIndex = 0; inputIndex < inputWavPaths.size(); ++inputIndex)
     {
+        if (inputIndex > 0)
+        {
+            plugin->reset();
+            runPreroll (prerunSeconds);
+        }
+
+        const auto& inputWavPath = inputWavPaths[inputIndex];
         juce::File stemFile (inputWavPath);
         if (! stemFile.existsAsFile())
         {
@@ -1779,7 +1791,10 @@ int main (int argc, char** argv)
                     stemInput.copyFrom (1, 0, stemInput, 0, 0, stemSamples);
 
                 auto output = renderThroughPlugin (*plugin, stemInput);
-                auto outFile = outDir.getChildFile (slug + "_stem.wav");
+                const auto outputSlug = inputWavPaths.size() == 1
+                    ? slug
+                    : slug + "_" + stemFile.getFileNameWithoutExtension();
+                auto outFile = outDir.getChildFile (outputSlug + "_stem.wav");
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
             }

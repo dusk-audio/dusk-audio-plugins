@@ -30,7 +30,8 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize);
     void process (const float* inputL, const float* inputR,
-                  float* outputL, float* outputR, int numSamples);
+                  float* outputL, float* outputR, int numSamples,
+                  const float* sourceSide = nullptr);
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);

@@ -47,16 +47,21 @@ public:
     void setDecayMs (float m)     { decayMs_    = std::max (10.0f, m); if (prepared_) buildTaps(); }
     void setBurst2Ms (float m)    { burst2Ms_   = std::max (0.0f, m); if (prepared_) buildTaps(); }
     void setBurst2Gain (float g)  { burst2Gain_ = std::max (0.0f, g); if (prepared_) buildTaps(); }
+    void setStereoInput (float amount) { stereoInputAmount_ = std::clamp (amount, 0.0f, 4.0f); }
 
     void process (const float* inL, const float* inR,
-                  float* outL, float* outR, int numSamples)
+                  float* outL, float* outR, int numSamples,
+                  const float* sourceSide = nullptr)
     {
         if (! prepared_) { std::fill (outL, outL+numSamples, 0.0f); std::fill (outR, outR+numSamples, 0.0f); return; }
         for (int i = 0; i < numSamples; ++i)
         {
             const float x = 0.5f * (inL[i] + inR[i]);
-            bufferL_[static_cast<size_t> (writePos_)] = x;   // mono feed; L/R differ only by tap geometry
-            bufferR_[static_cast<size_t> (writePos_)] = x;
+            const float side = stereoInputAmount_ > 0.0f
+                ? (sourceSide != nullptr ? sourceSide[i] : 0.5f * (inL[i] - inR[i]))
+                : 0.0f;
+            bufferL_[static_cast<size_t> (writePos_)] = x + stereoInputAmount_ * side;
+            bufferR_[static_cast<size_t> (writePos_)] = x - stereoInputAmount_ * side;
 
             float l = 0.0f, r = 0.0f;
             for (int t = 0; t < numTapsL_; ++t)
@@ -175,4 +180,5 @@ private:
     float decayMs_    = 55.0f;    // overall gain decay constant
     float burst2Ms_   = 115.0f;   // second density cluster centre (0 = off)
     float burst2Gain_ = 0.0f;     // GAIN bump at burst2Ms_ (the discrete late tap; 0 = off, bit-null)
+    float stereoInputAmount_ = 0.0f;
 };

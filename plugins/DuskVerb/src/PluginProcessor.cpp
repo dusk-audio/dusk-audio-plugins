@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
+#include "StereoImagePresets.h"
 
 #include <algorithm>
 #include <array>
@@ -83,6 +84,9 @@ struct TuningEnv
     const char* lowshelf;
     const char* differ;
     const char* differhp;
+    const char* poststeer;
+    const char* poststeerprofile;
+    const char* nativestereo;
     TuningEnv()
         : pteq      (std::getenv ("DUSKVERB_PTEQ")),
           outdiff   (std::getenv ("DUSKVERB_OUTDIFF")),
@@ -143,7 +147,10 @@ struct TuningEnv
           airshelf  (std::getenv ("DUSKVERB_AIRSHELF")),
           lowshelf  (std::getenv ("DUSKVERB_LOWSHELF")),
           differ    (std::getenv ("DUSKVERB_DIFFER")),
-          differhp  (std::getenv ("DUSKVERB_DIFFERHP")) {}
+          differhp  (std::getenv ("DUSKVERB_DIFFERHP")),
+          poststeer (std::getenv ("DUSKVERB_POSTSTEER")),
+          poststeerprofile (std::getenv ("DUSKVERB_POSTSTEER_PROFILE")),
+          nativestereo (std::getenv ("DUSKVERB_NATIVE_STEREO")) {}
 };
 const TuningEnv& tuningEnv()
 {
@@ -1992,6 +1999,62 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     engine.setDpvBassShelfGainDb   (dpvBassShelfGainDb);
     engine.setDpvBassShelfFreqHz   (dpvBassShelfFreqHz);
 
+    // Issue #123: retain each preset's measured source-side wet-image lean.
+    // Every factory preset has an explicit calibration entry, including zero,
+    // so reused engines cannot inherit a previous preset's steer amount. The
+    // cached env override keeps offline A/B sweeps possible without calling
+    // getenv() on the audio thread; an explicit value of 0 disables the bake.
+    float postSteer = DuskVerbStereoImage::steerAmountForPreset (std::string_view (name));
+    if (const char* overrideValue = tuningEnv().poststeer;
+        overrideValue != nullptr && overrideValue[0] != '\0')
+        postSteer = std::clamp (static_cast<float> (std::atof (overrideValue)), -1.0f, 1.0f);
+    engine.setPostSteer (postSteer);
+    if (const auto* profile =
+            DuskVerbStereoImage::findSteerProfile (std::string_view (name)))
+    {
+        engine.setPostSteerProfile (profile->earlyK[0], profile->earlyK[1], profile->earlyK[2],
+                                    profile->middleK[0], profile->middleK[1], profile->middleK[2],
+                                    profile->lateK[0], profile->lateK[1], profile->lateK[2],
+                                    profile->holdMs, profile->fastReleaseMs, profile->slowReleaseMs);
+        engine.setPostSteerWander (profile->wanderDepth[0], profile->wanderDepth[1],
+                                   profile->wanderDepth[2], profile->wanderRateHz,
+                                   profile->wanderDecayMs, profile->wanderPhase);
+    }
+    else
+    {
+        engine.setPostSteerProfile (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        engine.setPostSteerWander (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    if (const char* profile = tuningEnv().poststeerprofile;
+        profile != nullptr && profile[0] != '\0')
+    {
+        float earlyL = 0.0f, earlyM = 0.0f, earlyH = 0.0f;
+        float middleL = 0.0f, middleM = 0.0f, middleH = 0.0f;
+        float lateL = 0.0f, lateM = 0.0f, lateH = 0.0f;
+        float holdMs = 0.0f, fastMs = 0.0f, slowMs = 0.0f;
+        if (std::sscanf (profile, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
+                         &earlyL, &earlyM, &earlyH, &middleL, &middleM, &middleH,
+                         &lateL, &lateM, &lateH, &holdMs, &fastMs, &slowMs) == 12)
+            engine.setPostSteerProfile (earlyL, earlyM, earlyH, middleL, middleM, middleH,
+                                        lateL, lateM, lateH, holdMs, fastMs, slowMs);
+    }
+
+    // The Dattorro and Quad tanks historically summed their input to mono.
+    // Feed the source side into their loop topologies only for presets whose
+    // anchors retain hard-pan provenance. Both setters are explicit on every
+    // preset so a reused engine cannot inherit a previous calibration.
+    float nativeStereo = 0.0f;
+    if (const auto* calibration =
+            DuskVerbStereoImage::findPresetCalibration (std::string_view (name)))
+        nativeStereo = calibration->nativeStereoAmount;
+    if (const char* overrideValue = tuningEnv().nativestereo;
+        overrideValue != nullptr && overrideValue[0] != '\0')
+        nativeStereo = std::clamp (static_cast<float> (std::atof (overrideValue)), 0.0f, 4.0f);
+    engine.setDattorroStereoInput (nativeStereo);
+    engine.setQuadStereoInput (nativeStereo);
+    engine.setSparseStereoInput (nativeStereo);
+
     // ─── Post-tank parametric EQ — per-preset 4-band overrides ────────────
     // Per-preset entries live in pteqByName() (file-scope, shared with the
     // processor's performPresetSwap freq/Q cache path). Presets not in the
@@ -3613,7 +3676,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         { "Blade Runner 224", { 0.65f, 12.0f, 55.0f, 34.0f, 0.50f, 0.40f } },  // tank-duck TRIED 2026-07-07 (amount 0.4): my ad-hoc probe read 25->21 but fleet_audit (authoritative) read 19->20 — the probe over-reports BR by ~6 phantom gates, so the "closed" gates were probe-only. Reverted. Feature is sound (setEarlyTankDuck, bit-null); re-tune against fleet_audit, not the probe.
         { "Large Chamber",    { 0.45f, 7.0f, 38.0f, 22.0f, 0.50f, 0.10f, 0.0f, 1.0f, 1.7f,
             /*buildupPostTank*/0.0f, /*duckAmt*/0.0f, /*duckHold*/150.0f, /*duckThresh*/0.35f,
-            /*tankDuckAmt*/0.5f, /*tankDuckHold*/160.0f, /*tankDuckThresh*/0.35f } },  // 2026-07-07 EARLY-WINDOW TANK-DUCK 0.5/160ms (new setEarlyTankDuck feature): suppress the DenseHall wash for the early-reflection window -> 23->19 (fleet_audit authoritative, stable 4/4). The one preset the tank-duck nets a clean win on (it regresses BR/BrightHall/79VC etc — deep early-field walls). // 2026-06-23 workflow: BUILDUP 1.0 + timeScale 1.7 — gradual tank build closes mid 1-4k/hi 4-12k/energy_t50/bloom 2-4k/4-8k/env_shape (20->17; trades T60-16k/noiseburst — EAR-CHECK)
+            /*tankDuckAmt*/0.5f, /*tankDuckHold*/165.0f, /*tankDuckThresh*/0.35f } },  // 2026-07-22 #123: hold 160->165ms keeps the anchor-matched post-steer from marginally opening env_shape_L1; baseline/calibrated retain the identical 19-gate list (stable 3/3).  // 2026-07-07 EARLY-WINDOW TANK-DUCK 0.5/160ms (new setEarlyTankDuck feature): suppress the DenseHall wash for the early-reflection window -> 23->19 (fleet_audit authoritative, stable 4/4). The one preset the tank-duck nets a clean win on (it regresses BR/BrightHall/79VC etc — deep early-field walls). // 2026-06-23 workflow: BUILDUP 1.0 + timeScale 1.7 — gradual tank build closes mid 1-4k/hi 4-12k/energy_t50/bloom 2-4k/4-8k/env_shape (20->17; trades T60-16k/noiseburst — EAR-CHECK)
         // 79 Vocal Chamber (QuadTank front-load redesign 2026-06-18): the velvet
         // sparse field front-loads the early arrival the QuadTank's washy swell lacks
         // (energy_t50 +88ms late → "cloudy snare"). erGain high + sparseTailGain

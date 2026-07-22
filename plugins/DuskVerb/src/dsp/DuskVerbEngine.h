@@ -331,6 +331,9 @@ public:
     void setQuadStereoMod (float rateHz, float depth);
     // QuadTank stereo-input injection (issue #123); amount 0 = OFF/default = bit-null.
     void setQuadStereoInput (float amount);
+    // Dattorro/DPV source-side injection; amount 0 preserves the legacy mono tank.
+    void setDattorroStereoInput (float amount);
+    void setSparseStereoInput (float amount);
     // Per-pass HF-sustain compensation shelf (top-octave cliff / "muffle" fix) —
     // Dattorro + DenseHall; 0 dB = bit-null.
     void setTankHFSustain (float db, float cornerHz);
@@ -347,10 +350,18 @@ public:
                                float atkMs, float relFastMs, float relSlowMs);
     void setPmbBand (int b, float t60s, float level, float direct, float width);   // ParallelMultiband (algo 15) per-band config; no-op elsewhere
     void setPmbStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
-    // #123 (agent 8) — engine-agnostic post-tank source-side ILD steer applied to
-    // the FINAL wet, keyed off the clean dry-input balance, BEFORE the Mono Maker /
-    // width stage. amount 0 = off = bit-identical. No preset calls it yet.
+    // #123 engine-agnostic source-side ILD steer keyed off the clean dry-input
+    // balance. The scalar compatibility path precedes output width; measured
+    // three-band profiles are the final stereo operation. amount 0 is bit-null.
     void setPostSteer (float amount);
+    void setPostSteerProfile (float earlyLowK, float earlyMidK, float earlyHighK,
+                              float middleLowK, float middleMidK, float middleHighK,
+                              float lateLowK, float lateMidK, float lateHighK,
+                              float holdMs, float fastReleaseMs, float slowReleaseMs);
+    void setPostSteerWander (float lowDepth, float midDepth, float highDepth,
+                             float rateHz, float decayMs, float phaseRadians);
+    float getPostSteerAmount() const noexcept { return psAmount_; }
+    bool hasPostSteerProfile() const noexcept { return psProfileActive_; }
     void setDenseHallOctaveDecayRef (float seconds);
     void setDenseHallTonalCorrection (bool enabled);   // fork B: decouple T60 from level
     void setDenseHallStereoImageBias (float amount);   // #123 source-side energy lean; 0 = off = bit-identical
@@ -634,6 +645,7 @@ private:
 
     // Scratch buffers (sized by prepare()).
     std::vector<float> tankInL_, tankInR_;
+    std::vector<float> sourceSide_;   // clean post-predelay side, captured before diffuser
     std::vector<float> tankOutL_, tankOutR_;
     std::vector<float> erOutL_, erOutR_;
     std::vector<float> sparseOutL_, sparseOutR_;   // algo 11: sparse early-field scratch
@@ -862,12 +874,11 @@ private:
     void designMatchEQ();             // (re)design match-EQ coeffs from matchCorr_ at sampleRate_
     void applyPostSteerOverride();    // #123 DUSKVERB_POSTSTEER calibration hook (prepare, message thread)
 
-    // ---- Post-tank stereo image steer (issue #123, agent 8) — declared LAST ----
-    // Engine-agnostic source-side energy lean on the FINAL wet, keyed off the clean
-    // dry-input L/R balance, downstream of every engine and BEFORE the Mono Maker /
-    // width M/S stage. Restores the +2..+4 dB tail ILD a hard-panned input loses in
-    // the tanks — the mechanism the per-engine output-tap reweighting could not
-    // reach (DenseHall ceilinged at +0.76 dB, PMB +0.20 dB).
+    // ---- Post-tank stereo image steer (issue #123) — declared LAST ----
+    // Engine-agnostic source-side energy lean keyed off the clean dry-input L/R
+    // balance, downstream of every engine. The legacy scalar path precedes width;
+    // the anchor-calibrated three-band path follows all output imaging so its
+    // measured transfer is stable across preset width/cross-talk configurations.
     //
     // Declared LAST so existing member offsets are unchanged and the disabled path's
     // codegen stays byte-identical (Lessons #2). postSteerActive_ false → the whole
@@ -887,4 +898,33 @@ private:
     float psEnvR_          = 0.0f;   // dry-R amplitude envelope
     float psGainL_         = 1.0f;   // smoothed applied L gain (starts at unity)
     float psGainR_         = 1.0f;   // smoothed applied R gain
+    bool  psProfileActive_ = false;
+    float psProfileK_[3]   = { 0.0f, 0.0f, 0.0f };
+    float psProfileMiddleK_[3] = { 0.0f, 0.0f, 0.0f };
+    float psProfileLateK_[3] = { 0.0f, 0.0f, 0.0f };
+    float psProfileReleaseMs_ = 0.0f;
+    float psProfileReleaseCoeff_ = 0.0f;
+    float psProfileTimeEnv_ = 0.0f;
+    float psProfileSlowReleaseMs_ = 0.0f;
+    float psProfileSlowReleaseCoeff_ = 0.0f;
+    float psProfileSlowTimeEnv_ = 0.0f;
+    float psProfileHoldMs_ = 0.0f;
+    int   psProfileHoldSamples_ = 0;
+    int   psProfileHoldRemaining_ = 0;
+    float psProfileGainCoeff_ = 0.0f;
+    float psProfileGainL_[3] = { 1.0f, 1.0f, 1.0f };
+    float psProfileGainR_[3] = { 1.0f, 1.0f, 1.0f };
+    float psBandLp1Coeff_ = 0.0f, psBandLp2Coeff_ = 0.0f;
+    float psBandLp1L_ = 0.0f, psBandLp1R_ = 0.0f;
+    float psBandLp2L_ = 0.0f, psBandLp2R_ = 0.0f;
+    bool  psWanderActive_ = false;
+    bool  psWanderStarted_ = false;
+    float psWanderDepth_[3] = { 0.0f, 0.0f, 0.0f };
+    float psWanderRateHz_ = 0.0f;
+    float psWanderDecayMs_ = 0.0f;
+    float psWanderInitialPhase_ = 0.0f;
+    float psWanderPhase_ = 0.0f;
+    float psWanderPhaseInc_ = 0.0f;
+    float psWanderEnv_ = 0.0f;
+    float psWanderDecayCoeff_ = 0.0f;
 };

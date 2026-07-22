@@ -270,6 +270,7 @@ void DattorroPlateVintage::setSustainLimiterLow (float lo, float hi, float thr, 
                                                  float atk, float relF, float relS)
 { tank_.setSustainLimiterLow (lo, hi, thr, cut, atk, relF, relS); }
 void DattorroPlateVintage::setFreeze            (bool  v) { dfFrozen_ = v; tank_.setFreeze (v); }
+void DattorroPlateVintage::setStereoInput       (float v) { tank_.setStereoInput (v); }
 
 void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz)
 {

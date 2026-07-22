@@ -87,6 +87,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     tankInL_.assign  (static_cast<size_t> (maxBlockSize), 0.0f);
     tankInR_.assign  (static_cast<size_t> (maxBlockSize), 0.0f);
+    sourceSide_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     tankOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     tankOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutL_.assign   (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -161,7 +162,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     xtalkLpL_     = 0.0f;
     xtalkLpR_     = 0.0f;
 
-    // Post-tank stereo image steer (issue #123, agent 8): dry-balance follower +
+    // Post-tank stereo image steer (issue #123): dry-balance follower +
     // applied-gain smoother one-pole coeffs. exp(-1/(tau·sr)): larger tau →
     // coeff nearer 1 → slower. State resets to unity gain / zero envelope. These
     // writes touch ONLY the new members, so the disabled path is unaffected.
@@ -170,6 +171,24 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     psGainCoeff_ = std::exp (-1.0f / (0.020f * static_cast<float> (sampleRate)));   // 20 ms applied-gain smoother: click-free (a bounded one-pole, no zipper) yet fast enough that a single hard-pan reaches full tilt inside the measured tail window (preserves the ILD table)
     psEnvL_ = psEnvR_ = 0.0f;
     psGainL_ = psGainR_ = 1.0f;
+    psProfileGainCoeff_ = std::exp (-1.0f / (0.002f * static_cast<float> (sampleRate)));
+    psBandLp1Coeff_ = std::exp (-kTwoPi * 300.0f / static_cast<float> (sampleRate));
+    psBandLp2Coeff_ = std::exp (-kTwoPi * 2000.0f / static_cast<float> (sampleRate));
+    psProfileReleaseCoeff_ = psProfileReleaseMs_ > 0.0f
+        ? std::exp (-1.0f / (0.001f * psProfileReleaseMs_ * static_cast<float> (sampleRate)))
+        : 0.0f;
+    psProfileSlowReleaseCoeff_ = psProfileSlowReleaseMs_ > 0.0f
+        ? std::exp (-1.0f / (0.001f * psProfileSlowReleaseMs_ * static_cast<float> (sampleRate)))
+        : 0.0f;
+    psProfileHoldSamples_ = static_cast<int> (0.001f * psProfileHoldMs_ * static_cast<float> (sampleRate));
+    psProfileHoldRemaining_ = 0;
+    psProfileTimeEnv_ = psProfileSlowTimeEnv_ = 0.0f;
+    for (int b = 0; b < 3; ++b)
+        psProfileGainL_[b] = psProfileGainR_[b] = 1.0f;
+    psBandLp1L_ = psBandLp1R_ = psBandLp2L_ = psBandLp2R_ = 0.0f;
+    psWanderStarted_ = false;
+    psWanderPhase_ = psWanderInitialPhase_;
+    psWanderEnv_ = 0.0f;
 
     // Per-band Width tilt — one-pole LP coeffs at the 300 Hz / 5 kHz crossovers.
     wbLp1Coeff_ = std::exp (-kTwoPi *  300.0f / static_cast<float> (sampleRate));
@@ -192,9 +211,11 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     currentAlgorithm_ = -1;
     setAlgorithm (0);
 
-    // #123 post-tank steer env hook (DUSKVERB_POSTSTEER; offline measurement
-    // harness only). Must run AFTER the steer state reset above; the per-engine
-    // DUSKVERB_STEREOBIAS hook runs earlier in prepare. Unset → bit-null.
+    // #123 calibration hooks. Run after every engine has been prepared and after
+    // the post-steer state reset above. Preset application may subsequently
+    // replace DUSKVERB_POSTSTEER with its baked value; PluginProcessor preserves
+    // the environment override when applying a factory preset.
+    applyStereoImageBiasOverride();
     applyPostSteerOverride();
 }
 
@@ -275,6 +296,16 @@ void DuskVerbEngine::clearAllBuffers()
     xtalkLpR_     = 0.0f;
     wbLp1State_   = 0.0f;
     wbLp2State_   = 0.0f;
+    psEnvL_ = psEnvR_ = 0.0f;
+    psGainL_ = psGainR_ = 1.0f;
+    psProfileTimeEnv_ = psProfileSlowTimeEnv_ = 0.0f;
+    psProfileHoldRemaining_ = 0;
+    for (int b = 0; b < 3; ++b)
+        psProfileGainL_[b] = psProfileGainR_[b] = 1.0f;
+    psBandLp1L_ = psBandLp1R_ = psBandLp2L_ = psBandLp2R_ = 0.0f;
+    psWanderStarted_ = false;
+    psWanderPhase_ = psWanderInitialPhase_;
+    psWanderEnv_ = 0.0f;
 }
 
 void DuskVerbEngine::snapSmoothersToTargets()
@@ -631,6 +662,17 @@ void DuskVerbEngine::setQuadStereoInput (float amount)
     quad_.setStereoInput (amount);
 }
 
+void DuskVerbEngine::setDattorroStereoInput (float amount)
+{
+    dattorro_.setStereoInput (amount);
+    dattorroVintage_.setStereoInput (amount);
+}
+
+void DuskVerbEngine::setSparseStereoInput (float amount)
+{
+    sparseField_.setStereoInput (amount);
+}
+
 void DuskVerbEngine::setTankHFSustain (float db, float cornerHz)
 {
     // Per-pass HF-sustain compensation (top-octave cliff fix) — Dattorro + DenseHall
@@ -680,27 +722,87 @@ void DuskVerbEngine::setPmbStereoImageBias (float amount)
 
 void DuskVerbEngine::setPostSteer (float amount)
 {
-    // Issue #123 (agent 8) — engine-agnostic post-tank source-side ILD steer on the
-    // FINAL wet. 0 = off = bit-identical. No preset calls this yet; enablement waits
-    // on the ear pass. Precompute psK_ so the hot loop only reads members.
+    // Issue #123 — engine-agnostic post-tank source-side ILD steer on the
+    // FINAL wet. 0 = off = bit-identical. Factory presets provide anchor-matched
+    // amounts; precompute psK_ so the hot loop only reads members.
     // amount ∈ [-1,+1]: negative leans AWAY from the source side (de-steers presets whose
     // engine already over-leans vs the anchor). psK_ tracks the sign.
     psAmount_        = std::clamp (amount, -1.0f, 1.0f);
-    postSteerActive_ = std::abs (psAmount_) > 1.0e-6f;
+    postSteerActive_ = std::abs (psAmount_) > 1.0e-6f || psProfileActive_;
     psK_             = kPostSteerKMax * psAmount_;
+}
+
+void DuskVerbEngine::setPostSteerProfile (float earlyLowK, float earlyMidK, float earlyHighK,
+                                          float middleLowK, float middleMidK, float middleHighK,
+                                          float lateLowK, float lateMidK, float lateHighK,
+                                          float holdMs, float fastReleaseMs, float slowReleaseMs)
+{
+    psProfileK_[0] = std::clamp (earlyLowK,  -0.9999f, 0.9999f);
+    psProfileK_[1] = std::clamp (earlyMidK,  -0.9999f, 0.9999f);
+    psProfileK_[2] = std::clamp (earlyHighK, -0.9999f, 0.9999f);
+    psProfileMiddleK_[0] = std::clamp (middleLowK,  -0.9999f, 0.9999f);
+    psProfileMiddleK_[1] = std::clamp (middleMidK,  -0.9999f, 0.9999f);
+    psProfileMiddleK_[2] = std::clamp (middleHighK, -0.9999f, 0.9999f);
+    psProfileLateK_[0] = std::clamp (lateLowK,  -0.9999f, 0.9999f);
+    psProfileLateK_[1] = std::clamp (lateMidK,  -0.9999f, 0.9999f);
+    psProfileLateK_[2] = std::clamp (lateHighK, -0.9999f, 0.9999f);
+    psProfileHoldMs_ = std::max (0.0f, holdMs);
+    psProfileHoldSamples_ = sampleRate_ > 0.0
+        ? static_cast<int> (0.001f * psProfileHoldMs_ * static_cast<float> (sampleRate_))
+        : 0;
+    psProfileReleaseMs_ = std::max (0.0f, fastReleaseMs);
+    psProfileSlowReleaseMs_ = std::max (0.0f, slowReleaseMs);
+    psProfileReleaseCoeff_ = psProfileReleaseMs_ > 0.0f && sampleRate_ > 0.0
+        ? std::exp (-1.0f / (0.001f * psProfileReleaseMs_ * static_cast<float> (sampleRate_)))
+        : 0.0f;
+    psProfileSlowReleaseCoeff_ = psProfileSlowReleaseMs_ > 0.0f && sampleRate_ > 0.0
+        ? std::exp (-1.0f / (0.001f * psProfileSlowReleaseMs_ * static_cast<float> (sampleRate_)))
+        : 0.0f;
+    psProfileActive_ = std::abs (psProfileK_[0]) > 1.0e-6f
+                    || std::abs (psProfileK_[1]) > 1.0e-6f
+                    || std::abs (psProfileK_[2]) > 1.0e-6f
+                    || std::abs (psProfileMiddleK_[0]) > 1.0e-6f
+                    || std::abs (psProfileMiddleK_[1]) > 1.0e-6f
+                    || std::abs (psProfileMiddleK_[2]) > 1.0e-6f
+                    || std::abs (psProfileLateK_[0]) > 1.0e-6f
+                    || std::abs (psProfileLateK_[1]) > 1.0e-6f
+                    || std::abs (psProfileLateK_[2]) > 1.0e-6f;
+    postSteerActive_ = std::abs (psAmount_) > 1.0e-6f || psProfileActive_;
+}
+
+void DuskVerbEngine::setPostSteerWander (float lowDepth, float midDepth, float highDepth,
+                                         float rateHz, float decayMs, float phaseRadians)
+{
+    psWanderDepth_[0] = std::clamp (lowDepth,  -1.5f, 1.5f);
+    psWanderDepth_[1] = std::clamp (midDepth,  -1.5f, 1.5f);
+    psWanderDepth_[2] = std::clamp (highDepth, -1.5f, 1.5f);
+    psWanderRateHz_ = std::clamp (rateHz, 0.0f, 5.0f);
+    psWanderDecayMs_ = std::max (0.0f, decayMs);
+    psWanderInitialPhase_ = phaseRadians;
+    psWanderPhase_ = phaseRadians;
+    psWanderPhaseInc_ = sampleRate_ > 0.0
+        ? kTwoPi * psWanderRateHz_ / static_cast<float> (sampleRate_)
+        : 0.0f;
+    psWanderDecayCoeff_ = psWanderDecayMs_ > 0.0f && sampleRate_ > 0.0
+        ? std::exp (-1.0f / (0.001f * psWanderDecayMs_ * static_cast<float> (sampleRate_)))
+        : 0.0f;
+    psWanderActive_ = psWanderRateHz_ > 0.0f && psWanderDecayMs_ > 0.0f
+                   && (std::abs (psWanderDepth_[0]) > 1.0e-6f
+                    || std::abs (psWanderDepth_[1]) > 1.0e-6f
+                    || std::abs (psWanderDepth_[2]) > 1.0e-6f);
+    psWanderStarted_ = false;
+    psWanderEnv_ = 0.0f;
 }
 
 void DuskVerbEngine::applyPostSteerOverride()
 {
-    // Calibration hook (issue #123), same pattern as DUSKVERB_VELVET / DUSKVERB_REVERSE:
-    // lets the render harness measure the ILD table without wiring the feature into any
-    // preset path. Message thread only (called from prepare()), read once; absent env ⇒
-    // setPostSteer is never called ⇒ postSteerActive_ stays false ⇒ bit-identical default.
+    // Calibration hook (issue #123), same pattern as DUSKVERB_VELVET / DUSKVERB_REVERSE.
+    // Factory-preset application preserves this override, allowing the render harness
+    // to sweep the ILD calibration or explicitly disable it with a value of zero.
     if (const char* ov = std::getenv ("DUSKVERB_POSTSTEER"))
     {
         const float amount = std::clamp (static_cast<float> (std::atof (ov)), -1.0f, 1.0f);
-        if (std::abs (amount) > 0.0f)
-            setPostSteer (amount);
+        setPostSteer (amount);
     }
 }
 
@@ -861,7 +963,8 @@ void DuskVerbEngine::applyEarlyFieldComposite (int numSamples)
         }
     }
     sparseField_.process (tankInL_.data(), tankInR_.data(),
-                          sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                          sparseOutL_.data(), sparseOutR_.data(), numSamples,
+                          sourceSide_.data());
     applyEarlyTankDuck (numSamples);
     if (sparseERDuckAmount_ > 0.0f)
     {
@@ -1077,12 +1180,17 @@ void DuskVerbEngine::reapplyNeutralEngineConfig()
     setDattorroDensity (0.0f); setDattorroModReduction (1.0f); setDattorroInputDiffusion (0.0f);
     setDattorroDensityRoomFill (false); setDattorroMainLineDetune (1.0f, 1.0f, 1.0f, 1.0f);
     setDattorroSoftOnsetMs (0.0f); setDattorroBloomAttackMs (0.0f);
+    setDattorroStereoInput (0.0f); setQuadStereoInput (0.0f); setSparseStereoInput (0.0f);
     setReflectionTap (0.0f, 0.0f); setTankOnsetMs (0.0f);          // discrete tap + tank-onset → off
     setEarlyTapBank  (nullptr, nullptr, 0);                        // tap bank → off (count 0 never dereferences)
     setTiledRoomVoicing (1.0f, 14.0f, 55.0f, 115.0f, 0.45f, 1.0f); // SparseEarlyField voicing → engine defaults
     setSparseFieldBurst2Gain (0.0f);
     setDiffuseER (nullptr, nullptr, 0, 0.6f, 1.0f);   // diffused discrete-ER → inactive (bit-null)
     setBuildupAmount (0.0f); setBuildupTimeScale (1.0f); setBuildupPostTank (false);  // DenseHall tail buildup → bypass
+    setPostSteerProfile (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                         0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    setPostSteerWander (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    setPostSteer (0.0f);                                         // stereo-image calibration → off
 }
 
 void DuskVerbEngine::setFDNInLoopPeaking (float freqHz, float qFactor, float gainDb)
@@ -1692,6 +1800,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         const int readPos = (preDelayWritePos_ - preDelaySamples_) & preDelayMask_;
         tankInL_[static_cast<size_t> (i)] = preDelayBufL_[static_cast<size_t> (readPos)];
         tankInR_[static_cast<size_t> (i)] = preDelayBufR_[static_cast<size_t> (readPos)];
+        sourceSide_[static_cast<size_t> (i)] =
+            0.5f * (tankInL_[static_cast<size_t> (i)] - tankInR_[static_cast<size_t> (i)]);
 
         // FORK A — snapshot the CLEAN post-predelay dry mono here, BEFORE the input
         // diffuser / tank-feed EQ mutate tankIn. The reflection tap reads this so it's
@@ -1804,7 +1914,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     {
         case EngineType::Dattorro:
             dattorro_.process (tankInL_.data(), tankInR_.data(),
-                               tankOutL_.data(), tankOutR_.data(), numSamples);
+                               tankOutL_.data(), tankOutR_.data(), numSamples,
+                               sourceSide_.data());
             // Dense early-field: predelayed dry-mono → compact Schroeder reverb,
             // summed POST-tank to fill the thin post-onset shelf of the short rooms.
             // Off (gain 0) → skipped entirely → tankOut byte-identical (bit-null).
@@ -1843,7 +1954,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             break;
         case EngineType::QuadTank:
             quad_.process (tankInL_.data(), tankInR_.data(),
-                           tankOutL_.data(), tankOutR_.data(), numSamples);
+                           tankOutL_.data(), tankOutR_.data(), numSamples,
+                           sourceSide_.data());
             // FRONT-LOAD REDESIGN (2026-06-18): sparse velvet ER front-end + reduced
             // tank — the same composite as algo 11/13/14, which front-loads the early
             // field (the defined early arrival the FDN/QuadTank washy swell lacks →
@@ -1852,7 +1964,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // sparseERGain + the sparse field). The velvet field is the DEFINED early
             // arrival; the QuadTank tank is the late body (sparseTailGain × it).
             sparseField_.process (tankInL_.data(), tankInR_.data(),
-                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples,
+                                  sourceSide_.data());
             applyEarlyTankDuck (numSamples);
             for (int i = 0; i < numSamples; ++i)
             {
@@ -1934,7 +2047,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             accurateHall_.process (tankInL_.data(), tankInR_.data(),
                                    tankOutL_.data(), tankOutR_.data(), numSamples);
             sparseField_.process (tankInL_.data(), tankInR_.data(),
-                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples,
+                                  sourceSide_.data());
             applyEarlyTankDuck (numSamples);
             for (int i = 0; i < numSamples; ++i)
             {
@@ -1993,7 +2107,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 }
             }
             sparseField_.process (tankInL_.data(), tankInR_.data(),
-                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples,
+                                  sourceSide_.data());
             applyEarlyTankDuck (numSamples);
             if (sparseERDuckAmount_ > 0.0f)
             {
@@ -2037,7 +2152,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             pmb_.process (tankInL_.data(), tankInR_.data(),
                           tankOutL_.data(), tankOutR_.data(), numSamples);
             sparseField_.process (tankInL_.data(), tankInR_.data(),
-                                  sparseOutL_.data(), sparseOutR_.data(), numSamples);
+                                  sparseOutL_.data(), sparseOutR_.data(), numSamples,
+                                  sourceSide_.data());
             applyEarlyTankDuck (numSamples);
             if (sparseERDuckAmount_ > 0.0f)
             {
@@ -2283,7 +2399,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         wetL = perBandEDT_.processL (wetL);
         wetR = perBandEDT_.processR (wetR);
 
-        // ---- Post-tank stereo image steer (issue #123, agent 8) ----
+        // ---- Post-tank stereo image steer (issue #123) ----
         // Constant-power L/R gain tilt on the FINAL wet, keyed off the CLEAN dry input
         // still held in left[i]/right[i] here (the engine writes wet back only at the
         // end of this loop; the pre-delay read and sus-limiter mutate their OWN buffers,
@@ -2303,19 +2419,51 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // write below is byte-identical to legacy (bit-null). Centered input →
         // EL==ER exactly → b==0 → gl==gr==sqrt(1.0f)==1.0f → wet × 1.0f → byte-identical
         // even with the feature ON (a stronger guarantee than the < -100 dB target).
+        float steerBalance = 0.0f;
         if (postSteerActive_)
         {
-            const float axl = std::fabs (left[i]);
-            const float axr = std::fabs (right[i]);
+            const float srcL = reflDryMono_[static_cast<size_t> (i)] + sourceSide_[static_cast<size_t> (i)];
+            const float srcR = reflDryMono_[static_cast<size_t> (i)] - sourceSide_[static_cast<size_t> (i)];
+            const float axl = std::fabs (srcL);
+            const float axr = std::fabs (srcR);
             psEnvL_ = axl + ((axl > psEnvL_) ? psAtkCoeff_ : psRelCoeff_) * (psEnvL_ - axl);
             psEnvR_ = axr + ((axr > psEnvR_) ? psAtkCoeff_ : psRelCoeff_) * (psEnvR_ - axr);
             const float b   = std::clamp ((psEnvL_ - psEnvR_) / (psEnvL_ + psEnvR_ + 1.0e-9f), -1.0f, 1.0f);
-            const float glT = std::sqrt (std::max (0.0f, 1.0f + psK_ * b));
-            const float grT = std::sqrt (std::max (0.0f, 1.0f - psK_ * b));
-            psGainL_ = glT + psGainCoeff_ * (psGainL_ - glT);
-            psGainR_ = grT + psGainCoeff_ * (psGainR_ - grT);
-            wetL *= psGainL_;
-            wetR *= psGainR_;
+            steerBalance = b;
+            if (psProfileActive_)
+            {
+                if (axl + axr > 1.0e-6f)
+                {
+                    psProfileTimeEnv_ = psProfileSlowTimeEnv_ = 1.0f;
+                    psProfileHoldRemaining_ = psProfileHoldSamples_;
+                    if (psWanderActive_)
+                    {
+                        psWanderStarted_ = true;
+                        psWanderPhase_ = psWanderInitialPhase_;
+                        psWanderEnv_ = 1.0f;
+                    }
+                }
+                else if (psProfileHoldRemaining_ > 0)
+                {
+                    --psProfileHoldRemaining_;
+                }
+                else if (psProfileReleaseCoeff_ > 0.0f)
+                {
+                    psProfileTimeEnv_ *= psProfileReleaseCoeff_;
+                    psProfileSlowTimeEnv_ *= psProfileSlowReleaseCoeff_;
+                }
+                else
+                    psProfileTimeEnv_ = psProfileSlowTimeEnv_ = 1.0f;
+            }
+            else
+            {
+                const float glT = std::sqrt (std::max (0.0f, 1.0f + psK_ * b));
+                const float grT = std::sqrt (std::max (0.0f, 1.0f - psK_ * b));
+                psGainL_ = glT + psGainCoeff_ * (psGainL_ - glT);
+                psGainR_ = grT + psGainCoeff_ * (psGainR_ - grT);
+                wetL *= psGainL_;
+                wetR *= psGainR_;
+            }
         }
 
         // Mono Maker — sums L+R below the cutoff to mono before width
@@ -2376,6 +2524,52 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             const float hiR = wetR - xtalkLpR_;
             wetL -= xtalkDepth_ * hiR;     // R's HF, inverted, into L
             wetR -= xtalkDepth_ * hiL;     // L's HF, inverted, into R
+        }
+
+        // The calibrated profile is deliberately the final stereo operation.
+        // This makes its anchor fit independent of Width/Mono Maker/cross-talk,
+        // while the legacy scalar path above remains byte-compatible.
+        if (psProfileActive_)
+        {
+            psBandLp1L_ = (1.0f - psBandLp1Coeff_) * wetL + psBandLp1Coeff_ * psBandLp1L_;
+            psBandLp1R_ = (1.0f - psBandLp1Coeff_) * wetR + psBandLp1Coeff_ * psBandLp1R_;
+            psBandLp2L_ = (1.0f - psBandLp2Coeff_) * wetL + psBandLp2Coeff_ * psBandLp2L_;
+            psBandLp2R_ = (1.0f - psBandLp2Coeff_) * wetR + psBandLp2Coeff_ * psBandLp2R_;
+            const float bandsL[3] = { psBandLp1L_, psBandLp2L_ - psBandLp1L_, wetL - psBandLp2L_ };
+            const float bandsR[3] = { psBandLp1R_, psBandLp2R_ - psBandLp1R_, wetR - psBandLp2R_ };
+            float sumL = 0.0f, sumR = 0.0f;
+            const float wander = psWanderActive_ && psWanderStarted_
+                ? std::sin (psWanderPhase_) * psWanderEnv_
+                : 0.0f;
+            for (int band = 0; band < 3; ++band)
+            {
+                const float k = std::clamp (
+                    psProfileLateK_[band]
+                        + (psProfileMiddleK_[band] - psProfileLateK_[band]) * psProfileSlowTimeEnv_
+                        + (psProfileK_[band] - psProfileMiddleK_[band]) * psProfileTimeEnv_
+                        + psWanderDepth_[band] * wander,
+                    -0.9999f, 0.9999f);
+                const float glT = std::sqrt (std::max (0.0f, 1.0f + k * steerBalance));
+                const float grT = std::sqrt (std::max (0.0f, 1.0f - k * steerBalance));
+                psProfileGainL_[band] = glT + psProfileGainCoeff_ * (psProfileGainL_[band] - glT);
+                psProfileGainR_[band] = grT + psProfileGainCoeff_ * (psProfileGainR_[band] - grT);
+                sumL += bandsL[band] * psProfileGainL_[band];
+                sumR += bandsR[band] * psProfileGainR_[band];
+            }
+            if (std::abs (steerBalance) > 1.0e-9f)
+            {
+                wetL = sumL;
+                wetR = sumR;
+            }
+            if (psWanderActive_ && psWanderStarted_
+                && std::abs (reflDryMono_[static_cast<size_t> (i)] + sourceSide_[static_cast<size_t> (i)])
+                 + std::abs (reflDryMono_[static_cast<size_t> (i)] - sourceSide_[static_cast<size_t> (i)]) <= 1.0e-6f)
+            {
+                psWanderPhase_ += psWanderPhaseInc_;
+                if (psWanderPhase_ >= kTwoPi)
+                    psWanderPhase_ -= kTwoPi;
+                psWanderEnv_ *= psWanderDecayCoeff_;
+            }
         }
 
         // gain_trim is a WET-PATH gain — baked into the engine's wet output so
