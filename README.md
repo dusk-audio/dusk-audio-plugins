@@ -2,9 +2,11 @@
 
 A collection of professional audio VST3/AU/LV2 plugins built with JUCE or DPF. Several titles also ship in CLAP format.
 
+**Website & downloads**: https://dusk-audio.github.io/ | [GitHub Releases](https://github.com/dusk-audio/dusk-audio-plugins/releases)
+
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
-> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are currently released and recommended for production use. **TapeMachine 2** is the DPF-based successor release. All other plugins are in active development.
+> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **TapeMachine 2**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are released and recommended for production use. **DuskVerb** is available as a pre-release. All other plugins are in active development.
 
 ## Plugins
 
@@ -30,7 +32,15 @@ Multi-mode compressor with seven classic compression styles plus 4-band multiban
 - **Digital** – Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection. Ideal for surgical dynamics control where transparency is paramount.
 - **Multiband** – 4-band multiband compressor with Linkwitz-Riley crossovers. Adjustable crossover frequencies, per-band threshold/ratio/attack/release/makeup, and solo buttons for each band.
 
-**Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
+**Features:** External sidechain input, sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain with input/output level matching, parallel mix with click-free per-sample ramping, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
+
+### TapeMachine - RELEASED
+Classic analog tape emulation (JUCE). The original tape plugin, still maintained:
+- Tape saturation with bias and calibration controls
+- Wow, flutter, and noise modeling
+- VST3/AU/LV2 formats
+
+Superseded by TapeMachine 2 below, which is a separate plugin with its own identity; both can be installed side by side.
 
 ### TapeMachine 2 - RELEASED
 DPF-based tape processing with distinct tracking and mastering deck models:
@@ -42,7 +52,7 @@ DPF-based tape processing with distinct tracking and mastering deck models:
 - American head-width, crosstalk, transport, and transformer controls
 - Four-band Advanced reproduce EQ and 20 calibrated factory presets
 - Fixed, fitted 2x nonlinear core
-- macOS AU/VST3/CLAP/LV2 universal builds and Linux VST3/CLAP/LV2 builds
+- macOS AU/VST3/CLAP/LV2 universal builds (Developer ID signed and notarized), Linux VST3/CLAP/LV2 builds (x64 and ARM64), and Windows builds
 
 See the [TapeMachine 2 README](plugins/TapeMachine/README.md) and [manual](manuals/tapemachine-2.md).
 
@@ -98,6 +108,7 @@ Classic tape delay with spring reverb:
 - Tape saturation and wow/flutter
 - Tempo sync with multiple note divisions
 - Animated tape visualization
+- Being ported to DPF (early builds tagged as `tape-echo-dpf`)
 
 ### GrooveMind - IN DEVELOPMENT
 > ⚠️ Early development - not functional yet.
@@ -118,7 +129,13 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - Optional NAM (Neural Amp Modeler) integration
 - Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
 - 2x/4x oversampling on nonlinear stages
-- See the [v5 roadmap](https://github.com/dusk-audio/plugins) for the path to commercial-tier quality
+
+### Multi-Synth - IN DEVELOPMENT
+Polyphonic synthesizer:
+- Multi-mode filter engine
+- Modulation matrix
+- Built-in arpeggiator
+- Effects engine
 
 ## Building
 
@@ -128,20 +145,21 @@ For consistent, distributable binaries:
 # Build all plugins
 ./docker/build_release.sh
 
-# Build a single plugin (production-ready)
+# Build a single plugin (released)
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
-./docker/build_release.sh tape         # Legacy JUCE TapeMachine 1.x
+./docker/build_release.sh tape         # TapeMachine 1.x (JUCE)
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh chord        # Chord Analyzer
-
-# Build a single plugin (in development)
-./docker/build_release.sh duskverb     # DuskVerb
 ./docker/build_release.sh spectrum     # Spectrum Analyzer
+
+# Build a single plugin (pre-release / in development)
+./docker/build_release.sh duskverb     # DuskVerb
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh groovemind   # GrooveMind
 ./docker/build_release.sh duskamp      # DuskAmp
+./docker/build_release.sh multisynth   # Multi-Synth
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -157,39 +175,47 @@ For consistent, distributable binaries:
 ### Build Individual Plugin
 ```bash
 cd build
-# Production-ready
+# Released
 cmake --build . --target FourKEQ_All
 cmake --build . --target MultiComp_All
 cmake --build . --target TapeMachine_All
 cmake --build . --target MultiQ_All
 cmake --build . --target ChordAnalyzer_All
-
-# In development
-cmake --build . --target DuskVerb_All
 cmake --build . --target SpectrumAnalyzer_All
+
+# Pre-release / in development
+cmake --build . --target DuskVerb_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target GrooveMind_All
 cmake --build . --target DuskAmp_All
 ```
 
-TapeMachine 2 uses its standalone DPF build rather than the top-level JUCE build:
+The DPF-based plugins use standalone builds rather than the top-level JUCE build:
 
 ```bash
+# TapeMachine 2
 cmake -S plugins/TapeMachine/dpf-plugin -B plugins/TapeMachine/dpf-plugin/build -G Ninja
 cmake --build plugins/TapeMachine/dpf-plugin/build
+
+# Tape Echo (DPF port, in progress)
+cmake -S plugins/tape-echo/dpf-plugin -B plugins/tape-echo/dpf-plugin/build -G Ninja
+cmake --build plugins/tape-echo/dpf-plugin/build
 ```
 
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`
 - **macOS VST3**: `~/Library/Audio/Plug-Ins/VST3/`
+- **macOS CLAP**: `~/Library/Audio/Plug-Ins/CLAP/`
 - **Linux VST3**: `~/.vst3/`
 - **Linux LV2**: `~/.lv2/`
+- **Linux CLAP**: `~/.clap/`
 - **Windows VST3**: `C:\Program Files\Common Files\VST3\`
+- **Windows CLAP**: `C:\Program Files\Common Files\CLAP\`
 
 ## Installing Unsigned Binaries
 
-Some legacy releases are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/plugins/releases). TapeMachine 2 macOS production releases are Developer ID signed and Apple-notarized; the instructions below apply only to unsigned legacy artifacts.
+Some legacy releases are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/dusk-audio-plugins/releases). TapeMachine 2 macOS production releases are Developer ID signed and Apple-notarized; the instructions below apply only to unsigned legacy artifacts.
 
 ### macOS
 
@@ -235,7 +261,13 @@ Reusable analog hardware emulation components:
 
 ### Shared UI Components
 - `DuskLookAndFeel.h` - Base look-and-feel for consistent styling
+- `DuskVintageLookAndFeel.h` - Vintage/retro UI styling
 - `LEDMeter.h/cpp` - Shared LED-style level meter component
+- `ScalableEditorHelper.h` - Resizable UI with size persistence
+- `SupportersOverlay.h` - Patreon supporter credits (click the plugin title)
+- `UserPresetManager.h` - User preset save/load
+
+DPF-based plugins share equivalent components in `plugins/shared-dpf/`.
 
 ## Contributing
 
