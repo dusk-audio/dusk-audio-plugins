@@ -235,6 +235,18 @@ jobs:
           cp -r "build/bin/${PLUGIN_BASE}.lv2"  "${STAGE}/LV2/"
           cp ../../../LICENSE "${STAGE}/LICENSE"
           cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          # Bundle the User Manual PDF INSIDE the archive so it sits alongside the
+          # plugin folders, exactly like the JUCE plugins on build.yml. Sourced from
+          # the website repo's main branch; /release-plugin regenerates it on every
+          # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
+          # new plugin without a published manual yet must not block the release).
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
+          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
+            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
+          else
+            rm -f "${STAGE}/${ASSET}-manual.pdf"
+            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
+          fi
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
           tar -czf "${STAGE}.tar.gz" "${STAGE}"
@@ -335,6 +347,18 @@ jobs:
           cp -r "build/bin/${PLUGIN_BASE}.lv2"  "${STAGE}/LV2/"
           cp ../../../LICENSE "${STAGE}/LICENSE"
           cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          # Bundle the User Manual PDF INSIDE the archive so it sits alongside the
+          # plugin folders, exactly like the JUCE plugins on build.yml. Sourced from
+          # the website repo's main branch; /release-plugin regenerates it on every
+          # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
+          # new plugin without a published manual yet must not block the release).
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
+          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
+            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
+          else
+            rm -f "${STAGE}/${ASSET}-manual.pdf"
+            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
+          fi
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
           tar -czf "${STAGE}.tar.gz" "${STAGE}"
@@ -540,6 +564,18 @@ jobs:
           cp -r "build/bin/${PLUGIN_BASE}.lv2"       "${STAGE}/LV2/"
           cp ../../../LICENSE "${STAGE}/LICENSE"
           cp ../../shared-dpf/THIRD_PARTY_LICENSES.md "${STAGE}/THIRD_PARTY_LICENSES.md"
+          # Bundle the User Manual PDF INSIDE the archive so it sits alongside the
+          # plugin folders, exactly like the JUCE plugins on build.yml. Sourced from
+          # the website repo's main branch; /release-plugin regenerates it on every
+          # tag so it tracks the released version. Missing PDF is non-fatal (a brand-
+          # new plugin without a published manual yet must not block the release).
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
+          if curl -fL --silent --show-error "$manual_url" -o "${STAGE}/${ASSET}-manual.pdf"; then
+            echo "bundled ${ASSET}-manual.pdf into ${STAGE}/"
+          else
+            rm -f "${STAGE}/${ASSET}-manual.pdf"
+            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
+          fi
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2 -type d
           # ditto preserves macOS bundle metadata better than zip
           ditto -c -k --keepParent "${STAGE}" "${STAGE}.zip"
@@ -653,6 +689,17 @@ jobs:
           Copy-Item $clap.FullName "$stage/CLAP/"
           Copy-Item "../../../LICENSE" "$stage/LICENSE"
           Copy-Item "../../shared-dpf/THIRD_PARTY_LICENSES.md" "$stage/THIRD_PARTY_LICENSES.md"
+          # Bundle the User Manual PDF INSIDE the archive, matching the JUCE plugins on
+          # build.yml. Missing PDF is non-fatal (a brand-new plugin without a published
+          # manual yet must not block the release).
+          $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/$env:ASSET-manual.pdf"
+          try {
+            Invoke-WebRequest -Uri $manualUrl -OutFile "$stage/$env:ASSET-manual.pdf" -ErrorAction Stop
+            Write-Host "bundled $env:ASSET-manual.pdf into $stage/"
+          } catch {
+            Remove-Item -Force -ErrorAction SilentlyContinue "$stage/$env:ASSET-manual.pdf"
+            Write-Host "::warning::User manual PDF not found at $manualUrl (non-fatal)"
+          }
           Get-ChildItem -Recurse "$stage" | Select-Object FullName
           Compress-Archive -Path "$stage" -DestinationPath "$stage.zip" -Force
 
@@ -703,7 +750,7 @@ jobs:
             if [ -n "$CHANGELOG" ]; then echo "$CHANGELOG"; echo ""; fi
             echo "### Installation"
             echo ""
-            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2)."
+            echo "Linux and macOS zips contain \`VST3/\`, \`CLAP/\`, \`LV2/\` and (macOS only) \`AU/\`. The Windows zip contains \`VST3/\` and \`CLAP/\` (no AU or LV2). Every archive also bundles the User Manual PDF."
             echo ""
             echo "**Linux (x86_64 and arm64):**"
             echo "- VST3: copy \`VST3/${BASE}.vst3\` to \`~/.vst3/\`"
@@ -738,28 +785,12 @@ jobs:
                 ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
               done >> dist/SHA256SUMS
 
-      - name: Fetch user manual PDF
-        run: |
-          # Bundle the per-plugin User Manual PDF into the release, matching the JUCE
-          # plugins on build.yml. Sourced from the dusk-audio.github.io repo's main branch;
-          # /release-plugin regenerates it on every tag so it tracks the released version.
-          # A missing PDF is non-fatal so a brand-new plugin without a published manual yet
-          # does not block the release.
-          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${ASSET}-manual.pdf"
-          if curl -fL --silent --show-error "$manual_url" -o "dist/${ASSET}-manual.pdf"; then
-            echo "bundled ${ASSET}-manual.pdf into the release"
-          else
-            rm -f "dist/${ASSET}-manual.pdf"
-            echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
-          fi
-
       - name: Publish Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
           files: |
             dist/**/*.zip
             dist/**/*.tar.gz
-            dist/*-manual.pdf
             dist/SHA256SUMS
           generate_release_notes: true
           body_path: release_body.md
