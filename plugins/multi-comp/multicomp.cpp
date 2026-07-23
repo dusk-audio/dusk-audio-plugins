@@ -1036,8 +1036,12 @@ public:
         buffer.setSize(numChannels, maxLookaheadSamples);
         buffer.clear();
 
-        // Initialize write positions
-        writePositions.resize(static_cast<size_t>(numChannels), 0);
+        // Zero ALL write positions. resize(n, 0) only value-initializes NEW
+        // elements — after a re-prepare at a lower sample rate the buffer
+        // shrinks but the old indices survived, and the first processSample
+        // wrote past the end (ASan-confirmed heap overflow; pluginval's fuzz
+        // hit it as intermittent teardown heap corruption).
+        writePositions.assign(static_cast<size_t>(numChannels), 0);
 
         currentLookaheadSamples = 0;
     }
@@ -1070,6 +1074,11 @@ public:
         {
             int& writePos = writePositions[static_cast<size_t>(channel)];
             int bufferSize = maxLookaheadSamples;
+
+            // Safety net: never index with a position from a previous sizing
+            // (belt to prepare()'s assign-suspenders; costs one compare).
+            if (writePos >= bufferSize)
+                writePos = 0;
 
             // Read position is lookaheadSamples behind write position
             int readPos = (writePos - lookaheadSamples + bufferSize) % bufferSize;
@@ -3775,6 +3784,9 @@ public:
         numChannels = numCh;
         this->maxBlockSize = maxBlockSize;
 
+        // Start the blend settled — a prepare is not a knob move.
+        mixRampCurrent = mixRampTarget;
+
         // Prepare crossover filters - LR4 requires separate filter instances per signal path
         // Each crossover has two cascaded stages (a and b) for 4th order response
         auto sz = static_cast<size_t>(numCh);
@@ -4047,8 +4059,12 @@ public:
             }
         }
 
-        // Whether a dry blend is needed (parallel mix < 100%).
-        bool needsDry = (mixPercent < 100.0f);
+        // The blend is ramped per sample (see mixRamp), so the dry reference is
+        // needed whenever the target is below 100% OR the ramp is still moving
+        // towards it — otherwise the tail of a move to 100% would have nothing
+        // to blend against and would step instead of finishing its fade.
+        mixRampTarget = juce::jlimit(0.0f, 1.0f, mixPercent * 0.01f);
+        bool needsDry = (mixRampTarget < 1.0f) || (mixRampCurrent != mixRampTarget);
 
         // Split the input signal into 4 bands using crossover filters
         splitIntoBands(buffer, numSamples, channels);
@@ -4132,19 +4148,28 @@ public:
             buffer.applyGain(outGain);
         }
 
-        // Mix with dry signal (parallel compression)
+        // Mix with dry signal (parallel compression), ramped per sample so
+        // moving the knob does not step the gain at every block boundary.
         if (needsDry)
         {
-            float wetAmount = mixPercent / 100.0f;
-            float dryAmount = 1.0f - wetAmount;
+            const float maxStep = static_cast<float>(1.0 / (kMixRampSeconds * juce::jmax(1.0, sampleRate)));
 
-            for (int ch = 0; ch < channels; ++ch)
+            for (int i = 0; i < numSamples; ++i)
             {
-                float* out = buffer.getWritePointer(ch);
-                const float* dry = tempBuffer.getReadPointer(ch);
-
-                for (int i = 0; i < numSamples; ++i)
+                if (mixRampCurrent != mixRampTarget)
                 {
+                    const float diff = mixRampTarget - mixRampCurrent;
+                    mixRampCurrent = (std::abs(diff) <= maxStep) ? mixRampTarget
+                                                                 : mixRampCurrent + (diff > 0.0f ? maxStep : -maxStep);
+                }
+
+                const float wetAmount = mixRampCurrent;
+                const float dryAmount = 1.0f - wetAmount;
+
+                for (int ch = 0; ch < channels; ++ch)
+                {
+                    float* out = buffer.getWritePointer(ch);
+                    const float* dry = tempBuffer.getReadPointer(ch);
                     out[i] = out[i] * wetAmount + dry[i] * dryAmount;
                 }
             }
@@ -4475,6 +4500,12 @@ private:
     static constexpr int kOversizeFactor = 8;
     int allocatedBlockSize = 512 * kOversizeFactor;
 
+    // Per-sample dry/wet ramp (matches DryWetMixer's 20 ms). Without it the
+    // blend stepped once per block and clicked while the knob moved.
+    static constexpr double kMixRampSeconds = 0.02;
+    float mixRampTarget = 1.0f;
+    float mixRampCurrent = 1.0f;
+
 public:
     void updateSampleRate(double newSampleRate)
     {
@@ -4484,6 +4515,48 @@ public:
         // Recalculate crossover filters for new sample rate
         updateCrossoverFrequencies(crossoverFreqs[0], crossoverFreqs[1], crossoverFreqs[2]);
     }
+};
+
+// juce::AudioParameterBool stores whatever normalized float the host hands it
+// and returns it raw from getValue() (JUCE: `value = newValue`), while Choice
+// and Int snap internally and the APVTS state round-trip snaps. Result: write
+// 0.4964, read 0.4964 live, read 0.0 after a save/load — hosts and pluginval
+// that compare those two reads see a bool "not restored" (the intermittent
+// level-10 failures). Snapping on set makes the live read match the round-trip.
+// (AudioParameterBool::setValue is private, so this is a sibling implementation
+// rather than a subclass. Nothing in the codebase casts to AudioParameterBool —
+// all access goes through the generic parameter/APVTS interfaces.)
+class SnappingBoolParameter : public juce::RangedAudioParameter
+{
+public:
+    SnappingBoolParameter(const juce::ParameterID& id, const juce::String& name, bool defaultVal)
+        : juce::RangedAudioParameter(id, name),
+          value(defaultVal ? 1.0f : 0.0f),
+          defaultValue(defaultVal ? 1.0f : 0.0f)
+    {
+    }
+
+    const juce::NormalisableRange<float>& getNormalisableRange() const override { return range; }
+    float getValue() const override        { return value.load(); }
+    void setValue(float newValue) override { value.store(newValue >= 0.5f ? 1.0f : 0.0f); }
+    float getDefaultValue() const override { return defaultValue; }
+    int getNumSteps() const override       { return 2; }
+    bool isDiscrete() const override       { return true; }
+    bool isBoolean() const override        { return true; }
+
+    juce::String getText(float v, int) const override { return v >= 0.5f ? "On" : "Off"; }
+    float getValueForText(const juce::String& text) const override
+    {
+        return (text.getIntValue() != 0
+                || text.equalsIgnoreCase("on")
+                || text.equalsIgnoreCase("yes")
+                || text.equalsIgnoreCase("true")) ? 1.0f : 0.0f;
+    }
+
+private:
+    const juce::NormalisableRange<float> range { 0.0f, 1.0f, 1.0f };
+    std::atomic<float> value;
+    const float defaultValue;
 };
 
 // Parameter layout creation
@@ -4500,7 +4573,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
                           "Studio FET", "Studio VCA", "Digital", "Multiband"}, 0));
 
     // Global parameters
-    layout.add(std::make_unique<juce::AudioParameterBool>("bypass", "Bypass", false));
+    layout.add(std::make_unique<SnappingBoolParameter>("bypass", "Bypass", false));
 
     // Stereo linking control (0% = independent, 100% = fully linked)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -4548,7 +4621,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::StringArray{"Vintage (Warm)", "Modern (Clean)", "Pristine (Minimal)"}, 0));
 
     // External sidechain enable
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "sidechain_enable", "External Sidechain", false));
 
     // Global lookahead for all modes (not just Digital)
@@ -4558,7 +4631,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::AudioParameterFloatAttributes().withLabel("ms")));
 
     // Global sidechain listen (output sidechain signal for monitoring)
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "global_sidechain_listen", "SC Listen", false));
 
     // Stereo link mode (Stereo = max-level, Mid-Side = M/S processing, Dual Mono = independent)
@@ -4567,7 +4640,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::StringArray{"Stereo", "Mid-Side", "Dual Mono"}, 0));
 
     // Analog noise floor enable (optional for CPU savings)
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "noise_enable", "Analog Noise", true));
 
     // Oversampling factor (0 = Off, 1 = 2x, 2 = 4x)
@@ -4598,7 +4671,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     // True-Peak Detection for sidechain (ITU-R BS.1770 compliant)
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "true_peak_enable", "True Peak", false));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -4618,7 +4691,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "opto_gain", "Gain", 
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f)); // Unity gain at 50%
-    layout.add(std::make_unique<juce::AudioParameterBool>("opto_limit", "Limit Mode", false));
+    layout.add(std::make_unique<SnappingBoolParameter>("opto_limit", "Limit Mode", false));
     // FET parameters (Vintage FET style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "fet_input", "Input", 
@@ -4672,7 +4745,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "vca_output", "Output", 
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterBool>("vca_overeasy", "Over Easy", false));
+    layout.add(std::make_unique<SnappingBoolParameter>("vca_overeasy", "Over Easy", false));
 
     // VCA detector mode: "Adaptive" matches the donor's prior behaviour
     // (level-dependent RMS TC, 35 ms → 5 ms). "Classic" forces a fixed
@@ -4722,6 +4795,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_output", "Output",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
+    // DEAD PARAMETER: nothing reads "studio_vca_mix" — Studio VCA uses the
+    // global "mix". Kept in the layout because removing a parameter breaks
+    // session/state compatibility; do not wire it up without also deciding how
+    // it stacks with the global Mix (see bus_mix/digital_mix, which multiply).
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_mix", "Mix",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));  // Parallel compression
@@ -4751,7 +4828,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "digital_output", "Output",
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterBool>(
+    layout.add(std::make_unique<SnappingBoolParameter>(
         "digital_adaptive", "Adaptive Release", false));  // Program-dependent release
     // SC Listen is now a global control (global_sidechain_listen) in header for all modes
 
@@ -4818,11 +4895,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
             juce::AudioParameterFloatAttributes().withLabel("dB")));
 
         // Band bypass
-        layout.add(std::make_unique<juce::AudioParameterBool>(
+        layout.add(std::make_unique<SnappingBoolParameter>(
             "mb_" + name + "_bypass", label + " Bypass", false));
 
         // Band solo
-        layout.add(std::make_unique<juce::AudioParameterBool>(
+        layout.add(std::make_unique<SnappingBoolParameter>(
             "mb_" + name + "_solo", label + " Solo", false));
 
         // Band enabled — when false, the band is removed from the multiband
@@ -4830,7 +4907,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         // unaffected. The UI enforces a minimum of 2 enabled bands; the DSP
         // layer also defends against <2 in case the param is driven by host
         // automation.
-        layout.add(std::make_unique<juce::AudioParameterBool>(
+        layout.add(std::make_unique<SnappingBoolParameter>(
             "mb_" + name + "_enabled", label + " Enabled", true));
     }
 
@@ -5255,17 +5332,11 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     }
 
     // Initialize RMS coefficient for ~200ms averaging window
-    // GR-based auto-gain: smooth the gain reduction with ~200ms time constant
-    // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
-    float grTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
-    int grBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
-    double safeSampleRate = juce::jlimit(8000.0, 384000.0, sampleRate);
-    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(grBlockSize);
-    grSmoothCoeff = 1.0f - std::exp(-1.0f / (blocksPerSecond * grTimeConstantSec));
-    grSmoothCoeff = juce::jlimit(0.001f, 0.999f, grSmoothCoeff);
-    smoothedGrDb = 0.0f;
+    // Auto-gain estimator. The window is long on purpose (see AutoGainMatcher.h):
+    // anything short enough to follow the compression envelope pumps.
+    autoGainMatcher.prepare(juce::jlimit(8000.0, 384000.0, sampleRate));
     lastCompressorMode = -1;  // Force mode change detection on first processBlock
-    primeGrAccumulator = true;  // Prime on first block
+    modeMixSnap = true;       // Mode-local mix ramp starts settled
 
     // Initialize crossover frequency smoothers (~20ms smoothing to prevent zipper noise)
     smoothedCrossover1.reset(sampleRate, 0.02);
@@ -5440,7 +5511,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         {
             case CompressorMode::Opto:
                 if (auto* a = parameters.getRawParameterValue ("opto_peak_reduction")) p0 = juce::jlimit (0.0f, 100.0f, a->load());
-                if (auto* a = parameters.getRawParameterValue ("opto_gain"))           p1 = juce::jlimit (-40.0f, 40.0f, (juce::jlimit (0.0f, 100.0f, a->load()) - 50.0f) * 0.8f);
+                if (auto* a = parameters.getRawParameterValue ("opto_gain"))           p1 = MultiComp::optoKnobToGainDb (a->load());
                 if (auto* a = parameters.getRawParameterValue ("opto_limit"))          p2 = a->load();
                 break;
             case CompressorMode::FET:
@@ -5600,8 +5671,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         bypassFadeRemaining = bypassFadeActualLength;
 
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
-        smoothedGrDb = 0.0f;
-        primeGrAccumulator = true;
+        autoGainMatcher.reset();
     }
 
     // Get stereo link and mix parameters with proper null checks
@@ -5621,10 +5691,14 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         mixAmount = *mixParam * 0.01f; // Convert to 0-1
     }
 
-    // Track whether we need dry/wet mixing for parallel compression
-    // The actual dry capture happens at oversampled rate (in the oversampling section)
-    // for phase-coherent mixing that prevents comb filtering
-    bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
+    // Dry capture runs whenever we are in the normal processing path, not only
+    // when the knob sits between the endpoints. The mixer ramps the mix per
+    // sample (20 ms) and keeps its delay ring fed from the captured dry, so
+    // skipping capture at exactly 100 % wet would (a) leave the ring stale for
+    // the first blocks after the knob comes back down and (b) force a jump from
+    // "no mix" to "mid-ramp mix". At a settled 1.0 the blend multiplies dry by
+    // exactly 0, so this is bit-identical to the old wet-only output.
+    bool needsDryBuffer = true;
 
     // Save latency-aligned dry signal for bypass crossfade.
     // The wet path includes lookahead delay, so the dry reference must be delayed
@@ -5676,31 +5750,17 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
     }
 
-    // At 0% mix (100% dry), skip all processing. Keep the constant reported latency (do NOT zero it
-    // from the audio thread — see issue #106 in the bypass path) and time-align the dry output.
-    if (mixAmount <= 0.001f)
-    {
-        const int bypassChannels = buffer.getNumChannels();
-        const int bypassSamples = buffer.getNumSamples();
-
-        // Update meters to show input = output
-        for (int ch = 0; ch < bypassChannels; ++ch)
-        {
-            float rms = 0.0f;
-            const float* data = buffer.getReadPointer(ch);
-            for (int i = 0; i < bypassSamples; ++i)
-                rms += data[i] * data[i];
-            rms = std::sqrt(rms / static_cast<float>(bypassSamples));
-
-            if (ch == 0)
-                linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
-            else
-                linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
-        }
-        grMeter.store(0.0f, std::memory_order_relaxed);
-        emitLatencyAlignedDry(buffer);  // dry, delayed by the constant reported latency
-        return;
-    }
+    // NOTE: 0% mix (100% dry) deliberately runs the FULL processing path.
+    // There used to be an early return here that skipped everything and emitted
+    // dry via emitLatencyAlignedDry. It cost a click at both ends of the knob:
+    // skipping the chain starved the oversampler's FIR state, so coming back off
+    // 0% resumed from stale filter history (measured as a full-amplitude step),
+    // and with internal oversampling off the two dry sources were 218 samples
+    // apart. The blend at a settled 0% already yields exact dry through the
+    // normal path, correctly aligned, with every filter kept warm. Bypass still
+    // uses emitLatencyAlignedDry — there the host's PDC makes it the right
+    // answer, and no state has to survive the gap.
+    dryWetMixer.setTargetMix(mixAmount);
 
     // Internal oversampling — default true, but hosts that want a 1x default
     // (and an external/global quality switch) can flip it off via
@@ -5713,10 +5773,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (currentModeInt != lastCompressorMode)
     {
         lastCompressorMode = currentModeInt;
-        // Flag to prime GR accumulator with first block's GR value (instant convergence)
-        primeGrAccumulator = true;
-        // Reset smoothed gain to unity to avoid sudden volume jumps
-        smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+        // Re-measure from scratch for the new mode. The estimator primes from the
+        // first block with signal, but the APPLIED gain still ramps there, so a
+        // mode or preset change no longer steps the level.
+        autoGainMatcher.reset();
+        // Mode-local mix units differ per mode — snap rather than ramp across them.
+        modeMixSnap = true;
         // Reset Digital mode's lookahead latency
         if (mode != CompressorMode::Digital)
             dryWetMixer.setProcessingLatency(0);
@@ -5745,15 +5807,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p3 = parameters.getRawParameterValue("opto_limit");
             if (p1 && p2 && p3) {
                 cachedParams[0] = juce::jlimit(0.0f, 100.0f, p1->load());  // Peak reduction 0-100
-                // Opto gain is 0-40dB range, parameter is 0-100
-                // Map 50 = unity gain (0dB), 0 = -40dB, 100 = +40dB
+                // Opto gain knob is 0-100 (50 = unity, 0.8 dB per unit).
                 // When auto-makeup is enabled, force gain to 0dB (unity)
-                if (autoMakeup)
-                    cachedParams[1] = 0.0f;
-                else {
-                    float gainParam = juce::jlimit(0.0f, 100.0f, p2->load());
-                    cachedParams[1] = juce::jlimit(-40.0f, 40.0f, (gainParam - 50.0f) * 0.8f);  // Bounded gain
-                }
+                cachedParams[1] = autoMakeup ? 0.0f : MultiComp::optoKnobToGainDb(p2->load());
                 cachedParams[2] = p3->load();
             } else validParams = false;
             break;
@@ -5935,6 +5991,11 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     inputMeter.store(inputDb, std::memory_order_relaxed);
     inputMeterL.store(inputDbL, std::memory_order_relaxed);
     inputMeterR.store(numChannels > 1 ? inputDbR : inputDbL, std::memory_order_relaxed);  // Mono: use same value for both
+
+    // Reference level for the auto-gain matcher. Taken here: after the bypass
+    // and minimal-path exits, but before the M/S encode and any processing, so
+    // it is directly comparable with the L/R output measured further down.
+    const float autoGainInputRms = blockRms(buffer, numChannels, numSamples);
 
     // Get sidechain HP filter frequency and update filter if changed (0 = Off/bypassed)
     auto* sidechainHpParam = parameters.getRawParameterValue("sidechain_hp");
@@ -6332,78 +6393,11 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             grHistoryWritePos.store((pos + 1) % GR_HISTORY_SIZE, std::memory_order_relaxed);
         }
 
-        // GR-based auto-gain for multiband mode
-        // Inverts the compressor's own gain reduction for deterministic compensation
-        {
-            float targetAutoGain = 1.0f;
-
-            if (autoMakeup)
-            {
-                // Use max band GR for compensation — the most-compressed band dominates
-                // perception, and for narrowband signals, only that band's GR matters
-                float avgGrDb = grMax;
-
-                // Smooth the GR to avoid pumping
-                if (primeGrAccumulator)
-                {
-                    smoothedGrDb = avgGrDb;
-                    primeGrAccumulator = false;
-                    float primedGain = juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 40.0f, -avgGrDb));
-                    float mbMixNorm = mbMix * 0.01f;
-                    primedGain = 1.0f + (primedGain - 1.0f) * mbMixNorm;
-                    smoothedAutoMakeupGain.setCurrentAndTargetValue(primedGain);
-                }
-                else
-                {
-                    smoothedGrDb += grSmoothCoeff * (avgGrDb - smoothedGrDb);
-                }
-
-                // Base compensation: invert the smoothed gain reduction
-                float autoGainDb = -smoothedGrDb;
-                autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-                targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
-
-                // Scale auto-gain by mix amount: dry signal doesn't need compensation
-                float mbMixNorm = mbMix * 0.01f;
-                targetAutoGain = 1.0f + (targetAutoGain - 1.0f) * mbMixNorm;
-            }
-
-            smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
-
-            if (smoothedAutoMakeupGain.isSmoothing())
-            {
-                const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
-                const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
-
-                for (int i = 0; i < samplesToProcess; ++i)
-                    smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
-
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    float* data = buffer.getWritePointer(ch);
-                    const float* gains = smoothedGainBuffer.data();
-                    for (int i = 0; i < samplesToProcess; ++i)
-                        data[i] *= gains[i];
-                }
-            }
-            else
-            {
-                float currentGain = smoothedAutoMakeupGain.getCurrentValue();
-                if (std::abs(currentGain - 1.0f) > 0.001f)
-                {
-                    for (int ch = 0; ch < numChannels; ++ch)
-                    {
-                        float* data = buffer.getWritePointer(ch);
-                        SIMDHelpers::applyGain(data, numSamples, currentGain);
-                    }
-                }
-            }
-        }
-
         // Convert M/S back to L/R before the early return — the normal-path
-        // decode further down is never reached from here. Decode BEFORE output
-        // metering and the bypass crossfade so both operate on L/R (the fade's
-        // dry reference in bypassFadeBuffer is raw L/R input).
+        // decode further down is never reached from here. Decode BEFORE the
+        // auto-gain (which matches against an L/R-domain input measurement),
+        // output metering and the bypass crossfade (whose dry reference in
+        // bypassFadeBuffer is raw L/R input).
         if (useMidSide && numChannels >= 2)
         {
             float* mid = buffer.getWritePointer(0);
@@ -6416,6 +6410,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 side[i] = m - s;  // Right = Mid - Side
             }
         }
+
+        applyAutoGain(buffer, numChannels, numSamples, autoGainInputRms, autoMakeup);
 
         // Update output meter AFTER auto-makeup gain is applied
         float outputLevel = 0.0f;
@@ -6474,7 +6470,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // lookahead tracking section above. All other modes add zero group delay.
 
         // Capture dry at oversampled rate so both paths share the downsampling filter
-        bool needsOversampledDry = needsDryBuffer && (mixAmount < 0.999f);
+        bool needsOversampledDry = needsDryBuffer;
         if (needsOversampledDry)
         {
             // Use shared DryWetMixer for phase-coherent capture
@@ -6505,6 +6501,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             float* destPtr = interpolatedSidechain.getWritePointer(ch);
             SIMDHelpers::interpolateSidechain(srcPtr, destPtr, numSamples, osNumSamples);
         }
+
+        // Ramp the mode-local mix (bus_mix / digital_mix) at the oversampled
+        // rate; one curve, reused by every channel.
+        if (mode == CompressorMode::Bus)
+            fillModeMixCurve(cachedParams[5], 1.0f,
+                             getSampleRate() * juce::jmax(1, osNumSamples / juce::jmax(1, numSamples)), osNumSamples);
+        else if (mode == CompressorMode::Digital)
+            fillModeMixCurve(cachedParams[6], 100.0f,
+                             getSampleRate() * juce::jmax(1, osNumSamples / juce::jmax(1, numSamples)), osNumSamples);
 
         // Process with cached parameters - now using pre-interpolated sidechain
         for (int channel = 0; channel < osNumChannels; ++channel)
@@ -6537,6 +6542,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     {
                         // True console stereo link (oversampled path): shared sidechain
                         // drives both VCAs. No compensationGain here (postGain=1).
+                        // KNOWN GAP: this path has no mix argument, so bus_mix is
+                        // silently ignored whenever stereo link is engaged (the
+                        // per-channel branch below honours it). Pre-existing; no
+                        // UI binds bus_mix, so exposure is automation-only.
                         busCompressor->processStereoLinked(
                             oversampledBlock.getChannelPointer(static_cast<size_t>(0)), oversampledBlock.getChannelPointer(static_cast<size_t>(1)), osNumSamples,
                             cachedParams[0], cachedParams[1],
@@ -6553,7 +6562,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     else
                     {
                         for (int i = 0; i < osNumSamples; ++i)
-                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i], hasExternalSidechain);
+                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))], true, scData[i], hasExternalSidechain);
                     }
                     break;
                 case CompressorMode::StudioFET:
@@ -6576,7 +6585,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     for (int i = 0; i < osNumSamples; ++i)
                     {
                         data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
-                                                             cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                             cachedParams[3], cachedParams[4], cachedParams[5],
+                                                             modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))],
                                                              cachedParams[7], cachedParams[8] > 0.5f, scData[i]);
                     }
                     break;
@@ -6619,11 +6629,18 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             dryWetMixer.captureDryAtNormalRate(buffer);
             canMixNormal = true;
         }
-        
+
+        // Ramp the mode-local mix (bus_mix / digital_mix) at native rate;
+        // one curve, reused by every channel.
+        if (mode == CompressorMode::Bus)
+            fillModeMixCurve(cachedParams[5], 1.0f, getSampleRate(), numSamples);
+        else if (mode == CompressorMode::Digital)
+            fillModeMixCurve(cachedParams[6], 100.0f, getSampleRate(), numSamples);
+
         for (int channel = 0; channel < numChannels; ++channel)
         {
             float* data = buffer.getWritePointer(channel);
-            
+
             switch (mode)
             {
                 case CompressorMode::Opto:
@@ -6690,7 +6707,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                                 scSignal = linkedSidechain.getSample(channel, i);
                             else
                                 scSignal = filteredSidechain.getSample(channel, i);
-                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal, hasExternalSidechain) * compensationGain;
+                            data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))], false, scSignal, hasExternalSidechain) * compensationGain;
                         }
                     }
                     break;
@@ -6732,7 +6749,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
                         // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
                         data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
-                                                             cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                             cachedParams[3], cachedParams[4], cachedParams[5],
+                                                             modeMixCurve[static_cast<size_t>(juce::jmin(i, static_cast<int>(modeMixCurve.size()) - 1))],
                                                              cachedParams[7], cachedParams[8] > 0.5f, scSignal) * compensationGain;
                     }
                     break;
@@ -6811,95 +6829,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Combined gain reduction (min of both channels for display)
     float gainReduction = juce::jmin(grLeft, grRight);
 
-    // GR-based auto-gain: invert the compressor's gain reduction for deterministic compensation
-    // Industry-standard approach (FabFilter Pro-C, Waves CLA series)
-    {
-        float targetAutoGain = 1.0f;
-
-        if (autoMakeup)
-        {
-            // Average GR across channels (negative dB = compression)
-            float avgGrDb = (grLeft + grRight) * 0.5f;
-
-            // Smooth the GR to avoid pumping (~200ms time constant)
-            if (primeGrAccumulator)
-            {
-                smoothedGrDb = avgGrDb;
-                primeGrAccumulator = false;
-                // Set gain immediately without smoothing on first block
-                float autoGainDb = -avgGrDb;
-                if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
-                    autoGainDb -= cachedParams[0];  // Compensate for input gain knob
-                // Opto: tube harmonics add energy proportional to GR that autogain doesn't track
-                if (mode == CompressorMode::Opto)
-                    autoGainDb -= std::min(1.5f, std::abs(avgGrDb) * 0.25f);
-                autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-                float primedGain = juce::Decibels::decibelsToGain(autoGainDb);
-                primedGain = 1.0f + (primedGain - 1.0f) * mixAmount;
-                smoothedAutoMakeupGain.setCurrentAndTargetValue(primedGain);
-            }
-            else
-            {
-                smoothedGrDb += grSmoothCoeff * (avgGrDb - smoothedGrDb);
-            }
-
-            // Base compensation: invert the smoothed gain reduction
-            float autoGainDb = -smoothedGrDb;
-
-            // FET/StudioFET: also compensate for the input gain knob
-            // When user turns input down, auto-gain should restore the original level
-            if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
-                autoGainDb -= cachedParams[0];  // cachedParams[0] = fet_input parameter
-
-            // Opto: tube harmonics add energy proportional to GR that autogain doesn't track
-            if (mode == CompressorMode::Opto)
-                autoGainDb -= std::min(1.5f, std::abs(smoothedGrDb) * 0.25f);
-
-            autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-            targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
-
-            // Scale auto-gain by mix amount: dry signal doesn't need compensation
-            // At 100% wet = full auto-gain, at 100% dry = unity, at 50/50 = half
-            targetAutoGain = 1.0f + (targetAutoGain - 1.0f) * mixAmount;
-        }
-
-        // Update target and apply smoothed gain sample-by-sample
-        smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
-
-        if (smoothedAutoMakeupGain.isSmoothing())
-        {
-            // OPTIMIZED: Pre-fill gain curve array, then apply channel-by-channel
-            // This improves cache locality compared to the inner channel loop
-            const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
-            const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
-
-            // Pre-compute all smoothed gain values
-            for (int i = 0; i < samplesToProcess; ++i)
-                smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
-
-            // Apply gains channel-by-channel (cache-friendly)
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                float* data = buffer.getWritePointer(ch);
-                const float* gains = smoothedGainBuffer.data();
-                for (int i = 0; i < samplesToProcess; ++i)
-                    data[i] *= gains[i];
-            }
-        }
-        else
-        {
-            // No smoothing needed, apply constant gain efficiently
-            float currentGain = smoothedAutoMakeupGain.getCurrentValue();
-            if (std::abs(currentGain - 1.0f) > 0.001f)
-            {
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    float* data = buffer.getWritePointer(ch);
-                    SIMDHelpers::applyGain(data, numSamples, currentGain);
-                }
-            }
-        }
-    }
+    // Auto-gain: match the output level back to the input over a long window.
+    // See AutoGainMatcher.h for why this replaced GR inversion (which pumped and
+    // needed a per-mode fudge for the Opto's tube/transformer energy).
+    applyAutoGain(buffer, numChannels, numSamples, autoGainInputRms, autoMakeup);
 
     // Apply bypass crossfade (smooth transition from bypassed to active)
     if (bypassFadeRemaining > 0)
@@ -7070,6 +7003,94 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     return CompressorMode::Opto; // Default fallback
 }
 
+void UniversalCompressor::fillModeMixCurve(float target, float span, double rate, int numSamples)
+{
+    if (modeMixSnap)
+    {
+        modeMixCurrent = target;
+        modeMixSnap = false;
+    }
+
+    const int n = juce::jmin(numSamples, static_cast<int>(modeMixCurve.size()));
+    const float maxStep = span / static_cast<float>(0.02 * juce::jmax(1.0, rate));   // 20 ms full swing
+
+    for (int i = 0; i < n; ++i)
+    {
+        if (modeMixCurrent != target)
+        {
+            const float diff = target - modeMixCurrent;
+            modeMixCurrent = (std::abs(diff) <= maxStep) ? target
+                                                         : modeMixCurrent + (diff > 0.0f ? maxStep : -maxStep);
+        }
+        modeMixCurve[static_cast<size_t>(i)] = modeMixCurrent;
+    }
+}
+
+float UniversalCompressor::blockRms(const juce::AudioBuffer<float>& buffer, int numChannels, int numSamples)
+{
+    if (numSamples <= 0 || numChannels <= 0)
+        return 0.0f;
+
+    double sum = 0.0;
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        const float* data = buffer.getReadPointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+            sum += static_cast<double>(data[i]) * data[i];
+    }
+
+    return static_cast<float>(std::sqrt(sum / (static_cast<double>(numSamples) * numChannels)));
+}
+
+void UniversalCompressor::applyAutoGain(juce::AudioBuffer<float>& buffer, int numChannels, int numSamples,
+                                        float inRms, bool autoMakeupEnabled)
+{
+    float targetAutoGain = 1.0f;
+
+    if (autoMakeupEnabled)
+    {
+        // Measure what actually came out — post-compression, post-saturation,
+        // post dry/wet blend — and ask for the gain that matches the input. No
+        // mix scaling is needed: at 0% wet the output already equals the input,
+        // so the matcher naturally converges on unity.
+        const float outRms = blockRms(buffer, numChannels, numSamples);
+        targetAutoGain = autoGainMatcher.update(inRms, outRms, numSamples);
+    }
+    else
+    {
+        autoGainMatcher.reset();
+    }
+
+    smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
+
+    if (smoothedAutoMakeupGain.isSmoothing())
+    {
+        // Pre-fill the gain curve, then apply channel-by-channel (cache-friendly).
+        const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
+        const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
+
+        for (int i = 0; i < samplesToProcess; ++i)
+            smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = buffer.getWritePointer(ch);
+            const float* gains = smoothedGainBuffer.data();
+            for (int i = 0; i < samplesToProcess; ++i)
+                data[i] *= gains[i];
+        }
+    }
+    else
+    {
+        const float currentGain = smoothedAutoMakeupGain.getCurrentValue();
+        if (std::abs(currentGain - 1.0f) > 0.001f)
+        {
+            for (int ch = 0; ch < numChannels; ++ch)
+                SIMDHelpers::applyGain(buffer.getWritePointer(ch), numSamples, currentGain);
+        }
+    }
+}
+
 int UniversalCompressor::computeLatencySamples() const
 {
     const auto mode = getCurrentMode();
@@ -7219,11 +7240,11 @@ void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
 
 void UniversalCompressor::resetDSPState()
 {
-    // Reset smoothed auto-makeup gain and GR accumulator to neutral
+    // Reset smoothed auto-makeup gain and the level-matching estimator to neutral
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
-    smoothedGrDb = 0.0f;
+    autoGainMatcher.reset();
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
-    primeGrAccumulator = true;  // Prime accumulator on first block after reset
+    modeMixSnap = true;
 
     bypassFadeRemaining = 0;
     bypassFadeBuffer.clear();
@@ -7331,8 +7352,10 @@ void UniversalCompressor::setCurrentProgram(int index)
         // Opto defaults
         if (auto* p = parameters.getParameter("opto_peak_reduction"))
             p->setValueNotifyingHost(parameters.getParameterRange("opto_peak_reduction").convertTo0to1(30.0f));
+        // 0 dB of makeup = knob 50, NOT knob 0 (which is -40 dB and mutes the mode)
         if (auto* p = parameters.getParameter("opto_gain"))
-            p->setValueNotifyingHost(parameters.getParameterRange("opto_gain").convertTo0to1(0.0f));
+            p->setValueNotifyingHost(parameters.getParameterRange("opto_gain")
+                .convertTo0to1(MultiComp::optoGainDbToKnob(0.0f)));
         if (auto* p = parameters.getParameter("opto_limit"))
             p->setValueNotifyingHost(0.0f);  // Compress
 

@@ -199,69 +199,59 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
 
     add_dependencies(MultiCompBypassAutoGainTest MultiComp_All)
 
+    # Every functional test links the same way: one source file against the
+    # MultiComp target plus the JUCE modules it pulls in. Declare that once.
+    function(multicomp_add_functional_test target source)
+        add_executable(${target} ${source})
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
+        )
+        target_compile_definitions(${target} PRIVATE
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_DISPLAY_SPLASH_SCREEN=0
+            JUCE_STANDALONE_APPLICATION=1
+        )
+        target_compile_features(${target} PRIVATE cxx_std_17)
+        target_link_libraries(${target}
+            PRIVATE
+                MultiComp
+                juce::juce_core
+                juce::juce_audio_basics
+                juce::juce_audio_formats
+                juce::juce_audio_processors
+                juce::juce_audio_utils
+                juce::juce_data_structures
+                juce::juce_dsp
+                juce::juce_events
+                juce::juce_graphics
+                juce::juce_gui_basics
+                juce::juce_gui_extra
+        )
+        add_dependencies(${target} MultiComp_All)
+    endfunction()
+
     # --- Issue #114: Multiband dry/wet mix comb-filter regression test ---
-    add_executable(MultiCompMixCombTest
-        tests/test_multiband_mix_comb.cpp
-    )
-    target_include_directories(MultiCompMixCombTest PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
-    )
-    target_compile_definitions(MultiCompMixCombTest PRIVATE
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
-        JUCE_STANDALONE_APPLICATION=1
-    )
-    target_compile_features(MultiCompMixCombTest PRIVATE cxx_std_17)
-    target_link_libraries(MultiCompMixCombTest
-        PRIVATE
-            MultiComp
-            juce::juce_core
-            juce::juce_audio_basics
-            juce::juce_audio_formats
-            juce::juce_audio_processors
-            juce::juce_audio_utils
-            juce::juce_data_structures
-            juce::juce_dsp
-            juce::juce_events
-            juce::juce_graphics
-            juce::juce_gui_basics
-            juce::juce_gui_extra
-    )
-    add_dependencies(MultiCompMixCombTest MultiComp_All)
+    multicomp_add_functional_test(MultiCompMixCombTest tests/test_multiband_mix_comb.cpp)
 
     # --- Sidechain functional test (external SC keys compression) ---
-    add_executable(MultiCompSidechainTest
-        tests/test_sidechain.cpp
-    )
-    target_include_directories(MultiCompSidechainTest PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
-    )
-    target_compile_definitions(MultiCompSidechainTest PRIVATE
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
-        JUCE_STANDALONE_APPLICATION=1
-    )
-    target_compile_features(MultiCompSidechainTest PRIVATE cxx_std_17)
-    target_link_libraries(MultiCompSidechainTest
-        PRIVATE
-            MultiComp
-            juce::juce_core
-            juce::juce_audio_basics
-            juce::juce_audio_formats
-            juce::juce_audio_processors
-            juce::juce_audio_utils
-            juce::juce_data_structures
-            juce::juce_dsp
-            juce::juce_events
-            juce::juce_graphics
-            juce::juce_gui_basics
-            juce::juce_gui_extra
-    )
-    add_dependencies(MultiCompSidechainTest MultiComp_All)
+    multicomp_add_functional_test(MultiCompSidechainTest tests/test_sidechain.cpp)
+
+    # --- Factory-preset level gate (catches units-mismatch mutes, e.g. opto_gain) ---
+    multicomp_add_functional_test(MultiCompPresetLevelTest tests/test_preset_levels.cpp)
+
+    # --- Mix-knob ramp / click gate ---
+    multicomp_add_functional_test(MultiCompMixRampTest tests/test_mix_ramp_click.cpp)
+
+    # --- Auto-gain stability gate (pumping + static level match) ---
+    multicomp_add_functional_test(MultiCompAutoGainTest tests/test_autogain_stability.cpp)
+
+    # --- State-restore integrity (pluginval L10 bool-param flake, deterministic) ---
+    multicomp_add_functional_test(MultiCompStateRestoreTest tests/test_state_restore.cpp)
+
+    # --- Parameter fuzz (pluginval "Fuzz parameters" replica; run under ASan) ---
+    multicomp_add_functional_test(MultiCompParamFuzzTest tests/test_param_fuzz.cpp)
 endif()
 
 # Optional: Build unit tests
