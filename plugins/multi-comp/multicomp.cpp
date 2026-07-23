@@ -2774,12 +2774,13 @@ public:
         // Apply makeup gain
         float output = processed * juce::Decibels::decibelsToGain(makeupGain);
 
-        // Note: Mix/parallel compression is now handled globally at the end of processBlock
-        // for consistency across all compressor modes (mixAmount parameter kept for API compatibility)
-        (void)mixAmount;  // Suppress unused warning
-
-        // Final output limiting
-        return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
+        // Local Bus mix (parallel): blend the untransformed input against the
+        // full wet chain, then let the caller apply its native-rate compensation.
+        // Applied here as well as in processStereoLinked so bus_mix behaves
+        // identically with or without stereo link; the global "mix" still wraps
+        // this blend downstream via dryWetMixer.
+        const float wet = juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
+        return wet * mixAmount + input * (1.0f - mixAmount);
     }
 
     // Stereo-linked bus processing — true British bus behaviour: the sidechain is
@@ -2793,7 +2794,9 @@ public:
     void processStereoLinked (float* dataL, float* dataR, int numSamples,
                               float threshold, float ratio,
                               int attackIndex, int releaseIndex,
-                              float makeupGain, float postGain, float stereoLinkAmount,
+                              float makeupGain, float postGain,
+                              const float* mixCurve, int mixCurveSize,
+                              float stereoLinkAmount,
                               const float* extScL, const float* extScR,
                               bool useExternalSidechain)
     {
@@ -2854,8 +2857,10 @@ public:
 
         for (int i = 0; i < numSamples; ++i)
         {
-            const float tL = inputTransformer.processSample (dataL[i], 0);
-            const float tR = inputTransformer.processSample (dataR[i], 1);
+            const float dryL = dataL[i];
+            const float dryR = dataR[i];
+            const float tL = inputTransformer.processSample (dryL, 0);
+            const float tR = inputTransformer.processSample (dryR, 1);
 
             // Per-channel RMS detection (external or HP-filtered feedback), each
             // blended toward the pair's max by the link amount.
@@ -2873,8 +2878,16 @@ public:
             dL.prevCompressed = cL;   // feedback taps
             dR.prevCompressed = cR;
 
-            dataL[i] = outStage (cL, 0, makeupGain) * postGain;
-            dataR[i] = outStage (cR, 1, makeupGain) * postGain;
+            const float wetL = outStage (cL, 0, makeupGain);
+            const float wetR = outStage (cR, 1, makeupGain);
+            const float mixAmount = mixCurve[static_cast<size_t>(
+                juce::jmin(i, mixCurveSize - 1))];
+
+            // Local Bus mix is inside the global Mix: blend the untransformed
+            // input against the complete compressed/output-stage signal, then
+            // apply the caller's native-rate compensation to the whole blend.
+            dataL[i] = (wetL * mixAmount + dryL * (1.0f - mixAmount)) * postGain;
+            dataR[i] = (wetR * mixAmount + dryR * (1.0f - mixAmount)) * postGain;
         }
     }
 
@@ -4796,9 +4809,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "studio_vca_output", "Output",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
     // DEAD PARAMETER: nothing reads "studio_vca_mix" — Studio VCA uses the
-    // global "mix". Kept in the layout because removing a parameter breaks
-    // session/state compatibility; do not wire it up without also deciding how
-    // it stacks with the global Mix (see bus_mix/digital_mix, which multiply).
+    // global "mix". Keep it in the JUCE layout for saved-session compatibility;
+    // do not wire or remove it here. It is intentionally dropped by the DPF port
+    // in #130, where JUCE session compatibility no longer applies.
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_mix", "Mix",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));  // Parallel compression
@@ -6542,15 +6555,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     {
                         // True console stereo link (oversampled path): shared sidechain
                         // drives both VCAs. No compensationGain here (postGain=1).
-                        // KNOWN GAP: this path has no mix argument, so bus_mix is
-                        // silently ignored whenever stereo link is engaged (the
-                        // per-channel branch below honours it). Pre-existing; no
-                        // UI binds bus_mix, so exposure is automation-only.
                         busCompressor->processStereoLinked(
                             oversampledBlock.getChannelPointer(static_cast<size_t>(0)), oversampledBlock.getChannelPointer(static_cast<size_t>(1)), osNumSamples,
                             cachedParams[0], cachedParams[1],
                             static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]),
-                            cachedParams[4], 1.0f, stereoLinkAmount,
+                            cachedParams[4], 1.0f,
+                            modeMixCurve.data(), static_cast<int>(modeMixCurve.size()),
+                            stereoLinkAmount,
                             interpolatedSidechain.getReadPointer(0),
                             interpolatedSidechain.getReadPointer(juce::jmin(1, interpolatedSidechain.getNumChannels() - 1)),
                             hasExternalSidechain);
@@ -6690,7 +6701,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                             buffer.getWritePointer(0), buffer.getWritePointer(1), numSamples,
                             cachedParams[0], cachedParams[1],
                             static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]),
-                            cachedParams[4], compensationGain, stereoLinkAmount,
+                            cachedParams[4], compensationGain,
+                            modeMixCurve.data(), static_cast<int>(modeMixCurve.size()),
+                            stereoLinkAmount,
                             linkedSidechain.getReadPointer(0), linkedSidechain.getReadPointer(1),
                             hasExternalSidechain);
                     }
