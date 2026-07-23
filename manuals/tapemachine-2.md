@@ -15,6 +15,8 @@ deck topology with additional transport and electronics options. The machine,
 speed, tape formulation, equalization, bias, and signal path all change the
 modeled recording and playback chain.
 
+![TapeMachine 2 main interface: dual VU meters, the machine and tape selector row, and the gain staging, tape character, transport, and filter controls](screenshots/tapemachine-2/01-main-ui.png)
+
 The factory bank contains 20 calibrated presets. They are useful starting
 points, but Input, Bias, transport modulation, filters, and the Advanced
 reproduce EQ remain fully editable.
@@ -203,8 +205,14 @@ values are intentional parts of each fitted preset.
 ## Formats and requirements
 
 - macOS 10.15 or newer: AU, VST3, CLAP, LV2; universal arm64/x86_64
-- Linux x86_64: VST3, CLAP, LV2
-- Windows and Standalone builds are not currently shipped
+- Linux (x86_64 and arm64): VST3, CLAP, LV2
+- Windows (x86_64): VST3, CLAP
+- A Standalone build is not currently shipped
 
-Production macOS releases are Developer ID signed and Apple-notarized. Release
-archives include GPL and third-party license notices plus SHA-256 checksums.
+macOS builds are not code-signed or notarized. On first launch Gatekeeper will
+warn; either right-click the plugin and choose Open, or clear the quarantine flag
+with `xattr -dr com.apple.quarantine <bundle>`.
+
+Each release archive contains the plugin bundles, the GPL LICENSE, third-party
+license notices, and the User Manual PDF. Every release also publishes a
+SHA256SUMS file for integrity checking.
