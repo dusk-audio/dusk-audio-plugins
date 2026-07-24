@@ -2459,6 +2459,17 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             steerBalance = b;
             if (psProfileActive_)
             {
+                // INTENTIONAL input-keyed gating: any non-negligible source sample
+                // (> 1e-6 ≈ −120 dBFS) pins the time envelopes at 1.0, re-arms the
+                // hold, and re-primes the wander. The fitted early→middle→late
+                // trajectory (and wander decay) therefore runs only AFTER the source
+                // goes near-silent — it models what the wet image does once the
+                // source stops, while active input keeps the full source-keyed lean.
+                // This matches the offline fitter's burst-then-silence envelope model
+                // exactly on the calibration stimuli. Caveat: dithered "silence"
+                // (16-bit dither ≈ 2e-5) stays above the gate, so such material holds
+                // the early state — accepted; raising the gate would diverge from all
+                // fitted profiles and require recalibration.
                 if (axl + axr > 1.0e-6f)
                 {
                     psProfileTimeEnv_ = psProfileSlowTimeEnv_ = 1.0f;
