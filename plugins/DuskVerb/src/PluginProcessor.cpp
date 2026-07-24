@@ -2048,7 +2048,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                                         tokens[6].trim().getFloatValue(),  tokens[7].trim().getFloatValue(),
                                         tokens[8].trim().getFloatValue(),  tokens[9].trim().getFloatValue(),
                                         tokens[10].trim().getFloatValue(), tokens[11].trim().getFloatValue());
-            engine.setPostSteerPanRotation (parsed == 13 ? tokens[12].trim().getFloatValue() : 0.0f);
+            engine.setPostSteerPanRotation (parsed >= 13 ? tokens[12].trim().getFloatValue() : 0.0f);
             engine.setPostSteerHardRightMirror (false);
             // Neutralize any baked wander so a valid env profile fully determines
             // post-steer behavior (e.g. Blade Runner 224 keeps its wander otherwise).
