@@ -153,6 +153,12 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    container:
+      # Build inside Ubuntu 22.04 (glibc 2.35) so the binaries load on
+      # Ubuntu 22.04 / Debian 12 hosts. Building directly on ubuntu-latest
+      # (24.04, glibc 2.39) shipped VST3s that failed to load with
+      # "version `GLIBC_2.38' not found". Same approach as build.yml.
+      image: ubuntu:22.04
     permissions:
       contents: read
     strategy:
@@ -164,6 +170,15 @@ jobs:
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
     steps:
+      # git + ca-certificates must exist BEFORE actions/checkout so the DPF
+      # submodule checkouts work inside the bare container.
+      - name: Install container prerequisites
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -o Acquire::Retries=3
+          apt-get install -y --no-install-recommends git ca-certificates
+
       - name: Checkout plugins repo
         uses: actions/checkout@v4
         with:
@@ -193,12 +208,13 @@ jobs:
         run: |
           # DPF's OpenGL (DGL) UI resolves these via pkg-config in Makefile.base.mk:
           # gl (mesa), x11, dbus-1 (optional file browser).
-          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
-          # runners, aborting apt with exit 100. Retry the whole update+install a few times.
+          # cmake/zip/curl are needed here too: the ubuntu:22.04 container is bare
+          # (no sudo either — we run as root). Mirrors are intermittently
+          # unreachable from GitHub runners, so retry the whole update+install.
           install_deps() {
-            sudo apt-get update -o Acquire::Retries=3 && \
-            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              build-essential pkg-config ninja-build \
+            apt-get update -o Acquire::Retries=3 && \
+            apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              build-essential pkg-config cmake ninja-build zip curl \
               libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
           }
           for i in 1 2 3 4 5; do
@@ -268,6 +284,11 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+    container:
+      # glibc 2.35 for loadability on Ubuntu 22.04 / Debian 12 arm64 hosts —
+      # the bare 24.04 runner links against glibc 2.38+ symbols. Same as
+      # build.yml's arm64 job.
+      image: ubuntu:22.04
     permissions:
       contents: read
     strategy:
@@ -279,6 +300,15 @@ jobs:
       PLUGIN_BASE: ${{ matrix.plugin.base }}
       ASSET: ${{ matrix.plugin.asset }}
     steps:
+      # git + ca-certificates must exist BEFORE actions/checkout so the DPF
+      # submodule checkouts work inside the bare container.
+      - name: Install container prerequisites
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -o Acquire::Retries=3
+          apt-get install -y --no-install-recommends git ca-certificates
+
       - name: Checkout plugins repo
         uses: actions/checkout@v4
         with:
@@ -308,10 +338,11 @@ jobs:
         run: |
           # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
           # runners, aborting apt with exit 100. Retry the whole update+install a few times.
+          # cmake/zip/curl needed too: bare ubuntu:22.04 container, run as root (no sudo).
           install_deps() {
-            sudo apt-get update -o Acquire::Retries=3 && \
-            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              build-essential pkg-config ninja-build \
+            apt-get update -o Acquire::Retries=3 && \
+            apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              build-essential pkg-config cmake ninja-build zip curl \
               libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
           }
           for i in 1 2 3 4 5; do
