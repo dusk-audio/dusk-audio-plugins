@@ -239,10 +239,20 @@ def fit_preset(preset: str, root: Path, thorough: bool = False,
         expected = 13 if pan_rotation else 12
         if len(initial_profile) != expected:
             raise ValueError(f"initial profile must have {expected} values")
+        if initial_profile[10] <= 0.0 or initial_profile[11] <= 0.0:
+            raise ValueError(
+                "--initial-profile fast/slow release times (values 11 and 12) must be "
+                f"positive, got {initial_profile[10]!r} and {initial_profile[11]!r}")
         initial = np.asarray(initial_profile[:10] + [math.log(initial_profile[10]),
                              math.log(initial_profile[11] / initial_profile[10])]
                              + ([initial_profile[12]] if pan_rotation else []),
                              dtype=np.float64)
+        if not np.all(np.isfinite(initial)):
+            raise ValueError("--initial-profile transforms to non-finite fit values")
+        if np.any(initial < bounds[0]) or np.any(initial > bounds[1]):
+            raise ValueError(
+                "--initial-profile lies outside the fit bounds "
+                f"(lower {bounds[0].tolist()}, upper {bounds[1].tolist()})")
         starts = (initial,) + starts
     best = None
     for start in starts:

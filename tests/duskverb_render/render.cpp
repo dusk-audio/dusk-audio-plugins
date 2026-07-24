@@ -1757,6 +1757,10 @@ int main (int argc, char** argv)
     // names always include the input filename stem so left/right/center
     // reference captures stay resolvable regardless of input count;
     // --legacy-stem-name restores the old single-input {slug}_stem.wav form.
+    if (legacyStemName && inputWavPaths.size() != 1)
+        std::cerr << "  ! --legacy-stem-name ignored: it applies only with exactly one --input-wav"
+                  << std::endl;
+    juce::StringArray writtenStemNames;
     for (size_t inputIndex = 0; inputIndex < inputWavPaths.size(); ++inputIndex)
     {
         if (inputIndex > 0)
@@ -1798,7 +1802,13 @@ int main (int argc, char** argv)
                 const auto outputSlug = (inputWavPaths.size() == 1 && legacyStemName)
                     ? slug
                     : slug + "_" + stemFile.getFileNameWithoutExtension();
-                auto outFile = outDir.getChildFile (outputSlug + "_stem.wav");
+                const auto outName = outputSlug + "_stem.wav";
+                if (writtenStemNames.contains (outName))
+                    std::cerr << "  ! duplicate stem output name '" << outName
+                              << "': another --input-wav with the same basename was already "
+                              << "rendered and is being overwritten" << std::endl;
+                writtenStemNames.add (outName);
+                auto outFile = outDir.getChildFile (outName);
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
             }

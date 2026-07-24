@@ -179,7 +179,8 @@ def _run(cmd: list[str], timeout: int = 300) -> str:
 
 
 def _capture_set(renderer: Path, plugin_flag: str, plugin: Path, out_dir: Path,
-                 slug: str, inputs: dict[str, Path], config: list[str]) -> dict[str, Path]:
+                 slug: str, inputs: dict[str, Path], config: list[str],
+                 timeout: int = 300) -> dict[str, Path]:
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [str(renderer), plugin_flag, str(plugin), "--output-dir", str(out_dir),
@@ -187,7 +188,7 @@ def _capture_set(renderer: Path, plugin_flag: str, plugin: Path, out_dir: Path,
     for input_wav in inputs.values():
         cmd.extend(["--input-wav", str(input_wav)])
     cmd.extend(config)
-    _run(cmd)
+    _run(cmd, timeout=timeout)
     stems = {side: out_dir / f"{slug}_{input_wav.stem}_stem.wav"
              for side, input_wav in inputs.items()}
     missing = [str(path) for path in stems.values() if not path.exists()]
@@ -196,10 +197,12 @@ def _capture_set(renderer: Path, plugin_flag: str, plugin: Path, out_dir: Path,
     return stems
 
 
-def _capture_dv(renderer: Path, dv: Path, preset: str, inputs: dict[str, Path], root: Path) -> dict[str, Path]:
+def _capture_dv(renderer: Path, dv: Path, preset: str, inputs: dict[str, Path], root: Path,
+                timeout: int = 300) -> dict[str, Path]:
     return _capture_set(
         renderer, "--vst3", dv, root, "dv", inputs,
-        ["--program", preset, "--param", "Dry/Wet=1.0", "--param", "Bus Mode=1"])
+        ["--program", preset, "--param", "Dry/Wet=1.0", "--param", "Bus Mode=1"],
+        timeout=timeout)
 
 
 def _reference_first_config(ref: Reference, audio_tools: Path, vvv: Path, shimmer: Path,
@@ -224,9 +227,10 @@ def _reference_first_config(ref: Reference, audio_tools: Path, vvv: Path, shimme
 
 
 def _capture_reference(renderer: Path, ref: Reference, audio_tools: Path, vvv: Path,
-                       shimmer: Path, vvv_data: dict, inputs: dict[str, Path], root: Path) -> dict[str, Path]:
+                       shimmer: Path, vvv_data: dict, inputs: dict[str, Path], root: Path,
+                       timeout: int = 300) -> dict[str, Path]:
     flag, plugin, config = _reference_first_config(ref, audio_tools, vvv, shimmer, vvv_data)
-    return _capture_set(renderer, flag, plugin, root, "ref", inputs, config)
+    return _capture_set(renderer, flag, plugin, root, "ref", inputs, config, timeout=timeout)
 
 
 def _load(path: Path) -> tuple[np.ndarray, int]:
@@ -368,6 +372,10 @@ def main() -> int:
     parser.add_argument("--vvv-vst3", type=Path, default=DEFAULT_VVV)
     parser.add_argument("--shimmer-vst3", type=Path, default=DEFAULT_SHIMMER)
     parser.add_argument("--json", type=Path, help="write machine-readable results")
+    parser.add_argument("--render-timeout", type=int, default=900,
+                        help="per-render subprocess timeout in seconds; bridged "
+                             "(yabridge) reference captures can far exceed the "
+                             "old fixed 300 s limit")
     args = parser.parse_args()
 
     selected = args.preset or list(PRESETS)
@@ -386,11 +394,19 @@ def main() -> int:
         root = args.out / slug
         dv_root, ref_root = root / "dv", root / "ref"
         print(f"[{index}/{len(selected)}] {preset}", flush=True)
-        if args.capture or args.capture_dv_only:
-            _capture_dv(args.renderer, args.dv_vst3, preset, inputs, dv_root)
-        if args.capture:
-            _capture_reference(args.renderer, PRESETS[preset], args.audio_tools, args.vvv_vst3,
-                               args.shimmer_vst3, vvv_data, inputs, ref_root)
+        try:
+            if args.capture or args.capture_dv_only:
+                _capture_dv(args.renderer, args.dv_vst3, preset, inputs, dv_root,
+                            timeout=args.render_timeout)
+            if args.capture:
+                _capture_reference(args.renderer, PRESETS[preset], args.audio_tools, args.vvv_vst3,
+                                   args.shimmer_vst3, vvv_data, inputs, ref_root,
+                                   timeout=args.render_timeout)
+        except subprocess.TimeoutExpired as exc:
+            print(f"  TIMEOUT after {args.render_timeout}s: {' '.join(exc.cmd)}",
+                  file=sys.stderr)
+            total_failures += 1
+            continue
         dv_paths = {side: dv_root / f"dv_{side}_stem.wav" for side in inputs}
         ref_paths = {side: ref_root / f"ref_{side}_stem.wav" for side in inputs}
         missing = [str(path) for path in [*dv_paths.values(), *ref_paths.values()] if not path.exists()]
