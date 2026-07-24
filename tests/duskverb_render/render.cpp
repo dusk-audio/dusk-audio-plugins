@@ -842,13 +842,16 @@ int main (int argc, char** argv)
     juce::String outDirArg;
     // Arbitrary stem input: when set, load WAV, pad with reverb-tail
     // headroom, render through the configured engine, write to
-    // {outDir}/{slug}_stem.wav. Lets users A/B real-world stems against
-    // Lexicon reference renders without going through a DAW.
-    // May be repeated. A single --input-wav keeps the legacy {slug}_stem.wav
-    // name; repeated inputs become {slug}_{input-file-stem}_stem.wav. Each is
-    // rendered after an independent reset + preroll, but through the same
-    // hosted plugin instance (important for slow yabridge reference audits).
+    // {outDir}/{slug}_{input-file-stem}_stem.wav. Lets users A/B real-world
+    // stems against Lexicon reference renders without going through a DAW.
+    // May be repeated; the input-stem naming applies regardless of count so
+    // capture sets stay resolvable. --legacy-stem-name restores the old
+    // single-input {slug}_stem.wav name for scripts that predate the multi-
+    // input form. Each input is rendered after an independent reset + preroll,
+    // but through the same hosted plugin instance (important for slow
+    // yabridge reference audits).
     std::vector<juce::String> inputWavPaths;
+    bool legacyStemName = false;
     juce::String programArg;            // factory program by name
     int          programIndex   = -1;   // factory program by index
     juce::String saveStatePath;         // dump getStateInformation bytes here after preset
@@ -907,6 +910,7 @@ int main (int argc, char** argv)
         else if (a == "--slug"      && i + 1 < argc) slugArg      = argv[++i];
         else if (a == "--output-dir" && i + 1 < argc) outDirArg   = argv[++i];
         else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
+        else if (a == "--legacy-stem-name")          legacyStemName = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
         else if (a == "--program-index" && i + 1 < argc)
                                                      programIndex = juce::String (argv[++i]).getIntValue();
@@ -1749,10 +1753,10 @@ int main (int argc, char** argv)
 
     // ---- Render 2b: arbitrary stems (--input-wav, repeatable) ----
     // Loads each user-supplied WAV, pads with 6 seconds of silence so the
-    // reverb tail fully decays, and resets + prerolls between inputs. A single
-    // input preserves the legacy {slug}_stem.wav name; repeated inputs include
-    // the input filename stem so left/right/center reference captures can share
-    // one hosted plugin instance without sharing DSP state.
+    // reverb tail fully decays, and resets + prerolls between inputs. Output
+    // names always include the input filename stem so left/right/center
+    // reference captures stay resolvable regardless of input count;
+    // --legacy-stem-name restores the old single-input {slug}_stem.wav form.
     for (size_t inputIndex = 0; inputIndex < inputWavPaths.size(); ++inputIndex)
     {
         if (inputIndex > 0)
@@ -1791,7 +1795,7 @@ int main (int argc, char** argv)
                     stemInput.copyFrom (1, 0, stemInput, 0, 0, stemSamples);
 
                 auto output = renderThroughPlugin (*plugin, stemInput);
-                const auto outputSlug = inputWavPaths.size() == 1
+                const auto outputSlug = (inputWavPaths.size() == 1 && legacyStemName)
                     ? slug
                     : slug + "_" + stemFile.getFileNameWithoutExtension();
                 auto outFile = outDir.getChildFile (outputSlug + "_stem.wav");

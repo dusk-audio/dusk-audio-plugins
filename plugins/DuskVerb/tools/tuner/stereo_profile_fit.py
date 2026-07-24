@@ -33,6 +33,17 @@ PREDELAY_MS = {
 }
 
 
+def _json_safe(value):
+    """Recursively convert non-finite floats to None so json.dumps stays valid."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def split_bands(x: np.ndarray, sr: int) -> np.ndarray:
     c1 = math.exp(-2.0 * math.pi * 300.0 / sr)
     c2 = math.exp(-2.0 * math.pi * 2000.0 / sr)
@@ -278,7 +289,8 @@ def fit_preset(preset: str, root: Path, thorough: bool = False,
 
 
 def fit_wander_preset(preset: str, root: Path, base_profile: list[float],
-                      thorough: bool = False) -> dict:
+                      thorough: bool = False,
+                      mirror_hard_right: bool = False) -> dict:
     """Add a damped image wander to a fitted profile.
 
     Lexicon's Blade Runner image crosses the centre repeatedly during the first
@@ -303,8 +315,10 @@ def fit_wander_preset(preset: str, root: Path, base_profile: list[float],
 
     def evaluate(w: np.ndarray):
         p = expand(w)
-        left = apply_profile(bands_l, +1.0, sr, predelay, p)
-        right = apply_profile(bands_r, -1.0, sr, predelay, p)
+        left = apply_profile(bands_l, +1.0, sr, predelay, p,
+                             mirror_hard_right=mirror_hard_right)
+        right = apply_profile(bands_r, -1.0, sr, predelay, p,
+                              mirror_hard_right=mirror_hard_right)
         return (*metrics(left, right, dv["center"], sr), left, right)
 
     def residual(w: np.ndarray) -> np.ndarray:
@@ -344,6 +358,7 @@ def fit_wander_preset(preset: str, root: Path, base_profile: list[float],
         math.exp(float(w[3])), math.exp(float(w[4])), float(w[5])]
     return {
         "preset": preset, "profile": profile, "fit_rms": score,
+        "mirror_hard_right": mirror_hard_right,
         "actual_stereo_reference": actual, "metrics": vars(m),
         "reference": vars(ref_m), "failures": failures,
     }
@@ -371,7 +386,11 @@ def main() -> int:
     if args.wander_from and len(selected) != 1:
         parser.error("--wander-from requires exactly one --preset")
     base_profile = None
+    wander_mirror = False
     if args.wander_from:
+        if args.pan_rotation:
+            parser.error("--pan-rotation cannot be combined with --wander-from: the "
+                         "wander expansion only supports the 12-value profile ordering")
         prior = json.loads(args.wander_from.read_text())["results"]
         if not prior:
             parser.error(f"--wander-from file {args.wander_from} has no results")
@@ -379,12 +398,19 @@ def main() -> int:
             parser.error(f"--wander-from file {args.wander_from} was fitted for "
                          f"{prior[0].get('preset')!r}, not {selected[0]!r}")
         base_profile = prior[0]["profile"]
+        if len(base_profile) != 12:
+            parser.error(f"--wander-from base profile has {len(base_profile)} values; "
+                         "wander fitting supports only 12-value profiles (a 13-value "
+                         "pan-rotation fit cannot keep its rotation angle through the "
+                         "wander expansion)")
+        wander_mirror = bool(prior[0].get("mirror_hard_right", False)) or args.mirror_hard_right
     initial_profile = ([float(value) for value in args.initial_profile.split(",")]
                        if args.initial_profile else None)
     results = []
     for i, preset in enumerate(selected, 1):
         print(f"[{i}/{len(selected)}] {preset}", flush=True)
-        result = (fit_wander_preset(preset, args.root, base_profile, args.thorough)
+        result = (fit_wander_preset(preset, args.root, base_profile, args.thorough,
+                                    wander_mirror)
                   if base_profile is not None else
                   fit_preset(preset, args.root, args.thorough, args.pan_rotation,
                              initial_profile, args.pan_weight,
@@ -398,7 +424,7 @@ def main() -> int:
     payload = {"results": results, "failure_count": sum(len(r["failures"]) for r in results)}
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(json.dumps(payload, indent=2) + "\n")
+        args.json.write_text(json.dumps(_json_safe(payload), indent=2) + "\n")
     return 1 if payload["failure_count"] else 0
 
 

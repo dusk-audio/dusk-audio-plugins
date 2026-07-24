@@ -163,6 +163,12 @@ def _make_inputs(root: Path) -> dict[str, Path]:
     return out
 
 
+def _clean(values: dict) -> dict:
+    """JSON-safe copy: non-finite floats become None, like the trajectory lists."""
+    return {key: (None if isinstance(value, float) and not math.isfinite(value) else value)
+            for key, value in values.items()}
+
+
 def _run(cmd: list[str], timeout: int = 300) -> str:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
@@ -181,7 +187,6 @@ def _capture_set(renderer: Path, plugin_flag: str, plugin: Path, out_dir: Path,
     for input_wav in inputs.values():
         cmd.extend(["--input-wav", str(input_wav)])
     cmd.extend(config)
-    cmd.append("RefRender")
     _run(cmd)
     stems = {side: out_dir / f"{slug}_{input_wav.stem}_stem.wav"
              for side, input_wav in inputs.items()}
@@ -367,8 +372,12 @@ def main() -> int:
 
     selected = args.preset or list(PRESETS)
     inputs = _make_inputs(args.out / "inputs")
-    vvv_path = args.audio_tools / "tools" / "duskverb" / "tuner" / "vvv_anchor_presets.json"
-    vvv_data = json.loads(vvv_path.read_text())
+    # Only reference capture reads the VVV GUI-readback data; analysis-only and
+    # DV-only runs must not require the private dusk-audio-tools checkout.
+    vvv_data: dict = {}
+    if args.capture:
+        vvv_path = args.audio_tools / "tools" / "duskverb" / "tuner" / "vvv_anchor_presets.json"
+        vvv_data = json.loads(vvv_path.read_text())
     results: list[dict] = []
     total_failures = 0
 
@@ -404,8 +413,8 @@ def main() -> int:
         results.append({
             "preset": preset,
             "actual_stereo_reference": actual_stereo,
-            "dv": asdict(dv_metrics),
-            "reference": asdict(ref_metrics),
+            "dv": _clean(asdict(dv_metrics)),
+            "reference": _clean(asdict(ref_metrics)),
             "dv_trajectory_db": [None if not math.isfinite(v) else float(v) for v in dv_traj],
             "reference_trajectory_db": [None if not math.isfinite(v) else float(v) for v in ref_traj],
             "failures": failures,
