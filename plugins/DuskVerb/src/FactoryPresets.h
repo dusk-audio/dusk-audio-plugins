@@ -355,7 +355,15 @@ struct FactoryPreset
             // gave T60-16k +80% and pulled cent_500 +27% bright in the late tail. Air is
             // the top band -> must damp FASTEST. Fixes the late-centroid tilt in-loop
             // (cent_50 untouched, unlike the static air-shelf).
-            { "79 Vocal Chamber", { 0.18f, 0.22f } },
+            // 2026-07-24: hi-mid 0.18->0.11 — the 4-8k tail ran long+bright vs the dark
+            // Chamber1979 anchor (T60 4k +17.9%, T60 8k +36.2%, cent_500 +28%). Damping
+            // the hi-mid band faster closes all three (cent_500 +5%, T60 4k -0.9%, T60 8k
+            // +9.0%) in one lever. COST: edt hi 2-8k goes -34% (early HF decays faster —
+            // inherent to a single damping multiplier: can't shorten the late tail without
+            // shortening the early). Sweet spot 0.11: 0.10 also breaks ripple-high; 0.13
+            // leaves T60-8k failing. Air 0.22 unchanged (ss-air +14.5 is structural — the
+            // anchor top is near-silent -72dB, no damping reaches it). 12->10, byte-stable.
+            { "79 Vocal Chamber", { 0.11f, 0.22f } },
         };
         float qtHiMid = -1.0f, qtAir = -1.0f;
         if (auto it = kQuadBandByName.find (juce::String (name)); it != kQuadBandByName.end())
