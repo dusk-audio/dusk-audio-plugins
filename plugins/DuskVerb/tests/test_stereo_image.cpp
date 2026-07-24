@@ -5,11 +5,13 @@
 #include "../src/StereoImagePresets.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -40,6 +42,7 @@ struct Render
 {
     std::vector<float> left;
     std::vector<float> right;
+    int burstSamples = 0;
 };
 
 enum class InputPan
@@ -51,10 +54,14 @@ enum class InputPan
 
 Render renderDattorro (float steerAmount, InputPan inputPan,
                        float nativeStereoAmount = 0.0f, bool profileEnabled = false,
-                       float panRotationRadians = 0.0f, bool mirrorHardRight = false)
+                       float panRotationRadians = 0.0f, bool mirrorHardRight = false,
+                       double sampleRate = kSampleRate)
 {
+    const int renderSamples = static_cast<int> (sampleRate * 2.0);
+    const int burstSamples = static_cast<int> (sampleRate * 0.005);
+
     DuskVerbEngine engine;
-    engine.prepare (kSampleRate, kBlockSize);
+    engine.prepare (sampleRate, kBlockSize);
     engine.setAlgorithm (0);
     engine.setWidth (1.0f);
     engine.setMonoBelow (20.0f);
@@ -71,20 +78,21 @@ Render renderDattorro (float steerAmount, InputPan inputPan,
         engine.setPostSteerHardRightMirror (mirrorHardRight);
     }
 
-    Render render { std::vector<float> (kRenderSamples, 0.0f),
-                    std::vector<float> (kRenderSamples, 0.0f) };
+    Render render { std::vector<float> (static_cast<size_t> (renderSamples), 0.0f),
+                    std::vector<float> (static_cast<size_t> (renderSamples), 0.0f),
+                    burstSamples };
 
     uint32_t rng = 0x12345678u;
-    for (int i = 0; i < kBurstSamples; ++i)
+    for (int i = 0; i < burstSamples; ++i)
     {
         const float sample = nextNoise (rng) * 0.25f;
         render.left[static_cast<size_t> (i)] = inputPan != InputPan::right ? sample : 0.0f;
         render.right[static_cast<size_t> (i)] = inputPan != InputPan::left ? sample : 0.0f;
     }
 
-    for (int offset = 0; offset < kRenderSamples; offset += kBlockSize)
+    for (int offset = 0; offset < renderSamples; offset += kBlockSize)
     {
-        const int count = std::min (kBlockSize, kRenderSamples - offset);
+        const int count = std::min (kBlockSize, renderSamples - offset);
         engine.process (render.left.data() + offset, render.right.data() + offset, count);
     }
 
@@ -95,10 +103,10 @@ float tailIldDb (const Render& render)
 {
     double energyL = 0.0;
     double energyR = 0.0;
-    for (int i = kBurstSamples; i < kRenderSamples; ++i)
+    for (size_t i = static_cast<size_t> (render.burstSamples); i < render.left.size(); ++i)
     {
-        const double left = render.left[static_cast<size_t> (i)];
-        const double right = render.right[static_cast<size_t> (i)];
+        const double left = render.left[i];
+        const double right = render.right[i];
         energyL += left * left;
         energyR += right * right;
     }
@@ -123,9 +131,28 @@ void testPresetCalibrationWiring()
                          }),
            "factory presets keep native tank-side injection disabled");
 
+    // Independent guard against a profile-table name typo: the assertion above
+    // derives both sides from the same findSteerProfile() lookup, so a mistyped
+    // kSteerProfiles name would pass silently. This list is the set of preset
+    // names EXPECTED to carry a fitted post-steer profile, hardcoded from
+    // StereoImagePresets.h kSteerProfiles (17 entries) so the two must agree.
+    static constexpr std::array<const char*, 17> kExpectedProfilePresets = { {
+        "Vocal Plate", "Drum Plate", "Bright Hall", "Vocal Hall",
+        "Cathedral Large Hall", "Blade Runner 224", "79 Vocal Chamber",
+        "Small Drum Room", "Medium Drum Room", "Live Room", "Tiled Room",
+        "Ambience", "Vintage Vocal Plate", "Vintage Gold Plate",
+        "Large Chamber", "Reverse Taps", "Deep Blue Day" } };
+    check (kExpectedProfilePresets.size() == DuskVerbStereoImage::kSteerProfiles.size(),
+           "expected profile-set size matches kSteerProfiles size (17)");
+    const auto expectsProfile = [] (std::string_view presetName) {
+        return std::any_of (kExpectedProfilePresets.begin(), kExpectedProfilePresets.end(),
+                            [presetName] (const char* n) { return presetName == n; });
+    };
+
     DuskVerbEngine engine;
     engine.prepare (kSampleRate, kBlockSize);
 
+    int profileBearingPresets = 0;
     for (const auto& preset : presets)
     {
         const auto* calibration = DuskVerbStereoImage::findPresetCalibration (preset.name);
@@ -139,7 +166,13 @@ void testPresetCalibrationWiring()
         check (engine.hasPostSteerProfile()
                    == (DuskVerbStereoImage::findSteerProfile (preset.name) != nullptr),
                std::string (preset.name) + " applies or clears its measured profile");
+        check (engine.hasPostSteerProfile() == expectsProfile (preset.name),
+               std::string (preset.name) + " profile presence matches the explicit expected set");
+        if (engine.hasPostSteerProfile())
+            ++profileBearingPresets;
     }
+    check (profileBearingPresets == 17,
+           "exactly 17 factory presets apply a fitted post-steer profile");
 
     engine.setPostSteer (0.75f);
     engine.reapplyNeutralEngineConfig();
@@ -210,6 +243,31 @@ void testHardPannedInputRetainsSourceSide()
                && std::memcmp (rightProfiled.right.data(), rightMirrored.left.data(), bytes) == 0,
            "hard-right mirror swaps channels without changing their samples");
 }
+
+// The full trajectory/profile checks above stay 48 kHz-only to bound runtime;
+// the two rate-invariant guarantees (centred bit-identity + hard-panned sign)
+// are re-run here at 44.1 kHz and 96 kHz.
+void testSampleRateInvariants (double sampleRate)
+{
+    const std::string hz = std::to_string (static_cast<int> (sampleRate)) + " Hz";
+
+    const auto off = renderDattorro (0.0f, InputPan::centre, 0.0f, false, 0.0f, false, sampleRate);
+    const auto on = renderDattorro (0.97f, InputPan::centre, 0.0f, false, 0.0f, false, sampleRate);
+    const auto bytes = off.left.size() * sizeof (float);
+    check (off.left.size() == on.left.size()
+               && std::memcmp (off.left.data(), on.left.data(), bytes) == 0
+               && std::memcmp (off.right.data(), on.right.data(), bytes) == 0,
+           "centred input stays bit-identical with post-steer enabled @ " + hz);
+
+    const auto leftOn = renderDattorro (0.38f, InputPan::left, 0.0f, false, 0.0f, false, sampleRate);
+    const auto rightOn = renderDattorro (0.38f, InputPan::right, 0.0f, false, 0.0f, false, sampleRate);
+    const float leftOnIld = tailIldDb (leftOn);
+    const float rightOnIld = tailIldDb (rightOn);
+    std::cout << "       Dattorro @ " << hz << " tail ILD: hard-left " << leftOnIld
+              << " dB, hard-right " << rightOnIld << " dB\n";
+    check (leftOnIld >= 2.0f, "hard-left input produces at least +2 dB source-side tail ILD @ " + hz);
+    check (rightOnIld <= -2.0f, "hard-right input produces at least -2 dB source-side tail ILD @ " + hz);
+}
 } // namespace
 
 int main()
@@ -217,6 +275,8 @@ int main()
     testPresetCalibrationWiring();
     testCentredInputIsBitIdentical();
     testHardPannedInputRetainsSourceSide();
+    testSampleRateInvariants (44100.0);
+    testSampleRateInvariants (96000.0);
 
     if (failures != 0)
         std::cerr << failures << " stereo-image test(s) failed\n";

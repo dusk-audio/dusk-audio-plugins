@@ -2426,15 +2426,15 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         wetR = perBandEDT_.processR (wetR);
 
         // ---- Post-tank stereo image steer (issue #123) ----
-        // Constant-power L/R gain tilt on the FINAL wet, keyed off the CLEAN dry input
-        // still held in left[i]/right[i] here (the engine writes wet back only at the
-        // end of this loop; the pre-delay read and sus-limiter mutate their OWN buffers,
-        // never left/right — verified). Applied HERE, downstream of every engine and
+        // Constant-power L/R gain tilt on the FINAL wet, keyed off the PREDELAYED clean
+        // source reconstructed as reflDryMono_[i] ± sourceSide_[i] (== the predelayed
+        // tank-input L/R; both buffers are snapshotted post-predelay each block and are
+        // never mutated by the engines). Applied HERE, downstream of every engine and
         // BEFORE the Mono Maker / width M/S stage, so the imposed ILD is then shaped by
         // width exactly like any other stereo content. Engine-agnostic: works even on
         // the mono-in tanks (Dattorro) where output-tap surgery cannot lean the image.
         //
-        // Detector: per-sample amplitude-envelope followers on |dryL|,|dryR| (attack/
+        // Detector: per-sample amplitude-envelope followers on |srcL|,|srcR| (attack/
         // release one-poles), balance b=(EL-ER)/(EL+ER+eps) clamped [-1,1]. Steer:
         // gl=sqrt(1+k·b), gr=sqrt(1-k·b) (constant-power), k=kPostSteerKMax·amount,
         // smoothed by a one-pole gain smoother (anti-zipper — the Vocal Hall AttackRamp
@@ -2443,8 +2443,9 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         //
         // postSteerActive_ false → this block is skipped → the left[i]/right[i] final
         // write below is byte-identical to legacy (bit-null). Centered input →
-        // EL==ER exactly → b==0 → gl==gr==sqrt(1.0f)==1.0f → wet × 1.0f → byte-identical
-        // even with the feature ON (a stronger guarantee than the < -100 dB target).
+        // srcL==srcR exactly → sourceSide_==0 → b==0 → gl==gr==sqrt(1.0f)==1.0f →
+        // wet × 1.0f → byte-identical even with the feature ON (a stronger guarantee
+        // than the < -100 dB target).
         float steerBalance = 0.0f;
         if (postSteerActive_)
         {
@@ -2475,6 +2476,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 }
                 else if (psProfileReleaseCoeff_ > 0.0f)
                 {
+                    // NOTE: gated on the FAST coeff only. A hand-authored profile with
+                    // fastRelease > 0 but slowRelease == 0 collapses the slow env to 0
+                    // here (the offline fitter's envelope holds at 1.0 instead). Fitted
+                    // profiles always have both releases > 0, so this asymmetry is
+                    // unreachable from the shipped tables.
                     psProfileTimeEnv_ *= psProfileReleaseCoeff_;
                     psProfileSlowTimeEnv_ *= psProfileSlowReleaseCoeff_;
                 }

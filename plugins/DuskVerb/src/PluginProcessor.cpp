@@ -2007,7 +2007,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     float postSteer = DuskVerbStereoImage::steerAmountForPreset (std::string_view (name));
     if (const char* overrideValue = tuningEnv().poststeer;
         overrideValue != nullptr && overrideValue[0] != '\0')
-        postSteer = std::clamp (static_cast<float> (std::atof (overrideValue)), -1.0f, 1.0f);
+        postSteer = std::clamp (juce::String (overrideValue).getFloatValue(), -1.0f, 1.0f);
     engine.setPostSteer (postSteer);
     if (const auto* profile =
             DuskVerbStereoImage::findSteerProfile (std::string_view (name)))
@@ -2033,18 +2033,22 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
     if (const char* profile = tuningEnv().poststeerprofile;
         profile != nullptr && profile[0] != '\0')
     {
-        float earlyL = 0.0f, earlyM = 0.0f, earlyH = 0.0f;
-        float middleL = 0.0f, middleM = 0.0f, middleH = 0.0f;
-        float lateL = 0.0f, lateM = 0.0f, lateH = 0.0f;
-        float holdMs = 0.0f, fastMs = 0.0f, slowMs = 0.0f, panRotation = 0.0f;
-        const int parsed = std::sscanf (profile, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
-                         &earlyL, &earlyM, &earlyH, &middleL, &middleM, &middleH,
-                         &lateL, &lateM, &lateH, &holdMs, &fastMs, &slowMs, &panRotation);
+        // Locale-independent parse (juce::String::getFloatValue always uses '.',
+        // unlike std::sscanf %f which honours the C locale's decimal point).
+        // 12 tokens → profile with panRotation 0; 13 → token 12 is panRotation;
+        // fewer than 12 → no-op, matching the prior sscanf semantics.
+        juce::StringArray tokens;
+        tokens.addTokens (juce::String (profile), ",", "");
+        const int parsed = tokens.size();
         if (parsed >= 12)
         {
-            engine.setPostSteerProfile (earlyL, earlyM, earlyH, middleL, middleM, middleH,
-                                        lateL, lateM, lateH, holdMs, fastMs, slowMs);
-            engine.setPostSteerPanRotation (parsed == 13 ? panRotation : 0.0f);
+            engine.setPostSteerProfile (tokens[0].trim().getFloatValue(),  tokens[1].trim().getFloatValue(),
+                                        tokens[2].trim().getFloatValue(),  tokens[3].trim().getFloatValue(),
+                                        tokens[4].trim().getFloatValue(),  tokens[5].trim().getFloatValue(),
+                                        tokens[6].trim().getFloatValue(),  tokens[7].trim().getFloatValue(),
+                                        tokens[8].trim().getFloatValue(),  tokens[9].trim().getFloatValue(),
+                                        tokens[10].trim().getFloatValue(), tokens[11].trim().getFloatValue());
+            engine.setPostSteerPanRotation (parsed == 13 ? tokens[12].trim().getFloatValue() : 0.0f);
             engine.setPostSteerHardRightMirror (false);
             // Neutralize any baked wander so a valid env profile fully determines
             // post-steer behavior (e.g. Blade Runner 224 keeps its wander otherwise).
@@ -2062,7 +2066,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         nativeStereo = calibration->nativeStereoAmount;
     if (const char* overrideValue = tuningEnv().nativestereo;
         overrideValue != nullptr && overrideValue[0] != '\0')
-        nativeStereo = std::clamp (static_cast<float> (std::atof (overrideValue)), 0.0f, 4.0f);
+        nativeStereo = std::clamp (juce::String (overrideValue).getFloatValue(), 0.0f, 4.0f);
     engine.setDattorroStereoInput (nativeStereo);
     engine.setQuadStereoInput (nativeStereo);
     engine.setSparseStereoInput (nativeStereo);

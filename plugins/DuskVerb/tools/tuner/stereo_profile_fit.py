@@ -413,6 +413,10 @@ def main() -> int:
                          "wander fitting supports only 12-value profiles (a 13-value "
                          "pan-rotation fit cannot keep its rotation angle through the "
                          "wander expansion)")
+        if base_profile[10] <= 0.0 or base_profile[11] <= 0.0:
+            parser.error("--wander-from base profile fast/slow release times (values 11 "
+                         f"and 12) must be positive, got {base_profile[10]!r} and "
+                         f"{base_profile[11]!r}")
         wander_mirror = bool(prior[0].get("mirror_hard_right", False)) or args.mirror_hard_right
     initial_profile = ([float(value) for value in args.initial_profile.split(",")]
                        if args.initial_profile else None)
