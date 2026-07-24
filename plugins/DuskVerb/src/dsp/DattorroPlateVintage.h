@@ -44,7 +44,8 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     void clearBuffers();
     void process (const float* inputL, const float* inputR,
-                  float* outputL, float* outputR, int numSamples);
+                  float* outputL, float* outputR, int numSamples,
+                  const float* sourceSide = nullptr);
 
     // Forwarded to internal DattorroTank — same semantics as DattorroTank.
     void setDecayTime         (float seconds);

@@ -665,12 +665,9 @@ void DuskVerbEngine::setQuadStereoInput (float amount)
 void DuskVerbEngine::setDattorroStereoInput (float amount)
 {
     dattorro_.setStereoInput (amount);
-    // NOTE: dattorroVintage_ (DattorroPlateVintage) is intentionally NOT forwarded.
-    // Its tank derives the side signal from the post-EQ pre-tank buffer and was never
-    // plumbed for sourceSide_, so a non-zero native-stereo amount would be silently
-    // dropped here anyway. Before native-stereo is ever enabled for a DPV preset, the
-    // DattorroPlateVintage tank must first be extended to accept sourceSide_ (mind the
-    // -ffast-math hot-loop codegen-drift trap on any process() signature change).
+    // DPV's internal tank now receives the engine's clean sourceSide_ (plumbed
+    // through DattorroPlateVintage::process), so forward native-stereo here too.
+    dattorroVintage_.setStereoInput (amount);
 }
 
 void DuskVerbEngine::setSparseStereoInput (float amount)
@@ -2017,7 +2014,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             break;
         case EngineType::DattorroVintage:
             dattorroVintage_.process (tankInL_.data(), tankInR_.data(),
-                                       tankOutL_.data(), tankOutR_.data(), numSamples);
+                                       tankOutL_.data(), tankOutR_.data(), numSamples,
+                                       sourceSide_.data());
             break;
         case EngineType::VintageTank:
             // VintageTank engine removed 2026-06-13 (no factory preset). Old saved

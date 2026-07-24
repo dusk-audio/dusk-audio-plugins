@@ -100,7 +100,8 @@ void DattorroPlateVintage::clearBuffers()
 }
 
 void DattorroPlateVintage::process (const float* inputL, const float* inputR,
-                                    float* outputL, float* outputR, int numSamples)
+                                    float* outputL, float* outputR, int numSamples,
+                                    const float* sourceSide)
 {
     if (! prepared_) return;
     if (static_cast<size_t> (numSamples) > preTankL_.size())
@@ -173,7 +174,7 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
         }
     }
 
-    tank_.process (preTankL_.data(), preTankR_.data(), outputL, outputR, numSamples);
+    tank_.process (preTankL_.data(), preTankR_.data(), outputL, outputR, numSamples, sourceSide);
 
     for (int n = 0; n < numSamples; ++n)
     {
