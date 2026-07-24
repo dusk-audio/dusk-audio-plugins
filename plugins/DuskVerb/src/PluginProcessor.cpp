@@ -2046,6 +2046,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
                                         lateL, lateM, lateH, holdMs, fastMs, slowMs);
             engine.setPostSteerPanRotation (parsed == 13 ? panRotation : 0.0f);
             engine.setPostSteerHardRightMirror (false);
+            // Neutralize any baked wander so a valid env profile fully determines
+            // post-steer behavior (e.g. Blade Runner 224 keeps its wander otherwise).
+            engine.setPostSteerWander (0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
         }
     }
 

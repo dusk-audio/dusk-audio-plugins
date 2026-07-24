@@ -189,6 +189,15 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     psWanderStarted_ = false;
     psWanderPhase_ = psWanderInitialPhase_;
     psWanderEnv_ = 0.0f;
+    // Recompute the sample-rate-dependent wander coefficients (setPostSteerWander
+    // derived them from the previous sampleRate_). Same derivation as there, so a
+    // sample-rate change does not leave stale coeffs until a preset is reapplied.
+    psWanderPhaseInc_ = sampleRate_ > 0.0
+        ? kTwoPi * psWanderRateHz_ / static_cast<float> (sampleRate_)
+        : 0.0f;
+    psWanderDecayCoeff_ = psWanderDecayMs_ > 0.0f && sampleRate_ > 0.0
+        ? std::exp (-1.0f / (0.001f * psWanderDecayMs_ * static_cast<float> (sampleRate_)))
+        : 0.0f;
 
     // Per-band Width tilt — one-pole LP coeffs at the 300 Hz / 5 kHz crossovers.
     wbLp1Coeff_ = std::exp (-kTwoPi *  300.0f / static_cast<float> (sampleRate));
@@ -848,13 +857,15 @@ void DuskVerbEngine::applyStereoImageBiasOverride()
         const float raw = static_cast<float> (std::atof (ov));
         if (raw > 0.0f)
         {
-            // Tier-2 output-tap levers clamp to 0..1 here; the tank injection
-            // levers (measured walls, env-only, no preset) take the raw value
-            // and clamp to their own 0..4 range internally.
+            // Tier-2 output-tap levers clamp to 0..1 here. Quad-tank injection is
+            // owned by the preset path (setQuadStereoInput) and its own
+            // DUSKVERB_NATIVE_STEREO override (see PluginProcessor), which runs
+            // after this on every preset apply and would overwrite anything set
+            // here — so STEREOBIAS covers only the tier-2 output-tap levers
+            // (denseHall, pmb).
             const float amount = std::clamp (raw, 0.0f, 1.0f);
             denseHall_.setStereoImageBias (amount);
             pmb_.setStereoImageBias (amount);
-            quad_.setStereoInput (raw);
         }
     }
 }
