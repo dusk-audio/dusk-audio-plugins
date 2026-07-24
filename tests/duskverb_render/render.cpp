@@ -1760,7 +1760,22 @@ int main (int argc, char** argv)
     if (legacyStemName && inputWavPaths.size() != 1)
         std::cerr << "  ! --legacy-stem-name ignored: it applies only with exactly one --input-wav"
                   << std::endl;
+    // Pre-validate every requested input: a missing file is a caller error and a
+    // partial capture set silently poisons downstream A/B analysis, so fail the
+    // whole run up front instead of rendering the subset that exists.
+    {
+        int missingInputs = 0;
+        for (const auto& inputWavPath : inputWavPaths)
+            if (! juce::File (inputWavPath).existsAsFile())
+            {
+                std::cerr << "  ! --input-wav file not found: " << inputWavPath << std::endl;
+                ++missingInputs;
+            }
+        if (missingInputs > 0)
+            return 1;
+    }
     juce::StringArray writtenStemNames;
+    int stemRenderFailures = 0;
     for (size_t inputIndex = 0; inputIndex < inputWavPaths.size(); ++inputIndex)
     {
         if (inputIndex > 0)
@@ -1773,7 +1788,9 @@ int main (int argc, char** argv)
         juce::File stemFile (inputWavPath);
         if (! stemFile.existsAsFile())
         {
+            // Pre-validated above; a file vanishing mid-run still fails the batch.
             std::cerr << "  ! --input-wav file not found: " << inputWavPath << std::endl;
+            ++stemRenderFailures;
         }
         else
         {
@@ -1784,6 +1801,17 @@ int main (int argc, char** argv)
             if (reader == nullptr)
             {
                 std::cerr << "  ! could not read stem WAV: " << inputWavPath << std::endl;
+                ++stemRenderFailures;
+            }
+            else if (reader->sampleRate != kSampleRate)
+            {
+                // The hosted plugin is prepared at kSampleRate; feeding samples at
+                // another rate renders at the wrong pitch and timing. Reject rather
+                // than silently mis-render (resampling is out of scope here).
+                std::cerr << "  ! --input-wav sample rate " << reader->sampleRate
+                          << " != renderer rate " << kSampleRate << ", refusing: "
+                          << inputWavPath << std::endl;
+                ++stemRenderFailures;
             }
             else
             {
@@ -1802,17 +1830,30 @@ int main (int argc, char** argv)
                 const auto outputSlug = (inputWavPaths.size() == 1 && legacyStemName)
                     ? slug
                     : slug + "_" + stemFile.getFileNameWithoutExtension();
-                const auto outName = outputSlug + "_stem.wav";
+                auto outName = outputSlug + "_stem.wav";
                 if (writtenStemNames.contains (outName))
+                {
+                    // Same-basename inputs must not silently overwrite an earlier
+                    // capture; derive a deterministic unique name from the input index.
+                    const auto uniqueName = outputSlug + "-" + juce::String (static_cast<int> (inputIndex))
+                                          + "_stem.wav";
                     std::cerr << "  ! duplicate stem output name '" << outName
-                              << "': another --input-wav with the same basename was already "
-                              << "rendered and is being overwritten" << std::endl;
+                              << "': another --input-wav shares this basename; writing '"
+                              << uniqueName << "' instead" << std::endl;
+                    outName = uniqueName;
+                }
                 writtenStemNames.add (outName);
                 auto outFile = outDir.getChildFile (outName);
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
             }
         }
+    }
+    if (stemRenderFailures > 0)
+    {
+        std::cerr << stemRenderFailures << " --input-wav stem(s) failed; refusing to "
+                  << "report success on a partial capture set" << std::endl;
+        return 1;
     }
 
     plugin->reset();

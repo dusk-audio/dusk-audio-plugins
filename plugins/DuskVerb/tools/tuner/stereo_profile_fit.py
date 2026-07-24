@@ -418,8 +418,19 @@ def main() -> int:
                          f"and 12) must be positive, got {base_profile[10]!r} and "
                          f"{base_profile[11]!r}")
         wander_mirror = bool(prior[0].get("mirror_hard_right", False)) or args.mirror_hard_right
-    initial_profile = ([float(value) for value in args.initial_profile.split(",")]
-                       if args.initial_profile else None)
+        if args.initial_profile:
+            parser.error("--initial-profile is not supported with --wander-from: the "
+                         "wander fit always starts from the prior fit's profile")
+        if args.pan_weight != 4.0:
+            parser.error("--pan-weight is not supported with --wander-from: the wander "
+                         "fit uses fixed residual weights")
+    initial_profile = None
+    if args.initial_profile:
+        try:
+            initial_profile = [float(value) for value in args.initial_profile.split(",")]
+        except ValueError:
+            parser.error(f"--initial-profile contains a non-numeric value: "
+                         f"{args.initial_profile!r}")
     results = []
     for i, preset in enumerate(selected, 1):
         print(f"[{i}/{len(selected)}] {preset}", flush=True)

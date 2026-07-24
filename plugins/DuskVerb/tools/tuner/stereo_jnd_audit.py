@@ -305,6 +305,9 @@ def _measure(paths: dict[str, Path]) -> tuple[Metrics, np.ndarray]:
     center, sr_c = _load(paths["center"])
     if sr != sr_r or sr != sr_c:
         raise ValueError("sample-rate mismatch in capture set")
+    if sr != SR:
+        raise ValueError(f"capture set rate {sr} != expected {SR} "
+                         f"(TAIL_START and band gates assume {SR}): {paths['left']}")
     l_tail, r_tail, c_tail = _tail(left, sr), _tail(right, sr), _tail(center, sr)
     n = min(len(l_tail), len(r_tail))
     mirror = r_tail[:n, ::-1]
