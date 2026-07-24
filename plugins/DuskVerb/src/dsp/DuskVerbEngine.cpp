@@ -665,7 +665,12 @@ void DuskVerbEngine::setQuadStereoInput (float amount)
 void DuskVerbEngine::setDattorroStereoInput (float amount)
 {
     dattorro_.setStereoInput (amount);
-    dattorroVintage_.setStereoInput (amount);
+    // NOTE: dattorroVintage_ (DattorroPlateVintage) is intentionally NOT forwarded.
+    // Its tank derives the side signal from the post-EQ pre-tank buffer and was never
+    // plumbed for sourceSide_, so a non-zero native-stereo amount would be silently
+    // dropped here anyway. Before native-stereo is ever enabled for a DPV preset, the
+    // DattorroPlateVintage tank must first be extended to accept sourceSide_ (mind the
+    // -ffast-math hot-loop codegen-drift trap on any process() signature change).
 }
 
 void DuskVerbEngine::setSparseStereoInput (float amount)

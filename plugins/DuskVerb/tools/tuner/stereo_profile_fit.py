@@ -90,6 +90,8 @@ def apply_profile(bands: np.ndarray, sign: float, sr: int, predelay_ms: float,
              + (early[band] - middle[band]) * fast_env)
         if wander is not None:
             k = np.clip(k + params[12 + band] * wander, -0.9999, 0.9999)
+        else:
+            k = np.clip(k, -0.9999, 0.9999)
         gl = smooth_gain(np.sqrt(np.maximum(0.0, 1.0 + sign * k)), sr)
         gr = smooth_gain(np.sqrt(np.maximum(0.0, 1.0 - sign * k)), sr)
         out[:, 0] += bands[band, :, 0] * gl
