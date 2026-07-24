@@ -85,7 +85,12 @@ namespace tmparams
     static constexpr const char* kCalibration[] = { "+3dB", "+6dB", "+7.5dB", "+9dB" };
     static constexpr const char* kOffOn[]       = { "Off", "On" };
     static constexpr const char* kOversampling[]= { "1x", "2x", "4x" };
-    static constexpr const char* kHeadWidth[]   = { "1/4\"", "1/2\"", "1\"" };   // American head stack
+    // Inch marks use U+2033 DOUBLE PRIME, not an ASCII quote: DPF's LV2 TTL
+    // writer wraps any label containing an ASCII '"' in Turtle long-quotes, and a
+    // label ENDING in '"' produces """1/4"""" — four quotes — which is an invalid
+    // Turtle string (Ardour: "no ports"; Reaper: "invalid character in quote").
+    // The prime renders identically as the inch mark and dodges the writer bug.
+    static constexpr const char* kHeadWidth[]   = { "1/4″", "1/2″", "1″" };   // American head stack
 
     template <int N> static constexpr int count(const char* const (&)[N]) { return N; }
 }
