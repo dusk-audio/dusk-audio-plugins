@@ -338,7 +338,7 @@ jobs:
         shell: bash
         run: |
           cmake --build build --config ${{ env.BUILD_TYPE }} --target DuskVerbStereoImageTest -j$(nproc)
-          ctest --test-dir build -R DuskVerbStereoImage --output-on-failure
+          ctest --test-dir build -R DuskVerbStereoImage --output-on-failure --no-tests=error
 
       - name: Validate plugins
         shell: bash

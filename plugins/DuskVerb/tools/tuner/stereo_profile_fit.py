@@ -44,6 +44,22 @@ def _json_safe(value):
     return value
 
 
+def trajectory_residual(candidate: np.ndarray, reference: np.ndarray) -> list[float]:
+    """Keep the residual dimension fixed when a candidate frame is silent.
+
+    A profile can briefly cancel both channels closely enough for the audit's
+    relative silence test. Treat that as a large miss instead of dropping the
+    frame and changing least_squares' residual dimension.
+    """
+    n = min(len(candidate), len(reference))
+    keep = np.isfinite(reference[:n])
+    if not np.any(keep):
+        return []
+    values = candidate[:n][keep] - reference[:n][keep]
+    values = np.nan_to_num(values, nan=2.0 * audit.TRAJECTORY_ILD_LIMIT_DB)
+    return values.tolist()
+
+
 def split_bands(x: np.ndarray, sr: int) -> np.ndarray:
     c1 = math.exp(-2.0 * math.pi * 300.0 / sr)
     c2 = math.exp(-2.0 * math.pi * 2000.0 / sr)
@@ -190,19 +206,6 @@ def fit_preset(preset: str, root: Path, thorough: bool = False,
                               mirror_hard_right)
         return (*metrics(left, right, dv["center"], sr), left, right)
 
-    def trajectory_residual(candidate: np.ndarray, reference: np.ndarray) -> list[float]:
-        """Keep the residual dimension fixed when a candidate frame is silent."""
-        n = min(len(candidate), len(reference))
-        keep = np.isfinite(reference[:n])
-        if not np.any(keep):
-            return []
-        values = candidate[:n][keep] - reference[:n][keep]
-        # A profile can briefly cancel both channels closely enough for the
-        # audit's relative silence test. Treat that as a large miss instead of
-        # dropping the frame and changing least_squares' residual dimension.
-        values = np.nan_to_num(values, nan=2.0 * audit.TRAJECTORY_ILD_LIMIT_DB)
-        return values.tolist()
-
     def residual(p: np.ndarray) -> np.ndarray:
         left = apply_profile(bands_l, +1.0, sr, predelay, p, pan_rotation,
                              mirror_hard_right)
@@ -338,10 +341,7 @@ def fit_wander_preset(preset: str, root: Path, base_profile: list[float],
                   6.0 * (m.ild_mid_db - ref_m.ild_mid_db),
                   6.0 * (m.ild_high_db - ref_m.ild_high_db),
                   6.0 * (m.pan_swap_db - ref_m.pan_swap_db)]
-        n = min(len(traj), len(ref_traj))
-        keep = np.isfinite(ref_traj[:n])
-        delta = traj[:n][keep] - ref_traj[:n][keep]
-        values.extend(np.nan_to_num(delta, nan=2.0 * audit.TRAJECTORY_ILD_LIMIT_DB).tolist())
+        values.extend(trajectory_residual(traj, ref_traj))
         return np.asarray(values, dtype=np.float64)
 
     bounds = (np.array([-1.5, -1.5, -1.5, math.log(0.25), math.log(100.0), -math.pi]),

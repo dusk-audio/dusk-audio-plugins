@@ -407,6 +407,10 @@ def main() -> int:
                   file=sys.stderr)
             total_failures += 1
             continue
+        except RuntimeError as exc:
+            print(f"  RENDER FAILED for {preset}: {exc}", file=sys.stderr)
+            total_failures += 1
+            continue
         dv_paths = {side: dv_root / f"dv_{side}_stem.wav" for side in inputs}
         ref_paths = {side: ref_root / f"ref_{side}_stem.wav" for side in inputs}
         missing = [str(path) for path in [*dv_paths.values(), *ref_paths.values()] if not path.exists()]
