@@ -33,7 +33,8 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize);
     void process (const float* inputL, const float* inputR,
-                  float* outputL, float* outputR, int numSamples);
+                  float* outputL, float* outputR, int numSamples,
+                  const float* sourceSide = nullptr);
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
@@ -47,6 +48,10 @@ public:
     void setModeSmear (float depthSamples, float rateHz);  // deep+slow delay wander to smear the tail "boing"; depth 0 = off/bit-null
     void setSize (float size);
     void setFreeze (bool frozen);
+    // Preserve the clean pre-diffuser input side in the two figure-8 loops.
+    // amount 0 retains the legacy mono-sum path exactly; positive amounts
+    // inject +side into the left loop and -side into the right loop.
+    void setStereoInput (float amount);
 
     // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
     // Scales the in-loop density-AP coefficient around the engine baseline so
@@ -587,6 +592,11 @@ private:
 
     // Density-AP wander depth fraction (see setDensityJitter). 0.02 = legacy.
     float densityJitterFraction_ = 0.02f;
+
+    // Source-side injection. The inactive branch leaves the legacy mono tank
+    // unchanged; the wrapper supplies side from before its stereo diffuser.
+    bool  stereoInputActive_ = false;
+    float stereoInputAmount_ = 0.0f;
 
     void updateDelayLengths();
     void updateDecayCoefficients();

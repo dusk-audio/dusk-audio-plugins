@@ -157,7 +157,8 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
 // -----------------------------------------------------------------------
 void QuadTank::process (const float* inputL, const float* inputR,
-                        float* outputL, float* outputR, int numSamples)
+                        float* outputL, float* outputR, int numSamples,
+                        const float* sourceSide)
 {
     if (! prepared_)
         return;
@@ -190,7 +191,8 @@ void QuadTank::process (const float* inputL, const float* inputR,
         // Stereo-input side term (issue #123). Zero (and branch-free-equivalent)
         // when the feature is off or frozen, so the legacy mono path is unchanged.
         const float side = (stereoInputActive_ && ! frozen_)
-                         ? (inputL[i] - inputR[i]) * 0.5f
+                         ? (sourceSide != nullptr ? sourceSide[i]
+                                                  : (inputL[i] - inputR[i]) * 0.5f)
                          : 0.0f;
 
         // Phase 2: advance master sine ONCE per sample (not per tank).

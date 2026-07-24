@@ -146,3 +146,43 @@ set_target_properties(DuskVerb PROPERTIES
 # Test/IR helper binaries removed during the v2 soft reset — they referenced
 # the SDIR-matching infrastructure (per-preset engines, analyze_ir.py outputs)
 # that was nuked. Re-add against the new clean engine when needed.
+
+# Issue #123 stereo-image regression: verifies the complete factory-preset
+# calibration table, neutral reset behavior, centred-input bit identity, and
+# hard-panned source-side tail retention through the real DuskVerb engine.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(DuskVerbStereoImageTest
+        tests/test_stereo_image.cpp
+    )
+
+    target_include_directories(DuskVerbStereoImageTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_BINARY_DIR}/DuskVerb_artefacts/JuceLibraryCode
+    )
+
+    target_compile_definitions(DuskVerbStereoImageTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+    )
+
+    target_compile_features(DuskVerbStereoImageTest PRIVATE cxx_std_17)
+
+    target_link_libraries(DuskVerbStereoImageTest
+        PRIVATE
+            DuskVerb
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+
+    add_test(NAME DuskVerbStereoImage COMMAND DuskVerbStereoImageTest)
+endif()
