@@ -59,11 +59,9 @@ public:
     {
         // GAIN LINK mirror: the OUTPUT knob is drawn/edited as the opposed input (its
         // readout shows -input). Route every write it makes to INPUT so the two gains
-        // always read as an opposed pair — input = clamp(-displayed). The preset's baked
-        // OUTPUT trim (the recall CALIBRATION) is neither read nor written here: it stays
-        // in the outputGain param and the DSP keeps applying -input + trim, so the
-        // calibrated level is preserved while the knobs stay in sync. UI-only, no DSP
-        // change. This is the single point every OUTPUT-knob gesture funnels through.
+        // always read as an opposed pair — input = clamp(-displayed). The stored OUTPUT
+        // value is neither read nor written here and is used only with the link off.
+        // This is the single point every OUTPUT-knob gesture funnels through.
         if (outLinkActive_ && idx == kParamOutputGain)
         {
             const TmParam& in = kTmParams[kParamInputGain];
@@ -1023,11 +1021,9 @@ private:
         // GAIN LINK path (OUTPUT knob only): a MIRROR of INPUT. The knob shows the opposed
         // input (-input) on the normal ±12 dB output scale, so the two gains always read as
         // an opposed pair (+3 / -3). Its edits are routed to INPUT in the setParam adapter
-        // (input = -displayed). The preset's baked OUTPUT trim is the recall CALIBRATION: it
-        // is neither read nor shown here and stays in the outputGain param, so the DSP keeps
-        // applying -input + trim for the calibrated level while the knobs stay in sync.
-        // Because the readout is always -input, the two knobs cannot drift out of sync (an
-        // OUTPUT trim left behind by editing while UNLINKED is simply not shown under link).
+        // (input = -displayed). The stored OUTPUT value is neither read nor shown here and
+        // remains available for unlinked operation. Because the readout is always -input,
+        // the two knobs cannot drift out of sync.
         // Moving INPUT rotates this needle; moving this knob rotates the INPUT needle. UI-only.
         if (linked)
         {
@@ -1039,8 +1035,8 @@ private:
                        /*persistent*/ true, nullptr, /*rightClickReset*/ false, 1.0f,
                        /*dispAdd*/ 0.0f, l1, /*contextMenu*/ true, overrideText);
             outLinkActive_ = false;
-            // The INPUT mirror is applied in the setParam adapter; the baked OUTPUT trim and
-            // the DSP are left untouched, so nothing to store back here.
+            // The INPUT mirror is applied in the setParam adapter; the stored unlinked
+            // OUTPUT value is left untouched, so nothing is stored back here.
             return ch;
         }
         // Interaction is owned entirely by the shared knob widget so every knob
@@ -1126,15 +1122,15 @@ private:
         dl->AddLine(P(26, cellBot), P(774, cellBot), IM_COL32(150, 151, 153, 140), 1.0f * s);
 
         // GAIN STAGING — with GAIN LINK (autoComp) on, the DSP holds the output at the
-        // inverse of the input (drive the tape harder without the level rising): output gain
-        // = -input + trim, where trim is the outputGain param. Factory presets ship a fitted
-        // trim as recall CALIBRATION for each reference preset's loudness; the link lives in
+        // exact inverse of the input (drive the tape harder without a gain-stage level
+        // change). The stored outputGain value is used only while the link is off; linked
+        // preset changes therefore cannot add a hidden output-trim step. The link lives in
         // the DSP so it works under host automation. To make the link read clearly the OUTPUT
         // knob MIRRORS input under link — its needle AND readout show -input (an opposed pair,
         // e.g. +3 / -3) on the normal ±12 scale, and moving either knob moves the other the
         // opposite way (the drag is routed to INPUT in the setParam adapter, linkOffset = -input).
-        // The baked trim is deliberately NOT shown or changed by the knob, so the calibration
-        // is preserved untouched while the knobs stay in sync. Link off -> plain output gain / trim.
+        // The stored unlinked value is not shown or changed while the knobs stay in sync.
+        // Link off -> plain output gain / trim.
         const bool gainLink = values[kParamAutoComp] > 0.5f;
         knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB");
         knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB",

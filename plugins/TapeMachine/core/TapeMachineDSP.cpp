@@ -150,7 +150,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     inGain.snap  (inGainDb);
     {
         outGain.snap (pAutoComp.load (std::memory_order_relaxed)
-                          ? -inGainDb + pOutputGainDb.load (std::memory_order_relaxed)  // gain link = inverse + Output trim
+                          ? -inGainDb  // gain link = exact inverse; stored Output is unlinked-only
                           : pOutputGainDb.load (std::memory_order_relaxed));
     }
     const float initSat = std::clamp (((inGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
@@ -462,14 +462,11 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     float targetOutputGainDb;
     if (pAutoComp.load (std::memory_order_relaxed))
     {
-        // Gain link ("LINK"): output = -input + Output-knob trim. The inverse of the
-        // input drive locks the two knobs (drive the tape harder without the level
-        // rising); unity/cal-neutrality are handled inside the tape core
-        // (m_machineMakeupGain + cal restore). The Output knob remains a small ADDITIVE
-        // makeup trim on top of the inverse (default 0 -> pure inverse -> byte-identical
-        // unity). Factory presets use it to carry the reference preset's own non-unity output
-        // level (a post-tape LINEAR gain: shifts loudness but not THD/FR/aliasing).
-        targetOutputGainDb = -inputGainDb + pOutputGainDb.load (std::memory_order_relaxed);
+        // Gain link ("LINK"): output is the exact inverse of input. The stored Output
+        // parameter is deliberately ignored here so changing presets cannot introduce a
+        // hidden makeup-trim step while the two visible gain controls remain opposed.
+        // Unity/cal-neutrality are handled inside the tape core.
+        targetOutputGainDb = -inputGainDb;
     }
     else
     {
@@ -479,7 +476,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // inGain/outGain smooth in the dB DOMAIN (dbToGain applied per sample in the ramp
     // loops below), NOT linear gain. With the gain link engaged the two one-poles share
     // the same tau, so their dB trajectories cancel term-for-term and the in*out product
-    // tracks the Output trim exactly through the whole transition. Linear-domain smoothing
+    // remains at unity through the whole transition. Linear-domain smoothing
     // of g and 1/g does NOT cancel: the product bulges to 1 + (r-1)^2/(4r) mid-ramp
     // (r = gain-change ratio) — a 23.8 dB preset-switch input step transiently boosted
     // the OUTPUT by ~+13 dB (audible pop over 0 dBFS on every large preset change).

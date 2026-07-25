@@ -8,10 +8,9 @@
 //
 // Gain link (Auto Compensation) is ON for every preset: driving the tape via Input
 // adds saturation while the output holds unity (-12 dBFS in -> -12 dBFS out), which
-// is how the reference operates at its calibrated -12 dBFS internal level. Each preset then
-// carries a small per-preset Output makeup trim (outTrim, applied on top of the link)
-// that matches the loudness of the reference preset it was curated from — the reference
-// presets dial their own record/repro levels, so their net output is not always unity.
+// is how the calibrated -12 dBFS internal level operates. Each preset also stores an
+// Output trim for unlinked operation; Gain Link deliberately ignores it so preset
+// changes cannot alter the linked gain-stage level.
 
 #pragma once
 
@@ -34,10 +33,9 @@ struct TmPreset
     float highpassFreq, lowpassFreq;
     float wow, flutter, noiseAmount;
     float reproLf, reproLmf, reproHmf, reproHf;  // advanced repro-head 4-band EQ (dB); 0 = neutral (rows may omit -> 0)
-    float outTrim;  // per-preset OUTPUT makeup trim (dB) applied on top of the gain-link
-                    // inverse (output = -input + outTrim); matches the reference preset's
-                    // own non-unity output level. Post-tape LINEAR gain: shifts loudness only,
-                    // transparent to THD/FR/aliasing. 0 = unity; every row sets it explicitly.
+    float outTrim;  // per-preset OUTPUT makeup trim (dB), used only with Gain Link off.
+                    // Post-tape LINEAR gain: shifts loudness only, transparent to
+                    // THD/FR/aliasing. 0 = unity; every row sets it explicitly.
     bool  crosstalk = false;  // American-only adjacent-track bleed toggle, matching the reference
                     // preset's own Crosstalk switch. Omitted (=false) on Swiss presets (that deck
                     // models zero crosstalk) and on American presets whose reference ships it Off;
@@ -112,8 +110,8 @@ static constexpr TmPreset kTmPresets[] =
     // (6.3-16 kHz); the program-band-keyed cut closes it (sustHF 6.12 -> 0.38) while THD stays
     // byte-identical (the 1 kHz tone is below the prog envelope's -12 anchor). Phase B reproHf=8.7 kept.
     // outTrim 1.5 -> 2.53: the HF cut removed ~1.46 dB broadband on loud program (pink loud-region
-    // dRMS), so the makeup restores loud-region loudness parity (Cat1 dRMS -1.03 -> 0.0). outTrim is
-    // a post-tape LINEAR gain (THD %/FR/alias invariant; it does scale the render level).
+    // dRMS), so this unlinked makeup restores loud-region loudness parity (Cat1 dRMS -1.03 -> 0.0).
+    // outTrim is a post-tape LINEAR gain (THD %/FR/alias invariant; it scales unlinked output).
     { "Drum Bus", "Swiss Mix", 0, 1, 1, 0, 1, 1, 1, 10.9f, false, 62.f, 20.f, 20000.f, 0.f, 0.f, 0.f, -1.7f, 0.4f, -0.4f, 8.7f, 2.53f, false, 0.0f, 0.0f, 0.707f, -14.0f, -14.0f, 0.0f, 17.5f },
     { "Hi-Fi Shine", "Swiss Mix", 0, 2, 1, 0, 1, 0, 1, 5.1f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 0.f, 0.6f, 0.3f, -0.8f, 5.5f, 0.3f },
     { "Lush Film", "Swiss Mix", 0, 1, 2, 0, 0, 1, 1, 3.1f, true, 50.f, 20.f, 20000.f, 0.f, 0.f, 0.f, -1.7f, 0.5f, -0.8f, 1.f, 0.9f, false, 0.0f, 0.0f, 0.707f, 0.0f, -5.0f, 0.0f, 5.5f },
@@ -148,8 +146,9 @@ static constexpr int kNumTmPresets = (int)(sizeof(kTmPresets) / sizeof(kTmPreset
 
 // Apply a preset by invoking setter(paramId, value) for each parameter it owns.
 // Used by both the plugin (loadProgram) and the UI (preset combo) so the two stay
-// in lockstep. Gain link is forced on; Output Gain carries the preset's makeup trim
-// (added to the link's -input inverse). Parameters not listed keep their current value.
+// in lockstep. Gain link is forced on; Output Gain retains the preset's unlinked
+// makeup trim but cannot affect the linked -input inverse. Parameters not listed
+// keep their current value.
 template <class SetFn>
 inline void tmApplyPreset(int idx, SetFn&& set)
 {
@@ -169,8 +168,8 @@ inline void tmApplyPreset(int idx, SetFn&& set)
     set(kParamWowFlutterOn, 1.0f);
     set(kParamTransformer,  1.0f);
     set(kParamInputGain,    p.inputGain);
-    set(kParamOutputGain,   p.outTrim);                 // makeup trim on top of the gain-link inverse
-    set(kParamAutoComp,     1.0f);                      // gain link on (unity + outTrim output)
+    set(kParamOutputGain,   p.outTrim);                 // retained for unlinked operation
+    set(kParamAutoComp,     1.0f);                      // gain link on (exact -input inverse)
     set(kParamAutoCal,      p.autoCal ? 1.f : 0.f);
     set(kParamBias,         p.bias);
     set(kParamHighpassFreq, p.highpassFreq);
