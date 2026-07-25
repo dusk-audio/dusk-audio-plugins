@@ -541,6 +541,10 @@ void MultiSynthDSP::snapshotParameters() noexcept
     setSmoothTarget(smCutoff,   vp.filterCutoff);
     setSmoothTarget(smRes,      vp.filterResonance);
     setSmoothTarget(smHPCutoff, vp.filterHPCutoff);
+
+    // The effect drive / wet mixes smooth themselves (Effects.hpp); they only
+    // need to be told when a snapshot is a preset load rather than a knob move.
+    if (smoothSnap) effects.snapSmoothing();
 }
 
 //==============================================================================

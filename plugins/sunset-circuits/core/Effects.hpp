@@ -20,6 +20,7 @@
 
 #include "SynthCommon.hpp"
 #include "DuskFilters.hpp"   // duskaudio::OnePoleLP/HP, DCBlocker
+#include "DuskSmoothed.hpp"  // one-pole parameter smoothing
 
 #include <algorithm>
 #include <array>
@@ -29,30 +30,54 @@ namespace msynth
 {
 
 //==============================================================================
+// Drive / wet-mix smoothing time constant. The engine snapshots parameters once
+// per block, so an automated drive or wet-mix knob would otherwise step ~94
+// times a second and splatter broadband energy (zipper noise). 8 ms is short
+// enough that a knob still feels instant and long enough that the block-rate
+// step is gone. Each effect exposes snapSmoothing() so a preset load lands
+// immediately instead of gliding (EffectsChain::snapSmoothing).
+//
+// The delay read length and the reverb pre-delay keep their own, deliberately
+// slower 20 ms glides — those are tape-style pitch swoops, not de-zippering.
+static constexpr float kMixSmoothTau = 0.008f;
+
+//==============================================================================
 // Drive / saturation
 enum class DriveType { SoftClip = 0, HardClip, Tube };
 
 class DriveEffect
 {
 public:
-    void prepare(double sampleRate, int) noexcept { sr = (float)sampleRate; }
+    void prepare(double sampleRate, int) noexcept
+    {
+        sr = (float)sampleRate;
+        smDrive.prepare(sampleRate, kMixSmoothTau);
+        smMix.prepare(sampleRate, kMixSmoothTau);
+        snapSmoothing();
+    }
 
     void setEnabled(bool on) noexcept { enabled = on; }
-    void setDrive(float amount) noexcept { drive = clampf(amount, 0.0f, 1.0f); }
-    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); }
+    void setDrive(float amount) noexcept { drive = clampf(amount, 0.0f, 1.0f); smDrive.setTarget(drive); }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
     void setType(DriveType t) noexcept { type = t; }
+    void snapSmoothing() noexcept { smDrive.snap(drive); smMix.snap(mix); }
 
     void process(float& left, float& right) noexcept
     {
-        if (!enabled || drive < 0.001f) return;
+        // Bypassed: hold the smoothers at their targets so re-enabling starts at
+        // the right value instead of gliding up from wherever it was left.
+        if (!enabled) { snapSmoothing(); return; }
+        const float drv = smDrive.next();
+        const float m   = smMix.next();
+        if (drv < 0.001f) return;
         const float dryL = left, dryR = right;
-        const float gain = 1.0f + drive * 10.0f;
+        const float gain = 1.0f + drv * 10.0f;
         left  = saturate(left  * gain);
         right = saturate(right * gain);
-        const float comp = 1.0f / (1.0f + drive * 2.0f);
+        const float comp = 1.0f / (1.0f + drv * 2.0f);
         left  *= comp; right *= comp;
-        left  = dryL * (1.0f - mix) + left  * mix;
-        right = dryR * (1.0f - mix) + right * mix;
+        left  = dryL * (1.0f - m) + left  * m;
+        right = dryR * (1.0f - m) + right * m;
     }
 
 private:
@@ -70,7 +95,8 @@ private:
 
     float sr = 44100.0f;
     bool  enabled = false;
-    float drive = 0.0f, mix = 1.0f;
+    float drive = 0.0f, mix = 1.0f;          // smoother targets
+    duskaudio::SmoothedValue smDrive, smMix;
     DriveType type = DriveType::SoftClip;
 };
 
@@ -87,21 +113,30 @@ public:
         bufR.assign((size_t)maxDelaySamples, 0.0f);
         bufSize = maxDelaySamples;
         writePos = 0; lfoPhase = 0.0f;
+        smDepth.prepare(sampleRate, kMixSmoothTau);
+        smMix.prepare(sampleRate, kMixSmoothTau);
+        snapSmoothing();
     }
 
     void setEnabled(bool on) noexcept { enabled = on; }
+    // Rate is not smoothed: the LFO phase is continuous, so a rate change bends
+    // the modulation instead of stepping the signal (measured: no artifact).
     void setRate(float r) noexcept { rate = clampf(r, 0.1f, 10.0f); }
-    void setDepth(float d) noexcept { depth = clampf(d, 0.0f, 1.0f); }
-    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); }
+    void setDepth(float d) noexcept { depth = clampf(d, 0.0f, 1.0f); smDepth.setTarget(depth); }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
+    void snapSmoothing() noexcept { smDepth.snap(depth); smMix.snap(mix); }
 
     void process(float& left, float& right) noexcept
     {
-        if (!enabled) return;
+        if (!enabled) { snapSmoothing(); return; }
         const float dryL = left, dryR = right;
         const float lfoL = std::sin(lfoPhase * kTwoPi);
         const float lfoR = std::sin((lfoPhase + 0.5f) * kTwoPi);
         const float baseDelay = sr * 0.007f;
-        const float modRange  = sr * 0.003f * depth;
+        // Depth scales the delay-line excursion, so a stepped depth jumps the read
+        // pointer and clicks; the mix blend steps the level. Both are smoothed.
+        const float m         = smMix.next();
+        const float modRange  = sr * 0.003f * smDepth.next();
         const float delayL = baseDelay + lfoL * modRange;
         const float delayR = baseDelay + lfoR * modRange;
 
@@ -114,8 +149,8 @@ public:
         lfoPhase += rate / sr;
         if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
 
-        left  = dryL * (1.0f - mix) + wetL * mix;
-        right = dryR * (1.0f - mix) + wetR * mix;
+        left  = dryL * (1.0f - m) + wetL * m;
+        right = dryR * (1.0f - m) + wetR * m;
     }
 
     void reset() noexcept
@@ -123,6 +158,7 @@ public:
         std::fill(bufL.begin(), bufL.end(), 0.0f);
         std::fill(bufR.begin(), bufR.end(), 0.0f);
         writePos = 0; lfoPhase = 0.0f;
+        snapSmoothing();
     }
 
 private:
@@ -138,7 +174,8 @@ private:
 
     float sr = 44100.0f;
     bool  enabled = false;
-    float rate = 0.8f, depth = 0.5f, mix = 0.5f;
+    float rate = 0.8f, depth = 0.5f, mix = 0.5f;   // depth/mix are smoother targets
+    duskaudio::SmoothedValue smDepth, smMix;
     std::vector<float> bufL, bufR;
     int bufSize = 1, writePos = 0;
     float lfoPhase = 0.0f;
@@ -265,21 +302,30 @@ public:
         fbHP_R.setCutoff(fbHPFFreq, sampleRate);
         fbHP_L.reset();
         fbHP_R.reset();
+        smFeedback.prepare(sampleRate, kMixSmoothTau);
+        smMix.prepare(sampleRate, kMixSmoothTau);
+        snapSmoothing();
     }
 
     void setEnabled(bool on) noexcept { enabled = on; }
     void setTempoSync(bool s) noexcept { tempoSynced = s; }
     void setTimeMs(float ms) noexcept { delayTimeMs = clampf(ms, 1.0f, 2000.0f); }
     void setSyncDivision(ArpRateDivision d) noexcept { syncDivision = d; }
-    void setFeedback(float fb) noexcept { feedback = clampf(fb, 0.0f, 0.95f); }
-    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); }
+    void setFeedback(float fb) noexcept { feedback = clampf(fb, 0.0f, 0.95f); smFeedback.setTarget(feedback); }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
     void setPingPong(bool pp) noexcept { pingPong = pp; }
     void setTapeCharacter(bool on) noexcept { tapeChar = on; }
+    void snapSmoothing() noexcept { smFeedback.snap(feedback); smMix.snap(mix); }
 
     void process(float& left, float& right, double bpm) noexcept
     {
-        if (!enabled) return;
+        if (!enabled) { snapSmoothing(); return; }
         const float dryL = left, dryR = right;
+        // Feedback scales what is written back into the line, so a stepped value
+        // puts a discontinuity into the recirculating signal that resurfaces one
+        // delay time later as a click.
+        const float fb = smFeedback.next();
+        const float m  = smMix.next();
 
         float delaySamples;
         if (tempoSynced && bpm > 0.0)
@@ -318,18 +364,18 @@ public:
         };
         if (pingPong)
         {
-            bufL[(size_t)writePos] = softClamp(left  + fbR * feedback);
-            bufR[(size_t)writePos] = softClamp(right + fbL * feedback);
+            bufL[(size_t)writePos] = softClamp(left  + fbR * fb);
+            bufR[(size_t)writePos] = softClamp(right + fbL * fb);
         }
         else
         {
-            bufL[(size_t)writePos] = softClamp(left  + fbL * feedback);
-            bufR[(size_t)writePos] = softClamp(right + fbR * feedback);
+            bufL[(size_t)writePos] = softClamp(left  + fbL * fb);
+            bufR[(size_t)writePos] = softClamp(right + fbR * fb);
         }
         writePos = (writePos + 1) % bufSize;
 
-        left  = dryL * (1.0f - mix) + wetL * mix;
-        right = dryR * (1.0f - mix) + wetR * mix;
+        left  = dryL * (1.0f - m) + wetL * m;
+        right = dryR * (1.0f - m) + wetR * m;
     }
 
     void reset() noexcept
@@ -341,6 +387,7 @@ public:
         smoothedDelay = -1.0f; // re-snap to the next target after a reset
         fbHP_L.reset();
         fbHP_R.reset();
+        snapSmoothing();
     }
 
 private:
@@ -369,6 +416,7 @@ private:
     float delayTimeMs = 500.0f;
     ArpRateDivision syncDivision = ArpRateDivision::Quarter;
     float feedback = 0.3f, mix = 0.3f, fbLPFFreq = 8000.0f, fbHPFFreq = 80.0f;
+    duskaudio::SmoothedValue smFeedback, smMix;  // targets are feedback / mix above
     std::vector<float> bufL, bufR;
     int bufSize = 1, writePos = 0;
     float fbLPF_L = 0.0f, fbLPF_R = 0.0f;
@@ -508,6 +556,8 @@ public:
         // Pre-Delay knob swoops instead of clicking; steady-state is exact.
         preDelayGlideCoeff = 1.0f - std::exp(-1.0f / (0.020f * sr));
         smoothedPd = -1.0f; // sentinel: snap to the first target
+        smMix.prepare(sampleRate, kMixSmoothTau);
+        snapSmoothing();
         updateParams();
     }
 
@@ -515,13 +565,15 @@ public:
     void setSize(float s) { roomSize = clampf(s, 0.0f, 1.0f); updateParams(); }
     void setDecay(float d) { decay = clampf(d, 0.1f, 20.0f); updateParams(); }
     void setDamping(float d) { damping = clampf(d, 0.0f, 1.0f); updateParams(); }
-    void setMix(float m) { mix = clampf(m, 0.0f, 1.0f); }
+    void setMix(float m) { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
     void setPreDelay(float ms) { preDelayMs = clampf(ms, 0.0f, 200.0f); }
+    void snapSmoothing() noexcept { smMix.snap(mix); }
 
     void process(float& left, float& right) noexcept
     {
-        if (!enabled) return;
+        if (!enabled) { snapSmoothing(); return; }
         const float dryL = left, dryR = right;
+        const float m = smMix.next();
 
         if (preDelayMs > 0.1f)
         {
@@ -542,8 +594,8 @@ public:
         }
 
         reverb.processStereo(&left, &right, 1);
-        left  = dryL * (1.0f - mix) + left  * mix;
-        right = dryR * (1.0f - mix) + right * mix;
+        left  = dryL * (1.0f - m) + left  * m;
+        right = dryR * (1.0f - m) + right * m;
     }
 
     void reset()
@@ -553,6 +605,7 @@ public:
         std::fill(preR.begin(), preR.end(), 0.0f);
         prePos = 0;
         smoothedPd = -1.0f;
+        snapSmoothing();
     }
 
 private:
@@ -570,6 +623,7 @@ private:
     float sr = 44100.0f;
     bool  enabled = false;
     float roomSize = 0.5f, decay = 2.0f, damping = 0.3f, mix = 0.2f, preDelayMs = 0.0f;
+    duskaudio::SmoothedValue smMix;    // target is mix above
     float smoothedPd = -1.0f;          // glided pre-delay read offset (E4); <0 = snap
     float preDelayGlideCoeff = 0.0f;   // one-pole ~20 ms coeff (cached in prepare)
     Freeverb reverb;
@@ -724,6 +778,18 @@ public:
         delay.reset();
         reverb.reset();
         springReverb.reset();
+        drive.snapSmoothing();
+    }
+
+    // Land every smoothed control on its target immediately. The engine calls
+    // this when a snapshot looks like a program change, so preset switches are
+    // instant instead of gliding (see MultiSynthDSP::detectBulkParamChange).
+    void snapSmoothing() noexcept
+    {
+        drive.snapSmoothing();
+        chorus.snapSmoothing();
+        delay.snapSmoothing();
+        reverb.snapSmoothing();
     }
 
     DriveEffect drive;
