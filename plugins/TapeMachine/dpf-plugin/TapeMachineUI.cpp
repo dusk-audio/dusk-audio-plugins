@@ -101,11 +101,6 @@ public:
         panel.setPalette(pal);
 
         scanUserPresets();
-
-        // Start the PEAK-lamp hold timers cleared: a host that hides (not destroys)
-        // the editor would otherwise freeze a mid-hold value and show a stale lit lamp
-        // on reopen. No DPF show/visibility hook exists here, so ctor-init is the guard.
-        clipHoldL = clipHoldR = 0.0f;
     }
 
 protected:
@@ -154,13 +149,9 @@ protected:
         const bool modalOpen = showAdvanced || showSupporters;
         if (modalOpen) ImGui::BeginDisabled();
         drawHeader(dl);
-        // The PEAK lamp follows the post-input-gain, pre-tape record level during normal
-        // processing and raw passthrough input while bypassed or in Thru. It lights at
-        // 0 dBFS (see drawVU), auto-holds 1.5 s after the last over, and click-clears.
-        const bool clipEnabled = true;
         const ImU32 accent = accentCol();
-        drawVU(dl, 68,  62, 388, 198, meterLevel(0), peakLevel(0), needleL, clipHoldL, clipEnabled, accent, "L");
-        drawVU(dl, 412, 62, 732, 198, meterLevel(1), peakLevel(1), needleR, clipHoldR, clipEnabled, accent, "R");
+        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, accent, "L");
+        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, accent, "R");
         drawSelectors(dl);
         drawControls(dl);
         if (modalOpen) ImGui::EndDisabled();
@@ -190,19 +181,6 @@ private:
             if (out) { if (tapeMachineGetVuL)   v = ch == 0 ? tapeMachineGetVuL(inst)   : tapeMachineGetVuR(inst); }
             else     { if (tapeMachineGetInVuL) v = ch == 0 ? tapeMachineGetInVuL(inst) : tapeMachineGetInVuR(inst); }
         }
-       #endif
-        return v;
-    }
-
-    // Sample peak for the PEAK lamp: post-input-gain/pre-tape during normal
-    // processing, raw passthrough input while bypassed or in Thru.
-    float peakLevel(int ch)
-    {
-        float v = 0.0f;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (void* const inst = getPluginInstancePointer())
-            if (tapeMachineGetInPeakL)
-                v = ch == 0 ? tapeMachineGetInPeakL(inst) : tapeMachineGetInPeakR(inst);
        #endif
         return v;
     }
@@ -746,8 +724,7 @@ private:
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
 
     void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
-                float level, float peak, float& needle, float& clipHold, bool clipEnabled,
-                ImU32 accent, const char* label)
+                float level, float& needle, ImU32 accent, const char* label)
     {
         // 0 VU = -12 dBFS: the reference/Swiss/American spec ("plug-in operates at an internal
         // level of -12 dBFS ... a -12 dBFS input equates to 0 dB on the meters").
@@ -822,44 +799,6 @@ private:
         // - (left) and + (red, right) marks in the top corners
         text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
         text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
-
-        // over lamp (right). The peak comes from the post-input-gain, pre-tape
-        // record node during normal processing and raw passthrough input while
-        // bypassed or in Thru.
-        // `clipHold` is a HOLD TIMER in seconds: every over (re)arms it to 1.5 s, and
-        // between overs it counts down by the frame dt, so a brief transient stays lit ~1.5 s
-        // after it passes and a sustained hot signal keeps re-arming (stays lit). A click clears
-        // it immediately. (Replaces the old indefinite output-clip latch.)
-        static constexpr float kPeakThreshLin = 1.0f;          // 0 dBFS in linear amplitude
-        static constexpr float kPeakHoldSec   = 1.5f;          // auto-hold after the last over
-        if (clipEnabled && peak >= kPeakThreshLin)
-            clipHold = kPeakHoldSec;                           // (re)arm on every over
-        else if (clipHold > 0.0f)
-            clipHold -= ImGui::GetIO().DeltaTime;              // count the hold down between overs
-        const bool over = clipEnabled && clipHold > 0.0f;
-        const ImVec2 lp = P(fx1 - 15, pivotY - L * 0.20f);
-        if (clipEnabled)
-        {
-            char cid[8]; std::snprintf(cid, sizeof(cid), "clip%s", label);
-            ImGui::SetCursorScreenPos(ImVec2(lp.x - 8.0f * s, lp.y - 8.0f * s));
-            ImGui::InvisibleButton(cid, ImVec2(16.0f * s, 16.0f * s));
-            if (ImGui::IsItemClicked()) clipHold = 0.0f;
-        }
-        // Lit vs unlit must be unmistakable: LIT = hot red core + bright ring + glow
-        // halo; UNLIT = a clearly dark drilled recess. Click the lamp to clear the hold.
-        dl->AddCircleFilled(lp, 7.2f * s, IM_COL32(26, 20, 18, 255), 22);              // drilled socket shadow
-        if (over) dl->AddCircleFilled(lp, 10.5f * s, IM_COL32(232, 60, 40, 95), 24);   // glow halo
-        dl->AddCircleFilled(lp, 5.0f * s,
-            over ? IM_COL32(242, 68, 46, 255) : IM_COL32(44, 33, 31, 255), 18);        // lit core / dark recess
-        if (over)
-            dl->AddCircle(lp, 5.7f * s, IM_COL32(255, 152, 132, 225), 20, 1.2f * s);   // hot rim when lit
-        else
-            dl->AddCircle(lp, 5.0f * s, IM_COL32(10, 6, 6, 255), 18, 1.2f * s);        // recessed dark rim
-        dl->AddCircleFilled(ImVec2(lp.x - 1.4f * s, lp.y - 1.6f * s), 1.6f * s,
-                            IM_COL32(255, 205, 185, over ? 235 : 38), 10);             // specular dot
-        // small screened label so the click-to-reset lamp reads as PEAK without a tooltip
-        text(dl, fx1 - 15, pivotY - L * 0.20f + 8.5f, 7.5f,
-             over ? red : IM_COL32(118, 98, 78, 210), "PEAK", 0, true);
 
         // VU legend + channel tag
         text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
@@ -1227,7 +1166,6 @@ private:
     float   s = 1.0f;
     ImVec2  org = ImVec2(0, 0);
     float   needleL = 0.0f, needleR = 0.0f;
-    float   clipHoldL = 0.0f, clipHoldR = 0.0f;   // PEAK-lamp hold timers (seconds); 0 = unlit
     bool    outLinkActive_ = false;   // set only while the OUTPUT knob is drawn under GAIN LINK
     ImVec2  advScrimPressPos = ImVec2(0, 0);       // where an Advanced-scrim press began (travel guard)
     int     meterSource = 0;      // 0 = input (record/tape-drive level, like the hardware VU), 1 = output

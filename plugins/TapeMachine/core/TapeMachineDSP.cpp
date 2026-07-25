@@ -939,8 +939,8 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // output gain. Input gain is applied at base rate before upsampling.
     float inSL = inVuStateL, inSR = inVuStateR;   // input VU: mean-abs of the post-trim record level
     // Input sample peak hold (instant attack, ~300 ms release) at the SAME record node the
-    // input VU meters — post-input-gain, PRE-tape. Feeds only the UI PEAK lamp (a record-
-    // level over indicator), kept separate from the mean-abs VU integrator.
+    // input VU meters — post-input-gain, PRE-tape. Retained as a diagnostic separate from
+    // the mean-abs VU integrator.
     float pkL = inPeakStateL, pkR = inPeakStateR;
     {
         int osIdx = 0;
@@ -948,7 +948,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         {
             const float x = inputs[0][n] * inGainArr[static_cast<size_t> (n)];
             const float axL = std::abs (x); inSL += (axL - inSL) * vuBallisticAlpha;
-            pkL = axL > pkL ? axL : pkL * peakDecayCoeff;   // input sample peak for the PEAK lamp
+            pkL = axL > pkL ? axL : pkL * peakDecayCoeff;
             outputs[0][n] = osL.processSample (x, [&] (float s) noexcept
             {
                 const size_t si = static_cast<size_t> (osIdx);
@@ -971,7 +971,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         {
             const float x = inputs[1][n] * inGainArr[static_cast<size_t> (n)];
             const float axR = std::abs (x); inSR += (axR - inSR) * vuBallisticAlpha;
-            pkR = axR > pkR ? axR : pkR * peakDecayCoeff;   // input sample peak for the PEAK lamp
+            pkR = axR > pkR ? axR : pkR * peakDecayCoeff;
             outputs[1][n] = osR.processSample (x, [&] (float s) noexcept
             {
                 const size_t si = static_cast<size_t> (osIdx);
@@ -1102,9 +1102,9 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     }
 
     // --- VU meter (output; ANSI mean-abs one-pole, ~300 ms to 99%) + output sample peak ----
-    // Retain the final-output sample peak as a diagnostic even though the UI PEAK lamp now
-    // follows the input record node. This is post-tape / post-output-gain / post-crosstalk,
-    // with instant attack and the ~300 ms peakDecayCoeff release.
+    // Retain the final-output sample peak as a diagnostic. This is post-tape /
+    // post-output-gain / post-crosstalk, with instant attack and the ~300 ms
+    // peakDecayCoeff release.
     float sL = vuStateL, sR = vuStateR;
     float pkOL = outPeakStateL, pkOR = outPeakStateR;
     for (int n = 0; n < nSamples; ++n)

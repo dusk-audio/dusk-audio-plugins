@@ -2102,12 +2102,11 @@ public:
     // INPUT (record-node) sample-peak hold (instant attack, ~300 ms release), taken post-
     // input-gain / PRE-tape during normal processing and from the raw passthrough input while
     // bypassed or operating in Thru mode.
-    // Feeds ONLY the UI PEAK lamp; kept separate from the mean-abs VU integrator.
+    // Retained for diagnostic metering; kept separate from the mean-abs VU integrator.
     float getInPeakL() const noexcept { return inPeakL.load (std::memory_order_relaxed); }
     float getInPeakR() const noexcept { return inPeakR.load (std::memory_order_relaxed); }
     // OUTPUT (final post-everything) sample-peak hold (instant attack, ~300 ms release),
-    // taken on the buffer the host receives. Retained for diagnostic metering only; the UI
-    // PEAK lamp uses the input record-node accessors above.
+    // taken on the buffer the host receives. Retained for diagnostic metering only.
     float getOutPeakL() const noexcept { return outPeakL.load (std::memory_order_relaxed); }
     float getOutPeakR() const noexcept { return outPeakR.load (std::memory_order_relaxed); }
 
@@ -2223,7 +2222,7 @@ private:
     float vuStateL = 0.0f, vuStateR = 0.0f;
     float inVuStateL = 0.0f, inVuStateR = 0.0f;
     float vuBallisticAlpha = 0.0f;   // one-pole integrator coeff for ANSI VU ballistics (~300 ms to 99%)
-    // separate INPUT-node sample-peak hold for the PEAK lamp (instant attack, 300 ms release)
+    // separate INPUT-node diagnostic sample-peak hold (instant attack, 300 ms release)
     std::atomic<float> inPeakL{0.0f}, inPeakR{0.0f};
     float inPeakStateL = 0.0f, inPeakStateR = 0.0f;
     bool inputPeakUsesRawInput = false;  // audio-thread-only metering-node transition state
