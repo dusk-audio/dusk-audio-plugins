@@ -17,6 +17,9 @@ namespace duskaudio
 static constexpr float kGainTau  = 0.0067f; // ~20 ms settle (juce::dsp::Gain 20 ms ramp)
 static constexpr float kSatTau   = 0.05f;   // ~150 ms settle (smoothedSaturation 150 ms)
 static constexpr float kParamTau = 0.0067f; // ~20 ms settle (wow / flutter / noise 20 ms)
+static constexpr float kLinkedMatchTau = 0.05f; // ~150 ms settle for linked peak makeup
+static constexpr float kLinkedGuardSec = 0.25f; // prevent preset-transition overshoot
+static constexpr float kLinkedSlewReleaseSec = 0.05f;
 
 //==============================================================================
 // Signal-level FR compensation (Phase B). The tape core's FR drifts with record
@@ -138,6 +141,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     // is advanced at the oversampled rate so it is configured there.
     inGain.prepare  (baseSampleRate, kGainTau);
     outGain.prepare (currentOsRate,  kGainTau);
+    linkedMakeupDb.prepare (baseSampleRate, kLinkedMatchTau);
     smSat.prepare     (baseSampleRate, kSatTau);
     smBias.prepare    (baseSampleRate, kSatTau);
     smWow.prepare     (baseSampleRate, kParamTau);
@@ -148,6 +152,12 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     // hold dB (converted per sample in processBlock — see the smoothing note there).
     const float inGainDb = pInputGainDb.load (std::memory_order_relaxed);
     inGain.snap  (inGainDb);
+    lastLinkedInputGainDb = pAutoComp.load (std::memory_order_relaxed) ? inGainDb : 1000.0f;
+    linkedMakeupDb.snap (0.0f);
+    linkedGuardSamples = 0;
+    lastLinkedOutputL = lastLinkedOutputR = 0.0f;
+    lastLinkedInputL = lastLinkedInputR = 0.0f;
+    linkedTopologyKey = UINT32_MAX;
     {
         outGain.snap (pAutoComp.load (std::memory_order_relaxed)
                           ? -inGainDb  // gain link = exact inverse; stored Output is unlinked-only
@@ -176,6 +186,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
 
     // Scratch buffers (allocated here; never on the audio thread).
     inGainArr.assign  (static_cast<size_t> (maxBlock), 0.0f);
+    linkedSlewLimitArr.assign (static_cast<size_t> (maxBlock), 1.0f);
     const size_t osCap = static_cast<size_t> (maxBlock) * 4u;
     satArr.assign       (osCap, 0.0f);
     biasArr.assign      (osCap, 0.0f);
@@ -258,6 +269,12 @@ void TapeMachineDSP::reset()
     vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     inPeakStateL = inPeakStateR = 0.0f;
     inputPeakUsesRawInput = false;
+    lastLinkedInputGainDb = 1000.0f;
+    linkedMakeupDb.snap (0.0f);
+    linkedGuardSamples = 0;
+    lastLinkedOutputL = lastLinkedOutputR = 0.0f;
+    lastLinkedInputL = lastLinkedInputR = 0.0f;
+    linkedTopologyKey = UINT32_MAX;
     outPeakStateL = outPeakStateR = 0.0f;
     vuL.store (0.0f, std::memory_order_relaxed);
     vuR.store (0.0f, std::memory_order_relaxed);
@@ -337,9 +354,20 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         applyFactor (reqFactor);
 
     const bool hardBypass = pBypass.load (std::memory_order_relaxed);
+    const bool gainLinked = pAutoComp.load (std::memory_order_relaxed);
     const auto signalPath = static_cast<TapeCore::SignalPath> (
         clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));
     const bool useRawInputPeak = hardBypass || signalPath == TapeCore::Thru;
+    const uint32_t topologyKey =
+        static_cast<uint32_t> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1))
+        | (static_cast<uint32_t> (clampI (pSpeed.load (std::memory_order_relaxed), 0, 3)) << 1u)
+        | (static_cast<uint32_t> (clampI (pType.load (std::memory_order_relaxed), 0, 3)) << 3u)
+        | (static_cast<uint32_t> (signalPath) << 5u)
+        | (static_cast<uint32_t> (clampI (pEqStandard.load (std::memory_order_relaxed), 0, 1)) << 7u)
+        | (static_cast<uint32_t> (clampI (pCalibration.load (std::memory_order_relaxed), 0, 3)) << 8u)
+        | (static_cast<uint32_t> (clampI (pHeadWidth.load (std::memory_order_relaxed), 0, 2)) << 10u);
+    bool linkedTransition = gainLinked && topologyKey != linkedTopologyKey;
+    linkedTopologyKey = gainLinked ? topologyKey : UINT32_MAX;
 
     // Normal processing meters post-input-gain; bypass and Thru meter raw input.
     // A held value cannot cross between those reference nodes without changing meaning.
@@ -352,6 +380,10 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- bypass: pure passthrough + sample-peak refresh -----------------------
     if (hardBypass)
     {
+        linkedMakeupDb.snap (0.0f);
+        linkedGuardSamples = 0;
+        lastLinkedInputGainDb = 1000.0f;
+        linkedTopologyKey = UINT32_MAX;
         for (int ch = 0; ch < nCh; ++ch)
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
@@ -378,6 +410,10 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         outPeakStateL = pkOL; outPeakStateR = (nCh >= 2) ? pkOR : pkOL;
         outPeakL.store (outPeakStateL, std::memory_order_relaxed);
         outPeakR.store (outPeakStateR, std::memory_order_relaxed);
+        lastLinkedOutputL = outputs[0][nSamples - 1];
+        lastLinkedOutputR = outputs[nCh >= 2 ? 1 : 0][nSamples - 1];
+        lastLinkedInputL = inputs[0][nSamples - 1];
+        lastLinkedInputR = inputs[nCh >= 2 ? 1 : 0][nSamples - 1];
         return;
     }
 
@@ -388,6 +424,10 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // --- Thru: passthrough + VU (input == output) ----------------------------
     if (signalPath == TapeCore::Thru)
     {
+        linkedMakeupDb.snap (0.0f);
+        linkedGuardSamples = 0;
+        lastLinkedInputGainDb = 1000.0f;
+        linkedTopologyKey = UINT32_MAX;
         for (int ch = 0; ch < nCh; ++ch)
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
@@ -415,7 +455,35 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         inVuStateL = vuStateL; inVuStateR = vuStateR;   // Thru: input == output
         inVuL.store (inVuStateL, std::memory_order_relaxed);
         inVuR.store (inVuStateR, std::memory_order_relaxed);
+        lastLinkedOutputL = outputs[0][nSamples - 1];
+        lastLinkedOutputR = outputs[nCh >= 2 ? 1 : 0][nSamples - 1];
+        lastLinkedInputL = inputs[0][nSamples - 1];
+        lastLinkedInputR = inputs[nCh >= 2 ? 1 : 0][nSamples - 1];
         return;
+    }
+
+    // Capture the host-facing input peak before an in-place buffer can be overwritten.
+    // Gain Link uses this as the unity target for its post-tape peak makeup.
+    float linkedInputBlockPeak = 0.0f;
+    if (gainLinked)
+    {
+        float prevL = lastLinkedInputL;
+        float prevR = lastLinkedInputR;
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int n = 0; n < nSamples; ++n)
+                linkedInputBlockPeak = std::max (linkedInputBlockPeak, std::abs (inputs[ch][n]));
+        for (int n = 0; n < nSamples; ++n)
+        {
+            const float curL = inputs[0][n];
+            const float curR = inputs[nCh >= 2 ? 1 : 0][n];
+            const float inputDelta = std::max (std::abs (curL - prevL), std::abs (curR - prevR));
+            linkedSlewLimitArr[static_cast<size_t> (n)] =
+                std::max (1.0e-4f, inputDelta);
+            prevL = curL;
+            prevR = curR;
+        }
+        lastLinkedInputL = prevL;
+        lastLinkedInputR = prevR;
     }
 
     // --- tone SVF coefficient refresh (dirty) --------------------------------
@@ -460,12 +528,12 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     const float inputGainDb = pInputGainDb.load (std::memory_order_relaxed);
 
     float targetOutputGainDb;
-    if (pAutoComp.load (std::memory_order_relaxed))
+    if (gainLinked)
     {
-        // Gain link ("LINK"): output is the exact inverse of input. The stored Output
-        // parameter is deliberately ignored here so changing presets cannot introduce a
-        // hidden makeup-trim step while the two visible gain controls remain opposed.
-        // Unity/cal-neutrality are handled inside the tape core.
+        // The linked linear output stage is the exact inverse of input. The stored Output
+        // parameter is deliberately ignored so presets cannot introduce a hidden trim step.
+        // The post-tape matcher below then restores host-facing peak unity after nonlinear
+        // compression and topology changes.
         targetOutputGainDb = -inputGainDb;
     }
     else
@@ -480,10 +548,19 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // of g and 1/g does NOT cancel: the product bulges to 1 + (r-1)^2/(4r) mid-ramp
     // (r = gain-change ratio) — a 23.8 dB preset-switch input step transiently boosted
     // the OUTPUT by ~+13 dB (audible pop over 0 dBFS on every large preset change).
-    // Static renders are bit-identical: after snap/convergence the smoother repeats the
-    // same dB value and dbToGain of it reproduces the identical linear gain per sample.
+    // The paired ramps therefore cannot create their own gain bulge; the post-tape linked
+    // matcher below handles level changes produced by the nonlinear/model stages.
+    const bool largeLinkedGainStep =
+        gainLinked && std::abs (inputGainDb - lastLinkedInputGainDb) > 0.5f;
+    linkedTransition = linkedTransition || largeLinkedGainStep;
+    if (linkedTransition)
+    {
+        linkedMakeupDb.snap (0.0f);
+        linkedGuardSamples = static_cast<int> (baseSampleRate * kLinkedGuardSec);
+    }
     inGain.setTarget (inputGainDb);
     outGain.setTarget (targetOutputGainDb);
+    lastLinkedInputGainDb = gainLinked ? inputGainDb : 1000.0f;
 
     const float saturationAmount = std::clamp (((inputGainDb + 12.0f) / 24.0f) * 100.0f, 0.0f, 100.0f);
     smSat.setTarget     (saturationAmount);
@@ -881,6 +958,76 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             outputs[0][n] += tempR * crosstalkAmount;
             outputs[1][n] += tempL * crosstalkAmount;
         }
+    }
+
+    // Gain Link is a host-level unity contract, not only a linear input/output-knob
+    // inverse. Measure the processed block before makeup and restore its peak to the raw
+    // input peak. During steady processing makeup moves smoothly; during the short preset
+    // guard it follows each block immediately so stale filter or nonlinear state cannot
+    // create an overshoot above the incoming peak.
+    const bool linkedGuardActive = linkedGuardSamples > 0;
+    if (gainLinked && linkedInputBlockPeak > 1.0e-6f)
+    {
+        float linkedOutputBlockPeak = 0.0f;
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int n = 0; n < nSamples; ++n)
+                linkedOutputBlockPeak = std::max (linkedOutputBlockPeak, std::abs (outputs[ch][n]));
+
+        if (linkedOutputBlockPeak > 1.0e-9f)
+        {
+            const float targetDb = std::clamp (
+                20.0f * std::log10 (linkedInputBlockPeak / linkedOutputBlockPeak),
+                -36.0f, 12.0f);
+            if (linkedGuardActive)
+                linkedMakeupDb.snap (targetDb);
+            else
+                linkedMakeupDb.setTarget (targetDb);
+
+            for (int n = 0; n < nSamples; ++n)
+            {
+                const float makeup = dbToGain (linkedMakeupDb.next());
+                outputs[0][n] *= makeup;
+                if (nCh >= 2) outputs[1][n] *= makeup;
+            }
+        }
+    }
+    else if (! gainLinked)
+    {
+        linkedMakeupDb.snap (0.0f);
+        linkedGuardSamples = 0;
+    }
+
+    // A topology change can also alter filter phase. During the short level guard, limit
+    // output slew to the source signal's own per-sample slew so the coefficient change
+    // cannot turn into a click. This does not run during steady processing.
+    if (linkedGuardActive)
+    {
+        for (int n = 0; n < nSamples; ++n)
+        {
+            const int releaseSamples =
+                std::max (1, static_cast<int> (baseSampleRate * kLinkedSlewReleaseSec));
+            const float release = linkedGuardSamples < releaseSamples
+                ? 1.0f - static_cast<float> (linkedGuardSamples)
+                         / static_cast<float> (releaseSamples)
+                : 0.0f;
+            const float slewScale = 1.25f + release * 14.75f;
+            const float limit = linkedSlewLimitArr[static_cast<size_t> (n)] * slewScale;
+            outputs[0][n] = std::clamp (outputs[0][n],
+                                        lastLinkedOutputL - limit, lastLinkedOutputL + limit);
+            lastLinkedOutputL = outputs[0][n];
+            if (nCh >= 2)
+            {
+                outputs[1][n] = std::clamp (outputs[1][n],
+                                            lastLinkedOutputR - limit, lastLinkedOutputR + limit);
+                lastLinkedOutputR = outputs[1][n];
+            }
+            linkedGuardSamples = std::max (0, linkedGuardSamples - 1);
+        }
+    }
+    else
+    {
+        lastLinkedOutputL = outputs[0][nSamples - 1];
+        lastLinkedOutputR = outputs[nCh >= 2 ? 1 : 0][nSamples - 1];
     }
 
     // --- VU meter (output; ANSI mean-abs one-pole, ~300 ms to 99%) + output sample peak ----
