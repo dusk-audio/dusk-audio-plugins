@@ -342,6 +342,10 @@ public:
         retireUnison = prevUCount;
     }
 
+    // Oscillator banks this voice would keep rendering if it were retired now:
+    // retire() freezes the sub-voice count, so it is the last one rendered.
+    int  retireBankCost() const noexcept { return prevUCount; }
+
     bool isActive() const noexcept { return active; }
     bool isReleasing() const noexcept { return ampEnv.getStage() == ADSREnvelope::Stage::Release; }
     int  getCurrentNote() const noexcept { return currentNote; }
@@ -791,12 +795,46 @@ public:
     {
         const int poly = effectivePoly();
         polyTrim = gainForPoly(poly);   // only edge on which effectivePoly() moves
-        for (int i = poly; i < kMaxPolyphony; ++i)
+
+        // The fade is BUDGETED. A retiring voice keeps rendering with its previous
+        // sub-voice count frozen, so a shrink transiently runs more oscillator
+        // banks than the poly x unison <= kMaxOscVoices ceiling allows in steady
+        // state — up to 2x it:
+        //     polyNew*unisonNew + (polyOld - polyNew)*unisonOld  <=  16 + 16
+        // Measured with cpu_bench "shrink" (Prism 4-op FM, 4x OS, full FX — the
+        // worst reachable case, 28 banks) the unbudgeted transient cost a 22.0 ms
+        // worst block against a 10.7 ms budget. Half the ceiling may fade;
+        // everything past it is reset outright.
+        //
+        // WHICH voices fade is chosen by level, loudest first, because a hard reset
+        // is a step proportional to the voice's current output: the voices that
+        // would actually be heard clicking get the fade, and the step that is left
+        // is always the smallest one available. (cpu_bench "steady16" is the
+        // control for all of this: 16 banks with nothing retiring already costs
+        // 96.2%, so the ceiling itself — not this fade — is the real CPU wall.)
+        int budget = kMaxOscVoices / 2;
+        bool handled[kMaxPolyphony] = {};
+        for (int pass = poly; pass < kMaxPolyphony; ++pass)
         {
-            SynthVoice& v = voices[(size_t)i];
-            if (v.isActive()) v.retire();
-            else              v.reset();
+            int best = -1;
+            float bestLevel = -1.0f;
+            for (int i = poly; i < kMaxPolyphony; ++i)
+            {
+                if (handled[(size_t)i] || !voices[(size_t)i].isActive()) continue;
+                const float level = voices[(size_t)i].getCurrentLevel();
+                if (level > bestLevel) { bestLevel = level; best = i; }
+            }
+            if (best < 0) break;                    // nothing sounding left to place
+            handled[(size_t)best] = true;
+            SynthVoice& v = voices[(size_t)best];
+            const int cost = v.retireBankCost();
+            if (cost <= budget) { budget -= cost; v.retire(); }
+            else                { v.reset(); }
         }
+        // Slots that were already idle (or were just reset) are cleared outright,
+        // so a later limit increase can never revive one.
+        for (int i = poly; i < kMaxPolyphony; ++i)
+            if (!voices[(size_t)i].isActive()) voices[(size_t)i].reset();
     }
 
     SynthVoice* noteOn(int note, float velocity, const VoiceParameters& params) noexcept
