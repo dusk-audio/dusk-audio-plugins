@@ -159,21 +159,117 @@ private:
 
 enum class LFOShape { Sine = 0, Triangle, Square, SampleAndHold, RandomSmooth };
 
+// LFO phase source
+// ----------------
+// FREE-RUN (default): the phase accumulates at rate/sr per sample.
+//
+// HOST-LOCKED (tempo sync on for this LFO + transport playing + valid host song
+// position): the phase is DERIVED from the song position, phase = frac(songBeat
+// / beatsPerCycle), exactly the way the arpeggiator derives its step index
+// (Arpeggiator::advanceLocked). Scaling the free-run RATE by bpm/120 -- which is
+// all tempo sync used to do -- keeps the average speed right but leaves the
+// phase wherever the last note-on happened to leave it: the LFO drifts against
+// the bar line and no two transport passes over the same bar sound the same.
+// Deriving the phase fixes both at once, and a loop wrap needs no handling at
+// all (the phase is a pure function of the song position, so a loop whose length
+// is a whole number of LFO cycles is continuous straight through the wrap).
+//
+// Acquiring the lock would STEP the phase, and a step in a modulation signal is
+// a click on every route it feeds. It is SLEWED instead: the distance between
+// the free-running and the derived phase is captured as an offset at the moment
+// of lock -- so the first locked sample continues exactly where the free run
+// left off -- and then bled out at no more than the grid's own rate. The
+// effective LFO rate therefore stays inside [0, 2x] nominal (it hurries or it
+// waits, it never jumps), the correction always finishes within half a cycle,
+// and the offset lands on EXACTLY zero, after which the phase is the derived
+// value bit for bit -- which is what makes two transport passes reproducible.
+//
+// Re-seeding at the next cycle boundary instead was the alternative. It does not
+// actually remove the step: both clocks run at the same rate, so their phase
+// distance is CONSTANT and the boundary is merely where the jump gets moved to.
+// It also defers the lock by up to a full cycle -- 20 s at the 0.01 Hz end of
+// the rate range.
 class LFO
 {
 public:
-    void prepare(double sampleRate) noexcept { sr = (float)sampleRate; phase = 0.0f; }
+    void prepare(double sampleRate) noexcept { sr = (float)sampleRate; phase = 0.0f; lastPhase = 0.0f; }
     void setSampleRate(double sampleRate) noexcept { sr = (float)sampleRate; }
 
     void setRate(float rateHz) noexcept   { rate = rateHz; }
     void setShape(LFOShape s) noexcept    { shape = s; }
     void setFadeIn(float seconds) noexcept { fadeInTime = maxf(0.0f, seconds); }
     void setTempoSync(bool enabled) noexcept { tempoSync = enabled; }
+    // Cycle length in quarter-note beats; only read while host-locked. The engine
+    // derives it from the rate knob so the knob keeps its musical meaning at
+    // every tempo (see MultiSynthDSP::snapshotParameters).
+    void setBeatsPerCycle(float beats) noexcept { beatsPerCycle = maxf(1.0e-4f, beats); }
     void seed(uint32_t s) noexcept { rng.seed(s); }
+
+    // Host song position in beats for the CURRENT host sample, pushed once per
+    // host sample by the engine ahead of that sample's oversampled renders.
+    // hostLocked is the engine's transport-playing + valid-song-position flag;
+    // this LFO locks only if tempo sync is also on for it.
+    void setSongBeat(double songBeat, bool hostLocked) noexcept
+    {
+        if (!(hostLocked && tempoSync))
+        {
+            // Transport stopped, song position lost, or sync switched off: drop
+            // the lock and leave the phase exactly where it is. The free-run
+            // accumulator carries on from there, so the release is continuous
+            // and needs no slew of its own.
+            locked = false;
+            syncOffset = 0.0f;
+            return;
+        }
+
+        const double cycles = songBeat / (double)beatsPerCycle;
+        const float derived = (float)(cycles - std::floor(cycles));
+        const bool acquiring = !locked;
+
+        if (acquiring)
+        {
+            // Lock acquired: start from the free-running phase, then slew.
+            locked = true;
+            syncOffset = wrapSigned(phase - derived);
+        }
+        else
+        {
+            // Bleed the offset out at the grid's own rate, so this host sample's
+            // phase advance stays in [0, 2x grid] -- never backwards, never more
+            // than double speed -- and reaches zero EXACTLY (the <= test, not an
+            // asymptotic decay) within half a cycle.
+            //
+            // A backward jump in the song position (loop wrap or seek) shows up
+            // here as a large step, which clears the offset in one sample: a hard
+            // re-sync, matching the arpeggiator's loop-wrap behaviour. That is the
+            // right call -- the timeline jumped, so the grid jumps with it.
+            float step = derived - lastDerived;
+            if (step < 0.0f) step += 1.0f;                       // grid wrapped
+            if (std::abs(syncOffset) <= step) syncOffset = 0.0f; // locked, exactly
+            else syncOffset += (syncOffset > 0.0f) ? -step : step;
+        }
+
+        lastDerived = derived;
+        phase = derived + syncOffset;   // offset is in [-0.5, 0.5], so one wrap does it
+        if (phase >= 1.0f) phase -= 1.0f;
+        else if (phase < 0.0f) phase += 1.0f;
+        // derived + (phase - derived) can land an ulp under the free-run phase it
+        // is meant to reproduce; without this the first locked sample would read
+        // as a cycle wrap and re-roll the S&H value.
+        if (acquiring) lastPhase = phase;
+    }
 
     void retrigger() noexcept
     {
-        phase = 0.0f;
+        // Host-locked, the grid owns the phase: a note-on must not restart it --
+        // that is the whole point of syncing to the host -- and a note that
+        // starts DURING a lock slew starts already on the grid, because only the
+        // voice that was already sounding when the transport rolled has a
+        // discontinuity to hide. The per-note fade-in and the random targets
+        // restart either way.
+        if (locked) { syncOffset = 0.0f; phase = lastDerived; }
+        else        { phase = 0.0f; }
+        lastPhase = phase;
         fadeInPhase = 0.0f;
         smoothTarget = randomValue();
     }
@@ -181,6 +277,12 @@ public:
     float processSample() noexcept
     {
         const float dt = rate / sr;
+        // Host-locked: setSongBeat() has already written this host sample's phase
+        // and the free-run accumulator is idle, so a cycle wrap is detected
+        // against the previous sample instead of the free-run heuristics below
+        // (which would fire once per OVERSAMPLED sample, the grid phase being
+        // held for the whole host sample).
+        const bool wrapped = locked && (phase < lastPhase);
         float raw = 0.0f;
 
         switch (shape)
@@ -195,21 +297,25 @@ public:
                 raw = phase < 0.5f ? 1.0f : -1.0f;
                 break;
             case LFOShape::SampleAndHold:
-                if (phase < dt) // wrapped (matches original heuristic)
+                if (locked ? wrapped : (phase < dt)) // wrapped (matches original heuristic)
                     currentSHValue = randomValue();
                 raw = currentSHValue;
                 break;
             case LFOShape::RandomSmooth:
-                if (phase + dt >= 1.0f)
+                if (locked ? wrapped : (phase + dt >= 1.0f))
                     smoothTarget = randomValue();
                 currentSmoothValue += (smoothTarget - currentSmoothValue) * dt * 6.0f;
                 raw = currentSmoothValue;
                 break;
         }
 
-        phase += dt;
-        if (phase >= 1.0f)
-            phase -= 1.0f;
+        if (!locked)
+        {
+            phase += dt;
+            if (phase >= 1.0f)
+                phase -= 1.0f;
+        }
+        lastPhase = phase;
 
         float fadeGain = 1.0f;
         if (fadeInTime > 0.0f && fadeInPhase < 1.0f)
@@ -222,14 +328,24 @@ public:
         return raw * fadeGain;
     }
 
-    void reset() noexcept { phase = 0.0f; fadeInPhase = 1.0f; currentSHValue = 0.0f; currentSmoothValue = 0.0f; }
+    void reset() noexcept
+    {
+        phase = 0.0f; lastPhase = 0.0f; fadeInPhase = 1.0f;
+        currentSHValue = 0.0f; currentSmoothValue = 0.0f;
+        locked = false; syncOffset = 0.0f; lastDerived = 0.0f;
+    }
 
 private:
     float randomValue() noexcept { return rng.nextBipolar(); }
 
+    // Signed phase distance in [-0.5, 0.5) — the SHORT way round, so the slew
+    // never takes the long path through most of a cycle.
+    static float wrapSigned(float d) noexcept { return d - std::floor(d + 0.5f); }
+
     float sr = 44100.0f;
     float rate = 1.0f;
     float phase = 0.0f;
+    float lastPhase = 0.0f;   // previous sample's phase (host-locked wrap detect)
     float fadeInTime = 0.0f;
     float fadeInPhase = 1.0f; // 1 = fully faded in
     bool  tempoSync = false;
@@ -238,6 +354,12 @@ private:
     float smoothTarget = 0.0f;
     float currentSmoothValue = 0.0f;
     Xorshift rng;
+
+    // Host-locked (song-position) phase state.
+    bool  locked = false;         // sync on AND host transport locked
+    float beatsPerCycle = 2.0f;   // cycle length in quarter-note beats
+    float syncOffset = 0.0f;      // decaying free->locked continuity offset
+    float lastDerived = 0.0f;     // previous host sample's grid phase
 };
 
 } // namespace msynth

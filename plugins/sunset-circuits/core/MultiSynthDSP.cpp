@@ -452,19 +452,34 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     effects.springReverb.setEnabled(isModular);
     if (isModular) effects.springReverb.setMix(0.15f);
 
-    // --- LFOs (with tempo-sync rate scaling) ---
+    // --- LFOs (tempo sync: rate scaling + host phase lock) ---
+    // Sync has two halves. The free-run RATE is scaled by bpm/120, and the PHASE
+    // is locked to the host song position whenever the transport is playing
+    // (LFO::setSongBeat) — the rate scaling is what the stopped-transport
+    // fallback runs on.
+    //
+    // The two halves have to agree, and they do by construction. At bpm the
+    // synced LFO runs rate*bpm/120 cycles per second against a grid of bpm/60
+    // beats per second, so one cycle is 2/rate BEATS at every tempo: the rate
+    // knob's musical meaning (2.0 = a quarter note, 1.0 = a half note) is
+    // tempo-invariant, and that is exactly what the phase lock reproduces.
+    // beatsPerCycle comes from the UNSCALED knob for that reason.
     const double bpm = hostBpm.load(std::memory_order_relaxed);
-    float lfo1Rate = p(pLfo1Rate); float lfo2Rate = p(pLfo2Rate);
-    if (p(pLfo1Sync) > 0.5f && bpm > 0.0) lfo1Rate *= (float)(bpm / 120.0);
-    if (p(pLfo2Sync) > 0.5f && bpm > 0.0) lfo2Rate *= (float)(bpm / 120.0);
+    const bool  lfo1Sync = p(pLfo1Sync) > 0.5f, lfo2Sync = p(pLfo2Sync) > 0.5f;
+    const float lfo1Knob = p(pLfo1Rate), lfo2Knob = p(pLfo2Rate);
+    float lfo1Rate = lfo1Knob; float lfo2Rate = lfo2Knob;
+    if (lfo1Sync && bpm > 0.0) lfo1Rate *= (float)(bpm / 120.0);
+    if (lfo2Sync && bpm > 0.0) lfo2Rate *= (float)(bpm / 120.0);
+    const float lfo1Beats = 2.0f / maxf(1.0e-4f, lfo1Knob);
+    const float lfo2Beats = 2.0f / maxf(1.0e-4f, lfo2Knob);
     const LFOShape lfo1Shape = (LFOShape)clampi((int)p(pLfo1Shape), 0, 4);
     const LFOShape lfo2Shape = (LFOShape)clampi((int)p(pLfo2Shape), 0, 4);
     const float lfo1Fade = p(pLfo1Fade), lfo2Fade = p(pLfo2Fade);
     const bool prismMode = (vp.mode == SynthMode::Prism);
     for (int v = 0; v < kMaxPolyphony; ++v)
     {
-        voices.getVoice(v)->setLFO1Params(lfo1Shape, lfo1Rate, lfo1Fade);
-        voices.getVoice(v)->setLFO2Params(lfo2Shape, lfo2Rate, lfo2Fade);
+        voices.getVoice(v)->setLFO1Params(lfo1Shape, lfo1Rate, lfo1Fade, lfo1Sync, lfo1Beats);
+        voices.getVoice(v)->setLFO2Params(lfo2Shape, lfo2Rate, lfo2Fade, lfo2Sync, lfo2Beats);
         if (prismMode) voices.getVoice(v)->updateFMParams(vp);
     }
 
@@ -802,6 +817,19 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
             }
             else
             {
+                // Host-locked LFO phase: push the song-beat cursor once per HOST
+                // sample, before anything consumes it. Only the LFOs with sync on
+                // act on it (Envelope.hpp). It comes BEFORE the arp because the
+                // arp's note-ons retrigger LFOs, and a retriggered LFO reads the
+                // grid phase this call establishes.
+                //
+                // The acid branch does not push: it renders a mono voice with no
+                // LFOs of its own and leaves the poly voices silent. Their lock
+                // state simply goes stale for the duration, which the first push
+                // after a switch back absorbs — a stale grid phase reads as one
+                // large slew step, and a large step is what clears the offset.
+                voices.setLFOSongBeat(songBeat, hostLocked);
+
                 // Arp advances at host rate; triggers its own generated notes.
                 if (arpEnabled)
                 {

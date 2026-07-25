@@ -352,10 +352,29 @@ public:
     float getCurrentLevel() const noexcept { return ampEnv.getCurrentValue() * velocityGain; }
     float getEffectsMixMod() const noexcept { return effectsMixMod; }
 
-    void setLFO1Params(LFOShape shape, float rate, float fadeIn) noexcept
-    { lfo1.setShape(shape); baseLfo1Rate = rate; lfo1.setFadeIn(fadeIn); }
-    void setLFO2Params(LFOShape shape, float rate, float fadeIn) noexcept
-    { lfo2.setShape(shape); baseLfo2Rate = rate; lfo2.setFadeIn(fadeIn); }
+    // rate is the free-run rate in Hz (already tempo-scaled by the engine when
+    // sync is on); beatsPerCycle is the same cycle length expressed on the host
+    // beat grid, used while the transport locks the phase (Envelope.hpp).
+    void setLFO1Params(LFOShape shape, float rate, float fadeIn,
+                       bool tempoSync, float beatsPerCycle) noexcept
+    {
+        lfo1.setShape(shape); baseLfo1Rate = rate; lfo1.setFadeIn(fadeIn);
+        lfo1.setTempoSync(tempoSync); lfo1.setBeatsPerCycle(beatsPerCycle);
+    }
+    void setLFO2Params(LFOShape shape, float rate, float fadeIn,
+                       bool tempoSync, float beatsPerCycle) noexcept
+    {
+        lfo2.setShape(shape); baseLfo2Rate = rate; lfo2.setFadeIn(fadeIn);
+        lfo2.setTempoSync(tempoSync); lfo2.setBeatsPerCycle(beatsPerCycle);
+    }
+
+    // Host song position for the current HOST sample (see LFO::setSongBeat).
+    // Pushed once per host sample, ahead of that sample's oversampled renders.
+    void setLFOSongBeat(double songBeat, bool hostLocked) noexcept
+    {
+        lfo1.setSongBeat(songBeat, hostLocked);
+        lfo2.setSongBeat(songBeat, hostLocked);
+    }
 
     // Render one INTERNAL-rate stereo sample for this voice.
     void renderInternalSample(const VoiceParameters& params, const ModMatrix& matrix,
@@ -674,7 +693,11 @@ private:
     void buildModState(ModulationState& state, const ModMatrix& matrix, const VoiceParameters& params) noexcept
     {
         // LFO rate mod (fix #5) uses the previous sample's dest value to avoid a
-        // dependency cycle (the LFO output itself feeds the matrix).
+        // dependency cycle (the LFO output itself feeds the matrix). While an LFO
+        // is host-locked its cycle length comes from the beat grid, so a rate
+        // routing no longer stretches it — the grid is the authority, and any
+        // per-voice scaling of it would be exactly the drift the lock exists to
+        // remove. It still tilts the RandomSmooth slew, which is rate-derived.
         lfo1.setRate(baseLfo1Rate * (1.0f + clampf(lfoRateMod1, -0.9f, 4.0f)));
         lfo2.setRate(baseLfo2Rate * (1.0f + clampf(lfoRateMod2, -0.9f, 4.0f)));
 
@@ -866,6 +889,15 @@ public:
 
     SynthVoice* getVoice(int i) noexcept { return &voices[(size_t)i]; }
     int getPoly() const noexcept { return effectivePoly(); }
+
+    // Host song position for the current HOST sample (see LFO::setSongBeat). Every
+    // slot is fed, not just the sounding ones: an idle voice has to be holding the
+    // lock before it is handed a note, or its LFO would start off the grid and
+    // slew onto it while the note is already audible.
+    void setLFOSongBeat(double songBeat, bool hostLocked) noexcept
+    {
+        for (auto& v : voices) v.setLFOSongBeat(songBeat, hostLocked);
+    }
 
     // Render one INTERNAL-rate stereo sample summing all active voices. Also
     // aggregates the EffectsMix mod (fix #5) as the mean over active voices.
