@@ -67,6 +67,10 @@ public:
     float getOutLevelRForUI() const noexcept { return dsp.getOutputLevelR(); }
     int   getArpStepForUI()   const noexcept { return dsp.getArpStep(); }
     msynth::MultiSynthDSP* getDSPForUI() noexcept { return &dsp; }
+    // Packed (sequence << 8 | program) for a MIDI program change the plugin applied
+    // to itself; 0 = none yet. See loadProgramFromMidi.
+    uint32_t getMidiProgramSignalForUI() const noexcept
+    { return midiProgramSignal.load(std::memory_order_acquire); }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -273,6 +277,37 @@ private:
         setLatency(latencyForOsParam(values[kParamOversampling].load(std::memory_order_relaxed)));
     }
 
+    // MIDI program change (0xC0) -> factory preset, through the SAME loadProgram()
+    // the host's own program change uses, so the preset rows, the smoothing snap
+    // (notifyProgramChange) and the reported latency all stay consistent with a
+    // host-driven change. Out-of-range programs are ignored (54 factory presets;
+    // the MIDI data byte reaches 127).
+    //
+    // RT AUDIT — this is called from handleMidi on the audio thread. loadProgram()
+    // does: kNumCoreParams + kBaselineRows + preset rows calls to setParameterValue,
+    // each a pair of relaxed atomic stores (values[] and the core's params[]); one
+    // dsp.notifyProgramChange() (release store); and updateLatency(), which is a
+    // plain field store in DPF (Plugin::setLatency -> pData->latency = frames). No
+    // allocation, no lock, no I/O, no host callback — RT-safe, so it runs inline
+    // rather than through a pending-program atomic. Inline is also strictly better
+    // for timing: run() splits the buffer at every MIDI event, so applying it here
+    // lands the preset on the event's own frame instead of the next block boundary.
+    //
+    // The JACK standalone wrapper ALSO handles 0xC0 itself and then still forwards
+    // the event, so there it applies twice. loadProgram() is deterministic (it
+    // rewrites every parameter from defaults), so the second pass is a no-op that
+    // writes the same values and snaps an already-snapped smoother.
+    void loadProgramFromMidi(uint8_t program) noexcept
+    {
+        if (program >= (uint8_t)kNumFactoryPresets) return;
+        loadProgram(program);
+        // Tell a same-process UI (which the host never notifies about a change the
+        // plugin made to itself) that the program moved. Sequence counter in the
+        // high bits so repeats of the same program are still seen as edges.
+        midiProgramSignal.store(((midiProgramSignal.load(std::memory_order_relaxed) >> 8) + 1u) << 8
+                                | (uint32_t)program, std::memory_order_release);
+    }
+
     // MIDI routing. CHANNEL POLICY: OMNI — every channel is played, the channel
     // nibble is ignored throughout. That is the synth convention (an instrument
     // plugin is already addressed per-track by the host, so a channel filter only
@@ -304,6 +339,9 @@ private:
             else if (ev.data[1] == 64)                   dsp.sustainPedal(ev.data[2] >= 64); // damper
             else if (ev.data[1] == 120 || ev.data[1] == 123) dsp.allNotesOff(); // all sound / all notes off
             break;
+        case 0xC0: // program change -> factory preset (data byte is 0..127)
+            loadProgramFromMidi(ev.data[1]);
+            break;
         case 0xD0: // channel pressure (aftertouch, size >= 2 already guaranteed)
             dsp.aftertouch((float)ev.data[1] / 127.0f);
             break;
@@ -320,6 +358,9 @@ private:
 
     msynth::MultiSynthDSP dsp;
     double lastBpm = 120.0;
+    // Audio thread writes on a MIDI program change, UI thread polls (see
+    // loadProgramFromMidi / MultiSynthAccess.hpp).
+    std::atomic<uint32_t> midiProgramSignal { 0 };
     // Host thread writes (setParameterValue/loadProgram); run() reads on the
     // audio thread. Atomic (relaxed) removes the data race, same as the core.
     std::atomic<float> values[kNumCoreParams] = {};
@@ -339,5 +380,7 @@ float multiSynthGetOutLevelR(void* const p) noexcept
 { return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getOutLevelRForUI() : 0.0f; }
 int multiSynthGetArpStep(void* const p) noexcept
 { return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getArpStepForUI() : -1; }
+uint32_t multiSynthGetMidiProgramSignal(void* const p) noexcept
+{ return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getMidiProgramSignalForUI() : 0u; }
 msynth::MultiSynthDSP* multiSynthGetDSP(void* const p) noexcept
 { return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getDSPForUI() : nullptr; }

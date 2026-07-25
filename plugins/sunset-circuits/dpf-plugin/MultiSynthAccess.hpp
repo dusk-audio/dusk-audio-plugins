@@ -16,6 +16,8 @@
 
 #include "DuskAccessBridge.hpp"
 
+#include <cstdint>
+
 namespace msynth { class MultiSynthDSP; }
 
 // Peak output level in dBFS (-60..~+6), ~300 ms release. Null in a split LV2 UI.
@@ -25,3 +27,11 @@ DUSK_ACCESS_DECL(float, multiSynthGetOutLevelR);
 DUSK_ACCESS_DECL(int,   multiSynthGetArpStep);
 // Live DSP instance for the scope ring buffer (read-only). Null in split LV2 UI.
 DUSK_ACCESS_DECL(msynth::MultiSynthDSP*, multiSynthGetDSP);
+// Packed (sequence << 8 | program) for a MIDI program change (0xC0) the PLUGIN
+// applied to itself. DPF has no plugin->host parameter notification, so a preset
+// recalled by MIDI is invisible to the host and to the UI's parameter cache; the
+// UI polls this, and on a sequence change re-applies that preset through its own
+// (host-visible) preset path so knobs, name display and host automation agree with
+// the engine. 0 = no MIDI program change yet. Null in a split LV2 UI, which simply
+// does not get the sync.
+DUSK_ACCESS_DECL(uint32_t, multiSynthGetMidiProgramSignal);

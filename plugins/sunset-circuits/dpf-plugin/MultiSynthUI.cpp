@@ -158,6 +158,8 @@ protected:
         s   = std::min(winW / kDesignW, winH / kDesignH);
         org = ImVec2(0.5f * (winW - kDesignW * s), 0.5f * (winH - kDesignH * s));
 
+        syncMidiProgramChange();
+
         // ---- mode crossfade (spec §5) ----
         const int m = clampMode((int)std::lround(values[kParamMode]));
         if (m != curMode) { fromPal = live; prevMode = curMode; curMode = m; modeBlend = 0.0f; }
@@ -916,6 +918,28 @@ private:
     }
     void pushParam(uint32_t i, float v)
     { editParameter(i, true); values[i] = v; setParameterValue(i, v); editParameter(i, false); }
+
+    // A MIDI program change (0xC0) is applied by the plugin to ITSELF on the audio
+    // thread, and DPF has no plugin->host parameter notification, so neither the
+    // host's parameter cache nor this UI's values[] hears about it. Poll the shell's
+    // signal each frame and, on a change, run the very same applyPreset() a click on
+    // that preset would: the engine already holds those values, so re-pushing them
+    // is inaudible, and it is what makes the knobs, the preset name and the host's
+    // automation state agree with what is sounding. Split LV2 UI: no bridge, no
+    // sync (audio is still correct, the display just lags until the user touches
+    // something) — matching every other bridge accessor's fallback.
+    void syncMidiProgramChange()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiSynthGetMidiProgramSignal == nullptr) return;
+        void* const inst = getPluginInstancePointer();
+        if (inst == nullptr) return;
+        const uint32_t sig = multiSynthGetMidiProgramSignal(inst);
+        if (sig == lastMidiProgramSignal) return;
+        lastMidiProgramSignal = sig;
+        if (sig != 0u) applyPreset((int)(sig & 0xFFu));
+       #endif
+    }
 
     // Tell the engine the push above was a preset load, so the smoothed controls
     // LAND on it rather than gliding. The UI pushes parameters one at a time
@@ -2443,6 +2467,9 @@ private:
     // presets; kNumFactoryPresets + n selects user preset n in presetStore.list().
     // -1 = nothing recalled. programLoaded() (host->UI) only ever maps to factory.
     int    currentPreset = -1;
+    // Last (sequence << 8 | program) seen from the shell's MIDI program-change
+    // signal; 0 matches its initial value, so an untouched plugin never syncs.
+    uint32_t lastMidiProgramSignal = 0;
     bool   showMod = false;
 
     // user preset library + save modal state

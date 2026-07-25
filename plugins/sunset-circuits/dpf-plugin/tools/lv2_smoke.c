@@ -5,7 +5,8 @@
 //     uses), providing the URID map and options features a real host provides;
 //   * sweeps the oversampling factor and reads the reported-latency output port
 //     (expect 0 / 12 / 14 for 1x / 2x / 4x);
-//   * injects a MIDI note-on and confirms the MIDI-to-audio path is audible.
+//   * injects a MIDI note-on and confirms the MIDI-to-audio path is audible;
+//   * injects a MIDI program change (0xC0) and confirms it reached loadProgram().
 //
 //   cc lv2_smoke.c $(pkg-config --cflags --libs lilv-0) -lm -o lv2_smoke
 //   LV2_PATH=<dir-containing-the-.lv2-bundle> ./lv2_smoke <plugin-uri>
@@ -46,6 +47,27 @@ static const char* unmap_uri(LV2_URID_Unmap_Handle h, LV2_URID urid) {
 }
 
 #define BLOCK 512
+
+// Overwrite an input atom port's sequence with exactly one MIDI event at frame 0.
+static void put_midi_event(uint8_t* buf, LV2_URID midiEventURID,
+                           const uint8_t* msg, uint32_t size) {
+    LV2_Atom_Sequence* seq = (LV2_Atom_Sequence*)buf;
+    seq->atom.type = map_uri(NULL, LV2_ATOM__Sequence);
+    seq->body.unit = 0;
+    seq->body.pad  = 0;
+    LV2_Atom_Event* ev = (LV2_Atom_Event*)(buf + sizeof(LV2_Atom_Sequence));
+    ev->time.frames = 0;
+    ev->body.type = midiEventURID;
+    ev->body.size = size;
+    memcpy((uint8_t*)(ev + 1), msg, size);
+    seq->atom.size = sizeof(LV2_Atom_Sequence_Body)
+                   + lv2_atom_pad_size(sizeof(LV2_Atom_Event) + size);
+}
+
+// Empty the sequence again (the host clears the input buffer between cycles).
+static void clear_seq(uint8_t* buf) {
+    ((LV2_Atom_Sequence*)buf)->atom.size = sizeof(LV2_Atom_Sequence_Body);
+}
 
 int main(int argc, char** argv) {
     if (argc < 2) { fprintf(stderr, "usage: lv2_smoke <plugin-uri>\n"); return 1; }
@@ -183,6 +205,8 @@ int main(int argc, char** argv) {
                facName[os], (double)lat, finite ? "yes" : "NO");
     }
 
+    int failures = 0;
+
     // --- MIDI -> audio smoke: inject a note-on and confirm non-silent output.
     if (atomInIdx >= 0) {
         ctrl[oversamplingIdx] = 1.0f; // 2x
@@ -193,18 +217,8 @@ int main(int argc, char** argv) {
         lilv_instance_run(inst, BLOCK);
         const LV2_URID midiEventURID = map_uri(NULL, "http://lv2plug.in/ns/ext/midi#MidiEvent");
         uint8_t* buf = atomBuf[atomInIdx];
-        LV2_Atom_Sequence* seq = (LV2_Atom_Sequence*)buf;
-        // Build a sequence containing one note-on at frame 0.
-        seq->atom.type = map_uri(NULL, LV2_ATOM__Sequence);
-        seq->body.unit = 0; seq->body.pad = 0;
-        LV2_Atom_Event* ev = (LV2_Atom_Event*)(buf + sizeof(LV2_Atom_Sequence));
-        ev->time.frames = 0;
-        ev->body.type = midiEventURID;
-        ev->body.size = 3;
-        uint8_t* msg = (uint8_t*)(ev + 1);
-        msg[0] = 0x90; msg[1] = 60; msg[2] = 100; // note-on C4 vel 100
-        seq->atom.size = sizeof(LV2_Atom_Sequence_Body)
-                       + lv2_atom_pad_size(sizeof(LV2_Atom_Event) + 3);
+        const uint8_t noteOn[3] = { 0x90, 60, 100 }; // note-on C4 vel 100
+        put_midi_event(buf, midiEventURID, noteOn, 3);
 
         float peak = 0.0f;
         for (int b = 0; b < 20; ++b) {           // ~213 ms of audio
@@ -217,15 +231,66 @@ int main(int argc, char** argv) {
                     }
             // After the first run the host would normally clear the input
             // sequence; DPF has already consumed the note, so leave it.
-            seq->atom.size = sizeof(LV2_Atom_Sequence_Body);
+            clear_seq(buf);
         }
+        const int audible = peak > 1e-4f;
         printf("\nMIDI->audio smoke (note-on C4 @ 2x): peak = %.4f (%s)\n",
-               peak, peak > 1e-4f ? "AUDIBLE - PASS" : "SILENT - FAIL");
+               peak, audible ? "AUDIBLE - PASS" : "SILENT - FAIL");
+        if (!audible) ++failures;
+
+        // --- MIDI program change (0xC0) -> loadProgram().
+        // The plugin applies a self-initiated program change without telling the
+        // host, so no control INPUT port can show it. The reported latency can:
+        // every factory preset's baseline sets oversampling to 2x, so parking the
+        // host's oversampling port at 4x (latency 14) and then sending a program
+        // change must pull the reported latency to the preset's 2x value (12).
+        // That is a parameter the preset owns, observed through a real host port.
+        uint8_t pc[2] = { 0xC0, 0 };
+
+        ctrl[oversamplingIdx] = 2.0f; // 4x
+        lilv_instance_run(inst, BLOCK);
+        lilv_instance_run(inst, BLOCK);
+        const float latBefore = ctrl[latencyIdx];
+
+        put_midi_event(buf, midiEventURID, pc, 2);   // program 0
+        lilv_instance_run(inst, BLOCK);
+        clear_seq(buf);
+        const float latAfter = ctrl[latencyIdx];
+
+        const int pcOk = (latBefore == 14.0f) && (latAfter == 12.0f);
+        printf("program change (0xC0 prog 0): latency %.0f -> %.0f "
+               "(want 14 -> 12, the preset's 2x oversampling)  %s\n",
+               (double)latBefore, (double)latAfter, pcOk ? "PASS" : "FAIL");
+        if (!pcOk) ++failures;
+
+        // Out-of-range program must be ignored, not clamped or crashed into.
+        // Re-arming 4x needs the control port to actually CHANGE: the program change
+        // moved the plugin's internal oversampling to 2x behind the host's back, so
+        // the port still reads 4x and DPF (which only pushes a control port whose
+        // value differs from the last one it pushed) would not re-send it. Go via 1x.
+        ctrl[oversamplingIdx] = 0.0f; // 1x
+        lilv_instance_run(inst, BLOCK);
+        ctrl[oversamplingIdx] = 2.0f; // 4x
+        lilv_instance_run(inst, BLOCK);
+        lilv_instance_run(inst, BLOCK);
+        pc[1] = 127;                                  // > 54 factory presets
+        put_midi_event(buf, midiEventURID, pc, 2);
+        lilv_instance_run(inst, BLOCK);
+        clear_seq(buf);
+        const float latOor = ctrl[latencyIdx];
+        const int oorOk = latOor == 14.0f;
+        printf("program change (0xC0 prog 127): latency %.0f "
+               "(want 14, out-of-range ignored)  %s\n",
+               (double)latOor, oorOk ? "PASS" : "FAIL");
+        if (!oorOk) ++failures;
     }
 
     lilv_instance_deactivate(inst);
     lilv_instance_free(inst);
-    printf("\nOK: instantiate + activate + run + latency read succeeded.\n");
+    if (failures == 0)
+        printf("\nOK: instantiate + activate + run + latency + MIDI checks succeeded.\n");
+    else
+        printf("\nFAILED: %d check(s) did not pass.\n", failures);
     (void)defsNode;
-    return 0;
+    return failures == 0 ? 0 : 6;
 }
