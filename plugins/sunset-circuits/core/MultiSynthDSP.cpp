@@ -458,12 +458,21 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     {
         acidVoice.setWaveform(vp.osc1Wave);
         acidVoice.setPulseWidth(vp.osc1PulseWidth);
-        acidVoice.setCutoff(vp.filterCutoff);
-        acidVoice.setResonance(vp.filterResonance);
-        acidVoice.setEnvMod(clampf(std::abs(vp.filterEnvAmount), 0.0f, 1.0f));
+        // cutoff / resonance / envMod are pushed per host sample from the shared
+        // smoothers in processBlock — the acid voice renders outside the poly
+        // path, so taking them from the block snapshot here would leave mode 5 as
+        // the one voice path that still steps once per block.
+        //
+        // The rest stay on the block snapshot deliberately. Decay, sustain and
+        // slide time are envelope/glide TIME constants: stepping one bends the
+        // envelope's slope, it does not put a discontinuity in the signal. Drive
+        // does step the filter input gain, but measured with the zipper probe it
+        // sits at -91 dB absolute (41 dB over a -132 dB floor) because the acid
+        // filter's own saturation absorbs it — below every threshold in the gate
+        // and far below audibility, so it is not worth a smoother.
         acidVoice.setDecay(vp.ampDecay);
         acidVoice.setSustain(vp.ampSustain);
-        acidVoice.setDrive(1.0f + 4.0f * clamp01(p(pDriveAmt)));
+        acidVoice.setDrive(1.0f + 4.0f * clamp01(driveAmt));
         acidVoice.setAccentAmount(clamp01(p(pAcidAccentAmt)));
         acidVoice.setSlideTime(p(pAcidSlideTime));
 
@@ -701,6 +710,10 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         {
             // Mono acid path: the sequencer (when enabled) or live legato play
             // drives a single AcidVoice; the poly allocator/arp are bypassed.
+            // Feed it the same smoothed filter values the poly voices read.
+            acidVoice.setCutoff(voiceParams.filterCutoff);
+            acidVoice.setResonance(voiceParams.filterResonance);
+            acidVoice.setEnvMod(clampf(std::abs(voiceParams.filterEnvAmount), 0.0f, 1.0f));
             if (acidSeqEnabled)
             {
                 const auto ev = acidSeq.advanceSample(bpm, playing, songBeat, hostLocked);
