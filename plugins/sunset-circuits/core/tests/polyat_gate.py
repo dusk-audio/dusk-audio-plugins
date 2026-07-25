@@ -20,6 +20,17 @@ Scenarios (48k, 2x OS):
   c. poly other: 0xA0 for a note NOT being played  -> centroid unchanged
   d. channel   : 0xD0                              -> centroid opens like (b)
   e. retrigger : pressed note released and played again -> pressure cleared
+  f. two notes : the real per-voice proof. With a CHORD sounding, 0xA0 on one of
+                 its notes must open less far than 0xD0 does, and 0xA0 on BOTH
+                 notes must land exactly where 0xD0 lands. A channel-fold
+                 implementation passes (a)-(e) but makes (f) collapse: one
+                 message would open every voice and read the same as 0xD0.
+  g. arp       : 0xA0 is ignored while the arpeggiator runs (its notes are the
+                 arp's own copies, and every step would re-zero the pressure);
+                 0xD0 still works there, which is the control for the same row.
+
+Renders are byte-deterministic (verified: three runs, zero spread), so the
+margins below are set well inside the measured gaps rather than at a JND.
 """
 import sys
 import numpy as np
@@ -32,6 +43,10 @@ PATCH = dict(modSrc0=5, modDst0=5, modAmt0=1.0,
 
 OPEN_RATIO = 1.5    # pressure must move the centroid at least this much
 SAME_TOL   = 0.05   # "unchanged" band, fraction of the baseline centroid
+# Two-note margins. Measured: one voice 418.5 Hz, both voices / channel 440.8 Hz
+# (identical to four decimals), so the gap is 22.3 Hz and the equality is exact.
+TWO_NOTE_GAP_HZ  = 10.0
+TWO_NOTE_SAME_HZ = 1.0
 
 
 def centroid(x, sr, t0, t1):
@@ -79,6 +94,29 @@ def main():
     fails += check("e", abs(c_retrig - base) <= SAME_TOL * base,
                    f"retrigger : {c_retrig:7.1f} Hz (pressure cleared, "
                    f"want {base:.1f} +-{SAME_TOL * 100:.0f}%)")
+
+    # (f) two-note per-voice proof. Pressure on ONE note of a two-note chord must
+    #     open strictly less than channel pressure (which opens both voices), and
+    #     pressure on BOTH notes must reproduce channel pressure exactly.
+    c2_one  = run("pat2_one",  hold="72", polyat="0.5:60:1.0")
+    c2_both = run("pat2_both", hold="72", polyat=["0.5:60:1.0", "0.5:72:1.0"])
+    c2_chan = run("pat2_chan", hold="72", chanat="0.5:1.0")
+    fails += check("f", (c2_chan - c2_one) > TWO_NOTE_GAP_HZ
+                        and abs(c2_both - c2_chan) < TWO_NOTE_SAME_HZ,
+                   f"two notes : one {c2_one:7.1f} Hz vs channel {c2_chan:7.1f} Hz "
+                   f"(gap > {TWO_NOTE_GAP_HZ:.0f}); both-notes {c2_both:7.1f} Hz "
+                   f"(== channel +-{TWO_NOTE_SAME_HZ:.0f})")
+
+    # (g) arpeggiator: poly pressure is a deliberate no-op there, channel is not.
+    arp = dict(arpOn=1, arpRate=3, arpOctave=1)
+    c_arp_base = run("pat_arp_base", **arp)
+    c_arp_poly = run("pat_arp_poly", **arp, polyat="0.5:60:1.0")
+    c_arp_chan = run("pat_arp_chan", **arp, chanat="0.5:1.0")
+    fails += check("g", abs(c_arp_poly - c_arp_base) <= SAME_TOL * c_arp_base
+                        and c_arp_chan > OPEN_RATIO * c_arp_base,
+                   f"arp       : poly {c_arp_poly:7.1f} Hz (inert, want "
+                   f"{c_arp_base:.1f} +-{SAME_TOL * 100:.0f}%), "
+                   f"channel {c_arp_chan:7.1f} Hz (still opens)")
 
     print(f"polyat_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

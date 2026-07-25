@@ -161,7 +161,10 @@ public:
     // playing is dropped (there is nothing per-note to apply it to) rather than
     // being folded into channel pressure, which would move the whole patch.
     // No-op in Acid mode, whose mono engine has no mod matrix (channel pressure is
-    // equally inert there).
+    // equally inert there), and no-op while the ARPEGGIATOR is running, where the
+    // sounding notes are the arp's own copies and a per-key message would only
+    // flicker between steps (see the implementation). Channel pressure is the
+    // expressive control in both of those cases.
     void polyAftertouch(int note, float v01) noexcept;
     // Sustain pedal (MIDI CC64, >= 64 = down). While the pedal is down a note-off
     // is CAPTURED instead of released: the key-state mask clears immediately (the

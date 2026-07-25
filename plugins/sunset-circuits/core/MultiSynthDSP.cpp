@@ -284,12 +284,23 @@ void MultiSynthDSP::releaseSustained(uint64_t lo, uint64_t hi) noexcept
 void MultiSynthDSP::polyAftertouch(int note, float v01) noexcept
 {
     // Per-voice: the mod matrix reads max(channel, key) pressure inside the voice
-    // (Voice.hpp), so one Aftertouch routing serves both message types. Acid's mono
-    // engine has no matrix, so mode 5 is a no-op — and with the arp on, the sounding
-    // notes are the arp's transposed copies, which no incoming key number matches;
-    // both cases fall through as "no voice plays this note", which is the correct
-    // drop rather than a patch-wide jump.
+    // (Voice.hpp), so one Aftertouch routing serves both message types. A message
+    // for a note no voice is playing is dropped rather than folded into channel
+    // pressure, which would move the whole patch. Acid's mono engine has no mod
+    // matrix, so mode 5 is inert either way.
+    //
+    // With the ARPEGGIATOR running, poly pressure is ignored outright. The sounding
+    // notes are the arp's generated (and possibly octave-transposed) copies, so a
+    // per-key message has no stable voice to own it: at octave range 1 the note
+    // numbers happen to match and the pressure DOES land, but every arp step
+    // retriggers the voice and zeroes it again, so the result is a flicker whose
+    // depth depends on the arp rate and on where the message falls between steps
+    // (measured: centroid 245 Hz unpressed, 260 Hz with 0xA0 — against 422 Hz for
+    // the same routing driven by channel pressure). An unpredictable partial effect
+    // is worse than none, and channel pressure remains fully expressive under the
+    // arp, so this is a deliberate no-op rather than a half-applied modulation.
     if (note < 0 || note > 127) return;
+    if (p(pArpOn) > 0.5f) return;
     voices.setPolyPressure(note, clamp01(v01));
 }
 

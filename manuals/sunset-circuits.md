@@ -78,7 +78,7 @@ Sunset Circuits listens on **all MIDI channels** (omni), the usual convention fo
 | CC 1 (Mod Wheel) | Feeds the Mod Whl mod source. |
 | CC 64 (Sustain Pedal) | Holds notes after you release the keys, until you lift the pedal. |
 | Channel Pressure | Feeds the Aftertouch mod source for the whole instrument. |
-| Poly Key Pressure | Feeds the Aftertouch mod source for that one note's voice only. |
+| Poly Key Pressure | Feeds the Aftertouch mod source for that one note's voice only. Ignored while the arpeggiator is running, where the sounding notes are the arpeggiator's own; use channel pressure there. |
 | Program Change | Recalls a factory preset by number (0 to 53); higher numbers are ignored. |
 | CC 120 / CC 123 | All Sound Off / All Notes Off. Stops everything, including pedal-held notes, and releases the pedal. |
 
