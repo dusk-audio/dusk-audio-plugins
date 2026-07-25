@@ -840,6 +840,7 @@ private:
         float tmp[kNumCoreParams];
         if (!presetStore.loadInto(L[u].path, tmp, (int)kNumCoreParams)) return;
         for (uint32_t i = 0; i < kNumCoreParams; ++i) pushParam(i, tmp[i]);
+        notifyDspProgramChange();
         currentPreset = kNumFactoryPresets + u;
     }
 
@@ -911,9 +912,28 @@ private:
         const FactoryPreset& pr = kFactoryPresets[idx];
         for (int r = 0; r < pr.nRows; ++r)
             pushParam((uint32_t)pr.rows[r].index, pr.rows[r].value);
+        notifyDspProgramChange();
     }
     void pushParam(uint32_t i, float v)
     { editParameter(i, true); values[i] = v; setParameterValue(i, v); editParameter(i, false); }
+
+    // Tell the engine the push above was a preset load, so the smoothed controls
+    // LAND on it rather than gliding. The UI pushes parameters one at a time
+    // through the host, which is indistinguishable from automation at the DSP, so
+    // the signal has to be explicit. Called after the pushes so the snapshot that
+    // consumes it sees the finished patch.
+    //
+    // Only reachable through the same-process direct-access bridge; a split LV2
+    // UI has no pointer and falls back to MultiSynthDSP's bulk-change heuristic.
+    void notifyDspProgramChange()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiSynthGetDSP != nullptr)
+            if (void* const inst = getPluginInstancePointer())
+                if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
+                    d->notifyProgramChange();
+       #endif
+    }
 
     // Brushed-metal chassis: subtle vertical gradient + noise-free procedural
     // brushing lines, all derived from live.bg so it crossfades with the mode

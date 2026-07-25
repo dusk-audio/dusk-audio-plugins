@@ -29,6 +29,10 @@
 //                       starts at/after <sec>, call setParameter(name, value).
 //                       Repeatable (pass multiple setat= args) — used to
 //                       reproduce preset-switch / arp-toggle stuck-note bugs.
+//   notifyat=<sec>      call notifyProgramChange() on the same block boundary as
+//                       a setat= at the same time, AFTER that block's parameter
+//                       writes — i.e. exactly what the shell's loadProgram() and
+//                       the UI preset paths do. Repeatable.
 
 #include "MultiSynthDSP.hpp"
 
@@ -177,6 +181,10 @@ int main(int argc, char** argv)
     struct SchedNote { double time; int note; bool on; };
     std::vector<SchedNote> schedNotes;
 
+    // Scheduled program-change notifications (notifyat=<sec>). Fired after the
+    // scheduled parameter writes of the same block, mirroring the shell.
+    std::vector<double> schedNotify;
+
     for (int a = 6; a < argc; ++a)
     {
         std::string kv = argv[a];
@@ -206,6 +214,17 @@ int main(int argc, char** argv)
             const int sidx = msynth::MultiSynthDSP::paramIndexForName(name.c_str());
             if (sidx < 0) { std::fprintf(stderr, "setat unknown param: %s\n", name.c_str()); return 1; }
             scheduled.push_back({ t, sidx, v });
+            continue;
+        }
+        if (key == "notifyat")
+        {
+            const double t = parseNum("notifyat", val);
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad notifyat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                return 1;
+            }
+            schedNotify.push_back(t);
             continue;
         }
         if (key == "noteon" || key == "noteoff")
@@ -354,6 +373,7 @@ int main(int argc, char** argv)
     // Frame at which each scheduled change fires (first block starting >= it).
     std::vector<char> schedDone(scheduled.size(), 0);
     std::vector<char> schedNoteDone(schedNotes.size(), 0);
+    std::vector<char> schedNotifyDone(schedNotify.size(), 0);
 
     bool released = false;
     for (int pos = 0; pos < totalFrames; )
@@ -369,6 +389,18 @@ int main(int argc, char** argv)
             {
                 synth.setParameter(scheduled[s].idx, scheduled[s].val);
                 schedDone[s] = 1;
+            }
+        }
+
+        // Signal a program change AFTER this block's parameter writes, exactly as
+        // the shell does once a preset's parameters have all been pushed.
+        for (size_t s = 0; s < schedNotify.size(); ++s)
+        {
+            if (schedNotifyDone[s]) continue;
+            if (pos >= (int)(schedNotify[s] * sampleRate))
+            {
+                synth.notifyProgramChange();
+                schedNotifyDone[s] = 1;
             }
         }
 

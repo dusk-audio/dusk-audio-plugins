@@ -150,6 +150,10 @@ protected:
         const FactoryPreset& pr = kFactoryPresets[index];
         for (int r = 0; r < pr.nRows; ++r)
             setParameterValue((uint32_t)pr.rows[r].index, pr.rows[r].value);
+        // Land the smoothed controls on the new patch instead of gliding to it.
+        // Must come after the writes above so the snapshot that consumes the flag
+        // already sees the whole preset.
+        dsp.notifyProgramChange();
         updateLatency(); // a preset may change oversampling (E1)
     }
 

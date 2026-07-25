@@ -106,31 +106,45 @@ def step_case(label, mode, patch, steps):
 
 
 # --- preset-load snap check ---------------------------------------------------
-# masterVol drops 24 dB at CHANGE_T. Alone that is a knob move and must glide;
-# accompanied by five more large jumps it is a preset load and must land at once.
-# The five companions are FX controls whose effects are switched off, so they move
-# the classifier without touching the audio being measured.
+# masterVol drops 24 dB at CHANGE_T and the probe asks how much of that drop has
+# arrived a few ms later. Three cases pin down all three paths:
+#
+#   1. alone, no notify  -> a knob move. Must GLIDE (still near the old level).
+#   2. alone + notify    -> the explicit program-change signal the shell raises
+#                           from loadProgram() and the UI preset paths. Must SNAP.
+#   3. six large jumps   -> the fallback heuristic for hosts that replay a stored
+#                           patch as raw parameter writes. Must SNAP.
+#
+# Case 2 is the one that matters in a DAW: measured over all 2862 ordered factory
+# preset pairs the heuristic alone fires on 74 (2.6%), because loadProgram()
+# rewrites every parameter to default + kPresetBaseline before applying the
+# preset's rows, so any two presets agree on nearly every witness.
 CHANGE_T = 1.5
-SNAP_NOTE = 81                        # A5 -- ~1.8 cycles in the 2 ms probe window
+SNAP_NOTE = 93                        # A6 = 1760 Hz; 48000/1760 = 300/11 exactly,
+SNAP_CYCLES = 11                      # so 11 cycles is EXACTLY 300 samples and the
+SNAP_WIN = 300                        # window carries no partial-cycle RMS slop.
 SNAP_PATCH = dict(BASE, **dict(OPEN, ampR=1.0))
 BULK_COMPANIONS = [("driveAmt", 0.95), ("driveMix", 0.0), ("chorusMix", 0.95),
                    ("delayMix", 0.95), ("reverbMix", 0.95)]
 
 
-def snap_probe(label, companions):
-    """dB by which the first 2 ms after the change still exceeds the settled level.
+def snap_probe(label, companions=(), notify=False):
+    """dB by which the probe window still exceeds the settled level.
 
-    0 dB means the new gain applied immediately (snapped); a glide is still near
-    the OLD level 2 ms in, so it reads strongly positive.
+    0 dB means the new gain applied immediately (snapped); an 8 ms one-pole is
+    still near the OLD level this early, so a glide reads strongly positive.
     """
     setat = [f"{CHANGE_T}:masterVol:-24"] + \
             [f"{CHANGE_T}:{n}:{v}" for n, v in companions]
-    _, x = render(2, SNAP_NOTE, 3.0, 2, f"zip_snap_{label}", setat=setat, **SNAP_PATCH)
+    kw = dict(SNAP_PATCH)
+    if notify:
+        kw["notifyat"] = CHANGE_T
+    _, x = render(2, SNAP_NOTE, 3.0, 2, f"zip_snap_{label}", setat=setat, **kw)
     mono = x.mean(axis=1)
     # render_test fires a scheduled change on the first block starting at/after
     # its time, so the change lands exactly on this frame.
     frame = int(np.ceil(int(CHANGE_T * SR) / BLOCK) * BLOCK)
-    win = mono[frame:frame + int(0.002 * SR)]
+    win = mono[frame:frame + SNAP_WIN]
     settled = mono[frame + int(0.20 * SR):frame + int(0.30 * SR)]
     rms = lambda v: float(np.sqrt(np.mean(v ** 2)) + 1e-30)
     return 20.0 * np.log10(rms(win) / rms(settled))
@@ -150,18 +164,23 @@ def main():
     print("\n(floor = same patch held still; pre-fix = same probe before parameter "
           "smoothing existed)")
 
-    print("\npreset-load handling (masterVol -24 dB at t=1.5 s):")
-    bulk = snap_probe("bulk", BULK_COMPANIONS)     # 6 large jumps -> snap
-    solo = snap_probe("solo", [])                  # 1 large jump  -> glide
-    bulk_ok = abs(bulk) < 3.0
-    solo_ok = solo > 10.0
-    failures += (not bulk_ok) + (not solo_ok)
-    print(f"  with 5 companion jumps  {bulk:+7.2f} dB above settled  "
-          f"(want |x| < 3, i.e. snapped)   {'PASS' if bulk_ok else 'FAIL'}")
-    print(f"  masterVol alone         {solo:+7.2f} dB above settled  "
-          f"(want x > 10, i.e. glided)    {'PASS' if solo_ok else 'FAIL'}")
+    print(f"\npreset-load handling (masterVol -24 dB at t=1.5 s, "
+          f"{SNAP_CYCLES}-cycle / {SNAP_WIN}-sample window):")
+    checks = [
+        ("knob move (no notify)",   snap_probe("solo"),
+         lambda v: v > 10.0,  "want x > 10, i.e. glided"),
+        ("notifyProgramChange()",   snap_probe("notify", notify=True),
+         lambda v: abs(v) < 2.0, "want |x| < 2, i.e. snapped"),
+        ("fallback: 6 large jumps", snap_probe("bulk", BULK_COMPANIONS),
+         lambda v: abs(v) < 2.0, "want |x| < 2, i.e. snapped"),
+    ]
+    for name, val, pred, want in checks:
+        ok = pred(val)
+        failures += not ok
+        print(f"  {name:<24}{val:+7.2f} dB above settled  ({want})"
+              f"{'   PASS' if ok else '   FAIL'}")
 
-    total = len(CASES) + 2
+    total = len(CASES) + len(checks)
     print(f"\nzipper_gate: {total - failures}/{total} "
           f"({'PASS' if failures == 0 else 'FAIL'})")
     sys.exit(1 if failures else 0)

@@ -258,6 +258,10 @@ void MultiSynthDSP::acidNoteOff(int note) noexcept
 //==============================================================================
 void MultiSynthDSP::snapshotParameters() noexcept
 {
+    // Consume the explicit program-change signal first (see notifyProgramChange).
+    // Read here, applied at the bottom once every target for this block is known.
+    const bool explicitSnap = pendingSnap.exchange(false, std::memory_order_acquire);
+
     VoiceParameters& vp = voiceParams;
     vp.mode = (SynthMode)clampi((int)p(pMode), 0, 5);
 
@@ -524,8 +528,12 @@ void MultiSynthDSP::snapshotParameters() noexcept
     // smoothers once per host sample so automation and knob drags glide instead
     // of stepping 94 times a second (see kParamSmoothTau in the header).
     // A program change (or the first block after prepare/reset) must land
-    // instantly, so classify the snapshot first and snap rather than glide.
-    smoothSnap = detectBulkParamChange();
+    // instantly, so decide first and snap rather than glide. The explicit signal
+    // is authoritative; the heuristic only catches hosts that replay a stored
+    // patch as raw parameter writes. detectBulkParamChange() is called
+    // unconditionally because it also carries the witness history forward.
+    const bool bulkSnap = detectBulkParamChange();
+    smoothSnap = explicitSnap || bulkSnap;
 
     const float panAngle = (masterPan + 1.0f) * 0.25f * kPi;
     setSmoothTarget(smGain,  masterGain);

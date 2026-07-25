@@ -138,6 +138,16 @@ public:
     // Name lookup for the test harness / shell param mapping. Returns -1 if unknown.
     static int paramIndexForName(const char* name) noexcept;
 
+    // Tell the engine that the parameter table was just rewritten wholesale by a
+    // program / preset load, so the smoothed controls must LAND on their new
+    // values instead of gliding to them (a preset switch must never swoop).
+    //
+    // Call it AFTER pushing the preset's parameters: the flag is consumed by the
+    // next snapshot, and setting it last guarantees that snapshot sees the whole
+    // new patch. Safe from any thread (relaxed-release atomic, no allocation), so
+    // the host thread's loadProgram() and the UI's preset paths can both use it.
+    void notifyProgramChange() noexcept { pendingSnap.store(true, std::memory_order_release); }
+
     //--- MIDI / transport (audio thread; see contract above) ------------------
     void noteOn(int note, float velocity01) noexcept;
     void noteOff(int note) noexcept;
@@ -205,19 +215,26 @@ private:
     // render loop advances a one-pole toward it once per HOST sample.
     //
     // Engine-level smoothers live here; the effect wet mixes / drive smooth
-    // themselves inside Effects.hpp (see kMixSmoothTau there).
-    static constexpr float kParamSmoothTau = 0.008f; // ~8 ms one-pole
+    // themselves inside Effects.hpp. Both use msynth::kParamSmoothTau
+    // (SynthCommon.hpp) — one constant, one place to tune it.
 
     // --- preset-load detection (snap instead of glide) ------------------------
-    // A program change must be INSTANT, but the shell's loadProgram() only calls
-    // setParameter() repeatedly — the core gets no "new preset" signal. It does
-    // however have a distinctive shape: MANY smoothed controls jump a LARGE
-    // amount between two consecutive blocks. Automation (even several lanes at
-    // once) moves each control by a small increment per ~10 ms block, so
-    // requiring BOTH width and magnitude keeps ordinary automation on the smooth
-    // path while a preset switch snaps. Witnesses below are the smoothed controls
-    // a preset is most likely to move; `jump` is the per-control delta that a
-    // hand or automation ramp cannot produce in one block (octaves when logScale).
+    // A program change must be INSTANT. notifyProgramChange() is the PRIMARY
+    // mechanism and the shell calls it on every preset path; the heuristic below
+    // is only a fallback for hosts that replay a stored patch as raw parameter
+    // writes without ever loading a program.
+    //
+    // The fallback looks for the shape of a bulk change: several smoothed
+    // controls jumping a large amount in one block, which an automation ramp
+    // cannot produce. It is deliberately biased toward gliding, because a missed
+    // snap merely glides (inaudible) while a false snap re-introduces the click.
+    // It is NOT a substitute for the explicit signal: measured over all 2862
+    // ordered factory-preset pairs it fires on only 74 of them (2.6%), because
+    // loadProgram() rewrites every parameter to default + kPresetBaseline first,
+    // so any two presets agree on most witnesses (0-3 differ in 96% of pairs).
+    //
+    // `jump` is the per-control delta that a hand or automation ramp cannot
+    // produce in a 10 ms block (octaves when logScale).
     struct SmoothWitness { Param idx; float jump; bool logScale; };
     static constexpr SmoothWitness kSmoothWitness[] = {
         { pMasterVol,    6.0f,  false },   // dB
@@ -331,7 +348,11 @@ private:
     // change a phase increment or an edge position, so the signal stays
     // continuous across the step and no click is produced.
 
-    // Previous snapshot's witness values (preset-load detection, see above).
+    // Set by notifyProgramChange() on the host/UI thread, consumed by the next
+    // snapshot on the audio thread. This is the primary preset-load signal.
+    std::atomic<bool> pendingSnap { false };
+
+    // Previous snapshot's witness values (fallback preset-load detection, above).
     float lastWitness[kNumSmoothWitness] {};
     bool  haveWitness = false;
     bool  smoothSnap = true;   // this snapshot snaps rather than glides
