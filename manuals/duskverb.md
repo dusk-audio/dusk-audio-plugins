@@ -171,6 +171,8 @@ The bottom macro row applies three global shapers on top of whatever engine and 
 - **Mono Below:** 20 to 300 Hz. Frequencies below this cutoff are summed to mono in the reverb output. Default 20 Hz (effectively bypass); typical settings 80 to 150 Hz to keep low-frequency reverb mono-compatible.
 - **Gain Trim:** -48 to +48 dB. Final output level adjustment.
 
+The wet tail preserves the dry source's left/right placement instead of collapsing to the center: a signal panned left decays as a left-leaning tail, a right-panned source keeps its tail on the right, and centered input stays centered. Each preset's stereo behavior is calibrated against its hardware anchor reference, so the amount of preserved lean matches the character of the unit the preset emulates; a few presets keep an intentionally neutral image where their reference does (Black Hole, for example, renders a centered tail like the unit it recreates). Width still applies on top of this, so you can widen or narrow the preserved image to taste.
+
 ## Tips and Traps
 
 - **Pre-Delay is your most important parameter for clarity.** Without pre-delay, the reverb tail starts on the same sample as the dry signal and the result smears. 20 to 60 ms of pre-delay keeps vocals and drums distinct from their reverb.
