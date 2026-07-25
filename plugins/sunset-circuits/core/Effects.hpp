@@ -56,6 +56,10 @@ public:
     void setDrive(float amount) noexcept { drive = clampf(amount, 0.0f, 1.0f); smDrive.setTarget(drive); }
     void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
     void setType(DriveType t) noexcept { type = t; }
+    // Mod-matrix EffectsMix scale, applied to the SMOOTHED mix at the point of
+    // use so the modulation itself is never one-pole filtered (see setMixMod in
+    // EffectsChain). 1.0 = unmodulated.
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
     void snapSmoothing() noexcept { smDrive.snap(drive); smMix.snap(mix); }
 
     void process(float& left, float& right) noexcept
@@ -64,7 +68,7 @@ public:
         // the right value instead of gliding up from wherever it was left.
         if (!enabled) { snapSmoothing(); return; }
         const float drv = smDrive.next();
-        const float m   = smMix.next();
+        const float m   = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
         if (drv < 0.001f) return;
         const float dryL = left, dryR = right;
         const float gain = 1.0f + drv * 10.0f;
@@ -91,6 +95,7 @@ private:
 
     bool  enabled = false;
     float drive = 0.0f, mix = 1.0f;          // smoother targets
+    float mixMod = 1.0f;                     // per-sample EffectsMix scale
     duskaudio::SmoothedValue smDrive, smMix;
     DriveType type = DriveType::SoftClip;
 };
@@ -119,6 +124,7 @@ public:
     void setRate(float r) noexcept { rate = clampf(r, 0.1f, 10.0f); }
     void setDepth(float d) noexcept { depth = clampf(d, 0.0f, 1.0f); smDepth.setTarget(depth); }
     void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
     void snapSmoothing() noexcept { smDepth.snap(depth); smMix.snap(mix); }
 
     void process(float& left, float& right) noexcept
@@ -130,7 +136,7 @@ public:
         const float baseDelay = sr * 0.007f;
         // Depth scales the delay-line excursion, so a stepped depth jumps the read
         // pointer and clicks; the mix blend steps the level. Both are smoothed.
-        const float m         = smMix.next();
+        const float m         = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
         const float modRange  = sr * 0.003f * smDepth.next();
         const float delayL = baseDelay + lfoL * modRange;
         const float delayR = baseDelay + lfoR * modRange;
@@ -170,6 +176,7 @@ private:
     float sr = 44100.0f;
     bool  enabled = false;
     float rate = 0.8f, depth = 0.5f, mix = 0.5f;   // depth/mix are smoother targets
+    float mixMod = 1.0f;                           // per-sample EffectsMix scale
     duskaudio::SmoothedValue smDepth, smMix;
     std::vector<float> bufL, bufR;
     int bufSize = 1, writePos = 0;
@@ -310,6 +317,7 @@ public:
     void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
     void setPingPong(bool pp) noexcept { pingPong = pp; }
     void setTapeCharacter(bool on) noexcept { tapeChar = on; }
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
     void snapSmoothing() noexcept { smFeedback.snap(feedback); smMix.snap(mix); }
 
     void process(float& left, float& right, double bpm) noexcept
@@ -320,7 +328,7 @@ public:
         // puts a discontinuity into the recirculating signal that resurfaces one
         // delay time later as a click.
         const float fb = smFeedback.next();
-        const float m  = smMix.next();
+        const float m  = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
 
         float delaySamples;
         if (tempoSynced && bpm > 0.0)
@@ -411,6 +419,7 @@ private:
     float delayTimeMs = 500.0f;
     ArpRateDivision syncDivision = ArpRateDivision::Quarter;
     float feedback = 0.3f, mix = 0.3f, fbLPFFreq = 8000.0f, fbHPFFreq = 80.0f;
+    float mixMod = 1.0f;                         // per-sample EffectsMix scale
     duskaudio::SmoothedValue smFeedback, smMix;  // targets are feedback / mix above
     std::vector<float> bufL, bufR;
     int bufSize = 1, writePos = 0;
@@ -562,13 +571,14 @@ public:
     void setDamping(float d) { damping = clampf(d, 0.0f, 1.0f); updateParams(); }
     void setMix(float m) { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
     void setPreDelay(float ms) { preDelayMs = clampf(ms, 0.0f, 200.0f); }
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
     void snapSmoothing() noexcept { smMix.snap(mix); }
 
     void process(float& left, float& right) noexcept
     {
         if (!enabled) { snapSmoothing(); return; }
         const float dryL = left, dryR = right;
-        const float m = smMix.next();
+        const float m = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
 
         if (preDelayMs > 0.1f)
         {
@@ -618,7 +628,8 @@ private:
     float sr = 44100.0f;
     bool  enabled = false;
     float roomSize = 0.5f, decay = 2.0f, damping = 0.3f, mix = 0.2f, preDelayMs = 0.0f;
-    duskaudio::SmoothedValue smMix;    // target is mix above
+    float mixMod = 1.0f;               // per-sample EffectsMix scale
+    duskaudio::SmoothedValue smMix;     // target is mix above
     float smoothedPd = -1.0f;          // glided pre-delay read offset (E4); <0 = snap
     float preDelayGlideCoeff = 0.0f;   // one-pole ~20 ms coeff (cached in prepare)
     Freeverb reverb;
@@ -785,6 +796,20 @@ public:
         chorus.snapSmoothing();
         delay.snapSmoothing();
         reverb.snapSmoothing();
+    }
+
+    // Mod-matrix EffectsMix destination. The engine calls this per sample while
+    // the routing is live; each effect multiplies its SMOOTHED mix by the scale
+    // at the point of use. Retargeting the smoothers instead would push the
+    // modulation through the 8 ms one-pole, lowpassing an LFO/envelope that is
+    // meant to arrive intact -- and would also change the rendered output of any
+    // patch using the routing, which de-zippering must not do.
+    void setMixMod(float s) noexcept
+    {
+        drive.setMixMod(s);
+        chorus.setMixMod(s);
+        delay.setMixMod(s);
+        reverb.setMixMod(s);
     }
 
     DriveEffect drive;

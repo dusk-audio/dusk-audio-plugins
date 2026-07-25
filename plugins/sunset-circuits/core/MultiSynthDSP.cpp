@@ -375,22 +375,32 @@ void MultiSynthDSP::snapshotParameters() noexcept
     for (int i = 0; i < 16; ++i) arp.setStepActive(i, p((Param)(pArpStep0 + i)) > 0.5f);
 
     // --- Effects ---
+    // The mix / drive / depth / feedback values are read into locals because they
+    // double as smoothing witnesses at the bottom of this function; reading each
+    // atomic exactly once keeps the witness in step with the target it came from.
+    // setMix() only sets the smoother TARGET -- the mod-matrix EffectsMix scale is
+    // applied separately per sample via effects.setMixMod().
+    effects.setMixMod(1.0f);   // unmodulated unless the render loop says otherwise
+
+    const float driveAmt = p(pDriveAmt), driveMix = p(pDriveMix);
     effects.drive.setEnabled(p(pDriveOn) > 0.5f);
     effects.drive.setType((DriveType)clampi((int)p(pDriveType), 0, 2));
-    effects.drive.setDrive(p(pDriveAmt));
-    baseDriveMix = p(pDriveMix); effects.drive.setMix(baseDriveMix);
+    effects.drive.setDrive(driveAmt);
+    effects.drive.setMix(driveMix);
 
+    const float chorusDepth = p(pChorusDepth), chorusMix = p(pChorusMix);
     effects.chorus.setEnabled(p(pChorusOn) > 0.5f);
     effects.chorus.setRate(p(pChorusRate));
-    effects.chorus.setDepth(p(pChorusDepth));
-    baseChorusMix = p(pChorusMix); effects.chorus.setMix(baseChorusMix);
+    effects.chorus.setDepth(chorusDepth);
+    effects.chorus.setMix(chorusMix);
 
     effects.delay.setEnabled(p(pDelayOn) > 0.5f);
     effects.delay.setTempoSync(p(pDelaySync) > 0.5f);
     effects.delay.setTimeMs(p(pDelayTime));
     effects.delay.setSyncDivision((ArpRateDivision)clampi((int)p(pDelayDiv), 0, (int)ArpRateDivision::NumDivisions - 1));
-    effects.delay.setFeedback(p(pDelayFB));
-    baseDelayMix = p(pDelayMix); effects.delay.setMix(baseDelayMix);
+    const float delayFB = p(pDelayFB), delayMix = p(pDelayMix);
+    effects.delay.setFeedback(delayFB);
+    effects.delay.setMix(delayMix);
     effects.delay.setPingPong(p(pDelayPP) > 0.5f);
     effects.delay.setTapeCharacter(p(pDelayTape) > 0.5f);
 
@@ -398,7 +408,8 @@ void MultiSynthDSP::snapshotParameters() noexcept
     effects.reverb.setSize(p(pReverbSize));
     effects.reverb.setDecay(p(pReverbDecay));
     effects.reverb.setDamping(p(pReverbDamp));
-    baseReverbMix = p(pReverbMix); effects.reverb.setMix(baseReverbMix);
+    const float reverbMix = p(pReverbMix);
+    effects.reverb.setMix(reverbMix);
     effects.reverb.setPreDelay(p(pReverbPD));
 
     cosmosChorus.setMode(vp.mode == SynthMode::Cosmos
@@ -694,14 +705,15 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
 
         // EffectsMix mod (fix #5): scale effect wet mixes by the mean per-voice
         // routing amount. Only pays per-sample setter cost when routed.
+        //
+        // This is a SCALE on the smoothed mix, not a new smoother target. Pushing
+        // the modulation through the 8 ms one-pole would lowpass an LFO or
+        // envelope that is meant to arrive intact, and would change the rendered
+        // output of every patch that uses the routing -- de-zippering must not do
+        // that. snapshotParameters() resets the scale to 1.0 each block, so the
+        // unrouted case needs nothing here.
         if (hasEffectsMixRouting)
-        {
-            const float m = clampf(1.0f + fxMod, 0.0f, 2.0f);
-            effects.drive.setMix(clamp01(baseDriveMix * m));
-            effects.chorus.setMix(clamp01(baseChorusMix * m));
-            effects.delay.setMix(clamp01(baseDelayMix * m));
-            effects.reverb.setMix(clamp01(baseReverbMix * m));
-        }
+            effects.setMixMod(clampf(1.0f + fxMod, 0.0f, 2.0f));
 
         effects.process(sL, sR, bpm);
 

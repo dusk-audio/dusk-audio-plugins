@@ -332,7 +332,6 @@ private:
 
     // block-cached engine-level controls (targets for the smoothers below)
     float masterGain = 1.0f, masterPan = 0.0f, stereoWidth = 0.5f, vintage = 0.0f;
-    float baseDriveMix = 1.0f, baseChorusMix = 0.5f, baseDelayMix = 0.3f, baseReverbMix = 0.2f;
 
     // Per-sample output-stage smoothers. panL/panR are smoothed as a PAIR rather
     // than smoothing the pan angle: interpolating the two gains costs no trig in
