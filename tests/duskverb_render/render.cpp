@@ -1846,6 +1846,12 @@ int main (int argc, char** argv)
                 auto outFile = outDir.getChildFile (outName);
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+                else
+                {
+                    std::cerr << "  ! failed to write stem WAV: "
+                              << outFile.getFullPathName() << std::endl;
+                    ++stemRenderFailures;
+                }
             }
         }
     }
