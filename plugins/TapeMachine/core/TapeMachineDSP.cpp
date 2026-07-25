@@ -25,6 +25,8 @@ static constexpr float kLinkedSlewStartScale = 4.0f;
 static constexpr float kLinkedSlewTightScale = 1.5f;
 static constexpr float kLinkedSlewCeilingDb = -12.0f;
 static constexpr float kLinkedDirectGuardDb = 3.0f; // catch abrupt jumps, not normal UI gestures
+static constexpr float kLinkedGuardSnapFloor = 1.0e-3f; // -60 dBFS: below this a block peak is
+                                                        // noise/tail, not a usable match reference
 
 //==============================================================================
 // Signal-level FR compensation (Phase B). The tape core's FR drifts with record
@@ -365,6 +367,14 @@ void TapeMachineDSP::applyFactor (int newFactor)
 
     osL.setFactor (newFactor); osR.setFactor (newFactor);
     osL.reset();               osR.reset();
+
+    // NOTE: linkedInputDelayL/R are NOT resized here. They are sized in prepare() from
+    // activeLatencySamples(), which is factor-dependent, so a live factor change would
+    // leave the gain-link reference misaligned against the output. Harmless today because
+    // factorFromChoice() is hardwired to 2 and this function therefore never runs after
+    // prepare(). If per-factor oversampling is ever re-enabled, pre-size both buffers for
+    // the MAX factor in prepare() and track the active length in a member — do not assign
+    // here (audio thread).
 
     // No reallocation: wow/flutter buffers are pre-sized for the max factor.
     coreL.prepare (currentOsRate, newFactor, maxOsRate);
@@ -1058,9 +1068,21 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             const float targetDb = std::clamp (
                 20.0f * std::log10 (matchInputPeak / matchOutputPeak),
                 -36.0f, 12.0f);
+            // The guard's first block hard-snaps so a preset change cannot overshoot before
+            // the smoother catches up. Only do that when BOTH block peaks are audible: the
+            // guard compares per-block maxima, so a transition landing in a quiet passage
+            // would otherwise derive its ratio from noise/tail samples and snap straight to
+            // the +/-clamp. Below the floor, fall through to setTarget and disarm — the
+            // guard tau is ~0.5 ms, so it converges within a millisecond anyway, and a
+            // still-armed snap would fire mid-signal later in the window as a hard step.
             if (linkedGuardActive && linkedGuardFirstBlock)
             {
-                linkedMakeupDb.snap (targetDb);
+                if (matchInputPeak > kLinkedGuardSnapFloor
+                    && matchOutputPeak > kLinkedGuardSnapFloor)
+                    linkedMakeupDb.snap (targetDb);
+                else
+                    linkedMakeupDb.setTarget (targetDb);
+
                 linkedGuardFirstBlock = false;
             }
             else
