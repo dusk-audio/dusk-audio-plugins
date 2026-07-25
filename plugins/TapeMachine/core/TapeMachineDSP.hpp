@@ -2121,6 +2121,8 @@ private:
     // latencySamples(), so the tuned 2x core always runs regardless of the stored choice.
     static int factorFromChoice (int /*storedChoice*/) noexcept { return 2; }
 
+    int activeLatencySamples() const noexcept;
+    uint32_t currentLinkedTopologyKey() const noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change
 
     // --- parameters (atomics) ---
@@ -2166,6 +2168,10 @@ private:
     int linkedGuardSamples = 0;
     float lastLinkedOutputL = 0.0f, lastLinkedOutputR = 0.0f;
     float lastLinkedInputL = 0.0f, lastLinkedInputR = 0.0f;
+    float linkedInputMatchPeak = 0.0f, linkedOutputMatchPeak = 0.0f;
+    float linkedMatchPeakDecay = 0.0f;
+    std::vector<float> linkedInputDelayL, linkedInputDelayR;
+    size_t linkedInputDelayIndex = 0;
     std::vector<float> linkedSlewLimitArr;
     uint32_t linkedTopologyKey = UINT32_MAX;
     uint32_t lastLinkedBatchRevision = 0u;
