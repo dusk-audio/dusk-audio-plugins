@@ -2093,7 +2093,8 @@ public:
     float getInVuL() const noexcept { return inVuL.load (std::memory_order_relaxed); }
     float getInVuR() const noexcept { return inVuR.load (std::memory_order_relaxed); }
     // INPUT (record-node) sample-peak hold (instant attack, ~300 ms release), taken post-
-    // input-gain / PRE-tape while processing and from the passthrough input while bypassed.
+    // input-gain / PRE-tape during normal processing and from the raw passthrough input while
+    // bypassed or operating in Thru mode.
     // Feeds ONLY the UI PEAK lamp; kept separate from the mean-abs VU integrator.
     float getInPeakL() const noexcept { return inPeakL.load (std::memory_order_relaxed); }
     float getInPeakR() const noexcept { return inPeakR.load (std::memory_order_relaxed); }
