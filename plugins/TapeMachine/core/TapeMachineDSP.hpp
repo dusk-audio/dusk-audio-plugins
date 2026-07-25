@@ -2165,13 +2165,16 @@ private:
     float lastLinkedInputGainDb = 1000.0f;
     SmoothedValue linkedMakeupDb;            // post-tape linked peak matching, dB
     int linkedGuardSamples = 0;
+    bool linkedGuardFirstBlock = false;
+    bool linkedGuardDiscontinuity = false;
+    float linkedGuardSlewScale = 4.0f;
     float lastLinkedOutputL = 0.0f, lastLinkedOutputR = 0.0f;
-    float lastLinkedInputL = 0.0f, lastLinkedInputR = 0.0f;
+    float linkedRecentOutputSlewL = 0.0f, linkedRecentOutputSlewR = 0.0f;
+    float linkedOutputSlewDecay = 0.0f;
     float linkedInputMatchPeak = 0.0f, linkedOutputMatchPeak = 0.0f;
     float linkedMatchPeakDecay = 0.0f;
     std::vector<float> linkedInputDelayL, linkedInputDelayR;
     size_t linkedInputDelayIndex = 0;
-    std::vector<float> linkedSlewLimitArr;
     uint32_t linkedTopologyKey = UINT32_MAX;
     uint32_t lastLinkedBatchRevision = 0u;
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;
