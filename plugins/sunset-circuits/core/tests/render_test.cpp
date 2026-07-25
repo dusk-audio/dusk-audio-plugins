@@ -19,8 +19,14 @@
 //   playing=<0|1>       transport playing flag (default 1)
 //   songpos=<beats>     host song position at frame 0, in beats. When set, the
 //                       harness acts as the DAW host: it calls setSongPosition
-//                       before each processBlock so the arp/acid step clock
-//                       phase-locks to the host grid. Unset = free-run (default).
+//                       before each processBlock so the arp/acid/LFO clocks
+//                       phase-lock to the host grid. Unset = free-run (default).
+//   playat=<sec>        start the transport at this time instead of at frame 0:
+//                       until then the host reports "stopped" and parks the
+//                       playhead at songpos (a stopped DAW does not advance it),
+//                       after it the position rolls from songpos. This is the
+//                       free -> host-locked transition, which is the only way to
+//                       exercise how the clocks acquire the lock mid-note.
 //   hold=n,n,n          extra held notes (played in addition to <midinote>);
 //                       useful for arpeggiator/chord tests
 //   sr=<hz>             sample rate (default 48000)
@@ -173,6 +179,7 @@ int main(int argc, char** argv)
     bool   playing = true;
     double songPosStart = 0.0;
     bool   haveSongPos = false;
+    double playAtTime = -1.0;   // < 0 = transport rolling from frame 0
     std::vector<int> holdNotes;
     int    blockSize = 512;
 
@@ -291,6 +298,16 @@ int main(int argc, char** argv)
             playing = (p != 0); continue;
         }
         if (key == "songpos")  { songPosStart = parseNum("songpos", val); haveSongPos = true; continue; }
+        if (key == "playat")
+        {
+            playAtTime = parseNum("playat", val);
+            if (!(std::isfinite(playAtTime) && playAtTime >= 0.0 && playAtTime <= seconds))
+            {
+                std::fprintf(stderr, "invalid playat: %g (want 0 <= playat <= %g)\n", playAtTime, seconds);
+                return 1;
+            }
+            continue;
+        }
         if (key == "sr")       { sampleRate = parseNum("sr", val); continue; }
         if (key == "block")
         {
@@ -448,11 +465,23 @@ int main(int argc, char** argv)
             n = releaseFrame - pos; // shorten so the next iteration starts at releaseFrame
         }
 
+        // Transport state for THIS block. With playat= the host reports "stopped"
+        // until that time and parks the playhead at songpos, then rolls from it —
+        // so the engines see a free -> host-locked transition mid-render. Without
+        // it, nowPlaying == playing and rolled == elapsed, exactly as before.
+        const double tNow = (double)pos / sampleRate;
+        const bool nowPlaying = playing && (playAtTime < 0.0 || tNow >= playAtTime);
+        synth.setTempo(tempo, nowPlaying);
+
         // Host phase-lock: feed the song position for THIS block's start frame
         // (pos = frames already rendered), so the block-start beat is correct
         // across the release split. Unset songpos leaves the engine free-running.
         if (haveSongPos)
-            synth.setSongPosition(songPosStart + (double)pos / sampleRate * tempo / 60.0, true);
+        {
+            const double rolled = (playAtTime < 0.0) ? tNow
+                                                     : (nowPlaying ? tNow - playAtTime : 0.0);
+            synth.setSongPosition(songPosStart + rolled * tempo / 60.0, true);
+        }
 
         synth.processBlock(bufL.data(), bufR.data(), n);
         for (int i = 0; i < n; ++i)
