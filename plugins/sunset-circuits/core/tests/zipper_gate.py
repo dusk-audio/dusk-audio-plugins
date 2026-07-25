@@ -24,12 +24,30 @@ MEASUREMENT
     flake it. Both calibration numbers are in the table below and are printed on
     every run.
 
+    Two parameters cannot be judged this way and get their own probes:
+    noiseLevel (a noise source is broadband by nature, so an out-of-band metric
+    is blind to it -- see ENVELOPE PROBE) and anything whose test signal is not a
+    clean tone.
+
+ENVELOPE PROBE
+    For noiseLevel the artifact lives in the AMPLITUDE, not the spectrum, so the
+    power envelope is folded at the 2-block modulation period. Content that is
+    not locked to the block grid averages away; a stepped gain leaves a square
+    edge in the folded envelope while a smoothed one leaves a rounded ramp, and
+    the edge shows up as HF content in the fold.
+
+FALSE POSITIVES
+    De-zippering is only half the job: the preset-load classifier must NOT fire on
+    ordinary automation, because snapping every block is exactly the zipper it was
+    meant to remove. The ramp probe sweeps six witness parameters together in small
+    per-block increments and asserts the glide path held. Its teeth are calibrated
+    against the same render with a program change forced on every block.
+
 PRESET LOADS
-    Smoothing must not make program changes glide. The shell's loadProgram() only
-    calls setParameter() repeatedly, so the engine classifies each snapshot: many
-    smoothed controls jumping a large amount in one block is a preset load and
-    snaps, one control moving is a knob and glides. Both branches are asserted at
-    the end of this gate.
+    Smoothing must not make program changes glide. notifyProgramChange() is the
+    real signal the shell raises; the bulk-change heuristic is only a fallback for
+    hosts that replay a stored patch as raw parameter writes. All three paths --
+    glide, explicit snap, fallback snap -- are asserted at the end of this gate.
 """
 import sys
 import numpy as np
@@ -65,7 +83,18 @@ CASES = [
     ("filterEnvAmt", 2, dict(filterCutoff=800, filterRes=0.3, filterEnvAmt=0.3),
                                                                     ("filterEnvAmt", -0.8, 0.8), -85.0, -56.44),
     ("osc1Level",    2, OPEN,                                       ("osc1Level", 0.2, 1.0),    -70.0, -38.64),
+    ("osc2Level",    2, dict(OPEN, osc2Level=0.8, osc2Wave=3, osc2Semi=0),
+                                                                    ("osc2Level", 0.1, 1.0),    -70.0, -38.02),
+    # osc3 is only mixed by Modular (mode 3), and it must be the ONLY voice: with
+    # osc1 also up, activeGain normalisation (Voice.hpp: mix /= activeGain when the
+    # sum exceeds 1) cancels an osc3Level change exactly and the probe reads a
+    # perfect null on a broken build. Alone, activeGain <= 1 so no division occurs.
+    ("osc3Level",    3, dict(OPEN, osc1Level=0.0, osc2Level=0.0, osc3Wave=3, osc3Level=0.5),
+                                                                    ("osc3Level", 0.1, 1.0),    -65.0, -31.08),
     ("subLevel",     2, dict(OPEN, subLevel=0.5, subWave=1),        ("subLevel", 0.1, 1.0),     -70.0, -36.54),
+    # Acid (mode 5) renders through its own mono voice, outside the poly path.
+    ("acid cutoff",  5, dict(arpOn=0, filterCutoff=800, filterRes=0.3, ampD=5.0, ampS=1.0),
+                                                                    ("filterCutoff", 400, 1600), -90.0, -58.49),
     ("driveAmt",     2, dict(OPEN, driveOn=1, driveAmt=0.3, driveMix=1.0),
                                                                     ("driveAmt", 0.05, 0.9),    -65.0, -35.15),
     ("driveMix",     2, dict(OPEN, driveOn=1, driveAmt=0.6, driveMix=1.0),
@@ -103,6 +132,66 @@ def step_case(label, mode, patch, steps):
     _, stp = render(mode, 45, SECONDS, 2, f"zip_{label}_step",
                     setat=step_args(param, lo, hi), **dict(BASE, **patch))
     return out_of_band_db(ctl), out_of_band_db(stp)
+
+
+# --- noiseLevel: envelope probe -----------------------------------------------
+# A noise source is broadband, so the out-of-band metric cannot separate a gain
+# step from the signal (measured: stepped -33.75 dB against a -34.59 dB floor,
+# i.e. nothing). Fold the POWER envelope at the modulation period instead: a
+# stepped gain leaves a square edge, a smoothed one a rounded ramp. 10 s rather
+# than 4 s because the fold's floor falls as 1/sqrt(periods) and the separation
+# is only ~5 dB at 4 s.
+NOISE_SECONDS = 10.0
+NOISE_LIMIT = -19.0
+NOISE_PREFIX_DB = -14.82
+
+
+def env_fold_db(x):
+    """HF content of the block-synchronously folded power envelope, in dB."""
+    seg = x[int(ANALYSIS_START * SR):, 0] ** 2
+    period = 2 * BLOCK
+    n = len(seg) // period
+    folded = seg[:n * period].reshape(n, period).mean(axis=0)
+    spec = np.fft.rfft(folded - folded.mean())
+    f = np.fft.rfftfreq(period, 1.0 / SR)
+    hf = np.sqrt((np.abs(spec[f >= 1000.0]) ** 2).sum())
+    return 20.0 * np.log10(hf / (folded.mean() * period / 2 + 1e-30))
+
+
+def noise_case():
+    patch = dict(BASE, **dict(OPEN, osc1Level=0.0, noiseLevel=0.3))
+    _, ctl = render(2, 45, NOISE_SECONDS, 2, "zip_noise_ctl", **patch)
+    _, stp = render(2, 45, NOISE_SECONDS, 2, "zip_noise_step",
+                    setat=step_args("noiseLevel", 0.05, 0.6, NOISE_SECONDS), **patch)
+    return env_fold_db(ctl), env_fold_db(stp)
+
+
+# --- false-positive probe -----------------------------------------------------
+# Six witness parameters swept together, a full range every 0.5 s -- fast but
+# entirely ordinary automation, ~0.021 of range per block against a 0.267
+# threshold. The classifier must stay on the GLIDE path; if it decided this was a
+# preset load it would snap every block and put the zipper straight back. The
+# limit is calibrated against exactly that failure, reproduced by forcing a
+# program change on every block (FP_SNAPPED_DB).
+FP_RAMP = ["masterVol", "filterCutoff", "osc1Level", "driveMix", "chorusMix", "reverbMix"]
+FP_LO = {"masterVol": -12.0, "filterCutoff": 2000.0, "osc1Level": 0.3,
+         "driveMix": 0.0, "chorusMix": 0.0, "reverbMix": 0.0}
+FP_HI = {"masterVol": 0.0, "filterCutoff": 9000.0, "osc1Level": 1.0,
+         "driveMix": 1.0, "chorusMix": 1.0, "reverbMix": 0.9}
+FP_LIMIT = -65.0
+FP_SNAPPED_DB = -52.58      # same render with a program change forced every block
+
+
+def fp_probe():
+    setat = []
+    for b in range(int(SECONDS * SR) // BLOCK):
+        t = b * BLOCK / SR
+        tri = 2.0 * abs((t / 0.5) % 1.0 - 0.5)      # 0..1 triangle
+        for n in FP_RAMP:
+            setat.append(f"{t:.9f}:{n}:{FP_LO[n] + (FP_HI[n] - FP_LO[n]) * tri:.6f}")
+    patch = dict(BASE, **dict(OPEN, driveOn=1, driveAmt=0.4, chorusOn=1, reverbOn=1))
+    _, x = render(2, 45, SECONDS, 2, "zip_fp_ramp", setat=setat, **patch)
+    return out_of_band_db(x)
 
 
 # --- preset-load snap check ---------------------------------------------------
@@ -161,8 +250,25 @@ def main():
         print(f"{label:<14}{mode:>5}{floor:>10.2f}{stepped:>10.2f}{limit:>9.1f}"
               f"{prefix_db:>10.2f}   {'PASS' if ok else 'FAIL'}")
 
+    # noiseLevel needs the envelope probe: an out-of-band metric is blind to a
+    # broadband source (see ENVELOPE PROBE in the module docstring).
+    n_floor, n_stepped = noise_case()
+    n_ok = n_stepped <= NOISE_LIMIT
+    failures += not n_ok
+    print(f"{'noiseLevel*':<14}{2:>5}{n_floor:>10.2f}{n_stepped:>10.2f}"
+          f"{NOISE_LIMIT:>9.1f}{NOISE_PREFIX_DB:>10.2f}   {'PASS' if n_ok else 'FAIL'}")
+
     print("\n(floor = same patch held still; pre-fix = same probe before parameter "
           "smoothing existed)")
+    print(f"(* noiseLevel is the folded power-envelope probe over {NOISE_SECONDS:.0f} s, "
+          f"not the out-of-band ratio -- noise is broadband)")
+
+    fp = fp_probe()
+    fp_ok = fp <= FP_LIMIT
+    failures += not fp_ok
+    print(f"\nfalse positives (6 witness lanes swept together, full range every 0.5 s):")
+    print(f"  glide path held         {fp:+7.2f} dB   (limit {FP_LIMIT:.1f}; forced snap "
+          f"every block reads {FP_SNAPPED_DB:.2f}){'   PASS' if fp_ok else '   FAIL'}")
 
     print(f"\npreset-load handling (masterVol -24 dB at t=1.5 s, "
           f"{SNAP_CYCLES}-cycle / {SNAP_WIN}-sample window):")
@@ -180,7 +286,7 @@ def main():
         print(f"  {name:<24}{val:+7.2f} dB above settled  ({want})"
               f"{'   PASS' if ok else '   FAIL'}")
 
-    total = len(CASES) + len(checks)
+    total = len(CASES) + len(checks) + 2   # + noiseLevel + false-positive probe
     print(f"\nzipper_gate: {total - failures}/{total} "
           f"({'PASS' if failures == 0 else 'FAIL'})")
     sys.exit(1 if failures else 0)

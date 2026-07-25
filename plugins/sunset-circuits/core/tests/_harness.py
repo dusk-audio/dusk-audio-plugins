@@ -14,14 +14,14 @@ def render(mode, note, seconds, osfactor, name, **params):
     """Render a note and return (samplerate, stereo float array [N,2])."""
     path = os.path.join(OUT, name + ".wav")
     args = [BIN, str(mode), str(note), str(seconds), str(osfactor), path]
-    # setat is repeatable (dicts can't hold duplicate keys) so accept a list.
-    setat = params.pop("setat", None)
+    # Repeatable keys (setat, notifyat, noteon/noteoff) can't be expressed as
+    # duplicate dict entries, so any list/tuple value is emitted as repeated args.
     for k, v in params.items():
-        args.append(f"{k}={v}")
-    if setat is not None:
-        items = setat if isinstance(setat, (list, tuple)) else [setat]
-        for s in items:
-            args.append(f"setat={s}")
+        if isinstance(v, (list, tuple)):
+            for item in v:
+                args.append(f"{k}={item}")
+        else:
+            args.append(f"{k}={v}")
     # Capture stderr so a failing render surfaces the binary's diagnostics
     # instead of a bare CalledProcessError; 120 s timeout matches _acid.py.
     try:
