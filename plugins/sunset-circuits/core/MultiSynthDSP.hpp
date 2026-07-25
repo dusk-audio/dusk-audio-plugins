@@ -154,6 +154,11 @@ public:
     void pitchBend(float norm) noexcept   { pitchBendNorm.store(clampf(norm, -1.0f, 1.0f), std::memory_order_relaxed); }
     void modWheel(float v01) noexcept     { modWheelValue.store(clamp01(v01), std::memory_order_relaxed); }
     void aftertouch(float v01) noexcept   { aftertouchValue.store(clamp01(v01), std::memory_order_relaxed); }
+    // Sustain pedal (MIDI CC64, >= 64 = down). While the pedal is down a note-off
+    // is CAPTURED instead of released: the key-state mask clears immediately (the
+    // key really is up) but the voice keeps sounding until the pedal is lifted.
+    // See the sustain contract next to the implementation.
+    void sustainPedal(bool down) noexcept;
     void allNotesOff() noexcept;
     void setTempo(double bpm, bool playing) noexcept
     { hostBpm.store(bpm, std::memory_order_relaxed); transportPlaying.store(playing, std::memory_order_relaxed); }
@@ -205,6 +210,22 @@ private:
 
     void snapshotParameters(int nSamples) noexcept; // atomics -> voiceParams + subsystems
     void applyOsFactor(int factor);       // (re)prepare voices at internalRate
+
+    // ============================ SUSTAIN PEDAL ==============================
+    // routeNoteOff() is noteOff() minus the key-mask bookkeeping and the pedal
+    // check: the actual "release this note through whichever path owns it"
+    // (acid / arp / poly). noteOff() and the pedal-up release both funnel here so
+    // a pedal-deferred release is byte-for-byte the same event as a live key-up.
+    //
+    // Pedal state is a pair of 64-bit masks over MIDI 0..127, exactly like
+    // heldNotes*, holding the notes whose note-off arrived while the pedal was
+    // down. Audio-thread only (all note/controller events are), so plain members —
+    // no atomics needed, unlike heldNotes* which the UI reads.
+    void routeNoteOff(int note) noexcept;
+    void releaseSustained(uint64_t lo, uint64_t hi) noexcept;
+    void clearSustained() noexcept { sustainedLo = sustainedHi = 0; }
+    bool     sustainDown = false;
+    uint64_t sustainedLo = 0, sustainedHi = 0;
 
     // ======================== PARAMETER SMOOTHING ============================
     // snapshotParameters() reads the atomics once per block, so every continuous

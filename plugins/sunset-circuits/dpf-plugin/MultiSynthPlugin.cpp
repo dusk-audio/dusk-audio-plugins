@@ -273,6 +273,13 @@ private:
         setLatency(latencyForOsParam(values[kParamOversampling].load(std::memory_order_relaxed)));
     }
 
+    // MIDI routing. CHANNEL POLICY: OMNI — every channel is played, the channel
+    // nibble is ignored throughout. That is the synth convention (an instrument
+    // plugin is already addressed per-track by the host, so a channel filter only
+    // creates silent-plugin support tickets), and it is stated in the manual.
+    //
+    // Runs on the AUDIO THREAD, between the run() render segments, at the exact
+    // frame of the event — so everything called here must be RT-safe.
     void handleMidi(const MidiEvent& ev) noexcept
     {
         if (ev.size < 2 || ev.size > MidiEvent::kDataSize) return; // ignore sysex/ext
@@ -290,6 +297,7 @@ private:
         case 0xB0: // control change
             if (ev.size < 3) return; // need controller + value
             if (ev.data[1] == 1)                         dsp.modWheel((float)ev.data[2] / 127.0f);
+            else if (ev.data[1] == 64)                   dsp.sustainPedal(ev.data[2] >= 64); // damper
             else if (ev.data[1] == 120 || ev.data[1] == 123) dsp.allNotesOff(); // all sound / all notes off
             break;
         case 0xD0: // channel pressure (aftertouch, size >= 2 already guaranteed)

@@ -51,6 +51,11 @@
 //                       a setat= at the same time, AFTER that block's parameter
 //                       writes — i.e. exactly what the shell's loadProgram() and
 //                       the UI preset paths do. Repeatable.
+//   sustainat=<sec>:<0|1>
+//                       sustain pedal (MIDI CC64) up/down at this time, applied on
+//                       the first block starting at/after <sec>. Repeatable.
+//   panicat=<sec>       call allNotesOff() (MIDI CC120/CC123) at this time.
+//                       Repeatable.
 
 #include "MultiSynthDSP.hpp"
 
@@ -205,6 +210,11 @@ int main(int argc, char** argv)
     // scheduled parameter writes of the same block, mirroring the shell.
     std::vector<double> schedNotify;
 
+    // Scheduled sustain-pedal (CC64) edges and panics (CC120/123).
+    struct SchedPedal { double time; bool down; };
+    std::vector<SchedPedal> schedPedal;
+    std::vector<double>     schedPanic;
+
     // Scheduled song-position jumps (loopat=<sec>:<beats>) — loop wrap / seek.
     struct SchedLoop { double time; double beats; };
     std::vector<SchedLoop> schedLoops;
@@ -249,6 +259,41 @@ int main(int argc, char** argv)
                 return 1;
             }
             schedNotify.push_back(t);
+            continue;
+        }
+        if (key == "sustainat")
+        {
+            // <sec>:<0|1>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad sustainat (want <sec>:<0|1>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("sustainat.time", val.substr(0, c1));
+            const long d = parseInt("sustainat.down", val.substr(c1 + 1));
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad sustainat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                return 1;
+            }
+            if (d != 0 && d != 1)
+            {
+                std::fprintf(stderr, "bad sustainat state: %ld (want 0 or 1)\n", d);
+                return 1;
+            }
+            schedPedal.push_back({ t, d != 0 });
+            continue;
+        }
+        if (key == "panicat")
+        {
+            const double t = parseNum("panicat", val);
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad panicat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                return 1;
+            }
+            schedPanic.push_back(t);
             continue;
         }
         if (key == "noteon" || key == "noteoff")
@@ -439,6 +484,8 @@ int main(int argc, char** argv)
     std::vector<char> schedDone(scheduled.size(), 0);
     std::vector<char> schedNoteDone(schedNotes.size(), 0);
     std::vector<char> schedNotifyDone(schedNotify.size(), 0);
+    std::vector<char> schedPedalDone(schedPedal.size(), 0);
+    std::vector<char> schedPanicDone(schedPanic.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
 
@@ -471,6 +518,20 @@ int main(int argc, char** argv)
             }
         }
 
+        // Sustain-pedal edges come BEFORE this block's note events: a pedal-down
+        // scheduled at the same time as a key-up has to already be down for the
+        // note-off to be captured, which is exactly the ordering a MIDI stream
+        // gives when the pedal event precedes the note event in the buffer.
+        for (size_t s = 0; s < schedPedal.size(); ++s)
+        {
+            if (schedPedalDone[s]) continue;
+            if (pos >= (int)(schedPedal[s].time * sampleRate))
+            {
+                synth.sustainPedal(schedPedal[s].down);
+                schedPedalDone[s] = 1;
+            }
+        }
+
         // Apply any scheduled note events whose time has arrived.
         for (size_t s = 0; s < schedNotes.size(); ++s)
         {
@@ -495,6 +556,17 @@ int main(int argc, char** argv)
         else if (!released && releaseFrame > pos && releaseFrame < pos + n)
         {
             n = releaseFrame - pos; // shorten so the next iteration starts at releaseFrame
+        }
+
+        // Panic (CC120/CC123) last, so it overrides every note event of this block.
+        for (size_t s = 0; s < schedPanic.size(); ++s)
+        {
+            if (schedPanicDone[s]) continue;
+            if (pos >= (int)(schedPanic[s] * sampleRate))
+            {
+                synth.allNotesOff();
+                schedPanicDone[s] = 1;
+            }
         }
 
         // Transport state for THIS block. With playat= the host reports "stopped"

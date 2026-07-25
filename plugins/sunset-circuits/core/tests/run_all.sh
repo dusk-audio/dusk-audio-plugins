@@ -7,7 +7,7 @@ cmake --build build >/dev/null
 echo "== render_test built =="
 
 fail=0
-for g in pitch env reverb arp lfo_sync acid stuck steal zipper user_preset; do
+for g in pitch env reverb arp lfo_sync acid stuck sustain steal zipper user_preset; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1

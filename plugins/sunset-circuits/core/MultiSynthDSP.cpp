@@ -168,14 +168,23 @@ void MultiSynthDSP::reset()
     scopeCount.store(0, std::memory_order_relaxed);
     heldNotesLo.store(0, std::memory_order_relaxed);
     heldNotesHi.store(0, std::memory_order_relaxed);
+    sustainDown = false;    // a re-prepare starts with the pedal up and nothing captured
+    clearSustained();
 }
 
 //==============================================================================
 void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
 {
     if (note >= 0 && note < 128)
+    {
         (note < 64 ? heldNotesLo : heldNotesHi)
             .fetch_or(1ull << (note & 63), std::memory_order_relaxed);
+        // Re-pressing a key that the pedal is currently holding hands the note back
+        // to the KEY: it retriggers now, and the pending pedal release is dropped so
+        // lifting the pedal cannot cut a note whose key is still down. If the key
+        // goes up again while the pedal is still down it is simply captured afresh.
+        (note < 64 ? sustainedLo : sustainedHi) &= ~(1ull << (note & 63));
+    }
     if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
     // Keep voiceParams.mode current even for a frame-0 note that arrives before
     // the block's snapshot runs — the voice needs it to trigger the right osc
@@ -190,17 +199,94 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
 void MultiSynthDSP::noteOff(int note) noexcept
 {
     if (note >= 0 && note < 128)
+    {
+        // The key-state mask always clears: the key IS up, whatever the pedal is
+        // doing. Latch pruning combines it with the pedal mask explicitly (see
+        // snapshotParameters), so nothing downstream loses the sustained notes.
         (note < 64 ? heldNotesLo : heldNotesHi)
             .fetch_and(~(1ull << (note & 63)), std::memory_order_relaxed);
+        if (sustainDown)
+        {
+            (note < 64 ? sustainedLo : sustainedHi) |= 1ull << (note & 63);
+            return;   // deferred to sustainPedal(false)
+        }
+    }
+    routeNoteOff(note);
+}
+
+// Release `note` through whichever path currently owns it. Called by a live key-up
+// and by the pedal-up sweep, so a deferred release is identical to a live one.
+void MultiSynthDSP::routeNoteOff(int note) noexcept
+{
     if (isAcidMode()) { acidNoteOff(note); return; }
     if (p(pArpOn) > 0.5f) arp.noteOff(note);
     else voices.noteOff(note);
+}
+
+// ============================ SUSTAIN CONTRACT ===============================
+// * Pedal down: note-offs are captured, not released. The voice sustains; the key
+//   mask still clears, so "which keys are down" stays truthful for the UI keyboard.
+// * Pedal up: every captured note whose key is NOT currently down is released.
+//   Notes re-pressed while the pedal was down survive (their key is down).
+// * Arp / acid sequencer: the pedal feeds the held-set exactly like a key. A
+//   captured note-off never reaches Arpeggiator::noteOff, so the pattern keeps
+//   running until the pedal lifts — which is also how LATCH behaves, except the
+//   pedal is momentary. Latch-off pruning therefore matches captured notes against
+//   (keys | pedal) so a sustained note is not pruned out from under the pedal.
+// * Mono (mode 2) needs no special case: it is the poly path with modeVoices == 1,
+//   so a pedal-held note simply keeps sounding until the pedal lifts.
+// * Acid (mode 5) is last-note-hold: captured notes stay on the held-note stack, so
+//   the pedal holds the last note (and the sequencer's root) exactly as a key would.
+//   The real TB-303 has no pedal input at all; ignoring CC64 there would be equally
+//   defensible, but the uniform behaviour is what a player expects from a mode
+//   rocker on one instrument, and it cannot strand a note (see releaseSustained).
+// * allNotesOff (CC120/CC123) clears the captured set AND lifts the pedal: a panic
+//   that left the pedal latched down would re-strand the very next note played,
+//   which is exactly the stuck note the panic exists to clear.
+// * A mode switch clears the captured set with the rest of the note state
+//   (snapshotParameters); a preset change WITHIN a mode keeps held notes seamless,
+//   and pedal-held notes are held notes, so they are kept too.
+void MultiSynthDSP::sustainPedal(bool down) noexcept
+{
+    if (down == sustainDown) return;
+    sustainDown = down;
+    if (down) { clearSustained(); return; }
+    const uint64_t lo = sustainedLo, hi = sustainedHi;
+    clearSustained();
+    // Keys physically down are NOT released — the pedal was only ever holding the
+    // notes whose keys had already come up.
+    releaseSustained(lo & ~heldNotesLo.load(std::memory_order_relaxed),
+                     hi & ~heldNotesHi.load(std::memory_order_relaxed));
+}
+
+void MultiSynthDSP::releaseSustained(uint64_t lo, uint64_t hi) noexcept
+{
+    if ((lo | hi) == 0) return;
+    auto set = [&](int n) noexcept
+    { return ((((n < 64) ? lo : hi) >> (n & 63)) & 1ull) != 0; };
+
+    // Live (non-sequencer) Acid is a last-note-priority mono stack whose TOP note is
+    // the one sounding. Releasing the top first makes acidNoteOff glide the voice
+    // down to the next held note — a note that is about to be released on this very
+    // sample, so the slide is an audible blip on the way to silence. Release it
+    // last and the stack unwinds silently. Every other path is order-independent.
+    int last = -1;
+    if (isAcidMode() && p(pArpOn) <= 0.5f && acidHeldCount > 0)
+    {
+        const int top = acidHeld[acidHeldCount - 1].note;
+        if (top >= 0 && top < 128 && set(top)) last = top;
+    }
+    for (int n = 0; n < 128; ++n)
+        if (n != last && set(n)) routeNoteOff(n);
+    if (last >= 0) routeNoteOff(last);
 }
 
 void MultiSynthDSP::allNotesOff() noexcept
 {
     heldNotesLo.store(0, std::memory_order_relaxed);
     heldNotesHi.store(0, std::memory_order_relaxed);
+    sustainDown = false;   // a panic that leaves the pedal down re-strands the next note
+    clearSustained();
     voices.allNotesOff();
     arp.reset();
     acidVoice.noteOff();
@@ -393,11 +479,12 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     const bool latchOn = p(pArpLatch) > 0.5f;
     if (lastArpLatch && !latchOn)
     {
-        // Latch just turned off: prune latched notes whose keys are no longer
-        // physically down (heldNotes tracks key state). Keys still held keep
-        // playing; with none held the arp/acid pattern stops cleanly.
-        const uint64_t lo = heldNotesLo.load(std::memory_order_relaxed);
-        const uint64_t hi = heldNotesHi.load(std::memory_order_relaxed);
+        // Latch just turned off: prune latched notes that are no longer held —
+        // by a key (heldNotes) OR by the sustain pedal, which feeds the arp
+        // held-set exactly like a key. Notes still held keep playing; with none
+        // held the arp/acid pattern stops cleanly.
+        const uint64_t lo = heldNotesLo.load(std::memory_order_relaxed) | sustainedLo;
+        const uint64_t hi = heldNotesHi.load(std::memory_order_relaxed) | sustainedHi;
         arp.retainHeld(lo, hi);
         acidSeq.retainHeld(lo, hi);
     }
@@ -579,6 +666,10 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
             voices.reset();
             acidVoice.reset();
             acidHeldCount = 0;   // drop the live-acid held-note stack
+            // Pedal-captured note-offs belong to voices that no longer exist; the
+            // pedal itself stays down (it is a physical control, not note state), so
+            // playing into the new mode with the pedal still held sustains normally.
+            clearSustained();
             arp.clearLatch();    // drop latched held notes (else they re-trigger
             arp.reset();         // in the new mode and drone; reset() keeps them
             acidSeq.clearLatch();// while latch is on)
