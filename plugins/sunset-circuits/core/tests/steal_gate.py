@@ -11,7 +11,8 @@ Three engine-side holes cut a sounding voice mid-waveform:
 
   (2) The per-voice headroom trim 2/sqrt(poly) stepped on the same edge, so the
       SURVIVING voices jumped level at the instant the retired ones vanished
-      (6 -> 5 voices is +0.8 dB, 6 -> 2 is +4.8 dB).
+      (6 -> 5 voices is +0.79 dB; the largest reachable step is 8 -> 4 or below at
+      +3.01 dB, where the trim saturates at unity).
 
   (3) MODE SWITCH. The outgoing path (poly voices, or the mono acid voice) was
       released but never rendered again -- the render loop picks its branch from

@@ -737,12 +737,12 @@ public:
         for (int i = 0; i < kMaxPolyphony; ++i)
             voices[(size_t)i].prepare(sampleRate, 0x1000u + 0x1000u * (uint32_t)i);
         voiceGain.prepare(sampleRate, kParamSmoothTau);
-        voiceGain.snap(gainForPoly(effectivePoly()));
+        snapVoiceGain();
     }
     void reset() noexcept
     {
         for (auto& v : voices) v.reset();
-        voiceGain.snap(gainForPoly(effectivePoly()));
+        snapVoiceGain();
     }
     // Rate change preserving active notes/pitch (oversampling-factor switch).
     void setSampleRate(double sampleRate) noexcept
@@ -750,10 +750,11 @@ public:
         for (auto& v : voices) v.setSampleRate(sampleRate);
         voiceGain.prepare(sampleRate, kParamSmoothTau); // new coeff, keeps the value
     }
-    // Land the headroom trim on the current polyphony instead of gliding to it.
-    // Used for the first snapshot after prepare/reset, where the mode's voice
-    // budget is established before anything can be sounding.
-    void snapVoiceGain() noexcept { voiceGain.snap(gainForPoly(effectivePoly())); }
+    // Land the headroom trim on the current polyphony instead of gliding to it:
+    // the first snapshot after prepare/reset (the budget is simply being
+    // established), and any snapshot classified as a preset load — a program
+    // change must land, never swoop, and this is a smoothed control like any other.
+    void snapVoiceGain() noexcept { polyTrim = gainForPoly(effectivePoly()); voiceGain.snap(polyTrim); }
 
     // modeMaxVoices: nominal polyphony for the current mode. On an actual change,
     // retire voices that fall outside the new limit so they can't become zombies
@@ -789,6 +790,7 @@ public:
     void retireAbove() noexcept
     {
         const int poly = effectivePoly();
+        polyTrim = gainForPoly(poly);   // only edge on which effectivePoly() moves
         for (int i = poly; i < kMaxPolyphony; ++i)
         {
             SynthVoice& v = voices[(size_t)i];
@@ -836,10 +838,12 @@ public:
         // The headroom trim is a TARGET, not a value: effectivePoly() changes on a
         // unison or mode-budget edge, and stepping 2/sqrt(poly) there jumps the
         // level of every surviving voice on that one sample (6 -> 5 voices is
-        // +0.8 dB, 6 -> 2 is +4.8 dB) — the same click the retire fade exists to
-        // remove. Gliding it costs one multiply-add per internal sample and is
-        // exactly a no-op while the polyphony holds still.
-        voiceGain.setTarget(gainForPoly(effectivePoly()));
+        // +0.79 dB; the largest reachable step is 8 -> 4 or below at +3.01 dB,
+        // where the trim saturates at unity) — the same click the retire fade
+        // exists to remove. Gliding it costs one multiply-add per internal sample
+        // and is exactly a no-op while the polyphony holds still. The target is
+        // cached on the edge, so no sqrt is taken in the render path.
+        voiceGain.setTarget(polyTrim);
         const float g = voiceGain.next();
 
         // All slots are visited, not just the ones below effectivePoly(): a voice
@@ -873,7 +877,11 @@ private:
     }
 
     SynthVoice voices[kMaxPolyphony];
-    duskaudio::SmoothedValue voiceGain;   // glided 2/sqrt(effectivePoly())
+    duskaudio::SmoothedValue voiceGain;   // glided headroom trim
+    // gainForPoly(effectivePoly()), cached. effectivePoly() only moves when
+    // setModeVoices/setUnison change it and both funnel through retireAbove(), so
+    // the sqrt is taken on that edge rather than once per internal sample.
+    float polyTrim = 1.0f;
     int modeVoices = 6;
     int unisonCount = 1;
 };

@@ -308,12 +308,8 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     }
     voices.setModeVoices(modeVoices);
     voices.setUnison(clampi((int)p(pUnisonVoices), 1, kMaxUnison));
-    // The per-voice headroom trim glides with the voice budget so a mid-note
-    // unison change cannot step the level of the surviving voices. On the FIRST
-    // snapshot after prepare/reset there is nothing to protect — the budget is
-    // simply being established — so land on it instead of gliding up from the
-    // constructor's default.
-    if (!haveLastSnap) voices.snapVoiceGain();
+    // (The headroom trim that goes with this budget is snapped-or-glided at the
+    // bottom of this function, with the rest of the smoothed controls.)
 
     vp.osc1Wave = (Waveform)clampi((int)p(pOsc1Wave), 0, 5);
     vp.osc1Detune = p(pOsc1Detune);
@@ -650,6 +646,14 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // Oscillator mix levels. These scale the summed oscillator output directly,
     // so a stepped level is a plain amplitude discontinuity -- the loudest and
     // most obvious form of zipper in the voice.
+    // The per-voice headroom trim 2/sqrt(effectivePoly()) is a smoothed control
+    // like any other: it glides so a mid-note unison or voice-budget change cannot
+    // step the level of every surviving voice, and it LANDS on a preset load (and
+    // on the first snapshot after prepare/reset, where the budget is simply being
+    // established). It lives in the allocator rather than in a SmoothedValue here
+    // because only the allocator knows the effective polyphony.
+    if (smoothSnap) voices.snapVoiceGain();
+
     setSmoothTarget(smOsc1Level,  vp.osc1Level);
     setSmoothTarget(smOsc2Level,  vp.osc2Level);
     setSmoothTarget(smOsc3Level,  vp.osc3Level);
