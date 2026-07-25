@@ -347,11 +347,13 @@ private:
     // block-cached engine-level controls (targets for the smoothers below)
     float masterGain = 1.0f, masterPan = 0.0f, stereoWidth = 0.5f, vintage = 0.0f;
 
-    // Per-sample output-stage smoothers. panL/panR are smoothed as a PAIR rather
-    // than smoothing the pan angle: interpolating the two gains costs no trig in
-    // the render loop, both endpoints are exactly constant-power, and the only
-    // cost is a ~0.3 dB dip mid-glide on a hard hard-left -> hard-right jump.
-    duskaudio::SmoothedValue smGain, smPanL, smPanR, smWidth;
+    // Per-sample output-stage smoothers. The PAN ANGLE is smoothed, not the two
+    // pan gains: interpolating the (cos, sin) pair leaves the constant-power law
+    // only at the endpoints and sags badly in between -- a hard-left to
+    // hard-right glide passes through (0.5, 0.5), which is 3.01 dB down. Gliding
+    // the angle and taking cos/sin per host sample is constant-power the whole
+    // way across for two trig calls per sample at host rate.
+    duskaudio::SmoothedValue smGain, smPanAngle, smWidth;
     // Voice-parameter smoothers. Written into voiceParams once per host sample,
     // so all voices (and every oversampled sub-sample) see the same glided value.
     // smCutoff / smHPCutoff carry LOG2(Hz) so a sweep takes the same time per

@@ -129,7 +129,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
     // Parameter smoothers advance once per HOST sample (see processBlock), so
     // they are prepared at hostRate regardless of the oversampling factor.
-    for (auto* s : { &smGain, &smPanL, &smPanR, &smWidth,
+    for (auto* s : { &smGain, &smPanAngle, &smWidth,
                      &smCutoff, &smRes, &smHPCutoff, &smFilterEnvAmt,
                      &smOsc1Level, &smOsc2Level, &smOsc3Level, &smSubLevel, &smNoiseLevel })
         s->prepare(hostRate, kParamSmoothTau);
@@ -572,11 +572,9 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     const bool bulkSnap = detectBulkParamChange(witnessNow, (float)(nSamples / hostRate));
     smoothSnap = explicitSnap || bulkSnap;
 
-    const float panAngle = (masterPan + 1.0f) * 0.25f * kPi;
-    setSmoothTarget(smGain,  masterGain);
-    setSmoothTarget(smPanL,  std::cos(panAngle));
-    setSmoothTarget(smPanR,  std::sin(panAngle));
-    setSmoothTarget(smWidth, 2.0f * stereoWidth);
+    setSmoothTarget(smGain,     masterGain);
+    setSmoothTarget(smPanAngle, (masterPan + 1.0f) * 0.25f * kPi);
+    setSmoothTarget(smWidth,    2.0f * stereoWidth);
 
     // Filter section. The values written into vp above are this block's targets;
     // the render loop overwrites the vp fields with the glided values each host
@@ -766,10 +764,13 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
             sL += noise; sR += noise;
         }
 
-        // Master gain + pan (per-sample smoothed; see kParamSmoothTau).
+        // Master gain + pan (per-sample smoothed; see kParamSmoothTau). The pan
+        // ANGLE is glided and cos/sin taken here, so the pan law stays exactly
+        // constant-power throughout the move rather than only at its endpoints.
         const float gain = smGain.next();
-        sL *= gain * smPanL.next();
-        sR *= gain * smPanR.next();
+        const float ang  = smPanAngle.next();
+        sL *= gain * std::cos(ang);
+        sR *= gain * std::sin(ang);
 
         // Stereo width (mid/side). The 0..1 param maps to a 0..2 side factor so
         // the 0.5 DEFAULT is unity (image preserved): 0 = mono, 0.5 = as
