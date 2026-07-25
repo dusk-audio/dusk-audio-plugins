@@ -12,6 +12,7 @@
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
 #include "TapeMachinePresets.hpp"
+#include "TapeMachineVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"   // shared DPF Patreon "Special Thanks" overlay (click title)
@@ -155,10 +156,9 @@ protected:
         const bool modalOpen = showAdvanced || showSupporters;
         if (modalOpen) ImGui::BeginDisabled();
         drawHeader(dl);
-        // The PEAK lamp is a digital-CLIP indicator: peakLevel(ch) reads the DSP's final-OUTPUT
-        // sample-peak hold, and the lamp lights when the output crosses 0 dBFS (see drawVU),
-        // auto-holds 1.5 s after the last over, and click-clears. Tape soft-saturates, so
-        // driving it for crunch does not trip it — only a genuine output over does.
+        // The PEAK lamp follows the post-input-gain, pre-tape record level. It lights when
+        // that input node crosses 0 dBFS (see drawVU), auto-holds 1.5 s after the last over,
+        // and click-clears.
         const bool clipEnabled = true;
         const ImU32 accent = accentCol();
         drawVU(dl, 68,  62, 388, 198, meterLevel(0), peakLevel(0), needleL, clipHoldL, clipEnabled, accent, "L");
@@ -168,7 +168,8 @@ protected:
         if (modalOpen) ImGui::EndDisabled();
         if (showAdvanced) drawAdvanced(dl);
         if (showSupporters)
-            duskdpf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters, "TapeMachine 2", "");
+            duskdpf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
+                                           "TapeMachine 2", TM2_VERSION_STRING);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -195,18 +196,15 @@ private:
         return v;
     }
 
-    // OUTPUT-node true sample-peak for the PEAK lamp — the final signal the host receives.
-    // The lamp is a genuine digital-clip indicator (lights when the OUTPUT crosses 0 dBFS in
-    // drawVU). Tape soft-saturates, so hitting the tape harder for crunch does NOT trip it;
-    // only a real output over does. (Previously read the INPUT record node, which lit on any
-    // hot source + positive input gain even though nothing was clipping.)
+    // Post-input-gain, pre-tape sample peak for the PEAK lamp. This is the record
+    // level entering the tape path, independent of output compensation.
     float peakLevel(int ch)
     {
         float v = 0.0f;
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
         if (void* const inst = getPluginInstancePointer())
-            if (tapeMachineGetOutPeakL)
-                v = ch == 0 ? tapeMachineGetOutPeakL(inst) : tapeMachineGetOutPeakR(inst);
+            if (tapeMachineGetInPeakL)
+                v = ch == 0 ? tapeMachineGetInPeakL(inst) : tapeMachineGetInPeakR(inst);
        #endif
         return v;
     }
@@ -498,6 +496,8 @@ private:
         dl->AddRectFilled(P(30, 12), P(247, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
         dl->AddRect(P(30, 12), P(247, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
         text(dl, 42, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
+        text(dl, 177, 21, 8.5f, IM_COL32(158, 158, 156, 255),
+             "v" TM2_VERSION_STRING, 0);
         {   // machine badge (accent-tinted). Options are hard-gated per machine, so
             // no non-standard state exists to flag.
             const char* badge = isSwiss() ? "Swiss" : "American";
@@ -825,12 +825,9 @@ private:
         text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
         text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
 
-        // over lamp (right). A digital-CLIP indicator (peak = the DSP's final-OUTPUT sample-peak
-        // hold — the buffer the host receives). Lights when the OUTPUT crosses 0 dBFS (true
-        // digital over). Because the tape soft-saturates and the gain-link holds output ~unity,
-        // pushing the input for crunch does NOT clip the output, so the lamp stays dark under
-        // normal drive and lights only on a genuine over. (Earlier it read the INPUT record node
-        // and lit on any hot source + positive input gain, a false alarm the user reported.)
+        // over lamp (right). The peak comes from the post-input-gain, pre-tape
+        // record node, so it warns when the level driving the tape path crosses
+        // 0 dBFS regardless of the linked output compensation.
         // `clipHold` is a HOLD TIMER in seconds: every over (re)arms it to 1.5 s, and
         // between overs it counts down by the frame dt, so a brief transient stays lit ~1.5 s
         // after it passes and a sustained hot signal keeps re-arming (stays lit). A click clears

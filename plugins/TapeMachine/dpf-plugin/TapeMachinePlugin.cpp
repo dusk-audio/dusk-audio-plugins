@@ -8,6 +8,7 @@
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
 #include "TapeMachinePresets.hpp"
+#include "TapeMachineVersion.hpp"
 #include "TapeMachineDSP.hpp"
 
 #include <atomic>
@@ -42,13 +43,7 @@ protected:
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
-    // Version comes from the CMake project() VERSION via compile definitions
-    // (single source of truth). Fallback keeps non-CMake builds compiling.
-#ifndef TM2_VERSION_MAJOR
- #define TM2_VERSION_MAJOR 2
- #define TM2_VERSION_MINOR 0
- #define TM2_VERSION_PATCH 0
-#endif
+    // Version comes from the CMake project() VERSION via TapeMachineVersion.hpp.
     uint32_t    getVersion() const override  { return d_version(TM2_VERSION_MAJOR, TM2_VERSION_MINOR, TM2_VERSION_PATCH); }
     int64_t     getUniqueId() const override { return d_cconst('D', 's', 'T', 'M'); } // matches DISTRHO_PLUGIN_UNIQUE_ID (DsTM)
 

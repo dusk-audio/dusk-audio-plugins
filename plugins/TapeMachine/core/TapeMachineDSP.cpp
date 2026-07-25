@@ -334,22 +334,32 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     if (reqFactor != currentFactor)
         applyFactor (reqFactor);
 
-    // --- bypass: pure passthrough (matches JUCE early return, no meter update)-
+    // --- bypass: pure passthrough + sample-peak refresh -----------------------
     if (pBypass.load (std::memory_order_relaxed))
     {
         for (int ch = 0; ch < nCh; ++ch)
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
 
-        // Keep the output PEAK lamp honest even while bypassed: capture any real
-        // output clip and let a stale peak decay instead of latching the UI lamp.
+        // Input and output are identical while bypassed, but retain their independent
+        // peak states so peaks from before the transition continue to decay naturally.
+        float pL = inPeakStateL, pR = inPeakStateR;
         float pkOL = outPeakStateL, pkOR = outPeakStateR;
         for (int n = 0; n < nSamples; ++n)
         {
-            const float aL = std::abs (outputs[0][n]);
+            const float aL = std::abs (inputs[0][n]);
+            pL = aL > pL ? aL : pL * peakDecayCoeff;
             pkOL = aL > pkOL ? aL : pkOL * peakDecayCoeff;
-            if (nCh >= 2) { const float aR = std::abs (outputs[1][n]); pkOR = aR > pkOR ? aR : pkOR * peakDecayCoeff; }
+            if (nCh >= 2)
+            {
+                const float aR = std::abs (inputs[1][n]);
+                pR = aR > pR ? aR : pR * peakDecayCoeff;
+                pkOR = aR > pkOR ? aR : pkOR * peakDecayCoeff;
+            }
         }
+        inPeakStateL = pL; inPeakStateR = (nCh >= 2) ? pR : pL;
+        inPeakL.store (inPeakStateL, std::memory_order_relaxed);
+        inPeakR.store (inPeakStateR, std::memory_order_relaxed);
         outPeakStateL = pkOL; outPeakStateR = (nCh >= 2) ? pkOR : pkOL;
         outPeakL.store (outPeakStateL, std::memory_order_relaxed);
         outPeakR.store (outPeakStateR, std::memory_order_relaxed);
@@ -835,7 +845,7 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         }
     }
 
-    // input VU + input true-peak store (post-trim / pre-sat record level)
+    // input VU + input sample-peak store (post-trim / pre-sat record level)
     inVuStateL = inSL; inVuStateR = (nCh >= 2) ? inSR : inSL;
     inVuL.store (inVuStateL, std::memory_order_relaxed);
     inVuR.store (inVuStateR, std::memory_order_relaxed);
@@ -863,11 +873,10 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         }
     }
 
-    // --- VU meter (output; ANSI mean-abs one-pole, ~300 ms to 99%) + output true-peak ----
-    // The PEAK lamp is a genuine digital-clip (output over 0 dBFS) indicator: it reads the
-    // final-output sample-peak taken HERE (post-tape / post-output-gain / post-crosstalk — the
-    // exact buffer the host receives), instant attack with the ~300 ms peakDecayCoeff release.
-    // Tape soft-saturates, so moderate record drive never trips it — only a true output over does.
+    // --- VU meter (output; ANSI mean-abs one-pole, ~300 ms to 99%) + output sample peak ----
+    // Retain the final-output sample peak as a diagnostic even though the UI PEAK lamp now
+    // follows the input record node. This is post-tape / post-output-gain / post-crosstalk,
+    // with instant attack and the ~300 ms peakDecayCoeff release.
     float sL = vuStateL, sR = vuStateR;
     float pkOL = outPeakStateL, pkOR = outPeakStateR;
     for (int n = 0; n < nSamples; ++n)

@@ -2092,15 +2092,14 @@ public:
     // Pre-processing input peak (for a UI In/Out meter switch). Metering only.
     float getInVuL() const noexcept { return inVuL.load (std::memory_order_relaxed); }
     float getInVuR() const noexcept { return inVuR.load (std::memory_order_relaxed); }
-    // INPUT (record-node) true-peak hold (instant attack, ~300 ms release), taken post-
-    // input-gain / PRE-tape — feeds ONLY the UI PEAK lamp, kept separate from the mean-abs
-    // VU integrator. Metering only.
+    // INPUT (record-node) sample-peak hold (instant attack, ~300 ms release), taken post-
+    // input-gain / PRE-tape while processing and from the passthrough input while bypassed.
+    // Feeds ONLY the UI PEAK lamp; kept separate from the mean-abs VU integrator.
     float getInPeakL() const noexcept { return inPeakL.load (std::memory_order_relaxed); }
     float getInPeakR() const noexcept { return inPeakR.load (std::memory_order_relaxed); }
-    // OUTPUT (final post-everything) true sample-peak hold (instant attack, ~300 ms release),
-    // taken on the buffer the host receives — feeds the UI PEAK lamp as a genuine digital-clip
-    // (output over 0 dBFS) indicator. Tape saturates softly, so moderate drive does NOT trip it.
-    // Metering only.
+    // OUTPUT (final post-everything) sample-peak hold (instant attack, ~300 ms release),
+    // taken on the buffer the host receives. Retained for diagnostic metering only; the UI
+    // PEAK lamp uses the input record-node accessors above.
     float getOutPeakL() const noexcept { return outPeakL.load (std::memory_order_relaxed); }
     float getOutPeakR() const noexcept { return outPeakR.load (std::memory_order_relaxed); }
 
@@ -2200,10 +2199,10 @@ private:
     float vuStateL = 0.0f, vuStateR = 0.0f;
     float inVuStateL = 0.0f, inVuStateR = 0.0f;
     float vuBallisticAlpha = 0.0f;   // one-pole integrator coeff for ANSI VU ballistics (~300 ms to 99%)
-    // separate INPUT-node true-peak hold for the PEAK lamp (instant attack, 300 ms release)
+    // separate INPUT-node sample-peak hold for the PEAK lamp (instant attack, 300 ms release)
     std::atomic<float> inPeakL{0.0f}, inPeakR{0.0f};
     float inPeakStateL = 0.0f, inPeakStateR = 0.0f;
-    std::atomic<float> outPeakL{0.0f}, outPeakR{0.0f};  // final-output sample-peak hold (PEAK lamp = digital clip)
+    std::atomic<float> outPeakL{0.0f}, outPeakR{0.0f};  // final-output sample-peak hold (diagnostic)
     float outPeakStateL = 0.0f, outPeakStateR = 0.0f;
     float peakDecayCoeff = 0.0f;
 };
