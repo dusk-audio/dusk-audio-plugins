@@ -51,26 +51,30 @@ BASE = dict(sr=SR, analogAmt=0, unisonVoices=1, vintage=0,
 
 OPEN = dict(filterCutoff=12000, filterRes=0.1)   # filter out of the way
 
-# label, extra patch, (param, lo, hi), limit dB, pre-smoothing dB (calibration)
+# label, mode, patch, (param, lo, hi), limit dB, pre-smoothing dB (calibration).
+# Mode 2 (Mono) unless the parameter needs another engine: filterHP is only wired
+# up in mode 0 (Cosmos) -- modes 1-3 ignore the HP argument entirely, so probing
+# it in Mono measures nothing at all.
 CASES = [
-    ("masterVol",    OPEN,                                          ("masterVol", -12, 0),      -65.0, -28.94),
-    ("masterPan",    OPEN,                                          ("masterPan", -0.8, 0.8),   -65.0, -27.76),
-    ("stereoWidth",  dict(OPEN, masterPan=0.4),                     ("stereoWidth", 0.0, 1.0),  -65.0, -30.41),
-    ("filterCutoff", dict(filterCutoff=800, filterRes=0.3),         ("filterCutoff", 400, 1600), -90.0, -61.24),
-    ("filterRes",    dict(filterCutoff=800, filterRes=0.3),         ("filterRes", 0.05, 0.9),   -70.0, -31.96),
-    ("filterEnvAmt", dict(filterCutoff=800, filterRes=0.3, filterEnvAmt=0.3),
+    ("masterVol",    2, OPEN,                                       ("masterVol", -12, 0),      -65.0, -28.94),
+    ("masterPan",    2, OPEN,                                       ("masterPan", -0.8, 0.8),   -65.0, -27.76),
+    ("stereoWidth",  2, dict(OPEN, masterPan=0.4),                  ("stereoWidth", 0.0, 1.0),  -65.0, -30.41),
+    ("filterCutoff", 2, dict(filterCutoff=800, filterRes=0.3),      ("filterCutoff", 400, 1600), -90.0, -61.24),
+    ("filterRes",    2, dict(filterCutoff=800, filterRes=0.3),      ("filterRes", 0.05, 0.9),   -70.0, -31.96),
+    ("filterHP",     0, dict(OPEN, filterHP=200),                   ("filterHP", 60, 900),      -85.0, -57.66),
+    ("filterEnvAmt", 2, dict(filterCutoff=800, filterRes=0.3, filterEnvAmt=0.3),
                                                                     ("filterEnvAmt", -0.8, 0.8), -85.0, -56.44),
-    ("osc1Level",    OPEN,                                          ("osc1Level", 0.2, 1.0),    -70.0, -38.64),
-    ("subLevel",     dict(OPEN, subLevel=0.5, subWave=1),           ("subLevel", 0.1, 1.0),     -70.0, -36.54),
-    ("driveAmt",     dict(OPEN, driveOn=1, driveAmt=0.3, driveMix=1.0),
+    ("osc1Level",    2, OPEN,                                       ("osc1Level", 0.2, 1.0),    -70.0, -38.64),
+    ("subLevel",     2, dict(OPEN, subLevel=0.5, subWave=1),        ("subLevel", 0.1, 1.0),     -70.0, -36.54),
+    ("driveAmt",     2, dict(OPEN, driveOn=1, driveAmt=0.3, driveMix=1.0),
                                                                     ("driveAmt", 0.05, 0.9),    -65.0, -35.15),
-    ("driveMix",     dict(OPEN, driveOn=1, driveAmt=0.6, driveMix=1.0),
+    ("driveMix",     2, dict(OPEN, driveOn=1, driveAmt=0.6, driveMix=1.0),
                                                                     ("driveMix", 0.0, 1.0),     -65.0, -31.38),
-    ("chorusMix",    dict(OPEN, chorusOn=1, chorusMix=0.5),         ("chorusMix", 0.0, 1.0),    -62.0, -26.56),
-    ("chorusDepth",  dict(OPEN, chorusOn=1, chorusMix=1.0),         ("chorusDepth", 0.1, 1.0),  -60.0, -27.53),
-    ("delayMix",     dict(OPEN, delayOn=1, delayMix=0.4),           ("delayMix", 0.0, 0.9),     -55.0, -23.29),
-    ("delayFB",      dict(OPEN, delayOn=1, delayMix=0.5),           ("delayFB", 0.05, 0.9),     -60.0, -25.83),
-    ("reverbMix",    dict(OPEN, reverbOn=1, reverbMix=0.4),         ("reverbMix", 0.0, 0.9),    -60.0, -25.13),
+    ("chorusMix",    2, dict(OPEN, chorusOn=1, chorusMix=0.5),      ("chorusMix", 0.0, 1.0),    -62.0, -26.56),
+    ("chorusDepth",  2, dict(OPEN, chorusOn=1, chorusMix=1.0),      ("chorusDepth", 0.1, 1.0),  -60.0, -27.53),
+    ("delayMix",     2, dict(OPEN, delayOn=1, delayMix=0.4),        ("delayMix", 0.0, 0.9),     -55.0, -23.29),
+    ("delayFB",      2, dict(OPEN, delayOn=1, delayMix=0.5),        ("delayFB", 0.05, 0.9),     -60.0, -25.83),
+    ("reverbMix",    2, dict(OPEN, reverbOn=1, reverbMix=0.4),      ("reverbMix", 0.0, 0.9),    -60.0, -25.13),
 ]
 
 
@@ -93,10 +97,10 @@ def out_of_band_db(x, hf_hz=HF_HZ):
     return worst
 
 
-def step_case(label, patch, steps):
+def step_case(label, mode, patch, steps):
     param, lo, hi = steps
-    _, ctl = render(2, 45, SECONDS, 2, f"zip_{label}_ctl", **dict(BASE, **patch))
-    _, stp = render(2, 45, SECONDS, 2, f"zip_{label}_step",
+    _, ctl = render(mode, 45, SECONDS, 2, f"zip_{label}_ctl", **dict(BASE, **patch))
+    _, stp = render(mode, 45, SECONDS, 2, f"zip_{label}_step",
                     setat=step_args(param, lo, hi), **dict(BASE, **patch))
     return out_of_band_db(ctl), out_of_band_db(stp)
 
@@ -133,14 +137,14 @@ def snap_probe(label, companions):
 
 
 def main():
-    print(f"{'parameter':<14}{'floor':>9}{'stepped':>10}{'limit':>9}"
+    print(f"{'parameter':<14}{'mode':>5}{'floor':>10}{'stepped':>10}{'limit':>9}"
           f"{'pre-fix':>10}   result")
     failures = 0
-    for label, patch, steps, limit, prefix_db in CASES:
-        floor, stepped = step_case(label, patch, steps)
+    for label, mode, patch, steps, limit, prefix_db in CASES:
+        floor, stepped = step_case(label, mode, patch, steps)
         ok = stepped <= limit
         failures += not ok
-        print(f"{label:<14}{floor:>9.2f}{stepped:>10.2f}{limit:>9.1f}"
+        print(f"{label:<14}{mode:>5}{floor:>10.2f}{stepped:>10.2f}{limit:>9.1f}"
               f"{prefix_db:>10.2f}   {'PASS' if ok else 'FAIL'}")
 
     print("\n(floor = same patch held still; pre-fix = same probe before parameter "
