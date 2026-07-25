@@ -296,6 +296,11 @@ void TapeMachineDSP::reset()
     const bool gainLinked = pAutoComp.load (std::memory_order_relaxed);
     lastLinkedInputGainDb = gainLinked
         ? pInputGainDb.load (std::memory_order_relaxed) : 1000.0f;
+    // Re-prepare with the steady-state tau, matching the bypass/Thru/unlinked branches. A
+    // reset landing mid-guard would otherwise clear linkedGuardSamples while the smoother
+    // still held the fast guard coefficient, and the "guard ended" re-prepare in
+    // processBlock only runs when a guard counts down to zero — never after this.
+    linkedMakeupDb.prepare (baseSampleRate, kLinkedMatchTau);
     linkedMakeupDb.snap (0.0f);
     linkedGuardSamples = 0;
     linkedGuardFirstBlock = false;
@@ -489,12 +494,31 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             const float aL = std::abs (inputs[0][n]);
             pL = aL > pL ? aL : pL * peakDecayCoeff;
             pkOL = aL > pkOL ? aL : pkOL * peakDecayCoeff;
+            // Keep the slew history moving with the passthrough. Leaving bypass invalidates
+            // the topology key above, so the first processed block arms a guard whose ceiling
+            // is derived from this history — and the fixed floor is only -12 dB/sample, below
+            // the per-sample delta of loud HF content. Freezing the history for the length of
+            // the bypass would let a quiet pre-bypass passage impose that floor on whatever
+            // plays after, clamping legitimate transients for the guard's 250 ms.
+            const float deltaL = std::abs (outputs[0][n] - lastLinkedOutputL);
+            linkedRecentOutputSlewL =
+                std::max (deltaL, linkedRecentOutputSlewL * linkedOutputSlewDecay);
+            lastLinkedOutputL = outputs[0][n];
             if (nCh >= 2)
             {
                 const float aR = std::abs (inputs[1][n]);
                 pR = aR > pR ? aR : pR * peakDecayCoeff;
                 pkOR = aR > pkOR ? aR : pkOR * peakDecayCoeff;
+                const float deltaR = std::abs (outputs[1][n] - lastLinkedOutputR);
+                linkedRecentOutputSlewR =
+                    std::max (deltaR, linkedRecentOutputSlewR * linkedOutputSlewDecay);
+                lastLinkedOutputR = outputs[1][n];
             }
+        }
+        if (nCh < 2)
+        {
+            lastLinkedOutputR = lastLinkedOutputL;
+            linkedRecentOutputSlewR = linkedRecentOutputSlewL;
         }
         inPeakStateL = pL; inPeakStateR = (nCh >= 2) ? pR : pL;
         inPeakL.store (inPeakStateL, std::memory_order_relaxed);
@@ -502,8 +526,6 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         outPeakStateL = pkOL; outPeakStateR = (nCh >= 2) ? pkOR : pkOL;
         outPeakL.store (outPeakStateL, std::memory_order_relaxed);
         outPeakR.store (outPeakStateR, std::memory_order_relaxed);
-        lastLinkedOutputL = outputs[0][nSamples - 1];
-        lastLinkedOutputR = outputs[nCh >= 2 ? 1 : 0][nSamples - 1];
         return;
     }
 
@@ -536,7 +558,29 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             sL += (aL - sL) * vuBallisticAlpha;
             pL = aL > pL ? aL : pL * peakDecayCoeff;
             pkOL = aL > pkOL ? aL : pkOL * peakDecayCoeff;
-            if (nCh >= 2) { const float aR = std::abs (inputs[1][n]); sR += (aR - sR) * vuBallisticAlpha; pR = aR > pR ? aR : pR * peakDecayCoeff; pkOR = aR > pkOR ? aR : pkOR * peakDecayCoeff; }
+            // Same reason as the bypass branch: this path invalidates the topology key, so
+            // leaving Thru arms a guard whose slew ceiling comes from this history. Track the
+            // passthrough rather than freezing a pre-Thru value.
+            const float deltaL = std::abs (outputs[0][n] - lastLinkedOutputL);
+            linkedRecentOutputSlewL =
+                std::max (deltaL, linkedRecentOutputSlewL * linkedOutputSlewDecay);
+            lastLinkedOutputL = outputs[0][n];
+            if (nCh >= 2)
+            {
+                const float aR = std::abs (inputs[1][n]);
+                sR += (aR - sR) * vuBallisticAlpha;
+                pR = aR > pR ? aR : pR * peakDecayCoeff;
+                pkOR = aR > pkOR ? aR : pkOR * peakDecayCoeff;
+                const float deltaR = std::abs (outputs[1][n] - lastLinkedOutputR);
+                linkedRecentOutputSlewR =
+                    std::max (deltaR, linkedRecentOutputSlewR * linkedOutputSlewDecay);
+                lastLinkedOutputR = outputs[1][n];
+            }
+        }
+        if (nCh < 2)
+        {
+            lastLinkedOutputR = lastLinkedOutputL;
+            linkedRecentOutputSlewR = linkedRecentOutputSlewL;
         }
         vuStateL = sL; vuStateR = (nCh >= 2) ? sR : sL;
         inPeakStateL = pL; inPeakStateR = (nCh >= 2) ? pR : pL;
@@ -550,8 +594,6 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
         inVuStateL = vuStateL; inVuStateR = vuStateR;   // Thru: input == output
         inVuL.store (inVuStateL, std::memory_order_relaxed);
         inVuR.store (inVuStateR, std::memory_order_relaxed);
-        lastLinkedOutputL = outputs[0][nSamples - 1];
-        lastLinkedOutputR = outputs[nCh >= 2 ? 1 : 0][nSamples - 1];
         return;
     }
 
@@ -1043,7 +1085,12 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // latency-aligned raw-input peak. During steady processing makeup moves smoothly;
     // during the short preset guard it starts from the first measured block, then follows
     // subsequent block targets with a fast smoother to avoid hard gain steps.
-    const bool linkedGuardActive = linkedGuardSamples > 0;
+    // Must include the LIVE link state, not just the counter. The unlinked branch below
+    // zeroes linkedGuardSamples, but this snapshot is taken first — so a guard armed while
+    // linked would otherwise still gate the slew limiter for one block after Gain Link is
+    // switched off, clamping output the unlinked path never asked to limit. Inside the
+    // gainLinked branch the added term is a no-op, so peak-selection there is unchanged.
+    const bool linkedGuardActive = gainLinked && linkedGuardSamples > 0;
     if (gainLinked)
     {
         float linkedOutputPeak = linkedOutputMatchPeak;
@@ -1072,22 +1119,22 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
             // the smoother catches up. Only do that when BOTH block peaks are audible: the
             // guard compares per-block maxima, so a transition landing in a quiet passage
             // would otherwise derive its ratio from noise/tail samples and snap straight to
-            // the +/-clamp. Below the floor, fall through to setTarget and disarm — the
-            // guard tau is ~0.5 ms, so it converges within a millisecond anyway, and a
-            // still-armed snap would fire mid-signal later in the window as a hard step.
-            if (linkedGuardActive && linkedGuardFirstBlock)
-            {
-                if (matchInputPeak > kLinkedGuardSnapFloor
-                    && matchOutputPeak > kLinkedGuardSnapFloor)
-                    linkedMakeupDb.snap (targetDb);
-                else
-                    linkedMakeupDb.setTarget (targetDb);
-
-                linkedGuardFirstBlock = false;
-            }
+            // the +/-clamp. Below the floor, ramp instead — the guard tau is ~0.5 ms, so it
+            // converges within a millisecond anyway.
+            if (linkedGuardActive && linkedGuardFirstBlock
+                && matchInputPeak > kLinkedGuardSnapFloor
+                && matchOutputPeak > kLinkedGuardSnapFloor)
+                linkedMakeupDb.snap (targetDb);
             else
                 linkedMakeupDb.setTarget (targetDb);
         }
+
+        // Disarm after the guard's FIRST block whether or not it yielded a usable target.
+        // A silent first block skips the audibility gate above entirely, and leaving the
+        // snap armed would fire it on a later block once signal returns — a hard gain step
+        // mid-transition, the exact artifact the snap exists to prevent.
+        if (linkedGuardActive)
+            linkedGuardFirstBlock = false;
 
         // Keep the current makeup active even when the aligned input is silent. The active
         // path can still be emitting its delayed tail or tape noise in that block; bypassing
