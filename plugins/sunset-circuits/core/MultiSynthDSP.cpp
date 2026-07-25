@@ -256,7 +256,7 @@ void MultiSynthDSP::acidNoteOff(int note) noexcept
 }
 
 //==============================================================================
-void MultiSynthDSP::snapshotParameters() noexcept
+void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
 {
     // Consume the explicit program-change signal first (see notifyProgramChange).
     // Read here, applied at the bottom once every target for this block is known.
@@ -543,7 +543,33 @@ void MultiSynthDSP::snapshotParameters() noexcept
     // is authoritative; the heuristic only catches hosts that replay a stored
     // patch as raw parameter writes. detectBulkParamChange() is called
     // unconditionally because it also carries the witness history forward.
-    const bool bulkSnap = detectBulkParamChange();
+    //
+    // Witnesses come from the values already read above, never from a fresh
+    // atomic load: a re-read could pick up a host write that landed after the
+    // target was taken, and that jump would then be consumed without ever being
+    // acted on. Slots are named so the fill cannot drift out of step with the
+    // threshold table.
+    float witnessNow[kNumSmoothWitness];
+    witnessNow[wMasterGain]  = masterGain;
+    witnessNow[wMasterPan]   = masterPan;
+    witnessNow[wStereoWidth] = stereoWidth;
+    witnessNow[wCutoff]      = vp.filterCutoff;
+    witnessNow[wHPCutoff]    = vp.filterHPCutoff;
+    witnessNow[wRes]         = vp.filterResonance;
+    witnessNow[wOsc1Level]   = vp.osc1Level;
+    witnessNow[wOsc2Level]   = vp.osc2Level;
+    witnessNow[wOsc3Level]   = vp.osc3Level;
+    witnessNow[wSubLevel]    = vp.subLevel;
+    witnessNow[wNoiseLevel]  = vp.noiseLevel;
+    witnessNow[wDriveAmt]    = driveAmt;
+    witnessNow[wDriveMix]    = driveMix;
+    witnessNow[wChorusDepth] = chorusDepth;
+    witnessNow[wChorusMix]   = chorusMix;
+    witnessNow[wDelayFB]     = delayFB;
+    witnessNow[wDelayMix]    = delayMix;
+    witnessNow[wReverbMix]   = reverbMix;
+
+    const bool bulkSnap = detectBulkParamChange(witnessNow, (float)(nSamples / hostRate));
     smoothSnap = explicitSnap || bulkSnap;
 
     const float panAngle = (masterPan + 1.0f) * 0.25f * kPi;
@@ -585,23 +611,35 @@ void MultiSynthDSP::snapshotParameters() noexcept
 }
 
 //==============================================================================
-bool MultiSynthDSP::detectBulkParamChange() noexcept
+bool MultiSynthDSP::detectBulkParamChange(const float* now, float blockSeconds) noexcept
 {
+    // The thresholds say how far a control can move in a 10 ms block, so scale
+    // them by the ACTUAL block length. Without this the classifier gets steadily
+    // more trigger-happy as the host buffer grows — at 4096 frames a five-lane
+    // macro sweep moves ~28% of range per block and would read as a preset load,
+    // snapping every block and putting the zipper straight back — and
+    // hypersensitive on the short sub-blocks the shell creates when it splits at
+    // MIDI events. Clamped at both ends so neither extreme runs away; the bias is
+    // deliberately toward gliding, because a missed snap is inaudible while a
+    // false snap clicks.
+    const float scale = clampf(blockSeconds / 0.010f, 0.25f, 4.0f);
+
     int large = 0;
     const bool first = !haveWitness;
     for (int i = 0; i < kNumSmoothWitness; ++i)
     {
         const SmoothWitness& w = kSmoothWitness[i];
-        const float v = p(w.idx);
+        const float v = now[i];
         const float prev = lastWitness[i];
         lastWitness[i] = v;
         if (first) continue;
-        // Frequencies are compared in octaves — 500 -> 2000 Hz is a preset-sized
-        // move, 15000 -> 16500 Hz is not, and a linear delta cannot tell them apart.
+        // Frequencies and gains are compared as ratios — 500 -> 2000 Hz is a
+        // preset-sized move, 15000 -> 16500 Hz is not, and a linear delta cannot
+        // tell them apart.
         const float d = w.logScale
-            ? std::abs(std::log2(maxf(1.0e-3f, v) / maxf(1.0e-3f, prev)))
+            ? std::abs(std::log2(maxf(1.0e-6f, v) / maxf(1.0e-6f, prev)))
             : std::abs(v - prev);
-        if (d > w.jump) ++large;
+        if (d > w.jump * scale) ++large;
     }
     haveWitness = true;
     return first || large >= kBulkSnapCount;
@@ -617,7 +655,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     const int desiredOs = ((int)p(pOversampling) == 0) ? 1 : ((int)p(pOversampling) == 1) ? 2 : 4;
     if (desiredOs != osFactor) applyOsFactor(desiredOs);
 
-    snapshotParameters();
+    snapshotParameters(nSamples);
 
     const double bpm = hostBpm.load(std::memory_order_relaxed);
     const bool playing = transportPlaying.load(std::memory_order_relaxed);

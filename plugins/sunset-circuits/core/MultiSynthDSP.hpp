@@ -203,7 +203,7 @@ private:
     static float clamp01(float v) noexcept { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
     float p(Param e) const noexcept { return params[(size_t)e].load(std::memory_order_relaxed); }
 
-    void snapshotParameters() noexcept;   // atomics -> voiceParams + subsystems
+    void snapshotParameters(int nSamples) noexcept; // atomics -> voiceParams + subsystems
     void applyOsFactor(int factor);       // (re)prepare voices at internalRate
 
     // ======================== PARAMETER SMOOTHING ============================
@@ -234,32 +234,46 @@ private:
     // so any two presets agree on most witnesses (0-3 differ in 96% of pairs).
     //
     // `jump` is the per-control delta that a hand or automation ramp cannot
-    // produce in a 10 ms block (octaves when logScale).
-    struct SmoothWitness { Param idx; float jump; bool logScale; };
-    static constexpr SmoothWitness kSmoothWitness[] = {
-        { pMasterVol,    6.0f,  false },   // dB
-        { pMasterPan,    0.5f,  false },
-        { pStereoWidth,  0.25f, false },
-        { pFilterCutoff, 1.0f,  true  },   // octaves
-        { pFilterHP,     1.0f,  true  },   // octaves
-        { pFilterRes,    0.25f, false },
-        { pOsc1Level,    0.25f, false },
-        { pOsc2Level,    0.25f, false },
-        { pOsc3Level,    0.25f, false },
-        { pSubLevel,     0.25f, false },
-        { pNoiseLevel,   0.25f, false },
-        { pDriveAmt,     0.25f, false },
-        { pDriveMix,     0.25f, false },
-        { pChorusDepth,  0.25f, false },
-        { pChorusMix,    0.25f, false },
-        { pDelayFB,      0.25f, false },
-        { pDelayMix,     0.25f, false },
-        { pReverbMix,    0.25f, false },
+    // produce in a 10 ms block (octaves when logScale). It is scaled by the
+    // ACTUAL block length, so the classifier behaves the same at every buffer
+    // size instead of getting more trigger-happy as the buffer grows.
+    //
+    // Witness values are PASSED IN from the same reads that produced this
+    // block's targets. Re-reading the atomics here would open a window in which
+    // the host writes between the two reads: the witness would record the new
+    // value while the target still held the old one, and that jump would be
+    // consumed without ever being acted on -- hiding it permanently.
+    enum WitnessSlot {
+        wMasterGain = 0, wMasterPan, wStereoWidth, wCutoff, wHPCutoff, wRes,
+        wOsc1Level, wOsc2Level, wOsc3Level, wSubLevel, wNoiseLevel,
+        wDriveAmt, wDriveMix, wChorusDepth, wChorusMix, wDelayFB, wDelayMix, wReverbMix,
+        kNumSmoothWitness
     };
-    static constexpr int kNumSmoothWitness = (int)(sizeof(kSmoothWitness) / sizeof(kSmoothWitness[0]));
+    struct SmoothWitness { float jump; bool logScale; };
+    static constexpr SmoothWitness kSmoothWitness[kNumSmoothWitness] = {
+        { 1.0f,  true  },   // wMasterGain — linear gain, so 1 octave == 6 dB
+        { 0.5f,  false },   // wMasterPan
+        { 0.25f, false },   // wStereoWidth
+        { 1.0f,  true  },   // wCutoff     — octaves
+        { 1.0f,  true  },   // wHPCutoff   — octaves
+        { 0.25f, false },   // wRes
+        { 0.25f, false },   // wOsc1Level
+        { 0.25f, false },   // wOsc2Level
+        { 0.25f, false },   // wOsc3Level
+        { 0.25f, false },   // wSubLevel
+        { 0.25f, false },   // wNoiseLevel
+        { 0.25f, false },   // wDriveAmt
+        { 0.25f, false },   // wDriveMix
+        { 0.25f, false },   // wChorusDepth
+        { 0.25f, false },   // wChorusMix
+        { 0.25f, false },   // wDelayFB
+        { 0.25f, false },   // wDelayMix
+        { 0.25f, false },   // wReverbMix
+    };
     static constexpr int kBulkSnapCount = 5;  // this many large jumps == preset load
 
-    bool  detectBulkParamChange() noexcept;   // updates lastWitness[], returns "snap"
+    // updates lastWitness[], returns "snap"; now[] is indexed by WitnessSlot
+    bool  detectBulkParamChange(const float* now, float blockSeconds) noexcept;
 
     // Set a smoother's target for this block, snapping straight to it when the
     // snapshot was classified as a preset load / the first block after reset.
