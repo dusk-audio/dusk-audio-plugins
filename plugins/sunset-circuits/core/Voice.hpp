@@ -290,9 +290,17 @@ public:
         ampEnv.noteOff(); filtEnv.noteOff();
         for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
     }
+    // Voice steal: release everything that shapes the outgoing note before the new
+    // one is triggered on top. The FILTER envelope must release with the amp
+    // envelope, not just alongside it: in legato mode noteOn() deliberately skips
+    // the retrigger while ampEnv is still active, so a stolen voice runs its amp
+    // release to silence while filtEnv sat in Sustain holding the cutoff wide open
+    // for the whole fade — and left that stale level as the seed for the next note
+    // to land on this voice. Outside legato the following noteOn() retriggers both
+    // envelopes from their current values, so this is a no-op there.
     void setSteal() noexcept
     {
-        ampEnv.noteOff();
+        ampEnv.noteOff(); filtEnv.noteOff();
         for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
     }
 
