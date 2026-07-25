@@ -350,6 +350,14 @@ int TapeMachineDSP::latencySamples() const noexcept
     if (pBypass.load (std::memory_order_relaxed))
         return 0;
 
+    // Thru is the same true zero-delay passthrough: its branch in processBlock copies
+    // input->output and returns before the oversampler ever runs. Reporting the active-path
+    // latency here made the host compensate for a delay that is not present, placing a
+    // Thru'd track ~32+ samples EARLY against the rest of the mix.
+    if (static_cast<TapeCore::SignalPath> (
+            clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3)) == TapeCore::Thru)
+        return 0;
+
     return activeLatencySamples();
 }
 
