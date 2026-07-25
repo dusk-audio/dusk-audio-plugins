@@ -12,6 +12,7 @@
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
 #include "TapeMachinePresets.hpp"
+#include "TapeMachineVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"   // shared DPF Patreon "Special Thanks" overlay (click title)
@@ -58,11 +59,9 @@ public:
     {
         // GAIN LINK mirror: the OUTPUT knob is drawn/edited as the opposed input (its
         // readout shows -input). Route every write it makes to INPUT so the two gains
-        // always read as an opposed pair — input = clamp(-displayed). The preset's baked
-        // OUTPUT trim (the recall CALIBRATION) is neither read nor written here: it stays
-        // in the outputGain param and the DSP keeps applying -input + trim, so the
-        // calibrated level is preserved while the knobs stay in sync. UI-only, no DSP
-        // change. This is the single point every OUTPUT-knob gesture funnels through.
+        // always read as an opposed pair — input = clamp(-displayed). The stored OUTPUT
+        // value is neither read nor written here and is used only with the link off.
+        // This is the single point every OUTPUT-knob gesture funnels through.
         if (outLinkActive_ && idx == kParamOutputGain)
         {
             const TmParam& in = kTmParams[kParamInputGain];
@@ -102,11 +101,6 @@ public:
         panel.setPalette(pal);
 
         scanUserPresets();
-
-        // Start the PEAK-lamp hold timers cleared: a host that hides (not destroys)
-        // the editor would otherwise freeze a mid-hold value and show a stale lit lamp
-        // on reopen. No DPF show/visibility hook exists here, so ctor-init is the guard.
-        clipHoldL = clipHoldR = 0.0f;
     }
 
 protected:
@@ -155,20 +149,16 @@ protected:
         const bool modalOpen = showAdvanced || showSupporters;
         if (modalOpen) ImGui::BeginDisabled();
         drawHeader(dl);
-        // The PEAK lamp is a digital-CLIP indicator: peakLevel(ch) reads the DSP's final-OUTPUT
-        // sample-peak hold, and the lamp lights when the output crosses 0 dBFS (see drawVU),
-        // auto-holds 1.5 s after the last over, and click-clears. Tape soft-saturates, so
-        // driving it for crunch does not trip it — only a genuine output over does.
-        const bool clipEnabled = true;
         const ImU32 accent = accentCol();
-        drawVU(dl, 68,  62, 388, 198, meterLevel(0), peakLevel(0), needleL, clipHoldL, clipEnabled, accent, "L");
-        drawVU(dl, 412, 62, 732, 198, meterLevel(1), peakLevel(1), needleR, clipHoldR, clipEnabled, accent, "R");
+        drawVU(dl, 68,  62, 388, 198, meterLevel(0), needleL, accent, "L");
+        drawVU(dl, 412, 62, 732, 198, meterLevel(1), needleR, accent, "R");
         drawSelectors(dl);
         drawControls(dl);
         if (modalOpen) ImGui::EndDisabled();
         if (showAdvanced) drawAdvanced(dl);
         if (showSupporters)
-            duskdpf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters, "TapeMachine 2", "");
+            duskdpf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
+                                           "TapeMachine 2", TM2_VERSION_STRING);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -191,22 +181,6 @@ private:
             if (out) { if (tapeMachineGetVuL)   v = ch == 0 ? tapeMachineGetVuL(inst)   : tapeMachineGetVuR(inst); }
             else     { if (tapeMachineGetInVuL) v = ch == 0 ? tapeMachineGetInVuL(inst) : tapeMachineGetInVuR(inst); }
         }
-       #endif
-        return v;
-    }
-
-    // OUTPUT-node true sample-peak for the PEAK lamp — the final signal the host receives.
-    // The lamp is a genuine digital-clip indicator (lights when the OUTPUT crosses 0 dBFS in
-    // drawVU). Tape soft-saturates, so hitting the tape harder for crunch does NOT trip it;
-    // only a real output over does. (Previously read the INPUT record node, which lit on any
-    // hot source + positive input gain even though nothing was clipping.)
-    float peakLevel(int ch)
-    {
-        float v = 0.0f;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (void* const inst = getPluginInstancePointer())
-            if (tapeMachineGetOutPeakL)
-                v = ch == 0 ? tapeMachineGetOutPeakL(inst) : tapeMachineGetOutPeakR(inst);
        #endif
         return v;
     }
@@ -498,6 +472,8 @@ private:
         dl->AddRectFilled(P(30, 12), P(247, 40), IM_COL32(30, 30, 32, 255), 3.0f * s);
         dl->AddRect(P(30, 12), P(247, 40), IM_COL32(120, 120, 122, 255), 3.0f * s, 0, 1.4f * s);
         text(dl, 42, 17, 15, IM_COL32(232, 232, 228, 255), "TapeMachine 2", -1, true);
+        text(dl, 177, 21, 8.5f, IM_COL32(158, 158, 156, 255),
+             "v" TM2_VERSION_STRING, 0);
         {   // machine badge (accent-tinted). Options are hard-gated per machine, so
             // no non-standard state exists to flag.
             const char* badge = isSwiss() ? "Swiss" : "American";
@@ -748,8 +724,7 @@ private:
     static constexpr float kVuA0 = -2.70f, kVuA1 = -0.44f;
 
     void drawVU(ImDrawList* dl, float x0, float y0, float x1, float y1,
-                float level, float peak, float& needle, float& clipHold, bool clipEnabled,
-                ImU32 accent, const char* label)
+                float level, float& needle, ImU32 accent, const char* label)
     {
         // 0 VU = -12 dBFS: the reference/Swiss/American spec ("plug-in operates at an internal
         // level of -12 dBFS ... a -12 dBFS input equates to 0 dB on the meters").
@@ -824,47 +799,6 @@ private:
         // - (left) and + (red, right) marks in the top corners
         text(dl, fx0 + 10, fy0 + 3, 15.0f, ink, "-", -1, true);
         text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
-
-        // over lamp (right). A digital-CLIP indicator (peak = the DSP's final-OUTPUT sample-peak
-        // hold — the buffer the host receives). Lights when the OUTPUT crosses 0 dBFS (true
-        // digital over). Because the tape soft-saturates and the gain-link holds output ~unity,
-        // pushing the input for crunch does NOT clip the output, so the lamp stays dark under
-        // normal drive and lights only on a genuine over. (Earlier it read the INPUT record node
-        // and lit on any hot source + positive input gain, a false alarm the user reported.)
-        // `clipHold` is a HOLD TIMER in seconds: every over (re)arms it to 1.5 s, and
-        // between overs it counts down by the frame dt, so a brief transient stays lit ~1.5 s
-        // after it passes and a sustained hot signal keeps re-arming (stays lit). A click clears
-        // it immediately. (Replaces the old indefinite output-clip latch.)
-        static constexpr float kPeakThreshLin = 1.0f;          // 0 dBFS in linear amplitude
-        static constexpr float kPeakHoldSec   = 1.5f;          // auto-hold after the last over
-        if (clipEnabled && peak >= kPeakThreshLin)
-            clipHold = kPeakHoldSec;                           // (re)arm on every over
-        else if (clipHold > 0.0f)
-            clipHold -= ImGui::GetIO().DeltaTime;              // count the hold down between overs
-        const bool over = clipEnabled && clipHold > 0.0f;
-        const ImVec2 lp = P(fx1 - 15, pivotY - L * 0.20f);
-        if (clipEnabled)
-        {
-            char cid[8]; std::snprintf(cid, sizeof(cid), "clip%s", label);
-            ImGui::SetCursorScreenPos(ImVec2(lp.x - 8.0f * s, lp.y - 8.0f * s));
-            ImGui::InvisibleButton(cid, ImVec2(16.0f * s, 16.0f * s));
-            if (ImGui::IsItemClicked()) clipHold = 0.0f;
-        }
-        // Lit vs unlit must be unmistakable: LIT = hot red core + bright ring + glow
-        // halo; UNLIT = a clearly dark drilled recess. Click the lamp to clear the hold.
-        dl->AddCircleFilled(lp, 7.2f * s, IM_COL32(26, 20, 18, 255), 22);              // drilled socket shadow
-        if (over) dl->AddCircleFilled(lp, 10.5f * s, IM_COL32(232, 60, 40, 95), 24);   // glow halo
-        dl->AddCircleFilled(lp, 5.0f * s,
-            over ? IM_COL32(242, 68, 46, 255) : IM_COL32(44, 33, 31, 255), 18);        // lit core / dark recess
-        if (over)
-            dl->AddCircle(lp, 5.7f * s, IM_COL32(255, 152, 132, 225), 20, 1.2f * s);   // hot rim when lit
-        else
-            dl->AddCircle(lp, 5.0f * s, IM_COL32(10, 6, 6, 255), 18, 1.2f * s);        // recessed dark rim
-        dl->AddCircleFilled(ImVec2(lp.x - 1.4f * s, lp.y - 1.6f * s), 1.6f * s,
-                            IM_COL32(255, 205, 185, over ? 235 : 38), 10);             // specular dot
-        // small screened label so the click-to-reset lamp reads as PEAK without a tooltip
-        text(dl, fx1 - 15, pivotY - L * 0.20f + 8.5f, 7.5f,
-             over ? red : IM_COL32(118, 98, 78, 210), "PEAK", 0, true);
 
         // VU legend + channel tag
         text(dl, cx, pivotY - L * 0.46f, 11, ink, "VU", 0, true);
@@ -1026,11 +960,9 @@ private:
         // GAIN LINK path (OUTPUT knob only): a MIRROR of INPUT. The knob shows the opposed
         // input (-input) on the normal ±12 dB output scale, so the two gains always read as
         // an opposed pair (+3 / -3). Its edits are routed to INPUT in the setParam adapter
-        // (input = -displayed). The preset's baked OUTPUT trim is the recall CALIBRATION: it
-        // is neither read nor shown here and stays in the outputGain param, so the DSP keeps
-        // applying -input + trim for the calibrated level while the knobs stay in sync.
-        // Because the readout is always -input, the two knobs cannot drift out of sync (an
-        // OUTPUT trim left behind by editing while UNLINKED is simply not shown under link).
+        // (input = -displayed). The stored OUTPUT value is neither read nor shown here and
+        // remains available for unlinked operation. Because the readout is always -input,
+        // the two knobs cannot drift out of sync.
         // Moving INPUT rotates this needle; moving this knob rotates the INPUT needle. UI-only.
         if (linked)
         {
@@ -1042,8 +974,8 @@ private:
                        /*persistent*/ true, nullptr, /*rightClickReset*/ false, 1.0f,
                        /*dispAdd*/ 0.0f, l1, /*contextMenu*/ true, overrideText);
             outLinkActive_ = false;
-            // The INPUT mirror is applied in the setParam adapter; the baked OUTPUT trim and
-            // the DSP are left untouched, so nothing to store back here.
+            // The INPUT mirror is applied in the setParam adapter; the stored unlinked
+            // OUTPUT value is left untouched, so nothing is stored back here.
             return ch;
         }
         // Interaction is owned entirely by the shared knob widget so every knob
@@ -1129,15 +1061,16 @@ private:
         dl->AddLine(P(26, cellBot), P(774, cellBot), IM_COL32(150, 151, 153, 140), 1.0f * s);
 
         // GAIN STAGING — with GAIN LINK (autoComp) on, the DSP holds the output at the
-        // inverse of the input (drive the tape harder without the level rising): output gain
-        // = -input + trim, where trim is the outputGain param. Factory presets ship a fitted
-        // trim as recall CALIBRATION for each reference preset's loudness; the link lives in
-        // the DSP so it works under host automation. To make the link read clearly the OUTPUT
+        // exact inverse of the input (drive the tape harder without a gain-stage level
+        // change). The stored outputGain value is used only while the link is off; linked
+        // preset changes therefore cannot add a hidden output-trim step. The link lives in
+        // the DSP and its post-tape makeup holds the host-facing sample peak at the incoming
+        // level, including during guarded preset transitions. To make the link read clearly the OUTPUT
         // knob MIRRORS input under link — its needle AND readout show -input (an opposed pair,
         // e.g. +3 / -3) on the normal ±12 scale, and moving either knob moves the other the
         // opposite way (the drag is routed to INPUT in the setParam adapter, linkOffset = -input).
-        // The baked trim is deliberately NOT shown or changed by the knob, so the calibration
-        // is preserved untouched while the knobs stay in sync. Link off -> plain output gain / trim.
+        // The stored unlinked value is not shown or changed while the knobs stay in sync.
+        // Link off -> plain output gain / trim.
         const bool gainLink = values[kParamAutoComp] > 0.5f;
         knob(dl, "input",  kParamInputGain,  67.0f, cy, "INPUT",  "%.1f", " dB");
         knob(dl, "output", kParamOutputGain,163.0f, cy, "OUTPUT", "%.1f", " dB",
@@ -1233,7 +1166,6 @@ private:
     float   s = 1.0f;
     ImVec2  org = ImVec2(0, 0);
     float   needleL = 0.0f, needleR = 0.0f;
-    float   clipHoldL = 0.0f, clipHoldR = 0.0f;   // PEAK-lamp hold timers (seconds); 0 = unlit
     bool    outLinkActive_ = false;   // set only while the OUTPUT knob is drawn under GAIN LINK
     ImVec2  advScrimPressPos = ImVec2(0, 0);       // where an Advanced-scrim press began (travel guard)
     int     meterSource = 0;      // 0 = input (record/tape-drive level, like the hardware VU), 1 = output

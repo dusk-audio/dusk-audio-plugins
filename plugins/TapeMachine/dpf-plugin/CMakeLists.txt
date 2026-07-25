@@ -34,9 +34,12 @@ target_include_directories(tape_machine_2 PUBLIC
     ${DUSK_DPF_INCLUDE_DIRS})
 
 # Single source of truth for the plugin version: the project() VERSION above is
-# plumbed into getVersion() via these macros (see TapeMachinePlugin.cpp). Bumped
-# by the /release-plugin skill (slug tapemachine-2).
-target_compile_definitions(tape_machine_2 PRIVATE
+# plumbed into getVersion() and the UI version display via these macros (see
+# TapeMachineVersion.hpp). Bumped by the /release-plugin skill (slug
+# tapemachine-2). PUBLIC because DPF compiles the UI in a separate
+# tape_machine_2-ui target that links this one and must see the same values —
+# PRIVATE would leave the UI on the header's stale fallback.
+target_compile_definitions(tape_machine_2 PUBLIC
     TM2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     TM2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     TM2_VERSION_PATCH=${PROJECT_VERSION_PATCH})

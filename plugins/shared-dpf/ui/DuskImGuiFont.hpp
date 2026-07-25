@@ -45,6 +45,25 @@ inline const char* findCrispFontPath()
     return nullptr;
 }
 
+// Codepoints rasterized into the atlas. ImGui's default range is Basic Latin +
+// Latin-1 Supplement only, so anything above U+00FF renders as the face's fallback
+// box or '?'. Plugin labels use U+2033 DOUBLE PRIME for inches — a label ENDING in a
+// literal '"' emits invalid Turtle in the generated LV2 TTL (see the note on
+// tmparams::kHeadWidth), so the typographic mark is not cosmetic, it is the only
+// spelling that survives both the TTL generator and the UI. Listed as two extra
+// codepoints rather than all of General Punctuation to keep the atlas small: this
+// set is rasterized once per font size, and the sets run up to CrispFontSet::kMax.
+// A face missing these degrades to the same fallback glyph as before — no regression.
+inline const ImWchar* crispGlyphRanges()
+{
+    static const ImWchar ranges[] = {
+        0x0020, 0x00FF,   // Basic Latin + Latin-1 Supplement (the ImGui default)
+        0x2032, 0x2033,   // PRIME, DOUBLE PRIME (feet / inches)
+        0,
+    };
+    return ranges;
+}
+
 // Loads a bold face at pixelSize into the ImGui atlas and builds it.
 // Returns the ImFont* (or nullptr on failure). Kept for single-size callers.
 inline ImFont* loadCrispFont(float pixelSize)
@@ -56,6 +75,7 @@ inline ImFont* loadCrispFont(float pixelSize)
     cfg.OversampleH = 2;
     cfg.OversampleV = 2;
     cfg.PixelSnapH = false;
+    cfg.GlyphRanges = crispGlyphRanges();
     ImFont* font = io.Fonts->AddFontFromFileTTF(path, pixelSize, &cfg);
     if (font != nullptr) io.Fonts->Build();
     return font;
@@ -98,6 +118,7 @@ inline CrispFontSet loadCrispFontSet(const float* designSizes, int n, float scal
     cfg.OversampleH = 2;
     cfg.OversampleV = 2;
     cfg.PixelSnapH = false;
+    cfg.GlyphRanges = crispGlyphRanges();
 
     for (int i = 0; i < n && set.count < CrispFontSet::kMax; ++i)
     {

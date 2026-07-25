@@ -17,11 +17,12 @@ DUSK_ACCESS_DECL(float, tapeMachineGetVuR);
 // Pre-processing input peak per channel (for the UI's In/Out meter switch).
 DUSK_ACCESS_DECL(float, tapeMachineGetInVuL);
 DUSK_ACCESS_DECL(float, tapeMachineGetInVuR);
-// INPUT (post-gain, pre-tape) true-peak hold per channel — feeds only the PEAK lamp.
-// Null in split LV2 UI.
+// INPUT sample-peak hold per channel — post-gain/pre-tape during normal processing,
+// raw passthrough input while bypassed or in Thru mode. Retained as a direct-access
+// diagnostic; null in split LV2 UI.
 DUSK_ACCESS_DECL(float, tapeMachineGetInPeakL);
 DUSK_ACCESS_DECL(float, tapeMachineGetInPeakR);
-// OUTPUT (final, post-everything) true sample-peak hold per channel — feeds the PEAK lamp
-// as a genuine digital-clip (output over 0 dBFS) indicator. Null in split LV2 UI.
+// OUTPUT (final, post-everything) sample-peak hold per channel. Retained as a
+// direct-access diagnostic for the output node. Null in split LV2 UI.
 DUSK_ACCESS_DECL(float, tapeMachineGetOutPeakL);
 DUSK_ACCESS_DECL(float, tapeMachineGetOutPeakR);

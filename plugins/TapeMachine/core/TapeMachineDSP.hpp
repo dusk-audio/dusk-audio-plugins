@@ -2046,7 +2046,14 @@ public:
     void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
     int  latencySamples() const noexcept;
 
-    void setTapeMachine (int idx)  noexcept { pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed); }
+    void setTapeMachine (int idx)  noexcept
+    {
+        pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed);
+        // Factory and user preset application writes Machine first, even when its value is
+        // unchanged. Keep that signal separate from a lone Input Gain gesture so a preset
+        // recall can arm the large-gain transition guard without classifying knob motion.
+        pLinkedBatchRevision.fetch_add (1u, std::memory_order_relaxed);
+    }
     void setTapeSpeed   (int idx)  noexcept { pSpeed.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setTapeType    (int idx)  noexcept { pType.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setSignalPath  (int idx)  noexcept { pSignalPath.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
@@ -2092,15 +2099,14 @@ public:
     // Pre-processing input peak (for a UI In/Out meter switch). Metering only.
     float getInVuL() const noexcept { return inVuL.load (std::memory_order_relaxed); }
     float getInVuR() const noexcept { return inVuR.load (std::memory_order_relaxed); }
-    // INPUT (record-node) true-peak hold (instant attack, ~300 ms release), taken post-
-    // input-gain / PRE-tape — feeds ONLY the UI PEAK lamp, kept separate from the mean-abs
-    // VU integrator. Metering only.
+    // INPUT (record-node) sample-peak hold (instant attack, ~300 ms release), taken post-
+    // input-gain / PRE-tape during normal processing and from the raw passthrough input while
+    // bypassed or operating in Thru mode.
+    // Retained for diagnostic metering; kept separate from the mean-abs VU integrator.
     float getInPeakL() const noexcept { return inPeakL.load (std::memory_order_relaxed); }
     float getInPeakR() const noexcept { return inPeakR.load (std::memory_order_relaxed); }
-    // OUTPUT (final post-everything) true sample-peak hold (instant attack, ~300 ms release),
-    // taken on the buffer the host receives — feeds the UI PEAK lamp as a genuine digital-clip
-    // (output over 0 dBFS) indicator. Tape saturates softly, so moderate drive does NOT trip it.
-    // Metering only.
+    // OUTPUT (final post-everything) sample-peak hold (instant attack, ~300 ms release),
+    // taken on the buffer the host receives. Retained for diagnostic metering only.
     float getOutPeakL() const noexcept { return outPeakL.load (std::memory_order_relaxed); }
     float getOutPeakR() const noexcept { return outPeakR.load (std::memory_order_relaxed); }
 
@@ -2114,6 +2120,8 @@ private:
     // latencySamples(), so the tuned 2x core always runs regardless of the stored choice.
     static int factorFromChoice (int /*storedChoice*/) noexcept { return 2; }
 
+    int activeLatencySamples() const noexcept;
+    uint32_t currentLinkedTopologyKey() const noexcept;
     void applyFactor (int newFactor);   // reconfigure internal DSP for an OS-factor change
 
     // --- parameters (atomics) ---
@@ -2128,6 +2136,7 @@ private:
     std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
     std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
     std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
+    std::atomic<uint32_t> pLinkedBatchRevision{0u};
     std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
     // American front-panel toggles — default On = the state the American tuning captured.
     std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
@@ -2147,11 +2156,27 @@ private:
 
     // --- smoothers ---
     // inGain/outGain hold dB, not linear gain (dbToGain applied per ramp sample): with
-    // the gain link on, dB-domain one-poles cancel exactly so in*out tracks the Output
-    // trim through a transition. Linear-domain smoothing of g and 1/g bulged the product
-    // by up to ~+13 dB on a large preset-switch gain step (pop over 0 dBFS).
+    // the gain link on, dB-domain one-poles cancel exactly so in*out stays at unity
+    // through a transition. Linear-domain smoothing of g and 1/g bulged the product
+    // by up to ~+13 dB on a large preset-switch gain step. linkedMakeupDb then restores
+    // host-facing peak unity across nonlinear and topology-dependent level changes.
     SmoothedValue inGain;                   // base-rate ramp, dB (shared by L/R)
     SmoothedValue outGain;                  // OS-rate ramp, dB (shared by L/R)
+    float lastLinkedInputGainDb = 1000.0f;
+    SmoothedValue linkedMakeupDb;            // post-tape linked peak matching, dB
+    int linkedGuardSamples = 0;
+    bool linkedGuardFirstBlock = false;
+    bool linkedGuardDiscontinuity = false;
+    float linkedGuardSlewScale = 4.0f;
+    float lastLinkedOutputL = 0.0f, lastLinkedOutputR = 0.0f;
+    float linkedRecentOutputSlewL = 0.0f, linkedRecentOutputSlewR = 0.0f;
+    float linkedOutputSlewDecay = 0.0f;
+    float linkedInputMatchPeak = 0.0f, linkedOutputMatchPeak = 0.0f;
+    float linkedMatchPeakDecay = 0.0f;
+    std::vector<float> linkedInputDelayL, linkedInputDelayR;
+    size_t linkedInputDelayIndex = 0;
+    uint32_t linkedTopologyKey = UINT32_MAX;
+    uint32_t lastLinkedBatchRevision = 0u;
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;
 
     bool bypassLowpass = true;
@@ -2200,10 +2225,11 @@ private:
     float vuStateL = 0.0f, vuStateR = 0.0f;
     float inVuStateL = 0.0f, inVuStateR = 0.0f;
     float vuBallisticAlpha = 0.0f;   // one-pole integrator coeff for ANSI VU ballistics (~300 ms to 99%)
-    // separate INPUT-node true-peak hold for the PEAK lamp (instant attack, 300 ms release)
+    // separate INPUT-node diagnostic sample-peak hold (instant attack, 300 ms release)
     std::atomic<float> inPeakL{0.0f}, inPeakR{0.0f};
     float inPeakStateL = 0.0f, inPeakStateR = 0.0f;
-    std::atomic<float> outPeakL{0.0f}, outPeakR{0.0f};  // final-output sample-peak hold (PEAK lamp = digital clip)
+    bool inputPeakUsesRawInput = false;  // audio-thread-only metering-node transition state
+    std::atomic<float> outPeakL{0.0f}, outPeakR{0.0f};  // final-output sample-peak hold (diagnostic)
     float outPeakStateL = 0.0f, outPeakStateR = 0.0f;
     float peakDecayCoeff = 0.0f;
 };
