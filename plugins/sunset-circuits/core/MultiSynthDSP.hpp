@@ -324,8 +324,12 @@ private:
     duskaudio::SmoothedValue smGain, smPanL, smPanR, smWidth;
     // Voice-parameter smoothers. Written into voiceParams once per host sample,
     // so all voices (and every oversampled sub-sample) see the same glided value.
-    duskaudio::SmoothedValue smCutoff, smRes, smHPCutoff;
+    duskaudio::SmoothedValue smCutoff, smRes, smHPCutoff, smFilterEnvAmt;
     duskaudio::SmoothedValue smOsc1Level, smOsc2Level, smOsc3Level, smSubLevel, smNoiseLevel;
+    // Deliberately NOT smoothed, each measured clean with the zipper probe: osc
+    // and unison detune, pulse width, and the LFO / chorus rates. All of them
+    // change a phase increment or an edge position, so the signal stays
+    // continuous across the step and no click is produced.
 
     // Previous snapshot's witness values (preset-load detection, see above).
     float lastWitness[kNumSmoothWitness] {};

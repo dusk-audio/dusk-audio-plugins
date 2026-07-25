@@ -130,7 +130,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     // Parameter smoothers advance once per HOST sample (see processBlock), so
     // they are prepared at hostRate regardless of the oversampling factor.
     for (auto* s : { &smGain, &smPanL, &smPanR, &smWidth,
-                     &smCutoff, &smRes, &smHPCutoff,
+                     &smCutoff, &smRes, &smHPCutoff, &smFilterEnvAmt,
                      &smOsc1Level, &smOsc2Level, &smOsc3Level, &smSubLevel, &smNoiseLevel })
         s->prepare(hostRate, kParamSmoothTau);
     reset();
@@ -538,9 +538,19 @@ void MultiSynthDSP::snapshotParameters() noexcept
     // sample, so every voice (and every oversampled sub-sample) sees the same
     // smooth trajectory. Cutoff glides linearly in Hz — over 8 ms the difference
     // from a log glide is inaudible and a per-sample exp() is not affordable.
-    setSmoothTarget(smCutoff,   vp.filterCutoff);
-    setSmoothTarget(smRes,      vp.filterResonance);
-    setSmoothTarget(smHPCutoff, vp.filterHPCutoff);
+    setSmoothTarget(smCutoff,       vp.filterCutoff);
+    setSmoothTarget(smRes,          vp.filterResonance);
+    setSmoothTarget(smHPCutoff,     vp.filterHPCutoff);
+    setSmoothTarget(smFilterEnvAmt, vp.filterEnvAmount);
+
+    // Oscillator mix levels. These scale the summed oscillator output directly,
+    // so a stepped level is a plain amplitude discontinuity -- the loudest and
+    // most obvious form of zipper in the voice.
+    setSmoothTarget(smOsc1Level,  vp.osc1Level);
+    setSmoothTarget(smOsc2Level,  vp.osc2Level);
+    setSmoothTarget(smOsc3Level,  vp.osc3Level);
+    setSmoothTarget(smSubLevel,   vp.subLevel);
+    setSmoothTarget(smNoiseLevel, vp.noiseLevel);
 
     // The effect drive / wet mixes smooth themselves (Effects.hpp); they only
     // need to be told when a snapshot is a preset load rather than a knob move.
@@ -613,6 +623,12 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         voiceParams.filterCutoff    = smCutoff.next();
         voiceParams.filterResonance = smRes.next();
         voiceParams.filterHPCutoff  = smHPCutoff.next();
+        voiceParams.filterEnvAmount = smFilterEnvAmt.next();
+        voiceParams.osc1Level       = smOsc1Level.next();
+        voiceParams.osc2Level       = smOsc2Level.next();
+        voiceParams.osc3Level       = smOsc3Level.next();
+        voiceParams.subLevel        = smSubLevel.next();
+        voiceParams.noiseLevel      = smNoiseLevel.next();
 
         // Render osFactor internal samples, then decimate to host rate (fix #1).
         float iL[4], iR[4];
