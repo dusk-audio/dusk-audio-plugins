@@ -710,8 +710,6 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     const int desiredOs = ((int)p(pOversampling) == 0) ? 1 : ((int)p(pOversampling) == 1) ? 2 : 4;
     if (desiredOs != osFactor) applyOsFactor(desiredOs);
 
-    snapshotParameters(nSamples);
-
     const double bpm = hostBpm.load(std::memory_order_relaxed);
     const bool playing = transportPlaying.load(std::memory_order_relaxed);
 
@@ -732,154 +730,185 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         return x >= 0.0f ? limited : -limited;
     };
 
-    const bool acidMode = (voiceParams.mode == SynthMode::Acid);
-
-    for (int i = 0; i < nSamples; ++i)
+    // The block is rendered in SEGMENTS. Normally there is exactly one, but a
+    // pending mode switch commits on the sample its crossfade reaches zero, and the
+    // commit has to be followed by a fresh snapshot — the new mode's voice budget,
+    // oscillator section, chorus and acid wiring all come from snapshotParameters.
+    // Cutting the segment there is what keeps the transition buffer-size
+    // INVARIANT. Waiting for the next block boundary instead left the voice path
+    // muted for (blockSize - fade) samples: 0 at 512 frames, but 73 ms at 4096,
+    // during which a note the player pressed was routed to the outgoing mode and
+    // then wiped by the commit — the key simply did nothing. songBeat is carried
+    // across segments so the host-locked arp/acid clock does not restart.
+    //
+    // At most two segments run per block: after a commit the requested mode and the
+    // active mode agree, so no second cut can be scheduled.
+    for (int done = 0; done < nSamples; )
     {
-        // Advance the voice-parameter smoothers once per HOST sample and publish
-        // them into the shared snapshot the voices render from. Done for both the
-        // poly and the acid path so the smoother state stays valid across a mode
-        // switch (the acid voice takes its cutoff/res at snapshot time instead).
-        voiceParams.filterCutoff    = std::exp2(smCutoff.next());   // smoothed in log2(Hz)
-        voiceParams.filterHPCutoff  = std::exp2(smHPCutoff.next()); // ...so sweeps are symmetric
-        voiceParams.filterResonance = smRes.next();
-        voiceParams.filterEnvAmount = smFilterEnvAmt.next();
-        voiceParams.osc1Level       = smOsc1Level.next();
-        voiceParams.osc2Level       = smOsc2Level.next();
-        voiceParams.osc3Level       = smOsc3Level.next();
-        voiceParams.subLevel        = smSubLevel.next();
-        voiceParams.noiseLevel      = smNoiseLevel.next();
+        const int remain = nSamples - done;
+        snapshotParameters(remain);
 
-        // Render osFactor internal samples, then decimate to host rate (fix #1).
-        float iL[4], iR[4];
-        float fxAccum = 0.0f;
-
-        if (acidMode)
+        int segment = remain;
+        if (modeSwitchPending)
         {
-            // Mono acid path: the sequencer (when enabled) or live legato play
-            // drives a single AcidVoice; the poly allocator/arp are bypassed.
-            // Feed it the same smoothed filter values the poly voices read.
-            acidVoice.setCutoff(voiceParams.filterCutoff);
-            acidVoice.setResonance(voiceParams.filterResonance);
-            acidVoice.setEnvMod(clampf(std::abs(voiceParams.filterEnvAmount), 0.0f, 1.0f));
-            if (acidSeqEnabled)
-            {
-                const auto ev = acidSeq.advanceSample(bpm, playing, songBeat, hostLocked);
-                if (ev.noteOff) acidVoice.noteOff();
-                if (ev.noteOn)  acidVoice.noteOn(ev.freq, ev.accent, ev.slide, 1.0f);
-            }
-            for (int os = 0; os < osFactor; ++os)
-            {
-                const float m = acidVoice.processSample();
-                iL[os] = m; iR[os] = m;
-            }
-        }
-        else
-        {
-            // Arp advances at host rate; triggers its own generated notes.
-            if (arpEnabled)
-            {
-                const auto ev = arp.advanceSample(bpm, playing, songBeat, hostLocked);
-                if (ev.noteOffValid) voices.noteOff(ev.offNote);
-                if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
-            }
-            for (int os = 0; os < osFactor; ++os)
-            {
-                float l, r, fx;
-                voices.renderInternalSample(voiceParams, modMatrix, l, r, fx);
-                iL[os] = l; iR[os] = r; fxAccum += fx;
-            }
+            // snapshotParameters only leaves a switch pending with modeFade > 0, so
+            // this is always at least one sample.
+            const int toZero = (int)std::ceil((double)modeFade / (double)modeFadeStep);
+            if (toZero > 0 && toZero < segment) segment = toZero;
         }
 
-        float sL = decimL.process(iL);
-        float sR = decimR.process(iR);
-        const float fxMod = fxAccum / (float)osFactor;
+        const bool acidMode = (voiceParams.mode == SynthMode::Acid);
+        const int segEnd = done + segment;
 
-        // Mode-switch crossfade (see snapshotParameters). Applied to the VOICE path
-        // only, ahead of the effects, so delay and reverb tails ring on through the
-        // transition instead of ducking with it. Smoothstep rather than the bare
-        // linear ramp so the fade has no slope corner at either end; it is exactly
-        // 1.0 — and so a bit-for-bit no-op — whenever no switch is in flight.
-        modeFade = clampf(modeFade + (modeSwitchPending ? -modeFadeStep : modeFadeStep),
-                          0.0f, 1.0f);
-        const float mf = modeFade * modeFade * (3.0f - 2.0f * modeFade);
-        sL *= mf; sR *= mf;
-
-        constexpr float kVoiceGain = 0.7f;
-        sL *= kVoiceGain; sR *= kVoiceGain;
-
-        cosmosChorus.process(sL, sR);
-
-        // EffectsMix mod (fix #5): scale effect wet mixes by the mean per-voice
-        // routing amount. Only pays per-sample setter cost when routed.
-        //
-        // This is a SCALE on the smoothed mix, not a new smoother target. Pushing
-        // the modulation through the 8 ms one-pole would lowpass an LFO or
-        // envelope that is meant to arrive intact, and would change the rendered
-        // output of every patch that uses the routing -- de-zippering must not do
-        // that. snapshotParameters() resets the scale to 1.0 each block, so the
-        // unrouted case needs nothing here.
-        if (hasEffectsMixRouting)
-            effects.setMixMod(clampf(1.0f + fxMod, 0.0f, 2.0f));
-
-        effects.process(sL, sR, bpm);
-
-        // Vintage: HF rolloff + tiny noise floor (member PRNG, no rand()).
-        if (vintage > 0.01f)
+        for (int i = done; i < segEnd; ++i)
         {
-            const float coeff = 1.0f - vintage * 0.3f;
-            sL = sL * coeff + prevVintageL * (1.0f - coeff);
-            sR = sR * coeff + prevVintageR * (1.0f - coeff);
-            prevVintageL = sL; prevVintageR = sR;
-            const float noise = vintageRng.nextBipolar() * vintage * 0.001f;
-            sL += noise; sR += noise;
+            // Advance the voice-parameter smoothers once per HOST sample and publish
+            // them into the shared snapshot the voices render from. Done for both the
+            // poly and the acid path so the smoother state stays valid across a mode
+            // switch (the acid voice takes its cutoff/res at snapshot time instead).
+            voiceParams.filterCutoff    = std::exp2(smCutoff.next());   // smoothed in log2(Hz)
+            voiceParams.filterHPCutoff  = std::exp2(smHPCutoff.next()); // ...so sweeps are symmetric
+            voiceParams.filterResonance = smRes.next();
+            voiceParams.filterEnvAmount = smFilterEnvAmt.next();
+            voiceParams.osc1Level       = smOsc1Level.next();
+            voiceParams.osc2Level       = smOsc2Level.next();
+            voiceParams.osc3Level       = smOsc3Level.next();
+            voiceParams.subLevel        = smSubLevel.next();
+            voiceParams.noiseLevel      = smNoiseLevel.next();
+
+            // Render osFactor internal samples, then decimate to host rate (fix #1).
+            float iL[4], iR[4];
+            float fxAccum = 0.0f;
+
+            if (acidMode)
+            {
+                // Mono acid path: the sequencer (when enabled) or live legato play
+                // drives a single AcidVoice; the poly allocator/arp are bypassed.
+                // Feed it the same smoothed filter values the poly voices read.
+                acidVoice.setCutoff(voiceParams.filterCutoff);
+                acidVoice.setResonance(voiceParams.filterResonance);
+                acidVoice.setEnvMod(clampf(std::abs(voiceParams.filterEnvAmount), 0.0f, 1.0f));
+                if (acidSeqEnabled)
+                {
+                    const auto ev = acidSeq.advanceSample(bpm, playing, songBeat, hostLocked);
+                    if (ev.noteOff) acidVoice.noteOff();
+                    if (ev.noteOn)  acidVoice.noteOn(ev.freq, ev.accent, ev.slide, 1.0f);
+                }
+                for (int os = 0; os < osFactor; ++os)
+                {
+                    const float m = acidVoice.processSample();
+                    iL[os] = m; iR[os] = m;
+                }
+            }
+            else
+            {
+                // Arp advances at host rate; triggers its own generated notes.
+                if (arpEnabled)
+                {
+                    const auto ev = arp.advanceSample(bpm, playing, songBeat, hostLocked);
+                    if (ev.noteOffValid) voices.noteOff(ev.offNote);
+                    if (ev.noteOnValid)  voices.noteOn(ev.onNote, (float)ev.onVel / 127.0f, voiceParams);
+                }
+                for (int os = 0; os < osFactor; ++os)
+                {
+                    float l, r, fx;
+                    voices.renderInternalSample(voiceParams, modMatrix, l, r, fx);
+                    iL[os] = l; iR[os] = r; fxAccum += fx;
+                }
+            }
+
+            float sL = decimL.process(iL);
+            float sR = decimR.process(iR);
+            const float fxMod = fxAccum / (float)osFactor;
+
+            // Mode-switch crossfade (see snapshotParameters). Applied to the VOICE path
+            // only, ahead of the effects, so delay and reverb tails ring on through the
+            // transition instead of ducking with it. Smoothstep rather than the bare
+            // linear ramp so the fade has no slope corner at either end; it is exactly
+            // 1.0 — and so a bit-for-bit no-op — whenever no switch is in flight.
+            modeFade = clampf(modeFade + (modeSwitchPending ? -modeFadeStep : modeFadeStep),
+                              0.0f, 1.0f);
+            const float mf = modeFade * modeFade * (3.0f - 2.0f * modeFade);
+            sL *= mf; sR *= mf;
+
+            constexpr float kVoiceGain = 0.7f;
+            sL *= kVoiceGain; sR *= kVoiceGain;
+
+            cosmosChorus.process(sL, sR);
+
+            // EffectsMix mod (fix #5): scale effect wet mixes by the mean per-voice
+            // routing amount. Only pays per-sample setter cost when routed.
+            //
+            // This is a SCALE on the smoothed mix, not a new smoother target. Pushing
+            // the modulation through the 8 ms one-pole would lowpass an LFO or
+            // envelope that is meant to arrive intact, and would change the rendered
+            // output of every patch that uses the routing -- de-zippering must not do
+            // that. snapshotParameters() resets the scale to 1.0 each block, so the
+            // unrouted case needs nothing here.
+            if (hasEffectsMixRouting)
+                effects.setMixMod(clampf(1.0f + fxMod, 0.0f, 2.0f));
+
+            effects.process(sL, sR, bpm);
+
+            // Vintage: HF rolloff + tiny noise floor (member PRNG, no rand()).
+            if (vintage > 0.01f)
+            {
+                const float coeff = 1.0f - vintage * 0.3f;
+                sL = sL * coeff + prevVintageL * (1.0f - coeff);
+                sR = sR * coeff + prevVintageR * (1.0f - coeff);
+                prevVintageL = sL; prevVintageR = sR;
+                const float noise = vintageRng.nextBipolar() * vintage * 0.001f;
+                sL += noise; sR += noise;
+            }
+
+            // Master gain + pan (per-sample smoothed; see kParamSmoothTau). The pan
+            // ANGLE is glided and cos/sin taken here, so the pan law stays exactly
+            // constant-power throughout the move rather than only at its endpoints.
+            const float gain = smGain.next();
+            const float ang  = smPanAngle.next();
+            sL *= gain * std::cos(ang);
+            sR *= gain * std::sin(ang);
+
+            // Stereo width (mid/side). The 0..1 param maps to a 0..2 side factor so
+            // the 0.5 DEFAULT is unity (image preserved): 0 = mono, 0.5 = as
+            // rendered, 1 = double-width. The old side*width mapping silently
+            // halved every preset's stereo image at the default setting.
+            const float mid = (sL + sR) * 0.5f;
+            const float side = (sL - sR) * 0.5f;
+            const float widthFactor = smWidth.next();
+            sL = mid + side * widthFactor;
+            sR = mid - side * widthFactor;
+
+            // Output DC blocker (reverb combs / filter nonlinearity leave a little DC).
+            sL = dcBlockL.process(sL);
+            sR = dcBlockR.process(sR);
+
+            sL = softLimit(sL);
+            sR = softLimit(sR);
+
+            outL[i] = sL;
+            if (outR) outR[i] = sR;
+
+            // Scope ring (mono sum).
+            const int wp = scopeWritePos.load(std::memory_order_relaxed);
+            scope[(size_t)wp].store((sL + (outR ? sR : sL)) * 0.5f, std::memory_order_relaxed);
+            scopeWritePos.store((wp + 1) % kScopeSize, std::memory_order_relaxed);
+            const int sc = scopeCount.load(std::memory_order_relaxed);
+            if (sc < kScopeSize) scopeCount.store(sc + 1, std::memory_order_relaxed);
+
+            // Peak metering with release.
+            const float aL = std::abs(sL), aR = std::abs(sR);
+            meterL = aL > meterL ? aL : meterL * meterDecay;
+            meterR = aR > meterR ? aR : meterR * meterDecay;
+
+            // Advance the host-locked song-beat cursor one host sample.
+            songBeat += beatsPerSample;
         }
 
-        // Master gain + pan (per-sample smoothed; see kParamSmoothTau). The pan
-        // ANGLE is glided and cos/sin taken here, so the pan law stays exactly
-        // constant-power throughout the move rather than only at its endpoints.
-        const float gain = smGain.next();
-        const float ang  = smPanAngle.next();
-        sL *= gain * std::cos(ang);
-        sR *= gain * std::sin(ang);
-
-        // Stereo width (mid/side). The 0..1 param maps to a 0..2 side factor so
-        // the 0.5 DEFAULT is unity (image preserved): 0 = mono, 0.5 = as
-        // rendered, 1 = double-width. The old side*width mapping silently
-        // halved every preset's stereo image at the default setting.
-        const float mid = (sL + sR) * 0.5f;
-        const float side = (sL - sR) * 0.5f;
-        const float widthFactor = smWidth.next();
-        sL = mid + side * widthFactor;
-        sR = mid - side * widthFactor;
-
-        // Output DC blocker (reverb combs / filter nonlinearity leave a little DC).
-        sL = dcBlockL.process(sL);
-        sR = dcBlockR.process(sR);
-
-        sL = softLimit(sL);
-        sR = softLimit(sR);
-
-        outL[i] = sL;
-        if (outR) outR[i] = sR;
-
-        // Scope ring (mono sum).
-        const int wp = scopeWritePos.load(std::memory_order_relaxed);
-        scope[(size_t)wp].store((sL + (outR ? sR : sL)) * 0.5f, std::memory_order_relaxed);
-        scopeWritePos.store((wp + 1) % kScopeSize, std::memory_order_relaxed);
-        const int sc = scopeCount.load(std::memory_order_relaxed);
-        if (sc < kScopeSize) scopeCount.store(sc + 1, std::memory_order_relaxed);
-
-        // Peak metering with release.
-        const float aL = std::abs(sL), aR = std::abs(sR);
-        meterL = aL > meterL ? aL : meterL * meterDecay;
-        meterR = aR > meterR ? aR : meterR * meterDecay;
-
-        // Advance the host-locked song-beat cursor one host sample.
-        songBeat += beatsPerSample;
+        done = segEnd;
     }
 
-    if (acidMode && acidSeqEnabled)
+    if (voiceParams.mode == SynthMode::Acid && acidSeqEnabled)
     {
         arpStep.store(acidSeq.getCurrentStep(), std::memory_order_relaxed);
         arpTotalSteps.store(16, std::memory_order_relaxed);
