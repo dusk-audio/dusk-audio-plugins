@@ -497,7 +497,7 @@ substituted. Store in `kTooltips[kParamCount]`.
 | `lfo1Rate` / `lfo2Rate` | Speed of LFO N. |
 | `lfo1Shape` / `lfo2Shape` | Waveform of LFO N. |
 | `lfo1Fade` / `lfo2Fade` | Time for LFO N to fade in after a note. |
-| `lfo1Sync` / `lfo2Sync` | Scale LFO N speed with the host tempo (rate × BPM/120 — tempo-relative rate, not beat-phase locking). |
+| `lfo1Sync` / `lfo2Sync` | Lock LFO N to the host tempo and song position: the rate scales as rate × BPM/120 (one cycle every 2/rate beats at any tempo) and, while the transport plays, the phase is derived from the song position rather than free-running, so a note-on no longer restarts it. Falls back to the scaled free-run rate when the transport is stopped. |
 
 ### Unison / Portamento / Velocity
 | Param | Tooltip |
