@@ -156,9 +156,9 @@ protected:
         const bool modalOpen = showAdvanced || showSupporters;
         if (modalOpen) ImGui::BeginDisabled();
         drawHeader(dl);
-        // The PEAK lamp follows the post-input-gain, pre-tape record level. It lights when
-        // that input node crosses 0 dBFS (see drawVU), auto-holds 1.5 s after the last over,
-        // and click-clears.
+        // The PEAK lamp follows the post-input-gain, pre-tape record level during normal
+        // processing and raw passthrough input while bypassed or in Thru. It lights at
+        // 0 dBFS (see drawVU), auto-holds 1.5 s after the last over, and click-clears.
         const bool clipEnabled = true;
         const ImU32 accent = accentCol();
         drawVU(dl, 68,  62, 388, 198, meterLevel(0), peakLevel(0), needleL, clipHoldL, clipEnabled, accent, "L");
@@ -196,8 +196,8 @@ private:
         return v;
     }
 
-    // Post-input-gain, pre-tape sample peak for the PEAK lamp. This is the record
-    // level entering the tape path, independent of output compensation.
+    // Sample peak for the PEAK lamp: post-input-gain/pre-tape during normal
+    // processing, raw passthrough input while bypassed or in Thru.
     float peakLevel(int ch)
     {
         float v = 0.0f;
@@ -826,8 +826,8 @@ private:
         text(dl, fx1 - 10, fy0 + 3, 15.0f, red, "+", 1, true);
 
         // over lamp (right). The peak comes from the post-input-gain, pre-tape
-        // record node, so it warns when the level driving the tape path crosses
-        // 0 dBFS regardless of the linked output compensation.
+        // record node during normal processing and raw passthrough input while
+        // bypassed or in Thru.
         // `clipHold` is a HOLD TIMER in seconds: every over (re)arms it to 1.5 s, and
         // between overs it counts down by the frame dt, so a brief transient stays lit ~1.5 s
         // after it passes and a sustained hot signal keeps re-arming (stays lit). A click clears

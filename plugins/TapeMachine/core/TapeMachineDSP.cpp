@@ -218,6 +218,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     m_driveDecaySm  = 1.0f;   // neutral (no below-anchor decay until the signal drops below -12)
     vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     inPeakStateL = inPeakStateR = 0.0f;
+    inputPeakUsesRawInput = false;
     outPeakStateL = outPeakStateR = 0.0f;
     vuL.store (0.0f, std::memory_order_relaxed);
     vuR.store (0.0f, std::memory_order_relaxed);
@@ -256,6 +257,7 @@ void TapeMachineDSP::reset()
     m_driveDecaySm  = 1.0f;
     vuStateL = vuStateR = inVuStateL = inVuStateR = 0.0f;
     inPeakStateL = inPeakStateR = 0.0f;
+    inputPeakUsesRawInput = false;
     outPeakStateL = outPeakStateR = 0.0f;
     vuL.store (0.0f, std::memory_order_relaxed);
     vuR.store (0.0f, std::memory_order_relaxed);
@@ -334,15 +336,28 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     if (reqFactor != currentFactor)
         applyFactor (reqFactor);
 
+    const bool hardBypass = pBypass.load (std::memory_order_relaxed);
+    const auto signalPath = static_cast<TapeCore::SignalPath> (
+        clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));
+    const bool useRawInputPeak = hardBypass || signalPath == TapeCore::Thru;
+
+    // Normal processing meters post-input-gain; bypass and Thru meter raw input.
+    // A held value cannot cross between those reference nodes without changing meaning.
+    if (useRawInputPeak != inputPeakUsesRawInput)
+    {
+        inPeakStateL = inPeakStateR = 0.0f;
+        inputPeakUsesRawInput = useRawInputPeak;
+    }
+
     // --- bypass: pure passthrough + sample-peak refresh -----------------------
-    if (pBypass.load (std::memory_order_relaxed))
+    if (hardBypass)
     {
         for (int ch = 0; ch < nCh; ++ch)
             if (inputs[ch] != outputs[ch])
                 for (int n = 0; n < nSamples; ++n) outputs[ch][n] = inputs[ch][n];
 
-        // Input and output are identical while bypassed, but retain their independent
-        // peak states so peaks from before the transition continue to decay naturally.
+        // Input and output are identical while bypassed, but retain independent states:
+        // raw input starts from the rebased value while the output diagnostic keeps decaying.
         float pL = inPeakStateL, pR = inPeakStateR;
         float pkOL = outPeakStateL, pkOR = outPeakStateR;
         for (int n = 0; n < nSamples; ++n)
@@ -369,8 +384,6 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // Input VU is metered POST-input-trim / PRE-saturation, inside the processing
     // loops below (see item B): it reflects record/tape-drive level, not the raw
     // incoming signal. Same 0 VU reference + ANSI mean-abs ballistics as the output VU.
-
-    const auto signalPath = static_cast<TapeCore::SignalPath> (clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));
 
     // --- Thru: passthrough + VU (input == output) ----------------------------
     if (signalPath == TapeCore::Thru)

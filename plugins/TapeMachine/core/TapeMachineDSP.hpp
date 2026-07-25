@@ -2202,6 +2202,7 @@ private:
     // separate INPUT-node sample-peak hold for the PEAK lamp (instant attack, 300 ms release)
     std::atomic<float> inPeakL{0.0f}, inPeakR{0.0f};
     float inPeakStateL = 0.0f, inPeakStateR = 0.0f;
+    bool inputPeakUsesRawInput = false;  // audio-thread-only metering-node transition state
     std::atomic<float> outPeakL{0.0f}, outPeakR{0.0f};  // final-output sample-peak hold (diagnostic)
     float outPeakStateL = 0.0f, outPeakStateR = 0.0f;
     float peakDecayCoeff = 0.0f;
