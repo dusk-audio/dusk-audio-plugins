@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 namespace msynth
 {
@@ -126,6 +127,12 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     acidVoice.prepare(hostRate * (double)osFactor);
     acidSeq.prepare(hostRate);
     decimL.setFactor(osFactor); decimR.setFactor(osFactor);
+    // Parameter smoothers advance once per HOST sample (see processBlock), so
+    // they are prepared at hostRate regardless of the oversampling factor.
+    for (auto* s : { &smGain, &smPanL, &smPanR, &smWidth,
+                     &smCutoff, &smRes, &smHPCutoff,
+                     &smOsc1Level, &smOsc2Level, &smOsc3Level, &smSubLevel, &smNoiseLevel })
+        s->prepare(hostRate, kParamSmoothTau);
     reset();
 }
 
@@ -152,6 +159,7 @@ void MultiSynthDSP::reset()
     prevVintageL = prevVintageR = 0.0f;
     meterL = meterR = 0.0f;
     haveLastSnap = false;   // first snapshot after (re)prepare must not spuriously release
+    haveWitness  = false;   // ...and must SNAP the smoothers, not glide up from stale state
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
     scopeCount.store(0, std::memory_order_relaxed);
@@ -510,6 +518,43 @@ void MultiSynthDSP::snapshotParameters() noexcept
     lastSnapMode = vp.mode;
     lastArpEnabled = arpEnabled;
     lastAcidSeqEnabled = acidSeqEnabled;
+
+    // --- Parameter smoothing targets -----------------------------------------
+    // Everything above wrote this block's TARGETS. The render loop advances the
+    // smoothers once per host sample so automation and knob drags glide instead
+    // of stepping 94 times a second (see kParamSmoothTau in the header).
+    // A program change (or the first block after prepare/reset) must land
+    // instantly, so classify the snapshot first and snap rather than glide.
+    smoothSnap = detectBulkParamChange();
+
+    const float panAngle = (masterPan + 1.0f) * 0.25f * kPi;
+    setSmoothTarget(smGain,  masterGain);
+    setSmoothTarget(smPanL,  std::cos(panAngle));
+    setSmoothTarget(smPanR,  std::sin(panAngle));
+    setSmoothTarget(smWidth, 2.0f * stereoWidth);
+}
+
+//==============================================================================
+bool MultiSynthDSP::detectBulkParamChange() noexcept
+{
+    int large = 0;
+    const bool first = !haveWitness;
+    for (int i = 0; i < kNumSmoothWitness; ++i)
+    {
+        const SmoothWitness& w = kSmoothWitness[i];
+        const float v = p(w.idx);
+        const float prev = lastWitness[i];
+        lastWitness[i] = v;
+        if (first) continue;
+        // Frequencies are compared in octaves — 500 -> 2000 Hz is a preset-sized
+        // move, 15000 -> 16500 Hz is not, and a linear delta cannot tell them apart.
+        const float d = w.logScale
+            ? std::abs(std::log2(maxf(1.0e-3f, v) / maxf(1.0e-3f, prev)))
+            : std::abs(v - prev);
+        if (d > w.jump) ++large;
+    }
+    haveWitness = true;
+    return first || large >= kBulkSnapCount;
 }
 
 //==============================================================================
@@ -535,9 +580,6 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     const bool   hostLocked     = playing && songPosValid.load(std::memory_order_relaxed);
     double       songBeat       = songPosBeats.load(std::memory_order_relaxed);
     const double beatsPerSample = (bpm > 0.0 ? bpm : 120.0) / (60.0 * hostRate);
-
-    const float panAngle = (masterPan + 1.0f) * 0.25f * kPi;
-    const float panL = std::cos(panAngle), panR = std::sin(panAngle);
 
     auto softLimit = [](float x) noexcept -> float {
         if (isBad(x)) return 0.0f;
@@ -621,9 +663,10 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
             sL += noise; sR += noise;
         }
 
-        // Master gain + pan.
-        sL *= masterGain * panL;
-        sR *= masterGain * panR;
+        // Master gain + pan (per-sample smoothed; see kParamSmoothTau).
+        const float gain = smGain.next();
+        sL *= gain * smPanL.next();
+        sR *= gain * smPanR.next();
 
         // Stereo width (mid/side). The 0..1 param maps to a 0..2 side factor so
         // the 0.5 DEFAULT is unity (image preserved): 0 = mono, 0.5 = as
@@ -631,7 +674,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         // halved every preset's stereo image at the default setting.
         const float mid = (sL + sR) * 0.5f;
         const float side = (sL - sR) * 0.5f;
-        const float widthFactor = 2.0f * stereoWidth;
+        const float widthFactor = smWidth.next();
         sL = mid + side * widthFactor;
         sR = mid - side * widthFactor;
 

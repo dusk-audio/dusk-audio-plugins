@@ -44,6 +44,7 @@
 #include "AcidEngine.hpp"      // Acid mode (mode 5): mono voice + pattern sequencer
 #include "DuskOversampler.hpp" // HalfbandFIR + hbtaps
 #include "DuskFilters.hpp"     // DCBlocker (output hygiene)
+#include "DuskSmoothed.hpp"    // one-pole parameter smoothing (zipper-free automation)
 
 #include <array>
 #include <atomic>
@@ -195,6 +196,62 @@ private:
     void snapshotParameters() noexcept;   // atomics -> voiceParams + subsystems
     void applyOsFactor(int factor);       // (re)prepare voices at internalRate
 
+    // ======================== PARAMETER SMOOTHING ============================
+    // snapshotParameters() reads the atomics once per block, so every continuous
+    // control would otherwise STEP once per block — ~94 steps/s at 512 frames /
+    // 48 kHz. Each step splatters broadband energy (zipper noise) whenever the
+    // control is automated or a knob is dragged. The continuous controls are
+    // therefore targets, not values: snapshotParameters() sets the target and the
+    // render loop advances a one-pole toward it once per HOST sample.
+    //
+    // Engine-level smoothers live here; the effect wet mixes / drive smooth
+    // themselves inside Effects.hpp (see kMixSmoothTau there).
+    static constexpr float kParamSmoothTau = 0.008f; // ~8 ms one-pole
+
+    // --- preset-load detection (snap instead of glide) ------------------------
+    // A program change must be INSTANT, but the shell's loadProgram() only calls
+    // setParameter() repeatedly — the core gets no "new preset" signal. It does
+    // however have a distinctive shape: MANY smoothed controls jump a LARGE
+    // amount between two consecutive blocks. Automation (even several lanes at
+    // once) moves each control by a small increment per ~10 ms block, so
+    // requiring BOTH width and magnitude keeps ordinary automation on the smooth
+    // path while a preset switch snaps. Witnesses below are the smoothed controls
+    // a preset is most likely to move; `jump` is the per-control delta that a
+    // hand or automation ramp cannot produce in one block (octaves when logScale).
+    struct SmoothWitness { Param idx; float jump; bool logScale; };
+    static constexpr SmoothWitness kSmoothWitness[] = {
+        { pMasterVol,    6.0f,  false },   // dB
+        { pMasterPan,    0.5f,  false },
+        { pStereoWidth,  0.25f, false },
+        { pFilterCutoff, 1.0f,  true  },   // octaves
+        { pFilterHP,     1.0f,  true  },   // octaves
+        { pFilterRes,    0.25f, false },
+        { pOsc1Level,    0.25f, false },
+        { pOsc2Level,    0.25f, false },
+        { pOsc3Level,    0.25f, false },
+        { pSubLevel,     0.25f, false },
+        { pNoiseLevel,   0.25f, false },
+        { pDriveAmt,     0.25f, false },
+        { pDriveMix,     0.25f, false },
+        { pChorusDepth,  0.25f, false },
+        { pChorusMix,    0.25f, false },
+        { pDelayFB,      0.25f, false },
+        { pDelayMix,     0.25f, false },
+        { pReverbMix,    0.25f, false },
+    };
+    static constexpr int kNumSmoothWitness = (int)(sizeof(kSmoothWitness) / sizeof(kSmoothWitness[0]));
+    static constexpr int kBulkSnapCount = 5;  // this many large jumps == preset load
+
+    bool  detectBulkParamChange() noexcept;   // updates lastWitness[], returns "snap"
+
+    // Set a smoother's target for this block, snapping straight to it when the
+    // snapshot was classified as a preset load / the first block after reset.
+    void setSmoothTarget(duskaudio::SmoothedValue& s, float v) noexcept
+    {
+        s.setTarget(v);
+        if (smoothSnap) s.snap(v);
+    }
+
     // --- Acid mode (mode 5) helpers ---
     // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
     // AcidVoice + AcidSequencer replace the whole poly/arp path (mono).
@@ -256,9 +313,24 @@ private:
 
     VoiceParameters voiceParams;
 
-    // block-cached engine-level controls
+    // block-cached engine-level controls (targets for the smoothers below)
     float masterGain = 1.0f, masterPan = 0.0f, stereoWidth = 0.5f, vintage = 0.0f;
     float baseDriveMix = 1.0f, baseChorusMix = 0.5f, baseDelayMix = 0.3f, baseReverbMix = 0.2f;
+
+    // Per-sample output-stage smoothers. panL/panR are smoothed as a PAIR rather
+    // than smoothing the pan angle: interpolating the two gains costs no trig in
+    // the render loop, both endpoints are exactly constant-power, and the only
+    // cost is a ~0.3 dB dip mid-glide on a hard hard-left -> hard-right jump.
+    duskaudio::SmoothedValue smGain, smPanL, smPanR, smWidth;
+    // Voice-parameter smoothers. Written into voiceParams once per host sample,
+    // so all voices (and every oversampled sub-sample) see the same glided value.
+    duskaudio::SmoothedValue smCutoff, smRes, smHPCutoff;
+    duskaudio::SmoothedValue smOsc1Level, smOsc2Level, smOsc3Level, smSubLevel, smNoiseLevel;
+
+    // Previous snapshot's witness values (preset-load detection, see above).
+    float lastWitness[kNumSmoothWitness] {};
+    bool  haveWitness = false;
+    bool  smoothSnap = true;   // this snapshot snaps rather than glides
     bool  hasEffectsMixRouting = false;
     bool  arpEnabled = false;
     bool  lastArpLatch = false;   // detects the latch 1->0 edge (prune latched notes)
