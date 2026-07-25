@@ -277,6 +277,12 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     }
     voices.setModeVoices(modeVoices);
     voices.setUnison(clampi((int)p(pUnisonVoices), 1, kMaxUnison));
+    // The per-voice headroom trim glides with the voice budget so a mid-note
+    // unison change cannot step the level of the surviving voices. On the FIRST
+    // snapshot after prepare/reset there is nothing to protect — the budget is
+    // simply being established — so land on it instead of gliding up from the
+    // constructor's default.
+    if (!haveLastSnap) voices.snapVoiceGain();
 
     vp.osc1Wave = (Waveform)clampi((int)p(pOsc1Wave), 0, 5);
     vp.osc1Detune = p(pOsc1Detune);

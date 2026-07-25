@@ -49,6 +49,13 @@ static constexpr int kMaxPolyphony   = 8;
 static constexpr int kMaxUnison      = 8;
 static constexpr int kMaxOscVoices   = 16; // poly x unison ceiling
 
+// Fade-out length for a voice that falls outside the effective polyphony while
+// still sounding (SynthVoice::retire). Long enough that the fade itself is
+// inaudible, short enough that an over-budget voice cannot linger: at 15 ms the
+// worst case is one extra voice-render's worth of CPU for under a millisecond of
+// music, and the freed slot is back in the allocator's hands almost immediately.
+static constexpr float kRetireSeconds = 0.015f;
+
 // Per-voice parameters (shared across voices for a given mode). Set once per
 // block by the engine from atomics — never looked up in the render path.
 struct VoiceParameters
@@ -153,6 +160,8 @@ public:
         voicePanOffset = (rng.nextFloat() - 0.5f) * 0.3f;
         portaFreq.prepare(sampleRate, 0.1f);
         portaFreq.snap(440.0f);
+        retireStep = 1.0f / (float)(kRetireSeconds * sampleRate);
+        retiring = false; retirePhase = 1.0f;
     }
 
     // Change the internal (oversampled) rate WITHOUT resetting musical state:
@@ -178,6 +187,7 @@ public:
         lfo2.setSampleRate(sampleRate);
         sampleAndHold.setSampleRate(sampleRate);
         portaFreq.prepare(sampleRate, 0.1f); // updates coeff; keeps current/target value
+        retireStep = 1.0f / (float)(kRetireSeconds * sampleRate); // keeps retirePhase
     }
 
     void reset() noexcept
@@ -196,6 +206,7 @@ public:
         }
         lfoRateMod1 = lfoRateMod2 = 0.0f;
         effectsMixMod = 0.0f;
+        retiring = false; retirePhase = 1.0f;
     }
 
     void noteOn(int midiNote, float velocity, const VoiceParameters& params) noexcept
@@ -203,6 +214,7 @@ public:
         currentNote = midiNote;
         currentVelocity = velocity;
         active = true;
+        retiring = false; retirePhase = 1.0f;   // a re-used voice is no longer retiring
 
         const float targetFreq = midiToHz((float)midiNote);
 
@@ -304,6 +316,31 @@ public:
         for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
     }
 
+    // Retire: the voice has fallen OUTSIDE the allocator's effective polyphony
+    // (the unison count grew, or a mode with a smaller voice budget took over)
+    // while still sounding. It used to be reset() outright, which is a full-scale
+    // step to zero in one sample — a click.
+    //
+    // Instead: release like a note-off, and gate it with an independent ramp that
+    // guarantees the voice is finished within kRetireSeconds. The ramp is what
+    // makes this safe. A plain release would let a 10 s patch release hold a voice
+    // that is over budget for 10 s; the ramp caps the overrun at ~15 ms, so the
+    // extra rendering can never accumulate and the allocator's accounting (which
+    // only ever hands out slots below effectivePoly()) stays honest.
+    void retire() noexcept
+    {
+        if (!active || retiring) return;
+        noteOff();
+        retiring = true;
+        retirePhase = 1.0f;
+        // Freeze the sub-voice count for the fade. The edge that retires a voice is
+        // almost always a unison change, and letting the retiring voice follow it
+        // would drop fresh sub-voices in at phase zero on the very sample the fade
+        // starts — a second discontinuity, in the one voice that exists only to
+        // avoid the first. A voice on its way out plays out as it was.
+        retireUnison = prevUCount;
+    }
+
     bool isActive() const noexcept { return active; }
     bool isReleasing() const noexcept { return ampEnv.getStage() == ADSREnvelope::Stage::Release; }
     int  getCurrentNote() const noexcept { return currentNote; }
@@ -335,6 +372,23 @@ public:
         const float ampVal = ampEnv.processSample();
         const float filtVal = filtEnv.processSample();
         if (!ampEnv.isActive()) { active = false; return; }
+
+        // Retire ramp (see retire()). Advanced BEFORE the silent-mode early-out so
+        // a retiring voice always finishes on schedule, whatever the render branch
+        // is doing. Smoothstep rather than a linear ramp: a linear fade still has a
+        // slope corner at each end, and on a loud voice that corner is audible as a
+        // faint tick; p*p*(3-2p) is C1 at both ends and costs two multiplies.
+        float retireGain = 1.0f;
+        if (retiring)
+        {
+            retirePhase -= retireStep;
+            if (retirePhase <= 0.0f)
+            {
+                retirePhase = 0.0f; retiring = false; active = false;
+                return;
+            }
+            retireGain = retirePhase * retirePhase * (3.0f - 2.0f * retirePhase);
+        }
         if (silentMode) return;
 
         // --- modulation state ---
@@ -365,7 +419,7 @@ public:
 
         const float noiseSample = pinkNoise.processSample() * params.noiseLevel;
 
-        const int uCount = clampi(unisonCount, 1, kMaxUnison);
+        const int uCount = clampi(retiring ? retireUnison : unisonCount, 1, kMaxUnison);
         // The R filter runs only on the multi-voice path; when unison count grows
         // from 1 -> >1 mid-note its state is stale (last touched at the previous
         // note-on). Reset it before first use to avoid a startup transient (C4b).
@@ -442,7 +496,7 @@ public:
 
         // --- amplitude ---
         const float ampMod = clampf(1.0f + modState.getDestValue(ModDest::Amplitude), 0.0f, 2.0f);
-        const float g = ampVal * velocityGain * ampMod;
+        const float g = ampVal * velocityGain * ampMod * retireGain;
         outL = sanitize(sL * g);
         outR = sanitize(sR * g);
     }
@@ -653,6 +707,10 @@ private:
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
     float effectsMixMod = 0.0f;
     int   prevUCount = 1; // detects the 1 -> >1 unison transition (C4b)
+    bool  retiring = false;        // bounded fade-out in progress (see retire())
+    float retirePhase = 1.0f;      // 1 -> 0 over kRetireSeconds
+    float retireStep = 1.0f;       // per internal sample, set by prepare/setSampleRate
+    int   retireUnison = 1;        // sub-voice count frozen for the duration of the fade
 
     OscSet osc[kMaxUnison];
     FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice
@@ -677,10 +735,24 @@ public:
     {
         for (int i = 0; i < kMaxPolyphony; ++i)
             voices[(size_t)i].prepare(sampleRate, 0x1000u + 0x1000u * (uint32_t)i);
+        voiceGain.prepare(sampleRate, kParamSmoothTau);
+        voiceGain.snap(gainForPoly(effectivePoly()));
     }
-    void reset() noexcept { for (auto& v : voices) v.reset(); }
+    void reset() noexcept
+    {
+        for (auto& v : voices) v.reset();
+        voiceGain.snap(gainForPoly(effectivePoly()));
+    }
     // Rate change preserving active notes/pitch (oversampling-factor switch).
-    void setSampleRate(double sampleRate) noexcept { for (auto& v : voices) v.setSampleRate(sampleRate); }
+    void setSampleRate(double sampleRate) noexcept
+    {
+        for (auto& v : voices) v.setSampleRate(sampleRate);
+        voiceGain.prepare(sampleRate, kParamSmoothTau); // new coeff, keeps the value
+    }
+    // Land the headroom trim on the current polyphony instead of gliding to it.
+    // Used for the first snapshot after prepare/reset, where the mode's voice
+    // budget is established before anything can be sounding.
+    void snapVoiceGain() noexcept { voiceGain.snap(gainForPoly(effectivePoly())); }
 
     // modeMaxVoices: nominal polyphony for the current mode. On an actual change,
     // retire voices that fall outside the new limit so they can't become zombies
@@ -706,12 +778,22 @@ public:
         return clampi(byUnison < modeVoices ? byUnison : modeVoices, 1, kMaxPolyphony);
     }
 
-    // Reset every voice at or above the current effective polyphony so a later
-    // limit increase cannot revive a voice that was silently dropped.
+    // Clear every voice at or above the current effective polyphony, so a later
+    // limit increase cannot revive a voice that was silently dropped. A voice that
+    // is still SOUNDING is faded out (SynthVoice::retire) rather than reset — the
+    // reset was a full-scale step to zero in one sample. renderInternalSample()
+    // keeps rendering retiring voices until their ramp ends; noteOn() never looks
+    // at them, because it only ever searches below effectivePoly(), so a retiring
+    // voice cannot occupy a slot a new note needs.
     void retireAbove() noexcept
     {
         const int poly = effectivePoly();
-        for (int i = poly; i < kMaxPolyphony; ++i) voices[(size_t)i].reset();
+        for (int i = poly; i < kMaxPolyphony; ++i)
+        {
+            SynthVoice& v = voices[(size_t)i];
+            if (v.isActive()) v.retire();
+            else              v.reset();
+        }
     }
 
     SynthVoice* noteOn(int note, float velocity, const VoiceParameters& params) noexcept
@@ -750,26 +832,26 @@ public:
                               float& outL, float& outR, float& effectsMixModOut) noexcept
     {
         outL = outR = 0.0f;
-        const int poly = effectivePoly();
-        // Constant-power headroom referenced to a 4-voice sum: 2/sqrt(poly),
-        // clamped to unity. The old 1/(1+log2(poly)) cost a 6-voice mode 11 dB
-        // even when ONE note sounded, which made every poly preset audibly
-        // quieter than the mono/acid modes (fleet audit: poly peaks -21..-33
-        // dBFS vs mono -7..-9). With this curve the loudest poly preset peaks
-        // ~-7 dBFS under the audit performances (rule: peak <= -1), mono/acid
-        // are untouched (poly=1 -> 1.0), and sqrt still tracks uncorrelated
-        // voice summing as polyphony grows.
-        const float voiceGain = std::min(1.0f, 2.0f / std::sqrt((float)poly));
+        // The headroom trim is a TARGET, not a value: effectivePoly() changes on a
+        // unison or mode-budget edge, and stepping 2/sqrt(poly) there jumps the
+        // level of every surviving voice on that one sample (6 -> 5 voices is
+        // +0.8 dB, 6 -> 2 is +4.8 dB) — the same click the retire fade exists to
+        // remove. Gliding it costs one multiply-add per internal sample and is
+        // exactly a no-op while the polyphony holds still.
+        voiceGain.setTarget(gainForPoly(effectivePoly()));
+        const float g = voiceGain.next();
 
+        // All slots are visited, not just the ones below effectivePoly(): a voice
+        // above the limit can still be sounding while its retire ramp runs out.
         float fxSum = 0.0f; int activeN = 0;
-        for (int v = 0; v < poly; ++v)
+        for (int v = 0; v < kMaxPolyphony; ++v)
         {
             auto& voice = voices[(size_t)v];
             if (!voice.isActive()) continue;
             float l, r;
             voice.renderInternalSample(params, matrix, unisonCount, l, r);
-            outL += l * voiceGain;
-            outR += r * voiceGain;
+            outL += l * g;
+            outR += r * g;
             fxSum += voice.getEffectsMixMod();
             ++activeN;
         }
@@ -777,7 +859,20 @@ public:
     }
 
 private:
+    // Constant-power headroom referenced to a 4-voice sum: 2/sqrt(poly), clamped
+    // to unity. The old 1/(1+log2(poly)) cost a 6-voice mode 11 dB even when ONE
+    // note sounded, which made every poly preset audibly quieter than the
+    // mono/acid modes (fleet audit: poly peaks -21..-33 dBFS vs mono -7..-9).
+    // With this curve the loudest poly preset peaks ~-7 dBFS under the audit
+    // performances (rule: peak <= -1), mono/acid are untouched (poly=1 -> 1.0),
+    // and sqrt still tracks uncorrelated voice summing as polyphony grows.
+    static float gainForPoly(int poly) noexcept
+    {
+        return std::min(1.0f, 2.0f / std::sqrt((float)poly));
+    }
+
     SynthVoice voices[kMaxPolyphony];
+    duskaudio::SmoothedValue voiceGain;   // glided 2/sqrt(effectivePoly())
     int modeVoices = 6;
     int unisonCount = 1;
 };
