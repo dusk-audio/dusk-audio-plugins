@@ -19,6 +19,15 @@ constexpr float kPi     = 3.14159265358979323846f;
 constexpr float kTwoPi  = 6.28318530717958647692f;
 constexpr float kHalfPi = 1.57079632679489661923f;
 
+// Parameter smoothing time constant. The engine snapshots its parameters once
+// per block, so every continuous control is a TARGET that a one-pole chases per
+// sample; without that, each control steps ~94 times a second at 512 frames /
+// 48 kHz and splatters broadband energy (zipper noise). 8 ms is short enough
+// that a knob still feels instant and long enough that the block-rate step is
+// gone. Shared by the engine-level smoothers (MultiSynthDSP) and the effect
+// drive / wet mixes (Effects.hpp) so there is exactly one number to tune.
+constexpr float kParamSmoothTau = 0.008f;
+
 // juce::jlimit is jlimit(lo, hi, x); our clamp is clamp(x, lo, hi).
 inline float clampf(float x, float lo, float hi) noexcept
 {

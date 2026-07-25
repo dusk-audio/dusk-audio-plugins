@@ -30,17 +30,14 @@ namespace msynth
 {
 
 //==============================================================================
-// Drive / wet-mix smoothing time constant. The engine snapshots parameters once
-// per block, so an automated drive or wet-mix knob would otherwise step ~94
-// times a second and splatter broadband energy (zipper noise). 8 ms is short
-// enough that a knob still feels instant and long enough that the block-rate
-// step is gone. Each effect exposes snapSmoothing() so a preset load lands
-// immediately instead of gliding (EffectsChain::snapSmoothing).
+// Drive and the wet mixes below smooth themselves with the shared
+// kParamSmoothTau (SynthCommon.hpp) -- same defect, same fix, one constant.
+// Each effect exposes snapSmoothing() so a preset load lands immediately
+// instead of gliding (see EffectsChain::snapSmoothing).
 //
 // The delay read length and the reverb pre-delay keep their own, deliberately
 // slower 20 ms glides — those are tape-style pitch swoops, not de-zippering.
-static constexpr float kMixSmoothTau = 0.008f;
-
+//
 //==============================================================================
 // Drive / saturation
 enum class DriveType { SoftClip = 0, HardClip, Tube };
@@ -50,8 +47,8 @@ class DriveEffect
 public:
     void prepare(double sampleRate, int) noexcept
     {
-        smDrive.prepare(sampleRate, kMixSmoothTau);
-        smMix.prepare(sampleRate, kMixSmoothTau);
+        smDrive.prepare(sampleRate, kParamSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
         snapSmoothing();
     }
 
@@ -111,8 +108,8 @@ public:
         bufR.assign((size_t)maxDelaySamples, 0.0f);
         bufSize = maxDelaySamples;
         writePos = 0; lfoPhase = 0.0f;
-        smDepth.prepare(sampleRate, kMixSmoothTau);
-        smMix.prepare(sampleRate, kMixSmoothTau);
+        smDepth.prepare(sampleRate, kParamSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
         snapSmoothing();
     }
 
@@ -300,8 +297,8 @@ public:
         fbHP_R.setCutoff(fbHPFFreq, sampleRate);
         fbHP_L.reset();
         fbHP_R.reset();
-        smFeedback.prepare(sampleRate, kMixSmoothTau);
-        smMix.prepare(sampleRate, kMixSmoothTau);
+        smFeedback.prepare(sampleRate, kParamSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
         snapSmoothing();
     }
 
@@ -554,7 +551,7 @@ public:
         // Pre-Delay knob swoops instead of clicking; steady-state is exact.
         preDelayGlideCoeff = 1.0f - std::exp(-1.0f / (0.020f * sr));
         smoothedPd = -1.0f; // sentinel: snap to the first target
-        smMix.prepare(sampleRate, kMixSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
         snapSmoothing();
         updateParams();
     }
