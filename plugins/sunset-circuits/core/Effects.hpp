@@ -50,7 +50,6 @@ class DriveEffect
 public:
     void prepare(double sampleRate, int) noexcept
     {
-        sr = (float)sampleRate;
         smDrive.prepare(sampleRate, kMixSmoothTau);
         smMix.prepare(sampleRate, kMixSmoothTau);
         snapSmoothing();
@@ -93,7 +92,6 @@ private:
         return x;
     }
 
-    float sr = 44100.0f;
     bool  enabled = false;
     float drive = 0.0f, mix = 1.0f;          // smoother targets
     duskaudio::SmoothedValue smDrive, smMix;
@@ -774,11 +772,11 @@ public:
 
     void reset()
     {
+        drive.snapSmoothing();   // DriveEffect holds no state beyond its smoothers
         chorus.reset();
         delay.reset();
         reverb.reset();
         springReverb.reset();
-        drive.snapSmoothing();
     }
 
     // Land every smoothed control on its target immediately. The engine calls
