@@ -698,9 +698,20 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
         }
         else
         {
-            // Same mode: only the specific disabled subsystem's voice is stranded.
-            if (lastArpEnabled && !arpEnabled && vp.mode != SynthMode::Acid)
-                voices.allNotesOff();          // release the arp-triggered voice
+            // Same mode: only the specific subsystem whose routing moved is stranded.
+            // The arp toggle strands voices in BOTH directions, because noteOn and
+            // noteOff each pick their path from the CURRENT arpOn: enabling it while
+            // notes sound sends their key-ups to Arpeggiator::noteOff, which never
+            // reaches the poly voices that are actually sounding (measured -14.9 dB
+            // droning forever, with or without the sustain pedal), and disabling it
+            // strands the arp-triggered voice the same way. Either edge releases.
+            if (lastArpEnabled != arpEnabled && vp.mode != SynthMode::Acid)
+            {
+                voices.allNotesOff();
+                // The captured note-offs belong to the voices just released, and
+                // their routing has moved too — drop them like a mode switch does.
+                clearSustained();
+            }
             if (lastAcidSeqEnabled && !acidSeqEnabled)
                 acidVoice.noteOff();           // release the gated acid voice
         }

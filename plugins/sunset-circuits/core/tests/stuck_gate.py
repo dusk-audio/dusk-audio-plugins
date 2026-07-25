@@ -25,6 +25,17 @@ Scenarios (48k, 2x OS, 4 s, sustained patch ampS=1 ampR=0.3, no reverb/delay):
   f. panic+acid  : same for the Acid sequencer's latched root note, whose run gate
                    used to accept `latch` as a substitute for `held` and so kept
                    sequencing from the default C3 root after the panic.
+  g. arp on-edge : poly notes sounding, arp switched ON at 1.0 -> the voices must be
+                   released, not stranded. Note routing reads arpOn on EACH event,
+                   so the key-ups of notes started before the arp went on are
+                   delivered to the arpeggiator, which never sees those voices.
+
+Note: scenario (a) switches between two POLY modes (Cosmos 0 -> Oracle 1). A
+switch INTO Acid (mode 5) leaves the poly voice stuck in the allocator but
+INAUDIBLE (the Acid render branch bypasses the poly voices), so it cannot be
+measured at the output; a poly->poly switch is the reproduction that drones.
+Levels: this engine's sustained note tops out near -30..-37 dBFS RMS, so the
+thresholds are set with margin against measured reality (not an absolute -20).
 """
 import sys
 import numpy as np
@@ -123,6 +134,19 @@ def main():
           f"final {f_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if f_ok else 'FAIL'}")
     if not f_ok:
         fails.append("f")
+
+    # (g) arp switched ON while poly notes are sounding: the mirror of (b). The arp's
+    #     own held-set is empty (those keys went down before it was enabled), so the
+    #     correct result is silence -- the failure mode is the OLD voices droning on.
+    sr, x = render(0, 60, seconds, 2, "stuck_arp_on", arpRate=3, hold="64,67",
+                   setat="1.0:arpOn:1", **PATCH)
+    g_early = window_db(x, sr, 0.0, 0.9)
+    g_final = window_db(x, sr, seconds - 1.0, seconds)
+    g_ok = (g_early > LOUD_DB) and (g_final < SILENT_DB)
+    print(f"(g) arp on-edge : early {g_early:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"final {g_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if g_ok else 'FAIL'}")
+    if not g_ok:
+        fails.append("g")
 
     print(f"stuck_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
