@@ -14,6 +14,13 @@ Three engine-side holes cut a sounding voice mid-waveform:
       (6 -> 5 voices is +0.79 dB; the largest reachable step is 8 -> 4 or below at
       +3.01 dB, where the trim saturates at unity).
 
+      The fade is budgeted (VoiceAllocator::retireAbove): a retiring voice keeps
+      rendering, so only kMaxOscVoices/2 extra oscillator banks may fade at once,
+      loudest voices first. Beyond that a voice is still reset outright — by
+      construction the quietest one available, so the residual step is the smallest
+      there is. None of the scenarios below reach the cap (they retire one voice of
+      one sub-voice); cpu_bench "shrink" is where it is exercised and measured.
+
   (3) MODE SWITCH. The outgoing path (poly voices, or the mono acid voice) was
       released but never rendered again -- the render loop picks its branch from
       the NEW mode -- so the tail was dropped on the spot.
@@ -41,12 +48,22 @@ MEASUREMENT
     per-voice seeds, so the difference is EXACTLY the sixth voice: the one that
     gets retired.
 
+BUFFER SIZE
+    Anything the engine defers to a block boundary has to behave the same at every
+    buffer size, so the mode-switch rows run at 64, 512 and 4096 frames. This is
+    not decoration: the crossfade used to commit only at a boundary, which left the
+    voice path muted for (blockSize - fade) samples, and scenario (f) -- press a
+    key 50 ms after the switch -- read -24 dBFS at 64 and 512 frames but -178 dBFS
+    at 4096, because the note was routed to the outgoing mode and then wiped by the
+    commit. At 512 frames alone the hole is exactly zero samples and invisible.
+
 Scenarios (48 kHz, 2x OS, sustained patch, all FX off, switch at t = 1 s):
   a. poly shrink  : 6-note chord, unisonVoices 1 -> 3 (effectivePoly 6 -> 5)
-  b. poly -> acid : 6-note chord, mode 0 -> 5
-  c. acid -> poly : live acid note, mode 5 -> 0
+  b. poly -> acid : 6-note chord, mode 0 -> 5                    [64/512/4096]
+  c. acid -> poly : live acid note, mode 5 -> 0                  [64/512/4096]
   d. no starvation: after the shrink the freed slot is reusable (a new note sounds)
   e. no zombie    : a retired voice must not resume when the limit grows back
+  f. live key     : a note pressed 50 ms after a mode switch sounds [64/512/4096]
 
 Calibration: the pre-fix column is the same probe on the build immediately before
 these fixes landed (fe6ec66). Limits sit ~10 dB over the post-fix reading and
@@ -58,9 +75,11 @@ import numpy as np
 from _harness import render
 
 SR = 48000
-BLOCK = 512          # render_test's fixed block size
+BLOCK = 512          # render_test's default block size
+BLOCKS = (64, 512, 4096)   # buffer sizes the mode-switch rows are checked at
 SECONDS = 3.0
 SWITCH_T = 1.0
+KEY_T = 1.05         # scenario (f): key pressed this long after the switch
 HF_HZ = 4000.0
 WIN = 1440           # 30 ms analysis window
 QUIET_T = 0.5        # start of the reference window (steady, untouched signal)
@@ -91,7 +110,7 @@ CHORD = [52, 55, 59, 62, 64]     # + ROOT = six notes -> voices 0..5
 SILENT_DB = -60.0
 LOUD_DB = -45.0
 
-# label: (limit dB, pre-fix dB)
+# label: (limit dB, pre-fix dB at 512 frames)
 BURST_LIMIT = {
     "a": (8.0, 25.76),
     "b": (14.0, 39.97),
@@ -99,9 +118,15 @@ BURST_LIMIT = {
 }
 
 
-def switch_frame(t=SWITCH_T):
-    """Frame at which render_test applies a setat= scheduled at time t."""
-    return int(np.ceil(int(t * SR) / BLOCK) * BLOCK)
+def switch_frame(block=BLOCK, t=SWITCH_T):
+    """Frame at which render_test applies a setat= scheduled at time t.
+
+    Scheduled events fire on the first block starting at or after their time, so
+    this is block-quantised -- which is the detection latency the engine cannot
+    avoid without sample-accurate parameter events, and is why the analysis window
+    is placed relative to this frame rather than to t.
+    """
+    return int(np.ceil(int(t * SR) / block) * block)
 
 
 def out_of_band_db(sig, start):
@@ -164,19 +189,23 @@ def main():
     val = rms_db(d, SECONDS - 0.5, SECONDS)
     check("a", "retired voice gone", val, SILENT_DB, None, val < SILENT_DB)
 
-    # --- (b) mode switch poly -> acid -------------------------------------------
-    _, xb = render(0, ROOT, SECONDS, 2, "steal_mode_poly_acid",
-                   hold=held(CHORD), setat=f"{SWITCH_T}:mode:5", **POLY)
+    # --- (b) mode switch poly -> acid, at every buffer size ----------------------
     lim, pre = BURST_LIMIT["b"]
-    val = burst_db(xb, frame)
-    check("b", "poly -> acid", val, lim, pre, val <= lim)
+    for blk in BLOCKS:
+        _, xb = render(0, ROOT, SECONDS, 2, f"steal_mode_poly_acid_{blk}",
+                       hold=held(CHORD), setat=f"{SWITCH_T}:mode:5", block=blk, **POLY)
+        val = burst_db(xb, switch_frame(blk))
+        check("b", f"poly -> acid @{blk}", val, lim, pre if blk == BLOCK else None,
+              val <= lim)
 
-    # --- (c) mode switch acid -> poly -------------------------------------------
-    _, xc = render(5, ROOT, SECONDS, 2, "steal_mode_acid_poly",
-                   setat=f"{SWITCH_T}:mode:0", **ACID)
+    # --- (c) mode switch acid -> poly, at every buffer size ----------------------
     lim, pre = BURST_LIMIT["c"]
-    val = burst_db(xc, frame)
-    check("c", "acid -> poly", val, lim, pre, val <= lim)
+    for blk in BLOCKS:
+        _, xc = render(5, ROOT, SECONDS, 2, f"steal_mode_acid_poly_{blk}",
+                       setat=f"{SWITCH_T}:mode:0", block=blk, **ACID)
+        val = burst_db(xc, switch_frame(blk))
+        check("c", f"acid -> poly @{blk}", val, lim, pre if blk == BLOCK else None,
+              val <= lim)
 
     # --- (d) no starvation: the freed slot is reusable ---------------------------
     # Shrink at 1 s, release every key at 1.5 s, press a new note at 2 s. If a
@@ -188,15 +217,33 @@ def main():
     check("d", "new note sounds", val, LOUD_DB, None, val > LOUD_DB)
 
     # --- (e) no zombie: growing the limit back must not revive a retired voice ---
-    _, xe = render(0, ROOT, SECONDS, 2, "steal_zombie",
-                   hold=held(CHORD), release=1.5,
-                   setat=[f"{SWITCH_T}:unisonVoices:3", "2.0:unisonVoices:1"],
-                   **POLY)
-    val = rms_db(xe, 2.5, SECONDS)
+    # Keys stay DOWN for the whole render. A voice that were merely frozen above
+    # the limit rather than ended would still be in Sustain when the limit grows
+    # back at 2 s, and would resume for good. Measured on the 6-vs-5 difference so
+    # the reading is the retired voice alone, exactly as in (a) -- an earlier
+    # version released the keys at 1.5 s and measured 2.5-3.0 s, by which point
+    # even a revived voice had rung out, so it could not fail.
+    _, xe6 = render(0, ROOT, SECONDS, 2, "steal_zombie6", hold=held(CHORD),
+                    setat=[f"{SWITCH_T}:unisonVoices:3", "2.0:unisonVoices:1"], **POLY)
+    _, xe5 = render(0, ROOT, SECONDS, 2, "steal_zombie5", hold=held(CHORD[:-1]),
+                    setat=[f"{SWITCH_T}:unisonVoices:3", "2.0:unisonVoices:1"], **POLY)
+    val = rms_db(xe6 - xe5, 2.5, SECONDS)
     check("e", "no zombie", val, SILENT_DB, None, val < SILENT_DB)
 
+    # --- (f) a key pressed just after a mode switch must sound -------------------
+    # The mode-switch crossfade defers the switch; while it is in flight the engine
+    # is still rendering the OLD mode, and a note arriving then used to be routed to
+    # it, played at zero gain and wiped by the commit. Purely a buffer-size defect:
+    # the dead window is (blockSize - fade) samples, so 512 frames shows nothing.
+    for blk in BLOCKS:
+        _, xf = render(0, ROOT, SECONDS, 2, f"steal_key_after_switch_{blk}",
+                       hold=held(CHORD), setat=f"{SWITCH_T}:mode:1",
+                       noteon=f"{KEY_T}:72", block=blk, **POLY)
+        val = rms_db(xf, KEY_T + 0.1, 1.5)
+        check("f", f"live key @{blk}", val, LOUD_DB, None, val > LOUD_DB)
+
     print("\n(a-c are the broadband burst in dB over the same signal's own "
-          "out-of-band floor; d-e are dBFS RMS)")
+          "out-of-band floor; d-f are dBFS RMS)")
     print(f"steal_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
 
