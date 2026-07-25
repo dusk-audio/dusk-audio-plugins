@@ -411,7 +411,13 @@ public:
     {
         Event ev;
 
-        if (!enabled || (!held && !latch))
+        // Runs while a root note is HELD. `latch` is not an alternative to held:
+        // it is what KEEPS held true across a key-up (noteOff/reset both preserve
+        // it while latched), so testing it here made the pattern unstoppable —
+        // clearLatch() and retainHeld() clear `held`, and the old `|| latch` term
+        // then ran the sequencer anyway, from the default C3 root, straight through
+        // an All Notes Off (measured -16.6 dB still playing 1.5 s after the panic).
+        if (!enabled || !held)
         {
             if (notePlaying) { ev.noteOff = true; notePlaying = false; }
             currentStep = 0;

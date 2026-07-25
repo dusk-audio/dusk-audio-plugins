@@ -18,13 +18,13 @@ Scenarios (48k, 2x OS, 4 s, sustained patch ampS=1 ampR=0.3, no reverb/delay):
   c. control     : note held, no switch          -> final 1 s LOUD (not killed)
   d. latch-off   : latched arp chord, keys released at 0.5 s (LOUD mid, latch keeps
                    playing), setat 1.5:arpLatch:0 -> final 1 s silent (pattern stops)
-
-Note: scenario (a) switches between two POLY modes (Cosmos 0 -> Oracle 1). A
-switch INTO Acid (mode 5) leaves the poly voice stuck in the allocator but
-INAUDIBLE (the Acid render branch bypasses the poly voices), so it cannot be
-measured at the output; a poly->poly switch is the reproduction that drones.
-Levels: this engine's sustained note tops out near -30..-37 dBFS RMS, so the
-thresholds are set with margin against measured reality (not an absolute -20).
+  e. panic+latch : latched arp chord, keys released, allNotesOff (CC120/123) at 1.0
+                   -> final 1 s silent. An All Notes Off has to stop a LATCHED
+                   pattern too; reset()/clearLatch() both keep held notes while
+                   latch is on, so the arp used to play straight through the panic.
+  f. panic+acid  : same for the Acid sequencer's latched root note, whose run gate
+                   used to accept `latch` as a substitute for `held` and so kept
+                   sequencing from the default C3 root after the panic.
 """
 import sys
 import numpy as np
@@ -100,6 +100,29 @@ def main():
           f"final {d_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if d_ok else 'FAIL'}")
     if not d_ok:
         fails.append("d")
+
+    # (e) panic while the arp is LATCHED: keys released at 0.5 s (the latch keeps the
+    #     pattern running, proven by the LOUD mid window), allNotesOff at 1.0 s.
+    sr, x = render(0, 60, seconds, 2, "stuck_panic_arp", arpOn=1, arpRate=3, arpLatch=1,
+                   hold="64,67", release=0.5, panicat=1.0, **PATCH)
+    e_mid = window_db(x, sr, 0.6, 0.9)
+    e_final = window_db(x, sr, seconds - 1.0, seconds)
+    e_ok = (e_mid > LOUD_DB) and (e_final < SILENT_DB)
+    print(f"(e) panic+latch : mid {e_mid:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"final {e_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if e_ok else 'FAIL'}")
+    if not e_ok:
+        fails.append("e")
+
+    # (f) same for the Acid sequencer's latched root (mode 5, arpOn drives the seq).
+    sr, x = render(5, 40, seconds, 2, "stuck_panic_acid", arpOn=1, arpRate=3, arpLatch=1,
+                   release=0.5, panicat=1.0, **PATCH)
+    f_mid = window_db(x, sr, 0.6, 0.9)
+    f_final = window_db(x, sr, seconds - 1.0, seconds)
+    f_ok = (f_mid > LOUD_DB) and (f_final < SILENT_DB)
+    print(f"(f) panic+acid  : mid {f_mid:6.1f} dB (>{LOUD_DB:.0f}), "
+          f"final {f_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if f_ok else 'FAIL'}")
+    if not f_ok:
+        fails.append("f")
 
     print(f"stuck_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

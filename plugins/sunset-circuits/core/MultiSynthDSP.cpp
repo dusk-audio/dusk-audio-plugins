@@ -300,9 +300,18 @@ void MultiSynthDSP::allNotesOff() noexcept
     sustainDown = false;   // a panic that leaves the pedal down re-strands the next note
     clearSustained();
     voices.allNotesOff();
+    // Empty the arp / sequencer held-sets UNCONDITIONALLY. Both reset() and
+    // clearLatch() deliberately keep held notes while latch is engaged, so a panic
+    // with LATCH on left the pattern running (measured: arp -21.0 dB, acid seq
+    // -16.6 dB, 1.5 s after the panic, against -400 dB unlatched). retainHeld
+    // against an empty key mask is the one call that drops every held note whatever
+    // latch says, and it must come BEFORE the resets so the reset clears the
+    // step/note state of an already-empty sequencer.
+    arp.retainHeld(0, 0);
+    acidSeq.retainHeld(0, 0);
     arp.reset();
     acidVoice.noteOff();
-    acidSeq.noteOff(0); acidSeq.clearLatch(); acidSeq.reset();
+    acidSeq.reset();
     acidHeldCount = 0;
 }
 
