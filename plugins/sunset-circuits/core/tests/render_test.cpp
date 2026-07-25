@@ -56,6 +56,10 @@
 //                       the first block starting at/after <sec>. Repeatable.
 //   panicat=<sec>       call allNotesOff() (MIDI CC120/CC123) at this time.
 //                       Repeatable.
+//   polyat=<sec>:<note>:<0..1>
+//                       polyphonic key pressure (MIDI 0xA0) for one note.
+//                       Repeatable.
+//   chanat=<sec>:<0..1> channel pressure (MIDI 0xD0). Repeatable.
 
 #include "MultiSynthDSP.hpp"
 
@@ -215,6 +219,11 @@ int main(int argc, char** argv)
     std::vector<SchedPedal> schedPedal;
     std::vector<double>     schedPanic;
 
+    // Scheduled pressure messages: polyphonic key pressure (0xA0, note >= 0) and
+    // channel pressure (0xD0, note < 0).
+    struct SchedPressure { double time; int note; float value; };
+    std::vector<SchedPressure> schedPressure;
+
     // Scheduled song-position jumps (loopat=<sec>:<beats>) — loop wrap / seek.
     struct SchedLoop { double time; double beats; };
     std::vector<SchedLoop> schedLoops;
@@ -283,6 +292,45 @@ int main(int argc, char** argv)
                 return 1;
             }
             schedPedal.push_back({ t, d != 0 });
+            continue;
+        }
+        if (key == "polyat" || key == "chanat")
+        {
+            // polyat=<sec>:<note>:<0..1>   chanat=<sec>:<0..1>
+            const bool poly = (key == "polyat");
+            const auto c1 = val.find(':');
+            const auto c2 = (!poly || c1 == std::string::npos)
+                          ? std::string::npos : val.find(':', c1 + 1);
+            if (c1 == std::string::npos || (poly && c2 == std::string::npos))
+            {
+                std::fprintf(stderr, "bad %s (want %s): %s\n", key.c_str(),
+                             poly ? "<sec>:<note>:<0..1>" : "<sec>:<0..1>", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("pressure.time", val.substr(0, c1));
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad %s time: %g (want 0 <= t <= %g)\n", key.c_str(), t, seconds);
+                return 1;
+            }
+            int note = -1;
+            if (poly)
+            {
+                const long nnL = parseInt("polyat.note", val.substr(c1 + 1, c2 - c1 - 1));
+                if (nnL < 0 || nnL > 127)
+                {
+                    std::fprintf(stderr, "bad polyat note: %ld (want 0..127)\n", nnL);
+                    return 1;
+                }
+                note = (int)nnL;
+            }
+            const double v = parseNum("pressure.value", val.substr((poly ? c2 : c1) + 1));
+            if (!(v >= 0.0 && v <= 1.0))
+            {
+                std::fprintf(stderr, "bad %s value: %g (want 0..1)\n", key.c_str(), v);
+                return 1;
+            }
+            schedPressure.push_back({ t, note, (float)v });
             continue;
         }
         if (key == "panicat")
@@ -486,6 +534,7 @@ int main(int argc, char** argv)
     std::vector<char> schedNotifyDone(schedNotify.size(), 0);
     std::vector<char> schedPedalDone(schedPedal.size(), 0);
     std::vector<char> schedPanicDone(schedPanic.size(), 0);
+    std::vector<char> schedPressureDone(schedPressure.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
 
@@ -529,6 +578,20 @@ int main(int argc, char** argv)
             {
                 synth.sustainPedal(schedPedal[s].down);
                 schedPedalDone[s] = 1;
+            }
+        }
+
+        // Pressure messages (0xA0 per note / 0xD0 channel-wide).
+        for (size_t s = 0; s < schedPressure.size(); ++s)
+        {
+            if (schedPressureDone[s]) continue;
+            if (pos >= (int)(schedPressure[s].time * sampleRate))
+            {
+                if (schedPressure[s].note >= 0)
+                    synth.polyAftertouch(schedPressure[s].note, schedPressure[s].value);
+                else
+                    synth.aftertouch(schedPressure[s].value);
+                schedPressureDone[s] = 1;
             }
         }
 

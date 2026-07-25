@@ -281,6 +281,18 @@ void MultiSynthDSP::releaseSustained(uint64_t lo, uint64_t hi) noexcept
     if (last >= 0) routeNoteOff(last);
 }
 
+void MultiSynthDSP::polyAftertouch(int note, float v01) noexcept
+{
+    // Per-voice: the mod matrix reads max(channel, key) pressure inside the voice
+    // (Voice.hpp), so one Aftertouch routing serves both message types. Acid's mono
+    // engine has no matrix, so mode 5 is a no-op — and with the arp on, the sounding
+    // notes are the arp's transposed copies, which no incoming key number matches;
+    // both cases fall through as "no voice plays this note", which is the correct
+    // drop rather than a patch-wide jump.
+    if (note < 0 || note > 127) return;
+    voices.setPolyPressure(note, clamp01(v01));
+}
+
 void MultiSynthDSP::allNotesOff() noexcept
 {
     heldNotesLo.store(0, std::memory_order_relaxed);

@@ -207,6 +207,7 @@ public:
         }
         lfoRateMod1 = lfoRateMod2 = 0.0f;
         effectsMixMod = 0.0f;
+        polyPressure = 0.0f;
         retiring = false; retirePhase = 1.0f;
     }
 
@@ -215,6 +216,7 @@ public:
         currentNote = midiNote;
         currentVelocity = velocity;
         active = true;
+        polyPressure = 0.0f;   // a new note starts unpressed until 0xA0 says otherwise
         retiring = false; retirePhase = 1.0f;   // a re-used voice is no longer retiring
 
         const float targetFreq = midiToHz((float)midiNote);
@@ -303,6 +305,10 @@ public:
         ampEnv.noteOff(); filtEnv.noteOff();
         for (int u = 0; u < kMaxUnison; ++u) fm[u].noteOff();
     }
+    // Polyphonic key pressure for this voice (MIDI 0xA0). Not cleared on note-off:
+    // a key that was pressed hard keeps that pressure through its release tail,
+    // which is what the player heard while holding it. noteOn/reset zero it.
+    void setPolyPressure(float v01) noexcept { polyPressure = v01; }
     // Voice steal: release everything that shapes the outgoing note before the new
     // one is triggered on top. The FILTER envelope must release with the amp
     // envelope, not just alongside it: in legato mode noteOn() deliberately skips
@@ -705,7 +711,13 @@ private:
         state.setSourceValue(ModSource::LFO2, lfo2.processSample());
         state.setSourceValue(ModSource::Envelope2, filtEnv.getCurrentValue());
         state.setSourceValue(ModSource::ModWheel, params.modWheel);
-        state.setSourceValue(ModSource::Aftertouch, params.aftertouch);
+        // One Aftertouch source, fed by whichever pressure message is higher:
+        // params.aftertouch is CHANNEL pressure (0xD0, one value for the whole
+        // instrument), polyPressure is this voice's own key pressure (0xA0).
+        // max() rather than a sum keeps the source inside its 0..1 contract, and
+        // makes a controller that sends only one of the two behave identically.
+        state.setSourceValue(ModSource::Aftertouch,
+                             params.aftertouch > polyPressure ? params.aftertouch : polyPressure);
         state.setSourceValue(ModSource::Velocity, currentVelocity);
         state.setSourceValue(ModSource::KeyTracking, (float)(currentNote - 60) / 60.0f);
         state.setSourceValue(ModSource::Random, randomPerNote);
@@ -734,6 +746,7 @@ private:
     float baseLfo1Rate = 1.0f, baseLfo2Rate = 0.5f;
     float lfoRateMod1 = 0.0f, lfoRateMod2 = 0.0f;
     float effectsMixMod = 0.0f;
+    float polyPressure = 0.0f;     // per-note key pressure (MIDI 0xA0), see render loop
     int   prevUCount = 1; // detects the 1 -> >1 unison transition (C4b)
     bool  retiring = false;        // bounded fade-out in progress (see retire())
     float retirePhase = 1.0f;      // 1 -> 0 over kRetireSeconds
@@ -886,6 +899,15 @@ public:
     }
 
     void allNotesOff() noexcept { for (auto& v : voices) if (v.isActive()) v.noteOff(); }
+
+    // Polyphonic key pressure (MIDI 0xA0): applies to every voice currently playing
+    // `note` — unison stacks one note on one voice, but a re-pressed note can be
+    // sounding on two (the older one still releasing), and both are that key.
+    void setPolyPressure(int note, float v01) noexcept
+    {
+        for (auto& v : voices)
+            if (v.isActive() && v.getCurrentNote() == note) v.setPolyPressure(v01);
+    }
 
     SynthVoice* getVoice(int i) noexcept { return &voices[(size_t)i]; }
     int getPoly() const noexcept { return effectivePoly(); }

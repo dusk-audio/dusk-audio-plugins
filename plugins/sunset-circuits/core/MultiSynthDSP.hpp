@@ -154,6 +154,15 @@ public:
     void pitchBend(float norm) noexcept   { pitchBendNorm.store(clampf(norm, -1.0f, 1.0f), std::memory_order_relaxed); }
     void modWheel(float v01) noexcept     { modWheelValue.store(clamp01(v01), std::memory_order_relaxed); }
     void aftertouch(float v01) noexcept   { aftertouchValue.store(clamp01(v01), std::memory_order_relaxed); }
+    // Polyphonic key pressure (MIDI 0xA0). Applies to the VOICES currently playing
+    // `note`; the mod matrix sees max(channel pressure, this voice's key pressure)
+    // on the single Aftertouch source, so a patch routed from Aftertouch responds
+    // to either message without being wired twice. A message for a note no voice is
+    // playing is dropped (there is nothing per-note to apply it to) rather than
+    // being folded into channel pressure, which would move the whole patch.
+    // No-op in Acid mode, whose mono engine has no mod matrix (channel pressure is
+    // equally inert there).
+    void polyAftertouch(int note, float v01) noexcept;
     // Sustain pedal (MIDI CC64, >= 64 = down). While the pedal is down a note-off
     // is CAPTURED instead of released: the key-state mask clears immediately (the
     // key really is up) but the voice keeps sounding until the pedal is lifted.

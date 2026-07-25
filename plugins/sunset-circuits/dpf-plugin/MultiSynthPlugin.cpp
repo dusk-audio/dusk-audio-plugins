@@ -294,6 +294,10 @@ private:
         case 0x80: // note off (size >= 2 already guaranteed)
             dsp.noteOff(ev.data[1]);
             break;
+        case 0xA0: // polyphonic key pressure -> per-voice, same mod source as 0xD0
+            if (ev.size < 3) return; // need note + pressure
+            dsp.polyAftertouch(ev.data[1], (float)ev.data[2] / 127.0f);
+            break;
         case 0xB0: // control change
             if (ev.size < 3) return; // need controller + value
             if (ev.data[1] == 1)                         dsp.modWheel((float)ev.data[2] / 127.0f);
