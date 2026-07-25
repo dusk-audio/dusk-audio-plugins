@@ -24,6 +24,13 @@
 //   hold=n,n,n          extra held notes (played in addition to <midinote>);
 //                       useful for arpeggiator/chord tests
 //   sr=<hz>             sample rate (default 48000)
+//   block=<frames>      host buffer size (default 512, 1..16384). Scheduled
+//                       events still fire on the first block starting at/after
+//                       their time, so they land on a block boundary — which is
+//                       the point: anything the engine defers to a boundary
+//                       (parameter snapshots, mode switches) has to behave the
+//                       same at every buffer size, and this is the knob that
+//                       proves it.
 //   setat=<sec>:<name>:<value>
 //                       schedule a parameter change: at the first block that
 //                       starts at/after <sec>, call setParameter(name, value).
@@ -167,6 +174,7 @@ int main(int argc, char** argv)
     double songPosStart = 0.0;
     bool   haveSongPos = false;
     std::vector<int> holdNotes;
+    int    blockSize = 512;
 
     struct Override { int idx; float val; };
     std::vector<Override> overrides;
@@ -284,6 +292,17 @@ int main(int argc, char** argv)
         }
         if (key == "songpos")  { songPosStart = parseNum("songpos", val); haveSongPos = true; continue; }
         if (key == "sr")       { sampleRate = parseNum("sr", val); continue; }
+        if (key == "block")
+        {
+            const long b = parseInt("block", val);
+            if (b < 1 || b > 16384)
+            {
+                std::fprintf(stderr, "invalid block: %ld (want 1..16384)\n", b);
+                return 1;
+            }
+            blockSize = (int)b;
+            continue;
+        }
         if (key == "hold")
         {
             std::string s = val; size_t pos = 0;
@@ -351,7 +370,6 @@ int main(int argc, char** argv)
     }
 
     const int osIdx = (osFactor == 4) ? 2 : (osFactor == 2 ? 1 : 0);
-    const int blockSize = 512;
 
     msynth::MultiSynthDSP synth;
     synth.prepare(sampleRate, blockSize);
