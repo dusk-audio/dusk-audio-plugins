@@ -303,9 +303,12 @@ private:
         loadProgram(program);
         // Tell a same-process UI (which the host never notifies about a change the
         // plugin made to itself) that the program moved. Sequence counter in the
-        // high bits so repeats of the same program are still seen as edges.
-        midiProgramSignal.store(((midiProgramSignal.load(std::memory_order_relaxed) >> 8) + 1u) << 8
-                                | (uint32_t)program, std::memory_order_release);
+        // high 24 bits so repeats of the same program are still seen as edges; it
+        // skips 0 on wrap because a packed value of 0 means "no MIDI program change
+        // yet" (a wrap landing on program 0 would otherwise be swallowed).
+        uint32_t seq = ((midiProgramSignal.load(std::memory_order_relaxed) >> 8) + 1u) & 0xFFFFFFu;
+        if (seq == 0u) seq = 1u;
+        midiProgramSignal.store((seq << 8) | (uint32_t)program, std::memory_order_release);
     }
 
     // MIDI routing. CHANNEL POLICY: OMNI — every channel is played, the channel
