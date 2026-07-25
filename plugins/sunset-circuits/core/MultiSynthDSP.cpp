@@ -544,11 +544,19 @@ void MultiSynthDSP::snapshotParameters() noexcept
     // Filter section. The values written into vp above are this block's targets;
     // the render loop overwrites the vp fields with the glided values each host
     // sample, so every voice (and every oversampled sub-sample) sees the same
-    // smooth trajectory. Cutoff glides linearly in Hz — over 8 ms the difference
-    // from a log glide is inaudible and a per-sample exp() is not affordable.
-    setSmoothTarget(smCutoff,       vp.filterCutoff);
+    // smooth trajectory.
+    //
+    // The two cutoffs are smoothed in LOG2(Hz), not Hz. A one-pole on linear Hz
+    // is violently asymmetric because pitch is logarithmic: 12 kHz -> 200 Hz
+    // takes 32.6 ms just to come within an octave of the target, while
+    // 200 Hz -> 12 kHz crosses the entire low end in 0.14 ms. In log2 the glide
+    // takes the same time per octave in both directions, which is what the ear
+    // expects from a filter sweep. Cost is one exp2() per host sample per cutoff
+    // -- cheap next to the pow(2,x) the voice already runs per voice per
+    // oversampled sample for its envelope modulation.
+    setSmoothTarget(smCutoff,       std::log2(maxf(kMinSmoothHz, vp.filterCutoff)));
+    setSmoothTarget(smHPCutoff,     std::log2(maxf(kMinSmoothHz, vp.filterHPCutoff)));
     setSmoothTarget(smRes,          vp.filterResonance);
-    setSmoothTarget(smHPCutoff,     vp.filterHPCutoff);
     setSmoothTarget(smFilterEnvAmt, vp.filterEnvAmount);
 
     // Oscillator mix levels. These scale the summed oscillator output directly,
@@ -628,9 +636,9 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         // them into the shared snapshot the voices render from. Done for both the
         // poly and the acid path so the smoother state stays valid across a mode
         // switch (the acid voice takes its cutoff/res at snapshot time instead).
-        voiceParams.filterCutoff    = smCutoff.next();
+        voiceParams.filterCutoff    = std::exp2(smCutoff.next());   // smoothed in log2(Hz)
+        voiceParams.filterHPCutoff  = std::exp2(smHPCutoff.next()); // ...so sweeps are symmetric
         voiceParams.filterResonance = smRes.next();
-        voiceParams.filterHPCutoff  = smHPCutoff.next();
         voiceParams.filterEnvAmount = smFilterEnvAmt.next();
         voiceParams.osc1Level       = smOsc1Level.next();
         voiceParams.osc2Level       = smOsc2Level.next();
