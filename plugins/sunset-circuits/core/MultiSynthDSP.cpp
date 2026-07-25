@@ -828,7 +828,7 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
                 // state simply goes stale for the duration, which the first push
                 // after a switch back absorbs — a stale grid phase reads as one
                 // large slew step, and a large step is what clears the offset.
-                voices.setLFOSongBeat(songBeat, hostLocked);
+                voices.setLFOSongBeat(songBeat, beatsPerSample, hostLocked);
 
                 // Arp advances at host rate; triggers its own generated notes.
                 if (arpEnabled)

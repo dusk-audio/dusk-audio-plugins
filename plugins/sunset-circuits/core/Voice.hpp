@@ -370,10 +370,10 @@ public:
 
     // Host song position for the current HOST sample (see LFO::setSongBeat).
     // Pushed once per host sample, ahead of that sample's oversampled renders.
-    void setLFOSongBeat(double songBeat, bool hostLocked) noexcept
+    void setLFOSongBeat(double songBeat, double beatsPerHostSample, bool hostLocked) noexcept
     {
-        lfo1.setSongBeat(songBeat, hostLocked);
-        lfo2.setSongBeat(songBeat, hostLocked);
+        lfo1.setSongBeat(songBeat, beatsPerHostSample, hostLocked);
+        lfo2.setSongBeat(songBeat, beatsPerHostSample, hostLocked);
     }
 
     // Render one INTERNAL-rate stereo sample for this voice.
@@ -894,9 +894,9 @@ public:
     // slot is fed, not just the sounding ones: an idle voice has to be holding the
     // lock before it is handed a note, or its LFO would start off the grid and
     // slew onto it while the note is already audible.
-    void setLFOSongBeat(double songBeat, bool hostLocked) noexcept
+    void setLFOSongBeat(double songBeat, double beatsPerHostSample, bool hostLocked) noexcept
     {
-        for (auto& v : voices) v.setLFOSongBeat(songBeat, hostLocked);
+        for (auto& v : voices) v.setLFOSongBeat(songBeat, beatsPerHostSample, hostLocked);
     }
 
     // Render one INTERNAL-rate stereo sample summing all active voices. Also
