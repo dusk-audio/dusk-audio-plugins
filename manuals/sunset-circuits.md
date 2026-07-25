@@ -67,6 +67,23 @@ Loading a factory preset also sets the mode, because the mode is stored with the
 
 The full-width keyboard at the bottom is playable with the mouse and sends MIDI notes to the engine. The OCT- and OCT+ buttons at its left shift the played octave. Notes arriving from your DAW light up on the keyboard as they play. For real performance, drive the instrument from a MIDI controller or a piano roll; the on-screen keyboard is for quick auditioning.
 
+### MIDI implementation
+
+Sunset Circuits listens on **all MIDI channels** (omni), the usual convention for an instrument plugin, since your host already routes MIDI to the instrument per track.
+
+| Message | What it does |
+|---|---|
+| Note On / Note Off | Plays the instrument. A Note On with velocity 0 counts as a Note Off. |
+| Pitch Bend | Bends pitch over the range set by PB Range, and is available as a mod source. |
+| CC 1 (Mod Wheel) | Feeds the Mod Whl mod source. |
+| CC 64 (Sustain Pedal) | Holds notes after you release the keys, until you lift the pedal. |
+| Channel Pressure | Feeds the Aftertouch mod source for the whole instrument. |
+| Poly Key Pressure | Feeds the Aftertouch mod source for that one note's voice only. |
+| Program Change | Recalls a factory preset by number (0 to 53); higher numbers are ignored. |
+| CC 120 / CC 123 | All Sound Off / All Notes Off. Stops everything, including pedal-held notes, and releases the pedal. |
+
+The sustain pedal works in every mode. In Mono and Acid it holds the last note you played, and with the arpeggiator or the Acid sequencer running it holds the pattern's notes exactly as keeping the keys down would, so the pattern keeps playing until the pedal comes up.
+
 ## The Six Modes
 
 ### Cosmos: six-voice DCO poly
@@ -237,7 +254,7 @@ The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX*
 | LFO 1 / LFO 2 | The two low-frequency oscillators. |
 | Filt Env | The filter envelope. |
 | Mod Whl | The MIDI modulation wheel. |
-| Aftertouch | Channel aftertouch (pressure). |
+| Aftertouch | Key pressure. Channel pressure moves every voice; polyphonic key pressure moves only the voice playing that note. |
 | Velocity | Note-on velocity. |
 | Key Track | Note pitch across the keyboard. |
 | Random | A new random value per note. |
