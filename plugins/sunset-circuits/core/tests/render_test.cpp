@@ -21,6 +21,11 @@
 //                       harness acts as the DAW host: it calls setSongPosition
 //                       before each processBlock so the arp/acid/LFO clocks
 //                       phase-lock to the host grid. Unset = free-run (default).
+//   loopat=<sec>:<beats>
+//                       jump the song position back (or forward) to <beats> at
+//                       this time and carry on from there — a loop wrap or a
+//                       seek. Applied at the first block starting at/after <sec>.
+//                       Repeatable. Needs songpos= to have any effect.
 //   playat=<sec>        start the transport at this time instead of at frame 0:
 //                       until then the host reports "stopped" and parks the
 //                       playhead at songpos (a stopped DAW does not advance it),
@@ -200,6 +205,10 @@ int main(int argc, char** argv)
     // scheduled parameter writes of the same block, mirroring the shell.
     std::vector<double> schedNotify;
 
+    // Scheduled song-position jumps (loopat=<sec>:<beats>) — loop wrap / seek.
+    struct SchedLoop { double time; double beats; };
+    std::vector<SchedLoop> schedLoops;
+
     for (int a = 6; a < argc; ++a)
     {
         std::string kv = argv[a];
@@ -298,6 +307,25 @@ int main(int argc, char** argv)
             playing = (p != 0); continue;
         }
         if (key == "songpos")  { songPosStart = parseNum("songpos", val); haveSongPos = true; continue; }
+        if (key == "loopat")
+        {
+            // <sec>:<beats>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad loopat (want <sec>:<beats>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("loopat.time", val.substr(0, c1));
+            const double b = parseNum("loopat.beats", val.substr(c1 + 1));
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad loopat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                return 1;
+            }
+            schedLoops.push_back({ t, b });
+            continue;
+        }
         if (key == "playat")
         {
             playAtTime = parseNum("playat", val);
@@ -393,7 +421,9 @@ int main(int argc, char** argv)
     synth.setParameter(msynth::pMode, (float)mode);
     synth.setParameter(msynth::pOversampling, (float)osIdx);
     for (const auto& o : overrides) synth.setParameter(o.idx, o.val);
-    synth.setTempo(tempo, playing);
+    // Transport state as of frame 0, so the notes below are pressed against the
+    // same state the first block will render with (playat= means "stopped" here).
+    synth.setTempo(tempo, playing && playAtTime <= 0.0);
 
     // Trigger note(s). noteOn routes to the arp internally when arpOn is set.
     synth.noteOn(midiNote, vel);
@@ -409,6 +439,8 @@ int main(int argc, char** argv)
     std::vector<char> schedDone(scheduled.size(), 0);
     std::vector<char> schedNoteDone(schedNotes.size(), 0);
     std::vector<char> schedNotifyDone(schedNotify.size(), 0);
+    std::vector<char> schedLoopDone(schedLoops.size(), 0);
+    std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
 
     bool released = false;
     for (int pos = 0; pos < totalFrames; )
@@ -480,7 +512,30 @@ int main(int argc, char** argv)
         {
             const double rolled = (playAtTime < 0.0) ? tNow
                                                      : (nowPlaying ? tNow - playAtTime : 0.0);
-            synth.setSongPosition(songPosStart + rolled * tempo / 60.0, true);
+            double songBeat = songPosStart + rolled * tempo / 60.0;
+            // Loop wraps / seeks: each fired event shifts every later position by
+            // however far the playhead moved, so the timeline stays continuous on
+            // either side of the jump. The shift is referenced to the SCHEDULED
+            // jump time rather than the block boundary the event happens to fire
+            // on (same reasoning as playat=), so the modelled timeline is
+            // buffer-size independent even though the engine still sees the jump
+            // arrive on a boundary — which is the thing under test.
+            double applied = 0.0;
+            for (size_t s = 0; s < schedLoops.size(); ++s)
+            {
+                if (!schedLoopDone[s])
+                {
+                    if (pos < (int)(schedLoops[s].time * sampleRate)) continue;
+                    const double jumpT = schedLoops[s].time;
+                    const double rolledAtJump = (playAtTime < 0.0)
+                        ? jumpT : (jumpT > playAtTime ? jumpT - playAtTime : 0.0);
+                    schedLoopShift[s] = songPosStart + rolledAtJump * tempo / 60.0
+                                      - applied - schedLoops[s].beats;
+                    schedLoopDone[s] = 1;
+                }
+                applied += schedLoopShift[s];
+            }
+            synth.setSongPosition(songBeat - applied, true);
         }
 
         synth.processBlock(bufL.data(), bufR.data(), n);
