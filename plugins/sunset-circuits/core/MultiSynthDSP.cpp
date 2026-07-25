@@ -117,6 +117,7 @@ void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)
     cosmosChorus.prepare(hostRate, maxBlockSize);
     arp.prepare(hostRate);
     meterDecay = std::exp(-1.0f / (0.3f * (float)hostRate));
+    modeFadeStep = 1.0f / (float)(kModeFadeSeconds * hostRate);
     dcBlockL.setSampleRate(hostRate);
     dcBlockR.setSampleRate(hostRate);
     // Full voice init at the default internal rate; later factor changes use the
@@ -160,6 +161,8 @@ void MultiSynthDSP::reset()
     meterL = meterR = 0.0f;
     haveLastSnap = false;   // first snapshot after (re)prepare must not spuriously release
     haveWitness  = false;   // ...and must SNAP the smoothers, not glide up from stale state
+    modeSwitchPending = false;  // ...and must adopt the requested mode, not fade into it
+    modeFade = 1.0f;
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
     scopeCount.store(0, std::memory_order_relaxed);
@@ -176,8 +179,10 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
     if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
     // Keep voiceParams.mode current even for a frame-0 note that arrives before
     // the block's snapshot runs — the voice needs it to trigger the right osc
-    // section (Prism retriggers its 4 operator envelopes at note-on).
-    voiceParams.mode = (SynthMode)clampi((int)p(pMode), 0, 5);
+    // section (Prism retriggers its 4 operator envelopes at note-on). renderMode()
+    // rather than the raw parameter: while a mode-switch crossfade is in flight the
+    // engine is still rendering the OLD mode, and a note arriving now belongs to it.
+    voiceParams.mode = renderMode();
     if (p(pArpOn) > 0.5f) { arp.setEnabled(true); arp.noteOn(note, clampi((int)(velocity01 * 127.0f), 1, 127)); }
     else voices.noteOn(note, clamp01(velocity01), voiceParams);
 }
@@ -263,7 +268,33 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     const bool explicitSnap = pendingSnap.exchange(false, std::memory_order_acquire);
 
     VoiceParameters& vp = voiceParams;
-    vp.mode = (SynthMode)clampi((int)p(pMode), 0, 5);
+
+    // --- mode-switch crossfade (rationale in the header) ----------------------
+    // The requested mode is held off while the voice path fades out, and commits
+    // on the first block that starts with the fade at zero. Everything below this
+    // point derives from vp.mode, so holding it steady is all it takes to keep the
+    // outgoing engine intact and rendering for the length of the fade.
+    const SynthMode requestedMode = (SynthMode)clampi((int)p(pMode), 0, 5);
+    if (!haveLastSnap)
+    {
+        // First snapshot after prepare/reset: adopt outright, there is nothing
+        // sounding to fade and the host has already set the mode it wants.
+        activeMode = requestedMode;
+        modeSwitchPending = false;
+        modeFade = 1.0f;
+    }
+    else if (modeSwitchPending && modeFade <= 0.0f)
+    {
+        activeMode = requestedMode;     // muted: commit (cleanup runs further down)
+        modeSwitchPending = false;
+    }
+    else
+    {
+        // Starts a fade on a new request, and cancels one whose request was
+        // reverted before it finished.
+        modeSwitchPending = (requestedMode != activeMode);
+    }
+    vp.mode = activeMode;
 
     int modeVoices = 6;
     switch (vp.mode)
@@ -519,16 +550,23 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // sequencer, WHILE notes are held. The note-routing path then changes out
     // from under the sounding voice, so its key-up never reaches it and it drones
     // forever. Detect the transition here and release the stranded voice(s).
-    // Release (not hard-mute) so envelopes enter Release and tails ring out with
-    // no click. Browsing presets WITHIN the same mode is untouched — held notes
-    // stay seamless, which is the correct, desired behaviour.
+    // For an arp / sequencer disable that is a plain release, so envelopes enter
+    // Release and tails ring out with no click. Browsing presets WITHIN the same
+    // mode is untouched — held notes stay seamless, which is the correct, desired
+    // behaviour.
     if (haveLastSnap)
     {
         if (vp.mode != lastSnapMode)
         {
             // Mode changed: every note started under the old mode is unreachable.
-            voices.allNotesOff();
-            acidVoice.noteOff();
+            // This branch only runs on the block that COMMITS a mode switch, i.e.
+            // with the voice path already faded to zero gain, so the outgoing
+            // engines are RESET rather than released — releasing them would ring the
+            // old notes back IN behind the fade-in, rendered through the new mode's
+            // oscillator section. Their EFFECT tails are unaffected either way: the
+            // mode fade sits ahead of the effects chain.
+            voices.reset();
+            acidVoice.reset();
             acidHeldCount = 0;   // drop the live-acid held-note stack
             arp.clearLatch();    // drop latched held notes (else they re-trigger
             arp.reset();         // in the new mode and drone; reset() keeps them
@@ -752,6 +790,16 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         float sL = decimL.process(iL);
         float sR = decimR.process(iR);
         const float fxMod = fxAccum / (float)osFactor;
+
+        // Mode-switch crossfade (see snapshotParameters). Applied to the VOICE path
+        // only, ahead of the effects, so delay and reverb tails ring on through the
+        // transition instead of ducking with it. Smoothstep rather than the bare
+        // linear ramp so the fade has no slope corner at either end; it is exactly
+        // 1.0 — and so a bit-for-bit no-op — whenever no switch is in flight.
+        modeFade = clampf(modeFade + (modeSwitchPending ? -modeFadeStep : modeFadeStep),
+                          0.0f, 1.0f);
+        const float mf = modeFade * modeFade * (3.0f - 2.0f * modeFade);
+        sL *= mf; sR *= mf;
 
         constexpr float kVoiceGain = 0.7f;
         sL *= kVoiceGain; sR *= kVoiceGain;

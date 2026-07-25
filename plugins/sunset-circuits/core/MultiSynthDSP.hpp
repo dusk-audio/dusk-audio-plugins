@@ -283,10 +283,41 @@ private:
         if (smoothSnap) s.snap(v);
     }
 
+    // ======================= MODE-SWITCH CROSSFADE ============================
+    // A mode change swaps the whole voice path — oscillator section, filter model,
+    // voice budget, and for Acid the poly allocator is replaced by a mono engine on
+    // a different render branch. There is exactly ONE VoiceParameters snapshot, so
+    // the outgoing engine cannot be rendered once the new mode is in it: poly
+    // voices asked to render with mode == Acid return silence by contract
+    // (Voice.hpp), and a poly -> poly switch would ring the old note out through
+    // the new mode's oscillator section. A real outgoing tail would need a second
+    // parameter set and a second render branch — two engines side by side.
+    //
+    // The switch is DEFERRED instead. The requested mode is held off while the
+    // voice path fades out over kModeFadeSeconds; it commits on the first block
+    // that starts with the fade at zero, and the new mode fades back in. The
+    // outgoing note is faded rather than cut mid-waveform.
+    //
+    // activeMode is what the engine is actually RENDERING; it lags the parameter
+    // while a fade is in flight. Note routing has to follow it (a note arriving
+    // mid-fade belongs to the path that is still sounding), which is what
+    // renderMode() is for; before the first snapshot it has not been primed yet, so
+    // that case falls back to the parameter.
+    static constexpr float kModeFadeSeconds = 0.012f;
+    SynthMode renderMode() const noexcept
+    {
+        return haveLastSnap ? activeMode : (SynthMode)clampi((int)p(pMode), 0, 5);
+    }
+
+    SynthMode activeMode = SynthMode::Cosmos;
+    bool  modeSwitchPending = false;   // fading out, waiting to commit
+    float modeFade = 1.0f;             // voice-path gain, 0..1
+    float modeFadeStep = 1.0f;         // per host sample, set in prepare()
+
     // --- Acid mode (mode 5) helpers ---
     // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
     // AcidVoice + AcidSequencer replace the whole poly/arp path (mono).
-    bool  isAcidMode() const noexcept { return (int)p(pMode) == (int)SynthMode::Acid; }
+    bool  isAcidMode() const noexcept { return renderMode() == SynthMode::Acid; }
     void  acidNoteOn(int note, float velocity01) noexcept;
     void  acidNoteOff(int note) noexcept;
     // 100/127: MIDI velocity > 100 accents a live-played acid note (design doc).

@@ -17,8 +17,9 @@
 // oscillator bank; mode 4 (Prism) renders through a per-unison-sub-voice
 // FMVoiceEngine bank (FMEngine.hpp); mode 5 (Acid) is rendered by the engine's
 // dedicated mono AcidEngine path in MultiSynthDSP. Poly voices are not rendered
-// at all in Acid mode (note-off short-circuits to acidNoteOff, mode switches
-// clean up via voices.allNotesOff()), so the silentMode guard is defensive only.
+// at all in Acid mode (note-off short-circuits to acidNoteOff, and a mode switch
+// only commits with the voice path muted, where it resets the poly voices), so the
+// silentMode guard is defensive only.
 //
 // Prepared at the INTERNAL (oversampled) rate; renderInternalSample() is called
 // osFactor times per host sample by the engine, then decimated.
