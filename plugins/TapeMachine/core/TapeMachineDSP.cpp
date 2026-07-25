@@ -20,6 +20,7 @@ static constexpr float kParamTau = 0.0067f; // ~20 ms settle (wow / flutter / no
 static constexpr float kLinkedMatchTau = 0.05f; // ~150 ms settle for linked peak makeup
 static constexpr float kLinkedGuardSec = 0.25f; // prevent preset-transition overshoot
 static constexpr float kLinkedSlewReleaseSec = 0.05f;
+static constexpr float kLinkedDirectGuardDb = 3.0f; // catch abrupt jumps, not normal UI gestures
 
 //==============================================================================
 // Signal-level FR compensation (Phase B). The tape core's FR drifts with record
@@ -158,6 +159,7 @@ void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
     lastLinkedOutputL = lastLinkedOutputR = 0.0f;
     lastLinkedInputL = lastLinkedInputR = 0.0f;
     linkedTopologyKey = UINT32_MAX;
+    lastLinkedBatchRevision = pLinkedBatchRevision.load (std::memory_order_relaxed);
     {
         outGain.snap (pAutoComp.load (std::memory_order_relaxed)
                           ? -inGainDb  // gain link = exact inverse; stored Output is unlinked-only
@@ -275,6 +277,7 @@ void TapeMachineDSP::reset()
     lastLinkedOutputL = lastLinkedOutputR = 0.0f;
     lastLinkedInputL = lastLinkedInputR = 0.0f;
     linkedTopologyKey = UINT32_MAX;
+    lastLinkedBatchRevision = pLinkedBatchRevision.load (std::memory_order_relaxed);
     outPeakStateL = outPeakStateR = 0.0f;
     vuL.store (0.0f, std::memory_order_relaxed);
     vuR.store (0.0f, std::memory_order_relaxed);
@@ -358,6 +361,9 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     const auto signalPath = static_cast<TapeCore::SignalPath> (
         clampI (pSignalPath.load (std::memory_order_relaxed), 0, 3));
     const bool useRawInputPeak = hardBypass || signalPath == TapeCore::Thru;
+    const uint32_t linkedBatchRevision = pLinkedBatchRevision.load (std::memory_order_relaxed);
+    const bool linkedBatchStarted = linkedBatchRevision != lastLinkedBatchRevision;
+    lastLinkedBatchRevision = linkedBatchRevision;
     const uint32_t topologyKey =
         static_cast<uint32_t> (clampI (pMachine.load (std::memory_order_relaxed), 0, 1))
         | (static_cast<uint32_t> (clampI (pSpeed.load (std::memory_order_relaxed), 0, 3)) << 1u)
@@ -550,9 +556,15 @@ void TapeMachineDSP::processBlock (const float* const* inputs, float* const* out
     // the OUTPUT by ~+13 dB (audible pop over 0 dBFS on every large preset change).
     // The paired ramps therefore cannot create their own gain bulge; the post-tape linked
     // matcher below handles level changes produced by the nonlinear/model stages.
-    const bool largeLinkedGainStep =
-        gainLinked && std::abs (inputGainDb - lastLinkedInputGainDb) > 0.5f;
-    linkedTransition = linkedTransition || largeLinkedGainStep;
+    // A preset batch or an abrupt >3 dB Input Gain jump arms the hard guard. Normal
+    // sub-3 dB UI gesture updates keep the paired dB smoothers and the normal makeup
+    // smoother, avoiding repeated hard snaps and transition-only slew limiting.
+    const float linkedGainDeltaDb = std::abs (inputGainDb - lastLinkedInputGainDb);
+    const bool guardedLinkedGainStep =
+        gainLinked
+        && (linkedGainDeltaDb > kLinkedDirectGuardDb
+            || (linkedBatchStarted && linkedGainDeltaDb > 0.5f));
+    linkedTransition = linkedTransition || guardedLinkedGainStep;
     if (linkedTransition)
     {
         linkedMakeupDb.snap (0.0f);

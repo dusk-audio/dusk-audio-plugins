@@ -2046,7 +2046,14 @@ public:
     void processBlock (const float* const* inputs, float* const* outputs, int nCh, int nSamples) noexcept;
     int  latencySamples() const noexcept;
 
-    void setTapeMachine (int idx)  noexcept { pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed); }
+    void setTapeMachine (int idx)  noexcept
+    {
+        pMachine.store (clampI (idx, 0, 1), std::memory_order_relaxed);
+        // Factory and user preset application writes Machine first, even when its value is
+        // unchanged. Keep that signal separate from a lone Input Gain gesture so a preset
+        // recall can arm the large-gain transition guard without classifying knob motion.
+        pLinkedBatchRevision.fetch_add (1u, std::memory_order_relaxed);
+    }
     void setTapeSpeed   (int idx)  noexcept { pSpeed.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setTapeType    (int idx)  noexcept { pType.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
     void setSignalPath  (int idx)  noexcept { pSignalPath.store (clampI (idx, 0, 3), std::memory_order_relaxed); }
@@ -2128,6 +2135,7 @@ private:
     std::atomic<float> pProgHmfTrim{0.0f}, pProgHfTrim{0.0f};   // hidden program-band above-anchor HF trims (Phase C)
     std::atomic<float> pProgLfTrim{0.0f};                        // hidden program-band deep-sub bloom (EAR-GREEN)
     std::atomic<float> pLpQ{0.707f};        // lowpass SVF resonance (hidden preset data; 0.707 = the historic fixed Q)
+    std::atomic<uint32_t> pLinkedBatchRevision{0u};
     std::atomic<bool>  pAutoCal{true}, pNoiseEnabled{false}, pAutoComp{true}, pBypass{false};
     // American front-panel toggles — default On = the state the American tuning captured.
     std::atomic<bool>  pCrosstalk{true}, pWowFlutterOn{true}, pTransformer{true};
@@ -2160,6 +2168,7 @@ private:
     float lastLinkedInputL = 0.0f, lastLinkedInputR = 0.0f;
     std::vector<float> linkedSlewLimitArr;
     uint32_t linkedTopologyKey = UINT32_MAX;
+    uint32_t lastLinkedBatchRevision = 0u;
     SmoothedValue smSat, smWow, smFlutter, smNoise, smBias;
 
     bool bypassLowpass = true;
