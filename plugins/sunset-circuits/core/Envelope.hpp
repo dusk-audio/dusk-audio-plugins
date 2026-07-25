@@ -3,8 +3,8 @@
 // Envelope.hpp — phase-based ADSR (4 curve shapes) and multi-shape LFO.
 //
 // Framework-free port of the envelope/LFO classes from the JUCE ModMatrix.h.
-// Curves, stage logic, fade-in, one-shot and retrigger are all carried over
-// verbatim; juce::Random is replaced by the SynthCommon xorshift PRNG. Both are
+// Curves, stage logic, fade-in and retrigger are all carried over verbatim;
+// juce::Random is replaced by the SynthCommon xorshift PRNG. Both are
 // prepared at the INTERNAL (oversampled) rate so attack/decay/release and LFO
 // rate stay correct at every oversampling factor.
 
@@ -168,7 +168,6 @@ public:
     void setRate(float rateHz) noexcept   { rate = rateHz; }
     void setShape(LFOShape s) noexcept    { shape = s; }
     void setFadeIn(float seconds) noexcept { fadeInTime = maxf(0.0f, seconds); }
-    void setOneShot(bool enabled) noexcept { oneShot = enabled; }
     void setTempoSync(bool enabled) noexcept { tempoSync = enabled; }
     void seed(uint32_t s) noexcept { rng.seed(s); }
 
@@ -176,15 +175,11 @@ public:
     {
         phase = 0.0f;
         fadeInPhase = 0.0f;
-        completed = false;
         smoothTarget = randomValue();
     }
 
     float processSample() noexcept
     {
-        if (oneShot && completed)
-            return 0.0f;
-
         const float dt = rate / sr;
         float raw = 0.0f;
 
@@ -214,10 +209,7 @@ public:
 
         phase += dt;
         if (phase >= 1.0f)
-        {
             phase -= 1.0f;
-            if (oneShot) completed = true;
-        }
 
         float fadeGain = 1.0f;
         if (fadeInTime > 0.0f && fadeInPhase < 1.0f)
@@ -230,7 +222,7 @@ public:
         return raw * fadeGain;
     }
 
-    void reset() noexcept { phase = 0.0f; fadeInPhase = 1.0f; completed = false; currentSHValue = 0.0f; currentSmoothValue = 0.0f; }
+    void reset() noexcept { phase = 0.0f; fadeInPhase = 1.0f; currentSHValue = 0.0f; currentSmoothValue = 0.0f; }
 
 private:
     float randomValue() noexcept { return rng.nextBipolar(); }
@@ -240,9 +232,7 @@ private:
     float phase = 0.0f;
     float fadeInTime = 0.0f;
     float fadeInPhase = 1.0f; // 1 = fully faded in
-    bool  oneShot = false;
     bool  tempoSync = false;
-    bool  completed = false;
     LFOShape shape = LFOShape::Sine;
     float currentSHValue = 0.0f;
     float smoothTarget = 0.0f;

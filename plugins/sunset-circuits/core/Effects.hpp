@@ -93,14 +93,13 @@ public:
     void setRate(float r) noexcept { rate = clampf(r, 0.1f, 10.0f); }
     void setDepth(float d) noexcept { depth = clampf(d, 0.0f, 1.0f); }
     void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); }
-    void setStereo(bool s) noexcept { stereo = s; }
 
     void process(float& left, float& right) noexcept
     {
         if (!enabled) return;
         const float dryL = left, dryR = right;
         const float lfoL = std::sin(lfoPhase * kTwoPi);
-        const float lfoR = stereo ? std::sin((lfoPhase + 0.5f) * kTwoPi) : lfoL;
+        const float lfoR = std::sin((lfoPhase + 0.5f) * kTwoPi);
         const float baseDelay = sr * 0.007f;
         const float modRange  = sr * 0.003f * depth;
         const float delayL = baseDelay + lfoL * modRange;
@@ -138,7 +137,7 @@ private:
     }
 
     float sr = 44100.0f;
-    bool  enabled = false, stereo = true;
+    bool  enabled = false;
     float rate = 0.8f, depth = 0.5f, mix = 0.5f;
     std::vector<float> bufL, bufR;
     int bufSize = 1, writePos = 0;

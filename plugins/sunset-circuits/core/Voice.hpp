@@ -13,10 +13,12 @@
 //      (EffectsMix is consumed at engine level);
 //   #10 member xorshift PRNG (drift / per-note random), NaN guards kept.
 //
-// The oscillator section is a plain per-mode switch so Phase 2 can slot an
-// alternative engine (FMEngine / AcidEngine) per voice; modes 4/5 (Prism/Acid)
-// are safe stubs that render silence for now. TODO(Phase 2): dispatch modes
-// 4/5 to FMEngine.hpp / AcidEngine.hpp.
+// The oscillator section is a plain per-mode switch. Modes 0-3 use the analog
+// oscillator bank; mode 4 (Prism) renders through a per-unison-sub-voice
+// FMVoiceEngine bank (FMEngine.hpp); mode 5 (Acid) is rendered by the engine's
+// dedicated mono AcidEngine path in MultiSynthDSP. Poly voices are not rendered
+// at all in Acid mode (note-off short-circuits to acidNoteOff, mode switches
+// clean up via voices.allNotesOff()), so the silentMode guard is defensive only.
 //
 // Prepared at the INTERNAL (oversampled) rate; renderInternalSample() is called
 // osFactor times per host sample by the engine, then decimated.
@@ -39,8 +41,8 @@ enum class SynthMode
     Oracle,     // 5-voice poly, poly-mod
     Mono,       // mono, sub + ring + sync
     Modular,    // duophonic, 3 osc + S&H + spring
-    Prism,      // 4-op FM (Phase 2 stub)
-    Acid        // acid bass + sequencer (Phase 2 stub)
+    Prism,      // 4-op FM (FMEngine.hpp, one op bank per unison sub-voice)
+    Acid        // acid bass + sequencer (AcidEngine.hpp, engine-level mono path)
 };
 
 static constexpr int kMaxPolyphony   = 8;

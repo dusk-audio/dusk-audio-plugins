@@ -74,8 +74,6 @@ const ParamDef kParamDefs[] = {
     // --- Acid globals (per-step seqPitch/Accent/Slide resolved by prefix below) ---
     { pAcidAccentAmt, "acidAccentAmt", 0.7f }, { pAcidSlideTime, "acidSlideTime", 60.0f },
 };
-
-char stepScratch[8]; // not thread-shared: only used at construction / lookup
 } // namespace
 
 int MultiSynthDSP::paramIndexForName(const char* name) noexcept
@@ -107,7 +105,6 @@ MultiSynthDSP::MultiSynthDSP()
     for (const auto& d : kParamDefs) params[(size_t)d.idx].store(d.def, std::memory_order_relaxed);
     for (int i = 0; i < 16; ++i) params[(size_t)(pArpStep0 + i)].store(1.0f, std::memory_order_relaxed); // steps on
     vintageRng.seed(0xBEEF1234u);
-    (void)stepScratch;
 }
 
 void MultiSynthDSP::prepare(double sampleRate, int maxBlockSize)

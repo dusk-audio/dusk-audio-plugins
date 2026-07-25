@@ -152,7 +152,6 @@ public:
     {
         op[idx(i)].env.setParameters(a, d, s, r);
     }
-    void setOpCurve(int i, EnvelopeCurve c) noexcept { op[idx(i)].env.setCurve(c); }
 
     // Op-4 self-feedback amount, 0..1.
     void setFeedback(float fb) noexcept { feedback = clampf(fb, 0.0f, 1.0f); }

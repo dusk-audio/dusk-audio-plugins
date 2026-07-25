@@ -8,8 +8,9 @@
 // mode voicings are unchanged. Hardware model names are described generically
 // (no third-party trademarks). Prepared at the internal (oversampled) rate.
 //
-// Phase 2 will add a 3-pole diode-ladder AcidFilter tuning here for the Acid
-// mode; Phase 1 ships the four LP models used by modes 0-3.
+// Scope: the four LP models used by modes 0-3 (plus mode 4/Prism, which borrows
+// the clean Cosmos LPF). The Acid mode's 3-pole diode-ladder filter is not here
+// — it lives in AcidEngine.hpp, coupled to that voice's envelope/accent path.
 
 #pragma once
 
