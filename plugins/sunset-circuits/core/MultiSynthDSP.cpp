@@ -532,6 +532,15 @@ void MultiSynthDSP::snapshotParameters() noexcept
     setSmoothTarget(smPanL,  std::cos(panAngle));
     setSmoothTarget(smPanR,  std::sin(panAngle));
     setSmoothTarget(smWidth, 2.0f * stereoWidth);
+
+    // Filter section. The values written into vp above are this block's targets;
+    // the render loop overwrites the vp fields with the glided values each host
+    // sample, so every voice (and every oversampled sub-sample) sees the same
+    // smooth trajectory. Cutoff glides linearly in Hz — over 8 ms the difference
+    // from a log glide is inaudible and a per-sample exp() is not affordable.
+    setSmoothTarget(smCutoff,   vp.filterCutoff);
+    setSmoothTarget(smRes,      vp.filterResonance);
+    setSmoothTarget(smHPCutoff, vp.filterHPCutoff);
 }
 
 //==============================================================================
@@ -593,6 +602,14 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
 
     for (int i = 0; i < nSamples; ++i)
     {
+        // Advance the voice-parameter smoothers once per HOST sample and publish
+        // them into the shared snapshot the voices render from. Done for both the
+        // poly and the acid path so the smoother state stays valid across a mode
+        // switch (the acid voice takes its cutoff/res at snapshot time instead).
+        voiceParams.filterCutoff    = smCutoff.next();
+        voiceParams.filterResonance = smRes.next();
+        voiceParams.filterHPCutoff  = smHPCutoff.next();
+
         // Render osFactor internal samples, then decimate to host rate (fix #1).
         float iL[4], iR[4];
         float fxAccum = 0.0f;
