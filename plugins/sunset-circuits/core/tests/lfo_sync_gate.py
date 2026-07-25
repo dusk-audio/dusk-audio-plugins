@@ -18,6 +18,9 @@ millisecond off the analytic envelope of a 1 kHz carrier.
 
 Cases:
   [grid]     120 BPM, synced 1/4: every cycle start after bar 1 is on a beat.
+             Rendered from a song position that is NOT a whole beat, because
+             from beat 0 a free-running LFO started at frame 0 sits on the grid
+             by coincidence and the case passes without any lock at all.
   [repeat]   two renders whose song position starts at different offsets land on
              the SAME phase once locked (the reproducibility the derivation
              buys); the sync-off control shows the same measurement telling the
@@ -26,6 +29,16 @@ Cases:
              the grid: the phase must SLEW onto the grid (no step in the
              modulation -- a step is a click on every route it feeds) and be on
              the grid within the bar.
+  [rate]     the rate knob moves under lock, 400 beats into the song. The grid
+             it derives from is discontinuous in the cycle length by an amount
+             that grows with the song position, so this is the one edge that
+             steps the phase full-scale if the new grid is adopted rather than
+             slewed onto.
+  [loop]     a loop wrap onto a NON-whole number of cycles. Here the phase is
+             meant to jump -- following the host is the point, and re-anchoring
+             is what keeps the loop reproducible -- so this one is measured as a
+             click: energy well above the carrier, which a step in the amplitude
+             modulation sprays and a crossfaded re-anchor does not.
 """
 import sys
 import numpy as np
@@ -116,13 +129,14 @@ def grid_residual_beats(times, song_offset):
 
 def case_grid():
     """Cycle starts land on the host beat grid after bar 1."""
+    OFFSET = 0.37   # off-beat start: a free-running LFO cannot pass by accident
     sr, x = render(0, 84, 4.0, 2, "lfo_sync_grid", tempo=BPM, playing=1,
-                   songpos=0.0, **PATCH)
+                   songpos=OFFSET, **PATCH)
     starts = cycle_starts(envelope(x[:, 0]), sr, t_from=2.0)   # after bar 1 (4/4)
     if len(starts) < 3:
         print(f"[grid]    FAIL (only {len(starts)} cycle starts found after bar 1)")
         return False
-    dev_s = np.abs(grid_residual_beats(starts, 0.0)) * BEAT_S
+    dev_s = np.abs(grid_residual_beats(starts, OFFSET)) * BEAT_S
     worst = float(np.max(dev_s))
     ok = worst <= GRID_TOL_S
     print(f"[grid]    {len(starts)} cycle starts after bar 1, worst off-grid "
@@ -161,26 +175,30 @@ def case_repeat():
     return ok
 
 
+def step_vs_nominal(env, sr, t_event, ref_from, ref_to):
+    """(largest 5 ms envelope change around t_event, 99th pct of the same before).
+
+    Measured on the de-rippled envelope: raw carrier-period ripple is 10x the
+    LFO's own slope and would swamp the comparison. Nominal is the LFO's own
+    slope; a slew is allowed up to 2x nominal rate by construction, a phase SNAP
+    is an order out -- up to full scale inside one sample.
+    """
+    w = int(0.0025 * sr)
+    sm = boxcar(env, sr, SMOOTH_S)
+    slope = np.abs(sm[2 * w:] - sm[:-2 * w])
+    t = (np.arange(len(slope)) + w) / sr
+    ref = slope[(t > ref_from) & (t < ref_to)]
+    near = slope[(t > t_event - 0.05) & (t < t_event + 0.05)]
+    return float(np.max(near)), float(np.percentile(ref, 99.0))
+
+
 def case_acquire():
     """Transport starts mid-note: slew onto the grid, no step in the modulation."""
     PLAY_AT = 1.13   # free phase at lock = frac(2*1.13) = 0.26 cycles off the grid
     sr, x = render(0, 84, 6.0, 2, "lfo_sync_acquire", tempo=BPM, playing=1,
                    songpos=0.0, playat=PLAY_AT, **PATCH)
     env = envelope(x[:, 0])
-
-    # Continuity: envelope change across a 5 ms window, measured on the
-    # de-rippled envelope (raw carrier-period ripple is 10x the LFO's own slope
-    # and would swamp the comparison). Nominal is the LFO's own slope; the slew
-    # is allowed up to 2x nominal rate by construction, a phase SNAP is an order
-    # out -- up to full scale inside one sample.
-    w = int(0.0025 * sr)
-    sm = boxcar(env, sr, SMOOTH_S)
-    slope = np.abs(sm[2 * w:] - sm[:-2 * w])
-    t = (np.arange(len(slope)) + w) / sr
-    free = slope[(t > 0.2) & (t < PLAY_AT - 0.05)]
-    near = slope[(t > PLAY_AT - 0.05) & (t < PLAY_AT + 0.05)]
-    nominal = float(np.percentile(free, 99.0))
-    jump = float(np.max(near))
+    jump, nominal = step_vs_nominal(env, sr, PLAY_AT, 0.2, PLAY_AT - 0.05)
     cont_ok = jump <= 3.0 * nominal
 
     # And it must actually be on the grid a bar later. Song position is 0 at the
@@ -201,10 +219,109 @@ def case_acquire():
     return ok
 
 
+def click_vs_floor(x, sr, t_event, ref_from, ref_to):
+    """(peak HF energy around t_event, 99th pct of the same in a reference span).
+
+    A step in the amplitude modulation of a 1 kHz carrier sprays energy across
+    the whole spectrum; a glide of any length does not. So its short-window RMS
+    well above the carrier is a click detector.
+
+    The band starts at 12 kHz, not just above the carrier: the voice's own
+    harmonic distortion runs to -26 dBc at 4-8 kHz and, being amplitude
+    modulated along with everything else, would swamp the artifact. Above the
+    patch's 12 kHz filter cutoff it is gone -- while an amplitude step is applied
+    POST-filter (Voice.hpp) and is not attenuated at all.
+    """
+    n = len(x)
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(n, 1.0 / sr)
+    X[f < 12000.0] = 0.0
+    hf = np.fft.irfft(X, n)
+    w = max(1, int(0.002 * sr))
+    e = np.sqrt(boxcar(hf * hf, sr, 0.002))
+    t = np.arange(len(e)) / sr
+    near = e[(t > t_event - 0.02) & (t < t_event + 0.02)]
+    ref = e[(t > ref_from) & (t < ref_to)]
+    return float(np.max(near)), float(np.percentile(ref, 99.0))
+
+
+def case_rate():
+    """The rate knob moves under lock, deep into the song: glide, do not step.
+
+    Swept over several targets rather than measured at one: how far the derived
+    grid moves for a given rate change is frac(songBeat/newCycle) against
+    frac(songBeat/oldCycle), which for any single target can land near zero by
+    coincidence (2.3 Hz here shifts the grid only 0.04 cycles and would pass
+    unfixed). Across the sweep the worst target shifts it nearly half a cycle.
+    """
+    SONGPOS = 400.37   # the grid shift on a rate change scales with this
+    CHANGE_AT = 3.0
+    worst_ratio, worst_rate = 0.0, 0.0
+    for i, new_rate in enumerate((2.11, 2.15, 2.53)):
+        sr, x = render(0, 84, 4.0, 2, f"lfo_sync_rate{i}", tempo=BPM, playing=1,
+                       songpos=SONGPOS, setat=[f"{CHANGE_AT}:lfo1Rate:{new_rate}"],
+                       **PATCH)
+        jump, nominal = step_vs_nominal(envelope(x[:, 0]), sr, CHANGE_AT,
+                                        0.5, CHANGE_AT - 0.05)
+        ratio = jump / max(nominal, 1e-12)
+        if ratio > worst_ratio:
+            worst_ratio, worst_rate = ratio, new_rate
+    ok = worst_ratio <= 3.0
+    print(f"[rate]    rate moves under lock at song beat "
+          f"{SONGPOS + CHANGE_AT * BPM / 60.0:.2f}: worst of 3 targets is "
+          f"{worst_rate} Hz at {worst_ratio:.2f}x nominal envelope step "
+          f"(limit 3x)  {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+def case_loop():
+    """Loop wrap onto a non-whole number of cycles: re-anchor without a click.
+
+    Rendered with a SINE LFO, not the triangle the other cases use: the triangle
+    corner at each cycle start is itself a derivative discontinuity in the
+    amplitude, and its broadband spray sits only a factor of two below the click
+    being looked for. 1 + sin is smooth everywhere, so the only wideband energy
+    in the render is the artifact under test. Its amplitude dip is at phase 0.75
+    instead of 0, which the grid residual accounts for.
+    """
+    LOOP_AT = 3.0
+    LOOP_TO = 0.37    # 6.0 -> 0.37 beats: 5.63 beats back, .63 of a cycle out
+    DIP_PHASE = 0.75  # 1 + sin(2*pi*phase) is zero here
+    sr, x = render(0, 84, 6.0, 2, "lfo_sync_loop", tempo=BPM, playing=1,
+                   songpos=0.0, loopat=[f"{LOOP_AT}:{LOOP_TO}"],
+                   **{**PATCH, "lfo1Shape": 0})
+    click, floor = click_vs_floor(x[:, 0], sr, LOOP_AT, 0.5, LOOP_AT - 0.05)
+    click_ok = click <= 3.0 * floor
+
+    # The phase must actually be on the NEW grid straight after the wrap (a hard
+    # re-anchor, not a slew) -- that is what makes a loop reproduce.
+    starts = cycle_starts(envelope(x[:, 0]), sr, t_from=LOOP_AT + 0.1)
+    if len(starts) < 3:
+        print(f"[loop]    FAIL (only {len(starts)} cycle starts after the wrap)")
+        return False
+    worst = float(np.max(np.abs(
+        grid_residual_beats(starts - LOOP_AT, LOOP_TO - DIP_PHASE)))) * BEAT_S
+    grid_ok = worst <= GRID_TOL_S
+
+    ok = click_ok and grid_ok
+    print(f"[loop]    wrap to beat {LOOP_TO}: HF click {click:.2e} vs {floor:.2e} "
+          f"floor ({click / max(floor, 1e-20):.2f}x, limit 3x)  post-wrap worst "
+          f"off-grid {worst * 1000:.2f} ms  {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 def main():
-    ok = case_grid()
-    ok = case_repeat() and ok
-    ok = case_acquire() and ok
+    try:
+        ok = case_grid()
+        ok = case_repeat() and ok
+        ok = case_acquire() and ok
+        ok = case_rate() and ok
+        ok = case_loop() and ok
+    except RuntimeError as e:
+        # A stale render_test (built before playat=/setat= keys existed) exits
+        # nonzero; report it as a gate failure rather than a traceback.
+        print(f"lfo_sync_gate: FAIL (render harness error: {e})")
+        sys.exit(1)
     print(f"lfo_sync_gate: {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)
 
