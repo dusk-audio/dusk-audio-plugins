@@ -27,8 +27,9 @@
 #   * Velocity curve. Nothing asserts the velocity-to-level (or velocity-to-
 #     anything) mapping, so a curve inversion or a dead top/bottom would pass.
 #
-# Deliberately not written here: the brief that added the CI wiring scoped these
-# out. If you are adding a gate, add it to the loop below and delete its bullet.
+# These are known omissions, not oversights -- they were scoped out of the work
+# that wired this suite into CI. If you are adding one of these gates, add it to
+# the loop below and delete its bullet.
 # ---------------------------------------------------------------------------
 set -e
 cd "$(dirname "$0")"
