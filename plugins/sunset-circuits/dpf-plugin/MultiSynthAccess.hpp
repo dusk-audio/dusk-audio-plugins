@@ -25,7 +25,10 @@ DUSK_ACCESS_DECL(float, multiSynthGetOutLevelL);
 DUSK_ACCESS_DECL(float, multiSynthGetOutLevelR);
 // Current arpeggiator / acid-sequencer step (0..15), -1 when idle.
 DUSK_ACCESS_DECL(int,   multiSynthGetArpStep);
-// Live DSP instance for the scope ring buffer (read-only). Null in split LV2 UI.
+// Live DSP instance, used by the UI for the scope ring buffer (read + performance-
+// wheel writes: the UI's on-screen pitch-bend / mod-wheel controls call the same
+// dsp.pitchBend()/modWheel() setters the MIDI path uses, which are relaxed atomic
+// stores and therefore safe from the UI thread). Null in a split LV2 UI.
 DUSK_ACCESS_DECL(msynth::MultiSynthDSP*, multiSynthGetDSP);
 // Packed (sequence << 8 | program) for a MIDI program change (0xC0) the PLUGIN
 // applied to itself. DPF has no plugin->host parameter notification, so a preset
