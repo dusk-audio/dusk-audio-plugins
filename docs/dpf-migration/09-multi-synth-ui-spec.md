@@ -708,10 +708,18 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 ### 8.7 Keyboard widget (playable, → MIDI)
 - Draw 21 white keys then black keys on top (§1.5). Track `heldKey` (mouse). On
   `InvisibleButton` press over a key: compute `note = baseMidi + keyIndexToSemitone(i)`;
-  `UI::sendNote(0, note, 100)` (DPF, requires `DISTRHO_PLUGIN_WANT_MIDI_INPUT` — this is
+  `UI::sendNote(0, note, vel)` (DPF, requires `DISTRHO_PLUGIN_WANT_MIDI_INPUT` — this is
   the fleet's first synth, so the shell sets it). On release / drag-off: `sendNote(0,
   prevNote, 0)`. **Glissando**: while dragging, if the hovered key changes, note-off the
   old and note-on the new.
+- **Velocity from strike position** (`velFromY`): the click's Y within the key rect maps
+  linearly to **30..120** — top edge soft, bottom edge hard. Each key normalizes against
+  its OWN height (black keys are 50 design px, white keys 80), so both feel the same. The
+  glissando path re-reads the position on the key being entered, so a drag that wanders
+  down the keybed crescendos. The top of the range deliberately crosses the engine's Acid
+  accent threshold (MIDI velocity > 100, `MultiSynthDSP::kAcidAccentVel`), which the old
+  fixed velocity of 100 could never reach — a hard strike now accents like a hardware
+  bassline keyboard.
 - **Visual feedback**: pressed keys and **incoming MIDI notes from the host** light in
   `accent` — read active notes from the bridge `multiSynthGetActiveNotes` [optional; else
   only local presses light].
@@ -766,7 +774,8 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   right-click reset [enable via `rightClickReset`]. Hover → name bubble; drag → value bubble.
 - **Combos**: click to open; selecting sets the choice param (begin/set/end edit).
 - **LED-buttons / rockers / step cells / pitch columns**: click / drag as in §8.
-- **Keyboard**: press → note-on 100; release/drag-off → note-off; drag → glissando;
+- **Keyboard**: press → note-on with velocity from the strike position (30..120, §8.7);
+  release/drag-off → note-off; drag → glissando;
   OCT± shift base. Host MIDI lights keys.
 - **Preset browser**: ◀/▶ step `currentPreset` and apply (like tape-echo `applyPreset`,
   iterating the static preset table); combo jumps directly; ★ saves [v2 bridge].

@@ -2396,16 +2396,35 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
-        if (hov && ImGui::IsMouseClicked(0)) pressKey(note);
-        else if (hov && ImGui::IsMouseDown(0) && kbNote != note && kbNote >= 0) pressKey(note); // glissando
+        // Velocity comes from WHERE in the key you click; the glissando path reads it
+        // from the key being entered, so a drag that wanders down the keys crescendos.
+        if (hov && ImGui::IsMouseClicked(0)) pressKey(note, velFromY(b0.y, b1.y));
+        else if (hov && ImGui::IsMouseDown(0) && kbNote != note && kbNote >= 0)
+            pressKey(note, velFromY(b0.y, b1.y));
+    }
+
+    // Click position within the key -> velocity: top edge soft, bottom edge hard.
+    // The range top deliberately crosses the engine's Acid accent threshold (MIDI
+    // velocity > 100, MultiSynthDSP::kAcidAccentVel), so a hit near the bottom of a
+    // key accents the step the way a hardware bassline keyboard does — the old fixed
+    // 100 could never reach it. Black keys are 50 design px tall and white keys 80,
+    // so each key maps its OWN height across the range and both feel the same.
+    static constexpr int kVelMin = 30, kVelMax = 120;
+    uint8_t velFromY(float yTopPx, float yBotPx) const
+    {
+        const float h = yBotPx - yTopPx;
+        float f = h > 1.0f ? (ImGui::GetIO().MousePos.y - yTopPx) / h : 0.5f;
+        f = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+        const int v = kVelMin + (int)std::lround(f * (float)(kVelMax - kVelMin));
+        return (uint8_t)(v < 1 ? 1 : (v > 127 ? 127 : v));
     }
     static int clampMidi(int n) noexcept { return n < 0 ? 0 : (n > 127 ? 127 : n); }
-    void pressKey(int note)
+    void pressKey(int note, uint8_t vel)
     {
         note = clampMidi(note);               // defensive: never emit an out-of-range note
         if (kbNote == note) return;
         if (kbNote >= 0) sendNote(0, (uint8_t)kbNote, 0);
-        sendNote(0, (uint8_t)note, 100);
+        sendNote(0, (uint8_t)note, vel);
         kbNote = note;
     }
     void octButton(const char* id, float x0, float y0, float x1, float y1, const char* lab, int delta, const char* tip = nullptr)
