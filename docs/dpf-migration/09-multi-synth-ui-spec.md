@@ -754,9 +754,16 @@ and `Mod Whl` mod-matrix sources without external hardware.
   centre-detent notches on both slot edges.
 - **Interaction**: the pointer maps **absolutely** into the slot (grab-and-bend), not as a
   relative drag — on a 62 px wheel a relative drag would need repeated nudges to reach full
-  bend. PB is bipolar and **springs back** to centre on release, glided over ~25 ms so the
-  release lands instead of clicking. MOD is unipolar and **latches**; wheel-scroll trims it
-  in 5% steps.
+  bend. PB is bipolar and **springs back** to centre on release — an exponential return with
+  a **22 ms time constant** (`exp(-dt·45)`), inaudible after **~140 ms** from a full bend —
+  glided rather than snapped so the release lands instead of clicking. MOD is unipolar and
+  **latches**; wheel-scroll trims it in 5% steps.
+- **The spring runs per FRAME, not per draw** (`updateWheels()`, called from
+  `onImGuiDisplay` ahead of the modal early-returns). The mod-matrix and save modals replace
+  the base layers and return early, so the wheel is not drawn while one is open; driving the
+  spring from the widget froze a released bend in the engine for as long as the overlay
+  stayed up. `drawWheels()` still pushes at the end of its own frame so a live drag reaches
+  the engine with no frame of lag; both pushes are idempotent.
 - **Wiring**: straight to `MultiSynthDSP::pitchBend()` / `::modWheel()` through the
   `multiSynthGetDSP` bridge — the same entry points the shell's MIDI handler calls for 0xE0
   and CC 1, both plain relaxed atomic stores, so a UI-thread write is safe. Neither is a host

@@ -184,6 +184,8 @@ protected:
         org = ImVec2(0.5f * (winW - kDesignW * s), 0.5f * (winH - kDesignH * s));
 
         syncMidiProgramChange();
+        updateWheels();   // before the modal early-returns below, so the bend spring
+                          // keeps running while an overlay is up
 
         // ---- mode crossfade (spec §5) ----
         const int m = clampMode((int)std::lround(values[kParamMode]));
@@ -2414,8 +2416,34 @@ private:
         drawWheel("modwheel", 86, 112, false, modValue, "MOD",
                   live_ ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim."
                         : "The mod wheel is unavailable in a remote (split) UI.", live_);
+        pushWheels();   // again, so a live drag reaches the engine with no frame of lag
+    }
 
-        // Push only on change; the engine holds the last value like a hardware wheel.
+    // Spring return + engine push, run once per FRAME from onImGuiDisplay rather than
+    // from the wheel's own draw. The mod-matrix and save modals REPLACE the base
+    // layers and return early, so drawWheels() does not run while one is open: a bend
+    // released as a modal opened used to freeze at whatever it had reached and stay
+    // there, detuning the engine until the modal was closed. Frame-driven, the spring
+    // keeps running whatever is on screen.
+    void updateWheels()
+    {
+        const bool dragging = pbDragging;
+        pbDragging = false;          // re-armed by drawWheel() while the wheel is held
+        if (!dragging && pbValue != 0.0f)
+        {
+            // Exponential return, time constant 1/45 s = 22 ms; from a full bend it is
+            // inaudible (|v| < 0.002) after ~140 ms. Glided rather than snapped so a
+            // released bend lands instead of clicking.
+            const float dt = ImGui::GetIO().DeltaTime;
+            pbValue -= pbValue * (1.0f - std::exp(-(dt > 0.0f ? dt : 0.016f) * 45.0f));
+            if (std::fabs(pbValue) < 0.002f) pbValue = 0.0f;
+        }
+        pushWheels();
+    }
+
+    // Push only on change; the engine holds the last value like a hardware wheel.
+    void pushWheels()
+    {
         if (pbValue != pbSent)   { if (auto* d = dspAccess()) { d->pitchBend(pbValue); pbSent = pbValue; } }
         if (modValue != modSent) { if (auto* d = dspAccess()) { d->modWheel(modValue); modSent = modValue; } }
     }
@@ -2449,14 +2477,9 @@ private:
             const float wh = ImGui::GetIO().MouseWheel;
             if (wh != 0.0f) { v += wh * 0.05f; v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
         }
-        // Spring return, glided over ~25 ms rather than snapped, so a released bend
-        // lands instead of clicking.
-        if (bipolar && !active && v != 0.0f)
-        {
-            const float dt = ImGui::GetIO().DeltaTime;
-            v -= v * (1.0f - std::exp(-(dt > 0.0f ? dt : 0.016f) * 45.0f));
-            if (std::fabs(v) < 0.002f) v = 0.0f;
-        }
+        // The spring itself lives in updateWheels(), which runs every frame; this only
+        // reports whether the wheel is currently held, so the spring knows to wait.
+        if (bipolar && active) pbDragging = true;
 
         // bezel + recessed slot
         dl->AddRectFilled(P(x0 - 2, top - 2), P(x1 + 2, bot + 2), metalCol(), 5.0f * s);
@@ -2837,6 +2860,7 @@ private:
     // was last told, so the atomics are written only on change.
     float  pbValue = 0.0f,  modValue = 0.0f;
     float  pbSent  = 0.0f,  modSent  = 0.0f;
+    bool   pbDragging = false;   // set by drawWheel(), consumed by updateWheels()
 
     // misc animation
     float  shPhase = 0.0f;
