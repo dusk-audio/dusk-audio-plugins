@@ -464,8 +464,10 @@ vs ring top 442.5 = 5.4 px; row2 ring bottom 531.5 vs inner floor 539 = 7.5 px.
     the per-cell readout keeps edits precise; the height went to ACC/SLIDE instead.)
   - **Accent + Slide lanes** (bottom, two **h15** rows — accent y 658..673, slide
     y 677..692): 16 cells each for `seqAccent*` (amber) and `seqSlide*` (cyan), same
-    dark-cell fill idiom as the gate row plus 4-step group dividers spanning both rows,
-    so the off state reads as a lane of real click targets.
+    dark-cell fill idiom as the gate row (including the §8.4 downbeat split, bevel relief
+    and hover outline) plus 4-step group dividers spanning both rows, so the off state
+    reads as a lane of real click targets. The Acid lanes keep `groupGap = 0` so all four
+    stay column-aligned; the hairline dividers, not daylight, carry the beat grouping.
   - The **live step index** from the bridge highlights the current column across all lanes.
 - In **modes 0–4** the pitch/accent/slide lanes are **hidden**; the sequencer shows only
   the single on/off row (classic arp step-mutes).
@@ -694,10 +696,29 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   divisions (`delayDiv`, display the division name); when off, continuous `delayTime` ms.
 
 ### 8.4 Step cell (sequencer on/off)
-- 16 cells across the sequencer lane; cell *i* at `x = x0 + i*cw` (`cw = laneW/16`), gap 2.
-  Filled rounded rect; **on** = accent fill + lit; **off** = dark. The **live step** (from
-  bridge) draws a bright top border / glow regardless of on/off. `InvisibleButton` toggles
-  `arpStep{i}`. Beat groups of 4 get a subtle divider.
+- 16 cells from `x0` to `x1`; `pitch = (x1 - x0 - 3*groupGap)/16`, cell *i* at
+  `x0 + i*pitch + (i/4)*groupGap`, pad 2 each side. `InvisibleButton` toggles `arpStep{i}` on
+  click (unchanged) and shows its tooltip on hover.
+- **Beat rhythm**: the non-acid mute row passes `groupGap = 8`, so the four bars of four are
+  separated by **real daylight**. The old row was flush and relied on an `alpha 40` hairline,
+  which is invisible against an accent-filled cell — i.e. against the **default all-on
+  state**, where all 16 read as one undivided slab. Lanes that must stay column-aligned with
+  their neighbours (every Acid lane) pass `groupGap = 0` and keep the hairline instead.
+- **Fill**: `on` = accent at alpha **235 on a downbeat** (cells 1/5/9/13), 185 otherwise;
+  `off` = `#303238` / `#202226` on the same downbeat split. Downbeats therefore carry a touch
+  more ink in **both** states, so the beat grid stays legible whether the pattern is mostly
+  lit or mostly muted.
+- **Relief** (`cellFace`, shared with the Acid ACC/SLIDE mini-cells): the `panelBox` bevel
+  idiom — light top edge + dark bottom edge — with the two **swapped for an off cell**, so a
+  muted step reads as a pad pressed *into* the lane and a live one as a pad standing proud of
+  it. State is then legible from the relief as well as the fill.
+- **Hover**: `alpha 115` white outline. There was no hover affordance at all; nothing told
+  you the slabs were targets.
+- **Numbers** (`tall` rows only): ink is chosen against the fill via `inkOn()` rather than
+  fixed — `live.text` on the pale Cosmos/Mono accents was near-invisible. Muted cells use a
+  deliberately dim `#7C8088`, so on/off reads from the numbers too.
+- The **live step** (from the bridge) draws a bright `ledOn` border plus a 3 px top bar,
+  regardless of on/off.
 
 ### 8.5 Pitch-lane drag (Acid `seqPitch*`)
 - Column *i* is an `InvisibleButton` over its slot; on active drag, `value +=
@@ -961,7 +982,7 @@ Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
 |---|---|---|---|
 | **left (Prism)** | **49 754** | **75.9 %** | 36 chrome knobs in the operator matrix |
 | left (other modes) | 20 626 | 31.5 % | OSC 1/2/3 + VOICE / CHARACTER |
-| bottom | 22 110 | 33.7 % | sequencer lanes + FX strip + keyboard + wheels |
+| bottom | 22 142 | 33.8 % | sequencer lanes + FX strip + keyboard + wheels |
 | center | 16 508 | 25.2 % | filter curve + 2 ADSR displays + 8 knobs |
 | right | 14 672 | 22.4 % | LFOs + sub-panel + scope + VU |
 | browse | 10 616 | 16.2 % | 48 preset cells (57 presets listed, scrolled + hovered) |

@@ -2722,15 +2722,36 @@ private:
         }
         else
         {
-            // Single mute row, y 612..680 (h68) — 12 px shorter than before so it
-            // starts 6.6 px below the knob read-out ink instead of colliding with
-            // it. `groupGap` 8 splits the 16 cells into four bar-groups.
+            // Single mute row, y 612..680 (h68), starting 6.6 px below the knob
+            // read-out ink. The 16 cells are split into four bar-groups with an
+            // 8 px gap between groups, so the pattern reads as 4 bars of 4 at a
+            // glance — the old flush row relied on an alpha-40 hairline that was
+            // invisible against a lit (accent-filled) cell, i.e. against the
+            // default state, where all 16 read as one undivided beige slab.
             drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
         }
     }
     // Right-aligned lane label sitting in the acid sequencer's left gutter.
     void drawLaneLabel(float xRight, float y0, float y1, const char* t)
     { text(xRight, 0.5f * (y0 + y1) - 5.0f, 8.5f, live.textPanel, t, 1, true); }
+    // Shared face for every clickable step cell: flat fill plus the panelBox bevel
+    // idiom (light top edge, dark bottom edge) so a cell reads as a physical pad
+    // rather than a painted rectangle, plus a hover outline — the row had no hover
+    // affordance at all, so nothing told you the slabs were targets.
+    void cellFace(float x0, float y0, float x1, float y1, ImU32 fill, bool hov, float round,
+                  bool inset)
+    {
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        const ImU32 lit = lerpC(fill, IM_COL32(255, 255, 255, 255), 0.26f);
+        const ImU32 shd = lerpC(fill, IM_COL32(0, 0, 0, 255), 0.34f);
+        dl->AddRectFilled(b0, b1, fill, round * s);
+        // `inset` flips the bevel so an OFF cell reads as a pad pressed INTO the
+        // lane and an ON cell as one standing proud of it — the state is then
+        // legible from the relief as well as from the fill colour.
+        dl->AddLine(P(x0 + 2, y0 + 1), P(x1 - 2, y0 + 1), inset ? shd : lit, 1.0f * s);
+        dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1), inset ? lit : shd, 1.0f * s);
+        if (hov) dl->AddRect(b0, b1, IM_COL32(255, 255, 255, 115), round * s, 0, 1.4f * s);
+    }
     // 16 on/off cells from x0 to x1. `groupGap` inserts real daylight between the
     // four bar-groups (non-acid mute row); pass 0 to keep a flush lane whose cell
     // pitch stays aligned with the other acid lanes, which then get the hairline
@@ -2746,21 +2767,30 @@ private:
             const float gx  = x0 + i * pitch + (float)(i / 4) * groupGap;
             const float cx0 = gx + pad, cx1 = gx + pitch - pad;
             const bool on = values[base + i] > 0.5f;
+            const bool down = (i % 4) == 0;   // bar downbeat
             char id[16]; std::snprintf(id, sizeof(id), "step%u_%d", (unsigned)base, i);
             const ImVec2 b0 = P(cx0, y0), b1 = P(cx1, cy1);
             ImGui::SetCursorScreenPos(b0);
             ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
             if (ImGui::IsItemClicked()) setChoice(base + i, on ? 0 : 1);
-            if (ImGui::IsItemHovered() && tips[base + i]) ImGui::SetTooltip("%s", tips[base + i]);
-            dl->AddRectFilled(b0, b1, on ? withA(live.accent, 200) : IM_COL32(34, 36, 40, 255), 3.0f * s);
-            if (groupGap <= 0.0f && (i % 4) == 0)
+            const bool hov = ImGui::IsItemHovered();
+            if (hov && tips[base + i]) ImGui::SetTooltip("%s", tips[base + i]);
+            // Downbeats carry a touch more ink in BOTH states, so the beat grid is
+            // legible whether the pattern is mostly lit or mostly muted.
+            const ImU32 fill = on ? withA(live.accent, down ? 235 : 185)
+                                  : (down ? IM_COL32(48, 50, 56, 255) : IM_COL32(32, 34, 38, 255));
+            cellFace(cx0, y0, cx1, cy1, fill, hov, 3.0f, !on);
+            if (groupGap <= 0.0f && down)
                 dl->AddLine(P(cx0 - 2, y0), P(cx0 - 2, cy1), IM_COL32(255, 255, 255, 40), 1.2f * s);
             if (i == step)
             { dl->AddRect(b0, b1, live.ledOn, 3.0f * s, 0, 2.0f * s);
               dl->AddRectFilled(P(cx0, y0), P(cx1, y0 + 3), live.ledOn, 1.0f * s); }
+            // Number ink is chosen against the fill (inkOn) rather than fixed:
+            // live.text on the pale Cosmos accent was near-invisible. Muted cells
+            // stay deliberately dim so on/off reads from the numbers too.
             if (tall) { char n[4]; std::snprintf(n, sizeof(n), "%d", i + 1);
                         text(0.5f * (cx0 + cx1), y0 + h * 0.5f - 6, 10.0f,
-                             on ? live.text : live.textPanel, n, 0, on); }
+                             on ? inkOn(live.accent) : IM_COL32(124, 128, 136, 255), n, 0, on); }
         }
     }
     void drawPitchLane(float x0, float y0, float cw, float h, int step)
@@ -2845,8 +2875,10 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) setChoice(p, on ? 0 : 1);
-        if (ImGui::IsItemHovered() && tips[p]) ImGui::SetTooltip("%s", tips[p]);
-        dl->AddRectFilled(b0, b1, on ? onCol : IM_COL32(34, 36, 40, 255), 2.0f * s);
+        const bool hov = ImGui::IsItemHovered();
+        if (hov && tips[p]) ImGui::SetTooltip("%s", tips[p]);
+        cellFace(x0, y0, x1, y1, on ? onCol : ((i % 4) == 0 ? IM_COL32(48, 50, 56, 255)
+                                                           : IM_COL32(32, 34, 38, 255)), hov, 2.0f, !on);
         if (i == step) dl->AddRect(b0, b1, live.ledOn, 2.0f * s, 0, 1.4f * s);
     }
 
