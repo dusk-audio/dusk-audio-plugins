@@ -69,6 +69,43 @@ Calibration: the pre-fix column is the same probe on the build immediately befor
 these fixes landed (fe6ec66). Limits sit ~10 dB over the post-fix reading and
 >=10 dB under the pre-fix one, so a regression fails loudly and noise cannot
 flake the gate. Both numbers print on every run.
+
+WHY SCENARIO (b) READS +3.26 AT 512 BUT -2.43 / -3.07 AT 64 / 4096
+    Not drift, and not a fade landing inside the window. Two measurements:
+
+    1. Sweeping the buffer size shows the reading is a function of the SWITCH
+       FRAME, not of the buffer size as such. setat= fires on the first block
+       starting at/after 1.0 s, so the switch lands at frame 48000 (64, 128),
+       48128 (256, 512, 1024) or 49152 (2048, 4096) -- 0.0, 2.7 or 24.0 ms after
+       the nominal time -- and the readings group exactly the same way:
+       -2.43 / +3.26 / -3.07. Same three renders, same window offset from the
+       switch, three different fractions of the event inside the window.
+
+    2. The event itself is a legitimate, large amplitude collapse: after the
+       switch to Acid there is no live acid note, so the outgoing voices fade out
+       into silence and the output is gone ~10 ms later. That collapse alone
+       reads high on this metric. Control: take the steady chord from t = 0.5 s
+       (continuous, click-free by construction) and re-envelope it with the
+       amplitude curve measured across the switch. It reads +8.6 to +22.0 dB
+       depending on window offset -- i.e. the metric attributes up to 22 dB of
+       "burst" to a signal that provably contains no discontinuity, and the real
+       render reads AT OR BELOW that control at the gate's own window offset
+       (-11.7 / -13.4 / -11.7 dB below it at 64 / 512 / 4096).
+
+    So the 6.3 dB spread across buffer sizes is the window catching more or less
+    of a click-free collapse, and every reading has >=10.7 dB of margin under the
+    14 dB limit and >=36 dB under the pre-fix 39.97. No adjustment made: the
+    limit is untouched and the metric is left alone, because a control-referenced
+    metric would also have to re-derive the pre-fix calibration (a hard cut
+    produces nearly the same envelope, so its control reads high too).
+
+    ONE THING TO KNOW BEFORE MOVING THIS WINDOW. The reading is placement
+    sensitive: at +5 / +10 ms past the switch the same renders read +23.3 / +33.1
+    dB, over the 14 dB limit, while the click-free control reads +22.0 / +17.1
+    there. The window offset (PRE_MS) and SWITCH_T are therefore load-bearing
+    calibration, not free parameters -- change either and the limits must be
+    re-derived against the click-free control, not just against the pre-fix
+    column.
 """
 import sys
 import numpy as np
@@ -83,7 +120,8 @@ KEY_T = 1.05         # scenario (f): key pressed this long after the switch
 HF_HZ = 4000.0
 WIN = 1440           # 30 ms analysis window
 QUIET_T = 0.5        # start of the reference window (steady, untouched signal)
-PRE_MS = 2.0         # window starts this far before the event
+PRE_MS = 2.0         # window starts this far before the event (calibrated: see
+                     # "ONE THING TO KNOW BEFORE MOVING THIS WINDOW" above)
 
 # Pure sine voice, fully linear output chain: no FX, no chorus, no analog drift, no
 # vintage noise, and masterVol low enough that softLimit() never engages -- it is

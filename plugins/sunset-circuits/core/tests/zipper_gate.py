@@ -54,7 +54,7 @@ import numpy as np
 from _harness import render
 
 SR = 48000
-BLOCK = 512          # render_test's fixed block size
+BLOCK = 512          # render_test's DEFAULT block size (it takes block=<frames>)
 SECONDS = 4.0
 ANALYSIS_START = 1.0
 HF_HZ = 4000.0
@@ -144,6 +144,15 @@ def step_case(label, mode, patch, steps):
 NOISE_SECONDS = 10.0
 NOISE_LIMIT = -19.0
 NOISE_PREFIX_DB = -14.82
+# MARGIN LOG. This is the tightest row in the gate, so record the numbers a
+# healthy build produces and compare against them when a CI toolchain change
+# moves the answer, rather than re-deriving them from scratch under pressure.
+#   dev box (gcc 14, -O2, numpy 1.26), 2026-07: floor -23.32, stepped -22.57.
+# That is 3.57 dB of headroom under the -19.0 limit and 4.18 dB over the
+# pre-smoothing -14.82 -- but only 0.75 dB of separation between the stepped
+# reading and the held-still floor, because the fold's floor is itself set by
+# the noise source. A CI run that lands materially closer to -19.0 is a
+# toolchain/RNG difference to be understood, not a threshold to be loosened.
 
 
 def env_fold_db(x):
