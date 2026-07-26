@@ -27,5 +27,12 @@ echo "########## alias_gate (report only) ##########"
 python3 alias_gate.py || echo "alias_gate exited nonzero (report-only, not fatal)"
 
 echo
+echo "########## fx_alias_gate (report only) ##########"
+# Effects-chain counterpart to alias_gate: the drive/tape nonlinearities run at
+# host rate, downstream of the voice decimation, so voice oversampling cannot
+# reach them. Report only, same as alias_gate.
+python3 fx_alias_gate.py || echo "fx_alias_gate exited nonzero (report-only, not fatal)"
+
+echo
 if [ "$fail" -eq 0 ]; then echo "ALL PASS/FAIL GATES GREEN"; else echo "SOME GATES FAILED"; fi
 exit $fail
