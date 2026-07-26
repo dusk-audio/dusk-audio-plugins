@@ -26,6 +26,7 @@
 #include "DuskImGuiWidgets.hpp"
 
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -126,6 +127,10 @@ public:
         buildTooltips();
 
         presetStore.refresh();   // scan the user preset dir once at construction
+
+        // Mode tag per factory preset for the browser's badge + mode filter: one
+        // walk of each override table, here, instead of on every filter change.
+        for (int i = 0; i < kNumFactoryPresets; ++i) factoryMode[i] = factoryPresetMode(i);
 
         curMode = clampMode((int)std::lround(values[kParamMode]));
         prevMode = curMode;
@@ -241,6 +246,19 @@ protected:
             return;
         }
 
+        if (showBrowse)
+        {
+            dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
+            beginLayerScreen("MSbrowse", 0, 0, winW, winH, true);
+            drawPresetBrowserOverlay();
+            endLayer(kLayerBrowse);
+            ImGui::PopStyleVar(2);
+           #ifdef MSYNTH_FRAME_PROFILE
+            profileFrame(_t0);
+           #endif
+            return;
+        }
+
         if (showMod)
         {
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
@@ -306,7 +324,8 @@ protected:
     // ImGui::End() and keeps a running per-layer maximum, printed with the frame
     // timings. Re-run it after adding chrome; the worst case is the mod-matrix
     // modal, which draws the panel plus 8 rows of combos/knobs in ONE window.
-    enum { kLayerTop, kLayerLeft, kLayerCenter, kLayerRight, kLayerBottom, kLayerModal, kNumLayers };
+    enum { kLayerTop, kLayerLeft, kLayerCenter, kLayerRight, kLayerBottom, kLayerModal,
+           kLayerBrowse, kNumLayers };
     void endLayer(int layer)
     {
        #ifdef MSYNTH_FRAME_PROFILE
@@ -335,7 +354,7 @@ protected:
             std::fprintf(stderr, "MSYNTH_FRAME logic_median=%.3fms total_median=%.3fms (100 frames)\n",
                          a[50], b[50]);
             static const char* const kLayerNames[kNumLayers] =
-                { "top", "left", "center", "right", "bottom", "modal" };
+                { "top", "left", "center", "right", "bottom", "modal", "browse" };
             for (int i = 0; i < kNumLayers; ++i)
                 std::fprintf(stderr, "MSYNTH_VTX %-7s max=%5d / 65535 (%.1f%%)\n",
                              kLayerNames[i], vtxMax[i], 100.0 * vtxMax[i] / 65535.0);
@@ -839,14 +858,19 @@ private:
                  sel ? live.text : lerpC(live.text, live.bg, 0.35f), kModeNames[i], 0, sel);
         }
 
-        // Preset prev / combo / next / save. currentPreset is a combined index:
-        // factory [0..kNumFactoryPresets) then user [kNumFactoryPresets..total).
+        // Preset prev / combo / next / browse / save. currentPreset is a combined
+        // index: factory [0..kNumFactoryPresets) then user [kNumFactoryPresets..total).
+        // The cluster spans 952..1222; BROWSE was fitted by narrowing the combo
+        // 168 -> 126 and sliding ▶ left, leaving ★ SAVE on its original rect. The
+        // combo preview clips the longest factory names ("Alien Transmission") at
+        // that width, which is precisely what the browser exists to solve — it
+        // shows every name in full, with its mode and bank.
         const char* preview = presetName(currentPreset);
         if (chevron("presetPrev", 952, 14, 978, 42, false, "Previous preset"))
             applyCombined(currentPreset < 0 ? comboTotal() - 1 : currentPreset - 1);
 
         ImGui::SetCursorScreenPos(P(982, 14));
-        ImGui::SetNextItemWidth(168.0f * s);
+        ImGui::SetNextItemWidth(126.0f * s);
         ImFont* f = panel.pickFont(12.0f * s);
         ImGui::PushFont(f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * s, (28.0f * s - f->FontSize) * 0.5f));
@@ -880,20 +904,35 @@ private:
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select a factory or user preset");
         ImGui::PopStyleColor(4); ImGui::PopStyleVar(); ImGui::PopFont();
 
-        if (chevron("presetNext", 1154, 14, 1180, 42, true, "Next preset"))
+        if (chevron("presetNext", 1112, 14, 1138, 42, true, "Next preset"))
             applyCombined(currentPreset < 0 ? 0 : currentPreset + 1);
 
+        // BROWSE — full-screen searchable browser over factory + user presets.
+        if (barButton("presetBrowse", 1142, 14, 1182, 42, "BROWSE",
+                      "Browse every preset: search by name, filter by mode or bank"))
+            openBrowse();
+
         // Save ★ — opens the user-preset save modal (writes the current patch).
-        const ImVec2 s0 = P(1186, 14), s1 = P(1222, 42);
-        ImGui::SetCursorScreenPos(s0);
-        ImGui::InvisibleButton("presetSave", ImVec2(s1.x - s0.x, s1.y - s0.y));
-        const bool saveClicked = ImGui::IsItemClicked();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save the current patch as a user preset");
-        dl->AddRectFilled(s0, s1, IM_COL32(38, 38, 41, 255), 4.0f * s);
-        dl->AddRect(s0, s1, ImGui::IsItemHovered() ? live.accent : IM_COL32(90, 90, 94, 255),
-                    4.0f * s, 0, 1.2f * s);
-        text(1204, 21, 9.0f, live.accent, "SAVE", 0, true);
-        if (saveClicked) openSaveModal();
+        if (barButton("presetSave", 1186, 14, 1222, 42, "SAVE",
+                      "Save the current patch as a user preset"))
+            openSaveModal();
+    }
+
+    // Small labelled button in the top bar's preset cluster (BROWSE / SAVE): the
+    // chevron chrome with a 9 px accent label instead of a triangle.
+    bool barButton(const char* id, float x0, float y0, float x1, float y1,
+                   const char* label, const char* tip)
+    {
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool clicked = ImGui::IsItemClicked();
+        const bool hovered = ImGui::IsItemHovered();
+        if (tip && hovered) ImGui::SetTooltip("%s", tip);
+        dl->AddRectFilled(b0, b1, IM_COL32(38, 38, 41, 255), 4.0f * s);
+        dl->AddRect(b0, b1, hovered ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.2f * s);
+        text(0.5f * (x0 + x1), y0 + 7.0f, 9.0f, live.accent, label, 0, true);
+        return clicked;
     }
 
     //========================================================================
@@ -2006,6 +2045,383 @@ private:
     }
 
     //========================================================================
+    // Preset browser modal
+    //========================================================================
+    // Same replace-panels pattern as the mod matrix and the save modal: this
+    // backend does not composite overlapping windows, so while the browser is up
+    // the base layers are not submitted at all and it owns the whole surface over
+    // a dark scrim, in its own layer window (its own draw list, own vertex budget).
+    //
+    // Geometry, design space. Panel (48,58)-(1192,740); a 20 px inner margin puts
+    // the content band at x 68..1172 (1104 wide):
+    //   title + close ✕   y  66..90
+    //   search row        y 104..130   FIND label + input; bank chips at the right
+    //   mode chip row     y 140..166   ALL + the six mode names
+    //   grid              y 178..678   12 rows of h38 on a 42 pitch (last row
+    //                                  640..678); 4 columns of w270 on a 278 pitch
+    //   footer            y 690..720   status + hint text, APPLY / CLOSE buttons
+    // 4*270 + 3*8 = 1104 exactly, and 12*42 - 4 = 500 = 678-178, so the grid fills
+    // its band with no slack either way.
+    static constexpr float kBrX0 = 48.0f, kBrY0 = 58.0f, kBrX1 = 1192.0f, kBrY1 = 740.0f;
+    static constexpr float kBrCX0 = 68.0f, kBrCX1 = 1172.0f;      // content band
+    static constexpr float kBrGridY0 = 178.0f;
+    static constexpr float kBrCellW = 270.0f, kBrCellH = 38.0f;
+    static constexpr float kBrColPitch = 278.0f, kBrRowPitch = 42.0f;
+    static constexpr int   kBrCols = 4, kBrRows = 12;             // 48 cells on screen
+    static constexpr float kBrGridY1 = kBrGridY0 + (kBrRows - 1) * kBrRowPitch + kBrCellH;
+    // Filtered index capacity: every factory preset plus the store's own hard cap.
+    static constexpr int   kBrowseMax = kNumFactoryPresets + scpreset::kMaxUserPresets;
+
+    void openBrowse()
+    {
+        showBrowse = true;
+        browseJustOpened = true;
+        browseSearch[0] = '\0';
+        browseModeFilter = -1;   // all modes
+        browseSrcFilter  = 0;    // all banks
+        browseSel = -1;          // rebuild parks the cursor on the loaded preset
+        browseRow0 = 0;
+        browseDirty = true;
+        // NOT presetStore.refresh(): currentPreset addresses the user bank BY INDEX,
+        // and a rescan can renumber it (a file added or removed behind the plugin's
+        // back), which would silently repoint the highlight — and DELETE in the save
+        // modal — at a different patch. The combo has the same contract; the store is
+        // rescanned only where the UI itself changed it (save / delete).
+    }
+
+    // Mode a factory preset selects, read out of its own override table. Every
+    // table carries a kParamMode row; the Mode default covers a hypothetical one
+    // that does not, which is what loadProgram() would leave in place. Cached per
+    // preset in the constructor — this is a table walk, not something to repeat.
+    static int factoryPresetMode(int i)
+    {
+        const FactoryPreset& pr = kFactoryPresets[i];
+        int m = (int)std::lround(kParamDefs[kParamMode].def);
+        for (int r = 0; r < pr.nRows; ++r)
+            if (pr.rows[r].index == kParamMode) m = (int)std::lround(pr.rows[r].value);
+        return clampMode(m);
+    }
+
+    // Mode of any COMBINED index: factory from the cached table walk, user from the
+    // `mode=` line the store parsed at refresh() time.
+    int presetMode(int combined) const
+    {
+        if (combined >= 0 && combined < kNumFactoryPresets) return factoryMode[combined];
+        const int u = combined - kNumFactoryPresets;
+        if (u >= 0 && u < userCount()) return clampMode(presetStore.list()[u].mode);
+        return 0;
+    }
+
+    // Case-insensitive substring test. `needleLower` is pre-lowered by the caller
+    // so the per-candidate cost is one pass with no allocation and no <string>.
+    static bool containsCI(const char* hay, const char* needleLower)
+    {
+        if (needleLower[0] == '\0') return true;
+        if (hay == nullptr) return false;
+        for (const char* h = hay; *h != '\0'; ++h)
+        {
+            const char* a = h;
+            const char* b = needleLower;
+            while (*a != '\0' && *b != '\0'
+                   && (char)std::tolower((unsigned char)*a) == *b) { ++a; ++b; }
+            if (*b == '\0') return true;
+        }
+        return false;
+    }
+
+    // Rebuild the filtered index. Runs ONLY when a filter actually changes (or the
+    // browser opens) — never per frame; the grid draw walks browseIdx[] straight.
+    void rebuildBrowseIndex()
+    {
+        char needle[sizeof(browseSearch)];
+        int n = 0;
+        for (; browseSearch[n] != '\0' && n < (int)sizeof(needle) - 1; ++n)
+            needle[n] = (char)std::tolower((unsigned char)browseSearch[n]);
+        needle[n] = '\0';
+
+        // The preset the cursor is on now, so it can be found again in the new list.
+        const int keep = (browseSel >= 0 && browseSel < browseN) ? browseIdx[browseSel]
+                                                                 : currentPreset;
+        browseN = 0;
+        const int total = std::min(comboTotal(), kBrowseMax);
+        for (int i = 0; i < total; ++i)
+        {
+            const bool user = (i >= kNumFactoryPresets);
+            if (browseSrcFilter == 1 && user) continue;
+            if (browseSrcFilter == 2 && !user) continue;
+            if (browseModeFilter >= 0 && presetMode(i) != browseModeFilter) continue;
+            if (!containsCI(presetName(i), needle)) continue;
+            browseIdx[browseN++] = i;
+        }
+        // Keep the cursor on the same preset when it survived the new filter,
+        // otherwise park it on the first row so Enter always has a sane target.
+        browseSel = browseN > 0 ? 0 : -1;
+        for (int i = 0; i < browseN; ++i) if (browseIdx[i] == keep) { browseSel = i; break; }
+        browseRow0 = 0;
+        scrollBrowseToSel();
+        browseDirty = false;
+    }
+
+    void clampBrowseScroll()
+    {
+        const int rows = (browseN + kBrCols - 1) / kBrCols;
+        const int maxRow0 = rows > kBrRows ? rows - kBrRows : 0;
+        if (browseRow0 > maxRow0) browseRow0 = maxRow0;
+        if (browseRow0 < 0) browseRow0 = 0;
+    }
+    void scrollBrowseToSel()
+    {
+        if (browseSel < 0) { browseRow0 = 0; return; }
+        const int row = browseSel / kBrCols;
+        if (row < browseRow0) browseRow0 = row;
+        if (row >= browseRow0 + kBrRows) browseRow0 = row - kBrRows + 1;
+        clampBrowseScroll();
+    }
+
+    // Filter chip (mode / bank). Deliberately dark-on-panel in every skin, like the
+    // combos, so it reads on Acid's silver panel as well as the five dark ones.
+    bool chip(const char* id, float x0, float y0, float x1, float y1, const char* label, bool on)
+    {
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool clicked = ImGui::IsItemClicked();
+        const bool hov = ImGui::IsItemHovered();
+        dl->AddRectFilled(b0, b1, on ? withA(live.accent, 52) : IM_COL32(34, 34, 38, 255), 4.0f * s);
+        dl->AddRect(b0, b1, on ? live.accent
+                               : (hov ? IM_COL32(130, 130, 136, 255) : IM_COL32(84, 84, 88, 255)),
+                    4.0f * s, 0, on ? 1.6f * s : 1.1f * s);
+        text(0.5f * (x0 + x1), 0.5f * (y0 + y1) - 4.5f, 10.0f,
+             on ? live.accent : IM_COL32(198, 200, 206, 255), label, 0, on);
+        return clicked;
+    }
+
+    // Ink that reads on a filled swatch of `c`: the six mode accents run from
+    // Cosmos' pale sand to Acid's saturated orange, so the badge label picks its
+    // ink per swatch rather than committing to one colour.
+    static ImU32 inkOn(ImU32 c)
+    {
+        const int r = (int)((c >> IM_COL32_R_SHIFT) & 255);
+        const int g = (int)((c >> IM_COL32_G_SHIFT) & 255);
+        const int b = (int)((c >> IM_COL32_B_SHIFT) & 255);
+        return ((r * 30 + g * 59 + b * 11) / 100) > 140 ? IM_COL32(16, 16, 18, 255)
+                                                        : IM_COL32(240, 242, 246, 255);
+    }
+
+    // One preset cell. It does NOT apply anything itself: it reports through
+    // applyIdx / closeNow so the whole grid is submitted before any parameter push
+    // runs (a push mid-grid would reorder nothing today, but it keeps the frame's
+    // widget submission and the 222-param write strictly separated).
+    void drawBrowseCell(int fi, float x0, float y0, int& applyIdx, bool& closeNow)
+    {
+        const int idx = browseIdx[fi];
+        const float x1 = x0 + kBrCellW, y1 = y0 + kBrCellH;
+        const bool user = (idx >= kNumFactoryPresets);
+        const bool cur  = (idx == currentPreset);
+        const bool sel  = (fi == browseSel);
+        const int  m    = presetMode(idx);
+        const ImU32 mc  = kPalettes[m].accent;
+
+        char id[24]; std::snprintf(id, sizeof id, "brc%d", fi);
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) { browseSel = fi; applyIdx = idx; }
+        // Double-click loads AND closes. IsMouseDoubleClicked fires on the same
+        // frame as the second IsItemClicked, so the load is set once either way.
+        if (hov && ImGui::IsMouseDoubleClicked(0)) { browseSel = fi; applyIdx = idx; closeNow = true; }
+
+        dl->AddRectFilled(b0, b1, cur ? withA(live.accent, 40)
+                                      : (hov ? IM_COL32(52, 53, 58, 255)
+                                             : IM_COL32(32, 33, 37, 255)), 4.0f * s);
+        dl->AddRect(b0, b1, sel ? live.accent : IM_COL32(70, 70, 76, 255),
+                    4.0f * s, 0, sel ? 1.8f * s : 1.0f * s);
+        // Loaded preset: accent gutter bar + accent name, so "where am I" survives
+        // even when the keyboard cursor has moved somewhere else entirely.
+        if (cur) dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x0 + 5, y1 - 2), live.accent, 1.5f * s);
+
+        // Name ink band x0+12 .. x1-122 (136 px, ~24 chars at font 11) clears the
+        // badge; the longest factory name is "Alien Transmission" at 18.
+        text(x0 + 12, y0 + 14, 11.0f, cur ? live.accent : IM_COL32(226, 229, 234, 255),
+             presetName(idx), -1, cur || sel);
+        dl->AddRectFilled(P(x1 - 116, y0 + 11), P(x1 - 58, y0 + 27), mc, 3.0f * s);
+        text(x1 - 87, y0 + 15, 8.0f, inkOn(mc), kModeNames[m], 0, true);
+        text(x1 - 12, y0 + 15, 8.0f, user ? live.accent : IM_COL32(140, 142, 148, 255),
+             user ? "USER" : "FACTORY", 1, user);
+        if (hov)
+            ImGui::SetTooltip("%s \xC2\xB7 %s \xC2\xB7 %s preset%s", presetName(idx), kModeNames[m],
+                              user ? "user" : "factory", cur ? " (loaded)" : "");
+    }
+
+    void drawPresetBrowserOverlay()
+    {
+        if (!showBrowse) return;
+        if (browseDirty) rebuildBrowseIndex();
+
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
+
+        const ImVec2 pMin = P(kBrX0 - 3, kBrY0 - 3), pMax = P(kBrX1 + 3, kBrY1 + 3);
+        panelBox(kBrX0, kBrY0, kBrX1, kBrY1);
+        text(kBrCX0, kBrY0 + 12, 15.0f, live.accent, "PRESET BROWSER", -1, true);
+
+        // close ✕
+        const ImVec2 c0 = P(kBrX1 - 36, kBrY0 + 8), c1 = P(kBrX1 - 12, kBrY0 + 32);
+        ImGui::SetCursorScreenPos(c0);
+        ImGui::InvisibleButton("brclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
+        if (ImGui::IsItemClicked()) showBrowse = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close the browser");
+        dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
+        drawX(kBrX1 - 24, kBrY0 + 20, 5.0f, live.text);
+
+        int  applyIdx = -1;      // combined index to load at the end of the frame
+        bool closeNow = false;
+
+        // ---- search field ----
+        ImFont* f = panel.pickFont(13.0f * s);
+        ImGui::PushFont(f);
+        text(kBrCX0, 110, 10.0f, live.textPanel, "FIND", -1, true);
+        ImGui::SetCursorScreenPos(P(kBrCX0 + 42, 104));
+        ImGui::SetNextItemWidth(318.0f * s);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(6.0f * s, (26.0f * s - f->FontSize) * 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(238, 240, 244, 255));
+        if (browseJustOpened) { ImGui::SetKeyboardFocusHere(); browseJustOpened = false; }
+        const bool searchEnter = ImGui::InputText("##brsearch", browseSearch, sizeof(browseSearch),
+                                                 ImGuiInputTextFlags_EnterReturnsTrue);
+        // EnterReturnsTrue makes the return value mean "Enter", so edits are picked
+        // up separately; the rebuild then happens at the top of the NEXT frame,
+        // which keeps the index stable for the grid already being submitted.
+        if (ImGui::IsItemEdited()) browseDirty = true;
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
+        ImGui::PopFont();
+        if (browseSearch[0] == '\0' && !ImGui::IsItemActive())
+            text(kBrCX0 + 52, 110, 10.0f, withA(live.textPanel, 110), "search preset names", -1);
+
+        // ---- bank chips (right of the search field, same row) ----
+        {
+            const char* const labs[3] = { "ALL", "FACTORY", "USER" };
+            for (int i = 0; i < 3; ++i)
+            {
+                char id[16]; std::snprintf(id, sizeof id, "brsrc%d", i);
+                const float x0 = 908.0f + i * 90.0f;   // 908..992 / 998..1082 / 1088..1172
+                if (chip(id, x0, 104, x0 + 84, 130, labs[i], browseSrcFilter == i))
+                { browseSrcFilter = i; browseDirty = true; }
+            }
+        }
+
+        // ---- mode chips ----
+        {
+            for (int i = 0; i < 7; ++i)   // 0 = ALL, then the six modes
+            {
+                char id[16]; std::snprintf(id, sizeof id, "brmode%d", i);
+                const float x0 = kBrCX0 + i * 102.0f;  // 7 * 96 + 6 * 6 = 708 -> 68..776
+                const int   mf = i - 1;
+                if (chip(id, x0, 140, x0 + 96, 166, i == 0 ? "ALL" : kModeNames[mf],
+                         browseModeFilter == mf))
+                { browseModeFilter = mf; browseDirty = true; }
+            }
+        }
+
+        // ---- grid ----
+        // The wheel scrolls by whole ROWS. A pixel scroll would leave half-cells at
+        // the band edges whose ImGui hit boxes still stick out (ImGui only culls
+        // items that are FULLY clipped), so every visible cell is a whole cell.
+        if (mouseInRect(kBrCX0, kBrGridY0, kBrCX1, kBrGridY1))
+        {
+            const float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) { browseRow0 -= (int)std::lround(wheel); clampBrowseScroll(); }
+        }
+        for (int k = 0; k < kBrRows * kBrCols; ++k)
+        {
+            const int fi = browseRow0 * kBrCols + k;
+            if (fi >= browseN) break;                        // list exhausted
+            drawBrowseCell(fi, kBrCX0 + (k % kBrCols) * kBrColPitch,
+                           kBrGridY0 + (k / kBrCols) * kBrRowPitch, applyIdx, closeNow);
+        }
+        if (browseN == 0)
+            text(0.5f * (kBrCX0 + kBrCX1), kBrGridY0 + 40, 13.0f, whiteDimCol(),
+                 "No presets match this filter.", 0, true);
+
+        // scroll indicator (x 1178..1183, inside the panel's 1192 inner wall)
+        const int totalRows = (browseN + kBrCols - 1) / kBrCols;
+        if (totalRows > kBrRows)
+        {
+            const float h = kBrGridY1 - kBrGridY0;
+            const float th = h * (float)kBrRows / (float)totalRows;
+            const float ty = kBrGridY0 + h * (float)browseRow0 / (float)totalRows;
+            dl->AddRectFilled(P(kBrCX1 + 6, kBrGridY0), P(kBrCX1 + 11, kBrGridY1),
+                              IM_COL32(28, 28, 32, 255), 2.5f * s);
+            dl->AddRectFilled(P(kBrCX1 + 6, ty), P(kBrCX1 + 11, ty + th),
+                              withA(live.accent, 190), 2.5f * s);
+        }
+
+        // ---- footer ----
+        char st[64];
+        std::snprintf(st, sizeof st, "%d of %d presets", browseN, comboTotal());
+        text(kBrCX0, 694, 11.0f, live.textPanel, st, -1, true);
+        text(kBrCX0, 710, 9.0f, whiteDimCol(),
+             "Click loads \xC2\xB7 double-click loads and closes \xC2\xB7 "
+             "arrow keys move \xC2\xB7 Enter loads and closes", -1);
+        ImGui::PushFont(panel.pickFont(13.0f * s));
+        if (modalButton("APPLY", 920, 690, 120, 30, true) && browseSel >= 0 && browseSel < browseN)
+        { applyIdx = browseIdx[browseSel]; closeNow = true; }
+        if (modalButton("CLOSE", 1052, 690, 120, 30, false)) showBrowse = false;
+        ImGui::PopFont();
+
+        // ---- keyboard navigation ----
+        // Up/Down are read unconditionally: a single-line InputText only takes
+        // ownership of Left/Right/Enter/Home/End (imgui_widgets.cpp
+        // "always_owned_keys"; Up/Down are claimed for multiline only), so the grid
+        // stays navigable while the search box holds focus — type, then arrow down
+        // into the results. Left/Right yield to an active field so they still walk
+        // the search text.
+        if (browseN > 0)
+        {
+            const bool editing = ImGui::IsAnyItemActive();
+            int move = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) move += kBrCols;
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true))   move -= kBrCols;
+            if (!editing && ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) move += 1;
+            if (!editing && ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true))  move -= 1;
+            if (move != 0)
+            {
+                const int t = (browseSel < 0 ? 0 : browseSel) + move;
+                browseSel = t < 0 ? 0 : (t >= browseN ? browseN - 1 : t);
+                scrollBrowseToSel();
+            }
+            // Enter: from the search box it arrives as the InputText return value;
+            // with nothing active it is read as a plain key. The !searchEnter guard
+            // stops the two paths firing on the same frame (InputText clears the
+            // active id as it returns, so IsAnyItemActive() is already false).
+            const bool enterKey = searchEnter
+                || (!searchEnter && !editing && (ImGui::IsKeyPressed(ImGuiKey_Enter)
+                                                 || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)));
+            if (enterKey && browseSel >= 0) { applyIdx = browseIdx[browseSel]; closeNow = true; }
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showBrowse = false;
+
+        // Scrim close: a click in the dark area outside the panel, no popup open —
+        // same manual hit test as the other two modals, done AFTER the widgets so
+        // it can never swallow a click meant for one of them.
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        const bool insidePanel = mp.x >= pMin.x && mp.x <= pMax.x
+                              && mp.y >= pMin.y && mp.y <= pMax.y;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !insidePanel
+            && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+            showBrowse = false;
+
+        // Deferred load: applying pushes 222 parameters, so it runs once, here,
+        // after every widget in the frame has been submitted.
+        if (applyIdx >= 0) applyCombined(applyIdx);
+        if (closeNow) showBrowse = false;
+    }
+
+    //========================================================================
     // Scope + Output/VU
     //========================================================================
     void drawScope()
@@ -2845,6 +3261,21 @@ private:
     bool   overwriteConfirm = false;
     bool   deleteConfirm = false;
     char   saveNameBuf[128] = {};
+
+    // preset browser modal. browseIdx[] holds COMBINED indices that survive the
+    // current filter; it is rebuilt only when a filter changes (browseDirty), and
+    // is a fixed member array, so an open browser allocates nothing per frame.
+    bool   showBrowse = false;
+    bool   browseJustOpened = false;
+    bool   browseDirty = true;
+    char   browseSearch[64] = {};
+    int    browseModeFilter = -1;    // -1 = every mode, else 0..5
+    int    browseSrcFilter = 0;      // 0 both banks, 1 factory only, 2 user only
+    int    browseSel = -1;           // cursor: index INTO browseIdx, not a preset id
+    int    browseRow0 = 0;           // first visible grid row (whole-row scrolling)
+    int    browseN = 0;
+    int    browseIdx[kBrowseMax] = {};
+    int    factoryMode[kNumFactoryPresets] = {};   // derived once in the ctor
 
     // filter-curve cache
     static constexpr int kFcN = 180;
