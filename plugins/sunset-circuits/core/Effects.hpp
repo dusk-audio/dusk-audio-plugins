@@ -775,7 +775,23 @@ public:
         springL.prepare(sampleRate, 1.0f);
         springR.prepare(sampleRate, 1.013f);
     }
-    void setEnabled(bool on) noexcept { enabled = on; }
+    // The spring is enabled only in Modular mode, so its enable edge IS the mode
+    // switch. process() returns early while disabled, which freezes the two
+    // dispersive tanks mid-ring -- their feedback loops keep whatever was
+    // circulating. Coming back to Modular resumed that ring from where it was
+    // left: measured -28.7 dBFS into silence, 2 s after leaving the mode.
+    //
+    // Cleared on the OFF edge here, unlike the chorus and the reverb. A spring
+    // tank is a long feedback loop, so the clear also has to stop it ringing;
+    // doing it on the way out means the mode we are leaving goes quiet
+    // immediately instead of holding a tail no one can hear but which comes
+    // back later.
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        if (!on) reset();
+    }
     void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); }
     void process(float& left, float& right) noexcept
     {
