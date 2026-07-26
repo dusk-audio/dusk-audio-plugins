@@ -113,8 +113,9 @@ struct VoiceParameters
     float velocitySensitivity = 0.7f;
     int   velocityCurve = 0;
 
-    // Unison (fix #3).
-    int   unisonVoices = 1;
+    // Unison (fix #3). The voice COUNT is not here: the allocator owns it (see
+    // VoiceAllocator::effectivePoly / setUnisonCount), and this field was never
+    // written or read by anything -- only the detune and spread are per-voice.
     float unisonDetune = 10.0f;  // cents (max spread)
     float unisonSpread = 1.0f;
 
