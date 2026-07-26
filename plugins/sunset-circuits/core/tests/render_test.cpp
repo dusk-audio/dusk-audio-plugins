@@ -49,6 +49,16 @@
 //                       starts at/after <sec>, call setParameter(name, value).
 //                       Repeatable (pass multiple setat= args) — used to
 //                       reproduce preset-switch / arp-toggle stuck-note bugs.
+//                       This is the ONE place a non-finite value is accepted:
+//                       nan / inf / -inf / +inf (and anything strtod reads as
+//                       one) pass through verbatim, because injecting a bad
+//                       parameter write is the whole point of the fault gate.
+//                       Every other key stays strictly finite.
+//   meters=<path>       append "<sec> <levelL_dB> <levelR_dB>" per rendered
+//                       block to <path>, read from getOutputLevelL/R after each
+//                       processBlock. The meters are a published observable with
+//                       a declared -60 dB floor, and this is the only way a gate
+//                       can see them.
 //   notifyat=<sec>      call notifyProgramChange() on the same block boundary as
 //                       a setat= at the same time, AFTER that block's parameter
 //                       writes — i.e. exactly what the shell's loadProgram() and
@@ -136,6 +146,28 @@ double parseNum(const char* key, const std::string& v)
     char* end = nullptr;
     const double d = std::strtod(start, &end);
     if (end == start || *end != '\0' || !std::isfinite(d))
+    {
+        std::fprintf(stderr, "invalid numeric value for key '%s': %s\n", key, v.c_str());
+        std::exit(2);
+    }
+    return d;
+}
+
+// Like parseNum but PERMITS non-finite results (nan / inf / -inf). Used only for
+// setat= values: "a bad parameter value must not kill the engine for good" can
+// only be gated by actually writing one, and the whole point is that the engine
+// survives it. Trailing garbage is still rejected.
+double parseNumAllowNonFinite(const char* key, const std::string& v)
+{
+    if (v.empty())
+    {
+        std::fprintf(stderr, "empty value for key '%s'\n", key);
+        std::exit(2);
+    }
+    const char* start = v.c_str();
+    char* end = nullptr;
+    const double d = std::strtod(start, &end);
+    if (end == start || *end != '\0')
     {
         std::fprintf(stderr, "invalid numeric value for key '%s': %s\n", key, v.c_str());
         std::exit(2);
@@ -244,6 +276,7 @@ int main(int argc, char** argv)
     double playAtTime = -1.0;   // < 0 = transport rolling from frame 0
     std::vector<int> holdNotes;
     int    blockSize = 512;
+    std::string meterPath;
 
     struct Override { int idx; float val; };
     std::vector<Override> overrides;
@@ -300,7 +333,7 @@ int main(int argc, char** argv)
             }
             const double t = parseNum("setat.time", val.substr(0, c1));
             const std::string name = val.substr(c1 + 1, c2 - c1 - 1);
-            const float v = (float)parseNum("setat.value", val.substr(c2 + 1));
+            const float v = (float)parseNumAllowNonFinite("setat.value", val.substr(c2 + 1));
             if (!validEventTime(t, seconds))
             {
                 std::fprintf(stderr, "bad setat time: %g (want 0 <= t < %g)\n", t, seconds);
@@ -506,6 +539,7 @@ int main(int argc, char** argv)
             }
             continue;
         }
+        if (key == "meters")   { meterPath = val; continue; }
         if (key == "sr")       { sampleRate = parseNum("sr", val); continue; }
         if (key == "block")
         {
@@ -615,6 +649,18 @@ int main(int argc, char** argv)
     std::vector<char> schedProgramDone(schedProgram.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
+
+    // Optional meter log (meters=<path>): one line per rendered block.
+    FILE* meterFile = nullptr;
+    if (!meterPath.empty())
+    {
+        meterFile = std::fopen(meterPath.c_str(), "w");
+        if (!meterFile)
+        {
+            std::fprintf(stderr, "cannot open meter log %s\n", meterPath.c_str());
+            return 2;
+        }
+    }
 
     bool released = false;
     for (int pos = 0; pos < totalFrames; )
@@ -767,12 +813,30 @@ int main(int argc, char** argv)
         }
 
         synth.processBlock(bufL.data(), bufR.data(), n);
+        if (meterFile != nullptr)
+        {
+            // Read the published observables, not the buffer: the point is what
+            // the shell hands the host, floor and all.
+            if (std::fprintf(meterFile, "%.9g %.9g %.9g\n", (double)pos / sampleRate,
+                             (double)synth.getOutputLevelL(),
+                             (double)synth.getOutputLevelR()) < 0)
+            {
+                std::fprintf(stderr, "short write to meter log %s\n", meterPath.c_str());
+                std::exit(2);
+            }
+        }
         for (int i = 0; i < n; ++i)
         {
             interleaved[(size_t)((pos + i) * 2 + 0)] = bufL[(size_t)i];
             interleaved[(size_t)((pos + i) * 2 + 1)] = bufR[(size_t)i];
         }
         pos += n;
+    }
+
+    if (meterFile != nullptr && std::fclose(meterFile) != 0)
+    {
+        std::fprintf(stderr, "error closing meter log %s\n", meterPath.c_str());
+        return 2;
     }
 
     writeFloatWav(outPath, interleaved, (int)sampleRate);
