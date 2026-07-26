@@ -107,9 +107,11 @@ enum Param : int
     pSeqSlide0,  pSeqSlide15  = pSeqSlide0  + 15,
     // ---- Appended after 1.0.0-rc param freeze ----
     // New parameters go HERE, at the end, so every index above keeps the value
-    // it had: a host automation lane, a saved session and a .scpreset all key on
-    // the numeric index, and inserting arpAccentPattern next to the other arp
-    // params would silently reassign 150+ of them.
+    // it had. Host automation lanes and saved sessions key on the numeric
+    // index; .scpreset files key on the SYMBOL (UserPresetStore resolves
+    // symbol=value lines by name). So: never reorder (breaks hosts) AND never
+    // rename (breaks presets). Inserting arpAccentPattern next to the other
+    // arp params would silently reassign 150+ host indices.
     pArpAccentPattern,
     kNumParams
 };

@@ -3193,7 +3193,10 @@ private:
         // own sequencer with its own per-step ACC lane.
         if (velAccent && !acid)
         {
-            const float ax = xR - wVel;
+            // x still holds the VEL group's left edge (last group in the walk);
+            // deriving from it keeps ACC under VEL even if the walk's start
+            // clamp ever moves the row off the 692 rule.
+            const float ax = x;
             text(ax - 4.0f, 590.0f, 8.5f, live.textPanel, "ACC", 1, true);
             comboBox("arpacc", kParamArpAccentPattern, ax, 588, xR, 606, kArpAccent, 4);
         }

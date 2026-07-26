@@ -733,7 +733,7 @@ jobs:
           # --skip-gui-tests is mandatory, not an optimisation: pluginval's editor
           # tests segfault headless for every DPF plugin (host-side XEmbed issue,
           # docs/dpf-migration/00-OVERVIEW.md landmine 9). Strictness 8 is the bar
-          # the QA checklist calls authoritative for the 222-parameter state
+          # the QA checklist calls authoritative for the 223-parameter state
           # round-trip; the Windows job runs 5 on top of this.
           #
           # Run under xvfb-run even though --skip-gui-tests means no editor is

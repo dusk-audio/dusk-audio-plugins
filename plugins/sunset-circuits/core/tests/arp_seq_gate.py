@@ -309,6 +309,27 @@ def accent_patterns(fails):
         print(f"   {'':<12} n=1 vs n=3 max |delta| {drift:.2f} dB "
               f"(limit {CROSS_SIZE_TOL_DB:.1f})   {'PASS' if ok else 'FAIL'}")
 
+    # Host-locked arm: advanceLocked has its own accent lookup (globalStep-based)
+    # so the free-run cases above cannot vouch for it. Every Other alternation is
+    # the sharpest discriminator -- an unwired or mis-indexed locked path reads
+    # as Downbeat and collapses the margin to ~0.
+    # songpos 0.31 (same trick as arp_gate): at songpos 0.0 the frame-0 step
+    # races the hold note-on and the first AUDIBLE onset is grid step 1, which
+    # inverts the measured alternation. From 0.31 beats the first fired step is
+    # global step 2 -- an EVEN offset, so Every Other's parity is preserved and
+    # accent_shape stays valid. Only parity-safe patterns may use this arm.
+    lv = step_levels("arpseq_acc1_locked", songpos=0.31,
+                     **dict(BASE, arpVelMode=2, arpAccentPattern=1))
+    if lv is None:
+        print("   locked EveryOther: FAIL (too few onsets)")
+        fails.append("C2/locked")
+    else:
+        ok, desc = accent_shape(1, lv)
+        print(f"   locked (songpos) Every Other  {desc}   "
+              f"{'PASS' if ok else 'FAIL'}")
+        if not ok:
+            fails.append("C2/locked")
+
 
 # --- D. acid sequencer enable edge --------------------------------------------
 ACID = dict(sr=SR, analogAmt=0, vintage=0, noiseLevel=0, cosmosChorus=0,
