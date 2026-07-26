@@ -2294,6 +2294,16 @@ private:
     //========================================================================
     void drawFXStrip()
     {
+        // Which of the two dense FX panels reads out through its labels. Latched, and
+        // only re-evaluated while nothing is being dragged: a knob drag can sweep the
+        // pointer anywhere on screen, so a raw hit test made the DELAY labels flip to
+        // values while you were dragging a REVERB knob (and vice versa). Latching also
+        // keeps the panel you GRABBED in reading out for the whole gesture, which is
+        // the panel whose numbers you want.
+        if (!ImGui::IsAnyItemActive())
+            fxReadoutPanel = mouseInRect(968, 552, 1094, 688) ? 1
+                           : mouseInRect(1098, 552, 1224, 688) ? 2 : 0;
+
         // Drive
         panelBox(708, 552, 834, 688);
         sectionTitle(714, 556, "DRIVE");
@@ -2330,7 +2340,7 @@ private:
         // The knob row is boxed in (labels above, P-P/TAPE row at 664 below), so the
         // read-outs live in the LABEL slot and appear while the pointer is anywhere
         // in the DELAY panel — see klabelOrValue.
-        const bool dro = mouseInRect(968, 552, 1094, 688);
+        const bool dro = (fxReadoutPanel == 1);
         if (sync)
         {
             comboBox("dlydiv", kParamDelayDiv, 1038, 578, 1088, 598, kDivName, 14);
@@ -2369,7 +2379,7 @@ private:
         // Two knob rows back to back: row 1's read-out band IS row 2's label band, and
         // row 2 ends 5 px above the panel floor. Both rows therefore read out through
         // their labels while the pointer is in the REVERB panel.
-        const bool rro = mouseInRect(1098, 552, 1224, 688);
+        const bool rro = (fxReadoutPanel == 2);
         klabelOrValue(1123, 590, "SIZE",  rro, kParamReverbSize,  "%.0f", " %", 100.0f);
         knob("rvbsize", kParamReverbSize, 1123, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
         klabelOrValue(1161, 590, "DECAY", rro, kParamReverbDecay, "%.1f", " s");
@@ -2861,6 +2871,9 @@ private:
     float  pbValue = 0.0f,  modValue = 0.0f;
     float  pbSent  = 0.0f,  modSent  = 0.0f;
     bool   pbDragging = false;   // set by drawWheel(), consumed by updateWheels()
+
+    // Latched FX read-out panel: 0 none, 1 DELAY, 2 REVERB (see drawFXStrip).
+    int    fxReadoutPanel = 0;
 
     // misc animation
     float  shPhase = 0.0f;

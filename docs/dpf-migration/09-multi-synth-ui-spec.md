@@ -218,6 +218,10 @@ Placement is 9.5 px design-space, dimmed on-panel ink, centred at `cy + r + 8` (
   knob **label** to the value, in accent ink at the same size/weight, while the pointer is
   anywhere in the panel rect — so hovering the panel reads out every value in it at once,
   and the row never reflows. This is preferred over dropping those knobs to hover-only.
+  The owning panel is **latched** (`fxReadoutPanel`, re-evaluated only while
+  `!IsAnyItemActive()`): a knob drag sweeps the pointer anywhere on screen, so a raw hit
+  test flipped the DELAY labels to values while a REVERB knob was being dragged. Latching
+  also keeps the panel you grabbed in reading out for the whole gesture.
 - **Scale gate (`readoutsOn()`, `s >= 0.72`)**: 9.5 px of design space is <5 device px at the
   620×390 minimum, i.e. unreadable. Below `kReadoutMinS = 0.72` (≈ 893×562) every persistent
   read-out is suppressed and the 12 px hover bubble — drawn on the foreground draw list, so
