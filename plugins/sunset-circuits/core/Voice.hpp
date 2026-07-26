@@ -428,7 +428,13 @@ public:
         if (silentMode) return;
 
         // --- modulation state ---
-        ModulationState modState;
+        // modState is a member, not a local: constructing one here value-
+        // initialised both of its arrays every internal sample, and then
+        // ModMatrix::apply cleared the destinations again -- two clears per
+        // sample per voice, at the oversampled rate. Hoisting is behaviour-
+        // identical because buildModState writes every source that exists (all
+        // ten of ModSource, checked against the enum) before the matrix reads
+        // them, and apply() still clears the destinations itself.
         buildModState(modState, matrix, params);
         lfoRateMod1 = modState.getDestValue(ModDest::LFO1Rate);
         lfoRateMod2 = modState.getDestValue(ModDest::LFO2Rate);
@@ -758,6 +764,11 @@ private:
     float retirePhase = 1.0f;      // 1 -> 0 over kRetireSeconds
     float retireStep = 1.0f;       // per internal sample, set by prepare/setSampleRate
     int   retireUnison = 1;        // sub-voice count frozen for the duration of the fade
+
+    // Scratch for the per-sample mod-matrix evaluation. Lives here rather than on
+    // the stack of renderInternalSample so it is not re-zeroed every sample; see
+    // the note at its use.
+    ModulationState modState;
 
     OscSet osc[kMaxUnison];
     FMVoiceEngine fm[kMaxUnison];      // Prism (mode 4) — one op bank per unison sub-voice
