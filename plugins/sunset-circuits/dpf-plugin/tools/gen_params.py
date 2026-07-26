@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # Generates MultiSynthParams.hpp for the DPF shell. The param order MUST match
 # the core msynth::Param enum exactly (indices are shared 1:1).
+#
+#   gen_params.py            regenerate ../MultiSynthParams.hpp in place
+#   gen_params.py --check    regenerate to memory and byte-compare against the
+#                            committed header; exit 1 on drift (CI guard so a
+#                            hand-edited header can never ship)
+import argparse
 import io
 import os
+import sys
 
 L, LOG, I, B = "LIN", "LOG", "INT", "BOOL"
 
@@ -141,7 +148,46 @@ for n in range(16): add(f"SeqSlide{n}",f"seqSlide{n}",f"Seq Slide {n+1}",0,1,0,B
 
 NCORE = len(P)
 sym2enum = {p[1]: "kParam"+p[0] for p in P}
-sym2def  = {p[1]: p[5] for p in P}
+
+# ---------------- Parameter units (DPF Parameter::unit) ----------------------
+# Emitted as a plain `const char*` per param and copied into Parameter::unit in
+# initParameter(). Purely additive display metadata: it changes no index, no
+# symbol, no range, and no host automation mapping.
+#
+# ONLY units whose numeric range is literally in that unit are listed. In
+# particular there is deliberately NO "%" anywhere: every level/depth/mix
+# parameter here has range 0..1, not 0..100, so tagging it "%" would make hosts
+# render 0.8 as "0.8 %". Unit-less is correct for those. Dimensionless ratios
+# (op ratios, resonance, gate, swing, width) are likewise left blank.
+UNIT_S  = "s"    # seconds
+UNIT_MS = "ms"   # milliseconds
+UNIT_HZ = "Hz"
+UNIT_DB = "dB"
+UNIT_CT = "ct"   # cents
+UNIT_ST = "st"   # semitones
+
+UNITS = {}
+def _units(unit, *syms):
+    for s in syms:
+        UNITS[s] = unit
+
+_units(UNIT_DB, "masterVol")
+_units(UNIT_HZ, "filterCutoff", "filterHP", "shRate", "lfo1Rate", "lfo2Rate",
+       "chorusRate")
+_units(UNIT_CT, "masterTune", "osc1Detune", "osc2Detune", "unisonDetune")
+_units(UNIT_ST, "osc2Semi", "pbRange")
+_units(UNIT_MS, "delayTime", "reverbPD", "acidSlideTime")
+_units(UNIT_S,  "ampA", "ampD", "ampR", "filtA", "filtD", "filtR",
+       "lfo1Fade", "lfo2Fade", "portaTime", "reverbDecay")
+for _op in (1, 2, 3, 4):
+    _units(UNIT_CT, f"op{_op}Fine")
+    _units(UNIT_S,  f"op{_op}A", f"op{_op}D", f"op{_op}R")
+for _n in range(16):
+    _units(UNIT_ST, f"seqPitch{_n}")
+
+# Every unit must name a real parameter — a typo would silently label nothing.
+_unknown = sorted(set(UNITS) - {p[1] for p in P})
+assert not _unknown, f"UNITS names non-existent params: {_unknown}"
 
 # ---------------- Factory presets (from JUCE applyFactoryPreset) --------------
 # Baseline applied to every preset (mirrors the reset block at the top of the
@@ -344,18 +390,22 @@ w("// index equals the core msynth::Param index 1:1 (verified by static_assert i
 w("// MultiSynthPlugin.cpp), so forwarding is a single dsp.setParameter(index,value).\n")
 w("//\n")
 w("// KIND: LIN linear float, LOG logarithmic float (min>0), INT integer choice,\n")
-w("// BOOL on/off. Two output params (peak L/R for meters) follow the core params.\n\n")
+w("// BOOL on/off. Two output params (peak L/R for meters) follow the core params.\n")
+w("// UNIT: display-only suffix (\"Hz\", \"dB\", \"ms\", \"s\", \"st\", \"ct\"), \"\" when the\n")
+w("// value is dimensionless. Additive metadata only - it does not affect indices,\n")
+w("// symbols, ranges or host automation mapping.\n\n")
 w("#pragma once\n\n")
-w("// X(EnumSuffix, symbol, Name, min, max, default, KIND)\n")
+w("// X(EnumSuffix, symbol, Name, min, max, default, KIND, unit)\n")
 w("#define MSYNTH_PARAMS(X) \\\n")
 for i,p in enumerate(P):
     suf,sym,name,mn,mx,df,kind = p
     end = " \\\n" if i < len(P)-1 else "\n"
-    w(f'    X({suf}, "{sym}", "{name}", {fl(mn)}, {fl(mx)}, {fl(df)}, {kind}){end}')
+    unit = UNITS.get(sym, "")
+    w(f'    X({suf}, "{sym}", "{name}", {fl(mn)}, {fl(mx)}, {fl(df)}, {kind}, "{unit}"){end}')
 w("\n")
 w("// Parameter index enum (kParam<Suffix>), matching the core order 1:1.\n")
 w("enum ParamId\n{\n")
-w("#define X(suf, sym, name, mn, mx, df, kind) kParam##suf,\n")
+w("#define X(suf, sym, name, mn, mx, df, kind, unit) kParam##suf,\n")
 w("    MSYNTH_PARAMS(X)\n")
 w("#undef X\n")
 w(f"    kNumCoreParams,                 // == msynth::kNumParams ({NCORE})\n")
@@ -365,10 +415,10 @@ w("    kParamCount\n};\n\n")
 
 # Param metadata table for initParameter.
 w("enum ParamKind { PK_LIN = 0, PK_LOG, PK_INT, PK_BOOL };\n")
-w("struct ParamDef { const char* symbol; const char* name; float min, max, def; int kind; };\n")
+w("struct ParamDef { const char* symbol; const char* name; float min, max, def; int kind; const char* unit; };\n")
 w("static constexpr ParamDef kParamDefs[kNumCoreParams] =\n{\n")
 w("#define LIN  PK_LIN\n#define LOG  PK_LOG\n#define INT  PK_INT\n#define BOOL PK_BOOL\n")
-w("#define X(suf, sym, name, mn, mx, df, kind) { sym, name, mn, mx, df, kind },\n")
+w("#define X(suf, sym, name, mn, mx, df, kind, unit) { sym, name, mn, mx, df, kind, unit },\n")
 w("    MSYNTH_PARAMS(X)\n")
 w("#undef X\n#undef LIN\n#undef LOG\n#undef INT\n#undef BOOL\n};\n\n")
 
@@ -399,6 +449,42 @@ w("};\n")
 w("static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets)/sizeof(kFactoryPresets[0]));\n")
 w("static constexpr int kBaselineRows = (int)(sizeof(kPresetBaseline)/sizeof(PresetRow));\n")
 
-_out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "MultiSynthParams.hpp")
-open(_out_path, "w").write(out.getvalue())
+_out_path = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "MultiSynthParams.hpp"))
+_text = out.getvalue()
+
+_ap = argparse.ArgumentParser(description="Generate (or verify) MultiSynthParams.hpp")
+_ap.add_argument("--check", action="store_true",
+                 help="do not write; byte-compare the committed header against a "
+                      "fresh generation and exit 1 on any drift")
+_args = _ap.parse_args()
+
+if _args.check:
+    # Byte-exact comparison: the header is a build input, so ANY difference
+    # (including a hand-edit that happens to be semantically equivalent) is a
+    # failure — the generator is the single source of truth.
+    try:
+        with open(_out_path, "r", newline="") as f:
+            _have = f.read()
+    except OSError as e:
+        print(f"gen_params --check: cannot read {_out_path}: {e}", file=sys.stderr)
+        sys.exit(1)
+    if _have == _text:
+        print(f"gen_params --check: OK ({NCORE} params, {len(PRESETS)} presets, "
+              f"{len(_text)} bytes)")
+        sys.exit(0)
+    print(f"gen_params --check: DRIFT — {_out_path} does not match gen_params.py "
+          f"output ({len(_have)} bytes committed vs {len(_text)} generated).",
+          file=sys.stderr)
+    import difflib
+    _diff = list(difflib.unified_diff(_have.splitlines(True), _text.splitlines(True),
+                                      fromfile="committed", tofile="generated", n=1))
+    sys.stderr.writelines(_diff[:60])
+    if len(_diff) > 60:
+        print(f"... ({len(_diff) - 60} more diff lines)", file=sys.stderr)
+    print("Re-run tools/gen_params.py and commit the result.", file=sys.stderr)
+    sys.exit(1)
+
+with open(_out_path, "w", newline="") as f:
+    f.write(_text)
 print(f"core params = {NCORE}, presets = {len(PRESETS)}")
