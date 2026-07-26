@@ -243,18 +243,26 @@ sunset_vst3_path() {
 
 run_sunset_circuits_tests() {
     local skip_pluginval="$1"
+    local skip_audio="$2"
     local suite="$PROJECT_DIR/plugins/sunset-circuits/core/tests/run_all.sh"
 
     # --- offline gate suite (the authoritative DSP check for this plugin) -----
+    # Honours --skip-audio: the suite is offline audio rendering and takes
+    # minutes, and the documented fleet command in CLAUDE.md
+    # (run_plugin_tests.sh --plugin "<Name>" --skip-audio) has to stay quick.
     print_section "Core gate suite: $SUNSET_NAME"
-    if [ ! -x "$suite" ]; then
+    if [ "$skip_audio" = true ]; then
+        print_skip "Core gate suite (--skip-audio); run $suite directly for the DSP gates"
+    elif [ ! -x "$suite" ]; then
         print_skip "run_all.sh not found or not executable: $suite"
     else
         print_info "Running $suite (several minutes; builds its own harness)"
         if "$suite"; then
             print_pass "Core gate suite green"
         else
-            print_fail "Core gate suite failed (re-run $suite for the detail)"
+            # run_all.sh already printed the per-gate detail above; it reports
+            # one aggregate status, so name the log rather than re-deriving it.
+            print_fail "Core gate suite failed (per-gate detail is in the output above)"
         fi
     fi
 
@@ -365,9 +373,9 @@ main() {
                 echo "  --help            Show this help"
                 echo ""
                 echo "Note: \"Sunset Circuits\" (also accepted as \"sunset-circuits\") is the"
-                echo "DPF port. It runs its own offline gate suite"
-                echo "(plugins/sunset-circuits/core/tests/run_all.sh, several minutes, not"
-                echo "affected by --skip-audio) plus pluginval at strictness 8 with"
+                echo "DPF port. Instead of the shared audio analyzer it runs its own offline"
+                echo "gate suite (plugins/sunset-circuits/core/tests/run_all.sh, several"
+                echo "minutes) which --skip-audio skips, plus pluginval at strictness 8 with"
                 echo "--skip-gui-tests."
                 exit 0
                 ;;
@@ -392,7 +400,7 @@ main() {
 
         # DPF port with its own bundle name and gate suite; accept the slug too.
         if [ "$plugin" = "$SUNSET_NAME" ] || [ "$plugin" = "sunset-circuits" ]; then
-            run_sunset_circuits_tests "$skip_pluginval"
+            run_sunset_circuits_tests "$skip_pluginval" "$skip_audio"
             continue
         fi
 
