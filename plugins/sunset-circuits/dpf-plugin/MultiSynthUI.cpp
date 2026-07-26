@@ -2077,10 +2077,12 @@ private:
         showBrowse = true;
         browseJustOpened = true;
         browseSearch[0] = '\0';
+        browseSearchHadText = false;
         browseModeFilter = -1;   // all modes
         browseSrcFilter  = 0;    // all banks
         browseSel = -1;          // rebuild parks the cursor on the loaded preset
         browseRow0 = 0;
+        browseWheelAcc = 0.0f;
         browseDirty = true;
         // NOT presetStore.refresh(): currentPreset addresses the user bank BY INDEX,
         // and a rescan can renumber it (a file added or removed behind the plugin's
@@ -2177,6 +2179,19 @@ private:
         if (row >= browseRow0 + kBrRows) browseRow0 = row - kBrRows + 1;
         clampBrowseScroll();
     }
+    // The mirror of scrollBrowseToSel: after the WHEEL moves the view, drag the
+    // cursor back into it (keeping its column). Enter loads whatever the cursor is
+    // on, and a patch load has no undo in this UI — so the cursor must never be
+    // parked on a preset that scrolled off screen.
+    void clampBrowseSelToView()
+    {
+        if (browseSel < 0 || browseN <= 0) return;
+        const int col   = browseSel % kBrCols;
+        const int first = browseRow0 * kBrCols;
+        const int last  = std::min(browseN, (browseRow0 + kBrRows) * kBrCols) - 1;
+        if (browseSel < first)     browseSel = std::min(first + col, last);
+        else if (browseSel > last) browseSel = std::min((browseRow0 + kBrRows - 1) * kBrCols + col, last);
+    }
 
     // Filter chip (mode / bank). Deliberately dark-on-panel in every skin, like the
     // combos, so it reads on Acid's silver panel as well as the five dark ones.
@@ -2227,10 +2242,15 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked()) { browseSel = fi; applyIdx = idx; }
-        // Double-click loads AND closes. IsMouseDoubleClicked fires on the same
-        // frame as the second IsItemClicked, so the load is set once either way.
-        if (hov && ImGui::IsMouseDoubleClicked(0)) { browseSel = fi; applyIdx = idx; closeNow = true; }
+        // One gesture must cost ONE patch load. A double-click is two clicks: the
+        // first loads, the second would load the same 222 values again (visible to
+        // the host as a second burst of automation writes), so the single-click
+        // branch stands down once the click is part of a multi-click, and the
+        // double-click branch only loads if click 1 did not already land it.
+        if (ImGui::IsItemClicked() && ImGui::GetIO().MouseClickedCount[0] == 1)
+        { browseSel = fi; applyIdx = idx; }
+        if (hov && ImGui::IsMouseDoubleClicked(0))
+        { browseSel = fi; if (idx != currentPreset) applyIdx = idx; closeNow = true; }
 
         dl->AddRectFilled(b0, b1, cur ? withA(live.accent, 40)
                                       : (hov ? IM_COL32(52, 53, 58, 255)
@@ -2241,14 +2261,32 @@ private:
         // even when the keyboard cursor has moved somewhere else entirely.
         if (cur) dl->AddRectFilled(P(x0 + 2, y0 + 2), P(x0 + 5, y1 - 2), live.accent, 1.5f * s);
 
-        // Name ink band x0+12 .. x1-122 (136 px, ~24 chars at font 11) clears the
-        // badge; the longest factory name is "Alien Transmission" at 18.
+        // Badge + tag are 8 px of design space, i.e. 4 device px at the 620x390
+        // minimum (s = 0.5) — the same mush kReadoutMinS exists to suppress (§3.1b).
+        // Below it the row degrades instead of disappearing: the badge becomes a
+        // text-less colour swatch, which still names the mode (the palette IS the
+        // mode cue, §4.0), the FACTORY / USER tag drops, and the name takes the
+        // freed width. The hover tooltip carries mode and bank verbatim at any size.
+        const bool ro = readoutsOn();
+        // Name ink band x0+12 .. (x1-122 with badge+tag, x1-36 without): 136 / 222 px,
+        // ~24 / ~40 chars at font 11. The longest factory name is 18, but a USER name
+        // is whatever fitted in saveNameBuf (128) and panel.text() never clips — so
+        // the draw is clipped to the band and an over-long name is CUT, not allowed to
+        // overprint the badge and bleed into the next column. Tooltip has it in full.
+        const float nameX1 = ro ? x1 - 122.0f : x1 - 36.0f;
+        dl->PushClipRect(P(x0 + 12, y0), P(nameX1, y1), true);
         text(x0 + 12, y0 + 14, 11.0f, cur ? live.accent : IM_COL32(226, 229, 234, 255),
              presetName(idx), -1, cur || sel);
-        dl->AddRectFilled(P(x1 - 116, y0 + 11), P(x1 - 58, y0 + 27), mc, 3.0f * s);
-        text(x1 - 87, y0 + 15, 8.0f, inkOn(mc), kModeNames[m], 0, true);
-        text(x1 - 12, y0 + 15, 8.0f, user ? live.accent : IM_COL32(140, 142, 148, 255),
-             user ? "USER" : "FACTORY", 1, user);
+        dl->PopClipRect();
+        if (ro)
+        {
+            dl->AddRectFilled(P(x1 - 116, y0 + 11), P(x1 - 58, y0 + 27), mc, 3.0f * s);
+            text(x1 - 87, y0 + 15, 8.0f, inkOn(mc), kModeNames[m], 0, true);
+            text(x1 - 12, y0 + 15, 8.0f, user ? live.accent : IM_COL32(140, 142, 148, 255),
+                 user ? "USER" : "FACTORY", 1, user);
+        }
+        else
+            dl->AddRectFilled(P(x1 - 30, y0 + 11), P(x1 - 12, y0 + 27), mc, 3.0f * s);
         if (hov)
             ImGui::SetTooltip("%s \xC2\xB7 %s \xC2\xB7 %s preset%s", presetName(idx), kModeNames[m],
                               user ? "user" : "factory", cur ? " (loaded)" : "");
@@ -2258,6 +2296,9 @@ private:
     {
         if (!showBrowse) return;
         if (browseDirty) rebuildBrowseIndex();
+        // Query as it stood before this frame's InputText ran — see the Esc handler
+        // at the bottom for why the live buffer cannot answer that question.
+        const bool searchHadText = browseSearchHadText;
 
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
@@ -2295,6 +2336,7 @@ private:
         // up separately; the rebuild then happens at the top of the NEXT frame,
         // which keeps the index stable for the grid already being submitted.
         if (ImGui::IsItemEdited()) browseDirty = true;
+        browseSearchHadText = (browseSearch[0] != '\0');   // for next frame's Esc test
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar();
         ImGui::PopFont();
@@ -2327,14 +2369,27 @@ private:
         }
 
         // ---- grid ----
-        // The wheel scrolls by whole ROWS. A pixel scroll would leave half-cells at
+        // The wheel scrolls by whole ROWS: a pixel scroll would leave half-cells at
         // the band edges whose ImGui hit boxes still stick out (ImGui only culls
         // items that are FULLY clipped), so every visible cell is a whole cell.
+        // The fractional deltas a precision touchpad sends are ACCUMULATED rather
+        // than rounded per event — rounding drops every |delta| < 0.5 on the floor,
+        // which reads as a dead grid on exactly the hardware that sends the smallest
+        // steps. A partial notch is dropped when the pointer leaves the grid, so a
+        // half-scroll cannot leak into a later, unrelated gesture.
         if (mouseInRect(kBrCX0, kBrGridY0, kBrCX1, kBrGridY1))
         {
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f) { browseRow0 -= (int)std::lround(wheel); clampBrowseScroll(); }
+            browseWheelAcc += ImGui::GetIO().MouseWheel;
+            const int rows = (int)browseWheelAcc;   // truncate toward zero
+            if (rows != 0)
+            {
+                browseWheelAcc -= (float)rows;
+                browseRow0 -= rows;
+                clampBrowseScroll();
+                clampBrowseSelToView();
+            }
         }
+        else browseWheelAcc = 0.0f;
         for (int k = 0; k < kBrRows * kBrCols; ++k)
         {
             const int fi = browseRow0 * kBrCols + k;
@@ -2379,6 +2434,13 @@ private:
         // stays navigable while the search box holds focus — type, then arrow down
         // into the results. Left/Right yield to an active field so they still walk
         // the search text.
+        //
+        // A search EDIT only sets browseDirty — the rebuild lands at the top of the
+        // next frame, so the index stays stable for the grid already submitted this
+        // one. Enter, though, acts NOW: typing a query and hitting Enter in a single
+        // gesture would otherwise load out of the PRE-EDIT list, i.e. the wrong
+        // preset entirely. Rebuild first when both land on the same frame.
+        if (searchEnter && browseDirty) rebuildBrowseIndex();
         if (browseN > 0)
         {
             const bool editing = ImGui::IsAnyItemActive();
@@ -2403,7 +2465,22 @@ private:
             if (enterKey && browseSel >= 0) { applyIdx = browseIdx[browseSel]; closeNow = true; }
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showBrowse = false;
+        // Esc backs out one step at a time: it clears a typed query first and only
+        // closes the browser once the list is unfiltered again — losing the query
+        // AND the browser to one keystroke is the wrong ratio.
+        //
+        // The test is the query as it stood at the START of this frame, not as it
+        // stands now: ImGui's InputText handles Esc inside its own call, reverting
+        // the buffer to its focus-time value and clearing the active id, so by the
+        // time this runs a field that held "bass" a moment ago reads as empty and
+        // inactive. Testing the live buffer would therefore close the browser on the
+        // very keystroke that was meant to clear the search.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            if (searchHadText || browseSearch[0] != '\0')
+            { browseSearch[0] = '\0'; browseDirty = true; }
+            else showBrowse = false;
+        }
 
         // Scrim close: a click in the dark area outside the panel, no popup open —
         // same manual hit test as the other two modals, done AFTER the widgets so
@@ -3269,10 +3346,12 @@ private:
     bool   browseJustOpened = false;
     bool   browseDirty = true;
     char   browseSearch[64] = {};
+    bool   browseSearchHadText = false;   // buffer non-empty at the END of last frame
     int    browseModeFilter = -1;    // -1 = every mode, else 0..5
     int    browseSrcFilter = 0;      // 0 both banks, 1 factory only, 2 user only
     int    browseSel = -1;           // cursor: index INTO browseIdx, not a preset id
     int    browseRow0 = 0;           // first visible grid row (whole-row scrolling)
+    float  browseWheelAcc = 0.0f;    // sub-row wheel remainder (touchpad deltas)
     int    browseN = 0;
     int    browseIdx[kBrowseMax] = {};
     int    factoryMode[kNumFactoryPresets] = {};   // derived once in the ctor
