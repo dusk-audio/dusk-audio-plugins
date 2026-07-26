@@ -37,20 +37,13 @@ on:
       - '.github/workflows/dpf-release.yml'
   workflow_dispatch:
 
-# DPF / DPF-Widgets pinned to the SHAs validated locally for this release. Bump
-# both together and re-run the dispatch matrix before tagging.
-#
-# TODO: DPF_SHA still points at upstream DISTRHO/DPF, which reports latency
-# changes from outside clap_plugin::activate and so fails 24 clap-validator
-# tests. The fix lives on branch dusk/clap-latency-activate in the local DPF
-# checkout and is not pushed yet. Once it is pushed to the Dusk fork, bump
-# DPF_SHA below to the fork commit AND repoint every `repository: DISTRHO/DPF`
-# checkout step (5 of them) at the fork. Until then the clap-validator step
-# will fail on the 24 latency failures -- its allowlist has been removed
-# because the fix validates clean locally (44 tests: 33 pass, 10 skip,
-# 1 warning, 0 fail).
+# DPF is pinned to the dusk-audio/DPF fork (branch dusk/clap-latency-activate):
+# upstream DISTRHO/DPF reports CLAP latency changes outside clap_plugin::activate
+# and fails 24 clap-validator tests. Drop the fork pin once upstream merges the
+# fix. DPF-Widgets stays on upstream. Bump both SHAs together and re-run the
+# dispatch matrix before tagging.
 env:
-  DPF_SHA: 4238e1c7f0351bbe488d79f0899c540543ac7583
+  DPF_SHA: 2f98c651acd70cfbcd9f807b7e73ea1e39ecc2cb
   DPFWIDGETS_SHA: 730da6397904da66d99667c1cb30fc77fc3d794a
   PLUGIN_DIR: plugins/sunset-circuits/dpf-plugin
   SLUG: sunset-circuits
@@ -152,7 +145,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
@@ -253,7 +246,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
@@ -318,7 +311,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
@@ -481,7 +474,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
@@ -670,7 +663,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
