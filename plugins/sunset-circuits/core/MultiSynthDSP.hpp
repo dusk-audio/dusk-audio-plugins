@@ -48,6 +48,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>       // std::isfinite (setParameter guard)
 
 namespace msynth
 {
@@ -128,7 +129,14 @@ public:
     //--- parameters (any thread) ----------------------------------------------
     void setParameter(int index, float value) noexcept
     {
-        if (index >= 0 && index < kNumParams)
+        // Reject non-finite values at the door. A NaN or Inf that gets into the
+        // parameter table reaches the recursive parts of the render path -- the
+        // output DC blockers and the vintage one-pole -- and poisons their state
+        // permanently, so the engine never produces sound again even after the
+        // parameter is set back to something sane. softLimit's isBad branch
+        // clears that state so it is recoverable, but not letting the value in
+        // is the half of the fix that stops it happening at all.
+        if (index >= 0 && index < kNumParams && std::isfinite(value))
             params[(size_t)index].store(value, std::memory_order_relaxed);
     }
     float getParameter(int index) const noexcept

@@ -670,7 +670,15 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // only — drive/delay/reverb tone is untouched. Hot presets are trimmed via
     // their masterVol rows so the audit ceiling (peak <= -1 dBFS) still holds.
     constexpr float kOutputMakeup = 2.51188643f; // +8 dB
-    masterGain = kOutputMakeup * std::pow(10.0f, p(pMasterVol) / 20.0f);
+    // Clamped to the range the shell declares for this parameter (-60..+6 dB).
+    // Unclamped, a host writing a wild but FINITE value gets past the non-finite
+    // guard in setParameter and overflows here: masterVol = 1e30 makes pow()
+    // return +Inf, which lands in smGain, whose one-pole state is recursive and
+    // therefore Inf for good. The engine then renders silence permanently, even
+    // after the parameter is set back (measured: 20 blocks at peak 0.00000 with
+    // the note still held). Clamping the dB value is the only place this can be
+    // stopped -- once the target is Inf, no downstream reset recovers it.
+    masterGain = kOutputMakeup * std::pow(10.0f, clampf(p(pMasterVol), -60.0f, 6.0f) / 20.0f);
     masterPan = p(pMasterPan);
     stereoWidth = p(pStereoWidth);
     vintage = p(pVintage);
@@ -884,8 +892,28 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
     double       songBeat       = songPosBeats.load(std::memory_order_relaxed);
     const double beatsPerSample = (bpm > 0.0 ? bpm : 120.0) / (60.0 * hostRate);
 
-    auto softLimit = [](float x) noexcept -> float {
-        if (isBad(x)) return 0.0f;
+    auto softLimit = [this](float x) noexcept -> float {
+        if (isBad(x))
+        {
+            // Returning 0 stops the bad sample reaching the host, but by this
+            // point it has already gone THROUGH the output DC blockers and the
+            // vintage one-pole, all of which are recursive. Their state is now
+            // non-finite, so every later sample comes out non-finite too and is
+            // zeroed here in turn: the engine falls permanently silent, and stays
+            // silent even after the parameter that caused it is set back.
+            // Measured: one NaN write to masterVol, restored on the next block,
+            // left 20 further blocks at peak 0.00000 with the note still held.
+            //
+            // Clearing the recursive state is what makes this recoverable. Both
+            // channels are cleared regardless of which one went bad -- a
+            // non-finite sample is a fault, not a signal, and the pair is meant
+            // to stay matched.
+            dcBlockL.reset();
+            dcBlockR.reset();
+            prevVintageL = 0.0f;
+            prevVintageR = 0.0f;
+            return 0.0f;
+        }
         const float ax = std::abs(x);
         if (ax <= 0.9f) return x;
         const float limited = 0.9f + 0.1f * std::tanh((ax - 0.9f) * 10.0f);
