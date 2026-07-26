@@ -236,6 +236,26 @@ Solving gives `g = 17` (non-acid) / `13` (Acid) — even inside whichever row is
   row: Fixed spends the width on a 58 px combo plus the value knob (centre `679`, reach
   `696.5`, inside the 700 panel wall); the other modes give all 100 to the combo, which
   `"As Played"` wants (it clipped at 86).
+- **ACC (`arpAccentPattern`) is a SECOND LINE, not a seventh group.** The accent shape
+  (`Downbeat / Every Other / Ramp Up / Ramp Down`) is only meaningful while VEL is
+  `"Accent"` — `Arpeggiator::getVelocity` reads it in that branch and nowhere else — so it
+  is **shown/hidden**, matching the FIX knob rather than dimming. It does **not** join the
+  solved rhythm, and the reason is arithmetic: a seventh group of width `W` re-solves
+  `g = (692 − titleEnd − 475 − W)/7`, which hits the `g ≥ 12` floor at `W = 18 px`
+  (non-acid, `titleEnd ≈ 115`) and has **no solution at all** in Acid (`titleEnd ≈ 139`
+  ⇒ `W < 0`). Splitting the existing 100 px VEL group in two also fails — a combo spends
+  6 px of frame padding plus ~24 px of arrow before any text, so 100 px cannot carry two —
+  and widening the VEL group would reflow all six groups on a velocity-mode change, the
+  exact thing the fixed 100 px width exists to prevent.
+  It therefore takes the free band **directly under the VEL combo**, right-aligned on the
+  same `692` rule and the same **100 px** wide (`x 592..692`, `y 588..606`), with a
+  right-aligned `ACC` micro-label at `x588`. Vertical fit, measured the same way as the
+  rest of this header: VEL combo bottom `586` → **2 px** → ACC `588..606` → **6 px** →
+  non-acid step lane at `612`. The OCT/GATE/SWING read-outs share the `601..610` band but
+  end at `x ≈ 501`; the Fixed-VEL knob's read-out does reach this x-range, but Fixed and
+  Accent are mutually exclusive so they never draw together.
+  **Suppressed in Acid**: mode 5 has no free band (its GATE lane starts at `y600`) and does
+  not run the arpeggiator at all — AcidEngine has its own per-step ACC lane.
 
 ### 1.4 Overlays (drawn last, above everything)
 | Overlay | Rect | Contents |
@@ -289,7 +309,7 @@ Solving gives `g = 17` (non-acid) / `13` (Acid) — even inside whichever row is
 Every param from inventory §1, plus the new Prism/Acid params from `09-multi-synth.md`,
 maps to exactly one on-screen control. The DPF param enum is generated from the X-macro
 list in `MultiSynthParams.hpp`; the UI includes that header and indexes `values[kParamX]`
-exactly like `TapeEchoUI`. Total **222 core params** (134 ported + 38 Prism + 2 acid
+exactly like `TapeEchoUI`. Total **223 core params** (134 ported + 38 Prism + 1 appended `arpAccentPattern` + 2 acid
 globals + 48 seq step rows). Controls:
 
 - **Knob** (chrome, `DuskPanel::knob`): all continuous floats + stepped ints (`stepped=true`).
@@ -743,6 +763,7 @@ substituted. Store in `kTooltips[kParamCount]`.
 | `arpLatch` | Hold the pattern after keys are released. |
 | `arpVelMode` | Velocity source for steps: as played, fixed, or accented. |
 | `arpFixedVel` | Velocity used when the mode is fixed. |
+| `arpAccentPattern` | Accent shape over the 16-step grid, used when the velocity mode is Accent. |
 | `arpStepN` | Turn step N on or off. |
 
 ### FX — Drive / Chorus / Delay / Reverb
@@ -1102,7 +1123,7 @@ springing back (§8.9).
   the end of the frame, after every widget has been submitted.
   **One gesture costs one load**: a double-click is two clicks, so the single-click branch
   stands down once `MouseClickedCount > 1` and the double-click branch only loads if click 1
-  did not already land it — otherwise the host sees 222 parameter writes twice for one gesture.
+  did not already land it — otherwise the host sees 223 parameter writes twice for one gesture.
 - **`openBrowse()` deliberately does NOT rescan the user directory**: `currentPreset`
   addresses the user bank by index, and a rescan can renumber it, silently repointing both
   the highlight and the save modal's DELETE at a different patch. The store is rescanned only
@@ -1146,7 +1167,7 @@ at `(440,351)` w360; hint line at `y 393`; button row at `y 435` — SAVE `(440)
   `scpreset::Store::save()` takes an optional `std::string* errOut` and reports three
   distinct sources: `create_directories`' `error_code` (previously discarded outright),
   the `ofstream` open via `errno`, and the final `flush` via `errno` — the last is where a
-  full disk usually lands, since the ~222-line body is buffered and only the flush hits
+  full disk usually lands, since the ~223-line body is buffered and only the flush hits
   the wall. `commitDelete()` follows the same contract.
 
 Hint-slot priority, one line, in order: **save/delete error** → "Enter a name to save." →

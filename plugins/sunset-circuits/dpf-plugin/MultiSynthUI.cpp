@@ -84,6 +84,8 @@ namespace
     const char* const kDivName[]  = { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32",
                                       "1/2.", "1/4.", "1/8.", "1/16.", "1/2T", "1/4T", "1/8T", "1/16T" };
     const char* const kArpVel[]   = { "As Played", "Fixed", "Accent" };
+    // msynth::ArpAccentPattern. Only reachable/meaningful while kArpVel is "Accent".
+    const char* const kArpAccent[]= { "Downbeat", "Every Other", "Ramp Up", "Ramp Down" };
     const char* const kLfoShape[] = { "Sine", "Triangle", "Square", "S&H", "Random" };
     const char* const kDriveType[]= { "Soft", "Hard", "Tube" };
     const char* const kChorusOpt[]= { "Off", "I", "II", "I+II" };
@@ -2664,7 +2666,7 @@ private:
     // One preset cell. It does NOT apply anything itself: it reports through
     // applyIdx / closeNow so the whole grid is submitted before any parameter push
     // runs (a push mid-grid would reorder nothing today, but it keeps the frame's
-    // widget submission and the 222-param write strictly separated).
+    // widget submission and the 223-param write strictly separated).
     void drawBrowseCell(int fi, float x0, float y0, int& applyIdx, bool& closeNow)
     {
         const int idx = browseIdx[fi];
@@ -2681,7 +2683,7 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
         // One gesture must cost ONE patch load. A double-click is two clicks: the
-        // first loads, the second would load the same 222 values again (visible to
+        // first loads, the second would load the same 223 values again (visible to
         // the host as a second burst of automation writes), so the single-click
         // branch stands down once the click is part of a multi-click, and the
         // double-click branch only loads if click 1 did not already land it.
@@ -2934,7 +2936,7 @@ private:
             && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
             showBrowse = false;
 
-        // Deferred load: applying pushes 222 parameters, so it runs once, here,
+        // Deferred load: applying pushes 223 parameters, so it runs once, here,
         // after every widget in the frame has been submitted.
         if (applyIdx >= 0) applyCombined(applyIdx);
         if (closeNow) showBrowse = false;
@@ -3095,7 +3097,9 @@ private:
         // scan): Acid arc bottom 597.2 clears the GATE lane at y600 by 2.8 px, and
         // the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the non-acid
         // lane at y612 by 2.0 px.
-        const bool velFixed = (int)std::lround(values[kParamArpVelMode]) == 1;
+        const int  velMode  = (int)std::lround(values[kParamArpVelMode]);
+        const bool velFixed = velMode == 1;
+        const bool velAccent = velMode == 2;
         const float kr = 13.0f, khw = kr + 4.5f, kdx = 44.0f;  // radius / half-reach / pitch
         const float wArp = 52.0f, wMode = 84.0f, wRate = 64.0f, wLatch = 52.0f;
         const float wKnobs = 2.0f * kdx + 2.0f * khw;          // 123
@@ -3157,6 +3161,41 @@ private:
             const float fx = xR - kr;
             hlabel(fx, "FIX", 0);
             knob("arpfvel", kParamArpFixedVel, fx, hy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
+        }
+        // ACC — the accent SHAPE, only meaningful while VEL is "Accent" (it is the
+        // sole consumer: Arpeggiator::getVelocity reads accentPattern in that
+        // branch and nowhere else). Shown/hidden, not dimmed, matching the FIX
+        // knob one line up, which is the established idiom for "this control has
+        // no meaning in the other velocity modes".
+        //
+        // It is NOT a seventh group in the solved rhythm, and that is arithmetic,
+        // not taste. A seventh group of width W re-solves g to
+        // (692 - titleEnd - 475 - W)/7, which at the non-acid titleEnd of ~115
+        // hits the g >= 12 floor at W = 18 px and at the Acid titleEnd of ~139
+        // has no solution at all (W < 0). Splitting the existing 100 px VEL group
+        // in two does not work either: a combo spends 6 px of frame padding plus
+        // ~24 px of arrow before any text, so 100 px cannot carry two of them.
+        // Widening the VEL group to fit both would reflow all six groups on a
+        // velocity-mode change — precisely what the fixed 100 px width exists to
+        // prevent (see the note above it).
+        //
+        // So it takes the free band directly UNDER the VEL combo instead, right-
+        // aligned on the same 692 rule and the same 100 px wide, which keeps the
+        // column and costs the row nothing. Vertical fit (ink extents measured the
+        // same way as the rest of this header): VEL combo bottom 586 -> 2 px -> ACC
+        // 588..606 -> 6 px -> non-acid step lane at 612. The OCT/GATE/SWING read-
+        // outs share the 601..610 band but end at x~501, well left of 592; the
+        // Fixed-VEL knob's read-out does reach into this x-range, but Fixed and
+        // Accent are mutually exclusive so the two can never draw together.
+        //
+        // Suppressed in Acid, which has no free band (its GATE lane starts at
+        // y600) and does not use the arpeggiator at all — mode 5 runs AcidEngine's
+        // own sequencer with its own per-step ACC lane.
+        if (velAccent && !acid)
+        {
+            const float ax = xR - wVel;
+            text(ax - 4.0f, 590.0f, 8.5f, live.textPanel, "ACC", 1, true);
+            comboBox("arpacc", kParamArpAccentPattern, ax, 588, xR, 606, kArpAccent, 4);
         }
 
         const int step = liveStep();
@@ -3867,6 +3906,8 @@ private:
         tips[kParamArpLatch] = "Hold the pattern after keys are released.";
         tips[kParamArpVelMode] = "Velocity source for steps: as played, fixed, or accented.";
         tips[kParamArpFixedVel] = "Velocity used when the mode is fixed.";
+        tips[kParamArpAccentPattern] = "Accent shape over the 16-step grid, "
+                                       "used when the velocity mode is Accent.";
         for (int i = 0; i < 16; ++i) tips[kParamArpStep0 + i] = "Turn this step on or off.";
         tips[kParamDriveOn] = "Enable the drive stage.";
         tips[kParamDriveType] = "Drive character: soft, hard, or tube.";
