@@ -19,6 +19,12 @@ Scenarios (48k, 2x OS, sustained patch ampS=1 ampR=0.3, no reverb/delay):
                  running with the keys up, and stops on pedal-up
   g. acid      : mode 5's mono last-note stack holds under the pedal and unwinds
                  to silence on pedal-up (no stranded voice, no slide blip)
+  i. latch-off under pedal : latch-off prunes latched notes against (keys | pedal),
+                 not keys alone, so a pattern the PEDAL is holding survives the
+                 latch going off and stops when the pedal lifts
+  j. pedal-up first        : the same two events in the other order. Latch outranks
+                 the pedal, so the pedal-up must NOT stop the pattern; the later
+                 latch-off finds nothing held by keys or pedal and stops it
 
 Levels match stuck_gate.py: this engine's sustained note sits near -30..-37 dBFS
 RMS, so the thresholds are set against measured reality, not an absolute -20.
@@ -138,6 +144,36 @@ def main():
     fails += check("h", h_mid > LOUD_DB and h_end < SILENT_DB,
                    f"preset load : after load {h_mid:6.1f} dB (>{LOUD_DB:.0f}), "
                    f"after pedal-up {h_end:6.1f} dB (<{SILENT_DB:.0f})")
+
+    # (i) latch-off while the PEDAL holds the notes. snapshotParameters prunes the
+    #     latched set against (keys | pedal): the keys are up, so pruning against
+    #     keys alone would stop the pattern the pedal is still holding. It has to
+    #     keep running until 2.5 s, then stop.
+    sr, x = render(0, 60, seconds, 2, "sus_latch_pedal", arpOn=1, arpRate=3, arpLatch=1,
+                   hold="64,67", release=0.5,
+                   sustainat=["0.1:1", "2.5:0"], setat="1.5:arpLatch:0", **PATCH)
+    i_mid = window_db(x, sr, 1.8, 2.4)
+    i_end = window_db(x, sr, 3.2, seconds)
+    fails += check("i", i_mid > LOUD_DB and i_end < SILENT_DB,
+                   f"latch/pedal: after latch-off {i_mid:6.1f} dB (>{LOUD_DB:.0f}), "
+                   f"after pedal-up {i_end:6.1f} dB (<{SILENT_DB:.0f})")
+
+    # (j) the same two events in the opposite order. LATCH outranks the pedal: it is
+    #     holding the notes in its own right, so the pedal coming up at 1.5 s must
+    #     NOT stop the pattern (Arpeggiator::noteOff is a no-op while latched, and a
+    #     pedal release is an ordinary note-off). The latch-off at 2.5 s then finds
+    #     nothing held by either keys or pedal and stops it. Getting silence at the
+    #     pedal-up here would mean the pedal had quietly overridden the latch.
+    sr, x = render(0, 60, seconds, 2, "sus_pedal_latch", arpOn=1, arpRate=3, arpLatch=1,
+                   hold="64,67", release=0.5,
+                   sustainat=["0.1:1", "1.5:0"], setat="2.5:arpLatch:0", **PATCH)
+    j_mid = window_db(x, sr, 1.0, 1.4)
+    j_pedal = window_db(x, sr, 1.9, 2.4)
+    j_end = window_db(x, sr, 3.2, seconds)
+    fails += check("j", j_mid > LOUD_DB and j_pedal > LOUD_DB and j_end < SILENT_DB,
+                   f"pedal/latch: under pedal {j_mid:6.1f} dB (>{LOUD_DB:.0f}), "
+                   f"after pedal-up {j_pedal:6.1f} dB (>{LOUD_DB:.0f}, latch holds), "
+                   f"after latch-off {j_end:6.1f} dB (<{SILENT_DB:.0f})")
 
     print(f"sustain_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)
