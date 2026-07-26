@@ -130,13 +130,27 @@ per the production plan, so a separate host-less round-trip test was not added.
 
 ### Core gate suite
 
-`core/tests/run_all.sh` is green: pitch, env, reverb, arp, acid, stuck,
-user_preset, the FM suite, and the 54/54 preset audit
-(non-silent, peak <= -1 dBFS, no clip, finite). alias_gate and fx_alias_gate
-are both report-only. fx_alias_gate covers the effects chain, which runs at
-host rate downstream of the voice decimation and so is out of reach of the
-oversampling alias_gate measures; by default it runs sections 0-2 only, and
-`FX_ALIAS_FULL=1 ./run_all.sh` adds its 54-preset sweep.
+`core/tests/run_all.sh` is green. The pass/fail gates, in the order the script
+runs them: pitch, env, reverb, arp, lfo_sync, acid, stuck, sustain, polyat,
+steal, zipper, user_preset, then the FM sub-suite, the acid sub-suite, the
+54/54 preset audit (non-silent, peak <= -1 dBFS, no clip, finite), lv2_smoke
+and the cpu_bench sanity bar.
+
+What the gates added after the first pass cover:
+
+| Gate | Covers |
+|---|---|
+| `lfo_sync_gate` | LFO host phase-lock: locked phase follows song position, free-runs when the transport is stopped, and a note-on does not retrigger a locked LFO. |
+| `sustain_gate` | CC64: hold and release across modes, both latch-off / pedal-up orderings, on a real factory program. |
+| `polyat_gate` | 0xA0 poly key pressure reaches the right voice only, and is inert while the arpeggiator runs. |
+| `steal_gate` | Voice lifecycle: poly-shrink retirement fade, the per-voice headroom trim on the same edge, and the mode-switch crossfade landing sample-accurate at every buffer size. |
+| `zipper_gate` | Parameter smoothing: no click or step on a continuous parameter move, and a preset load still snaps. |
+| `stuck_gate` | No hung note across panic, transport changes and arp clock switches. |
+
+alias_gate and fx_alias_gate are both report-only. fx_alias_gate covers the
+effects chain, which runs at host rate downstream of the voice decimation and
+so is out of reach of the oversampling alias_gate measures; by default it runs
+sections 0-2 only, and `FX_ALIAS_FULL=1 ./run_all.sh` adds its 54-preset sweep.
 
 ### Demo pack (for the ear pass)
 
