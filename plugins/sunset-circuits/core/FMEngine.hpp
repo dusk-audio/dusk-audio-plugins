@@ -28,6 +28,10 @@
 #include "Envelope.hpp"
 #include "FMAlgorithms.hpp"
 
+#if defined(__FAST_MATH__)
+#error "sinTurns() range reduction relies on strict FP; it is invalid under -ffast-math (see sin_test)"
+#endif
+
 namespace msynth
 {
 

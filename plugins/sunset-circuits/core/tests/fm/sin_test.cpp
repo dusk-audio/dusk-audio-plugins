@@ -70,7 +70,6 @@ int main()
     for (int i = -2000000; i <= 2000000; ++i)
     {
         const float x = (float)((double)i * 34.0 / 2000000.0);
-        if (std::fabs((double)x) > 34.0) continue;
         const double e = std::fabs((double)msynth::sinTurns(x)
                                    - std::sin(2.0 * M_PI * (double)x));
         if (e > rworst) { rworst = e; rworstAt = (double)x; }

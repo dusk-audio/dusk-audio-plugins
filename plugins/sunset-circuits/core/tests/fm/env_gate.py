@@ -83,12 +83,12 @@ def rise_10_90(t, env):
         return None
 
     a10, a90 = cross(0.1 * top), cross(0.9 * top)
-    return (a90 - a10) if (a10 and a90) else float("nan")
+    return (a90 - a10) if (a10 is not None and a90 is not None) else float("nan")
 
 
 def rate_independence():
     """Operator-envelope time constants must not depend on the engine's rate."""
-    f0 = 440.0 * 2 ** ((69 - 69) / 12.0)
+    f0 = 440.0  # note 69, matching the render below
     rises = []
     for sr_hz in RATES:
         # Algo 7 (additive), one carrier, sustain 1: the amplitude envelope IS

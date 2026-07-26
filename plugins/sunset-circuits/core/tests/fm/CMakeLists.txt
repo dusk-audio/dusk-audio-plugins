@@ -16,9 +16,9 @@ add_executable(fm_test fm_test.cpp)
 target_include_directories(fm_test PRIVATE ${CORE_DIR})
 target_compile_options(fm_test PRIVATE -O2 -Wall -Wextra)
 
-# sin_test — numeric contract for FMEngine.hpp's sinTurns() polynomial. Built
-# with the SAME flags as fm_test so it measures the approximation as the engine
-# actually evaluates it, not a differently-optimised copy.
+# sin_test — numeric contract for FMEngine.hpp's sinTurns() polynomial.
+# (Measured error is identical across -O2/-O3/-march=native/-mfma; the contract
+# it really guards is strict FP — it fails hard under -ffast-math.)
 add_executable(sin_test sin_test.cpp)
 target_include_directories(sin_test PRIVATE ${CORE_DIR})
 target_compile_options(sin_test PRIVATE -O2 -Wall -Wextra)

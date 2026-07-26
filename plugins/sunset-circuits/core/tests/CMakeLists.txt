@@ -38,7 +38,9 @@ add_executable(cpu_bench
     ${CORE_DIR}/MultiSynthDSP.cpp)
 
 target_include_directories(cpu_bench PRIVATE ${CORE_DIR} ${SHARED_DSP})
-target_compile_options(cpu_bench PRIVATE -O2 -Wall -Wextra)
+# cpu_bench must compile like the shipping plugin (-O3 from Release) — a stray
+# -O2 here already produced one wrong perf conclusion; do not add one back.
+target_compile_options(cpu_bench PRIVATE -Wall -Wextra)
 
 # user_preset_test — unit gate for dpf-plugin/UserPresetStore.hpp (file-based user
 # preset library). Header-only; pulls MultiSynthParams.hpp for the symbol table.
