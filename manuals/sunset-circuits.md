@@ -7,7 +7,7 @@ tagline: Six vintage synth circuits in one instrument (pre-release)
 
 # Sunset Circuits
 
-> **Pre-release.** Sunset Circuits has not shipped a public release yet. Parameter ranges, preset names, and mode behavior may change before the 1.0 release. This manual reflects the current pre-release build; check the website for updates if you are reading an older copy.
+> **Pre-release.** Sunset Circuits has not shipped a public release yet. This manual documents the 1.0.0 candidate build and is the version that ships with it; check the website for updates if you are reading an older copy.
 
 ## Overview
 
@@ -45,6 +45,7 @@ LV2:  ~/.lv2/sunset_circuits.lv2
 ```
 VST3: C:\Program Files\Common Files\VST3\sunset_circuits.vst3
 CLAP: C:\Program Files\Common Files\CLAP\sunset_circuits.clap
+LV2:  C:\Program Files\Common Files\LV2\sunset_circuits.lv2
 ```
 
 **macOS**
@@ -52,6 +53,7 @@ CLAP: C:\Program Files\Common Files\CLAP\sunset_circuits.clap
 ```
 VST3: ~/Library/Audio/Plug-Ins/VST3/sunset_circuits.vst3
 CLAP: ~/Library/Audio/Plug-Ins/CLAP/sunset_circuits.clap
+LV2:  ~/Library/Audio/Plug-Ins/LV2/sunset_circuits.lv2
 AU:   ~/Library/Audio/Plug-Ins/Components/sunset_circuits.component
 ```
 
@@ -61,11 +63,25 @@ After installing, rescan plugins in your DAW. If the instrument does not appear,
 
 The six mode rockers at the top center are the most important control in the instrument. Click one to switch circuits. The panel color crossfades over about a quarter second, the mode sub-panel (the small panel on the right, below the LFOs) morphs to show that mode's signature controls, and a few controls in the standard panels appear or disappear depending on which mode is active. The mode is a normal automatable parameter, so you can switch circuits from the host if you want.
 
+Switching modes is click-safe. The old circuit's voices are crossfaded out over 12 ms while the new one comes up, so a mode change under a held chord is a fast dip rather than a click, and the delay and reverb tails ring on through it. The crossfade lands on an exact sample rather than waiting for the next buffer boundary, so a mode switch sounds the same at a 64-sample buffer and at 4096.
+
 Loading a factory preset also sets the mode, because the mode is stored with the preset. If you switch modes by hand without loading a preset, the other parameters keep their current values, so the sound may not match what you expect from that circuit until you load a preset or dial it in.
 
 ### Playing
 
-The full-width keyboard at the bottom is playable with the mouse and sends MIDI notes to the engine. The OCT- and OCT+ buttons at its left shift the played octave. Notes arriving from your DAW light up on the keyboard as they play. For real performance, drive the instrument from a MIDI controller or a piano roll; the on-screen keyboard is for quick auditioning.
+The full-width keyboard at the bottom is playable with the mouse and sends MIDI notes to the engine. It spans 21 white keys (three octaves). Notes arriving from your DAW light up on the keyboard as they play. For real performance, drive the instrument from a MIDI controller or a piano roll; the on-screen keyboard is for quick auditioning.
+
+**Velocity comes from where you strike the key.** The click's vertical position inside the key maps to velocity from 30 at the top edge to 120 at the bottom: strike high on the key for soft, low on the key for hard. Each key measures against its own height, so black keys and white keys feel the same. Dragging along the keyboard glissandos, and the velocity is re-read on each new key, so a drag that wanders down the keys crescendos. The bottom of the range clears the Acid accent threshold (velocity above 100), so in Acid mode a hard strike accents the way it would on the hardware.
+
+**The OCT- and OCT+ buttons** shift the played octave by twelve semitones per click, from a bottom key of C0 up to a bottom key of C6. The default is C3.
+
+**The pitch and mod wheels** sit to the left of the keys. The pitch wheel is bipolar and springs back to center when you let go; the mod wheel latches where you leave it and also responds to the scroll wheel. Both grab absolutely, so clicking part-way up a wheel jumps it there. They are the on-screen stand-ins for the two controllers a hardware synth puts left of the keybed, and the only way to exercise the Pitch Bend and Mod Whl mod-matrix sources without external hardware.
+
+### Reading the panel
+
+Most knobs carry a persistent value read-out underneath, so you can see what a patch is set to without touching anything. The read-outs need room to be legible: below about 72 percent of the design size (roughly 893 by 562 pixels) they are suppressed and a hover bubble takes over, showing the value of whatever knob the pointer is on. Make the window larger if you want the values on screen permanently. The Delay and Reverb panels work slightly differently: their knob labels swap to values while the pointer is inside the panel, and the panel latches into value mode while you are dragging a knob.
+
+The window is freely resizable and keeps its aspect ratio; the whole panel scales to fit. The smallest size is half the design size, 620 by 390. The text is drawn from a font atlas baked when the plugin window opens, so if you move the window to a display with a different pixel density the text can look slightly soft until you close and reopen the plugin. Rebuilding the atlas live is planned for a future release.
 
 ### MIDI implementation
 
@@ -77,12 +93,15 @@ Sunset Circuits listens on **all MIDI channels** (omni), the usual convention fo
 | Pitch Bend | Bends pitch over the range set by PB Range, and is available as a mod source. |
 | CC 1 (Mod Wheel) | Feeds the Mod Whl mod source. |
 | CC 64 (Sustain Pedal) | Holds notes after you release the keys, until you lift the pedal. |
+| CC 121 (Reset All Controllers) | Resets the four performance controllers: lifts the sustain pedal, zeroes the mod wheel, zeroes channel aftertouch, and re-centers pitch bend. It does not touch any synth parameter, so your patch is unchanged. |
 | Channel Pressure | Feeds the Aftertouch mod source for the whole instrument. |
 | Poly Key Pressure | Feeds the Aftertouch mod source for that one note's voice only. Ignored while the arpeggiator is running, where the sounding notes are the arpeggiator's own; use channel pressure there. |
 | Program Change | Recalls a factory preset by number (0 to 53); higher numbers are ignored. |
-| CC 120 / CC 123 | All Sound Off / All Notes Off. Stops everything, including pedal-held notes, and releases the pedal. |
+| CC 120 / CC 123 | All Sound Off / All Notes Off. Stops everything, including a latched arpeggiator and a running Acid pattern, and releases the pedal. |
 
-The sustain pedal works in every mode. In Mono and Acid it holds the last note you played, and with the arpeggiator or the Acid sequencer running it holds the pattern's notes exactly as keeping the keys down would, so the pattern keeps playing until the pedal comes up.
+The sustain pedal works in every mode. In Mono and Acid it holds the last note you played, and with the arpeggiator or the Acid sequencer running it holds the pattern's notes exactly as keeping the keys down would, so the pattern keeps playing until the pedal comes up. The difference from Arp Latch is that the pedal is momentary: latch holds until you switch it off, the pedal holds only while it is down.
+
+CC 120 and CC 123 are a true panic. They clear the arpeggiator and Acid held-note sets as well as the sounding voices, so a latched pattern stops rather than carrying on with nothing to release it, and the pedal is lifted so the next note you play cannot be stranded by a pedal the panic left down.
 
 One caveat applies to program changes in the LV2 version only. A preset recalled by a MIDI program change is applied to the sound immediately, but with the plugin window closed the host is not told which knobs moved, so your DAW may save the old values with the session. The VST3 and CLAP builds are unaffected, and so is LV2 with the window open. If you drive presets by MIDI in an LV2 host, open the plugin window once before saving.
 
@@ -119,7 +138,7 @@ Mode-specific controls visible in Mono: the **Sub** oscillator (wave and level),
 
 Modular is modeled on a 70s semi-modular synthesizer: three oscillators, a transistor-ladder filter, linear FM between oscillators, a sample and hold, and a real dispersive spring reverb. It is two-voice, so you can play the occasional dyad, but it is at its best on evolving drones, sci-fi effects, and sequences.
 
-Mode-specific controls visible in Modular: the third oscillator (**Osc 3** wave and level), the **Ring Mod** knob, the **Hard Sync** button, the **FM Amount** knob (linear FM from oscillator 1 into oscillator 2), and the mode sub-panel's **SAMPLE & HOLD** section with the **S&H Rate** knob and an animated staircase display. The panel wears decorative patch jacks and cables to complete the look; they are visual only and never interactive. When Modular is active the effects reverb shows **SPRING** to indicate the spring reverb model is engaged for that mode.
+Mode-specific controls visible in Modular: the third oscillator (**Osc 3** wave and level), the **Ring Mod** knob, the **Hard Sync** button, the **FM Amount** knob (linear FM from oscillator 1 into oscillator 2), and the mode sub-panel's **SAMPLE & HOLD** section with the **S&H Rate** knob and an animated staircase display. The panel wears decorative patch jacks to complete the look; they are visual only and never interactive. When Modular is active the effects reverb panel shows **SPRING** to indicate the spring tank is engaged for that mode.
 
 ### Prism: four-operator FM
 
@@ -152,7 +171,7 @@ Acid wears a silver panel instead of the dark chassis of the other modes. The os
 - **Amp Decay** (with Amp Sustain at zero) sets how quickly each step decays, from short and staccato to long and connected.
 - The two Acid globals live in the mode sub-panel: **Acid Accent** sets how much an accented step boosts level, resonance, and envelope depth (the "wow" that makes accents jump out), and **Acid Slide** sets the glide time for slid steps.
 
-The pattern itself lives in the sequencer, which expands to three lanes in Acid mode. See the sequencer chapter below for the pitch, accent, and slide lanes.
+The pattern itself lives in the sequencer, which expands to four lanes in Acid mode. See the sequencer chapter below for the gate, pitch, accent, and slide lanes.
 
 ### Per-mode visibility summary
 
@@ -170,7 +189,7 @@ The pattern itself lives in the sequencer, which expands to three lanes in Acid 
 | S&H Rate | no | no | no | yes | no | no |
 | Chorus I / II / I+II | yes | no | no | no | no | no |
 | Operator strips and algorithm | no | no | no | no | yes | no |
-| Acid globals and 3 sequencer lanes | no | no | no | no | no | yes |
+| Acid globals and 4 sequencer lanes | no | no | no | no | no | yes |
 
 Controls that are irrelevant to a mode are hidden, not greyed out. A hidden widget only removes the on-screen control; the underlying parameter always stays in the host's parameter list, so automation lanes never break.
 
@@ -216,7 +235,7 @@ The sequencer strip along the bottom is an arpeggiator and step sequencer shared
 ### Arpeggiator controls
 
 - **Arp On**: enable the arpeggiator or step sequencer.
-- **Arp Mode**: the note order the arpeggiator plays: Up, Down, Up/Down, Down/Up, Random, Order (as played), or Chord (all held notes on every step).
+- **Arp Mode**: the note order the arpeggiator plays: Up, Down, Up/Down, Down/Up, Random, Order (as played), or Chord. Chord is a known limitation in this release: it is selectable and stable, but it currently steps one note at a time exactly as Up does rather than striking every held note on each step. Use a held chord with the arpeggiator off if you want block chords.
 - **Arp Octave**: how many octaves the arpeggio spans, 1 to 4.
 - **Arp Rate**: the step length as a note division, from 1/1 down to 1/32, including dotted (1/8. and so on) and triplet (1/8T and so on) divisions.
 - **Arp Gate**: the length of each step relative to its slot, from staccato to fully connected.
@@ -236,13 +255,31 @@ When the transport is stopped, the arpeggiator free-runs from the moment you pla
 
 ### Acid pattern lanes
 
-In Acid mode the sequencer expands into three lanes that together define the sixteen-step pattern. You hold a single root note and the pattern transposes with it.
+In Acid mode the sequencer section retitles itself **PATTERN SEQUENCER** and expands into four labelled lanes that together define the sixteen-step pattern. You hold a single root note and the pattern transposes with it.
 
-- **Gate lane** (top): the sixteen on/off cells, the same step-mutes used in the other modes. A muted step is a rest.
-- **Pitch lane** (middle): sixteen vertical drag columns, one per step, setting each step's pitch offset from -24 to +24 semitones relative to the held root. Drag a column up or down; the bar fills from the center zero line. This is where the melodic shape of the line lives.
-- **Accent and Slide lanes** (bottom): two rows of sixteen cells. An **Accent** cell makes that step jump out using the Acid Accent amount (louder, more resonant, more envelope). A **Slide** cell glides the pitch into that step over the Acid Slide time, for the legato portamento that defines the acid sound.
+- **GATE** (top): the sixteen on/off cells, the same step-mutes used in the other modes. A muted step is a rest.
+- **PITCH**: sixteen vertical drag columns, one per step, setting each step's pitch offset from -24 to +24 semitones relative to the held root. Drag a column up or down; the bar fills from the center zero line. This is where the melodic shape of the line lives.
+- **ACC**: sixteen cells. An accented step jumps out using the Acid Accent amount (louder, more resonant, more envelope).
+- **SLIDE** (bottom): sixteen cells. A slid step glides the pitch into that step over the Acid Slide time, for the legato portamento that defines the acid sound.
 
-The live step position highlights the current column across all three lanes as the pattern plays.
+The live step position highlights the current column across all four lanes as the pattern plays.
+
+## LFOs
+
+There are two LFOs, and every voice owns its own pair, so they are per-note rather than global. Each has a **Shape** (Sine, Triangle, Square, Sample and Hold, or Random Smooth), a **Rate** from 0.01 to 50 Hz, a **Fade In** from 0 to 5 seconds for modulation that arrives after the attack, and a **Sync** switch.
+
+Nothing is hardwired. An LFO does not reach pitch, filter, or amplitude until you route it in the mod matrix, which is also true of the mod wheel. There is no built-in vibrato path to work around.
+
+### LFO sync
+
+**Sync locks the LFO's phase to the host's song position, not just its speed.** With the transport playing and a valid song position, the LFO's phase is computed from the bar position, so it lands the same way on every pass, re-anchors after a seek or a loop wrap, and cannot drift against the bar over a long section. This is the part that a plain rate multiplier never gives you: rate scaling alone gets the average speed right but leaves the phase wherever the last note happened to start it.
+
+Under sync the cycle length comes from the Rate knob rather than from a separate division list. Rate 2.0 is one cycle per quarter note, 1.0 is one cycle per half note, 4.0 is one cycle per eighth note; the relationship is tempo-invariant, so the LFO tracks a tempo change automatically. There is no note-division selector on the LFOs (the arpeggiator and the delay have those).
+
+Two behaviors are worth knowing:
+
+- **A note-on does not retrigger a locked LFO.** That is the point of locking: every voice you play joins the same running phase, so a chord modulates in step instead of each note starting its own sweep. Without sync, a note-on does reset the LFO to the start of its cycle. The fade-in restarts either way.
+- **Sync free-runs when the transport is stopped.** You still get a tempo-correct rate for auditioning; the phase lock engages when you press play. The lock is eased in over about half a second rather than snapped, so engaging the transport does not jump a slow modulation.
 
 ## Mod Matrix
 
@@ -280,26 +317,40 @@ The mod matrix is an eight-slot modulation router, opened from the **MOD MATRIX*
 
 A classic starting patch is LFO 1 to Cutoff for a filter wobble, or Key Track to Cutoff so the filter opens as you play higher. Aftertouch to LFO1 Rate gives expressive vibrato that speeds up under pressure.
 
-## User Presets
+## Presets
 
-> **Planned for v2 — not in the current pre-release.** A personal on-disk preset
-> library (the **star** save button, a user section in the preset menu, and the
-> `.scpreset` file format described below) is designed but not yet available in this
-> build. The current pre-release ships the 54 factory presets only; user save and load
-> arrive in a later release once the UserPreset storage bridge lands. The rest of this
-> section documents the planned behavior.
+### The preset menu and the browser
 
-Beyond the 54 factory presets, Sunset Circuits **will** keep a personal preset library you build yourself, stored as files on disk independent of any DAW session, so your patches follow you between projects and hosts.
+The top bar carries the preset controls: previous and next arrows around the preset name, a **BROWSE** button, and a **SAVE** button. The name itself is a drop-down menu listing the 54 factory presets, then a separator, then your own user presets. The arrows step through factory and user presets as one combined list and wrap around at the ends.
 
-### Saving a preset (v2)
+The drop-down is a list you scroll. The browser is the library you read. **BROWSE** opens a full-window preset browser built for finding a patch rather than scrolling past it:
 
-You **will** click the **star** button in the top bar next to the preset browser. A name-entry box appears; type a name and confirm. The current state of all parameters is written to a file, and the new preset appears in the preset menu below a separator, in its own user section under the factory presets. If a preset with that name already exists you are asked to confirm the overwrite. You can delete a user preset from the same modal.
+- **Search.** The FIND field is focused the moment the browser opens, so you can just start typing. Matching is case-insensitive on any part of the name.
+- **Mode chips.** Seven chips (ALL plus the six mode names) narrow the list to one circuit.
+- **Bank chips.** ALL, FACTORY, or USER, so you can look at only your own patches. Each cell is also tagged with its bank and its mode.
+- **Keyboard.** Up and Down move a whole row and keep working while you are typing in the search field; Left and Right move one preset when no field has focus. Enter loads the highlighted preset and closes the browser.
+- **Esc happens in two stages.** The first press clears a typed search; only once the search is empty does a press close the browser. This means Esc never throws away your place in the list by accident.
+- **Mouse.** A single click loads the preset and leaves the browser open, so you can audition down a list while the panel re-skins around you. A double click (or APPLY) loads and closes. The close button in the title bar, the CLOSE button, and a click outside all close the browser without loading.
 
-Loading a user preset **will** work exactly like a factory preset: pick it from the menu, or step to it with the previous and next arrows, and every parameter (including the mode) is restored.
+The footer shows how many presets the current filters match. The browser reads the preset library as it was last scanned; see the note on rescanning below.
 
-### File location (v2)
+### The user preset library
 
-User presets **will** be plain files in a per-user application-data folder:
+Beyond the 54 factory presets, Sunset Circuits keeps a personal preset library you build yourself, stored as files on disk independent of any DAW session, so your patches follow you between projects and hosts. The library is not saved into the host session; it lives in your own preset folder and is the same library in every project and every DAW.
+
+### Saving a preset
+
+Click the **SAVE** button in the top bar, to the right of BROWSE. A name-entry box appears; type a name and confirm (Enter commits, Esc closes). The current state of all parameters is written to a file, and the new preset appears in the preset menu below a separator, in its own user section under the factory presets.
+
+If a preset with that name already exists, the box says so before you commit, and SAVE turns into an OVERWRITE and CANCEL pair so the overwrite is always a second, deliberate click. When the patch you are currently on is a user preset, the same box offers DELETE, which likewise asks for confirmation before it removes the file.
+
+Loading a user preset works exactly like a factory preset: pick it from the menu, find it in the browser, or step to it with the previous and next arrows, and every parameter (including the mode) is restored. The arrows step through the factory and user presets as one combined list and wrap around at the ends.
+
+The preset folder is scanned when the plugin opens and after each save or delete, not on every menu open. If you add or remove `.scpreset` files by hand while the plugin is running, reopen the plugin to see the change.
+
+### File location
+
+User presets are plain files in a per-user application-data folder:
 
 ```
 Linux:   ~/.config/DuskAudio/SunsetCircuits/presets/
@@ -309,9 +360,11 @@ Windows: %APPDATA%\DuskAudio\SunsetCircuits\presets\
 
 On Linux, if `XDG_CONFIG_HOME` is set it is used in place of `~/.config`. Each preset is one file named after the preset with the extension `.scpreset`.
 
-### The .scpreset format (v2)
+### The .scpreset format
 
-A `.scpreset` file **will be** versioned plain text: a header line, a `name=` line, and one `symbol=value` line per parameter. It is human-readable and safe to back up, copy between machines, or share. Because it is plain text, you can inspect or hand-edit a patch if you want, though the plugin is the intended way to create them. When loading, any parameter the file does not mention keeps its factory default, and any symbol the plugin does not recognize is skipped, so presets stay forward-compatible as the instrument grows. A file with an unknown format version is rejected rather than loaded incorrectly.
+A `.scpreset` file is versioned plain text: a header line, a `name=` line, and one `symbol=value` line per parameter. It is human-readable and safe to back up, copy between machines, or share. Because it is plain text, you can inspect or hand-edit a patch if you want, though the plugin is the intended way to create them.
+
+Loading is deliberately forgiving in one direction and strict in the other. Any parameter the file does not mention keeps its factory default, and any symbol the plugin does not recognize is skipped, so presets stay forward-compatible as the instrument grows. Values are clamped to each parameter's legal range, and a value that is not a finite number is rejected. A file whose header is missing or carries an unknown format version is rejected outright rather than loaded incorrectly. The library loads up to 512 presets in alphabetical order.
 
 ## Effects
 
@@ -340,7 +393,9 @@ The delay buffer holds 2 seconds. In synced mode at a slow tempo, a long divisio
 
 ### Reverb
 
-A reverb with **Size**, **Decay**, **Damping**, **Pre-Delay**, and **Mix**. In modes Cosmos through Prism this is an algorithmic reverb. In **Modular** mode the reverb becomes a real dispersive **spring** reverb, matching the spring tank of the semi-modular hardware; the panel shows SPRING to indicate this. The spring gives the boingy, dispersive character that a digital reverb cannot, and it is part of what makes Modular sound like a patchable vintage instrument.
+An algorithmic reverb with **Size** (0 to 1), **Decay** (0.1 to 20 seconds), **Damping**, **Pre-Delay** (up to 200 ms), and **Mix**. It is the same reverb in all six modes.
+
+In **Modular** mode a real dispersive **spring** tank is switched in after it, at a fixed light mix, matching the spring of the semi-modular hardware; the panel shows SPRING to indicate this. Note that the spring is added to the chain rather than replacing the reverb, so in Modular you have both: the main reverb still responds to its own controls, and the spring sits behind it. The spring gives the boingy, dispersive character that a digital reverb cannot, and it is part of what makes Modular sound like a patchable vintage instrument. If you want the spring alone in Modular, turn the main reverb's enable off.
 
 ## Performance Notes
 
@@ -379,11 +434,32 @@ The figures below are single-core measurements taken at 48 kHz with a 512-sample
 | 4-voice Oracle pad with reverb | 2x | about 15% |
 | Acid sequence with drive, delay, and reverb | 2x | about 3% |
 
-The first row is close to the worst case the instrument can produce: a full 8-voice FM patch, every effect on, at the highest oversampling factor. Even there it uses about half of one core, so a typical session runs several instances comfortably. If you need more headroom, drop from 4x to 2x oversampling first, since that is where most of the voice cost lives, then thin out effects you are not using.
+The first row is the worst case among ordinary patches: a full 8-voice FM patch, every effect on, at the highest oversampling factor. Even there it uses about half of one core, so a typical session runs several instances comfortably. If you need more headroom, drop from 4x to 2x oversampling first, since that is where most of the voice cost lives, then thin out effects you are not using.
+
+**One case does run out of headroom: Prism with heavy unison at 4x.** Prism's cost is per operator bank, and unison multiplies the bank count rather than sharing one. A patch that keeps sixteen operator banks running at 4x sits at essentially the whole of one core on the reference machine above, and the transient peak while a bulk of voices retires is in the same region. It is a known limit rather than a bug, and it is a wall you have to go looking for; nothing in the 54 factory presets reaches it. If a Prism patch of yours crackles, take it to 2x, or reduce the unison count before you reduce polyphony. The other five circuits do not have a comparable ceiling.
+
+### Parameters and automation
+
+Every control is a normal host parameter: 222 automatable parameters, plus two output-only level meters the host can read but not write, for 224 host parameters in total (228 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 222, so it automates like anything else. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
+
+Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. A few controls are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should.
+
+Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 222 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
+
+### Known limits
+
+- **Prism with heavy unison at 4x oversampling** can exceed one core. See the CPU section above.
+- **Aliasing on the voice path** is measured and bounded, not eliminated. At 2x the worst alias images sit around -47 dBc, which is inaudible on normal material; at 1x they are considerably higher and 1x is best reserved for pads and bass. 4x is there for exposed bright leads and high FM tones.
+- **The effects run at the host rate**, downstream of the voice decimation, so they are not covered by the Oversampling control. Drive in particular is a nonlinearity at host rate: pushed hard on an already bright, wide-open source it can fold a little energy back down the spectrum, and raising Oversampling will not help because the voice path was never the problem. If a driven lead sounds gritty in a way you do not want, back off Drive Amount or the Drive Mix, or darken the source with the filter before the drive rather than after. Nothing in the factory bank is pushed into that region.
+- **Chord arpeggiator mode** currently plays like Up. See the arpeggiator section.
+- **The font atlas is baked when the plugin window opens**, so text can look slightly soft after you move the window to a display with a different pixel density, until you close and reopen the plugin.
+- **MIDI program change under LV2 with the window closed** does not tell the host which parameters moved. See the MIDI implementation section.
 
 ## Factory Presets
 
-Sunset Circuits ships with 54 factory presets, grouped below by mode.
+Sunset Circuits ships with 54 factory presets. They are grouped by mode below for reading, but they are **not** stored in mode order: the menu, the previous and next arrows, and MIDI program numbers 0 to 53 run through the bank in its own order, which interleaves the modes. Use the browser's mode chips when you want to see one circuit's presets together.
+
+Two names are easy to misread. **Acid Squelch** and **Acid Machine** are Mono-mode presets that happen to go for an acid sound; the five presets that actually use the Acid circuit are listed under Acid at the end.
 
 ### Cosmos (six-voice DCO poly)
 
@@ -467,8 +543,10 @@ Sunset Circuits ships with 54 factory presets, grouped below by mode.
 
 **The synced delay is not tracking a very slow tempo.** The delay buffer is 2 seconds. At slow tempi the longest note divisions ask for more than 2 seconds and are clamped to the buffer, so they hold at 2 seconds instead of tracking further. Use a shorter division or the free (milliseconds) mode if you need the delay to follow a very slow tempo exactly.
 
-**Bright or high notes sound harsh or buzzy.** That is aliasing. Raise the Oversampling from 1x to 2x or 4x. FM tones in Prism and high-resonance filter sweeps benefit the most.
+**Bright or high notes sound harsh or buzzy.** That is aliasing. Raise the Oversampling from 1x to 2x or 4x. FM tones in Prism and high-resonance filter sweeps benefit the most. If raising oversampling changes nothing, the grit is coming from the effects rather than from the voice: Drive runs at the host rate and is not oversampled, so back off Drive Amount or Drive Mix instead.
 
-**The interface looks small on a high-resolution display.** The UI scales with the window: drag the window corner to resize it and the whole panel scales to fit while keeping its aspect ratio. On a HiDPI display the font atlas is rebuilt at the base scale, so extreme zoom levels can look slightly soft; resizing the window to a comfortable size gives the crispest text. A font-atlas rebuild for live rescaling is planned for a future release.
+**The interface looks small, or the knob values disappeared.** The UI scales with the window: drag the window corner to resize it and the whole panel scales to fit while keeping its aspect ratio. The smallest size is 620 by 390. The persistent value read-outs need legible room and switch off below about 893 by 562, leaving a hover bubble in their place, so if the numbers under the knobs have vanished the window is simply too small.
+
+**The text looks slightly soft.** The font atlas is baked once when the plugin window opens, at the pixel density of the display it opened on. Moving the window to a display with a different density, or zooming a long way from the size it opened at, softens the text until you close and reopen the plugin. A live atlas rebuild is planned for a future release.
 
 **My host shows extra latency.** Oversampling at 2x or 4x reports a small fixed latency (12 or 14 samples) so the host can compensate. Confirm plugin delay compensation is enabled in your DAW if other tracks sound out of sync.
