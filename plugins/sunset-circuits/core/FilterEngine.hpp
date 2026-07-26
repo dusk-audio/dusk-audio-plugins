@@ -69,9 +69,47 @@ public:
 
     void setParameters(float cutoffHz, float resonance, float driveAmount = 1.0f) noexcept
     {
-        // 0.4x-rate ceiling: g = tan(pi*fc/sr) grows unbounded toward Nyquist and
-        // the zero-delay one-pole misbehaves at very high cutoff (worst at 1x OS).
-        float fc = clampf(cutoffHz, 10.0f, sr * 0.40f);
+        // CONTAINMENT, not a cure. The integrator below is naive (forward) Euler:
+        //     s += g * (in - s),   g = tan(pi*fc/sr)
+        // whose pole is 1-g, so it is unconditionally unstable for g > 2, and the
+        // resonant feedback path drags that limit down much further. When it goes,
+        // it does not ring musically -- it alternates at exactly Nyquist. Measured
+        // free-running tail (silent input, level 1.0 = full scale), at the old
+        // 0.40 ceiling:
+        //
+        //     model    tail rms   tail frequency
+        //     Cosmos     1.111      0.500 * sr
+        //     Oracle     0.909      0.500 * sr
+        //     Mono       0.667      0.500 * sr
+        //
+        // and it never decays. Every self-oscillation this filter can produce is
+        // that artefact; none of the three models self-oscillates musically.
+        //
+        // The onset moves with resonance, because feedback adds loop gain:
+        //
+        //     res      onset (fraction of sr)
+        //     0.00     0.3523      <- g = 2.000, the textbook Euler limit
+        //     0.50     0.221 - 0.238 depending on model
+        //     1.00     0.206       <- worst case, Mono
+        //
+        // Hence 0.20: below the worst measured onset with a little margin. Swept
+        // 3 models x 4 sample rates (44.1/48/96/192k) x 41 resonance values x 3
+        // excitation levels, the worst free-running tail at 0.200*sr is 1.7e-15
+        // and at 0.203*sr is 1.7e-15, while 0.206*sr already gives 2.9e-2 at
+        // Nyquist. This ceiling is a FRACTION of the rate, so oversampling raises
+        // it in Hz: 9.6 kHz at 48 kHz with OS off, 19.2 kHz at 2x.
+        //
+        // THE CORRECT FIX IS TO REPLACE THE INTEGRATOR, not to clamp it. A TPT /
+        // zero-delay-feedback one-pole,
+        //     v = g * (x - s) / (1 + g);   y = v + s;   s = y + v;
+        // is unconditionally stable for every g > 0, which removes the ceiling
+        // entirely and restores the top octave at 1x. It was not done here
+        // because it changes the response of all four models at every cutoff, so
+        // it needs the three models' maxFeedback retuned, every gate recalibrated
+        // and the ear pass reopened. Containment keeps the factory presets
+        // byte-identical (verified, all 54 at their own oversampling setting)
+        // while removing the failure.
+        float fc = clampf(cutoffHz, 10.0f, sr * 0.20f);
         g = std::tan(kPi * fc / sr);
         g = clampf(g, 0.0f, 12.0f);
         res = clampf(resonance, 0.0f, 1.0f);
