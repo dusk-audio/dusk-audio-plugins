@@ -54,6 +54,13 @@ struct Entry
 {
     std::string           name;   // display name (from the `name=` header, else stem)
     std::filesystem::path path;   // absolute path to the .scpreset file
+    // Engine the patch selects, read straight out of the file's `mode=` line. It
+    // is DERIVED state, not new metadata: it is the value loadInto() would put in
+    // out[kParamMode], cached here so a listing (the preset browser's mode badge
+    // and mode filter) does not have to parse 222 symbols per file per frame.
+    // Falls back to the Mode default when the file omits the symbol, which is
+    // exactly what a load of that file would leave in place.
+    int                   mode = (int)kParamDefs[kParamMode].def;
 };
 
 // --------------------------------------------------------------------------
@@ -139,7 +146,7 @@ public:
             if (p.extension() != kFileExt) continue;
             Entry e;
             e.path = p;
-            e.name = readName(p);
+            readHeader(p, e.name, e.mode);
             if (e.name.empty()) e.name = p.stem().string();
             entries_.push_back(std::move(e));
         }
@@ -281,19 +288,43 @@ private:
         return -1;
     }
 
-    // Read just the `name=` header of a file (for the listing). Empty on miss.
-    static std::string readName(const std::filesystem::path& file)
+    // Read the two listing fields — display name and Mode — out of a preset file
+    // without a full 222-symbol parse. Both sit at the top of anything save()
+    // wrote (`name=` is line 2 and `mode=` line 3, Mode being core param 0), so
+    // the scan normally stops after three lines; a hand-reordered file just costs
+    // a full read. `name` is left empty when the header is missing (the caller
+    // falls back to the filename stem) and `mode` keeps the Mode default, which is
+    // what loadInto() would leave in place for a file with no `mode=` line.
+    static void readHeader(const std::filesystem::path& file, std::string& name, int& mode)
     {
+        name.clear();
+        mode = (int)kParamDefs[kParamMode].def;
         std::ifstream is(file, std::ios::in | std::ios::binary);
-        if (!is) return {};
+        if (!is) return;
+        bool haveName = false, haveMode = false;
         std::string ln;
-        int guard = 0;
-        while (std::getline(is, ln) && guard++ < 8)
+        while ((!haveName || !haveMode) && std::getline(is, ln))
         {
             stripCR(ln);
-            if (ln.rfind("name=", 0) == 0) return ln.substr(5);
+            const auto eq = ln.find('=');
+            if (eq == std::string::npos) continue;
+            if (!haveName && ln.compare(0, eq, "name") == 0)
+            {
+                name = ln.substr(eq + 1);
+                haveName = true;
+            }
+            else if (!haveMode && ln.compare(0, eq, kParamDefs[kParamMode].symbol) == 0)
+            {
+                const float v = std::strtof(ln.c_str() + eq + 1, nullptr);
+                if (std::isfinite(v))
+                {
+                    const int m = (int)std::lround(v);
+                    mode = std::max((int)kParamDefs[kParamMode].min,
+                                    std::min((int)kParamDefs[kParamMode].max, m));
+                }
+                haveMode = true;
+            }
         }
-        return {};
     }
 
     std::vector<Entry> entries_;
