@@ -89,59 +89,95 @@ else
     # Point LV2_PATH at a directory holding ONLY the bundle: dpf-plugin/build/bin
     # also contains the .vst3 and .clap, and lilv logs errors trying to read a
     # manifest.ttl out of each of them.
+    # Guarded as one unit: under set -e a bare rm/mkdir/ln failure (read-only
+    # build dir, stale root-owned scan dir) would abort the whole script here,
+    # losing cpu_bench, the report-only gates and the summary line.
     lv2_scan_dir="build/lv2_scan"
-    rm -rf "$lv2_scan_dir"
-    mkdir -p "$lv2_scan_dir"
-    ln -s "$(cd "$lv2_bundle_dir/sunset_circuits.lv2" && pwd)" "$lv2_scan_dir/sunset_circuits.lv2"
-    # A renamed/moved plugin URI makes lv2_smoke exit 2 (plugin not found), which
-    # is a real failure here, not a skip -- the bundle exists but does not expose
-    # the URI we ship.
-    LV2_PATH="$(cd "$lv2_scan_dir" && pwd)" ./build/lv2_smoke \
-        "https://dusk-audio.github.io/plugins/sunset-circuits" || fail=1
+    if rm -rf "$lv2_scan_dir" \
+       && mkdir -p "$lv2_scan_dir" \
+       && ln -s "$(cd "$lv2_bundle_dir/sunset_circuits.lv2" && pwd)" \
+                "$lv2_scan_dir/sunset_circuits.lv2"; then
+        # A renamed/moved plugin URI makes lv2_smoke exit 2 (plugin not found),
+        # which is a real failure here, not a skip -- the bundle exists but does
+        # not expose the URI we ship.
+        LV2_PATH="$(cd "$lv2_scan_dir" && pwd)" ./build/lv2_smoke \
+            "https://dusk-audio.github.io/plugins/sunset-circuits" || fail=1
+    else
+        echo "lv2_smoke: could not stage the LV2 scan dir at $lv2_scan_dir"
+        fail=1
+    fi
 fi
 
 echo
 echo "########## cpu_bench sanity ##########"
-# Gross-regression guard, NOT a performance target. cpu_bench is built by the
-# cmake step above and always exits 0, so its table is parsed here.
+# Gross-regression guard, NOT a performance target. cpu_bench exits 0 on the
+# normal path (and 2 if it names a parameter the DSP no longer has), so both its
+# exit status and its table are checked here.
 #
-# EXCLUDED FROM THE BAR: scenarios (e) "retire edge" and (f) "CONTROL steady 16
-# FM banks". Both run 16 Prism FM operator banks at 4x oversampling and sit on a
-# known, pre-existing CPU wall -- 97% and 99% of real time on the dev box this
-# bar was calibrated on. Gating them would fail on any machine slower than that
-# box, so they are still run and printed (a regression there remains visible in
-# the log) but they are not gated. Fix the wall, then gate them.
+# EXCLUDED FROM THE BAR: the two scenarios whose labels contain "retire edge"
+# and "CONTROL steady". Both drive the same Prism FM stack at 4x oversampling --
+# 16 operator banks steady, transiently 24 while the retire edge thrashes unison
+# -- and sit on a known, pre-existing CPU wall: 96% and 99-100% of real time on
+# the dev box this bar was calibrated on, with the control scenario crossing 100%
+# between runs. Gating them would fail on any machine slower than that box, so
+# they are still run and printed (a regression there remains visible in the log)
+# but they are not gated. Fix the wall, then gate them.
 #
 # Everything else is gated at SC_CPU_MAX_PCT (default 250% of real time). The
-# worst gated scenario, (a) 8-voice Prism FM at 4x, measures ~56% on the dev
-# box, so the ceiling tolerates a runner roughly 4x slower while still catching
-# what this step exists to catch: a per-sample allocation, a lost early-out, or
+# worst gated scenario, 8-voice Prism FM at 4x, measures ~56% on the dev box, so
+# the ceiling tolerates a runner roughly 4x slower while still catching what this
+# step exists to catch: a per-sample allocation, a lost early-out, or
 # oversampling running when it should not. Override with SC_CPU_MAX_PCT=<n>;
 # skip entirely with SC_SKIP_CPU_BENCH=1.
+#
+# Rows are classified by LABEL TEXT, not by the (a)..(f) marker, so reordering
+# the scenario table cannot silently move a scenario across the bar. The row
+# count is asserted too, so adding a scenario fails here until someone decides
+# whether it belongs above or below the bar.
 if [ "${SC_SKIP_CPU_BENCH:-0}" = "1" ]; then
     echo "(skipped: SC_SKIP_CPU_BENCH=1)"
 else
-    cpu_out=$(./build/cpu_bench all 3) || { echo "cpu_bench failed to run"; fail=1; }
-    echo "$cpu_out"
-    echo "$cpu_out" | awk -v max="${SC_CPU_MAX_PCT:-250}" '
-        $1 ~ /^\([a-f]\)$/ {
-            pct = $(NF-2); sub(/%$/, "", pct); pct += 0
-            if ($1 == "(e)" || $1 == "(f)") {
-                printf "  %s %6.2f%%rt   ungated (known 16-bank 4x CPU wall)\n", $1, pct
-                next
+    if cpu_out=$(./build/cpu_bench all 3); then
+        echo "$cpu_out"
+        echo "$cpu_out" | awk -v max="${SC_CPU_MAX_PCT:-250}" '
+            /^\([a-z]\)/ {
+                pct = $(NF-2); sub(/%$/, "", pct); pct += 0
+                # Label = the row minus its three trailing numeric columns.
+                label = $0
+                sub(/[[:space:]]+[0-9.]+%[[:space:]]+[0-9.]+[[:space:]]+[0-9.]+[[:space:]]*$/, "", label)
+                rows++
+                if (label ~ /retire edge/ || label ~ /CONTROL steady/) {
+                    ungated++
+                    printf "  %-52s %6.2f%%rt   ungated (known Prism 4x CPU wall)\n", label, pct
+                    next
+                }
+                gated++
+                if (pct > max+0) {
+                    printf "  %-52s %6.2f%%rt   EXCEEDS the %s%% ceiling\n", label, pct, max
+                    bad++
+                } else {
+                    printf "  %-52s %6.2f%%rt   ok (ceiling %s%%)\n", label, pct, max
+                }
             }
-            n++
-            if (pct > max+0) { printf "  %s %6.2f%%rt   EXCEEDS the %s%% ceiling\n", $1, pct, max; bad++ }
-            else             { printf "  %s %6.2f%%rt   ok (ceiling %s%%)\n", $1, pct, max }
-        }
-        END {
-            if (n < 4) {
-                print "cpu_bench: parsed " n+0 " gated scenarios, expected 4 -- table format changed?"
-                exit 1
-            }
-            if (bad) { print "cpu_bench sanity: FAIL"; exit 1 }
-            print "cpu_bench sanity: PASS"
-        }' || fail=1
+            END {
+                if (rows != 6) {
+                    print "cpu_bench: parsed " rows+0 " scenario rows, expected 6 --"
+                    print "  the scenario table changed. Classify the new/removed row above"
+                    print "  or below the bar and update this check."
+                    exit 1
+                }
+                if (ungated != 2 || gated != 4) {
+                    print "cpu_bench: " gated+0 " gated / " ungated+0 " ungated, expected 4/2 --"
+                    print "  a scenario label changed; re-check which side of the bar it belongs on."
+                    exit 1
+                }
+                if (bad) { print "cpu_bench sanity: FAIL"; exit 1 }
+                print "cpu_bench sanity: PASS"
+            }' || fail=1
+    else
+        echo "cpu_bench failed to run (exit $?) -- stale parameter name, or it did not build"
+        fail=1
+    fi
 fi
 
 echo

@@ -64,8 +64,10 @@ if(LILV_FOUND)
     enable_language(C)
     add_executable(lv2_smoke ${DPF_PLUGIN}/tools/lv2_smoke.c)
     target_include_directories(lv2_smoke PRIVATE ${LILV_INCLUDE_DIRS})
-    target_link_directories(lv2_smoke PRIVATE ${LILV_LIBRARY_DIRS})
-    target_link_libraries(lv2_smoke PRIVATE ${LILV_LIBRARIES} m)
+    # LINK_LIBRARIES carries absolute paths, so no target_link_directories search
+    # path is needed and the linker cannot pick up a same-named library from an
+    # unrelated directory.
+    target_link_libraries(lv2_smoke PRIVATE ${LILV_LINK_LIBRARIES} m)
     target_compile_options(lv2_smoke PRIVATE -O2 -Wall -Wextra ${LILV_CFLAGS_OTHER})
     message(STATUS "lv2_smoke: building against lilv-0 ${LILV_VERSION}")
 else()
