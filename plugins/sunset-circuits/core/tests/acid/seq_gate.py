@@ -12,7 +12,7 @@ long-into-offbeat convention.)
 """
 import sys
 import numpy as np
-from _acid import render
+from _acid import render, peak_envelope, rising_edges
 
 BPM = 120.0
 STEP_S = 60.0 / BPM * 0.25   # 1/16 = 0.125 s
@@ -24,23 +24,9 @@ PATCH = dict(bpm=BPM, rate=4, gate=0.5, wave=0, cutoff=4000, res=0.1,
 
 
 def detect_onsets(sig, sr, thresh_frac=0.3, min_gap_s=0.03):
-    a = np.abs(sig)
     # ~15 ms release smooths the low carrier ripple so each note gives ONE
     # rising edge (instant attack keeps onset timing sharp).
-    rel = np.exp(-1.0 / (0.015 * sr))
-    env = np.empty_like(a)
-    e = 0.0
-    for i in range(len(a)):
-        e = a[i] if a[i] > e else e * rel
-        env[i] = e
-    thr = thresh_frac * np.max(env)
-    min_gap = int(min_gap_s * sr)
-    onsets, last = [], -min_gap
-    for i in range(1, len(env)):
-        if env[i] > thr and env[i - 1] <= thr and (i - last) >= min_gap:
-            onsets.append(i)
-            last = i
-    return np.array(onsets) / sr
+    return rising_edges(peak_envelope(sig, sr, 0.015), sr, thresh_frac, min_gap_s)
 
 
 def main():
@@ -87,29 +73,40 @@ def main():
     print(f"[swing] even {even_iv*1000:.1f} ms / odd {odd_iv*1000:.1f} ms  "
           f"worst dev {worst*1000:.2f} ms  {'PASS' if swing_ok else 'FAIL'} (tol +-{2*TOL_S*1000:.0f} ms)")
 
-    ok = host_locked_grid() and ok
-    ok = host_locked_swing() and ok
-    ok = loop_wrap() and ok
+    # The detector's own latency, MEASURED rather than absorbed by a padded
+    # tolerance: in the free-run grid render above, step 0 fires at exactly
+    # t = 0, so on[0] IS the latency (attack ramp + the threshold crossing on
+    # the 15 ms-release envelope). Measured 1.94 ms; it cancels in every
+    # interval check but shifts every absolute-grid check by the same amount.
+    latency = float(on[0])
+    print(f"[detector] measured onset latency {latency*1000:.2f} ms "
+          f"(subtracted from the absolute-grid checks below)")
+
+    ok = host_locked_grid(latency) and ok
+    ok = host_locked_swing(latency) and ok
+    ok = loop_wrap(latency) and ok
 
     print(f"seq_gate: {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)
 
 
-# The 15 ms-release detector adds a constant ~2 ms latency to every absolute
-# onset time (it cancels in interval measurements). Absolute-grid checks below
-# therefore allow +-3 ms; interval checks keep the tight +-1..2 ms tolerances.
+# Absolute-grid tolerance. It used to be +-3 ms, padded to swallow the ~2 ms
+# detector latency -- which made it asymmetric (3 ms of headroom late, 1 ms
+# early) and three times looser than the interval checks. With the latency
+# measured and subtracted, the absolute checks hold the same +-1 ms as the
+# interval ones (residual after subtraction: 0.02-0.06 ms).
 SPB = 60.0 / BPM               # seconds per beat (0.5 s at 120 BPM)
-ABS_TOL_S = 0.003
+ABS_TOL_S = TOL_S
 
 
-def host_locked_grid():
+def host_locked_grid(latency):
     # Song position 0.31 beats at frame 0, 1/16, strict quantize -> first onset on
     # the next 1/16 grid boundary (beat 0.5 -> 0.19 beats past songpos = 95 ms);
     # every later onset 125 ms apart on the absolute host grid.
     SONGPOS = 0.31
     first_s = (0.25 - (SONGPOS % 0.25)) * SPB     # to next 1/16 boundary = 95 ms
     sr, x = render("seq", "seq_locked", songpos=SONGPOS, swing=0.0, **PATCH)
-    on = detect_onsets(x, sr)
+    on = detect_onsets(x, sr) - latency
     # One-to-one onset count on the absolute host grid: onsets land at
     # first_s + k*STEP_S for every k whose onset falls before the 2.0 s render
     # end (less a small detector-latency slack). = 1 + floor((2.0-first_s-slack)/STEP_S).
@@ -127,12 +124,12 @@ def host_locked_grid():
     return ok
 
 
-def host_locked_swing():
+def host_locked_swing(latency):
     # Locked + swing 0.5: EVEN-step onsets pin to the absolute 0.5-beat grid; ODD
     # steps are delayed to k*0.25 + 0.0625 beats. Every onset must match a valid
     # grid-onset position {0.5*m} U {0.3125 + 0.5*m}.
     sr, x = render("seq", "seq_locked_swing", songpos=0.0, swing=0.5, **PATCH)
-    on = detect_onsets(x, sr)
+    on = detect_onsets(x, sr) - latency
     if len(on) < 6:
         print(f"[lock+swing] FAIL (only {len(on)} onsets)")
         return False
@@ -148,13 +145,13 @@ def host_locked_swing():
     return ok
 
 
-def loop_wrap():
+def loop_wrap(latency):
     # Transport loop of 4 beats (2.0 s). The cursor wraps 4 -> 0 and the grid
     # re-syncs: onsets stay on the 1/16 grid across the wrap and no step is
     # stuck/dropped (max inter-onset gap <= one step).
     sr, x = render("seq", "seq_wrap", songpos=0.0, loopbeats=4.0, swing=0.0,
                    **{**PATCH, "seconds": 4.0})
-    on = detect_onsets(x, sr)
+    on = detect_onsets(x, sr) - latency
     # 4.0 s / 0.125 s = 32 grid slots from t~=0; the transport wrap at beat 4
     # (2.0 s) re-syncs the step clock and merges the onset straddling the wrap
     # boundary, so 31 onsets are detected (stable across repeated runs — verified).
