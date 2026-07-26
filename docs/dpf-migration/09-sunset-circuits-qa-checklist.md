@@ -140,7 +140,7 @@ What the gates added after the first pass cover:
 
 | Gate | Covers |
 |---|---|
-| `lfo_sync_gate` | LFO host phase-lock: locked phase follows song position, free-runs when the transport is stopped, and a note-on does not retrigger a locked LFO. |
+| `lfo_sync_gate` | LFO host phase-lock: locked phase follows song position (grid/repeat/acquire/rate/loop cases); free-run before the transport starts is covered by the acquire case's pre-play prefix. |
 | `sustain_gate` | CC64: hold and release across modes, both latch-off / pedal-up orderings, on a real factory program. |
 | `polyat_gate` | 0xA0 poly key pressure reaches the right voice only, and is inert while the arpeggiator runs. |
 | `steal_gate` | Voice lifecycle: poly-shrink retirement fade, the per-voice headroom trim on the same edge, and the mode-switch crossfade landing sample-accurate at every buffer size. |
