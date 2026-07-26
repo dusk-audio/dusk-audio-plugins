@@ -160,7 +160,8 @@ public:
         driftSmooth = 0.0f;
         filterTrackingOffset = (rng.nextFloat() - 0.5f) * 0.04f;
         voicePanOffset = (rng.nextFloat() - 0.5f) * 0.3f;
-        portaFreq.prepare(sampleRate, 0.1f);
+        portaFreq.prepare(sampleRate, kDefaultPortaTau);
+        portaTau = kDefaultPortaTau;
         portaFreq.snap(440.0f);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate);
         retiring = false; retirePhase = 1.0f;
@@ -188,7 +189,12 @@ public:
         lfo1.setSampleRate(sampleRate);
         lfo2.setSampleRate(sampleRate);
         sampleAndHold.setSampleRate(sampleRate);
-        portaFreq.prepare(sampleRate, 0.1f); // updates coeff; keeps current/target value
+        // Re-derive the coefficient for the new rate at the tau the CURRENT glide
+        // is using, not at the default. Hardcoding 0.1 here reset the glide time
+        // of a note that was mid-portamento whenever the oversampling factor
+        // changed (this is called on every rate switch), so a 2 s glide became a
+        // 0.1 s one part-way through. Keeps current/target value.
+        portaFreq.prepare(sampleRate, portaTau);
         retireStep = 1.0f / (float)(kRetireSeconds * sampleRate); // keeps retirePhase
     }
 
@@ -227,7 +233,8 @@ public:
             float tau = params.portamentoTime;
             if (params.glideMode != 0) // constant rate: proportional to interval (octaves)
                 tau = params.portamentoTime * maxf(0.001f, std::abs(std::log2(targetFreq / lastFreq)));
-            portaFreq.prepare(sr, maxf(0.001f, tau));
+            portaTau = maxf(0.001f, tau);
+            portaFreq.prepare(sr, portaTau);
             portaFreq.setTarget(targetFreq);
         }
         else
@@ -780,6 +787,10 @@ private:
     ADSREnvelope ampEnv, filtEnv;
     LFO lfo1, lfo2;
     duskaudio::SmoothedValue portaFreq;
+    // Time constant the live glide is using, so a sample-rate change re-derives
+    // the coefficient at the right tau instead of the default.
+    static constexpr float kDefaultPortaTau = 0.1f;
+    float portaTau = kDefaultPortaTau;
     Xorshift rng;
 };
 
