@@ -1108,13 +1108,46 @@ Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
 
 | Layer | max verts | of 65535 | driver |
 |---|---|---|---|
-| **left (Prism)** | **49 754** | **75.9 %** | 36 chrome knobs in the operator matrix |
-| left (other modes) | 21 428 | 32.7 % | OSC 1/2/3 + VOICE / CHARACTER |
-| bottom | 22 142 | 33.8 % | sequencer lanes + FX strip + keyboard + wheels |
+| **left (Prism)** | **49 466** | **75.5 %** | 36 chrome knobs in the operator matrix |
+| left (other modes) | 21 428 | 32.7 % | OSC 1/2/3 + VOICE / CHARACTER (max is Modular, which draws two OSC 3 knobs) |
+| bottom | 22 094 | 33.7 % | sequencer lanes + FX strip + keyboard + wheels (max is Acid, four lanes) |
 | center | 16 508 | 25.2 % | filter curve + 2 ADSR displays + 8 knobs |
 | right | 14 672 | 22.4 % | LFOs + sub-panel + scope + VU |
 | browse | 10 616 | 16.2 % | 48 preset cells (57 presets listed, scrolled + hovered) |
 | modal | 9 692 | 14.8 % | 8 rows of combos/knobs (measured with a combo popup open) |
+
+**Measure per mode, not per run.** `endLayer()` keeps a running max, so a single sweep that
+visits all six modes reports only the heaviest mode for each layer — a per-mode increase in a
+lighter mode is invisible. Launch once per mode instead. Deterministic across repeats
+(re-measured three times for Acid and twice for Prism, identical each time). Values below are
+`-DMSYNTH_FRAME_PROFILE` with every lane row, both OSC knob rows and both wheels hovered:
+
+| mode | left | bottom | Δ left | Δ bottom |
+|---|---|---|---|---|
+| 0 Cosmos | 19 856 | 20 562 | 0 | −96 |
+| 1 Oracle | 20 434 | 20 562 | 0 | −96 |
+| 2 Mono | 20 380 | 20 562 | 0 | −96 |
+| 3 Modular | **21 428** | 20 634 | 0 | −96 |
+| 4 Prism | **49 466** | 20 562 | 0 | −96 |
+| 5 Acid | 19 856 | **22 094** | 0 | **+120** |
+
+Δ is against `e997c58`, the commit before the sequencer / wheel / oscillator work, built from a
+worktree with the same flags and swept with the same script. Reading them:
+
+- **left is bit-for-bit unchanged in every mode.** Chrome knobs tessellate with fixed segment
+  counts, so r20→r18 and r14→r18 cost nothing. Earlier revisions of this table carried 49 754
+  (Prism) and 20 626 (other modes); those were older sweeps with lighter hover coverage, *not*
+  a regression — the same binary measures 49 466 / 21 428 on both sides of the change.
+- **bottom falls 96 in the five non-acid modes** and rises 120 in Acid. Both follow from the
+  same two edits: dropping the tick rings from OCT/GATE/SWING removes 33 ring lines, and
+  `cellFace` adds two bevel lines per cell. Non-acid draws 16 cells (+32 lines, −33 rings, plus
+  a shorter lane and three read-outs) and nets out slightly cheaper; Acid draws 48 cells across
+  its four lanes (+96 lines) and nets out dearer. The worst case moved 21 974 → 22 094, i.e.
+  33.5 % → 33.7 % of the 16-bit index budget.
+
+> A multi-mode sweep has been seen to report bottom = 22 142 in Acid, ~50 verts above the
+> steady-state figure, when Acid is reached by switching modes rather than measured cold.
+> Budget against 22 142; the per-mode numbers are the reproducible ones.
 
 The worst case is **not** the mod-matrix modal (14.8 %) but the **Prism operator matrix**,
 at ~76 %. That is the layer to watch: roughly 16 k vertices of headroom, i.e. about a dozen
