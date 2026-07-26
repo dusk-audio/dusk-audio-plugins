@@ -30,6 +30,50 @@ echo "########## preset audit ##########"
 python3 presets/preset_audit.py || fail=1
 
 echo
+echo "########## cpu_bench sanity ##########"
+# Gross-regression guard, NOT a performance target. cpu_bench is built by the
+# cmake step above and always exits 0, so its table is parsed here.
+#
+# EXCLUDED FROM THE BAR: scenarios (e) "retire edge" and (f) "CONTROL steady 16
+# FM banks". Both run 16 Prism FM operator banks at 4x oversampling and sit on a
+# known, pre-existing CPU wall -- 97% and 99% of real time on the dev box this
+# bar was calibrated on. Gating them would fail on any machine slower than that
+# box, so they are still run and printed (a regression there remains visible in
+# the log) but they are not gated. Fix the wall, then gate them.
+#
+# Everything else is gated at SC_CPU_MAX_PCT (default 250% of real time). The
+# worst gated scenario, (a) 8-voice Prism FM at 4x, measures ~56% on the dev
+# box, so the ceiling tolerates a runner roughly 4x slower while still catching
+# what this step exists to catch: a per-sample allocation, a lost early-out, or
+# oversampling running when it should not. Override with SC_CPU_MAX_PCT=<n>;
+# skip entirely with SC_SKIP_CPU_BENCH=1.
+if [ "${SC_SKIP_CPU_BENCH:-0}" = "1" ]; then
+    echo "(skipped: SC_SKIP_CPU_BENCH=1)"
+else
+    cpu_out=$(./build/cpu_bench all 3) || { echo "cpu_bench failed to run"; fail=1; }
+    echo "$cpu_out"
+    echo "$cpu_out" | awk -v max="${SC_CPU_MAX_PCT:-250}" '
+        $1 ~ /^\([a-f]\)$/ {
+            pct = $(NF-2); sub(/%$/, "", pct); pct += 0
+            if ($1 == "(e)" || $1 == "(f)") {
+                printf "  %s %6.2f%%rt   ungated (known 16-bank 4x CPU wall)\n", $1, pct
+                next
+            }
+            n++
+            if (pct > max+0) { printf "  %s %6.2f%%rt   EXCEEDS the %s%% ceiling\n", $1, pct, max; bad++ }
+            else             { printf "  %s %6.2f%%rt   ok (ceiling %s%%)\n", $1, pct, max }
+        }
+        END {
+            if (n < 4) {
+                print "cpu_bench: parsed " n+0 " gated scenarios, expected 4 -- table format changed?"
+                exit 1
+            }
+            if (bad) { print "cpu_bench sanity: FAIL"; exit 1 }
+            print "cpu_bench sanity: PASS"
+        }' || fail=1
+fi
+
+echo
 echo "########## alias_gate (report only) ##########"
 python3 alias_gate.py || echo "alias_gate exited nonzero (report-only, not fatal)"
 
