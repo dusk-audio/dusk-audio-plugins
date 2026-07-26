@@ -98,8 +98,9 @@ tiers rather than a slope: hero `r54` (cutoff) → primary `r30` (filter row) �
 (oscillators + envelopes)** → dense grid `r13` (voice) → utility `r13/r14` tickless.
 
 **Height.** r18 with its tick ring reaches ±24.5, so a panel needs
-`4 (title) + 20 (combo) + 6 (gap) + 6.75 (label ink) + 6.75 (gap) + 49 (ring) + 3 (floor)
-= 87.75 px` minimum — more than OSC 3's old h80. Rather than grow the stack (VOICE /
+`30 (label top: title + combo + gap) + 9 (label ink — measured, see §1.3a) + 4.5 (label → ring
+gap) + 49 (ring) + 3 (inner floor) = 95.5 px` minimum, which is exactly what h101 realises —
+and more than OSC 3's old h80 could give. Rather than grow the stack (VOICE /
 CHARACTER below is documented as needing every one of its 166 px, §1.2), the existing
 `60..372` block is split **equally**: three **h101** panels with 4 px gutters. OSC 1 and OSC 2
 give up 11 px each, which they had spare; OSC 3 gains 21 px, which it needed. The block ends
@@ -118,7 +119,8 @@ a knob added to one cannot silently desynchronise it from the others:
 | knob centre | `+68` | 128 | 233 | 338 |
 
 Clearances, identical for all three by construction: combo bottom → label top **6.00**,
-label ink → ring top **6.75**, ring bottom → inner floor **5.50**. Horizontally the 49 px ring
+label ink → ring top **4.50** (ink bottom = label top + 9, measured), ring bottom → inner floor
+**5.50**. Horizontally the 49 px ring
 gets ≥ 21 px of daylight in OSC 1 (70/85 columns) and 9 px in OSC 2 (58 columns — VOICE /
 CHARACTER runs 6, so this is the roomier of the two grids). **Prism (mode 4) is unaffected**:
 it replaces the whole left column with the OPERATOR MATRIX and never draws these panels.
@@ -158,8 +160,19 @@ frame*, not hardcoded:
 
 ```
 titleEnd = 24 + textWidth(11 px bold, title)      // measured through the drawn atlas face
-g        = (692 - titleEnd - sum(groupWidths)) / 6      clamped to [12, 22]
+wSum     = 475                                    // sum(groupWidths), below
+g        = (692 - titleEnd - wSum) / 6            clamped to [12, 22]
+x        = min(titleEnd + g, 692 - wSum - 5*g)    // never cross the right rule
 ```
+
+The **start clamp is not decoration**. Walking left-to-right from the title only lands on the
+692 rule while `g` is the solved value; once the `[12, 22]` clamp engages — a title wide enough
+to drive `g` below 12 — the row would march straight through the right wall and into the FX
+strip. Real headroom is thin (DejaVu bold `"PATTERN SEQUENCER"` leaves `g` barely above the
+floor), and the failure is ugly: measured with a deliberately over-long title, the unclamped
+row ends at `x = 789`, i.e. **89 px inside the DRIVE panel**. Clamped, it still ends at 692 and
+the title gap absorbs the difference (the title then overlaps the MODE label, which is the
+correct trade — a panel boundary is a hard edge, a label collision is not).
 
 with group widths `ARP 52 | MODE 84 | RATE 64 | knobs 123 | LATCH 52 | VEL 100` (sum 475).
 The title is ~23 px shorter outside Acid (`"SEQUENCER / ARP"` vs `"PATTERN SEQUENCER"`), so a
@@ -172,10 +185,23 @@ Solving gives `g = 17` (non-acid) / `13` (Acid) — even inside whichever row is
   sit at `558..582`, 5 px high, which read as a misaligned row); knob centres `y578`;
   persistent read-outs ink `599..605.4`.
 - **OCT / GATE / SWING** are **r13 and TICKLESS**, matching the FX strip idiom next door.
-  Reach is `r+4.5 = ±17.5` (arc + stroke) instead of the tick ring's `±20.5`, which buys the
-  label its clearance, lifts the Acid GATE-lane clearance from 1.5 to 4.5 px, and makes the
-  three read as **one family** — as r14 ringed knobs they differed enough in apparent
-  size/weight to look like three different widgets. Centres `kx0 + {0,44,88}`.
+  Reach is `r+3+1.2 = ±17.2` (value arc + half its stroke) instead of the tick ring's `±20.5`,
+  which makes the three read as **one family** — as r14 ringed knobs they differed enough in
+  apparent size/weight to look like three different widgets. Centres `kx0 + {0,44,88}`.
+- **Ink extents here are MEASURED, not derived from `0.675·size`** — that convention, used by
+  older comments elsewhere in this file, is wrong, and `0.810·size` is also low for this atlas.
+  Scanned at `s = 1`, a label drawn with its top at `y552` puts ink on rows `555..560`, so the
+  ink box ends **9.0 px** below the draw origin, and that holds for every size in this row
+  (9.5 / 10 / 11 all snap to neighbouring atlas faces). Consequences, all pixel-verified:
+
+  | | value | clearance |
+  |---|---|---|
+  | label top `552` → ink bottom | `561` | — |
+  | knob centre `hy = 580` → arc top | `562.8` (first ink row 563) | **2.0 px** below the label |
+  | Acid: arc bottom | `597.2` (nothing drawn 592..599) | **2.8 px** above the GATE lane at `y600` |
+  | read-out top `hy+r+8 = 601` → ink bottom | `610` | **2.0 px** above the non-acid lane at `y612` |
+
+  `hy` was 578, which put the arc top at 560.8 — the label ink **overlapped it by 0.2 px**.
 - **Persistent read-outs** (§3.1b): OCT/GATE/SWING (and the Fixed-VEL knob) carry them,
   scale-gated on `readoutsOn()`. **Suppressed in Acid**, which packs four lanes from `y600`
   and has no free band under the knob row — the hover bubble is the read-out there.

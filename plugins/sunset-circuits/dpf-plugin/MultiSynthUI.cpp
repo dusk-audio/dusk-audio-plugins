@@ -1155,8 +1155,10 @@ private:
     // matrix; neither is the right neighbour to match here. So: r18, ticks on.
     //
     // HEIGHT. r18 with its tick ring reaches +/-24.5, so a panel needs
-    //   4 (title) + 20 (combo) + 6 (gap) + 6.75 (label ink) + 6.75 (gap) + 49 (ring)
-    //   + 3 (inner floor) = 87.75 px minimum.
+    //   30 (label top: title + combo + gap) + 9 (label ink — MEASURED; see
+    //   drawSequencer on why the 0.675*size convention in this file's older comments
+    //   is wrong) + 4.5 (label -> ring gap) + 49 (ring) + 3 (inner floor)
+    //   = 95.5 px minimum, which is exactly what h101 realises.
     // OSC 3's old h80 could not host it — which is also why its r14 tick ring already
     // poked 0.5 px through its own panel floor. Rather than grow the stack (VOICE /
     // CHARACTER below is documented as needing every one of its 166 px), the existing
@@ -1167,7 +1169,7 @@ private:
     //
     // Per-panel clearances (identical for all three, by construction):
     //   combo bottom -> label top   6.00 px
-    //   label ink    -> ring top    6.75 px
+    //   label ink    -> ring top    4.50 px   (ink bottom = label top + 9, measured)
     //   ring bottom  -> inner floor 5.50 px
     struct OscGeom { float y0, y1, rowY, comboY1, labelY, cy; };
     static OscGeom oscGeom(float y0)
@@ -2689,11 +2691,23 @@ private:
         // (Acid) — even inside whichever row you are actually looking at.
         //
         // Knobs are r13 and TICKLESS, matching the FX strip idiom next door:
-        // reach is r+4.5 = +/-17.5 (arc + stroke) instead of the tick ring's
-        // +/-20.5, which buys the label its clearance (ink ends 558.75, knob top
-        // 560.5), lifts the Acid GATE-lane clearance from 1.5 to 4.5 px, and
-        // makes all three read as one family — the r14 ringed knobs differed
-        // enough in apparent size/weight to look like three different widgets.
+        // reach is r+3+1.2 = +/-17.2 (value arc + half its stroke) instead of the
+        // tick ring's +/-20.5, which makes all three read as one family (as r14
+        // ringed knobs they differed enough in apparent size/weight to look like
+        // three different widgets) and lifts the Acid GATE-lane clearance.
+        //
+        // MEASURED ink extents, not the 0.675*size convention the older comments in
+        // this file use — that convention is wrong. Rendered at s=1 through this
+        // atlas, a label drawn with its top at y552 puts ink on rows 555..560, i.e.
+        // the ink box runs 9.0 px below the draw origin for every size in this row
+        // (9.5 / 10 / 11 all snap to neighbouring atlas faces). So:
+        //   label top 552          -> ink bottom 561
+        //   knob centre hy = 580   -> arc top 562.8   =>  1.8 px clearance
+        // hy was 578, which put the arc top at 560.8 and had the label ink
+        // overlapping it by 0.2 px. Downstream of hy = 580 (all verified by pixel
+        // scan): Acid arc bottom 597.2 clears the GATE lane at y600 by 2.8 px, and
+        // the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the non-acid
+        // lane at y612 by 2.0 px.
         const bool velFixed = (int)std::lround(values[kParamArpVelMode]) == 1;
         const float kr = 13.0f, khw = kr + 4.5f, kdx = 44.0f;  // radius / half-reach / pitch
         const float wArp = 52.0f, wMode = 84.0f, wRate = 64.0f, wLatch = 52.0f;
@@ -2705,19 +2719,28 @@ private:
         const float wVel = 100.0f;
         const float xR = 692.0f;
         const float titleEnd = 24.0f + textW(11.0f, seqTitle);
-        float g = (xR - titleEnd - (wArp + wMode + wRate + wKnobs + wLatch + wVel)) / 6.0f;
+        const float wSum = wArp + wMode + wRate + wKnobs + wLatch + wVel;   // 475
+        float g = (xR - titleEnd - wSum) / 6.0f;
         g = g < 12.0f ? 12.0f : (g > 22.0f ? 22.0f : g);        // font-metric guard
         auto hlabel = [&](float x, const char* t, int align)
         { text(x, 552, 10.0f, live.textPanel, t, align, true); };
 
-        const float hy = 578.0f;
-        // Persistent read-outs for OCT/GATE/SWING (spec §3.1b step 7): ink lands
-        // at 599..605.4 (cy + r + 8), which clears the non-acid lane top at 612.
+        const float hy = 580.0f;
+        // Persistent read-outs for OCT/GATE/SWING (spec §3.1b step 7): drawn top
+        // hy + r + 8 = 601, ink bottom 610, clearing the non-acid lane top at 612.
         // Acid packs four lanes from y600 and has no such band, so the read-outs
         // are suppressed there and the hover bubble stays the read-out.
         const bool ro = readoutsOn() && !acid;
 
+        // Walking left-to-right from the title only lands on the 692 rule while `g`
+        // is the SOLVED value; once the clamp engages (a title wide enough to drive g
+        // below 12) the row would march straight through the right wall and into the
+        // FX strip. Real headroom is thin — DejaVu bold "PATTERN SEQUENCER" leaves g
+        // barely above the floor — so pin the start to whatever still ends at xR and
+        // let the title gap absorb the difference instead.
         float x = titleEnd + g;
+        const float xMax = xR - wSum - 5.0f * g;
+        if (x > xMax) x = xMax;
         // LED buttons are h24 centred on 575, the same centre line as the combos
         // (they used to sit 5 px high, which read as a misaligned row).
         ledButton("arpon", kParamArpOn, x, 563, x + wArp, 587, "ARP");
