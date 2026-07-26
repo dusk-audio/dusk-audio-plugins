@@ -1,5 +1,35 @@
 #!/usr/bin/env bash
 # Build the render harness and run every Multi-Synth core gate.
+#
+# ---------------------------------------------------------------------------
+# KNOWN COVERAGE GAPS -- read this before assuming "the suite is green" means
+# "the change is safe". These areas have NO automated gate; a regression in any
+# of them reaches a user unless someone listens for it. Listed roughly in the
+# order they would bite.
+#
+#   * Effects chain parameter coverage. zipper_gate only proves smoothing does
+#     not click, and fx_alias_gate is report-only and mostly about aliasing.
+#     Nothing asserts what drive / tape / chorus / delay / reverb parameters
+#     actually DO to the signal, or that their ranges behave monotonically.
+#     (reverb_gate covers the reverb alone.)
+#   * Mod matrix routing. No gate walks source x destination and confirms the
+#     modulation lands on the right target with the right depth and polarity,
+#     or that an unrouted slot is inert.
+#   * Unison spread. steal_gate covers unisonVoices only as far as the poly
+#     budget (effectivePoly = min(modeVoices, 16 / unisonCount)); unisonDetune
+#     and unisonSpread are set but never measured, so the detune amount and the
+#     stereo placement of unison voices are unverified. cpu_bench runs 8x unison
+#     for cost only.
+#   * Stereo width. No gate measures the width control's effect on correlation,
+#     mono compatibility, or that width=0 is genuinely mono.
+#   * Portamento / glide at the synth level. acid/slide_gate covers the Acid
+#     engine's slide only -- the other five modes' portamento is untested.
+#   * Velocity curve. Nothing asserts the velocity-to-level (or velocity-to-
+#     anything) mapping, so a curve inversion or a dead top/bottom would pass.
+#
+# Deliberately not written here: the brief that added the CI wiring scoped these
+# out. If you are adding a gate, add it to the loop below and delete its bullet.
+# ---------------------------------------------------------------------------
 set -e
 cd "$(dirname "$0")"
 cmake -B build -GNinja >/dev/null 2>&1 || cmake -B build >/dev/null
