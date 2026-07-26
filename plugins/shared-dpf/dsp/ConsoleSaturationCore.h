@@ -11,7 +11,7 @@
 //   2. drive + soft-clip cap, then y = x + (b·x²+c·x³+d·x⁴+e·x⁵) via ADAA
 //        E-series (Brown): H2-dominant, warm/gritty
 //        G-series (Black): H3-dominant, smoother
-//   Drive is scaled so the knob spans a realistic SSL channel range (roughly
+//   Drive is scaled so the knob spans a realistic console channel range (roughly
 //   fractions of a % THD at nominal up to a few % pushed) — not the cartoonish
 //   over-drive the old constant produced.
 //   3. de-emphasis   (exact IIR inverse of pre-emphasis)
@@ -89,7 +89,7 @@ public:
 
         float x = applyPreEmphasis(input, isLeft);
 
-        const float DRIVE_SCALE = 2.5f; // realistic SSL channel range (was 4.0)
+        const float DRIVE_SCALE = 2.5f; // realistic console channel range (was 4.0)
         const float driveAmount = drive * DRIVE_SCALE;
         const float xd_raw = x * driveAmount;
         const float xd = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);

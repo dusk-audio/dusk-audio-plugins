@@ -40,7 +40,7 @@ float TransformerSaturation::process(float input, float driveAmount, bool isOutp
     // Transformer core asymmetry → even harmonics (H2, H4)
     // Real audio transformers have asymmetric B-H curves from residual
     // core magnetization, generating even-order harmonics at all signal levels.
-    // For Classic 102: H2 target -52 to -58dB at 0VU.
+    // For American: H2 target -52 to -58dB at 0VU.
     // y = x * (1 + b*x) where b*x² generates H2.
     // Calibrated empirically against vintage deck H2 measurements.
     float asymmetryCoeff = 0.80f * driveAmount;
@@ -438,8 +438,8 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
 
     switch (machine)
     {
-        case Swiss800:
-            // Type A (Swiss 800): transformerless, precision, odd-harmonic dominant
+        case Swiss:
+            // Type A (Swiss): transformerless, precision, odd-harmonic dominant
             chars.headBumpFreq = 48.0f;
             chars.headBumpGain = 3.0f;
             chars.headBumpQ = 1.0f;
@@ -458,8 +458,8 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.crosstalkAmount = -70.0f;
             break;
 
-        case Classic102:
-            // Type B (Classic 102): transformer coloration, even+odd harmonics
+        case American:
+            // Type B (American): transformer coloration, even+odd harmonics
             chars.headBumpFreq = 62.0f;
             chars.headBumpGain = 4.5f;
             chars.headBumpQ = 1.4f;
@@ -489,7 +489,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
 
     switch (type)
     {
-        case Type456:
+        case FormulaClassic:
             chars.coercivity = 0.78f;
             chars.retentivity = 0.82f;
             chars.saturationPoint = 0.88f;
@@ -501,7 +501,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hfLoss = 0.92f;
             break;
 
-        case TypeGP9:
+        case FormulaHighOutput:
             chars.coercivity = 0.92f;
             chars.retentivity = 0.95f;
             chars.saturationPoint = 0.96f;
@@ -513,7 +513,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hfLoss = 0.96f;
             break;
 
-        case Type911:
+        case FormulaBalanced:
             chars.coercivity = 0.82f;
             chars.retentivity = 0.86f;
             chars.saturationPoint = 0.85f;
@@ -525,7 +525,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hfLoss = 0.90f;
             break;
 
-        case Type250:
+        case FormulaVintage:
             chars.coercivity = 0.70f;
             chars.retentivity = 0.75f;
             chars.saturationPoint = 0.80f;
@@ -538,7 +538,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             break;
 
         default:
-            chars = getTapeCharacteristics(Type456);
+            chars = getTapeCharacteristics(FormulaClassic);
             break;
     }
 
@@ -661,7 +661,7 @@ void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
     // Configure Jiles-Atherton hysteresis for current tape type and machine
     // ========================================================================
     auto jaParams = getJAParams(type);
-    bool isPrecision = (machine == Swiss800);
+    bool isPrecision = (machine == Swiss);
 
     hysteresisBass.setFormulation(jaParams);
     hysteresisBass.setMachineType(isPrecision);
@@ -800,8 +800,8 @@ float ImprovedTapeEmulation::processSample(float input,
         m_cachedMachineChars = getMachineCharacteristics(machine);
         m_cachedTapeChars = getTapeCharacteristics(type);
         m_cachedSpeedChars = getSpeedCharacteristics(speed);
-        m_hasTransformers = (machine == Classic102);
-        m_gapWidth = (machine == Swiss800) ? 2.5f : 3.5f;
+        m_hasTransformers = (machine == American);
+        m_gapWidth = (machine == Swiss) ? 2.5f : 3.5f;
     }
 
     const auto& tapeChars = m_cachedTapeChars;
@@ -913,7 +913,7 @@ float ImprovedTapeEmulation::processSample(float input,
         // ====================================================================
         if (wowFlutterAmount > 0.0f)
         {
-            float motorQuality = (machine == Swiss800) ? 0.2f : 0.6f;
+            float motorQuality = (machine == Swiss) ? 0.2f : 0.6f;
             float motorFlutterMod = motorFlutter.calculateFlutter(motorQuality * wowFlutterAmount);
 
             if (sharedWowFlutterMod != nullptr)

@@ -100,7 +100,8 @@ void DattorroPlateVintage::clearBuffers()
 }
 
 void DattorroPlateVintage::process (const float* inputL, const float* inputR,
-                                    float* outputL, float* outputR, int numSamples)
+                                    float* outputL, float* outputR, int numSamples,
+                                    const float* sourceSide)
 {
     if (! prepared_) return;
     if (static_cast<size_t> (numSamples) > preTankL_.size())
@@ -173,7 +174,7 @@ void DattorroPlateVintage::process (const float* inputL, const float* inputR,
         }
     }
 
-    tank_.process (preTankL_.data(), preTankR_.data(), outputL, outputR, numSamples);
+    tank_.process (preTankL_.data(), preTankR_.data(), outputL, outputR, numSamples, sourceSide);
 
     for (int n = 0; n < numSamples; ++n)
     {
@@ -270,6 +271,7 @@ void DattorroPlateVintage::setSustainLimiterLow (float lo, float hi, float thr, 
                                                  float atk, float relF, float relS)
 { tank_.setSustainLimiterLow (lo, hi, thr, cut, atk, relF, relS); }
 void DattorroPlateVintage::setFreeze            (bool  v) { dfFrozen_ = v; tank_.setFreeze (v); }
+void DattorroPlateVintage::setStereoInput       (float v) { tank_.setStereoInput (v); }
 
 void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float tapMs, float lpHz)
 {

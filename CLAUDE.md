@@ -341,3 +341,10 @@ These behaviors produced the session's best results. Apply them to ALL diagnosti
 NOTE: an old `plugins/DuskVerb/tests/reference_comparison/` symlink no longer exists;
 tuning scripts now live in the private tools repo at
 `~/projects/dusk-audio-tools/tools/duskverb/tuner/` (see the tools repo README).
+
+NOTE (post-merge): the tooling move is not finished. `plugins/DuskVerb/tools/tuner/`
+still exists in-tree because `main` added those scripts after the move commit landed
+on this branch; 59 of the 64 are already mirrored in the private repo (the 5 that are
+not are 3 superseded session handoffs plus `stereo_jnd_audit.py` /
+`stereo_profile_fit.py` from the stereo campaign). Finish the move in its own commit
+after mirroring those two — do not delete them as a side effect of an unrelated change.

@@ -196,6 +196,9 @@ public:
         }
         for (int b = 0; b < kBands; ++b) susLimDet_[b].clear();
         susLimKey_.clear();
+        for (int b = 0; b < kBands; ++b)
+            for (int f = 0; f < 8; ++f)
+                biasZ_[b][f][0] = biasZ_[b][f][1] = 0.0f;   // stereo-image-bias side filter (unused while off)
     }
 
     // ── Per-band config ─────────────────────────────────────────────────────
@@ -239,6 +242,73 @@ public:
                 smearLfo_[b][l].setDepth (smearDepthSamples_);
                 smearLfo_[b][l].setRate  (smearRateHz_ * (0.85f + 0.02f * static_cast<float> (b * kLines + l)));
             }
+    }
+
+    // STEREO IMAGE BIAS (issue #123). A hard-panned source leaves this tank dead
+    // centre (measured tail ILD −0.31 dB) where the reference halls hold a
+    // +1.3..+4.3 dB lean toward the source side. The cause is visible in the tap
+    // algebra: the two band taps reduce EXACTLY to
+    //   bl = ½(p2 + p5),   br = ½(p5 − p2)
+    // (p = pre-Hadamard line values; verified against the tap expressions below),
+    // so the band's output MID is line 5 and its output SIDE is line 2. Now look
+    // at what the injection pattern (x0+=L, x1−=L, x2+=R, x3−=R) puts on each line
+    // after the butterfly: lines 1 and 5 receive the input MID (L+R), lines 3 and 7
+    // receive the input SIDE (L−R), and lines 0, 2, 4, 6 receive NOTHING directly.
+    // The output mid is therefore correctly fed by a mid-carrying line, but the
+    // output side is fed by line 2 — a line with no direct injection at all. The
+    // engine's side content is pure feedback scramble, unrelated to the input
+    // image, which is why the lean is zero (and why this engine reads as
+    // centre-collapsed).
+    //
+    // This setter rotates the output side off line 2 and onto line 3, the line that
+    // actually carries the input side:
+    //   S' = cos·(½p2) + sin·(½p3)
+    // Only the side moves, so the mid — and therefore L+R — is preserved exactly
+    // through the direct-add, width and level stages downstream, and a CENTRED
+    // source puts nothing on line 3 at all (L−R = 0), leaving it pure feedback
+    // scramble like line 2: same level, same width, no fixed panner. Magnitudes
+    // only — the injection sign alternation is untouched and the feedback path is
+    // not involved, so per-band T60/level/direct are unchanged. amount 0 = off =
+    // bit-identical (the block is appended, never interleaved).
+    //
+    // WHAT THIS DOES AND DOES NOT BUY — MEASURED, READ BEFORE TUNING. It does NOT
+    // deliver the target lean: full rotation moves tail ILD only −0.31 → +0.20 dB
+    // on algo 15. The reason is that an energy lean needs ⟨M,S⟩ ≠ 0, and here M is
+    // ½p5 while S is a DIFFERENT delay line; the same burst reaches lines 5 and 3
+    // at different delays (the line lengths are mutually prime by design), so the
+    // two are temporally decorrelated and their inner product integrates to ~0 over
+    // the tail. Re-weighting output taps can only create a lean when the mid and
+    // the side share content, and a decorrelating tank guarantees they do not.
+    // (Contrast DenseHall, where the mid IS the sum of an L-fed and an R-fed
+    // aggregate, so the same rotation yields a genuine energy difference.)
+    // What it DOES buy is that the output side finally tracks the input image: the
+    // panned-vs-centred side/mid delta flips from −0.88 dB (a panned source made
+    // LESS side energy than a centred one — the centre-collapse signature) to
+    // +0.33 dB. That is the defect this fixes; the ILD is a separate wall.
+    //
+    // THE LEAN IS AVAILABLE, BUT NOT FROM HERE. Tapping L from the L-injected lines
+    // (0,1) and R from the R-injected lines (2,3) — i.e. bl = ½(p0−p1),
+    // br = ½(p2−p3) — was built and measured: +3.73 dB left-pan, −3.97 dB
+    // right-pan, mirror error 0.24 dB, squarely inside the target window. It is not
+    // shipped because it REPLACES the output taps rather than reweighting them: the
+    // mid changes completely (L+R null +1.5 dB, level +0.73 dB), which breaks the
+    // centred-input rule and re-voices both shipping PMB presets (Vocal Hall,
+    // Medium Drum Room) that were tuned hard on the current taps. Taking it needs
+    // an ear pass plus a re-tune of those two, which is a deliberate call, not a
+    // side effect of enabling a bias. Do not "fix" the number here without it.
+    void setStereoImageBias (float amount)
+    {
+        stereoBias_ = std::clamp (amount, 0.0f, 1.0f);
+        const bool wasActive = stereoBiasActive_;
+        stereoBiasActive_ = stereoBias_ > 0.0f;
+        biasSin_ = stereoBias_ * kBiasMaxSin;
+        biasCos_ = std::sqrt (std::max (0.0f, 1.0f - biasSin_ * biasSin_));
+        // The side-line filter chain is cold until the bias runs; clear it on the
+        // off→on edge so a toggle can't splice a stale tail back in.
+        if (stereoBiasActive_ && ! wasActive)
+            for (int b = 0; b < kBands; ++b)
+                for (int f = 0; f < 8; ++f)
+                    biasZ_[b][f][0] = biasZ_[b][f][1] = 0.0f;
     }
 
     // ── In-loop sustained-energy limiter (SustainBandLimiter.h) ────────────
@@ -339,6 +409,29 @@ public:
                 // confined to the band's own range (leak-rings-long defect).
                 float bl = bandFilter (b, 0, 0.35355339f * (x[0] - x[3] + x[5] - x[6]));
                 float br = bandFilter (b, 1, 0.35355339f * (x[2] - x[1] + x[7] - x[4]));
+                // Stereo image bias (setStereoImageBias) — issue #123. Appended
+                // rather than folded into the two taps above: this target builds
+                // -O3 -ffast-math, so touching the statements of the hot loop moves
+                // the disabled output too (same lesson as the gb-local variant
+                // noted above, and as the DenseHall port of this feature). Off ⇒
+                // never entered, and nothing above it changed ⇒ bit-identical.
+                if (stereoBiasActive_)
+                {
+                    // ½p3 recovered by inverse Hadamard (the butterfly is its own
+                    // inverse up to the 1/sqrt8 it already applied), then run
+                    // through the band's own confinement filter with private state
+                    // so it lands inside the band exactly like the taps do.
+                    const float dRaw = 0.17677670f * (x[0] - x[1] - x[2] + x[3]
+                                                    + x[4] - x[5] - x[6] + x[7]);
+                    const float dF = biasBandFilter (b, dRaw);
+                    // bandFilter is linear with per-channel state, so the filtered
+                    // mid and side come straight out of the two taps above.
+                    const float midF  = 0.5f * (bl + br);
+                    const float sideF = 0.5f * (bl - br);
+                    const float sNew  = biasCos_ * sideF + biasSin_ * dF;
+                    bl = midF + sNew;
+                    br = midF - sNew;
+                }
                 // feed-forward direct (EDT/front-load, outside the loop —
                 // unfiltered: it is already band-split and must stay
                 // phase-tight for EDT shaping)
@@ -537,4 +630,29 @@ private:
     DspUtils::MultiSineLFO smearLfo_[kBands][kLines];   // per-LINE mode-smear wander (anti-boing, fully decorrelated)
     float smearDepthSamples_ = 0.0f, smearRateHz_ = 0.08f;
     bool  smearActive_ = false;
+
+    // Stereo image bias (setStereoImageBias) — issue #123. A private copy of the
+    // band confinement filter for the side-carrying line; deliberately NOT a
+    // reuse of bandFilter with a state pointer, since editing that function would
+    // recompile the disabled path's hot loop and move its output under
+    // -ffast-math. KEEP THESE MEMBERS LAST for the same reason: inserting them
+    // higher up shifts the offsets of every array the loop touches, which alone
+    // re-rolls the vectoriser and breaks the bias-off byte match.
+    float biasBandFilter (int b, float v)
+    {
+        for (int f = 0; f < outNb_[b]; ++f)
+        {
+            const BQ& c = outBq_[b][f];
+            float* z = biasZ_[b][f];
+            const float x = v;
+            v = c.b0 * x + z[0];
+            z[0] = c.b1 * x - c.a1 * v + z[1];
+            z[1] = c.b2 * x - c.a2 * v;
+        }
+        return v;
+    }
+    static constexpr float kBiasMaxSin = 1.0f;   // side-domain rotation at amount = 1
+    float biasZ_[kBands][8][2] = {};
+    float stereoBias_ = 0.0f, biasCos_ = 1.0f, biasSin_ = 0.0f;
+    bool  stereoBiasActive_ = false;
 };

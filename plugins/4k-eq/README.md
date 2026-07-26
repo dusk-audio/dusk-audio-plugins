@@ -33,7 +33,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
   - 🟢 Green: Frequency controls
   - 🔵 Blue: Q controls
   - 🟠 Orange: Filters & saturation
-- **Professional tick markings** - Console-style graduated scales with labeled frequency/Q values
+- **Professional tick markings** - British-style graduated scales with labeled frequency/Q values
   - LF: 30, 50, 100, 200, 300, 400, 480 Hz
   - LMF: 200, 300, 800, 1k, 1.5k, 2k, 2.5k Hz
   - HMF: 600, 800, 1.5k, 3k, 4.5k, 6k, 7k Hz
@@ -88,7 +88,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
 ## Technical Specifications
 
 ### DSP Details
-- **Filter topology**: Biquad IIR with console-style coefficient shaping
+- **Filter topology**: Biquad IIR with British-style coefficient shaping
 - **Frequency warping**: Pre-warped for HF accuracy (prevents digital cramping)
 - **Saturation model**: Asymmetric soft-clipping (NE5534 op-amp characteristic)
 - **Sample rates**: 44.1kHz - 192kHz (auto-limits oversampling at >96kHz)
@@ -159,7 +159,7 @@ cmake --build . --target FourKEQ_All -j8
 ├── FourKEQ.h                # Processor header
 ├── PluginEditor.cpp         # GUI implementation (includes spectrum analyzer)
 ├── PluginEditor.h           # Editor header
-├── FourKLookAndFeel.cpp     # Custom console-style UI theme
+├── FourKLookAndFeel.cpp     # Custom British-style UI theme
 ├── FourKLookAndFeel.h       # Look and feel header
 ├── ConsoleSaturation.h      # Console saturation modeling
 ├── PatreonBackers.h         # Patreon supporters credits list
@@ -202,7 +202,7 @@ cmake --build . --target FourKEQ_All -j8
 ### v1.0.6 (2026-01-29)
 - ✅ Selectable dB range for the EQ graph (±12/±24/±30/±60 dB, Warped)
 - ✅ Expanded EQ graph height and cleaner FILTERS section layout
-- ✅ SSL-style IN button positioning; width-only UI scaling fix
+- ✅ British-style IN button positioning; width-only UI scaling fix
 
 ### v1.0.5 (2026-01-28)
 - ✅ Automatic website version update on release-tag push
@@ -233,7 +233,7 @@ cmake --build . --target FourKEQ_All -j8
 - ✅ Removed LV2 inline display (JUCE compatibility)
 - ✅ Added mouse wheel support for knobs
 - ✅ Added double-click reset to defaults
-- ✅ Added professional knob tick markings (console-style)
+- ✅ Added professional knob tick markings (British-style)
 - ✅ Added pre/post spectrum toggle
 - ✅ Added "Master Sheen" factory preset
 - ✅ SIMD-optimized spectrum analyzer (~5% CPU reduction)

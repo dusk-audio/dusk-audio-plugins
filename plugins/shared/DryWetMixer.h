@@ -127,6 +127,9 @@ public:
         normalDryCaptured = false;
         lastOversampledSamples = 0;
 
+        // No ramp across a prepare — start settled wherever the host left us.
+        snapMixToTarget();
+
         ready.store(true, std::memory_order_release);
     }
 
@@ -149,6 +152,7 @@ public:
         oversampledDryCaptured = false;
         normalDryCaptured = false;
         lastOversampledSamples = 0;
+        snapMixToTarget();
     }
 
     /**
@@ -271,76 +275,46 @@ public:
     */
     void mixAtOversampledRate(juce::dsp::AudioBlock<float>& oversampledBlock, float mixAmount)
     {
-        // Skip if mix is 100% wet or no dry captured
-        if (mixAmount >= 0.999f || !oversampledDryCaptured)
-        {
-            oversampledDryCaptured = false;
+        setTargetMix(mixAmount);
+
+        if (!oversampledDryCaptured)
             return;
-        }
 
         const int numChannels = static_cast<int>(oversampledBlock.getNumChannels());
         const int numSamples = juce::jmin(static_cast<int>(oversampledBlock.getNumSamples()),
                                           lastOversampledSamples);
 
-        // Skip if mix is 100% dry (just copy dry over wet)
-        if (mixAmount <= 0.001f)
-        {
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
-                const float* dry = oversampledDryBuffer.getReadPointer(ch);
-                std::memcpy(wet, dry, static_cast<size_t>(numSamples) * sizeof(float));
-            }
-            oversampledDryCaptured = false;
-            return;
-        }
-
-        // Normal mixing: output = wet * mixAmount + dry * (1 - mixAmount)
-        const float wetAmount = mixAmount;
-        const float dryAmount = 1.0f - mixAmount;
-
         // Scale base-rate processing latency to oversampled rate
         const int osProcessingLatency = processingLatencyBase * currentOversamplingFactor;
+        const int delayToApply = juce::jlimit(0, MAX_OS_DELAY_SAMPLES - 1, osProcessingLatency);
+        const int channelsToProcess = juce::jmin(numChannels, MAX_CHANNELS);
+        const double osRate = baseSampleRate * currentOversamplingFactor;
 
-        if (osProcessingLatency <= 0)
+        // ONE loop for every case. The endpoints are not special-cased: at a
+        // settled mix of 1.0 the dry term multiplies by exactly 0 (bit-identical
+        // wet passthrough) and at 0.0 the wet term does, so nothing jumps when
+        // the knob crosses an endpoint. The ring is written unconditionally so
+        // the delayed dry is never stale when the mix comes back off 100 % wet
+        // — reading it back at delayToApply == 0 returns the sample just
+        // written, which is the undelayed dry.
+        for (int i = 0; i < numSamples; ++i)
         {
-            // No processing delay — direct crossfade (zero overhead)
-            for (int ch = 0; ch < numChannels; ++ch)
+            const int readPos = (osDelayWritePos - delayToApply + MAX_OS_DELAY_SAMPLES) & OS_DELAY_MASK;
+            const float wetAmount = advanceMix(osRate);
+            const float dryAmount = 1.0f - wetAmount;
+
+            for (int ch = 0; ch < channelsToProcess; ++ch)
             {
                 float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
                 const float* dry = oversampledDryBuffer.getReadPointer(ch);
 
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    wet[i] = wet[i] * wetAmount + dry[i] * dryAmount;
-                }
+                osDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(osDelayWritePos)] = dry[i];
+                const float delayedDry = osDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(readPos)];
+
+                wet[i] = wet[i] * wetAmount + delayedDry * dryAmount;
             }
-        }
-        else
-        {
-            // Delay-compensated crossfade: delay the dry signal to align with
-            // the wet processing chain's group delay, preventing comb filtering
-            const int delayToApply = juce::jmin(osProcessingLatency, MAX_OS_DELAY_SAMPLES - 1);
-            const int channelsToProcess = juce::jmin(numChannels, MAX_CHANNELS);
 
-            for (int i = 0; i < numSamples; ++i)
-            {
-                int readPos = (osDelayWritePos - delayToApply + MAX_OS_DELAY_SAMPLES) & OS_DELAY_MASK;
-
-                for (int ch = 0; ch < channelsToProcess; ++ch)
-                {
-                    float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
-                    const float* dry = oversampledDryBuffer.getReadPointer(ch);
-
-                    // Write current dry sample into ring buffer, read delayed
-                    float delayedDry = osDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(readPos)];
-                    osDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(osDelayWritePos)] = dry[i];
-
-                    wet[i] = wet[i] * wetAmount + delayedDry * dryAmount;
-                }
-
-                osDelayWritePos = (osDelayWritePos + 1) & OS_DELAY_MASK;
-            }
+            osDelayWritePos = (osDelayWritePos + 1) & OS_DELAY_MASK;
         }
 
         // Clear flag after mixing (must capture again next block)
@@ -385,73 +359,37 @@ public:
     */
     void mixAtNormalRate(juce::AudioBuffer<float>& buffer, float mixAmount)
     {
-        if (!normalDryCaptured || mixAmount >= 0.999f)
-        {
-            normalDryCaptured = false;
+        setTargetMix(mixAmount);
+
+        if (!normalDryCaptured)
             return;
-        }
 
         const int numChannels = juce::jmin(buffer.getNumChannels(), normalDryBuffer.getNumChannels());
         const int numSamples = juce::jmin(buffer.getNumSamples(), lastNormalSamples);
         const int totalDelay = oversamplingLatency + additionalLatency + processingLatencyBase;
+        const int delayToApply = juce::jlimit(0, MAX_DELAY_SAMPLES - 1, totalDelay);
+        const int channelsToProcess = juce::jmin(numChannels, MAX_CHANNELS);
 
-        // Skip if mix is 100% dry (just copy dry over wet)
-        if (mixAmount <= 0.001f)
+        // Single loop, endpoints included — see mixAtOversampledRate for why the
+        // fast paths are gone and why the ring is written unconditionally.
+        for (int i = 0; i < numSamples; ++i)
         {
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                float* wet = buffer.getWritePointer(ch);
-                const float* dry = normalDryBuffer.getReadPointer(ch);
-                std::memcpy(wet, dry, static_cast<size_t>(numSamples) * sizeof(float));
-            }
-            normalDryCaptured = false;
-            return;
-        }
+            const int readPos = (delayWritePos - delayToApply + MAX_DELAY_SAMPLES) & DELAY_MASK;
+            const float wetAmount = advanceMix(baseSampleRate);
+            const float dryAmount = 1.0f - wetAmount;
 
-        const float wetAmount = mixAmount;
-        const float dryAmount = 1.0f - mixAmount;
-
-        // If no delay needed, simple mix
-        if (totalDelay <= 0)
-        {
-            for (int ch = 0; ch < numChannels; ++ch)
+            for (int ch = 0; ch < channelsToProcess; ++ch)
             {
                 float* wet = buffer.getWritePointer(ch);
                 const float* dry = normalDryBuffer.getReadPointer(ch);
 
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    wet[i] = wet[i] * wetAmount + dry[i] * dryAmount;
-                }
+                delayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(delayWritePos)] = dry[i];
+                const float delayedDry = delayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(readPos)];
+
+                wet[i] = wet[i] * wetAmount + delayedDry * dryAmount;
             }
-        }
-        else
-        {
-            // Apply delay compensation via ring buffer
-            const int delayToApply = juce::jmin(totalDelay, MAX_DELAY_SAMPLES - 1);
-            const int channelsToProcess = juce::jmin(numChannels, MAX_CHANNELS);
 
-            for (int i = 0; i < numSamples; ++i)
-            {
-                // Calculate read position (circular) - use bitwise AND for efficient wraparound
-                int readPos = (delayWritePos - delayToApply + MAX_DELAY_SAMPLES) & DELAY_MASK;
-
-                for (int ch = 0; ch < channelsToProcess; ++ch)
-                {
-                    float* wet = buffer.getWritePointer(ch);
-                    const float* dry = normalDryBuffer.getReadPointer(ch);
-
-                    // Read delayed sample, write current to delay line
-                    float delayedDry = delayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(readPos)];
-                    delayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(delayWritePos)] = dry[i];
-
-                    // Mix with delayed dry
-                    wet[i] = wet[i] * wetAmount + delayedDry * dryAmount;
-                }
-
-                // Advance write position (bitwise AND for efficient wraparound)
-                delayWritePos = (delayWritePos + 1) & DELAY_MASK;
-            }
+            delayWritePos = (delayWritePos + 1) & DELAY_MASK;
         }
 
         normalDryCaptured = false;
@@ -476,7 +414,66 @@ public:
     */
     bool hasNormalDry() const { return normalDryCaptured; }
 
+    /**
+        Sets the mix the ramp is heading towards (0.0 = 100% dry, 1.0 = 100% wet).
+        Called for you by the mix functions; call it directly only to retarget
+        without processing a block.
+    */
+    void setTargetMix(float mixAmount)
+    {
+        mixTarget = juce::jlimit(0.0f, 1.0f, mixAmount);
+    }
+
+    /**
+        Snaps the ramp to its target. Use on prepare/reset or any discontinuity
+        (preset load, transport relocate) where a ramp would be pointless.
+    */
+    void snapMixToTarget() { mixCurrent = mixTarget; }
+
+    /**
+        True while the ramp is still travelling. The host processor must keep
+        capturing dry while this is true, even at a target of 100% wet, or the
+        remainder of the ramp has nothing to blend against.
+    */
+    bool isMixSmoothing() const { return mixCurrent != mixTarget; }
+
+    /** Current (ramped) mix value — what the last processed sample actually used. */
+    float getCurrentMix() const { return mixCurrent; }
+
+    /** Ramp length in seconds. Default 20 ms: inaudible steps, still snappy. */
+    void setMixRampSeconds(double seconds) { mixRampSeconds = juce::jmax(1.0e-4, seconds); }
+
 private:
+    //==============================================================================
+    // Mix ramp
+    //==============================================================================
+
+    /**
+        Advances the linear mix ramp by one sample at the given rate and returns
+        the value to use. Rate is a parameter rather than state because the same
+        ramp is advanced at base rate (tier 2) or oversampled rate (tier 1), and
+        the ramp must last the same wall-clock time either way.
+    */
+    float advanceMix(double rate)
+    {
+        if (mixCurrent == mixTarget)
+            return mixCurrent;
+
+        const float maxStep = static_cast<float>(1.0 / (mixRampSeconds * juce::jmax(1.0, rate)));
+        const float diff = mixTarget - mixCurrent;
+
+        if (std::abs(diff) <= maxStep)
+            mixCurrent = mixTarget;
+        else
+            mixCurrent += (diff > 0.0f ? maxStep : -maxStep);
+
+        return mixCurrent;
+    }
+
+    float mixTarget{1.0f};
+    float mixCurrent{1.0f};
+    double mixRampSeconds{0.02};
+
     //==============================================================================
     // Buffer Management
     //==============================================================================

@@ -238,12 +238,12 @@ inline HardwareUnitProfile createClassicVCA()
 }
 
 //------------------------------------------------------------------------------
-// Console Bus compressor (SSL style)
+// British bus compressor
 inline HardwareUnitProfile createConsoleBus()
 {
     HardwareUnitProfile profile;
-    profile.name = "Console Bus";
-    profile.modeledUnit = "Console Bus Compressor";
+    profile.name = "British bus";
+    profile.modeledUnit = "British bus compressor";
 
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.004f, 0.008f, 0.35f, 0.0f, 0.003f);
@@ -252,7 +252,7 @@ inline HardwareUnitProfile createConsoleBus()
     profile.outputStageHarmonics = HarmonicProfile::create(
         0.008f, 0.015f, 0.35f, 0.0f, 0.004f);
 
-    // SSL G-Bus: clean VCA, flat response
+    // British bus: clean VCA, flat response
     profile.inputTransformer = TransformerProfile::createActive(
         0.9f, 0.03f, 1.0f, 100000.0f, 10.0f,
         0.002f, 0.004f, 0.4f);
@@ -261,7 +261,7 @@ inline HardwareUnitProfile createConsoleBus()
         0.92f, 0.02f, 1.0f, 100000.0f, 8.0f,
         0.002f, 0.003f, 0.45f);
 
-    profile.inputTransformer.hysteresisAmount = 0.008f;  // SSL active transformer (minimal)
+    profile.inputTransformer.hysteresisAmount = 0.008f;  // console active transformer (minimal)
     profile.outputTransformer.hysteresisAmount = 0.008f;
 
     profile.timing = TimingProfile::create(

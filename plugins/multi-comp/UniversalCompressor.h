@@ -5,6 +5,7 @@
 #include <array>
 #include <memory>
 #include "../shared/DryWetMixer.h"
+#include "AutoGainMatcher.h"
 
 enum class CompressorMode : int
 {
@@ -34,7 +35,8 @@ enum class DistortionType : int
     Clip = 3     // Hard digital clip
 };
 
-class UniversalCompressor : public juce::AudioProcessor
+class UniversalCompressor : public juce::AudioProcessor,
+                            private juce::AsyncUpdater
 {
 public:
     UniversalCompressor();
@@ -54,6 +56,10 @@ public:
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override;
+    // Recompute the reported plugin latency and publish it to the host. Safe to
+    // call from ANY thread: applies immediately on the message thread, defers to
+    // an AsyncUpdater when called from the audio thread (CLAP — and clean host
+    // behaviour — forbids setLatencySamples() during process()).
     void updateLatencyReport();
     juce::AudioProcessorParameter* getBypassParameter() const override;
 
@@ -251,10 +257,10 @@ private:
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};
 
-    // GR-based auto-gain (industry-standard approach: invert the gain reduction)
-    float smoothedGrDb = 0.0f;          // Smoothed gain reduction in dB (negative = compression)
-    float grSmoothCoeff = 0.0f;         // One-pole filter coefficient for GR smoothing (~200ms)
-    bool primeGrAccumulator = true;     // Flag to instantly prime on mode change
+    // Auto-gain by slow in/out level matching (replaces GR inversion, which
+    // tracked the compression envelope closely enough to pump).
+    MultiComp::AutoGainMatcher autoGainMatcher;
+
     bool wasBypassedLastBlock = false;
     bool wasMinimalLastBlock  = false;  // Track minimal→standard transition for PDC restore
 
@@ -284,6 +290,7 @@ private:
     juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal
     juce::AudioBuffer<float> externalSidechain;   // External sidechain input buffer
     juce::AudioBuffer<float> interpolatedSidechain;  // Pre-interpolated sidechain for oversampling
+    juce::AudioBuffer<float> doubleConvBuffer;       // Float staging for double-precision processing
 
     // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
     // Replaces manual dryBuffer, oversampledDryBuffer, and delay line implementation
@@ -331,5 +338,45 @@ private:
     // Parameter creation
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     
+    // Pure computation of the current reported latency (no host call) — shared by
+    // updateLatencyReport() and the deferred async apply.
+    int computeLatencySamples() const;
+
+    // RMS of a block across all channels, used by the auto-gain matcher.
+    static float blockRms(const juce::AudioBuffer<float>& buffer, int numChannels, int numSamples);
+
+    // Per-sample ramp for the mode-local mix parameters (bus_mix, digital_mix).
+    // They were passed block-constant into the per-sample process calls and
+    // stepped when automated — same click class as the global Mix knob. Values
+    // are in the active mode's own units (bus_mix 0-1, digital_mix 0-100);
+    // `span` names that full range so the ramp is 20 ms per full swing either
+    // way. Snapping on mode change covers the unit switch. The curve holds
+    // min(numSamples, size) fresh values; a longer (oversized-block) tail reads
+    // the last value and the ramp completes next block — same idiom as
+    // smoothedGainBuffer.
+    void fillModeMixCurve(float target, float span, double rate, int numSamples);
+    float modeMixCurrent = 0.0f;
+    bool modeMixSnap = true;            // snap on prepare/reset/mode change
+    alignas(64) std::array<float, 8192> modeMixCurve{};
+
+    // Drives the auto-gain matcher and applies the smoothed makeup in place.
+    // Shared by the multiband path and the standard path — they used to carry
+    // near-identical copies of this logic.
+    void applyAutoGain(juce::AudioBuffer<float>& buffer, int numChannels, int numSamples,
+                       float inRms, bool autoMakeupEnabled);
+    // Message-thread apply of the pending latency (AsyncUpdater callback).
+    void handleAsyncUpdate() override;
+    std::atomic<int> pendingLatencySamples_{0};
+    // True while a processBlock call is on the stack. updateLatencyReport() keys
+    // on THIS (not thread identity) to decide whether to defer setLatencySamples,
+    // because a validator/host may drive process() on the message thread.
+    std::atomic<bool> inProcessBlock_{false};
+    struct ScopedProcessFlag
+    {
+        std::atomic<bool>& f;
+        explicit ScopedProcessFlag(std::atomic<bool>& x) : f(x) { f.store(true,  std::memory_order_relaxed); }
+        ~ScopedProcessFlag()                                   { f.store(false, std::memory_order_relaxed); }
+    };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(UniversalCompressor)
 };

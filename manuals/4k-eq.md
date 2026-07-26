@@ -2,7 +2,7 @@
 slug: 4k-eq
 version: 1.0.10
 last_updated: 2026-05-08
-tagline: Console-style 4-band parametric EQ with Brown and Black modes
+tagline: British-style 4-band parametric EQ with Brown and Black modes
 ---
 
 # 4K-EQ
@@ -11,11 +11,11 @@ tagline: Console-style 4-band parametric EQ with Brown and Black modes
 
 ![4K-EQ main UI](screenshots/4k-eq/01-main-ui.png)
 
-4K-EQ is a 4-band parametric equalizer modeled on the British large-format console channel strip. The four bands (Low, Low-Mid, High-Mid, High) cover the full audio spectrum, with separate high-pass and low-pass filters at the input. Two character modes ("Brown" and "Black") swap the EQ curves between the E-series and G-series console designs.
+4K-EQ is a 4-band parametric equalizer modeled on the British large-format console channel strip. The four bands (Low, Low-Mid, High-Mid, High) cover the full audio spectrum, with separate high-pass and low-pass filters at the input. Two character modes ("Brown" and "Black") swap the EQ curves between the E-series and British G-series designs.
 
 Use it where you would use a console EQ: tonal shaping during the mix, gentle pre-master sweetening, broad corrective work on individual sources. The bands are musical rather than surgical; if you need to notch out a single resonant peak, reach for Multi-Q's Digital mode instead.
 
-The console-style saturation stage adds a small amount of harmonic color when driven, and stays clean when the input gain is conservative. Auto-gain compensation keeps the output level matched to input as you boost and cut, so an A/B comparison reflects tone changes only.
+The British-style saturation stage adds a small amount of harmonic color when driven, and stays clean when the input gain is conservative. Auto-gain compensation keeps the output level matched to input as you boost and cut, so an A/B comparison reflects tone changes only.
 
 ## Quick Start
 
@@ -120,7 +120,7 @@ Why this works. A wide 2 dB shelf at 60 Hz adds weight without muddying. A gentl
 - **EQ Type:** Brown (E-series) or Black (G-series). Brown is warmer and slightly softer; Black is brighter with extended low and high response.
 - **Bypass:** Reports zero latency to the host while bypassed.
 - **Input Gain / Output Gain:** -12 to +12 dB. Use Input Gain to drive the saturation stage harder; Output Gain to compensate.
-- **Saturation:** 0 to 100%, default 0. Console-style harmonic distortion. Stays clean at 0; adds warmth at 10 to 25%; gets obviously colored above 50%.
+- **Saturation:** 0 to 100%, default 0. British-style harmonic distortion. Stays clean at 0; adds warmth at 10 to 25%; gets obviously colored above 50%.
 - **Oversampling:** 2x or 4x, default 2x. 4x reduces aliasing in the saturation stage at the cost of more CPU.
 - **Spectrum Pre/Post:** Default Post. The spectrum analyzer view shows audio after the EQ; flip to Pre to see the input signal.
 - **Auto Gain Compensation:** On by default. Keeps output loudness matched to input so EQ comparisons are level-matched.

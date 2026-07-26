@@ -11,7 +11,7 @@ tagline: Analog tape emulation with two machines, four formulations, wow, and fl
 
 ![TapeMachine main UI](screenshots/tapemachine/01-main-ui.png)
 
-TapeMachine emulates a professional reel-to-reel tape machine. Two machine models (Swiss 800 and Classic 102) with four tape formulations (Type 456, GP9, 911, 250), three speeds (7.5, 15, 30 IPS), and two EQ standards (NAB, CCIR) cover most of what you would find in a 1970s to 1990s pro studio. On top of that you get separate wow and flutter controls, switchable noise, oversampled saturation, and a four-position signal path so you can hear just the electronics, just the tape, the full chain, or true bypass.
+TapeMachine emulates a professional reel-to-reel tape machine. Two machine models (Swiss and American) with four tape formulations (456, GP9, 911, 250), three speeds (7.5, 15, 30 IPS), and two EQ standards (NAB, CCIR) cover most of what you would find in a 1970s to 1990s pro studio. On top of that you get separate wow and flutter controls, switchable noise, oversampled saturation, and a four-position signal path so you can hear just the electronics, just the tape, the full chain, or true bypass.
 
 Use it where you would use a real tape machine: subtle bus glue, vocal warmth, drum bus character, gritty character on guitars, or full lo-fi treatment. The machine model and speed affect the high-frequency response (head bump and roll-off); the tape formulation affects the saturation curve and noise floor; bias and calibration determine how hot you can drive before the sound breaks down.
 
@@ -20,10 +20,10 @@ It is not a chorus, flanger, or pitch-shift plugin. The wow and flutter are subt
 ## Quick Start
 
 1. Insert TapeMachine on a track or bus. Vocal busses, drum busses, and the master are all common targets.
-2. Leave the defaults for your first listen: **Swiss 800**, **15 IPS**, **Type 456**, **Repro** signal path, **NAB** EQ, **Auto Calibration** on, **Saturation** 4%.
+2. Leave the defaults for your first listen: **Swiss**, **15 IPS**, **Type 456**, **Repro** signal path, **NAB** EQ, **Auto Calibration** on, **Saturation** 4%.
 3. Compare bypassed against active. You should hear a subtle high-frequency softening and a touch of harmonic warmth.
 4. Push **Input Gain** by 4 to 6 dB to drive the saturation harder. Compensate with **Output Gain** to keep levels matched.
-5. Try the other machine: switch **Tape Machine** to **Classic 102** for a different head response and more pronounced character.
+5. Try the other machine: switch **Tape Machine** to **American** for a different head response and more pronounced character.
 6. If you want the full vintage effect, raise **Wow** to 10 to 15%, **Flutter** to 5 to 8%, and toggle **Noise Enabled** on with **Noise Amount** around 10%.
 
 You should hear the difference immediately on transients (slightly softer attack), on highs (gentle roll-off above 12 to 15 kHz), and on overall tone (subtle low-mid warmth from the head bump). With Saturation above 10% and Input Gain pushed, the harmonic content becomes audible.
@@ -37,7 +37,7 @@ You should hear the difference immediately on transients (slightly softer attack
 
 Settings:
 
-- **Tape Machine:** Swiss 800
+- **Tape Machine:** Swiss
 - **Tape Speed:** 30 IPS (cleanest, widest frequency response)
 - **Tape Type:** GP9 (low noise, high-output)
 - **Signal Path:** Repro
@@ -52,16 +52,16 @@ Why this works. 30 IPS gives the flattest response and the lowest noise; the hig
 
 ### Drum bus character with 70s grit
 
-![Classic 102 machine selected](screenshots/tapemachine/02-machine-classic-102.png)
+![American machine selected](screenshots/tapemachine/02-machine-classic-102.png)
 
 **Source:** Stereo drum bus, mixed and balanced.
 **Goal:** Pre-internet-era warmth and a touch of grit.
 
 Settings:
 
-- **Tape Machine:** Classic 102
+- **Tape Machine:** American
 - **Tape Speed:** 15 IPS
-- **Tape Type:** Type 456
+- **Tape Type:** 456
 - **Signal Path:** Repro
 - **EQ Standard:** NAB
 - **Input Gain:** +6 dB
@@ -72,7 +72,7 @@ Settings:
 - **Noise Enabled:** On, **Noise Amount:** 10%
 - **Output Gain:** -3 dB
 
-Why this works. Classic 102 is the more colored of the two machines. 15 IPS at NAB gives the classic 1970s head response with audible high-frequency roll-off. Type 456 saturates earlier than the modern formulations. Driving the input by 6 dB pushes the saturation into clearly audible territory. Under-biasing (Bias below 50%) thins the saturation slightly and adds harmonic distortion. Audible wow and flutter complete the era. This is the "70s Rock" preset.
+Why this works. American is the more colored of the two machines. 15 IPS at NAB gives the classic 1970s head response with audible high-frequency roll-off. Type 456 saturates earlier than the modern formulations. Driving the input by 6 dB pushes the saturation into clearly audible territory. Under-biasing (Bias below 50%) thins the saturation slightly and adds harmonic distortion. Audible wow and flutter complete the era. This is the "70s Rock" preset.
 
 For a less aggressive version, drop Saturation to 20% and Input Gain to +3 dB.
 
@@ -83,7 +83,7 @@ For a less aggressive version, drop Saturation to 20% and Input Gain to +3 dB.
 
 Settings:
 
-- **Tape Machine:** Classic 102
+- **Tape Machine:** American
 - **Tape Speed:** 7.5 IPS (worst high-frequency response)
 - **Tape Type:** Type 250 (highest noise, most coloration)
 - **Signal Path:** Repro
@@ -107,7 +107,7 @@ Why this works. 7.5 IPS at the most aggressive tape (Type 250) with heavy under-
 
 Settings:
 
-- **Tape Machine:** Swiss 800
+- **Tape Machine:** Swiss
 - **Tape Speed:** 30 IPS
 - **Tape Type:** GP9
 - **Signal Path:** Repro
@@ -128,9 +128,9 @@ Why this works. Conservative everything: cleanest machine, fastest speed, lowest
 
 ### Machine and tape
 
-- **Tape Machine:** Swiss 800 (default) or Classic 102. Swiss 800 is the cleaner, more linear machine; Classic 102 has more pronounced head response and saturation character.
+- **Tape Machine:** Swiss (default) or American. Swiss is the cleaner, more linear machine; American has more pronounced head response and saturation character.
 - **Tape Speed:** 7.5, 15 (default), or 30 IPS. Faster speed gives flatter frequency response, less noise, and less saturation per dB of input. 7.5 is the most colored and noisy; 30 is the cleanest.
-- **Tape Type:** Type 456 (default), GP9, 911, or 250. Different tape formulations have different saturation curves, noise floors, and tonal characters. 456 is the classic Ampex; GP9 is a modern low-noise; 911 is the popular European; 250 has the most character (and the most noise).
+- **Tape Type:** 456 (default), GP9, 911, or 250. Different tape formulations have different saturation curves, noise floors, and tonal characters. 456 is the classic general-purpose formulation; GP9 is a modern low-noise; 911 is the popular European; 250 has the most character (and the most noise).
 - **Signal Path:** Repro (default), Sync, Input, or Thru. Repro is the full signal chain (electronics into tape into reproduce head); Sync uses the record head as the playback head (slightly different EQ); Input is the electronics only with no tape (no saturation or modulation); Thru is true bypass.
 - **EQ Standard:** NAB (default), CCIR, or AES. American (NAB) and European (CCIR) tape EQs differ above 1 kHz; AES is mandatory at 30 IPS. The plugin will switch to AES automatically when you pick 30 IPS.
 
@@ -181,19 +181,19 @@ TapeMachine ships with 15 presets across 5 categories. Each is a starting point;
 
 ### Subtle
 
-- **Gentle Warmth.** Swiss 800, 30 IPS, GP9, low saturation. Almost-inaudible analog flavor for transparent work.
+- **Gentle Warmth.** Swiss, 30 IPS, GP9, low saturation. Almost-inaudible analog flavor for transparent work.
 - **Transparent Glue.** Similar to Gentle Warmth but slightly more saturation; for bus duty.
 - **Mastering Touch.** The cleanest setting in the plugin: 30 IPS, GP9, AES, perfectly biased, no modulation. For mastering bus or any "I want a hint of analog" job.
 
 ### Warm
 
-- **Classic Analog.** 15 IPS, Type 456, NAB, moderate drive. The textbook warm tape sound.
-- **Vintage Warmth.** Classic 102, 15 IPS, more pronounced head bump, slight wow. For sources that need to feel older.
+- **Classic Analog.** 15 IPS, Classic, NAB, moderate drive. The textbook warm tape sound.
+- **Vintage Warmth.** American, 15 IPS, more pronounced head bump, slight wow. For sources that need to feel older.
 - **Tube Console.** Heavier saturation with audible second-harmonic content; pairs well with a bus EQ.
 
 ### Character
 
-- **70s Rock.** Classic 102, 15 IPS, Type 456, under-biased (42%), audible wow and flutter, noise on. The drum-bus and rock-mix preset.
+- **70s Rock.** American, 15 IPS, Classic, under-biased (42%), audible wow and flutter, noise on. The drum-bus and rock-mix preset.
 - **Tape Saturation.** Heavy drive, full saturation. Think parallel-tape bus sound.
 - **Cassette Deck.** 7.5 IPS, narrow bandwidth, audible modulation. Lo-fi territory.
 

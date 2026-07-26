@@ -58,10 +58,10 @@ namespace
     constexpr float kHdrY0 = 26.f, kHdrY1 = 56.f;   // header button row
 
     // band face colours
-    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // SSL LF maroon console knob
-    constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // SSL LMF blue console knob
-    constexpr ImU32 C_HMF_GREEN = IM_COL32(58, 108, 58, 255);  // SSL HMF green console knob
-    constexpr ImU32 C_HF_RED    = IM_COL32(158, 52, 46, 255);  // SSL HF red console knob
+    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // British LF maroon knob
+    constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // British LMF blue knob
+    constexpr ImU32 C_HMF_GREEN = IM_COL32(58, 108, 58, 255);  // British HMF green knob
+    constexpr ImU32 C_HF_RED    = IM_COL32(158, 52, 46, 255);  // British HF red knob
 
     // Master-knob tick rings (continuous knobs: value + label per tick).
     constexpr float  MK_GAIN_V[]  = { -12.f, -6.f, 0.f, 6.f, 12.f };
@@ -633,7 +633,7 @@ private:
         panel.text(dl, 15, 10, 23.f, IM_COL32(232, 232, 232, 255), "Multi-Q 2", -1, true);
         static const char* kSub[4] = {
             "Universal EQ", "Universal EQ - Match",
-            "Console-Style EQ - British", "Passive Program EQ - Tube" };
+            "British-style EQ", "Passive Program EQ - Tube" };
         const int m = (int)std::lround(values[kParamEqType]);
         panel.text(dl, 16, 34, 10.f, IM_COL32(128, 128, 128, 255),
                    kSub[(m >= 0 && m < 4) ? m : 0], -1);
@@ -891,11 +891,12 @@ private:
     }
 
     // Shape-glyph drawn INSIDE a control node (JUCE drawBandControlPoint :1008-1101).
-    // Primitives only — no unicode: HPF "/¯", LPF "¯\", low/high shelf steps, notch
+    // Primitives only — no unicode: HPF "/", LPF "\", low/high shelf steps, notch
     // "V", bandpass "^", else the band number. cx/cy are the (design-space) node
     // centre, iconR the glyph half-extent, w the stroke width, col the ink colour.
-    // Coordinate offsets are copied verbatim from the JUCE Path builders (y grows
-    // down in both frameworks, so +y is below centre).
+    // The pass filters intentionally omit horizontal tails so they remain distinct
+    // from shelves. Coordinate offsets match the JUCE Path builders (y grows down
+    // in both frameworks, so +y is below centre).
     void digNodeGlyph(ImDrawList* dl, int b, float cx, float cy,
                       float iconR, float w, ImU32 col) const
     {
@@ -918,8 +919,8 @@ private:
         ImVec2 v[5]; int n = 0;
         switch (g)
         {
-            case 1: v[0]=pt(-0.6f,0.4f); v[1]=pt(-0.1f,0.4f); v[2]=pt(0.3f,-0.4f); v[3]=pt(0.6f,-0.4f); n=4; break; // HPF /¯
-            case 2: v[0]=pt(-0.6f,-0.4f);v[1]=pt(-0.3f,-0.4f);v[2]=pt(0.1f,0.4f);  v[3]=pt(0.6f,0.4f);  n=4; break; // LPF ¯\
+            case 1: v[0]=pt(-0.4f,0.4f); v[1]=pt(0.4f,-0.4f); n=2; break; // HPF /
+            case 2: v[0]=pt(-0.4f,-0.4f);v[1]=pt(0.4f,0.4f);  n=2; break; // LPF falling slope
             case 3: v[0]=pt(-0.6f,0.3f); v[1]=pt(-0.15f,0.3f);v[2]=pt(0.15f,-0.3f);v[3]=pt(0.6f,-0.3f); n=4; break; // low shelf
             case 4: v[0]=pt(-0.6f,-0.3f);v[1]=pt(-0.15f,-0.3f);v[2]=pt(0.15f,0.3f);v[3]=pt(0.6f,0.3f);  n=4; break; // high shelf
             case 5: v[0]=pt(-0.6f,-0.3f);v[1]=pt(-0.15f,-0.3f);v[2]=pt(0.f,0.5f);  v[3]=pt(0.15f,-0.3f);v[4]=pt(0.6f,-0.3f); n=5; break; // notch V
@@ -3606,7 +3607,7 @@ private:
             panel.text(dl, cx, cY(232), 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
         }
 
-        // FILTERS — SSL-style stepped HPF & LPF, then input trim.
+        // FILTERS — British-style stepped HPF & LPF, then input trim.
         static const char* const HPFL[7] = { "OUT", "20", "70", "120", "200", "300", "350" };
         static const float        HPFF[7] = { 20.f, 20.f, 70.f, 120.f, 200.f, 300.f, 350.f };
         static const char* const LPFL[7] = { "OUT", "12", "8", "5", "4", "3.5", "3" };
@@ -3731,7 +3732,7 @@ private:
     }
 
     //========================================================================
-    // SSL-style stepped filter rotary (HPF & LPF)
+    // British-style stepped filter rotary (HPF & LPF)
     //========================================================================
     static float stepLT(int i) { static const float t[7] = {0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f}; return t[i]; }
 
@@ -3886,7 +3887,7 @@ private:
     }
 
     //========================================================================
-    // SSL-style console band knob (continuous over (t,value) breakpoints)
+    // British-style console band knob (continuous over (t,value) breakpoints)
     //========================================================================
     static float detentPosToVal(const float* T, const float* V, int n, float t)
     {

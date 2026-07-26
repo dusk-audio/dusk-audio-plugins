@@ -822,7 +822,11 @@ private:
             return knobSkewed(id, p, cx, cy, r, fmt, suffix, bipolar, persist, dmul, dadd, ticks, timeAuto);
         const bool ch = panel.knob(id, p, d.min, d.max, cx, cy, r, values[p], defaults[p],
                                    stepped, ticks, fmt, suffix, 0, false, persist,
-                                   tips[p], false, dmul, dadd, d.name);
+                                   tips[p], false, dmul, dadd, d.name,
+                                   /*contextMenu*/ false, /*overrideText*/ nullptr,
+                                   /*hasExternalReadout*/ false,
+                                   /*dispMin*/ 0.0f, /*dispMax*/ 0.0f,
+                                   /*nameOnHover*/ true);
         const float t = (d.max > d.min) ? (values[p] - d.min) / (d.max - d.min) : 0.0f;
         // masterVol's bipolar arc anchors at the true 0 dB point, not the geometric
         // mid; symmetric bipolar ranges are unaffected (t0=0.5 either way).

@@ -57,6 +57,13 @@ public:
         // at a new SR reallocates; keeps update() allocation-free (audio-thread).
         spinL_.alloc ((int)(0.0061f*sr_), (int)(0.0002f*sr_));
         spinR_.alloc ((int)(0.0049f*sr_), (int)(0.0002f*sr_));
+        // Stereo-image bias only: per-provenance twins of the two spin allpasses
+        // (identical length/excursion, so the two halves re-sum to the unbiased
+        // tap). Unused — and never processed — while the bias is off.
+        spinLa_.alloc ((int)(0.0061f*sr_), (int)(0.0002f*sr_));
+        spinLb_.alloc ((int)(0.0061f*sr_), (int)(0.0002f*sr_));
+        spinRa_.alloc ((int)(0.0049f*sr_), (int)(0.0002f*sr_));
+        spinRb_.alloc ((int)(0.0049f*sr_), (int)(0.0002f*sr_));
         rebuild();   // sets line_[i].len at the current size (no allocation)
 
         // Smooth modulation LFOs (sine), detuned per side; spin LFO slower.
@@ -87,6 +94,7 @@ public:
         susLimMidDet_.clear(); susLimLowDet_.clear(); susLimKey_.clear();
         susLimMidRed_ = susLimLowRed_ = susLimMidAcc_ = susLimLowAcc_ = 0.0f;
         spinL_.clear(); spinR_.clear();
+        spinLa_.clear(); spinLb_.clear(); spinRa_.clear(); spinRb_.clear();
         tcL_.reset(); tcR_.reset();
         for (auto& d : dc_) d.reset();   // process() always runs the input DC blockers — clear their history too, else state leaks across instances/sessions
     }
@@ -155,6 +163,64 @@ public:
     }
     void setCrossoverFreq (float hz)     { lowX_  = std::clamp (hz, 40.0f, 2000.0f);   if (lowX_ > highX_) highX_ = lowX_; if (prepared_) update(); }  // bass↔mid split (keeps lowX_<=highX_)
     void setHighCrossoverFreq (float hz) { highX_ = std::clamp (hz, 800.0f, 14000.0f); if (highX_ < lowX_) lowX_ = highX_; if (prepared_) update(); }  // mid↔high split (keeps lowX_<=highX_)
+    // STEREO IMAGE BIAS (issue #123). A hard-panned source comes out of this tank
+    // dead centre (measured tail ILD −0.21 dB) while the reference halls hold a
+    // +1.3..+4.3 dB lean toward the source side. Root cause is in the output taps,
+    // not the tank: after the Hadamard butterfly the two taps collapse EXACTLY to
+    //   oL = g·(p1 + p5),   oR = g·(p2 − p6)
+    // (p = pre-Hadamard line values; verified by pushing basis vectors through
+    // hadamard8). Lines 0-3 are L-fed and 4-7 R-fed, so each output carries one
+    // L-fed and one R-fed line at EQUAL weight — the lean is cancelled by
+    // construction. This setter reweights the taps by provenance.
+    //
+    // The reweighting is a ROTATION inside the side domain, not a per-line gain:
+    //   D  = ½[(L-fed half) − (R-fed half)]        (the provenance difference)
+    //   S' = cos·S + sin·D                          (S = ½(oL − oR), M = ½(oL + oR))
+    // Properties that make it safe on centred material:
+    //   • M is untouched ⇒ L+R is preserved to float rounding, so mono-compatible
+    //     content keeps its tone, decay and level exactly (rule 2 of the brief).
+    //   • E(D) == E(S) for equal line energies ⇒ the rotation is constant-power:
+    //     no width change and no level change either, just a reshuffle of which
+    //     decorrelated tank nodes carry the side.
+    //   • The lean rides entirely on ⟨M,D⟩ = ¼(E_Lfed − E_Rfed), which is ZERO for
+    //     a centred source and positive for a left-panned one — so this can never
+    //     act as a fixed panner.
+    // Signs are untouched (they are the output decorrelation); only magnitudes
+    // move. The feedback matrix is not involved, so decay/T60 are unchanged.
+    // amount 0 = off = the pre-feature instruction stream (see process()).
+    //
+    // MEASURED CEILING — READ BEFORE TUNING THIS. amount=1 is the FULL rotation
+    // (sin=1: the side is entirely the provenance difference) and it buys only
+    // −0.21 → +0.76 dB of tail ILD on algo 14, well short of the +2.5..+4 dB the
+    // reference halls show. That is a property of the tank, not of this formula:
+    // ILD ∝ (E_Lfed − E_Rfed), and the Hadamard-8 scatter is FULL mixing, so line
+    // provenance is destroyed within one loop pass (~60-90 ms) while 77% of the
+    // tail energy arrives at or after that point. Measured per-window on a
+    // left-panned burst at amount=1: 0.05-0.15 s (77% of energy) only +0.43 dB.
+    // The brief's alternative per-line constant-power weighting was built and
+    // measured at ITS maximum lean (pure same-side taps) — +0.79 dB, the same
+    // ceiling, while destroying the centred-input null (L+R only −10.7 dB vs
+    // −89.5 dB here). Raising the lean further needs asymmetry in the FEEDBACK
+    // path (out of scope: it moves decay/T60) or a >1 gain on D, which breaks
+    // constant-power — reaching +2.5 dB that way needs ~2.8x, i.e. ~9 dB of extra
+    // side energy on centred material. Do not chase it from here.
+    void setStereoImageBias (float amount)
+    {
+        stereoBias_ = std::clamp (amount, 0.0f, 1.0f);
+        const bool wasActive = stereoBiasActive_;
+        stereoBiasActive_ = stereoBias_ > 0.0f;
+        // amount 1 = kBiasMaxSin = the full rotation, i.e. everything this mechanism
+        // has (+0.76 dB tail ILD). See the measured-ceiling note above.
+        biasSin_ = stereoBias_ * kBiasMaxSin;
+        biasCos_ = std::sqrt (std::max (0.0f, 1.0f - biasSin_ * biasSin_));
+        // Twins are cold until the bias runs; clear on the off→on edge so a toggle
+        // can never splice a stale tail back in.
+        if (stereoBiasActive_ && ! wasActive)
+        {
+            spinLa_.clear(); spinLb_.clear(); spinRa_.clear(); spinRb_.clear();
+        }
+    }
+
     void setModDepth (float d)       { modDepth_ = std::clamp (d, 0.0f, 1.0f); }       // scales allpass/delay excursion
     void setModRate (float hz)       { modRate_=std::clamp(hz,0.05f,3.0f); lfo1_.setRate(modRate_); lfo2_.setRate(modRate_*1.19f); }
     void setFreeze (bool f)          { frozen_ = f; if (prepared_) update(); }
@@ -239,6 +305,45 @@ public:
             const float sp = spin_.next() * (0.05f + 0.95f * modDepth_);
             oL = spinL_.process (oL, sp);
             oR = spinR_.process (oR, -sp);
+
+            // STEREO IMAGE BIAS (setStereoImageBias) — issue #123. Appended, never
+            // interleaved: every statement above is byte-for-byte the pre-feature
+            // code so the disabled build keeps its exact instruction stream (this
+            // target is -O3 -ffast-math; an earlier version that merely SPLIT the
+            // two lines above into if/else branches moved the disabled output by
+            // −67 dB). Off ⇒ this block is not entered and nothing above it changed.
+            if (stereoBiasActive_)
+            {
+                // Recover the four lines the taps resolve to. The butterfly is its
+                // own inverse up to 1/8, and x[] still holds g·(H·p), so
+                //   g·p_j = ⅛ Σ_k H[j][k]·x[k]
+                // gives them back exactly — no capture before the butterfly, which
+                // would have perturbed the loop above. By construction
+                // gp1 + gp5 == the left tap and gp2 − gp6 == the right tap.
+                const float gp1 = 0.125f * (x[0] - x[1] + x[2] - x[3] + x[4] - x[5] + x[6] - x[7]);   // L-fed
+                const float gp2 = 0.125f * (x[0] + x[1] - x[2] - x[3] + x[4] + x[5] - x[6] - x[7]);   // L-fed
+                const float gp5 = 0.125f * (x[0] - x[1] + x[2] - x[3] - x[4] + x[5] - x[6] + x[7]);   // R-fed
+                const float gp6 = 0.125f * (x[0] + x[1] - x[2] - x[3] - x[4] - x[5] + x[6] + x[7]);   // R-fed
+
+                // Each half gets its own copy of that channel's spin allpass (same
+                // length, gain and mod), so by linearity the halves re-sum to the
+                // unbiased tap — the spin stays inside the bias, which is what lets
+                // the mid come out untouched.
+                const float aL = spinLa_.process ( gp1,  sp);   // L-fed → left tap
+                const float bL = spinLb_.process ( gp5,  sp);   // R-fed → left tap
+                const float aR = spinRa_.process ( gp2, -sp);   // L-fed → right tap
+                const float bR = spinRb_.process (-gp6, -sp);   // R-fed → right tap
+
+                // Side-domain rotation: M is untouched (so L+R survives), and the
+                // lean rides on ⟨M,D⟩ = ¼(E_Lfed − E_Rfed) — zero for a centred
+                // source, positive for a left-panned one.
+                const float mid   = 0.5f * ((aL + bL) + (aR + bR));
+                const float side  = 0.5f * ((aL + bL) - (aR + bR));
+                const float dProv = 0.5f * ((aL + aR) - (bL + bR));   // L-fed minus R-fed
+                const float sideB = biasCos_ * side + biasSin_ * dProv;
+                oL = mid + sideB;
+                oR = mid - sideB;
+            }
 
             // FORK B — Jot tonal correction (decouple per-band T60 from LEVEL).
             // Output GEQ (post-tank, non-recursive → no codegen bit-null risk).
@@ -569,4 +674,17 @@ private:
     OctaveBandDamping::Coeffs tcCoeffs_;
     bool  tcActive_         = false;
     bool  tonalCorrEnabled_ = false;
+
+    // Stereo image bias (setStereoImageBias) — issue #123.
+    // KEEP THESE LAST. This target builds -O3 -ffast-math, and inserting members
+    // higher up shifts the offsets of every array the per-sample loop touches;
+    // that alone re-rolls the vectoriser's alignment decisions and moved the
+    // bias-OFF output by ~1e-5 (−67 dB) on Bright Hall. Appending leaves every
+    // pre-existing offset untouched, which is what makes bias off byte-identical.
+    // spinL2_/spinR2_ carry the R-fed and L-fed halves of the two output taps and
+    // only ever run on the biased path.
+    static constexpr float kBiasMaxSin = 1.0f;   // side-domain rotation at amount = 1
+    SpinComb spinLa_, spinLb_, spinRa_, spinRb_;
+    float stereoBias_ = 0.0f, biasCos_ = 1.0f, biasSin_ = 0.0f;
+    bool  stereoBiasActive_ = false;
 };

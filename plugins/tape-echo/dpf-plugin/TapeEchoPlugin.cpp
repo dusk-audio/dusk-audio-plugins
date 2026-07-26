@@ -41,7 +41,7 @@ protected:
     const char* getDescription() const override
     {
         return "Component-modeled vintage tape echo: "
-               "3-head tape delay with spring reverb, tape saturation and wow & flutter.";
+               "3-head tape delay with spring reverb, tape saturation and wow and flutter.";
     }
     const char* getMaker() const override       { return "Dusk Audio"; }
     const char* getHomePage() const override    { return "https://dusk-audio.github.io/"; }

@@ -121,6 +121,8 @@ public:
     // overdrawn by widgets submitted later in that same window (e.g. an adjacent
     // knob paints over a hovered knob's bubble). Drawing on the FOREGROUND list
     // -- composited after every window -- guarantees the bubble wins the z-order.
+    // The parameter is kept so existing callers (which pass either their window
+    // list or GetForegroundDrawList()) compile and behave identically.
     void valueBubble(ImDrawList* /*windowDl*/, float cx, float cy, float r, const char* txt) const
     {
         ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -235,6 +237,10 @@ public:
     //   rightClickReset : right-click resets to default (in addition to Cmd-click)
     //   dispMul/dispAdd : the read-out / type-entry value is (value*dispMul+dispAdd)
     //                     so e.g. a 0..100 bias can read as relative -50..+50.
+    //   nameOnHover     : opt-in bubble policy (Sunset Circuits) — resting hover
+    //                     shows `name` instead of the value, and the bubble is not
+    //                     suppressed on persistent / external-readout knobs.
+    //                     Default false keeps the fleet's value-on-hover behaviour.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -242,7 +248,11 @@ public:
               ImU32 faceColor = 0, bool bodyless = false,
               bool persistent = false, const char* tooltip = nullptr,
               bool rightClickReset = false, float dispMul = 1.0f, float dispAdd = 0.0f,
-              const char* name = nullptr)
+              const char* name = nullptr,
+              bool contextMenu = false, const char* overrideText = nullptr,
+              bool hasExternalReadout = false,
+              float dispMin = 0.0f, float dispMax = 0.0f,
+              bool nameOnHover = false)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -258,7 +268,15 @@ public:
             ImGui::SetTooltip("%s", tooltip);
 
         const bool editing = (valueEditId_ == id);
-        const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        // Reset modifier: Option/Alt on every platform, plus Cmd (Super) on macOS or
+        // Ctrl on Windows/Linux. macOS deliberately EXCLUDES Ctrl here: the OS routes a
+        // Ctrl+left-click as a right-click, so it must fall through to the context menu,
+        // never reset. io.KeyCtrl/KeySuper map to the platform's real modifiers in DPF.
+       #if defined(__APPLE__)
+        const bool modKey = ImGui::GetIO().KeyAlt || ImGui::GetIO().KeySuper;
+       #else
+        const bool modKey = ImGui::GetIO().KeyAlt || ImGui::GetIO().KeyCtrl;
+       #endif
         if (!editing)
         {
             if (ImGui::IsItemActivated())
@@ -294,7 +312,8 @@ public:
                 const float wheel = ImGui::GetIO().MouseWheel;
                 if (wheel != 0.0f)
                 {
-                    float nv = value + wheel * (stepped ? 1.0f : range * 0.02f);
+                    const float wheelStep = ImGui::GetIO().KeyShift ? range * 0.004f : range * 0.02f;
+                    float nv = value + wheel * (stepped ? 1.0f : wheelStep);
                     nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
                     nv = stepped ? std::round(nv) : nv;
                     if (nv != value)
@@ -304,14 +323,43 @@ public:
                     }
                 }
             }
-            if (rightClickReset && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            // Immediate right-click reset (legacy callers). Suppressed when a context
+            // menu is requested — that path owns the right button instead.
+            if (rightClickReset && !contextMenu && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
             {
                 host->beginEdit(param); value = defaultVal;
                 host->setParam(param, value); host->endEdit(param); changed = true;
             }
+            // Right-click context menu: discoverable Reset / Type-value fallback. Keyed
+            // to the knob's InvisibleButton (still the last-submitted item here).
+            if (contextMenu)
+            {
+                char pid[48]; std::snprintf(pid, sizeof(pid), "##ctx_%s", id);
+                if (ImGui::BeginPopupContextItem(pid))
+                {
+                    if (ImGui::MenuItem("Reset to default"))
+                    {
+                        host->beginEdit(param); value = defaultVal;
+                        host->setParam(param, value); host->endEdit(param); changed = true;
+                    }
+                    if (ImGui::MenuItem("Type value..."))
+                        openValueEdit(id, value * dispMul + dispAdd);
+                    ImGui::EndPopup();
+                }
+            }
         }
 
-        const float t = range > 0.0f ? (value - minV) / range : 0.0f;
+        // Pointer angle normally maps `value` across the drag range [minV,maxV]. Gain-link
+        // drives the OUTPUT knob in an effective domain whose DRAG range slides with the
+        // linked source (so the trim stays fully editable) — mapping the pointer against
+        // that sliding range would cancel the slide and the knob would never turn. A caller
+        // that needs the pointer to reflect the ABSOLUTE effective value passes a FIXED
+        // [dispMin,dispMax]; the pointer then rotates as the source moves. Off when dispMax<=dispMin.
+        const bool  useDisp = dispMax > dispMin;
+        const float tMin    = useDisp ? dispMin : minV;
+        const float tRange  = useDisp ? (dispMax - dispMin) : range;
+        float t = tRange > 0.0f ? (value - tMin) / tRange : 0.0f;
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
 
         if (panelTicks && !bodyless)
             for (int i = 0; i <= 10; ++i)
@@ -381,10 +429,30 @@ public:
                 host->setParam(param, value); host->endEdit(param); changed = true;
             }
         }
-        else if ((hovered || active) && valueEditId_ != id)
+        else if ((hovered || active) && valueEditId_ != id
+                 && (nameOnHover || (!persistent && !hasExternalReadout)))
         {
-            char buf[48], num[32];
-            if (active && name != nullptr)
+            // Floating value bubble — by default only for knobs with NO other live
+            // readout. Knobs that already show their value beneath them (persistent,
+            // or a caller-drawn external readout) suppress it to avoid a duplicate
+            // number while dragging, and the hover/drag read-out ALWAYS shows the
+            // value (the knob's name is already labelled above it). Drawn to the
+            // FOREGROUND draw list so it is never occluded by knobs / dividers
+            // drawn after this one.
+            //
+            // `nameOnHover` (opt-in; Sunset Circuits) selects the other policy:
+            // resting hover shows the parameter NAME, a drag still shows the value,
+            // and the suppression above does not apply — its panels label knobs in
+            // a separate text pass and rely on the bubble to name them.
+            char buf[48], num[32] = {};
+            // Resting hover under the nameOnHover policy: the bubble text is the
+            // parameter name, so the numeric formatting below is skipped entirely.
+            const bool showName = nameOnHover && !active && name != nullptr;
+            if (showName)
+                std::snprintf(buf, sizeof(buf), "%s", name);
+            else if (overrideText != nullptr)
+                std::snprintf(buf, sizeof(buf), "%s", overrideText);
+            else if (active)
             {
                 // Dragging: show the value at the fine-drag step's resolution so
                 // shift-fine can land on values the resting readout rounds away
@@ -405,24 +473,26 @@ public:
                     char f2[8]; std::snprintf(f2, sizeof(f2), plus ? "%%+.%df" : "%%.%df", d);
                     std::snprintf(num, sizeof(num), f2, value * dispMul + dispAdd);
                 }
-                std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-                valueBubble(dl, cx, cy, radius, buf);
             }
-            else if (name != nullptr && !active)   // hovering only -> parameter name
-                valueBubble(dl, cx, cy, radius, name);
-            else                                    // legacy callers (no name): caller fmt, unchanged
-            {
+            else   // hovering only -> value at resting precision
                 std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+            if (overrideText == nullptr && !showName)
                 std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-                valueBubble(dl, cx, cy, radius, buf);
-            }
+            valueBubble(ImGui::GetForegroundDrawList(), cx, cy, radius, buf);
         }
         if (persistent && valueEditId_ != id)
         {
             char buf[48], num[32];
-            std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
-            std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-            text(dl, cx, cy + radius + 8.0f, 9.5f, pal.whiteDim, buf, 0);
+            if (overrideText != nullptr)
+                std::snprintf(buf, sizeof(buf), "%s", overrideText);
+            else
+            {
+                std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+                std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
+            }
+            // Brighten the resting readout while the knob is active so the live
+            // value stays legible during a drag (it replaces the value bubble).
+            text(dl, cx, cy + radius + 8.0f, 9.5f, active ? pal.white : pal.whiteDim, buf, 0);
         }
         return changed;
     }

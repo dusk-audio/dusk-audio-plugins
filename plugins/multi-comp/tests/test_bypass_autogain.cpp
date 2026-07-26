@@ -193,7 +193,7 @@ static void testRapidBypassToggle(UniversalCompressor& plugin)
     plugin.releaseResources();
     plugin.prepareToPlay(sr, blockSize);
 
-    setParam(plugin, "mode", 3.0f);            // Bus/SSL (choice index)
+    setParam(plugin, "mode", 3.0f);            // Bus/console (choice index)
     setParam(plugin, "bus_threshold", -15.0f);
     setParam(plugin, "bus_ratio", 1.0f);        // Choice index 1 = "4:1"
     setParam(plugin, "mix", 100.0f);
@@ -237,7 +237,7 @@ static void testAutoGainDryWetScaling(UniversalCompressor& plugin)
     // Reference: 100% wet with auto gain
     plugin.releaseResources();
     plugin.prepareToPlay(sr, blockSize);
-    setParam(plugin, "mode", 3.0f);            // Bus/SSL (choice index)
+    setParam(plugin, "mode", 3.0f);            // Bus/console (choice index)
     setParam(plugin, "bus_threshold", -20.0f);
     setParam(plugin, "bus_ratio", 1.0f);        // Choice index 1 = "4:1"
     setParam(plugin, "bus_attack", 2.0f);       // Choice index 2 = "1ms"

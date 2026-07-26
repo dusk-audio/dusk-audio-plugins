@@ -252,7 +252,7 @@ private:
 //   - bounded by the saturation magnetisation (clamp + non-finite backstop)
 //   - the deck's auto-makeup carries the level; this stage is voiced, not unity
 //
-// THD characteristics (Type456, precision deck, bias=0.5):
+// THD characteristics (FormulaClassic, precision deck, bias=0.5):
 //   0VU: THD≈0.27% (H3 at -51dB, dominantly odd harmonics)
 //   +6VU: THD≈3.0%
 //   Bias modulates THD: low bias = more saturation
@@ -887,8 +887,8 @@ public:
 
     enum TapeMachine
     {
-        Swiss800 = 0,      // Precision deck (Type A)
-        Classic102         // Vintage deck (Type B)
+        Swiss = 0,      // Precision deck (Type A)
+        American         // Vintage deck (Type B)
     };
 
     enum TapeSpeed
@@ -900,10 +900,10 @@ public:
 
     enum TapeType
     {
-        Type456 = 0,
-        TypeGP9,
-        Type911,
-        Type250
+        FormulaClassic = 0,
+        FormulaHighOutput,
+        FormulaBalanced,
+        FormulaVintage
     };
 
     enum EQStandard
@@ -1107,7 +1107,7 @@ private:
 
     BandDriveRatios getBandDriveRatios(TapeMachine machine) const
     {
-        if (machine == Swiss800)
+        if (machine == Swiss)
             return { 0.55f, 1.0f, 0.20f };
         else
             return { 0.65f, 1.0f, 0.30f };
@@ -1125,13 +1125,13 @@ private:
     {
         switch (type)
         {
-            case Type456:
+            case FormulaClassic:
                 return { 280.0f, 720.0f, 0.016f, 640.0f, 0.50f };
-            case TypeGP9:
+            case FormulaHighOutput:
                 return { 320.0f, 800.0f, 0.012f, 700.0f, 0.60f };
-            case Type911:
+            case FormulaBalanced:
                 return { 270.0f, 700.0f, 0.018f, 620.0f, 0.48f };
-            case Type250:
+            case FormulaVintage:
                 return { 240.0f, 680.0f, 0.020f, 580.0f, 0.45f };
             default:
                 return { 280.0f, 720.0f, 0.016f, 640.0f, 0.50f };

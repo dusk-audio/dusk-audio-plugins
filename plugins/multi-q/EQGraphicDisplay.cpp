@@ -1009,26 +1009,23 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
     {
         case BandType::HighPass:
         {
-            // HPF icon: slope rising to the right (/¯)
+            // Keep pass-filter icons as bare slopes so they cannot be mistaken
+            // for the shelf icons, which deliberately have horizontal tails.
             juce::Path hpfPath;
             float cx = point.x, cy = point.y;
-            hpfPath.startNewSubPath(cx - iconSize * 0.6f, cy + iconSize * 0.4f);
-            hpfPath.lineTo(cx - iconSize * 0.1f, cy + iconSize * 0.4f);
-            hpfPath.lineTo(cx + iconSize * 0.3f, cy - iconSize * 0.4f);
-            hpfPath.lineTo(cx + iconSize * 0.6f, cy - iconSize * 0.4f);
+            hpfPath.startNewSubPath(cx - iconSize * 0.4f, cy + iconSize * 0.4f);
+            hpfPath.lineTo(cx + iconSize * 0.4f, cy - iconSize * 0.4f);
             g.strokePath(hpfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
                                                         juce::PathStrokeType::rounded));
             break;
         }
         case BandType::LowPass:
         {
-            // LPF icon: slope falling to the right (¯\)
+            // Bare falling slope; shelf icons retain their horizontal tails.
             juce::Path lpfPath;
             float cx = point.x, cy = point.y;
-            lpfPath.startNewSubPath(cx - iconSize * 0.6f, cy - iconSize * 0.4f);
-            lpfPath.lineTo(cx - iconSize * 0.3f, cy - iconSize * 0.4f);
-            lpfPath.lineTo(cx + iconSize * 0.1f, cy + iconSize * 0.4f);
-            lpfPath.lineTo(cx + iconSize * 0.6f, cy + iconSize * 0.4f);
+            lpfPath.startNewSubPath(cx - iconSize * 0.4f, cy - iconSize * 0.4f);
+            lpfPath.lineTo(cx + iconSize * 0.4f, cy + iconSize * 0.4f);
             g.strokePath(lpfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
                                                         juce::PathStrokeType::rounded));
             break;

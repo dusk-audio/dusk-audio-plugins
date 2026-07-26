@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(DuskPlugins VERSION 1.0.0)
 
+# Enable CTest so per-plugin regression tests registered via add_test() are
+# discoverable from the build root (`ctest --test-dir build`).
+enable_testing()
+
 # C++ standard is set per-plugin (most use C++17, set in their own CMakeLists.txt)
 
 # Include global settings

@@ -51,10 +51,10 @@ namespace
     constexpr float kHdrY0 = 26.f, kHdrY1 = 56.f;   // header button row
 
     // band face colours
-    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // SSL LF maroon console knob
-    constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // SSL LMF blue console knob
-    constexpr ImU32 C_HMF_GREEN = IM_COL32(58, 108, 58, 255);  // SSL HMF green console knob
-    constexpr ImU32 C_HF_RED    = IM_COL32(158, 52, 46, 255);  // SSL HF red console knob
+    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // British LF maroon knob
+    constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // British LMF blue knob
+    constexpr ImU32 C_HMF_GREEN = IM_COL32(58, 108, 58, 255);  // British HMF green knob
+    constexpr ImU32 C_HF_RED    = IM_COL32(158, 52, 46, 255);  // British HF red knob
     constexpr ImU32 C_LF  = IM_COL32(196, 74, 66, 255);
     constexpr ImU32 C_LMF = IM_COL32(202, 132, 66, 255);
     constexpr ImU32 C_HMF = IM_COL32(104, 168, 92, 255);
@@ -232,7 +232,7 @@ private:
         dl->AddLine(panel.P(0, 88), panel.P(kDesignW, 88), IM_COL32(60, 60, 63, 255), 1.5f * sc());
 
         panel.text(dl, 28, 28, 25, pal().white, "4K EQ 2", -1, true);
-        panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255), "Console-Style Equalizer", -1);
+        panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255), "British-style Equalizer", -1);
         // Clickable title -> Patreon supporters overlay.
         {
             const ImVec2 t0 = panel.P(26, 20), t1 = panel.P(150, 48);
@@ -639,7 +639,7 @@ private:
             panel.text(dl, cx, cY(232), 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
         }
 
-        // FILTERS — SSL-style stepped HPF & LPF (OUT folds in each enable), then
+        // FILTERS — British-style stepped HPF & LPF (OUT folds in each enable), then
         // the input trim. HPF ascends 20-350 Hz; LPF descends 12-3 kHz.
         static const char* const HPFL[7] = { "OUT", "20", "70", "120", "200", "300", "350" };
         static const float        HPFF[7] = { 20.f, 20.f, 70.f, 120.f, 200.f, 300.f, 350.f };
@@ -659,7 +659,7 @@ private:
         static const char* const QL[5] = { "3", "2", "1.5", "1", ".5" };
         static const float FT7[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f }; // 7 evenly-spaced detents
 
-        // LF — SSL brown console band: GAIN + FREQ (30-450 Hz) + BELL/SHELF button.
+        // LF — British brown band: GAIN + FREQ (30-450 Hz) + BELL/SHELF button.
         {
             const float lcx = 0.5f * (COL[1] + COL[2]);
             static const float FT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
@@ -669,7 +669,7 @@ private:
             consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT, FV, FL, 7, C_LF_BROWN, "Hz", "%.0f Hz");
             metalButton(dl, "lfbell", lcx - 32.f, cY(560), lcx + 32.f, cY(584), kLfBell, "BELL", "SHELF");
         }
-        // LMF — SSL blue console band: GAIN + FREQ (.2-2.5 kHz, 1 at top) + Q
+        // LMF — British blue band: GAIN + FREQ (.2-2.5 kHz, 1 at top) + Q
         // (.5-3, descending), with narrow/wide bandwidth symbols under Q.
         {
             const float mcx = 0.5f * (COL[2] + COL[3]);
@@ -680,7 +680,7 @@ private:
             consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, QT, QV, QL, 5, C_LMF_BLUE, "", "Q %.2f");
             bandwidthIcons(dl, mcx, cY(590) + 40.f);
         }
-        // HMF — SSL green console band: GAIN + FREQ (.6-7 kHz, 3 at top) + Q.
+        // HMF — British green band: GAIN + FREQ (.6-7 kHz, 3 at top) + Q.
         {
             const float hcx = 0.5f * (COL[3] + COL[4]);
             static const float HFV[7] = { 600.f, 800.f, 1500.f, 3000.f, 4500.f, 6000.f, 7000.f };
@@ -690,7 +690,7 @@ private:
             consoleDetentKnob(dl, "hmq", hcx, cY(590), 28.f, kHmQ, QT, QV, QL, 5, C_HMF_GREEN, "", "Q %.2f");
             bandwidthIcons(dl, hcx, cY(590) + 40.f);
         }
-        // HF — SSL red console band: GAIN + FREQ (1.5-16 kHz, 8 at top) + BELL/SHELF.
+        // HF — British red band: GAIN + FREQ (1.5-16 kHz, 8 at top) + BELL/SHELF.
         {
             const float hcx = 0.5f * (COL[4] + COL[5]);
             static const float XFV[7] = { 1500.f, 2000.f, 5000.f, 8000.f, 10000.f, 14000.f, 16000.f };
@@ -807,7 +807,7 @@ private:
     }
 
     //========================================================================
-    // SSL-style stepped filter rotary (HPF & LPF): OUT + 6 labelled Hz detents,
+    // British-style stepped filter rotary (HPF & LPF): OUT + 6 labelled Hz detents,
     // dots + labels around a brushed-metal knob, vertical pointer, rolloff icon.
     // The OUT position folds in the filter enable (no separate IN switch). F[]
     // is t-indexed (F[0] == F[1]); frequencies may ascend (HPF) or descend (LPF).
@@ -961,7 +961,7 @@ private:
         const float capR = RR * 0.74f;
         dl->AddCircleFilled(c, capR, capCol, 44);
         dl->PushClipRect(ImVec2(c.x - capR, c.y - capR), ImVec2(c.x + capR, c.y + capR), true);
-        // Matte SSL cap: a gentle top-to-bottom shade (top a touch lighter,
+        // Matte console cap: a gentle top-to-bottom shade (top a touch lighter,
         // bottom a touch darker) for roundness; the cap colour stays essentially
         // unchanged. Low-alpha discs centred just off the cap fade before centre.
         dl->AddCircleFilled(ImVec2(c.x, c.y + capR * 0.64f), capR * 0.82f, IM_COL32(0, 0, 0, 20), 40);       // subtle bottom shade
@@ -976,7 +976,7 @@ private:
     }
 
     //========================================================================
-    // SSL-style brown console band knob: continuous knob over arbitrary
+    // British-style brown console band knob: continuous knob over arbitrary
     // (t, value) breakpoints with dots + labels all around (e.g. LF GAIN with
     // 0 at top, +-15 dB; LF FREQ 30-450 Hz with 200 at top). Maroon cap, white
     // pointer, unit beneath.

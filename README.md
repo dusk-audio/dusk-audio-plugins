@@ -1,12 +1,12 @@
 # Dusk Audio Plugins
 
-A collection of professional audio VST3/AU/LV2 plugins. Several titles (4K EQ, Spectrum Analyzer) also ship in CLAP format.
+A collection of professional audio VST3/AU/LV2 plugins built with JUCE or DPF. Several titles also ship in CLAP format.
 
-> **Framework:** most plugins are built with **JUCE**. The project is migrating to **[DPF](https://github.com/DISTRHO/DPF)** (DISTRHO Plugin Framework) with a Dear ImGui UI — **Sunset Circuits** is the first DPF-native title, and the intent is to migrate *all* plugins to DPF over time. During the transition the two build systems coexist: JUCE plugins build through the top-level CMake graph, DPF plugins build out-of-graph (see [Building](#building)).
+**Website & downloads**: https://dusk-audio.github.io/ | [GitHub Releases](https://github.com/dusk-audio/dusk-audio-plugins/releases)
 
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
-> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are currently released and recommended for production use. All other plugins are in active development.
+> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **TapeMachine 2**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are released and recommended for production use. **DuskVerb** is available as a pre-release. All other plugins are in active development.
 
 ## Plugins
 
@@ -26,24 +26,35 @@ Multi-mode compressor with seven classic compression styles plus 4-band multiban
 - **Vintage Opto** – Classic 1960s tube optical leveling amplifier. Program-dependent attack/release with smooth, musical compression, including a T4B-style slow "afterglow" release on sustained material. Features "Peak Reduction" and "Gain" controls with optional Limit mode.
 - **Vintage FET** – Classic late-1960s FET limiting amplifier. All-discrete Class A design with ultra-fast attack times. Ratios (4:1, 8:1, 12:1, 20:1, plus All) re-derived from real hardware measurements, a new adjustable Threshold (-60 to 0 dB), gain-reduction-scaled harmonics, and "All Buttons" mode for extreme compression/distortion.
 - **Classic VCA** – Fast, precise 1970s VCA compressor. Known for its punchy, aggressive character with soft-knee compression. Great for drums and percussive sources.
-- **Bus Compressor** – Faithful stereo-linked SSL-style console bus compressor. The quintessential mix bus glue with fixed attack/release detents, Auto release, and gain-reduction-scaled harmonics. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
+- **Bus Compressor** – Faithful stereo-linked British bus compressor. The quintessential mix bus glue with fixed attack/release detents, Auto release, and gain-reduction-scaled harmonics. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
 - **Studio FET** – Later revision FET limiter. Cleaner character with approximately 30% of the harmonic content of the vintage version. More controlled transient response.
 - **Studio VCA** – Modern British dual VCA compressor. Clean, musical compression with RMS detection and soft knee. Excellent for vocals and mix bus applications.
 - **Digital** – Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection. Ideal for surgical dynamics control where transparency is paramount.
 - **Multiband** – 4-band multiband compressor with Linkwitz-Riley crossovers. Adjustable crossover frequencies, per-band threshold/ratio/attack/release/makeup, and solo buttons for each band.
 
-**Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
+**Features:** External sidechain input, sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain with input/output level matching, parallel mix with click-free per-sample ramping, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
 
 ### TapeMachine - RELEASED
-Analog tape machine emulation featuring:
-- Two tape machine models with distinct characters
-- Four tape formulations: Type 456, GP9, Type 911, Type 250
-- Tape speeds: 7.5, 15, 30 IPS
-- Advanced saturation and hysteresis modeling
-- Separate Wow & Flutter controls
-- 15 factory presets across 5 categories (Subtle, Warm, Character, Lo-Fi, Mastering)
-- Dual stereo VU meters with animated reels
-- 2x/4x oversampling for alias-free processing
+Classic analog tape emulation (JUCE). The original tape plugin, still maintained:
+- Tape saturation with bias and calibration controls
+- Wow, flutter, and noise modeling
+- VST3/AU/LV2 formats
+
+Superseded by TapeMachine 2 below, which is a separate plugin with its own identity; both can be installed side by side.
+
+### TapeMachine 2 - RELEASED
+DPF-based tape processing with distinct tracking and mastering deck models:
+- Swiss and American models with distinct plugin identity from TapeMachine 1.x
+- Type 456, GP9, 900, and 250 tape formulations
+- 7.5, 15, and 30 IPS on both decks; 3.75 IPS on American
+- Repro, Sync, Input, and Thru paths with NAB/CCIR EQ
+- Input drive, linked output compensation, bias/calibration, wow, flutter, noise, and filters
+- American head-width, crosstalk, transport, and transformer controls
+- Four-band Advanced reproduce EQ and 20 calibrated factory presets
+- Fixed, fitted 2x nonlinear core
+- macOS AU/VST3/CLAP/LV2 universal builds (Developer ID signed and notarized), Linux VST3/CLAP/LV2 builds (x64 and ARM64), and Windows builds
+
+See the [TapeMachine 2 README](plugins/TapeMachine/README.md) and [manual](manuals/tapemachine-2.md).
 
 ### Multi-Q - RELEASED
 Universal EQ with multiple modes:
@@ -97,6 +108,7 @@ Classic tape delay with spring reverb:
 - Tape saturation and wow/flutter
 - Tempo sync with multiple note divisions
 - Animated tape visualization
+- Being ported to DPF (early builds tagged as `tape-echo-dpf`)
 
 ### GrooveMind - IN DEVELOPMENT
 > ⚠️ Early development - not functional yet.
@@ -117,101 +129,106 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - Optional NAM (Neural Amp Modeler) integration
 - Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
 - 2x/4x oversampling on nonlinear stages
-- See the [v5 roadmap](https://github.com/dusk-audio/plugins) for the path to commercial-tier quality
 
 ### Sunset Circuits - PRE-RELEASE (DPF)
-Six vintage synth circuits in one instrument, and the first **DPF-native** plugin (Dear ImGui UI):
+Six vintage synth circuits in one instrument (DPF, Dear ImGui UI):
 - Six mode "circuits": Cosmos (DCO poly), Oracle (poly-mod), Mono, Modular (semi-modular + spring), Prism (4-operator FM), Acid (bass box + pattern sequencer)
 - Per-mode panel skins, signature controls, and sub-panels sharing one fixed layout
 - Arpeggiator / 16-step sequencer, 8-slot mod matrix, dual LFOs, unison, effects chain (drive/chorus/delay/reverb)
 - 54 factory presets across all six modes; 1x/2x/4x oversampled voices
 - VST3/CLAP/LV2 formats
 
-## Building
+The earlier JUCE prototype (Multi-Synth) still builds via `multisynth`; Sunset
+Circuits is its DPF-native successor and is the title being taken to release.
 
-> **Two build systems during the DPF migration.** JUCE plugins build through the
-> top-level CMake graph (`./rebuild_all.sh`, `./docker/build_release.sh <name>`).
-> DPF plugins (currently **Sunset Circuits**) build **out-of-graph** — they pin
-> DISTRHO/DPF + DPF-Widgets at fixed SHAs and build their own `dpf-plugin/` CMake
-> project. `./rebuild_all.sh` does **not** build DPF plugins; use the DPF path below.
+## Building
 
 ### Recommended: Docker/Podman Build
 For consistent, distributable binaries:
 ```bash
-# Build all JUCE plugins
+# Build all plugins
 ./docker/build_release.sh
 
-# Build a single plugin (production-ready)
+# Build a single plugin (released)
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
-./docker/build_release.sh tape         # TapeMachine
+./docker/build_release.sh tape         # TapeMachine 1.x (JUCE)
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh chord        # Chord Analyzer
-
-# Build a single plugin (in development)
-./docker/build_release.sh duskverb     # DuskVerb
 ./docker/build_release.sh spectrum     # Spectrum Analyzer
+
+# Build a single plugin (pre-release / in development)
+./docker/build_release.sh duskverb     # DuskVerb
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh groovemind   # GrooveMind
 ./docker/build_release.sh duskamp      # DuskAmp
-
-# DPF plugin (out-of-graph — clones DPF + DPF-Widgets in the container)
-./docker/build_release.sh sunset       # Sunset Circuits (VST3/CLAP/LV2)
+./docker/build_release.sh multisynth   # Multi-Synth (JUCE prototype)
+./docker/build_release.sh sunset       # Sunset Circuits (DPF: VST3/CLAP/LV2)
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
 ```
 
-### Local Development Build (JUCE plugins)
+### Local Development Build
 ```bash
-./rebuild_all.sh              # Standard build (all JUCE plugins)
-./rebuild_all.sh --fast       # Ninja + ccache + unity build (much faster rebuilds)
+./rebuild_all.sh              # Standard build
+./rebuild_all.sh --fast       # Use ccache and ninja if available
 ./rebuild_all.sh --debug      # Debug build
 ```
-ccache is auto-detected and wired via `CMAKE_<LANG>_COMPILER_LAUNCHER` in
-`cmake/GlobalSettings.cmake` — no manual `CC`/`CXX` setup needed.
-
-### Local Development Build (DPF plugins)
-DPF plugins build out-of-graph against pinned DPF SHAs. For an incremental local
-build of Sunset Circuits (after the first configure):
-```bash
-cmake --build plugins/sunset-circuits/dpf-plugin/build -j$(nproc)
-```
-The container/CI path (`./docker/build_release.sh sunset`, `.github/workflows/dpf-release.yml`)
-is the reproducible way to build DPF plugins from clean — it pins DISTRHO/DPF and
-DPF-Widgets at known-good SHAs. As more plugins migrate, each gains its own
-`dpf-plugin/` directory built the same way.
 
 ### Build Individual Plugin
 ```bash
 cd build
-# Production-ready
+# Released
 cmake --build . --target FourKEQ_All
 cmake --build . --target MultiComp_All
 cmake --build . --target TapeMachine_All
 cmake --build . --target MultiQ_All
 cmake --build . --target ChordAnalyzer_All
-
-# In development
-cmake --build . --target DuskVerb_All
 cmake --build . --target SpectrumAnalyzer_All
+
+# Pre-release / in development
+cmake --build . --target DuskVerb_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target GrooveMind_All
 cmake --build . --target DuskAmp_All
 ```
 
+The DPF-based plugins use standalone builds rather than the top-level JUCE build:
+
+```bash
+# TapeMachine 2
+cmake -S plugins/TapeMachine/dpf-plugin -B plugins/TapeMachine/dpf-plugin/build -G Ninja
+cmake --build plugins/TapeMachine/dpf-plugin/build
+
+# Tape Echo (DPF port, in progress)
+cmake -S plugins/tape-echo/dpf-plugin -B plugins/tape-echo/dpf-plugin/build -G Ninja
+cmake --build plugins/tape-echo/dpf-plugin/build
+
+# Sunset Circuits
+cmake -S plugins/sunset-circuits/dpf-plugin -B plugins/sunset-circuits/dpf-plugin/build -G Ninja
+cmake --build plugins/sunset-circuits/dpf-plugin/build
+```
+
+The container/CI path (`./docker/build_release.sh sunset`,
+`.github/workflows/dpf-release.yml`) is the reproducible way to build a DPF plugin
+from clean — it pins DISTRHO/DPF and DPF-Widgets at known-good SHAs.
+
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`
 - **macOS VST3**: `~/Library/Audio/Plug-Ins/VST3/`
+- **macOS CLAP**: `~/Library/Audio/Plug-Ins/CLAP/`
 - **Linux VST3**: `~/.vst3/`
 - **Linux LV2**: `~/.lv2/`
+- **Linux CLAP**: `~/.clap/`
 - **Windows VST3**: `C:\Program Files\Common Files\VST3\`
+- **Windows CLAP**: `C:\Program Files\Common Files\CLAP\`
 
 ## Installing Unsigned Binaries
 
-These plugins are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/plugins/releases). Both macOS Gatekeeper and Windows SmartScreen will block first-run by default — that's normal for unsigned builds.
+Some legacy releases are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/dusk-audio-plugins/releases). TapeMachine 2 macOS production releases are Developer ID signed and Apple-notarized; the instructions below apply only to unsigned legacy artifacts.
 
 ### macOS
 
@@ -257,7 +274,13 @@ Reusable analog hardware emulation components:
 
 ### Shared UI Components
 - `DuskLookAndFeel.h` - Base look-and-feel for consistent styling
+- `DuskVintageLookAndFeel.h` - Vintage/retro UI styling
 - `LEDMeter.h/cpp` - Shared LED-style level meter component
+- `ScalableEditorHelper.h` - Resizable UI with size persistence
+- `SupportersOverlay.h` - Patreon supporter credits (click the plugin title)
+- `UserPresetManager.h` - User preset save/load
+
+DPF-based plugins share equivalent components in `plugins/shared-dpf/`.
 
 ## Contributing
 
