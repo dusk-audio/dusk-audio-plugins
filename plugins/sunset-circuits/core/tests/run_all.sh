@@ -48,6 +48,18 @@ cmake --build build -j"$(nproc 2>/dev/null || echo 4)" >/dev/null
 echo "== render_test built =="
 
 fail=0
+
+echo
+echo "########## gen_params drift ##########"
+# MultiSynthParams.hpp is GENERATED. A hand edit to the shell header that
+# gen_params.py does not know about ships a param table the core does not agree
+# with, and nothing else in this suite can see it: render_test's static_asserts
+# only compare INDICES, so a changed range/default/unit slips straight through.
+# Fatal, not report-only -- the drift is silent by construction.
+if ! python3 ../../dpf-plugin/tools/gen_params.py --check; then
+    echo "Re-run tools/gen_params.py and commit the result."
+    fail=1
+fi
 for g in pitch env reverb arp lfo_sync acid stuck sustain polyat steal zipper user_preset; do
     echo
     echo "########## ${g}_gate ##########"
