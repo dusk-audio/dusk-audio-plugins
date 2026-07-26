@@ -351,6 +351,7 @@ private:
                 dsp.sustainPedal(false);
                 dsp.modWheel(0.0f);
                 dsp.aftertouch(0.0f);
+                dsp.pitchBend(0.0f); // spec: RAC also centres pitch bend
             }
             else if (ev.data[1] == 120 || ev.data[1] == 123) dsp.allNotesOff(); // all sound / all notes off
             break;
