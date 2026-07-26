@@ -21,6 +21,18 @@ over, never claims.
 Machine: Intel Core i7-8809G (4 cores / 8 threads, 3.1 GHz base), 31 GiB RAM,
 Linux x86_64. All figures are single-machine and single-core unless noted.
 
+The figures below were recorded by hand, but everything in this part now also
+runs in CI. The `test-linux` job in `.github/workflows/dpf-release.yml` builds
+the VST3 + LV2, runs the whole of `core/tests/run_all.sh` (every pass/fail gate,
+the fm and acid sub-suites, the 54-preset audit, the `lv2_smoke` host check and
+the `cpu_bench` sanity bar) and validates the VST3 with
+`pluginval --skip-gui-tests --strictness-level 8`. It runs on tag pushes and on
+`workflow_dispatch`, and the `release` job needs it, so a red gate blocks the
+publish. The Windows job additionally runs pluginval at strictness 5.
+
+Not covered by any gate: see the coverage-gap list at the top of
+`core/tests/run_all.sh`.
+
 ### CPU worst-case profile
 
 Tool: `core/tests/cpu_bench.cpp` (offline; times only the `processBlock` loop
