@@ -49,6 +49,10 @@ static const char* unmap_uri(LV2_URID_Unmap_Handle h, LV2_URID urid) {
     (void)h;
     return (urid >= 1 && urid <= g_nUris) ? g_uris[urid - 1] : NULL;
 }
+static void free_uris(void) {
+    for (uint32_t i = 0; i < g_nUris; ++i) { free(g_uris[i]); g_uris[i] = NULL; }
+    g_nUris = 0;
+}
 
 #define BLOCK 512
 
@@ -73,21 +77,44 @@ static void clear_seq(uint8_t* buf) {
     ((LV2_Atom_Sequence*)buf)->atom.size = sizeof(LV2_Atom_Sequence_Body);
 }
 
+// Exit codes: 0 ok, 1 usage, 2 plugin not found, 3 instantiate failed,
+// 4 no latency port, 5 no oversampling port, 6 one or more checks FAILED
+// (including a missing MIDI input port, which is a broken bundle, not a
+// reason to skip the MIDI section).
 int main(int argc, char** argv) {
+    // Everything that needs releasing is declared up front and NULL, so every
+    // exit path can funnel through the single `cleanup:` label below. This is a
+    // test fixture, but it must run clean under ASan/valgrind — a leak here is
+    // indistinguishable from a leak in the plugin under test.
+    int rc = 0, failures = 0, activated = 0;
+    LilvWorld*    world = NULL;
+    LilvInstance* inst  = NULL;
+    LilvNode *uriNode = NULL, *nm = NULL;
+    LilvNode *lv2Input = NULL, *lv2Output = NULL, *lv2Audio = NULL,
+             *lv2Control = NULL, *atomPort = NULL;
+    float  *ctrl = NULL, *mins = NULL, *maxs = NULL, *defs = NULL;
+    float  **audio = NULL;
+    uint8_t **atomBuf = NULL;
+    uint32_t nPorts = 0;
+    const LilvPlugins* plugins = NULL;
+    const LilvPlugin*  plug = NULL;
+    int oversamplingIdx = -1, latencyIdx = -1, atomInIdx = -1;
+
     if (argc < 2) { fprintf(stderr, "usage: lv2_smoke <plugin-uri>\n"); return 1; }
     const char* uri = argv[1];
 
-    LilvWorld* world = lilv_world_new();
+    world = lilv_world_new();
     lilv_world_load_all(world);
-    const LilvPlugins* plugins = lilv_world_get_all_plugins(world);
+    plugins = lilv_world_get_all_plugins(world);
 
-    LilvNode* uriNode = lilv_new_uri(world, uri);
-    const LilvPlugin* plug = lilv_plugins_get_by_uri(plugins, uriNode);
-    if (!plug) { fprintf(stderr, "plugin not found: %s\n", uri); return 2; }
+    uriNode = lilv_new_uri(world, uri);
+    plug = lilv_plugins_get_by_uri(plugins, uriNode);
+    if (!plug) { fprintf(stderr, "plugin not found: %s\n", uri); rc = 2; goto cleanup; }
 
-    LilvNode* nm = lilv_plugin_get_name(plug);
+    nm = lilv_plugin_get_name(plug);
     printf("plugin: %s\n", lilv_node_as_string(nm));
     lilv_node_free(nm);
+    nm = NULL;
 
     LV2_URID_Map   map   = { NULL, map_uri };
     LV2_URID_Unmap unmap = { NULL, unmap_uri };
@@ -114,35 +141,35 @@ int main(int argc, char** argv) {
     LV2_Feature optF = { LV2_OPTIONS__options, options };
     const LV2_Feature* features[] = { &mapF, &unmapF, &optF, NULL };
 
-    const uint32_t nPorts = lilv_plugin_get_num_ports(plug);
+    nPorts = lilv_plugin_get_num_ports(plug);
 
     // Port class URIs.
-    LilvNode* lv2Input   = lilv_new_uri(world, LV2_CORE__InputPort);
-    LilvNode* lv2Output  = lilv_new_uri(world, LV2_CORE__OutputPort);
-    LilvNode* lv2Audio   = lilv_new_uri(world, LV2_CORE__AudioPort);
-    LilvNode* lv2Control = lilv_new_uri(world, LV2_CORE__ControlPort);
-    LilvNode* atomPort   = lilv_new_uri(world, LV2_ATOM__AtomPort);
+    lv2Input   = lilv_new_uri(world, LV2_CORE__InputPort);
+    lv2Output  = lilv_new_uri(world, LV2_CORE__OutputPort);
+    lv2Audio   = lilv_new_uri(world, LV2_CORE__AudioPort);
+    lv2Control = lilv_new_uri(world, LV2_CORE__ControlPort);
+    atomPort   = lilv_new_uri(world, LV2_ATOM__AtomPort);
 
     // Buffers.
-    float*  ctrl  = calloc(nPorts, sizeof(float)); // one control slot per port index
-    float** audio = calloc(nPorts, sizeof(float*));
+    ctrl  = calloc(nPorts, sizeof(float)); // one control slot per port index
+    audio = calloc(nPorts, sizeof(float*));
     // Atom buffers (one 4 KB slot per atom port), indexed by REAL port index —
     // this plugin has 200+ ports, so a fixed 64-slot table masked with (i & 63)
     // could alias two atom ports onto one buffer.
-    uint8_t** atomBuf = calloc(nPorts, sizeof(uint8_t*));
-
-    int oversamplingIdx = -1, latencyIdx = -1, atomInIdx = -1;
-    LilvNode* defsNode = NULL;
+    atomBuf = calloc(nPorts, sizeof(uint8_t*));
 
     // Fill control defaults.
-    float* mins = calloc(nPorts, sizeof(float));
-    float* maxs = calloc(nPorts, sizeof(float));
-    float* defs = calloc(nPorts, sizeof(float));
+    mins = calloc(nPorts, sizeof(float));
+    maxs = calloc(nPorts, sizeof(float));
+    defs = calloc(nPorts, sizeof(float));
+    if (!ctrl || !audio || !atomBuf || !mins || !maxs || !defs) {
+        fprintf(stderr, "out of memory allocating port tables\n"); rc = 3; goto cleanup;
+    }
     lilv_plugin_get_port_ranges_float(plug, mins, maxs, defs);
 
     const double sampleRate = 48000.0;
-    LilvInstance* inst = lilv_plugin_instantiate(plug, sampleRate, features);
-    if (!inst) { fprintf(stderr, "instantiate failed\n"); return 3; }
+    inst = lilv_plugin_instantiate(plug, sampleRate, features);
+    if (!inst) { fprintf(stderr, "instantiate failed\n"); rc = 3; goto cleanup; }
 
     for (uint32_t i = 0; i < nPorts; ++i) {
         const LilvPort* port = lilv_plugin_get_port_by_index(plug, i);
@@ -182,16 +209,23 @@ int main(int argc, char** argv) {
         (void)isInput;
     }
 
-    if (latencyIdx < 0)      { fprintf(stderr, "no latency port found\n"); return 4; }
-    if (oversamplingIdx < 0) { fprintf(stderr, "no oversampling port found\n"); return 5; }
+    if (latencyIdx < 0)      { fprintf(stderr, "no latency port found\n"); rc = 4; goto cleanup; }
+    if (oversamplingIdx < 0) { fprintf(stderr, "no oversampling port found\n"); rc = 5; goto cleanup; }
 
     lilv_instance_activate(inst);
+    activated = 1;
 
     printf("port count: %u   oversampling idx=%d   latency idx=%d\n",
            nPorts, oversamplingIdx, latencyIdx);
-    printf("\n  osParam   factor   reported latency (host samples)   audio finite?\n");
-    printf("  -------   ------   ------------------------------   -------------\n");
+    printf("\n  osParam   factor   reported latency (host samples)   audio finite?   result\n");
+    printf("  -------   ------   ------------------------------   -------------   ------\n");
 
+    // The expected PDC values, in host samples, per oversampling setting. These
+    // are the halfband decimator group delays asserted in MultiSynthPlugin.cpp
+    // (latencyForOsParam): 1x bypasses the filters, 2x is downA alone, 4x is
+    // downA + downB. Printing them without checking them (the previous
+    // behaviour) meant a PDC regression scrolled past as a green run.
+    static const float kWantLatency[3] = { 0.0f, 12.0f, 14.0f };
     const char* facName[3] = { "1x", "2x", "4x" };
     for (int os = 0; os <= 2; ++os) {
         ctrl[oversamplingIdx] = (float)os;
@@ -205,14 +239,33 @@ int main(int argc, char** argv) {
             if (audio[i])
                 for (int k = 0; k < BLOCK; ++k)
                     if (!isfinite(audio[i][k])) { finite = 0; break; }
-        printf("  %6.0f    %4s     %28.0f   %13s\n", (double)ctrl[oversamplingIdx],
-               facName[os], (double)lat, finite ? "yes" : "NO");
+        const int latOk = (lat == kWantLatency[os]);
+        const int rowOk = latOk && finite;
+        printf("  %6.0f    %4s     %28.0f   %13s   %s\n", (double)ctrl[oversamplingIdx],
+               facName[os], (double)lat, finite ? "yes" : "NO", rowOk ? "PASS" : "FAIL");
+        if (!latOk) {
+            fprintf(stderr, "FAIL: %s reported latency %.0f, want %.0f\n",
+                    facName[os], (double)lat, (double)kWantLatency[os]);
+            ++failures;
+        }
+        if (!finite) {
+            fprintf(stderr, "FAIL: %s produced non-finite audio (NaN/Inf)\n", facName[os]);
+            ++failures;
+        }
     }
 
-    int failures = 0;
+    // A bundle with no MIDI input port cannot be an instrument. Skipping the
+    // MIDI section here (the previous behaviour) turned the most important
+    // half of this smoke test into a silent no-op that still exited 0.
+    if (atomInIdx < 0) {
+        fprintf(stderr, "FAIL: no input atom port found — this is an instrument, "
+                        "the MIDI input port is mandatory\n");
+        rc = 6;
+        goto cleanup;
+    }
 
     // --- MIDI -> audio smoke: inject a note-on and confirm non-silent output.
-    if (atomInIdx >= 0) {
+    {
         ctrl[oversamplingIdx] = 1.0f; // 2x
         // Prime the oversampling change with one empty run() so the engine's
         // re-preparation and latency update settle BEFORE the note is injected;
@@ -289,12 +342,34 @@ int main(int argc, char** argv) {
         if (!oorOk) ++failures;
     }
 
-    lilv_instance_deactivate(inst);
-    lilv_instance_free(inst);
     if (failures == 0)
         printf("\nOK: instantiate + activate + run + latency + MIDI checks succeeded.\n");
     else
         printf("\nFAILED: %d check(s) did not pass.\n", failures);
-    (void)defsNode;
-    return failures == 0 ? 0 : 6;
+    rc = (failures == 0) ? 0 : 6;
+
+cleanup:
+    // Single release path for every exit above. All handles start NULL and the
+    // lilv_*_free / free() calls are all NULL-tolerant, so this is safe however
+    // early we bailed.
+    if (inst) {
+        if (activated) lilv_instance_deactivate(inst);
+        lilv_instance_free(inst);
+    }
+    if (audio)   { for (uint32_t i = 0; i < nPorts; ++i) free(audio[i]);   free(audio); }
+    if (atomBuf) { for (uint32_t i = 0; i < nPorts; ++i) free(atomBuf[i]); free(atomBuf); }
+    free(ctrl);
+    free(mins);
+    free(maxs);
+    free(defs);
+    lilv_node_free(nm);
+    lilv_node_free(uriNode);
+    lilv_node_free(lv2Input);
+    lilv_node_free(lv2Output);
+    lilv_node_free(lv2Audio);
+    lilv_node_free(lv2Control);
+    lilv_node_free(atomPort);
+    lilv_world_free(world);
+    free_uris();   // the map_uri strdup table
+    return rc;
 }
