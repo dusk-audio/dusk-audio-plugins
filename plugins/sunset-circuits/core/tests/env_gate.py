@@ -90,11 +90,18 @@ def main():
     err = abs(rise - IDEAL_RISE) / IDEAL_RISE
     timing_ok = err <= TOL
     print(f"attack 10-90 rise: {rise:.3f}s  (ideal {IDEAL_RISE:.3f}s, err {err*100:+.1f}%, tol +-{TOL*100:.0f}%)")
-    print(f"release 10-90 fall: {fall:.3f}s (ideal {IDEAL_FALL:.3f}s)")
+
+    # The release leg is gated at the same +-15% as the attack. It used to be
+    # computed and printed only, so a release-time regression (or a NaN from a
+    # missed crossing) read as a normal line in a PASSing gate. Measured -1.0%.
+    fall_err = abs(fall - IDEAL_FALL) / IDEAL_FALL
+    fall_ok = fall_err <= TOL
+    print(f"release 10-90 fall: {fall:.3f}s (ideal {IDEAL_FALL:.3f}s, err {fall_err*100:+.1f}%, "
+          f"tol +-{TOL*100:.0f}%) {'PASS' if fall_ok else 'FAIL'}")
 
     click_ok = retrigger_click()
 
-    passed = timing_ok and click_ok
+    passed = timing_ok and fall_ok and click_ok
     print(f"env_gate: {'PASS' if passed else 'FAIL'}")
     sys.exit(0 if passed else 1)
 
