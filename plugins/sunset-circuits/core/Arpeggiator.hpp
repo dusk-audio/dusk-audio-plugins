@@ -95,7 +95,13 @@ public:
     }
     bool isStepActive(int step) const noexcept { return stepPattern[(size_t)(step % 16)]; }
 
-    int getCurrentStep() const noexcept { return currentStep; }
+    // Position in the 16-cell GRID row, which is what the UI highlights: the
+    // sequencer lane always draws 16 cells (drawStepRow(..., 16, kParamArpStep0,
+    // step, ...)), so the play-head has to run 0..15 and land on the cell whose
+    // mute/accent value actually applied. Returning the pattern position instead
+    // pinned the highlight to the first patternSize cells.
+    int getCurrentStep() const noexcept { return (int)(absStep & 15); }
+    // Length of the held-note pattern (not the grid row).
     int getTotalSteps() const noexcept { return patternSize; }
 
     void noteOn(int noteNumber, int velocity) noexcept
@@ -216,7 +222,11 @@ private:
             const int patIdx = (mode == ArpMode::Random) ? rng.nextInt(patternSize)
                                                          : (currentStep % patternSize);
             const NoteInfo note = pattern[(size_t)patIdx];
-            const bool stepActive = stepPattern[(size_t)(currentStep % 16)];
+            // The mute row and the accent patterns are 16-cell GRID rows, not
+            // per-pattern-position rows: index them off the monotonic step, so
+            // all 16 cells the UI draws are reachable at any patternSize.
+            const int gridStep = (int)(absStep & 15);
+            const bool stepActive = stepPattern[(size_t)gridStep];
 
             if (stepActive)
             {
@@ -228,7 +238,7 @@ private:
                 { ev.noteOffValid = true; ev.offNote = lastPlayedNote; }
                 ev.noteOnValid = true;
                 ev.onNote = note.note;
-                ev.onVel = getVelocity(note.velocity, currentStep);
+                ev.onVel = getVelocity(note.velocity, gridStep);
                 lastPlayedNote = note.note;
             }
             else if (lastPlayedNote >= 0)
@@ -302,7 +312,10 @@ private:
                 absStep = globalStep;
                 const int patIdx = (mode == ArpMode::Random) ? rng.nextInt(patternSize) : idx;
                 const NoteInfo note = pattern[(size_t)patIdx];
-                const bool stepActive = stepPattern[(size_t)(idx % 16)] && !pastGate;
+                // Grid rows (mute, accent) index off the absolute step, same as
+                // the free-run path; idx is a pattern position and wraps early.
+                const int gridStep = (int)(globalStep & 15);
+                const bool stepActive = stepPattern[(size_t)gridStep] && !pastGate;
 
                 if (stepActive)
                 {
@@ -311,7 +324,7 @@ private:
                     { ev.noteOffValid = true; ev.offNote = lastPlayedNote; }
                     ev.noteOnValid = true;
                     ev.onNote = note.note;
-                    ev.onVel = getVelocity(note.velocity, idx);
+                    ev.onVel = getVelocity(note.velocity, gridStep);
                     lastPlayedNote = note.note;
                 }
                 else if (lastPlayedNote >= 0)
