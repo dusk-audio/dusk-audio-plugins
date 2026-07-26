@@ -30,6 +30,36 @@ echo "########## preset audit ##########"
 python3 presets/preset_audit.py || fail=1
 
 echo
+echo "########## lv2_smoke (LV2 host integration) ##########"
+# The only gate that exercises the shipped plugin instead of the core: a minimal
+# lilv host instantiates the BUILT LV2 bundle, sweeps oversampling against the
+# reported-latency output port, injects a MIDI note-on, and injects in-range and
+# out-of-range MIDI program changes. Exits 6 on a failed check.
+#
+# Two optional dependencies, both skipped loudly rather than failed: lilv at
+# configure time (see the tests CMakeLists) and a locally built LV2 bundle.
+lv2_bundle_dir="../../dpf-plugin/build/bin"
+if [ ! -x build/lv2_smoke ]; then
+    echo "SKIP: lv2_smoke was not built (lilv-0 missing at cmake time; apt install liblilv-dev)"
+elif [ ! -d "$lv2_bundle_dir/sunset_circuits.lv2" ]; then
+    echo "SKIP: no LV2 bundle at $lv2_bundle_dir/sunset_circuits.lv2"
+    echo "      build it with: (cd ../../dpf-plugin && cmake --build build --target sunset_circuits-lv2)"
+else
+    # Point LV2_PATH at a directory holding ONLY the bundle: dpf-plugin/build/bin
+    # also contains the .vst3 and .clap, and lilv logs errors trying to read a
+    # manifest.ttl out of each of them.
+    lv2_scan_dir="build/lv2_scan"
+    rm -rf "$lv2_scan_dir"
+    mkdir -p "$lv2_scan_dir"
+    ln -s "$(cd "$lv2_bundle_dir/sunset_circuits.lv2" && pwd)" "$lv2_scan_dir/sunset_circuits.lv2"
+    # A renamed/moved plugin URI makes lv2_smoke exit 2 (plugin not found), which
+    # is a real failure here, not a skip -- the bundle exists but does not expose
+    # the URI we ship.
+    LV2_PATH="$(cd "$lv2_scan_dir" && pwd)" ./build/lv2_smoke \
+        "https://dusk-audio.github.io/plugins/sunset-circuits" || fail=1
+fi
+
+echo
 echo "########## cpu_bench sanity ##########"
 # Gross-regression guard, NOT a performance target. cpu_bench is built by the
 # cmake step above and always exits 0, so its table is parsed here.

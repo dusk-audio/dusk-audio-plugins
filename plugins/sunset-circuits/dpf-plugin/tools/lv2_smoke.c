@@ -1,5 +1,7 @@
 // Minimal lilv host for Sunset Circuits LV2 host-integration smoke (Phase 5 QA).
-// Standalone; not part of the CMake build. Requires lilv-0 dev headers.
+// Built by core/tests/CMakeLists.txt when lilv-0 is discoverable via pkg-config
+// (the target is skipped, not failed, when it is not) and run by
+// core/tests/run_all.sh against the locally built LV2 bundle.
 // It:
 //   * instantiates + activates + runs the bundle (via lilv, the library jalv
 //     uses), providing the URID map and options features a real host provides;
@@ -8,8 +10,10 @@
 //   * injects a MIDI note-on and confirms the MIDI-to-audio path is audible;
 //   * injects a MIDI program change (0xC0) and confirms it reached loadProgram().
 //
+// Standalone build (the suite does this for you):
 //   cc lv2_smoke.c $(pkg-config --cflags --libs lilv-0) -lm -o lv2_smoke
 //   LV2_PATH=<dir-containing-the-.lv2-bundle> ./lv2_smoke <plugin-uri>
+// LV2_PATH must contain ONLY the bundle; lilv logs errors on sibling .vst3/.clap.
 
 #include <lilv/lilv.h>
 #include <lv2/urid/urid.h>

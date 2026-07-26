@@ -45,3 +45,30 @@ target_compile_options(cpu_bench PRIVATE -O2 -Wall -Wextra)
 add_executable(user_preset_test user_preset_test.cpp)
 target_include_directories(user_preset_test PRIVATE ${DPF_PLUGIN})
 target_compile_options(user_preset_test PRIVATE -O2 -Wall -Wextra)
+
+# lv2_smoke — LV2 host-integration smoke test (dpf-plugin/tools/lv2_smoke.c).
+# Unlike every other target here it hosts the BUILT LV2 bundle through lilv (the
+# library jalv uses) rather than linking the core: instantiate + activate + run,
+# oversampling-vs-reported-latency sweep, MIDI note-on, MIDI program change.
+#
+# OPTIONAL by design. lilv is a system dependency the rest of the suite does not
+# need, so a machine without lilv-dev must still configure and run everything
+# else; when it is missing the target is simply not created and run_all.sh
+# prints a SKIP. It is C, so the C language is enabled only on this path.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LILV QUIET lilv-0)
+endif()
+
+if(LILV_FOUND)
+    enable_language(C)
+    add_executable(lv2_smoke ${DPF_PLUGIN}/tools/lv2_smoke.c)
+    target_include_directories(lv2_smoke PRIVATE ${LILV_INCLUDE_DIRS})
+    target_link_directories(lv2_smoke PRIVATE ${LILV_LIBRARY_DIRS})
+    target_link_libraries(lv2_smoke PRIVATE ${LILV_LIBRARIES} m)
+    target_compile_options(lv2_smoke PRIVATE -O2 -Wall -Wextra ${LILV_CFLAGS_OTHER})
+    message(STATUS "lv2_smoke: building against lilv-0 ${LILV_VERSION}")
+else()
+    message(STATUS "lv2_smoke: lilv-0 not found via pkg-config -- the LV2 host "
+                   "smoke test will be SKIPPED (apt install lilv-utils liblilv-dev)")
+endif()
