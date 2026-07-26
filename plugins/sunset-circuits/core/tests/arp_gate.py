@@ -6,7 +6,7 @@ checks the inter-onset intervals (after step 1) are on the grid within +-1 ms.
 """
 import sys
 import numpy as np
-from _harness import render
+from _harness import render, peak_envelope, rising_edges
 
 BPM = 120.0
 STEP_S = 60.0 / BPM * 0.5   # 1/8 note = 0.25 s
@@ -22,22 +22,7 @@ def detect_onsets(sig, sr, thresh_frac=0.3, min_gap_s=0.1):
     # Peak envelope follower: instant attack, ~3 ms release. Detects rising
     # edges (note onsets) on the smoothed envelope, immune to the carrier's
     # per-cycle zero crossings.
-    a = np.abs(sig)
-    rel = np.exp(-1.0 / (0.003 * sr))
-    env = np.empty_like(a)
-    e = 0.0
-    for i in range(len(a)):
-        e = a[i] if a[i] > e else e * rel
-        env[i] = e
-    thr = thresh_frac * np.max(env)
-    min_gap = int(min_gap_s * sr)
-    onsets = []
-    last = -min_gap
-    for i in range(1, len(env)):
-        if env[i] > thr and env[i - 1] <= thr and (i - last) >= min_gap:
-            onsets.append(i)
-            last = i
-    return np.array(onsets) / sr
+    return rising_edges(peak_envelope(sig, sr, 0.003), sr, thresh_frac, min_gap_s)
 
 
 def free_run():

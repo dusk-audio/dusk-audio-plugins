@@ -61,13 +61,12 @@ try:
 except ImportError:      # scipy is not a dependency of the other gates
     resample_poly = None
 
-from _harness import render
+from _harness import render, scratch_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_BIN = os.path.join(HERE, "build", "preset_render")
 PARAMS_HPP = os.path.join(HERE, "..", "..", "dpf-plugin", "MultiSynthParams.hpp")
-OUT = "/tmp/msynth_fxalias"
-os.makedirs(OUT, exist_ok=True)
+OUT = scratch_dir("msynth_fxalias")
 
 # alias_gate's published voice-path reference at 2x oversampling, quoted by the
 # QA checklist as the engineering guide for the ear pass.

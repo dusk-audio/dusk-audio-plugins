@@ -3,13 +3,20 @@
 Drives the standalone acid_test binary (built from AcidEngine.hpp directly).
 """
 import os
+import shutil
 import subprocess
+import tempfile
 import numpy as np
 import soundfile as sf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "build", "acid_test")
-OUT = "/tmp/acid_gate"
+
+# Per-process scratch dir: a fixed /tmp path is shared by every concurrent run
+# and every user on the box. Same construction as the core harness.
+OUT = os.path.join(tempfile.gettempdir(),
+                   f"acid_gate_{os.getuid()}_{os.getpid()}")
+shutil.rmtree(OUT, ignore_errors=True)
 os.makedirs(OUT, exist_ok=True)
 
 
@@ -108,6 +115,45 @@ def f0_zerocross(sig, sr):
                     freqs.append(1.0 / dt)
             last = tc
     return np.array(times), np.array(freqs)
+
+
+def peak_envelope(sig, sr, release_s):
+    """Instant-attack / exponential-release peak envelope, vectorised.
+
+    env[i] = max(|sig[i]|, env[i-1] * rel). Same helper as ../_harness.py --
+    duplicated rather than imported because this sub-suite is deliberately
+    self-contained (so is peak_hz). The per-sample Python loop it replaces
+    dominated seq_gate's runtime; chunked so rel**i cannot underflow. See the
+    parent copy for the one deliberate semantic correction (the old loop
+    compared against the un-decayed previous value); the reported onset times
+    are unchanged.
+    """
+    a = np.abs(np.asarray(sig, dtype=np.float64))
+    rel = float(np.exp(-1.0 / (release_s * sr)))
+    env = np.empty_like(a)
+    carry = 0.0
+    chunk = 50000
+    for s in range(0, len(a), chunk):
+        seg = a[s:s + chunk]
+        w = rel ** np.arange(len(seg))
+        e = w * np.maximum.accumulate(seg / w)
+        np.maximum(e, carry * rel * w, out=e)
+        env[s:s + chunk] = e
+        carry = float(e[-1])
+    return env
+
+
+def rising_edges(env, sr, thresh_frac=0.3, min_gap_s=0.1):
+    """Onset times (s) where `env` crosses thresh_frac*max, min_gap_s apart."""
+    thr = thresh_frac * float(np.max(env))
+    min_gap = int(min_gap_s * sr)
+    cross = np.flatnonzero((env[1:] > thr) & (env[:-1] <= thr)) + 1
+    onsets, last = [], -min_gap
+    for i in cross:
+        if i - last >= min_gap:
+            onsets.append(i)
+            last = i
+    return np.array(onsets) / sr
 
 
 def has_nan_inf(x):
