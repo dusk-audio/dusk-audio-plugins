@@ -60,8 +60,17 @@
 //                       polyphonic key pressure (MIDI 0xA0) for one note.
 //                       Repeatable.
 //   chanat=<sec>:<0..1> channel pressure (MIDI 0xD0). Repeatable.
+//   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DPF
+//                       shell's loadProgram() does (every parameter to its
+//                       default, then the shared baseline, then the preset's own
+//                       rows, then notifyProgramChange). Repeatable. NOTE: this
+//                       harness links the CORE only, so it reproduces what
+//                       loadProgram DOES, not the shell function itself -- the
+//                       shell's MIDI 0xC0 -> loadProgram wiring is covered
+//                       host-side by dpf-plugin/tools/lv2_smoke.c.
 
 #include "MultiSynthDSP.hpp"
+#include "MultiSynthParams.hpp"   // factory preset table (progat=), shell-side
 
 #include <algorithm>
 #include <cerrno>
@@ -74,8 +83,34 @@
 #include <string>
 #include <vector>
 
+// The preset rows are written with the SHELL's parameter indices; they only address
+// the core correctly because the two tables are 1:1. MultiSynthPlugin.cpp asserts
+// that, and so does this harness, so an index drift fails here too rather than
+// silently loading a scrambled patch into the gates.
+static_assert((int)kParamMode      == (int)msynth::pMode,      "param order drift");
+static_assert((int)kParamArpStep0  == (int)msynth::pArpStep0,  "arp step drift");
+static_assert((int)kParamModSrc0   == (int)msynth::pModSrc0,   "mod matrix drift");
+static_assert((int)kParamSeqSlide0 == (int)msynth::pSeqSlide0, "seq slide drift");
+static_assert((int)kNumCoreParams  == (int)msynth::kNumParams, "core param count drift");
+
 namespace
 {
+// Apply a factory program the way the DPF shell's loadProgram() does: every
+// parameter to its default (so the result cannot depend on what was loaded
+// before), then the shared baseline, then the preset's own rows, and finally the
+// explicit program-change signal that makes the smoothers land instead of glide.
+void loadFactoryProgram(msynth::MultiSynthDSP& synth, int index) noexcept
+{
+    for (int i = 0; i < kNumCoreParams; ++i)
+        synth.setParameter(i, kParamDefs[i].def);
+    for (int r = 0; r < kBaselineRows; ++r)
+        synth.setParameter(kPresetBaseline[r].index, kPresetBaseline[r].value);
+    const FactoryPreset& pr = kFactoryPresets[index];
+    for (int r = 0; r < pr.nRows; ++r)
+        synth.setParameter(pr.rows[r].index, pr.rows[r].value);
+    synth.notifyProgramChange();
+}
+
 // Strict string->double: reject empty, trailing garbage, or non-finite results.
 double parseNum(const char* key, const std::string& v)
 {
@@ -224,6 +259,10 @@ int main(int argc, char** argv)
     struct SchedPressure { double time; int note; float value; };
     std::vector<SchedPressure> schedPressure;
 
+    // Scheduled factory-program loads (progat=<sec>:<n>).
+    struct SchedProgram { double time; int index; };
+    std::vector<SchedProgram> schedProgram;
+
     // Scheduled song-position jumps (loopat=<sec>:<beats>) — loop wrap / seek.
     struct SchedLoop { double time; double beats; };
     std::vector<SchedLoop> schedLoops;
@@ -292,6 +331,31 @@ int main(int argc, char** argv)
                 return 1;
             }
             schedPedal.push_back({ t, d != 0 });
+            continue;
+        }
+        if (key == "progat")
+        {
+            // <sec>:<program>
+            const auto c1 = val.find(':');
+            if (c1 == std::string::npos)
+            {
+                std::fprintf(stderr, "bad progat (want <sec>:<program>): %s\n", val.c_str());
+                return 1;
+            }
+            const double t = parseNum("progat.time", val.substr(0, c1));
+            const long n = parseInt("progat.program", val.substr(c1 + 1));
+            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            {
+                std::fprintf(stderr, "bad progat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                return 1;
+            }
+            if (n < 0 || n >= kNumFactoryPresets)
+            {
+                std::fprintf(stderr, "bad progat program: %ld (want 0..%d)\n",
+                             n, kNumFactoryPresets - 1);
+                return 1;
+            }
+            schedProgram.push_back({ t, (int)n });
             continue;
         }
         if (key == "polyat" || key == "chanat")
@@ -535,6 +599,7 @@ int main(int argc, char** argv)
     std::vector<char> schedPedalDone(schedPedal.size(), 0);
     std::vector<char> schedPanicDone(schedPanic.size(), 0);
     std::vector<char> schedPressureDone(schedPressure.size(), 0);
+    std::vector<char> schedProgramDone(schedProgram.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
     std::vector<double> schedLoopShift(schedLoops.size(), 0.0);
 
@@ -542,6 +607,21 @@ int main(int argc, char** argv)
     for (int pos = 0; pos < totalFrames; )
     {
         int n = std::min(blockSize, totalFrames - pos);
+
+        // Factory-program loads run FIRST in the block, so a setat= scheduled at the
+        // same time acts as a post-load override (the same ordering preset_render
+        // uses for its auditioning overrides). The program's own notifyProgramChange
+        // still lands before this block's processBlock, so the snapshot that
+        // consumes it sees the finished patch either way.
+        for (size_t s = 0; s < schedProgram.size(); ++s)
+        {
+            if (schedProgramDone[s]) continue;
+            if (pos >= (int)(schedProgram[s].time * sampleRate))
+            {
+                loadFactoryProgram(synth, schedProgram[s].index);
+                schedProgramDone[s] = 1;
+            }
+        }
 
         // Apply any scheduled parameter changes whose time has arrived.
         for (size_t s = 0; s < scheduled.size(); ++s)

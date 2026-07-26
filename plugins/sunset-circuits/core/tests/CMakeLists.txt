@@ -16,7 +16,9 @@ add_executable(render_test
     render_test.cpp
     ${CORE_DIR}/MultiSynthDSP.cpp)
 
-target_include_directories(render_test PRIVATE ${CORE_DIR} ${SHARED_DSP})
+# DPF_PLUGIN is on the include path for MultiSynthParams.hpp only (the static
+# factory-preset table behind progat=); render_test still links the core alone.
+target_include_directories(render_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DPF_PLUGIN})
 target_compile_options(render_test PRIVATE -O2 -Wall -Wextra)
 
 # preset_render — includes the static factory-preset table (MultiSynthParams.hpp)

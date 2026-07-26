@@ -19,6 +19,8 @@ Scenarios (48k, 2x OS, sustained patch ampS=1 ampR=0.3, no reverb/delay):
                  running with the keys up, and stops on pedal-up
   g. acid      : mode 5's mono last-note stack holds under the pedal and unwinds
                  to silence on pedal-up (no stranded voice, no slide blip)
+  h. preset    : a real factory-program load (progat=) inside the same mode keeps
+                 pedal-held notes sounding and still releases them on pedal-up
   i. latch-off under pedal : latch-off prunes latched notes against (keys | pedal),
                  not keys alone, so a pattern the PEDAL is holding survives the
                  latch going off and stops when the pedal lifts
@@ -131,14 +133,16 @@ def main():
                    f"acid        : keys-up+pedal {g_mid:6.1f} dB (>{LOUD_DB:.0f}), "
                    f"after pedal-up {g_end:6.1f} dB (<{SILENT_DB:.0f})")
 
-    # (h) preset load WITHIN the same mode while the pedal holds notes. Held notes
-    #     are deliberately seamless across such a load (see snapshotParameters), and
-    #     pedal-held notes are held notes -- so they must keep sounding AND still
+    # (h) real factory-program load WITHIN the same mode while the pedal holds notes
+    #     (progat= runs the shell's loadProgram sequence: every parameter to its
+    #     default, the shared baseline, the preset's rows, then the program-change
+    #     signal). Program 36 "Init Cosmos" is a mode-0 preset, so the mode does not
+    #     change and held notes are deliberately seamless across the load -- and
+    #     pedal-held notes are held notes, so they must keep sounding AND still
     #     release on pedal-up rather than being stranded by the parameter rewrite.
+    #     The shell's own 0xC0 -> loadProgram wiring is covered by lv2_smoke.
     sr, x = render(0, 60, seconds, 2, "sus_preset", hold="64,67", release=0.5,
-                   sustainat=["0.1:1", "2.0:0"],
-                   setat=["1.0:filterCutoff:3000", "1.0:filterRes:0.5"], notifyat=1.0,
-                   **PATCH)
+                   sustainat=["0.1:1", "2.0:0"], progat="1.0:36", **PATCH)
     h_mid = window_db(x, sr, 1.2, 1.6)
     h_end = window_db(x, sr, seconds - 1.0, seconds)
     fails += check("h", h_mid > LOUD_DB and h_end < SILENT_DB,
