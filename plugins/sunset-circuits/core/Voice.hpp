@@ -366,6 +366,7 @@ public:
     int  retireBankCost() const noexcept { return prevUCount; }
 
     bool isActive() const noexcept { return active; }
+    bool isRetiring() const noexcept { return retiring; }
     bool isReleasing() const noexcept { return ampEnv.getStage() == ADSREnvelope::Stage::Release; }
     int  getCurrentNote() const noexcept { return currentNote; }
     float getCurrentLevel() const noexcept { return ampEnv.getCurrentValue() * velocityGain; }
@@ -884,7 +885,15 @@ public:
             float bestLevel = -1.0f;
             for (int i = poly; i < kMaxPolyphony; ++i)
             {
-                if (handled[(size_t)i] || !voices[(size_t)i].isActive()) continue;
+                // Voices already on their way out are not candidates. retire() is
+                // a no-op on them, so selecting one spent budget that a voice
+                // still at full level needed; and once the budget ran out the
+                // else-branch hard-reset it, stepping a voice to zero in the
+                // middle of the very fade that exists to avoid that step. Their
+                // cost is real but it is already committed -- the budget is about
+                // what MORE we are willing to keep rendering.
+                if (handled[(size_t)i] || !voices[(size_t)i].isActive()
+                    || voices[(size_t)i].isRetiring()) continue;
                 const float level = voices[(size_t)i].getCurrentLevel();
                 if (level > bestLevel) { bestLevel = level; best = i; }
             }
