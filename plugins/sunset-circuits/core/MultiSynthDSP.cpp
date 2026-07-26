@@ -1130,7 +1130,14 @@ void MultiSynthDSP::processBlock(float* outL, float* outR, int nSamples) noexcep
         arpTotalSteps.store(0, std::memory_order_relaxed);
     }
 
-    auto toDb = [](float lin) noexcept { return lin > 1.0e-6f ? 20.0f * std::log10(lin) : -60.0f; };
+    // Floor at 1e-3, which IS -60 dB, so the curve is continuous at the knee and
+    // nothing below the declared minimum is ever published. The old 1e-6 floor
+    // let everything between 1e-6 and 1e-3 through as -120..-60 dB, while the
+    // shell declares these two output ports as min = -60 (see initParameter for
+    // kParamOutLevelL/R). A VST3 host normalises against the declared range and
+    // pins the meter at the bottom, but LV2 hands the raw port value straight to
+    // the host, so the out-of-range values were visible there.
+    auto toDb = [](float lin) noexcept { return lin > 1.0e-3f ? 20.0f * std::log10(lin) : -60.0f; };
     outLevelL.store(toDb(meterL), std::memory_order_relaxed);
     outLevelR.store(toDb(meterR), std::memory_order_relaxed);
 }
