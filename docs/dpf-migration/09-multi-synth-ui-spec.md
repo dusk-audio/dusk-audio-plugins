@@ -43,19 +43,46 @@ brushed-metal outer bevel then a recessed inner fill (see §7 draw order). "Cent
 knob is its pivot; radius is design-space.
 
 ### 1.1 Top bar — `(0,0)–(1240,54)`
+Three zones, left to right: **nameplate**, **mode rockers**, **preset cluster**. The
+rockers used to be pinned at `x306`, which left a ~120 px hole after the nameplate and
+squeezed the preset cluster into the last 270 px. They now start immediately after the
+nameplate and the freed width goes entirely to the presets, which is what was short.
+
 | Element | Rect / center | Notes |
 |---|---|---|
 | Chassis header fill | `(0,0)–(1240,54)` | `bg` darkened 10%, 3 px metal top edge, 1.5 px hairline at y=54 |
-| Nameplate "SUNSET CIRCUITS" | text box `(18,10)–(250,44)` | 20 px bold, `text`; sub "Dusk Audio" 13 px right-aligned at x=1222,y=8 |
-| Mode rockers ×6 | strip `(300,8)–(940,48)` | rocker *i* at `x=306+i*106`, width **100**, `y 10..46` (§4) |
-| Preset ◀ prev | `(952,14)–(978,42)` | LED-button style |
-| Preset combo | `(982,14)–(1108,42)` (w **126**) | styled `BeginCombo`, per-mode accent header (§8). Narrowed from 168 to seat BROWSE; the preview clips the longest factory names ("Alien Transmission"), which is what the browser (§8.10) exists to solve |
-| Preset ▶ next | `(1112,14)–(1138,42)` | |
-| BROWSE | `(1142,14)–(1182,42)` | opens the preset browser (§8.10) |
-| Save ★ | `(1186,14)–(1222,42)` | opens user-preset save |
+| Nameplate "SUNSET CIRCUITS" | `(18,8)`, 20 px bold `text` | hit rect `(14,4)–(blockX1+6,50)` |
+| Byline "Dusk Audio" | `(20,32)`, 11 px bold **accent** | |
+| Version "· vX.Y.Z" | `(verX,33)`, 10 px, `text` @ α140 | `verX = 20 + textW(11,"Dusk Audio") + 7`; **suppressed below `kReadoutMinS`** (§3.1b) — 10 px is <6 device px at the minimum size, the same mush that gate exists for; the tooltip still carries it |
+| Mode rockers ×6 | rocker *i* at `x = modeX0 + i*96`, width **90**, `y 10..46` | `modeX0 = blockX1 + 16`, clamped so the row always clears the cluster (§4) |
+| Preset ◀ prev | `(792,12)–(826,44)` | w **34** (was 26×28) |
+| Preset combo | `(830,12)–(1038,44)` (w **208**) | styled `BeginCombo` (was 126, which clipped "Alien Transmission"); grouped multi-column popup, §8.12 |
+| Preset ▶ next | `(1042,12)–(1076,44)` | w **34** |
+| BROWSE | `(1082,12)–(1158,44)` | w **76** (was 40); opens the preset browser (§8.10) |
+| SAVE | `(1164,12)–(1222,44)` | w **58** (was 36); opens the save modal (§8.11) |
 
-BROWSE and SAVE share `barButton()` — chevron chrome with a 9 px accent label instead
-of a triangle, accent border on hover.
+- **The cluster is laid out right-to-left** from `kBarClusterX1 = 1222`, with constant gaps
+  (4 px around the combo, 6 px between the buttons). It is the anchored end, so a future
+  width change moves the cluster's *left* edge — and, through the clamp, the rockers —
+  instead of silently overrunning the panel wall. Every element shares one `12..44` row,
+  so the bar reads as a single band rather than three heights.
+- **`modeX0` is measured, not guessed**: `textW()` on the title and on the byline+version,
+  whichever is wider, so the gap after the nameplate survives a font substitution. It is
+  then clamped to `kBarPrevX0 − 14 − (5*96 + 90)`, which is what *guarantees* the two zones
+  cannot collide no matter how wide the title measures.
+- Rocker labels are drawn at `centre+7` (the LED owns `x0+11`); "MODULAR", the widest,
+  is ~46 px at font 12 and ends ~14 px short of the right edge.
+
+BROWSE and SAVE share `barButton()` — chevron chrome with a **10 px** accent label instead
+of a triangle, accent border on hover. (9 px was sized for the old 36/40-wide buttons; on
+the widened ones it read as a caption floating in a box rather than the button's label.)
+
+**Nameplate tooltip**: `Sunset Circuits v<version>` / `Dusk Audio` / `<W> x <H> · scale
+<s>`. The version is single-sourced from the git tag through CMake's `SC_VERSION_STRING`,
+so it *is* the build identity; the surface size and scale are the one other thing worth
+asking for in a bug report. Deliberately **no** `__DATE__`/`__TIME__` — it would make every
+rebuild a different binary and cost the release builds their reproducibility for a line
+nobody can act on.
 
 ### 1.2 Body — `y 60..542`
 
@@ -232,7 +259,8 @@ Solving gives `g = 17` (non-acid) / `13` (Acid) — even inside whichever row is
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ SUNSET CIRCUITS [COSMOS][ORACLE][MONO][MODULAR][PRISM][ACID]  ◀ [Preset ▾] ▶ BROWSE ★ Dusk│ 0..54
+│ SUNSET CIRCUITS [COSMOS][ORACLE][MONO][MODULAR][PRISM][ACID]  ◀ [ Preset ▾ ] ▶ BROWSE SAVE│ 0..54
+│ Dusk Audio · v1.0.0                                                                       │
 ├───────────────┬───────────────────────────────┬─────────────────────────────────────────┤
 │  OSC 1        │        FILTER                  │  LFO 1                 │   SCOPE          │
 │  wave det pw  │  ┌────filter-curve────────┐    │  rate fade shape sync  │   /\  /\  /\     │
@@ -1124,6 +1152,45 @@ at `(440,351)` w360; hint line at `y 393`; button row at `y 435` — SAVE `(440)
 Hint-slot priority, one line, in order: **save/delete error** → "Enter a name to save." →
 "Name in use · saving will ask to overwrite."
 
+### 8.12 Preset combo popup — grouped, multi-column
+TapeMachine 2's preset combo (`TapeMachineUI.cpp:328`) groups its list with
+`ImGui::TextDisabled` category headers in **one** column and lets ImGui scroll it — no
+`Columns`, no `BeginTable`, no popup size override, just headers emitted on a category
+change. That reads fine at twenty presets; at **54** it is a scroll hunt. So the same idea
+is laid out **across**: one group per **mode** — this synth's strongest cue, and the same
+grouping the browser's chips use — stacked into as many columns as the window can hold, so
+the whole library is on screen at once.
+
+- **Still one ImGui window.** Columns are `BeginGroup` / `SameLine` *inside the combo's own
+  popup*, not sibling windows, so the no-overlapping-windows constraint (§8.10) is not in
+  play. A combo popup is the one layer this backend *does* composite over the base windows,
+  which is why the single-column version worked; nothing here changes that.
+- **The popup gets its natural size** because we call `SetNextWindowSizeConstraints`
+  ourselves before `BeginCombo`: ImGui only imposes its "8 items tall, one column wide"
+  default when no constraint is pending (`imgui.cpp`, `BeginComboPopup`). The height is
+  capped at `0.86 × getHeight()` — ImGui clamps a popup's *position* into the viewport,
+  never its size, so an uncapped one with a large user bank would hang off the bottom.
+- **Column width is measured from the live atlas face**, not from the design size:
+  `pickFont()` snaps to the nearest baked size, so at small scales the glyphs are *larger*
+  than `12*s` and a design-space width would clip exactly the names this exists to stop
+  clipping. Measured once per opening (`IsWindowAppearing`), capped at `0.32 × getWidth()`
+  so one 128-char user name cannot push the grid off the window.
+- **Column count adapts**: `floor((getWidth() − 2*WindowPadding.x) / (colW + ItemSpacing.x))`,
+  clamped to `[1, nGroups]`. Seven 1:1 columns are ~1.1 kpx and sit inside 1240 comfortably;
+  at the 620×390 minimum the atlas floor keeps the glyphs near full size while the window
+  halves, so the same seven would run off the screen edge.
+- **Groups are never split** across columns — a mode's presets are the unit. A greedy
+  height balance keeps filling a column until the next group would push it past
+  `ceil(totalRows / nCols)`; with the usual one-column-per-group outcome the target never
+  binds, and it only does work when the window forces two groups to share.
+- Headers are drawn in **that mode's** accent (not the live one), with a hairline rule, so
+  the column a preset lives in is identifiable at a glance even mid-crossfade. A non-empty
+  user bank adds a 7th `USER` group in the live accent.
+
+Measured: 6 columns / 54 presets, no scrolling, at both 1240×780 and 620×390. 60 user
+presets at 620×390 degrades as designed — 6 columns, two mode groups sharing one, and the
+USER column scrolling. Vertex cost is in §9.1.
+
 ---
 
 ## 9. Rendering & performance notes
@@ -1185,6 +1252,15 @@ Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
 | right | 14 672 | 22.4 % | LFOs + sub-panel + scope + VU |
 | browse | 10 616 | 16.2 % | 48 preset cells (57 presets listed, scrolled + hovered) |
 | modal | 9 692 | 14.8 % | 8 rows of combos/knobs (measured with a combo popup open) |
+| **popup** | **2 580** | **3.9 %** | preset combo popup: 6 columns × 54 presets (§8.12) |
+| top | 2 142 | 3.3 % | nameplate + 6 rockers + preset cluster |
+
+`popup` is the one census slot that is **not** a layer window — it is the preset combo's own
+popup, sampled from inside `drawPresetPopupBody()`. A popup is a separate ImGui window with
+its own draw list, so the multi-column grid has its own 16-bit budget and would otherwise
+never appear here at all. With a 60-preset user bank (a 7th column, 114 rows) it measures
+**4 036** (6.2 %); beyond that the popup scrolls and ImGui culls what is off-screen, so it
+is bounded by what fits on the window, not by the size of the library.
 
 **Measure per mode, not per run.** `endLayer()` keeps a running max, so a single sweep that
 visits all six modes reports only the heaviest mode for each layer — a per-mode increase in a
@@ -1247,7 +1323,8 @@ cost, and the per-mode figures, and `drawPrismOps()` carries a pointer back to i
 - **Wheels** (§8.9): drag anywhere in the slot to set the value directly; PB springs back to
   centre on release, MOD latches and also takes wheel-scroll trim.
 - **Preset cluster**: ◀/▶ step `currentPreset` and apply (like tape-echo `applyPreset`,
-  iterating the static preset table); the combo jumps directly; ★ saves; **BROWSE** opens the
+  iterating the static preset table); the combo opens a **mode-grouped multi-column popup**
+  showing the whole library at once (§8.12); **SAVE** saves (§8.11); **BROWSE** opens the
   searchable browser (§8.10) — click loads, double-click / APPLY loads and closes,
   Esc / scrim / ✕ / CLOSE close, arrows + Enter navigate.
 - **MOD overlay**: MOD MATRIX button toggles; click-scrim, ✕ or **Esc** closes. Esc with a

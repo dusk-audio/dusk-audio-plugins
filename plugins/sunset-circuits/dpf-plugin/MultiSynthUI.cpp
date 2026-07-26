@@ -71,6 +71,10 @@ namespace
     };
     const char* const kModeNames[6] = { "COSMOS", "ORACLE", "MONO", "MODULAR", "PRISM", "ACID" };
 
+    // Version chip under the "Dusk Audio" byline. Middle dot, not an em dash:
+    // the crisp atlas is baked over Latin-1 and U+2014 draws as a "?" box.
+    const char* const kVerLabel = "\xC2\xB7 v" SC_VERSION_STRING;
+
     // Combo option tables (labels only; no trademarks).
     const char* const kWave5[]    = { "Saw", "Square", "Triangle", "Sine", "Pulse" };
     const char* const kWave4[]    = { "Saw", "Square", "Triangle", "Sine" };
@@ -389,8 +393,13 @@ protected:
     //   left   Cosmos 19856 · Oracle 20434 · Mono 20380 · Modular 21428 ·
     //          PRISM 49466 · Acid 19856
     //   center 16376 (all modes) · right 10528..13272 · bottom 20514..22094
+    //
+    // kLayerPopup is the one layer that is NOT a layer window: it is the preset
+    // combo's own popup, sampled from inside drawPresetPopupBody(). A popup is a
+    // separate ImGui window with its own draw list, so the multi-column grid has
+    // its own 16-bit budget and would otherwise never appear in the census.
     enum { kLayerTop, kLayerLeft, kLayerCenter, kLayerRight, kLayerBottom, kLayerModal,
-           kLayerBrowse, kNumLayers };
+           kLayerBrowse, kLayerPopup, kNumLayers };
     void endLayer(int layer)
     {
        #ifdef MSYNTH_FRAME_PROFILE
@@ -419,7 +428,7 @@ protected:
             std::fprintf(stderr, "MSYNTH_FRAME logic_median=%.3fms total_median=%.3fms (100 frames)\n",
                          a[50], b[50]);
             static const char* const kLayerNames[kNumLayers] =
-                { "top", "left", "center", "right", "bottom", "modal", "browse" };
+                { "top", "left", "center", "right", "bottom", "modal", "browse", "popup" };
             for (int i = 0; i < kNumLayers; ++i)
                 std::fprintf(stderr, "MSYNTH_VTX %-7s max=%5d / 65535 (%.1f%%)\n",
                              kLayerNames[i], vtxMax[i], 100.0 * vtxMax[i] / 65535.0);
@@ -915,28 +924,86 @@ private:
     //========================================================================
     // Top bar (nameplate, mode rockers, preset browser)
     //========================================================================
+    // TOP-BAR LAYOUT (design space; the bar is y 0..54).
+    //
+    // Three zones, left to right: NAMEPLATE (title + "Dusk Audio · vX.Y.Z"), the
+    // six MODE rockers, and the PRESET cluster, right-anchored at 1222.
+    //
+    // The rockers used to be pinned at x306, leaving a ~120 px hole between them
+    // and the nameplate and squeezing the preset cluster into the last 270 px.
+    // They now start immediately after the nameplate — MEASURED with textW()
+    // rather than guessed, so the gap survives a font substitution — and the
+    // width that frees goes entirely to the presets, which is what was actually
+    // short: the combo grew 126 -> 208 (at 126 it clipped the longest factory
+    // names, "Alien Transmission" among them), BROWSE 40 -> 76, SAVE 36 -> 58,
+    // and the chevrons 26x28 -> 34x32. Every cluster element now shares one
+    // 12..44 row, so the bar reads as a single band instead of three heights.
+    //
+    // The cluster is laid out right-to-left from kBarClusterX1 because it is the
+    // anchored end: gaps between its five elements are constants, so any future
+    // width change moves the LEFT edge (and, through the clamp below, the
+    // rockers) rather than silently overrunning the panel wall.
+    static constexpr float kBarClusterX1 = 1222.0f;
+    static constexpr float kBarY0 = 12.0f, kBarY1 = 44.0f;
+    static constexpr float kBarSaveW = 58.0f, kBarBrowseW = 76.0f;
+    static constexpr float kBarChevW = 34.0f, kBarComboW = 208.0f;
+    static constexpr float kBarSaveX0   = kBarClusterX1 - kBarSaveW;                 // 1164
+    static constexpr float kBarBrowseX0 = kBarSaveX0   - 6.0f - kBarBrowseW;         // 1082
+    static constexpr float kBarNextX0   = kBarBrowseX0 - 6.0f - kBarChevW;           // 1042
+    static constexpr float kBarComboX0  = kBarNextX0   - 4.0f - kBarComboW;          //  830
+    static constexpr float kBarPrevX0   = kBarComboX0  - 4.0f - kBarChevW;           //  792
+    // Rockers: 90 wide on a 96 pitch. "MODULAR" at font 12 is ~46 wide and is
+    // drawn at centre+7 (the LED owns x0+11), so it ends ~14 short of the right
+    // edge — the narrowest of the six fits with room, and the row is 570 wide.
+    static constexpr float kBarModeW = 90.0f, kBarModePitch = 96.0f;
+
     void drawTopBar()
     {
         dl->AddRectFilled(P(0, 0), P(kDesignW, 54), mulA(live.bg, 1.0f));
         dl->AddRectFilled(P(0, 0), P(kDesignW, 3), metalCol());
         dl->AddLine(P(0, 54), P(kDesignW, 54), IM_COL32(70, 70, 72, 255), 1.5f * s);
 
-        text(18, 8, 20.0f, live.text, "SUNSET CIRCUITS", -1, true);
-        text(20, 32, 11.0f, live.accent, "Dusk Audio", -1, true);
-
-        // Nameplate hover shows the single-sourced build version (SC_VERSION_STRING).
+        // ---- nameplate ----
+        // The version rides with the "Dusk Audio" byline, one step down the type
+        // hierarchy from it (10 px vs 11, dim ink vs accent): it has to be
+        // FINDABLE — a bug report starts with it — not read on every glance.
+        const float titleX = 18.0f, subX = 20.0f;
+        const float verX   = subX + textW(11.0f, "Dusk Audio") + 7.0f;
+        const float blockX1 = std::max(titleX + textW(20.0f, "SUNSET CIRCUITS"),
+                                       verX  + textW(10.0f, kVerLabel));
+        text(titleX, 8, 20.0f, live.text, "SUNSET CIRCUITS", -1, true);
+        text(subX, 32, 11.0f, live.accent, "Dusk Audio", -1, true);
+        // Scale-gated exactly like the persistent read-outs (§3.1b): 10 px of
+        // design space is under 6 device px at the 620x390 minimum, which is the
+        // same illegible mush that gate exists to suppress. The nameplate tooltip
+        // carries the version at every size, so nothing is lost by dropping it.
+        if (readoutsOn()) text(verX, 33, 10.0f, withA(live.text, 140), kVerLabel, -1);
         {
-            const ImVec2 np0 = P(14, 4), np1 = P(290, 50);
+            const ImVec2 np0 = P(14, 4), np1 = P(blockX1 + 6.0f, 50);
             ImGui::SetCursorScreenPos(np0);
             ImGui::InvisibleButton("nameplate", ImVec2(np1.x - np0.x, np1.y - np0.y));
+            // Full version (single-sourced from the git tag through CMake's
+            // SC_VERSION_STRING, so it IS the build identity) plus the live
+            // surface size and scale, which is the one other thing worth asking
+            // for in a bug report. Deliberately NOT __DATE__/__TIME__: those
+            // would make every rebuild a different binary and cost the release
+            // builds their reproducibility for a line nobody can act on.
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Sunset Circuits v%s", SC_VERSION_STRING);
+                ImGui::SetTooltip("Sunset Circuits v%s\nDusk Audio\n%d x %d \xC2\xB7 scale %.2f",
+                                  SC_VERSION_STRING, (int)getWidth(), (int)getHeight(), s);
         }
 
-        // Mode rockers ×6 (spec §8.1)
+        // ---- mode rockers x6 (spec §8.1) ----
+        // Start at the nameplate, but never at the cost of the preset cluster:
+        // the clamp is what guarantees the two zones cannot collide however wide
+        // the title measures on a substituted font.
+        float modeX0 = blockX1 + 16.0f;
+        const float modeMax = kBarPrevX0 - 14.0f - (5.0f * kBarModePitch + kBarModeW);
+        if (modeX0 > modeMax) modeX0 = modeMax;
         for (int i = 0; i < 6; ++i)
         {
-            const float x0 = 306.0f + i * 106.0f, x1 = x0 + 100.0f, y0 = 10.0f, y1 = 46.0f;
+            const float x0 = modeX0 + i * kBarModePitch, x1 = x0 + kBarModeW;
+            const float y0 = 10.0f, y1 = 46.0f;
             const bool sel = (i == curMode);
             char id[16]; std::snprintf(id, sizeof(id), "rocker%d", i);
             const ImVec2 p0 = P(x0, y0), p1 = P(x1, y1);
@@ -954,76 +1021,203 @@ private:
             else
                 dl->AddRect(p0, p1, IM_COL32(70, 70, 74, 255), 5.0f * s, 0, 1.2f * s);
             panel.led(dl, x0 + 11.0f, 0.5f * (y0 + y1), sel, 3.0f);
-            text(0.5f * (x0 + x1) + 8.0f, y0 + 11.0f, 12.0f,
+            text(0.5f * (x0 + x1) + 7.0f, y0 + 11.0f, 12.0f,
                  sel ? live.text : lerpC(live.text, live.bg, 0.35f), kModeNames[i], 0, sel);
         }
 
-        // Preset prev / combo / next / browse / save. currentPreset is a combined
-        // index: factory [0..kNumFactoryPresets) then user [kNumFactoryPresets..total).
-        // The cluster spans 952..1222; BROWSE was fitted by narrowing the combo
-        // 168 -> 126 and sliding ▶ left, leaving ★ SAVE on its original rect. The
-        // combo preview clips the longest factory names ("Alien Transmission") at
-        // that width, which is precisely what the browser exists to solve — it
-        // shows every name in full, with its mode and bank.
+        // ---- preset cluster ----
+        // currentPreset is a COMBINED index: factory [0..kNumFactoryPresets) then
+        // user [kNumFactoryPresets..total).
         const char* preview = presetName(currentPreset);
-        if (chevron("presetPrev", 952, 14, 978, 42, false, "Previous preset"))
+        if (chevron("presetPrev", kBarPrevX0, kBarY0, kBarPrevX0 + kBarChevW, kBarY1, false, "Previous preset"))
             applyCombined(currentPreset < 0 ? comboTotal() - 1 : currentPreset - 1);
 
-        ImGui::SetCursorScreenPos(P(982, 14));
-        ImGui::SetNextItemWidth(126.0f * s);
+        ImGui::SetCursorScreenPos(P(kBarComboX0, kBarY0));
+        ImGui::SetNextItemWidth(kBarComboW * s);
         ImFont* f = panel.pickFont(12.0f * s);
         ImGui::PushFont(f);
         // FramePadding.y floored at 1 px, as in comboBox(): at the 620x390 minimum
-        // the atlas face can be taller than the 28*s row, and a negative padding
+        // the atlas face can be taller than the row, and a negative padding
         // collapses the combo frame rather than tightening it.
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                            ImVec2(6.0f * s, std::max(1.0f, (28.0f * s - f->FontSize) * 0.5f)));
+        const float comboPadY = std::max(1.0f, ((kBarY1 - kBarY0) * s - f->FontSize) * 0.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * s, comboPadY));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(38, 38, 41, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
         ImGui::PushStyleColor(ImGuiCol_Header,  withA(live.accent, 150));
         ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(235, 238, 242, 255));
+        // Setting the constraint OURSELVES is what unlocks the grid: BeginCombo
+        // only imposes its "8 items tall, one column wide" default when no
+        // constraint is pending (imgui.cpp, BeginComboPopup), so supplying one
+        // hands the popup back its natural, content-driven size. The height cap
+        // keeps a large USER bank from growing a popup taller than the plugin
+        // window — ImGui clamps a popup's POSITION into the viewport, never its
+        // size, so an uncapped one would simply hang off the bottom.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
+                                            ImVec2(FLT_MAX, (float)getHeight() * 0.86f));
         if (ImGui::BeginCombo("##presets", preview))
         {
-            for (int i = 0; i < kNumFactoryPresets; ++i)
-            {
-                const bool sel = i == currentPreset;
-                if (ImGui::Selectable(kFactoryPresets[i].name, sel)) applyPreset(i);
-                if (sel) ImGui::SetItemDefaultFocus();   // auto-scroll to selection on open
-            }
-            const auto& users = presetStore.list();
-            if (!users.empty())
-            {
-                ImGui::Separator();
-                for (int u = 0; u < (int)users.size(); ++u)
-                {
-                    ImGui::PushID(u);   // user names may duplicate factory names
-                    const bool sel = currentPreset == kNumFactoryPresets + u;
-                    if (ImGui::Selectable(users[u].name.c_str(), sel)) applyUserPreset(u);
-                    if (sel) ImGui::SetItemDefaultFocus();
-                    ImGui::PopID();
-                }
-            }
+            drawPresetPopupBody();
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select a factory or user preset");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Select a preset \xC2\xB7 grouped by mode, %d in all", comboTotal());
         ImGui::PopStyleColor(4); ImGui::PopStyleVar(); ImGui::PopFont();
 
-        if (chevron("presetNext", 1112, 14, 1138, 42, true, "Next preset"))
+        if (chevron("presetNext", kBarNextX0, kBarY0, kBarNextX0 + kBarChevW, kBarY1, true, "Next preset"))
             applyCombined(currentPreset < 0 ? 0 : currentPreset + 1);
 
         // BROWSE — full-screen searchable browser over factory + user presets.
-        if (barButton("presetBrowse", 1142, 14, 1182, 42, "BROWSE",
+        if (barButton("presetBrowse", kBarBrowseX0, kBarY0, kBarBrowseX0 + kBarBrowseW, kBarY1, "BROWSE",
                       "Browse every preset: search by name, filter by mode or bank"))
             openBrowse();
 
-        // Save ★ — opens the user-preset save modal (writes the current patch).
-        if (barButton("presetSave", 1186, 14, 1222, 42, "SAVE",
+        // SAVE — opens the user-preset save modal (writes the current patch).
+        if (barButton("presetSave", kBarSaveX0, kBarY0, kBarSaveX0 + kBarSaveW, kBarY1, "SAVE",
                       "Save the current patch as a user preset"))
             openSaveModal();
     }
 
+    //========================================================================
+    // Preset combo popup — grouped, multi-column
+    //========================================================================
+    // TapeMachine 2's preset combo groups its list with TextDisabled category
+    // headers in ONE column and lets ImGui scroll it. That reads fine at twenty
+    // presets; at 54 it is a scroll hunt. So the same idea is laid out ACROSS:
+    // one group per MODE — which is this synth's strongest cue, and the same
+    // grouping the browser's chips use — stacked into as many columns as the
+    // window can actually hold, so the whole library is on screen at once.
+    //
+    // Still ONE ImGui window: the columns are BeginGroup/SameLine inside the
+    // combo's own popup, not sibling windows, so the backend's
+    // no-overlapping-windows limit is not in play. (A combo popup is the one
+    // layer this backend does composite over the base windows, which is why the
+    // single-column version worked; nothing here changes that.)
+    //
+    // Column WIDTH is measured from the actual atlas face rather than assumed
+    // from the design size: pickFont() snaps to the nearest baked size, so at
+    // small scales the glyphs are larger than 12*s and a design-space width
+    // would clip exactly the names this change exists to stop clipping.
+    void drawPresetPopupBody()
+    {
+        const auto& users = presetStore.list();
+        const int nUsers  = (int)users.size();
+        const int nGroups = 6 + (nUsers > 0 ? 1 : 0);
+
+        if (ImGui::IsWindowAppearing() || popupColW <= 0.0f) measurePopupColumn();
+
+        const ImGuiStyle& st = ImGui::GetStyle();
+        const float pitch = popupColW + st.ItemSpacing.x;
+
+        // Rows per group (header + entries), for the balance below.
+        int rows[7] = {};
+        for (int i = 0; i < kNumFactoryPresets; ++i) ++rows[clampMode(factoryMode[i])];
+        for (int m = 0; m < 6; ++m) rows[m] += 1;
+        if (nUsers > 0) rows[6] = 1 + nUsers;
+
+        // How many columns fit. Not "one per group": seven 1:1 columns are ~1.1
+        // kpx and sit inside 1240 comfortably, but at the 620x390 minimum the
+        // atlas floor keeps the glyphs near full size while the window halves,
+        // and the same seven would run off the screen edge.
+        int nCols = (int)std::floor(((float)getWidth() - 2.0f * st.WindowPadding.x) / pitch);
+        nCols = std::max(1, std::min(nGroups, nCols));
+
+        // Greedy height balance: keep filling a column until the next group would
+        // push it past the average, then move on. A group is never split across
+        // columns — a mode's presets are the unit being grouped — so with the
+        // usual "one column per group" outcome the target simply never binds; it
+        // only does the work when the window forces two small groups to share.
+        int total = 0; for (int g = 0; g < nGroups; ++g) total += rows[g];
+        const int target = (total + nCols - 1) / nCols;
+        int colRows = 0, colIdx = 0;
+        bool open = false;
+        for (int g = 0; g < nGroups; ++g)
+        {
+            if (open && colRows > 0 && colRows + rows[g] > target && colIdx + 1 < nCols)
+            {
+                ImGui::EndGroup();
+                ImGui::SameLine(0.0f, st.ItemSpacing.x);
+                ++colIdx; colRows = 0; open = false;
+            }
+            if (!open) { ImGui::BeginGroup(); open = true; }
+            drawPresetPopupGroup(g, users);
+            colRows += rows[g];
+        }
+        if (open) ImGui::EndGroup();
+
+       #ifdef MSYNTH_FRAME_PROFILE
+        // The popup is its own window, so it has its own 16-bit index budget and
+        // is invisible to endLayer(). Sample it here, inside the popup.
+        { const int v = ImGui::GetWindowDrawList()->VtxBuffer.Size;
+          if (v > vtxMax[kLayerPopup]) vtxMax[kLayerPopup] = v; }
+       #endif
+    }
+
+    // One group: an accent header with a hairline rule, then its presets. The
+    // header is drawn in that MODE's accent (not the live one) so the column a
+    // preset lives in is identifiable at a glance even mid-crossfade.
+    void drawPresetPopupGroup(int g, const std::vector<scpreset::Entry>& users)
+    {
+        const bool isUser = (g >= 6);
+        const ImU32 col = isUser ? live.accent : kPalettes[g].accent;
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::TextUnformatted(isUser ? "USER" : kModeNames[g]);
+        ImGui::PopStyleColor();
+        { const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+          ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, b.y), ImVec2(a.x + popupColW, b.y),
+                                              withA(col, 80), 1.0f); }
+
+        const ImVec2 cell(popupColW, 0.0f);
+        if (!isUser)
+        {
+            for (int i = 0; i < kNumFactoryPresets; ++i)
+            {
+                if (clampMode(factoryMode[i]) != g) continue;
+                const bool sel = (i == currentPreset);
+                ImGui::PushID(i);
+                if (ImGui::Selectable(kFactoryPresets[i].name, sel, 0, cell)) applyPreset(i);
+                if (sel) ImGui::SetItemDefaultFocus();
+                ImGui::PopID();
+            }
+        }
+        else
+        {
+            for (int u = 0; u < (int)users.size(); ++u)
+            {
+                ImGui::PushID(kNumFactoryPresets + u);   // user names may duplicate factory ones
+                const bool sel = (currentPreset == kNumFactoryPresets + u);
+                if (ImGui::Selectable(users[u].name.c_str(), sel, 0, cell)) applyUserPreset(u);
+                if (sel) ImGui::SetItemDefaultFocus();
+                ImGui::PopID();
+            }
+        }
+    }
+
+    // Widest label in the popup, measured through the face ImGui will actually
+    // draw with. Run once per popup opening (IsWindowAppearing), not per frame:
+    // it is ~60 string measurements, and nothing it depends on can change while
+    // the popup is up — the store is only rescanned by save/delete, both of
+    // which live behind modals that cannot be open at the same time.
+    void measurePopupColumn()
+    {
+        ImFont* const f = ImGui::GetFont();
+        const float fs = ImGui::GetFontSize();
+        float w = 0.0f;
+        const auto widen = [&](const char* t)
+        { w = std::max(w, f->CalcTextSizeA(fs, FLT_MAX, 0.0f, t).x); };
+        for (int i = 0; i < kNumFactoryPresets; ++i) widen(kFactoryPresets[i].name);
+        for (const auto& e : presetStore.list())     widen(e.name.c_str());
+        for (int m = 0; m < 6; ++m)                  widen(kModeNames[m]);
+        // A user name can be up to 128 chars (saveNameBuf); cap the column so one
+        // long name cannot push the grid off the window. Selectable clips its own
+        // label, and the browser (§8.10) is where full names are guaranteed.
+        popupColW = std::min(w + 2.0f * ImGui::GetStyle().FramePadding.x + 8.0f * s,
+                             (float)getWidth() * 0.32f);
+    }
+
     // Small labelled button in the top bar's preset cluster (BROWSE / SAVE): the
-    // chevron chrome with a 9 px accent label instead of a triangle.
+    // chevron chrome with a 10 px accent label instead of a triangle. (9 px was
+    // sized for the old 36/40-wide buttons; on the widened ones it read as a
+    // caption floating in a box rather than the button's own label.)
     bool barButton(const char* id, float x0, float y0, float x1, float y1,
                    const char* label, const char* tip)
     {
@@ -1035,7 +1229,7 @@ private:
         if (tip && hovered) ImGui::SetTooltip("%s", tip);
         dl->AddRectFilled(b0, b1, IM_COL32(38, 38, 41, 255), 4.0f * s);
         dl->AddRect(b0, b1, hovered ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.2f * s);
-        text(0.5f * (x0 + x1), y0 + 7.0f, 9.0f, live.accent, label, 0, true);
+        text(0.5f * (x0 + x1), 0.5f * (y0 + y1) - 5.0f, 10.0f, live.accent, label, 0, true);
         return clicked;
     }
 
@@ -3784,6 +3978,9 @@ private:
     int    browseN = 0;
     int    browseIdx[kBrowseMax] = {};
     int    factoryMode[kNumFactoryPresets] = {};   // derived once in the ctor
+    // Preset-combo popup: column width in DEVICE px, measured from the live atlas
+    // face each time the popup opens (see measurePopupColumn).
+    float  popupColW = 0.0f;
 
     // filter-curve cache
     static constexpr int kFcN = 180;
