@@ -185,6 +185,13 @@ public:
     float getOutputLevelR() const noexcept { return outLevelR.load(std::memory_order_relaxed); }
     int   getArpStep() const noexcept { return arpStep.load(std::memory_order_relaxed); }
     int   getArpTotalSteps() const noexcept { return arpTotalSteps.load(std::memory_order_relaxed); }
+    // Current performance-wheel state, whoever last wrote it — the shell's MIDI
+    // handler (0xE0 / CC 1) or the editor's on-screen wheels. Read-only, relaxed,
+    // no new state: these are the same atomics pitchBend()/modWheel() store into.
+    // The UI reads them each frame so the drawn wheels follow the host/hardware
+    // instead of silently disagreeing with the engine (see UI spec §8.9).
+    float getPitchBend() const noexcept { return pitchBendNorm.load(std::memory_order_relaxed); }
+    float getModWheel() const noexcept  { return modWheelValue.load(std::memory_order_relaxed); }
     // Held-note bitmask over MIDI 0..127 (bit n set between noteOn(n) and
     // noteOff(n)/allNotesOff, regardless of arp/acid routing — it tracks the
     // player's KEY state, not the sounding voices). Audio thread updates it with

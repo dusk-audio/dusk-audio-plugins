@@ -834,12 +834,48 @@ and `Mod Whl` mod-matrix sources without external hardware.
   `multiSynthGetDSP` bridge — the same entry points the shell's MIDI handler calls for 0xE0
   and CC 1, both plain relaxed atomic stores, so a UI-thread write is safe. Neither is a host
   parameter (performance state, not patch state): nothing to automate, nothing to save.
-- **Limits (accepted)**: a split LV2 UI has no bridge, so the wheels draw inert with an
-  explanatory tooltip; and bend sent by the HOST is not reflected back into the widget,
-  because the engine exposes no getter and adding one is a core change. Last writer wins,
-  which is how two physical controllers on one input behave anyway. The UI destructor
-  recentres pitch bend if the window closes mid-drag; the mod wheel is deliberately left
-  latched.
+  The same atomics are **read back** every frame through `MultiSynthDSP::getPitchBend()` /
+  `::getModWheel()` (read-only relaxed loads; no new engine state), which is what lets the
+  drawn wheels follow the host and hardware.
+
+#### 8.9a Ownership: who is the wheel this frame
+
+There is **one atomic per wheel**, shared between the shell's MIDI handler and these widgets,
+so ownership is resolved every frame in `updateWheels()`:
+
+| Condition | Owner | Behaviour |
+|---|---|---|
+| widget held (`pbDragging` / `modDragging`) | **local** | the drag writes the engine; an incoming host message is ignored for that frame so the control is not yanked out from under the pointer |
+| otherwise, engine value ≠ last value we pushed | **engine** | an external write (0xE0 / CC 1 from the host or hardware) — adopt it into the widget and redraw at that deflection |
+| otherwise | — | nothing to do; the widget already agrees with the engine |
+
+Adoption runs **before** the spring step, so a bend arriving mid-frame wins that frame rather
+than one frame later. On first frame after the editor opens, `*Sent` is 0 and the engine may
+hold a latched value, so this same rule **seeds both widgets from the engine** — which is how
+a reopened editor draws the mod wheel where the sound actually is.
+
+- **Spring exit condition (derived).** The spring is gated on `pbLocal` — *this UI authored the
+  current bend* — not on the old "not held and off centre". It exits when either
+  **(a)** the value reaches centre, which is where a released local drag belongs, or
+  **(b)** adoption clears `pbLocal` because an external write landed mid-spring, in which case
+  the spring abandons the gesture to whoever is now driving.
+  The old unconditional rule is a bug once the widget follows MIDI: a bend the host is
+  **holding** would be adopted, then immediately sprung, and the decaying UI value would be
+  pushed back over the host's — detuning the note the player is still bending. Under the
+  `pbLocal` gate a held hardware bend simply stays deflected on screen and untouched in the
+  engine.
+  Accepted consequence: releasing the on-screen wheel springs to **centre**, not back to a
+  bend the host may still be holding. There is one atomic and a held bend is not re-sent, so
+  the previous external value is unknowable — this is ordinary last-writer-wins MIDI merge.
+- **Teardown** (`~MultiSynthUI`): recentre pitch bend **only if `pbLocal`**. A bend this UI
+  authored has no widget left to release it, so closing mid-drag or mid-spring would leave the
+  engine detuned. A bend the *host* is holding is not ours to cancel — zeroing it would snap
+  the pitch of a note still being bent just because the editor was closed. The **mod wheel is
+  not reset at all**: it latches like the hardware it stands in for, and the old reset existed
+  only to stop a reopened UI drawing 0 against a non-zero engine — a workaround that
+  `getModWheel()` makes obsolete.
+- **Limits (accepted)**: a split LV2 UI has no bridge, so the wheels neither drive nor follow
+  the engine and are drawn inert with an explanatory tooltip.
 
 ### 8.10 Preset browser (`showBrowse`)
 The combo is a list you scroll; the browser is the library you read. BROWSE (§1.1) opens it

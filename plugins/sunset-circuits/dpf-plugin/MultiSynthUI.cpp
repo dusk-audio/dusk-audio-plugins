@@ -145,24 +145,24 @@ public:
     //
     //  * a key held under the mouse — sendNote() note-off, or the voice hangs for the
     //    life of the plugin (the release path is IsMouseReleased, which never arrives);
-    //  * pitch bend — the wheel springs back on release, but a window closed mid-drag
-    //    would leave the engine detuned;
-    //  * the mod wheel — only when THIS UI is what put it off zero (modSent != 0).
-    //    It latches like the hardware it stands in for, and the engine keeps the value
-    //    while the editor is shut, but a reopened UI draws the wheel at 0 because the
-    //    engine exposes no getter, and the first touch would then slam a stale-looking
-    //    control. Resetting what we set keeps widget and engine honest; a host driving
-    //    CC 1 is left alone, since modSent stays 0 in that case. The clean fix is a
-    //    read-only modWheel getter to seed the widget on first frame — that needs a
-    //    core accessor (modWheelValue is private), so it is out of this pass's scope.
+    //  * pitch bend — but ONLY a bend this UI authored (pbLocal). The spring normally
+    //    lands it, and a window closed mid-drag or mid-spring would otherwise leave
+    //    the engine detuned with no widget left to release it. A bend the HOST or a
+    //    hardware wheel is holding is NOT ours to cancel: zeroing it here would snap
+    //    the pitch of a note the player is still bending just because they closed the
+    //    editor. pbLocal is exactly that distinction (see updateWheels).
+    //
+    // The mod wheel is deliberately NOT reset. It latches like the hardware it stands
+    // in for and the engine keeps the value while the editor is shut; the old reset
+    // existed only because the engine had no getter, so a reopened UI would have drawn
+    // the wheel at 0 and disagreed with the sound. MultiSynthDSP::getModWheel() now
+    // seeds the widget from the engine on the first frame, so the honest behaviour —
+    // leave the latch alone — is finally available.
     ~MultiSynthUI() override
     {
         if (kbNote >= 0) sendNote(0, (uint8_t)kbNote, 0);
         if (msynth::MultiSynthDSP* d = dspAccess())
-        {
-            if (pbSent  != 0.0f) d->pitchBend(0.0f);
-            if (modSent != 0.0f) d->modWheel(0.0f);
-        }
+            if (pbLocal && pbSent != 0.0f) d->pitchBend(0.0f);
     }
 
 protected:
@@ -3005,41 +3005,77 @@ private:
     // thread is safe and is what makes "Mod Whl" / "P.Bend" usable as mod-matrix
     // sources without a hardware controller. There is no host-facing parameter for
     // either (they are performance state, not patch state), so nothing to automate
-    // and nothing to save. Consequence: a split LV2 UI has no bridge and the wheels
-    // are drawn inert with an explanatory tooltip, and bend sent by the HOST is not
-    // reflected back into the widget (the engine exposes no getter, and adding one
-    // is a core change) — last writer wins, which is how two physical controllers
-    // on one input would behave anyway.
+    // and nothing to save. They are also READ BACK every frame through
+    // getPitchBend()/getModWheel(), so bend and CC 1 arriving from the host or a
+    // hardware controller move the drawn wheels; updateWheels() arbitrates that
+    // against a local drag. Consequence for a split LV2 UI: no bridge, so the wheels
+    // neither drive nor follow the engine, and are drawn inert with a tooltip saying so.
     void drawWheels()
     {
         const bool live_ = dspAccess() != nullptr;
         drawWheel("pbwheel", 54, 80, true, pbValue, "PB",
-                  live_ ? "Pitch bend. Drag up or down; springs back to centre on release."
+                  live_ ? "Pitch bend. Drag up or down; springs back to centre on release.\n"
+                          "Follows bend sent by the host or a hardware wheel."
                         : "Pitch bend is unavailable in a remote (split) UI.", live_);
         drawWheel("modwheel", 86, 112, false, modValue, "MOD",
-                  live_ ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim."
+                  live_ ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim.\n"
+                          "Follows CC 1 sent by the host or a hardware wheel."
                         : "The mod wheel is unavailable in a remote (split) UI.", live_);
         pushWheels();   // again, so a live drag reaches the engine with no frame of lag
     }
 
-    // Spring return + engine push, run once per FRAME from onImGuiDisplay rather than
-    // from the wheel's own draw. The mod-matrix and save modals REPLACE the base
-    // layers and return early, so drawWheels() does not run while one is open: a bend
-    // released as a modal opened used to freeze at whatever it had reached and stay
-    // there, detuning the engine until the modal was closed. Frame-driven, the spring
-    // keeps running whatever is on screen.
+    // Wheel arbitration + spring return + engine push, run once per FRAME from
+    // onImGuiDisplay rather than from a wheel's own draw. The mod-matrix and save
+    // modals REPLACE the base layers and return early, so drawWheels() does not run
+    // while one is open: a bend released as a modal opened used to freeze at whatever
+    // it had reached and stay there, detuning the engine until the modal was closed.
+    // Frame-driven, the spring keeps running whatever is on screen.
+    //
+    // OWNERSHIP (spec §8.9). One atomic per wheel is shared with the shell's MIDI
+    // handler, so "who is the wheel" has to be resolved every frame:
+    //   * the local widget owns its value WHILE HELD — a host message arriving mid-
+    //     drag must not yank the control out from under the pointer;
+    //   * otherwise the ENGINE owns it. An engine value that differs from what we
+    //     last pushed can only have come from somewhere else (0xE0 / CC 1, i.e. the
+    //     host or a hardware controller), so we adopt it and redraw at that
+    //     deflection. This is what makes the drawn wheels follow the keyboard.
     void updateWheels()
     {
-        const bool dragging = pbDragging;
-        pbDragging = false;          // re-armed by drawWheel() while the wheel is held
-        if (!dragging && pbValue != 0.0f)
+        const bool pbHeld  = pbDragging,  modHeld = modDragging;
+        pbDragging = modDragging = false;   // re-armed by drawWheel() while held
+
+        if (msynth::MultiSynthDSP* const d = dspAccess())
+        {
+            // --- adopt external writes (must run BEFORE the spring step, so an
+            // incoming bend wins the frame it arrives rather than one frame later)
+            if (!pbHeld)
+            {
+                const float e = d->getPitchBend();
+                if (e != pbSent) { pbValue = e; pbSent = e; pbLocal = false; }
+            }
+            if (!modHeld)
+            {
+                const float e = d->getModWheel();
+                if (e != modSent) { modValue = e; modSent = e; }
+            }
+        }
+
+        // --- pitch spring. Gated on pbLocal (this UI authored the current bend), NOT
+        // merely on "not held and off centre": a bend the HOST is holding must stay
+        // deflected on screen, and springing it would push our decaying value back
+        // over the host's and detune the note the player is still bending. The exit
+        // conditions are therefore (a) reaching centre, which is where a released
+        // local drag belongs, or (b) adoption above clearing pbLocal because an
+        // external write landed mid-spring — the spring abandons the gesture to
+        // whoever is now driving instead of fighting it to zero.
+        if (pbLocal && !pbHeld && pbValue != 0.0f)
         {
             // Exponential return, time constant 1/45 s = 22 ms; from a full bend it is
             // inaudible (|v| < 0.002) after ~140 ms. Glided rather than snapped so a
             // released bend lands instead of clicking.
             const float dt = ImGui::GetIO().DeltaTime;
             pbValue -= pbValue * (1.0f - std::exp(-(dt > 0.0f ? dt : 0.016f) * 45.0f));
-            if (std::fabs(pbValue) < 0.002f) pbValue = 0.0f;
+            if (std::fabs(pbValue) < 0.002f) { pbValue = 0.0f; pbLocal = false; }
         }
         pushWheels();
     }
@@ -3080,9 +3116,12 @@ private:
             const float wh = ImGui::GetIO().MouseWheel;
             if (wh != 0.0f) { v += wh * 0.05f; v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
         }
-        // The spring itself lives in updateWheels(), which runs every frame; this only
-        // reports whether the wheel is currently held, so the spring knows to wait.
-        if (bipolar && active) pbDragging = true;
+        // The spring and the engine/widget arbitration both live in updateWheels(),
+        // which runs every frame; this only reports that the wheel is currently held,
+        // so the spring waits and an incoming host message does not steal the drag.
+        // pbLocal additionally marks the bend as THIS UI's, which is what licenses the
+        // spring to pull it back and the destructor to centre it.
+        if (active) { if (bipolar) { pbDragging = true; pbLocal = true; } else modDragging = true; }
 
         // bezel + recessed slot
         dl->AddRectFilled(P(x0 - 2, top - 2), P(x1 + 2, bot + 2), metalCol(), 5.0f * s);
@@ -3480,7 +3519,8 @@ private:
     // was last told, so the atomics are written only on change.
     float  pbValue = 0.0f,  modValue = 0.0f;
     float  pbSent  = 0.0f,  modSent  = 0.0f;
-    bool   pbDragging = false;   // set by drawWheel(), consumed by updateWheels()
+    bool   pbDragging = false, modDragging = false;  // set by drawWheel(), consumed by updateWheels()
+    bool   pbLocal = false;      // the current bend was authored HERE, not by the host
 
     // Latched FX read-out panel: 0 none, 1 DELAY, 2 REVERB (see drawFXStrip).
     int    fxReadoutPanel = 0;
