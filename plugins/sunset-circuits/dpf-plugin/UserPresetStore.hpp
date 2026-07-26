@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -174,20 +175,44 @@ public:
     // Write the 222 core params to <sanitized name>.scpreset. Returns false on
     // an empty/invalid name or any IO error. Overwrites an existing file (the
     // UI runs the overwrite-confirm flow before calling this).
-    bool save(const std::string& displayName, const float* values, int nValues)
+    //
+    // On failure `errOut` (when given) receives a short, human-readable reason.
+    // Every failure here is one the PLAYER can act on — a read-only preset
+    // directory, a full disk, a name that sanitizes to nothing — so a bare false
+    // is not enough: the caller has to be able to say WHY on screen instead of
+    // silently dropping the patch. The three sources are kept distinct:
+    //   * create_directories' error_code, which used to be discarded outright.
+    //     "open catches failure" was true but lossy: a permission error on the
+    //     directory surfaced as an unexplained open failure one line later;
+    //   * the ofstream open, reported through errno (the stream itself carries no
+    //     reason), which is where ENOSPC/EACCES/ENAMETOOLONG on the FILE land;
+    //   * the final flush, which is where a full disk usually actually shows up —
+    //     the writes above are buffered, so open can succeed and only the flush
+    //     of the ~222-line body hits the wall.
+    bool save(const std::string& displayName, const float* values, int nValues,
+              std::string* errOut = nullptr)
     {
         namespace fs = std::filesystem;
-        if (nValues < (int)kNumCoreParams || values == nullptr) return false;
+        const auto fail = [errOut](const char* what, const std::string& why) -> bool
+        {
+            if (errOut != nullptr) *errOut = why.empty() ? std::string(what)
+                                                         : std::string(what) + ": " + why;
+            return false;
+        };
+        if (nValues < (int)kNumCoreParams || values == nullptr)
+            return fail("internal error (short value array)", {});
         const std::string stem = sanitize(displayName);
-        if (stem.empty()) return false;
+        if (stem.empty()) return fail("that name has no usable characters", {});
 
         std::error_code ec;
         const fs::path dir = presetDir();
-        fs::create_directories(dir, ec);   // no-op if present; ec ignored, open catches failure
+        fs::create_directories(dir, ec);   // no-op if already present
+        if (ec) return fail("cannot create the preset folder", ec.message());
 
         const fs::path file = dir / (stem + kFileExt);
+        errno = 0;
         std::ofstream os(file, std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!os) return false;
+        if (!os) return fail("cannot open the file for writing", errnoText());
 
         os << "# SunsetCircuits preset v" << kFormatVersion << '\n';
         os << "name=" << stem << '\n';
@@ -198,8 +223,11 @@ public:
             std::snprintf(line, sizeof line, "%s=%.9g\n", kParamDefs[i].symbol, values[i]);
             os << line;
         }
+        errno = 0;
         os.flush();
-        return (bool)os;
+        if (!os) return fail("the write failed", errnoText());
+        if (errOut != nullptr) errOut->clear();
+        return true;
     }
 
     // Load a preset by file path into out[0..kNumCoreParams-1]. The array is
@@ -288,6 +316,15 @@ public:
     }
 
 private:
+    // errno rendered through the same machinery as an error_code, so a filesystem
+    // failure and a stream failure read the same way on screen. Empty when errno
+    // was never set (a stream can fail without touching it).
+    static std::string errnoText()
+    {
+        if (errno == 0) return {};
+        return std::error_code(errno, std::generic_category()).message();
+    }
+
     static void stripCR(std::string& s)
     { if (!s.empty() && s.back() == '\r') s.pop_back(); }
 

@@ -415,11 +415,51 @@ Copy the tape-echo pattern (its `drawHeader` combo): push `ImGuiCol_FrameBg`
 the skin. Set item width to the control rect. Place with `SetCursorScreenPos(P(x,y))`.
 For Acid's silver panel, use dark frame `IM_COL32(70,72,78,255)` and light text.
 
+**`FramePadding.y` is floored at 1 px** wherever it is derived from a row height:
+`padY = max(1, (rowH*s − font->FontSize) * 0.5)`. At the 620×390 minimum the atlas hands
+back a face whose `FontSize` can exceed `rowH*s`, and the resulting negative padding
+collapses the frame (and clips the `InputText` caret) instead of merely tightening it.
+Applies to `comboBox()`, the top-bar preset combo and the browser's FIND field alike.
+
 ### 3.10 Tooltip system
 Every control passes a `tooltip=` string to the shared knob, or (for combos/buttons)
 calls `ImGui::SetTooltip("%s", kTip[param])` when `ImGui::IsItemHovered()`. Tooltips live
 in one `static constexpr const char* kTooltips[kParamCount]` array indexed by param enum —
 see the **full table §6**. Hover delay = ImGui default; no tooltip while dragging.
+
+**On-screen strings are ASCII punctuation only.** The crisp atlas is baked over the
+Latin-1 range, so an em dash renders as a `?` box. Use `:` or the middle dot
+`"\xC2\xB7"` (which *is* in range, and is what the browser tooltip and footer already
+use). Comments in the source are free to use whatever reads best; drawn strings are not.
+
+### 3.11 Host edit-gesture lifecycle (`beginEdit` / `endEdit`)
+A `beginEdit` is a promise to the host — "a human is writing this parameter, hold your
+latch/recording here" — and only an `endEdit` retracts it. In an immediate-mode UI the
+widget that made the promise is not guaranteed to exist on the next frame, so the promise
+is **tracked centrally**, in the `duskdpf::ParamHost` overrides, not left to the widget:
+
+- `MultiSynthUI::openEditParam` holds the one open gesture (or `-1`). One slot is enough:
+  a drag captures the mouse, and every other path (`setChoice`, wheel, Ctrl-reset,
+  double-click reset, `pushParam`) is begin/set/end inside a single call.
+- `closeOrphanedEdit()` runs at the **top of `onImGuiDisplay`**, before anything can open
+  a new one. Every gesture that spans frames is backed by an ImGui *active item* (that is
+  what holds the capture), so "a gesture is open and `IsAnyItemActive()` is false" can
+  only mean the owner stopped being submitted — ImGui clears the active id in `NewFrame`
+  after one frame without a submission. Running before any widget is what makes the test
+  unambiguous: a fresh activation cannot have happened yet.
+- `~MultiSynthUI` closes a gesture still open at teardown (window closed mid-drag).
+
+The three ways a widget disappears under an open gesture, all of which leaked before:
+
+| Case | How |
+|---|---|
+| Mode-conditional widget | Host automation or a MIDI program change writes `mode` mid-drag; the Acid pitch lane / Prism op matrix / every sub-panel knob stops being drawn, and the `IsItemDeactivated()` `endEdit` is in the branch that no longer runs |
+| Modal opened | `showMod` / `showBrowse` / `showSaveModal` early-return past the base layers |
+| Editor closed | The window is destroyed mid-drag |
+
+Widget-side latches that gate a re-`beginEdit` must fall with the gesture —
+`pitchDragging` is cleared by `closeOrphanedEdit()`, or the lane would come back inert and
+its next drag would push values with no gesture around them.
 
 ---
 
@@ -1057,6 +1097,33 @@ springing back (§8.9).
   that held a query a moment earlier reads as empty and inactive — testing the live buffer
   closes the browser on the very keystroke meant to clear the search.
 
+### 8.11 Save-user-preset modal (`showSaveModal`)
+Panel `(420,285)–(820,495)`, same scrim + replace-panels rule as §8.10. Name `InputText`
+at `(440,351)` w360; hint line at `y 393`; button row at `y 435` — SAVE `(440)`, CANCEL
+`(572)`, DELETE right-aligned `(680)` and only present when a **user** preset is loaded.
+
+- **Name validity is cached, not recomputed per frame.** `sanitize()` plus `exists()`
+  (which builds four `fs::path`s inside `presetDir()` and then `stat()`s the folder) ran
+  on every frame the modal was up. They are recomputed on `ImGui::IsItemEdited()` and once
+  on open (`saveNameDirty`) — the same idiom as the browser's `browseDirty` index.
+- **Esc backs out one step at a time**, matching §8.10: overwrite-confirm → delete-confirm
+  → clear a non-empty name (caret restored) → close. It used to close the modal outright,
+  so Esc mid-typing — the reflex for "no, not that name" — threw away the dialog with the
+  name. The name test uses the value captured at the **start of the frame**
+  (`saveNameHadText`), for the exact reason `browseSearchHadText` exists.
+- **A failed write keeps the modal open** and puts the reason in the hint slot in red,
+  outranking both advisories, holding until the name is edited. It used to close
+  unconditionally, which made the two failures a player actually meets — a read-only
+  preset folder and a full disk — indistinguishable from success, with the patch gone.
+  `scpreset::Store::save()` takes an optional `std::string* errOut` and reports three
+  distinct sources: `create_directories`' `error_code` (previously discarded outright),
+  the `ofstream` open via `errno`, and the final `flush` via `errno` — the last is where a
+  full disk usually lands, since the ~222-line body is buffered and only the flush hits
+  the wall. `commitDelete()` follows the same contract.
+
+Hint-slot priority, one line, in order: **save/delete error** → "Enter a name to save." →
+"Name in use · saving will ask to overwrite."
+
 ---
 
 ## 9. Rendering & performance notes
@@ -1083,7 +1150,10 @@ springing back (§8.9).
   - Mode crossfade touches only colors — no re-layout, no re-cache.
 - **Bridge reads** (`getOutputLevelL/R`, `getScope`, step index, active notes) are one
   call each per frame, guarded by `#if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS` + null check,
-  exactly like `TapeEchoUI`'s `tapeEchoGetOutputLevel`.
+  exactly like `TapeEchoUI`'s `tapeEchoGetOutputLevel`. The contract is **per symbol** —
+  each accessor is its own weak symbol, resolved or not on its own — so a call site that
+  uses two of them must null-check **both**; taking L as proof of R is a null call away
+  from a crash, and the pair is meaningless half-filled anyway.
 - **No allocations in the frame loop**: fixed `values[kParamCount]`, fixed scratch arrays
   for curve/scope/adsr polylines (members), `snprintf` into stack buffers.
 
@@ -1108,7 +1178,7 @@ Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
 
 | Layer | max verts | of 65535 | driver |
 |---|---|---|---|
-| **left (Prism)** | **49 466** | **75.5 %** | 36 chrome knobs in the operator matrix |
+| **left (Prism)** | **49 466** | **75.5 %** | 37 chrome knobs in the operator matrix (4 ops × 9 + FB) |
 | left (other modes) | 21 428 | 32.7 % | OSC 1/2/3 + VOICE / CHARACTER (max is Modular, which draws two OSC 3 knobs) |
 | bottom | 22 094 | 33.7 % | sequencer lanes + FX strip + keyboard + wheels (max is Acid, four lanes) |
 | center | 16 508 | 25.2 % | filter curve + 2 ADSR displays + 8 knobs |
@@ -1150,9 +1220,19 @@ worktree with the same flags and swept with the same script. Reading them:
 > Budget against 22 142; the per-mode numbers are the reproducible ones.
 
 The worst case is **not** the mod-matrix modal (14.8 %) but the **Prism operator matrix**,
-at ~76 %. That is the layer to watch: roughly 16 k vertices of headroom, i.e. about a dozen
-more chrome knobs, before it would need splitting. Vertex counts are near scale-invariant
+at ~76 %. That is the layer to watch. Vertex counts are near scale-invariant
 (rounded-corner tessellation adds only ~0.4 % going from 1× to 1.5×).
+
+**Headroom, measured rather than estimated.** A control run that added one extra r13 knob
+per operator strip moved `left` in Prism **49 466 → 53 338**, i.e. **3 872 for four** →
+**≈ 968 vertices per r13 chrome knob** (body + tick ring + accent arc + chip label). The
+remaining `65 535 − 49 466 = 16 069` is therefore room for **≈ 16 more knobs** in Prism's
+left column — and for far fewer if they arrive with panels, dividers and read-outs
+attached. `MScenter` (25.0 %) and `MSright` (20.3 %) are where anything larger belongs.
+
+The `endLayer()` comment in `MultiSynthUI.cpp` used to name the mod-matrix modal as the
+worst case, contradicting this table by 5×; it now carries the same numbers, the per-knob
+cost, and the per-mode figures, and `drawPrismOps()` carries a pointer back to it.
 
 ---
 
@@ -1170,7 +1250,12 @@ more chrome knobs, before it would need splitting. Vertex counts are near scale-
   iterating the static preset table); the combo jumps directly; ★ saves; **BROWSE** opens the
   searchable browser (§8.10) — click loads, double-click / APPLY loads and closes,
   Esc / scrim / ✕ / CLOSE close, arrows + Enter navigate.
-- **MOD overlay**: MOD MATRIX button toggles; click-scrim or ✕ closes.
+- **MOD overlay**: MOD MATRIX button toggles; click-scrim, ✕ or **Esc** closes. Esc with a
+  Source/Dest dropdown open belongs to the dropdown: ImGui closes that popup itself, in
+  `NewFrame` (`NavUpdateCancelRequest`) and without consuming the key, so the overlay tests
+  the popup state as it stood at the **top of the frame** (`modPopupWasOpen`) — otherwise
+  one keystroke closes both.
+- **Save modal**: §8.11 — Esc ladder, cached name validity, visible write failures.
 - **Mode switch**: rockers set `mode`, kick 280 ms crossfade; sub-panels dissolve; per-mode
   visibility (§4.7) applies immediately to which widgets are drawn.
 - **Hidden vs disabled**: mode-irrelevant sub-panel controls are hidden; globally-relevant

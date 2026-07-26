@@ -46,6 +46,9 @@ namespace
     constexpr float kDesignW = 1240.0f;
     constexpr float kDesignH = 780.0f;
     constexpr float kPi = 3.14159265358979f;
+    // Period of the Modular S&H staircase animation in shPhase units — the
+    // staircase is sin((shPhase + k*1.37) * 2.1), so 2*pi/2.1.
+    constexpr float kShPeriod = 2.0f * kPi / 2.1f;
 
     inline ImU32 hx(uint32_t rgb) { return IM_COL32((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255); }
 
@@ -94,8 +97,32 @@ class MultiSynthUI : public UI, public duskdpf::ParamHost
 {
 public:
     //--- duskdpf::ParamHost -----------------------------------------------------
-    void beginEdit(uint32_t idx) override { editParameter(idx, true); }
-    void endEdit(uint32_t idx) override   { editParameter(idx, false); }
+    // Every host edit gesture this UI opens is TRACKED, not just forwarded. A
+    // gesture is a promise to the host ("automation is being written by hand,
+    // hold your recording/latch here") that only an endEdit can retract, and the
+    // widget that made the promise is not always around to keep it:
+    //
+    //   * the ACID pitch lane, and every knob that lives in a mode-conditional
+    //     branch, stops being submitted the instant the Mode param changes — and
+    //     Mode changes from the HOST too (automation, a MIDI program change),
+    //     with no regard for a drag in progress. The widget's IsItemDeactivated()
+    //     endEdit is in the branch that no longer runs;
+    //   * opening a modal (mod matrix / browser / save) early-returns past the
+    //     base layers with exactly the same effect;
+    //   * closing the editor mid-drag destroys the widget outright.
+    //
+    // In every one of those the host is left with an open gesture on a parameter
+    // nothing will ever touch again — in a DAW that reads as a control stuck in
+    // "being edited" forever. Only ONE gesture can be open at a time here (a
+    // drag captures the mouse, and every other path is begin/set/end inside one
+    // call), so one slot is enough; closeOrphanedEdit() below force-closes it and
+    // the destructor is the last-resort backstop.
+    void beginEdit(uint32_t idx) override { openEditParam = (int)idx; editParameter(idx, true); }
+    void endEdit(uint32_t idx) override
+    {
+        if (openEditParam == (int)idx) openEditParam = -1;
+        editParameter(idx, false);
+    }
     void setParam(uint32_t idx, float v) override { setParameterValue(idx, v); }
 
     MultiSynthUI()
@@ -168,8 +195,13 @@ public:
     // the wheel at 0 and disagreed with the sound. MultiSynthDSP::getModWheel() now
     // seeds the widget from the engine on the first frame, so the honest behaviour —
     // leave the latch alone — is finally available.
+    // An open edit gesture is also this UI's to undo: a window closed mid-drag has
+    // no widget left to fire the endEdit, and the host would hold the parameter in
+    // "being edited" for the life of the plugin. editParameter() directly rather
+    // than endEdit(): the tracking state is about to be destroyed anyway.
     ~MultiSynthUI() override
     {
+        if (openEditParam >= 0) { editParameter((uint32_t)openEditParam, false); openEditParam = -1; }
         if (kbNote >= 0) sendNote(0, (uint8_t)kbNote, 0);
         if (msynth::MultiSynthDSP* d = dspAccess())
             if (pbLocal && pbSent != 0.0f && d->getPitchBend() == pbSent)
@@ -200,6 +232,7 @@ protected:
         s   = std::min(winW / kDesignW, winH / kDesignH);
         org = ImVec2(0.5f * (winW - kDesignW * s), 0.5f * (winH - kDesignH * s));
 
+        closeOrphanedEdit();   // before anything can re-open one (see beginEdit)
         syncMidiProgramChange();
         updateWheels();   // before the modal early-returns below, so the bend spring
                           // keeps running while an overlay is up
@@ -334,8 +367,28 @@ protected:
     // windows. Every layer therefore ends through endLayer(), which (in a
     // -DMSYNTH_FRAME_PROFILE build) samples that window's draw list before
     // ImGui::End() and keeps a running per-layer maximum, printed with the frame
-    // timings. Re-run it after adding chrome; the worst case is the mod-matrix
-    // modal, which draws the panel plus 8 rows of combos/knobs in ONE window.
+    // timings. Re-run it after adding chrome.
+    //
+    // WORST CASE: MSleft in PRISM — 49466 / 65535 (75.5%). Not the mod-matrix
+    // modal, which this comment used to name: measured on the same build the
+    // modal peaks at 9692 (14.8%) with a Source dropdown open and the browser at
+    // 10616 (16.2%), i.e. five times under the real leader. The operator matrix
+    // is what runs away with it: 37 r13 knobs in ONE window, against MSleft's
+    // 19856 (30.3%) when the same layer draws the two oscillator panels instead.
+    //
+    // Measured headroom, so an addition can be checked by arithmetic rather than
+    // re-litigated: one r13 knob (chrome + ticks + accent arc + chip label) costs
+    // ~968 vertices — a control run with one extra knob per op strip moved MSleft
+    // 49466 -> 53338, i.e. 3872 for 4. The remaining 16069 vertices are therefore
+    // room for ~16 more knobs in Prism's left column, and for nothing like that
+    // many if they bring panels and read-outs with them. Anything bigger than a
+    // knob or two belongs in another layer; MScenter (25.0%) and MSright (20.3%)
+    // both have the budget for it.
+    //
+    // Per-mode figures (base layers, no overlay), for reference:
+    //   left   Cosmos 19856 · Oracle 20434 · Mono 20380 · Modular 21428 ·
+    //          PRISM 49466 · Acid 19856
+    //   center 16376 (all modes) · right 10528..13272 · bottom 20514..22094
     enum { kLayerTop, kLayerLeft, kLayerCenter, kLayerRight, kLayerBottom, kLayerModal,
            kLayerBrowse, kNumLayers };
     void endLayer(int layer)
@@ -394,6 +447,31 @@ protected:
     }
 
 private:
+    // Force-close an edit gesture whose owning widget stopped being submitted.
+    //
+    // Every gesture that SPANS frames in this UI is backed by an ImGui ACTIVE item
+    // — the knob, the pitch cell, the sequencer lane being dragged — because that
+    // is what holds the mouse capture; the begin/set/end-in-one-call paths (combo
+    // pick, wheel, ctrl-reset, double-click reset) are already balanced when they
+    // return. So "a gesture is open at the top of a frame and NOTHING is active"
+    // can only mean the owner is gone: ImGui clears the active id in NewFrame once
+    // an active item goes one frame without being submitted, which is exactly the
+    // mode flip / modal open / teardown case.
+    //
+    // Running at the TOP of the frame (before any widget) is what makes the test
+    // unambiguous: a fresh activation cannot have happened yet, so a non-zero
+    // active id here always belongs to the still-live owner of our gesture.
+    //
+    // pitchDragging is the pitch lane's own "I already opened a gesture" latch and
+    // has to fall with it, or the lane would come back inert — its next drag would
+    // see the latch still set and push values with no gesture around them.
+    void closeOrphanedEdit()
+    {
+        if (openEditParam < 0 || ImGui::IsAnyItemActive()) return;
+        endEdit((uint32_t)openEditParam);
+        pitchDragging = false;
+    }
+
     //========================================================================
     // small helpers
     //========================================================================
@@ -895,7 +973,11 @@ private:
         ImGui::SetNextItemWidth(126.0f * s);
         ImFont* f = panel.pickFont(12.0f * s);
         ImGui::PushFont(f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * s, (28.0f * s - f->FontSize) * 0.5f));
+        // FramePadding.y floored at 1 px, as in comboBox(): at the 620x390 minimum
+        // the atlas face can be taller than the 28*s row, and a negative padding
+        // collapses the combo frame rather than tightening it.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(6.0f * s, std::max(1.0f, (28.0f * s - f->FontSize) * 0.5f)));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(38, 38, 41, 255));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
         ImGui::PushStyleColor(ImGuiCol_Header,  withA(live.accent, 150));
@@ -1003,34 +1085,59 @@ private:
         overwriteConfirm = false;
         deleteConfirm = false;
         saveNameBuf[0] = '\0';
+        saveNameHadText = false;
+        saveNameDirty = true;
+        saveError[0] = '\0';
     }
 
     // Write values[] to disk, refresh the list, and select the new preset.
+    //
+    // A FAILED save keeps the modal open and puts the reason in the hint slot. It
+    // used to close unconditionally, which made the two failures a player actually
+    // meets — a read-only preset folder and a full disk — completely invisible:
+    // the modal dismissed exactly as it does on success and the patch was gone.
+    // The typed name is deliberately left in the field so the retry (a different
+    // name, or after freeing space) costs nothing.
     void commitSave()
     {
         const std::string nm = scpreset::sanitize(saveNameBuf);
         if (nm.empty()) return;
-        if (presetStore.save(saveNameBuf, values, (int)kNumCoreParams))
+        std::string err;
+        if (!presetStore.save(saveNameBuf, values, (int)kNumCoreParams, &err))
         {
-            presetStore.refresh();
-            const auto& L = presetStore.list();
-            for (int u = 0; u < (int)L.size(); ++u)
-                if (L[u].name == nm) { currentPreset = kNumFactoryPresets + u; break; }
+            std::snprintf(saveError, sizeof saveError, "Save failed: %s", err.c_str());
+            overwriteConfirm = false;   // back out of the confirm, keep name + modal
+            return;
         }
+        saveError[0] = '\0';
+        presetStore.refresh();
+        const auto& L = presetStore.list();
+        for (int u = 0; u < (int)L.size(); ++u)
+            if (L[u].name == nm) { currentPreset = kNumFactoryPresets + u; break; }
         showSaveModal = false;
         overwriteConfirm = false;
     }
 
+    // Same contract as commitSave: a delete that did not happen (read-only folder,
+    // file locked) leaves the modal up with the reason, rather than closing and
+    // leaving the preset sitting in the list as if nothing had been asked.
     void commitDelete()
     {
         if (currentPreset >= kNumFactoryPresets)
         {
             const int u = currentPreset - kNumFactoryPresets;
             const auto& L = presetStore.list();
-            if (u >= 0 && u < (int)L.size()) presetStore.remove(L[u].path);
+            if (u >= 0 && u < (int)L.size() && !presetStore.remove(L[u].path))
+            {
+                std::snprintf(saveError, sizeof saveError,
+                              "Delete failed: could not remove the file");
+                deleteConfirm = false;
+                return;
+            }
             presetStore.refresh();
             currentPreset = -1;
         }
+        saveError[0] = '\0';
         showSaveModal = false;
         deleteConfirm = false;
     }
@@ -1666,7 +1773,12 @@ private:
         const float rx0 = 884, ry0 = 360, rx1 = 988, ry1 = 448;  // shortened so the lower jacks (ry1+8) clear the 462 panel bottom
         dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), mulA(IM_COL32(10, 14, 12, 255), a), 3.0f * s);
         const float rate = values[kParamShRate];
-        shPhase += ImGui::GetIO().DeltaTime * rate;
+        // Wrapped, not free-running. The staircase is sin((shPhase + k*1.37)*2.1),
+        // period 2*pi/2.1 in shPhase, so folding into one period is exact — and it
+        // has to be folded: at the 50 Hz top of the S&H range a raw accumulator
+        // passes 180000 inside an hour, where a float32 mantissa can no longer
+        // resolve a 16 ms step and the animation visibly quantises, then stalls.
+        shPhase = std::fmod(shPhase + ImGui::GetIO().DeltaTime * rate, kShPeriod);
         const int steps = 8;
         ImVec2 stair[steps * 2];
         for (int i = 0; i < steps; ++i)
@@ -1719,6 +1831,11 @@ private:
     //========================================================================
     // Prism operator matrix (left column) + algorithm diagram
     //========================================================================
+    // BUDGET NOTE: this is the single heaviest thing the UI draws. Its 37 r13
+    // knobs put MSleft at 49466 / 65535 vertices in Prism (75.5%) — every other
+    // layer in every other mode sits between 10k and 22k. See the census comment
+    // on endLayer() for the measured per-knob cost (~968 vertices) and re-run the
+    // -DMSYNTH_FRAME_PROFILE census before adding anything here.
     void drawPrismOps()
     {
         panelBox(16, 60, 340, 408);
@@ -1868,7 +1985,6 @@ private:
         ImVec2 busPts[4]; int nb = 0;
         for (int i = 0; i < 4; ++i) if ((alg.carrierMask >> i) & 1)
         {
-            dl->AddLine(opc[i], P(0, 0), 0, 0); // no-op keeps structure clear
             dl->AddLine(ImVec2(opc[i].x, opc[i].y + box), ImVec2(opc[i].x, P(0, busY).y),
                         mulA(live.accent, a), (big ? 1.6f : 0.9f) * s);
             busPts[nb++] = opc[i];
@@ -1923,7 +2039,7 @@ private:
         const ImVec2 b0 = P(768, 474), b1 = P(992, 534);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("modbar", ImVec2(b1.x - b0.x, b1.y - b0.y));
-        if (ImGui::IsItemClicked()) showMod = !showMod;
+        if (ImGui::IsItemClicked()) { showMod = !showMod; modPopupWasOpen = false; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the modulation matrix");
         dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 4.0f * s);
         dl->AddRect(b0, b1, showMod ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.4f * s);
@@ -1935,6 +2051,9 @@ private:
     void drawModMatrixOverlay()
     {
         if (!showMod) return;
+        // Was a Source/Dest dropdown open at the START of this frame? Needed by the
+        // Esc handler at the bottom — see there.
+        const bool popupWasOpen = modPopupWasOpen;
         // Dark scrim behind the modal. NOTE: we deliberately do NOT submit a
         // full-window InvisibleButton for the scrim. In Dear ImGui the first
         // overlapping item to be submitted claims the hover (no AllowOverlap), so a
@@ -1995,6 +2114,21 @@ private:
             drawX(984, y + 20, 4.0f, live.textPanel);
         }
 
+        // Esc closes the overlay, matching the browser and the save modal (its
+        // absence here was the odd one out: the only modal you could not dismiss
+        // from the keyboard).
+        //
+        // One step at a time, as everywhere else: Esc with a Source/Dest dropdown
+        // open belongs to the DROPDOWN. ImGui closes that popup itself, but it
+        // does so in NewFrame (NavUpdateCancelRequest) and does not consume the
+        // key, so by the time this line runs the popup is already gone and
+        // IsPopupOpen() would report a clear field — one keystroke would close
+        // both. The test therefore uses the popup state as it stood at the top of
+        // this frame, the same before-the-fact trick browseSearchHadText uses.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !popupWasOpen
+            && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+            showMod = false;
+
         // Scrim close: dismiss the overlay only on a click in the dark area OUTSIDE
         // the panel rect, and only when no combo popup is open (so choosing a
         // Source / Dest / clearing a slot never dismisses the modal). Clicks inside
@@ -2005,6 +2139,8 @@ private:
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !insidePanel
             && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
             showMod = false;
+
+        modPopupWasOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
     }
 
     // Stock ImGui button styled to the mode accent; returns true on click.
@@ -2026,6 +2162,9 @@ private:
     void drawSaveModalOverlay()
     {
         if (!showSaveModal) return;
+        // The name as it stood BEFORE this frame's InputText ran — the browser's
+        // Esc handler needs the same thing, for the same reason (see there).
+        const bool nameHadText = saveNameHadText;
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
         dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(0, 0, 0, 150));
 
@@ -2054,11 +2193,23 @@ private:
         if (saveModalJustOpened) { ImGui::SetKeyboardFocusHere(); saveModalJustOpened = false; }
         const bool enter = ImGui::InputText("##presetname", saveNameBuf, sizeof(saveNameBuf),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
+        // Name VALIDITY and COLLISION are cached, not recomputed per frame: the
+        // pair costs a sanitize() allocation plus presetDir() (four more
+        // fs::path allocations) plus a stat() of the preset folder, and the answer
+        // can only change when the text does. Same browseDirty idiom as the
+        // browser's filter index — recompute on an actual edit, and once on open.
+        if (ImGui::IsItemEdited()) { saveNameDirty = true; saveError[0] = '\0'; }
+        if (saveNameDirty)
+        {
+            saveNameValid  = !scpreset::sanitize(saveNameBuf).empty();
+            saveNameExists = saveNameValid && presetStore.exists(saveNameBuf);
+            saveNameDirty  = false;
+        }
+        saveNameHadText = (saveNameBuf[0] != '\0');   // for next frame's Esc test
         ImGui::PopStyleColor(2);
 
-        const std::string nm = scpreset::sanitize(saveNameBuf);
-        const bool valid  = !nm.empty();
-        const bool exists = valid && presetStore.exists(saveNameBuf);
+        const bool valid  = saveNameValid;
+        const bool exists = saveNameExists;
 
         const float by = y0 + 150;   // button row baseline
         if (overwriteConfirm)
@@ -2077,10 +2228,19 @@ private:
         }
         else
         {
-            if (!valid)
+            // Hint slot, one line, three tenants in priority order: a failed write
+            // outranks both advisories — it is the only one reporting something
+            // that already went wrong, and it stays until the name is edited.
+            if (saveError[0] != '\0')
+                text(x0 + 20, y0 + 108, 10.0f, IM_COL32(240, 96, 80, 255), saveError, -1, true);
+            else if (!valid)
                 text(x0 + 20, y0 + 108, 10.0f, whiteDimCol(), "Enter a name to save.", -1);
             else if (exists)
-                text(x0 + 20, y0 + 108, 10.0f, whiteDimCol(), "Name in use — saving will ask to overwrite.", -1);
+                // ASCII punctuation only in on-screen strings: the crisp atlas is
+                // baked from the Latin-1 range, so an em dash renders as a "?"
+                // box. (The \xC2\xB7 middle dot used elsewhere IS in the range.)
+                text(x0 + 20, y0 + 108, 10.0f, whiteDimCol(),
+                     "Name in use \xC2\xB7 saving will ask to overwrite.", -1);
 
             const bool doSave = modalButton("SAVE", x0 + 20, by, 120, 30, true) || (enter && valid);
             if (doSave && valid) { if (exists) overwriteConfirm = true; else commitSave(); }
@@ -2093,7 +2253,31 @@ private:
 
         ImGui::PopFont();
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showSaveModal = false;
+        // Esc backs out ONE step at a time, same ladder as the browser: a confirm
+        // first, then the typed name, and only then the modal itself. It used to
+        // close the modal outright, so Esc mid-typing — the reflex for "no, not
+        // that name" — threw away the whole dialog along with the name.
+        //
+        // The name test uses the value captured at the TOP of this frame, because
+        // ImGui's InputText handles Esc inside its own call: it reverts the buffer
+        // to its focus-time value and drops the active id, so a field that held
+        // text a moment ago can already read as empty here. Testing the live
+        // buffer alone would close the modal on the very keystroke meant to clear
+        // it. (Same reasoning, verbatim, as browseSearchHadText.)
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            if (overwriteConfirm)      overwriteConfirm = false;
+            else if (deleteConfirm)    deleteConfirm = false;
+            else if (nameHadText || saveNameBuf[0] != '\0')
+            {
+                saveNameBuf[0] = '\0';
+                saveNameHadText = false;
+                saveNameDirty = true;
+                saveError[0] = '\0';
+                saveModalJustOpened = true;   // put the caret back in the field
+            }
+            else showSaveModal = false;
+        }
 
         // Scrim close: click in the dark area outside the panel, no popup open.
         const ImVec2 mp = ImGui::GetIO().MousePos;
@@ -2385,8 +2569,12 @@ private:
         text(kBrCX0, 110, 10.0f, live.textPanel, "FIND", -1, true);
         ImGui::SetCursorScreenPos(P(kBrCX0 + 42, 104));
         ImGui::SetNextItemWidth(318.0f * s);
+        // FramePadding.y floored at 1 px, same as comboBox(): at the 620x390
+        // minimum the crisp atlas hands back a face whose FontSize can exceed the
+        // 26*s row height, and the resulting negative padding collapses the frame
+        // (and clips the caret) instead of merely tightening it.
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                            ImVec2(6.0f * s, (26.0f * s - f->FontSize) * 0.5f));
+                            ImVec2(6.0f * s, std::max(1.0f, (26.0f * s - f->FontSize) * 0.5f)));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(24, 24, 26, 255));
         ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(238, 240, 244, 255));
         if (browseJustOpened) { ImGui::SetKeyboardFocusHere(); browseJustOpened = false; }
@@ -2612,7 +2800,12 @@ private:
 
         float lL = values[kParamOutLevelL], lR = values[kParamOutLevelR];
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (multiSynthGetOutLevelL != nullptr)
+        // BOTH accessors are tested: the bridge's contract is per-SYMBOL (each is
+        // its own weak symbol, resolved or not on its own), so "L resolved" says
+        // nothing about R. Taking L as proof of both is a null call away from a
+        // crash the moment the two ever ship apart, and the pair is meaningless
+        // half-filled anyway — fall back to the output params together.
+        if (multiSynthGetOutLevelL != nullptr && multiSynthGetOutLevelR != nullptr)
             if (void* const inst = getPluginInstancePointer())
             { lL = multiSynthGetOutLevelL(inst); lR = multiSynthGetOutLevelR(inst); }
        #endif
@@ -3542,6 +3735,10 @@ private:
     float  s = 1.0f;
     ImVec2 org = ImVec2(0, 0);
 
+    // The one edit gesture that can be open at a time, or -1. Written only by the
+    // beginEdit/endEdit overrides; read by closeOrphanedEdit() and the destructor.
+    int    openEditParam = -1;
+
     // mode crossfade
     int    curMode = 0, prevMode = 0;
     float  modeBlend = 1.0f;
@@ -3555,6 +3752,7 @@ private:
     // signal; 0 matches its initial value, so an untouched plugin never syncs.
     uint32_t lastMidiProgramSignal = 0;
     bool   showMod = false;
+    bool   modPopupWasOpen = false;   // a Source/Dest dropdown was up last frame
 
     // user preset library + save modal state
     scpreset::Store presetStore;
@@ -3563,6 +3761,12 @@ private:
     bool   overwriteConfirm = false;
     bool   deleteConfirm = false;
     char   saveNameBuf[128] = {};
+    // Cached answers about saveNameBuf (sanitize + a stat), recomputed on edit.
+    bool   saveNameDirty = true;
+    bool   saveNameValid = false;
+    bool   saveNameExists = false;
+    bool   saveNameHadText = false;   // buffer non-empty at the END of last frame
+    char   saveError[192] = {};       // last failed write, shown in the hint slot
 
     // preset browser modal. browseIdx[] holds COMBINED indices that survive the
     // current filter; it is rebuilt only when a filter changes (browseDirty), and
