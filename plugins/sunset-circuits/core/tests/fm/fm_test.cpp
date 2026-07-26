@@ -51,15 +51,30 @@ void writeFloatWavMono(const char* path, const std::vector<float>& mono, int sam
     FILE* f = std::fopen(path, "wb");
     if (!f) { std::fprintf(stderr, "cannot open %s\n", path); std::exit(2); }
 
-    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
-    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+    // Checked write: a short fwrite (disk full, quota) must fail, not truncate —
+    // a truncated WAV reads back as a shorter render and quietly moves a gate's
+    // answer. Same lambda as render_test.cpp.
+    auto w = [&](const void* p, size_t sz, size_t n) {
+        if (std::fwrite(p, sz, n, f) != n)
+        {
+            std::fprintf(stderr, "short write to %s\n", path);
+            std::exit(2);
+        }
+    };
+    auto u32 = [&](uint32_t v) { w(&v, 4, 1); };
+    auto u16 = [&](uint16_t v) { w(&v, 2, 1); };
 
-    std::fwrite("RIFF", 1, 4, f); u32(36 + dataBytes); std::fwrite("WAVE", 1, 4, f);
-    std::fwrite("fmt ", 1, 4, f); u32(16); u16(3 /* IEEE float */); u16(channels);
+    w("RIFF", 1, 4); u32(36 + dataBytes); w("WAVE", 1, 4);
+    w("fmt ", 1, 4); u32(16); u16(3 /* IEEE float */); u16(channels);
     u32((uint32_t)sampleRate); u32(byteRate); u16(blockAlign); u16(bits);
-    std::fwrite("data", 1, 4, f); u32(dataBytes);
-    std::fwrite(mono.data(), sizeof(float), mono.size(), f);
-    std::fclose(f);
+    w("data", 1, 4); u32(dataBytes);
+    w(mono.data(), sizeof(float), mono.size());
+    // fclose flushes buffered data; an EOF here means a deferred write failed.
+    if (std::fclose(f) != 0)
+    {
+        std::fprintf(stderr, "error closing %s\n", path);
+        std::exit(2);
+    }
 }
 
 // Strict string->double: reject empty, trailing garbage, or non-finite results.

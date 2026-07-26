@@ -57,15 +57,30 @@ void writeFloatWav(const char* path, const std::vector<float>& interleavedStereo
     FILE* f = std::fopen(path, "wb");
     if (!f) { std::fprintf(stderr, "cannot open %s\n", path); std::exit(2); }
 
-    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
-    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+    // Checked write: a short fwrite (disk full, quota) must fail, not truncate —
+    // a truncated WAV reads back as a shorter render and quietly moves the
+    // audit's answer. Same lambda as render_test.cpp.
+    auto w = [&](const void* p, size_t sz, size_t n) {
+        if (std::fwrite(p, sz, n, f) != n)
+        {
+            std::fprintf(stderr, "short write to %s\n", path);
+            std::exit(2);
+        }
+    };
+    auto u32 = [&](uint32_t v) { w(&v, 4, 1); };
+    auto u16 = [&](uint16_t v) { w(&v, 2, 1); };
 
-    std::fwrite("RIFF", 1, 4, f); u32(36 + dataBytes); std::fwrite("WAVE", 1, 4, f);
-    std::fwrite("fmt ", 1, 4, f); u32(16); u16(3 /* IEEE float */); u16(channels);
+    w("RIFF", 1, 4); u32(36 + dataBytes); w("WAVE", 1, 4);
+    w("fmt ", 1, 4); u32(16); u16(3 /* IEEE float */); u16(channels);
     u32((uint32_t)sampleRate); u32(byteRate); u16(blockAlign); u16(bits);
-    std::fwrite("data", 1, 4, f); u32(dataBytes);
-    std::fwrite(interleavedStereo.data(), sizeof(float), interleavedStereo.size(), f);
-    std::fclose(f);
+    w("data", 1, 4); u32(dataBytes);
+    w(interleavedStereo.data(), sizeof(float), interleavedStereo.size());
+    // fclose flushes buffered data; an EOF here means a deferred write failed.
+    if (std::fclose(f) != 0)
+    {
+        std::fprintf(stderr, "error closing %s\n", path);
+        std::exit(2);
+    }
 }
 
 struct NoteEvent { int frame; bool on; int note; float vel; };
@@ -258,6 +273,15 @@ int main(int argc, char** argv)
         synth.setParameter(pr.rows[r].index, pr.rows[r].value);
     // Post-preset auditioning overrides.
     for (const auto& o : overrides) synth.setParameter(o.idx, o.val);
+    // ...and the explicit program-change signal, which is the last thing
+    // loadProgram() does. It was missing, which made the claim above ("exactly
+    // as loadProgram does") false. Adding it is a no-op in PRACTICE here --
+    // preset_audit --json is numerically identical across all 54 presets before
+    // and after, because this binary applies the patch before the first
+    // processBlock and the first snapshot after prepare() lands rather than
+    // glides anyway -- but the harness must reproduce the real sequence, not a
+    // sequence that happens to coincide with it from a cold start.
+    synth.notifyProgramChange();
 
     synth.setTempo(tempo, true);
 
