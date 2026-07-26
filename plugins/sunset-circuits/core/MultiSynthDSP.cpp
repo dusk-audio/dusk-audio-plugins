@@ -163,6 +163,7 @@ void MultiSynthDSP::reset()
     haveWitness  = false;   // ...and must SNAP the smoothers, not glide up from stale state
     modeSwitchPending = false;  // ...and must adopt the requested mode, not fade into it
     modeFade = 1.0f;
+    deferredNoteCount = 0;      // ...and owes no notes from a fade that no longer exists
     for (auto& s : scope) s.store(0.0f, std::memory_order_relaxed);
     scopeWritePos.store(0, std::memory_order_relaxed);
     scopeCount.store(0, std::memory_order_relaxed);
@@ -185,6 +186,12 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
         // goes up again while the pedal is still down it is simply captured afresh.
         (note < 64 ? sustainedLo : sustainedHi) &= ~(1ull << (note & 63));
     }
+    // Mode-switch crossfade in flight: this note is routed to the outgoing mode
+    // below (right, it is what is still sounding), but the commit is about to
+    // reset the voice pool and wipe it. Remember it so the commit can re-issue it
+    // into the mode that actually arrives. See kMaxDeferredNotes.
+    if (modeSwitchPending && deferredNoteCount < kMaxDeferredNotes)
+        deferredNotes[deferredNoteCount++] = { note, clamp01(velocity01) };
     if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
     // Keep voiceParams.mode current even for a frame-0 note that arrives before
     // the block's snapshot runs — the voice needs it to trigger the right osc
@@ -393,6 +400,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     // point derives from vp.mode, so holding it steady is all it takes to keep the
     // outgoing engine intact and rendering for the length of the fade.
     const SynthMode requestedMode = (SynthMode)clampi((int)p(pMode), 0, 5);
+    bool committedModeSwitch = false;
     if (!haveLastSnap)
     {
         // First snapshot after prepare/reset: adopt outright, there is nothing
@@ -405,6 +413,7 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     {
         activeMode = requestedMode;     // muted: commit (cleanup runs further down)
         modeSwitchPending = false;
+        committedModeSwitch = true;     // replay the deferred note-ons after cleanup
     }
     else
     {
@@ -752,6 +761,26 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     lastSnapMode = vp.mode;
     lastArpEnabled = arpEnabled;
     lastAcidSeqEnabled = acidSeqEnabled;
+
+    // Re-issue the note-ons that arrived mid-crossfade, now that the new mode is
+    // committed and the cleanup above has finished resetting the voice pool. They
+    // go back through noteOn(), so each one picks the routing of the mode that
+    // actually arrived -- poly, arp or acid -- rather than the one it was pressed
+    // under. The counter is cleared FIRST so the re-entry cannot re-capture.
+    if (committedModeSwitch && deferredNoteCount > 0)
+    {
+        const int n = deferredNoteCount;
+        deferredNoteCount = 0;
+        for (int i = 0; i < n; ++i)
+            noteOn(deferredNotes[(size_t)i].note, deferredNotes[(size_t)i].vel);
+    }
+    else if (!modeSwitchPending)
+    {
+        // No fade in flight: either one was cancelled before it committed, in
+        // which case the notes are sounding normally in the mode that stayed, or
+        // there was never one. Either way nothing is owed.
+        deferredNoteCount = 0;
+    }
 
     // --- Parameter smoothing targets -----------------------------------------
     // Everything above wrote this block's TARGETS. The render loop advances the

@@ -362,6 +362,21 @@ private:
     float modeFade = 1.0f;             // voice-path gain, 0..1
     float modeFadeStep = 1.0f;         // per host sample, set in prepare()
 
+    // Note-ons that arrived while a mode-switch crossfade was in flight. They are
+    // routed to the OUTGOING mode (correctly -- that is what is still sounding),
+    // but the commit resets the voice pool, so without this they are wiped and
+    // the key simply does nothing. Measured: a key pressed 2 ms into the 12 ms
+    // fade sustained at -168.9 dBFS, against -9.7 dBFS for the same key pressed
+    // 8 ms later. Replayed into the new mode on the commit segment.
+    //
+    // Fixed array, sized to the largest voice pool, so the capture allocates
+    // nothing on the audio thread; past that a held chord simply stops
+    // capturing, which is the same as today's behaviour.
+    static constexpr int kMaxDeferredNotes = 16;
+    struct DeferredNote { int note = -1; float vel = 0.0f; };
+    DeferredNote deferredNotes[kMaxDeferredNotes] = {};
+    int deferredNoteCount = 0;
+
     // --- Acid mode (mode 5) helpers ---
     // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
     // AcidVoice + AcidSequencer replace the whole poly/arp path (mono).
