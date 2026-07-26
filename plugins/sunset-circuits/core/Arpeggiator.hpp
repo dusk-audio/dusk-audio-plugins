@@ -363,8 +363,25 @@ private:
         count = w;
     }
 
+    // Octave expansion adds 12 semitones per octave on top of a held note, so
+    // with a high held note and octave range 4 it runs off the top of the MIDI
+    // range: held 107 at octave 4 asks for 143. The voice happily tunes to it,
+    // which at 1x oversampling is above Nyquist -- note 143 (31.6 kHz nominal)
+    // rendered as a 2352 Hz alias tone, i.e. a wrong pitch, not a high one.
+    //
+    // SKIP rather than fold. Folding (subtracting octaves until it fits) is the
+    // other option, but it re-sounds a pitch the pattern already contains, so a
+    // 4-octave sweep would audibly repeat its top notes instead of ending. Every
+    // hardware arp this mode is modelled on simply runs out of range. Skipping
+    // also needs no special case for the two paths: both advanceFree and
+    // advanceLocked index the same pattern array, so a shorter pattern is
+    // consistent by construction.
+    //
+    // patternSize cannot reach 0 this way: the octave-0 pass copies the held
+    // notes verbatim and those came from MIDI, so they are always in range.
     void pushPattern(const NoteInfo& n) noexcept
     {
+        if (n.note < 0 || n.note > 127) return;
         if (patternSize < kMaxPattern) pattern[(size_t)patternSize++] = n;
     }
 
