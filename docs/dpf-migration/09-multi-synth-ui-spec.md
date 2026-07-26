@@ -192,6 +192,35 @@ globals + 48 seq step rows). Controls:
 | Op ratio | `%.2f` | `×` | snap list, see §4.5 |
 | Reverb decay | `%.1f` | ` s` | |
 
+#### 3.1b Persistent value read-outs
+Performance-critical knobs show their value permanently, not only in the hover bubble.
+Placement is 9.5 px design-space, dimmed on-panel ink, centred at `cy + r + 8` (the shared
+`persistent` flag), except where noted.
+
+| Where | Knobs | Placement |
+|---|---|---|
+| FILTER | Cutoff (bespoke 10 px accent read-out at `(426,290)`), Res, Env Amt, HP | under knob (y 270) |
+| AMP / FILTER ENV | A D S R ×2 | under knob (y 500), 7.6 px above the Curve combo |
+| LFO 1 / 2 | Rate, Fade | under knob (`y0+98`) |
+| VOICE / CHARACTER | row 2 only — Uni Detune, Uni Spread, Porta, Vel, PB | under knob (y 515); **suppressed in Prism geometry C**, where `yc2=514` would push the ink through the 539 panel floor |
+| OUTPUT | Volume | under knob |
+| FX DRIVE / CHORUS | Amt, Mix / Rate, Depth, Mix | under knob (y 668 / 658) |
+| FX DELAY / REVERB | all knobs | **label-slot read-out on panel hover** (below) |
+| MOD MATRIX modal | Amount ×8 | beside the knob at `x 816`, baseline `y+14` — rows are 58 apart, so an under-knob read-out sits almost midway between two knobs and captions the wrong one |
+| PRISM operator matrix | Ratio + Level per op | combined `"1.00× 80%"` line in the strip's left gutter, centred `(48, top+51)` at font 8.5 — the op rows have no free band (row 1's would land in row 2's label chips, row 2's in the next strip's divider) |
+
+- **Density fallback (`klabelOrValue`)**: FX DELAY and REVERB have no free band under their
+  knob rows (DELAY is boxed in by the P-P/TAPE row at y 664; REVERB's row-1 read-out band
+  *is* row-2's label band, and row 2 ends 5 px above the panel floor). Those panels swap the
+  knob **label** to the value, in accent ink at the same size/weight, while the pointer is
+  anywhere in the panel rect — so hovering the panel reads out every value in it at once,
+  and the row never reflows. This is preferred over dropping those knobs to hover-only.
+- **Scale gate (`readoutsOn()`, `s >= 0.72`)**: 9.5 px of design space is <5 device px at the
+  620×390 minimum, i.e. unreadable. Below `kReadoutMinS = 0.72` (≈ 893×562) every persistent
+  read-out is suppressed and the 12 px hover bubble — drawn on the foreground draw list, so
+  it is never clipped — is the only read-out. The bespoke CUTOFF read-out is exempt (it is
+  part of the FILTER panel's composition, not a per-knob caption).
+
 ### 3.2 Mode rocker (`mode`) — §8.1.
 
 ### 3.3 Toggle / LED-button (`DuskPanel::toggle` + LED variant) — §8.2.

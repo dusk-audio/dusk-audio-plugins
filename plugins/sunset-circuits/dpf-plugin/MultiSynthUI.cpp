@@ -363,6 +363,39 @@ private:
       dl->AddLine(P(cx - r, cy + r), P(cx + r, cy - r), col, 1.6f * s); }
     void klabel(float cx, float topY, const char* l) { text(cx, topY, 10.0f, live.textPanel, l, 0, true); }
 
+    //--- persistent value read-outs (spec §3.1b) --------------------------------
+    // Performance-critical knobs show their value under the knob at ALL times, not
+    // just in the hover bubble. Two gates keep that from becoming visual noise:
+    //   * SCALE — the read-out is 9.5 px of DESIGN space, so at the 620x390 minimum
+    //     (s = 0.5) it lands at <5 device px and is unreadable mush. Below
+    //     kReadoutMinS every persistent read-out is suppressed and the 12 px hover
+    //     bubble (drawn on the foreground list, never clipped) is the read-out.
+    //   * DENSITY — panels with no free band under their knobs (FX DELAY / REVERB,
+    //     whose knob rows are boxed in by the P-P/TAPE row and the panel floor)
+    //     swap the knob LABEL to the value while the pointer is anywhere in that
+    //     panel, rather than dropping to hover-only. Hovering the panel then reads
+    //     out every value in it at once, which is what A/B-ing a mix needs.
+    static constexpr float kReadoutMinS = 0.72f;   // 9.5 * 0.72 = 6.8 device px
+    bool readoutsOn() const { return s >= kReadoutMinS; }
+
+    bool mouseInRect(float x0, float y0, float x1, float y1) const
+    {
+        const ImVec2 m = ImGui::GetIO().MousePos, a = P(x0, y0), b = P(x1, y1);
+        return m.x >= a.x && m.x <= b.x && m.y >= a.y && m.y <= b.y;
+    }
+
+    // Knob label that reads out the knob's VALUE (accent ink) while `showValue`,
+    // and the static label otherwise. Identical size/weight either way, so the row
+    // never reflows as the pointer moves across it.
+    void klabelOrValue(float cx, float topY, const char* l, bool showValue, uint32_t p,
+                       const char* fmt, const char* suffix, float dmul = 1.0f,
+                       float dadd = 0.0f, bool timeAuto = false)
+    {
+        if (!showValue || !readoutsOn()) { klabel(cx, topY, l); return; }
+        char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto);
+        text(cx, topY, 10.0f, live.accent, buf, 0, true);
+    }
+
     // Mode-accent value arc drawn just outside the shared knob body (spec §3.1).
     void accentArc(float cx, float cy, float r, float t, bool bipolar, float anchorT = -1.0f)
     {
@@ -1123,12 +1156,18 @@ private:
         vLabel(KX(3), yc1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
         vLabel(KX(4), yc1 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, KX(4), yc1, kr, "%.0f", "", false, true);
 
-        // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend).
-        vLabel(KX(0), yc2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, KX(0), yc2, kr, "%.0f", " ct");
-        vLabel(KX(1), yc2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, KX(1), yc2, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(KX(2), yc2 - labOff, "PORTA"); knob("porta", kParamPortaTime, KX(2), yc2, kr, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
-        vLabel(KX(3), yc2 - labOff, "VEL");   knob("vels", kParamVelSens, KX(3), yc2, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(KX(4), yc2 - labOff, "PB");    knob("pb", kParamPbRange, KX(4), yc2, kr, "%.0f", " st", false, true);
+        // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend). This is
+        // the performance row, so it carries permanent read-outs (geometry B: ink
+        // 515..521.4, 17.6 px above the 539 inner floor). Geometry C (Prism) packs
+        // the same row at yc2 = 514 with r11 knobs, where the read-out would land at
+        // 533..539.4 and cross the floor — so it is suppressed there; the hover
+        // bubble still covers it. Row 1 is set-and-forget character, no read-outs.
+        const bool ro = readoutsOn() && !prism;
+        vLabel(KX(0), yc2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, KX(0), yc2, kr, "%.0f", " ct", false, false, ro);
+        vLabel(KX(1), yc2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, KX(1), yc2, kr, "%.0f", " %", false, false, ro, 100.0f);
+        vLabel(KX(2), yc2 - labOff, "PORTA"); knob("porta", kParamPortaTime, KX(2), yc2, kr, "%.2f", " s", false, false, ro, 1.0f, 0.0f, true, true);
+        vLabel(KX(3), yc2 - labOff, "VEL");   knob("vels", kParamVelSens, KX(3), yc2, kr, "%.0f", " %", false, false, ro, 100.0f);
+        vLabel(KX(4), yc2 - labOff, "PB");    knob("pb", kParamPbRange, KX(4), yc2, kr, "%.0f", " st", false, true, ro);
 
         // Right column — 3 combos + LEGATO lamp.
         iCombo("ovs",   kParamOversampling, is0, kOversmp, 3, "OVERSMP");
@@ -1158,10 +1197,13 @@ private:
         else               std::snprintf(rb, sizeof rb, "%.0f Hz", fc);
         text(426, 290, 10.0f, live.accent, rb, 0, true);
 
-        klabel(556, 184, "RES");    knob("res", kParamFilterRes, 556, 232, 30, "%.0f", " %", false, false, false, 100.0f);
-        klabel(636, 184, "ENV AMT");knob("fenvamt", kParamFilterEnvAmt, 636, 232, 30, "%+.0f", " %", true, false, false, 100.0f);
+        // RES / ENV AMT / HP all carry a permanent read-out (y 270, clear of the 297
+        // panel floor): they are the row you ride while playing.
+        const bool ro = readoutsOn();
+        klabel(556, 184, "RES");    knob("res", kParamFilterRes, 556, 232, 30, "%.0f", " %", false, false, ro, 100.0f);
+        klabel(636, 184, "ENV AMT");knob("fenvamt", kParamFilterEnvAmt, 636, 232, 30, "%+.0f", " %", true, false, ro, 100.0f);
         if (curMode == 0) // Cosmos HP
-        { klabel(712, 184, "HP"); knob("hp", kParamFilterHP, 712, 232, 30, "%.0f", " Hz"); }
+        { klabel(712, 184, "HP"); knob("hp", kParamFilterHP, 712, 232, 30, "%.0f", " Hz", false, false, ro); }
     }
 
     void drawFilterCurve(float rx0, float ry0, float rx1, float ry1)
@@ -1274,8 +1316,11 @@ private:
             char id[16]; std::snprintf(id, sizeof(id), "%s%s", pfx, labs[i]);
             const float cx = x0 + i * 46.0f;
             klabel(cx, 436, labs[i]);
-            if (i == 2) knob(id, baseA + i, cx, 474, 18, "%.0f", " %", false, false, false, 100.0f); // sustain
-            else        knob(id, baseA + i, cx, 474, 18, "%.0f", " ms", false, false, false, 1000.0f, 0.0f, true, true); // times, auto s
+            // Permanent read-out at y 500..506.4 — 1.5 px under the knob body and
+            // 7.6 px above the Curve combo (514).
+            const bool ro = readoutsOn();
+            if (i == 2) knob(id, baseA + i, cx, 474, 18, "%.0f", " %", false, false, ro, 100.0f); // sustain
+            else        knob(id, baseA + i, cx, 474, 18, "%.0f", " ms", false, false, ro, 1000.0f, 0.0f, true, true); // times, auto s
         }
     }
 
@@ -1361,9 +1406,12 @@ private:
         sectionTitle(x0 + 8, y0 + 4, title);
         char id[24];
         std::snprintf(id, sizeof(id), "%srate", pfx);
-        klabel(x0 + 46, y0 + 26, "RATE"); knob(id, rate, x0 + 46, y0 + 68, 22, "%.2f", " Hz");
+        // Permanent read-outs at y0+98..y0+104.4: clear of the panel floor (y0+127)
+        // and, in x, of the SYNC lamp column (x0+150..x0+232).
+        const bool ro = readoutsOn();
+        klabel(x0 + 46, y0 + 26, "RATE"); knob(id, rate, x0 + 46, y0 + 68, 22, "%.2f", " Hz", false, false, ro);
         std::snprintf(id, sizeof(id), "%sfade", pfx);
-        klabel(x0 + 116, y0 + 26, "FADE"); knob(id, fade, x0 + 116, y0 + 68, 22, "%.2f", " s", false, false, false, 1.0f, 0.0f, true, true);
+        klabel(x0 + 116, y0 + 26, "FADE"); knob(id, fade, x0 + 116, y0 + 68, 22, "%.2f", " s", false, false, ro, 1.0f, 0.0f, true, true);
         text(x0 + 168, y0 + 24, 9.5f, live.textPanel, "SHAPE", 0, true);
         std::snprintf(id, sizeof(id), "%sshape", pfx);
         comboBox(id, shape, x0 + 150, y0 + 38, x0 + 232, y0 + 58, kLfoShape, 5);
@@ -1553,6 +1601,19 @@ private:
             char lab[8]; std::snprintf(lab, sizeof(lab), "OP %d", op + 1);
             text(48, top + 28, 10.0f, carrier ? live.accent : live.textPanel, lab, -1, true);
             text(48, top + 42, 7.5f, withA(live.textPanel, 150), carrier ? "carrier" : "mod", -1, false);
+            // Permanent RATIO x LEVEL read-out for the operator. There is no free
+            // band under the op knobs (row 1's would land in row 2's label chips,
+            // row 2's in the next strip's divider), so the two values that define
+            // an operator's voice ride in the strip's left gutter instead: centred
+            // on x 48 at font 8.5 the widest string ("16.00x 100%") spans ~28..68,
+            // inside the panel wall (19) and clear of column 0's arc reach (78.8).
+            if (readoutsOn())
+            {
+                char ov[24];
+                std::snprintf(ov, sizeof ov, "%.2f\xC3\x97 %.0f%%",
+                              values[base + 0], values[base + 2] * 100.0f);
+                text(48, top + 51, 8.5f, whiteDimCol(), ov, 0);
+            }
             // group divider between LEVEL and VEL in sub-row 1
             dl->AddLine(P(231, top + 8), P(231, top + 32), withA(live.textPanel, 30), 1.0f * s);
 
@@ -1760,6 +1821,14 @@ private:
             comboBox(id, kParamModDst0 + r, 500, y + 8, 760, y + 34, kModDst, 13);
             std::snprintf(id, sizeof(id), "mamt%d", r);
             knob(id, kParamModAmt0 + r, 790, y + 20, 18, "%+.0f", " %", true, false, false, 100.0f);
+            // Permanent read-out: the depth of a routing is what you dial by ear.
+            // Placed BESIDE the knob (dead space x 812..968, between the knob's arc
+            // and the clear-row ✕) rather than under it — rows are only 58 apart, so
+            // an under-knob read-out sits almost exactly between two knobs and reads
+            // as a caption for the wrong one.
+            if (readoutsOn())
+            { char ab[24]; std::snprintf(ab, sizeof ab, "%+.0f %%", values[kParamModAmt0 + r] * 100.0f);
+              text(816, y + 14, 11.0f, whiteDimCol(), ab, -1); }
             // clear-row ✕
             std::snprintf(id, sizeof(id), "mclr%d", r);
             const ImVec2 x0 = P(972, y + 8), x1 = P(996, y + 32);
@@ -1952,7 +2021,7 @@ private:
         text(1036, 524, 9.0f, live.textPanel, "L", 0);
         text(1068, 524, 9.0f, live.textPanel, "R", 0);
 
-        klabel(1130, 336, "VOLUME"); knob("mvol", kParamMasterVol, 1130, 372, 24, "%+.1f", " dB", true, false, true, 1.0f, 0.0f, true, false, true);
+        klabel(1130, 336, "VOLUME"); knob("mvol", kParamMasterVol, 1130, 372, 24, "%+.1f", " dB", true, false, readoutsOn(), 1.0f, 0.0f, true, false, true);
         klabel(1108, 440, "PAN");    knob("mpan", kParamMasterPan, 1108, 476, 20, "%+.0f", " %", true, false, false, 100.0f);
         klabel(1180, 440, "WIDTH");  knob("mwid", kParamStereoWidth, 1180, 476, 20, "%.0f", " %", false, false, false, 100.0f);
     }
@@ -2180,8 +2249,11 @@ private:
         ledButton("drvon", kParamDriveOn, 786, 556, 828, 572, "ON");
         comboBox("drvtype", kParamDriveType, 716, 580, 828, 600, kDriveType, 3);
         // Tickless like the rest of the FX strip, centered in the body below the combo.
-        klabel(748, 612, "AMT"); knob("drvamt", kParamDriveAmt, 748, 646, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-        klabel(796, 612, "MIX"); knob("drvmix", kParamDriveMix, 796, 646, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        // DRIVE and CHORUS have a free band under their knob row, so their read-outs
+        // are permanent (ink 668..674.4 / 658..664.4 vs the 685 inner floor).
+        const bool ro = readoutsOn();
+        klabel(748, 612, "AMT"); knob("drvamt", kParamDriveAmt, 748, 646, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        klabel(796, 612, "MIX"); knob("drvmix", kParamDriveMix, 796, 646, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
 
         // Chorus — three tickless r14 knobs in ONE balanced row (the old layout
         // orphaned a smaller MIX bottom-right over dead space). Tickless reach is
@@ -2190,9 +2262,9 @@ private:
         panelBox(838, 552, 964, 688);
         sectionTitle(844, 556, "CHORUS");
         ledButton("choon", kParamChorusOn, 916, 556, 958, 572, "ON");
-        klabel(863, 598, "RATE");  knob("chorate", kParamChorusRate, 863, 636, 14, "%.2f", " Hz", false, false, false, 1.0f, 0.0f, false);
-        klabel(901, 598, "DEPTH"); knob("chodep", kParamChorusDepth, 901, 636, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-        klabel(939, 598, "MIX");   knob("chomix", kParamChorusMix, 939, 636, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabel(863, 598, "RATE");  knob("chorate", kParamChorusRate, 863, 636, 14, "%.2f", " Hz", false, false, ro, 1.0f, 0.0f, false);
+        klabel(901, 598, "DEPTH"); knob("chodep", kParamChorusDepth, 901, 636, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        klabel(939, 598, "MIX");   knob("chomix", kParamChorusMix, 939, 636, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
 
         // Delay — row structure instead of the old jumble (the DIV combo used to
         // end at y=606 with the FB label starting at 598 UNDER it): SYNC + the
@@ -2204,17 +2276,26 @@ private:
         ledButton("dlyon", kParamDelayOn, 1046, 556, 1088, 572, "ON");
         const bool sync = values[kParamDelaySync] > 0.5f;
         ledButton("dlysync", kParamDelaySync, 976, 578, 1032, 596, "SYNC");
+        // The knob row is boxed in (labels above, P-P/TAPE row at 664 below), so the
+        // read-outs live in the LABEL slot and appear while the pointer is anywhere
+        // in the DELAY panel — see klabelOrValue.
+        const bool dro = mouseInRect(968, 552, 1094, 688);
         if (sync)
         {
             comboBox("dlydiv", kParamDelayDiv, 1038, 578, 1088, 598, kDivName, 14);
-            klabel(1013, 608, "FB");  knob("dlyfb", kParamDelayFB, 1013, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            klabel(1049, 608, "MIX"); knob("dlymix", kParamDelayMix, 1049, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            klabelOrValue(1013, 608, "FB",  dro, kParamDelayFB,  "%.0f", " %", 100.0f);
+            knob("dlyfb", kParamDelayFB, 1013, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            klabelOrValue(1049, 608, "MIX", dro, kParamDelayMix, "%.0f", " %", 100.0f);
+            knob("dlymix", kParamDelayMix, 1049, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
         }
         else
         {
-            klabel(993, 608, "TIME");  knob("dlytime", kParamDelayTime, 993, 642, 14, "%.0f", " ms", false, false, false, 1.0f, 0.0f, false, true);
-            klabel(1031, 608, "FB");   knob("dlyfb", kParamDelayFB, 1031, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-            klabel(1069, 608, "MIX");  knob("dlymix", kParamDelayMix, 1069, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            klabelOrValue(993, 608, "TIME", dro, kParamDelayTime, "%.0f", " ms", 1.0f, 0.0f, true);
+            knob("dlytime", kParamDelayTime, 993, 642, 14, "%.0f", " ms", false, false, false, 1.0f, 0.0f, false, true);
+            klabelOrValue(1031, 608, "FB",  dro, kParamDelayFB,  "%.0f", " %", 100.0f);
+            knob("dlyfb", kParamDelayFB, 1031, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+            klabelOrValue(1069, 608, "MIX", dro, kParamDelayMix, "%.0f", " %", 100.0f);
+            knob("dlymix", kParamDelayMix, 1069, 642, 14, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
         }
         ledButton("dlypp", kParamDelayPP, 995, 664, 1031, 680, "P-P", true);
         ledButton("dlytape", kParamDelayTape, 1037, 664, 1073, 680, "TAPE", true);
@@ -2234,11 +2315,20 @@ private:
             dl->AddRect(P(1104, 573), P(1158, 585), live.accent, 3.0f * s, 0, 1.0f * s);
             text(1131, 575, 8.0f, live.accent, "SPRING", 0, true);
         }
-        klabel(1123, 590, "SIZE");  knob("rvbsize", kParamReverbSize, 1123, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-        klabel(1161, 590, "DECAY"); knob("rvbdec", kParamReverbDecay, 1161, 620, 13, "%.1f", " s", false, false, false, 1.0f, 0.0f, false);
-        klabel(1199, 590, "DAMP");  knob("rvbdamp", kParamReverbDamp, 1199, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-        klabel(1142, 642, "MIX");   knob("rvbmix", kParamReverbMix, 1142, 668, 12, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
-        klabel(1180, 642, "P-DLY"); knob("rvbpd", kParamReverbPD, 1180, 668, 12, "%.0f", " ms", false, false, false, 1.0f, 0.0f, false, true);
+        // Two knob rows back to back: row 1's read-out band IS row 2's label band, and
+        // row 2 ends 5 px above the panel floor. Both rows therefore read out through
+        // their labels while the pointer is in the REVERB panel.
+        const bool rro = mouseInRect(1098, 552, 1224, 688);
+        klabelOrValue(1123, 590, "SIZE",  rro, kParamReverbSize,  "%.0f", " %", 100.0f);
+        knob("rvbsize", kParamReverbSize, 1123, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabelOrValue(1161, 590, "DECAY", rro, kParamReverbDecay, "%.1f", " s");
+        knob("rvbdec", kParamReverbDecay, 1161, 620, 13, "%.1f", " s", false, false, false, 1.0f, 0.0f, false);
+        klabelOrValue(1199, 590, "DAMP",  rro, kParamReverbDamp,  "%.0f", " %", 100.0f);
+        knob("rvbdamp", kParamReverbDamp, 1199, 620, 13, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabelOrValue(1142, 642, "MIX",   rro, kParamReverbMix,   "%.0f", " %", 100.0f);
+        knob("rvbmix", kParamReverbMix, 1142, 668, 12, "%.0f", " %", false, false, false, 100.0f, 0.0f, false);
+        klabelOrValue(1180, 642, "P-DLY", rro, kParamReverbPD,    "%.0f", " ms", 1.0f, 0.0f, true);
+        knob("rvbpd", kParamReverbPD, 1180, 668, 12, "%.0f", " ms", false, false, false, 1.0f, 0.0f, false, true);
     }
 
     //========================================================================
