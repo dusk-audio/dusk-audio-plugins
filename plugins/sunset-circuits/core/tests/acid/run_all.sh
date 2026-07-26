@@ -2,7 +2,7 @@
 # Build the standalone Acid harness and run every Acid engine gate.
 set -e
 cd "$(dirname "$0")"
-cmake -B build -GNinja >/dev/null
+cmake -B build -GNinja >/dev/null 2>&1 || cmake -B build >/dev/null
 cmake --build build >/dev/null
 echo "== acid_test built =="
 

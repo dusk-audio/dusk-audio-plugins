@@ -18,6 +18,13 @@ echo "########## fm suite ##########"
 (cd fm && ./run_all.sh) || fail=1
 
 echo
+echo "########## acid suite ##########"
+# Standalone Acid-engine harness (acid_test.cpp): slope/scream/accent/slide/seq.
+# Self-contained build, same as the fm suite; the acid_gate.py above is the
+# whole-synth counterpart that goes through render_test.
+(cd acid && ./run_all.sh) || fail=1
+
+echo
 echo "########## preset audit ##########"
 # preset_render is built by the cmake step above (target in tests/CMakeLists.txt).
 python3 presets/preset_audit.py || fail=1
