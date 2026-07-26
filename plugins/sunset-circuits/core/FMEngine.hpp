@@ -119,57 +119,6 @@ class FMVoiceEngine
 public:
     static constexpr int kNumOps = 4;
 
-    // ---- operator-envelope control rate ----------------------------------
-    // The four operator ADSRs used to tick once per INTERNAL sample, which at 4x
-    // oversampling means 192 kHz — four envelopes, each with a divide, evaluated
-    // 192000 times a second per unison bank to describe a signal whose fastest
-    // possible move is the 1 ms attack floor. They tick at a decimated CONTROL
-    // rate instead, with the per-sample value linearly interpolated between
-    // control points.
-    //
-    // The divisor is derived from the sample rate to hold the control rate near
-    // this target rather than being a fixed ratio, and the difference is not
-    // cosmetic. A fixed /4 would put the control rate at 12 kHz when the engine
-    // runs at 1x/48 kHz, and a fixed /8 at 5.5 kHz at 1x/44.1 kHz — a slope
-    // corner every 5.5 kHz, in band, on a signal that multiplies the modulation
-    // index. Tying it to absolute time instead makes envelope fidelity
-    // independent of the oversampling switch, and puts the decimation exactly
-    // where the CPU problem is: /4 at 4x, /2 at 2x, and /1 at 1x, where the
-    // engine is nowhere near the wall and the result is bit-identical to
-    // ticking every sample.
-    //
-    // 48 kHz was chosen by measurement, against the same code with the divisor
-    // forced to 1, at 192 kHz internal, on the 1 ms attack floor that three of
-    // the five Prism factory presets sit on for every operator:
-    //
-    //                     10-90% rise err   carrier attack   modulator attack
-    //     /4  48 kHz ctrl        +0.01%         -91.2 dB          -84.7 dB
-    //     /8  24 kHz ctrl        +0.02%         -79.1 dB          -72.7 dB
-    //
-    // Timing is untouched either way — the interpolant is exact at every control
-    // point, so decimation costs curvature, not rise time. What it does cost is
-    // the attack's fine structure, and halving the control rate costs 12 dB more
-    // of it in both the amplitude and the phase-modulation case. A 24 kHz target
-    // measured 0.3 to 0.8 points of real time better across the Prism scenarios,
-    // which does not buy 12 dB, and it would drop 1x/48 kHz to a 24 kHz control
-    // rate as well — paying the fidelity everywhere to save CPU only at 4x.
-    //
-    // WHAT THE ERROR ACTUALLY IS, since "control rate" invites the wrong worry.
-    // There is no stair-step and there can be no click: envValue is a running
-    // accumulator that is never assigned a jump, so the delivered envelope is
-    // continuous by construction and its per-sample slope is bounded by the
-    // envelope's own. What is left is the curvature the straight line misses,
-    // which for the p² attack curve is delta²/4 with delta the phase advanced per
-    // control tick — 1.1e-4 at the 1 ms floor, matching the measured 1.097e-4 —
-    // plus the same order of corner-rounding at stage transitions (worst measured
-    // across the attack range, 1.4e-4 at the attack→decay corner of a 50 ms
-    // attack). So the operator envelope is within 1.4e-4 of its undecimated self
-    // everywhere, which is a sub-4 µs error along its own trajectory. On a real
-    // preset that shows as at most 0.63 dB in one third-octave band over the
-    // first 5 ms of a note, and 0.03 dB once the note is sounding.
-    static constexpr float kEnvControlRate = 48000.0f;
-    static constexpr int   kMaxEnvDivisor  = 8;
-
     FMVoiceEngine() noexcept
     {
         for (int i = 0; i < kNumOps; ++i)
@@ -185,7 +134,8 @@ public:
     {
         sr = (float)sampleRate;
         invSr = sr > 0.0f ? 1.0f / sr : 0.0f;
-        recomputeEnvControlRate();
+        for (int i = 0; i < kNumOps; ++i)
+            op[i].env.prepare(sampleRate);
         recomputeIncrements();
         reset();
     }
@@ -195,7 +145,8 @@ public:
     {
         sr = (float)sampleRate;
         invSr = sr > 0.0f ? 1.0f / sr : 0.0f;
-        recomputeEnvControlRate();
+        for (int i = 0; i < kNumOps; ++i)
+            op[i].env.setSampleRate(sampleRate);
         recomputeIncrements();
     }
 
@@ -205,10 +156,7 @@ public:
         {
             op[i].phase = 0.0f;
             op[i].env.reset();
-            op[i].envValue = 0.0f;
-            op[i].envSlope = 0.0f;
         }
-        envCountdown = 0;
         fbZ1 = fbZ2 = 0.0f;
     }
 
@@ -227,13 +175,6 @@ public:
             op[i].phase = 0.0f;     // deterministic attack transient
             op[i].env.noteOn();
         }
-        // Tick on the very next sample rather than finishing the interpolation
-        // period this note-on landed in: an attack must not spend up to a whole
-        // control period coasting on the OLD slope. envValue is deliberately
-        // left where it is — the next tick derives the new slope from it, which
-        // is what keeps a retrigger continuous (the same reason ADSREnvelope
-        // seeds its attack phase from the current level).
-        envCountdown = 0;
         fbZ1 = fbZ2 = 0.0f;
     }
 
@@ -241,7 +182,6 @@ public:
     {
         for (int i = 0; i < kNumOps; ++i)
             op[i].env.noteOff();
-        envCountdown = 0;   // same reasoning as noteOn: release starts now
     }
 
     // Per-sample base-frequency update WITHOUT retriggering: pitch bend, master
@@ -253,12 +193,7 @@ public:
         recomputeIncrements();
     }
 
-    // Voice is alive while ANY carrier envelope is still running. Reads the
-    // CONTROL-rate stage, so it can go false while the interpolant still has up
-    // to one control period left to slide down to zero. Nothing calls this —
-    // SynthVoice gates Prism on its own amp envelope — and a caller that did
-    // would be truncating at most 20 µs of an already-inaudible tail; the note
-    // is here so anyone who wires it up knows which of the two it is reading.
+    // Voice is alive while ANY carrier envelope is still running.
     bool isActive() const noexcept
     {
         const uint8_t mask = kPrismAlgos[algo].carrierMask;
@@ -317,23 +252,6 @@ public:
 
         float modAccum[kNumOps] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-        // Operator envelopes tick at the decimated control rate (see
-        // kEnvControlRate) and are linearly interpolated in between. The slope
-        // is chosen so envValue arrives at the new control point EXACTLY on the
-        // next tick, which makes the interpolant continuous across ticks and
-        // keeps it time-aligned with an undecimated envelope at every tick — the
-        // decimation costs curvature between control points, not timing.
-        if (envCountdown == 0)
-        {
-            envCountdown = envDivisor;
-            for (int i = 0; i < kNumOps; ++i)
-            {
-                Op& o = op[i];
-                o.envSlope = (o.env.processSample() - o.envValue) * invEnvDivisor;
-            }
-        }
-        --envCountdown;
-
         // Distribute op-4 self-feedback into its own phase first (classic
         // 2-sample average damping keeps the loop from screaming).
         if (feedback > 0.0f)
@@ -347,8 +265,7 @@ public:
         for (int i = kNumOps - 1; i >= 0; --i)
         {
             Op& o = op[i];
-            const float env = o.envValue;
-            o.envValue += o.envSlope;
+            const float env = o.env.processSample();
             // Phase and modulation are both in turns, so this is a bare add.
             const float s   = sinTurns(o.phase + modAccum[i]);
 
@@ -395,32 +312,10 @@ private:
         float carrierGain = 0.0f;   // effLevel          (as a carrier)
         // state
         float phase = 0.0f;
-        ADSREnvelope env;           // ticked at the CONTROL rate, not per sample
-        float envValue = 0.0f;      // interpolated envelope for the current sample
-        float envSlope = 0.0f;      // per-sample step toward the next control point
+        ADSREnvelope env;
     };
 
     static int idx(int i) noexcept { return clampi(i, 0, kNumOps - 1); }
-
-    // Pick the envelope control divisor for the current rate and re-prepare the
-    // four ADSRs at the resulting control rate — they own the time constants, so
-    // "tick a quarter as often" has to mean "tick at a quarter of the rate" or
-    // every attack, decay and release would come out four times too long.
-    //
-    // setSampleRate (the oversampling swap) reaches here too, and must not drop
-    // the note: ADSREnvelope::setSampleRate moves the per-sample constants and
-    // leaves stage and phase alone, and envValue is likewise kept so the
-    // interpolant is continuous across the switch. Only the cadence restarts.
-    void recomputeEnvControlRate() noexcept
-    {
-        const int d = clampi((int)(sr / kEnvControlRate + 0.5f), 1, kMaxEnvDivisor);
-        envDivisor    = d;
-        invEnvDivisor = 1.0f / (float)d;
-        envCountdown  = 0;
-        const double controlRate = (double)sr / (double)d;
-        for (int i = 0; i < kNumOps; ++i)
-            op[i].env.setSampleRate(controlRate);
-    }
 
     void recomputeIncrement(int i) noexcept
     {
@@ -458,11 +353,6 @@ private:
 
     float feedback = 0.0f;
     float fbZ1 = 0.0f, fbZ2 = 0.0f;   // op-4 feedback history (pre-level sines)
-
-    // Operator-envelope control-rate decimation (see kEnvControlRate).
-    int   envDivisor    = 1;      // internal samples per envelope tick
-    float invEnvDivisor = 1.0f;
-    int   envCountdown  = 0;      // samples left before the next tick
 };
 
 } // namespace msynth
