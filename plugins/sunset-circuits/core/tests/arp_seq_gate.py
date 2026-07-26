@@ -54,9 +54,25 @@ C. GRID ROWS ARE 16 CELLS, NOT patternSize CELLS
     Same bug in the accent patterns through getVelocity's step % 4. At
     patternSize 1 the step index was pinned to 0, so Downbeat accented EVERY
     note: measured -14.1 dB on every step pre-fix (margin -0.0 dB), and -14.2 on
-    steps 0,4,8,12 against -17.1 elsewhere post-fix (margin 2.9 dB). (Downbeat is the only accent pattern reachable
-    from the parameter surface -- setAccentPattern is never called from
-    MultiSynthDSP, so EveryOther cannot be selected by a host and is not gated.)
+    steps 0,4,8,12 against -17.1 elsewhere post-fix (margin 2.9 dB).
+
+    All FOUR accent patterns are now reachable: arpAccentPattern (core param
+    index 222) drives Arpeggiator::setAccentPattern, which getVelocity consumes
+    ONLY in velocity mode 2 (AccentPattern). Because the shape is indexed off the
+    16-cell GRID and not off the held-note pattern, the same step->level sequence
+    must come out at EVERY patternSize -- which is exactly what the C fix above
+    bought -- so each pattern is measured at patternSize 1 and 3 and the two runs
+    are required to agree. Measured (patternSize 1, first 16 steps, dBFS):
+
+        Downbeat     -14.1 -17.1 -17.1 -17.1  -14.2 -17.1 -17.1 -17.1  ...
+        Every Other  -14.1 -17.1 -14.2 -17.1  -14.2 -17.1 -14.2 -17.1  ...
+        Ramp Up      -18.9 -18.1 -17.4 -16.6  -16.0 -15.3 -14.8 -14.2  (repeats)
+        Ramp Down    -14.1 -14.8 -15.3 -16.0  -16.6 -17.4 -18.1 -19.0  (repeats)
+
+    The ramps span 8 grid cells (step % 8) and so run twice across the 16-cell
+    row; the alternation patterns span 2 and 4. Gated on shape, not on absolute
+    level: alternation needs the same >= 2.0 dB margin as Downbeat, and the ramps
+    need strict monotonicity over each 8-cell run plus a >= 3.0 dB total span.
 
 D. ACID SEQUENCER ENABLE EDGE
     Note-on and note-off each pick their routing from the CURRENT arpOn, so
@@ -195,7 +211,6 @@ def octave_range(fails):
 # --- C. the 16-cell grid rows -------------------------------------------------
 GRID_SECONDS = 2.2
 GRID_CELLS = 16
-ACCENT_LOUD_DB = 2.0         # accented steps must stand this far above the rest
 
 
 def grid_rows(fails):
@@ -222,28 +237,77 @@ def grid_rows(fails):
           f"nothing else   (pre-fix: 1/16 -- cell 0 muted every 3rd step, cells "
           f"3-15 did nothing)   {'PASS' if ok else 'FAIL'}")
 
-    # Accent pattern (Downbeat) at patternSize 1: loud on steps 0,4,8,12.
-    _, x = render(0, 60, GRID_SECONDS, 2, "arpseq_accent",
-                  tempo=BPM, playing=1, **dict(BASE, arpVelMode=2))
+
+def step_levels(name, **kw):
+    """Peak dBFS of the first 16 arp steps, or None if too few onsets."""
+    _, x = render(0, 60, GRID_SECONDS, 2, name, tempo=BPM, playing=1, **kw)
     on = onsets(x, SR)
-    lv = []
-    for t in on[:GRID_CELLS]:
-        i = int(t * SR)
-        lv.append(20.0 * np.log10(np.max(np.abs(x[i:i + int(0.04 * SR), 0])) + 1e-20))
-    if len(lv) < GRID_CELLS:
-        print(f"   accent: FAIL (only {len(lv)} onsets)")
-        fails.append("C/accent")
-        return
-    down = [lv[k] for k in range(GRID_CELLS) if k % 4 == 0]
-    rest = [lv[k] for k in range(GRID_CELLS) if k % 4 != 0]
-    margin = min(down) - max(rest)
-    acc_ok = margin >= ACCENT_LOUD_DB
-    if not acc_ok:
-        fails.append("C/accent")
-    print(f"   accent Downbeat @ patternSize 1: downbeats {np.mean(down):.1f} dB, "
-          f"rest {np.mean(rest):.1f} dB, margin {margin:.1f} dB "
-          f"(need >= {ACCENT_LOUD_DB:.0f}; pre-fix -0.0)   "
-          f"{'PASS' if acc_ok else 'FAIL'}")
+    lv = [20.0 * np.log10(np.max(np.abs(x[int(t * SR):int(t * SR) + int(0.04 * SR), 0]))
+                          + 1e-20)
+          for t in on[:GRID_CELLS]]
+    return lv if len(lv) == GRID_CELLS else None
+
+
+# --- C2. the four accent patterns --------------------------------------------
+# arpAccentPattern (core index 222) -> Arpeggiator::setAccentPattern, consumed
+# only by getVelocity's AccentPattern branch (arpVelMode 2).
+ACCENT_LOUD_DB = 2.0         # accented steps must stand this far above the rest
+RAMP_SPAN_DB = 3.0           # quietest -> loudest cell of one 8-cell ramp run
+RAMP_STEP_DB = 0.0           # every ramp step must move the right way, no plateau
+CROSS_SIZE_TOL_DB = 0.6      # patternSize 1 vs 3 must render the same shape
+
+
+def accent_shape(idx, lv):
+    """(ok, description) for accent pattern `idx` given 16 step levels."""
+    if idx in (0, 1):
+        period = 4 if idx == 0 else 2
+        loud = [lv[k] for k in range(GRID_CELLS) if k % period == 0]
+        soft = [lv[k] for k in range(GRID_CELLS) if k % period != 0]
+        margin = min(loud) - max(soft)
+        return (margin >= ACCENT_LOUD_DB,
+                f"loud {np.mean(loud):6.1f}  soft {np.mean(soft):6.1f}  "
+                f"margin {margin:5.1f} dB (need >= {ACCENT_LOUD_DB:.1f})")
+    # Ramps: two independent 8-cell runs, each strictly monotone with real span.
+    up = (idx == 2)
+    ok, spans = True, []
+    for run in (lv[0:8], lv[8:16]):
+        d = np.diff(run)
+        ok = ok and (np.all(d > RAMP_STEP_DB) if up else np.all(d < -RAMP_STEP_DB))
+        spans.append(abs(run[-1] - run[0]))
+    ok = ok and min(spans) >= RAMP_SPAN_DB
+    return (ok, f"runs {lv[0]:6.1f}->{lv[7]:6.1f} and {lv[8]:6.1f}->{lv[15]:6.1f}  "
+                f"span {min(spans):4.1f} dB (need >= {RAMP_SPAN_DB:.1f}, monotone)")
+
+
+def accent_patterns(fails):
+    print("\nC2. accent patterns (arpVelMode=Accent, arpAccentPattern 0..3)")
+    print("    the shape is keyed to the 16-cell GRID, so patternSize must not "
+          "change it")
+    for idx, nm in enumerate(("Downbeat", "Every Other", "Ramp Up", "Ramp Down")):
+        # patternSize 1 (one held note) and 3 (a triad) -- the two ends of the
+        # grid-vs-pattern indexing bug that C fixed.
+        lvs = {}
+        for psize, hold in ((1, None), (3, "64,67")):
+            kw = dict(BASE, arpVelMode=2, arpAccentPattern=idx)
+            if hold:
+                kw["hold"] = hold
+            lvs[psize] = step_levels(f"arpseq_acc{idx}_p{psize}", **kw)
+            if lvs[psize] is None:
+                print(f"   {nm:<12} patternSize {psize}: FAIL (too few onsets)")
+                fails.append(f"C2/{idx}/{psize}")
+        if any(v is None for v in lvs.values()):
+            continue
+        shapes = {p: accent_shape(idx, v) for p, v in lvs.items()}
+        drift = float(np.max(np.abs(np.array(lvs[1]) - np.array(lvs[3]))))
+        same = drift <= CROSS_SIZE_TOL_DB
+        ok = shapes[1][0] and shapes[3][0] and same
+        if not ok:
+            fails.append(f"C2/{idx}")
+        for psize in (1, 3):
+            print(f"   {nm if psize == 1 else '':<12} n={psize}  {shapes[psize][1]}"
+                  f"   {'ok' if shapes[psize][0] else 'BAD'}")
+        print(f"   {'':<12} n=1 vs n=3 max |delta| {drift:.2f} dB "
+              f"(limit {CROSS_SIZE_TOL_DB:.1f})   {'PASS' if ok else 'FAIL'}")
 
 
 # --- D. acid sequencer enable edge --------------------------------------------
@@ -284,6 +348,7 @@ def main():
     swing_tempo(fails)
     octave_range(fails)
     grid_rows(fails)
+    accent_patterns(fails)
     acid_seq_edge(fails)
     print(f"\narp_seq_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

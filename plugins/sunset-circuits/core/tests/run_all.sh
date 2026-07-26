@@ -38,11 +38,6 @@
 #     1->2->8 with 5-7 ms between the edges) and all three render IDENTICALLY on
 #     the builds either side of the fix. Re-check this if modeVoices ever exceeds
 #     kMaxOscVoices/2, or if kMaxOscVoices changes.
-#   * Accent patterns other than Downbeat. Arpeggiator::setAccentPattern is never
-#     called from MultiSynthDSP, so EveryOther / RampUp / RampDown cannot be
-#     selected by a host at all. arp_seq_gate covers Downbeat, which is what the
-#     parameter surface can reach. Wire the parameter up and the other three
-#     become gateable.
 #
 # These are known omissions, not oversights -- they were scoped out of the work
 # that wired this suite into CI. If you are adding one of these gates, add it to
