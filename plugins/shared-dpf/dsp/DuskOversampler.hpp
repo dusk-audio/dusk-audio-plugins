@@ -29,26 +29,42 @@ template <int L, int NSide>
 class HalfbandFIR
 {
 public:
+    // Power-of-two ring so the index wrap is a mask. Sized for the deepest tap set
+    // in use (kAdeep, L=71/NSide=18 -> 70 samples of lookback).
+    static constexpr int kRing = 128;
+    static constexpr int kMask = kRing - 1;
+
+    // The furthest-back sample `out()` reads is pos-(C + kMaxOdd) where C = L/2 and
+    // kMaxOdd = 2*NSide-1. Once that exceeds the ring, the mask silently aliases it
+    // onto a NEWER sample instead of the intended history and the filter quietly
+    // computes the wrong thing -- exactly the failure a 64-entry ring would have
+    // produced for the 71-tap set. Fail the build instead.
+    static_assert(L / 2 + 2 * NSide - 1 < kRing,
+                  "HalfbandFIR tap set is too long for the ring buffer: "
+                  "L/2 + 2*NSide - 1 must stay below kRing. Grow kRing (keep it a "
+                  "power of two) rather than letting the index mask alias.");
+    static_assert((kRing & kMask) == 0, "kRing must be a power of two");
+
     void reset() noexcept
     {
         for (float& v : buf) v = 0.0f;
         pos = 0;
     }
-    void push(float x) noexcept { pos = (pos + 1) & 127; buf[pos] = x; }
+    void push(float x) noexcept { pos = (pos + 1) & kMask; buf[pos] = x; }
     float out(const float* taps) const noexcept
     {
         constexpr int C = L / 2;
-        float acc = 0.5f * buf[(pos - C) & 127];
+        float acc = 0.5f * buf[(pos - C) & kMask];
         for (int i = 0; i < NSide; ++i)
         {
             const int k = 2 * i + 1;
-            acc += taps[i] * (buf[(pos - (C - k)) & 127] + buf[(pos - (C + k)) & 127]);
+            acc += taps[i] * (buf[(pos - (C - k)) & kMask] + buf[(pos - (C + k)) & kMask]);
         }
         return acc;
     }
 
 private:
-    float buf[128] = {};
+    float buf[kRing] = {};
     int   pos = 0;
 };
 

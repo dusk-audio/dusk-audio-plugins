@@ -939,7 +939,7 @@ private:
             if (!en) std::snprintf(buf, sizeof(buf), "OUT");
             else if (values[freqId] >= 1000.f) std::snprintf(buf, sizeof(buf), "%.1f kHz", values[freqId] / 1000.f);
             else std::snprintf(buf, sizeof(buf), "%.0f Hz", values[freqId]);
-            panel.valueBubble(dl, cx, cy, R, buf);
+            panel.valueBubble(cx, cy, R, buf);
         }
     }
 
@@ -1070,7 +1070,7 @@ private:
         else if ((hov || act) && !editing)
         {
             char buf[24]; std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
-            panel.valueBubble(dl, cx, cy, R, buf);
+            panel.valueBubble(cx, cy, R, buf);
         }
     }
 

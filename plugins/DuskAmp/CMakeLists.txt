@@ -238,8 +238,10 @@ set_target_properties(DuskAmp PROPERTIES
 # Bypasses the JUCE plugin wrapper and instantiates PreampModel /
 # ToneStackModel / PowerAmp directly. Off by default — enable with
 #   cmake -DBUILD_DUSKAMP_DSP_TEST=ON ...
-# Pairs with plugins/DuskAmp/tests/comparison/{generate_test_signals.py,
-# analyze_dsp_output.py} for end-to-end physics validation.
+# Pairs with the DSP comparison scripts (analyze_dsp_output.py, run_comparison.py,
+# validate_physics.py) in the private tools repo at
+# ~/projects/dusk-audio-tools/tools/duskamp-comparison/ for end-to-end physics
+# validation. The C++ harness (dsp_test_harness.cpp) stays here.
 # ---------------------------------------------------------------------------
 option(BUILD_DUSKAMP_DSP_TEST "Build DuskAmp standalone DSP test harness" OFF)
 

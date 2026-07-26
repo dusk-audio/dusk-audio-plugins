@@ -122,9 +122,6 @@ docs/_build/
 *.ogg
 *.flac
 
-# GrooveMind training data directories
-groovemind-training/
-
 # Python / NumPy / calibration artifacts
 *.npz
 *.npy
@@ -173,3 +170,6 @@ calibration.db-shm
 calibration.db-wal
 .claude/
 plugins/neural-amp/
+
+# Sunset Circuits (multi-synth) core test build artifacts
+plugins/sunset-circuits/core/tests/build/

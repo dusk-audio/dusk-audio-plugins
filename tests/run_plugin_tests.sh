@@ -38,7 +38,15 @@ PLUGINS=(
     "Universal Compressor"
     "TapeMachine"
     "Vintage Tape Echo"
+    "Sunset Circuits"
 )
+
+# Sunset Circuits is the DPF port, not a JUCE plugin: its bundle is named
+# sunset_circuits (not after the display name), it may live in the DPF build
+# tree rather than ~/.vst3, and it carries its own offline gate suite. It is
+# handled by run_sunset_circuits_tests() instead of the generic path below.
+SUNSET_NAME="Sunset Circuits"
+SUNSET_BUNDLE="sunset_circuits"
 
 #------------------------------------------------------------------------------
 # Utility Functions
@@ -218,6 +226,111 @@ run_audio_tests() {
 }
 
 #------------------------------------------------------------------------------
+# Sunset Circuits (DPF) - core gate suite + pluginval on the built VST3
+#------------------------------------------------------------------------------
+
+# Prefer an installed bundle, fall back to the DPF build tree (which is where it
+# lands when the plugin is configured with -DDUSK_DPF_INSTALL_LOCAL=OFF).
+sunset_vst3_path() {
+    local installed="$VST3_DIR/${SUNSET_BUNDLE}.vst3"
+    local built="$PROJECT_DIR/plugins/sunset-circuits/dpf-plugin/build/bin/${SUNSET_BUNDLE}.vst3"
+    if [ -d "$installed" ]; then
+        echo "$installed"
+    elif [ -d "$built" ]; then
+        echo "$built"
+    fi
+}
+
+run_sunset_circuits_tests() {
+    local skip_pluginval="$1"
+    local skip_audio="$2"
+    local suite="$PROJECT_DIR/plugins/sunset-circuits/core/tests/run_all.sh"
+
+    # --- offline gate suite (the authoritative DSP check for this plugin) -----
+    # Honours --skip-audio: the suite is offline audio rendering and takes
+    # minutes, and the documented fleet command in CLAUDE.md
+    # (run_plugin_tests.sh --plugin "<Name>" --skip-audio) has to stay quick.
+    print_section "Core gate suite: $SUNSET_NAME"
+    if [ "$skip_audio" = true ]; then
+        print_skip "Core gate suite (--skip-audio); run $suite directly for the DSP gates"
+    elif [ ! -x "$suite" ]; then
+        print_skip "run_all.sh not found or not executable: $suite"
+    else
+        print_info "Running $suite (several minutes; builds its own harness)"
+        if "$suite"; then
+            print_pass "Core gate suite green"
+        else
+            # run_all.sh already printed the per-gate detail above; it reports
+            # one aggregate status, so name the log rather than re-deriving it.
+            print_fail "Core gate suite failed (per-gate detail is in the output above)"
+        fi
+    fi
+
+    # --- bundle presence ------------------------------------------------------
+    print_section "Checking plugin files: $SUNSET_NAME"
+    local vst3
+    vst3="$(sunset_vst3_path)"
+    if [ -z "$vst3" ]; then
+        print_skip "No ${SUNSET_BUNDLE}.vst3 found (build dpf-plugin, or install to $VST3_DIR)"
+        return
+    fi
+    print_pass "VST3 exists: $vst3"
+
+    local arch_dir="x86_64-linux"
+    [ "$(uname -m)" = "aarch64" ] && arch_dir="aarch64-linux"
+    local so="$vst3/Contents/$arch_dir/${SUNSET_BUNDLE}.so"
+    if [ -f "$so" ]; then
+        print_pass "VST3 binary exists"
+        if nm -D "$so" 2>/dev/null | grep -q "GetPluginFactory"; then
+            print_pass "VST3 GetPluginFactory symbol found"
+        else
+            print_fail "VST3 GetPluginFactory symbol missing"
+        fi
+    else
+        print_fail "VST3 binary missing: $so"
+    fi
+
+    local lv2="$LV2_DIR/${SUNSET_BUNDLE}.lv2"
+    [ -d "$lv2" ] || lv2="$PROJECT_DIR/plugins/sunset-circuits/dpf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
+    if [ -f "$lv2/manifest.ttl" ]; then
+        print_pass "LV2 manifest.ttl exists"
+    else
+        print_skip "LV2 bundle not built/installed"
+    fi
+
+    # --- pluginval ------------------------------------------------------------
+    if [ "$skip_pluginval" = true ]; then
+        return
+    fi
+
+    print_section "Pluginval validation: $SUNSET_NAME"
+    if ! command -v pluginval &> /dev/null; then
+        print_skip "pluginval not installed (https://github.com/Tracktion/pluginval)"
+        return
+    fi
+
+    # --skip-gui-tests is mandatory: pluginval's editor tests segfault headless
+    # for every DPF plugin (a host-side XEmbed issue, docs/dpf-migration
+    # 00-OVERVIEW.md landmine 9), so a GUI run says nothing about this plugin.
+    # Strictness 8 is the bar the Sunset Circuits QA checklist declares
+    # authoritative for the 222-parameter state round-trip.
+    local level=8
+    local output_file="$TEST_OUTPUT_DIR/pluginval_${SUNSET_BUNDLE}_level${level}.log"
+    print_info "Running pluginval at strictness level $level (--skip-gui-tests)..."
+
+    if timeout 300 pluginval --validate "$vst3" --strictness-level "$level" \
+        --skip-gui-tests --timeout-ms 270000 --verbose > "$output_file" 2>&1; then
+        print_pass "Pluginval level $level passed"
+    elif grep -q "Starting test" "$output_file" && ! grep -q "FAILED" "$output_file"; then
+        # DPF tears down non-zero after a clean run on some hosts; tolerated only
+        # when the log proves tests ran and none failed (same rule as CI).
+        print_pass "Pluginval level $level passed (non-zero exit on teardown, tests clean)"
+    else
+        print_fail "Pluginval level $level failed (see $output_file)"
+    fi
+}
+
+#------------------------------------------------------------------------------
 # Main Test Runner
 #------------------------------------------------------------------------------
 
@@ -258,6 +371,12 @@ main() {
                 echo "  --skip-audio      Skip audio analysis tests"
                 echo "  --skip-pluginval  Skip pluginval tests"
                 echo "  --help            Show this help"
+                echo ""
+                echo "Note: \"Sunset Circuits\" (also accepted as \"sunset-circuits\") is the"
+                echo "DPF port. Instead of the shared audio analyzer it runs its own offline"
+                echo "gate suite (plugins/sunset-circuits/core/tests/run_all.sh, several"
+                echo "minutes) which --skip-audio skips, plus pluginval at strictness 8 with"
+                echo "--skip-gui-tests."
                 exit 0
                 ;;
             *)
@@ -278,6 +397,12 @@ main() {
     # Run tests for each plugin
     for plugin in "${plugins_to_test[@]}"; do
         print_header "Testing: $plugin"
+
+        # DPF port with its own bundle name and gate suite; accept the slug too.
+        if [ "$plugin" = "$SUNSET_NAME" ] || [ "$plugin" = "sunset-circuits" ]; then
+            run_sunset_circuits_tests "$skip_pluginval" "$skip_audio"
+            continue
+        fi
 
         test_plugin_exists "$plugin"
         test_binary_symbols "$plugin"

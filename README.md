@@ -130,12 +130,16 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
 - 2x/4x oversampling on nonlinear stages
 
-### Multi-Synth - IN DEVELOPMENT
-Polyphonic synthesizer:
-- Multi-mode filter engine
-- Modulation matrix
-- Built-in arpeggiator
-- Effects engine
+### Sunset Circuits - PRE-RELEASE (DPF)
+Six vintage synth circuits in one instrument (DPF, Dear ImGui UI):
+- Six mode "circuits": Cosmos (DCO poly), Oracle (poly-mod), Mono, Modular (semi-modular + spring), Prism (4-operator FM), Acid (bass box + pattern sequencer)
+- Per-mode panel skins, signature controls, and sub-panels sharing one fixed layout
+- Arpeggiator / 16-step sequencer, 8-slot mod matrix, dual LFOs, unison, effects chain (drive/chorus/delay/reverb)
+- 54 factory presets across all six modes; 1x/2x/4x oversampled voices
+- VST3/CLAP/LV2 formats
+
+The earlier JUCE prototype (Multi-Synth) still builds via `multisynth`; Sunset
+Circuits is its DPF-native successor and is the title being taken to release.
 
 ## Building
 
@@ -159,7 +163,8 @@ For consistent, distributable binaries:
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh groovemind   # GrooveMind
 ./docker/build_release.sh duskamp      # DuskAmp
-./docker/build_release.sh multisynth   # Multi-Synth
+./docker/build_release.sh multisynth   # Multi-Synth (JUCE prototype)
+./docker/build_release.sh sunset       # Sunset Circuits (DPF: VST3/CLAP/LV2)
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -201,7 +206,15 @@ cmake --build plugins/TapeMachine/dpf-plugin/build
 # Tape Echo (DPF port, in progress)
 cmake -S plugins/tape-echo/dpf-plugin -B plugins/tape-echo/dpf-plugin/build -G Ninja
 cmake --build plugins/tape-echo/dpf-plugin/build
+
+# Sunset Circuits
+cmake -S plugins/sunset-circuits/dpf-plugin -B plugins/sunset-circuits/dpf-plugin/build -G Ninja
+cmake --build plugins/sunset-circuits/dpf-plugin/build
 ```
+
+The container/CI path (`./docker/build_release.sh sunset`,
+`.github/workflows/dpf-release.yml`) is the reproducible way to build a DPF plugin
+from clean — it pins DISTRHO/DPF and DPF-Widgets at known-good SHAs.
 
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`

@@ -34,6 +34,19 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | Multi-Q 2 | multi-q-2 | plugins/multi-q/dpf-plugin | (inline: MultiQ2DPF) | multiq |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
 | GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
+| Sunset Circuits | sunset-circuits | plugins/sunset-circuits/dpf-plugin | SUNSETCIRCUITS (DPF) | sunset |
+
+**Sunset Circuits is DPF, but it is NOT one of the "-2" plugins.** The "-2" plugins
+are DPF rewrites that ship alongside a released JUCE original and take its version
+lineage; Sunset Circuits has never been released as JUCE (the `multisynth` prototype
+still in-tree is unreleased and is not versioned or tagged), so it owns its own
+version line. It keeps a `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` var
+in `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt` (which single-sources
+`project(VERSION)`, the C++ `getVersion()` via `SC_VERSION_*` compile defs, and the
+UI nameplate tooltip) rather than an inline `project()` literal, and it releases
+through its own `.github/workflows/dpf-release.yml` (tag `sunset-circuits-v*`),
+not `dpf-build.yml`. Everything else (website flow, changelog, push rules) is
+identical to the other plugins.
 
 ## Paths
 
@@ -76,6 +89,9 @@ For EACH plugin specified:
      from the tag, then rejects the release unless the tag's numeric BASE version equals
      this `project()` VERSION — so bump it here to match exactly (e.g. tag
      `tapemachine-2-v2.0.1-rc1` requires `project(TapeMachine2DPF VERSION 2.0.1)`).
+   - **Sunset Circuits** (DPF, own version line) uses
+     `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` in
+     `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt`.
 2. **Determine new version**:
    - If explicit version provided: use it
    - If omitted: auto-increment patch (1.0.2 → 1.0.3)
@@ -122,6 +138,17 @@ project(MultiQ2DPF      VERSION <base-version>)   # multi-q-2
 Bump only the one being released. `dpf-build.yml`'s guard strips any
 `-beta`/`-rc`/`-alpha` suffix from the tag and compares the numeric BASE version to
 this `project()` VERSION — they must match exactly or the release fails.
+
+**Sunset Circuits** (version var in the `dpf-plugin/` CMakeLists):
+```bash
+sed -i.bak 's/set(SUNSETCIRCUITS_DEFAULT_VERSION "[^"]*")/set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")/' \
+  plugins/sunset-circuits/dpf-plugin/CMakeLists.txt && rm plugins/sunset-circuits/dpf-plugin/CMakeLists.txt.bak
+# Verify the replacement actually landed — a silently unmatched sed must stop
+# the release before commit/tag.
+grep -q 'set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")' \
+  plugins/sunset-circuits/dpf-plugin/CMakeLists.txt \
+  || { echo "ERROR: Sunset Circuits version bump did not apply"; exit 1; }
+```
 
 **Manual front matter** (issue #80) — only if `manuals/<slug>.md` exists. Uses the portable `sed -i.bak ... && rm` form so this works on both macOS BSD sed and Linux GNU sed:
 ```bash
@@ -275,6 +302,9 @@ listens for:
   → matched by `.github/workflows/dpf-build.yml`, whose registry maps each `<slug>-v*`
   tag to the right `plugins/<dir>/dpf-plugin` build. e.g. `tapemachine-2-v2.0.1`
   triggers a TapeMachine 2 build + release.
+- **Sunset Circuits** → matched by `.github/workflows/dpf-release.yml`, which is
+  dedicated to the one plugin (`sunset-circuits-v*`); it is not in the
+  `dpf-build.yml` registry.
 
 ### Step 7: Push Everything
 

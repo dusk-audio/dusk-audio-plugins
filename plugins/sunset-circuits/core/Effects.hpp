@@ -1,0 +1,905 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+//
+// Effects.hpp — post-synth effects chain: Drive -> Chorus -> Delay -> Reverb,
+// plus a dispersive spring reverb for the Modular mode.
+//
+// Framework-free port of the JUCE EffectsEngine.h. Drive, the generic BBD
+// chorus, the dual-line vintage BBD chorus (fixed 0.513/0.863 Hz triangle LFOs,
+// inverted-phase stereo, ~3 ms BBD lowpass) and the tempo-synced stereo delay
+// are carried over verbatim. Two things are NOT ports (mandatory fixes #8):
+//
+//   * Freeverb    — a from-scratch 8-comb / 4-allpass-per-channel reverb with
+//                   the classic public-domain tunings and juce::Reverb's exact
+//                   parameter mapping, replacing the juce::Reverb dependency.
+//   * SpringReverb — the real dispersive spring tank from the tape-echo core
+//                   (long first-order-allpass chain in a modulated feedback
+//                   loop), replacing the JUCE "spring" that was just a dark
+//                   Freeverb preset.
+
+#pragma once
+
+#include "SynthCommon.hpp"
+#include "DuskFilters.hpp"   // duskaudio::OnePoleLP/HP, DCBlocker
+#include "DuskSmoothed.hpp"  // one-pole parameter smoothing
+
+#include <algorithm>
+#include <array>
+#include <vector>
+
+namespace msynth
+{
+
+//==============================================================================
+// Drive and the wet mixes below smooth themselves with the shared
+// kParamSmoothTau (SynthCommon.hpp) -- same defect, same fix, one constant.
+// Each effect exposes snapSmoothing() so a preset load lands immediately
+// instead of gliding (see EffectsChain::snapSmoothing).
+//
+// The delay read length and the reverb pre-delay keep their own, deliberately
+// slower 20 ms glides — those are tape-style pitch swoops, not de-zippering.
+//
+//==============================================================================
+// Drive / saturation
+enum class DriveType { SoftClip = 0, HardClip, Tube };
+
+class DriveEffect
+{
+public:
+    void prepare(double sampleRate, int) noexcept
+    {
+        smDrive.prepare(sampleRate, kParamSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
+        snapSmoothing();
+    }
+
+    void setEnabled(bool on) noexcept { enabled = on; }
+    void setDrive(float amount) noexcept { drive = clampf(amount, 0.0f, 1.0f); smDrive.setTarget(drive); }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
+    void setType(DriveType t) noexcept { type = t; }
+    // Mod-matrix EffectsMix scale, applied to the SMOOTHED mix at the point of
+    // use so the modulation itself is never one-pole filtered (see setMixMod in
+    // EffectsChain). 1.0 = unmodulated.
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
+    void snapSmoothing() noexcept { smDrive.snap(drive); smMix.snap(mix); }
+
+    void process(float& left, float& right) noexcept
+    {
+        // Bypassed: hold the smoothers at their targets so re-enabling starts at
+        // the right value instead of gliding up from wherever it was left.
+        if (!enabled) { snapSmoothing(); return; }
+        const float drv = smDrive.next();
+        const float m   = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
+        if (drv < 0.001f) return;
+        const float dryL = left, dryR = right;
+        const float gain = 1.0f + drv * 10.0f;
+        left  = saturate(left  * gain);
+        right = saturate(right * gain);
+        const float comp = 1.0f / (1.0f + drv * 2.0f);
+        left  *= comp; right *= comp;
+        left  = dryL * (1.0f - m) + left  * m;
+        right = dryR * (1.0f - m) + right * m;
+    }
+
+private:
+    float saturate(float x) noexcept
+    {
+        switch (type)
+        {
+            case DriveType::SoftClip: return std::tanh(x);
+            case DriveType::HardClip: return clampf(x, -1.0f, 1.0f);
+            case DriveType::Tube:
+                return x >= 0.0f ? 1.0f - std::exp(-x) : -(1.0f - std::exp(x)) * 0.8f;
+        }
+        return x;
+    }
+
+    bool  enabled = false;
+    float drive = 0.0f, mix = 1.0f;          // smoother targets
+    float mixMod = 1.0f;                     // per-sample EffectsMix scale
+    duskaudio::SmoothedValue smDrive, smMix;
+    DriveType type = DriveType::SoftClip;
+};
+
+//==============================================================================
+// Generic BBD chorus/ensemble
+class ChorusEffect
+{
+public:
+    void prepare(double sampleRate, int) noexcept
+    {
+        sr = (float)sampleRate;
+        const int maxDelaySamples = (int)(sr * 0.03f) + 1;
+        bufL.assign((size_t)maxDelaySamples, 0.0f);
+        bufR.assign((size_t)maxDelaySamples, 0.0f);
+        bufSize = maxDelaySamples;
+        writePos = 0; lfoPhase = 0.0f;
+        smDepth.prepare(sampleRate, kParamSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
+        snapSmoothing();
+    }
+
+    // process() returns early while disabled, so the delay lines stop being
+    // written but keep whatever was in them. Re-enabling then reads out audio
+    // from before the bypass -- up to 30 ms of it, at whatever level the signal
+    // had at the moment the chorus was switched off. Measured: a note sounding
+    // when the chorus was disabled came back as a -15.1 dBFS burst on re-enable,
+    // two seconds later, into what was otherwise silence.
+    //
+    // Clear on the ON edge rather than the OFF edge so that turning the chorus
+    // off stays free (it is on the audio path; turning an effect off should not
+    // do work), and the cost lands where a click is expected anyway.
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        if (on) reset();
+    }
+    // Rate is not smoothed: the LFO phase is continuous, so a rate change bends
+    // the modulation instead of stepping the signal (measured: no artifact).
+    void setRate(float r) noexcept { rate = clampf(r, 0.1f, 10.0f); }
+    void setDepth(float d) noexcept { depth = clampf(d, 0.0f, 1.0f); smDepth.setTarget(depth); }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
+    void snapSmoothing() noexcept { smDepth.snap(depth); smMix.snap(mix); }
+
+    void process(float& left, float& right) noexcept
+    {
+        if (!enabled) { snapSmoothing(); return; }
+        const float dryL = left, dryR = right;
+        const float lfoL = std::sin(lfoPhase * kTwoPi);
+        const float lfoR = std::sin((lfoPhase + 0.5f) * kTwoPi);
+        const float baseDelay = sr * 0.007f;
+        // Depth scales the delay-line excursion, so a stepped depth jumps the read
+        // pointer and clicks; the mix blend steps the level. Both are smoothed.
+        const float m         = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
+        const float modRange  = sr * 0.003f * smDepth.next();
+        const float delayL = baseDelay + lfoL * modRange;
+        const float delayR = baseDelay + lfoR * modRange;
+
+        bufL[(size_t)writePos] = left;
+        bufR[(size_t)writePos] = right;
+        const float wetL = readDelay(bufL, delayL);
+        const float wetR = readDelay(bufR, delayR);
+
+        writePos = (writePos + 1) % bufSize;
+        lfoPhase += rate / sr;
+        if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
+
+        left  = dryL * (1.0f - m) + wetL * m;
+        right = dryR * (1.0f - m) + wetR * m;
+    }
+
+    void reset() noexcept
+    {
+        std::fill(bufL.begin(), bufL.end(), 0.0f);
+        std::fill(bufR.begin(), bufR.end(), 0.0f);
+        writePos = 0; lfoPhase = 0.0f;
+        snapSmoothing();
+    }
+
+private:
+    float readDelay(const std::vector<float>& buf, float delaySamples) const noexcept
+    {
+        float rp = (float)writePos - delaySamples;
+        if (rp < 0.0f) rp += (float)bufSize;
+        const int i0 = (int)rp;
+        const int i1 = (i0 + 1) % bufSize;
+        const float f = rp - (float)i0;
+        return buf[(size_t)i0] * (1.0f - f) + buf[(size_t)i1] * f;
+    }
+
+    float sr = 44100.0f;
+    bool  enabled = false;
+    float rate = 0.8f, depth = 0.5f, mix = 0.5f;   // depth/mix are smoother targets
+    float mixMod = 1.0f;                           // per-sample EffectsMix scale
+    duskaudio::SmoothedValue smDepth, smMix;
+    std::vector<float> bufL, bufR;
+    int bufSize = 1, writePos = 0;
+    float lfoPhase = 0.0f;
+};
+
+//==============================================================================
+// Vintage dual-BBD chorus (Cosmos mode). Two lines, fixed triangle LFOs,
+// inverted-phase stereo, ~10 kHz BBD rolloff. Verbatim tunings.
+enum class CosmosChorusMode { Off = 0, I, II, Both };
+
+class CosmosChorusEffect
+{
+public:
+    void prepare(double sampleRate, int) noexcept
+    {
+        sr = (float)sampleRate;
+        const int maxDelay = (int)(sr * 0.015f) + 1;
+        for (int c = 0; c < 2; ++c)
+        {
+            bufL[c].assign((size_t)maxDelay, 0.0f);
+            bufSize[c] = maxDelay; writePos[c] = 0; lfoPhase[c] = 0.0f;
+        }
+        lpCoeff = std::exp(-kTwoPi * 10000.0f / sr);
+        lpStateL = lpStateR = 0.0f;
+    }
+
+    void setMode(CosmosChorusMode m) noexcept { mode = m; }
+
+    void process(float& left, float& right) noexcept
+    {
+        if (mode == CosmosChorusMode::Off) return;
+        const float dryL = left, dryR = right;
+        float wetL = 0.0f, wetR = 0.0f;
+        int numActive = 0;
+
+        for (int c = 0; c < 2; ++c)
+        {
+            bool active = false;
+            if (c == 0 && (mode == CosmosChorusMode::I  || mode == CosmosChorusMode::Both)) active = true;
+            if (c == 1 && (mode == CosmosChorusMode::II || mode == CosmosChorusMode::Both)) active = true;
+            if (!active) continue;
+            ++numActive;
+
+            const float lfo = 2.0f * std::abs(2.0f * (lfoPhase[c] - std::floor(lfoPhase[c] + 0.5f))) - 1.0f;
+            const float centerDelay = sr * 0.003f;
+            const float modDepth = sr * 0.002f;
+            const float delay = centerDelay + lfo * modDepth;
+
+            const float mono = (left + right) * 0.5f;
+            bufL[c][(size_t)writePos[c]] = mono;
+            // (bufR removed: the wet signal is derived from this mono line; the
+            // right channel is the phase-inverted copy below, not a second buffer.)
+
+            float wet = readBuf(bufL[c], bufSize[c], writePos[c], delay);
+            wet = wet * (1.0f - lpCoeff) + (c == 0 ? lpStateL : lpStateR) * lpCoeff;
+            if (c == 0) lpStateL = wet; else lpStateR = wet;
+
+            wetL += wet;
+            wetR -= wet; // inverted for stereo width
+
+            writePos[c] = (writePos[c] + 1) % bufSize[c];
+            const float rate = (c == 0) ? 0.513f : 0.863f;
+            lfoPhase[c] += rate / sr;
+            if (lfoPhase[c] >= 1.0f) lfoPhase[c] -= 1.0f;
+        }
+
+        if (numActive > 0)
+        {
+            const float wetGain = (numActive == 2) ? 0.35f : 0.5f;
+            left  = dryL * 0.7f + wetL * wetGain;
+            right = dryR * 0.7f + wetR * wetGain;
+        }
+    }
+
+    void reset() noexcept
+    {
+        for (int c = 0; c < 2; ++c)
+        {
+            std::fill(bufL[c].begin(), bufL[c].end(), 0.0f);
+            writePos[c] = 0; lfoPhase[c] = 0.0f;
+        }
+        lpStateL = lpStateR = 0.0f;
+    }
+
+private:
+    float readBuf(const std::vector<float>& buf, int sz, int wp, float delay) const noexcept
+    {
+        float rp = (float)wp - delay;
+        if (rp < 0.0f) rp += (float)sz;
+        const int i0 = (int)rp;
+        const int i1 = (i0 + 1) % sz;
+        const float f = rp - (float)i0;
+        return buf[(size_t)i0] * (1.0f - f) + buf[(size_t)i1] * f;
+    }
+
+    float sr = 44100.0f;
+    CosmosChorusMode mode = CosmosChorusMode::Off;
+    std::vector<float> bufL[2];
+    int bufSize[2] = { 1, 1 }, writePos[2] = { 0, 0 };
+    float lfoPhase[2] = { 0.0f, 0.0f };
+    float lpCoeff = 0.0f, lpStateL = 0.0f, lpStateR = 0.0f;
+};
+
+//==============================================================================
+// Tempo-synced stereo delay with ping-pong, feedback filtering, tape character.
+class DelayEffect
+{
+public:
+    void prepare(double sampleRate, int) noexcept
+    {
+        sr = (float)sampleRate;
+        // The line has to hold the LONGEST delay that is reachable, and the
+        // tempo-synced path can ask for far more than the free-running knob's
+        // 2 s ceiling. The slowest division is 1/1 = 4 beats
+        // (getBeatsPerStep(Whole)), which is 2 s only at exactly 120 BPM and
+        // grows without bound as the tempo drops.
+        //
+        // Sizing for 2 s silently clamped all of it. Measured at 1/1, the echo
+        // landed at 2.0013 s at 60, 90 AND 120 BPM -- 2.667 s expected at 90 and
+        // 4.0 s at 60, so every tempo below 120 was wrong and only 120 was right
+        // by coincidence.
+        //
+        // Sized instead for the slowest division at kMinSyncBpm. Hosts do not
+        // agree on a tempo floor, so this is ours: below it the delay clamps and
+        // shortens, which is the old behaviour, but it no longer does so
+        // anywhere near a usable tempo. Cost is one prepare()-time allocation of
+        // 2 ch x 4 B x kMinSyncBpm-worth of samples: 4.6 MB at 48 kHz, 18.4 MB
+        // at 192 kHz.
+        static constexpr double kMinSyncBpm   = 20.0;
+        static constexpr double kMaxSyncBeats = 4.0;   // getBeatsPerStep(Whole)
+        static constexpr double kMaxKnobSec   = 2.0;   // setTimeMs ceiling
+        const double maxSeconds = std::max(kMaxKnobSec, kMaxSyncBeats * 60.0 / kMinSyncBpm);
+        const int maxSamples = (int)(sampleRate * maxSeconds) + 1;
+        bufL.assign((size_t)maxSamples, 0.0f);
+        bufR.assign((size_t)maxSamples, 0.0f);
+        bufSize = maxSamples; writePos = 0;
+        fbLPF_L = fbLPF_R = 0.0f;
+        fbLPCoeff = std::exp(-kTwoPi * fbLPFFreq / sr); // constant: fbLPFFreq is fixed
+        // One-pole glide (~20 ms) on the effective delay length. Absorbs the jump
+        // when the sync division / time knob changes AND gives a tape-style pitch
+        // swoop on a tempo ramp; steady-state it reaches the target exactly. (E2)
+        delayGlideCoeff = 1.0f - std::exp(-1.0f / (0.020f * sr));
+        smoothedDelay = -1.0f; // sentinel: snap to the first target (no startup sweep)
+        fbHP_L.setCutoff(fbHPFFreq, sampleRate);
+        fbHP_R.setCutoff(fbHPFFreq, sampleRate);
+        fbHP_L.reset();
+        fbHP_R.reset();
+        smFeedback.prepare(sampleRate, kParamSmoothTau);
+        smMix.prepare(sampleRate, kParamSmoothTau);
+        snapSmoothing();
+    }
+
+    void setEnabled(bool on) noexcept { enabled = on; }
+    void setTempoSync(bool s) noexcept { tempoSynced = s; }
+    void setTimeMs(float ms) noexcept { delayTimeMs = clampf(ms, 1.0f, 2000.0f); }
+    void setSyncDivision(ArpRateDivision d) noexcept { syncDivision = d; }
+    void setFeedback(float fb) noexcept { feedback = clampf(fb, 0.0f, 0.95f); smFeedback.setTarget(feedback); }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
+    void setPingPong(bool pp) noexcept { pingPong = pp; }
+    void setTapeCharacter(bool on) noexcept { tapeChar = on; }
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
+    void snapSmoothing() noexcept { smFeedback.snap(feedback); smMix.snap(mix); }
+
+    void process(float& left, float& right, double bpm) noexcept
+    {
+        if (!enabled) { snapSmoothing(); return; }
+        const float dryL = left, dryR = right;
+        // Feedback scales what is written back into the line, so a stepped value
+        // puts a discontinuity into the recirculating signal that resurfaces one
+        // delay time later as a click.
+        const float fb = smFeedback.next();
+        const float m  = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
+
+        float delaySamples;
+        if (tempoSynced && bpm > 0.0)
+        {
+            const double beatsPerStep = getBeatsPerStep(syncDivision);
+            const double samplesPerBeat = (double)sr * 60.0 / bpm;
+            delaySamples = (float)(samplesPerBeat * beatsPerStep);
+        }
+        else
+        {
+            delaySamples = delayTimeMs * sr / 1000.0f;
+        }
+        delaySamples = clampf(delaySamples, 1.0f, (float)(bufSize - 1));
+
+        // Glide the effective read length toward the target (E2). Snap on the
+        // first block so a fresh delay doesn't sweep up from zero.
+        if (smoothedDelay < 0.0f) smoothedDelay = delaySamples;
+        else                      smoothedDelay += (delaySamples - smoothedDelay) * delayGlideCoeff;
+        const float readLen = clampf(smoothedDelay, 1.0f, (float)(bufSize - 1));
+
+        const float wetL = readBuf(bufL, readLen);
+        const float wetR = readBuf(bufR, readLen);
+
+        float fbL = applyFeedbackFilter(wetL, true);
+        float fbR = applyFeedbackFilter(wetR, false);
+        if (tapeChar) { fbL = std::tanh(fbL * 1.1f); fbR = std::tanh(fbR * 1.1f); }
+
+        // Continuous soft limiter (E3): identity for |x|<=1.5, then a tanh knee.
+        // Continuous at |x|=1.5 (tanh(0)=0 -> f=1.5, matching the identity branch)
+        // and asymptotically saturating at 2.0; the old form stepped ~0.35 there.
+        auto softClamp = [](float x) noexcept {
+            const float ax = std::abs(x);
+            if (ax <= 1.5f) return x;
+            const float lim = 1.5f + 0.5f * std::tanh((ax - 1.5f) * 2.0f);
+            return x >= 0.0f ? lim : -lim;
+        };
+        if (pingPong)
+        {
+            bufL[(size_t)writePos] = softClamp(left  + fbR * fb);
+            bufR[(size_t)writePos] = softClamp(right + fbL * fb);
+        }
+        else
+        {
+            bufL[(size_t)writePos] = softClamp(left  + fbL * fb);
+            bufR[(size_t)writePos] = softClamp(right + fbR * fb);
+        }
+        writePos = (writePos + 1) % bufSize;
+
+        left  = dryL * (1.0f - m) + wetL * m;
+        right = dryR * (1.0f - m) + wetR * m;
+    }
+
+    void reset() noexcept
+    {
+        std::fill(bufL.begin(), bufL.end(), 0.0f);
+        std::fill(bufR.begin(), bufR.end(), 0.0f);
+        writePos = 0;
+        fbLPF_L = fbLPF_R = 0.0f;
+        smoothedDelay = -1.0f; // re-snap to the next target after a reset
+        fbHP_L.reset();
+        fbHP_R.reset();
+        snapSmoothing();
+    }
+
+private:
+    float readBuf(const std::vector<float>& buf, float delay) const noexcept
+    {
+        // Split the delay into integer samples and fraction BEFORE wrapping, and
+        // do the wrap in int. Forming (float)writePos - delay first spends the
+        // 24-bit mantissa on the integer part, so the fractional read position
+        // -- the only part the interpolation actually uses -- loses precision as
+        // the line gets longer. The 12 s line this delay now allocates needs 22
+        // bits for the integer part at 192 kHz, leaving 2 for the fraction.
+        //
+        // Measured while enlarging the buffer: at 140 BPM, 1/4, the interpolated
+        // output moved 58 dB below peak purely from this, with no change to the
+        // delay time. In int the fraction is exact at any buffer size.
+        const int   di = (int)delay;
+        const float df = delay - (float)di;
+        int i0 = writePos - di;   if (i0 < 0) i0 += bufSize;
+        int i1 = i0 - 1;          if (i1 < 0) i1 += bufSize;
+        return buf[(size_t)i0] * (1.0f - df) + buf[(size_t)i1] * df;
+    }
+
+    float applyFeedbackFilter(float sample, bool isLeft) noexcept
+    {
+        // One-pole LP (cached coeff) then a proper one-pole HP. The old HP was a
+        // 2-tap FIR (out = out - prev*hpCoeff) with ~2x gain at Nyquist inside the
+        // feedback loop, boosting HF on every pass; OnePoleHP has unity passband.
+        float& lpState = isLeft ? fbLPF_L : fbLPF_R;
+        lpState = sample * (1.0f - fbLPCoeff) + lpState * fbLPCoeff;
+        return (isLeft ? fbHP_L : fbHP_R).process(lpState);
+    }
+
+    float sr = 44100.0f;
+    bool  enabled = false, tempoSynced = true, pingPong = false, tapeChar = false;
+    float delayTimeMs = 500.0f;
+    ArpRateDivision syncDivision = ArpRateDivision::Quarter;
+    float feedback = 0.3f, mix = 0.3f, fbLPFFreq = 8000.0f, fbHPFFreq = 80.0f;
+    float mixMod = 1.0f;                         // per-sample EffectsMix scale
+    duskaudio::SmoothedValue smFeedback, smMix;  // targets are feedback / mix above
+    std::vector<float> bufL, bufR;
+    int bufSize = 1, writePos = 0;
+    float fbLPF_L = 0.0f, fbLPF_R = 0.0f;
+    float fbLPCoeff = 0.0f;                 // cached in prepare (fbLPFFreq is fixed)
+    float smoothedDelay = -1.0f;            // glided effective read length (E2); <0 = snap
+    float delayGlideCoeff = 0.0f;           // one-pole ~20 ms coeff (cached in prepare)
+    duskaudio::OnePoleHP fbHP_L, fbHP_R;    // proper one-pole HP in the feedback path
+};
+
+//==============================================================================
+// Freeverb — classic 8-comb + 4-allpass per channel. Public-domain algorithm
+// (Jezar's Freeverb); parameter mapping matches juce::Reverb bit-for-bit so the
+// decay->roomSize mapping in ReverbEffect keeps producing the intended tails.
+class Freeverb
+{
+public:
+    void setSampleRate(double sampleRate)
+    {
+        // Comb/allpass lengths scale with the sample rate (juce::Reverb form).
+        const double scale = sampleRate / 44100.0;
+        static constexpr int kCombL[kNumCombs] = { 1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617 };
+        static constexpr int kAllpL[kNumAllpasses] = { 556, 441, 341, 225 };
+        for (int i = 0; i < kNumCombs; ++i)
+        {
+            combL[i].resize((int)std::round(kCombL[i] * scale));
+            combR[i].resize((int)std::round((kCombL[i] + kStereoSpread) * scale));
+        }
+        for (int i = 0; i < kNumAllpasses; ++i)
+        {
+            allpassL[i].resize((int)std::round(kAllpL[i] * scale));
+            allpassR[i].resize((int)std::round((kAllpL[i] + kStereoSpread) * scale));
+            allpassL[i].feedback = 0.5f;
+            allpassR[i].feedback = 0.5f;
+        }
+        reset();
+    }
+
+    struct Parameters { float roomSize = 0.5f, damping = 0.5f, wetLevel = 0.33f, dryLevel = 0.4f, width = 1.0f; };
+
+    void setParameters(const Parameters& p)
+    {
+        const float wetScaled = p.wetLevel * kWetScale;
+        wet1 = wetScaled * (p.width * 0.5f + 0.5f);
+        wet2 = wetScaled * ((1.0f - p.width) * 0.5f);
+        dry  = p.dryLevel * kDryScale;
+        const float feedback = p.roomSize * kRoomScale + kRoomOffset;
+        const float damp = p.damping * kDampScale;
+        for (int i = 0; i < kNumCombs; ++i)
+        {
+            combL[i].feedback = feedback; combL[i].setDamp(damp);
+            combR[i].feedback = feedback; combR[i].setDamp(damp);
+        }
+    }
+
+    void reset()
+    {
+        for (int i = 0; i < kNumCombs; ++i) { combL[i].clear(); combR[i].clear(); }
+        for (int i = 0; i < kNumAllpasses; ++i) { allpassL[i].clear(); allpassR[i].clear(); }
+    }
+
+    // In-place stereo processing (dry mixed per juce::Reverb; callers that do
+    // their own wet/dry set dryLevel=0).
+    void processStereo(float* left, float* right, int numSamples) noexcept
+    {
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float inL = left[n], inR = right[n];
+            const float input = (inL + inR) * kGain;
+            float outL = 0.0f, outR = 0.0f;
+            for (int i = 0; i < kNumCombs; ++i) { outL += combL[i].process(input); outR += combR[i].process(input); }
+            for (int i = 0; i < kNumAllpasses; ++i) { outL = allpassL[i].process(outL); outR = allpassR[i].process(outR); }
+            left[n]  = outL * wet1 + outR * wet2 + inL * dry;
+            right[n] = outR * wet1 + outL * wet2 + inR * dry;
+        }
+    }
+
+private:
+    static constexpr int kNumCombs = 8, kNumAllpasses = 4, kStereoSpread = 23;
+    static constexpr float kGain = 0.015f, kWetScale = 3.0f, kDryScale = 2.0f;
+    static constexpr float kDampScale = 0.4f, kRoomScale = 0.28f, kRoomOffset = 0.7f;
+
+    struct CombFilter
+    {
+        void resize(int n) { buf.assign((size_t)maxf(1.0f, (float)n), 0.0f); index = 0; }
+        void clear() { std::fill(buf.begin(), buf.end(), 0.0f); filterStore = 0.0f; }
+        void setDamp(float d) { damp1 = d; damp2 = 1.0f - d; }
+        float process(float input) noexcept
+        {
+            const float output = buf[(size_t)index];
+            filterStore = output * damp2 + filterStore * damp1;
+            if (isBad(filterStore)) filterStore = 0.0f;
+            buf[(size_t)index] = input + filterStore * feedback;
+            if (++index >= (int)buf.size()) index = 0;
+            return output;
+        }
+        std::vector<float> buf;
+        int index = 0;
+        float feedback = 0.5f, filterStore = 0.0f, damp1 = 0.0f, damp2 = 1.0f;
+    };
+
+    struct AllpassFilter
+    {
+        void resize(int n) { buf.assign((size_t)maxf(1.0f, (float)n), 0.0f); index = 0; }
+        void clear() { std::fill(buf.begin(), buf.end(), 0.0f); }
+        float process(float input) noexcept
+        {
+            const float bufout = buf[(size_t)index];
+            const float output = -input + bufout;
+            buf[(size_t)index] = input + bufout * feedback;
+            if (++index >= (int)buf.size()) index = 0;
+            return output;
+        }
+        std::vector<float> buf;
+        int index = 0;
+        float feedback = 0.5f;
+    };
+
+    CombFilter combL[kNumCombs], combR[kNumCombs];
+    AllpassFilter allpassL[kNumAllpasses], allpassR[kNumAllpasses];
+    float wet1 = 0.0f, wet2 = 0.0f, dry = 0.0f;
+};
+
+//==============================================================================
+// Reverb effect: pre-delay + Freeverb, with its own wet/dry mix.
+class ReverbEffect
+{
+public:
+    void prepare(double sampleRate, int)
+    {
+        sr = (float)sampleRate;
+        reverb.setSampleRate(sampleRate);
+        const int maxPreDelay = (int)(sr * 0.2f) + 1;
+        preL.assign((size_t)maxPreDelay, 0.0f);
+        preR.assign((size_t)maxPreDelay, 0.0f);
+        preSize = maxPreDelay; prePos = 0;
+        // One-pole glide (~20 ms) on the pre-delay read offset (E4) so a moved
+        // Pre-Delay knob swoops instead of clicking; steady-state is exact.
+        preDelayGlideCoeff = 1.0f - std::exp(-1.0f / (0.020f * sr));
+        smoothedPd = -1.0f; // sentinel: snap to the first target
+        smMix.prepare(sampleRate, kParamSmoothTau);
+        snapSmoothing();
+        updateParams();
+    }
+
+    // Both the Freeverb tank and the pre-delay line stop being written while
+    // disabled but keep their contents, so re-enabling reads out the tail from
+    // before the bypass. Measured, into silence 2 s after the bypass: the
+    // pre-delay line alone came back at -11.1 dBFS, and the tank with it at
+    // -0.0 dBFS -- a full-scale burst. Clear on the ON edge.
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        if (on) reset();
+    }
+    void setSize(float s) { roomSize = clampf(s, 0.0f, 1.0f); updateParams(); }
+    void setDecay(float d) { decay = clampf(d, 0.1f, 20.0f); updateParams(); }
+    void setDamping(float d) { damping = clampf(d, 0.0f, 1.0f); updateParams(); }
+    void setMix(float m) { mix = clampf(m, 0.0f, 1.0f); smMix.setTarget(mix); }
+    void setPreDelay(float ms) { preDelayMs = clampf(ms, 0.0f, 200.0f); }
+    void setMixMod(float s) noexcept { mixMod = clampf(s, 0.0f, 2.0f); }
+    void snapSmoothing() noexcept { smMix.snap(mix); }
+
+    void process(float& left, float& right) noexcept
+    {
+        if (!enabled) { snapSmoothing(); return; }
+        const float dryL = left, dryR = right;
+        const float m = clampf(smMix.next() * mixMod, 0.0f, 1.0f);
+
+        if (preDelayMs > 0.1f)
+        {
+            const float targetPd = clampf(preDelayMs * sr / 1000.0f, 0.0f, (float)(preSize - 1));
+            if (smoothedPd < 0.0f) smoothedPd = targetPd;             // snap on first use
+            else                   smoothedPd += (targetPd - smoothedPd) * preDelayGlideCoeff;
+            const int pd = clampi((int)smoothedPd, 0, preSize - 1);
+            preL[(size_t)prePos] = left;
+            preR[(size_t)prePos] = right;
+            const int readPos = (prePos - pd + preSize) % preSize;
+            left  = preL[(size_t)readPos];
+            right = preR[(size_t)readPos];
+            prePos = (prePos + 1) % preSize;
+        }
+        else
+        {
+            // Pre-delay knobbed down to bypass. smoothedPd >= 0 means it was
+            // running on the previous sample, so this is the bypass EDGE: drop
+            // the line contents, otherwise turning the knob back up replays up
+            // to 200 ms of audio from before the bypass (measured -11.1 dBFS
+            // into silence). The fill is O(preSize) but happens once per edge,
+            // not per sample, and allocates nothing.
+            if (smoothedPd >= 0.0f)
+            {
+                std::fill(preL.begin(), preL.end(), 0.0f);
+                std::fill(preR.begin(), preR.end(), 0.0f);
+                prePos = 0;
+            }
+            smoothedPd = -1.0f; // re-snap when the pre-delay re-engages
+        }
+
+        reverb.processStereo(&left, &right, 1);
+        left  = dryL * (1.0f - m) + left  * m;
+        right = dryR * (1.0f - m) + right * m;
+    }
+
+    void reset()
+    {
+        reverb.reset();
+        std::fill(preL.begin(), preL.end(), 0.0f);
+        std::fill(preR.begin(), preR.end(), 0.0f);
+        prePos = 0;
+        smoothedPd = -1.0f;
+        snapSmoothing();
+    }
+
+private:
+    void updateParams()
+    {
+        Freeverb::Parameters p;
+        p.roomSize = clampf(roomSize * 0.5f + decay / 40.0f, 0.0f, 1.0f);
+        p.damping = damping;
+        p.wetLevel = 1.0f;  // we handle wet/dry ourselves
+        p.dryLevel = 0.0f;
+        p.width = 1.0f;
+        reverb.setParameters(p);
+    }
+
+    float sr = 44100.0f;
+    bool  enabled = false;
+    float roomSize = 0.5f, decay = 2.0f, damping = 0.3f, mix = 0.2f, preDelayMs = 0.0f;
+    float mixMod = 1.0f;               // per-sample EffectsMix scale
+    duskaudio::SmoothedValue smMix;     // target is mix above
+    float smoothedPd = -1.0f;          // glided pre-delay read offset (E4); <0 = snap
+    float preDelayGlideCoeff = 0.0f;   // one-pole ~20 ms coeff (cached in prepare)
+    Freeverb reverb;
+    std::vector<float> preL, preR;
+    int preSize = 1, prePos = 0;
+};
+
+//==============================================================================
+// Dispersive spring reverb (Modular mode). Ported from the tape-echo core:
+// each spring is a feedback delay loop with a long chain of first-order
+// allpasses (falling group delay -> the downward "boing" chirp) plus in-loop
+// damping and slow delay modulation.
+class DispersiveSpring
+{
+public:
+    void prepare(double sampleRate, float detune)
+    {
+        springs[0].prepare(sampleRate, 0.0412f * detune, 0.855f, 0.31f, 0.62f);
+        springs[1].prepare(sampleRate, 0.0331f * detune, 0.835f, 0.47f, 0.66f);
+        inputHP.setCutoff(140.0f, sampleRate);
+        inputLP.setCutoff(4200.0f, sampleRate);
+        dcBlock.setSampleRate(sampleRate);
+        reset();
+    }
+
+    void reset()
+    {
+        for (auto& s : springs) s.reset();
+        inputHP.reset(); inputLP.reset(); dcBlock.reset();
+    }
+
+    float process(float in) noexcept
+    {
+        const float voiced = inputLP.process(inputHP.process(in));
+        const float wet = springs[0].process(voiced) + springs[1].process(voiced);
+        return dcBlock.process(0.6f * wet);
+    }
+
+private:
+    struct Allpass1
+    {
+        float a = 0.63f, z = 0.0f;
+        float process(float x) noexcept { const float y = -a * x + z; z = x + a * y; return y; }
+    };
+
+    static constexpr int kNumAllpasses = 36;
+
+    struct Spring
+    {
+        std::vector<float> buf;
+        int len = 0, writeIdx = 0;
+        float feedback = 0.0f, lfoPhase = 0.0f, lfoInc = 0.0f, lfoDepth = 0.0f;
+        std::array<Allpass1, kNumAllpasses> chain;
+        duskaudio::OnePoleLP damping;
+
+        void prepare(double fs, float lengthSeconds, float fbAmount, float lfoHz, float apCoeff)
+        {
+            len = (int)maxf(16.0f, std::round((float)(lengthSeconds * fs)));
+            buf.assign((size_t)len + 8, 0.0f);
+            writeIdx = 0; feedback = fbAmount; lfoPhase = 0.0f;
+            lfoInc = kTwoPi * lfoHz / (float)fs;
+            lfoDepth = std::min(1.5f + 0.00005f * (float)fs, 6.0f);
+            for (auto& ap : chain) ap.a = apCoeff;
+            damping.setCutoff(2800.0f, fs);
+            reset();
+        }
+        void reset()
+        {
+            std::fill(buf.begin(), buf.end(), 0.0f);
+            for (auto& ap : chain) ap.z = 0.0f;
+            damping.reset(); writeIdx = 0;
+        }
+        float process(float x) noexcept
+        {
+            lfoPhase += lfoInc;
+            if (lfoPhase > kTwoPi) lfoPhase -= kTwoPi;
+            const float delay = (float)len - 4.0f + lfoDepth * std::sin(lfoPhase);
+            const float sz = (float)buf.size();
+            float rp = (float)writeIdx - delay;
+            rp -= std::floor(rp / sz) * sz;
+            if (rp >= sz) rp -= sz;
+            const int i0 = (int)rp;
+            const float frac = rp - (float)i0;
+            const int i1 = (i0 + 1 < (int)buf.size()) ? i0 + 1 : 0;
+            float y = buf[(size_t)i0] + frac * (buf[(size_t)i1] - buf[(size_t)i0]);
+            for (auto& ap : chain) y = ap.process(y);
+            y = damping.process(y);
+            buf[(size_t)writeIdx] = x + feedback * y;
+            if (++writeIdx >= (int)buf.size()) writeIdx = 0;
+            return y;
+        }
+    };
+
+    std::array<Spring, 2> springs;
+    duskaudio::OnePoleHP inputHP;
+    duskaudio::OnePoleLP inputLP;
+    duskaudio::DCBlocker dcBlock;
+};
+
+// Stereo wrapper used by the Modular mode (auto-enabled at low mix).
+class SpringReverbFX
+{
+public:
+    void prepare(double sampleRate, int)
+    {
+        springL.prepare(sampleRate, 1.0f);
+        springR.prepare(sampleRate, 1.013f);
+    }
+    // The spring is enabled only in Modular mode, so its enable edge IS the mode
+    // switch. process() returns early while disabled, which freezes the two
+    // dispersive tanks mid-ring -- their feedback loops keep whatever was
+    // circulating. Coming back to Modular resumed that ring from where it was
+    // left: measured -28.7 dBFS into silence, 2 s after leaving the mode.
+    //
+    // Cleared on the OFF edge here, unlike the chorus and the reverb. A spring
+    // tank is a long feedback loop, so the clear also has to stop it ringing;
+    // doing it on the way out means the mode we are leaving goes quiet
+    // immediately instead of holding a tail no one can hear but which comes
+    // back later.
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        if (!on) reset();
+    }
+    void setMix(float m) noexcept { mix = clampf(m, 0.0f, 1.0f); }
+    void process(float& left, float& right) noexcept
+    {
+        if (!enabled) return;
+        const float wl = springL.process(left);
+        const float wr = springR.process(right);
+        left  = left  * (1.0f - mix) + wl * mix;
+        right = right * (1.0f - mix) + wr * mix;
+    }
+    void reset() { springL.reset(); springR.reset(); }
+private:
+    bool enabled = false;
+    float mix = 0.15f;
+    DispersiveSpring springL, springR;
+};
+
+//==============================================================================
+// Complete chain: Drive -> Chorus -> Delay -> Reverb -> SpringReverb.
+class EffectsChain
+{
+public:
+    void prepare(double sampleRate, int blockSize)
+    {
+        drive.prepare(sampleRate, blockSize);
+        chorus.prepare(sampleRate, blockSize);
+        delay.prepare(sampleRate, blockSize);
+        reverb.prepare(sampleRate, blockSize);
+        springReverb.prepare(sampleRate, blockSize);
+    }
+
+    void process(float& left, float& right, double bpm) noexcept
+    {
+        drive.process(left, right);
+        chorus.process(left, right);
+        delay.process(left, right, bpm);
+        reverb.process(left, right);
+        springReverb.process(left, right);
+    }
+
+    void reset()
+    {
+        drive.snapSmoothing();   // DriveEffect holds no state beyond its smoothers
+        chorus.reset();
+        delay.reset();
+        reverb.reset();
+        springReverb.reset();
+    }
+
+    // Land every smoothed control on its target immediately. The engine calls
+    // this when a snapshot looks like a program change, so preset switches are
+    // instant instead of gliding (see MultiSynthDSP::detectBulkParamChange).
+    void snapSmoothing() noexcept
+    {
+        drive.snapSmoothing();
+        chorus.snapSmoothing();
+        delay.snapSmoothing();
+        reverb.snapSmoothing();
+    }
+
+    // Mod-matrix EffectsMix destination. The engine calls this per sample while
+    // the routing is live; each effect multiplies its SMOOTHED mix by the scale
+    // at the point of use. Retargeting the smoothers instead would push the
+    // modulation through the 8 ms one-pole, lowpassing an LFO/envelope that is
+    // meant to arrive intact -- and would also change the rendered output of any
+    // patch using the routing, which de-zippering must not do.
+    void setMixMod(float s) noexcept
+    {
+        drive.setMixMod(s);
+        chorus.setMixMod(s);
+        delay.setMixMod(s);
+        reverb.setMixMod(s);
+    }
+
+    DriveEffect drive;
+    ChorusEffect chorus;
+    DelayEffect delay;
+    ReverbEffect reverb;
+    SpringReverbFX springReverb;
+};
+
+} // namespace msynth

@@ -1,0 +1,332 @@
+// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+//
+// FilterEngine.hpp — per-mode 4-pole (24 dB/oct) filter models.
+//
+// Framework-free port of the JUCE FilterEngine.h. Every tuning constant
+// (maxFeedback / saturationStrength / stageNonlinearity / bassComp per model)
+// and the zero-delay one-pole cascade are carried over verbatim so the four
+// mode voicings are unchanged. Hardware model names are described generically
+// (no third-party trademarks). Prepared at the internal (oversampled) rate.
+//
+// Scope: the four LP models used by modes 0-3 (plus mode 4/Prism, which borrows
+// the clean Cosmos LPF). The Acid mode's 3-pole diode-ladder filter is not here
+// — it lives in AcidEngine.hpp, coupled to that voice's envelope/accent path.
+
+#pragma once
+
+#include "SynthCommon.hpp"
+
+namespace msynth
+{
+
+// Filter voicing selector. Values 0-3 correspond to SynthMode 0-3.
+enum class FilterMode
+{
+    Cosmos = 0, // 4-pole non-self-oscillating LPF + HPF (early-80s Japanese poly)
+    Oracle,     // 4-pole self-oscillating LPF (late-70s American poly)
+    Mono,       // 4-pole aggressive OTA LPF (70s Japanese mono)
+    Modular     // 4-pole transistor-ladder LPF (70s semi-modular)
+};
+
+// First-order non-resonant high-pass (Cosmos mode).
+class SimpleHPF
+{
+public:
+    void prepare(double sampleRate) noexcept { sr = (float)sampleRate; reset(); }
+
+    void setCutoff(float cutoffHz) noexcept
+    {
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.4f);
+        const float wc = kTwoPi * fc / sr;
+        coeff = 1.0f / (1.0f + wc);
+    }
+
+    float process(float input) noexcept
+    {
+        const float hp = coeff * (prevOutput + input - prevInput);
+        prevInput = input;
+        prevOutput = hp;
+        if (isBad(prevOutput)) prevOutput = 0.0f;
+        return hp;
+    }
+
+    void reset() noexcept { prevInput = 0.0f; prevOutput = 0.0f; }
+
+private:
+    float sr = 44100.0f, coeff = 1.0f, prevInput = 0.0f, prevOutput = 0.0f;
+};
+
+// 4-pole OTA-style cascade (base for Cosmos, Oracle, Mono).
+class FourPoleOTA
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate;
+        dcCoeff = 1.0f - (kTwoPi * 5.0f / sr);
+        reset();
+    }
+
+    void setParameters(float cutoffHz, float resonance, float driveAmount = 1.0f) noexcept
+    {
+        // CONTAINMENT, not a cure. The integrator below is naive (forward) Euler:
+        //     s += g * (in - s),   g = tan(pi*fc/sr)
+        // whose pole is 1-g, so it is unconditionally unstable for g > 2, and the
+        // resonant feedback path drags that limit down much further. When it goes,
+        // it does not ring musically -- it alternates at exactly Nyquist. Measured
+        // free-running tail (silent input, level 1.0 = full scale), at the old
+        // 0.40 ceiling:
+        //
+        //     model    tail rms   tail frequency
+        //     Cosmos     1.111      0.500 * sr
+        //     Oracle     0.909      0.500 * sr
+        //     Mono       0.667      0.500 * sr
+        //
+        // and it never decays. Every self-oscillation this filter can produce is
+        // that artefact; none of the three models self-oscillates musically.
+        //
+        // The onset moves with resonance, because feedback adds loop gain:
+        //
+        //     res      onset (fraction of sr)
+        //     0.00     0.3523      <- g = 2.000, the textbook Euler limit
+        //     0.50     0.221 - 0.238 depending on model
+        //     1.00     0.206       <- worst case, Mono
+        //
+        // Hence 0.20: below the worst measured onset with a little margin. Swept
+        // 3 models x 4 sample rates (44.1/48/96/192k) x 41 resonance values x 3
+        // excitation levels, the worst free-running tail at 0.200*sr is 1.7e-15
+        // and at 0.203*sr is 1.7e-15, while 0.206*sr already gives 2.9e-2 at
+        // Nyquist. This ceiling is a FRACTION of the rate, so oversampling raises
+        // it in Hz: 9.6 kHz at 48 kHz with OS off, 19.2 kHz at 2x.
+        //
+        // THE CORRECT FIX IS TO REPLACE THE INTEGRATOR, not to clamp it. A TPT /
+        // zero-delay-feedback one-pole,
+        //     v = g * (x - s) / (1 + g);   y = v + s;   s = y + v;
+        // is unconditionally stable for every g > 0, which removes the ceiling
+        // entirely and restores the top octave at 1x. It was not done here
+        // because it changes the response of all four models at every cutoff, so
+        // it needs the three models' maxFeedback retuned, every gate recalibrated
+        // and the ear pass reopened. Containment keeps the factory presets
+        // byte-identical (verified, all 54 at their own oversampling setting)
+        // while removing the failure.
+        float fc = clampf(cutoffHz, 10.0f, sr * 0.20f);
+        g = std::tan(kPi * fc / sr);
+        g = clampf(g, 0.0f, 12.0f);
+        res = clampf(resonance, 0.0f, 1.0f);
+        feedback = res * maxFeedback;
+        drive = driveAmount;
+    }
+
+    float process(float input) noexcept
+    {
+        float fb = std::tanh(s[3] * feedback);
+        float in = input * drive - fb;
+        in = std::tanh(in * saturationStrength) / std::tanh(saturationStrength);
+
+        for (int i = 0; i < 4; ++i)
+        {
+            const float y = s[i] + g * (in - s[i]);
+            // Per-stage soft saturation with UNITY small-signal gain. The former
+            // normaliser was tanh(y*k)/tanh(k), whose small-signal gain is
+            // k/tanh(k) > 1 — that makes each stage a bistable latch (fixed point
+            // s=0 has loop gain >1), so at low cutoff (small g, little AC to keep
+            // the integrator moving) every stage rails to a constant +-1, i.e.
+            // pure DC, which the output DC blocker then removes -> the voice
+            // decays to silence on any sustained note below ~2.5 kHz. Dividing by
+            // stageNonlinearity instead of tanh(stageNonlinearity) restores unity
+            // small-signal gain (stable) while keeping the knob a real saturation
+            // amount (higher k = harder knee). Matches the proven LadderFilter/
+            // AcidFilter approach (plain bounded tanh, gain <= 1).
+            s[i] = std::tanh(y * stageNonlinearity) / stageNonlinearity;
+            in = s[i];
+        }
+
+        for (auto& st : s)
+            if (isBad(st)) st = 0.0f;
+
+        const float output = s[3] + input * bassComp * res;
+
+        const float dcOut = output - dcState + dcCoeff * dcPrev;
+        dcPrev = dcOut;
+        dcState = output;
+        if (isBad(dcPrev)) dcPrev = 0.0f;
+        if (isBad(dcState)) dcState = 0.0f;
+        return dcOut;
+    }
+
+    void reset() noexcept
+    {
+        for (auto& st : s) st = 0.0f;
+        dcState = 0.0f; dcPrev = 0.0f;
+    }
+
+    float maxFeedback = 3.8f;
+    float saturationStrength = 1.0f;
+    float stageNonlinearity = 1.0f;
+    float bassComp = 0.0f;
+
+protected:
+    float sr = 44100.0f, g = 0.0f, res = 0.0f, feedback = 0.0f, drive = 1.0f;
+    float s[4] = {};
+    float dcCoeff = 0.999f, dcState = 0.0f, dcPrev = 0.0f;
+};
+
+// Warm, non-self-oscillating LPF + HPF (early-80s Japanese poly).
+class CosmosFilter
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        lpf.prepare(sampleRate);
+        hpf.prepare(sampleRate);
+        lpf.maxFeedback = 3.0f;
+        lpf.saturationStrength = 0.8f;
+        lpf.stageNonlinearity = 0.9f;
+        lpf.bassComp = 0.0f;
+    }
+    void setParameters(float lpCutoff, float lpResonance, float hpCutoff) noexcept
+    {
+        lpf.setParameters(lpCutoff, clampf(lpResonance, 0.0f, 0.75f));
+        hpf.setCutoff(hpCutoff);
+    }
+    float process(float input) noexcept { return lpf.process(hpf.process(input)); }
+    void reset() noexcept { lpf.reset(); hpf.reset(); }
+private:
+    FourPoleOTA lpf;
+    SimpleHPF hpf;
+};
+
+// Punchy, self-oscillating LPF, less bass loss (late-70s American poly).
+class OracleFilter
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        lpf.prepare(sampleRate);
+        lpf.maxFeedback = 4.2f;
+        lpf.saturationStrength = 1.2f;
+        lpf.stageNonlinearity = 1.1f;
+        lpf.bassComp = 0.15f;
+    }
+    void setParameters(float cutoffHz, float resonance) noexcept { lpf.setParameters(cutoffHz, resonance); }
+    float process(float input) noexcept { return lpf.process(input); }
+    void reset() noexcept { lpf.reset(); }
+private:
+    FourPoleOTA lpf;
+};
+
+// Fat, driven, squelchy OTA LPF (70s Japanese mono).
+class MonoFilter
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        lpf.prepare(sampleRate);
+        lpf.maxFeedback = 4.0f;
+        lpf.saturationStrength = 1.8f;
+        lpf.stageNonlinearity = 1.5f;
+        lpf.bassComp = 0.2f;
+    }
+    void setParameters(float cutoffHz, float resonance) noexcept
+    {
+        const float drive = 1.0f + resonance * 1.5f;
+        lpf.setParameters(cutoffHz, resonance, drive);
+    }
+    float process(float input) noexcept { return lpf.process(input); }
+    void reset() noexcept { lpf.reset(); }
+private:
+    FourPoleOTA lpf;
+};
+
+// Transistor-ladder LPF (70s semi-modular).
+class LadderFilter
+{
+public:
+    void prepare(double sampleRate) noexcept { sr = (float)sampleRate; reset(); }
+
+    void setParameters(float cutoffHz, float resonance) noexcept
+    {
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
+        const float r  = clampf(resonance, 0.0f, 1.0f);
+        float wc = kTwoPi * fc / sr;
+        wc = clampf(wc, 0.0f, 1.5f);
+        g = 0.9892f * wc - 0.4342f * wc * wc + 0.1381f * wc * wc * wc - 0.0202f * wc * wc * wc * wc;
+        g = clampf(g, 0.0f, 0.95f);
+        feedback = r * 3.8f;
+    }
+
+    float process(float input) noexcept
+    {
+        const float fb = std::tanh(s[3] * feedback);
+        float in = std::tanh(input - fb);
+        for (int i = 0; i < 4; ++i)
+        {
+            const float y = s[i] + g * (in - s[i]);
+            s[i] = std::tanh(y);
+            in = s[i];
+        }
+        for (auto& st : s)
+            if (isBad(st)) st = 0.0f;
+        return s[3];
+    }
+
+    void reset() noexcept { for (auto& st : s) st = 0.0f; }
+
+private:
+    float sr = 44100.0f, g = 0.0f, feedback = 0.0f;
+    float s[4] = {};
+};
+
+// Unified per-mode filter dispatch.
+class SynthFilter
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        cosmos.prepare(sampleRate);
+        oracle.prepare(sampleRate);
+        mono.prepare(sampleRate);
+        ladder.prepare(sampleRate);
+    }
+
+    void setMode(FilterMode m) noexcept { mode = m; }
+
+    // Rate change for oversampling-factor switches. Re-prepares the models
+    // (recomputes rate-dependent constants; resets filter state — a brief,
+    // acceptable transient. Pitch lives in the oscillators, not here).
+    void setSampleRate(double sampleRate) noexcept { prepare(sampleRate); }
+
+    void setParameters(float cutoff, float resonance, float hpCutoff = 20.0f) noexcept
+    {
+        switch (mode)
+        {
+            case FilterMode::Cosmos:  cosmos.setParameters(cutoff, resonance, hpCutoff); break;
+            case FilterMode::Oracle:  oracle.setParameters(cutoff, resonance); break;
+            case FilterMode::Mono:    mono.setParameters(cutoff, resonance); break;
+            case FilterMode::Modular: ladder.setParameters(cutoff, resonance); break;
+        }
+    }
+
+    float process(float input) noexcept
+    {
+        switch (mode)
+        {
+            case FilterMode::Cosmos:  return cosmos.process(input);
+            case FilterMode::Oracle:  return oracle.process(input);
+            case FilterMode::Mono:    return mono.process(input);
+            case FilterMode::Modular: return ladder.process(input);
+        }
+        return input;
+    }
+
+    void reset() noexcept { cosmos.reset(); oracle.reset(); mono.reset(); ladder.reset(); }
+
+private:
+    FilterMode mode = FilterMode::Cosmos;
+    CosmosFilter cosmos;
+    OracleFilter oracle;
+    MonoFilter mono;
+    LadderFilter ladder;
+};
+
+} // namespace msynth

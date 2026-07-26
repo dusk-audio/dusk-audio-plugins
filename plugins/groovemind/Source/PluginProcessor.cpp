@@ -37,11 +37,12 @@ void GrooveMindProcessor::loadPatternLibrary()
     searchPaths.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
                     .getChildFile(".local/share/GrooveMind/patterns").getFullPathName());
 
-    // Walk up from plugin binary to find groovemind-training/library
+    // Walk up from plugin binary to find the training library (dev only; moved
+    // to the private dusk-audio-tools repo, a sibling of the plugins checkout).
     auto devPath = pluginFile.getParentDirectory();
     for (int i = 0; i < 6; ++i)
     {
-        auto trainPath = devPath.getChildFile("groovemind-training/library");
+        auto trainPath = devPath.getChildFile("dusk-audio-tools/training/groovemind/library");
         if (trainPath.isDirectory())
         {
             searchPaths.add(trainPath.getFullPathName());
@@ -74,7 +75,7 @@ juce::File GrooveMindProcessor::getResourcesDirectory() const
     auto devPath = pluginFile.getParentDirectory();
     for (int i = 0; i < 6; ++i)
     {
-        auto trainPath = devPath.getChildFile("groovemind-training/rtneural");
+        auto trainPath = devPath.getChildFile("dusk-audio-tools/training/groovemind/rtneural");
         if (trainPath.isDirectory())
         {
             searchPaths.add(trainPath.getFullPathName());

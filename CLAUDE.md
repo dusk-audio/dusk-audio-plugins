@@ -309,7 +309,10 @@ You are operating within a constrained context window and strict system prompts.
 ## Private Tools Repo
 
 Calibration and testing scripts are in `~/projects/dusk-audio-tools/` (private repo).
-DuskVerb tuning scripts live in `plugins/DuskVerb/tools/tuner/` (see its README).
+DuskVerb tuning/analysis scripts live in `~/projects/dusk-audio-tools/tools/duskverb/`
+(tuner in `tools/duskverb/tuner/`); GrooveMind training in `training/groovemind/`. The
+tuner scripts locate this plugins checkout via `DUSK_PLUGIN_REPO` (default
+`~/projects/plugins`); see the tools repo README.
 
 ## Scientific Method Overrides (added 2026-07-06, from the Fable 5 DuskVerb session)
 
@@ -336,4 +339,12 @@ These behaviors produced the session's best results. Apply them to ALL diagnosti
    run parallel. Loose briefs produce slop.
 
 NOTE: an old `plugins/DuskVerb/tests/reference_comparison/` symlink no longer exists;
-tuning scripts live in `plugins/DuskVerb/tools/tuner/` (see its README).
+tuning scripts now live in the private tools repo at
+`~/projects/dusk-audio-tools/tools/duskverb/tuner/` (see the tools repo README).
+
+NOTE (post-merge): the tooling move is not finished. `plugins/DuskVerb/tools/tuner/`
+still exists in-tree because `main` added those scripts after the move commit landed
+on this branch; 59 of the 64 are already mirrored in the private repo (the 5 that are
+not are 3 superseded session handoffs plus `stereo_jnd_audit.py` /
+`stereo_profile_fit.py` from the stereo campaign). Finish the move in its own commit
+after mirroring those two — do not delete them as a side effect of an unrelated change.
