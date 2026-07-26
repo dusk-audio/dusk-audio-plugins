@@ -39,6 +39,16 @@ on:
 
 # DPF / DPF-Widgets pinned to the SHAs validated locally for this release. Bump
 # both together and re-run the dispatch matrix before tagging.
+#
+# TODO: DPF_SHA still points at upstream DISTRHO/DPF, which reports latency
+# changes from outside clap_plugin::activate and so fails 24 clap-validator
+# tests. The fix lives on branch dusk/clap-latency-activate in the local DPF
+# checkout and is not pushed yet. Once it is pushed to the Dusk fork, bump
+# DPF_SHA below to the fork commit AND repoint every `repository: DISTRHO/DPF`
+# checkout step (5 of them) at the fork. Until then the clap-validator step
+# will fail on the 24 latency failures -- its allowlist has been removed
+# because the fix validates clean locally (44 tests: 33 pass, 10 skip,
+# 1 warning, 0 fail).
 env:
   DPF_SHA: 4238e1c7f0351bbe488d79f0899c540543ac7583
   DPFWIDGETS_SHA: 730da6397904da66d99667c1cb30fc77fc3d794a
@@ -802,9 +812,9 @@ jobs:
         run: |
           CLAP="$(cd build/bin && pwd)/sunset_circuits.clap"
           test -f "$CLAP"
-          # Machine-readable output, classified below. Exit status alone is not
-          # usable here (see the allowlist), so it is captured and the JSON is
-          # what decides.
+          # Machine-readable output, classified below. The exit status is still
+          # captured separately so a timeout is distinguishable from a test
+          # failure, but the JSON is what decides pass/fail.
           set +e
           timeout 600 "$CLAP_VALIDATOR" validate --json "$CLAP" > clap-validator.json 2> clap-validator.err
           STATUS=$?
@@ -814,29 +824,18 @@ jobs:
             echo "::error::clap-validator timed out after 600s"
             exit 1
           fi
-          # ONE tolerated failure cause, and only this exact one:
+          # No tolerated failures: any failed test fails the job.
           #
-          #   clap_host_latency::changed
-          #   Must only be called within 'clap_plugin::activate'
-          #
-          # That is DPF's CLAP wrapper, not this plugin. DPF reports a latency
-          # change from its main-thread callback (DistrhoPluginCLAP.cpp,
-          # reportLatencyChangeIfNeeded), which clap-validator 0.4.1 rejects
-          # because CLAP requires clap_host_latency::changed to be called only
-          # inside clap_plugin::activate. It fires on this plugin because
-          # oversampling changes the reported latency, and it hits every DPF
-          # plugin that declares latency. Measured locally on 0.4.1: 44 tests
-          # run, 10 passed, 24 failed, 10 skipped -- and all 24 failures carry
-          # this one message and nothing else.
-          #
-          # Any failure with a different message fails the job, and if the DPF
-          # bump that fixes this lands, the allowlist stops matching and the
-          # check below tells you to delete it.
+          # There used to be an allowlist here for
+          #   clap_host_latency::changed / Must only be called within 'clap_plugin::activate'
+          # a DPF CLAP-wrapper bug that failed 24 of 44 tests on any DPF plugin
+          # declaring a latency. It is fixed in DistrhoPluginCLAP.cpp by only
+          # announcing latency changes from within clap_plugin::activate; see the
+          # DPF_SHA TODO at the top of this file for the fork bump this depends on.
+          # Measured locally against the fixed DPF: 44 tests run, 33 passed,
+          # 10 skipped, 1 warning, 0 failed.
           python3 - <<'PY'
           import collections, json, sys
-
-          KNOWN = ("clap_host_latency::changed\n"
-                   "Must only be called within 'clap_plugin::activate'")
 
           with open("clap-validator.json") as f:
               results = json.load(f)["results"]
@@ -845,34 +844,31 @@ jobs:
               print("::error::clap-validator produced no results")
               sys.exit(1)
 
+          def test_name(r):
+              t = r["test"]
+              for k in ("plugin-instance", "plugin-library", "preset-discovery"):
+                  if k in t:
+                      return t[k]["test"]
+              return str(t)
+
           counts = collections.Counter(r["status"]["code"] for r in results)
           print("clap-validator: " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())))
 
-          unexpected = []
-          known = 0
+          failed = []
           for r in results:
-              if r["status"]["code"] != "failed":
-                  continue
+              code = r["status"]["code"]
               details = (r["status"].get("details") or "").strip()
-              name = r["test"]["plugin-instance"]["test"]
-              if details == KNOWN:
-                  known += 1
-              else:
-                  unexpected.append((name, details))
+              if code == "failed":
+                  failed.append((test_name(r), details))
+              elif code == "warning":
+                  print(f"::warning::clap-validator {test_name(r)}: {details}")
 
-          if unexpected:
-              for name, details in unexpected:
+          if failed:
+              for name, details in failed:
                   print(f"::error::clap-validator {name}: {details}")
               sys.exit(1)
 
-          if known:
-              print(f"::warning::{known} clap-validator failures are the known "
-                    "upstream DPF clap_host_latency::changed deviation "
-                    "(tolerated; delete the allowlist once DPF is bumped past it)")
-          else:
-              print("::notice::clap-validator is fully green -- the DPF "
-                    "clap_host_latency allowlist in this workflow is now dead "
-                    "code and should be removed")
+          print("::notice::clap-validator: no failures")
           PY
 
       - name: Upload validation logs
