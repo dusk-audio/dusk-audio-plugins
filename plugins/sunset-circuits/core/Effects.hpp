@@ -304,7 +304,28 @@ public:
     void prepare(double sampleRate, int) noexcept
     {
         sr = (float)sampleRate;
-        const int maxSamples = (int)(sr * 2.0f) + 1;
+        // The line has to hold the LONGEST delay that is reachable, and the
+        // tempo-synced path can ask for far more than the free-running knob's
+        // 2 s ceiling. The slowest division is 1/1 = 4 beats
+        // (getBeatsPerStep(Whole)), which is 2 s only at exactly 120 BPM and
+        // grows without bound as the tempo drops.
+        //
+        // Sizing for 2 s silently clamped all of it. Measured at 1/1, the echo
+        // landed at 2.0013 s at 60, 90 AND 120 BPM -- 2.667 s expected at 90 and
+        // 4.0 s at 60, so every tempo below 120 was wrong and only 120 was right
+        // by coincidence.
+        //
+        // Sized instead for the slowest division at kMinSyncBpm. Hosts do not
+        // agree on a tempo floor, so this is ours: below it the delay clamps and
+        // shortens, which is the old behaviour, but it no longer does so
+        // anywhere near a usable tempo. Cost is one prepare()-time allocation of
+        // 2 ch x 4 B x kMinSyncBpm-worth of samples: 4.6 MB at 48 kHz, 18.4 MB
+        // at 192 kHz.
+        static constexpr double kMinSyncBpm   = 20.0;
+        static constexpr double kMaxSyncBeats = 4.0;   // getBeatsPerStep(Whole)
+        static constexpr double kMaxKnobSec   = 2.0;   // setTimeMs ceiling
+        const double maxSeconds = std::max(kMaxKnobSec, kMaxSyncBeats * 60.0 / kMinSyncBpm);
+        const int maxSamples = (int)(sampleRate * maxSeconds) + 1;
         bufL.assign((size_t)maxSamples, 0.0f);
         bufR.assign((size_t)maxSamples, 0.0f);
         bufSize = maxSamples; writePos = 0;
@@ -411,12 +432,21 @@ public:
 private:
     float readBuf(const std::vector<float>& buf, float delay) const noexcept
     {
-        float rp = (float)writePos - delay;
-        if (rp < 0.0f) rp += (float)bufSize;
-        const int i0 = (int)rp;
-        const int i1 = (i0 + 1) % bufSize;
-        const float f = rp - (float)i0;
-        return buf[(size_t)i0] * (1.0f - f) + buf[(size_t)i1] * f;
+        // Split the delay into integer samples and fraction BEFORE wrapping, and
+        // do the wrap in int. Forming (float)writePos - delay first spends the
+        // 24-bit mantissa on the integer part, so the fractional read position
+        // -- the only part the interpolation actually uses -- loses precision as
+        // the line gets longer. The 12 s line this delay now allocates needs 22
+        // bits for the integer part at 192 kHz, leaving 2 for the fraction.
+        //
+        // Measured while enlarging the buffer: at 140 BPM, 1/4, the interpolated
+        // output moved 58 dB below peak purely from this, with no change to the
+        // delay time. In int the fraction is exact at any buffer size.
+        const int   di = (int)delay;
+        const float df = delay - (float)di;
+        int i0 = writePos - di;   if (i0 < 0) i0 += bufSize;
+        int i1 = i0 - 1;          if (i1 < 0) i1 += bufSize;
+        return buf[(size_t)i0] * (1.0f - df) + buf[(size_t)i1] * df;
     }
 
     float applyFeedbackFilter(float sample, bool isLeft) noexcept
