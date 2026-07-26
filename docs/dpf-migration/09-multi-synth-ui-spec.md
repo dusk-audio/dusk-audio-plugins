@@ -49,9 +49,13 @@ knob is its pivot; radius is design-space.
 | Nameplate "SUNSET CIRCUITS" | text box `(18,10)–(250,44)` | 20 px bold, `text`; sub "Dusk Audio" 13 px right-aligned at x=1222,y=8 |
 | Mode rockers ×6 | strip `(300,8)–(940,48)` | rocker *i* at `x=306+i*106`, width **100**, `y 10..46` (§4) |
 | Preset ◀ prev | `(952,14)–(978,42)` | LED-button style |
-| Preset combo | `(982,14)–(1150,42)` | styled `BeginCombo`, per-mode accent header (§8) |
-| Preset ▶ next | `(1154,14)–(1180,42)` | |
-| Save ★ | `(1186,14)–(1222,42)` | opens user-preset save [v2 = writes via UserPreset bridge] |
+| Preset combo | `(982,14)–(1108,42)` (w **126**) | styled `BeginCombo`, per-mode accent header (§8). Narrowed from 168 to seat BROWSE; the preview clips the longest factory names ("Alien Transmission"), which is what the browser (§8.10) exists to solve |
+| Preset ▶ next | `(1112,14)–(1138,42)` | |
+| BROWSE | `(1142,14)–(1182,42)` | opens the preset browser (§8.10) |
+| Save ★ | `(1186,14)–(1222,42)` | opens user-preset save |
+
+BROWSE and SAVE share `barButton()` — chevron chrome with a 9 px accent label instead
+of a triangle, accent border on hover.
 
 ### 1.2 Body — `y 60..542`
 
@@ -103,6 +107,8 @@ knob is its pivot; radius is design-space.
 | Overlay | Rect | Contents |
 |---|---|---|
 | MOD MATRIX | modal `(220,120)–(1020,660)` over a `IM_COL32(0,0,0,150)` full-window scrim | 8 rows × {Source combo, arrow, Dest combo, Amount bipolar bar-knob, clear-row ×}; title + close ✕ `(988,128)–(1012,152)` |
+| SAVE USER PRESET | modal `(420,285)–(820,495)` over the same scrim | name `InputText`, inline overwrite / delete confirm, SAVE / CANCEL / DELETE |
+| PRESET BROWSER | modal `(48,58)–(1192,740)` over the same scrim | search + mode/bank chips + 4×12 preset grid + APPLY / CLOSE (§8.10) |
 | KEYBOARD SHORTCUTS `?` | reuse Multi-Q help card pattern [v2] | optional |
 
 ### 1.5 Keyboard — `(16,700)–(1224,780)` (always visible)
@@ -119,7 +125,7 @@ knob is its pivot; radius is design-space.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ SUNSET CIRCUITS [COSMOS][ORACLE][MONO][MODULAR][PRISM][ACID]   ◀ [ Preset ▾ ] ▶  ★  Dusk  │ 0..54
+│ SUNSET CIRCUITS [COSMOS][ORACLE][MONO][MODULAR][PRISM][ACID]  ◀ [Preset ▾] ▶ BROWSE ★ Dusk│ 0..54
 ├───────────────┬───────────────────────────────┬─────────────────────────────────────────┤
 │  OSC 1        │        FILTER                  │  LFO 1                 │   SCOPE          │
 │  wave det pw  │  ┌────filter-curve────────┐    │  rate fade shape sync  │   /\  /\  /\     │
@@ -779,6 +785,66 @@ and `Mod Whl` mod-matrix sources without external hardware.
   recentres pitch bend if the window closes mid-drag; the mod wheel is deliberately left
   latched.
 
+### 8.10 Preset browser (`showBrowse`)
+The combo is a list you scroll; the browser is the library you read. BROWSE (§1.1) opens it
+over the same scrim and with the same **replace-panels** rule as the mod matrix — the base
+layers are not submitted at all while it is up, and it draws into its own layer window
+(`MSbrowse`, `kLayerBrowse`, own draw list and own vertex budget). `updateWheels()` still
+runs *before* the early return, so a pitch bend released as the browser opened keeps
+springing back (§8.9).
+
+- **Geometry** (design space). Panel `(48,58)–(1192,740)`; 20 px inner margin → content band
+  `x 68..1172` (1104 wide).
+
+  | Band | `y` | Contents |
+  |---|---|---|
+  | title + close ✕ | `66..90` | "PRESET BROWSER" (15 px accent); ✕ `(1156,66)–(1180,90)` |
+  | search row | `104..130` | "FIND" label `x68`; `InputText` `(110,104)` w318 with a dim "search preset names" placeholder when empty and unfocused; bank chips `ALL / FACTORY / USER` w84 at `x{908,998,1088}` |
+  | mode chips | `140..166` | `ALL` + the six mode names, w96 at `x = 68 + i*102` (→ `68..776`) |
+  | grid | `178..678` | 4 columns w270 on a 278 pitch (`4*270 + 3*8 = 1104` exactly); 12 rows h38 on a 42 pitch (`12*42 − 4 = 500 = 678−178`) → **48 cells on screen** |
+  | footer | `690..720` | "N of M presets" + hint line; APPLY `(920,690)` and CLOSE `(1052,690)`, both 120×30 |
+
+  Scroll indicator (only when the list is taller than 12 rows) at `x 1178..1183`, thumb
+  height/offset = `rows_visible / rows_total`.
+- **Cell** (270×38): name at `x0+12`, `y0+14`, font 11 (ink band 136 px ≈ 24 chars, clear of
+  the badge; the longest factory name is 18). Mode badge `(x1−116,y0+11)–(x1−58,y0+27)`
+  filled with that mode's **accent** (§4.0), label font 8 in an ink picked per swatch by
+  luminance. Bank tag right-aligned at `x1−12`, font 8: `FACTORY` dim, `USER` accent. Cell
+  fill/border are dark in every skin (like the combos) so they read on Acid's silver panel.
+  The **loaded** preset gets an accent gutter bar `(x0+2)–(x0+5)` plus an accent name; the
+  **cursor** gets a 1.8 px accent border; hover lightens the fill. Hover tooltip =
+  `name · MODE · factory|user preset[ (loaded)]`.
+- **Filters**: substring search is case-insensitive and allocation-free (the needle is
+  pre-lowered into a stack buffer and matched in place); mode chips filter on a **derived**
+  tag — factory from a walk of each preset's own override table for its `kParamMode` row
+  (cached in the ctor), user from the `mode=` line `scpreset::Store::refresh()` parses.
+  No tagging metadata beyond mode and bank exists, and none is invented.
+- **No per-frame work**: `browseIdx[]` is a fixed member array of combined indices, rebuilt
+  **only** when a filter changes (`browseDirty`, so a search edit rebuilds at the top of the
+  next frame and the index stays stable for the grid already being submitted). The grid draw
+  walks it directly; nothing allocates while the browser is open.
+- **Scrolling is by whole ROWS.** ImGui only culls items that are *fully* clipped, so a pixel
+  scroll would leave half-cells at the band edges with live hit boxes hanging over the filter
+  row. Wheel = ±1 row over the grid; the cursor auto-scrolls itself into view.
+- **Loading** goes through `applyCombined()` — the identical entry point ◀/▶ use, dispatching
+  to `applyPreset()` (factory) or the user-store load, so the **U1** limitation is unchanged:
+  a DPF UI cannot ask the host to load a program, so the preset's parameters are pushed
+  directly, followed by `notifyDspProgramChange()`. Click loads and leaves the browser open
+  (the skin changes around you); double-click or APPLY loads and closes; ✕ / CLOSE / Esc /
+  a click on the scrim close without loading anything further. The load itself is deferred to
+  the end of the frame, after every widget has been submitted.
+- **`openBrowse()` deliberately does NOT rescan the user directory**: `currentPreset`
+  addresses the user bank by index, and a rescan can renumber it, silently repointing both
+  the highlight and the save modal's DELETE at a different patch. The store is rescanned only
+  where the UI itself changed it (save / delete), which is the combo's contract too.
+- **Keyboard**: Up/Down move one row, Left/Right one cell, Enter loads and closes. Up/Down are
+  read unconditionally — a single-line `InputText` only takes ownership of
+  Left/Right/Enter/Home/End (`imgui_widgets.cpp`, `always_owned_keys`; Up/Down are claimed for
+  multiline only) — so you can type into FIND and arrow straight down into the results.
+  Left/Right yield to an active field so they still walk the search text. Enter arrives either
+  as the `EnterReturnsTrue` return value or, with nothing active, as a plain key press; the
+  two paths are mutually exclusive so a preset is never loaded twice on one frame.
+
 ---
 
 ## 9. Rendering & performance notes
@@ -835,6 +901,7 @@ Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
 | bottom | 22 110 | 33.7 % | sequencer lanes + FX strip + keyboard + wheels |
 | center | 16 508 | 25.2 % | filter curve + 2 ADSR displays + 8 knobs |
 | right | 14 672 | 22.4 % | LFOs + sub-panel + scope + VU |
+| browse | 10 616 | 16.2 % | 48 preset cells (57 presets listed, scrolled + hovered) |
 | modal | 9 692 | 14.8 % | 8 rows of combos/knobs (measured with a combo popup open) |
 
 The worst case is **not** the mod-matrix modal (14.8 %) but the **Prism operator matrix**,
@@ -854,8 +921,10 @@ more chrome knobs, before it would need splitting. Vertex counts are near scale-
   OCT± shift base. Host MIDI lights keys.
 - **Wheels** (§8.9): drag anywhere in the slot to set the value directly; PB springs back to
   centre on release, MOD latches and also takes wheel-scroll trim.
-- **Preset browser**: ◀/▶ step `currentPreset` and apply (like tape-echo `applyPreset`,
-  iterating the static preset table); combo jumps directly; ★ saves [v2 bridge].
+- **Preset cluster**: ◀/▶ step `currentPreset` and apply (like tape-echo `applyPreset`,
+  iterating the static preset table); the combo jumps directly; ★ saves; **BROWSE** opens the
+  searchable browser (§8.10) — click loads, double-click / APPLY loads and closes,
+  Esc / scrim / ✕ / CLOSE close, arrows + Enter navigate.
 - **MOD overlay**: MOD MATRIX button toggles; click-scrim or ✕ closes.
 - **Mode switch**: rockers set `mode`, kick 280 ms crossfade; sub-panels dissolve; per-mode
   visibility (§4.7) applies immediately to which widgets are drawn.
@@ -884,6 +953,8 @@ Implement in this order so each step is verifiable in the Xvfb UI sweep:
     descriptor with the engine).
 12. **Acid silver skin + 3-lane sequencer** (pitch drag, accent/slide cells).
 13. **Tooltips** pass over every control; final Xvfb screenshot sweep + readout checks.
+14. **Preset browser** (§8.10) — after the modals exist, since it reuses their
+    replace-panels pattern and the user-preset store.
 
 ---
 *Multi-Synth UI spec | 1240×780 fixed design space | Dear ImGui / ImDrawList | Dusk Audio*
