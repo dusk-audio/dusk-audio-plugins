@@ -134,6 +134,15 @@ public:
         modeBlend = 1.0f;
     }
 
+    // The pitch wheel springs back on mouse release, but a window closed mid-drag
+    // would leave the engine detuned with no widget left to recentre it. The mod
+    // wheel is deliberately NOT reset — it latches, like the hardware it stands in for.
+    ~MultiSynthUI() override
+    {
+        if (pbSent != 0.0f)
+            if (msynth::MultiSynthDSP* d = dspAccess()) d->pitchBend(0.0f);
+    }
+
 protected:
     void parameterChanged(uint32_t index, float value) override
     {
@@ -206,7 +215,7 @@ protected:
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
             beginLayerScreen("MSsave", 0, 0, winW, winH, true);
             drawSaveModalOverlay();
-            ImGui::End();
+            endLayer(kLayerModal);
             ImGui::PopStyleVar(2);
            #ifdef MSYNTH_FRAME_PROFILE
             profileFrame(_t0);
@@ -219,7 +228,7 @@ protected:
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
             beginLayerScreen("MSmodal", 0, 0, winW, winH, true);
             drawModMatrixOverlay();
-            ImGui::End();
+            endLayer(kLayerModal);
             ImGui::PopStyleVar(2);
            #ifdef MSYNTH_FRAME_PROFILE
             profileFrame(_t0);
@@ -229,7 +238,7 @@ protected:
 
         beginLayer("MStop", 0, 0, kDesignW, 55);
         drawTopBar();
-        ImGui::End();
+        endLayer(kLayerTop);
 
         // Layer seam at y=545. The lower body ROW of the upper three layers (VOICE/
         // CHARACTER, AMP/FILTER ENV, MOD bar, OUTPUT) ends at y=542, so its outer
@@ -241,12 +250,12 @@ protected:
         if (curMode == 4) drawPrismOps();   // Prism swaps oscillators for the op matrix
         else              drawOscPanels();
         drawMixerVoice();
-        ImGui::End();
+        endLayer(kLayerLeft);
 
         beginLayer("MScenter", 346, 55, 756, 545);
         drawFilter();
         drawEnvelopes();
-        ImGui::End();
+        endLayer(kLayerCenter);
 
         beginLayer("MSright", 756, 55, kDesignW, 545);
         drawLFOs();
@@ -254,13 +263,14 @@ protected:
         drawModMatrixBar();
         drawScope();
         drawOutputVU();
-        ImGui::End();
+        endLayer(kLayerRight);
 
         beginLayer("MSbottom", 0, 545, kDesignW, kDesignH);
         drawSequencer();
         drawFXStrip();
+        drawWheels();
         drawKeyboard();
-        ImGui::End();
+        endLayer(kLayerBottom);
 
         ImGui::PopStyleVar(2);
        #ifdef MSYNTH_FRAME_PROFILE
@@ -270,6 +280,26 @@ protected:
        #endif
     }
 
+    // Per-layer VERTEX CENSUS. The DPF DearImGui backend has no VtxOffset support,
+    // so a single window's draw list corrupts past 65535 vertices (ImDrawIdx is
+    // 16-bit) — the whole reason this UI is split into non-overlapping layer
+    // windows. Every layer therefore ends through endLayer(), which (in a
+    // -DMSYNTH_FRAME_PROFILE build) samples that window's draw list before
+    // ImGui::End() and keeps a running per-layer maximum, printed with the frame
+    // timings. Re-run it after adding chrome; the worst case is the mod-matrix
+    // modal, which draws the panel plus 8 rows of combos/knobs in ONE window.
+    enum { kLayerTop, kLayerLeft, kLayerCenter, kLayerRight, kLayerBottom, kLayerModal, kNumLayers };
+    void endLayer(int layer)
+    {
+       #ifdef MSYNTH_FRAME_PROFILE
+        const int v = ImGui::GetWindowDrawList()->VtxBuffer.Size;
+        if (layer >= 0 && layer < kNumLayers && v > vtxMax[layer]) vtxMax[layer] = v;
+       #else
+        (void)layer;
+       #endif
+        ImGui::End();
+    }
+
    #ifdef MSYNTH_FRAME_PROFILE
     void profileFrame(std::chrono::high_resolution_clock::time_point t0)
     {
@@ -277,13 +307,21 @@ protected:
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         if (profN >= 0 && profN < 100)
         { profLogic[profN] = ms; profTotal[profN] = ImGui::GetIO().DeltaTime * 1000.0; }
-        if (++profN == 100)
+        // Report every 100 frames (not once), so a census taken with the mod matrix
+        // or the save modal open actually reaches the log.
+        if (++profN >= 100)
         {
             double a[100], b[100];
             std::memcpy(a, profLogic, sizeof a); std::memcpy(b, profTotal, sizeof b);
             std::sort(a, a + 100); std::sort(b, b + 100);
             std::fprintf(stderr, "MSYNTH_FRAME logic_median=%.3fms total_median=%.3fms (100 frames)\n",
                          a[50], b[50]);
+            static const char* const kLayerNames[kNumLayers] =
+                { "top", "left", "center", "right", "bottom", "modal" };
+            for (int i = 0; i < kNumLayers; ++i)
+                std::fprintf(stderr, "MSYNTH_VTX %-7s max=%5d / 65535 (%.1f%%)\n",
+                             kLayerNames[i], vtxMax[i], 100.0 * vtxMax[i] / 65535.0);
+            profN = 0;
         }
     }
    #endif
@@ -2332,6 +2370,120 @@ private:
     }
 
     //========================================================================
+    // Performance wheels (pitch bend + mod), keyboard row, left of the keys
+    //========================================================================
+    // Live DSP instance, or null in a split LV2 UI (see DuskAccessBridge.hpp).
+    msynth::MultiSynthDSP* dspAccess()
+    {
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (multiSynthGetDSP != nullptr)
+            if (void* const inst = getPluginInstancePointer())
+                return multiSynthGetDSP(inst);
+       #endif
+        return nullptr;
+    }
+
+    // The wheels drive the SAME engine entry points the shell's MIDI handler calls
+    // for 0xE0 (pitch bend) and CC 1 (mod wheel) — MultiSynthDSP::pitchBend() /
+    // ::modWheel(), both plain relaxed atomic stores, so writing them from the UI
+    // thread is safe and is what makes "Mod Whl" / "P.Bend" usable as mod-matrix
+    // sources without a hardware controller. There is no host-facing parameter for
+    // either (they are performance state, not patch state), so nothing to automate
+    // and nothing to save. Consequence: a split LV2 UI has no bridge and the wheels
+    // are drawn inert with an explanatory tooltip, and bend sent by the HOST is not
+    // reflected back into the widget (the engine exposes no getter, and adding one
+    // is a core change) — last writer wins, which is how two physical controllers
+    // on one input would behave anyway.
+    void drawWheels()
+    {
+        const bool live_ = dspAccess() != nullptr;
+        drawWheel("pbwheel", 54, 80, true, pbValue, "PB",
+                  live_ ? "Pitch bend. Drag up or down; springs back to centre on release."
+                        : "Pitch bend is unavailable in a remote (split) UI.", live_);
+        drawWheel("modwheel", 86, 112, false, modValue, "MOD",
+                  live_ ? "Mod wheel (CC 1). Latches where you leave it; wheel-scroll to trim."
+                        : "The mod wheel is unavailable in a remote (split) UI.", live_);
+
+        // Push only on change; the engine holds the last value like a hardware wheel.
+        if (pbValue != pbSent)   { if (auto* d = dspAccess()) { d->pitchBend(pbValue); pbSent = pbValue; } }
+        if (modValue != modSent) { if (auto* d = dspAccess()) { d->modWheel(modValue); modSent = modValue; } }
+    }
+
+    // One vertical wheel. `bipolar` = pitch bend: centre rest, springs back to 0 on
+    // release. Otherwise a mod wheel, which latches. The pointer maps ABSOLUTELY
+    // into the slot (grab-and-bend) rather than as a relative drag: on a 62 px tall
+    // wheel a relative drag would need repeated nudges to reach full bend.
+    void drawWheel(const char* id, float x0, float x1, bool bipolar, float& v,
+                   const char* label, const char* tip, bool enabled)
+    {
+        const float top = 700.0f, bot = 762.0f;
+        const float mid = 0.5f * (top + bot), halfH = 0.5f * (bot - top);
+        const ImVec2 b0 = P(x0, top), b1 = P(x1, bot);
+
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool active  = enabled && ImGui::IsItemActive();
+        const bool hovered = ImGui::IsItemHovered();
+        if (hovered && !active) ImGui::SetTooltip("%s", tip);
+
+        if (active)
+        {
+            const float h = b1.y - b0.y;
+            float t = h > 1.0f ? (ImGui::GetIO().MousePos.y - b0.y) / h : 0.5f;
+            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+            v = bipolar ? (1.0f - 2.0f * t) : (1.0f - t);
+        }
+        else if (enabled && !bipolar && hovered)
+        {
+            const float wh = ImGui::GetIO().MouseWheel;
+            if (wh != 0.0f) { v += wh * 0.05f; v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+        }
+        // Spring return, glided over ~25 ms rather than snapped, so a released bend
+        // lands instead of clicking.
+        if (bipolar && !active && v != 0.0f)
+        {
+            const float dt = ImGui::GetIO().DeltaTime;
+            v -= v * (1.0f - std::exp(-(dt > 0.0f ? dt : 0.016f) * 45.0f));
+            if (std::fabs(v) < 0.002f) v = 0.0f;
+        }
+
+        // bezel + recessed slot
+        dl->AddRectFilled(P(x0 - 2, top - 2), P(x1 + 2, bot + 2), metalCol(), 5.0f * s);
+        dl->AddRectFilled(b0, b1, IM_COL32(14, 14, 16, 255), 4.0f * s);
+        // cylinder shading: lit band across the middle, falling off to both rims
+        const ImU32 rim = IM_COL32(44, 45, 48, 255), lit = IM_COL32(122, 124, 130, 255);
+        dl->AddRectFilledMultiColor(P(x0 + 1, top + 1), P(x1 - 1, mid), rim, rim, lit, lit);
+        dl->AddRectFilledMultiColor(P(x0 + 1, mid), P(x1 - 1, bot - 1), lit, lit, rim, rim);
+        // Drum ridges: ridge k sits at u = frac(k/N + phase) and is projected as
+        // y = mid - halfH*cos(pi*u), so ridges bunch toward both rims exactly as a
+        // real cylinder's do; the value drives the phase, so the wheel visibly rolls.
+        const float phase = bipolar ? (0.25f - 0.25f * v) : (0.5f - 0.5f * v);
+        const int N = 12;
+        for (int k = 0; k < N; ++k)
+        {
+            float u = (float)k / (float)N + phase;
+            u -= std::floor(u);
+            const float y = mid - halfH * std::cos(kPi * u) * 0.95f;
+            int a = (int)(190.0f * std::sin(kPi * u));
+            a = a < 0 ? 0 : a;
+            dl->AddLine(P(x0 + 1.5f, y), P(x1 - 1.5f, y), IM_COL32(20, 20, 22, a), 1.2f * s);
+        }
+        // value indicator + (pitch only) centre detent notches
+        const float vy = bipolar ? (mid - halfH * 0.90f * v)
+                                 : (bot - 3.0f - (bot - top - 6.0f) * v);
+        dl->AddRectFilled(P(x0 + 1, vy - 1.3f), P(x1 - 1, vy + 1.3f),
+                          enabled ? live.accent : withA(live.accent, 90), 1.0f * s);
+        if (bipolar)
+        {
+            dl->AddLine(P(x0 + 1.5f, mid), P(x0 + 5.5f, mid), withA(live.text, 150), 1.2f * s);
+            dl->AddLine(P(x1 - 5.5f, mid), P(x1 - 1.5f, mid), withA(live.text, 150), 1.2f * s);
+        }
+        dl->AddRect(b0, b1, IM_COL32(0, 0, 0, 200), 4.0f * s, 0, 1.2f * s);
+        text(0.5f * (x0 + x1), bot + 5.0f, 8.5f,
+             enabled ? live.text : withA(live.text, 110), label, 0, true);
+    }
+
+    //========================================================================
     // Keyboard (playable, → MIDI via sendNote)
     //========================================================================
     void drawKeyboard()
@@ -2355,7 +2507,11 @@ private:
                 && (((n < 64 ? heldLo : heldHi) >> (n & 63)) & 1ull) != 0;
         };
 
-        const float kx0 = 52.0f, kx1 = 1224.0f;
+        // The playable span starts at 118 (was 52): the pitch/mod wheels take
+        // x 52..114 out of the keyboard's left end rather than growing the design
+        // space. White keys go 55.81 -> 52.67 px wide (-5.6%), which is still a
+        // comfortable mouse target, and the 21-key / 3-octave span is unchanged.
+        const float kx0 = 118.0f, kx1 = 1224.0f;
         const float w = (kx1 - kx0) / 21.0f;
         const int whiteSemi[7] = { 0, 2, 4, 5, 7, 9, 11 };
         const float yTop = 700, yBot = 780, yBlackBot = 750;
@@ -2609,6 +2765,11 @@ private:
     int    baseMidi = 48;   // C3
     int    kbNote = -1;
 
+    // performance wheels. *Value is what the widget shows, *Sent is what the engine
+    // was last told, so the atomics are written only on change.
+    float  pbValue = 0.0f,  modValue = 0.0f;
+    float  pbSent  = 0.0f,  modSent  = 0.0f;
+
     // misc animation
     float  shPhase = 0.0f;
     bool   pitchDragging = false;
@@ -2620,6 +2781,7 @@ private:
    #ifdef MSYNTH_FRAME_PROFILE
     double profLogic[100] = {}, profTotal[100] = {};
     int    profN = -20; // skip warmup frames
+    int    vtxMax[kNumLayers] = {};   // running per-layer vertex maximum
    #endif
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiSynthUI)

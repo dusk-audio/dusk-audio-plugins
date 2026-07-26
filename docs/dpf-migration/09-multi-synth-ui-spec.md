@@ -107,9 +107,12 @@ knob is its pivot; radius is design-space.
 
 ### 1.5 Keyboard — `(16,700)–(1224,780)` (always visible)
 - OCT− / OCT+ buttons reserved `x 16..48` (two stacked, `(16,700)–(48,738)` / `(16,742)–(48,780)`).
-- Playable keys region `x 52..1224`, **3 octaves** = 21 white keys. White key width
-  `w = (1224-52)/21 ≈ 55.81`. White keys full height `y 700..780`; black keys width
+- **Performance wheels** `x 52..114` (§8.9): pitch bend slot `(54,700)–(80,762)`, mod wheel
+  slot `(86,700)–(112,762)`, each with a 2 px bezel and an 8.5 px label at `y 767`.
+- Playable keys region `x 118..1224`, **3 octaves** = 21 white keys. White key width
+  `w = (1224-118)/21 ≈ 52.67`. White keys full height `y 700..780`; black keys width
   `0.62*w`, height `700..750`, centered on white-key boundaries at the standard C#,D#,F#,G#,A# offsets.
+  (The keys gave up their left 66 px to the wheels rather than the design space growing.)
 - Base octave from OCT buttons; default lowest key = **MIDI 48 (C3)**, span C3..B5.
 
 ### 1.6 ASCII layout diagram
@@ -134,7 +137,7 @@ knob is its pivot; radius is design-space.
 │  SEQUENCER  [1][2][3][4][5][6][7][8][9]..[16]                        │ DRV │ CHO │ DLY │ REV │ 548
 │  (Acid: +pitch lane  +accent lane  +slide lane)                      │     │     │     │     │ ..692
 ├─────────────────────────────────────────────────────────────────────┴─────┴─────┴─────┴─────┤
-│OCT│ ▌▐▌▐▌▌▐▌▐▌▐▌  ▌▐▌▐▌▌▐▌▐▌▐▌  ▌▐▌▐▌▌▐▌▐▌▐▌   (3-octave clickable keyboard → MIDI notes)   │ 700..780
+│OCT│PB MOD│ ▌▐▌▐▌▌▐▌▐▌▐▌  ▌▐▌▐▌▌▐▌▐▌▐▌  ▌▐▌▐▌▌▐▌▐▌▐▌ (3-octave clickable keyboard → MIDI) │ 700..780
 └───────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -737,6 +740,34 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
   Amount bar-knob `(790,·)` r18, clear-row ✕ `(980,·)`. Title "MODULATION MATRIX" + close.
 - Active-slot count on the bar button = slots where src≠None and dst≠None and amt≠0.
 
+### 8.9 Performance wheels (pitch bend + mod)
+Two vertical wheels in the keyboard row, left of the keys — the on-screen stand-ins for the
+two controllers every hardware synth puts there, and the only way to exercise the `P.Bend`
+and `Mod Whl` mod-matrix sources without external hardware.
+
+- **Geometry**: slots `(54,700)–(80,762)` (PB) and `(86,700)–(112,762)` (MOD); 2 px metal
+  bezel; labels centred at `y 767`, font 8.5.
+- **Render**: recessed slot, a cylinder gradient (lit band across the middle, falling off to
+  both rims), and 12 drum ridges at `u = frac(k/12 + phase)` projected as
+  `y = mid − halfH·cos(π·u)` so they bunch toward the rims like a real cylinder's. The value
+  drives `phase`, so the wheel visibly rolls. An accent bar marks the value; PB also engraves
+  centre-detent notches on both slot edges.
+- **Interaction**: the pointer maps **absolutely** into the slot (grab-and-bend), not as a
+  relative drag — on a 62 px wheel a relative drag would need repeated nudges to reach full
+  bend. PB is bipolar and **springs back** to centre on release, glided over ~25 ms so the
+  release lands instead of clicking. MOD is unipolar and **latches**; wheel-scroll trims it
+  in 5% steps.
+- **Wiring**: straight to `MultiSynthDSP::pitchBend()` / `::modWheel()` through the
+  `multiSynthGetDSP` bridge — the same entry points the shell's MIDI handler calls for 0xE0
+  and CC 1, both plain relaxed atomic stores, so a UI-thread write is safe. Neither is a host
+  parameter (performance state, not patch state): nothing to automate, nothing to save.
+- **Limits (accepted)**: a split LV2 UI has no bridge, so the wheels draw inert with an
+  explanatory tooltip; and bend sent by the HOST is not reflected back into the widget,
+  because the engine exposes no getter and adding one is a core change. Last writer wins,
+  which is how two physical controllers on one input behave anyway. The UI destructor
+  recentres pitch bend if the window closes mid-drag; the mod wheel is deliberately left
+  latched.
+
 ---
 
 ## 9. Rendering & performance notes
@@ -767,6 +798,39 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 - **No allocations in the frame loop**: fixed `values[kParamCount]`, fixed scratch arrays
   for curve/scope/adsr polylines (members), `snprintf` into stack buffers.
 
+### 9.1 Vertex budget (the reason for the layer windows)
+The DPF DearImGui backend has no `VtxOffset` support, so **one window's draw list corrupts
+past 65535 vertices** (`ImDrawIdx` is 16-bit). The frame is therefore split into
+non-overlapping borderless layer windows — top / left / center / right / bottom, plus a
+single modal layer that *replaces* the base panels — each with its own draw list.
+
+Every layer ends through `endLayer(kLayer…)`, which in a `-DMSYNTH_FRAME_PROFILE` build
+samples `ImGui::GetWindowDrawList()->VtxBuffer.Size` before `ImGui::End()` and keeps a
+running per-layer maximum, printed to stderr with the frame timings every 100 frames.
+Re-run it after adding chrome:
+
+```
+cmake -S . -B build-vtx -GNinja -DCMAKE_CXX_FLAGS=-DMSYNTH_FRAME_PROFILE
+cmake --build build-vtx --target sunset_circuits-jack
+# then visit every mode and open both modals; read the MSYNTH_VTX lines
+```
+
+Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
+
+| Layer | max verts | of 65535 | driver |
+|---|---|---|---|
+| **left (Prism)** | **49 754** | **75.9 %** | 36 chrome knobs in the operator matrix |
+| left (other modes) | 20 626 | 31.5 % | OSC 1/2/3 + VOICE / CHARACTER |
+| bottom | 22 110 | 33.7 % | sequencer lanes + FX strip + keyboard + wheels |
+| center | 16 508 | 25.2 % | filter curve + 2 ADSR displays + 8 knobs |
+| right | 14 672 | 22.4 % | LFOs + sub-panel + scope + VU |
+| modal | 9 692 | 14.8 % | 8 rows of combos/knobs (measured with a combo popup open) |
+
+The worst case is **not** the mod-matrix modal (14.8 %) but the **Prism operator matrix**,
+at ~76 %. That is the layer to watch: roughly 16 k vertices of headroom, i.e. about a dozen
+more chrome knobs, before it would need splitting. Vertex counts are near scale-invariant
+(rounded-corner tessellation adds only ~0.4 % going from 1× to 1.5×).
+
 ---
 
 ## 10. Interaction map (summary)
@@ -777,6 +841,8 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 - **Keyboard**: press → note-on with velocity from the strike position (30..120, §8.7);
   release/drag-off → note-off; drag → glissando;
   OCT± shift base. Host MIDI lights keys.
+- **Wheels** (§8.9): drag anywhere in the slot to set the value directly; PB springs back to
+  centre on release, MOD latches and also takes wheel-scroll trim.
 - **Preset browser**: ◀/▶ step `currentPreset` and apply (like tape-echo `applyPreset`,
   iterating the static preset table); combo jumps directly; ★ saves [v2 bridge].
 - **MOD overlay**: MOD MATRIX button toggles; click-scrim or ✕ closes.
