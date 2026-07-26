@@ -74,8 +74,15 @@ public:
     void applyFM(float fmAmount) noexcept
     {
         phase += fmAmount;
-        while (phase < 0.0f)  phase += 1.0f;
-        while (phase >= 1.0f) phase -= 1.0f;
+        // Constant-time wrap. The while loops this replaces ran once per whole
+        // cycle of overshoot, so their cost was proportional to |fmAmount| -- a
+        // large modulation value would have spun the audio thread. Nothing
+        // reaches that today (cross-mod scales the modulator to +-0.03), so this
+        // is insurance, and it is bit-identical for every |fmAmount| < 1: floor()
+        // subtracts exactly the one cycle a single loop iteration would have.
+        phase -= std::floor(phase);
+        // floor() leaves NaN as NaN and cannot bring an infinity back in range.
+        if (!(phase >= 0.0f && phase < 1.0f)) phase = 0.0f;
     }
 
     float processSample() noexcept
