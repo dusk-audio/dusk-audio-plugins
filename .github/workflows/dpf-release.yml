@@ -393,7 +393,9 @@ jobs:
           # the test-linux job below runs strictness 8 on Linux, and the real-DAW
           # matrix in Phase 5 (QA checklist Part 2) remains the final word. The
           # shipping Linux jobs above build and package only.
-          $log = & $pv.FullName --strictness-level 5 --skip-gui-tests --validate $vst3 2>&1 | Out-String
+          # --timeout-ms bounds a hung test rather than letting it ride the job
+          # timeout (landmine 9), matching the Linux job.
+          $log = & $pv.FullName --strictness-level 5 --skip-gui-tests --timeout-ms 270000 --validate $vst3 2>&1 | Out-String
           Write-Host $log
           if ($LASTEXITCODE -eq 0) {
             Write-Host "pluginval: SUCCESS"
@@ -566,7 +568,10 @@ jobs:
   test-linux:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Generous: the shipping linux job budgets 40 minutes for the build alone,
+    # and this one adds the gate suite and pluginval on top of a build of
+    # comparable size.
+    timeout-minutes: 75
     env:
       PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
     steps:
@@ -580,10 +585,15 @@ jobs:
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libdbus-1-dev \
-            liblilv-dev
+            liblilv-dev \
+            xvfb
           # liblilv-dev enables the suite's lv2_smoke target; without it that one
-          # gate self-skips and the LV2 host path would go unvalidated.
+          # gate self-skips and the LV2 host path would go unvalidated, so fail
+          # here rather than let the suite quietly skip it.
           pkg-config --modversion lilv-0
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -591,10 +601,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python gate deps
-        run: python3 -m pip install --upgrade numpy soundfile
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
+        run: |
+          # Pinned to minor series: this job gates the release, and the gates
+          # compare measured numbers against fixed thresholds, so a numpy major
+          # bump must not silently move an answer. Bump deliberately, then
+          # re-run the suite.
+          python3 -m pip install 'numpy==1.26.*' 'soundfile==0.12.*'
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -641,12 +653,23 @@ jobs:
         run: |
           # SHA-256 pinned: the release asset is practically immutable but the tag
           # is not cryptographically so -- verify before executing anything.
+          # Staged in RUNNER_TEMP so nothing lands in the checkout.
+          cd "$RUNNER_TEMP"
           curl -fsSL -o pluginval.zip \
             https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
           echo "69adc87d6bbb2f7224a038d8f8c5e737ea5c906ea153752b8a546b6125e0564f  pluginval.zip" \
             | sha256sum -c -
           unzip -o pluginval.zip -d pluginval
-          chmod +x pluginval/pluginval
+          # Locate the binary rather than assuming the archive layout (the
+          # Windows job does the same); a layout change should fail loudly.
+          PV="$(find pluginval -type f -name pluginval | head -n1)"
+          if [ -z "$PV" ]; then
+            echo "::error::pluginval binary not found after install"
+            exit 1
+          fi
+          chmod +x "$PV"
+          echo "PLUGINVAL=$RUNNER_TEMP/$PV" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/$PV" --version || true
 
       - name: Validate VST3 (pluginval, headless)
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -659,27 +682,49 @@ jobs:
           # the QA checklist calls authoritative for the 222-parameter state
           # round-trip; the Windows job runs 5 on top of this.
           #
+          # Run under xvfb-run even though --skip-gui-tests means no editor is
+          # opened: that is the pattern 00-OVERVIEW.md prescribes and the one the
+          # local QA runs use, and this job gates the release -- not the place to
+          # rely on pluginval's untested no-X path.
+          #
+          # Output is tee'd, not captured: a hung pluginval hitting the job
+          # timeout with everything still in a shell variable would leave zero
+          # diagnostic output. The shell-level `timeout` bounds it well inside
+          # the job timeout so a hang fails with the partial log intact.
+          #
           # Same tolerated-teardown rule as the Windows job: DPF can exit non-zero
           # tearing down after a clean run, and that is accepted ONLY when the log
           # shows tests actually ran and none failed. A plugin that fails to load
           # or a real failed test still fails the job.
           set +e
-          LOG=$("${GITHUB_WORKSPACE}/pluginval/pluginval" \
+          timeout 900 xvfb-run -a "$PLUGINVAL" \
             --strictness-level 8 --skip-gui-tests --timeout-ms 270000 \
-            --validate "$VST3" 2>&1)
-          STATUS=$?
+            --validate "$VST3" 2>&1 | tee pluginval.log
+          STATUS=${PIPESTATUS[0]}
           set -e
-          echo "$LOG"
           if [ "$STATUS" -eq 0 ]; then
             echo "pluginval: SUCCESS"
             exit 0
           fi
-          if grep -q 'Starting test' <<< "$LOG" && ! grep -q 'FAILED' <<< "$LOG"; then
+          if [ "$STATUS" -eq 124 ]; then
+            echo "::error::pluginval timed out after 900s (partial log above)"
+            exit 1
+          fi
+          if grep -q 'Starting test' pluginval.log && ! grep -q 'FAILED' pluginval.log; then
             echo "::warning::pluginval exited non-zero after tests ran clean (DPF headless teardown, known issue, non-fatal)"
             exit 0
           fi
           echo "::error::pluginval reported a real failure (load error or failed test)"
           exit 1
+
+      - name: Upload pluginval log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SLUG }}-pluginval-linux-log
+          path: ${{ env.PLUGIN_DIR }}/pluginval.log
+          retention-days: 14
+          if-no-files-found: ignore
 
   # Assemble the GitHub Release from the four platform zips (tags only).
   # test-linux is in needs: so a red gate suite blocks the publish.
