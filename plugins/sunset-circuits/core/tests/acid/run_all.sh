@@ -2,8 +2,14 @@
 # Build the standalone Acid harness and run every Acid engine gate.
 set -e
 cd "$(dirname "$0")"
-cmake -B build -GNinja >/dev/null 2>&1 || cmake -B build >/dev/null
-cmake --build build >/dev/null
+# Three-step configure; see the long note in ../run_all.sh. A failed Ninja
+# configure leaves a CMakeCache.txt pinned to Ninja, so a bare retry dies on the
+# poisoned cache (verified: rc=1 then rc=1) and set -e kills the suite.
+#   1. in-place Ninja  2. wipe + retry Ninja  3. wipe + default generator
+cmake -B build -GNinja >/dev/null 2>&1 \
+    || { rm -rf build; cmake -B build -GNinja >/dev/null 2>&1; } \
+    || { rm -rf build; cmake -B build >/dev/null; }
+cmake --build build -j"$(nproc 2>/dev/null || echo 4)" >/dev/null
 echo "== acid_test built =="
 
 fail=0

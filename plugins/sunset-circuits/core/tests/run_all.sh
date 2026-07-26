@@ -33,8 +33,18 @@
 # ---------------------------------------------------------------------------
 set -e
 cd "$(dirname "$0")"
-cmake -B build -GNinja >/dev/null 2>&1 || cmake -B build >/dev/null
-cmake --build build >/dev/null
+# Three-step configure. A failed Ninja configure still writes a CMakeCache.txt
+# pinned to CMAKE_GENERATOR:INTERNAL=Ninja, so a bare retry dies on the poisoned
+# cache (verified: rc=1 then rc=1) and set -e takes the whole suite with it.
+#   1. in-place Ninja      -- the normal path, reuses the existing cache
+#   2. wipe, retry Ninja   -- recovers a cache left on another generator
+#   3. wipe, default gen   -- ninja genuinely unavailable
+# Step 2 matters: without it, one run on a ninja-less box would leave a Makefiles
+# cache that pins every later run to Makefiles even after ninja is installed.
+cmake -B build -GNinja >/dev/null 2>&1 \
+    || { rm -rf build; cmake -B build -GNinja >/dev/null 2>&1; } \
+    || { rm -rf build; cmake -B build >/dev/null; }
+cmake --build build -j"$(nproc 2>/dev/null || echo 4)" >/dev/null
 echo "== render_test built =="
 
 fail=0
