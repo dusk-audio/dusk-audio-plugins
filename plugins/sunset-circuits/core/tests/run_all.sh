@@ -26,6 +26,23 @@
 #     engine's slide only -- the other five modes' portamento is untested.
 #   * Velocity curve. Nothing asserts the velocity-to-level (or velocity-to-
 #     anything) mapping, so a curve inversion or a dead top/bottom would pass.
+#   * Overlapping unison shrinks. VoiceAllocator::retireAbove budgets how many
+#     over-budget voices may FADE (kMaxOscVoices/2 = 8) rather than be cut, and
+#     a fix landed for its candidate scan re-picking a voice that was already
+#     retiring. That path is NOT REACHABLE from the parameter surface as shipped,
+#     so no gate is possible: effectivePoly = min(modeVoices, 16/unisonCount),
+#     the largest modeVoices is 8 (Prism, with Cosmos 6 / Oracle 5 / Modular 2 /
+#     Mono 1 / Acid 1), so at most 8 voices can ever be over budget -- exactly the
+#     budget. The else-branch that hard-resets a mid-fade voice therefore never
+#     runs. Three overlap shapes were tried at block=64 (1->8 single, 1->3->8 and
+#     1->2->8 with 5-7 ms between the edges) and all three render IDENTICALLY on
+#     the builds either side of the fix. Re-check this if modeVoices ever exceeds
+#     kMaxOscVoices/2, or if kMaxOscVoices changes.
+#   * Accent patterns other than Downbeat. Arpeggiator::setAccentPattern is never
+#     called from MultiSynthDSP, so EveryOther / RampUp / RampDown cannot be
+#     selected by a host at all. arp_seq_gate covers Downbeat, which is what the
+#     parameter surface can reach. Wire the parameter up and the other three
+#     become gateable.
 #
 # These are known omissions, not oversights -- they were scoped out of the work
 # that wired this suite into CI. If you are adding one of these gates, add it to
@@ -60,7 +77,8 @@ if ! python3 ../../dpf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
-for g in pitch env reverb arp lfo_sync acid stuck sustain polyat steal zipper user_preset; do
+for g in pitch env reverb arp arp_seq filter_stability fx_reenable param_robust \
+         lfo_sync acid stuck sustain polyat steal zipper user_preset; do
     echo
     echo "########## ${g}_gate ##########"
     python3 "${g}_gate.py" || fail=1
