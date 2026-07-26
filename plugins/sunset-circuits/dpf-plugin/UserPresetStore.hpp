@@ -48,6 +48,10 @@ namespace scpreset {
 inline constexpr int   kFormatVersion   = 1;
 inline constexpr char  kFileExt[]       = ".scpreset";
 inline constexpr int   kMaxUserPresets  = 512;   // hard cap; extras ignored
+// First bytes of every file save() writes, before the version number. loadInto()
+// validates the same prefix (plus the version) through its sscanf format; the
+// listing scan uses it to fail closed on a foreign file before reading its body.
+inline constexpr char  kHeaderPrefix[]  = "# SunsetCircuits preset v";
 
 // One entry in the on-disk library.
 struct Entry
@@ -152,6 +156,12 @@ public:
         }
         std::sort(entries_.begin(), entries_.end(),
                   [](const Entry& a, const Entry& b) { return a.name < b.name; });
+        // The cap is applied AFTER the sort on purpose: "the first 512 by name" is
+        // reproducible, "the first 512 the directory iterator happened to hand back"
+        // is not, and you cannot know which names sort first without reading every
+        // name. What bounds the cost of an oversized directory is therefore the
+        // per-file work, not an early exit — see readHeader(), which rejects a
+        // foreign file on a 47-byte probe and caps a real one at a few lines.
         if ((int)entries_.size() > kMaxUserPresets)
         {
             std::fprintf(stderr,
@@ -289,21 +299,39 @@ private:
     }
 
     // Read the two listing fields — display name and Mode — out of a preset file
-    // without a full 222-symbol parse. Both sit at the top of anything save()
-    // wrote (`name=` is line 2 and `mode=` line 3, Mode being core param 0), so
-    // the scan normally stops after three lines; a hand-reordered file just costs
-    // a full read. `name` is left empty when the header is missing (the caller
-    // falls back to the filename stem) and `mode` keeps the Mode default, which is
-    // what loadInto() would leave in place for a file with no `mode=` line.
+    // without a full 222-symbol parse. Both sit at the top of anything save() wrote
+    // (`name=` is line 2 and `mode=` line 3, Mode being core param 0), so the scan
+    // normally stops after three lines. `name` is left empty when the header is
+    // missing (the caller falls back to the filename stem) and `mode` keeps the
+    // Mode default, which is what loadInto() would leave in place for a file with
+    // no `mode=` line.
+    //
+    // A listing scan runs over a directory the plugin does not control, so it is
+    // bounded twice over. The FORMAT HEADER is checked first, out of a fixed-size
+    // read: getline() on a file with no newline in it would pull the entire thing
+    // into one std::string, and refusing a foreign file costs 40 bytes here rather
+    // than however large that file is. The line loop is then capped at one line per
+    // core param plus header slack, so a truncated or hand-mangled preset cannot
+    // turn the scan unbounded either.
     static void readHeader(const std::filesystem::path& file, std::string& name, int& mode)
     {
         name.clear();
         mode = (int)kParamDefs[kParamMode].def;
         std::ifstream is(file, std::ios::in | std::ios::binary);
         if (!is) return;
-        bool haveName = false, haveMode = false;
+
+        char hdr[48] = {};
+        is.read(hdr, (std::streamsize)sizeof(hdr) - 1);
+        if (std::strncmp(hdr, kHeaderPrefix, std::strlen(kHeaderPrefix)) != 0) return;
+        is.clear();        // a file shorter than the probe leaves eofbit set
+        is.seekg(0);
+        if (!is) return;
+
+        const int  kMaxLines = (int)kNumCoreParams + 8;
+        int        lines = 0;
+        bool       haveName = false, haveMode = false;
         std::string ln;
-        while ((!haveName || !haveMode) && std::getline(is, ln))
+        while ((!haveName || !haveMode) && lines++ < kMaxLines && std::getline(is, ln))
         {
             stripCR(ln);
             const auto eq = ln.find('=');
@@ -315,14 +343,20 @@ private:
             }
             else if (!haveMode && ln.compare(0, eq, kParamDefs[kParamMode].symbol) == 0)
             {
-                const float v = std::strtof(ln.c_str() + eq + 1, nullptr);
-                if (std::isfinite(v))
+                // Same contract as loadInto(): a line whose value is not a number,
+                // or is not finite, is SKIPPED — the default stands and a later
+                // well-formed line can still win. strtof() happily returns 0 for
+                // "mode=banana", which would otherwise read as a real Cosmos tag.
+                const char* const vs = ln.c_str() + eq + 1;
+                char* endp = nullptr;
+                const float v = std::strtof(vs, &endp);
+                if (endp != vs && std::isfinite(v))
                 {
                     const int m = (int)std::lround(v);
                     mode = std::max((int)kParamDefs[kParamMode].min,
                                     std::min((int)kParamDefs[kParamMode].max, m));
+                    haveMode = true;
                 }
-                haveMode = true;
             }
         }
     }
