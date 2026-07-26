@@ -104,6 +104,11 @@ int main(int argc, char** argv) {
     const char* uri = argv[1];
 
     world = lilv_world_new();
+    // NOTE: under ASan this call leaks exactly one 24-byte LilvNode inside
+    // lilv_world_load_plugin_classes -> lilv_world_add_plugin_class, which
+    // lilv_world_free does not release. That one allocation is upstream lilv's
+    // and is the ONLY thing this fixture reports (498680 bytes in 7015
+    // allocations before the cleanup path below existed). Do not chase it.
     lilv_world_load_all(world);
     plugins = lilv_world_get_all_plugins(world);
 
