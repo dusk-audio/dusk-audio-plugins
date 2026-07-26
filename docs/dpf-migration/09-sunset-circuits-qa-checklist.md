@@ -115,7 +115,11 @@ per the production plan, so a separate host-less round-trip test was not added.
 
 `core/tests/run_all.sh` is green: pitch, env, reverb, arp, acid, stuck,
 user_preset, the FM suite, and the 54/54 preset audit
-(non-silent, peak <= -1 dBFS, no clip, finite). alias_gate is report-only.
+(non-silent, peak <= -1 dBFS, no clip, finite). alias_gate and fx_alias_gate
+are both report-only. fx_alias_gate covers the effects chain, which runs at
+host rate downstream of the voice decimation and so is out of reach of the
+oversampling alias_gate measures; by default it runs sections 0-2 only, and
+`FX_ALIAS_FULL=1 ./run_all.sh` adds its 54-preset sweep.
 
 ### Demo pack (for the ear pass)
 

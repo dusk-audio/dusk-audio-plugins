@@ -31,7 +31,17 @@ echo "########## fx_alias_gate (report only) ##########"
 # Effects-chain counterpart to alias_gate: the drive/tape nonlinearities run at
 # host rate, downstream of the voice decimation, so voice oversampling cannot
 # reach them. Report only, same as alias_gate.
-python3 fx_alias_gate.py || echo "fx_alias_gate exited nonzero (report-only, not fatal)"
+#
+# Sections 0-2 by default (~30 s). Section 3's 54-preset sweep costs 108 extra
+# preset_render subprocesses plus ~1500 8x resamples, which makes it the single
+# slowest item in this suite; it only changes answer when the factory presets
+# change, so it is opt-in. FX_ALIAS_FULL=1 ./run_all.sh runs it.
+if [ "${FX_ALIAS_FULL:-0}" = "1" ]; then
+    python3 fx_alias_gate.py || echo "fx_alias_gate exited nonzero (report-only, not fatal)"
+else
+    python3 fx_alias_gate.py --no-presets || echo "fx_alias_gate exited nonzero (report-only, not fatal)"
+    echo "(section 3, the 54-preset sweep, was skipped: re-run with FX_ALIAS_FULL=1)"
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL PASS/FAIL GATES GREEN"; else echo "SOME GATES FAILED"; fi

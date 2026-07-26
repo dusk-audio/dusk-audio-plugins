@@ -55,7 +55,11 @@ import sys
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import resample_poly
+
+try:
+    from scipy.signal import resample_poly
+except ImportError:      # scipy is not a dependency of the other gates
+    resample_poly = None
 
 from _harness import render
 
@@ -65,8 +69,18 @@ PARAMS_HPP = os.path.join(HERE, "..", "..", "dpf-plugin", "MultiSynthParams.hpp"
 OUT = "/tmp/msynth_fxalias"
 os.makedirs(OUT, exist_ok=True)
 
-# alias_gate's published voice-path reference at 2x oversampling. The QA
-# checklist quotes it as the engineering guide for the ear pass.
+# alias_gate's published voice-path reference at 2x oversampling, quoted by the
+# QA checklist as the engineering guide for the ear pass.
+#
+# CONVENTION WARNING. alias_gate measures images re the FUNDAMENTAL; this file
+# measures them re the STRONGEST HARMONIC (sections 1-2) and re the strongest
+# bin of the alias-free reference (section 3). The three coincide only while the
+# fundamental is the strongest partial, which is true of the undriven voice path
+# and false once drive is engaged. So this constant is a documented FALLBACK
+# only: section 1 re-measures the same voice path under this file's own
+# convention every run ("drive OFF" row) and every later comparison uses that
+# measured number, not this one. They have agreed to 0.1 dB so far, which is
+# why the constant is still worth carrying as a drift tripwire.
 VOICE_REF_2X_DBC = -47.0
 
 HOST_SR = 48000
@@ -84,13 +98,33 @@ RESAMPLE_WIN = ("kaiser", 14.0)
 
 DRIVE_NAMES = {0: "SoftClip", 1: "HardClip", 2: "Tube"}
 
+kOutputMakeup = 2.51188643   # +8 dB output makeup, MultiSynthDSP.cpp:672
+# Master volume used for every render in this file. Low enough that the output
+# stage's softLimit() is provably identity (see PATCH), and exactly unwound
+# again by capture_scale() when a render is used as a drive-stage capture.
+CAPTURE_VOL_DB = -30.0
+
 # Same note and patch as alias_gate so the voice-path row is directly
 # comparable: MIDI 108 saw, filter wide open, no chorus/reverb/analog drift.
+#
+# masterVol is pinned at CAPTURE_VOL_DB for one reason: softLimit() in the
+# output stage (MultiSynthDSP.cpp:874) is a THIRD host-rate memoryless
+# nonlinearity, and any fold-back it contributes would be silently booked
+# against the drive. At the shipped 0 dB plus the +8 dB makeup, the driven
+# renders peak around 0.67 against softLimit's 0.9 knee -- close enough that a
+# hotter patch or a future default would cross it without anyone noticing.
+# Pinning the level puts ~25 dB between the two. The drive stage runs BEFORE
+# the master gain, so this is a pure output scaling and every dBc in this file
+# is invariant to it (asserted per row by assert_linear_output()).
 NOTE = 108
 PATCH = dict(osc1Wave=0, osc2Level=0, subLevel=0, osc3Level=0, noiseLevel=0,
              analogAmt=0, filterEnvAmt=0, filterCutoff=16000, filterRes=0,
              cosmosChorus=0, ampA=0.005, ampD=0.01, ampS=1.0, reverbOn=0,
-             chorusOn=0, delayOn=0, vintage=0)
+             chorusOn=0, delayOn=0, vintage=0, masterVol=CAPTURE_VOL_DB)
+
+# softLimit() is identity below this; anything at or above it means the output
+# stage is shaping the signal and the row's fold-back is not the drive's alone.
+SOFTLIMIT_KNEE = 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -127,10 +161,15 @@ def worst_image_db(sig, sr, f0, lo_hz=BAND_LO, hi_hz=BAND_HI):
 
 
 def analysis_segment(x, sr, frac_lo=0.35, frac_hi=0.95):
-    """Steady-state mono-summed slice (skips attack and any release tail)."""
+    """Steady-state LEFT-channel slice (drops the attack and the release tail).
+
+    Left channel, not a mono sum, for the same reason capture_drive_input() uses
+    it: every nonlinearity in the chain is per-channel, so a summed signal is
+    f((L+R)/2), which is not what the engine evaluates.
+    """
     n = len(x)
     seg = x[int(frac_lo * n):int(frac_hi * n)]
-    return seg.mean(axis=1) if seg.ndim > 1 else seg
+    return seg[:, 0] if seg.ndim > 1 else seg
 
 
 def to_host_rate(x, sr):
@@ -145,24 +184,43 @@ def note_hz(n):
     return 440.0 * 2.0 ** ((n - 69) / 12.0)
 
 
-def analyse(seg, sr, f0):
-    """(worst dBc in band, its Hz, worst dBc below 8 kHz, RMS dBFS)."""
+def assert_linear_output(x, name):
+    """Fail loudly if a render reached the output stage's softLimit() knee.
+
+    Every dBc in sections 1-2 is attributed to the drive or the delay. That
+    attribution is only valid while softLimit() (MultiSynthDSP.cpp:874) is
+    identity, so this is checked rather than assumed -- on the FULL render, not
+    the analysis window, since the peak may sit in the attack.
+    """
+    peak = float(np.max(np.abs(x)))
+    if peak >= SOFTLIMIT_KNEE:
+        raise RuntimeError(
+            f"{name}: peak {peak:.3f} reached softLimit()'s {SOFTLIMIT_KNEE} knee -- "
+            "the output stage is shaping this render, so its fold-back is not the "
+            "drive stage's alone. Lower CAPTURE_VOL_DB.")
+    return peak
+
+
+def analyse(seg, sr, f0, peak):
+    """(worst dBc, its Hz, worst dBc below 8 kHz, RMS dBFS, peak dBFS)."""
     rms = 20.0 * np.log10(float(np.sqrt(np.mean(seg ** 2))) + 1e-20)
     db, hz = worst_image_db(seg, sr, f0)
     crit, _ = worst_image_db(seg, sr, f0, hi_hz=CRIT_HI)
-    return db, hz, crit, rms
+    return db, hz, crit, rms, 20.0 * np.log10(peak + 1e-20)
 
 
 def measure(mode, note, seconds, osf, name, control=False, **params):
-    """Render and return (worst_dbc, hz, worst_dbc_below_8k, rms_dbfs)."""
+    """Render and return (worst_dbc, hz, worst_dbc_below_8k, rms_dbfs, peak_dbfs)."""
     p = dict(params)
     if control:
         p["sr"] = CTRL_SR
         sr, x = render(mode, note, seconds, 1, name, **p)
+        peak = assert_linear_output(x, name)
         x, sr = to_host_rate(x, sr)
     else:
         sr, x = render(mode, note, seconds, osf, name, **p)
-    return analyse(analysis_segment(x, sr), sr, note_hz(note))
+        peak = assert_linear_output(x, name)
+    return analyse(analysis_segment(x, sr), sr, note_hz(note), peak)
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +238,19 @@ def section_drive(results):
     print("   at 192 kHz, i.e. what a fully oversampled drive stage would deliver.")
     print("   The '<8k' columns repeat the measurement below 8 kHz, where an")
     print("   inharmonic tone has no nearby masker and reads as grit.")
-    print("   Read '2x minus 192k' as the fold-back the drive stage adds.\n")
+    print()
+    print("   'fold4x' = 4x minus 192k, and it is the ONLY single-variable")
+    print("   isolation here: both arms render the voices at 192 kHz internally,")
+    print("   so the one thing that differs is whether the FX chain also runs")
+    print("   there. Do NOT read '2x minus 192k' the same way -- it moves the")
+    print("   voice rate AND the FX rate at once, and carries the voice path's")
+    print("   own 2x aliasing (see the drive-OFF row) inside it. The 2x column is")
+    print("   still what a user hears at the shipped default, so it is reported")
+    print("   as an absolute level, not as a difference.\n")
 
     hdr = (f"   {'config':<26}{'2x':>8}{'4x':>8}{'192k':>8}"
-           f"{'2x<8k':>8}{'4x<8k':>8}{'192k<8k':>9}   worst-image freq")
+           f"{'2x<8k':>8}{'4x<8k':>8}{'192k<8k':>9}{'fold4x':>8}"
+           f"{'pk2x':>7}{'rms2x':>7}   worst-image freq")
     base = {}
     print(hdr)
     for osf in (2, 4):
@@ -192,7 +259,8 @@ def section_drive(results):
                            driveOn=0, **PATCH)
     print(f"   {'drive OFF (voice path)':<26}{base[2][0]:>8.1f}{base[4][0]:>8.1f}"
           f"{base['ctrl'][0]:>8.1f}{base[2][2]:>8.1f}{base[4][2]:>8.1f}"
-          f"{base['ctrl'][2]:>9.1f}   {base[2][1]:>8.0f} Hz (2x)")
+          f"{base['ctrl'][2]:>9.1f}{base[4][0] - base['ctrl'][0]:>8.1f}"
+          f"{base[2][4]:>7.1f}{base[2][3]:>7.1f}   {base[2][1]:>8.0f} Hz (2x)")
 
     for dtype in (0, 1, 2):
         for amt in DRIVE_AMTS:
@@ -207,17 +275,35 @@ def section_drive(results):
                          driveMix=1.0, **PATCH)
             label = f"{DRIVE_NAMES[dtype]} amt {amt:.2f}"
             print(f"   {label:<26}{r2[0]:>8.1f}{r4[0]:>8.1f}{rc[0]:>8.1f}"
-                  f"{r2[2]:>8.1f}{r4[2]:>8.1f}{rc[2]:>9.1f}   {r2[1]:>8.0f} Hz (2x)")
+                  f"{r2[2]:>8.1f}{r4[2]:>8.1f}{rc[2]:>9.1f}"
+                  f"{r4[0] - rc[0]:>8.1f}{r2[4]:>7.1f}{r2[3]:>7.1f}"
+                  f"   {r2[1]:>8.0f} Hz (2x)")
             results["drive"].append(dict(
                 type=DRIVE_NAMES[dtype], amt=amt,
                 dbc_2x=r2[0], hz_2x=r2[1], crit_2x=r2[2],
+                rms_2x=r2[3], peak_2x=r2[4],
                 dbc_4x=r4[0], crit_4x=r4[2],
                 dbc_ctrl=rc[0], crit_ctrl=rc[2],
                 delta_2x=r2[0] - base[2][0], delta_4x=r4[0] - base[4][0],
-                fold_2x=r2[0] - rc[0], fold_4x=r4[0] - rc[0],
-                fold_crit_2x=r2[2] - rc[2]))
-    results["drive_base"] = {k: dict(dbc=v[0], hz=v[1], crit=v[2])
+                # fold_4x is the clean isolation; fold_2x is kept only because
+                # it is the shipped-default headroom, and is base-corrected by
+                # subtracting the drive-OFF row's own 2x-vs-192k gap.
+                fold_4x=r4[0] - rc[0], fold_crit_4x=r4[2] - rc[2],
+                fold_2x_raw=r2[0] - rc[0],
+                fold_2x_basecorrected=(r2[0] - rc[0])
+                - (base[2][0] - base["ctrl"][0])))
+    results["drive_base"] = {str(k): dict(dbc=v[0], hz=v[1], crit=v[2],
+                                          rms=v[3], peak=v[4])
                              for k, v in base.items()}
+    # The reference every later flag is compared against, measured under THIS
+    # file's convention rather than borrowed from alias_gate's (see
+    # VOICE_REF_2X_DBC). Section 3 reads it from here.
+    results["voice_ref_measured"] = base[2][0]
+    drift = base[2][0] - VOICE_REF_2X_DBC
+    print(f"\n   voice-path reference re-measured under this file's convention: "
+          f"{base[2][0]:.1f} dBc at 2x")
+    print(f"   (alias_gate's published {VOICE_REF_2X_DBC:.0f} dBc uses the "
+          f"FUNDAMENTAL as reference; drift {drift:+.1f} dB)")
 
     # Cross-check: the same configurations measured by the completely different
     # offline-residual method of section 3. Two methods, one signal -- if they
@@ -250,7 +336,9 @@ DELAY_FBS = (0.4, 0.7, 0.9, 0.95)
 def section_delay(results):
     print(f"== 2. Delay tape character ==  saw note {NOTE}, 120 ms free-run delay")
     print("   tanh(fb*1.1) sits INSIDE the feedback loop, so images accumulate")
-    print("   per pass; measured over the last 40% of a 3 s render.\n")
+    print("   per pass; measured over the middle 60% (0.35..0.95) of a 3 s")
+    print("   render, which is long enough past a 120 ms delay for the")
+    print("   recirculation to have settled.\n")
     common = dict(PATCH)
     common.update(delayOn=1, delaySync=0, delayTime=120.0, delayMix=0.7,
                   delayPP=0, driveOn=0)
@@ -303,11 +391,9 @@ def section_delay(results):
 # share an input sample for sample, so the difference is fold-back and nothing
 # else. Running the same difference against a 2x and a 4x version sizes the
 # candidate fix directly.
-kOutputMakeup = 2.51188643      # +8 dB, MultiSynthDSP.cpp:672
-CAPTURE_VOL_DB = -30.0          # keeps the output stage's softLimit() out of the
-                                # capture (it engages above 0.9)
 OS_IDEAL = 8                    # "alias-free" reference rate for the residual
 STRESS = dict(type=0, amt=0.75, mix=1.0)   # what a user cranking Drive gets
+EXPECTED_PRESETS = 54           # tripwire on the MultiSynthParams.hpp parser
 
 
 def parse_presets():
@@ -322,8 +408,26 @@ def parse_presets():
             vals[k[0].lower() + k[1:]] = float(v)
         rows[m.group(1)] = vals
     table = re.search(r"kFactoryPresets\[\]\s*=\s*\{(.*?)\n\};", src, re.S).group(1)
-    return [(name, rows.get(sym, {}))
-            for name, sym in re.findall(r'\{\s*"([^"]*)"\s*,\s*(kP\d+)\s*,', table)]
+    out = [(name, rows.get(sym, {}))
+           for name, sym in re.findall(r'\{\s*"([^"]*)"\s*,\s*(kP\d+)\s*,', table)]
+    # This is a regex over C++, so it fails silently and partially if the header
+    # is ever reformatted -- a missed row would quietly drop a preset from the
+    # sweep, or (worse) give it an empty param dict and report it as "no drive".
+    # Both are caught here rather than in the table.
+    n_decl = int(re.search(r"kNumFactoryPresets\s*=\s*\(int\)\(sizeof\(kFactoryPresets\)",
+                           src) is not None)
+    if n_decl and len(out) != EXPECTED_PRESETS:
+        raise RuntimeError(
+            f"parsed {len(out)} factory presets, expected {EXPECTED_PRESETS} -- "
+            f"{PARAMS_HPP} layout changed, fix the parser (or bump "
+            f"EXPECTED_PRESETS if presets were genuinely added)")
+    empty = [nm for nm, r in out if not r]
+    if empty:
+        raise RuntimeError(
+            f"factory presets parsed with no rows at all: {empty} -- the "
+            f"PresetRow regex is not matching, every drive setting would read "
+            f"as off")
+    return out
 
 
 def preset_render(index, path, **kw):
@@ -514,7 +618,16 @@ def section_presets(results):
     print("   'own'    = the preset's shipped drive setting")
     print(f"   'stress' = {DRIVE_NAMES[STRESS['type']]} amt {STRESS['amt']} mix "
           f"{STRESS['mix']} forced on, i.e. a user reaching for the Drive knob")
-    print("   '2x'/'4x' = what would be left if the drive stage were oversampled\n")
+    print("   '2x'/'4x' = what would be left if the drive stage were oversampled")
+    ref = results.get("voice_ref_measured", VOICE_REF_2X_DBC)
+    print(f"\n   FLAG THRESHOLD {ref:.1f} dBc = the voice path measured in section 1.")
+    print("   Caveat, because it is comparing across two conventions: section 1")
+    print("   reads the worst image in an OUTPUT spectrum re its strongest")
+    print("   harmonic, this section reads the worst bin of a RESIDUAL re the")
+    print("   strongest bin of the alias-free reference. Both are 'worst spurious")
+    print("   bin re the strongest tone present', which is what makes the")
+    print("   comparison meaningful, but they are not the same measurement and a")
+    print("   row sitting a decibel either side of the line means little.\n")
     print(f"   {'#':>3} {'name':<20}{'drv':>6}{'amt':>6}"
           f"{'own1x':>8}{'own2x':>7}{'own4x':>7}"
           f"{'str1x':>8}{'str2x':>7}{'str4x':>7}{'src':>6}  flag")
@@ -531,13 +644,17 @@ def section_presets(results):
         silent = True
         for label, high in (("auto", False), ("C6", True)):
             sr, x = capture_drive_input(i, high=high)
-            if not checked:
-                pk, en = self_check(x, sr)
-                results["self_check"] = dict(peak_dbc=pk, energy_db=en)
-                checked = True
             if 20.0 * np.log10(float(np.sqrt(np.mean(x ** 2))) + 1e-20) < -80.0:
                 continue
             silent = False
+            # Publish the method floor from the first NON-SILENT capture: run on
+            # a silent one it reports the round-trip of digital zero (-200 dB)
+            # and every residual below would look trustworthy.
+            if not checked:
+                pk, en = self_check(x, sr)
+                results["self_check"] = dict(peak_dbc=pk, energy_db=en,
+                                             from_preset=i, capture=label)
+                checked = True
             res, ideal = residuals(x, STRESS["type"], STRESS["amt"], STRESS["mix"])
             st = {k: band_stats(v, ideal, sr)[0] for k, v in res.items()}
             ow = {}
@@ -557,10 +674,10 @@ def section_presets(results):
             continue
 
         flag = ""
-        if drive_on and own[1] > VOICE_REF_2X_DBC:
+        if drive_on and own[1] > ref:
             flag = "OVER-REF"
             flagged.append((i, name, dtype, amt, own[1], own[2], own[4]))
-        elif stress[1] > VOICE_REF_2X_DBC:
+        elif stress[1] > ref:
             flag = "stress-only"
         if rows.get("mode", 0.0) == 3.0:
             flag = (flag + " spring-in-capture").strip()
@@ -581,10 +698,39 @@ def section_presets(results):
 
 
 # ---------------------------------------------------------------------------
+def preflight(do_presets):
+    """Everything this run needs, checked before minutes of renders are spent.
+
+    Report-only gates must not turn a missing dependency into a silent absence:
+    run_all.sh swallows a nonzero exit as "report-only, not fatal", so an
+    unavailable scipy or an unbuilt preset_render would just make the report
+    quietly disappear from the suite output. Say so instead, and exit 0.
+    """
+    if resample_poly is None:
+        print("fx_alias_gate SKIPPED: needs scipy (resample_poly) and it is not "
+              "installed.")
+        print("   Every measurement here is a rate-conversion difference, so "
+              "there is no degraded mode to fall back to.")
+        print("   Install with: python3 -m pip install scipy")
+        return False
+    if do_presets and not os.path.exists(PRESET_BIN):
+        print(f"fx_alias_gate SKIPPED: {PRESET_BIN} not built.")
+        print("   Build it with: cmake --build build   (run_all.sh does this "
+              "first), or pass --no-presets for sections 0-2 only.")
+        return False
+    if not os.path.exists(PARAMS_HPP):
+        print(f"fx_alias_gate SKIPPED: {PARAMS_HPP} not found.")
+        return False
+    return True
+
+
 def main():
     do_presets = "--no-presets" not in sys.argv
     as_json = "--json" in sys.argv
     results = dict(drive=[], delay=[], presets=[])
+
+    if not preflight(do_presets):
+        return 0
 
     # --json emits only JSON on stdout: the tables would otherwise make the
     # stream unparseable for anything consuming it.
@@ -602,15 +748,20 @@ def main():
     if as_json:
         print(json.dumps(results, indent=2,
                          default=lambda o: o.item() if hasattr(o, "item") else str(o)))
-        return
+        return 0
 
+    ref = results.get("voice_ref_measured", VOICE_REF_2X_DBC)
     print("== Summary ==")
+    print(f"   voice-path reference (measured, this file's convention): "
+          f"{ref:.1f} dBc at 2x")
+    print("   fold-back below is 4x minus 192k -- the single-variable isolation.")
     for name in ("SoftClip", "HardClip", "Tube"):
         rows = [r for r in results["drive"] if r["type"] == name]
-        w = max(rows, key=lambda r: r["fold_2x"])
-        print(f"   {name:<9}: worst fold-back {w['fold_2x']:+5.1f} dB at amt "
-              f"{w['amt']:.2f} ({w['dbc_2x']:.1f} dBc at 2x vs {w['dbc_ctrl']:.1f} "
-              f"dBc oversampled; below 8 kHz {w['fold_crit_2x']:+.1f} dB)")
+        w = max(rows, key=lambda r: r["fold_4x"])
+        print(f"   {name:<9}: worst fold-back {w['fold_4x']:+5.1f} dB at amt "
+              f"{w['amt']:.2f} ({w['dbc_4x']:.1f} dBc at 4x vs {w['dbc_ctrl']:.1f} "
+              f"dBc oversampled; below 8 kHz {w['fold_crit_4x']:+.1f} dB). "
+              f"Shipped-default 2x level {w['dbc_2x']:.1f} dBc")
     dworst = max(results["delay"], key=lambda r: r["tape_alias_2x"])
     print(f"   delay tape: worst alias-attributable delta "
           f"{dworst['tape_alias_2x']:+.1f} dB at fb {dworst['fb']:.2f} "
@@ -635,11 +786,16 @@ def main():
         print(f"   worst under the stress config: #{sw['index']} {sw['name']} "
               f"{sw['stress_1x']:.1f} dBc (2x {sw['stress_2x']:.1f}, "
               f"4x {sw['stress_4x']:.1f})")
-        n_stress = sum(1 for r in rows if r["stress_1x"] > VOICE_REF_2X_DBC)
-        print(f"   {n_stress} of {len(rows)} exceed {VOICE_REF_2X_DBC:.0f} dBc once "
+        n_stress = sum(1 for r in rows if r["stress_1x"] > ref)
+        print(f"   {n_stress} of {len(rows)} exceed {ref:.1f} dBc once "
               f"Drive is turned up to {STRESS['amt']:.2f}")
+    else:
+        print("   presets   : SKIPPED (--no-presets). Section 3 sweeps all "
+              f"{EXPECTED_PRESETS} factory presets and is the slow part of this "
+              "gate; run_all.sh runs it only when FX_ALIAS_FULL=1.")
     print("\nfx_alias_gate: report only (no pass/fail)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
