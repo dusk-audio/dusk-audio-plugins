@@ -8,6 +8,13 @@ cmake --build build >/dev/null
 echo "== fm_test built =="
 
 fail=0
+echo
+echo "########## sin_gate ##########"
+# Pure-numeric gate (C++, no audio): the sinTurns() polynomial contract. Runs
+# first so a broken approximation is named directly instead of surfacing as a
+# puzzling THD or sideband failure downstream.
+./build/sin_test || fail=1
+
 for g in spectrum env feedback; do
     echo
     echo "########## ${g}_gate ##########"

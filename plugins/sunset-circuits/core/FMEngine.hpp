@@ -12,9 +12,10 @@
 //   * 4 sine operators, each a phase accumulator + per-op ADSR (core ADSREnvelope).
 //   * 8 routing algorithms from the shared kPrismAlgos table (FMAlgorithms.hpp),
 //     which the UI diagram widget renders from too.
-//   * Phase modulation: a modulator adds `env * (level² · 2π) · sin(...)` radians
-//     into its target's phase (square-law level — the classic FM level feel).
-//     A carrier contributes `env · level · sin(...)` to the output bus.
+//   * Phase modulation: a modulator adds `env * level² · sin(...)` TURNS into its
+//     target's phase (square-law level — the classic FM level feel; one turn is
+//     the 2π radians the depth used to be expressed in). A carrier contributes
+//     `env · level · sin(...)` to the output bus.
 //   * Op 4 self-feedback 0..1 with the classic 2-sample-average damping.
 //   * Per op: ratio, fine cents, level, velocity sensitivity, key-level scaling.
 //
@@ -29,6 +30,89 @@
 
 namespace msynth
 {
+
+// sin(2π·x) with x in TURNS — the operator sine, replacing libm sinf in the FM
+// hot loop (4 ops × up to 16 unison banks × the internal rate; at 4x
+// oversampling that is millions of evaluations a second, and it measures ~14
+// points of real time in the worst-case Prism scenario).
+//
+// TURNS, NOT RADIANS, is the load-bearing choice, for three separate reasons:
+//
+//   1. The range reduction is EXACT. `x - round(x)` subtracts an integer from a
+//      float, and the result — being a multiple of ulp(x) no larger than 0.5 —
+//      is always representable, so the reduction loses no bits at all. Reducing
+//      in radians instead means dividing by 2π and eating a rounding error that
+//      grows with the argument, exactly where FM arguments are largest.
+//   2. The wrap is SILENT. The x·(1−4x²) factor pins exact zeros at x = 0 and
+//      x = ±0.5, so however the polynomial residual falls, the approximation is
+//      bit-exactly zero at the wrap point. A plain minimax polynomial leaves a
+//      small step there, and a step once per cycle is broadband spray at the
+//      carrier's own rate.
+//   3. It deletes a multiply. Depths are carried in turns end to end (see
+//      updateGain / modDepth), so the hot loop adds phase and modulation
+//      directly instead of scaling one of them by 2π first.
+//
+// THIS IS A LATENCY PROBLEM, NOT A THROUGHPUT ONE, and both remaining shapes
+// below follow from that. Ops are evaluated 3→0 with each one's output feeding
+// the next one's phase, so the four sines of a sample sit on one serial
+// dependency chain and only the chain's LENGTH matters. Measured in situ on the
+// worst-case scenario (f), starting from 100.7% of real time with libm:
+//
+//     libm sinf                                        100.7%   (baseline)
+//     cvttss2si reduction + Horner polynomial          100.0%   -0.7
+//     cvttss2si reduction + Estrin polynomial           96.0%   -4.7
+//     add/subtract reduction + Horner polynomial        94.0%   -6.7
+//     add/subtract reduction + Estrin polynomial        93.3%   -7.4  <- this
+//     sine removed entirely (unreachable floor)         86.3%  -14.4
+//
+//   * The REDUCTION avoids int at all. (x + 2^23·1.5) − 2^23·1.5 rounds x to the
+//     nearest integer purely in the FP domain; the obvious `(float)(int)` round
+//     trip costs two conversions plus a register-domain crossing, and that alone
+//     is 2.7 points. Valid for |x| < 2^22, which the reachable range below
+//     clears by five orders of magnitude.
+//   * The POLYNOMIAL is evaluated Estrin rather than Horner. Same coefficients,
+//     same result to the bit in almost every case, two fewer links in the chain.
+//
+// The reduction assumes ROUND-TO-NEAREST, the default and the only mode a plugin
+// host may leave the FPU in (changing it would break libm for everything else in
+// the process too). It also assumes the compiler does not algebraically cancel
+// `(x + K) − K` back to `x`, which is legal only under -ffast-math and which
+// this project does not enable. Both assumptions are load-bearing, and sin_gate
+// fails outright if either breaks — verified by building sin_test with
+// -ffast-math, which collapses the reduction and takes the measured error from
+// 6.7e-6 to 1.0.
+//
+// Accuracy, measured in float32 in this operation order by the fm suite's
+// sin_gate: max abs error 6.7e-6 = −103.5 dB, over one period and over the full
+// ±34-turn reachable range alike. That is 23 dB inside the −80 dB (1e-4) design
+// target, and below the float32 quantisation of the argument itself at deep
+// modulation (ulp(33 turns)/2 = 1e-6 turns = 6.2e-6 in sine value). The error is
+// a smooth function of phase, so on a steady tone it lands on the signal's own
+// harmonics rather than creating new non-harmonic bins: measured on a bare
+// carrier, THD goes from 0.000027% to 0.000656% against a 1% gate.
+//
+// REACHABLE RANGE. The argument is phase + modAccum. modAccum is bounded
+// structurally: updateGain clamps the effective level to 4, so modDepth ≤ 16
+// turns; kPrismAlgos has a maximum in-degree of 2 (algorithms #2 and #3); and
+// op-4 feedback adds at most 1 turn. That is 2·16 + 1 + 1 = 34 turns, and a
+// swept-to-the-rails render over all 8 algorithms at feedback 1 measures 33.0.
+// A non-finite argument is unreachable (every term is bounded and the output of
+// this function is bounded by construction), but if one ever arrived it would
+// propagate NaN rather than trap, and the isBad() guard at the end of
+// processSample would catch it.
+inline float sinTurns(float x) noexcept
+{
+    // 1.5 · 2^23: adding it pushes x into the binade where ulp == 1, so the
+    // add rounds away every fractional bit; subtracting it back leaves exactly
+    // round(x). Two dependent adds, no conversions, no branches.
+    constexpr float kRoundMagic = 12582912.0f;
+    const float w  = x - ((x + kRoundMagic) - kRoundMagic);   // [-0.5, 0.5]
+    const float u  = w * w;
+    const float u2 = u * u;
+    // g(u) fitted by IRLS toward the minimax of the FINAL value error, not of g.
+    const float g  = (6.2830423f + u * -16.1981858f) + u2 * (16.5597331f + u * -8.15233665f);
+    return w * (1.0f - 4.0f * u) * g;
+}
 
 class FMVoiceEngine
 {
@@ -172,7 +256,7 @@ public:
         // 2-sample average damping keeps the loop from screaming).
         if (feedback > 0.0f)
         {
-            const float fbDepth = feedback * feedback * kTwoPi; // square-law, up to 2π
+            const float fbDepth = feedback * feedback;  // square-law, up to 1 turn
             modAccum[A.fbOp] += fbDepth * 0.5f * (fbZ1 + fbZ2);
         }
 
@@ -182,7 +266,8 @@ public:
         {
             Op& o = op[i];
             const float env = o.env.processSample();
-            const float s   = std::sin(o.phase * kTwoPi + modAccum[i]);
+            // Phase and modulation are both in turns, so this is a bare add.
+            const float s   = sinTurns(o.phase + modAccum[i]);
 
             if (i == A.fbOp)
             {
@@ -223,8 +308,8 @@ private:
         float keyScale = 0.0f;
         // derived
         float inc         = 0.0f;   // phase increment per sample
-        float modDepth    = 0.0f;   // effLevel² · 2π   (as a modulator)
-        float carrierGain = 0.0f;   // effLevel         (as a carrier)
+        float modDepth    = 0.0f;   // effLevel², in TURNS (as a modulator)
+        float carrierGain = 0.0f;   // effLevel          (as a carrier)
         // state
         float phase = 0.0f;
         ADSREnvelope env;
@@ -243,7 +328,7 @@ private:
 
     // Effective level after velocity sensitivity and key-level scaling, then the
     // two output gains derived from it (square-law depth for modulators, linear
-    // for carriers).
+    // for carriers). The modulator depth is in TURNS — see sinTurns.
     void updateGain(int i) noexcept
     {
         Op& o = op[i];
@@ -254,7 +339,7 @@ private:
         const float keyFactor = std::pow(2.0f, o.keyScale * (note - 60.0f) / 24.0f);
         const float eff = clampf(o.level * velFactor * keyFactor, 0.0f, 4.0f);
         o.carrierGain = eff;
-        o.modDepth    = eff * eff * kTwoPi;
+        o.modDepth    = eff * eff;
     }
 
     Op  op[kNumOps];
