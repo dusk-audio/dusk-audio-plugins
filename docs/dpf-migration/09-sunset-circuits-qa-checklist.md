@@ -60,6 +60,14 @@ Results:
 - MIDI-to-audio path: a note-on (C4, velocity 100) written into the input atom
   port produces audible output (peak about -33 dBFS over ~213 ms). This confirms
   MIDI reaches the engine through the real LV2 wrapper, not just the offline core.
+- MIDI program change (0xC0): with the host's oversampling port parked at 4x
+  (reported latency 14), program 0 pulls the reported latency to the preset
+  baseline's 2x value (12), which is a parameter the preset owns observed through
+  a real host port; program 127 (past the 54 factory presets) leaves it at 14.
+
+The smoke tool is now pass/fail, not print-only: every check above feeds a
+failure counter and the process exits 6 if any of them fails, so it can be
+wired into a script without parsing its output.
 
 Ardour is installed but a headless Ardour session was not scripted. Ardour
 session automation via Lua is not straightforward and belongs to the desktop

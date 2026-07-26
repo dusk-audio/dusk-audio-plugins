@@ -340,6 +340,18 @@ private:
             if (ev.size < 3) return; // need controller + value
             if (ev.data[1] == 1)                         dsp.modWheel((float)ev.data[2] / 127.0f);
             else if (ev.data[1] == 64)                   dsp.sustainPedal(ev.data[2] >= 64); // damper
+            else if (ev.data[1] == 121)
+            {
+                // Reset All Controllers. Only the controllers this instrument
+                // actually implements are reset — the damper (a pedal left latched
+                // down by a stopped transport is a stuck-note source in its own
+                // right) and the two continuous mod sources. Synth PARAMETERS are
+                // never touched here: a host sending CC121 on transport stop must
+                // not silently rewrite the patch the user is editing.
+                dsp.sustainPedal(false);
+                dsp.modWheel(0.0f);
+                dsp.aftertouch(0.0f);
+            }
             else if (ev.data[1] == 120 || ev.data[1] == 123) dsp.allNotesOff(); // all sound / all notes off
             break;
         case 0xC0: // program change -> factory preset (data byte is 0..127)

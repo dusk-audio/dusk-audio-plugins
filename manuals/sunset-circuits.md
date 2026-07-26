@@ -84,6 +84,8 @@ Sunset Circuits listens on **all MIDI channels** (omni), the usual convention fo
 
 The sustain pedal works in every mode. In Mono and Acid it holds the last note you played, and with the arpeggiator or the Acid sequencer running it holds the pattern's notes exactly as keeping the keys down would, so the pattern keeps playing until the pedal comes up.
 
+One caveat applies to program changes in the LV2 version only. A preset recalled by a MIDI program change is applied to the sound immediately, but with the plugin window closed the host is not told which knobs moved, so your DAW may save the old values with the session. The VST3 and CLAP builds are unaffected, and so is LV2 with the window open. If you drive presets by MIDI in an LV2 host, open the plugin window once before saving.
+
 ## The Six Modes
 
 ### Cosmos: six-voice DCO poly

@@ -307,7 +307,12 @@ public:
     }
     // Polyphonic key pressure for this voice (MIDI 0xA0). Not cleared on note-off:
     // a key that was pressed hard keeps that pressure through its release tail,
-    // which is what the player heard while holding it. noteOn/reset zero it.
+    // which is what the player heard while holding it. noteOn/reset zero it — and
+    // note that under the SUSTAIN PEDAL that "release tail" is unbounded, because
+    // the note-off is deferred: a note the pedal is holding keeps whatever pressure
+    // it was last sent until the pedal lifts (or the key is pressed again, which
+    // zeroes it). Controllers stop sending 0xA0 at key-up, so the last value simply
+    // persists; that is the same convention channel pressure follows.
     void setPolyPressure(float v01) noexcept { polyPressure = v01; }
     // Voice steal: release everything that shapes the outgoing note before the new
     // one is triggered on top. The FILTER envelope must release with the amp
