@@ -806,14 +806,23 @@ springing back (§8.9).
 
   Scroll indicator (only when the list is taller than 12 rows) at `x 1178..1183`, thumb
   height/offset = `rows_visible / rows_total`.
-- **Cell** (270×38): name at `x0+12`, `y0+14`, font 11 (ink band 136 px ≈ 24 chars, clear of
-  the badge; the longest factory name is 18). Mode badge `(x1−116,y0+11)–(x1−58,y0+27)`
-  filled with that mode's **accent** (§4.0), label font 8 in an ink picked per swatch by
-  luminance. Bank tag right-aligned at `x1−12`, font 8: `FACTORY` dim, `USER` accent. Cell
-  fill/border are dark in every skin (like the combos) so they read on Acid's silver panel.
-  The **loaded** preset gets an accent gutter bar `(x0+2)–(x0+5)` plus an accent name; the
-  **cursor** gets a 1.8 px accent border; hover lightens the fill. Hover tooltip =
-  `name · MODE · factory|user preset[ (loaded)]`.
+- **Cell** (270×38): name at `x0+12`, `y0+14`, font 11. Mode badge
+  `(x1−116,y0+11)–(x1−58,y0+27)` filled with that mode's **accent** (§4.0), label font 8 in an
+  ink picked per swatch by luminance. Bank tag right-aligned at `x1−12`, font 8: `FACTORY` dim,
+  `USER` accent. Cell fill/border are dark in every skin (like the combos) so they read on
+  Acid's silver panel. The **loaded** preset gets an accent gutter bar `(x0+2)–(x0+5)` plus an
+  accent name; the **cursor** gets a 1.8 px accent border; hover lightens the fill. Hover
+  tooltip = `name · MODE · factory|user preset[ (loaded)]`.
+  - **The name draw is clipped** to `x0+12 .. nameX1` (`PushClipRect`). Factory names top out
+    at 18 chars, but a user name is whatever fitted in `saveNameBuf` (**128**) and
+    `panel.text()` never clips — unclipped, a long one overprints the badge and bleeds into
+    the next column. An over-long name is cut; the tooltip always has it in full.
+  - **Below `kReadoutMinS`** (§3.1b) badge and tag would be 4 device px, the same mush the
+    read-out gate exists to suppress, so the row **degrades** instead of disappearing: the
+    badge becomes a text-less colour swatch `(x1−30,y0+11)–(x1−12,y0+27)` — the palette is
+    itself the mode cue — the bank tag drops, and the name band widens to `x1−36`
+    (222 px ≈ 40 chars). BROWSE stays available at every size; the tooltip carries mode and
+    bank verbatim regardless of scale.
 - **Filters**: substring search is case-insensitive and allocation-free (the needle is
   pre-lowered into a stack buffer and matched in place); mode chips filter on a **derived**
   tag — factory from a walk of each preset's own override table for its `kParamMode` row
@@ -825,7 +834,13 @@ springing back (§8.9).
   walks it directly; nothing allocates while the browser is open.
 - **Scrolling is by whole ROWS.** ImGui only culls items that are *fully* clipped, so a pixel
   scroll would leave half-cells at the band edges with live hit boxes hanging over the filter
-  row. Wheel = ±1 row over the grid; the cursor auto-scrolls itself into view.
+  row. The wheel's fractional deltas are **accumulated** in `browseWheelAcc` and consumed a row
+  at a time — rounding per event drops every `|delta| < 0.5`, which reads as a dead grid on
+  precision touchpads, the hardware that sends the smallest steps. A partial notch is dropped
+  when the pointer leaves the grid. After a wheel scroll the **cursor is clamped back into
+  view** (`clampBrowseSelToView()`, keeping its column) — Enter loads whatever the cursor is on
+  and a patch load has no undo, so it must never sit off screen. Arrow-key moves do the mirror
+  of this and scroll the view to the cursor.
 - **Loading** goes through `applyCombined()` — the identical entry point ◀/▶ use, dispatching
   to `applyPreset()` (factory) or the user-store load, so the **U1** limitation is unchanged:
   a DPF UI cannot ask the host to load a program, so the preset's parameters are pushed
@@ -833,6 +848,9 @@ springing back (§8.9).
   (the skin changes around you); double-click or APPLY loads and closes; ✕ / CLOSE / Esc /
   a click on the scrim close without loading anything further. The load itself is deferred to
   the end of the frame, after every widget has been submitted.
+  **One gesture costs one load**: a double-click is two clicks, so the single-click branch
+  stands down once `MouseClickedCount > 1` and the double-click branch only loads if click 1
+  did not already land it — otherwise the host sees 222 parameter writes twice for one gesture.
 - **`openBrowse()` deliberately does NOT rescan the user directory**: `currentPreset`
   addresses the user bank by index, and a rescan can renumber it, silently repointing both
   the highlight and the save modal's DELETE at a different patch. The store is rescanned only
@@ -844,6 +862,16 @@ springing back (§8.9).
   Left/Right yield to an active field so they still walk the search text. Enter arrives either
   as the `EnterReturnsTrue` return value or, with nothing active, as a plain key press; the
   two paths are mutually exclusive so a preset is never loaded twice on one frame.
+  **Enter rebuilds a dirty index first**: an edit only sets `browseDirty` (the rebuild is
+  deferred so the index stays stable for the grid already submitted), but Enter acts now, so
+  typing a query and hitting Enter in one gesture would otherwise load out of the *pre-edit*
+  list — the wrong preset.
+- **Esc stages**: it clears a typed query first and only closes the browser once the list is
+  unfiltered again. The test is the query as it stood at the **start of the frame**
+  (`browseSearchHadText`), not the live buffer: ImGui's `InputText` handles Esc inside its own
+  call, reverting the buffer to its focus-time value and clearing the active id, so a field
+  that held a query a moment earlier reads as empty and inactive — testing the live buffer
+  closes the browser on the very keystroke meant to clear the search.
 
 ---
 
