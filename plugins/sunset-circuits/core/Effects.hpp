@@ -118,7 +118,22 @@ public:
         snapSmoothing();
     }
 
-    void setEnabled(bool on) noexcept { enabled = on; }
+    // process() returns early while disabled, so the delay lines stop being
+    // written but keep whatever was in them. Re-enabling then reads out audio
+    // from before the bypass -- up to 30 ms of it, at whatever level the signal
+    // had at the moment the chorus was switched off. Measured: a note sounding
+    // when the chorus was disabled came back as a -15.1 dBFS burst on re-enable,
+    // two seconds later, into what was otherwise silence.
+    //
+    // Clear on the ON edge rather than the OFF edge so that turning the chorus
+    // off stays free (it is on the audio path; turning an effect off should not
+    // do work), and the cost lands where a click is expected anyway.
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        if (on) reset();
+    }
     // Rate is not smoothed: the LFO phase is continuous, so a rate change bends
     // the modulation instead of stepping the signal (measured: no artifact).
     void setRate(float r) noexcept { rate = clampf(r, 0.1f, 10.0f); }
