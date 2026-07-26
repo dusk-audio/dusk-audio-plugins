@@ -723,8 +723,21 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
                 // their routing has moved too — drop them like a mode switch does.
                 clearSustained();
             }
-            if (lastAcidSeqEnabled && !acidSeqEnabled)
-                acidVoice.noteOff();           // release the gated acid voice
+            // The acid sequencer strands its voice on BOTH edges, for exactly the
+            // reason the arp does above: noteOn and noteOff each pick their path
+            // from the CURRENT arpOn. Enabling the sequencer while a note is held
+            // live routes that note's key-up to the sequencer, so it never
+            // reaches the acidVoice the live path gated on and the voice drones
+            // (measured -8.2 dBFS for the rest of the render, against a silent
+            // control that released the note before the edge). Disabling it
+            // strands the sequencer-gated voice the same way, which is the only
+            // direction that used to be handled.
+            if (lastAcidSeqEnabled != acidSeqEnabled)
+            {
+                acidVoice.noteOff();   // release whichever path had gated it
+                acidHeldCount = 0;     // the live stack was routed the old way
+                clearSustained();      // and so were the pedal-captured key-ups
+            }
         }
     }
     haveLastSnap = true;
