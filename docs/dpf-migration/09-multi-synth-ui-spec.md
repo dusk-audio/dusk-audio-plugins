@@ -77,8 +77,8 @@ knob is its pivot; radius is design-space.
 | Panel | Rect | Contents |
 |---|---|---|
 | FILTER | `(348,60)–(752,300)` | curve display `(360,74)–(742,180)`; **oversized cutoff** center `(426,244)` r**54**; Res `(556,232)` r30; Env Amt `(636,232)` r30; HP `(712,232)` r30 (Cosmos only) |
-| AMP ENV | `(348,304)–(548,542)` | ADSR display `(356,320)–(540,420)`; knobs A/D/S/R centers `x{380,426,472,518} y=486` r18 (labels `y=448`); Curve combo `(360,514)–(536,538)` |
-| FILTER ENV | `(552,304)–(752,542)` | ADSR display `(560,320)–(744,420)`; knobs centers `x{584,630,676,722} y=486` r18 (labels `y=448`); Curve combo `(564,514)–(740,538)` |
+| AMP ENV | `(348,304)–(548,542)` | ADSR display `(356,320)–(540,420)`; knobs A/D/S/R centers `x{380,426,472,518} y=474` r18 (labels `y=436`, read-outs `y=500`); Curve combo `(360,514)–(536,538)` |
+| FILTER ENV | `(552,304)–(752,542)` | ADSR display `(560,320)–(744,420)`; knobs centers `x{584,630,676,722} y=474` r18 (labels `y=436`, read-outs `y=500`); Curve combo `(564,514)–(740,538)` |
 
 **RIGHT column — LFOs / Mode sub-panel / Scope / Output — `x 760..1224`**
 | Panel | Rect | Contents |
