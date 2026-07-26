@@ -134,13 +134,29 @@ public:
         modeBlend = 1.0f;
     }
 
-    // The pitch wheel springs back on mouse release, but a window closed mid-drag
-    // would leave the engine detuned with no widget left to recentre it. The mod
-    // wheel is deliberately NOT reset — it latches, like the hardware it stands in for.
+    // Teardown has to undo everything this UI is the sole owner of, because once the
+    // window is gone there is no widget left to undo it with:
+    //
+    //  * a key held under the mouse — sendNote() note-off, or the voice hangs for the
+    //    life of the plugin (the release path is IsMouseReleased, which never arrives);
+    //  * pitch bend — the wheel springs back on release, but a window closed mid-drag
+    //    would leave the engine detuned;
+    //  * the mod wheel — only when THIS UI is what put it off zero (modSent != 0).
+    //    It latches like the hardware it stands in for, and the engine keeps the value
+    //    while the editor is shut, but a reopened UI draws the wheel at 0 because the
+    //    engine exposes no getter, and the first touch would then slam a stale-looking
+    //    control. Resetting what we set keeps widget and engine honest; a host driving
+    //    CC 1 is left alone, since modSent stays 0 in that case. The clean fix is a
+    //    read-only modWheel getter to seed the widget on first frame — that needs a
+    //    core accessor (modWheelValue is private), so it is out of this pass's scope.
     ~MultiSynthUI() override
     {
-        if (pbSent != 0.0f)
-            if (msynth::MultiSynthDSP* d = dspAccess()) d->pitchBend(0.0f);
+        if (kbNote >= 0) sendNote(0, (uint8_t)kbNote, 0);
+        if (msynth::MultiSynthDSP* d = dspAccess())
+        {
+            if (pbSent  != 0.0f) d->pitchBend(0.0f);
+            if (modSent != 0.0f) d->modWheel(0.0f);
+        }
     }
 
 protected:
