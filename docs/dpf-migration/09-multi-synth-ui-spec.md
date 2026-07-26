@@ -337,9 +337,11 @@ globals + 48 seq step rows). Controls:
 - **Label + value readout**: label above via `knobLabel`; live value via the shared
   `valueBubble` on hover/drag (`name=` set so hover shows the parameter name, drag shows
   the value). Format strings per type — **table §3.1a**.
-- **Double-click** → inline type-entry (shared `valueEdit`). **Ctrl/Cmd-click** →
-  reset to default (`kParamDefaults`). **Shift-drag** → fine (0.0008 vs 0.005 range/px,
-  shared). **Wheel** → ±2% range (±1 step for stepped). All already in the shared knob.
+- **Double-click** → inline type-entry (shared `valueEdit`). **Alt-click** (plus
+  **Cmd-click** on macOS / **Ctrl-click** elsewhere) → reset to default
+  (`kParamDefaults`); macOS excludes Ctrl because the OS turns Ctrl+left-click into a
+  right-click. **Shift-drag** → fine (0.0008 vs 0.005 range/px, shared). **Wheel** →
+  ±2% range, ±0.4% on Shift (±1 step for stepped). All already in the shared knob.
 - **`dispMul/dispAdd`**: use for Hz-in-kHz or normalized→dB display where helpful; most
   params display in native units.
 
@@ -1334,7 +1336,8 @@ cost, and the per-mode figures, and `drawPrismOps()` carries a pointer back to i
 ---
 
 ## 10. Interaction map (summary)
-- **Knobs**: drag (fine on Shift), wheel, double-click type, Ctrl/Cmd-click reset,
+- **Knobs**: drag (fine on Shift), wheel (fine on Shift), double-click type,
+  Alt-click reset (also Cmd on macOS / Ctrl elsewhere),
   right-click reset [enable via `rightClickReset`]. Hover → name bubble; drag → value bubble.
 - **Combos**: click to open; selecting sets the choice param (begin/set/end edit).
 - **LED-buttons / rockers / step cells / pitch columns**: click / drag as in §8.

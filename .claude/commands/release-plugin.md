@@ -36,8 +36,11 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
 | Sunset Circuits | sunset-circuits | plugins/sunset-circuits/dpf-plugin | SUNSETCIRCUITS (DPF) | sunset |
 
-**Sunset Circuits is DPF, but it is NOT one of the "-2" plugins.** It is DPF-native
-(no JUCE original), so it keeps a `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` var
+**Sunset Circuits is DPF, but it is NOT one of the "-2" plugins.** The "-2" plugins
+are DPF rewrites that ship alongside a released JUCE original and take its version
+lineage; Sunset Circuits has never been released as JUCE (the `multisynth` prototype
+still in-tree is unreleased and is not versioned or tagged), so it owns its own
+version line. It keeps a `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` var
 in `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt` (which single-sources
 `project(VERSION)`, the C++ `getVersion()` via `SC_VERSION_*` compile defs, and the
 UI nameplate tooltip) rather than an inline `project()` literal, and it releases
@@ -86,7 +89,7 @@ For EACH plugin specified:
      from the tag, then rejects the release unless the tag's numeric BASE version equals
      this `project()` VERSION — so bump it here to match exactly (e.g. tag
      `tapemachine-2-v2.0.1-rc1` requires `project(TapeMachine2DPF VERSION 2.0.1)`).
-   - **Sunset Circuits** (DPF-native) uses
+   - **Sunset Circuits** (DPF, own version line) uses
      `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` in
      `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt`.
 2. **Determine new version**:
@@ -136,7 +139,7 @@ Bump only the one being released. `dpf-build.yml`'s guard strips any
 `-beta`/`-rc`/`-alpha` suffix from the tag and compares the numeric BASE version to
 this `project()` VERSION — they must match exactly or the release fails.
 
-**Sunset Circuits** (DPF-native — version var in the `dpf-plugin/` CMakeLists):
+**Sunset Circuits** (version var in the `dpf-plugin/` CMakeLists):
 ```bash
 sed -i.bak 's/set(SUNSETCIRCUITS_DEFAULT_VERSION "[^"]*")/set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")/' \
   plugins/sunset-circuits/dpf-plugin/CMakeLists.txt && rm plugins/sunset-circuits/dpf-plugin/CMakeLists.txt.bak

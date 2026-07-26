@@ -298,11 +298,16 @@ protected:
             drawCharSelector(dl);
             if (showGraph)
                 drawGraph(dl);
-            // Absorb input under a modal (preset list / credits) BEFORE controls.
-            if (presetOpen || showCredits)
+            // Absorb input under a modal (preset list / credits / '?' overlay)
+            // BEFORE controls, so the blocker wins ImGui's hover. The help
+            // overlay MUST be in here: knob value bubbles draw on the foreground
+            // draw list, which composites after every window, so a knob left
+            // hoverable under the overlay paints its bubble over the scrim.
+            if (presetOpen || showCredits || showHelpOverlay_)
             {
                 ImGui::SetCursorScreenPos(ImVec2(0, 0));
                 ImGui::InvisibleButton("modalblock", ImVec2(winW, winH));
+                if (showHelpOverlay_ && ImGui::IsItemClicked()) showHelpOverlay_ = false;
             }
             drawColumns(dl);
             drawMeters(dl);
@@ -313,10 +318,13 @@ protected:
         {
             const int mode = (int)std::lround(values[kParamEqType]);
             drawSimpleHeader(dl, "Dusk Audio");
-            if (showCredits)
+            // Same pre-controls blocker as the British branch above; see the note
+            // there for why showHelpOverlay_ has to be part of it.
+            if (showCredits || showHelpOverlay_)
             {
                 ImGui::SetCursorScreenPos(ImVec2(0, 0));
                 ImGui::InvisibleButton("modalblock", ImVec2(winW, winH));
+                if (showHelpOverlay_ && ImGui::IsItemClicked()) showHelpOverlay_ = false;
             }
             // Digital gets the full JUCE-style header (A/B, character dropdown,
             // preset, Save, Auto Gain, mode, range, Oversample, Bypass); Match/Tube
@@ -449,9 +457,9 @@ protected:
     void drawHelpOverlay(ImDrawList* dl, float winW, float winH)
     {
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(16, 16, 24, 224));
-        ImGui::SetCursorScreenPos(ImVec2(0, 0));
-        ImGui::InvisibleButton("helpblock", ImVec2(winW, winH));
-        if (ImGui::IsItemClicked()) showHelpOverlay_ = false;
+        // No input blocker here: it is submitted with the other modal blockers
+        // BEFORE the controls (see drawUI), because an InvisibleButton submitted
+        // at this point loses ImGui's hover race to the already-submitted knobs.
 
         // Centre panel in the 960x680 design space (440x340).
         const float px0 = 260.f, py0 = 170.f, px1 = 700.f, py1 = 510.f, cx = 480.f;
@@ -2039,7 +2047,7 @@ private:
                     std::snprintf(bub, sizeof(bub), values[mqidx::freq(b)] >= 1000.f ? "%.2f kHz  Q %.2f" : "%.0f Hz  Q %.2f",
                                   values[mqidx::freq(b)] >= 1000.f ? values[mqidx::freq(b)] / 1000.f : values[mqidx::freq(b)], values[mqidx::q(b)]);
                 }
-                panel.valueBubble(dl, hx, hy, 8.f, bub);
+                panel.valueBubble(hx, hy, 8.f, bub);
             }
         }
 
@@ -3856,7 +3864,7 @@ private:
             if (!en) std::snprintf(buf, sizeof(buf), "OUT");
             else if (values[freqId] >= 1000.f) std::snprintf(buf, sizeof(buf), "%.1f kHz", values[freqId] / 1000.f);
             else std::snprintf(buf, sizeof(buf), "%.0f Hz", values[freqId]);
-            panel.valueBubble(dl, cx, cy, R, buf);
+            panel.valueBubble(cx, cy, R, buf);
         }
     }
 
@@ -3977,7 +3985,7 @@ private:
         else if ((hov || act) && !editing)
         {
             char buf[24]; std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
-            panel.valueBubble(dl, cx, cy, R, buf);
+            panel.valueBubble(cx, cy, R, buf);
         }
     }
 

@@ -113,17 +113,22 @@ public:
 
     //--- value read-out bubble + inline text entry ---------------------------
     // JUCE-style pop-out: a light rounded pill with a little pointer, placed to
-    // the RIGHT of the knob (flips left near the window edge). Shown while a knob
-    // is hovered/dragged instead of a cramped label above it.
-    // NOTE: the passed `dl` (the caller's window draw list) is intentionally
-    // ignored. The UI is split into non-overlapping layer windows to stay under
-    // ImGui's 64k-vertex-per-window limit, so anything on a window draw list is
-    // overdrawn by widgets submitted later in that same window (e.g. an adjacent
-    // knob paints over a hovered knob's bubble). Drawing on the FOREGROUND list
-    // -- composited after every window -- guarantees the bubble wins the z-order.
-    // The parameter is kept so existing callers (which pass either their window
-    // list or GetForegroundDrawList()) compile and behave identically.
-    void valueBubble(ImDrawList* /*windowDl*/, float cx, float cy, float r, const char* txt) const
+    // the RIGHT of the knob (flips left near the viewport edge). Shown while a
+    // knob is hovered/dragged instead of a cramped label above it.
+    //
+    // Takes NO draw list: the bubble always goes on the FOREGROUND list. The UI
+    // is split into non-overlapping layer windows to stay under ImGui's
+    // 64k-vertex-per-window limit, so anything on a window draw list is overdrawn
+    // by widgets submitted later in that same window (e.g. an adjacent knob paints
+    // over a hovered knob's bubble). The foreground list is composited after every
+    // window, so it always wins the z-order.
+    //
+    // CONSEQUENCE for callers: the bubble is NOT clipped by the caller's window or
+    // by any active PushClipRect, and it is NOT hidden by a scrim drawn on a window
+    // list. A modal/overlay must therefore stop the knob being hovered in the first
+    // place — submit a full-window InvisibleButton BEFORE the controls so it wins
+    // ImGui's hover race (see FourKEQUI's "modalblock").
+    void valueBubble(float cx, float cy, float r, const char* txt) const
     {
         ImDrawList* dl = ImGui::GetForegroundDrawList();
         const float fs = 12.0f * s;
@@ -134,8 +139,13 @@ public:
         const float halfH = ts.y * 0.5f + padY;
         const float bw = ts.x + 2.0f * padX;
 
-        // Default to the right; flip left if it would spill past the window edge.
-        const float winR = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+        // Default to the right; flip left if it would spill past the VIEWPORT edge.
+        // Not the window edge: the bubble lives on the foreground list and is no
+        // longer clipped by the window, and the layer windows the UI is split into
+        // can be a fraction of the viewport width -- testing against those fired the
+        // flip on knobs sitting nowhere near the plugin's real right edge.
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const float winR = vp->Pos.x + vp->Size.x;
         bool left = (kc.x + r * s + gap + bw + tail) > (winR - 4.0f * s);
 
         ImVec2 bmin, bmax;
@@ -145,7 +155,6 @@ public:
         // The foreground list clips to the whole viewport, not the current window
         // (which used to clip the bubble). Shift the pill back on-screen if a knob
         // near a viewport edge would push it past the edge.
-        const ImGuiViewport* vp = ImGui::GetMainViewport();
         const float pad = 2.0f * s;
         const float vx0 = vp->Pos.x + pad, vy0 = vp->Pos.y + pad;
         const float vx1 = vp->Pos.x + vp->Size.x - pad, vy1 = vp->Pos.y + vp->Size.y - pad;
@@ -157,7 +166,7 @@ public:
         bmin.x += dx; bmax.x += dx; bmin.y += dy; bmax.y += dy;
 
         // The viewport shift above can move the pill to the opposite side of the knob
-        // from where `left` was chosen against the window edge. Re-derive the pointer
+        // from where `left` was chosen against the viewport edge. Re-derive the pointer
         // side from the FINAL pill position relative to the knob so the tail always
         // attaches to the edge that faces the knob (main-viewport space throughout).
         left = kc.x > 0.5f * (bmin.x + bmax.x);
@@ -189,6 +198,24 @@ public:
     // Draw the inline InputText over knob `id` when it is being edited. Returns
     // true and writes the parsed number to outValue on commit (Enter / focus
     // loss). Escape cancels. Caller clamps and applies to the parameter.
+    //
+    // NOTE: unlike valueBubble, this CANNOT move to the foreground draw list.
+    // InputText is an interactive item: it has to be submitted into a real window
+    // so it gets an ID-stack entry, keyboard focus/nav, a clip rect and hover
+    // registration. A foreground draw list is raw geometry with none of that, so
+    // there is nowhere to put an editable field on it.
+    //
+    // It therefore still carries the overpaint hazard valueBubble escaped: it is
+    // drawn into the caller's window at the point knob() is called, so anything
+    // that window submits AFTERWARDS paints over it. Only one knob can be in edit
+    // mode at a time (valueEditId_ is a single id), so the exposure is limited to
+    // whatever the caller draws after that one knob in that one window.
+    //
+    // CALLER RULE: within a layer window, submit knobs after the panel art they
+    // sit on, and do not draw opaque chrome over a knob's own cell later in the
+    // same window. If a layout ever needs that, split the offending chrome into an
+    // earlier window rather than reordering the knob (the knob must stay ahead of
+    // any modal blocker — see the valueBubble note above).
     bool valueEdit(const char* id, float cx, float cy, float /*r*/, float& outValue)
     {
         if (valueEditId_ != id)
@@ -281,7 +308,7 @@ public:
         {
             if (ImGui::IsItemActivated())
             {
-                if (modKey) // Ctrl/Cmd+click: reset to default (no drag)
+                if (modKey) // Alt+click (or Cmd on macOS / Ctrl elsewhere): reset, no drag
                 {
                     host->beginEdit(param); value = defaultVal; dragValue = value;
                     host->setParam(param, value); host->endEdit(param); changed = true;
@@ -478,7 +505,7 @@ public:
                 std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
             if (overrideText == nullptr && !showName)
                 std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
-            valueBubble(ImGui::GetForegroundDrawList(), cx, cy, radius, buf);
+            valueBubble(cx, cy, radius, buf);
         }
         if (persistent && valueEditId_ != id)
         {

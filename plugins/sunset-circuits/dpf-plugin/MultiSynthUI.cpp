@@ -662,6 +662,20 @@ private:
         std::snprintf(buf, n, "%s%s", num, suffix ? suffix : "");
     }
 
+    // Reset modifier for the LOCAL knobs below. Must stay identical to the block
+    // in DuskPanel::knob (DuskImGuiWidgets.hpp) or one panel would answer to two
+    // conventions: Option/Alt everywhere, plus Cmd on macOS or Ctrl elsewhere.
+    // macOS deliberately excludes Ctrl -- the OS routes Ctrl+left-click as a
+    // right-click, so it must reach the context menu rather than reset.
+    static bool resetModKey() noexcept
+    {
+       #if defined(__APPLE__)
+        return ImGui::GetIO().KeyAlt || ImGui::GetIO().KeySuper;
+       #else
+        return ImGui::GetIO().KeyAlt || ImGui::GetIO().KeyCtrl;
+       #endif
+    }
+
     // Local log-taper knob (spec feel-fix): maps the vertical drag and pointer
     // position through log space for LOG-skew params (freq/time), so the low end
     // of the range gets proportional resolution. Reuses the shared panel's value
@@ -684,7 +698,7 @@ private:
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
         const bool hovered = ImGui::IsItemHovered();
         const bool active  = ImGui::IsItemActive();
-        const bool modKey  = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        const bool modKey  = resetModKey();
         const bool editing = panel.isEditingValue(id);
         bool changed = false;
 
@@ -712,7 +726,9 @@ private:
                 const float wheel = ImGui::GetIO().MouseWheel;
                 if (wheel != 0.0f)
                 {
-                    float L = toL(values[p]) + wheel * lrange * 0.02f;
+                    // Shift = fine, same 0.004/0.02 split the shared knob uses.
+                    const float step = ImGui::GetIO().KeyShift ? 0.004f : 0.02f;
+                    float L = toL(values[p]) + wheel * lrange * step;
                     if (L < lmin) L = lmin; if (L > lmax) L = lmax;
                     const float nv = fromL(L);
                     if (nv != values[p]) { beginEdit(p); values[p] = nv; setParam(p, nv); endEdit(p); changed = true; }
@@ -733,8 +749,8 @@ private:
         }
         else if ((hovered || active) && !panel.isEditingValue(id))
         {
-            if (active) { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto); panel.valueBubble(dl, cx, cy, r, buf); }
-            else        panel.valueBubble(dl, cx, cy, r, d.name);
+            if (active) { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto); panel.valueBubble(cx, cy, r, buf); }
+            else        panel.valueBubble(cx, cy, r, d.name);
         }
         if (persist && !panel.isEditingValue(id))
         { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto); text(cx, cy + r + 8.0f, 9.5f, whiteDimCol(), buf, 0); }
@@ -756,7 +772,7 @@ private:
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
         const bool hovered = ImGui::IsItemHovered();
         const bool active  = ImGui::IsItemActive();
-        const bool modKey  = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
+        const bool modKey  = resetModKey();
         const bool editing = panel.isEditingValue(id);
         bool changed = false;
         if (tips[p] && tips[p][0] && hovered && !active) ImGui::SetTooltip("%s", tips[p]);
@@ -785,6 +801,9 @@ private:
                 const float wheel = ImGui::GetIO().MouseWheel;
                 if (wheel != 0.0f)
                 {
+                    // No Shift-fine here by design: this wheel steps the discrete
+                    // classic-ratio list, matching the shared knob's `stepped`
+                    // path (which also uses a fixed 1-step and ignores Shift).
                     int n; const float* L = ratioList(n);
                     int idx = 0; float bd = 1e9f;
                     for (int i = 0; i < n; ++i) { float dd = std::fabs(L[i] - values[p]); if (dd < bd) { bd = dd; idx = i; } }
@@ -803,7 +822,7 @@ private:
             if (typed != values[p]) { beginEdit(p); values[p] = typed; setParam(p, typed); endEdit(p); changed = true; }
         }
         else if ((hovered || active) && !panel.isEditingValue(id))
-        { char buf[24]; std::snprintf(buf, sizeof buf, "%.2f\xC3\x97", values[p]); panel.valueBubble(dl, cx, cy, r, buf); }
+        { char buf[24]; std::snprintf(buf, sizeof buf, "%.2f\xC3\x97", values[p]); panel.valueBubble(cx, cy, r, buf); }
         return changed;
     }
 
