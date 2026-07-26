@@ -97,11 +97,46 @@ of a triangle, accent border on hover.
 ### 1.3 Bottom strip — `y 548..692`
 | Panel | Rect | Contents |
 |---|---|---|
-| SEQUENCER | `(16,548)–(700,692)` | transport header `y 552..586` (r15 mini-knobs OCT/GATE/SWING centres `x{398,440,482} y=579`; ARP LED `162,558..214,582`; LATCH LED `522,558..574,582`; MODE/RATE/VEL combos `y 564..586`; labels `y552`; Fixed-VEL knob `x680` when VEL=Fixed) + step lanes. Non-acid step row `y 604..680` (h76). **Acid** expands to 3 lanes (§4.6) |
+| SEQUENCER | `(16,548)–(700,692)` | transport header `y 552..606` (§1.3a) + step lanes. Non-acid step row `y 612..680` (h68, four bar-groups, §8.4). **Acid** expands to 4 lanes (§4.6) |
 | FX · Drive | `(708,552)–(834,688)` | enable LED-button, Type combo, Amount, Mix |
 | FX · Chorus | `(838,552)–(964,688)` | enable, Rate, Depth, Mix |
 | FX · Delay | `(968,552)–(1094,688)` | enable, Sync toggle, Time/Div (context knob), FB, Mix, PingPong+Tape LED-buttons |
 | FX · Reverb | `(1098,552)–(1224,688)` | enable, Size, Decay, Damp, Mix, PreDelay |
+
+#### 1.3a Sequencer transport header — solved rhythm
+
+The header is **six groups** — `ARP | MODE | RATE | OCT/GATE/SWING | LATCH | VEL` — right-
+aligned on the **`x=692` rule the step lane below also ends on**, with a **single gap `g`
+repeated between every adjacent pair, the section title included**. `g` is *solved per
+frame*, not hardcoded:
+
+```
+titleEnd = 24 + textWidth(11 px bold, title)      // measured through the drawn atlas face
+g        = (692 - titleEnd - sum(groupWidths)) / 6      clamped to [12, 22]
+```
+
+with group widths `ARP 52 | MODE 84 | RATE 64 | knobs 123 | LATCH 52 | VEL 100` (sum 475).
+The title is ~23 px shorter outside Acid (`"SEQUENCER / ARP"` vs `"PATTERN SEQUENCER"`), so a
+fixed start can only balance one of them: the old `x=160` start balanced Acid and left the
+other five modes opening on a **45 px hole** while their own inter-group gaps were 6..11 px.
+Solving gives `g = 17` (non-acid) / `13` (Acid) — even inside whichever row is on screen.
+
+- **Vertical**: labels top `y552` (font 10, ink to 558.75); combos `y 564..586`; LED-buttons
+  `y 563..587`, i.e. **h24 centred on 575, the same centre line as the combos** (they used to
+  sit at `558..582`, 5 px high, which read as a misaligned row); knob centres `y578`;
+  persistent read-outs ink `599..605.4`.
+- **OCT / GATE / SWING** are **r13 and TICKLESS**, matching the FX strip idiom next door.
+  Reach is `r+4.5 = ±17.5` (arc + stroke) instead of the tick ring's `±20.5`, which buys the
+  label its clearance, lifts the Acid GATE-lane clearance from 1.5 to 4.5 px, and makes the
+  three read as **one family** — as r14 ringed knobs they differed enough in apparent
+  size/weight to look like three different widgets. Centres `kx0 + {0,44,88}`.
+- **Persistent read-outs** (§3.1b): OCT/GATE/SWING (and the Fixed-VEL knob) carry them,
+  scale-gated on `readoutsOn()`. **Suppressed in Acid**, which packs four lanes from `y600`
+  and has no free band under the knob row — the hover bubble is the read-out there.
+- **VEL group is 100 wide in both velocity modes** so switching to Fixed does not reflow the
+  row: Fixed spends the width on a 58 px combo plus the value knob (centre `679`, reach
+  `696.5`, inside the 700 panel wall); the other modes give all 100 to the combo, which
+  `"As Played"` wants (it clipped at 86).
 
 ### 1.4 Overlays (drawn last, above everything)
 | Overlay | Rect | Contents |

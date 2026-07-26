@@ -25,6 +25,7 @@
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 
+#include <cfloat>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -417,6 +418,16 @@ private:
 
     void text(float x, float y, float sz, ImU32 col, const char* t, int align, bool bold = false)
     { panel.text(dl, x, y, sz, col, t, align, bold); }
+
+    // Advance width of `t` in DESIGN units, measured through the same atlas face
+    // text() would pick. Lets a row lay itself out AFTER a variable-width label
+    // instead of hardcoding a gap that only balances for one of the strings.
+    float textW(float sz, const char* t) const
+    {
+        const float px = sz * s;
+        ImFont* const f = panel.pickFont(px);
+        return f->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x / s;
+    }
 
     void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f)
     {
@@ -2612,39 +2623,84 @@ private:
     {
         // Panel top 548 (was 524): the lower body row above grew +24, so the
         // sequencer gives that height back at the top. The transport header (y
-        // 552..586) keeps its r15 mini-knobs and legible labels; the step lanes
-        // occupy the remaining y 600..692.
+        // 552..606) carries the labels, controls and read-outs; the step lanes
+        // occupy the remaining height down to the 692 floor.
         panelBox(16, 548, 700, 692);
-        sectionTitle(24, 552, curMode == 5 ? "PATTERN SEQUENCER" : "SEQUENCER / ARP");
-
-        // --- transport header (y 552..596). Mini-knobs are r14 WITH the tick ring
-        // (reach R+6.5 = ±20.5), so centres must sit >= 45 apart — the old r15 row
-        // at 42 px spacing had the rings visibly interpenetrating. OCT/GATE/SWING
-        // at x {404,452,500} (48 apart, 7 px ring daylight); knob centres y=578 so
-        // the ring bottom (598.5) clears the acid GATE lane top (600). The row
-        // spreads across the strip: ARP | MODE | RATE | knobs | LATCH | VEL, with
-        // the conditional Fixed-VEL knob filling the right-end slack.
         const bool acid = (curMode == 5);
-        ledButton("arpon", kParamArpOn, 160, 558, 212, 582, "ARP");
-        text(220, 552, 9.5f, live.textPanel, "MODE", -1, true);
-        comboBox("arpmode", kParamArpMode, 218, 564, 302, 586, kArpMode, 7, acid);
-        text(314, 552, 9.5f, live.textPanel, "RATE", -1, true);
-        comboBox("arprate", kParamArpRate, 312, 564, 376, 586, kDivName, 14, acid);
-        const float hy = 578.0f;
-        klabel(404, 552, "OCT");   knob("arpoct", kParamArpOctave, 404, hy, 14, "%.0f", "", false, true);
-        klabel(452, 552, "GATE");  knob("arpgate", kParamArpGate, 452, hy, 14, "%.0f", " %", false, false, false, 100.0f);
-        klabel(500, 552, "SWING"); knob("arpswing", kParamArpSwing, 500, hy, 14, "%.0f", " %", false, false, false, 100.0f);
-        ledButton("arplatch", kParamArpLatch, 532, 558, 584, 582, "LATCH");
-        text(596, 552, 9.5f, live.textPanel, "VEL", -1, true);
-        // The VEL combo is context-sized: "As Played" needs ~74 px of text+arrow,
-        // so the combo runs wide (592..678) — except in Fixed mode, where the text
-        // is short and the width is given to the Fixed-velocity value knob instead
-        // (combo 592..650; knob at x=674 r14, ring 653.5..694.5, inside the 697
-        // inner wall and 3.5 px right of the combo).
+        const char* const seqTitle = acid ? "PATTERN SEQUENCER" : "SEQUENCER / ARP";
+        sectionTitle(24, 552, seqTitle);
+
+        // --- transport header: ONE rhythm, no dead air ------------------------
+        // The row is six groups — ARP | MODE | RATE | OCT/GATE/SWING | LATCH |
+        // VEL — laid out right-to-left off the 692 rule the step lane below also
+        // ends on, with a single gap `g` repeated between EVERY pair including
+        // title -> ARP. `g` is solved rather than hardcoded because the title is
+        // ~23 px shorter outside Acid ("SEQUENCER / ARP" vs "PATTERN SEQUENCER"):
+        // the old fixed x=160 start balanced only the Acid string and left the
+        // other five modes opening on a 45 px hole while their own inter-group
+        // gaps were 6..11 px. Solving per mode gives 17 px (non-acid) / 13 px
+        // (Acid) — even inside whichever row you are actually looking at.
+        //
+        // Knobs are r13 and TICKLESS, matching the FX strip idiom next door:
+        // reach is r+4.5 = +/-17.5 (arc + stroke) instead of the tick ring's
+        // +/-20.5, which buys the label its clearance (ink ends 558.75, knob top
+        // 560.5), lifts the Acid GATE-lane clearance from 1.5 to 4.5 px, and
+        // makes all three read as one family — the r14 ringed knobs differed
+        // enough in apparent size/weight to look like three different widgets.
         const bool velFixed = (int)std::lround(values[kParamArpVelMode]) == 1;
-        comboBox("arpvel", kParamArpVelMode, 592, 564, velFixed ? 650.0f : 678.0f, 586, kArpVel, 3, acid);
+        const float kr = 13.0f, khw = kr + 4.5f, kdx = 44.0f;  // radius / half-reach / pitch
+        const float wArp = 52.0f, wMode = 84.0f, wRate = 64.0f, wLatch = 52.0f;
+        const float wKnobs = 2.0f * kdx + 2.0f * khw;          // 123
+        // The VEL group is 100 wide in BOTH velocity modes so that switching to
+        // Fixed does not reflow the whole row: Fixed spends the width on a 58 px
+        // combo ("Fixed" is short) plus the value knob, the other modes give all
+        // 100 to the combo (which "As Played" wants — it was clipping at 86).
+        const float wVel = 100.0f;
+        const float xR = 692.0f;
+        const float titleEnd = 24.0f + textW(11.0f, seqTitle);
+        float g = (xR - titleEnd - (wArp + wMode + wRate + wKnobs + wLatch + wVel)) / 6.0f;
+        g = g < 12.0f ? 12.0f : (g > 22.0f ? 22.0f : g);        // font-metric guard
+        auto hlabel = [&](float x, const char* t, int align)
+        { text(x, 552, 10.0f, live.textPanel, t, align, true); };
+
+        const float hy = 578.0f;
+        // Persistent read-outs for OCT/GATE/SWING (spec §3.1b step 7): ink lands
+        // at 599..605.4 (cy + r + 8), which clears the non-acid lane top at 612.
+        // Acid packs four lanes from y600 and has no such band, so the read-outs
+        // are suppressed there and the hover bubble stays the read-out.
+        const bool ro = readoutsOn() && !acid;
+
+        float x = titleEnd + g;
+        // LED buttons are h24 centred on 575, the same centre line as the combos
+        // (they used to sit 5 px high, which read as a misaligned row).
+        ledButton("arpon", kParamArpOn, x, 563, x + wArp, 587, "ARP");
+        x += wArp + g;
+        hlabel(x + 2, "MODE", -1);
+        comboBox("arpmode", kParamArpMode, x, 564, x + wMode, 586, kArpMode, 7, acid);
+        x += wMode + g;
+        hlabel(x + 2, "RATE", -1);
+        comboBox("arprate", kParamArpRate, x, 564, x + wRate, 586, kDivName, 14, acid);
+        x += wRate + g;
+        const float kx0 = x + khw;
+        hlabel(kx0, "OCT", 0);
+        knob("arpoct", kParamArpOctave, kx0, hy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
+        hlabel(kx0 + kdx, "GATE", 0);
+        knob("arpgate", kParamArpGate, kx0 + kdx, hy, kr, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        hlabel(kx0 + 2.0f * kdx, "SWING", 0);
+        knob("arpswing", kParamArpSwing, kx0 + 2.0f * kdx, hy, kr, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        x += wKnobs + g;
+        ledButton("arplatch", kParamArpLatch, x, 563, x + wLatch, 587, "LATCH");
+        x += wLatch + g;
+        hlabel(x + 2, "VEL", -1);
+        // Fixed mode: combo 58 wide + the value knob on the right end of the
+        // group (centre xR-13 = 679, reach 696.5, inside the 700 panel wall).
+        comboBox("arpvel", kParamArpVelMode, x, 564, velFixed ? x + 58.0f : x + wVel, 586, kArpVel, 3, acid);
         if (velFixed)
-        { klabel(674, 552, "FIX"); knob("arpfvel", kParamArpFixedVel, 674, hy, 14, "%.0f", "", false, true); }
+        {
+            const float fx = xR - kr;
+            hlabel(fx, "FIX", 0);
+            knob("arpfvel", kParamArpFixedVel, fx, hy, kr, "%.0f", "", false, true, ro, 1.0f, 0.0f, false);
+        }
 
         const int step = liveStep();
 
@@ -2657,7 +2713,7 @@ private:
             // keeps it precise, so it doesn't need more), ACC 658..673, SLIDE 677..692.
             const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
             drawLaneLabel(58, 600, 616, "GATE");
-            drawStepRow(gx, 600, cw, 16, kParamArpStep0, step, false);
+            drawStepRow(gx, 600, 692, 16, kParamArpStep0, step, false, 0.0f);
             drawLaneLabel(58, 620, 654, "PITCH");
             drawPitchLane(gx, 620, cw, 34, step);
             drawLaneLabel(58, 658, 673, "ACC");
@@ -2666,19 +2722,29 @@ private:
         }
         else
         {
-            const float gx = 24.0f, cw = (692.0f - gx) / 16.0f;
-            drawStepRow(gx, 604, cw, 76, kParamArpStep0, step, true);
+            // Single mute row, y 612..680 (h68) — 12 px shorter than before so it
+            // starts 6.6 px below the knob read-out ink instead of colliding with
+            // it. `groupGap` 8 splits the 16 cells into four bar-groups.
+            drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
         }
     }
     // Right-aligned lane label sitting in the acid sequencer's left gutter.
     void drawLaneLabel(float xRight, float y0, float y1, const char* t)
     { text(xRight, 0.5f * (y0 + y1) - 5.0f, 8.5f, live.textPanel, t, 1, true); }
-    void drawStepRow(float x0, float y0, float cw, float h, uint32_t base, int step, bool tall)
+    // 16 on/off cells from x0 to x1. `groupGap` inserts real daylight between the
+    // four bar-groups (non-acid mute row); pass 0 to keep a flush lane whose cell
+    // pitch stays aligned with the other acid lanes, which then get the hairline
+    // group divider instead. `tall` adds the 1..16 step numbers.
+    void drawStepRow(float x0, float y0, float x1, float h, uint32_t base, int step,
+                     bool tall, float groupGap)
     {
+        const float pitch = (x1 - x0 - 3.0f * groupGap) / 16.0f;
+        const float pad = 2.0f;
+        const float cy1 = y0 + h;
         for (int i = 0; i < 16; ++i)
         {
-            const float cx0 = x0 + i * cw + 2, cx1 = x0 + (i + 1) * cw - 2;
-            const float cy1 = y0 + h;
+            const float gx  = x0 + i * pitch + (float)(i / 4) * groupGap;
+            const float cx0 = gx + pad, cx1 = gx + pitch - pad;
             const bool on = values[base + i] > 0.5f;
             char id[16]; std::snprintf(id, sizeof(id), "step%u_%d", (unsigned)base, i);
             const ImVec2 b0 = P(cx0, y0), b1 = P(cx1, cy1);
@@ -2687,12 +2753,14 @@ private:
             if (ImGui::IsItemClicked()) setChoice(base + i, on ? 0 : 1);
             if (ImGui::IsItemHovered() && tips[base + i]) ImGui::SetTooltip("%s", tips[base + i]);
             dl->AddRectFilled(b0, b1, on ? withA(live.accent, 200) : IM_COL32(34, 36, 40, 255), 3.0f * s);
-            if ((i % 4) == 0) dl->AddLine(P(cx0 - 2, y0), P(cx0 - 2, cy1), IM_COL32(255, 255, 255, 40), 1.2f * s);
+            if (groupGap <= 0.0f && (i % 4) == 0)
+                dl->AddLine(P(cx0 - 2, y0), P(cx0 - 2, cy1), IM_COL32(255, 255, 255, 40), 1.2f * s);
             if (i == step)
             { dl->AddRect(b0, b1, live.ledOn, 3.0f * s, 0, 2.0f * s);
               dl->AddRectFilled(P(cx0, y0), P(cx1, y0 + 3), live.ledOn, 1.0f * s); }
             if (tall) { char n[4]; std::snprintf(n, sizeof(n), "%d", i + 1);
-                        text(0.5f * (cx0 + cx1), y0 + h * 0.5f - 6, 10.0f, on ? live.text : live.textPanel, n, 0, on); }
+                        text(0.5f * (cx0 + cx1), y0 + h * 0.5f - 6, 10.0f,
+                             on ? live.text : live.textPanel, n, 0, on); }
         }
     }
     void drawPitchLane(float x0, float y0, float cw, float h, int step)
