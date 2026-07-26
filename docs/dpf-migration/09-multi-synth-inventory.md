@@ -105,8 +105,9 @@ APVTS uses `JUCE_FORCE_USE_LEGACY_PARAM_IDS=1`; every param has version hint `1`
 | `arpVelMode` | Arp Vel Mode | Choice | As Played/Fixed/Accent | 0 |
 | `arpFixedVel` | Arp Fixed Vel | Int | 1..127 | 100 |
 | `arpStep0`..`arpStep15` | Arp Step N | Bool | — | true (**16 params**) |
+| `arpAccentPattern` | Arp Accent Pattern | Choice | Downbeat/Every Other/Ramp Up/Ramp Down | 0 (Downbeat) |
 
-Note: `arpMode` StringArray has 7 entries; DSP `ArpMode` enum has 7 (Up/Down/UpDown/DownUp/Random/Order/Chord) — order matches, cast valid. AccentPattern (Downbeat/EveryOther/RampUp/RampDown) is **not** exposed as a param (hardcoded to Downbeat).
+Note: `arpMode` StringArray has 7 entries; DSP `ArpMode` enum has 7 (Up/Down/UpDown/DownUp/Random/Order/Chord) — order matches, cast valid. `arpAccentPattern` maps 1:1 onto `ArpAccentPattern` (Downbeat/EveryOther/RampUp/RampDown) and is consumed only by `getVelocity`'s AccentPattern branch, i.e. only while `arpVelMode == 2`; its default 0 is the value the arpeggiator was hardcoded to before it was exposed. **It lives at the END of the param table (index 222), not here** — the DPF/core index is what hosts, sessions and `.scpreset` files key on, so post-freeze parameters are appended, never inserted.
 
 ### Effects — Drive / Chorus / Delay / Reverb
 | ID | Name | Type | Range | Default | Skew |

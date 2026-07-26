@@ -243,6 +243,7 @@ The sequencer strip along the bottom is an arpeggiator and step sequencer shared
 - **Arp Latch**: holds the pattern after you release the keys, so it keeps playing hands-free.
 - **Arp Vel Mode**: where each step's velocity comes from: As Played, Fixed, or Accent.
 - **Arp Fixed Vel**: the velocity used when the mode is Fixed.
+- **Arp Accent Pattern**: the accent shape, which appears under the velocity selector once the velocity mode is Accent. Downbeat accents every fourth step, Every Other alternates loud and soft, Ramp Up climbs from soft to loud and Ramp Down falls from loud to soft. The shape is laid over the sixteen-cell step grid rather than over the held notes, so it stays put no matter how many keys you hold: Downbeat accents cells 1, 5, 9 and 13, and the two ramps run over eight cells and repeat twice across the row. The control has no effect in the other two velocity modes, which is why it is only shown in Accent.
 - **Step cells**: the sixteen cells turn individual steps on or off (step-mutes) in every mode.
 
 ### Host sync behavior
@@ -440,11 +441,11 @@ The first row is the worst case among ordinary patches: a full 8-voice FM patch,
 
 ### Parameters and automation
 
-Every control is a normal host parameter: 222 automatable parameters, plus two output-only level meters the host can read but not write, for 224 host parameters in total (228 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 222, so it automates like anything else. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
+Every control is a normal host parameter: 223 automatable parameters, plus two output-only level meters the host can read but not write, for 225 host parameters in total (229 ports in the LV2 build, counting audio, MIDI, and the latency report). Oversampling is one of the 223, so it automates like anything else. Controls that a mode hides are still present in the host's parameter list, so an automation lane never breaks when you switch circuits.
 
 Continuous parameters are smoothed, so automating or dragging them does not produce zipper noise. The smoother settles with an 8 ms time constant, short enough that a knob still feels immediate. Filter cutoffs are smoothed in the log-frequency domain rather than in Hz, so a sweep sounds even across the range instead of racing through the top octaves. The smoothed set covers the level, filter and effect-mix controls; the rest step per block, which for most of them is inaudible. A few are deliberately left unsmoothed because smoothing them would be worse than the step: oscillator and unison detune, pulse width, and the LFO and chorus rates all set a phase increment or an edge position, where a ramp is a pitch glide nobody asked for. Stepped controls (waveforms, modes, sequencer cells, mod-matrix routings) switch outright, as they should.
 
-Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 222 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
+Loading a preset snaps rather than glides. The plugin tells the engine explicitly that a program change happened, so all 223 values land at once and a preset sounds correct on its first note instead of sliding into place over the first fraction of a second. For hosts that replay a patch as a burst of ordinary parameter writes rather than a program change, the engine detects the burst and snaps anyway.
 
 ### Known limits
 

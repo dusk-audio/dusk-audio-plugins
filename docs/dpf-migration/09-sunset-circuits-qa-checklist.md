@@ -71,7 +71,7 @@ Results:
 - Bundle loads; plugin resolves by URI `https://dusk-audio.github.io/plugins/sunset-circuits`.
 - `instantiate` + `activate` + `run` all succeed (the DPF options feature and a
   URID map were provided, as any real host does).
-- 228 ports enumerated; oversampling control input and the `lv2_latency`
+- 229 ports enumerated; oversampling control input and the `lv2_latency`
   reporting output port located and connected.
 - Audio output is finite at every oversampling factor with no notes held.
 - MIDI-to-audio path: a note-on (C4, velocity 100) written into the input atom
@@ -114,7 +114,7 @@ by calling `updateLatency()` at the end of the constructor
 pre-`prepareToPlay` info dump; that line is the JUCE host's cached default before
 activation and does not reflect the plugin's live report.
 
-### State round-trip (222 parameters)
+### State round-trip (223 parameters)
 
 `pluginval --skip-gui-tests --strictness-level 8` on the VST3 is green
 (`SUCCESS`). At strictness 8 this exercises, and passes:
@@ -125,7 +125,7 @@ activation and does not reflect the plugin's live report.
   values are compared to confirm the round-trip.
 - Automatable Parameters, Parameters, Parameter thread safety, Fuzz parameters.
 
-This is the authoritative 222-parameter save/restore proxy at the DPF/VST3 level
+This is the authoritative 223-parameter save/restore proxy at the DPF/VST3 level
 per the production plan, so a separate host-less round-trip test was not added.
 
 ### Core gate suite
