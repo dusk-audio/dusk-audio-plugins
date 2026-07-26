@@ -580,7 +580,17 @@ public:
         updateParams();
     }
 
-    void setEnabled(bool on) noexcept { enabled = on; }
+    // Both the Freeverb tank and the pre-delay line stop being written while
+    // disabled but keep their contents, so re-enabling reads out the tail from
+    // before the bypass. Measured, into silence 2 s after the bypass: the
+    // pre-delay line alone came back at -11.1 dBFS, and the tank with it at
+    // -0.0 dBFS -- a full-scale burst. Clear on the ON edge.
+    void setEnabled(bool on) noexcept
+    {
+        if (on == enabled) return;
+        enabled = on;
+        if (on) reset();
+    }
     void setSize(float s) { roomSize = clampf(s, 0.0f, 1.0f); updateParams(); }
     void setDecay(float d) { decay = clampf(d, 0.1f, 20.0f); updateParams(); }
     void setDamping(float d) { damping = clampf(d, 0.0f, 1.0f); updateParams(); }
@@ -610,6 +620,18 @@ public:
         }
         else
         {
+            // Pre-delay knobbed down to bypass. smoothedPd >= 0 means it was
+            // running on the previous sample, so this is the bypass EDGE: drop
+            // the line contents, otherwise turning the knob back up replays up
+            // to 200 ms of audio from before the bypass (measured -11.1 dBFS
+            // into silence). The fill is O(preSize) but happens once per edge,
+            // not per sample, and allocates nothing.
+            if (smoothedPd >= 0.0f)
+            {
+                std::fill(preL.begin(), preL.end(), 0.0f);
+                std::fill(preR.begin(), preR.end(), 0.0f);
+                prePos = 0;
+            }
             smoothedPd = -1.0f; // re-snap when the pre-delay re-engages
         }
 
