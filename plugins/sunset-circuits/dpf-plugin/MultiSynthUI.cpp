@@ -2497,16 +2497,6 @@ private:
                 && (((n < 64 ? heldLo : heldHi) >> (n & 63)) & 1ull) != 0;
         };
 
-        // The playable span starts at 118 (was 52): the pitch/mod wheels take
-        // x 52..114 out of the keyboard's left end rather than growing the design
-        // space. White keys go 55.81 -> 52.67 px wide (-5.6%), which is still a
-        // comfortable mouse target, and the 21-key / 3-octave span is unchanged.
-        const float kx0 = 118.0f, kx1 = 1224.0f;
-        const float w = (kx1 - kx0) / 21.0f;
-        const int whiteSemi[7] = { 0, 2, 4, 5, 7, 9, 11 };
-        const float yTop = 700, yBot = 780, yBlackBot = 750;
-        const float bw = 0.62f * w;
-
         // White keys are submitted FIRST, and a black key overlaps the top 50 px of
         // the two beneath it. Submission order alone does not decide that contest:
         // since ImGui 1.89 the first item to be submitted claims g.HoveredId and the
@@ -2519,44 +2509,96 @@ private:
         // which lets the black key take it.
         for (int i = 0; i < 21; ++i)
         {
-            const float x = kx0 + i * w;
-            const int note = clampMidi(baseMidi + (i / 7) * 12 + whiteSemi[i % 7]);
+            const KeyRect k = whiteKeyRect(i);
             char id[16]; std::snprintf(id, sizeof(id), "wk%d", i);
             ImGui::SetNextItemAllowOverlap();
-            keyHit(id, x + 1, yTop, x + w - 1, yBot, note);
-            const bool lit = (kbNote == note) || held(note);
-            dl->AddRectFilled(P(x + 1, yTop), P(x + w - 1, yBot),
+            keyHit(id, k);
+            const bool lit = (kbNote == k.note) || held(k.note);
+            dl->AddRectFilled(P(k.x0, k.y0), P(k.x1, k.y1),
                               lit ? withA(live.accent, 220) : IM_COL32(238, 238, 240, 255), 2.0f * s);
-            dl->AddRect(P(x + 1, yTop), P(x + w - 1, yBot), IM_COL32(60, 60, 64, 255), 2.0f * s, 0, 1.0f * s);
+            dl->AddRect(P(k.x0, k.y0), P(k.x1, k.y1), IM_COL32(60, 60, 64, 255), 2.0f * s, 0, 1.0f * s);
         }
         // black keys
         for (int i = 0; i < 20; ++i)
         {
-            const int deg = i % 7;
-            if (deg == 2 || deg == 6) continue; // no black after E or B
-            const float boundary = kx0 + (i + 1) * w;
-            const int note = clampMidi(baseMidi + (i / 7) * 12 + whiteSemi[deg] + 1);
+            KeyRect k;
+            if (!blackKeyRect(i, k)) continue;   // no black key after E or B
             char id[16]; std::snprintf(id, sizeof(id), "bk%d", i);
-            const float x0 = boundary - bw * 0.5f, x1 = boundary + bw * 0.5f;
-            keyHit(id, x0, yTop, x1, yBlackBot, note);
-            const bool lit = (kbNote == note) || held(note);
-            dl->AddRectFilled(P(x0, yTop), P(x1, yBlackBot),
+            keyHit(id, k);
+            const bool lit = (kbNote == k.note) || held(k.note);
+            dl->AddRectFilled(P(k.x0, k.y0), P(k.x1, k.y1),
                               lit ? withA(live.accent, 240) : IM_COL32(18, 18, 20, 255), 2.0f * s);
-            dl->AddRect(P(x0, yTop), P(x1, yBlackBot), IM_COL32(0, 0, 0, 255), 2.0f * s, 0, 1.0f * s);
+            dl->AddRect(P(k.x0, k.y0), P(k.x1, k.y1), IM_COL32(0, 0, 0, 255), 2.0f * s, 0, 1.0f * s);
+        }
+
+        // GLISSANDO. This cannot go through IsItemHovered(): the moment one key takes
+        // the ActiveId, ImGui's ItemHoverable() returns false for every OTHER item
+        // ("if (g.ActiveId != 0 && g.ActiveId != id && !g.ActiveIdAllowOverlap) return
+        // false"), so a per-key hover test during a drag is unreachable code — the
+        // press-then-drag emitted nothing at all. SetNextItemAllowOverlap does not
+        // help here either; it only governs HoveredId. So the drag is resolved
+        // geometrically instead, black keys first to match the visual stacking.
+        if (kbNote >= 0 && ImGui::IsMouseDown(0))
+        {
+            KeyRect k;
+            if (keyAt(ImGui::GetIO().MousePos, k) && k.note != kbNote)
+                pressKey(k.note, velFromY(P(0, k.y0).y, P(0, k.y1).y));
         }
         if (ImGui::IsMouseReleased(0) && kbNote >= 0) { sendNote(0, (uint8_t)kbNote, 0); kbNote = -1; }
     }
-    void keyHit(const char* id, float x0, float y0, float x1, float y1, int note)
+
+    // Key geometry, shared by the draw loops, the ImGui hit boxes and the glissando
+    // hit test, so those three can never drift apart. The playable span starts at 118
+    // (was 52): the pitch/mod wheels took x 52..114 out of the keyboard's left end
+    // rather than the design space growing. White keys went 55.81 -> 52.67 px wide.
+    struct KeyRect { float x0, y0, x1, y1; int note; };
+    static constexpr float kKbX0 = 118.0f, kKbX1 = 1224.0f;
+    static constexpr float kKbTop = 700.0f, kKbBot = 780.0f, kKbBlackBot = 750.0f;
+    static constexpr int kWhiteSemi[7] = { 0, 2, 4, 5, 7, 9, 11 };
+
+    KeyRect whiteKeyRect(int i) const
     {
-        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        const float w = (kKbX1 - kKbX0) / 21.0f;
+        const float x = kKbX0 + i * w;
+        return { x + 1.0f, kKbTop, x + w - 1.0f, kKbBot,
+                 clampMidi(baseMidi + (i / 7) * 12 + kWhiteSemi[i % 7]) };
+    }
+    // false for the E / B slots, which have no black key above them.
+    bool blackKeyRect(int i, KeyRect& r) const
+    {
+        const int deg = i % 7;
+        if (deg == 2 || deg == 6) return false;
+        const float w = (kKbX1 - kKbX0) / 21.0f, bw = 0.62f * w;
+        const float boundary = kKbX0 + (i + 1) * w;
+        r = { boundary - bw * 0.5f, kKbTop, boundary + bw * 0.5f, kKbBlackBot,
+              clampMidi(baseMidi + (i / 7) * 12 + kWhiteSemi[deg] + 1) };
+        return true;
+    }
+    // Front-to-back hit test in screen space: black keys sit on top, so they win the
+    // 50 px overlap band, matching both the drawing and the AllowOverlap ImGui path.
+    bool keyAt(ImVec2 mp, KeyRect& out) const
+    {
+        auto inside = [&](const KeyRect& r)
+        {
+            const ImVec2 a = P(r.x0, r.y0), b = P(r.x1, r.y1);
+            return mp.x >= a.x && mp.x <= b.x && mp.y >= a.y && mp.y <= b.y;
+        };
+        KeyRect r;
+        for (int i = 0; i < 20; ++i) if (blackKeyRect(i, r) && inside(r)) { out = r; return true; }
+        for (int i = 0; i < 21; ++i) { r = whiteKeyRect(i); if (inside(r)) { out = r; return true; } }
+        return false;
+    }
+
+    void keyHit(const char* id, const KeyRect& k)
+    {
+        const ImVec2 b0 = P(k.x0, k.y0), b1 = P(k.x1, k.y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
-        // Velocity comes from WHERE in the key you click; the glissando path reads it
-        // from the key being entered, so a drag that wanders down the keys crescendos.
-        if (hov && ImGui::IsMouseClicked(0)) pressKey(note, velFromY(b0.y, b1.y));
-        else if (hov && ImGui::IsMouseDown(0) && kbNote != note && kbNote >= 0)
-            pressKey(note, velFromY(b0.y, b1.y));
+        // Only the INITIAL strike goes through ImGui hovering; the drag that follows
+        // is resolved geometrically in drawKeyboard (see the glissando note there).
+        // Velocity comes from WHERE in the key you click.
+        if (hov && ImGui::IsMouseClicked(0)) pressKey(k.note, velFromY(b0.y, b1.y));
         // Note name + the velocity THIS pointer position would play: the only way the
         // strike-position mapping is discoverable. Suppressed while the button is
         // down so the tooltip does not chase the pointer during a glissando.
@@ -2565,7 +2607,7 @@ private:
             static const char* const kNoteNames[12] =
                 { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
             ImGui::SetTooltip("%s%d \xC2\xB7 velocity %d (strike lower = harder)",
-                              kNoteNames[note % 12], note / 12 - 1, (int)velFromY(b0.y, b1.y));
+                              kNoteNames[k.note % 12], k.note / 12 - 1, (int)velFromY(b0.y, b1.y));
         }
     }
 
