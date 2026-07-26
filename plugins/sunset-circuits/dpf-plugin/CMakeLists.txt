@@ -18,7 +18,22 @@ cmake_minimum_required(VERSION 3.15)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/PluginVersion.cmake")
 set(SUNSETCIRCUITS_DEFAULT_VERSION "1.0.0")
 get_plugin_version("sunset-circuits" SUNSETCIRCUITS_VERSION)
-if(NOT SUNSETCIRCUITS_VERSION OR SUNSETCIRCUITS_VERSION STREQUAL "0.0.0")
+# project(VERSION) accepts ONLY numeric major[.minor[.patch[.tweak]]] and hard-
+# FAILS configure on anything else. get_plugin_version can return non-numeric
+# strings: PLUGIN_VERSION_OVERRIDE is passed through with no validation at all,
+# and its git-tag regex ("^[0-9]+\\.[0-9]+\\.[0-9]+", PluginVersion.cmake) is not
+# anchored at the end, so a pre-release tag like sunset-circuits-v1.0.0-rc1
+# matches and yields "1.0.0-rc1". That used to abort the build outright with
+#   CMake Error at CMakeLists.txt: VERSION "1.0.0-rc1" format invalid.
+# Require a strict X.Y.Z here and fall back to the default otherwise, so an rc/
+# beta tag degrades to a buildable version instead of breaking configure. The
+# empty and "0.0.0" cases are the same fallback.
+if(NOT SUNSETCIRCUITS_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+   OR SUNSETCIRCUITS_VERSION STREQUAL "0.0.0")
+    if(SUNSETCIRCUITS_VERSION AND NOT SUNSETCIRCUITS_VERSION STREQUAL "0.0.0")
+        message(WARNING "sunset-circuits: version '${SUNSETCIRCUITS_VERSION}' is not a "
+                        "strict X.Y.Z; using ${SUNSETCIRCUITS_DEFAULT_VERSION} instead.")
+    endif()
     set(SUNSETCIRCUITS_VERSION ${SUNSETCIRCUITS_DEFAULT_VERSION})
 endif()
 
