@@ -12,7 +12,9 @@
 //   out.wav   output path (float32 stereo WAV)
 //
 // key=value overrides any engine parameter by name (see paramIndexForName), plus
-// these special keys:
+// these special keys. Every <sec> below is validated against the HALF-OPEN window
+// [0, seconds): an event at exactly `seconds` has no block left to fire on, so it
+// is rejected rather than silently ignored (see validEventTime).
 //   vel=<0..1>          note-on velocity (default 1.0)
 //   release=<sec>       call noteOff at this time (default: no release)
 //   tempo=<bpm>         host tempo (default 120)
@@ -109,6 +111,17 @@ void loadFactoryProgram(msynth::MultiSynthDSP& synth, int index) noexcept
     for (int r = 0; r < pr.nRows; ++r)
         synth.setParameter(pr.rows[r].index, pr.rows[r].value);
     synth.notifyProgramChange();
+}
+
+// Scheduled events fire on the FIRST BLOCK STARTING AT OR AFTER their time, and
+// the render loop stops at `seconds`. An event scheduled at exactly `seconds`
+// therefore has no block left to fire on: the harness used to accept it and
+// silently do nothing, so a gate written around it measured an untouched render
+// and passed. The schedule window is half-open -- [0, seconds) -- and this is
+// where that is enforced, for every event key and for release=.
+bool validEventTime(double t, double seconds) noexcept
+{
+    return std::isfinite(t) && t >= 0.0 && t < seconds;
 }
 
 // Strict string->double: reject empty, trailing garbage, or non-finite results.
@@ -288,9 +301,9 @@ int main(int argc, char** argv)
             const double t = parseNum("setat.time", val.substr(0, c1));
             const std::string name = val.substr(c1 + 1, c2 - c1 - 1);
             const float v = (float)parseNum("setat.value", val.substr(c2 + 1));
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad setat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                std::fprintf(stderr, "bad setat time: %g (want 0 <= t < %g)\n", t, seconds);
                 return 1;
             }
             const int sidx = msynth::MultiSynthDSP::paramIndexForName(name.c_str());
@@ -301,9 +314,9 @@ int main(int argc, char** argv)
         if (key == "notifyat")
         {
             const double t = parseNum("notifyat", val);
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad notifyat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                std::fprintf(stderr, "bad notifyat time: %g (want 0 <= t < %g)\n", t, seconds);
                 return 1;
             }
             schedNotify.push_back(t);
@@ -320,9 +333,9 @@ int main(int argc, char** argv)
             }
             const double t = parseNum("sustainat.time", val.substr(0, c1));
             const long d = parseInt("sustainat.down", val.substr(c1 + 1));
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad sustainat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                std::fprintf(stderr, "bad sustainat time: %g (want 0 <= t < %g)\n", t, seconds);
                 return 1;
             }
             if (d != 0 && d != 1)
@@ -344,9 +357,9 @@ int main(int argc, char** argv)
             }
             const double t = parseNum("progat.time", val.substr(0, c1));
             const long n = parseInt("progat.program", val.substr(c1 + 1));
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad progat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                std::fprintf(stderr, "bad progat time: %g (want 0 <= t < %g)\n", t, seconds);
                 return 1;
             }
             if (n < 0 || n >= kNumFactoryPresets)
@@ -372,9 +385,9 @@ int main(int argc, char** argv)
                 return 1;
             }
             const double t = parseNum("pressure.time", val.substr(0, c1));
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad %s time: %g (want 0 <= t <= %g)\n", key.c_str(), t, seconds);
+                std::fprintf(stderr, "bad %s time: %g (want 0 <= t < %g)\n", key.c_str(), t, seconds);
                 return 1;
             }
             int note = -1;
@@ -400,9 +413,9 @@ int main(int argc, char** argv)
         if (key == "panicat")
         {
             const double t = parseNum("panicat", val);
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad panicat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                std::fprintf(stderr, "bad panicat time: %g (want 0 <= t < %g)\n", t, seconds);
                 return 1;
             }
             schedPanic.push_back(t);
@@ -419,9 +432,9 @@ int main(int argc, char** argv)
             }
             const double t = parseNum("noteev.time", val.substr(0, c1));
             const long nnL = parseInt("noteev.note", val.substr(c1 + 1));
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad %s time: %g (want 0 <= t <= %g)\n", key.c_str(), t, seconds);
+                std::fprintf(stderr, "bad %s time: %g (want 0 <= t < %g)\n", key.c_str(), t, seconds);
                 return 1;
             }
             if (nnL < 0 || nnL > 127)
@@ -475,9 +488,9 @@ int main(int argc, char** argv)
             }
             const double t = parseNum("loopat.time", val.substr(0, c1));
             const double b = parseNum("loopat.beats", val.substr(c1 + 1));
-            if (!(std::isfinite(t) && t >= 0.0 && t <= seconds))
+            if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad loopat time: %g (want 0 <= t <= %g)\n", t, seconds);
+                std::fprintf(stderr, "bad loopat time: %g (want 0 <= t < %g)\n", t, seconds);
                 return 1;
             }
             schedLoops.push_back({ t, b });
@@ -486,9 +499,9 @@ int main(int argc, char** argv)
         if (key == "playat")
         {
             playAtTime = parseNum("playat", val);
-            if (!(std::isfinite(playAtTime) && playAtTime >= 0.0 && playAtTime <= seconds))
+            if (!validEventTime(playAtTime, seconds))
             {
-                std::fprintf(stderr, "invalid playat: %g (want 0 <= playat <= %g)\n", playAtTime, seconds);
+                std::fprintf(stderr, "invalid playat: %g (want 0 <= playat < %g)\n", playAtTime, seconds);
                 return 1;
             }
             continue;
@@ -558,9 +571,9 @@ int main(int argc, char** argv)
     // A provided release must be finite and within the render window: NaN would
     // otherwise slip past the (releaseTime >= 0.0) gate to "never release", and a
     // huge value overflows the later (int)(releaseTime * sampleRate) cast.
-    if (releaseProvided && !(std::isfinite(releaseTime) && releaseTime >= 0.0 && releaseTime <= seconds))
+    if (releaseProvided && !validEventTime(releaseTime, seconds))
     {
-        std::fprintf(stderr, "invalid release: %g (want 0 <= release <= %g)\n", releaseTime, seconds);
+        std::fprintf(stderr, "invalid release: %g (want 0 <= release < %g)\n", releaseTime, seconds);
         return 1;
     }
     const double framesD = seconds * sampleRate;
