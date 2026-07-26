@@ -162,6 +162,7 @@ public:
     void reset() noexcept
     {
         currentStep = 0;
+        absStep = 0;
         sampleCounter = 0;
         lastPlayedNote = -1;
         wasLocked = false;
@@ -196,10 +197,18 @@ private:
         // Symmetric swing: the even step (leading into the offbeat) lengthens and
         // the odd step shortens by the same amount, so each pair still lasts two
         // grid steps and downbeats stay on the tempo grid.
+        //
+        // Parity comes from absStep, the MONOTONIC step counter, not from
+        // currentStep (which wraps at patternSize). With an odd patternSize the
+        // wrap flips the pairing every cycle: patternSize 3 rendered
+        // 162/88/162/162/88/162 ms instead of a strict 162/88 alternation, i.e.
+        // two long steps back to back and the downbeat walking off the grid.
+        // advanceLocked has always keyed its swing off the absolute globalStep
+        // (globalStep & 1); this is the free-run path agreeing with it.
         double effStep = samplesPerStep;
         if (swing > 0.0f)
-            effStep *= (currentStep % 2 == 0) ? (1.0 + (double)swing * 0.5)
-                                              : (1.0 - (double)swing * 0.5);
+            effStep *= ((absStep & 1) == 0) ? (1.0 + (double)swing * 0.5)
+                                            : (1.0 - (double)swing * 0.5);
         const double gateSamples = effStep * (double)gateLength;
 
         if (sampleCounter == 1)
@@ -236,6 +245,7 @@ private:
         if ((double)sampleCounter >= effStep)
         {
             sampleCounter = 0;
+            ++absStep;
             if (++currentStep >= patternSize) currentStep = 0;
         }
 
@@ -287,6 +297,9 @@ private:
 
                 const int idx = (int)(globalStep % patternSize);
                 currentStep = idx;
+                // Keep the free-run counter aligned with the host grid so a
+                // later unlock continues the same swing/mute/accent phase.
+                absStep = globalStep;
                 const int patIdx = (mode == ArpMode::Random) ? rng.nextInt(patternSize) : idx;
                 const NoteInfo note = pattern[(size_t)patIdx];
                 const bool stepActive = stepPattern[(size_t)(idx % 16)] && !pastGate;
@@ -445,6 +458,13 @@ private:
     bool dirty = true;
 
     int currentStep = 0;
+    // Monotonic step index, never wrapped by patternSize. Everything that is
+    // musically keyed to the STEP GRID rather than to a position in the held-note
+    // pattern (swing parity, the 16-cell mute row, the accent patterns) indexes
+    // off this. In the host-locked path the equivalent quantity is globalStep,
+    // and absStep is kept in step with it so the two clocks agree across a
+    // lock/unlock transition.
+    long long absStep = 0;
     long long sampleCounter = 0;
     int lastPlayedNote = -1;
     Xorshift rng;
