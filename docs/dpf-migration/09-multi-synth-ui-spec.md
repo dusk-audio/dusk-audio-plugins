@@ -891,14 +891,25 @@ so ownership is resolved every frame in `updateWheels()`:
 
 | Condition | Owner | Behaviour |
 |---|---|---|
-| widget held (`pbDragging` / `modDragging`) | **local** | the drag writes the engine; an incoming host message is ignored for that frame so the control is not yanked out from under the pointer |
+| widget held (`pbDragging` / `modDragging`) | **local** | **re-assert every frame** — write `*Value` to the engine unconditionally, ignoring the change test |
 | otherwise, engine value ≠ last value we pushed | **engine** | an external write (0xE0 / CC 1 from the host or hardware) — adopt it into the widget and redraw at that deflection |
 | otherwise | — | nothing to do; the widget already agrees with the engine |
+
+**Both rows are load-bearing, and the first is not optional.** Suppressing adoption while held
+is only half of owning the value: `pushWheels()` is change-detected, so a wheel held *still*
+leaves `*Value == *Sent` and writes nothing. A host `0xE0` / CC 1 landing in that window would
+overwrite the atomic and never be corrected — the screen would show the drag while the engine
+sounded the host, which is precisely the divergence adoption exists to kill, inverted. Hence
+the unconditional re-assert, so both directions are resolved in the same place.
 
 Adoption runs **before** the spring step, so a bend arriving mid-frame wins that frame rather
 than one frame later. On first frame after the editor opens, `*Sent` is 0 and the engine may
 hold a latched value, so this same rule **seeds both widgets from the engine** — which is how
 a reopened editor draws the mod wheel where the sound actually is.
+
+The two grip flags are **one frame stale** (`drawWheel()` sets them after `updateWheels()`
+runs, so they describe the previous frame's grip). Harmless: a grip lasts far longer than a
+frame, so authority is asserted — and the spring started — one frame late, ~16 ms.
 
 - **Spring exit condition (derived).** The spring is gated on `pbLocal` — *this UI authored the
   current bend* — not on the old "not held and off centre". It exits when either
@@ -913,13 +924,22 @@ a reopened editor draws the mod wheel where the sound actually is.
   Accepted consequence: releasing the on-screen wheel springs to **centre**, not back to a
   bend the host may still be holding. There is one atomic and a held bend is not re-sent, so
   the previous external value is unknowable — this is ordinary last-writer-wins MIDI merge.
-- **Teardown** (`~MultiSynthUI`): recentre pitch bend **only if `pbLocal`**. A bend this UI
-  authored has no widget left to release it, so closing mid-drag or mid-spring would leave the
-  engine detuned. A bend the *host* is holding is not ours to cancel — zeroing it would snap
-  the pitch of a note still being bent just because the editor was closed. The **mod wheel is
-  not reset at all**: it latches like the hardware it stands in for, and the old reset existed
-  only to stop a reopened UI drawing 0 against a non-zero engine — a workaround that
-  `getModWheel()` makes obsolete.
+- **Teardown** (`~MultiSynthUI`): recentre pitch bend only if `pbLocal` **and the engine still
+  agrees the bend is ours** (`getPitchBend() == pbSent`). A bend this UI authored has no widget
+  left to release it, so closing mid-drag or mid-spring would leave the engine detuned. A bend
+  the *host* is holding is not ours to cancel — zeroing it would snap the pitch of a note still
+  being bent just because the editor was closed. `pbLocal` alone does not settle that: the host
+  can write `0xE0` *during* a local drag, leaving `pbLocal` true and `pbSent` non-zero while the
+  atomic holds the host's value, so the engine has to be asked.
+  *Residual hole (accepted):* because a held drag re-asserts every frame, an external write
+  during a drag is normally overwritten on the next frame, so by teardown the engine does agree
+  and the recentre fires. Only a close inside the one frame between the host's write and our
+  next push escapes — ~16 ms, self-correcting on the next message. The gate still earns its
+  keep by closing the same window during the **spring**, where nothing re-asserts and adoption
+  would need one more frame to clear `pbLocal`.
+  The **mod wheel is not reset at all**: it latches like the hardware it stands in for, and the
+  old reset existed only to stop a reopened UI drawing 0 against a non-zero engine — a
+  workaround that `getModWheel()` makes obsolete.
 - **Limits (accepted)**: a split LV2 UI has no bridge, so the wheels neither drive nor follow
   the engine and are drawn inert with an explanatory tooltip.
 

@@ -145,12 +145,22 @@ public:
     //
     //  * a key held under the mouse — sendNote() note-off, or the voice hangs for the
     //    life of the plugin (the release path is IsMouseReleased, which never arrives);
-    //  * pitch bend — but ONLY a bend this UI authored (pbLocal). The spring normally
-    //    lands it, and a window closed mid-drag or mid-spring would otherwise leave
-    //    the engine detuned with no widget left to release it. A bend the HOST or a
+    //  * pitch bend — but ONLY a bend this UI authored (pbLocal) AND that the engine
+    //    still agrees is ours (getPitchBend() == pbSent). The spring normally lands
+    //    it, and a window closed mid-drag or mid-spring would otherwise leave the
+    //    engine detuned with no widget left to release it. A bend the HOST or a
     //    hardware wheel is holding is NOT ours to cancel: zeroing it here would snap
     //    the pitch of a note the player is still bending just because they closed the
-    //    editor. pbLocal is exactly that distinction (see updateWheels).
+    //    editor. pbLocal alone does not settle that: the host can write 0xE0 DURING a
+    //    local drag, leaving pbLocal true and pbSent non-zero while the atomic holds
+    //    the host's value — so the engine has to be asked.
+    //      Residual hole (accepted): a held drag re-asserts every frame, so an
+    //    external write during a drag is normally overwritten on the next frame and by
+    //    teardown the engine does agree with pbSent, so the recentre fires. Only a
+    //    close inside the one frame between the host's write and our next push escapes
+    //    — ~16 ms wide, and self-correcting on the next message. The gate still earns
+    //    its keep by closing the same window during the SPRING, where nothing
+    //    re-asserts and adoption would need one more frame to clear pbLocal.
     //
     // The mod wheel is deliberately NOT reset. It latches like the hardware it stands
     // in for and the engine keeps the value while the editor is shut; the old reset
@@ -162,7 +172,8 @@ public:
     {
         if (kbNote >= 0) sendNote(0, (uint8_t)kbNote, 0);
         if (msynth::MultiSynthDSP* d = dspAccess())
-            if (pbLocal && pbSent != 0.0f) d->pitchBend(0.0f);
+            if (pbLocal && pbSent != 0.0f && d->getPitchBend() == pbSent)
+                d->pitchBend(0.0f);
     }
 
 protected:
@@ -3069,27 +3080,40 @@ private:
     //
     // OWNERSHIP (spec §8.9). One atomic per wheel is shared with the shell's MIDI
     // handler, so "who is the wheel" has to be resolved every frame:
-    //   * the local widget owns its value WHILE HELD — a host message arriving mid-
-    //     drag must not yank the control out from under the pointer;
+    //   * the local widget owns its value WHILE HELD, and must ASSERT that every
+    //     frame — see below;
     //   * otherwise the ENGINE owns it. An engine value that differs from what we
     //     last pushed can only have come from somewhere else (0xE0 / CC 1, i.e. the
     //     host or a hardware controller), so we adopt it and redraw at that
     //     deflection. This is what makes the drawn wheels follow the keyboard.
     void updateWheels()
     {
+        // These flags are one frame stale: drawWheel() sets them AFTER this runs, so
+        // they describe the previous frame's grip. Harmless — a grip lasts far longer
+        // than a frame, so the only effect is that authority is asserted (and the
+        // spring starts) one frame late, i.e. ~16 ms, which is invisible.
         const bool pbHeld  = pbDragging,  modHeld = modDragging;
         pbDragging = modDragging = false;   // re-armed by drawWheel() while held
 
         if (msynth::MultiSynthDSP* const d = dspAccess())
         {
-            // --- adopt external writes (must run BEFORE the spring step, so an
-            // incoming bend wins the frame it arrives rather than one frame later)
-            if (!pbHeld)
+            // HELD -> RE-ASSERT, unconditionally. Suppressing adoption is only half of
+            // owning the value: pushWheels() is change-detected, so holding the wheel
+            // STILL leaves *Value == *Sent and nothing gets written. A host 0xE0 / CC 1
+            // landing in that window would overwrite the atomic and never be corrected
+            // — the screen would show the drag while the engine sounded the host. That
+            // is the exact inverse of the divergence adoption fixes, so both directions
+            // are resolved here, in one place.
+            // NOT HELD -> ADOPT. Runs BEFORE the spring step, so an incoming bend wins
+            // the frame it arrives rather than one frame later.
+            if (pbHeld) { d->pitchBend(pbValue); pbSent = pbValue; }
+            else
             {
                 const float e = d->getPitchBend();
                 if (e != pbSent) { pbValue = e; pbSent = e; pbLocal = false; }
             }
-            if (!modHeld)
+            if (modHeld) { d->modWheel(modValue); modSent = modValue; }
+            else
             {
                 const float e = d->getModWheel();
                 if (e != modSent) { modValue = e; modSent = e; }
@@ -3104,13 +3128,16 @@ private:
         // local drag belongs, or (b) adoption above clearing pbLocal because an
         // external write landed mid-spring — the spring abandons the gesture to
         // whoever is now driving instead of fighting it to zero.
-        if (pbLocal && !pbHeld && pbValue != 0.0f)
+        if (pbLocal && !pbHeld)
         {
             // Exponential return, time constant 1/45 s = 22 ms; from a full bend it is
             // inaudible (|v| < 0.002) after ~140 ms. Glided rather than snapped so a
-            // released bend lands instead of clicking.
+            // released bend lands instead of clicking. A release EXACTLY at centre
+            // skips the ramp but must still drop ownership, or pbLocal would go on
+            // claiming a bend that no longer exists until the next adoption.
             const float dt = ImGui::GetIO().DeltaTime;
-            pbValue -= pbValue * (1.0f - std::exp(-(dt > 0.0f ? dt : 0.016f) * 45.0f));
+            if (pbValue != 0.0f)
+                pbValue -= pbValue * (1.0f - std::exp(-(dt > 0.0f ? dt : 0.016f) * 45.0f));
             if (std::fabs(pbValue) < 0.002f) { pbValue = 0.0f; pbLocal = false; }
         }
         pushWheels();
