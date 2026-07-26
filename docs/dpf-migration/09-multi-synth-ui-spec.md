@@ -72,10 +72,56 @@ of a triangle, accent border on hover.
 **LEFT column — Oscillators / Mixer — `x 16..340`**
 | Panel | Rect | Contents |
 |---|---|---|
-| OSC 1 | `(16,60)–(340,172)` | wave combo, Detune, PW, Level knobs (internals unchanged) |
-| OSC 2 | `(16,176)–(340,288)` | wave combo, Semi (stepped knob), Detune, PW, Level (internals shifted −6) |
-| OSC 3 / SUB | `(16,292)–(340,372)` (h80) | **mode-variant** (see §4): title/combo `y296` (`296..316`), knob label `y319`, knob centre `y349` **r14**; Modular→osc3 wave+level+FM Amt at `x{118,238}` (centred as a pair on the panel midline 178); Cosmos/Mono→sub wave+level at `x178`; else dimmed text `y340` |
+| OSC 1 | `(16,60)–(340,161)` | wave combo, Detune `x60`, PW `x130`, Level `x200`, X-Mod `x285` (Cosmos/Oracle only) |
+| OSC 2 | `(16,165)–(340,266)` | wave combo, Semi `x56` (stepped), Detune `x114`, PW `x172`, Level `x230`; Semi/Detune drawn **inert** in Cosmos (§4.1) |
+| OSC 3 / SUB | `(16,270)–(340,371)` | **mode-variant** (see §4): Modular→osc3 wave + Level `x118` + FM Amt `x238`; Cosmos/Mono→sub wave + Level `x178`; else dimmed "(not used in this mode)" text at the knob row |
+
+**All three oscillator panels share ONE geometry (§1.2a)** — same height, same rows, same knob
+radius — because they are the same widget set. `oscGeom(y0)` is the single source.
 | VOICE / CHARACTER | `(16,376)–(340,542)` (h166) | **2 rows** of **r13 knobs** (tick ring reaches R+6.5 → ±19.5) with **font-10 labels**. Knob columns `x=42+45·c` (c=0..4 → 42..222); row centres `y{430,494}`, labels top `y−32`. Row1: Noise/Analog/Vntg/Tune/UniV. Row2: UniDT/UniSP/Porta/Vel/PB. Right-hand column `x=291` (hw45): 4 stacked items (label baseline `centre−19`, comboH9) — OverSmp `y416`, Glide `y452`, Legato LED `y488`, V.Crv `y524`. Clearances (per drawMixerVoice comment): row1 label ink 399..405.75 vs ring top 410.5 = **4.75 px**; row2 ring bottom 513.5 vs inner floor 539 = **25.5 px**; column spacing 45 ≥ ring-Ø 39 + 4. Verified on the Acid silver palette. Prism (mode 4) uses the compact variant, see §4.5. |
+
+#### 1.2a Oscillator panel geometry — one family
+
+The three OSC panels are structurally identical: section title + wave combo on the top row,
+then **exactly one** row of knobs. They had drifted to **r20 / r18 / r14** on panels of
+**h112 / h112 / h80** — a staircase that encoded nothing. OSC 1 read as the "important"
+oscillator purely because its panel happened to be tallest and OSC 3 as an afterthought, and
+OSC 3's r14 tick ring already poked 0.5 px through its own panel floor.
+
+**Radius r18, ticks on**, for all three. This is the house standard for a *primary body
+control*, not a split-the-difference number: AMP ENV and FILTER ENV — the panels immediately
+right of this stack, at the same visual weight — use r18 for their four knobs each, as do the
+S&H rate and the mod-matrix amount. The r13/r14 **tickless** family belongs to the bottom
+utility strip (FX + sequencer, §1.3) and the r13 VOICE / CHARACTER grid is a dense 10-knob
+matrix; neither is the right neighbour to match. The resulting left-column hierarchy reads as
+tiers rather than a slope: hero `r54` (cutoff) → primary `r30` (filter row) → **standard `r18`
+(oscillators + envelopes)** → dense grid `r13` (voice) → utility `r13/r14` tickless.
+
+**Height.** r18 with its tick ring reaches ±24.5, so a panel needs
+`4 (title) + 20 (combo) + 6 (gap) + 6.75 (label ink) + 6.75 (gap) + 49 (ring) + 3 (floor)
+= 87.75 px` minimum — more than OSC 3's old h80. Rather than grow the stack (VOICE /
+CHARACTER below is documented as needing every one of its 166 px, §1.2), the existing
+`60..372` block is split **equally**: three **h101** panels with 4 px gutters. OSC 1 and OSC 2
+give up 11 px each, which they had spare; OSC 3 gains 21 px, which it needed. The block ends
+at 371, so the gutter before VOICE / CHARACTER is 5 px rather than 4 — which reads as the
+group break it actually is.
+
+`oscGeom(y0)` returns the whole row set, so all three panels are laid out by one function and
+a knob added to one cannot silently desynchronise it from the others:
+
+| Item | Offset from `y0` | OSC 1 (60) | OSC 2 (165) | OSC 3 (270) |
+|---|---|---|---|---|
+| panel | `0 .. 101` | 60..161 | 165..266 | 270..371 |
+| title / combo top | `+4` | 64 | 169 | 274 |
+| combo bottom | `+24` | 84 | 189 | 294 |
+| knob label top | `+30` | 90 | 195 | 300 |
+| knob centre | `+68` | 128 | 233 | 338 |
+
+Clearances, identical for all three by construction: combo bottom → label top **6.00**,
+label ink → ring top **6.75**, ring bottom → inner floor **5.50**. Horizontally the 49 px ring
+gets ≥ 21 px of daylight in OSC 1 (70/85 columns) and 9 px in OSC 2 (58 columns — VOICE /
+CHARACTER runs 6, so this is the roomier of the two grids). **Prism (mode 4) is unaffected**:
+it replaces the whole left column with the OPERATOR MATRIX and never draws these panels.
 
 **CENTER column — Filter + Envelopes — `x 348..752`**
 | Panel | Rect | Contents |
@@ -1017,7 +1063,7 @@ Census at 1240×780 / 1860×1170, all six modes visited, both modals opened:
 | Layer | max verts | of 65535 | driver |
 |---|---|---|---|
 | **left (Prism)** | **49 754** | **75.9 %** | 36 chrome knobs in the operator matrix |
-| left (other modes) | 20 626 | 31.5 % | OSC 1/2/3 + VOICE / CHARACTER |
+| left (other modes) | 21 428 | 32.7 % | OSC 1/2/3 + VOICE / CHARACTER |
 | bottom | 22 142 | 33.8 % | sequencer lanes + FX strip + keyboard + wheels |
 | center | 16 508 | 25.2 % | filter curve + 2 ADSR displays + 8 knobs |
 | right | 14 672 | 22.4 % | LFOs + sub-panel + scope + VU |

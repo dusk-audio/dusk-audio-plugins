@@ -1128,72 +1128,108 @@ private:
     //========================================================================
     // LEFT column — oscillators / mixer / voice
     //========================================================================
+    // The three oscillator panels are STRUCTURALLY IDENTICAL — section title + wave
+    // combo on the top row, then exactly one row of knobs — so they share one
+    // geometry instead of three hand-tuned sets. Those had drifted to r20 / r18 / r14
+    // on panels of h112 / h112 / h80, a staircase that encoded nothing: OSC 1 read as
+    // the "important" oscillator purely because its panel happened to be the tallest,
+    // and OSC 3 as an afterthought. Now all three are the same size and the same
+    // radius, and adding a knob to one cannot silently desynchronise it from the rest.
+    //
+    // RADIUS r18 is the house standard for a primary body control, not a compromise:
+    // AMP ENV and FILTER ENV — the panels immediately right of this stack, at the same
+    // visual weight — use r18 for their four knobs each, as do the S&H rate and the
+    // mod-matrix amount. The r13/r14 TICKLESS family belongs to the bottom utility
+    // strip (FX + sequencer) and the r13 VOICE/CHARACTER grid is a dense 10-knob
+    // matrix; neither is the right neighbour to match here. So: r18, ticks on.
+    //
+    // HEIGHT. r18 with its tick ring reaches +/-24.5, so a panel needs
+    //   4 (title) + 20 (combo) + 6 (gap) + 6.75 (label ink) + 6.75 (gap) + 49 (ring)
+    //   + 3 (inner floor) = 87.75 px minimum.
+    // OSC 3's old h80 could not host it — which is also why its r14 tick ring already
+    // poked 0.5 px through its own panel floor. Rather than grow the stack (VOICE /
+    // CHARACTER below is documented as needing every one of its 166 px), the existing
+    // 60..372 block is split EQUALLY: three h101 panels with 4 px gutters. OSC 1 and
+    // OSC 2 give up 11 px each, which they had spare; OSC 3 gains 21 px, which it
+    // needed. The block ends at 371, so the gutter before VOICE / CHARACTER is 5 px
+    // rather than 4 — which reads as the group break it actually is.
+    //
+    // Per-panel clearances (identical for all three, by construction):
+    //   combo bottom -> label top   6.00 px
+    //   label ink    -> ring top    6.75 px
+    //   ring bottom  -> inner floor 5.50 px
+    struct OscGeom { float y0, y1, rowY, comboY1, labelY, cy; };
+    static OscGeom oscGeom(float y0)
+    { return { y0, y0 + 101.0f, y0 + 4.0f, y0 + 24.0f, y0 + 30.0f, y0 + 68.0f }; }
+    static constexpr float kOscR = 18.0f;   // shared oscillator knob radius
+
     void drawOscPanels()
     {
-        // OSC 1 — panel shrunk (bottom 178 -> 172) to feed the grown VOICE/CHARACTER
-        // panel below; internals unchanged.
-        panelBox(16, 60, 340, 172);
-        sectionTitle(24, 64, "OSC 1");
-        comboBox("o1w", kParamOsc1Wave, 150, 64, 332, 84, kWave5, 5, curMode == 5);
-        klabel(60, 96, "DETUNE");  knob("o1det", kParamOsc1Detune, 60, 138, 20, "%+.0f", " ct", true);
-        klabel(130, 96, "PW");     knob("o1pw", kParamOsc1PW, 130, 138, 20, "%.0f", " %", false, false, false, 100.0f);
-        klabel(200, 96, "LEVEL");  knob("o1lvl", kParamOsc1Level, 200, 138, 20, "%.0f", " %", false, false, false, 100.0f);
+        const OscGeom g1 = oscGeom(60.0f), g2 = oscGeom(165.0f), g3 = oscGeom(270.0f);
+
+        // OSC 1 — DETUNE / PW / LEVEL, plus X-MOD in Cosmos and Oracle. Columns 70/85
+        // apart against a 49 px ring, so >= 21 px of daylight.
+        panelBox(16, g1.y0, 340, g1.y1);
+        sectionTitle(24, g1.rowY, "OSC 1");
+        comboBox("o1w", kParamOsc1Wave, 150, g1.rowY, 332, g1.comboY1, kWave5, 5, curMode == 5);
+        klabel(60, g1.labelY, "DETUNE");  knob("o1det", kParamOsc1Detune, 60, g1.cy, kOscR, "%+.0f", " ct", true);
+        klabel(130, g1.labelY, "PW");     knob("o1pw", kParamOsc1PW, 130, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
+        klabel(200, g1.labelY, "LEVEL");  knob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
         // crossMod lives with the oscillators (Cosmos/Oracle only) — see report.
         if (curMode == 0 || curMode == 1)
-        { klabel(285, 96, "X-MOD"); knob("xmod", kParamCrossMod, 285, 138, 20, "%.0f", " %", false, false, false, 100.0f); }
+        { klabel(285, g1.labelY, "X-MOD"); knob("xmod", kParamCrossMod, 285, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f); }
 
-        // OSC 2 — panel 176..288 (was 182..300); internals shifted -6.
-        panelBox(16, 176, 340, 288);
-        sectionTitle(24, 180, "OSC 2");
+        // OSC 2 — SEMI / DETUNE / PW / LEVEL. Four columns 58 apart against the same
+        // 49 px ring, so 9 px of daylight (VOICE / CHARACTER runs 6, so this is the
+        // roomier of the two grids).
+        panelBox(16, g2.y0, 340, g2.y1);
+        sectionTitle(24, g2.rowY, "OSC 2");
         // Cosmos (mode 0) forces OSC 2 to a Pulse locked to OSC 1's frequency and
         // detune, so the combo shows "Pulse" and SEMI/DETUNE are inert here (PW +
         // LEVEL stay live). The wave param remains selectable to store a choice for
         // the other modes. Pulse is index 4 in kWave5. (U2)
         const bool cosmosOsc2 = (curMode == 0);
-        comboBox("o2w", kParamOsc2Wave, 150, 180, 332, 200, kWave5, 5, curMode == 5,
+        comboBox("o2w", kParamOsc2Wave, 150, g2.rowY, 332, g2.comboY1, kWave5, 5, curMode == 5,
                  cosmosOsc2 ? 4 : -1);
-        klabel(56, 212, "SEMI");
-        klabel(114, 212, "DETUNE");
+        klabel(56, g2.labelY, "SEMI");
+        klabel(114, g2.labelY, "DETUNE");
         if (cosmosOsc2)
         {
-            inertKnob("o2semi", kParamOsc2Semi, 56, 252, 18, true,
+            inertKnob("o2semi", kParamOsc2Semi, 56, g2.cy, kOscR, true,
                       "Inactive in Cosmos: OSC 2 tracks OSC 1's pitch.");
-            inertKnob("o2det",  kParamOsc2Detune, 114, 252, 18, true,
+            inertKnob("o2det",  kParamOsc2Detune, 114, g2.cy, kOscR, true,
                       "Inactive in Cosmos: OSC 2 uses OSC 1's detune.");
         }
         else
         {
-            knob("o2semi", kParamOsc2Semi, 56, 252, 18, "%+.0f", " st", true, true);
-            knob("o2det", kParamOsc2Detune, 114, 252, 18, "%+.0f", " ct", true);
+            knob("o2semi", kParamOsc2Semi, 56, g2.cy, kOscR, "%+.0f", " st", true, true);
+            knob("o2det", kParamOsc2Detune, 114, g2.cy, kOscR, "%+.0f", " ct", true);
         }
-        klabel(172, 212, "PW");    knob("o2pw", kParamOsc2PW, 172, 252, 18, "%.0f", " %", false, false, false, 100.0f);
-        klabel(230, 212, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, 252, 18, "%.0f", " %", false, false, false, 100.0f);
+        klabel(172, g2.labelY, "PW");    knob("o2pw", kParamOsc2PW, 172, g2.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
+        klabel(230, g2.labelY, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, g2.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
 
-        // OSC 3 / SUB (mode-variant) — panel 292..372 (h80, was 304..410).
-        panelBox(16, 292, 340, 372);
-        // Short panel (h80): r14 knobs with labels lifted to y319 so the label ink
-        // (ink bottom 326.75) clears both the combo bottom (316, 4px) and the knob arc
-        // top (332 = centre-17, 5px), and the knob body bottom (363) clears the panel
-        // inner floor (369) by 6px.
+        // OSC 3 / SUB — mode-variant contents, but the SAME frame and knob row as the
+        // two panels above it in every mode (that is the whole point of the rework).
+        panelBox(16, g3.y0, 340, g3.y1);
         if (curMode == 3) // Modular -> osc3
         {
-            sectionTitle(24, 296, "OSC 3");
-            comboBox("o3w", kParamOsc3Wave, 150, 296, 332, 316, kWave4, 4, false);
+            sectionTitle(24, g3.rowY, "OSC 3");
+            comboBox("o3w", kParamOsc3Wave, 150, g3.rowY, 332, g3.comboY1, kWave4, 4, false);
             // Centred as a pair on the panel's midline (178) like the SUB OSC
             // variant's lone LEVEL knob; 90/240 sat 13 px left of centre.
-            klabel(118, 319, "LEVEL");  knob("o3lvl", kParamOsc3Level, 118, 349, 14, "%.0f", " %", false, false, false, 100.0f);
-            klabel(238, 319, "FM AMT"); knob("fmamt", kParamFMAmount, 238, 349, 14, "%.0f", " %", false, false, false, 100.0f);
+            klabel(118, g3.labelY, "LEVEL");  knob("o3lvl", kParamOsc3Level, 118, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
+            klabel(238, g3.labelY, "FM AMT"); knob("fmamt", kParamFMAmount, 238, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
         }
         else if (curMode == 0 || curMode == 2) // Cosmos / Mono -> sub
         {
-            sectionTitle(24, 296, "SUB OSC");
-            comboBox("subw", kParamSubWave, 150, 296, 332, 316, kSubWave, 2, curMode == 5);
-            klabel(178, 319, "LEVEL"); knob("sublvl", kParamSubLevel, 178, 349, 14, "%.0f", " %", false, false, false, 100.0f);
+            sectionTitle(24, g3.rowY, "SUB OSC");
+            comboBox("subw", kParamSubWave, 150, g3.rowY, 332, g3.comboY1, kSubWave, 2, curMode == 5);
+            klabel(178, g3.labelY, "LEVEL"); knob("sublvl", kParamSubLevel, 178, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
         }
         else
         {
-            sectionTitle(24, 296, "OSC 3 / SUB");
-            text(178, 340, 11.0f, lerpC(live.textPanel, live.panel, 0.4f), "(not used in this mode)", 0, false);
+            sectionTitle(24, g3.rowY, "OSC 3 / SUB");
+            text(178, g3.cy - 6.0f, 11.0f, lerpC(live.textPanel, live.panel, 0.4f), "(not used in this mode)", 0, false);
         }
     }
 
