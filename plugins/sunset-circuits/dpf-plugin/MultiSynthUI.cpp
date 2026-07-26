@@ -2507,12 +2507,22 @@ private:
         const float yTop = 700, yBot = 780, yBlackBot = 750;
         const float bw = 0.62f * w;
 
-        // white keys first (so overlapping black keys, submitted later, win hover)
+        // White keys are submitted FIRST, and a black key overlaps the top 50 px of
+        // the two beneath it. Submission order alone does not decide that contest:
+        // since ImGui 1.89 the first item to be submitted claims g.HoveredId and the
+        // later, overlapping one is rejected — so the black keys were unhittable,
+        // every click in the overlap sounding the white key underneath while the
+        // tooltip named the black one. SetNextItemAllowOverlap() on each white key is
+        // what turns submission order into a front-to-back hit test: ItemHoverable()
+        // then refuses the white key unless it also owned HoveredId last frame
+        // (imgui.cpp "AllowOverlap mode requires previous frame HoveredId to match"),
+        // which lets the black key take it.
         for (int i = 0; i < 21; ++i)
         {
             const float x = kx0 + i * w;
             const int note = clampMidi(baseMidi + (i / 7) * 12 + whiteSemi[i % 7]);
             char id[16]; std::snprintf(id, sizeof(id), "wk%d", i);
+            ImGui::SetNextItemAllowOverlap();
             keyHit(id, x + 1, yTop, x + w - 1, yBot, note);
             const bool lit = (kbNote == note) || held(note);
             dl->AddRectFilled(P(x + 1, yTop), P(x + w - 1, yBot),
