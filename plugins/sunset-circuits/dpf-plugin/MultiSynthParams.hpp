@@ -239,7 +239,8 @@
     X(SeqSlide12, "seqSlide12", "Seq Slide 13", 0.0f, 1.0f, 0.0f, BOOL, "") \
     X(SeqSlide13, "seqSlide13", "Seq Slide 14", 0.0f, 1.0f, 0.0f, BOOL, "") \
     X(SeqSlide14, "seqSlide14", "Seq Slide 15", 0.0f, 1.0f, 0.0f, BOOL, "") \
-    X(SeqSlide15, "seqSlide15", "Seq Slide 16", 0.0f, 1.0f, 0.0f, BOOL, "")
+    X(SeqSlide15, "seqSlide15", "Seq Slide 16", 0.0f, 1.0f, 0.0f, BOOL, "") \
+    X(ArpAccentPattern, "arpAccentPattern", "Arp Accent Pattern", 0.0f, 3.0f, 0.0f, INT, "")
 
 // Parameter index enum (kParam<Suffix>), matching the core order 1:1.
 enum ParamId
@@ -247,7 +248,7 @@ enum ParamId
 #define X(suf, sym, name, mn, mx, df, kind, unit) kParam##suf,
     MSYNTH_PARAMS(X)
 #undef X
-    kNumCoreParams,                 // == msynth::kNumParams (222)
+    kNumCoreParams,                 // == msynth::kNumParams (223)
     kParamOutLevelL = kNumCoreParams, // output: peak L (meter fallback)
     kParamOutLevelR,                  // output: peak R
     kParamCount

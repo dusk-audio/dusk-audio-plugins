@@ -145,6 +145,12 @@ add("AcidSlideTime","acidSlideTime","Acid Slide",10,200,60,LOG)
 for n in range(16): add(f"SeqPitch{n}",f"seqPitch{n}",f"Seq Pitch {n+1}",-24,24,0,I)
 for n in range(16): add(f"SeqAccent{n}",f"seqAccent{n}",f"Seq Accent {n+1}",0,1,0,B)
 for n in range(16): add(f"SeqSlide{n}",f"seqSlide{n}",f"Seq Slide {n+1}",0,1,0,B)
+# --- Appended after the 1.0.0-rc param freeze -------------------------------
+# APPEND ONLY, never insert. The DPF index IS the core msynth::Param index and
+# both are what a host automation lane, a saved session and a .scpreset key on,
+# so a parameter added next to its topical siblings would renumber everything
+# after it. Grouping lives in the UI, not in the index.
+add("ArpAccentPattern","arpAccentPattern","Arp Accent Pattern",0,3,0,I)
 
 NCORE = len(P)
 sym2enum = {p[1]: "kParam"+p[0] for p in P}

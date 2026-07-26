@@ -43,6 +43,8 @@ static_assert((int)kParamOp1Ratio    == (int)msynth::pOp1Ratio,    "op block dri
 static_assert((int)kParamOp4R        == (int)msynth::pOp4R,        "op block end drift");
 static_assert((int)kParamSeqPitch0   == (int)msynth::pSeqPitch0,   "seq pitch drift");
 static_assert((int)kParamSeqSlide0   == (int)msynth::pSeqSlide0,   "seq slide drift");
+static_assert((int)kParamArpAccentPattern == (int)msynth::pArpAccentPattern,
+              "appended param drift");
 static_assert((int)kNumCoreParams    == (int)msynth::kNumParams,   "core param count drift");
 
 //---------------------------------------------------------------------------
@@ -105,6 +107,8 @@ static_assert(paramMaxI(kParamArpMode)   == (int)msynth::ArpMode::Chord,
               "ArpMode range vs ArpMode");
 static_assert(paramMaxI(kParamArpVelMode) == (int)msynth::ArpVelocityMode::AccentPattern,
               "Arp velocity mode range vs ArpVelocityMode");
+static_assert(paramMaxI(kParamArpAccentPattern) == (int)msynth::ArpAccentPattern::RampDown,
+              "Arp accent pattern range vs ArpAccentPattern");
 static_assert(paramMaxI(kParamDriveType) == (int)msynth::DriveType::Tube,
               "Drive type range vs DriveType");
 static_assert(paramMaxI(kParamCosmosChorus) == (int)msynth::CosmosChorusMode::Both,
@@ -113,7 +117,9 @@ static_assert(paramMaxI(kParamCosmosChorus) == (int)msynth::CosmosChorusMode::Bo
 static_assert(paramMinI(kParamMode) == 0 && paramMinI(kParamArpRate) == 0
                   && paramMinI(kParamDelayDiv) == 0 && paramMinI(kParamModSrc0) == 0
                   && paramMinI(kParamModDst0) == 0 && paramMinI(kParamPrismAlgo) == 0
-                  && paramMinI(kParamArpMode) == 0 && paramMinI(kParamDriveType) == 0,
+                  && paramMinI(kParamArpMode) == 0 && paramMinI(kParamDriveType) == 0
+                  && paramMinI(kParamArpVelMode) == 0
+                  && paramMinI(kParamArpAccentPattern) == 0,
               "enum-backed choice params must start at 0");
 
 // Which BBT beat convention the wrapper we were loaded as delivers (see the long

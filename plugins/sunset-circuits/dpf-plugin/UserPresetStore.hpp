@@ -4,7 +4,7 @@
 //
 // UserPresetStore.hpp — Sunset Circuits user-preset library (UI-side only).
 //
-// A file-based patch bank. The host already persists the 222 core params inside
+// A file-based patch bank. The host already persists the 223 core params inside
 // its session (DISTRHO_PLUGIN_WANT_STATE stays 0), so this is purely a personal
 // library the player can save to / recall from, independent of any DAW.
 //
@@ -62,7 +62,7 @@ struct Entry
     // Engine the patch selects, read straight out of the file's `mode=` line. It
     // is DERIVED state, not new metadata: it is the value loadInto() would put in
     // out[kParamMode], cached here so a listing (the preset browser's mode badge
-    // and mode filter) does not have to parse 222 symbols per file per frame.
+    // and mode filter) does not have to parse 223 symbols per file per frame.
     // Falls back to the Mode default when the file omits the symbol, which is
     // exactly what a load of that file would leave in place.
     int                   mode = (int)kParamDefs[kParamMode].def;
@@ -172,7 +172,7 @@ public:
         }
     }
 
-    // Write the 222 core params to <sanitized name>.scpreset. Returns false on
+    // Write the 223 core params to <sanitized name>.scpreset. Returns false on
     // an empty/invalid name or any IO error. Overwrites an existing file (the
     // UI runs the overwrite-confirm flow before calling this).
     //
@@ -188,7 +188,7 @@ public:
     //     reason), which is where ENOSPC/EACCES/ENAMETOOLONG on the FILE land;
     //   * the final flush, which is where a full disk usually actually shows up —
     //     the writes above are buffered, so open can succeed and only the flush
-    //     of the ~222-line body hits the wall.
+    //     of the ~223-line body hits the wall.
     bool save(const std::string& displayName, const float* values, int nValues,
               std::string* errOut = nullptr)
     {
@@ -336,7 +336,7 @@ private:
     }
 
     // Read the two listing fields — display name and Mode — out of a preset file
-    // without a full 222-symbol parse. Both sit at the top of anything save() wrote
+    // without a full 223-symbol parse. Both sit at the top of anything save() wrote
     // (`name=` is line 2 and `mode=` line 3, Mode being core param 0), so the scan
     // normally stops after three lines. `name` is left empty when the header is
     // missing (the caller falls back to the filename stem) and `mode` keeps the

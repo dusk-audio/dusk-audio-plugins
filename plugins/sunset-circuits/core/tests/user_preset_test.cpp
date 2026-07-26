@@ -5,7 +5,7 @@
 // XDG_CONFIG_HOME so it never touches the real ~/.config. Exercised by
 // core/tests/user_preset_gate.py and wired into run_all.sh.
 //
-// Covers: 222-float bit-exact round-trip, reset-then-apply defaults for missing
+// Covers: 223-float bit-exact round-trip, reset-then-apply defaults for missing
 // symbols, malformed/unknown-version rejection, unknown-symbol skip, name
 // sanitization, overwrite, delete, exists().
 
@@ -60,11 +60,11 @@ int main()
 
     const int N = (int)kNumCoreParams;
     std::fprintf(stderr, "kNumCoreParams = %d\n", N);
-    CHECK(N == 222, "222 core params");
+    CHECK(N == 223, "223 core params");
 
     Store store;
 
-    // ---- 1. bit-exact round-trip of all 222 floats -------------------------
+    // ---- 1. bit-exact round-trip of all 223 floats -------------------------
     std::vector<float> vin(N), vout(N, -12345.0f);
     std::mt19937 rng(0xC0FFEE);
     for (int i = 0; i < N; ++i)
@@ -86,7 +86,7 @@ int main()
         std::fprintf(stderr, "  round-trip mismatches=%d first=%d (%s: %.9g vs %.9g)\n",
                      mism, firstBad, kParamDefs[firstBad].symbol,
                      vin[firstBad], vout[firstBad]);
-    CHECK(mism == 0, "222/222 floats bit-exact after save+load");
+    CHECK(mism == 0, "223/223 floats bit-exact after save+load");
 
     // ---- 2. missing symbols keep factory defaults --------------------------
     {

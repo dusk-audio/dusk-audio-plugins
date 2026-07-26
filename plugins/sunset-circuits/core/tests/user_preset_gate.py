@@ -2,7 +2,7 @@
 """user_preset_gate — runs the UserPresetStore unit binary.
 
 The heavy lifting is in user_preset_test.cpp (built by tests/CMakeLists.txt): it
-saves a 222-float patch, reloads it, and asserts a bit-exact round-trip plus
+saves a 223-float patch, reloads it, and asserts a bit-exact round-trip plus
 malformed-file rejection, missing-symbol defaults, sanitization, overwrite, and
 delete. This wrapper just locates and runs it so run_all.sh treats it like the
 other gates.

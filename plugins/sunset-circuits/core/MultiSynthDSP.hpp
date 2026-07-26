@@ -105,6 +105,12 @@ enum Param : int
     pSeqPitch0,  pSeqPitch15  = pSeqPitch0  + 15,
     pSeqAccent0, pSeqAccent15 = pSeqAccent0 + 15,
     pSeqSlide0,  pSeqSlide15  = pSeqSlide0  + 15,
+    // ---- Appended after 1.0.0-rc param freeze ----
+    // New parameters go HERE, at the end, so every index above keeps the value
+    // it had: a host automation lane, a saved session and a .scpreset all key on
+    // the numeric index, and inserting arpAccentPattern next to the other arp
+    // params would silently reassign 150+ of them.
+    pArpAccentPattern,
     kNumParams
 };
 

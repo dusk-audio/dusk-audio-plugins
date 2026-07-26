@@ -48,6 +48,9 @@ const ParamDef kParamDefs[] = {
     { pArpOn, "arpOn", 0 }, { pArpMode, "arpMode", 0 }, { pArpOctave, "arpOctave", 1 }, { pArpRate, "arpRate", 3 },
     { pArpGate, "arpGate", 0.5f }, { pArpSwing, "arpSwing", 0 }, { pArpLatch, "arpLatch", 0 },
     { pArpVelMode, "arpVelMode", 0 }, { pArpFixedVel, "arpFixedVel", 100 },
+    // Index 222, appended at the end of the enum (see the note there); listed
+    // with its siblings because this table is keyed by index, not by order.
+    { pArpAccentPattern, "arpAccentPattern", 0 },
 
     { pDriveOn, "driveOn", 0 }, { pDriveType, "driveType", 0 }, { pDriveAmt, "driveAmt", 0.3f }, { pDriveMix, "driveMix", 1.0f },
     { pChorusOn, "chorusOn", 0 }, { pChorusRate, "chorusRate", 0.8f }, { pChorusDepth, "chorusDepth", 0.5f }, { pChorusMix, "chorusMix", 0.5f },
@@ -533,6 +536,12 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     arp.setLatch(latchOn);
     arp.setVelocityMode((ArpVelocityMode)clampi((int)p(pArpVelMode), 0, 2));
     arp.setFixedVelocity((int)p(pArpFixedVel));
+    // Only consumed by getVelocity's AccentPattern branch, i.e. it is inert
+    // unless arpVelMode == 2; setting it unconditionally is still correct
+    // (cheaper than branching, and the mode can change between two steps).
+    // Default 0 == Downbeat == the value the class already constructed with, so
+    // every existing render and preset is bit-identical.
+    arp.setAccentPattern((ArpAccentPattern)clampi((int)p(pArpAccentPattern), 0, 3));
     for (int i = 0; i < 16; ++i) arp.setStepActive(i, p((Param)(pArpStep0 + i)) > 0.5f);
 
     // --- Effects ---
