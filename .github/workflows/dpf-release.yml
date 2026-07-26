@@ -555,9 +555,136 @@ jobs:
           path: ${{ env.PLUGIN_DIR }}/${{ env.SLUG }}-macos.zip
           retention-days: 30
 
+  # Gate suite + Linux validation. Runs on BOTH triggers (tag push and
+  # workflow_dispatch), and the release job needs it, so a red gate blocks the
+  # publish rather than being noticed afterwards.
+  #
+  # Deliberately NOT in the ubuntu:20.04 container the shipping linux jobs use:
+  # this job produces no artifact, so it has no glibc floor to respect, and the
+  # plain runner gives it a modern python, liblilv and pluginval without fighting
+  # focal's package set. The binaries it builds are for testing only.
+  test-linux:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
+    steps:
+      - name: Install build + test deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config unzip \
+            libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libdbus-1-dev \
+            liblilv-dev
+          # liblilv-dev enables the suite's lv2_smoke target; without it that one
+          # gate self-skips and the LV2 host path would go unvalidated.
+          pkg-config --modversion lilv-0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python gate deps
+        run: python3 -m pip install --upgrade numpy soundfile
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout DPF
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF
+          ref: ${{ env.DPF_SHA }}
+          path: DPF
+          submodules: recursive
+
+      - name: Checkout DPF-Widgets
+        uses: actions/checkout@v4
+        with:
+          repository: DISTRHO/DPF-Widgets
+          ref: ${{ env.DPFWIDGETS_SHA }}
+          path: DPF-Widgets
+          submodules: recursive
+
+      - name: Configure
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_DPF_INSTALL_LOCAL=OFF \
+            -DDPF_PATH="${GITHUB_WORKSPACE}/DPF" \
+            -DDPFWIDGETS_PATH="${GITHUB_WORKSPACE}/DPF-Widgets"
+
+      - name: Build (VST3 + LV2)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          # The suite's lv2_smoke gate hosts build/bin/sunset_circuits.lv2, so the
+          # LV2 bundle must exist before run_all.sh; pluginval below needs the VST3.
+          cmake --build build --target sunset_circuits-vst3 sunset_circuits-lv2 -j"$(nproc)"
+
+      - name: Core gate suite
+        run: |
+          # Full suite: every pass/fail gate, the fm and acid sub-suites, the
+          # 54-preset audit, lv2_smoke, and the cpu_bench sanity bar. The
+          # fx_alias 54-preset sweep stays opt-in (FX_ALIAS_FULL=1) -- it only
+          # changes answer when the factory presets change and is by far the
+          # slowest item in the suite.
+          plugins/sunset-circuits/core/tests/run_all.sh
+
+      - name: Install pluginval
+        run: |
+          # SHA-256 pinned: the release asset is practically immutable but the tag
+          # is not cryptographically so -- verify before executing anything.
+          curl -fsSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
+          echo "69adc87d6bbb2f7224a038d8f8c5e737ea5c906ea153752b8a546b6125e0564f  pluginval.zip" \
+            | sha256sum -c -
+          unzip -o pluginval.zip -d pluginval
+          chmod +x pluginval/pluginval
+
+      - name: Validate VST3 (pluginval, headless)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          VST3="$(cd build/bin && pwd)/sunset_circuits.vst3"
+          test -d "$VST3"
+          # --skip-gui-tests is mandatory, not an optimisation: pluginval's editor
+          # tests segfault headless for every DPF plugin (host-side XEmbed issue,
+          # docs/dpf-migration/00-OVERVIEW.md landmine 9). Strictness 8 is the bar
+          # the QA checklist calls authoritative for the 222-parameter state
+          # round-trip; the Windows job runs 5 on top of this.
+          #
+          # Same tolerated-teardown rule as the Windows job: DPF can exit non-zero
+          # tearing down after a clean run, and that is accepted ONLY when the log
+          # shows tests actually ran and none failed. A plugin that fails to load
+          # or a real failed test still fails the job.
+          set +e
+          LOG=$("${GITHUB_WORKSPACE}/pluginval/pluginval" \
+            --strictness-level 8 --skip-gui-tests --timeout-ms 270000 \
+            --validate "$VST3" 2>&1)
+          STATUS=$?
+          set -e
+          echo "$LOG"
+          if [ "$STATUS" -eq 0 ]; then
+            echo "pluginval: SUCCESS"
+            exit 0
+          fi
+          if grep -q 'Starting test' <<< "$LOG" && ! grep -q 'FAILED' <<< "$LOG"; then
+            echo "::warning::pluginval exited non-zero after tests ran clean (DPF headless teardown, known issue, non-fatal)"
+            exit 0
+          fi
+          echo "::error::pluginval reported a real failure (load error or failed test)"
+          exit 1
+
   # Assemble the GitHub Release from the four platform zips (tags only).
+  # test-linux is in needs: so a red gate suite blocks the publish.
   release:
-    needs: [setup, build-linux-x64, build-linux-arm64, build-windows, build-macos]
+    needs: [setup, test-linux, build-linux-x64, build-linux-arm64, build-windows, build-macos]
     runs-on: ubuntu-latest
     if: needs.setup.outputs.is_release == 'true'
     permissions:
