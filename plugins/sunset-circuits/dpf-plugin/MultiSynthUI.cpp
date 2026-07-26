@@ -1022,12 +1022,7 @@ private:
     // UI has no pointer and falls back to MultiSynthDSP's bulk-change heuristic.
     void notifyDspProgramChange()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (multiSynthGetDSP != nullptr)
-            if (void* const inst = getPluginInstancePointer())
-                if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
-                    d->notifyProgramChange();
-       #endif
+        if (msynth::MultiSynthDSP* d = dspAccess()) d->notifyProgramChange();
     }
 
     // Brushed-metal chassis: subtle vertical gradient + noise-free procedural
@@ -1116,8 +1111,10 @@ private:
         {
             sectionTitle(24, 296, "OSC 3");
             comboBox("o3w", kParamOsc3Wave, 150, 296, 332, 316, kWave4, 4, false);
-            klabel(90, 319, "LEVEL");  knob("o3lvl", kParamOsc3Level, 90, 349, 14, "%.0f", " %", false, false, false, 100.0f);
-            klabel(240, 319, "FM AMT"); knob("fmamt", kParamFMAmount, 240, 349, 14, "%.0f", " %", false, false, false, 100.0f);
+            // Centred as a pair on the panel's midline (178) like the SUB OSC
+            // variant's lone LEVEL knob; 90/240 sat 13 px left of centre.
+            klabel(118, 319, "LEVEL");  knob("o3lvl", kParamOsc3Level, 118, 349, 14, "%.0f", " %", false, false, false, 100.0f);
+            klabel(238, 319, "FM AMT"); knob("fmamt", kParamFMAmount, 238, 349, 14, "%.0f", " %", false, false, false, 100.0f);
         }
         else if (curMode == 0 || curMode == 2) // Cosmos / Mono -> sub
         {
@@ -1841,6 +1838,7 @@ private:
         ImGui::SetCursorScreenPos(c0);
         ImGui::InvisibleButton("modclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
         if (ImGui::IsItemClicked()) showMod = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close the modulation matrix");
         dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
         drawX(1000, 140, 5.0f, live.text);
         text(240, 156, 10.0f, live.textPanel, "SOURCE", -1, true);
@@ -1924,6 +1922,7 @@ private:
         ImGui::SetCursorScreenPos(c0);
         ImGui::InvisibleButton("saveclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
         if (ImGui::IsItemClicked()) showSaveModal = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close without saving");
         dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
         drawX(x1 - 20, y0 + 20, 5.0f, live.text);
 
@@ -2002,15 +2001,11 @@ private:
         dl->AddLine(P(rx0, midY), P(rx1, midY), IM_COL32(255, 255, 255, 25), 1.0f * s);
 
         int count = 0;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (multiSynthGetDSP != nullptr)
-            if (void* const inst = getPluginInstancePointer())
-                if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
-                    // Copy the ring (oldest->newest) into our preallocated buffer via
-                    // the data-race-free bridge API (may tear, fine for a scope);
-                    // no raw ring pointer / writePos math.
-                    count = d->copyScope(scope, msynth::MultiSynthDSP::kScopeSize);
-       #endif
+        // Copy the ring (oldest->newest) into our preallocated buffer via the
+        // data-race-free bridge API (may tear, fine for a scope); no raw ring
+        // pointer / writePos math.
+        if (msynth::MultiSynthDSP* d = dspAccess())
+            count = d->copyScope(scope, msynth::MultiSynthDSP::kScopeSize);
         if (count > 0)
         {
             // rising zero-cross trigger over the first quarter
@@ -2496,12 +2491,7 @@ private:
         // holding on a hardware MIDI keyboard (or via the host), not just local
         // mouse presses. Null bridge (split LV2 UI) -> mask stays 0, local-only.
         uint64_t heldLo = 0, heldHi = 0;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (multiSynthGetDSP != nullptr)
-            if (void* const inst = getPluginInstancePointer())
-                if (msynth::MultiSynthDSP* d = multiSynthGetDSP(inst))
-                    d->getHeldNotes(heldLo, heldHi);
-       #endif
+        if (msynth::MultiSynthDSP* d = dspAccess()) d->getHeldNotes(heldLo, heldHi);
         auto held = [&](int n) {
             return n >= 0 && n < 128
                 && (((n < 64 ? heldLo : heldHi) >> (n & 63)) & 1ull) != 0;
@@ -2557,6 +2547,16 @@ private:
         if (hov && ImGui::IsMouseClicked(0)) pressKey(note, velFromY(b0.y, b1.y));
         else if (hov && ImGui::IsMouseDown(0) && kbNote != note && kbNote >= 0)
             pressKey(note, velFromY(b0.y, b1.y));
+        // Note name + the velocity THIS pointer position would play: the only way the
+        // strike-position mapping is discoverable. Suppressed while the button is
+        // down so the tooltip does not chase the pointer during a glissando.
+        if (hov && !ImGui::IsMouseDown(0))
+        {
+            static const char* const kNoteNames[12] =
+                { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+            ImGui::SetTooltip("%s%d \xC2\xB7 velocity %d (strike lower = harder)",
+                              kNoteNames[note % 12], note / 12 - 1, (int)velFromY(b0.y, b1.y));
+        }
     }
 
     // Click position within the key -> velocity: top edge soft, bottom edge hard.

@@ -70,7 +70,7 @@ knob is its pivot; radius is design-space.
 |---|---|---|
 | OSC 1 | `(16,60)–(340,172)` | wave combo, Detune, PW, Level knobs (internals unchanged) |
 | OSC 2 | `(16,176)–(340,288)` | wave combo, Semi (stepped knob), Detune, PW, Level (internals shifted −6) |
-| OSC 3 / SUB | `(16,292)–(340,372)` (h80) | **mode-variant** (see §4): title/combo `y296` (`296..316`), knob label `y319`, knob centre `y349` **r14**; Modular→osc3 wave+level+FM Amt; Cosmos/Mono→sub wave+level; else dimmed text `y340` |
+| OSC 3 / SUB | `(16,292)–(340,372)` (h80) | **mode-variant** (see §4): title/combo `y296` (`296..316`), knob label `y319`, knob centre `y349` **r14**; Modular→osc3 wave+level+FM Amt at `x{118,238}` (centred as a pair on the panel midline 178); Cosmos/Mono→sub wave+level at `x178`; else dimmed text `y340` |
 | VOICE / CHARACTER | `(16,376)–(340,542)` (h166) | **2 rows** of **r13 knobs** (tick ring reaches R+6.5 → ±19.5) with **font-10 labels**. Knob columns `x=42+45·c` (c=0..4 → 42..222); row centres `y{430,494}`, labels top `y−32`. Row1: Noise/Analog/Vntg/Tune/UniV. Row2: UniDT/UniSP/Porta/Vel/PB. Right-hand column `x=291` (hw45): 4 stacked items (label baseline `centre−19`, comboH9) — OverSmp `y416`, Glide `y452`, Legato LED `y488`, V.Crv `y524`. Clearances (per drawMixerVoice comment): row1 label ink 399..405.75 vs ring top 410.5 = **4.75 px**; row2 ring bottom 513.5 vs inner floor 539 = **25.5 px**; column spacing 45 ≥ ring-Ø 39 + 4. Verified on the Acid silver palette. Prism (mode 4) uses the compact variant, see §4.5. |
 
 **CENTER column — Filter + Envelopes — `x 348..752`**
