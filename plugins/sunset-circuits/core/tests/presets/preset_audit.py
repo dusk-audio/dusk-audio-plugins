@@ -17,16 +17,26 @@ Usage:
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 import numpy as np
 import soundfile as sf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "..", "build", "preset_render")
-OUT = "/tmp/msynth_presets"
+
+# Per-process scratch dir: a fixed /tmp path is shared by every concurrent run
+# and every user on the box. Same construction as ../_harness.py.
+OUT = os.path.join(tempfile.gettempdir(),
+                   f"msynth_presets_{os.getuid()}_{os.getpid()}")
+shutil.rmtree(OUT, ignore_errors=True)
 os.makedirs(OUT, exist_ok=True)
+
+# Bound every preset_render call: a hung binary must fail the audit, not hang CI.
+RENDER_TIMEOUT_S = 120
 
 PEAK_CLIP_DBFS = -1.0     # peak must be at or below this
 SILENCE_DBFS = -60.0      # RMS above this = audible
@@ -35,7 +45,8 @@ SILENCE_DBFS = -60.0      # RMS above this = audible
 def preset_count():
     """Number of factory presets = highest index preset_render accepts + 1."""
     # Cheap probe: binary reports out-of-range on a huge index; parse the range.
-    r = subprocess.run([BIN, "99999", "/dev/null"], capture_output=True, text=True)
+    r = subprocess.run([BIN, "99999", "/dev/null"], capture_output=True, text=True,
+                       timeout=RENDER_TIMEOUT_S)
     # message: "preset index 99999 out of range [0,NN)"
     msg = r.stderr.strip()
     try:
@@ -49,7 +60,7 @@ def render(index, **kw):
     args = [BIN, str(index), path]
     for k, v in kw.items():
         args.append(f"{k}={v}")
-    r = subprocess.run(args, capture_output=True, text=True)
+    r = subprocess.run(args, capture_output=True, text=True, timeout=RENDER_TIMEOUT_S)
     if r.returncode != 0:
         raise RuntimeError(f"render failed for {index}: {r.stderr}")
     info = r.stderr.strip()

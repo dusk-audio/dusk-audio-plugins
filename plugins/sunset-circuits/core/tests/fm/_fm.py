@@ -1,12 +1,19 @@
 """Shared helpers for the Prism FM engine validation gates."""
 import os
+import shutil
 import subprocess
+import tempfile
 import numpy as np
 import soundfile as sf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(HERE, "build", "fm_test")
-OUT = "/tmp/prism_fm_gate"
+
+# Per-process scratch dir: a fixed /tmp path is shared by every concurrent run
+# and every user on the box. Same construction as the core harness.
+OUT = os.path.join(tempfile.gettempdir(),
+                   f"prism_fm_gate_{os.getuid()}_{os.getpid()}")
+shutil.rmtree(OUT, ignore_errors=True)
 os.makedirs(OUT, exist_ok=True)
 
 
@@ -16,7 +23,15 @@ def render(algo, note, seconds, name, **params):
     args = [BIN, str(algo), str(note), str(seconds), path]
     for k, v in params.items():
         args.append(f"{k}={v}")
-    subprocess.run(args, check=True, stderr=subprocess.DEVNULL)
+    # Capture stderr so a failing render surfaces the binary's diagnostics
+    # instead of a bare CalledProcessError, and bound it so a hung fm_test
+    # fails the gate instead of hanging CI forever. Matches ../_harness.py.
+    try:
+        subprocess.run(args, check=True, capture_output=True, timeout=120)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"fm_test failed (rc={e.returncode}): "
+            f"{e.stderr.decode(errors='replace').strip()}") from e
     x, sr = sf.read(path, always_2d=True)
     return sr, x[:, 0]
 
