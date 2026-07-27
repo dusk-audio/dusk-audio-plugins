@@ -130,7 +130,7 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
 - 2x/4x oversampling on nonlinear stages
 
-### Sunset Circuits - PRE-RELEASE (DPF)
+### Sunset Circuits - RELEASED
 Six vintage synth circuits in one instrument (DPF, Dear ImGui UI):
 - Six mode "circuits": Cosmos (DCO poly), Oracle (poly-mod), Mono, Modular (semi-modular + spring), Prism (4-operator FM), Acid (bass box + pattern sequencer)
 - Per-mode panel skins, signature controls, and sub-panels sharing one fixed layout
@@ -138,8 +138,7 @@ Six vintage synth circuits in one instrument (DPF, Dear ImGui UI):
 - 54 factory presets across all six modes; 1x/2x/4x oversampled voices
 - VST3/CLAP/LV2 formats
 
-The earlier JUCE prototype (Multi-Synth) still builds via `multisynth`; Sunset
-Circuits is its DPF-native successor and is the title being taken to release.
+See the [Sunset Circuits manual](manuals/sunset-circuits.md).
 
 ## Building
 
@@ -156,6 +155,7 @@ For consistent, distributable binaries:
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh chord        # Chord Analyzer
 ./docker/build_release.sh spectrum     # Spectrum Analyzer
+./docker/build_release.sh sunset       # Sunset Circuits (DPF: VST3/CLAP/LV2)
 
 # Build a single plugin (pre-release / in development)
 ./docker/build_release.sh duskverb     # DuskVerb
@@ -163,8 +163,6 @@ For consistent, distributable binaries:
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh groovemind   # GrooveMind
 ./docker/build_release.sh duskamp      # DuskAmp
-./docker/build_release.sh multisynth   # Multi-Synth (JUCE prototype)
-./docker/build_release.sh sunset       # Sunset Circuits (DPF: VST3/CLAP/LV2)
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
