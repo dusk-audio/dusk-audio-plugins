@@ -922,7 +922,12 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: artifacts/**/*.zip
-          generate_release_notes: true
+          # generate_release_notes is OFF: with no prior tag in this workflow's
+          # lineage GitHub walks the ENTIRE repo PR history into the body, which
+          # blew the 125k-char release-body limit on v1.0.0 (422, three retries,
+          # job failed). body_path carries the changelog; auto-notes add nothing
+          # we want here.
+          generate_release_notes: false
           body_path: release_body.md
           draft: false
           # Derived from the validated tag suffix in the setup job (any
