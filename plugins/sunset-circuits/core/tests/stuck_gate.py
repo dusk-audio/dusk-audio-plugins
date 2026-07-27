@@ -29,6 +29,27 @@ Scenarios (48k, 2x OS, 4 s, sustained patch ampS=1 ampR=0.3, no reverb/delay):
                    released, not stranded. Note routing reads arpOn on EACH event,
                    so the key-ups of notes started before the arp went on are
                    delivered to the arpeggiator, which never sees those voices.
+  h. fade key-up : a key pressed AND released inside the ~12 ms mode-switch fade.
+                   The fade captures mid-fade note-ons (deferredNotes) and the
+                   commit replays them into the mode that actually arrived; the
+                   key-up has to CANCEL that capture. It used not to, so the
+                   commit re-issued a note whose note-off had already come and
+                   gone -- a voice nothing can reach (measured -16.6 dB forever).
+  i. fade CC123  : the same capture, cancelled by an All Notes Off instead of a
+                   key-up. allNotesOff cleared every held/latched set except the
+                   deferred one, so the commit handed the notes back ~12 ms after
+                   the panic (measured -16.6 dB forever).
+  j. fade CC120  : as (i) for All Sound Off, which must cancel the capture too.
+  k. CC120 tail  : CC123 and CC120 differ on a LONG release (ampR = 8 s). 123
+                   releases -- the tail rings out, and must still be audible.
+                   120 is an immediate mute -- it must be gone. Both directions
+                   are asserted, so wiring 120 back to a plain release fails here.
+
+Scenarios (h)-(j) run at block=64. The events have to land INSIDE the 12 ms fade,
+and the default 512-frame block is 10.7 ms at 48 k, so a note scheduled 2 ms after
+the mode write fires on the SAME block boundary as the write -- before the snapshot
+that starts the fade -- and nothing is captured at all (verified: the pre-fix build
+passes (h) at block=512 and drones at block=64).
 
 Note: scenario (a) switches between two POLY modes (Cosmos 0 -> Oracle 1). A
 switch INTO Acid (mode 5) leaves the poly voice stuck in the allocator but
@@ -147,6 +168,43 @@ def main():
           f"final {g_final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if g_ok else 'FAIL'}")
     if not g_ok:
         fails.append("g")
+
+    # --- mode-switch fade: the deferred-note capture ----------------------------
+    # Common shape: mode 0 -> 1 requested at 1.0 s (starts the ~12 ms fade), a NEW
+    # key pressed 2 ms in (captured for replay by the commit), and the event that
+    # has to cancel that capture 4 ms later, still inside the fade. The originally
+    # held note 60 is wiped by the commit either way (that is scenario (a)), so
+    # anything left in the final second is the replayed note 62 with nothing able
+    # to release it.
+    FADE = dict(PATCH, block=64)
+
+    def fade_case(tag, name, label, **events):
+        sr, x = render(0, 60, seconds, 2, name, setat="1.0:mode:1",
+                       noteon="1.002:62", **events, **FADE)
+        early = window_db(x, sr, 0.0, 0.9)
+        final = window_db(x, sr, seconds - 1.0, seconds)
+        ok = (early > LOUD_DB) and (final < SILENT_DB)
+        print(f"({tag}) {label}: early {early:6.1f} dB (>{LOUD_DB:.0f}), "
+              f"final {final:6.1f} dB (<{SILENT_DB:.0f})  {'PASS' if ok else 'FAIL'}")
+        return [] if ok else [tag]
+
+    fails += fade_case("h", "stuck_fade_keyup", "fade key-up ", noteoff="1.006:62")
+    fails += fade_case("i", "stuck_fade_cc123", "fade CC123  ", panicat=1.006)
+    fails += fade_case("j", "stuck_fade_cc120", "fade CC120  ", soundoffat=1.006)
+
+    # (k) CC123 vs CC120 on a long release. Same render, same window, one differs
+    #     only in which panic is sent -- so this cannot pass by the note simply
+    #     being short. 123 must leave the tail ringing, 120 must have muted it.
+    LONG = dict(PATCH, ampR=8.0)
+    sr, x = render(0, 60, 2.0, 2, "stuck_cc123_tail", panicat=0.5, **LONG)
+    k_rel = window_db(x, sr, 0.6, 0.9)
+    sr, x = render(0, 60, 2.0, 2, "stuck_cc120_tail", soundoffat=0.5, **LONG)
+    k_mute = window_db(x, sr, 0.6, 0.9)
+    k_ok = (k_rel > LOUD_DB) and (k_mute < SILENT_DB)
+    print(f"(k) CC120 tail  : ampR=8 after CC123 {k_rel:6.1f} dB (>{LOUD_DB:.0f}, rings out), "
+          f"after CC120 {k_mute:6.1f} dB (<{SILENT_DB:.0f}, muted)  {'PASS' if k_ok else 'FAIL'}")
+    if not k_ok:
+        fails.append("k")
 
     print(f"stuck_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

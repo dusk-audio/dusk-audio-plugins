@@ -937,6 +937,15 @@ public:
 
     void allNotesOff() noexcept { for (auto& v : voices) if (v.isActive()) v.noteOff(); }
 
+    // All Sound Off (MIDI CC120): stop every sounding voice NOW, rather than
+    // releasing it and letting the patch's release time decide. retire() is the
+    // existing bounded-fade path (release + an independent ramp that guarantees the
+    // voice is finished within kRetireSeconds), so this is the same mechanism the
+    // over-budget case already uses -- no second fade system, no click, and no
+    // patch-dependent tail. A voice already retiring is left alone; it is inside
+    // the same 15 ms budget.
+    void allSoundOff() noexcept { for (auto& v : voices) if (v.isActive()) v.retire(); }
+
     // Polyphonic key pressure (MIDI 0xA0): applies to every voice currently playing
     // `note` — unison stacks one note on one voice, but a re-pressed note can be
     // sounding on two (the older one still releasing), and both are that key.

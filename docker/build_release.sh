@@ -34,7 +34,6 @@ get_plugin_target() {
         spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "SpectrumAnalyzer_All" ;;
         duskverb|dusk-verb|reverb) echo "DuskVerb_All" ;;
         duskamp|dusk-amp|amp) echo "DuskAmp_All" ;;
-        multisynth|multi-synth|synth) echo "MultiSynth_All" ;;
         *) echo "" ;;
     esac
 }
@@ -53,7 +52,6 @@ get_plugin_name() {
         spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "Spectrum Analyzer" ;;
         duskverb|dusk-verb|reverb) echo "DuskVerb" ;;
         duskamp|dusk-amp|amp) echo "DuskAmp" ;;
-        multisynth|multi-synth|synth) echo "Multi-Synth" ;;
         *) echo "" ;;
     esac
 }
@@ -184,7 +182,6 @@ show_help() {
     echo "  spectrumanalyzer, spectrum-analyzer, spectrum, span, fft   Spectrum Analyzer"
     echo "  duskverb, dusk-verb, reverb   DuskVerb"
     echo "  duskamp, dusk-amp, amp   DuskAmp"
-    echo "  multisynth, multi-synth, synth   Multi-Synth (legacy JUCE, unreleased)"
     echo "  sunset, sunset-circuits, sc   Sunset Circuits (DPF: VST3/CLAP/LV2)"
     echo ""
     echo "Examples:"

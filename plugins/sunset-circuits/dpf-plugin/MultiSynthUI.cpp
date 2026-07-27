@@ -3733,11 +3733,20 @@ private:
             ImGui::SetNextItemAllowOverlap();
             keyHit(id, k);
             const bool lit = (kbNote == k.note) || held(k.note);
+            // Opaque accent, not withA(accent, 220): the translucent fill let the dark
+            // chassis under the keybed bleed through (and dulled the accent ~14%).
             dl->AddRectFilled(P(k.x0, k.y0), P(k.x1, k.y1),
-                              lit ? withA(live.accent, 220) : IM_COL32(238, 238, 240, 255), 2.0f * s);
+                              lit ? live.accent : IM_COL32(238, 238, 240, 255), 2.0f * s);
             dl->AddRect(P(k.x0, k.y0), P(k.x1, k.y1), IM_COL32(60, 60, 64, 255), 2.0f * s, 0, 1.0f * s);
         }
-        // black keys
+        // Black keys. A black key is centered exactly on a white-key boundary (see
+        // blackKeyRect), so the two white outline strokes and the gap between them run
+        // straight down its centerline: the old withA(accent, 240) lit fill was 6%
+        // translucent and showed that as a vertical seam through the pressed key. The
+        // fill is opaque now, and stays distinct from a lit white key by being a darker
+        // shade of the accent rather than a see-through one. Same reason only the
+        // BOTTOM corners round — the key sits flush at kKbTop, so rounded top corners
+        // cut away to the white key behind them.
         for (int i = 0; i < 20; ++i)
         {
             KeyRect k;
@@ -3746,8 +3755,11 @@ private:
             keyHit(id, k);
             const bool lit = (kbNote == k.note) || held(k.note);
             dl->AddRectFilled(P(k.x0, k.y0), P(k.x1, k.y1),
-                              lit ? withA(live.accent, 240) : IM_COL32(18, 18, 20, 255), 2.0f * s);
-            dl->AddRect(P(k.x0, k.y0), P(k.x1, k.y1), IM_COL32(0, 0, 0, 255), 2.0f * s, 0, 1.0f * s);
+                              lit ? lerpC(live.accent, IM_COL32(0, 0, 0, 255), 0.35f)
+                                  : IM_COL32(18, 18, 20, 255),
+                              2.0f * s, ImDrawFlags_RoundCornersBottom);
+            dl->AddRect(P(k.x0, k.y0), P(k.x1, k.y1), IM_COL32(0, 0, 0, 255),
+                        2.0f * s, ImDrawFlags_RoundCornersBottom, 1.0f * s);
         }
 
         // GLISSANDO. This cannot go through IsItemHovered(): the moment one key takes

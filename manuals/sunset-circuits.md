@@ -2,12 +2,10 @@
 slug: sunset-circuits
 version: 1.0.0
 last_updated: 2026-07-26
-tagline: Six vintage synth circuits in one instrument (pre-release)
+tagline: Six vintage synth circuits in one instrument
 ---
 
 # Sunset Circuits
-
-> **Pre-release.** Sunset Circuits has not shipped a public release yet. This manual documents the 1.0.0 candidate build and is the version that ships with it; check the website for updates if you are reading an older copy.
 
 ## Overview
 

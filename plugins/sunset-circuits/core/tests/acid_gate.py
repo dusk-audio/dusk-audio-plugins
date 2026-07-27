@@ -4,11 +4,12 @@
 The standalone acid harness (core/tests/acid/) exercises the AcidVoice/Filter/
 Sequencer in isolation; this gate confirms they are wired correctly INSIDE the
 engine: the 16-step pattern sequencer replaces the arp when arpOn is set, notes
-render, and accent + slide are audible in the rendered waveform statistics.
+render, accent + slide are audible in the rendered waveform statistics, and the
+sequencer root unwinds a held chord last-note-first instead of stopping dead.
 """
 import sys
 import numpy as np
-from _harness import render, rms_envelope, has_nan_inf
+from _harness import render, rms_envelope, has_nan_inf, peak_hz
 
 # Common acid patch: sequencer on, screaming filter, fast pluck decay. Every step
 # on; the pattern transposes from the held root (C3 = 48). 120 BPM, 1/8 steps.
@@ -84,6 +85,66 @@ def main():
     print(f"[slide]   env floor on {floor_on:.4f} vs off {floor_off:.4f} -> {ratio:.1f}x "
           f"(need >= {SLIDE_MIN_RATIO:.0f}x, finite={finite_slide}, both sounding={sounding})")
     ok &= slide_ok
+
+    # 4. Sequencer root is a last-note-priority STACK, not a single note.
+    #
+    #    Hold C3 (48), then G3 (55) -- the newest key takes the root, so the pattern
+    #    transposes from G3. Release G3 with C3 still physically down: the pattern
+    #    must keep running, re-rooted on C3. AcidSequencer::noteOff used to test
+    #    "is this the root?" and drop `held` outright, so the whole sequence stopped
+    #    while a key was still down (measured: -400 dB from the moment G3 lifted).
+    #
+    #    Measured as PITCH on a fixed step grid, not just as level: "still sounding"
+    #    alone would also pass if the root had never moved off G3. The patch is
+    #    deliberately clean (open static filter, no resonance, sustained) so the FFT
+    #    peak IS the fundamental; every seqPitch row is 0, so every step plays the
+    #    root itself and a mid-gate window is a steady tone. 1/8 at 120 BPM = 0.25 s
+    #    per step, free-running from t=0.
+    CLEAN_SEQ = dict(arpOn=1, arpRate=3, arpGate=0.95, osc1Wave=0, analogAmt=0,
+                     filterCutoff=6000, filterRes=0.0, filterEnvAmt=0.0,
+                     ampD=5.0, ampS=1.0, reverbOn=0, delayOn=0, cosmosChorus=0)
+    STEP_S = 0.25
+    ROOT_TOL_CENTS = 60.0   # C3 and G3 are 700 cents apart; this only has to resolve that
+
+    def step_pitch(sig, sr, step):
+        """FFT peak of the mid-gate window of one sequencer step, as a MIDI note.
+
+        NaN on a silent window (peak_hz returns 0 there): that is the failure this
+        check exists for, and it must read as "no pitch", not log2(0).
+        """
+        a = int((step * STEP_S + 0.03) * sr)
+        b = int((step * STEP_S + 0.13) * sr)
+        f = peak_hz(sig[a:b], sr)
+        return 69.0 + 12.0 * np.log2(f / 440.0) if f > 0.0 else float("nan")
+
+    def step_rms(sig, sr, step):
+        a = int((step * STEP_S + 0.03) * sr)
+        b = int((step * STEP_S + 0.13) * sr)
+        return float(np.sqrt(np.mean(sig[a:b] ** 2)))
+
+    sr, xr = render(5, 48, 3.0, 2, "acid_seq_unwind", hold="55",
+                    noteoff="1.0:55", **CLEAN_SEQ, **steps)
+    mono = xr[:, 0]
+    # Steps 1-2 (0.25-0.75 s): both keys down, root = G3. Steps 8-10 (2.0-2.75 s):
+    # G3 released at 1.0 s, root must have fallen back to C3.
+    pre = [step_pitch(mono, sr, k) for k in (1, 2)]
+    post = [step_pitch(mono, sr, k) for k in (8, 9, 10)]
+    post_rms = min(step_rms(mono, sr, k) for k in (8, 9, 10))
+    pre_ok = all(abs(n - 55.0) * 100.0 <= ROOT_TOL_CENTS for n in pre)
+    running = post_rms > 1e-3
+    post_ok = running and all(abs(n - 48.0) * 100.0 <= ROOT_TOL_CENTS for n in post)
+    # Control: release BOTH keys -> the stack empties and the pattern DOES stop.
+    # Without this, "keeps running" could be satisfied by a sequencer that never
+    # stops at all, which is the stuck-note bug in the other direction.
+    _, xs = render(5, 48, 3.0, 2, "acid_seq_unwind_ctl", hold="55",
+                   noteoff=["1.0:55", "1.0:48"], **CLEAN_SEQ, **steps)
+    stop_rms = float(np.sqrt(np.mean(xs[int(2.0 * sr):, 0] ** 2)))
+    stop_ok = stop_rms < 1e-5
+    unwind_ok = pre_ok and post_ok and stop_ok
+    print(f"[seqroot] newest key held -> {'/'.join(f'{n:.2f}' for n in pre)} (want 55.00), "
+          f"newest released -> {'/'.join(f'{n:.2f}' for n in post)} (want 48.00, "
+          f"running={running}); both keys up -> rms {stop_rms:.2e} (want < 1e-5)")
+    ok &= unwind_ok
 
     print(f"acid_gate: {'PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)

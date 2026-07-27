@@ -60,7 +60,7 @@ jobs:
   # Emits a JSON array consumed as the build matrix (fromJSON).
   # -------------------------------------------------------------------------
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -151,12 +151,12 @@ jobs:
   # -------------------------------------------------------------------------
   build-linux:
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
       # Build inside Ubuntu 22.04 (glibc 2.35) so the binaries load on
-      # Ubuntu 22.04 / Debian 12 hosts. Building directly on ubuntu-latest
-      # (24.04, glibc 2.39) shipped VST3s that failed to load with
+      # Ubuntu 22.04 / Debian 12 hosts. Building directly on the host runner
+      # (ubuntu-24.04, glibc 2.39) shipped VST3s that failed to load with
       # "version `GLIBC_2.38' not found". Same approach as build.yml.
       image: ubuntu:22.04
     permissions:
@@ -747,7 +747,7 @@ jobs:
   # -------------------------------------------------------------------------
   release:
     needs: [plan, build-linux, build-linux-arm64, build-windows, build-macos]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: needs.plan.outputs.is_release == 'true'
     permissions:
       contents: write

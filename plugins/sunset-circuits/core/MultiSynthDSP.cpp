@@ -193,8 +193,23 @@ void MultiSynthDSP::noteOn(int note, float velocity01) noexcept
     // below (right, it is what is still sounding), but the commit is about to
     // reset the voice pool and wipe it. Remember it so the commit can re-issue it
     // into the mode that actually arrives. See kMaxDeferredNotes.
-    if (modeSwitchPending && deferredNoteCount < kMaxDeferredNotes)
-        deferredNotes[deferredNoteCount++] = { note, clamp01(velocity01) };
+    //
+    // Capture is keyed BY NOTE NUMBER, not appended blindly: a key pressed,
+    // released and re-pressed inside the same 12 ms fade would otherwise leave two
+    // entries for one key, and the commit would replay it twice -- two voices for
+    // one key, of which only one can ever be released (VoiceAllocator::noteOff
+    // matches on note number, so the duplicate that is not first in the pool is
+    // orphaned and drones). One entry per key, latest velocity wins, which is
+    // exactly what the last press asked for.
+    if (modeSwitchPending)
+    {
+        int slot = 0;
+        while (slot < deferredNoteCount && deferredNotes[(size_t)slot].note != note) ++slot;
+        if (slot < deferredNoteCount)
+            deferredNotes[(size_t)slot].vel = clamp01(velocity01);
+        else if (deferredNoteCount < kMaxDeferredNotes)
+            deferredNotes[(size_t)deferredNoteCount++] = { note, clamp01(velocity01) };
+    }
     if (isAcidMode()) { acidNoteOn(note, velocity01); return; }
     // Keep voiceParams.mode current even for a frame-0 note that arrives before
     // the block's snapshot runs — the voice needs it to trigger the right osc
@@ -226,11 +241,38 @@ void MultiSynthDSP::noteOff(int note) noexcept
 
 // Release `note` through whichever path currently owns it. Called by a live key-up
 // and by the pedal-up sweep, so a deferred release is identical to a live one.
+//
+// This is also where the mode-switch capture is pruned, and it is the ONLY correct
+// place for it: the capture exists to re-issue a note the commit is about to wipe,
+// so it must survive for exactly as long as the note should sound. That is the
+// EFFECTIVE release, not the key-up -- with the pedal down noteOff() captures the
+// release and returns without reaching here, the note is still meant to sound after
+// the commit, and its deferred entry is still owed. When the pedal lifts,
+// releaseSustained() routes the deferred key-ups through here and they prune then.
+// Pruning in noteOff() instead would cut every pedal-held note pressed mid-fade.
+//
+// The release below is still issued unconditionally: the note is (or may be)
+// sounding in the OUTGOING mode as well, and that voice needs its note-off whether
+// or not a replay was owed.
 void MultiSynthDSP::routeNoteOff(int note) noexcept
 {
+    pruneDeferred(note);
     if (isAcidMode()) { acidNoteOff(note); return; }
     if (p(pArpOn) > 0.5f) arp.noteOff(note);
     else voices.noteOff(note);
+}
+
+// Drop any mode-switch capture for `note` (see routeNoteOff). Order-preserving
+// compaction of a fixed array -- no allocation, no locks, bounded by
+// kMaxDeferredNotes. Duplicate entries cannot exist (noteOn dedupes), but the loop
+// removes every match anyway so this stays correct if that ever changes.
+void MultiSynthDSP::pruneDeferred(int note) noexcept
+{
+    int w = 0;
+    for (int r = 0; r < deferredNoteCount; ++r)
+        if (deferredNotes[(size_t)r].note != note)
+            deferredNotes[(size_t)w++] = deferredNotes[(size_t)r];
+    deferredNoteCount = w;
 }
 
 // ============================ SUSTAIN CONTRACT ===============================
@@ -250,12 +292,19 @@ void MultiSynthDSP::routeNoteOff(int note) noexcept
 //   The real TB-303 has no pedal input at all; ignoring CC64 there would be equally
 //   defensible, but the uniform behaviour is what a player expects from a mode
 //   rocker on one instrument, and it cannot strand a note (see releaseSustained).
-// * allNotesOff (CC120/CC123) clears the captured set AND lifts the pedal: a panic
-//   that left the pedal latched down would re-strand the very next note played,
-//   which is exactly the stuck note the panic exists to clear.
+// * allNotesOff (CC123, and allSoundOff / CC120 through it) clears the captured set
+//   AND lifts the pedal: a panic that left the pedal latched down would re-strand
+//   the very next note played, which is exactly the stuck note the panic exists to
+//   clear.
 // * A mode switch clears the captured set with the rest of the note state
 //   (snapshotParameters); a preset change WITHIN a mode keeps held notes seamless,
 //   and pedal-held notes are held notes, so they are kept too.
+// * Mode-switch CAPTURE (deferredNotes) and pedal capture compose: a key pressed
+//   during the fade is remembered for replay, and a key-up during the fade only
+//   cancels that replay once the pedal (if any) lets the release through. Both
+//   prunings happen at routeNoteOff, the single point where a release becomes
+//   effective, so the pedal cannot strand a replayed note and a key-up cannot
+//   cancel a note the pedal is still holding.
 void MultiSynthDSP::sustainPedal(bool down) noexcept
 {
     if (down == sustainDown) return;
@@ -334,15 +383,55 @@ void MultiSynthDSP::allNotesOff() noexcept
     acidVoice.noteOff();
     acidSeq.reset();
     acidHeldCount = 0;
+    // A panic that lands DURING a mode-switch crossfade must also cancel the
+    // note-ons the fade captured for replay: the commit at the end of
+    // snapshotParameters re-issues them unconditionally, so leaving them here
+    // un-does the panic ~12 ms after it was sent and hands back the very notes it
+    // was supposed to kill.
+    deferredNoteCount = 0;
+}
+
+// MIDI CC120 (All Sound Off). CC123 releases; this one MUTES.
+//
+// The spec: "all oscillators will turn off, and their volume envelopes are set to
+// zero as soon as possible". So it is allNotesOff() -- same note-state teardown,
+// same panic-clears-the-pedal rule, same deferred-replay cancellation -- plus a
+// hard stop on whatever is still sounding, because a 10 s release tail surviving an
+// All Sound Off is exactly what distinguishes it from CC123.
+//
+// "As soon as possible" is NOT "this sample": a full-scale step to zero is a click.
+// The poly voices reuse the retire ramp that already exists for over-budget voices
+// (SynthVoice::retire, kRetireSeconds = 15 ms) rather than a second fade system;
+// it releases the voice AND gates it with an independent ramp that guarantees
+// silence within its budget whatever the patch's release time is. The Acid voice
+// needs nothing extra: its envelope release is a fixed 10 ms (AcidVoice::kRelease,
+// not patch-controlled), so the noteOff() allNotesOff() already issued is bounded
+// on the same order as the retire ramp.
+//
+// EFFECTS TAILS ARE DELIBERATELY NOT FLUSHED. Reverb and delay are not oscillators
+// and hold no note state; hard-zeroing their buffers on a panic truncates the tail
+// with a discontinuity, and the mode-fade / makeup stage sits ahead of them, so a
+// flush would be audible in its own right. CC120 stops the SOURCE; the tail decays.
+void MultiSynthDSP::allSoundOff() noexcept
+{
+    allNotesOff();
+    voices.allSoundOff();
 }
 
 //==============================================================================
 // Acid (mode 5) note routing. With the sequencer on (arpOn) the player holds a
 // root note and the 16-step pattern transposes from it; with it off, live mono
 // play glides (legato) and MIDI velocity > 100 accents.
+//
+// acidHeld is the LAST-NOTE-PRIORITY key stack, and it is maintained for BOTH
+// paths. It used to be live-play only, which left AcidSequencer alone with
+// "held = false when the root's key lifts": holding C, then E (root moves to E),
+// then releasing E stopped the pattern with C still physically down. The stack
+// gives the sequencer the same next-newest unwind the live voice already had --
+// see acidNoteOff. The arpOn edge in snapshotParameters clears the stack for the
+// same reason it always did (the notes on it were routed the other way).
 void MultiSynthDSP::acidNoteOn(int note, float velocity01) noexcept
 {
-    if (p(pArpOn) > 0.5f) { acidSeq.noteOn(note); return; }
     const float vel = clamp01(velocity01);
     // Remove any existing entry for this note (re-press moves it to the top).
     int w = 0;
@@ -357,15 +446,17 @@ void MultiSynthDSP::acidNoteOn(int note, float velocity01) noexcept
         acidHeldCount = 15;
     }
     acidHeld[acidHeldCount++] = { note, vel };
+    // Sequencer: the newest key is the root, exactly as before. Latch and the
+    // 16-step pattern are the sequencer's business, not the stack's.
+    if (p(pArpOn) > 0.5f) { acidSeq.noteOn(note); return; }
     const bool accent = vel > kAcidAccentVel;
     acidVoice.noteOn(midiToHz((float)note), accent, slide, vel);
 }
 
 void MultiSynthDSP::acidNoteOff(int note) noexcept
 {
-    if (p(pArpOn) > 0.5f) { acidSeq.noteOff(note); return; }
-    if (acidHeldCount <= 0) return;
-    const bool wasTop = acidHeld[acidHeldCount - 1].note == note;
+    const bool seq = p(pArpOn) > 0.5f;
+    const bool wasTop = acidHeldCount > 0 && acidHeld[acidHeldCount - 1].note == note;
     // Remove the entry for this note (ignore if not held).
     int w = 0;
     bool removed = false;
@@ -374,8 +465,19 @@ void MultiSynthDSP::acidNoteOff(int note) noexcept
         if (!removed && acidHeld[r].note == note) { removed = true; continue; }
         acidHeld[w++] = acidHeld[r];
     }
+    if (removed) acidHeldCount = w;
+
+    if (seq)
+    {
+        // Hand the sequencer the next-newest key still down so a chord unwinds root
+        // by root instead of stopping the pattern the instant the newest key lifts.
+        // -1 = nothing left, stop. The message is forwarded even when the note was
+        // not on the stack: the stack is cleared on an arpOn/mode edge while the
+        // sequencer keeps its root, and that root still has to be releasable.
+        acidSeq.noteOff(note, acidHeldCount > 0 ? acidHeld[acidHeldCount - 1].note : -1);
+        return;
+    }
     if (!removed) return;
-    acidHeldCount = w;
     if (wasTop && acidHeldCount > 0)
     {
         // Return to the now-top held note (legato via slide-tie, no retrigger).

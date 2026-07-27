@@ -187,7 +187,14 @@ public:
     // key really is up) but the voice keeps sounding until the pedal is lifted.
     // See the sustain contract next to the implementation.
     void sustainPedal(bool down) noexcept;
+    // MIDI CC123 (All Notes Off) and the channel-mode messages that imply it:
+    // every note is RELEASED, so envelopes enter release and tails ring out.
     void allNotesOff() noexcept;
+    // MIDI CC120 (All Sound Off): everything allNotesOff does, plus a hard stop on
+    // whatever is still sounding, so a long release tail cannot survive the panic.
+    // Bounded and click-free (the voices' existing ~15 ms retire ramp); effects
+    // tails are deliberately left to decay. See the implementation.
+    void allSoundOff() noexcept;
     void setTempo(double bpm, bool playing) noexcept
     { hostBpm.store(bpm, std::memory_order_relaxed); transportPlaying.store(playing, std::memory_order_relaxed); }
     // Host song position at the start of the next processBlock segment, in beats.
@@ -380,10 +387,17 @@ private:
     // Fixed array, sized to the largest voice pool, so the capture allocates
     // nothing on the audio thread; past that a held chord simply stops
     // capturing, which is the same as today's behaviour.
+    //
+    // Entries are keyed by note number (noteOn updates in place rather than
+    // appending a second entry for the same key) and are dropped again by
+    // pruneDeferred() when the note's release becomes effective, so a key that goes
+    // up before the commit is not replayed into a note nobody can release. Cleared
+    // wholesale by reset() and by allNotesOff() / allSoundOff().
     static constexpr int kMaxDeferredNotes = 16;
     struct DeferredNote { int note = -1; float vel = 0.0f; };
     DeferredNote deferredNotes[kMaxDeferredNotes] = {};
     int deferredNoteCount = 0;
+    void pruneDeferred(int note) noexcept;
 
     // --- Acid mode (mode 5) helpers ---
     // Note routing for mode 5 lives outside the poly VoiceAllocator: a single
