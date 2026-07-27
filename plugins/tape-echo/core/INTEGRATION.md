@@ -30,20 +30,26 @@ wire up — call the setters from wherever the host delivers values.
 | ID | Name          | Setter            | Range      | Default | Notes |
 |----|---------------|-------------------|------------|---------|-------|
 | 0  | Mode Selector | `setMode`         | 1–12 (int, stepped) | 1 | 12-position rotary switch |
-| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.5     | 0 = 177 ms (slow motor), 1 = 69 ms |
-| 2  | Intensity     | `setIntensity`    | 0–1        | 0.4     | self-oscillates above ~0.75 |
-| 3  | Echo Volume   | `setEchoLevel`    | 0–1        | 0.8     | |
+| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | 0 = 178.50 ms (slow motor), 1 = 69.83 ms |
+| 2  | Intensity     | `setIntensity`    | 0–1        | 0.0     | self-oscillates above ~0.75 |
+| 3  | Echo Volume   | `setEchoLevel`    | 0–1        | 0.5     | |
 | 4  | Reverb Volume | `setReverbLevel`  | 0–1        | 0.0     | only audible in modes 5–12 |
 | 5  | Bass          | `setBass`         | −1–+1      | 0.0     | ±12 dB shelf @ 100 Hz, echo path only |
 | 6  | Treble        | `setTreble`       | −1–+1      | 0.0     | ±12 dB shelf @ 3 kHz, echo path only |
 | 7  | Input Volume  | `setInputGain`    | 0–1        | 0.5     | preamp drive / saturation amount |
-| 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.5     | ~7% residual wow always present (real transports are never perfect); knob adds on top |
+| 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.0     | transport modulation amount |
 | 9  | Dry Level     | `setDryLevel`     | 0–1        | 1.0     | instrument-through level |
-| 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks head-1 time to a host-tempo division, octave-folded into 69–177 ms |
+| 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks head-1 time to a host-tempo division, octave-folded into 69.83–178.50 ms |
 | 11 | Sync Division | (shell-level)     | 0–7 (int)  | 2 (1/16)| 1/32, 1/16T, 1/16, 1/8T, 1/16., 1/8, 1/8., 1/4 |
-| 12 | Tape Age      | `setTapeAge`      | 0–1        | 0.0     | 0 = fresh transport (bit-identical to pre-knob builds); worn: hiss onto tape (regenerates with intensity), extra wow, HF loss, level wobble |
-| 13 | Bypass        | `setBypass`       | off/on     | off     | host-designated; UI POWER switch, click-free clean passthrough |
-| 14 | Out Level     | `getOutputLevel`  | 0–3 (out)  | —       | peak meter, ~300 ms release; exposed as a host OUTPUT parameter the UI reads through the shell (out-of-process-safe). Single-binary formats may read the DSP peak directly via the weak-symbol access bridge as an optimization, never a requirement |
+| 12 | Tape Age      | `setTapeAge`      | 0–1        | 0.5     | 0 = fresh transport; worn settings add hiss, wow, HF loss, and level wobble |
+| 13 | Output Volume | `setOutputVolume` | 0–1        | 0.5     | −20 dB to +20 dB; midpoint is unity |
+| 14 | Echo Pan      | `setEchoPan`      | 0–1        | 0.5     | 0 = left, 0.5 = center, 1 = right |
+| 15 | Reverb Pan    | `setReverbPan`    | 0–1        | 0.5     | 0 = left, 0.5 = center, 1 = right |
+| 16 | Input Send    | `setInputSend`    | off/on     | on      | feeds the tape and spring paths |
+| 17 | Wet Solo      | `setWetSolo`      | off/on     | off     | mutes the dry path |
+| 18 | Loop Splice   | `triggerLoopSplice` | trigger  | off     | relocates the circulating tape splice |
+| 19 | Bypass        | `setBypass`       | off/on     | off     | host-designated; UI POWER switch, click-free clean passthrough |
+| 20 | Out Level     | `getOutputLevel`  | 0–3 (out)  | —       | peak meter, ~300 ms release; exposed as a host OUTPUT parameter the UI reads through the shell (out-of-process-safe). Single-binary formats may read the DSP peak directly via the weak-symbol access bridge as an optimization, never a requirement |
 
 Tempo sync lives in the plugin shell, not the DSP core: the shell converts
 division + host BPM to an equivalent Repeat Rate each block (see
@@ -64,7 +70,7 @@ runs native).
 
 ```
 tape-echo-dpf/
-├── dpf/                     # git submodule: github.com/DISTRHO/DPF
+├── dpf/                     # git submodule: github.com/dusk-audio/DPF (fork; branch dusk/clap-latency-activate)
 ├── plugin/
 │   ├── DistrhoPluginInfo.h
 │   ├── TapeEchoPlugin.cpp  # DSP wrapper (below)

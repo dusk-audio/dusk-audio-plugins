@@ -49,7 +49,7 @@ Already written and validated inside tape-echo — reuse, do not rewrite:
 | Factory-preset table + host programs | `dpf-plugin/TapeEchoParams.hpp` + shell | preset headers |
 | CMake template | `dpf-plugin/CMakeLists.txt` | JUCE CMake |
 
-DPF checkout: `~/projects/DPF` (needs `git submodule update --init` for pugl).
+DPF checkout: `~/projects/DPF` — our fork `dusk-audio/DPF`, branch `dusk/clap-latency-activate` (CLAP latency-in-activate fix; remote `dusk`, `origin` stays upstream DISTRHO). Needs `git submodule update --init` for pugl.
 DPF-Widgets checkout: `~/projects/DPF-Widgets` (DearImGui wrapper).
 
 ## Landmines (all hit and fixed during tape-echo — do not rediscover them)

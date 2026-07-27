@@ -71,7 +71,7 @@ inline const std::vector<Preset>& getFactoryPresets()
           11, 0.0f, 1.0f, 50.0f, -8.0f, -60.0f, 0.0f, 0.0f, 10.0f, 50.0f },
 
         // --- Ambient ---
-        { "Space Echo", "Ambient",
+        { "Orbital Echo", "Ambient",
           4, 0.0f, 0.8f, 75.0f, -6.0f, -10.0f, 1.0f, -2.0f, 25.0f, 55.0f },
 
         { "Dark Wash", "Ambient",
