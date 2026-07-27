@@ -47,9 +47,19 @@ on:
       - 'plugins/shared-dpf/**'
       - '.github/workflows/dpf-build.yml'
 
-# Pinned DPF revisions — identical to tapemachine2-release.yml. Bump deliberately.
+# DPF is our fork (dusk-audio/DPF), branch dusk/clap-latency-activate. Upstream's
+# CLAP wrapper reported latency changes outside clap_plugin::activate(), violating
+# the CLAP spec (24 clap-validator failures); the fork constrains latency changes
+# to activate() and serves a constant snapshot while active. One file changed vs
+# upstream base 4238e1c. DPF_REF pins that fix commit. DPF-Widgets stays upstream
+# (DISTRHO/DPF-Widgets) — only DPF is forked.
+# To advance DPF: rebase the branch onto newer upstream in ~/projects/DPF,
+# re-run clap-validator, confirm the latency signature is absent, review any
+# remaining advisory suite failures, push to dusk-audio/DPF, THEN bump DPF_REF.
+# Drop the fork (repoint checkouts to DISTRHO/DPF) only once upstream merges an
+# equivalent fix, verified with clap-validator first. Bump deliberately.
 env:
-  DPF_REF: 4238e1c7f0351bbe488d79f0899c540543ac7583
+  DPF_REF: f2c9f01f510cf0c04a7c9c5a2873921ac9ce2ee2
   DPFWIDGETS_REF: 730da6397904da66d99667c1cb30fc77fc3d794a
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
@@ -187,7 +197,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_REF }}
           path: DPF
           submodules: recursive
@@ -215,7 +225,8 @@ jobs:
             apt-get update -o Acquire::Retries=3 && \
             apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               build-essential pkg-config cmake ninja-build zip curl \
-              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev \
+              xvfb python3
           }
           for i in 1 2 3 4 5; do
             install_deps && break
@@ -239,6 +250,16 @@ jobs:
         run: |
           cmake --build build --config Release -j"$(nproc)" \
             --target "${PLUGIN_BASE}-vst3" "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
+
+      - name: Validate CLAP (clap-validator gate)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          # Hard-fail on a DPF CLAP latency regression (clap_host_latency::changed
+          # outside clap_plugin::activate()); the rest of the suite is advisory for
+          # now (see .github/scripts/dpf_clap_validate.py). xvfb: clap-validator
+          # drives the plugin GUI, which needs an X display in this headless container.
+          xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/dpf_clap_validate.py" \
+            "build/bin/${PLUGIN_BASE}.clap"
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -317,7 +338,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_REF }}
           path: DPF
           submodules: recursive
@@ -343,7 +364,8 @@ jobs:
             apt-get update -o Acquire::Retries=3 && \
             apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               build-essential pkg-config cmake ninja-build zip curl \
-              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev \
+              xvfb python3
           }
           for i in 1 2 3 4 5; do
             install_deps && break
@@ -431,7 +453,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_REF }}
           path: DPF
           submodules: recursive
@@ -651,7 +673,7 @@ jobs:
       - name: Checkout DPF
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF
+          repository: dusk-audio/DPF
           ref: ${{ env.DPF_REF }}
           path: DPF
           submodules: recursive

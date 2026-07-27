@@ -37,31 +37,40 @@ namespace
         { 1, 0, 0, 0 },   // 1:  Head 1
         { 0, 1, 0, 0 },   // 2:  Head 2
         { 0, 0, 1, 0 },   // 3:  Head 3
-        { 0, 1, 1, 0 },   // 4:  Heads 2 + 3
+        { 0, 0.724f, 0.724f, 0 }, // 4: Heads 2 + 3
         { 1, 0, 0, 1 },   // 5:  Head 1 + Reverb
         { 0, 1, 0, 1 },   // 6:  Head 2 + Reverb
         { 0, 0, 1, 1 },   // 7:  Head 3 + Reverb
-        { 1, 1, 0, 1 },   // 8:  Heads 1 + 2 + Reverb
-        { 0, 1, 1, 1 },   // 9:  Heads 2 + 3 + Reverb
-        { 1, 0, 1, 1 },   // 10: Heads 1 + 3 + Reverb
-        { 1, 1, 1, 1 },   // 11: Heads 1 + 2 + 3 + Reverb
+        { 0.724f, 0.724f, 0, 1 }, // 8: Heads 1 + 2 + Reverb
+        { 0, 0.724f, 0.724f, 1 }, // 9: Heads 2 + 3 + Reverb
+        { 0.724f, 0, 0.724f, 1 }, // 10: Heads 1 + 3 + Reverb
+        { 0.596f, 0.596f, 0.596f, 1 }, // 11: all heads + Reverb
         { 0, 0, 0, 1 },   // 12: Reverb only
     };
 
-    // Per-head playback trims: later heads sit slightly lower and duller on
-    // the real unit (longer tape wear path, playback amp voicing).
-    constexpr float kHeadTrim[3] = { 1.0f, 0.95f, 0.90f };
+    // Hosted single-head trims. Multi-head attenuation lives in the mode table
+    // above and keeps the summed programs near the single-head loudness.
+    constexpr float kHeadTrim[3] = { 1.0f, 1.122f, 0.958f };
 
-    // Wow & flutter depths (fraction of nominal delay time) at full depth.
-    // Tuned so the 0.5 default lands near real tape-transport figures
-    // (~0.15-0.25% peak pitch deviation); full depth is a musical extreme.
+    // Transport motion. Flutter frequency follows tape speed; its depth grows
+    // toward the slow end of the motor range. The second harmonic gives the
+    // measured capstan cycle its slightly non-sinusoidal shape.
     constexpr float kWowHz       = 0.5f;
-    constexpr float kFlutterHz   = 4.1f;
-    constexpr float kWowDepth    = 0.0055f;
-    constexpr float kFlutterDepth= 0.0012f;
-    constexpr float kNoiseDepth  = 0.0028f;
+    constexpr float kFlutterMaxHz= 3.857f;
+    constexpr float kWowDepth    = 0.0008f;
+    constexpr float kNoiseDepth  = 0.0004f;
 
     constexpr float kTwoPi = 6.28318530717958647692f;
+
+    // clap-validator exercises fractional sample rates down to 1 kHz. Keep
+    // every bilinear-transform design safely below Nyquist; this is a no-op
+    // throughout the plug-in's normal supported audio-rate range.
+    inline float safeBiquadFrequency(double sampleRate, float frequency) noexcept
+    {
+        return std::max(
+            1.0f,
+            std::min(frequency, 0.45f * (float)sampleRate));
+    }
 }
 
 //==============================================================================
@@ -101,26 +110,49 @@ void SpringReverb::Spring::prepare(double fs, float lengthSeconds, float fbAmoun
 {
     len = std::max(16, (int)std::lround(lengthSeconds * fs));
     buf.assign((size_t)len + 8, 0.0f);
+    // The return transducer and mounting add a short path beyond the nominal
+    // one-way spring length. This places the measured recurrences around
+    // 46--53 ms without moving the first pickup arrival.
+    const int feedbackLen =
+        len + std::max(1, (int)std::lround(0.0035 * fs));
+    feedbackBuf.assign((size_t)feedbackLen, 0.0f);
     writeIdx = 0;
+    feedbackWriteIdx = 0;
     feedback = fbAmount;
     lfoPhase = 0.0f;
     lfoInc   = kTwoPi * lfoHz / (float)fs;
-    // A few samples, rate-scaled — capped so the modulation excursion stays well
+    // A few samples, rate-scaled — capped so the modulation excursion stays
     // inside the +8 buffer guard band at any sample rate (6 < 8).
-    lfoDepth = std::min(1.5f + 0.00005f * (float)fs, 6.0f);
+    lfoDepth = std::min(
+        1.54f * (1.5f + 0.00005f * (float)fs), 6.0f);
     for (auto& ap : chain)
         ap.a = apCoeff;
-    damping.setCutoff(2800.0f, fs);
+    damping.setCutoff(17000.0f, fs);
+    feedbackHighPass.setCoeffs(Biquad::highPass(
+        fs, safeBiquadFrequency(fs, 51.0f), 0.70710678f));
+    highDamping.setCoeffs(Biquad::lowPass(
+        fs, safeBiquadFrequency(fs, 8000.0f), 0.70710678f));
+    airDamping.setCoeffs(Biquad::shelfSlope1(
+        fs, safeBiquadFrequency(fs, 6500.0f), -2.75f, true));
+    upperModeDamping.setCoeffs(Biquad::peak(
+        fs, safeBiquadFrequency(fs, 8000.0f), -0.70f, 3.0f));
     reset();
 }
 
 void SpringReverb::Spring::reset()
 {
     std::fill(buf.begin(), buf.end(), 0.0f);
+    std::fill(feedbackBuf.begin(), feedbackBuf.end(), 0.0f);
     for (auto& ap : chain)
         ap.z = 0.0f;
     damping.reset();
+    feedbackHighPass.reset();
+    highDamping.reset();
+    airDamping.reset();
+    upperModeDamping.reset();
+    lfoPhase = 0.0f;
     writeIdx = 0;
+    feedbackWriteIdx = 0;
 }
 
 float SpringReverb::Spring::process(float x) noexcept
@@ -148,9 +180,21 @@ float SpringReverb::Spring::process(float x) noexcept
     for (auto& ap : chain)
         y = ap.process(y);
 
-    y = damping.process(y);
+    y = highDamping.process(damping.process(y));
 
-    buf[(size_t)writeIdx] = x + feedback * y;
+    // A spring's pickup hears the first one-way wave, while feedback returns
+    // through the opposite direction of travel. Keeping that return delay
+    // separate preserves the initial arrival but makes the recurrence period
+    // a physical round trip instead of another one-way transit.
+    const float feedbackReturn =
+        upperModeDamping.process(airDamping.process(
+            feedbackHighPass.process(
+                feedbackBuf[(size_t)feedbackWriteIdx])));
+    feedbackBuf[(size_t)feedbackWriteIdx] = y;
+    if (++feedbackWriteIdx >= (int)feedbackBuf.size())
+        feedbackWriteIdx = 0;
+
+    buf[(size_t)writeIdx] = x + feedback * feedbackReturn;
     if (++writeIdx >= (int)buf.size())
         writeIdx = 0;
 
@@ -159,13 +203,59 @@ float SpringReverb::Spring::process(float x) noexcept
 
 void SpringReverb::prepare(double sampleRate, float detune)
 {
-    // Two unequal springs; slight per-channel detune decorrelates L/R.
-    // Feedback sets decay: ~1.4 dB loss per ~40 ms round trip gives the
-    // real three-spring tank's ~1.8 s RT60 (HF decays faster via damping).
-    springs[0].prepare(sampleRate, 0.0412f * detune, 0.855f, 0.31f, 0.62f);
-    springs[1].prepare(sampleRate, 0.0331f * detune, 0.835f, 0.47f, 0.66f);
+    // Four unequal springs build the tank's dense dispersive tail.
+    // Length-compensated feedback keeps the low-band decay close across the
+    // four unequal paths. The high damping corner preserves the measured
+    // upper-mid spring tail while still shortening the extreme top end.
+    springs[0].prepare(sampleRate, 0.0200f * detune, 0.8980f, 0.31f, 0.62f);
+    springs[1].prepare(sampleRate, 0.0215f * detune, 0.8900f, 0.47f, 0.66f);
+    springs[2].prepare(sampleRate, 0.0230f * detune, 0.8820f, 0.38f, 0.60f);
+    springs[3].prepare(sampleRate, 0.0245f * detune, 0.8740f, 0.53f, 0.68f);
+    pickupTap8  = std::max(1, (int)std::lround(0.008 * sampleRate));
+    pickupTap18 = std::max(1, (int)std::lround(0.018 * sampleRate));
+    pickupTap28 = std::max(1, (int)std::lround(0.028 * sampleRate));
+    pickupSpring3Tap85 =
+        std::max(1, (int)std::lround(0.0085 * sampleRate));
+    pickupSpring3Tap20 =
+        std::max(1, (int)std::lround(0.020 * sampleRate));
+    pickupSpring3Tap285 =
+        std::max(1, (int)std::lround(0.0285 * sampleRate));
+    const size_t pickupSize =
+        (size_t)std::max(pickupTap28, pickupSpring3Tap285) + 1;
+    pickupBuf.assign(pickupSize, 0.0f);
+    pickupSpring3Buf.assign(pickupSize, 0.0f);
+    pickupWriteIdx = 0;
+    outputDiffusionBuf.assign(
+        (size_t)std::max(1, (int)std::lround(0.0013 * sampleRate)),
+        0.0f);
+    outputDiffusionWriteIdx = 0;
     inputHP.setCutoff(140.0f, sampleRate);
     inputLP.setCutoff(4200.0f, sampleRate);
+    outputHP.setCoeffs(Biquad::highPass(
+        sampleRate, safeBiquadFrequency(sampleRate, 400.0f), 0.70710678f));
+    outputVoiceLP.setCoeffs(Biquad::lowPass(
+        sampleRate, safeBiquadFrequency(sampleRate, 1800.0f), 0.70710678f));
+    for (size_t i = 0; i < outputCeilingLP.size(); ++i)
+    {
+        const float theta =
+            ((2.0f * (float)i + 1.0f) * kDuskPi)
+            / (4.0f * (float)outputCeilingLP.size());
+        const float q = 1.0f / (2.0f * std::cos(theta));
+        outputCeilingLP[i].setCoeffs(Biquad::lowPass(
+            sampleRate, safeBiquadFrequency(sampleRate, 4900.0f), q));
+    }
+    outputLowContour.setCoeffs(Biquad::peak(
+        sampleRate, safeBiquadFrequency(sampleRate, 127.0f),
+        -5.0f, 2.0f));
+    outputBody.setCoeffs(Biquad::peak(
+        sampleRate, safeBiquadFrequency(sampleRate, 1000.0f),
+        1.6f, 0.70f));
+    outputPresence.setCoeffs(Biquad::peak(
+        sampleRate, safeBiquadFrequency(sampleRate, 5000.0f),
+        5.0f, 3.0f));
+    pickupImagePhaseInc = kTwoPi
+        * safeBiquadFrequency(sampleRate, 12000.0f)
+        / (float)sampleRate;
     reset();
 }
 
@@ -173,22 +263,130 @@ void SpringReverb::reset()
 {
     for (auto& s : springs)
         s.reset();
+    std::fill(pickupBuf.begin(), pickupBuf.end(), 0.0f);
+    std::fill(pickupSpring3Buf.begin(), pickupSpring3Buf.end(), 0.0f);
+    pickupWriteIdx = 0;
+    std::fill(outputDiffusionBuf.begin(), outputDiffusionBuf.end(), 0.0f);
+    outputDiffusionWriteIdx = 0;
     inputHP.reset();
     inputLP.reset();
     dcBlock.reset();
+    outputHP.reset();
+    outputVoiceLP.reset();
+    for (auto& lp : outputCeilingLP)
+        lp.reset();
+    outputLowContour.reset();
+    outputBody.reset();
+    outputPresence.reset();
+    pickupImagePhase = 0.057f;
 }
 
 float SpringReverb::process(float in) noexcept
 {
     const float voiced = inputLP.process(inputHP.process(in));
-    const float wet    = springs[0].process(voiced) + springs[1].process(voiced);
-    return dcBlock.process(0.6f * wet);
+    float wet = 0.0f;
+    float spring3Wet = 0.0f;
+    for (size_t i = 0; i < springs.size(); ++i)
+    {
+        const float springWet = springs[i].process(voiced);
+        wet += springWet;
+        if (i == 3)
+            spring3Wet = springWet;
+    }
+
+    // Secondary pickup modes bridge the quiet intervals between primary
+    // round trips. They are feed-forward only: the calibrated decay and
+    // stability of each spring loop remain unchanged.
+    const auto pickupAt = [this](const std::vector<float>& buffer,
+                                 int delay) noexcept
+    {
+        int index = pickupWriteIdx - delay;
+        if (index < 0)
+            index += (int)buffer.size();
+        return buffer[(size_t)index];
+    };
+    pickupBuf[(size_t)pickupWriteIdx] = wet;
+    pickupSpring3Buf[(size_t)pickupWriteIdx] = spring3Wet;
+    wet = 0.90f * wet
+        + 0.45f * pickupAt(pickupBuf, pickupTap8)
+        - 0.18f * pickupAt(pickupBuf, pickupTap18)
+        + 0.09f * pickupAt(pickupBuf, pickupTap28)
+        + 0.45f * (pickupAt(pickupSpring3Buf, pickupSpring3Tap85)
+                   - pickupAt(pickupSpring3Buf, pickupTap8))
+        - 0.18f * (pickupAt(pickupSpring3Buf, pickupSpring3Tap20)
+                   - pickupAt(pickupSpring3Buf, pickupTap18))
+        + 0.09f * (pickupAt(pickupSpring3Buf, pickupSpring3Tap285)
+                   - pickupAt(pickupSpring3Buf, pickupTap28));
+    if (++pickupWriteIdx >= (int)pickupBuf.size())
+        pickupWriteIdx = 0;
+
+    // A short all-pass at the pickup diffuses coherent reflection clusters
+    // without changing the tank's magnitude response or calibrated decay.
+    constexpr float kOutputDiffusion = 0.70f;
+    const float diffusionDelay =
+        outputDiffusionBuf[(size_t)outputDiffusionWriteIdx];
+    const float diffusedWet = diffusionDelay - kOutputDiffusion * wet;
+    outputDiffusionBuf[(size_t)outputDiffusionWriteIdx] =
+        wet + kOutputDiffusion * diffusedWet;
+    if (++outputDiffusionWriteIdx >= (int)outputDiffusionBuf.size())
+        outputDiffusionWriteIdx = 0;
+    wet = diffusedWet;
+
+    // Output trim is calibrated per channel. The wet path is mono and panned
+    // later; measuring an L/R average here would overstate the spring level
+    // because the former dual-mono tanks partially cancelled at center.
+    float voicedWet = outputHP.process(dcBlock.process(0.96f * wet));
+    voicedWet = outputVoiceLP.process(voicedWet);
+    for (auto& lp : outputCeilingLP)
+        voicedWet = lp.process(voicedWet);
+    voicedWet = outputLowContour.process(voicedWet);
+    const float springReturn =
+        outputPresence.process(outputBody.process(voicedWet));
+
+    // The pickup return carries a very quiet clock image of the tank signal.
+    // Keeping it feed-forward preserves the calibrated decay and adds only the
+    // measured upper-air sidebands around the 12 kHz carrier.
+    const float pickupImage =
+        0.00028f * springReturn * std::cos(pickupImagePhase);
+    pickupImagePhase += pickupImagePhaseInc;
+    if (pickupImagePhase >= kTwoPi)
+        pickupImagePhase -= kTwoPi;
+    return springReturn + pickupImage;
 }
 
 //==============================================================================
 // TapeEchoDSP
 //==============================================================================
 constexpr float TapeEchoDSP::kHeadRatio[3];
+
+float TapeEchoDSP::delayMsForRepeatRate(float v01) noexcept
+{
+    const float x  = clamp01(v01);
+    const float x2 = x * x;
+    // Monotonic endpoint-constrained fit to hosted head-1 arrivals at five
+    // motor positions. A linear knob law was over 10 ms early at midpoint.
+    const float slow01 = clamp01(
+        1.0f - 2.14728717f * x2
+             + 0.90911783f * x2 * x
+             + 0.23816934f * x2 * x2);
+    return kMinDelayMs + slow01 * (kMaxDelayMs - kMinDelayMs);
+}
+
+float TapeEchoDSP::repeatRateForDelayMs(float delayMs) noexcept
+{
+    const float target = clampF(delayMs, kMinDelayMs, kMaxDelayMs);
+    float lo = 0.0f;
+    float hi = 1.0f;
+    for (int i = 0; i < 24; ++i)
+    {
+        const float mid = 0.5f * (lo + hi);
+        if (delayMsForRepeatRate(mid) > target)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return 0.5f * (lo + hi);
+}
 
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
@@ -207,17 +405,46 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     for (auto& ch : channels)
     {
         ch.tape.assign((size_t)tapeLen, 0.0f);
-        ch.recordHP.setCutoff(55.0f, fs);
-        ch.recordLP.setCutoff(6200.0f, fs);
-        ch.recordLP2.setCutoff(4800.0f, fs);
+        ch.recordHP.setCoeffs(Biquad::highPass(
+            fs, safeBiquadFrequency(fs, 115.0f), 0.70710678f));
+        const float initialMs = delayMsForRepeatRate(
+            pRepeatRate.load(std::memory_order_relaxed));
+        const float initialSlow01 = clamp01(
+            (initialMs - kMinDelayMs) / (kMaxDelayMs - kMinDelayMs));
+        const float initialVoicing = 1.05f + 0.08f * initialSlow01
+            + 0.48f * initialSlow01 * (1.0f - initialSlow01);
+        ch.speedLP.setCoeffs(Biquad::lowPass(
+            fs, safeBiquadFrequency(
+                fs, 7200.0f * kMinDelayMs / initialMs * initialVoicing),
+            0.70710678f));
+        constexpr float kButterworthQ[4] =
+            { 0.50979558f, 0.60134489f, 0.89997622f, 2.56291545f };
+        for (int i = 0; i < 4; ++i)
+            ch.antiAliasLP[(size_t)i].setCoeffs(Biquad::lowPass(
+                fs, safeBiquadFrequency(
+                    fs, 11000.0f
+                        + 2000.0f * std::pow(1.0f - initialSlow01, 3.0f)),
+                kButterworthQ[i]));
+        // The direct monitor path retains full midrange level while its
+        // coupling network and output amplifier gently soften the extremes.
+        // These shelves are outside the echo/reverb sends.
+        ch.dryLowShelf.setCoeffs(Biquad::shelf(
+            fs, safeBiquadFrequency(fs, 46.3316f),
+            -6.17579f, 0.492074f, /*high=*/false));
+        ch.dryHighShelf.setCoeffs(Biquad::shelf(
+            fs, safeBiquadFrequency(fs, 13762.47f),
+            -6.13329f, 0.492299f, /*high=*/true));
         ch.spring.prepare(fs, detune);
         detune = 1.013f; // second channel slightly longer springs
     }
 
     noiseLP.setCutoff(2.0f, fs);
     wowInc     = kTwoPi * kWowHz     / (float)fs;
-    flutterInc = kTwoPi * kFlutterHz / (float)fs;
+    flutterInc = kTwoPi * kFlutterMaxHz / (float)fs;
     meterDecayPerSample = std::exp(-1.0f / (0.3f * (float)fs));
+    recordEnvelopeAttack =
+        1.0f - std::exp(-1.0f / (0.00005f * (float)fs));
+    recordEnvelopeRelease = std::exp(-1.0f / (0.12f * (float)fs));
     outputPeak.store(0.0f, std::memory_order_relaxed);
 
     delaySmoother.prepare(fs, 0.35f);        // motor/capstan inertia
@@ -228,18 +455,22 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     echoLevelSmoother.prepare(fs, 0.02f);
     reverbLevelSmoother.prepare(fs, 0.02f);
     dryLevelSmoother.prepare(fs, 0.02f);
+    outputVolumeSmoother.prepare(fs, 0.02f);
+    echoPanSmoother.prepare(fs, 0.02f);
+    reverbPanSmoother.prepare(fs, 0.02f);
+    inputSendSmoother.prepare(fs, 0.01f);
+    wetSoloSmoother.prepare(fs, 0.01f);
     driveSmoother.prepare(fs, 0.02f);
     wowFlutterSmoother.prepare(fs, 0.05f);
     powerSmoother.prepare(fs, 0.03f);
     ageSmoother.prepare(fs, 0.10f);
     hissVoice.setCutoff(4500.0f, fs);
-    hissVoiceR.setCutoff(4500.0f, fs);
     wobbleLP.setCutoff(5.0f, fs);
 
     // Snap smoothers to current parameter values so prepare() never glides.
     const auto& m = kModeTable[pMode.load(std::memory_order_relaxed) - 1];
-    const float t = kMinDelayMs + (1.0f - pRepeatRate.load(std::memory_order_relaxed))
-                                  * (kMaxDelayMs - kMinDelayMs);
+    const float t = delayMsForRepeatRate(
+        pRepeatRate.load(std::memory_order_relaxed));
     delaySmoother.snap(t * 0.001f * (float)fs);
     intensitySmoother.snap(pIntensity.load(std::memory_order_relaxed));
     headGain[0].snap(m.h1);
@@ -249,11 +480,18 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     echoLevelSmoother.snap(pEchoLevel.load(std::memory_order_relaxed));
     reverbLevelSmoother.snap(pReverbLevel.load(std::memory_order_relaxed));
     dryLevelSmoother.snap(pDryLevel.load(std::memory_order_relaxed));
+    outputVolumeSmoother.snap(
+        pOutputVolume.load(std::memory_order_relaxed));
+    echoPanSmoother.snap(pEchoPan.load(std::memory_order_relaxed));
+    reverbPanSmoother.snap(pReverbPan.load(std::memory_order_relaxed));
+    inputSendSmoother.snap(pInputSend.load(std::memory_order_relaxed));
+    wetSoloSmoother.snap(pWetSolo.load(std::memory_order_relaxed));
     driveSmoother.snap(pInputGain.load(std::memory_order_relaxed));
     wowFlutterSmoother.snap(pWowFlutter.load(std::memory_order_relaxed));
     powerSmoother.snap(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.snap(pTapeAge.load(std::memory_order_relaxed));
-    lastAge = -1.0f; // force LP2 retune on first block
+    lastPlaybackCutoff = -1.0f;
+    lastAntiAliasCutoff = -1.0f;
 
     lastBass = lastTreble = -999.0f; // force shelf recompute
     reset();
@@ -268,18 +506,33 @@ void TapeEchoDSP::reset()
         ch.upA.reset(); ch.downA.reset();
         ch.upB.reset(); ch.downB.reset();
         ch.recordHP.reset();
-        ch.recordLP.reset();
-        ch.recordLP2.reset();
+        ch.speedLP.reset();
+        for (auto& lp : ch.antiAliasLP)
+            lp.reset();
         ch.bassShelf.reset();
         ch.trebleShelf.reset();
+        ch.dryLowShelf.reset();
+        ch.dryHighShelf.reset();
         ch.spring.reset();
+        ch.springCleanDelay.fill(0.0f);
+        ch.springCleanDelayWriteIdx = 0;
+        ch.recordEnvelope = 0.0f;
+        ch.magneticEnvelope = 0.0f;
     }
     noiseLP.reset();
     hissVoice.reset();
-    hissVoiceR.reset();
     wobbleLP.reset();
     writeIdx = 0;
     wowPhase = flutterPhase = 0.0f;
+    // Initial cartridge position is deterministic. Hosted captures place the
+    // first head-1 splice at about 7.0 s over most of the motor range and
+    // 9.1 s at the extreme fast end (after renderer pre-roll).
+    spliceSamplesToHead1 = 7.58f * (float)fs;
+    spliceClockStarted = false;
+    lastSpliceTrigger =
+        pSpliceTrigger.load(std::memory_order_relaxed);
+    lastClearRequest =
+        pClearRequest.load(std::memory_order_relaxed);
 }
 
 float TapeEchoDSP::readTape(const std::vector<float>& buf, float delaySamples) const noexcept
@@ -299,6 +552,16 @@ float TapeEchoDSP::readTape(const std::vector<float>& buf, float delaySamples) c
 
 void TapeEchoDSP::refreshBlockRateControls()
 {
+    const uint32_t clearRequest =
+        pClearRequest.load(std::memory_order_relaxed);
+    if (clearRequest != lastClearRequest)
+    {
+        // POWER off clears the circulating tape and spring tank. reset() only
+        // clears preallocated state, so it is allocation-free on this thread.
+        reset();
+        lastClearRequest = clearRequest;
+    }
+
     // Snapshot atomics once per block; smoothers handle the rest per sample.
     const auto& m = kModeTable[pMode.load(std::memory_order_relaxed) - 1];
     headGain[0].setTarget(m.h1);
@@ -307,29 +570,74 @@ void TapeEchoDSP::refreshBlockRateControls()
     reverbSendSmoother.setTarget(m.reverb);
 
     const float rate = pRepeatRate.load(std::memory_order_relaxed);
-    const float tMs  = kMinDelayMs + (1.0f - rate) * (kMaxDelayMs - kMinDelayMs);
+    if (!spliceClockStarted)
+    {
+        const float initialSpliceSeconds =
+            7.58f + 2.07f * std::pow(rate, 6.0f);
+        spliceSamplesToHead1 =
+            initialSpliceSeconds * (float)fs;
+        spliceClockStarted = true;
+    }
+    const float tMs  = delayMsForRepeatRate(rate);
     delaySmoother.setTarget(tMs * 0.001f * (float)fs);
 
     intensitySmoother.setTarget(pIntensity.load(std::memory_order_relaxed));
     echoLevelSmoother.setTarget(pEchoLevel.load(std::memory_order_relaxed));
     reverbLevelSmoother.setTarget(pReverbLevel.load(std::memory_order_relaxed));
     dryLevelSmoother.setTarget(pDryLevel.load(std::memory_order_relaxed));
+    outputVolumeSmoother.setTarget(
+        pOutputVolume.load(std::memory_order_relaxed));
+    echoPanSmoother.setTarget(pEchoPan.load(std::memory_order_relaxed));
+    reverbPanSmoother.setTarget(pReverbPan.load(std::memory_order_relaxed));
+    inputSendSmoother.setTarget(pInputSend.load(std::memory_order_relaxed));
+    wetSoloSmoother.setTarget(pWetSolo.load(std::memory_order_relaxed));
     driveSmoother.setTarget(pInputGain.load(std::memory_order_relaxed));
     wowFlutterSmoother.setTarget(pWowFlutter.load(std::memory_order_relaxed));
     powerSmoother.setTarget(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.setTarget(pTapeAge.load(std::memory_order_relaxed));
 
-    // worn heads/tape lose top end: retune the second in-loop pole at block
-    // rate. age 0 recomputes the original 4.8 kHz coefficient exactly, so a
-    // fresh transport stays bit-identical.
+    const uint32_t spliceTrigger =
+        pSpliceTrigger.load(std::memory_order_relaxed);
+    if (spliceTrigger != lastSpliceTrigger)
+    {
+        lastSpliceTrigger = spliceTrigger;
+        // A manual trigger drops the splice at the write head. It reaches the
+        // first read head one head-delay later.
+        spliceSamplesToHead1 = delaySmoother.value();
+    }
+
+    // Playback bandwidth is proportional to tape speed. Worn tape narrows it
+    // further. This replaces the fixed-frequency poles that made slow and fast
+    // repeats incorrectly share the same spectrum.
     {
         const float age = ageSmoother.value();
-        if (age != lastAge)
+        const float slow01 = clamp01(
+            (tMs - kMinDelayMs) / (kMaxDelayMs - kMinDelayMs));
+        const float voicing = 1.05f + 0.08f * slow01
+                            + 0.48f * slow01 * (1.0f - slow01);
+        const float cutoff = safeBiquadFrequency(
+            fs, 7200.0f * kMinDelayMs / tMs * voicing
+              * (1.0f - 0.32f * age));
+        if (cutoff != lastPlaybackCutoff)
         {
-            lastAge = age;
-            const float fc2 = 4800.0f * (1.0f - 0.58f * age);
+            lastPlaybackCutoff = cutoff;
             for (int c = 0; c < kMaxChannels; ++c)
-                channels[(size_t)c].recordLP2.setCutoff(fc2, fs);
+                channels[(size_t)c].speedLP.setCoeffs(
+                    Biquad::lowPass(fs, cutoff, 0.70710678f));
+        }
+        const float antiAliasCutoff = safeBiquadFrequency(
+            fs,
+            (11000.0f + 2000.0f * std::pow(1.0f - slow01, 3.0f))
+            * (1.0f - 0.10f * age));
+        if (antiAliasCutoff != lastAntiAliasCutoff)
+        {
+            lastAntiAliasCutoff = antiAliasCutoff;
+            constexpr float kButterworthQ[4] =
+                { 0.50979558f, 0.60134489f, 0.89997622f, 2.56291545f };
+            for (int c = 0; c < kMaxChannels; ++c)
+                for (int i = 0; i < 4; ++i)
+                    channels[(size_t)c].antiAliasLP[(size_t)i].setCoeffs(
+                        Biquad::lowPass(fs, antiAliasCutoff, kButterworthQ[i]));
         }
     }
 
@@ -346,10 +654,35 @@ void TapeEchoDSP::refreshBlockRateControls()
         // default while channels[0] is shelved — an L/R mismatch.
         for (int c = 0; c < kMaxChannels; ++c)
         {
+            const float bassAmount = std::abs(bass);
+            const float bassGainDb = std::copysign(
+                bassAmount * (11.31f + 6.06f * bassAmount), bass);
+            const float bassFrequency =
+                67.55f + 86.70f * bassAmount;
+            const float bassQ =
+                1.074f - 0.580f * bassAmount;
             channels[(size_t)c].bassShelf.setCoeffs(
-                Biquad::shelfSlope1(fs, 100.0f, bass * 12.0f, /*high=*/false));
+                Biquad::shelf(
+                    fs, safeBiquadFrequency(fs, bassFrequency),
+                    bassGainDb, bassQ, /*high=*/false));
+
+            const float trebleAmount = std::abs(treble);
+            const float trebleGainDb = std::copysign(
+                trebleAmount * (4.375f + 13.09f * trebleAmount),
+                treble);
+            // The passive boost and cut arms have different turnover laws.
+            // Hosted impulse sweeps place the half-travel corners at 991 Hz
+            // (boost) and 1441 Hz (cut), converging near 3 kHz at full travel.
+            const float trebleFrequency = treble >= 0.0f
+                ? 2850.8f * std::pow(trebleAmount, 1.525f)
+                : 3440.8f * std::pow(trebleAmount, 1.255f);
+            const float trebleQ =
+                0.545f - 0.102f * trebleAmount;
             channels[(size_t)c].trebleShelf.setCoeffs(
-                Biquad::shelfSlope1(fs, 3000.0f, treble * 12.0f, /*high=*/true));
+                Biquad::shelf(
+                    fs, safeBiquadFrequency(
+                        fs, std::max(trebleFrequency, 20.0f)),
+                    trebleGainDb, trebleQ, /*high=*/true));
         }
     }
 }
@@ -370,32 +703,42 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     for (int n = 0; n < numSamples; ++n)
     {
         //--- shared per-sample control signals (one motor, one tape) ----------
+        const float nominalT1 = delaySmoother.next();
+        const float nominalMs = nominalT1 * (1000.0f / (float)fs);
+        const float slow01 = clamp01(
+            (nominalMs - kMinDelayMs) / (kMaxDelayMs - kMinDelayMs));
+        // The recurring transport cycle speeds up with tape velocity: hosted
+        // 3150 Hz captures measured 2.00 Hz at midpoint and 3.857 Hz at fast.
+        flutterInc = kTwoPi * kFlutterMaxHz
+                   * (kMinDelayMs / nominalMs) / (float)fs;
+
         wowPhase += wowInc;
         if (wowPhase > kTwoPi)     wowPhase     -= kTwoPi;
         flutterPhase += flutterInc;
         if (flutterPhase > kTwoPi) flutterPhase -= kTwoPi;
 
-        // ~7% of full modulation depth is always present: real tape transports
-        // have residual wow even in perfect condition. Knob adds on top; a
-        // worn transport (Tape Age) adds more still.
+        // The reference transport always moves, even in its freshest state.
+        // The user control adds an intentionally wider creative range.
         const float age = ageSmoother.next();
-        const float wf  = 0.07f + 0.93f * wowFlutterSmoother.next() + 0.45f * age;
+        const float wf  = 1.0f + 1.5f * wowFlutterSmoother.next() + 0.20f * age;
         // slow playback-level wobble (worn pinch roller / dropout precursor);
         // exactly 1.0 at age 0.
         const float wobble = 1.0f + age * 0.11f * wobbleLP.process(ageRand());
         // hiss recorded onto the tape: regenerates with intensity like the
         // hardware. Voiced dark, exactly 0.0 at age 0.
-        const float hissL = age * 0.012f * hissVoice.process(ageRand());
-        const float hissR = age * 0.012f * hissVoiceR.process(ageRand());
-        const float mod = wf * (kWowDepth     * std::sin(wowPhase)
-                              + kFlutterDepth * std::sin(flutterPhase)
-                              + kNoiseDepth   * noiseLP.process(frand()));
+        const float hissL = age * 0.0000079f * hissVoice.process(ageRand());
+        const float flutterDepth = 0.00237f + 0.00242f * slow01;
+        const float flutterWave = std::sin(flutterPhase)
+                                + 0.088f * std::sin(2.0f * flutterPhase);
+        const float mod = wf * (kWowDepth * std::sin(wowPhase)
+                              + flutterDepth * flutterWave
+                              + kNoiseDepth * noiseLP.process(frand()));
 
         // The oversampled preamp delays the tape feed by a fixed group delay;
         // subtract it AFTER the head-ratio scaling so all three heads stay at
         // their exact mechanical times (subtracting from T would scale the
         // compensation by 1.9x/2.75x on the far heads).
-        const float t1 = delaySmoother.next() * (1.0f + mod);
+        const float t1 = nominalT1 * (1.0f + mod);
         const float d1 = clampF(t1                 - kPreampLatencySamples, 4.0f, maxDelaySamples);
         const float d2 = clampF(t1 * kHeadRatio[1] - kPreampLatencySamples, 4.0f, maxDelaySamples);
         const float d3 = clampF(t1 * kHeadRatio[2] - kPreampLatencySamples, 4.0f, maxDelaySamples);
@@ -407,63 +750,283 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         // Intensity mapped past unity loop gain: > ~0.75 the loop exceeds
         // unity for small signals and the in-loop tape saturation clamps it
         // into stable, warm self-oscillation.
-        const float fbGain    = intensitySmoother.next() * 1.30f;
+        const float fbGain =
+            feedbackGainFromControl(intensitySmoother.next());
         const float revSend   = reverbSendSmoother.next();
-        // Level knobs use an audio (squared) taper, and the echo bus is
-        // trimmed so full Echo Volume lands near dry-signal loudness even
-        // with all three heads saturated (the raw head sum peaks ~3x).
+        // Level controls use measured analog-style tapers. The effect-volume
+        // curve includes a linear term, so low settings remain useful.
         const float echoRaw   = echoLevelSmoother.next();
-        const float echoLvl   = echoRaw * echoRaw * 0.55f;
+        const float echoLvl   = echoGainFromControl(echoRaw);
         const float revRaw    = reverbLevelSmoother.next();
-        const float revLvl    = revRaw * revRaw * revSend;
+        const float revLvl    = echoGainFromControl(revRaw) * revSend;
         const float dryLvl    = dryLevelSmoother.next();
+        const float outputVolume = outputVolumeSmoother.next();
+        // Hosted output trim is linear in decibels: -20 dB at zero, unity at
+        // midpoint, and +20 dB at maximum.
+        const float outputGain = std::pow(
+            10.0f, 2.0f * outputVolume - 1.0f);
         const float driveKnob = driveSmoother.next();
-        const float drive     = 0.4f + 2.6f * driveKnob * driveKnob; // audio taper: clean low, saturated high
-        const float driveComp = 1.0f / softClip(drive);
+        const float inputGain = inputGainFromControl(driveKnob);
+        // Equivalent-level hosted sweeps at multiple knob positions collapse
+        // onto one transfer curve: the input control is a gain taper feeding
+        // a fixed record-stage nonlinearity, not a second distortion control.
+        constexpr float kInputStageDrive = 2.65f;
+        constexpr float kInputStageTrim  = 0.459f;
         const float power     = powerSmoother.next(); // 0 = bypassed
 
-        //--- per-channel audio path -------------------------------------------
+        //--- mono effect path -------------------------------------------------
+        // The hosted unit sums its stereo input before both wet paths. A
+        // left-only impulse produces sample-identical L/R wet signals at
+        // center, while duplicated stereo material drives the nonlinear
+        // record stage about 6 dB harder. The 0.5 average here preserves the
+        // transfer calibration made with duplicated stereo stimuli; the
+        // measured pan matrix below restores the corresponding x2 wet gain.
+        const float inL = inputs[0][n];
+        const float inR = numChannels > 1 ? inputs[1][n] : inL;
+        const float inputSend = inputSendSmoother.next();
+        const float effectIn =
+            inputSend * power
+            * (numChannels > 1 ? 0.5f * (inL + inR) : inL);
+        Channel& ch = channels[0];
+        const float tapeInput = effectIn * inputGain;
+
+        // The hosted record path has a broad tape-compression knee above
+        // nominal level and asymptotically reaches about 4.5 dB of gain
+        // reduction. Most of that reduction happens before the saturator
+        // (limiting harmonic growth); the balance is clean record gain.
+        const float tapeMagnitude =
+            tapeInput < 0.0f ? -tapeInput : tapeInput;
+        if (tapeMagnitude > ch.recordEnvelope)
+            ch.recordEnvelope += recordEnvelopeAttack
+                               * (tapeMagnitude - ch.recordEnvelope);
+        else
+            ch.recordEnvelope *= recordEnvelopeRelease;
+        const float over = std::max(ch.recordEnvelope - 0.12f, 0.0f);
+        const float reductionDb = 4.5f * (1.0f - std::exp(-2.7f * over));
+        const float compression =
+            std::pow(10.0f, -reductionDb * (1.0f / 20.0f));
+        // Below the nominal tape threshold, gain reduction is clean and
+        // leaves the measured harmonic curve intact. Above it, a growing
+        // fraction moves ahead of the shaper so THD approaches the
+        // measured high-level plateau instead of climbing without bound.
+        const float preCompression01 = clamp01(
+            (ch.recordEnvelope - 0.45f) * (1.0f / 0.75f));
+        const float preExponent =
+            1.2f * std::pow(preCompression01, 0.8f);
+        const float postExponent =
+            std::max(1.0f - 0.3f * preExponent, 0.6f);
+        const float preDriveGain =
+            std::pow(compression, preExponent);
+        const float highLevel01 = clamp01(
+            (ch.recordEnvelope - 0.65f) * (1.0f / 0.59f));
+        const float highLevelTrim = std::pow(
+            10.0f, -1.1f * std::sqrt(highLevel01) * (1.0f / 20.0f));
+        const float postDriveGain =
+            std::pow(compression, postExponent) * highLevelTrim;
+
+        // FET preamp front-end, saturated at 4x to keep fold-back
+        // products out of the echo passband.
+        const float pre = ch.preampDC.process(
+                              preampOversampled(
+                                  ch, tapeInput * preDriveGain,
+                                  kInputStageDrive))
+                          * kInputStageTrim * postDriveGain;
+        // The spring send includes a clean feed around the record-stage
+        // shaper. This keeps the tank's drive and crest response while
+        // matching the hosted spring path's very low harmonic residue.
+        const float shapedSpringPre =
+            pre / std::max(postDriveGain, 0.5f);
+        float cleanReadPos =
+            (float)ch.springCleanDelayWriteIdx - kPreampLatencySamples;
+        if (cleanReadPos < 0.0f)
+            cleanReadPos += (float)ch.springCleanDelay.size();
+        const int cleanRead0 = (int)cleanReadPos;
+        const int cleanRead1 =
+            (cleanRead0 + 1) % (int)ch.springCleanDelay.size();
+        const float cleanReadFrac = cleanReadPos - (float)cleanRead0;
+        const float delayedTapeInput =
+            ch.springCleanDelay[(size_t)cleanRead0]
+            + cleanReadFrac
+                * (ch.springCleanDelay[(size_t)cleanRead1]
+                   - ch.springCleanDelay[(size_t)cleanRead0]);
+        ch.springCleanDelay[(size_t)ch.springCleanDelayWriteIdx] = tapeInput;
+        if (++ch.springCleanDelayWriteIdx >=
+            (int)ch.springCleanDelay.size())
+            ch.springCleanDelayWriteIdx = 0;
+        constexpr float kCleanSpringSendGain =
+            0.84f * kInputStageDrive * kInputStageTrim;
+        const float cleanSpringPre =
+            kCleanSpringSendGain * delayedTapeInput;
+        constexpr float kCleanSpringSendMix = 0.40f;
+        const float springPre =
+            (1.0f - kCleanSpringSendMix) * shapedSpringPre
+            + kCleanSpringSendMix * cleanSpringPre;
+
+        // Three playback heads off the shared tape.
+        // The joined ends of the physical tape create a recurring dropout.
+        // Its loop period is 9.23 s at the fastest motor setting and scales
+        // inversely with tape speed. A narrow join is followed by a broader
+        // loss region; age determines how audible both become.
+        const float speedScale = nominalMs / kMinDelayMs;
+        float spliceDepthDb;
+        if (age <= 0.5f)
+            spliceDepthDb = 1.34f + 4.0f * age;
+        else
+        {
+            const float old01 = (age - 0.5f) * 2.0f;
+            spliceDepthDb =
+                3.34f + 9.82f * std::pow(old01, 1.5f);
+        }
+        const auto spliceGain = [&](float samplesToEvent) noexcept
+        {
+            const float secondsToEvent =
+                samplesToEvent / (float)fs;
+            const float narrow =
+                std::exp(-0.5f * std::pow(
+                    secondsToEvent / 0.0075f, 2.0f));
+            const float broad =
+                std::exp(-0.5f * std::pow(
+                    secondsToEvent / (0.080f * speedScale), 2.0f));
+            const float shape = 0.65f * narrow + 0.35f * broad;
+            return std::pow(10.0f, -spliceDepthDb * shape * 0.05f);
+        };
+        const float h1 = readTape(ch.tape, d1)
+                       * spliceGain(spliceSamplesToHead1);
+        const float h2 = readTape(ch.tape, d2)
+                       * spliceGain(
+                           spliceSamplesToHead1 + (d2 - d1));
+        const float h3 = readTape(ch.tape, d3)
+                       * spliceGain(
+                           spliceSamplesToHead1 + (d3 - d1));
+        const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
+
+        // Record chain: program + feedback -> head EQ -> magnetic
+        // saturation -> tape. Everything here is inside the loop, so
+        // repeats darken and compress cumulatively.
+        const float recorded = ch.recordHP.process(
+            ch.speedLP.process(
+                pre + hissL + fbGain * softClip(headSum)));
+        // The tape's low-level magnetisation curve is more strongly curved
+        // than the record preamp, but its slope remains positive at overload.
+        // This bounded cubic term raises the odd-harmonic ladder without
+        // changing small-signal loop gain or the separately calibrated spring
+        // send.
+        const float recorded2 = recorded * recorded;
+        // At low flux the measured odd harmonics fall much more slowly than a
+        // cubic polynomial can produce. A regularized, scale-covariant p=2.15
+        // term restores that quiet harmonic floor, then fades out before the
+        // main magnetic curve reaches its already-matched -18 dB operating
+        // point.
+        const float lowFloor01 = clamp01(
+            (ch.recordEnvelope - 0.02f) * (1.0f / 0.07f));
+        const float lowFloorSmooth =
+            lowFloor01 * lowFloor01 * (3.0f - 2.0f * lowFloor01);
+        const float lowFloorFade = 1.0f - lowFloorSmooth;
+        const float lowFloor = 1.325f * lowFloorFade * recorded
+            * std::pow(recorded2 + 0.006f * 0.006f, 0.575f);
+        const float magneticInput =
+            recorded * (1.0f - 5.0f * recorded2
+                        / (1.0f + 8.0f * recorded2))
+            - lowFloor;
+        const float baseTape = softClip(magneticInput);
+        const float baseMagnitude = std::abs(baseTape);
+        if (baseMagnitude > ch.magneticEnvelope)
+            ch.magneticEnvelope = baseMagnitude;
+        else
+            ch.magneticEnvelope *= recordEnvelopeRelease;
+
+        // At high record flux the hosted tape adds a steep odd-harmonic
+        // ladder while its fundamental has already reached a level plateau.
+        // Chebyshev terms supply those missing harmonics without changing the
+        // steady-state fundamental. Their envelope-gated, normalized sum is
+        // bounded to roughly thirteen percent of the tape signal and remains
+        // zero through the already-matched nominal range.
+        const float magneticAmplitude =
+            std::max(ch.magneticEnvelope, 1.0e-4f);
+        const float z = clampF(
+            baseTape / magneticAmplitude, -1.0f, 1.0f);
+        const float z2 = z * z;
+        const float z3 = z2 * z;
+        const float z5 = z3 * z2;
+        const float z7 = z5 * z2;
+        const float hot01 = clamp01(
+            (ch.recordEnvelope - 0.26f) * (1.0f / 0.21f));
+        const float hot =
+            hot01 * hot01 * (3.0f - 2.0f * hot01);
+        const float veryHot01 = clamp01(
+            (ch.recordEnvelope - 0.52f) * (1.0f / 0.16f));
+        const float veryHot =
+            veryHot01 * veryHot01 * (3.0f - 2.0f * veryHot01);
+        const float t3 = 4.0f * z3 - 3.0f * z;
+        const float t5 = 16.0f * z5 - 20.0f * z3 + 5.0f * z;
+        const float t7 =
+            64.0f * z7 - 112.0f * z5 + 56.0f * z3 - 7.0f * z;
+        const float c3 = -0.0983f * hot + 0.0209f * veryHot;
+        const float c5 = -0.0195f * hot - 0.0255f * veryHot;
+        const float c7 = 0.0f;
+        float toTape = baseTape + magneticAmplitude
+            * (c3 * t3 + c5 * t5 + c7 * t7);
+        // Restore the measured level plateau without undoing the magnetic
+        // curvature. The slowly tracked envelope makes this a program-level
+        // makeup law (not a sample-by-sample waveshaper), so harmonic ratios
+        // stay intact. It is inactive below ordinary musical peaks.
+        const float magneticMakeup01 = clamp01(
+            (ch.recordEnvelope - 0.18f) * (1.0f / 0.82f));
+        const float magneticMakeupDb =
+            1.8f * std::sqrt(std::sqrt(magneticMakeup01))
+            + 0.46f * hot + 0.06f * veryHot;
+        toTape *= std::pow(10.0f, magneticMakeupDb * (1.0f / 20.0f));
+        for (auto& lp : ch.antiAliasLP)
+            toTape = lp.process(toTape);
+        ch.tape[(size_t)writeIdx] = toTape;
+
+        // Echo output path only: bass/treble shelves (dry and reverb
+        // are unaffected, matching the hardware layout).
+        const float echoWet =
+            ch.trebleShelf.process(ch.bassShelf.process(headSum));
+
+        // Spring tank is fed from the same mono preamp signal.
+        const float rev = ch.spring.process(springPre * revSend);
+
+        // Both wet-path pan controls are measured linear amplitude laws.
+        // In stereo, the x2 factor pairs with the input average above:
+        // center (0.5/0.5) preserves the calibrated wet level, while a hard
+        // pan is 6.02 dB louder in its destination channel.
+        const float echoPan = echoPanSmoother.next();
+        const float reverbPan = reverbPanSmoother.next();
+        const float dryEnable = 1.0f - wetSoloSmoother.next();
         for (int c = 0; c < numChannels; ++c)
         {
-            Channel& ch = channels[(size_t)c];
-            const float in = inputs[c][n];
+            const float in = c == 0 ? inL : inR;
+            Channel& outputChannel = channels[(size_t)c];
+            const float dry = outputChannel.dryHighShelf.process(
+                outputChannel.dryLowShelf.process(in));
+            const float echoPanGain = numChannels == 1
+                ? 1.0f : 2.0f * (c == 0 ? 1.0f - echoPan : echoPan);
+            const float reverbPanGain = numChannels == 1
+                ? 1.0f : 2.0f * (c == 0 ? 1.0f - reverbPan : reverbPan);
+            const float wet = dryEnable * dryLvl * inputGain * dry
+                            + echoLvl * echoWet * echoPanGain
+                            + revLvl * rev * reverbPanGain;
+            // POWER off: clean passthrough. The wet state is cleared on the
+            // falling edge, so re-engaging starts with an empty tape loop.
+            outputs[c][n] = in + power * (outputGain * wet - in);
 
-            // FET preamp front-end, saturated at 4x to keep fold-back
-            // products out of the echo passband.
-            const float pre = ch.preampDC.process(preampOversampled(ch, in, drive)) * driveComp;
-
-            // Three playback heads off the shared tape.
-            const float h1 = readTape(ch.tape, d1);
-            const float h2 = readTape(ch.tape, d2);
-            const float h3 = readTape(ch.tape, d3);
-            const float headSum = (h1 * g1 + h2 * g2 + h3 * g3) * wobble;
-
-            // Record chain: program + feedback -> head EQ -> magnetic
-            // saturation -> tape. Everything here is inside the loop, so
-            // repeats darken and compress cumulatively.
-            const float hiss = (c == 0) ? hissL : hissR;
-            const float toTape = ch.recordHP.process(
-                                     ch.recordLP2.process(
-                                         ch.recordLP.process(pre + hiss + fbGain * softClip(headSum))));
-            ch.tape[(size_t)writeIdx] = softClip(toTape);
-
-            // Echo output path only: bass/treble shelves (dry and reverb
-            // are unaffected, matching the hardware layout).
-            const float echoWet = ch.trebleShelf.process(ch.bassShelf.process(headSum));
-
-            // Spring tank is fed from the preamp, as in the original.
-            const float rev = ch.spring.process(pre * revSend);
-
-            const float wet = dryLvl * in + echoLvl * echoWet + revLvl * rev;
-            // POWER off: clean passthrough; tape and springs keep running so
-            // re-engaging brings tails back, like pulling the output jack.
-            outputs[c][n] = in + power * (wet - in);
-
-            const float mag = power * (wet < 0.0f ? -wet : wet);
+            const float output = outputGain * wet;
+            const float mag = power * (output < 0.0f ? -output : output);
             blockPeak = mag > blockPeak ? mag : blockPeak;
         }
 
         writeIdx = (writeIdx + 1) & mask;
+        spliceSamplesToHead1 -= 1.0f;
+        const float spliceTailSamples =
+            0.8f * speedScale * (float)fs;
+        if (spliceSamplesToHead1 < -spliceTailSamples)
+        {
+            const float loopPeriodSamples =
+                9.23f * speedScale * (float)fs;
+            spliceSamplesToHead1 += loopPeriodSamples;
+        }
     }
 
     const float decayed = outputPeak.load(std::memory_order_relaxed)

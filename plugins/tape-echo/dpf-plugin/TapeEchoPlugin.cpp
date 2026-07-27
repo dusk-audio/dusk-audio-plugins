@@ -16,24 +16,34 @@ public:
         : Plugin(kParamCount, kNumFactoryPresets, 0)
     {
         values[kParamMode]        = 1.0f;
-        values[kParamRepeatRate]  = 0.5f;
-        values[kParamIntensity]   = 0.4f;
-        values[kParamEchoLevel]   = 0.8f;
+        values[kParamRepeatRate]  = 0.0f;
+        values[kParamIntensity]   = 0.0f;
+        values[kParamEchoLevel]   = 0.5f;
         values[kParamReverbLevel] = 0.0f;
         values[kParamBass]        = 0.0f;
         values[kParamTreble]      = 0.0f;
         values[kParamInputGain]   = 0.5f;
-        values[kParamWowFlutter]  = 0.5f;
+        values[kParamWowFlutter]  = 0.0f;
         values[kParamDryLevel]    = 1.0f;
         values[kParamTempoSync]   = 0.0f;
         values[kParamSyncDivision] = 2.0f; // 1/16
-        values[kParamTapeAge]     = 0.0f;
+        values[kParamTapeAge]     = 0.5f;
+        values[kParamOutputVolume] = 0.5f;
+        values[kParamEchoPan]     = 0.5f;
+        values[kParamReverbPan]   = 0.5f;
+        values[kParamInputSend]   = 1.0f;
+        values[kParamWetSolo]     = 0.0f;
+        values[kParamLoopSplice]  = 0.0f;
         values[kParamBypass]      = 0.0f;
     }
 
 public:
-    // same-process meter access for the UI bridge (TapeEchoAccess.hpp)
+    // Same-process UI bridge access (TapeEchoAccess.hpp).
     float getOutputLevelForUI() const noexcept { return dsp.getOutputLevel(); }
+    float getHead1DelayMsForUI() const noexcept
+    {
+        return effectiveHead1DelayMs.load(std::memory_order_relaxed);
+    }
 
 protected:
     //--- metadata --------------------------------------------------------------
@@ -46,7 +56,7 @@ protected:
     const char* getMaker() const override       { return "Dusk Audio"; }
     const char* getHomePage() const override    { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override     { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override     { return d_version(0, 1, 0); }
+    uint32_t    getVersion() const override     { return d_version(1, 0, 0); }
     int64_t     getUniqueId() const override    { return d_cconst('D', 's', 'T', 'E'); } // must match DISTRHO_PLUGIN_UNIQUE_ID (DsTE)
 
     //--- parameters ------------------------------------------------------------
@@ -62,15 +72,15 @@ protected:
             break;
         case kParamRepeatRate:
             p.name = "Repeat Rate"; p.symbol = "repeat_rate";
-            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
         case kParamIntensity:
             p.name = "Intensity";   p.symbol = "intensity";
-            p.ranges.def = 0.4f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
         case kParamEchoLevel:
             p.name = "Echo Volume"; p.symbol = "echo_volume";
-            p.ranges.def = 0.8f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
         case kParamReverbLevel:
             p.name = "Reverb Volume"; p.symbol = "reverb_volume";
@@ -90,7 +100,7 @@ protected:
             break;
         case kParamWowFlutter:
             p.name = "Wow & Flutter"; p.symbol = "wow_flutter";
-            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
         case kParamDryLevel:
             p.name = "Dry Level";   p.symbol = "dry_level";
@@ -109,6 +119,33 @@ protected:
             break;
         case kParamTapeAge:
             p.name = "Tape Age";    p.symbol = "tape_age";
+            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamOutputVolume:
+            p.name = "Output Volume"; p.symbol = "output_volume";
+            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamEchoPan:
+            p.name = "Echo Pan";    p.symbol = "echo_pan";
+            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamReverbPan:
+            p.name = "Reverb Pan";  p.symbol = "reverb_pan";
+            p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamInputSend:
+            p.hints |= kParameterIsBoolean | kParameterIsInteger;
+            p.name = "Input Send";  p.symbol = "input_send";
+            p.ranges.def = 1.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamWetSolo:
+            p.hints |= kParameterIsBoolean | kParameterIsInteger;
+            p.name = "Wet Solo";    p.symbol = "wet_solo";
+            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamLoopSplice:
+            p.hints |= kParameterIsTrigger;
+            p.name = "Loop Splice"; p.symbol = "loop_splice";
             p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
         case kParamBypass:
@@ -135,7 +172,9 @@ protected:
     {
         if (index >= kParamOutLevel) // output params are not settable
             return;
-        values[index].store(value, std::memory_order_relaxed);
+        values[index].store(
+            index == kParamLoopSplice ? 0.0f : value,
+            std::memory_order_relaxed);
         switch (index)
         {
         case kParamBypass:      dsp.setBypass(value > 0.5f);      break;
@@ -145,6 +184,15 @@ protected:
             break;
         case kParamSyncDivision: break; // applied per-block in run()
         case kParamTapeAge:     dsp.setTapeAge(value);            break;
+        case kParamOutputVolume:dsp.setOutputVolume(value);        break;
+        case kParamEchoPan:     dsp.setEchoPan(value);             break;
+        case kParamReverbPan:   dsp.setReverbPan(value);           break;
+        case kParamInputSend:   dsp.setInputSend(value >= 0.5f);   break;
+        case kParamWetSolo:     dsp.setWetSolo(value >= 0.5f);     break;
+        case kParamLoopSplice:
+            if (value >= 0.5f)
+                dsp.triggerLoopSplice();
+            break;
         case kParamMode:        dsp.setMode((int)(value + 0.5f)); break;
         case kParamRepeatRate:
             if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
@@ -172,8 +220,15 @@ protected:
     {
         if (index >= (uint32_t)kNumFactoryPresets)
             return;
+        const TapeEchoPreset& preset = kFactoryPresets[index];
         for (uint32_t i = 0; i <= kParamTapeAge; ++i)
-            setParameterValue(i, kFactoryPresets[index].v[i]);
+            setParameterValue(i, preset.v[i]);
+        setParameterValue(kParamOutputVolume, preset.outputVolume);
+        setParameterValue(kParamEchoPan, preset.echoPan);
+        setParameterValue(kParamReverbPan, preset.reverbPan);
+        setParameterValue(kParamInputSend, preset.inputSend);
+        setParameterValue(kParamWetSolo, preset.wetSolo);
+        setParameterValue(kParamBypass, preset.bypass);
     }
 
     //--- lifecycle ---------------------------------------------------------------
@@ -194,22 +249,32 @@ protected:
     //--- audio -------------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
+        float effectiveMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(
+            values[kParamRepeatRate].load(std::memory_order_relaxed));
         if (values[kParamTempoSync].load(std::memory_order_relaxed) > 0.5f)
         {
             const TimePosition& tp = getTimePosition();
             if (tp.bbt.valid && tp.bbt.beatsPerMinute > 20.0)
                 lastBpm = tp.bbt.beatsPerMinute;
 
-            const double ms = syncDelayMs(lastBpm,
+            double foldedMs = syncDelayMs(lastBpm,
                 (int)(values[kParamSyncDivision].load(std::memory_order_relaxed) + 0.5f));
-            // Convert to the motor-speed knob's 0..1 range; the DSP's motor
-            // inertia smoother turns tempo changes into tape-style glides.
-            // Map the delay (ms) back onto the motor knob's 0..1 range using the
-            // DSP's own delay bounds so this stays aligned if they ever change.
-            constexpr double kMinMs = duskaudio::TapeEchoDSP::kMinDelayMs;
-            constexpr double kMaxMs = duskaudio::TapeEchoDSP::kMaxDelayMs;
-            dsp.setRepeatRate(1.0f - (float)((ms - kMinMs) / (kMaxMs - kMinMs)));
+            // Preserve the selected note division, but octave-fold requests
+            // outside the transport's measured range. Since the range spans
+            // more than one octave, either loop converges without overshooting
+            // the opposite bound; already-supported delays remain untouched.
+            while (foldedMs > duskaudio::TapeEchoDSP::kMaxDelayMs)
+                foldedMs *= 0.5;
+            while (foldedMs < duskaudio::TapeEchoDSP::kMinDelayMs)
+                foldedMs *= 2.0;
+
+            // Convert the folded delay to the motor-speed knob's 0..1 range;
+            // the DSP's inertia smoother turns tempo changes into tape glides.
+            dsp.setRepeatRate(
+                duskaudio::TapeEchoDSP::repeatRateForDelayMs((float)foldedMs));
+            effectiveMs = (float)foldedMs;
         }
+        effectiveHead1DelayMs.store(effectiveMs, std::memory_order_relaxed);
 
         dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
     }
@@ -223,6 +288,9 @@ private:
 
     duskaudio::TapeEchoDSP dsp;
     double lastBpm = 120.0;
+    std::atomic<float> effectiveHead1DelayMs {
+        duskaudio::TapeEchoDSP::kMaxDelayMs
+    };
     // Parameter cache shared across threads: run() reads it on the audio thread
     // while setParameterValue()/loadProgram() write it from the host thread.
     // Atomic (relaxed) storage removes the data race — same pattern as the DSP
@@ -244,4 +312,10 @@ float tapeEchoGetOutputLevel(void* const pluginInstancePointer) noexcept
 {
     auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
     return plugin != nullptr ? plugin->getOutputLevelForUI() : 0.0f;
+}
+
+float tapeEchoGetHead1DelayMs(void* const pluginInstancePointer) noexcept
+{
+    auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
+    return plugin != nullptr ? plugin->getHead1DelayMsForUI() : 0.0f;
 }

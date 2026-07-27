@@ -17,6 +17,12 @@ enum ParamId
     kParamTempoSync,    // 1 = head-1 delay locks to a division of host tempo
     kParamSyncDivision, // note division index into kSyncDivisions
     kParamTapeAge,      // 0 = fresh tape/serviced transport (bit-identical to before this knob existed)
+    kParamOutputVolume, // post-mix output trim, -20 to +20 dB
+    kParamEchoPan,      // linear wet-path pan: 0 = left, 0.5 = center, 1 = right
+    kParamReverbPan,    // linear spring-path pan: 0 = left, 0.5 = center, 1 = right
+    kParamInputSend,    // boolean input feed to tape and spring paths
+    kParamWetSolo,      // boolean dry-path mute
+    kParamLoopSplice,   // momentary relocation of the circulating tape splice
     kParamBypass,       // host-designated bypass; the UI POWER switch (1 = off)
     kParamOutLevel,     // output parameter: peak level for the VU meter
     kParamCount
@@ -37,45 +43,82 @@ static constexpr SyncDivision kSyncDivisions[] =
 };
 static constexpr int kNumSyncDivisions = (int)(sizeof(kSyncDivisions) / sizeof(kSyncDivisions[0]));
 
-// Head-1 delay for a division at the given tempo, octave-folded into the
-// motor's mechanical range (69-177 ms). The fold always converges because
-// the range spans more than one octave (177/69 > 2).
+// Requested head-1 delay for a division at the given tempo. The plugin wrapper
+// octave-folds this nominal value against TapeEchoDSP's measured motor bounds;
+// keeping that policy beside the DSP prevents these UI-facing definitions from
+// drifting away from the supported delay range.
 static inline double syncDelayMs(double bpm, int divisionIndex)
 {
     if (bpm < 20.0 || bpm > 999.0) bpm = 120.0;
     if (divisionIndex < 0) divisionIndex = 0;
     if (divisionIndex >= kNumSyncDivisions) divisionIndex = kNumSyncDivisions - 1;
-    double ms = kSyncDivisions[divisionIndex].beats * 60000.0 / bpm;
-    while (ms > 177.0) ms *= 0.5;
-    while (ms < 69.0)  ms *= 2.0;
-    return ms;
+    return kSyncDivisions[divisionIndex].beats * 60000.0 / bpm;
 }
 
-// Factory presets: classic RE-201 use cases (slapback, dub, ambient washes,
-// runaway drones, spring-only), same territory the commercial references
-// cover. Values for params kParamMode..kParamSyncDivision, in enum order.
+// Factory presets cover slapback, dub, ambient washes, runaway drones, and
+// spring-only effects. Values for params kParamMode..kParamSyncDivision, in
+// enum order.
 struct TapeEchoPreset
 {
     const char* name;
     float v[kParamTapeAge + 1]; // mode, rate, int, echo, rev, bass, treb, input, wow, dry, sync, div, age
+    float outputVolume = 0.5f;
+    float echoPan = 0.5f;
+    float reverbPan = 0.5f;
+    float inputSend = 1.0f;
+    float wetSolo = 0.0f;
+    float bypass = 0.0f;
 };
 
 static constexpr TapeEchoPreset kFactoryPresets[] =
 {
     //                          mode  rate  int   echo  rev   bass  treb  input wow   dry   sync div
-    { "Default",              {  1,   0.5f, 0.4f, 0.8f, 0.0f, 0.0f, 0.0f, 0.5f, 0.5f, 1.0f, 0,   2 ,   0 } },
-    { "Slapback Vocal",       {  1,   0.7f, 0.0f, 0.7f, 0.0f, 0.0f, 0.1f, 0.5f, 0.3f, 1.0f, 0,   2 ,   0 } },
-    { "Rockabilly Guitar",    {  1,   0.8f, 0.15f,0.75f,0.0f, 0.0f, 0.2f, 0.6f, 0.4f, 1.0f, 0,   2 ,   0 } },
-    { "Classic Tape Echo",    {  2,   0.35f,0.35f,0.8f, 0.0f, 0.0f, 0.0f, 0.5f, 0.5f, 1.0f, 0,   2 ,   0 } },
-    { "Dub Throw",            {  2,   0.3f, 0.68f,0.9f, 0.0f, 0.35f,-0.2f,0.55f,0.5f, 1.0f, 0,   2 ,   0 } },
-    { "Synced 1/8 Dub",       {  2,   0.5f, 0.6f, 0.85f,0.0f, 0.25f,-0.1f,0.5f, 0.5f, 1.0f, 1,   5 ,   0 } },
-    { "Multi-Head Bounce",    {  4,   0.45f,0.25f,0.8f, 0.0f, 0.0f, 0.0f, 0.5f, 0.45f,1.0f, 0,   2 ,   0 } },
-    { "Space Echo",           {  8,   0.4f, 0.40f,0.8f, 0.5f, 0.1f, 0.0f, 0.5f, 0.5f, 1.0f, 0,   2 ,   0 } },
+    { "Default",              {  1,   0.0f, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, 0,   2 ,   0.5f } },
+    { "Slapback Vocal",       {  1,   0.45498657f, 0.42501831f, 1.0f, 0.0f,
+                                  0.11999512f, -0.08996582f, 0.51000977f,
+                                  0.0f, 1.0f, 0, 2, 0.5f },
+                                0.48999023f, 0.5f, 0.49499512f },
+    { "Rockabilly Guitar",    {  1,   1.0f, 0.28646851f, 1.0f, 0.0f,
+                                 -0.42553711f, -0.59252930f, 0.5f,
+                                  0.0f, 1.0f, 0, 2, 0.5f },
+                                0.5f, 0.5f, 0.51315308f },
+    { "Classic Tape Echo",    {  6,   0.50497437f, 0.39001465f, 0.28500366f, 0.0f,
+                                  0.01000977f, 0.02001953f, 0.51000977f,
+                                  0.0f, 1.0f, 0, 2, 0.5f },
+                                0.47065759f },
+    { "Dub Throw",            {  6,   1.0f, 0.52313232f, 1.0f, 0.0f,
+                                 -0.42553711f, -0.59252930f, 0.5f,
+                                  0.0f, 1.0f, 0, 2, 0.5f },
+                                0.47153696f, 0.5f, 0.51315308f },
+    { "Synced 1/8 Dub",       {  6,   0.39999390f, 0.43499756f, 0.11499023f, 0.04000854f,
+                                  0.0f, 0.0f, 0.29000854f, 0.0f, 1.0f,
+                                  1, 5, 0.5f },
+                                0.66342163f },
+    { "Multi-Head Bounce",    {  9,   0.53500366f, 0.48001099f, 0.5f, 0.25997925f,
+                                  0.66998291f, 0.0f, 0.5f, 0.0f, 1.0f,
+                                  0, 2, 0.0f },
+                                0.5f, 1.0f },
+    { "Orbital Echo",         {  8,   0.39999390f, 0.45001221f, 0.5f, 0.66000366f,
+                                  0.80999756f, -0.40997314f, 0.5f, 0.0f, 1.0f,
+                                  1, 2, 0.5f },
+                                0.43145752f, 0.28500366f, 0.73001099f },
     { "Full Wash",            { 11,   0.5f, 0.22f,0.7f, 0.45f,0.0f, -0.1f,0.5f, 0.55f,1.0f, 0,   2 ,   0 } },
-    { "Ambient Trails",       {  7,   0.25f,0.72f,0.8f, 0.6f, 0.0f, -0.3f,0.45f,0.65f,1.0f, 0,   2 ,   0.25f } },
-    { "Worn Tape",            {  2,   0.4f, 0.45f,0.8f, 0.0f, 0.15f,-0.5f,0.6f, 0.95f,1.0f, 0,   2 ,   0.85f } },
-    { "Runaway Drone",        {  1,   0.5f, 0.95f,0.6f, 0.0f, 0.0f, 0.0f, 0.55f,0.5f, 1.0f, 0,   2 ,   0 } },
-    { "Spring Only",          { 12,   0.5f, 0.0f, 0.0f, 0.8f, 0.0f, 0.0f, 0.5f, 0.3f, 1.0f, 0,   2 ,   0 } },
+    { "Ambient Trails",       {  7,   0.81033325f, 0.57254028f, 0.53720093f,
+                                  0.58779907f, -0.07104492f, -0.57696533f,
+                                  0.47543335f, 0.0f, 1.0f, 0, 2, 1.0f },
+                                0.41147773f, 0.0f, 1.0f },
+    { "Worn Tape",            {  2,   0.20483398f, 0.61618042f, 0.53720093f, 0.0f,
+                                 -1.0f, 0.22f, 0.47543335f, 0.0f, 1.0f,
+                                  0, 2, 0.20f },
+                                0.492f, 0.48483276f, 0.54565430f },
+    { "Runaway Drone",        { 10,   0.0f, 0.59866333f, 1.0f, 0.0f,
+                                  0.66699219f, -0.49353027f, 0.30581665f,
+                                  0.0f, 1.0f, 0, 2, 0.0f },
+                                0.58154625f, 0.53262329f, 0.5f },
+    { "Spring Only",          { 12,   0.0f, 0.0f, 0.5f, 0.91986084f,
+                                 0.0f, 0.0f, 0.5f, 0.0f, 1.0f,
+                                 0,   0,   0.5f },
+                               0.38354333f },
 };
 static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets) / sizeof(kFactoryPresets[0]));
 
