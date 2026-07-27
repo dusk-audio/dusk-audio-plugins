@@ -59,7 +59,7 @@ on:
 # Drop the fork (repoint checkouts to DISTRHO/DPF) only once upstream merges an
 # equivalent fix, verified with clap-validator first. Bump deliberately.
 env:
-  DPF_REF: 2f98c651acd70cfbcd9f807b7e73ea1e39ecc2cb
+  DPF_REF: f2c9f01f510cf0c04a7c9c5a2873921ac9ce2ee2
   DPFWIDGETS_REF: 730da6397904da66d99667c1cb30fc77fc3d794a
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
