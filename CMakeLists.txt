@@ -74,7 +74,6 @@ option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 option(BUILD_CHORD_ANALYZER "Build Chord Analyzer plugin" ON)
 option(BUILD_SPECTRUM_ANALYZER "Build Spectrum Analyzer plugin" ON)
 option(BUILD_DUSKVERB "Build DuskVerb plugin" ON)
-option(BUILD_MULTI_SYNTH "Build Multi-Synth plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -119,10 +118,6 @@ endif()
 
 if(BUILD_DUSKVERB)
     add_subdirectory(plugins/DuskVerb)
-endif()
-
-if(BUILD_MULTI_SYNTH)
-    add_subdirectory(plugins/sunset-circuits)
 endif()
 
 option(BUILD_DUSKAMP "Build DuskAmp plugin" ON)

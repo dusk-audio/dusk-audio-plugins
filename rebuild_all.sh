@@ -184,7 +184,6 @@ get_plugin_target() {
         chord-analyzer) echo "ChordAnalyzer_All" ;;
         spectrum-analyzer) echo "SpectrumAnalyzer_All" ;;
         DuskVerb) echo "DuskVerb_All" ;;
-        multi-synth) echo "MultiSynth_All" ;;
         *) echo "" ;;
     esac
 }
