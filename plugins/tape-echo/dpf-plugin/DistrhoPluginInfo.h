@@ -3,7 +3,7 @@
 #pragma once
 
 #define DISTRHO_PLUGIN_BRAND        "Dusk Audio"
-#define DISTRHO_PLUGIN_NAME         "Tape Echo"
+#define DISTRHO_PLUGIN_NAME         "Tape Echo 2"
 #define DISTRHO_PLUGIN_URI          "https://dusk-audio.github.io/plugins/tape-echo"
 #define DISTRHO_PLUGIN_CLAP_ID      "com.duskaudio.tape-echo"
 

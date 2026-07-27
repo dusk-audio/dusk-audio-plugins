@@ -56,7 +56,7 @@ protected:
     const char* getMaker() const override       { return "Dusk Audio"; }
     const char* getHomePage() const override    { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override     { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override     { return d_version(0, 1, 0); }
+    uint32_t    getVersion() const override     { return d_version(1, 0, 0); }
     int64_t     getUniqueId() const override    { return d_cconst('D', 's', 'T', 'E'); } // must match DISTRHO_PLUGIN_UNIQUE_ID (DsTE)
 
     //--- parameters ------------------------------------------------------------

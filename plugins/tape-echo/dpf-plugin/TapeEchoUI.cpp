@@ -145,7 +145,7 @@ protected:
             ImGui::EndDisabled();
         if (showSupporters)
             duskdpf::drawSupportersOverlay(
-                panel, dl, kDesignW, kDesignH, showSupporters, "Tape Echo");
+                panel, dl, kDesignW, kDesignH, showSupporters, "Tape Echo 2");
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -197,7 +197,7 @@ private:
         // name plate
         dl->AddRect(P(38, 8), P(360, 38), IM_COL32(210, 210, 210, 200), 4.0f * s,
                     0, 1.6f * s);
-        text(dl, 52, 12, 20, kColWhite, "TAPE ECHO", -1, true);
+        text(dl, 52, 12, 20, kColWhite, "TAPE ECHO 2", -1, true);
         text(dl, 235, 15, 15, kColWhiteDim, "TE-3", -1, true);
         text(dl, kDesignW - 30, 14, 15, kColWhite, "Dusk Audio", 1, true);
 
