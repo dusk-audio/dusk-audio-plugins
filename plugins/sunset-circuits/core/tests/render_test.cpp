@@ -66,8 +66,11 @@
 //   sustainat=<sec>:<0|1>
 //                       sustain pedal (MIDI CC64) up/down at this time, applied on
 //                       the first block starting at/after <sec>. Repeatable.
-//   panicat=<sec>       call allNotesOff() (MIDI CC120/CC123) at this time.
-//                       Repeatable.
+//   panicat=<sec>       call allNotesOff() (MIDI CC123 and the channel-mode
+//                       messages that imply it) at this time. Repeatable.
+//   soundoffat=<sec>    call allSoundOff() (MIDI CC120) at this time — the same
+//                       teardown plus an immediate, bounded voice kill, so a long
+//                       release tail does not survive it. Repeatable.
 //   polyat=<sec>:<note>:<0..1>
 //                       polyphonic key pressure (MIDI 0xA0) for one note.
 //                       Repeatable.
@@ -295,10 +298,11 @@ int main(int argc, char** argv)
     // scheduled parameter writes of the same block, mirroring the shell.
     std::vector<double> schedNotify;
 
-    // Scheduled sustain-pedal (CC64) edges and panics (CC120/123).
+    // Scheduled sustain-pedal (CC64) edges and panics (CC123 / CC120).
     struct SchedPedal { double time; bool down; };
     std::vector<SchedPedal> schedPedal;
-    std::vector<double>     schedPanic;
+    std::vector<double>     schedPanic;      // panicat=    -> allNotesOff()
+    std::vector<double>     schedSoundOff;   // soundoffat= -> allSoundOff()
 
     // Scheduled pressure messages: polyphonic key pressure (0xA0, note >= 0) and
     // channel pressure (0xD0, note < 0).
@@ -443,15 +447,16 @@ int main(int argc, char** argv)
             schedPressure.push_back({ t, note, (float)v });
             continue;
         }
-        if (key == "panicat")
+        if (key == "panicat" || key == "soundoffat")
         {
-            const double t = parseNum("panicat", val);
+            const double t = parseNum(key.c_str(), val);
             if (!validEventTime(t, seconds))
             {
-                std::fprintf(stderr, "bad panicat time: %g (want 0 <= t < %g)\n", t, seconds);
+                std::fprintf(stderr, "bad %s time: %g (want 0 <= t < %g)\n",
+                             key.c_str(), t, seconds);
                 return 1;
             }
-            schedPanic.push_back(t);
+            (key == "panicat" ? schedPanic : schedSoundOff).push_back(t);
             continue;
         }
         if (key == "noteon" || key == "noteoff")
@@ -645,6 +650,7 @@ int main(int argc, char** argv)
     std::vector<char> schedNotifyDone(schedNotify.size(), 0);
     std::vector<char> schedPedalDone(schedPedal.size(), 0);
     std::vector<char> schedPanicDone(schedPanic.size(), 0);
+    std::vector<char> schedSoundOffDone(schedSoundOff.size(), 0);
     std::vector<char> schedPressureDone(schedPressure.size(), 0);
     std::vector<char> schedProgramDone(schedProgram.size(), 0);
     std::vector<char> schedLoopDone(schedLoops.size(), 0);
@@ -760,7 +766,7 @@ int main(int argc, char** argv)
             n = releaseFrame - pos; // shorten so the next iteration starts at releaseFrame
         }
 
-        // Panic (CC120/CC123) last, so it overrides every note event of this block.
+        // Panic (CC123 / CC120) last, so it overrides every note event of this block.
         for (size_t s = 0; s < schedPanic.size(); ++s)
         {
             if (schedPanicDone[s]) continue;
@@ -768,6 +774,15 @@ int main(int argc, char** argv)
             {
                 synth.allNotesOff();
                 schedPanicDone[s] = 1;
+            }
+        }
+        for (size_t s = 0; s < schedSoundOff.size(); ++s)
+        {
+            if (schedSoundOffDone[s]) continue;
+            if (pos >= (int)(schedSoundOff[s] * sampleRate))
+            {
+                synth.allSoundOff();
+                schedSoundOffDone[s] = 1;
             }
         }
 

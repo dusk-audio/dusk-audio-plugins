@@ -610,11 +610,12 @@ private:
             //
             // CC120 (All Sound Off) is spec'd as an IMMEDIATE mute that ignores
             // release envelopes, unlike CC123 (All Notes Off) which releases
-            // normally. The core exposes only allNotesOff() — there is no
-            // hard-kill entry point — so 120 is handled as a release here. A true
-            // CC120 needs a core-side immediate-silence API (out of scope for
-            // this shell; see the report).
-            else if (d1 == 120 || d1 == 123 || (d1 >= 124 && d1 <= 127))
+            // normally, so the two map to different core entry points.
+            // allSoundOff() is allNotesOff() plus a bounded (~15 ms, click-free)
+            // hard stop on the sounding voices; effects tails decay either way.
+            else if (d1 == 120)
+                dsp.allSoundOff();
+            else if (d1 == 123 || (d1 >= 124 && d1 <= 127))
                 dsp.allNotesOff();
             break;
         case 0xC0: // program change -> factory preset (data byte is 0..127)

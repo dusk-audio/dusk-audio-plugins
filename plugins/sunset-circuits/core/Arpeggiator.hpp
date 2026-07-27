@@ -426,10 +426,24 @@ private:
             {
                 const int n = baseEnd - baseStart;
                 std::reverse(pattern.begin() + baseStart, pattern.begin() + baseEnd);
+                // Return leg = the ascending interior of the run just reversed. Read
+                // it back OUT OF THE PATTERN, the same way UpDown does, instead of
+                // recomputing sorted[i % heldCount] + (i / heldCount) * 12: that
+                // formula addresses the UNCLIPPED octave enumeration, and pushPattern
+                // SKIPS anything above MIDI 127, so the two disagree from the first
+                // skipped note onward. Because the skipped entries are exactly the
+                // ones the formula then re-derives, the old code fed them back to
+                // pushPattern, which rejected them again -- silently truncating the
+                // return leg (held 60 + 120 at octave range 4: an 8-step DownUp came
+                // out 7 steps, the top of the climb missing, and the "up" leg no
+                // longer mirrored the "down" leg).
+                //
+                // After the reverse, ascending position j sits at baseStart+(n-1-j).
+                // Reads stay inside [baseStart, baseEnd) while pushPattern appends at
+                // patternSize >= baseEnd, so the source can never alias the writes.
                 if (n > 1)
-                    for (int i = 1; i <= n - 2; ++i) // ascending, skip first and last
-                        pushPattern({ sorted[(size_t)(i % heldCount)].note + (i / heldCount) * 12,
-                                      sorted[(size_t)(i % heldCount)].velocity });
+                    for (int j = 1; j <= n - 2; ++j) // ascending, skip first and last
+                        pushPattern(pattern[(size_t)(baseStart + (n - 1 - j))]);
                 break;
             }
 

@@ -383,10 +383,22 @@ public:
         rootNote = clampi(noteNumber, 0, 127);
         held = true;
     }
-    void noteOff(int noteNumber) noexcept
+    // Release `noteNumber`. `nextRoot` is the note that should take the root over
+    // (the caller's next-newest key still down) or -1 for "nothing left".
+    //
+    // Releasing a note that is not the root is a no-op, as it always was. Releasing
+    // the ROOT used to stop the pattern outright, which is wrong the moment more
+    // than one key is down: hold C, hold E (root moves to E), release E and the
+    // sequencer stopped with C still held. The root is a last-note-priority stack
+    // position, so a release unwinds to the previous entry and only the last one
+    // out stops the pattern. Latch still outranks everything -- it is what KEEPS
+    // held true across a key-up, so a latched pattern ignores releases entirely
+    // and is cleared by clearLatch() / retainHeld() instead.
+    void noteOff(int noteNumber, int nextRoot = -1) noexcept
     {
-        if (noteNumber == rootNote && !latch)
-            held = false;
+        if (noteNumber != rootNote || latch) return;
+        if (nextRoot >= 0 && nextRoot < 128) rootNote = nextRoot;  // held stays true
+        else                                 held = false;
     }
     void clearLatch() noexcept { if (latch) held = false; }
     // Latch released: drop the root unless its key is physically down (engine
