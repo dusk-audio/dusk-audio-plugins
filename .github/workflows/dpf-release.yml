@@ -181,6 +181,11 @@ jobs:
           cp -r build/bin/sunset_circuits.lv2  out/LV2/
           test -f "out/VST3/sunset_circuits.vst3/Contents/x86_64-linux/sunset_circuits.so"
           test -f "out/LV2/sunset_circuits.lv2/manifest.ttl"
+          # Bundle the published user manual (non-fatal if absent), same as
+          # dpf-build.yml does for the "-2" plugins.
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
+          curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
+            || { rm -f "out/${SLUG}-manual.pdf"; echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"; }
           ( cd out && zip -r "../${SLUG}-linux.zip" . )
           echo "=== contents ==="; unzip -l "${SLUG}-linux.zip"
 
@@ -282,6 +287,10 @@ jobs:
           cp -r build/bin/sunset_circuits.lv2  out/LV2/
           test -f "out/VST3/sunset_circuits.vst3/Contents/aarch64-linux/sunset_circuits.so"
           test -f "out/LV2/sunset_circuits.lv2/manifest.ttl"
+          # Bundle the published user manual (non-fatal if absent).
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
+          curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
+            || { rm -f "out/${SLUG}-manual.pdf"; echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"; }
           ( cd out && zip -r "../${SLUG}-linux-arm64.zip" . )
           echo "=== contents ==="; unzip -l "${SLUG}-linux-arm64.zip"
 
@@ -396,6 +405,10 @@ jobs:
           Copy-Item -Recurse build/bin/sunset_circuits.vst3 out/VST3/
           Copy-Item          build/bin/sunset_circuits.clap out/CLAP/
           Copy-Item -Recurse build/bin/sunset_circuits.lv2  out/LV2/
+          # Bundle the published user manual (non-fatal if absent).
+          $manualUrl = "https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/$env:SLUG-manual.pdf"
+          try { Invoke-WebRequest -Uri $manualUrl -OutFile "out/$env:SLUG-manual.pdf" }
+          catch { Remove-Item -Force -ErrorAction SilentlyContinue "out/$env:SLUG-manual.pdf"; Write-Host "::warning::User manual PDF not found at $manualUrl (non-fatal)" }
           Compress-Archive -Path out/* -DestinationPath "$env:SLUG-windows.zip" -Force
           Write-Host "=== contents ==="
           Get-ChildItem -Recurse out | Select-Object FullName
@@ -593,6 +606,10 @@ jobs:
           [ -e out/CLAP/sunset_circuits.clap ]      || cp -r build/bin/sunset_circuits.clap      out/CLAP/
           [ -e out/AU/sunset_circuits.component ]   || cp -r build/bin/sunset_circuits.component out/AU/
           cp -r build/bin/sunset_circuits.lv2 out/LV2/
+          # Bundle the published user manual (non-fatal if absent).
+          manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
+          curl -fL --silent --show-error "$manual_url" -o "out/${SLUG}-manual.pdf" \
+            || { rm -f "out/${SLUG}-manual.pdf"; echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"; }
           ( cd out && zip -r "../${SLUG}-macos.zip" . )
           echo "=== contents ==="; unzip -l "${SLUG}-macos.zip"
 
