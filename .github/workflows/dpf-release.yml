@@ -52,12 +52,21 @@ jobs:
   # Parse the release version out of the tag; empty on workflow_dispatch, which
   # lets the DPF CMakeLists fall back to SUNSETCIRCUITS_DEFAULT_VERSION (1.0.0).
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.v.outputs.version }}
       is_release: ${{ steps.v.outputs.is_release }}
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
+      # Needed by the tag<->CMake version guard below, which reads the plugin's
+      # CMakeLists.txt.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Parse tag
         id: v
         run: |
@@ -76,6 +85,20 @@ jobs:
               IS_RELEASE="true"
               VERSION="${BASH_REMATCH[1]}"
               if [[ -n "${BASH_REMATCH[2]}" ]]; then PRERELEASE="true"; fi
+              # Guard: the tag version must equal the CMake version (the numeric
+              # core, so an -rc/-beta suffix is ignored), else the release ships
+              # binaries whose embedded version disagrees with the tag. This
+              # plugin declares the version in SUNSETCIRCUITS_DEFAULT_VERSION and
+              # only passes the resolved variable to project(), so read the set()
+              # -- grepping the project() line would find no literal. || true so a
+              # missing/renamed variable reports the message below instead of
+              # dying silently on errexit.
+              CMAKE_VERSION=$(grep -m1 -oE 'SUNSETCIRCUITS_DEFAULT_VERSION[[:space:]]+"[0-9]+\.[0-9]+\.[0-9]+"' \
+                "$PLUGIN_DIR/CMakeLists.txt" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+              if [ -z "$CMAKE_VERSION" ] || [ "$VERSION" != "$CMAKE_VERSION" ]; then
+                echo "::error::Tag '$TAG' version '$VERSION' != CMake SUNSETCIRCUITS_DEFAULT_VERSION '${CMAKE_VERSION:-<not found>}' in $PLUGIN_DIR/CMakeLists.txt"
+                exit 1
+              fi
             else
               echo "::error::malformed release tag '$TAG' (want sunset-circuits-vX.Y.Z or sunset-circuits-vX.Y.Z-<suffix>)"
               exit 1
@@ -94,7 +117,7 @@ jobs:
     # refs/pull/<n>/merge on a PR, so this is false there and true for both a
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     container:
       image: ubuntu:20.04  # glibc 2.31, matching the JUCE fleet (build.yml)
@@ -309,7 +332,7 @@ jobs:
     # refs/pull/<n>/merge on a PR, so this is false there and true for both a
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 60
     env:
       PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
@@ -630,7 +653,7 @@ jobs:
   # focal's package set. The binaries it builds are for testing only.
   test-linux:
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Generous: the shipping linux job budgets 40 minutes for the build alone,
     # and this one adds the gate suite and pluginval on top of a build of
     # comparable size.
@@ -897,7 +920,7 @@ jobs:
   # test-linux is in needs: so a red gate suite blocks the publish.
   release:
     needs: [setup, test-linux, build-linux-x64, build-linux-arm64, build-windows, build-macos]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: needs.setup.outputs.is_release == 'true'
     permissions:
       contents: write
