@@ -16,7 +16,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
 # DPF / DPF-Widgets SHAs — keep in sync with .github/workflows/dpf-release.yml.
-DPF_SHA="4238e1c7f0351bbe488d79f0899c540543ac7583"
+# DPF comes from the dusk-audio/DPF fork (our patches live there); DPF-Widgets
+# stays on upstream DISTRHO (no fork).
+DPF_SHA="a9b033c241f80da2f141977819691322c2da988f"
 DPFWIDGETS_SHA="730da6397904da66d99667c1cb30fc77fc3d794a"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
@@ -108,7 +110,7 @@ build_sunset() {
                 cd /tmp
             }
             cd /tmp
-            fetch_sha https://github.com/DISTRHO/DPF.git         "$DPF_SHA"        /tmp/dpf
+            fetch_sha https://github.com/dusk-audio/DPF.git      "$DPF_SHA"        /tmp/dpf
             fetch_sha https://github.com/DISTRHO/DPF-Widgets.git  "$DPFWIDGETS_SHA" /tmp/dpf-widgets
             test -n "$(ls -A /tmp/dpf/dgl/src/pugl-upstream 2>/dev/null)" \
                 || { echo "ERROR: DPF pugl submodule missing after fetch"; exit 1; }

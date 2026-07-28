@@ -21,7 +21,7 @@ set(DPF_PATH        "${_dusk_repo_root}/../DPF"         CACHE PATH "Path to DIST
 set(DPFWIDGETS_PATH "${_dusk_repo_root}/../DPF-Widgets" CACHE PATH "Path to DPF-Widgets (Dear ImGui wrapper)")
 
 if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
-    message(FATAL_ERROR "DPF not found at ${DPF_PATH} — clone https://github.com/dusk-audio/DPF (our fork, branch dusk/clap-latency-activate) or pass -DDPF_PATH=...")
+    message(FATAL_ERROR "DPF not found at ${DPF_PATH} — clone https://github.com/dusk-audio/DPF (our fork; do not use upstream DISTRHO/DPF) or pass -DDPF_PATH=...")
 endif()
 if(NOT EXISTS "${DPFWIDGETS_PATH}/opengl/DearImGui.cpp")
     message(FATAL_ERROR "DPF-Widgets not found at ${DPFWIDGETS_PATH} — clone https://github.com/DISTRHO/DPF-Widgets or pass -DDPFWIDGETS_PATH=...")

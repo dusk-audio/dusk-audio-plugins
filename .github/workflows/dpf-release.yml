@@ -37,13 +37,13 @@ on:
       - '.github/workflows/dpf-release.yml'
   workflow_dispatch:
 
-# DPF is pinned to the dusk-audio/DPF fork (branch dusk/clap-latency-activate):
-# upstream DISTRHO/DPF reports CLAP latency changes outside clap_plugin::activate
-# and fails 24 clap-validator tests. Drop the fork pin once upstream merges the
-# fix. DPF-Widgets stays on upstream. Bump both SHAs together and re-run the
-# dispatch matrix before tagging.
+# DPF is pinned to the dusk-audio/DPF fork (branch main), which is the
+# permanent source of truth for our DPF patches (CLAP latency-in-activate fix
+# and later work). DPF-Widgets stays on upstream DISTRHO (no fork). Keep SHAs
+# in sync with dpf-build.yml, dpf-au-test.yml and docker/build_release.sh, and
+# re-run the dispatch matrix before tagging.
 env:
-  DPF_SHA: 2f98c651acd70cfbcd9f807b7e73ea1e39ecc2cb
+  DPF_SHA: a9b033c241f80da2f141977819691322c2da988f
   DPFWIDGETS_SHA: 730da6397904da66d99667c1cb30fc77fc3d794a
   PLUGIN_DIR: plugins/sunset-circuits/dpf-plugin
   SLUG: sunset-circuits
