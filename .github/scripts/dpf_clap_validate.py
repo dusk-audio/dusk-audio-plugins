@@ -128,7 +128,7 @@ def resolve_binary(workdir):
     # Linux/macOS assets wrap a .tar.gz; Windows ships the .exe directly.
     for tgz in glob.glob(os.path.join(workdir, "*.tar.gz")):
         with tarfile.open(tgz) as t:
-            t.extractall(workdir)
+            t.extractall(workdir, filter="data")
 
     for root, _dirs, files in os.walk(workdir):
         for name in ("clap-validator", "clap-validator.exe"):
@@ -158,8 +158,13 @@ def main():
                 [vbin, "validate", clap],
                 capture_output=True, text=True, timeout=RUN_TIMEOUT_S,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             log(f"::error::clap-validator timed out after {RUN_TIMEOUT_S}s on {clap}")
+            for stream_name, output in (("stdout", exc.stdout), ("stderr", exc.stderr)):
+                if output:
+                    if isinstance(output, bytes):
+                        output = output.decode(errors="replace")
+                    log(f"Partial {stream_name}:\n{output}")
             sys.exit(2)
 
         out = (proc.stdout or "") + (proc.stderr or "")

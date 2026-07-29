@@ -8,7 +8,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeEchoDPF VERSION 1.0.0)
+project(TapeEchoDPF VERSION 0.1.3)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,16 @@ target_include_directories(tape_echo PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DPF_INCLUDE_DIRS})   # shared-dpf dsp/ui + DPF-Widgets opengl
+
+# Single source of truth for the plugin version: the project() VERSION above is
+# plumbed into getVersion() and the UI version display via these macros (see
+# TapeEchoVersion.hpp). Bumped by the /release-plugin skill. PUBLIC because DPF
+# compiles the UI in a separate tape_echo-ui target that links this one and must
+# see the same values — PRIVATE would leave the UI on the header's stale fallback.
+target_compile_definitions(tape_echo PUBLIC
+    TE2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    TE2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    TE2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).

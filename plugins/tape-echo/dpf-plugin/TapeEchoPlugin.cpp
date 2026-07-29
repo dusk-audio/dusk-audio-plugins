@@ -4,6 +4,7 @@
 #include "TapeEchoAccess.hpp"
 #include "TapeEchoDSP.hpp"
 #include "TapeEchoParams.hpp"
+#include "TapeEchoVersion.hpp"
 
 #include <atomic>
 
@@ -56,7 +57,9 @@ protected:
     const char* getMaker() const override       { return "Dusk Audio"; }
     const char* getHomePage() const override    { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override     { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override     { return d_version(1, 0, 0); }
+    // Version comes from the CMake project() VERSION via TapeEchoVersion.hpp.
+    uint32_t    getVersion() const override
+    { return d_version(TE2_VERSION_MAJOR, TE2_VERSION_MINOR, TE2_VERSION_PATCH); }
     int64_t     getUniqueId() const override    { return d_cconst('D', 's', 'T', 'E'); } // must match DISTRHO_PLUGIN_UNIQUE_ID (DsTE)
 
     //--- parameters ------------------------------------------------------------
@@ -170,7 +173,7 @@ protected:
     // DSP setters are atomic stores — safe from whichever thread DPF uses.
     void setParameterValue(uint32_t index, float value) override
     {
-        if (index >= kParamOutLevel) // output params are not settable
+        if (index >= kParamCount || index == kParamOutLevel)
             return;
         values[index].store(
             index == kParamLoopSplice ? 0.0f : value,
@@ -282,8 +285,9 @@ protected:
 private:
     void pushAllParams()
     {
-        for (uint32_t i = 0; i < kParamOutLevel; ++i)
-            setParameterValue(i, values[i].load(std::memory_order_relaxed));
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (i != kParamOutLevel)
+                setParameterValue(i, values[i].load(std::memory_order_relaxed));
     }
 
     duskaudio::TapeEchoDSP dsp;
