@@ -170,7 +170,7 @@ def main():
             log(f"::error::DPF CLAP latency regression: '{LATENCY_SIGNATURE}' "
                 "reported -- latency changed outside clap_plugin::activate(). "
                 "This is the upstream bug the dusk-audio/DPF fork fixes; DPF has "
-                "regressed. Check DPF_REF and the fork branch.")
+                "regressed. Check DPF_REF against dusk-audio/DPF main.")
             sys.exit(1)
 
         # ADVISORY (or strict) on the remaining suite.

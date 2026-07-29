@@ -10,6 +10,10 @@ on:
     tags:
       - 'tape-echo-dpf-v*'
 
+env:
+  DPF_SHA: 45a7e30e5343231019e6d5f09629bae13f5899c7
+  DPFWIDGETS_SHA: 730da6397904da66d99667c1cb30fc77fc3d794a
+
 jobs:
   build-au-macos:
     name: Build + auval Tape Echo AU (macOS)
@@ -17,6 +21,8 @@ jobs:
     steps:
       - name: Checkout plugins repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # DPF comes from the dusk-audio/DPF fork (our patches live there);
       # DPF-Widgets stays on upstream DISTRHO (no fork). Keep SHAs in sync
@@ -25,17 +31,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dusk-audio/DPF
-          ref: a9b033c241f80da2f141977819691322c2da988f
+          ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
           repository: DISTRHO/DPF-Widgets
-          ref: 730da6397904da66d99667c1cb30fc77fc3d794a
+          ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Install Ninja
         run: brew install ninja
