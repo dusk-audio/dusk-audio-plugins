@@ -343,8 +343,33 @@ protected:
         if (showHelpOverlay_)
             drawHelpOverlay(dl, winW, winH);
 
+        // Own resize grip, submitted LAST so it wins ImGui's hover race (over the
+        // preset popup, the credits card and the '?' overlay alike) and paints over
+        // everything. AUv2 hosts (Logic) never provide a window grip of their own;
+        // on VST3/CLAP the host's grip stays available and this is simply a second
+        // way to do the same thing. `designH`, not kDesignH: the British skin's
+        // design is shorter with the graph hidden, and the grip has to drive the
+        // same aspect this frame was letterboxed to.
+        const duskdpf::ResizeGripState grip =
+            panel.resizeGrip(dl, winW, winH, kDesignW, designH);
+
         ImGui::End();
         ImGui::PopStyleVar(2);
+
+        // Cursor feedback. The DPF-Widgets ImGui backend never forwards
+        // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
+        // Edge-triggered: setCursor() is a window-level call, not a per-frame one.
+        if (grip.hot != gripCursorSet)
+        {
+            gripCursorSet = grip.hot;
+            setCursor(gripCursorSet ? DGL_NAMESPACE::kMouseCursorUpLeftDownRight
+                                    : DGL_NAMESPACE::kMouseCursorArrow);
+        }
+
+        // Applied after End() so a host that services the resize synchronously
+        // cannot re-enter the UI in the middle of this window's submission.
+        if (grip.resized)
+            setSize(grip.width, grip.height);
     }
 
     // Control-area vertical remap (see FourKEQUI): maps a design Y in the
@@ -4092,6 +4117,7 @@ private:
     int  digPreset_ = -1;      // Digital: selected factory preset index (-1 = Init/none)
     int  tubePreset_ = -1;     // Tube: selected factory preset index (-1 = Init/none)
     bool uiPresetsSynced_ = false; // one-shot: restore dropdown selection from plugin state on open
+    bool gripCursorSet = false;    // NWSE cursor currently pushed to the window
 
     // Digital analyzer state (own FFT + buffers, kept separate from British `fft`/
     // `specDb` so the two skins never fight over the FFT size). digFrozen_ + snapshot

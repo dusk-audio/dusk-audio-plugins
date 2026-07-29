@@ -7,7 +7,8 @@
 // Extracted from plugins/tape-echo/dpf-plugin/TapeEchoUI.cpp. Provides a fixed
 // design-space coordinate mapper, a chrome knob (drag / shift-fine / wheel /
 // double-click-reset, single active-knob drag state), LED, toggle, styled text,
-// plus an analytic response-curve polyline mapper and a small real-FFT +
+// a bottom-right window resize grip for hosts that provide none, plus an
+// analytic response-curve polyline mapper and a small real-FFT +
 // spectrum drawer for EQ/analyzer UIs. Colors come from a Palette struct;
 // host parameter edits go through a ParamHost interface so this stays free of
 // any DPF include (the UI subclass adapts editParameter/setParameterValue).
@@ -46,6 +47,18 @@ struct Palette
     ImU32 ledGlow  = IM_COL32(255, 70, 45, 90);
     ImU32 ledOff   = IM_COL32(70, 20, 15, 255);
     ImU32 accent   = IM_COL32(120, 170, 235, 255);
+};
+
+// One frame of DuskPanel::resizeGrip() state. The two things it implies --
+// applying the new size and showing a diagonal mouse cursor -- are both DPF
+// window calls, which this header deliberately cannot make, so the caller
+// performs them (see the resizeGrip() comment for the exact contract).
+struct ResizeGripState
+{
+    bool     hot     = false;  // hovered or dragged: caller shows the NWSE cursor
+    bool     resized = false;  // a size change is being asked for this frame
+    uint32_t width   = 0;      // requested window size, valid when resized
+    uint32_t height  = 0;
 };
 
 class DuskPanel
@@ -557,6 +570,106 @@ public:
         return toggled;
     }
 
+    //--- bottom-right window resize grip -------------------------------------
+    // AUv2 hosts (Logic above all) never hand a plugin window a resize handle of
+    // their own, so a resizable UI has to draw its own and resize itself. This is
+    // the DPF counterpart of what plugins/shared/ScalableEditorHelper does for the
+    // JUCE plugins via juce::ResizableCornerComponent.
+    //
+    // winW/winH are WINDOW space -- the UI's getWidth()/getHeight() -- not design
+    // space, so the grip stays welded to the real corner even when an off-aspect
+    // window letterboxes the design box. Its own size still tracks the panel scale.
+    //
+    // Aspect is locked. The pointer delta is projected onto the design diagonal
+    // (least-squares fit of the single step t for which the box grows by
+    // t*designW x t*designH), so both axes drive one uniform scale, which is then
+    // clamped to [minScale, maxScale] of the design size. minScale must match the
+    // minimum handed to setGeometryConstraints(designW, designH, true): DPF clamps
+    // the window to that and re-derives the aspect from the same ratio, and a grip
+    // that disagreed would just fight the window.
+    //
+    // UNITS, measured not assumed: DGL/pugl report window sizes in BACKING PIXELS
+    // (a 900x320-point plugin window on a 2x display reports 1800x640), and neither
+    // UI::getScaleFactor() nor Window::getScaleFactor() exposes that factor -- both
+    // read 1.0 under AU. So the scale here, like DPF's own constraint, is in device
+    // pixels: on a 2x display [1.0, 3.0] spans 450..1350 points, i.e. half to 1.5x
+    // the nominal window, with the design always drawn at >= 1 device pixel per
+    // design pixel. Change the bounds if a plugin wants a different physical range;
+    // there is no way to express one in points from inside the UI.
+    //
+    // CALLER RULES:
+    //  - submit this LAST in the frame: it has to win ImGui's hover race against
+    //    anything it overlaps, and it should paint over it.
+    //  - apply width/height AFTER ImGui::End(), never mid-window -- a host may run
+    //    the resize (and therefore the window's event handling) synchronously.
+    //  - map `hot` onto a real cursor yourself; the DPF-Widgets ImGui backend has
+    //    no cursor support, so the ImGui::SetMouseCursor() below is advisory only.
+    ResizeGripState resizeGrip(ImDrawList* dl, float winW, float winH,
+                               float designW, float designH,
+                               float minScale = 1.0f, float maxScale = 3.0f)
+    {
+        ResizeGripState st;
+        if (designW <= 0.0f || designH <= 0.0f)
+            return st;
+
+        const float g = 14.0f * s;                     // hotspot == painted area
+        ImGui::SetCursorScreenPos(ImVec2(winW - g, winH - g));
+        ImGui::InvisibleButton("##duskresizegrip", ImVec2(g, g));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active  = ImGui::IsItemActive();
+        st.hot = hovered || active;
+        if (st.hot)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+
+        // Anchor the gesture to the scale at press time and drive it from the
+        // absolute pointer delta. setSize() is asynchronous (DPF: "will not change
+        // the widget's size right away, but be pending on the OS resizing the
+        // window"), so folding a per-frame delta into whatever size the window
+        // currently reports would re-apply every still-pending resize and run away.
+        if (ImGui::IsItemActivated())
+        {
+            const float sw = winW / designW, sh = winH / designH;
+            gripStartScale_ = sw < sh ? sw : sh;   // matches the caller's own `s`
+            gripReqW_ = (uint32_t) (winW + 0.5f);
+            gripReqH_ = (uint32_t) (winH + 0.5f);
+        }
+
+        if (active)
+        {
+            const ImVec2 d = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+            const float t = (d.x * designW + d.y * designH)
+                          / (designW * designW + designH * designH);
+            float scale = gripStartScale_ + t;
+            scale = scale < minScale ? minScale : (scale > maxScale ? maxScale : scale);
+
+            const uint32_t w = (uint32_t) (designW * scale + 0.5f);
+            const uint32_t h = (uint32_t) (designH * scale + 0.5f);
+            // Only ask when the ask differs from the LAST ask, not from winW/winH:
+            // setSize() is asynchronous, so while a resize is pending the window
+            // still reports the old size and comparing against it would re-fire
+            // the identical request every frame until the host catches up.
+            if (w != gripReqW_ || h != gripReqH_)
+            {
+                gripReqW_ = w;
+                gripReqH_ = h;
+                st.resized = true;
+                st.width   = w;
+                st.height  = h;
+            }
+        }
+
+        // Three hatch lines stepping out from the corner: readable as a grip,
+        // dim enough to disappear into the chassis until it is pointed at.
+        const ImU32 col = st.hot ? IM_COL32(238, 236, 228, 175) : IM_COL32(238, 236, 228, 70);
+        const float cx = winW - 3.0f * s, cy = winH - 3.0f * s;
+        for (int i = 1; i <= 3; ++i)
+        {
+            const float o = (float) i * 3.6f * s;
+            dl->AddLine(ImVec2(cx - o, cy), ImVec2(cx, cy - o), col, 1.3f * s);
+        }
+        return st;
+    }
+
     // Map a (log-frequency, dB) point into a pixel inside a design-space rect.
     ImVec2 curvePoint(float rx0, float ry0, float rx1, float ry1,
                       float freq, float db, float fMin, float fMax, float dbRange) const
@@ -576,6 +689,8 @@ private:
     Palette pal;
     CrispFontSet fontSet;  // multi-size faces; pickFont() chooses nearest
     float dragValue = 0.0f;
+    float gripStartScale_ = 1.0f;  // resizeGrip(): scale when the drag started
+    uint32_t gripReqW_ = 0, gripReqH_ = 0;  // resizeGrip(): last size asked of the host
 
     // Inline value-entry state (double-click a knob to type a value).
     std::string valueEditId_;
