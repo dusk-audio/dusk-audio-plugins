@@ -15,8 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
-# DPF / DPF-Widgets SHAs — keep in sync with .github/workflows/dpf-release.yml.
-DPF_SHA="4238e1c7f0351bbe488d79f0899c540543ac7583"
+# DPF / DPF-Widgets SHAs — keep in sync with dpf-build.yml, dpf-release.yml and dpf-au-test.yml.
+# DPF comes from the dusk-audio/DPF fork (our patches live there); DPF-Widgets
+# stays on upstream DISTRHO (no fork).
+DPF_SHA="45a7e30e5343231019e6d5f09629bae13f5899c7"
 DPFWIDGETS_SHA="730da6397904da66d99667c1cb30fc77fc3d794a"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
@@ -65,7 +67,7 @@ is_sunset() {
 }
 
 # Build Sunset Circuits (DPF) in the container. Unlike the JUCE plugins this does
-# NOT use the top-level JUCE build graph: it clones DISTRHO/DPF + DPF-Widgets at
+# NOT use the top-level JUCE build graph: it clones dusk-audio/DPF (our fork) + DISTRHO/DPF-Widgets at
 # the pinned SHAs inside the container and builds plugins/sunset-circuits/dpf-plugin
 # standalone (mirrors .github/workflows/dpf-release.yml). Produces VST3/CLAP/LV2.
 build_sunset() {
@@ -108,7 +110,7 @@ build_sunset() {
                 cd /tmp
             }
             cd /tmp
-            fetch_sha https://github.com/DISTRHO/DPF.git         "$DPF_SHA"        /tmp/dpf
+            fetch_sha https://github.com/dusk-audio/DPF.git      "$DPF_SHA"        /tmp/dpf
             fetch_sha https://github.com/DISTRHO/DPF-Widgets.git  "$DPFWIDGETS_SHA" /tmp/dpf-widgets
             test -n "$(ls -A /tmp/dpf/dgl/src/pugl-upstream 2>/dev/null)" \
                 || { echo "ERROR: DPF pugl submodule missing after fetch"; exit 1; }

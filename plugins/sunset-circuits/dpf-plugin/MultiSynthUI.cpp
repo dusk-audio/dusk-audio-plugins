@@ -289,8 +289,10 @@ protected:
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
             beginLayerScreen("MSsave", 0, 0, winW, winH, true);
             drawSaveModalOverlay();
+            const duskdpf::ResizeGripState grip = submitGrip(winW, winH);
             endLayer(kLayerModal);
             ImGui::PopStyleVar(2);
+            applyGrip(grip);
            #ifdef MSYNTH_FRAME_PROFILE
             profileFrame(_t0);
            #endif
@@ -302,8 +304,10 @@ protected:
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
             beginLayerScreen("MSbrowse", 0, 0, winW, winH, true);
             drawPresetBrowserOverlay();
+            const duskdpf::ResizeGripState grip = submitGrip(winW, winH);
             endLayer(kLayerBrowse);
             ImGui::PopStyleVar(2);
+            applyGrip(grip);
            #ifdef MSYNTH_FRAME_PROFILE
             profileFrame(_t0);
            #endif
@@ -315,8 +319,10 @@ protected:
             dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 170)); // scrim on bg list
             beginLayerScreen("MSmodal", 0, 0, winW, winH, true);
             drawModMatrixOverlay();
+            const duskdpf::ResizeGripState grip = submitGrip(winW, winH);
             endLayer(kLayerModal);
             ImGui::PopStyleVar(2);
+            applyGrip(grip);
            #ifdef MSYNTH_FRAME_PROFILE
             profileFrame(_t0);
            #endif
@@ -357,9 +363,15 @@ protected:
         drawFXStrip();
         drawWheels();
         drawKeyboard();
+        // MSbottom owns the window's bottom-right corner (the design is aspect-
+        // locked, so the letterbox margin here is sub-pixel), and it is the last
+        // base layer submitted, hence the frontmost -- so the grip both wins the
+        // hover race and paints over the keyboard it overlaps.
+        const duskdpf::ResizeGripState grip = submitGrip(winW, winH);
         endLayer(kLayerBottom);
 
         ImGui::PopStyleVar(2);
+        applyGrip(grip);
        #ifdef MSYNTH_FRAME_PROFILE
         profileFrame(_t0);
        #else
@@ -455,6 +467,47 @@ protected:
         if (!inputs) f |= ImGuiWindowFlags_NoInputs;
         ImGui::Begin(name, nullptr, f);
         dl = ImGui::GetWindowDrawList();
+    }
+
+    // Own in-UI resize grip. AUv2 hosts (Logic) never provide a window grip of
+    // their own; on VST3/CLAP the host's grip stays available and this is simply
+    // a second way to do the same thing.
+    //
+    // Shared by every terminal path of onImGuiDisplay because this UI has four of
+    // them -- three modals that REPLACE the panels, plus the base frame -- and the
+    // grip has to be in all of them or the window would stop being resizable
+    // whenever an overlay is up.
+    //
+    // Submitted into the FRONTMOST LAYER rather than a full-window grip layer of
+    // its own: the layer windows are deliberately non-overlapping (see the vertex
+    // census above), and one stacked over all of them would steal hover from every
+    // panel underneath. The window that owns the bottom-right corner is MSbottom
+    // in the base frame and the modal's own full-window layer otherwise, so
+    // calling this last in that layer gives the grip exactly the hover priority it
+    // needs and nothing more. Costs ~24 vertices, i.e. nothing against MSbottom's
+    // measured 22094/65535 worst case.
+    duskdpf::ResizeGripState submitGrip(float winW, float winH)
+    {
+        return panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH);
+    }
+
+    // The grip's two side effects, both DPF window calls the shared widget header
+    // deliberately cannot make. Applied AFTER the owning layer's ImGui::End(): a
+    // host may service setSize() synchronously and re-enter the UI, which must not
+    // happen in the middle of a window's submission.
+    void applyGrip(const duskdpf::ResizeGripState& grip)
+    {
+        // The DPF-Widgets ImGui backend never forwards ImGui::SetMouseCursor() to
+        // the window, so drive DGL's cursor directly. Edge-triggered: setCursor()
+        // is a window-level call, not a per-frame one.
+        if (grip.hot != gripCursorSet)
+        {
+            gripCursorSet = grip.hot;
+            setCursor(gripCursorSet ? DGL_NAMESPACE::kMouseCursorUpLeftDownRight
+                                    : DGL_NAMESPACE::kMouseCursorArrow);
+        }
+        if (grip.resized)
+            setSize(grip.width, grip.height);
     }
 
 private:
@@ -4007,6 +4060,7 @@ private:
     const char* tips[kNumCoreParams] = {};
     float  s = 1.0f;
     ImVec2 org = ImVec2(0, 0);
+    bool   gripCursorSet = false;  // NWSE cursor currently pushed to the window
 
     // The one edit gesture that can be open at a time, or -1. Written only by the
     // beginEdit/endEdit overrides; read by closeOrphanedEdit() and the destructor.

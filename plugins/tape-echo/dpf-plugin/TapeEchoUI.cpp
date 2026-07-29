@@ -147,8 +147,30 @@ protected:
             duskdpf::drawSupportersOverlay(
                 panel, dl, kDesignW, kDesignH, showSupporters, "Tape Echo 2");
 
+        // Own resize grip, submitted LAST so it wins ImGui's hover race and
+        // paints over everything. AUv2 hosts (Logic) never provide a window
+        // grip of their own; on VST3/CLAP the host's grip stays available and
+        // this is simply a second way to do the same thing.
+        const duskdpf::ResizeGripState grip =
+            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH);
+
         ImGui::End();
         ImGui::PopStyleVar(2);
+
+        // Cursor feedback. The DPF-Widgets ImGui backend never forwards
+        // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
+        // Edge-triggered: setCursor() is a window-level call, not a per-frame one.
+        if (grip.hot != gripCursorSet)
+        {
+            gripCursorSet = grip.hot;
+            setCursor(gripCursorSet ? DGL_NAMESPACE::kMouseCursorUpLeftDownRight
+                                    : DGL_NAMESPACE::kMouseCursorArrow);
+        }
+
+        // Applied after End() so a host that services the resize synchronously
+        // cannot re-enter the UI in the middle of this window's submission.
+        if (grip.resized)
+            setSize(grip.width, grip.height);
     }
 
 private:
@@ -666,6 +688,7 @@ private:
     float  meterLevel = 0.0f;
     int    currentPreset = -1;
     bool   showSupporters = false;
+    bool   gripCursorSet = false;   // NWSE cursor currently pushed to the window
     float  s = 1.0f;
     ImVec2 org = ImVec2(0, 0);
 

@@ -3,7 +3,7 @@ name: Build Sunset Circuits (DPF)
 # Release + CI-debug workflow for the DPF-based Sunset Circuits synth.
 #
 # The DPF ports live outside the JUCE release build graph (build.yml), so they
-# need their own matrix: this checks out DISTRHO/DPF + DISTRHO/DPF-Widgets at
+# need their own matrix: this checks out dusk-audio/DPF (our fork) + DISTRHO/DPF-Widgets at
 # pinned SHAs and builds plugins/sunset-circuits/dpf-plugin (VST3 + CLAP + LV2
 # everywhere, plus a notarizable AU on macOS with an auval pass).
 #
@@ -37,13 +37,13 @@ on:
       - '.github/workflows/dpf-release.yml'
   workflow_dispatch:
 
-# DPF is pinned to the dusk-audio/DPF fork (branch dusk/clap-latency-activate):
-# upstream DISTRHO/DPF reports CLAP latency changes outside clap_plugin::activate
-# and fails 24 clap-validator tests. Drop the fork pin once upstream merges the
-# fix. DPF-Widgets stays on upstream. Bump both SHAs together and re-run the
-# dispatch matrix before tagging.
+# DPF is pinned to the dusk-audio/DPF fork (branch main), which is the
+# permanent source of truth for our DPF patches (CLAP latency-in-activate fix
+# and later work). DPF-Widgets stays on upstream DISTRHO (no fork). Keep SHAs
+# in sync with dpf-build.yml, dpf-au-test.yml and docker/build_release.sh, and
+# re-run the dispatch matrix before tagging.
 env:
-  DPF_SHA: 2f98c651acd70cfbcd9f807b7e73ea1e39ecc2cb
+  DPF_SHA: 45a7e30e5343231019e6d5f09629bae13f5899c7
   DPFWIDGETS_SHA: 730da6397904da66d99667c1cb30fc77fc3d794a
   PLUGIN_DIR: plugins/sunset-circuits/dpf-plugin
   SLUG: sunset-circuits
@@ -118,6 +118,8 @@ jobs:
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 40
     container:
       image: ubuntu:20.04  # glibc 2.31, matching the JUCE fleet (build.yml)
@@ -164,6 +166,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -172,6 +176,7 @@ jobs:
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -180,6 +185,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -228,6 +234,8 @@ jobs:
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
     timeout-minutes: 40
     container:
       image: ubuntu:22.04  # glibc 2.35, matching build.yml's arm job
@@ -270,6 +278,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -278,6 +288,7 @@ jobs:
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -286,6 +297,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -333,12 +345,16 @@ jobs:
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
+    permissions:
+      contents: read
     timeout-minutes: 60
     env:
       PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -347,6 +363,7 @@ jobs:
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -355,6 +372,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -500,12 +518,16 @@ jobs:
     # tag push and a manual dispatch.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: macos-14
+    permissions:
+      contents: read
     timeout-minutes: 60
     env:
       PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -514,6 +536,7 @@ jobs:
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -522,6 +545,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Install Ninja
         run: brew install ninja
@@ -654,6 +678,8 @@ jobs:
   test-linux:
     needs: setup
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # Generous: the shipping linux job budgets 40 minutes for the build alone,
     # and this one adds the gate suite and pluginval on top of a build of
     # comparable size.
@@ -680,6 +706,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -707,6 +735,7 @@ jobs:
           ref: ${{ env.DPF_SHA }}
           path: DPF
           submodules: recursive
+          persist-credentials: false
 
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
@@ -715,6 +744,7 @@ jobs:
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
+          persist-credentials: false
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -864,7 +894,7 @@ jobs:
           # a DPF CLAP-wrapper bug that failed 24 of 44 tests on any DPF plugin
           # declaring a latency. It is fixed in DistrhoPluginCLAP.cpp by only
           # announcing latency changes from within clap_plugin::activate; see the
-          # DPF_SHA TODO at the top of this file for the fork bump this depends on.
+          # DPF_SHA pin at the top of this file.
           # Measured locally against the fixed DPF: 44 tests run, 33 passed,
           # 10 skipped, 1 warning, 0 failed.
           python3 - <<'PY'
@@ -930,6 +960,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

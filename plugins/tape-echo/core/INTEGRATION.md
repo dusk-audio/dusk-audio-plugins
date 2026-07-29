@@ -70,7 +70,7 @@ runs native).
 
 ```
 tape-echo-dpf/
-├── dpf/                     # git submodule: github.com/dusk-audio/DPF (fork; branch dusk/clap-latency-activate)
+├── dpf/                     # git submodule: github.com/dusk-audio/DPF (our fork)
 ├── plugin/
 │   ├── DistrhoPluginInfo.h
 │   ├── TapeEchoPlugin.cpp  # DSP wrapper (below)

@@ -47,19 +47,16 @@ on:
       - 'plugins/shared-dpf/**'
       - '.github/workflows/dpf-build.yml'
 
-# DPF is our fork (dusk-audio/DPF), branch dusk/clap-latency-activate. Upstream's
-# CLAP wrapper reported latency changes outside clap_plugin::activate(), violating
-# the CLAP spec (24 clap-validator failures); the fork constrains latency changes
-# to activate() and serves a constant snapshot while active. One file changed vs
-# upstream base 4238e1c. DPF_REF pins that fix commit. DPF-Widgets stays upstream
+# DPF is our fork (dusk-audio/DPF), branch main — the permanent source of truth
+# for our DPF patches (CLAP latency changes constrained to activate(), AU
+# preset + CLAP state hardening, Wayland/CI work). DPF-Widgets stays upstream
 # (DISTRHO/DPF-Widgets) — only DPF is forked.
-# To advance DPF: rebase the branch onto newer upstream in ~/projects/DPF,
-# re-run clap-validator, confirm the latency signature is absent, review any
-# remaining advisory suite failures, push to dusk-audio/DPF, THEN bump DPF_REF.
-# Drop the fork (repoint checkouts to DISTRHO/DPF) only once upstream merges an
-# equivalent fix, verified with clap-validator first. Bump deliberately.
+# To advance DPF: land changes on fork main in ~/projects/DPF, re-run
+# clap-validator and pluginval against the rebuilt plugins, push to
+# dusk-audio/DPF, THEN bump DPF_REF. Keep SHAs in sync with dpf-release.yml,
+# dpf-au-test.yml and docker/build_release.sh. Bump deliberately.
 env:
-  DPF_REF: f2c9f01f510cf0c04a7c9c5a2873921ac9ce2ee2
+  DPF_REF: 45a7e30e5343231019e6d5f09629bae13f5899c7
   DPFWIDGETS_REF: 730da6397904da66d99667c1cb30fc77fc3d794a
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk

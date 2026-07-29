@@ -177,8 +177,33 @@ protected:
         if (showCredits)
             drawCredits(dl, winW, winH);
 
+        // Own resize grip, submitted LAST so it wins ImGui's hover race (over the
+        // preset popup and the credits card alike) and paints over everything.
+        // AUv2 hosts (Logic) never provide a window grip of their own; on VST3/CLAP
+        // the host's grip stays available and this is simply a second way to do the
+        // same thing. `designH`, not kDesignH: the design is shorter with the graph
+        // hidden, and the grip must drive the same aspect the host is constrained
+        // to (see updateSizeConstraints) or the two would fight over the height.
+        const duskdpf::ResizeGripState grip =
+            panel.resizeGrip(dl, winW, winH, kDesignW, designH);
+
         ImGui::End();
         ImGui::PopStyleVar(2);
+
+        // Cursor feedback. The DPF-Widgets ImGui backend never forwards
+        // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
+        // Edge-triggered: setCursor() is a window-level call, not a per-frame one.
+        if (grip.hot != gripCursorSet)
+        {
+            gripCursorSet = grip.hot;
+            setCursor(gripCursorSet ? DGL_NAMESPACE::kMouseCursorUpLeftDownRight
+                                    : DGL_NAMESPACE::kMouseCursorArrow);
+        }
+
+        // Applied after End() so a host that services the resize synchronously
+        // cannot re-enter the UI in the middle of this window's submission.
+        if (grip.resized)
+            setSize(grip.width, grip.height);
     }
 
     // Control-area vertical remap: maps a design Y in the [220..662] band to the
@@ -1199,6 +1224,7 @@ private:
     bool showFft = true;         // spectrum analyzer overlay on the graph
     int  graphRangeIdx = 2;      // 0:+-6 1:+-12 2:+-18 3:+-30 4:Warped
     bool needResize = false;
+    bool gripCursorSet = false;  // NWSE cursor currently pushed to the window
     float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f; // stepped filter-knob drag origin (HPF/LPF)
     bool  stepModReset_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
