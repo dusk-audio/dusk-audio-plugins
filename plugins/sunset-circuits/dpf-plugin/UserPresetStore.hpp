@@ -4,7 +4,7 @@
 //
 // UserPresetStore.hpp — Sunset Circuits user-preset library (UI-side only).
 //
-// A file-based patch bank. The host already persists the 223 core params inside
+// A file-based patch bank. The host already persists all core params inside
 // its session (DISTRHO_PLUGIN_WANT_STATE stays 0), so this is purely a personal
 // library the player can save to / recall from, independent of any DAW.
 //
@@ -22,6 +22,8 @@
 //   Linux:   $XDG_CONFIG_HOME (or ~/.config)/DuskAudio/SunsetCircuits/presets/
 //   macOS:   ~/Library/Application Support/DuskAudio/SunsetCircuits/presets/
 //   Windows: %APPDATA%/DuskAudio/SunsetCircuits/presets/
+// Test/portable installs may explicitly set SUNSET_CIRCUITS_CONFIG_HOME; normal
+// platform environment variables retain the behavior documented above.
 // Filename = sanitized display name + ".scpreset".
 //
 // Pure C++17 <filesystem>. No exceptions escape (all APIs return bool/optional);
@@ -49,6 +51,7 @@ namespace scpreset {
 inline constexpr int   kFormatVersion   = 1;
 inline constexpr char  kFileExt[]       = ".scpreset";
 inline constexpr int   kMaxUserPresets  = 512;   // hard cap; extras ignored
+inline constexpr char  kPortableConfigEnv[] = "SUNSET_CIRCUITS_CONFIG_HOME";
 // First bytes of every file save() writes, before the version number. loadInto()
 // validates the same prefix (plus the version) through its sscanf format; the
 // listing scan uses it to fail closed on a foreign file before reading its body.
@@ -62,7 +65,7 @@ struct Entry
     // Engine the patch selects, read straight out of the file's `mode=` line. It
     // is DERIVED state, not new metadata: it is the value loadInto() would put in
     // out[kParamMode], cached here so a listing (the preset browser's mode badge
-    // and mode filter) does not have to parse 223 symbols per file per frame.
+    // and mode filter) does not have to parse every symbol per file per frame.
     // Falls back to the Mode default when the file omits the symbol, which is
     // exactly what a load of that file would leave in place.
     int                   mode = (int)kParamDefs[kParamMode].def;
@@ -77,6 +80,18 @@ inline std::filesystem::path presetDir()
 {
     namespace fs = std::filesystem;
     fs::path base;
+
+    // Dedicated opt-in for isolated tests and portable installations. Keep this
+    // separate from XDG_CONFIG_HOME: XDG may be present in a normal macOS login,
+    // but must not move the native Application Support preset library.
+    if (const char* portable = std::getenv(kPortableConfigEnv);
+        portable && *portable)
+    {
+        base = fs::path(portable);
+        base /= "DuskAudio"; base /= "SunsetCircuits"; base /= "presets";
+        return base;
+    }
+
    #if defined(_WIN32)
     if (const char* appdata = std::getenv("APPDATA"); appdata && *appdata)
         base = fs::path(appdata);
@@ -172,7 +187,7 @@ public:
         }
     }
 
-    // Write the 223 core params to <sanitized name>.scpreset. Returns false on
+    // Write the core params to <sanitized name>.scpreset. Returns false on
     // an empty/invalid name or any IO error. Overwrites an existing file (the
     // UI runs the overwrite-confirm flow before calling this).
     //
@@ -188,7 +203,7 @@ public:
     //     reason), which is where ENOSPC/EACCES/ENAMETOOLONG on the FILE land;
     //   * the final flush, which is where a full disk usually actually shows up —
     //     the writes above are buffered, so open can succeed and only the flush
-    //     of the ~223-line body hits the wall.
+    //     of the parameter body hits the wall.
     bool save(const std::string& displayName, const float* values, int nValues,
               std::string* errOut = nullptr)
     {
@@ -336,7 +351,7 @@ private:
     }
 
     // Read the two listing fields — display name and Mode — out of a preset file
-    // without a full 223-symbol parse. Both sit at the top of anything save() wrote
+    // without a full parameter-symbol parse. Both sit at the top of anything save() wrote
     // (`name=` is line 2 and `mode=` line 3, Mode being core param 0), so the scan
     // normally stops after three lines. `name` is left empty when the header is
     // missing (the caller falls back to the filename stem) and `mode` keeps the

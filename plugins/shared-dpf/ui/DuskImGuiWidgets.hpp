@@ -281,6 +281,9 @@ public:
     //                     shows `name` instead of the value, and the bubble is not
     //                     suppressed on persistent / external-readout knobs.
     //                     Default false keeps the fleet's value-on-hover behaviour.
+    //   bubbleOnActiveOnly: suppress the resting hover bubble while preserving a
+    //                     live value bubble during a drag. Useful when a separate
+    //                     descriptive tooltip already identifies the control.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -292,7 +295,8 @@ public:
               bool contextMenu = false, const char* overrideText = nullptr,
               bool hasExternalReadout = false,
               float dispMin = 0.0f, float dispMax = 0.0f,
-              bool nameOnHover = false)
+              bool nameOnHover = false,
+              bool bubbleOnActiveOnly = false)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -304,7 +308,8 @@ public:
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
         const bool hovered = ImGui::IsItemHovered();
         const bool active  = ImGui::IsItemActive();
-        if (tooltip != nullptr && hovered && !active)
+        if (tooltip != nullptr && !active
+            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("%s", tooltip);
 
         const bool editing = (valueEditId_ == id);
@@ -470,7 +475,9 @@ public:
             }
         }
         else if ((hovered || active) && valueEditId_ != id
-                 && (nameOnHover || (!persistent && !hasExternalReadout)))
+                 && (bubbleOnActiveOnly
+                         ? active
+                         : (nameOnHover || (!persistent && !hasExternalReadout))))
         {
             // Floating value bubble — by default only for knobs with NO other live
             // readout. Knobs that already show their value beneath them (persistent,
