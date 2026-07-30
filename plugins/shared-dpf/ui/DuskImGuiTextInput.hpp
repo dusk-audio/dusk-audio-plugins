@@ -75,26 +75,34 @@ public:
                 wasActive_ = (GetFocus() == editor);
             }
         }
-        else if (wasActive_)
+        else
         {
-            // If the user has already focused another window, leave it alone.
-            if (GetFocus() == editor)
+            if (wasActive_)
             {
-                HWND const parent = GetParent(editor);
-                // A dead HWND can be recycled by an unrelated window, so
-                // IsWindow() alone proves nothing: require the stored handle to
-                // still belong to this editor's hierarchy, else use the parent.
-                HWND const target =
-                    restoreFocus_ != nullptr && IsWindow(restoreFocus_)
-                    && (restoreFocus_ == parent
-                        || (parent != nullptr && IsChild(parent, restoreFocus_)))
-                        ? restoreFocus_
-                        : parent;
-                if (target != nullptr)
-                    SetFocus(target);
+                // If the user has already focused another window, leave it alone.
+                if (GetFocus() == editor)
+                {
+                    HWND const parent = GetParent(editor);
+                    // A dead HWND can be recycled by an unrelated window, so
+                    // IsWindow() alone proves nothing: require the stored handle
+                    // to still belong to this editor's hierarchy, else use the
+                    // parent.
+                    HWND const target =
+                        restoreFocus_ != nullptr && IsWindow(restoreFocus_)
+                        && (restoreFocus_ == parent
+                            || (parent != nullptr && IsChild(parent, restoreFocus_)))
+                            ? restoreFocus_
+                            : parent;
+                    if (target != nullptr)
+                        SetFocus(target);
+                }
+                wasActive_ = false;
             }
+            // Cleared on every frame without text input, which also covers an
+            // ABANDONED activation (captured, but SetFocus never took, so
+            // wasActive_ never latched): the next activation has to capture the
+            // focus owner as it is then, not a handle left over from that try.
             restoreFocus_ = nullptr;
-            wasActive_ = false;
         }
 #else
         (void)ui;
