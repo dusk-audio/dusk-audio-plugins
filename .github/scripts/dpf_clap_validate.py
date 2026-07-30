@@ -85,21 +85,48 @@ def _sha256(path):
     return digest.hexdigest()
 
 
-def _extract_zip_safely(archive, workdir):
-    """extractall() the archive, refusing any member that escapes workdir.
+def _reject_escaping_members(names, workdir):
+    """Fail closed on any archive member that would land outside workdir.
 
     The pinned SHA-256 already fixes the archive's contents, so this is
     defence in depth: absolute member paths, ../ traversals and separator
-    tricks all fail closed instead of writing outside the temp dir.
+    tricks all exit instead of writing outside the temp dir.
     """
     base = os.path.realpath(workdir)
-    for member in archive.namelist():
-        target = os.path.realpath(os.path.join(base, member))
+    for name in names:
+        target = os.path.realpath(os.path.join(base, name))
         if target != base and not target.startswith(base + os.sep):
             log("::error::clap-validator archive member escapes the extraction "
-                f"directory: {member!r}")
+                f"directory: {name!r}")
             sys.exit(2)
+
+
+def _extract_zip_safely(archive, workdir):
+    _reject_escaping_members(archive.namelist(), workdir)
     archive.extractall(workdir)
+
+
+def _extract_tar_safely(archive, workdir):
+    """extractall() a tar, using the 'data' filter only where it exists.
+
+    tarfile's filter= keyword arrived in 3.12 and was backported to the 3.8-3.11
+    security releases (tarfile.data_filter is the feature probe). Older
+    interpreters must not be passed it -- filter= raises TypeError there -- so
+    the member checks below carry the protection on their own: paths are
+    confined to workdir and only regular files and directories are extracted,
+    which rules out the link/device members the data filter guards against.
+    """
+    members = archive.getmembers()
+    _reject_escaping_members([m.name for m in members], workdir)
+    for member in members:
+        if not (member.isfile() or member.isdir()):
+            log("::error::clap-validator tarball member is not a regular file "
+                f"or directory: {member.name!r}")
+            sys.exit(2)
+    if hasattr(tarfile, "data_filter"):
+        archive.extractall(workdir, filter="data")
+    else:
+        archive.extractall(workdir)
 
 
 def resolve_binary(workdir):
@@ -145,7 +172,7 @@ def resolve_binary(workdir):
     # Linux/macOS assets wrap a .tar.gz; Windows ships the .exe directly.
     for tgz in glob.glob(os.path.join(workdir, "*.tar.gz")):
         with tarfile.open(tgz) as t:
-            t.extractall(workdir, filter="data")
+            _extract_tar_safely(t, workdir)
 
     for root, _dirs, files in os.walk(workdir):
         for name in ("clap-validator", "clap-validator.exe"):

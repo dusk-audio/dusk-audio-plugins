@@ -38,46 +38,60 @@ public:
         HWND const editor = reinterpret_cast<HWND>(
             ui.getParentWindow().getNativeWindowHandle());
 
+        // No native handle yet: leave wasActive_ alone so activation is retried
+        // on a later frame rather than latched as already done, which would
+        // leave WantTextInput stuck with the host still holding the keyboard.
         if (editor == nullptr)
-        {
-            wasActive_ = wantsText;
             return;
-        }
 
-        if (wantsText && !wasActive_)
+        if (wantsText)
         {
-            HWND const parent = GetParent(editor);
-            HWND const focused = GetFocus();
+            if (!wasActive_)
+            {
+                HWND const parent = GetParent(editor);
+                HWND const focused = GetFocus();
 
-            // Only remember focus from inside the same embedded host hierarchy.
-            // Restoring an unrelated application after an Alt-Tab would be a
-            // surprising focus steal.
-            restoreFocus_ =
-                focused != nullptr
-                && (focused == parent
-                    || (parent != nullptr && IsChild(parent, focused)))
-                    ? focused
-                    : parent;
+                // Only remember focus from inside the same embedded host
+                // hierarchy, and never the editor itself: restoring an
+                // unrelated application after an Alt-Tab would be a surprising
+                // focus steal, and restoring the editor would never hand the
+                // keyboard back to the host.
+                restoreFocus_ =
+                    focused != nullptr && focused != editor
+                    && (focused == parent
+                        || (parent != nullptr && IsChild(parent, focused)))
+                        ? focused
+                        : parent;
 
-            if (focused != editor)
-                SetFocus(editor);
+                if (focused != editor)
+                    SetFocus(editor);
+
+                // Latch only once the native editor really owns focus; a failed
+                // SetFocus retries on the next frame.
+                wasActive_ = (GetFocus() == editor);
+            }
         }
-        else if (!wantsText && wasActive_)
+        else if (wasActive_)
         {
             // If the user has already focused another window, leave it alone.
             if (GetFocus() == editor)
             {
+                HWND const parent = GetParent(editor);
+                // A dead HWND can be recycled by an unrelated window, so
+                // IsWindow() alone proves nothing: require the stored handle to
+                // still belong to this editor's hierarchy, else use the parent.
                 HWND const target =
                     restoreFocus_ != nullptr && IsWindow(restoreFocus_)
+                    && (restoreFocus_ == parent
+                        || (parent != nullptr && IsChild(parent, restoreFocus_)))
                         ? restoreFocus_
-                        : GetParent(editor);
+                        : parent;
                 if (target != nullptr)
                     SetFocus(target);
             }
             restoreFocus_ = nullptr;
+            wasActive_ = false;
         }
-
-        wasActive_ = wantsText;
 #else
         (void)ui;
 #endif

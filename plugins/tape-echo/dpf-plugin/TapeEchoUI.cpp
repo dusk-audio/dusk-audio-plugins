@@ -733,6 +733,11 @@ private:
         for (const char* var : { "APPDATA", "LOCALAPPDATA" })
             if (const char* v = std::getenv(var); v != nullptr && *v != '\0')
             { base = v; break; }
+       #elif defined(__APPLE__)
+        // XDG_CONFIG_HOME is deliberately NOT read here: a mac with it set in a
+        // dotfile would otherwise stop seeing the library shipped builds wrote.
+        if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+            base = std::string(home) + "/.config";
        #else
         if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
             base = xdg;
@@ -742,6 +747,30 @@ private:
         if (base.empty())
             base = ".";
         return base + "/DuskAudio/TapeEcho2/presets";
+    }
+
+    // Strict field parse, shared by the library scan and the loader so a file can
+    // never mean two things. atof() reports failure as 0.0 and happily yields
+    // NaN/inf for "nan"/"1e999", all of which would reach the DSP through setP();
+    // require the whole field to be one finite number and clamp it into the
+    // parameter's declared range (mode and sync division included, before either
+    // is folded to an index). Returns false for a line to skip.
+    static bool parsePresetValue(const std::string& line, std::size_t valueStart,
+                                 uint32_t param, float& out)
+    {
+        const char* const first = line.c_str() + valueStart;
+        char* end = nullptr;
+        const double d = std::strtod(first, &end);
+        if (end == first || !std::isfinite(d))   // unparsable, or over/underflowed to inf
+            return false;
+        while (*end == ' ' || *end == '\t' || *end == '\r')
+            ++end;
+        if (*end != '\0')                        // trailing junk: not a number
+            return false;
+        const TeParam& p = kTeParams[param];
+        out = (float)(d < (double)p.min ? (double)p.min
+                                        : (d > (double)p.max ? (double)p.max : d));
+        return true;
     }
 
     void scanUserPresets()
@@ -767,14 +796,31 @@ private:
                     continue;
                 const std::string key = line.substr(0, eq);
                 if (key == "name") { up.name = line.substr(eq + 1); continue; }
-                const float v = (float)std::atof(line.c_str() + eq + 1);
                 for (uint32_t i = 0; i < kParamCount; ++i)
-                    if (teIsPresetParam(i) && key == kTeParams[i].id) { up.vals[i] = v; break; }
+                    if (teIsPresetParam(i) && key == kTeParams[i].id)
+                    {
+                        float v = 0.0f;
+                        if (parsePresetValue(line, eq + 1, i, v))
+                            up.vals[i] = v;   // else keep the default already in place
+                        break;
+                    }
             }
             userPresets.push_back(std::move(up));
         }
         std::sort(userPresets.begin(), userPresets.end(),
                   [](const UserPreset& a, const UserPreset& b) { return a.name < b.name; });
+    }
+
+    // Display name stored inside a preset file, or "" when the file is missing or
+    // carries no name= line (a foreign or truncated file in our own directory).
+    static std::string storedPresetName(const std::string& path)
+    {
+        std::ifstream f(path);
+        std::string line;
+        while (std::getline(f, line))
+            if (line.compare(0, 5, "name=") == 0)
+                return line.substr(5);
+        return {};
     }
 
     void saveUserPreset(const char* rawName)
@@ -784,12 +830,33 @@ private:
             name.pop_back();
         if (name.empty())
             return;
+        const std::string dir = configDir();
         std::error_code ec;
-        std::filesystem::create_directories(configDir(), ec);
-        std::string fn;
+        std::filesystem::create_directories(dir, ec);
+        // Filename stem: every non-alphanumeric collapses to '_', so distinct
+        // display names can share a stem ("A B" and "A-B" both give "A_B").
+        // Re-saving the SAME name still overwrites its own file; a stem clash
+        // with a different name takes the next free suffix instead of silently
+        // clobbering that preset.
+        std::string stem;
         for (char c : name)
-            fn += std::isalnum((unsigned char)c) ? c : '_';
-        std::ofstream f(configDir() + "/" + fn + ".tepreset", std::ios::trunc);
+            stem += std::isalnum((unsigned char)c) ? c : '_';
+        std::string path;
+        bool usable = false;
+        for (int n = 1; n <= 99 && !usable; ++n)
+        {
+            path = dir + "/" + stem
+                 + (n == 1 ? std::string() : "_" + std::to_string(n)) + ".tepreset";
+            // A free path, or one whose file already stores THIS display name.
+            // An existing file without a name= line is not free: the library
+            // lists it under its stem, so overwriting it would drop a preset
+            // the player can see.
+            usable = !std::filesystem::exists(path, ec)
+                  || storedPresetName(path) == name;
+        }
+        if (!usable)
+            return;   // 99 colliding stems: refuse rather than overwrite one
+        std::ofstream f(path, std::ios::trunc);
         if (!f)
             return;
         f << "name=" << name << "\n";
@@ -825,9 +892,14 @@ private:
             const std::string key = line.substr(0, eq);
             if (key == "name")
                 continue;
-            const float v = (float)std::atof(line.c_str() + eq + 1);
             for (uint32_t i = 0; i < kParamCount; ++i)
-                if (teIsPresetParam(i) && key == kTeParams[i].id) { setP(i, v); break; }
+                if (teIsPresetParam(i) && key == kTeParams[i].id)
+                {
+                    float v = 0.0f;
+                    if (parsePresetValue(line, eq + 1, i, v))
+                        setP(i, v);   // else keep the default written above
+                    break;
+                }
         }
         currentPreset = -1;
         currentUserName = name;
