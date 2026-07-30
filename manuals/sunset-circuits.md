@@ -117,14 +117,17 @@ Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level
 
 Oracle is modeled on a late-70s American five-voice polysynth with two true analog oscillators per voice and a self-oscillating low-pass filter. Where Cosmos is clean and stable, Oracle is characterful and alive. The filter reaches self-oscillation at high resonance, so it can sing on its own.
 
-The signature of Oracle is poly-modulation. The mode sub-panel is a four-knob **POLY-MOD** grid that routes modulation sources into destinations per voice:
+The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **POLY-MOD / SYNC** section: filter envelope and oscillator 2 can each reach oscillator 1 pitch, oscillator 1 pulse width, and the filter.
 
 - **FEnv to OscA**: the filter envelope modulates oscillator 1 pitch, for pitched attack transients and bell tones.
+- **FEnv to PW**: the filter envelope modulates oscillator 1 pulse width, for moving attacks and animated pulse tones.
+- **FEnv to Filter**: the filter envelope is added on top of the filter cutoff, for extra bite.
 - **OscB to OscA**: oscillator 2 modulates oscillator 1 pitch at audio rate, for clangorous inharmonic timbres.
 - **OscB to PW**: oscillator 2 modulates oscillator 1 pulse width, for animated pulse textures.
-- **FEnv to Filter**: the filter envelope is added on top of the filter cutoff, for extra bite.
+- **OscB to Filter**: oscillator 2 modulates filter cutoff at audio rate, for growling and metallic filter FM.
+- **Sync**: oscillator 1 hard-syncs oscillator 2, creating swept harmonic edges when their pitches differ.
 
-Mode-specific controls visible in Oracle: the **Cross Mod** knob and the four poly-mod knobs. There is no sub oscillator and no filter high-pass in this mode; the OSC3/SUB panel is inactive.
+Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync** button. There is no sub oscillator and no filter high-pass in this mode; the OSC3/SUB panel is inactive.
 
 ### Mono: aggressive monophonic
 
@@ -179,10 +182,10 @@ The pattern itself lives in the sequencer, which expands to four lanes in Acid m
 | Osc 3 wave and level | no | no | no | yes | no | no |
 | Sub wave and level | yes | no | yes | no | no | no |
 | Filter HP | yes | no | no | no | no | no |
-| Cross Mod | yes | yes | no | no | no | no |
-| Poly-mod (4 knobs) | no | yes | no | no | no | no |
+| Cross Mod | yes | no | no | no | no | no |
+| Poly-mod (6 knobs) | no | yes | no | no | no | no |
 | Ring Mod | no | no | yes | yes | no | no |
-| Hard Sync | no | no | yes | yes | no | no |
+| Hard Sync | no | yes | yes | yes | no | no |
 | FM Amount | no | no | no | yes | no | no |
 | S&H Rate | no | no | no | yes | no | no |
 | Chorus I / II / I+II | yes | no | no | no | no | no |
@@ -205,21 +208,21 @@ Operators are numbered 1 to 4. In the table, `a to b` means operator `a` modulat
 |---|---|---|---|---|
 | 1 | Serial | 4 to 3, 3 to 2, 2 to 1 | 1 | One long modulation stack into a single carrier. The brightest and most metallic algorithm; the classic bright bass and lead voice. |
 | 2 | Stack-2M | 4 to 2, 3 to 2, 2 to 1 | 1 | Two modulators feed one, which feeds the carrier. Rich and vocal, good for reeds and complex leads. |
-| 3 | Branch | 4 to 2, 4 to 3, 2 to 1, 3 to 1 | 1 | One modulator fans out into two, both of which modulate the carrier. Dense and harmonically complex. |
-| 4 | Y-Split | 4 to 3, 3 to 1, 3 to 2 | 1, 2 | A serial modulation chain that splits into two carriers. The classic tine electric-piano structure. |
+| 3 | Split Stack | 3 to 2, 2 to 1, 4 to 1 | 1 | A two-operator stack and a second modulator meet at one carrier. Layered and harmonically dense. |
+| 4 | Stack Fork | 4 to 3, 3 to 1, 2 to 1 | 1 | A serial branch and a direct modulator meet at one carrier. Bright and responsive without the full serial chain. |
 | 5 | Dual | 2 to 1, 4 to 3 | 1, 3 | Two independent two-operator stacks. Layer a body tone against a tine or edge; the workhorse e-piano algorithm. |
-| 6 | Twin+1 | 3 to 1, 3 to 2 | 1, 2, 4 | One modulator into two carriers, plus a third clean standalone carrier. Adds a pure sine partial under a modulated pair. |
+| 6 | Three Carrier | 4 to 1, 4 to 2, 4 to 3 | 1, 2, 3 | One modulator colors three parallel carriers. Broad, layered tones retain a strong pitched center. |
 | 7 | Tri+FM | 4 to 3 | 1, 2, 3 | One modulated tone plus two clean carriers. Mostly additive with a single FM color; organ-like with an edge. |
 | 8 | Additive | (none) | 1, 2, 3, 4 | Four parallel carriers, no modulation. Pure additive synthesis; drawbar-organ and formant tones. |
 
 ```
-  Alg 1 (serial)       Alg 4 (Y-split)      Alg 5 (dual stack)     Alg 8 (additive)
-     [4]                  [4]                  [2]   [4]            [1][2][3][4]
-      |                    |                    |     |              |  |  |  |
-     [3]                  [3]                  [1]   [3]             ============
-      |                   /  \                  |     |               (output bus)
-     [2]                [1]  [2]              ==== output bus ====
-      |                 ==== output ====
+  Alg 1 (serial)      Alg 4 (stack fork)     Alg 5 (dual stack)     Alg 8 (additive)
+     [4]                  [4]   [2]              [2]   [4]            [1][2][3][4]
+      |                    |     |                |     |              |  |  |  |
+     [3]                  [3]   /                [1]   [3]             ============
+      |                     \  /                  |     |               (output bus)
+     [2]                    [1]                 ==== output bus ====
+      |                  ==== output ====
      [1]
    ==== output ====
 ```
