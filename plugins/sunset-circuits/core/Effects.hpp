@@ -199,8 +199,10 @@ private:
 };
 
 //==============================================================================
-// Vintage dual-BBD chorus (Cosmos mode). Two lines, fixed triangle LFOs,
-// inverted-phase stereo, ~10 kHz BBD rolloff. Verbatim tunings.
+// Vintage dual-BBD chorus (Cosmos mode).  The variable delay remains host-rate,
+// while the signal path models the audible parts around a bucket-brigade line:
+// pre-emphasis, two-pole anti-alias filtering, companding/expanding, quantised
+// clock delay, clock noise, and two-pole reconstruction filtering.
 enum class CosmosChorusMode { Off = 0, I, II, Both };
 
 class CosmosChorusEffect
@@ -215,8 +217,13 @@ public:
             bufL[c].assign((size_t)maxDelay, 0.0f);
             bufSize[c] = maxDelay; writePos[c] = 0; lfoPhase[c] = 0.0f;
         }
-        lpCoeff = std::exp(-kTwoPi * 10000.0f / sr);
-        lpStateL = lpStateR = 0.0f;
+        preEmphCoeff = 1.0f - std::exp(-kTwoPi * 1500.0f / sr);
+        preCoeff = 1.0f - std::exp(-kTwoPi * 12500.0f / sr);
+        postCoeff[0] = 1.0f - std::exp(-kTwoPi * 9200.0f / sr);
+        postCoeff[1] = 1.0f - std::exp(-kTwoPi * 10800.0f / sr);
+        dcCoeff = std::exp(-kTwoPi * 12.0f / sr);
+        noiseRng.seed(0xC05C05u);
+        reset();
     }
 
     void setMode(CosmosChorusMode m) noexcept { mode = m; }
@@ -227,6 +234,15 @@ public:
         const float dryL = left, dryR = right;
         float wetL = 0.0f, wetR = 0.0f;
         int numActive = 0;
+
+        const float mono = (left + right) * 0.5f;
+        // Fixed pre-emphasis lifts the detail that the BBD path will lose.
+        preEmphLP += (mono - preEmphLP) * preEmphCoeff;
+        const float emphasized = mono + (mono - preEmphLP) * 0.32f;
+        preLP1 += (emphasized - preLP1) * preCoeff;
+        preLP2 += (preLP1 - preLP2) * preCoeff;
+        const float compressed = preLP2 == 0.0f
+            ? 0.0f : std::copysign(std::sqrt(std::abs(preLP2)), preLP2);
 
         for (int c = 0; c < 2; ++c)
         {
@@ -239,16 +255,27 @@ public:
             const float lfo = 2.0f * std::abs(2.0f * (lfoPhase[c] - std::floor(lfoPhase[c] + 0.5f))) - 1.0f;
             const float centerDelay = sr * 0.003f;
             const float modDepth = sr * 0.002f;
-            const float delay = centerDelay + lfo * modDepth;
+            float delay = centerDelay + lfo * modDepth;
+            // Bucket clocks do not move continuously.  Sixteenth-sample delay
+            // steps are above the host sample resolution but still leave the
+            // faint clock texture after reconstruction filtering.
+            delay += noiseRng.nextBipolar() * 0.018f;
+            delay = std::round(delay * 16.0f) * (1.0f / 16.0f);
 
-            const float mono = (left + right) * 0.5f;
-            bufL[c][(size_t)writePos[c]] = mono;
-            // (bufR removed: the wet signal is derived from this mono line; the
-            // right channel is the phase-inverted copy below, not a second buffer.)
+            const float bucketNoise = noiseRng.nextBipolar() * 0.00011f;
+            bufL[c][(size_t)writePos[c]] = compressed + bucketNoise;
 
             float wet = readBuf(bufL[c], bufSize[c], writePos[c], delay);
-            wet = wet * (1.0f - lpCoeff) + (c == 0 ? lpStateL : lpStateR) * lpCoeff;
-            if (c == 0) lpStateL = wet; else lpStateR = wet;
+            postLP1[c] += (wet - postLP1[c]) * postCoeff[c];
+            postLP2[c] += (postLP1[c] - postLP2[c]) * postCoeff[c];
+            wet = postLP2[c];
+            // Complementary expander restores level and pushes the BBD noise
+            // down when the wanted signal is quiet.
+            wet *= std::abs(wet);
+            const float hp = wet - dcIn[c] + dcCoeff * dcOut[c];
+            dcIn[c] = wet;
+            dcOut[c] = isBad(hp) ? 0.0f : hp;
+            wet = dcOut[c] + noiseRng.nextBipolar() * 0.000035f;
 
             wetL += wet;
             wetR -= wet; // inverted for stereo width
@@ -273,8 +300,10 @@ public:
         {
             std::fill(bufL[c].begin(), bufL[c].end(), 0.0f);
             writePos[c] = 0; lfoPhase[c] = 0.0f;
+            postLP1[c] = postLP2[c] = 0.0f;
+            dcIn[c] = dcOut[c] = 0.0f;
         }
-        lpStateL = lpStateR = 0.0f;
+        preEmphLP = preLP1 = preLP2 = 0.0f;
     }
 
 private:
@@ -293,7 +322,12 @@ private:
     std::vector<float> bufL[2];
     int bufSize[2] = { 1, 1 }, writePos[2] = { 0, 0 };
     float lfoPhase[2] = { 0.0f, 0.0f };
-    float lpCoeff = 0.0f, lpStateL = 0.0f, lpStateR = 0.0f;
+    float preEmphCoeff = 1.0f, preCoeff = 1.0f;
+    float postCoeff[2] = { 1.0f, 1.0f };
+    float preEmphLP = 0.0f, preLP1 = 0.0f, preLP2 = 0.0f;
+    float postLP1[2] = {}, postLP2[2] = {};
+    float dcCoeff = 0.999f, dcIn[2] = {}, dcOut[2] = {};
+    Xorshift noiseRng;
 };
 
 //==============================================================================

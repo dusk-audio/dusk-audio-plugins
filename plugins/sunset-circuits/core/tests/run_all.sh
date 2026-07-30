@@ -72,7 +72,7 @@ if ! python3 ../../dpf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
-for g in pitch env reverb arp arp_seq filter_stability fx_reenable param_robust \
+for g in pitch env reverb arp arp_seq filter_stability accuracy fx_reenable param_robust \
          lfo_sync acid stuck sustain polyat steal zipper user_preset; do
     echo
     echo "########## ${g}_gate ##########"

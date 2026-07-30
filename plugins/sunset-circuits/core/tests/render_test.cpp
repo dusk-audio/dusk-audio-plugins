@@ -106,6 +106,8 @@ static_assert((int)kParamMode      == (int)msynth::pMode,      "param order drif
 static_assert((int)kParamArpStep0  == (int)msynth::pArpStep0,  "arp step drift");
 static_assert((int)kParamModSrc0   == (int)msynth::pModSrc0,   "mod matrix drift");
 static_assert((int)kParamSeqSlide0 == (int)msynth::pSeqSlide0, "seq slide drift");
+static_assert((int)kParamModOsc3Filter == (int)msynth::pModOsc3Filter,
+              "accuracy-upgrade block drift");
 static_assert((int)kNumCoreParams  == (int)msynth::kNumParams, "core param count drift");
 
 namespace

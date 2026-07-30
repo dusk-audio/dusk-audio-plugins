@@ -113,6 +113,10 @@ enum Param : int
     // rename (breaks presets). Inserting arpAccentPattern next to the other
     // arp params would silently reassign 150+ host indices.
     pArpAccentPattern,
+    // Accuracy expansion (append-only): complete Oracle Poly-Mod and expose the
+    // Modular audio-rate patch points / two filter revisions.
+    pPmFenvPWM, pPmOscBFilt,
+    pModFilterModel, pModOsc2Osc1, pModOsc3Filter,
     kNumParams
 };
 
@@ -366,7 +370,11 @@ private:
     // mid-fade belongs to the path that is still sounding), which is what
     // renderMode() is for; before the first snapshot it has not been primed yet, so
     // that case falls back to the parameter.
-    static constexpr float kModeFadeSeconds = 0.012f;
+    // The more strongly nonlinear per-model filters retain considerably more
+    // high-frequency energy than the former shared cascade.  A 36 ms C1 fade
+    // keeps switching those resonant paths inaudible without making mode changes
+    // feel sluggish.
+    static constexpr float kModeFadeSeconds = 0.036f;
     SynthMode renderMode() const noexcept
     {
         return haveLastSnap ? activeMode : (SynthMode)clampi((int)p(pMode), 0, 5);
