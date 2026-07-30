@@ -68,6 +68,10 @@ static constexpr TeParam kTeParams[kParamCount] =
     { "tempo_sync",     0.0f,  1.0f, 0.0f },
     { "sync_division",  0.0f, (float)(kNumSyncDivisions - 1), 2.0f },
     { "tape_age",       0.0f,  1.0f, 0.5f },
+    // kParamBypass carries DPF's own designation symbol ("dpf_bypass"), not this
+    // placeholder: it is excluded from presets by teIsPresetParam, so this `id` is
+    // never a file key and never has to match. min/max/def do mirror the
+    // designation's range, which is what the UI's POWER switch reads.
     { "bypass",         0.0f,  1.0f, 0.0f }, // kParamBypass  (host designation)
     { "out_level",      0.0f,  3.0f, 0.0f }, // kParamOutLevel (output-only meter)
     { "output_volume",  0.0f,  1.0f, 0.5f },

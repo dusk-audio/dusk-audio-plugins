@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -755,17 +757,22 @@ private:
     // require the whole field to be one finite number and clamp it into the
     // parameter's declared range (mode and sync division included, before either
     // is folded to an index). Returns false for a line to skip.
+    //
+    // Locale-independent on purpose, in both directions (saveUserPreset() imbues
+    // the same classic locale): plugin hosts do call setlocale(), and a
+    // comma-decimal locale makes strtod() stop at the '.' in "0.5" — every value
+    // in every preset file would silently read as its default.
     static bool parsePresetValue(const std::string& line, std::size_t valueStart,
                                  uint32_t param, float& out)
     {
-        const char* const first = line.c_str() + valueStart;
-        char* end = nullptr;
-        const double d = std::strtod(first, &end);
-        if (end == first || !std::isfinite(d))   // unparsable, or over/underflowed to inf
+        std::istringstream field(line.substr(valueStart));
+        field.imbue(std::locale::classic());
+        double d = 0.0;
+        field >> d;
+        if (field.fail() || !std::isfinite(d))   // unparsable, or overflowed to inf
             return false;
-        while (*end == ' ' || *end == '\t' || *end == '\r')
-            ++end;
-        if (*end != '\0')                        // trailing junk: not a number
+        char trailing = '\0';
+        if (field >> trailing)                   // trailing junk: not a number
             return false;
         const TeParam& p = kTeParams[param];
         out = (float)(d < (double)p.min ? (double)p.min
@@ -833,6 +840,8 @@ private:
         const std::string dir = configDir();
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
+        if (ec)
+            return;   // no usable library directory (permissions, file in the way)
         // Filename stem: every non-alphanumeric collapses to '_', so distinct
         // display names can share a stem ("A B" and "A-B" both give "A_B").
         // Re-saving the SAME name still overwrites its own file; a stem clash
@@ -850,15 +859,22 @@ private:
             // A free path, or one whose file already stores THIS display name.
             // An existing file without a name= line is not free: the library
             // lists it under its stem, so overwriting it would drop a preset
-            // the player can see.
-            usable = !std::filesystem::exists(path, ec)
-                  || storedPresetName(path) == name;
+            // the player can see. A path that cannot be probed is never assumed
+            // free either - exists() reports an error as false.
+            ec.clear();
+            const bool present = std::filesystem::exists(path, ec);
+            if (ec)
+                continue;
+            usable = !present || storedPresetName(path) == name;
         }
         if (!usable)
             return;   // 99 colliding stems: refuse rather than overwrite one
         std::ofstream f(path, std::ios::trunc);
         if (!f)
             return;
+        // Classic locale so the values are written with '.' whatever locale the
+        // host installed, matching parsePresetValue() on the way back in.
+        f.imbue(std::locale::classic());
         f << "name=" << name << "\n";
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (teIsPresetParam(i))

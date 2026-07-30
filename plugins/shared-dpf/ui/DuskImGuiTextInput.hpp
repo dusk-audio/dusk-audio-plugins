@@ -56,12 +56,16 @@ public:
                 // unrelated application after an Alt-Tab would be a surprising
                 // focus steal, and restoring the editor would never hand the
                 // keyboard back to the host.
-                restoreFocus_ =
-                    focused != nullptr && focused != editor
-                    && (focused == parent
-                        || (parent != nullptr && IsChild(parent, focused)))
-                        ? focused
-                        : parent;
+                // Captured once per activation: on a retry frame SetFocus may
+                // have landed by now, so re-capturing would replace the host
+                // child we remembered with the editor's own parent.
+                if (restoreFocus_ == nullptr)
+                    restoreFocus_ =
+                        focused != nullptr && focused != editor
+                        && (focused == parent
+                            || (parent != nullptr && IsChild(parent, focused)))
+                            ? focused
+                            : parent;
 
                 if (focused != editor)
                     SetFocus(editor);
