@@ -85,6 +85,50 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+def _reject_escaping_members(names, workdir):
+    """Fail closed on any archive member that would land outside workdir.
+
+    The pinned SHA-256 already fixes the archive's contents, so this is
+    defence in depth: absolute member paths, ../ traversals and separator
+    tricks all exit instead of writing outside the temp dir.
+    """
+    base = os.path.realpath(workdir)
+    for name in names:
+        target = os.path.realpath(os.path.join(base, name))
+        if target != base and not target.startswith(base + os.sep):
+            log("::error::clap-validator archive member escapes the extraction "
+                f"directory: {name!r}")
+            sys.exit(2)
+
+
+def _extract_zip_safely(archive, workdir):
+    _reject_escaping_members(archive.namelist(), workdir)
+    archive.extractall(workdir)
+
+
+def _extract_tar_safely(archive, workdir):
+    """extractall() a tar, using the 'data' filter only where it exists.
+
+    tarfile's filter= keyword arrived in 3.12 and was backported to the 3.8-3.11
+    security releases (tarfile.data_filter is the feature probe). Older
+    interpreters must not be passed it -- filter= raises TypeError there -- so
+    the member checks below carry the protection on their own: paths are
+    confined to workdir and only regular files and directories are extracted,
+    which rules out the link/device members the data filter guards against.
+    """
+    members = archive.getmembers()
+    _reject_escaping_members([m.name for m in members], workdir)
+    for member in members:
+        if not (member.isfile() or member.isdir()):
+            log("::error::clap-validator tarball member is not a regular file "
+                f"or directory: {member.name!r}")
+            sys.exit(2)
+    if hasattr(tarfile, "data_filter"):
+        archive.extractall(workdir, filter="data")
+    else:
+        archive.extractall(workdir)
+
+
 def resolve_binary(workdir):
     """Return a path to a runnable clap-validator, downloading if necessary."""
     env_bin = os.environ.get("CLAP_VALIDATOR_BIN")
@@ -124,11 +168,11 @@ def resolve_binary(workdir):
     log(f"Verified SHA-256: {actual_sha256}")
 
     with zipfile.ZipFile(zpath) as z:
-        z.extractall(workdir)
+        _extract_zip_safely(z, workdir)
     # Linux/macOS assets wrap a .tar.gz; Windows ships the .exe directly.
     for tgz in glob.glob(os.path.join(workdir, "*.tar.gz")):
         with tarfile.open(tgz) as t:
-            t.extractall(workdir)
+            _extract_tar_safely(t, workdir)
 
     for root, _dirs, files in os.walk(workdir):
         for name in ("clap-validator", "clap-validator.exe"):
@@ -158,8 +202,13 @@ def main():
                 [vbin, "validate", clap],
                 capture_output=True, text=True, timeout=RUN_TIMEOUT_S,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             log(f"::error::clap-validator timed out after {RUN_TIMEOUT_S}s on {clap}")
+            for stream_name, output in (("stdout", exc.stdout), ("stderr", exc.stderr)):
+                if output:
+                    if isinstance(output, bytes):
+                        output = output.decode(errors="replace")
+                    log(f"Partial {stream_name}:\n{output}")
             sys.exit(2)
 
         out = (proc.stdout or "") + (proc.stderr or "")

@@ -237,6 +237,79 @@ private:
         return x * (0.30355f + 0.69645f * x);
     }
 
+    // Hard ceiling with a quadratic knee: identity below `knee`, exactly
+    // `ceiling` at and above knee + 2(ceiling - knee). Monotonic, and C1 at
+    // both joins (unit slope entering the knee, zero slope leaving it).
+    static float hardKnee(float x, float knee, float ceiling) noexcept
+    {
+        const float magnitude = x < 0.0f ? -x : x;
+        if (magnitude <= knee)
+            return x;
+        const float width = 2.0f * (ceiling - knee);
+        const float sign  = x < 0.0f ? -1.0f : 1.0f;
+        if (magnitude >= knee + width)
+            return sign * ceiling;
+        const float under = 1.0f - (magnitude - knee) / width;
+        return sign * (knee + (ceiling - knee) * (1.0f - under * under));
+    }
+
+    // Record-amplifier overload, seen only by the regeneration path. The
+    // intensity control feeds the record amp, and that amplifier runs out of
+    // rail long before anything else in the loop does; the program arrives at
+    // the same summing node having already been through its own preamp shaper,
+    // so this ceiling is applied to the regenerated signal alone. That
+    // placement is also what makes it safe: it is identically zero with the
+    // intensity control at minimum, so every harmonic and level calibration
+    // measured there is bit-identical.
+    //
+    // The knee is 22 dB above the loop level anywhere in the calibrated repeat
+    // ladder and 15 dB above the marginal-oscillation level at intensity 0.7,
+    // so nothing at or below the matched settings can reach it.
+    //
+    // A ceiling at the tape write instead - which is demonstrably where the
+    // reference's is, since its loudest program peak (-22.15 dBFS wet) and its
+    // runaway peak (-22.11) agree to 0.05 dB - was built and measured and then
+    // rejected. This record chain reaches the reference's program fundamental
+    // and THD with a waveform 0.76 dB peakier (its loudest program peak is
+    // 0.2614 where the reference's is 0.2396), so any tape-write ceiling low
+    // enough to shape a runaway also clips program material. Measured: at
+    // 0.2396 it cost 0.62 dB of fundamental and 6.4% of THD at -3 dBFS and
+    // broke both transfer gates (0.64 / 0.87 dB against 0.50 / 0.75 limits);
+    // raised to 0.2620 and then 0.3000 to clear those, it still broke the
+    // factory octave-band gate (2.81 and 2.68 dB against a 2.50 limit, from a
+    // 2.13 baseline) because sustained tones in the factory presets reach that
+    // flux too. The cost of this placement instead is crest: the loop clip
+    // sits ahead of the playback roll-off, so a slammed loop reads back at
+    // 2.3-2.6 dB crest against the reference's 0.35-0.77. Closing that means
+    // reshaping the record stage's peak factor, which re-opens the
+    // already-matched harmonic calibration and is its own campaign.
+    static constexpr float kLoopCeilingKnee = 0.2000f;
+    static constexpr float kLoopCeiling     = 0.2940f;
+
+    // Runaway shaping above the onset knee. The reference crosses unity loop
+    // gain near 0.7 and is fully slammed into its tape ceiling by 0.8, holding
+    // that ceiling to maximum. The measured taper below only grazes unity, so
+    // the loop equilibrated shallow and clean instead of dense and saturated.
+    // This multiplier is exactly 1.0 with zero slope at and below 0.62, so
+    // every calibration measured at or below feedback 0.5 - the whole repeat
+    // ladder and all harmonic gates - is bit-identical. Piecewise smoothstep
+    // between anchors, hence C1 continuous with no zipper for the 30 ms
+    // intensity smoother to chase.
+    static float feedbackRunawayLift(float x) noexcept
+    {
+        constexpr float kX[5] = { 0.62f, 0.70f, 0.80f, 0.90f, 1.00f };
+        constexpr float kL[5] = { 1.0f, 1.0225f, 1.4500f, 1.9000f, 2.4500f };
+        if (x <= kX[0])
+            return kL[0];
+        int i = 3;
+        if (x <= kX[1])      i = 0;
+        else if (x <= kX[2]) i = 1;
+        else if (x <= kX[3]) i = 2;
+        const float t = (x - kX[i]) / (kX[i + 1] - kX[i]);
+        const float smooth = t * t * (3.0f - 2.0f * t);
+        return kL[i] + (kL[i + 1] - kL[i]) * smooth;
+    }
+
     static float feedbackGainFromControl(float x) noexcept
     {
         x = clamp01(x);
@@ -272,7 +345,7 @@ private:
             const float smooth = t * t * (3.0f - 2.0f * t);
             normalized = loGain + (hiGain - loGain) * smooth;
         }
-        return 1.30f * normalized;
+        return 1.30f * normalized * feedbackRunawayLift(x);
     }
 
     // Group delay of the 4x oversampling chain in base-rate samples
@@ -297,14 +370,15 @@ private:
         Biquad             trebleShelf;
         Biquad             dryLowShelf;  // direct-path coupling/amp bandwidth
         Biquad             dryHighShelf;
-        SpringReverb       spring;
         std::array<float, 32> springCleanDelay {};
         int                springCleanDelayWriteIdx = 0;
-        float              recordEnvelope = 0.0f;
+        float              recordEnvelope = 0.0f;   // program drive only
+        float              loopEnvelope = 0.0f;     // regeneration drive only
         float              magneticEnvelope = 0.0f;
     };
 
     std::array<Channel, kMaxChannels> channels;
+    SpringReverb spring; // shared mono wet path
 
     float preampOversampled(Channel& ch, float x, float drive) noexcept;
 
@@ -321,15 +395,59 @@ private:
     float recordEnvelopeRelease = 1.0f;
 
     //--- modulation (shared across channels: one motor, one tape) --------------
+    // Two-pole state-variable band-pass, TPT (Zavalishin) topology. A direct-form
+    // biquad is unusable here: at a 6 Hz corner and 48 kHz the pole pair sits
+    // 7.9e-4 rad off the real axis, so a1 ~ -1.9996 and a2 ~ 0.9996 lose the
+    // centre frequency to float cancellation (~10% drift). The TPT form stores
+    // g = tan(pi*fc/fs) directly and stays well conditioned at any fc/fs.
+    struct BandPassSVF
+    {
+        void set(float hz, float Q, double sampleRate) noexcept
+        {
+            const float nyquistGuard = 0.2f * (float)sampleRate;
+            const float f = hz < nyquistGuard ? hz : nyquistGuard;
+            const float g = std::tan(kDuskPi * f / (float)sampleRate);
+            const float k = 1.0f / Q;
+            a1 = 1.0f / (1.0f + g * (g + k));
+            a2 = g * a1;
+            a3 = g * a2;
+        }
+        void reset() noexcept { s1 = s2 = 0.0f; }
+        // Band-pass output; peak gain is Q at fc, -> 0 at DC and Nyquist.
+        float process(float x) noexcept
+        {
+            const float v3 = x - s2;
+            const float v1 = a1 * s1 + a2 * v3;
+            const float v2 = s2 + a2 * s1 + a3 * v3;
+            s1 = 2.0f * v1 - s1;
+            s2 = 2.0f * v2 - s2;
+            return v1;
+        }
+        float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, s1 = 0.0f, s2 = 0.0f;
+    };
+
     float     wowPhase = 0.0f, wowInc = 0.0f;
     float     flutterPhase = 0.0f, flutterInc = 0.0f;
     OnePoleLP noiseLP;
     uint32_t  rngState = 0x9E3779B9u;
 
+    // Stochastic scrape flutter: band noise around 6 Hz. Its own RNG stream so
+    // the wow noise realization (and therefore the measured wow depth) is
+    // untouched by this addition.
+    BandPassSVF flutterBand;
+    OnePoleLP   flutterBandLP;                    // steepens the upper skirt
+    uint32_t    flutterRngState = 0x2545F491u;
+
     float frand() noexcept  // uniform [-1, 1)
     {
         rngState = rngState * 1664525u + 1013904223u;
         return (float)(int32_t)rngState * (1.0f / 2147483648.0f);
+    }
+
+    float flutterRand() noexcept  // uniform [-1, 1)
+    {
+        flutterRngState = flutterRngState * 1664525u + 1013904223u;
+        return (float)(int32_t)flutterRngState * (1.0f / 2147483648.0f);
     }
 
     //--- atomic parameter inputs -----------------------------------------------

@@ -1000,6 +1000,8 @@ private:
                                    /*hasExternalReadout*/ false,
                                    /*dispMin*/ 0.0f, /*dispMax*/ 0.0f,
                                    /*nameOnHover*/ false,
+                                   /*doubleClickReset*/ false,
+                                   /*persistentTextSize*/ 9.5f,
                                    /*bubbleOnActiveOnly*/ true);
         const float t = (d.max > d.min) ? (values[p] - d.min) / (d.max - d.min) : 0.0f;
         // masterVol's bipolar arc anchors at the true 0 dB point, not the geometric

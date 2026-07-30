@@ -85,3 +85,10 @@ on macOS, AudioUnit) formats. VST2, LADSPA and DSSI are not built.
 
 All original Dusk Audio DSP, UI and shell code in this repository is
 Copyright (C) 2026 Dusk Audio and is licensed under the GNU GPL v3.0 or later.
+
+## Barlow Condensed
+
+Tape Echo 2 embeds the Barlow Condensed Regular and SemiBold font files from
+Google Fonts. Barlow Condensed is licensed under the SIL Open Font License 1.1.
+The complete license text is distributed at
+`plugins/shared-dpf/fonts/BarlowCondensed/OFL.txt`.

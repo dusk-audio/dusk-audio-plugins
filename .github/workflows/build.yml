@@ -42,7 +42,7 @@ env:
 jobs:
   # Determine which plugin(s) to build based on tag
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       plugin_target: ${{ steps.parse.outputs.target }}
       plugin_name: ${{ steps.parse.outputs.name }}
@@ -196,7 +196,7 @@ jobs:
 
   build-linux:
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     container:
       image: ubuntu:20.04  # Use Ubuntu 20.04 for glibc 2.31 (widest compatibility)
@@ -631,8 +631,8 @@ jobs:
 
   build-windows:
     needs: setup
-    runs-on: windows-latest
-    # 60 min: MSVC link is slow on the windows-latest runner. Standalone
+    runs-on: windows-2022
+    # 60 min: MSVC link is slow on the windows-2022 runner. Standalone
     # builds were dropped from all plugins (commit context) which should
     # bring most plugins under 30 min, but keeping the wider budget as
     # headroom for future format additions (CLAP, etc.).
@@ -1062,7 +1062,7 @@ jobs:
   # Create release when a tag is pushed
   release:
     needs: [setup, build-linux, build-linux-arm64, build-windows, build-macos]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: needs.setup.outputs.is_release == 'true'
     permissions:
       contents: write

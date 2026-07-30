@@ -296,6 +296,8 @@ public:
               bool hasExternalReadout = false,
               float dispMin = 0.0f, float dispMax = 0.0f,
               bool nameOnHover = false,
+              bool doubleClickReset = false,
+              float persistentTextSize = 9.5f,
               bool bubbleOnActiveOnly = false)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -346,8 +348,24 @@ public:
 
             if (!modKey && (hovered || active) && ImGui::IsMouseDoubleClicked(0))
             {
-                openValueEdit(id, value * dispMul + dispAdd); // double-click: type a value
-                host->endEdit(param);     // close the gesture the press opened
+                // Most plugin users expect a double-click to restore the default.
+                // Keep the historical type-entry gesture as the default so the
+                // shared fleet is unchanged; hardware-style panels opt into reset
+                // and retain discoverable type entry in the right-click menu.
+                if (doubleClickReset)
+                {
+                    value = defaultVal;
+                    dragValue = defaultVal;
+                    host->setParam(param, value);
+                    host->endEdit(param);
+                    changed = true;
+                    modResetActive_ = true;
+                }
+                else
+                {
+                    openValueEdit(id, value * dispMul + dispAdd);
+                    host->endEdit(param); // close the gesture the press opened
+                }
             }
             // Wheel is its own branch (not gated by the double-click check) so a
             // scroll frame is never dropped — requires the host window to carry
@@ -539,7 +557,8 @@ public:
             }
             // Brighten the resting readout while the knob is active so the live
             // value stays legible during a drag (it replaces the value bubble).
-            text(dl, cx, cy + radius + 8.0f, 9.5f, active ? pal.white : pal.whiteDim, buf, 0);
+            text(dl, cx, cy + radius + 8.0f, persistentTextSize,
+                 active ? pal.white : pal.whiteDim, buf, 0);
         }
         return changed;
     }

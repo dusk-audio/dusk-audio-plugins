@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 enum ParamId
 {
     kParamMode = 0,
@@ -17,15 +19,16 @@ enum ParamId
     kParamTempoSync,    // 1 = head-1 delay locks to a division of host tempo
     kParamSyncDivision, // note division index into kSyncDivisions
     kParamTapeAge,      // 0 = fresh tape/serviced transport (bit-identical to before this knob existed)
-    kParamOutputVolume, // post-mix output trim, -20 to +20 dB
-    kParamEchoPan,      // linear wet-path pan: 0 = left, 0.5 = center, 1 = right
-    kParamReverbPan,    // linear spring-path pan: 0 = left, 0.5 = center, 1 = right
-    kParamInputSend,    // boolean input feed to tape and spring paths
-    kParamWetSolo,      // boolean dry-path mute
-    kParamLoopSplice,   // momentary relocation of the circulating tape splice
-    kParamBypass,       // host-designated bypass; the UI POWER switch (1 = off)
-    kParamOutLevel,     // output parameter: peak level for the VU meter
-    kParamCount
+    // IDs 13 and 14 shipped in Tape Echo 0.1.x; append new parameters after them.
+    kParamBypass = 13,       // host-designated bypass; the UI POWER switch (1 = off)
+    kParamOutLevel = 14,     // output parameter: peak level for the VU meter
+    kParamOutputVolume = 15, // post-mix output trim, -20 to +20 dB
+    kParamEchoPan = 16,      // linear wet-path pan: 0 = left, 0.5 = center, 1 = right
+    kParamReverbPan = 17,    // linear spring-path pan: 0 = left, 0.5 = center, 1 = right
+    kParamInputSend = 18,    // boolean input feed to tape and spring paths
+    kParamWetSolo = 19,      // boolean dry-path mute
+    kParamLoopSplice = 20,   // momentary relocation of the circulating tape splice
+    kParamCount = 21
 };
 
 // Tempo-sync note divisions (fraction of a quarter-note beat).
@@ -42,6 +45,54 @@ static constexpr SyncDivision kSyncDivisions[] =
     { "1/4",   1.0         },
 };
 static constexpr int kNumSyncDivisions = (int)(sizeof(kSyncDivisions) / sizeof(kSyncDivisions[0]));
+
+// Per-parameter descriptor used by the UI: `id` is the DPF parameter symbol
+// (see TapeEchoPlugin::initParameter) and doubles as the key written into user
+// preset files, so it must stay in step with the symbols there. min/max/def
+// mirror initParameter's ranges; the UI uses them for knob ranges, INIT and
+// value-based preset identity matching.
+struct TeParam { const char* id; float min, max, def; };
+
+static constexpr TeParam kTeParams[kParamCount] =
+{
+    { "mode",           1.0f, 12.0f, 1.0f }, // kParamMode
+    { "repeat_rate",    0.0f,  1.0f, 0.0f },
+    { "intensity",      0.0f,  1.0f, 0.0f },
+    { "echo_volume",    0.0f,  1.0f, 0.5f },
+    { "reverb_volume",  0.0f,  1.0f, 0.0f },
+    { "bass",          -1.0f,  1.0f, 0.0f },
+    { "treble",        -1.0f,  1.0f, 0.0f },
+    { "input_volume",   0.0f,  1.0f, 0.5f },
+    { "wow_flutter",    0.0f,  1.0f, 0.0f },
+    { "dry_level",      0.0f,  1.0f, 1.0f },
+    { "tempo_sync",     0.0f,  1.0f, 0.0f },
+    { "sync_division",  0.0f, (float)(kNumSyncDivisions - 1), 2.0f },
+    { "tape_age",       0.0f,  1.0f, 0.5f },
+    // kParamBypass carries DPF's own designation symbol ("dpf_bypass"), not this
+    // placeholder: it is excluded from presets by teIsPresetParam, so this `id` is
+    // never a file key and never has to match. min/max/def do mirror the
+    // designation's range, which is what the UI's POWER switch reads.
+    { "bypass",         0.0f,  1.0f, 0.0f }, // kParamBypass  (host designation)
+    { "out_level",      0.0f,  3.0f, 0.0f }, // kParamOutLevel (output-only meter)
+    { "output_volume",  0.0f,  1.0f, 0.5f },
+    { "echo_pan",       0.0f,  1.0f, 0.5f },
+    { "reverb_pan",     0.0f,  1.0f, 0.5f },
+    { "input_send",     0.0f,  1.0f, 1.0f },
+    { "wet_solo",       0.0f,  1.0f, 0.0f },
+    { "loop_splice",    0.0f,  1.0f, 0.0f }, // momentary trigger
+};
+
+// Parameters a preset (factory or user) is allowed to carry. The meter output,
+// the host-designated bypass and the momentary splice trigger are all excluded:
+// the first is not a control, the second must never be fought by a preset load,
+// and the third would fire a splice on recall.
+static inline bool teIsPresetParam(uint32_t index)
+{
+    return index < kParamCount
+        && index != kParamOutLevel
+        && index != kParamBypass
+        && index != kParamLoopSplice;
+}
 
 // Requested head-1 delay for a division at the given tempo. The plugin wrapper
 // octave-folds this nominal value against TapeEchoDSP's measured motor bounds;
@@ -67,7 +118,8 @@ struct TapeEchoPreset
     float reverbPan = 0.5f;
     float inputSend = 1.0f;
     float wetSolo = 0.0f;
-    float bypass = 0.0f;
+    // No bypass field: see teIsPresetParam — a recall never touches the
+    // host-designated bypass, so a preset must not be able to carry one.
 };
 
 static constexpr TapeEchoPreset kFactoryPresets[] =
@@ -115,10 +167,13 @@ static constexpr TapeEchoPreset kFactoryPresets[] =
                                   0.66699219f, -0.49353027f, 0.30581665f,
                                   0.0f, 1.0f, 0, 2, 0.0f },
                                 0.58154625f, 0.53262329f, 0.5f },
+    // Output volume was 0.38354333f, set while the spring send ran about
+    // 1.6 dB hot; with the send calibrated to measured parity that trim left
+    // the program 1.33 dB under its hosted counterpart.
     { "Spring Only",          { 12,   0.0f, 0.0f, 0.5f, 0.91986084f,
                                  0.0f, 0.0f, 0.5f, 0.0f, 1.0f,
                                  0,   0,   0.5f },
-                               0.38354333f },
+                               0.41680908f },
 };
 static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets) / sizeof(kFactoryPresets[0]));
 
