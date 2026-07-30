@@ -1969,9 +1969,8 @@ private:
         else
         {
             iCombo("glide", kParamGlideMode, is1, kGlide, 2, "GLIDE");
-            iLabel(colCx, is2, "LEGATO");
-            compactToggle("legato", kParamLegato, colCx - 26.0f, is2 - comboH,
-                          colCx + 26.0f, is2 + comboH, "");
+            compactToggle("legato", kParamLegato, colCx - 33.0f, is2 - comboH,
+                          colCx + 33.0f, is2 + comboH, "LEGATO");
             iCombo("vcrv", kParamVelCurve, is3, kVelCurve, 4, "V.CRV");
         }
     }
