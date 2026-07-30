@@ -2133,12 +2133,13 @@ private:
         dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), IM_COL32(10, 12, 14, 255), 4.0f * s);
 
         const float D = values[kParamAmpD], S = values[kParamAmpS];
-        const float h = D * 3.1f + S * 7.3f + 501.0f;
-        if (h != acidEnvHash)
+        if (!acidEnvValid || D != acidEnvDecay || S != acidEnvSustain)
         {
-            acidEnvHash = h;
             computeADSR(rx0, ry0, rx1, ry1, 0.003f, D, S,
                         msynth::AcidVoice::kRelease, 1, acidEnv);
+            acidEnvDecay = D;
+            acidEnvSustain = S;
+            acidEnvValid = true;
         }
         for (int i = 0; i + 1 < kAdsrN; ++i)
             dl->AddQuadFilled(P(acidEnv[i].x, acidEnv[i].y),
@@ -4692,7 +4693,9 @@ private:
     // ADSR caches
     static constexpr int kAdsrN = 40;
     ImVec2 ampEnv[kAdsrN], filtEnv[kAdsrN], acidEnv[kAdsrN];
-    float  ampHash = -1, filtHash = -1, acidEnvHash = -1;
+    float  ampHash = -1, filtHash = -1;
+    float  acidEnvDecay = 0.0f, acidEnvSustain = 0.0f;
+    bool   acidEnvValid = false;
 
     // scope
     float  scope[msynth::MultiSynthDSP::kScopeSize] = {};

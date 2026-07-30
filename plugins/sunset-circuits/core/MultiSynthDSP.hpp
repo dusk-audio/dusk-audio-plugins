@@ -33,8 +33,9 @@
 // so pitch and all envelope/LFO times are CORRECT at every factor (the JUCE
 // build was an octave low at anything but 4x). Decimation back to hostRate uses
 // cascaded polyphase halfband FIRs (shared DuskOversampler taps), not a box
-// average. Effects, the vintage BBD chorus and the arpeggiator run at hostRate.
-// Changing the factor re-prepares the voices at block start (allocation-free).
+// average. Effects and the arpeggiator run at hostRate; the vintage BBD chorus
+// owns a fixed local 2x path. Changing the factor re-prepares the voices at
+// block start (allocation-free).
 
 #pragma once
 
