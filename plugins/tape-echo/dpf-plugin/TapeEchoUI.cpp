@@ -10,6 +10,7 @@
 #include "TapeEchoDSP.hpp"
 #include "TapeEchoParams.hpp"
 #include "DuskImGuiFont.hpp"      // shared crisp-bold loader (candidate search + DPI)
+#include "DuskImGuiTextInput.hpp" // Windows host focus while typing values
 #include "DuskImGuiWidgets.hpp"   // shared DuskPanel: chrome knob, LED, text, value bubble
 #include "DuskSupportersOverlay.hpp" // shared DPF Patreon "Special Thanks" overlay
 
@@ -156,6 +157,7 @@ protected:
 
         ImGui::End();
         ImGui::PopStyleVar(2);
+        textInputFocus.update(*this);
 
         // Cursor feedback. The DPF-Widgets ImGui backend never forwards
         // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
@@ -682,6 +684,7 @@ private:
     };
 
     duskdpf::DuskPanel panel;
+    duskdpf::DuskImGuiTextInputFocus textInputFocus;
     ImFont* labelFont = nullptr;
     float  values[kParamCount] = {};
     float  needlePos = 0.0f;
