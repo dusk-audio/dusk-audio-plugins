@@ -52,10 +52,10 @@ static constexpr int kMaxOscVoices   = 16; // poly x unison ceiling
 
 // Fade-out length for a voice that falls outside the effective polyphony while
 // still sounding (SynthVoice::retire). Long enough that the fade itself is
-// inaudible, short enough that an over-budget voice cannot linger: at 15 ms the
-// worst case is one extra voice-render's worth of CPU for under a millisecond of
-// music, and the freed slot is back in the allocator's hands almost immediately.
-static constexpr float kRetireSeconds = 0.015f;
+// inaudible, short enough that an over-budget voice cannot linger. The revoiced
+// high-resonance filters retain more upper-band energy than the former shared
+// cascade, so 36 ms is used to keep the fade's C1 corners below audibility.
+static constexpr float kRetireSeconds = 0.036f;
 
 // Per-voice parameters (shared across voices for a given mode). Set once per
 // block by the engine from atomics — never looked up in the render path.
@@ -103,7 +103,14 @@ struct VoiceParameters
     };
     FMOpParams op[FMVoiceEngine::kNumOps];
 
-    float polyModFEnvOscA = 0.0f, polyModFEnvFilt = 0.0f, polyModOscBOscA = 0.0f, polyModOscBPWM = 0.0f;
+    float polyModFEnvOscA = 0.0f, polyModFEnvFilt = 0.0f;
+    float polyModFEnvPWM = 0.0f;
+    float polyModOscBOscA = 0.0f, polyModOscBPWM = 0.0f;
+    float polyModOscBFilt = 0.0f;
+
+    ModularFilterModel modularFilterModel = ModularFilterModel::Early;
+    float modularOsc2Osc1 = 0.0f;   // audio-rate Osc 2 -> Osc 1 phase
+    float modularOsc3Filter = 0.0f; // audio-rate Osc 3 -> filter cutoff
 
     float portamentoTime = 0.0f;
     bool  legatoMode = false;
@@ -345,7 +352,7 @@ public:
     // guarantees the voice is finished within kRetireSeconds. The ramp is what
     // makes this safe. A plain release would let a 10 s patch release hold a voice
     // that is over budget for 10 s; the ramp caps the overrun at ~15 ms, so the
-    // extra rendering can never accumulate and the allocator's accounting (which
+    // extra rendering cannot accumulate and the allocator's accounting (which
     // only ever hands out slots below effectivePoly()) stays honest.
     void retire() noexcept
     {
@@ -479,6 +486,7 @@ public:
         const float maxDetune = params.unisonDetune * (1.0f + clampf(uniDetMod, -0.9f, 4.0f));
 
         float preL = 0.0f, preR = 0.0f;
+        float audioRateFilterMod = 0.0f;
 
         for (int u = 0; u < uCount; ++u)
         {
@@ -490,8 +498,10 @@ public:
                 uPan = (t * 2.0f - 1.0f) * params.unisonSpread;
             }
 
+            float filterMod = 0.0f;
             const float mix = renderOscSet(u, params, filtVal, freq1, freq2, baseFreq,
-                                           pwm1, pwm2, detCents, noiseSample);
+                                           pwm1, pwm2, detCents, noiseSample, filterMod);
+            audioRateFilterMod += filterMod / (float)uCount;
 
             if (uCount == 1)
             {
@@ -509,12 +519,18 @@ public:
         // --- filter (env-modulated cutoff) ---
         const float polyModFiltExtra = (params.mode == SynthMode::Oracle)
             ? filtVal * params.polyModFEnvFilt * 2.0f : 0.0f;
-        const float envModTotal = clampf((filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f, -2.0f, 2.0f);
+        // Oracle Osc-B->Filter and Modular Osc-3->Filter are evaluated from the
+        // actual oscillator sample above, at the internal audio rate.  They enter
+        // in octaves after the slower envelope/mod-matrix contribution.
+        const float audioRateOctaves = audioRateFilterMod
+            * (params.mode == SynthMode::Modular ? 4.0f : 3.0f);
+        const float envModTotal = clampf(
+            (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f
+            + audioRateOctaves, -5.0f, 5.0f);
         float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
         envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
-        // 0.4x internal-rate ceiling (fix): the OTA one-pole g = tan(pi*fc/sr)
-        // misbehaves near Nyquist at 1x OS; 0.4x keeps every model well-behaved.
-        envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.40f);
+        // TPT models remain stable throughout the usable top octave.
+        envCutoff = clampf(envCutoff, 20.0f, (float)sr * 0.45f);
         const float envRes = clampf(params.filterResonance + resMod, 0.0f, 1.0f);
 
         // Prism has no analog filter model of its own; route it through the clean
@@ -524,6 +540,7 @@ public:
         // Prism routes through the Cosmos filter model but has no dedicated HP
         // control, so feed a neutral 20 Hz HP (U3). Modes 1-3 ignore the HP arg.
         const float hpCut = (params.mode == SynthMode::Prism) ? 20.0f : params.filterHPCutoff;
+        filterL.setModularModel(params.modularFilterModel);
         filterL.setMode(filtMode); filterL.setParameters(envCutoff, envRes, hpCut);
 
         float sL, sR;
@@ -539,6 +556,7 @@ public:
         }
         else
         {
+            filterR.setModularModel(params.modularFilterModel);
             filterR.setMode(filtMode); filterR.setParameters(envCutoff, envRes, hpCut);
             sL = filterL.process(preL);
             sR = filterR.process(preR);
@@ -570,9 +588,11 @@ private:
     // One unison sub-voice's oscillator mix (pre-filter, mode-normalized).
     float renderOscSet(int u, const VoiceParameters& params, float filtVal,
                        float freq1, float freq2, float baseFreq,
-                       float pwm1, float pwm2, float detCents, float noiseSample) noexcept
+                       float pwm1, float pwm2, float detCents, float noiseSample,
+                       float& filterAudioMod) noexcept
     {
         OscSet& o = osc[(size_t)u];
+        filterAudioMod = 0.0f;
 
         o.osc1.setFrequency(freq1);
         o.osc1.setWaveform(params.osc1Wave);
@@ -580,8 +600,11 @@ private:
         // the 1-sample-delayed osc2 value. (The old Oracle-branch setPulseWidth ran
         // AFTER this call, so it was overwritten here on the next sample -> dead.)
         float pw1 = params.osc1PulseWidth + pwm1;
-        if (params.mode == SynthMode::Oracle && params.polyModOscBPWM > 0.0f)
-            pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * 0.3f;
+        if (params.mode == SynthMode::Oracle)
+        {
+            pw1 += filtVal * params.polyModFEnvPWM * 0.35f;
+            pw1 += lastOsc2[(size_t)u] * params.polyModOscBPWM * 0.30f;
+        }
         o.osc1.setPulseWidth(pw1);
         o.osc1.setDetune(params.osc1Detune + detCents);
 
@@ -591,6 +614,8 @@ private:
         if (params.crossMod > 0.0f
             && (params.mode == SynthMode::Cosmos || params.mode == SynthMode::Oracle))
             o.osc1.applyFM(lastOsc2[(size_t)u] * params.crossMod * 0.03f);
+        if (params.mode == SynthMode::Modular && params.modularOsc2Osc1 > 0.0f)
+            o.osc1.applyFM(lastOsc2[(size_t)u] * params.modularOsc2Osc1 * 0.10f);
 
         float osc1Sample = 0.0f, osc2Sample = 0.0f, osc3Sample = 0.0f, subSample = 0.0f;
         float mix = 0.0f, activeGain = 0.0f;
@@ -626,6 +651,7 @@ private:
                 o.osc2.setPulseWidth(params.osc2PulseWidth + pwm2);
                 o.osc2.setDetune(params.osc2Detune + detCents);
                 osc1Sample = o.osc1.processSample();
+                if (params.hardSync && o.osc1.didCross()) o.osc2.hardSync();
                 osc2Sample = o.osc2.processSample();
 
                 // Poly-mod (affects next sample via applyFM, matching original).
@@ -633,6 +659,7 @@ private:
                 if (params.polyModOscBOscA > 0.0f) o.osc1.applyFM(osc2Sample * params.polyModOscBOscA * 0.03f);
                 // (OscB->PW poly-mod is applied to osc1's pulse width up in renderOscSet's
                 //  pre-render set, using the 1-sample-delayed osc2 value.)
+                filterAudioMod = osc2Sample * params.polyModOscBFilt;
 
                 mix = osc1Sample * params.osc1Level + osc2Sample * params.osc2Level + noiseSample;
                 activeGain = params.osc1Level + params.osc2Level + params.noiseLevel;
@@ -679,7 +706,11 @@ private:
                 o.osc3.setFrequency(baseFreq);
                 o.osc3.setWaveform(params.osc3Wave);
                 o.osc3.setDetune(detCents);
-                osc3Sample = o.osc3.processSample() * params.osc3Level;
+                // The patch output exists before the oscillator's mixer level:
+                // Osc 3 may modulate cutoff even when it is not in the audio mix.
+                const float osc3Raw = o.osc3.processSample();
+                osc3Sample = osc3Raw * params.osc3Level;
+                filterAudioMod = osc3Raw * params.modularOsc3Filter;
 
                 if (params.ringMod > 0.0f)
                 {

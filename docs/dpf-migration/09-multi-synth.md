@@ -135,10 +135,10 @@ Keep every existing param id/range (inventory §1) except where fixes demand beh
 changes. Add: 38 Prism params (`prismAlgo`, `prismFB`, and 4 ops × 9 fields =
 `op{1-4}{Ratio,Fine,Level,Vel,KeyScale,A,D,S,R}`), 2 acid globals (`acidAccentAmt`,
 `acidSlideTime`) + 48 step params (`seqPitch/Accent/Slide 0-15`). DPF param table
-generated from one X-macro list in `MultiSynthParams.hpp` so shell + UI + presets share
-it. Total: **223 core params** (134 ported + 38 Prism + 2 acid globals + 48 step + 1
-appended post-freeze: `arpAccentPattern`) plus 2
-output params `outLevelL/R` (meters fallback; real path = weak-symbol bridge).
+is generated from `dpf-plugin/tools/gen_params.py` so shell + UI + presets share it.
+Total: **228 core params**: the original 222, `arpAccentPattern`, and five append-only
+accuracy controls documented in `09-sunset-circuits-accuracy-upgrade.md`. There are
+also 2 output params, `outLevelL/R` (meters fallback; real path = weak-symbol bridge).
 
 **Delay time ceiling**: the delay line buffer is 2 s (`sr * 2.0` samples). In
 tempo-sync mode a slow BPM with a long division can ask for more than 2 s

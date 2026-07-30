@@ -14,6 +14,7 @@
 #include "TapeMachinePresets.hpp"
 #include "TapeMachineVersion.hpp"
 #include "DuskImGuiFont.hpp"
+#include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"   // shared DPF Patreon "Special Thanks" overlay (click title)
 
@@ -170,6 +171,7 @@ protected:
 
         ImGui::End();
         ImGui::PopStyleVar(2);
+        textInputFocus.update(*this);
 
         // Cursor feedback. The DPF-Widgets ImGui backend never forwards
         // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
@@ -1183,6 +1185,7 @@ private:
 
     //--- state -----------------------------------------------------------------
     duskdpf::DuskPanel panel;
+    duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     float   values[kParamCount] = {};

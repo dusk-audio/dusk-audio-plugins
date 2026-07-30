@@ -1,16 +1,20 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// FilterEngine.hpp — per-mode 4-pole (24 dB/oct) filter models.
+// FilterEngine.hpp — stable, separately voiced filter models for the analogue
+// Sunset Circuits modes.
 //
-// Framework-free port of the JUCE FilterEngine.h. Every tuning constant
-// (maxFeedback / saturationStrength / stageNonlinearity / bassComp per model)
-// and the zero-delay one-pole cascade are carried over verbatim so the four
-// mode voicings are unchanged. Hardware model names are described generically
-// (no third-party trademarks). Prepared at the internal (oversampled) rate.
+// The previous implementation shared a forward-Euler four-pole cascade between
+// Cosmos, Oracle and Mono.  Its coefficient became unstable in the top octave
+// and its only "self oscillation" was a Nyquist flip-flop.  The models below use
+// topology-preserving-transform (TPT) integrators and an algebraic four-pole
+// feedback solve.  The integrators remain stable at every legal cutoff, and the
+// Oracle/Modular feedback paths can ring musically instead of alternating at
+// Nyquist.
 //
-// Scope: the four LP models used by modes 0-3 (plus mode 4/Prism, which borrows
-// the clean Cosmos LPF). The Acid mode's 3-pole diode-ladder filter is not here
-// — it lives in AcidEngine.hpp, coupled to that voice's envelope/accent path.
+// These are behavioural circuit models: each family has independent feedback,
+// drive, stage saturation and bass-compensation calibration.  They deliberately
+// share only the numerically stable TPT primitive, not one set of voicing
+// constants.
 
 #pragma once
 
@@ -19,16 +23,21 @@
 namespace msynth
 {
 
-// Filter voicing selector. Values 0-3 correspond to SynthMode 0-3.
 enum class FilterMode
 {
-    Cosmos = 0, // 4-pole non-self-oscillating LPF + HPF (early-80s Japanese poly)
-    Oracle,     // 4-pole self-oscillating LPF (late-70s American poly)
-    Mono,       // 4-pole aggressive OTA LPF (70s Japanese mono)
-    Modular     // 4-pole transistor-ladder LPF (70s semi-modular)
+    Cosmos = 0,
+    Oracle,
+    Mono,
+    Modular
 };
 
-// First-order non-resonant high-pass (Cosmos mode).
+enum class ModularFilterModel
+{
+    Early = 0, // earlier ladder: open top end, stronger saturation
+    Late      // later ladder: characteristic ~12 kHz cutoff ceiling
+};
+
+// First-order non-resonant high-pass used by Cosmos.
 class SimpleHPF
 {
 public:
@@ -36,142 +45,140 @@ public:
 
     void setCutoff(float cutoffHz) noexcept
     {
-        const float fc = clampf(cutoffHz, 10.0f, sr * 0.4f);
-        const float wc = kTwoPi * fc / sr;
-        coeff = 1.0f / (1.0f + wc);
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.45f);
+        const float g = std::tan(kPi * fc / sr);
+        a = 1.0f / (1.0f + g);
     }
 
     float process(float input) noexcept
     {
-        const float hp = coeff * (prevOutput + input - prevInput);
-        prevInput = input;
-        prevOutput = hp;
-        if (isBad(prevOutput)) prevOutput = 0.0f;
+        // Bilinear one-pole HPF.  `lpState` is the matching TPT low-pass state.
+        const float hp = (input - lpState) * a;
+        const float lp = input - hp;
+        lpState = lp + (lp - lpState);
+        if (isBad(lpState)) lpState = 0.0f;
         return hp;
     }
 
-    void reset() noexcept { prevInput = 0.0f; prevOutput = 0.0f; }
+    void reset() noexcept { lpState = 0.0f; }
 
 private:
-    float sr = 44100.0f, coeff = 1.0f, prevInput = 0.0f, prevOutput = 0.0f;
+    float sr = 44100.0f;
+    float a = 1.0f;
+    float lpState = 0.0f;
 };
 
-// 4-pole OTA-style cascade (base for Cosmos, Oracle, Mono).
-class FourPoleOTA
+// Four cascaded TPT one-poles with a zero-delay linear feedback solve and
+// bounded analogue-stage saturation.  The state contribution to the fourth
+// pole is solved before the stages are advanced:
+//
+//   y4 = G^4*u + sigma, u = (x - k*sigma) / (1 + k*G^4)
+//
+// Non-linearity is then applied at the input and each integrator.  This is the
+// inexpensive "predict then saturate" form commonly used for polyphonic virtual
+// analogue filters: it keeps the resonance pitch stable and the loop bounded
+// without an iterative per-sample Newton solve.
+class TPTFourPole
 {
 public:
     void prepare(double sampleRate) noexcept
     {
         sr = (float)sampleRate;
-        dcCoeff = 1.0f - (kTwoPi * 5.0f / sr);
+        dcCoeff = std::exp(-kTwoPi * 5.0f / sr);
         reset();
     }
 
-    void setParameters(float cutoffHz, float resonance, float driveAmount = 1.0f) noexcept
+    void configure(float maxFb, float inputGain, float inputSat,
+                   float stageSat, float lowComp, float outGain) noexcept
     {
-        // CONTAINMENT, not a cure. The integrator below is naive (forward) Euler:
-        //     s += g * (in - s),   g = tan(pi*fc/sr)
-        // whose pole is 1-g, so it is unconditionally unstable for g > 2, and the
-        // resonant feedback path drags that limit down much further. When it goes,
-        // it does not ring musically -- it alternates at exactly Nyquist. Measured
-        // free-running tail (silent input, level 1.0 = full scale), at the old
-        // 0.40 ceiling:
-        //
-        //     model    tail rms   tail frequency
-        //     Cosmos     1.111      0.500 * sr
-        //     Oracle     0.909      0.500 * sr
-        //     Mono       0.667      0.500 * sr
-        //
-        // and it never decays. Every self-oscillation this filter can produce is
-        // that artefact; none of the three models self-oscillates musically.
-        //
-        // The onset moves with resonance, because feedback adds loop gain:
-        //
-        //     res      onset (fraction of sr)
-        //     0.00     0.3523      <- g = 2.000, the textbook Euler limit
-        //     0.50     0.221 - 0.238 depending on model
-        //     1.00     0.206       <- worst case, Mono
-        //
-        // Hence 0.20: below the worst measured onset with a little margin. Swept
-        // 3 models x 4 sample rates (44.1/48/96/192k) x 41 resonance values x 3
-        // excitation levels, the worst free-running tail at 0.200*sr is 1.7e-15
-        // and at 0.203*sr is 1.7e-15, while 0.206*sr already gives 2.9e-2 at
-        // Nyquist. This ceiling is a FRACTION of the rate, so oversampling raises
-        // it in Hz: 9.6 kHz at 48 kHz with OS off, 19.2 kHz at 2x.
-        //
-        // THE CORRECT FIX IS TO REPLACE THE INTEGRATOR, not to clamp it. A TPT /
-        // zero-delay-feedback one-pole,
-        //     v = g * (x - s) / (1 + g);   y = v + s;   s = y + v;
-        // is unconditionally stable for every g > 0, which removes the ceiling
-        // entirely and restores the top octave at 1x. It was not done here
-        // because it changes the response of all four models at every cutoff, so
-        // it needs the three models' maxFeedback retuned, every gate recalibrated
-        // and the ear pass reopened. Containment keeps the factory presets
-        // byte-identical (verified, all 54 at their own oversampling setting)
-        // while removing the failure.
-        float fc = clampf(cutoffHz, 10.0f, sr * 0.20f);
-        g = std::tan(kPi * fc / sr);
-        g = clampf(g, 0.0f, 12.0f);
-        res = clampf(resonance, 0.0f, 1.0f);
-        feedback = res * maxFeedback;
-        drive = driveAmount;
+        maxFeedback = maxFb;
+        preGain = inputGain;
+        inputDrive = maxf(0.05f, inputSat);
+        stageDrive = maxf(0.05f, stageSat);
+        bassComp = lowComp;
+        outputGain = outGain;
+    }
+
+    void setParameters(float cutoffHz, float resonance) noexcept
+    {
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.45f);
+        const float gw = std::tan(kPi * fc / sr);
+        G = gw / (1.0f + gw);
+        const float r = clampf(resonance, 0.0f, 1.0f);
+        // A gentle convex law keeps the useful lower half of the control broad,
+        // while the final 15% reaches the musical oscillation region.
+        feedback = maxFeedback * r * (0.72f + 0.28f * r);
+        resonanceAmount = r;
     }
 
     float process(float input) noexcept
     {
-        float fb = std::tanh(s[3] * feedback);
-        float in = input * drive - fb;
-        in = std::tanh(in * saturationStrength) / std::tanh(saturationStrength);
+        const float oneMinusG = 1.0f - G;
+        const float G2 = G * G;
+        const float G3 = G2 * G;
+        const float G4 = G2 * G2;
+        const float sigma = oneMinusG
+            * (G3 * z[0] + G2 * z[1] + G * z[2] + z[3]);
 
+        float u = (input * preGain - feedback * sigma)
+                / (1.0f + feedback * G4);
+        u = soft(u, inputDrive);
+
+        float x = u;
         for (int i = 0; i < 4; ++i)
         {
-            const float y = s[i] + g * (in - s[i]);
-            // Per-stage soft saturation with UNITY small-signal gain. The former
-            // normaliser was tanh(y*k)/tanh(k), whose small-signal gain is
-            // k/tanh(k) > 1 — that makes each stage a bistable latch (fixed point
-            // s=0 has loop gain >1), so at low cutoff (small g, little AC to keep
-            // the integrator moving) every stage rails to a constant +-1, i.e.
-            // pure DC, which the output DC blocker then removes -> the voice
-            // decays to silence on any sustained note below ~2.5 kHz. Dividing by
-            // stageNonlinearity instead of tanh(stageNonlinearity) restores unity
-            // small-signal gain (stable) while keeping the knob a real saturation
-            // amount (higher k = harder knee). Matches the proven LadderFilter/
-            // AcidFilter approach (plain bounded tanh, gain <= 1).
-            s[i] = std::tanh(y * stageNonlinearity) / stageNonlinearity;
-            in = s[i];
+            const float v = G * (x - z[i]);
+            float y = soft(z[i] + v, stageDrive);
+            z[i] = y + v;
+            if (isBad(z[i]))
+            {
+                z[i] = 0.0f;
+                y = 0.0f;
+            }
+            x = y;
         }
 
-        for (auto& st : s)
-            if (isBad(st)) st = 0.0f;
-
-        const float output = s[3] + input * bassComp * res;
-
-        const float dcOut = output - dcState + dcCoeff * dcPrev;
-        dcPrev = dcOut;
-        dcState = output;
-        if (isBad(dcPrev)) dcPrev = 0.0f;
-        if (isBad(dcState)) dcState = 0.0f;
+        // Resonant cascades naturally lose bass.  The compensation is fed from
+        // the pre-saturated input and kept deliberately small per model.
+        const float raw = (x + input * bassComp * resonanceAmount) * outputGain;
+        const float out = raw - dcIn + dcCoeff * dcOut;
+        dcIn = raw;
+        dcOut = isBad(out) ? 0.0f : out;
+        if (isBad(dcIn)) dcIn = 0.0f;
         return dcOut;
     }
 
     void reset() noexcept
     {
-        for (auto& st : s) st = 0.0f;
-        dcState = 0.0f; dcPrev = 0.0f;
+        for (float& state : z) state = 0.0f;
+        dcIn = dcOut = 0.0f;
     }
 
-    float maxFeedback = 3.8f;
-    float saturationStrength = 1.0f;
-    float stageNonlinearity = 1.0f;
-    float bassComp = 0.0f;
+private:
+    static float soft(float x, float amount) noexcept
+    {
+        // Dividing by amount (not tanh(amount)) preserves unity small-signal
+        // gain and therefore the calibrated resonance threshold.
+        return std::tanh(x * amount) / amount;
+    }
 
-protected:
-    float sr = 44100.0f, g = 0.0f, res = 0.0f, feedback = 0.0f, drive = 1.0f;
-    float s[4] = {};
-    float dcCoeff = 0.999f, dcState = 0.0f, dcPrev = 0.0f;
+    float sr = 44100.0f;
+    float G = 0.0f;
+    float feedback = 0.0f;
+    float resonanceAmount = 0.0f;
+    float maxFeedback = 4.2f;
+    float preGain = 1.0f;
+    float inputDrive = 1.0f;
+    float stageDrive = 0.8f;
+    float bassComp = 0.0f;
+    float outputGain = 1.0f;
+    float z[4] = {};
+    float dcCoeff = 0.999f;
+    float dcIn = 0.0f, dcOut = 0.0f;
 };
 
-// Warm, non-self-oscillating LPF + HPF (early-80s Japanese poly).
+// Early-80s OTA poly filter. Cleaner stages and a subcritical feedback ceiling
+// retain the DCO clarity without crossing into sustained self-oscillation.
 class CosmosFilter
 {
 public:
@@ -179,105 +186,113 @@ public:
     {
         lpf.prepare(sampleRate);
         hpf.prepare(sampleRate);
-        lpf.maxFeedback = 3.0f;
-        lpf.saturationStrength = 0.8f;
-        lpf.stageNonlinearity = 0.9f;
-        lpf.bassComp = 0.0f;
+        lpf.configure(3.88f, 0.88f, 0.16f, 0.12f, 0.02f, 1.10f);
     }
     void setParameters(float lpCutoff, float lpResonance, float hpCutoff) noexcept
     {
-        lpf.setParameters(lpCutoff, clampf(lpResonance, 0.0f, 0.75f));
+        lpf.setParameters(lpCutoff, lpResonance);
         hpf.setCutoff(hpCutoff);
     }
     float process(float input) noexcept { return lpf.process(hpf.process(input)); }
     void reset() noexcept { lpf.reset(); hpf.reset(); }
 private:
-    FourPoleOTA lpf;
+    TPTFourPole lpf;
     SimpleHPF hpf;
 };
 
-// Punchy, self-oscillating LPF, less bass loss (late-70s American poly).
+// Late-70s American poly filter.  Hotter input and a slightly supercritical
+// feedback range give the strong, pitch-stable self oscillation used by Poly-Mod.
 class OracleFilter
 {
 public:
     void prepare(double sampleRate) noexcept
     {
         lpf.prepare(sampleRate);
-        lpf.maxFeedback = 4.2f;
-        lpf.saturationStrength = 1.2f;
-        lpf.stageNonlinearity = 1.1f;
-        lpf.bassComp = 0.15f;
+        lpf.configure(4.46f, 1.08f, 0.90f, 0.72f, 0.10f, 0.96f);
     }
-    void setParameters(float cutoffHz, float resonance) noexcept { lpf.setParameters(cutoffHz, resonance); }
+    void setParameters(float cutoffHz, float resonance) noexcept
+    {
+        lpf.setParameters(cutoffHz, resonance);
+    }
     float process(float input) noexcept { return lpf.process(input); }
     void reset() noexcept { lpf.reset(); }
 private:
-    FourPoleOTA lpf;
+    TPTFourPole lpf;
 };
 
-// Fat, driven, squelchy OTA LPF (70s Japanese mono).
+// Driven mono OTA cascade.  The input gain rises with resonance, reproducing the
+// compressed/squelchy interaction of a hot mono signal path.
 class MonoFilter
 {
 public:
     void prepare(double sampleRate) noexcept
     {
         lpf.prepare(sampleRate);
-        lpf.maxFeedback = 4.0f;
-        lpf.saturationStrength = 1.8f;
-        lpf.stageNonlinearity = 1.5f;
-        lpf.bassComp = 0.2f;
+        configure(0.0f);
     }
     void setParameters(float cutoffHz, float resonance) noexcept
     {
-        const float drive = 1.0f + resonance * 1.5f;
-        lpf.setParameters(cutoffHz, resonance, drive);
+        configure(clampf(resonance, 0.0f, 1.0f));
+        lpf.setParameters(cutoffHz, resonance);
     }
     float process(float input) noexcept { return lpf.process(input); }
     void reset() noexcept { lpf.reset(); }
 private:
-    FourPoleOTA lpf;
+    void configure(float resonance) noexcept
+    {
+        lpf.configure(4.30f, 1.10f + 1.65f * resonance,
+                      1.35f, 1.05f, 0.13f, 0.82f);
+    }
+    TPTFourPole lpf;
 };
 
-// Transistor-ladder LPF (70s semi-modular).
+// Semi-modular ladder with the two historically important revisions.
+// ModularFilterModel selects the early or late circuit: the late revision
+// intentionally stops opening around 12 kHz, while the early revision remains
+// open to the engine's safe TPT ceiling.
 class LadderFilter
 {
 public:
-    void prepare(double sampleRate) noexcept { sr = (float)sampleRate; reset(); }
+    void prepare(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate;
+        core.prepare(sampleRate);
+        applyModel();
+    }
+
+    void setModel(ModularFilterModel newModel) noexcept
+    {
+        if (model == newModel) return;
+        model = newModel;
+        applyModel();
+    }
 
     void setParameters(float cutoffHz, float resonance) noexcept
     {
-        const float fc = clampf(cutoffHz, 10.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
-        const float r  = clampf(resonance, 0.0f, 1.0f);
-        float wc = kTwoPi * fc / sr;
-        wc = clampf(wc, 0.0f, 1.5f);
-        g = 0.9892f * wc - 0.4342f * wc * wc + 0.1381f * wc * wc * wc - 0.0202f * wc * wc * wc * wc;
-        g = clampf(g, 0.0f, 0.95f);
-        feedback = r * 3.8f;
+        const float tptCeiling = sr * 0.45f;
+        const float ceiling = model == ModularFilterModel::Late
+            ? (tptCeiling < 12000.0f ? tptCeiling : 12000.0f)
+            : tptCeiling;
+        core.setParameters(clampf(cutoffHz, 10.0f, ceiling), resonance);
     }
 
-    float process(float input) noexcept
-    {
-        const float fb = std::tanh(s[3] * feedback);
-        float in = std::tanh(input - fb);
-        for (int i = 0; i < 4; ++i)
-        {
-            const float y = s[i] + g * (in - s[i]);
-            s[i] = std::tanh(y);
-            in = s[i];
-        }
-        for (auto& st : s)
-            if (isBad(st)) st = 0.0f;
-        return s[3];
-    }
-
-    void reset() noexcept { for (auto& st : s) st = 0.0f; }
+    float process(float input) noexcept { return core.process(input); }
+    void reset() noexcept { core.reset(); }
 
 private:
-    float sr = 44100.0f, g = 0.0f, feedback = 0.0f;
-    float s[4] = {};
+    void applyModel() noexcept
+    {
+        if (model == ModularFilterModel::Early)
+            core.configure(4.42f, 1.18f, 1.05f, 0.92f, 0.09f, 0.90f);
+        else
+            core.configure(4.28f, 1.05f, 0.88f, 0.76f, 0.12f, 0.94f);
+    }
+
+    float sr = 44100.0f;
+    ModularFilterModel model = ModularFilterModel::Early;
+    TPTFourPole core;
 };
 
-// Unified per-mode filter dispatch.
 class SynthFilter
 {
 public:
@@ -290,10 +305,10 @@ public:
     }
 
     void setMode(FilterMode m) noexcept { mode = m; }
+    void setModularModel(ModularFilterModel m) noexcept { ladder.setModel(m); }
 
-    // Rate change for oversampling-factor switches. Re-prepares the models
-    // (recomputes rate-dependent constants; resets filter state — a brief,
-    // acceptable transient. Pitch lives in the oscillators, not here).
+    // Re-preparing resets only filter memory; oscillator/envelope musical state is
+    // retained by SynthVoice during an oversampling-factor change.
     void setSampleRate(double sampleRate) noexcept { prepare(sampleRate); }
 
     void setParameters(float cutoff, float resonance, float hpCutoff = 20.0f) noexcept
@@ -319,7 +334,13 @@ public:
         return input;
     }
 
-    void reset() noexcept { cosmos.reset(); oracle.reset(); mono.reset(); ladder.reset(); }
+    void reset() noexcept
+    {
+        cosmos.reset();
+        oracle.reset();
+        mono.reset();
+        ladder.reset();
+    }
 
 private:
     FilterMode mode = FilterMode::Cosmos;

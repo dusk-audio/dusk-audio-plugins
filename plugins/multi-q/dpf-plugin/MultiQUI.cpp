@@ -26,6 +26,7 @@
 #include "MultiQFilters.hpp"  // amb:: analog-matched designers + MqBiquadCoeffs (Digital curve)
 
 #include "DuskImGuiFont.hpp"
+#include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "PatreonBackersDpf.hpp"
 
@@ -355,6 +356,7 @@ protected:
 
         ImGui::End();
         ImGui::PopStyleVar(2);
+        textInputFocus.update(*this);
 
         // Cursor feedback. The DPF-Widgets ImGui backend never forwards
         // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
@@ -4091,6 +4093,7 @@ private:
     }
 
     duskdpf::DuskPanel panel;
+    duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::RealFFT fft;
     std::vector<float> specDb;
     duskdpf::CrispFontSet fontSet;

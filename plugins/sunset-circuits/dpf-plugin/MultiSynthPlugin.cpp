@@ -45,6 +45,8 @@ static_assert((int)kParamSeqPitch0   == (int)msynth::pSeqPitch0,   "seq pitch dr
 static_assert((int)kParamSeqSlide0   == (int)msynth::pSeqSlide0,   "seq slide drift");
 static_assert((int)kParamArpAccentPattern == (int)msynth::pArpAccentPattern,
               "appended param drift");
+static_assert((int)kParamModOsc3Filter == (int)msynth::pModOsc3Filter,
+              "accuracy-upgrade block end drift");
 static_assert((int)kNumCoreParams    == (int)msynth::kNumParams,   "core param count drift");
 
 //---------------------------------------------------------------------------

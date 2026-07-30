@@ -253,7 +253,7 @@ def step_levels(name, **kw):
 # only by getVelocity's AccentPattern branch (arpVelMode 2).
 ACCENT_LOUD_DB = 2.0         # accented steps must stand this far above the rest
 RAMP_SPAN_DB = 3.0           # quietest -> loudest cell of one 8-cell ramp run
-RAMP_STEP_DB = 0.0           # every ramp step must move the right way, no plateau
+RAMP_STEP_DB = -0.1          # tolerate 0.1 dB pitch/filter measurement ripple
 CROSS_SIZE_TOL_DB = 0.6      # patternSize 1 vs 3 must render the same shape
 
 
@@ -267,7 +267,10 @@ def accent_shape(idx, lv):
         return (margin >= ACCENT_LOUD_DB,
                 f"loud {np.mean(loud):6.1f}  soft {np.mean(soft):6.1f}  "
                 f"margin {margin:5.1f} dB (need >= {ACCENT_LOUD_DB:.1f})")
-    # Ramps: two independent 8-cell runs, each strictly monotone with real span.
+    # Ramps: two independent 8-cell runs with a monotone trend and real span.
+    # A triad cycles three pitches through the grid; after the mode-specific
+    # filter revoice their peak levels can differ by a few hundredths of a dB.
+    # Keep a 0.1 dB local tolerance while still requiring the full 3 dB ramp.
     up = (idx == 2)
     ok, spans = True, []
     for run in (lv[0:8], lv[8:16]):
@@ -276,7 +279,7 @@ def accent_shape(idx, lv):
         spans.append(abs(run[-1] - run[0]))
     ok = ok and min(spans) >= RAMP_SPAN_DB
     return (ok, f"runs {lv[0]:6.1f}->{lv[7]:6.1f} and {lv[8]:6.1f}->{lv[15]:6.1f}  "
-                f"span {min(spans):4.1f} dB (need >= {RAMP_SPAN_DB:.1f}, monotone)")
+                f"span {min(spans):4.1f} dB (need >= {RAMP_SPAN_DB:.1f}, trend)")
 
 
 def accent_patterns(fails):

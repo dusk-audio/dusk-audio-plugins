@@ -23,6 +23,7 @@
 #include "MultiSynthDSP.hpp"      // MultiSynthDSP::copyScope / kScopeSize
 #include "FMAlgorithms.hpp"       // msynth::kPrismAlgos — single source of truth
 #include "DuskImGuiFont.hpp"
+#include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 
 #include <cfloat>
@@ -46,9 +47,7 @@ namespace
     constexpr float kDesignW = 1240.0f;
     constexpr float kDesignH = 780.0f;
     constexpr float kPi = 3.14159265358979f;
-    // Period of the Modular S&H staircase animation in shPhase units — the
-    // staircase is sin((shPhase + k*1.37) * 2.1), so 2*pi/2.1.
-    constexpr float kShPeriod = 2.0f * kPi / 2.1f;
+    constexpr float kDimTextBlend = 0.25f;
 
     inline ImU32 hx(uint32_t rgb) { return IM_COL32((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255); }
 
@@ -89,6 +88,7 @@ namespace
     const char* const kLfoShape[] = { "Sine", "Triangle", "Square", "S&H", "Random" };
     const char* const kDriveType[]= { "Soft", "Hard", "Tube" };
     const char* const kChorusOpt[]= { "Off", "I", "II", "I+II" };
+    const char* const kModFilterOpt[] = { "EARLY", "LATE" };
     const char* const kGlide[]    = { "Time", "Rate" };
     const char* const kVelCurve[] = { "Linear", "Soft", "Hard", "S-Curve" };
     const char* const kOversmp[]  = { "1x", "2x", "4x" };
@@ -157,6 +157,19 @@ public:
         // shared-dpf change (out of scope here).
         fontSet = duskdpf::loadCrispFontSet(kFontSizes, 8, getScaleFactor());
         panel.setFontSet(fontSet);
+
+        // Tooltips should read as deliberate UI, not text that appears immediately
+        // under the pointer. This ImGui context belongs to this editor, so setting
+        // the popup treatment once also keeps combo menus and tooltips consistent.
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.PopupRounding = 5.0f;
+        style.PopupBorderSize = 1.0f;
+        style.HoverStationaryDelay = 0.12f;
+        style.HoverDelayNormal = 0.42f;
+        style.HoverFlagsForTooltipMouse =
+            ImGuiHoveredFlags_Stationary | ImGuiHoveredFlags_DelayNormal;
+        style.Colors[ImGuiCol_PopupBg] = ImVec4(0.055f, 0.060f, 0.070f, 0.98f);
+        style.Colors[ImGuiCol_Border]  = ImVec4(0.42f, 0.43f, 0.46f, 0.92f);
 
         buildTooltips();
 
@@ -245,7 +258,15 @@ protected:
 
         // ---- mode crossfade (spec §5) ----
         const int m = clampMode((int)std::lround(values[kParamMode]));
-        if (m != curMode) { fromPal = live; prevMode = curMode; curMode = m; modeBlend = 0.0f; }
+        if (m != curMode)
+        {
+            fromPal = live;
+            prevMode = curMode;
+            curMode = m;
+            modeBlend = 0.0f;
+            if (m == 5)
+                showMod = false;
+        }
         const float dt = ImGui::GetIO().DeltaTime;
         modeBlend = std::min(1.0f, modeBlend + (dt > 0.f ? dt : 0.016f) / 0.28f);
         const float e = modeBlend * modeBlend * (3.0f - 2.0f * modeBlend);
@@ -254,7 +275,7 @@ protected:
         // Push the blended palette into the shared panel (on-panel ink + accent).
         duskdpf::Palette pp;
         pp.white    = live.textPanel;
-        pp.whiteDim = lerpC(live.textPanel, live.panel, 0.38f);
+        pp.whiteDim = lerpC(live.textPanel, live.panel, kDimTextBlend);
         pp.accent   = live.accent;
         pp.ledOn    = live.ledOn;
         pp.ledOff   = live.ledOff;
@@ -335,9 +356,10 @@ protected:
 
         // Layer seam at y=545. The lower body ROW of the upper three layers (VOICE/
         // CHARACTER, AMP/FILTER ENV, MOD bar, OUTPUT) ends at y=542, so its outer
-        // bevel reaches 542+3=545 and abuts the seam exactly. The SEQUENCER panel in
-        // MSbottom starts at y=548 (bevel top 545), so the two layers meet cleanly at
-        // 545 with no clipping either way. This +24 shift grew the lower body row
+        // bevel reaches y=544 and leaves a narrow chassis rule at the y=545 layer
+        // seam. The SEQUENCER panel in MSbottom starts at y=548 (bevel top 546), so
+        // neither frame clips and the rows read as separate hierarchy bands. This
+        // +24 shift grew the lower body row
         // (osc panels shrank to feed it) and trimmed the sequencer's height to match.
         beginLayer("MSleft", 0, 55, 346, 545);
         if (curMode == 4) drawPrismOps();   // Prism swaps oscillators for the op matrix
@@ -497,6 +519,8 @@ protected:
     // happen in the middle of a window's submission.
     void applyGrip(const duskdpf::ResizeGripState& grip)
     {
+        textInputFocus.update(*this);
+
         // The DPF-Widgets ImGui backend never forwards ImGui::SetMouseCursor() to
         // the window, so drive DGL's cursor directly. Edge-triggered: setCursor()
         // is a window-level call, not a per-frame one.
@@ -584,18 +608,27 @@ private:
 
     void panelBox(float x0, float y0, float x1, float y1, float alpha = 1.0f)
     {
-        dl->AddRectFilled(P(x0 - 3, y0 - 3), P(x1 + 3, y1 + 3), mulA(metalCol(), alpha), 8.0f * s);
+        // The older 3 px bright metal frame gave every nested section the same
+        // visual weight. A slimmer, chassis-blended rail keeps the hardware
+        // character while allowing titles, controls, and mode colour to lead.
+        const ImU32 frame = lerpC(metalCol(), live.bg, 0.34f);
+        dl->AddRectFilled(P(x0 - 2, y0 - 2), P(x1 + 2, y1 + 2),
+                          mulA(frame, alpha), 7.0f * s);
         dl->AddRectFilled(P(x0, y0), P(x1, y1), mulA(live.panel, alpha), 6.0f * s);
         // engraved bevel: light top-edge highlight + dark bottom-edge shade
         dl->AddLine(P(x0 + 2, y0 + 1), P(x1 - 2, y0 + 1),
-                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.22f), alpha), 1.0f * s);
+                    mulA(lerpC(live.panel, IM_COL32(255, 255, 255, 255), 0.13f), alpha), 1.0f * s);
         dl->AddLine(P(x0 + 2, y1 - 1), P(x1 - 2, y1 - 1),
-                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.35f), alpha), 1.0f * s);
+                    mulA(lerpC(live.panel, IM_COL32(0, 0, 0, 255), 0.26f), alpha), 1.0f * s);
     }
     void sectionTitle(float x, float y, const char* t)
     {
-        text(x + 0.6f, y + 1.0f, 11.0f, withA(IM_COL32(0, 0, 0, 255), 120), t, -1, true); // engraved shadow
-        text(x, y, 11.0f, live.accent, t, -1, true);
+        // Dark panels benefit from the engraved shadow. On Acid's light silver
+        // skin it reads as a second, misregistered heading instead of depth.
+        if (curMode != 5)
+            text(x + 0.6f, y + 1.0f, 11.0f,
+                 withA(IM_COL32(0, 0, 0, 255), 120), t, -1, true);
+        text(x, y, 11.5f, live.accent, t, -1, true);
     }
     void drawX(float cx, float cy, float r, ImU32 col) // close/clear glyph (no exotic font glyph)
     { dl->AddLine(P(cx - r, cy - r), P(cx + r, cy + r), col, 1.6f * s);
@@ -653,7 +686,81 @@ private:
         if (n >= 2) dl->AddPolyline(pts, n, live.accent, 0, 2.4f * s);
     }
 
-    ImU32 whiteDimCol() const { return lerpC(live.textPanel, live.panel, 0.38f); }
+    // Return the matrix destination represented by a visible control. Destinations
+    // without a truthful one-to-one control (voice amplitude and per-voice pan)
+    // stay on the matrix badge; Effects Mix intentionally marks all four wet-mix
+    // knobs because that destination scales the entire effects chain.
+    static int modDestForParam(uint32_t p)
+    {
+        switch (p)
+        {
+            case kParamOsc1Detune:   return 1;
+            case kParamOsc2Detune:   return 2;
+            case kParamOsc1PW:       return 3;
+            case kParamOsc2PW:       return 4;
+            case kParamFilterCutoff: return 5;
+            case kParamFilterRes:    return 6;
+            case kParamLfo1Rate:     return 9;
+            case kParamLfo2Rate:     return 10;
+            case kParamDriveMix:
+            case kParamChorusMix:
+            case kParamDelayMix:
+            case kParamReverbMix:    return 11;
+            case kParamUnisonDetune: return 12;
+            default:                 return 0;
+        }
+    }
+
+    // Commercial synths make modulation visible at its destination. Draw signed
+    // range arcs outside the normal value/tick ring: positive depth travels right
+    // from noon, negative depth left. Multiple slots accumulate independently so
+    // opposing routings remain visible instead of cancelling into "no modulation".
+    void modulationRange(uint32_t p, float cx, float cy, float r, bool ticks)
+    {
+        if (curMode == 5) return; // AcidVoice bypasses the modulation matrix.
+        const int dest = modDestForParam(p);
+        if (dest == 0) return;
+
+        float pos = 0.0f, neg = 0.0f;
+        for (int i = 0; i < 8; ++i)
+        {
+            if (values[kParamModSrc0 + i] <= 0.5f
+                || (int)std::lround(values[kParamModDst0 + i]) != dest)
+                continue;
+            const float amount = values[kParamModAmt0 + i];
+            if (amount > 0.0f) pos += amount;
+            else               neg -= amount;
+        }
+        pos = std::min(pos, 1.0f);
+        neg = std::min(neg, 1.0f);
+        if (pos <= 1e-4f && neg <= 1e-4f) return;
+
+        const ImVec2 c = P(cx, cy);
+        // Ticked knobs already reach r+6.5; tickless compact FX knobs have tightly
+        // stacked labels, so their range rides closer to the body.
+        const float R = (r + (ticks ? 9.0f : 5.5f)) * s;
+        const ImU32 col = lerpC(live.ledOn, live.accent, 0.24f);
+        auto arc = [&](float end)
+        {
+            constexpr int N = 18;
+            ImVec2 pts[N + 1];
+            for (int i = 0; i <= N; ++i)
+            {
+                const float t = 0.5f + (end - 0.5f) * (float)i / (float)N;
+                const float a = duskdpf::DuskPanel::knobAngle(t);
+                pts[i] = ImVec2(c.x + std::sin(a) * R, c.y - std::cos(a) * R);
+            }
+            dl->AddPolyline(pts, N + 1, col, 0, 2.0f * s);
+            dl->AddCircleFilled(pts[N], 2.2f * s, col, 10);
+        };
+        if (pos > 1e-4f) arc(0.5f + 0.45f * pos);
+        if (neg > 1e-4f) arc(0.5f - 0.45f * neg);
+    }
+
+    ImU32 whiteDimCol() const
+    {
+        return lerpC(live.textPanel, live.panel, kDimTextBlend);
+    }
 
     // Chrome knob body (matches duskdpf::DuskPanel's chrome exactly) so the local
     // skew/ratio knobs are visually identical to the shared linear knobs.
@@ -755,7 +862,9 @@ private:
         const bool editing = panel.isEditingValue(id);
         bool changed = false;
 
-        if (tips[p] && tips[p][0] && hovered && !active) ImGui::SetTooltip("%s", tips[p]);
+        if (tips[p] && tips[p][0] && !active
+            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tips[p]);
         if (!editing)
         {
             if (ImGui::IsItemActivated())
@@ -792,6 +901,7 @@ private:
         const float t = lrange > 0.0f ? (toL(values[p]) - lmin) / lrange : 0.0f;
         drawKnobChrome(c, R, t, ticks);
         accentArc(cx, cy, r, t, bipolar);
+        modulationRange(p, cx, cy, r, ticks);
 
         float typed;
         if (panel.valueEdit(id, cx, cy, r, typed))
@@ -800,10 +910,11 @@ private:
             typed = typed < d.min ? d.min : (typed > d.max ? d.max : typed);
             if (typed != values[p]) { beginEdit(p); values[p] = typed; setParam(p, typed); endEdit(p); changed = true; }
         }
-        else if ((hovered || active) && !panel.isEditingValue(id))
+        else if (active && !panel.isEditingValue(id))
         {
-            if (active) { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto); panel.valueBubble(cx, cy, r, buf); }
-            else        panel.valueBubble(cx, cy, r, d.name);
+            char buf[48];
+            fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto);
+            panel.valueBubble(cx, cy, r, buf);
         }
         if (persist && !panel.isEditingValue(id))
         { char buf[48]; fmtVal(buf, sizeof buf, p, fmt, suffix, dmul, dadd, timeAuto); text(cx, cy + r + 8.0f, 9.5f, whiteDimCol(), buf, 0); }
@@ -828,7 +939,9 @@ private:
         const bool modKey  = resetModKey();
         const bool editing = panel.isEditingValue(id);
         bool changed = false;
-        if (tips[p] && tips[p][0] && hovered && !active) ImGui::SetTooltip("%s", tips[p]);
+        if (tips[p] && tips[p][0] && !active
+            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tips[p]);
         if (!editing)
         {
             if (ImGui::IsItemActivated())
@@ -874,7 +987,7 @@ private:
             typed = typed < d.min ? d.min : (typed > d.max ? d.max : typed);
             if (typed != values[p]) { beginEdit(p); values[p] = typed; setParam(p, typed); endEdit(p); changed = true; }
         }
-        else if ((hovered || active) && !panel.isEditingValue(id))
+        else if (active && !panel.isEditingValue(id))
         { char buf[24]; std::snprintf(buf, sizeof buf, "%.2f\xC3\x97", values[p]); panel.valueBubble(cx, cy, r, buf); }
         return changed;
     }
@@ -898,12 +1011,16 @@ private:
                                    /*contextMenu*/ false, /*overrideText*/ nullptr,
                                    /*hasExternalReadout*/ false,
                                    /*dispMin*/ 0.0f, /*dispMax*/ 0.0f,
-                                   /*nameOnHover*/ true);
+                                   /*nameOnHover*/ false,
+                                   /*doubleClickReset*/ false,
+                                   /*persistentTextSize*/ 9.5f,
+                                   /*bubbleOnActiveOnly*/ true);
         const float t = (d.max > d.min) ? (values[p] - d.min) / (d.max - d.min) : 0.0f;
         // masterVol's bipolar arc anchors at the true 0 dB point, not the geometric
         // mid; symmetric bipolar ranges are unaffected (t0=0.5 either way).
         const float anchorT = (anchorZero && d.max > d.min) ? (0.0f - d.min) / (d.max - d.min) : -1.0f;
         accentArc(cx, cy, r, t, bipolar, anchorT);
+        modulationRange(p, cx, cy, r, ticks);
         return ch;
     }
 
@@ -935,7 +1052,24 @@ private:
                     withA(live.text, A), 2.0f * s);
         ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", whyTip);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", whyTip);
+    }
+
+    void readOnlyField(const char* id, float x0, float y0, float x1, float y1,
+                       const char* label, const char* whyTip, float alpha = 1.0f)
+    {
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", whyTip);
+        const ImU32 bg = lerpC(IM_COL32(38, 38, 41, 255), live.accent, 0.08f);
+        dl->AddRectFilled(b0, b1, mulA(bg, alpha), 3.0f * s);
+        dl->AddRect(b0, b1, mulA(withA(live.accent, 150), alpha),
+                    3.0f * s, 0, 1.0f * s);
+        text(0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 10.0f,
+             mulA(IM_COL32(230, 232, 235, 255), alpha), label, 0, true);
     }
 
     void setChoice(uint32_t p, int v)
@@ -959,6 +1093,15 @@ private:
         ImGui::PushStyleColor(ImGuiCol_PopupBg,  IM_COL32(24, 24, 26, 255));
         ImGui::PushStyleColor(ImGuiCol_Header,   withA(live.accent, 150));
         ImGui::PushStyleColor(ImGuiCol_Text,     IM_COL32(235, 238, 242, 255));
+        // ImGui's default combo-arrow button is bright blue. A dark tint derived
+        // from the current mode accent keeps dropdowns recognizable without
+        // turning every row into a repeated blue stripe (especially in Acid).
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              lerpC(live.accent, IM_COL32(30, 31, 35, 255), 0.68f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              lerpC(live.accent, IM_COL32(30, 31, 35, 255), 0.48f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                              lerpC(live.accent, IM_COL32(30, 31, 35, 255), 0.30f));
         char cid[40]; std::snprintf(cid, sizeof(cid), "##%s", id);
         if (ImGui::BeginCombo(cid, opts[shownIdx]))
         {
@@ -966,8 +1109,9 @@ private:
                 if (ImGui::Selectable(opts[i], i == idx)) setChoice(p, i);
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered() && tips[p]) ImGui::SetTooltip("%s", tips[p]);
-        ImGui::PopStyleColor(4);
+        if (tips[p] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tips[p]);
+        ImGui::PopStyleColor(7);
         ImGui::PopStyleVar();
         ImGui::PopFont();
     }
@@ -981,7 +1125,8 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) setChoice(p, on ? 0 : 1);
-        if (ImGui::IsItemHovered() && tips[p]) ImGui::SetTooltip("%s", tips[p]);
+        if (tips[p] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tips[p]);
         if (acid)
         {
             const ImVec2 c((b0.x + b1.x) * 0.5f, (b0.y + b1.y) * 0.5f);
@@ -991,12 +1136,50 @@ private:
             text((x0 + x1) * 0.5f, y1 + 1.0f, 9.0f, live.textPanel, label, 0, on);
             return;
         }
-        dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 3.0f * s);
+        const ImU32 offBg = IM_COL32(40, 40, 43, 255);
+        const ImU32 buttonBg = on ? lerpC(offBg, live.accent, 0.18f) : offBg;
+        dl->AddRectFilled(b0, b1, buttonBg, 3.0f * s);
         dl->AddRect(b0, b1, on ? withA(live.accent, 255) : IM_COL32(90, 90, 94, 255), 3.0f * s, 0, 1.4f * s);
         panel.led(dl, x0 + 8.0f, 0.5f * (y0 + y1), on, 3.2f);
         // label sits on the dark button, so always draw it light regardless of skin
         text(0.5f * (x0 + x1) + 8.0f, y0 + 0.30f * (y1 - y0), 10.0f,
              on ? IM_COL32(238, 238, 240, 255) : IM_COL32(150, 150, 154, 255), label, 0, on);
+    }
+
+    // Compact binary control for secondary state such as LEGATO and SYNC. Unlike
+    // ledButton(), the target hugs its content instead of filling an entire combo
+    // column, so an LED does not read as an unexplained empty text field.
+    void compactToggle(const char* id, uint32_t p, float x0, float y0, float x1, float y1,
+                       const char* label, bool interactive = true, float alpha = 1.0f)
+    {
+        const bool on = values[p] > 0.5f;
+        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
+        if (interactive)
+        {
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+            if (ImGui::IsItemClicked()) setChoice(p, on ? 0 : 1);
+            if (tips[p] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("%s", tips[p]);
+        }
+
+        const ImU32 offBg = IM_COL32(38, 39, 43, 255);
+        dl->AddRectFilled(b0, b1, mulA(on ? lerpC(offBg, live.accent, 0.20f) : offBg, alpha),
+                          0.5f * (y1 - y0) * s);
+        dl->AddRect(b0, b1,
+                    mulA(on ? live.accent : IM_COL32(91, 93, 99, 255), alpha),
+                    0.5f * (y1 - y0) * s, 0, 1.2f * s);
+        const float cy = 0.5f * (y0 + y1);
+        const ImVec2 lc = P(x0 + 9.0f, cy);
+        dl->AddCircleFilled(lc, 4.4f * s,
+                            mulA(on ? withA(live.ledOn, 75)
+                                    : IM_COL32(28, 29, 32, 255), alpha), 16);
+        dl->AddCircleFilled(lc, 2.6f * s,
+                            mulA(on ? live.ledOn : IM_COL32(82, 83, 88, 255), alpha), 16);
+        text(0.5f * (x0 + x1) + 5.0f, y0 + 0.27f * (y1 - y0), 9.0f,
+             mulA(on ? IM_COL32(238, 238, 240, 255)
+                     : IM_COL32(155, 156, 161, 255), alpha),
+             label && label[0] ? label : (on ? "ON" : "OFF"), 0, on);
     }
 
     //========================================================================
@@ -1066,7 +1249,7 @@ private:
             // for in a bug report. Deliberately NOT __DATE__/__TIME__: those
             // would make every rebuild a different binary and cost the release
             // builds their reproducibility for a line nobody can act on.
-            if (ImGui::IsItemHovered())
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
                 ImGui::SetTooltip("Sunset Circuits v%s\nDusk Audio\n%d x %d \xC2\xB7 scale %.2f",
                                   SC_VERSION_STRING, (int)getWidth(), (int)getHeight(), s);
         }
@@ -1088,7 +1271,7 @@ private:
             ImGui::SetCursorScreenPos(p0);
             ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
             if (ImGui::IsItemClicked() && !sel) setChoice(kParamMode, i);
-            if (ImGui::IsItemHovered())
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             { char tt[40]; std::snprintf(tt, sizeof(tt), "Switch to %s mode", kModeNames[i]); ImGui::SetTooltip("%s", tt); }
             dl->AddRectFilled(p0, p1, IM_COL32(24, 24, 27, 255), 5.0f * s);
             if (sel)
@@ -1123,6 +1306,12 @@ private:
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
         ImGui::PushStyleColor(ImGuiCol_Header,  withA(live.accent, 150));
         ImGui::PushStyleColor(ImGuiCol_Text,    IM_COL32(235, 238, 242, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              lerpC(live.accent, IM_COL32(30, 31, 35, 255), 0.68f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              lerpC(live.accent, IM_COL32(30, 31, 35, 255), 0.48f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                              lerpC(live.accent, IM_COL32(30, 31, 35, 255), 0.30f));
         // Setting the constraint OURSELVES is what unlocks the grid: BeginCombo
         // only imposes its "8 items tall, one column wide" default when no
         // constraint is pending (imgui.cpp, BeginComboPopup), so supplying one
@@ -1137,9 +1326,9 @@ private:
             drawPresetPopupBody();
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered())
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("Select a preset \xC2\xB7 grouped by mode, %d in all", comboTotal());
-        ImGui::PopStyleColor(4); ImGui::PopStyleVar(); ImGui::PopFont();
+        ImGui::PopStyleColor(7); ImGui::PopStyleVar(); ImGui::PopFont();
 
         if (chevron("presetNext", kBarNextX0, kBarY0, kBarNextX0 + kBarChevW, kBarY1, true, "Next preset"))
             applyCombined(currentPreset < 0 ? 0 : currentPreset + 1);
@@ -1304,7 +1493,8 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool clicked = ImGui::IsItemClicked();
         const bool hovered = ImGui::IsItemHovered();
-        if (tip && hovered) ImGui::SetTooltip("%s", tip);
+        if (tip && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tip);
         dl->AddRectFilled(b0, b1, IM_COL32(38, 38, 41, 255), 4.0f * s);
         dl->AddRect(b0, b1, hovered ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.2f * s);
         text(0.5f * (x0 + x1), 0.5f * (y0 + y1) - 5.0f, 10.0f, live.accent, label, 0, true);
@@ -1420,7 +1610,8 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool clk = ImGui::IsItemClicked();
-        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        if (tip && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tip);
         dl->AddRectFilled(b0, b1, IM_COL32(38, 38, 41, 255), 4.0f * s);
         dl->AddRect(b0, b1, IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.2f * s);
         const float cx = 0.5f * (x0 + x1), cy = 0.5f * (y0 + y1);
@@ -1559,16 +1750,28 @@ private:
     {
         const OscGeom g1 = oscGeom(60.0f), g2 = oscGeom(165.0f), g3 = oscGeom(270.0f);
 
-        // OSC 1 — DETUNE / PW / LEVEL, plus X-MOD in Cosmos and Oracle. Columns 70/85
-        // apart against a 49 px ring, so >= 21 px of daylight.
+        // OSC 1 — DETUNE / PW / LEVEL, plus Cosmos X-MOD. Oracle's defining
+        // OSC 2 -> OSC 1 routing belongs exclusively to its Poly-Mod panel; showing
+        // X-MOD here as well exposed two controls for effectively the same route.
         panelBox(16, g1.y0, 340, g1.y1);
         sectionTitle(24, g1.rowY, "OSC 1");
         comboBox("o1w", kParamOsc1Wave, 150, g1.rowY, 332, g1.comboY1, kWave5, 5, curMode == 5);
-        klabel(60, g1.labelY, "DETUNE");  knob("o1det", kParamOsc1Detune, 60, g1.cy, kOscR, "%+.0f", " ct", true);
+        klabel(60, g1.labelY, "DETUNE");
+        if (curMode == 5)
+            inertKnob("o1det", kParamOsc1Detune, 60, g1.cy, kOscR, true,
+                      "Acid uses a dedicated oscillator; OSC 1 detune is not used.");
+        else
+            knob("o1det", kParamOsc1Detune, 60, g1.cy, kOscR, "%+.0f", " ct", true);
         klabel(130, g1.labelY, "PW");     knob("o1pw", kParamOsc1PW, 130, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-        klabel(200, g1.labelY, "LEVEL");  knob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-        // crossMod lives with the oscillators (Cosmos/Oracle only) — see report.
-        if (curMode == 0 || curMode == 1)
+        klabel(200, g1.labelY, "LEVEL");
+        if (curMode == 5)
+            inertKnob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, false,
+                      "Acid has a fixed oscillator gain; OSC 1 level is not used.");
+        else
+            knob("o1lvl", kParamOsc1Level, 200, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
+        // Cross-mod is the Cosmos oscillator treatment. Oracle exposes its
+        // equivalent routing in the dedicated Poly-Mod panel below the LFOs.
+        if (curMode == 0)
         { klabel(285, g1.labelY, "X-MOD"); knob("xmod", kParamCrossMod, 285, g1.cy, kOscR, "%.0f", " %", false, false, false, 100.0f); }
 
         // OSC 2 — SEMI / DETUNE / PW / LEVEL. Four columns 58 apart against the same
@@ -1576,29 +1779,44 @@ private:
         // roomier of the two grids).
         panelBox(16, g2.y0, 340, g2.y1);
         sectionTitle(24, g2.rowY, "OSC 2");
+        if (curMode == 5)
+        {
+            text(178, g2.cy - 13.0f, 11.0f, whiteDimCol(),
+                 "SINGLE-OSCILLATOR ENGINE", 0, true);
+            text(178, g2.cy + 5.0f, 9.5f,
+                 lerpC(live.textPanel, live.panel, 0.42f),
+                 "OSC 2 is bypassed in Acid mode", 0, false);
+        }
         // Cosmos (mode 0) forces OSC 2 to a Pulse locked to OSC 1's frequency and
-        // detune, so the combo shows "Pulse" and SEMI/DETUNE are inert here (PW +
-        // LEVEL stay live). The wave param remains selectable to store a choice for
-        // the other modes. Pulse is index 4 in kWave5. (U2)
+        // detune. Render that waveform as a read-only field: the old forced combo
+        // still opened and wrote a stored value, even though no selection could
+        // change Cosmos sound. PW + LEVEL remain live.
         const bool cosmosOsc2 = (curMode == 0);
-        comboBox("o2w", kParamOsc2Wave, 150, g2.rowY, 332, g2.comboY1, kWave5, 5, curMode == 5,
-                 cosmosOsc2 ? 4 : -1);
-        klabel(56, g2.labelY, "SEMI");
-        klabel(114, g2.labelY, "DETUNE");
-        if (cosmosOsc2)
+        if (curMode != 5)
         {
-            inertKnob("o2semi", kParamOsc2Semi, 56, g2.cy, kOscR, true,
-                      "Inactive in Cosmos: OSC 2 tracks OSC 1's pitch.");
-            inertKnob("o2det",  kParamOsc2Detune, 114, g2.cy, kOscR, true,
-                      "Inactive in Cosmos: OSC 2 uses OSC 1's detune.");
+            if (cosmosOsc2)
+            {
+                readOnlyField("o2w_fixed", 150, g2.rowY, 332, g2.comboY1,
+                              "Pulse  \xC2\xB7  Fixed",
+                              "Cosmos fixes OSC 2 to Pulse; pulse width remains adjustable.");
+                text(85, g2.labelY, 9.0f, live.accent, "TRACKS OSC 1", 0, true);
+                inertKnob("o2semi", kParamOsc2Semi, 56, g2.cy, kOscR, true,
+                          "Inactive in Cosmos: OSC 2 tracks OSC 1's pitch.");
+                inertKnob("o2det",  kParamOsc2Detune, 114, g2.cy, kOscR, true,
+                          "Inactive in Cosmos: OSC 2 uses OSC 1's detune.");
+            }
+            else
+            {
+                comboBox("o2w", kParamOsc2Wave, 150, g2.rowY, 332, g2.comboY1,
+                         kWave5, 5);
+                klabel(56, g2.labelY, "SEMI");
+                klabel(114, g2.labelY, "DETUNE");
+                knob("o2semi", kParamOsc2Semi, 56, g2.cy, kOscR, "%+.0f", " st", true, true);
+                knob("o2det", kParamOsc2Detune, 114, g2.cy, kOscR, "%+.0f", " ct", true);
+            }
+            klabel(172, g2.labelY, "PW");    knob("o2pw", kParamOsc2PW, 172, g2.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
+            klabel(230, g2.labelY, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, g2.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
         }
-        else
-        {
-            knob("o2semi", kParamOsc2Semi, 56, g2.cy, kOscR, "%+.0f", " st", true, true);
-            knob("o2det", kParamOsc2Detune, 114, g2.cy, kOscR, "%+.0f", " ct", true);
-        }
-        klabel(172, g2.labelY, "PW");    knob("o2pw", kParamOsc2PW, 172, g2.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-        klabel(230, g2.labelY, "LEVEL"); knob("o2lvl", kParamOsc2Level, 230, g2.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
 
         // OSC 3 / SUB — mode-variant contents, but the SAME frame and knob row as the
         // two panels above it in every mode (that is the whole point of the rework).
@@ -1610,7 +1828,7 @@ private:
             // Centred as a pair on the panel's midline (178) like the SUB OSC
             // variant's lone LEVEL knob; 90/240 sat 13 px left of centre.
             klabel(118, g3.labelY, "LEVEL");  knob("o3lvl", kParamOsc3Level, 118, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
-            klabel(238, g3.labelY, "FM AMT"); knob("fmamt", kParamFMAmount, 238, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
+            klabel(238, g3.labelY, "OSC1\xE2\x86\x92OSC2"); knob("fmamt", kParamFMAmount, 238, g3.cy, kOscR, "%.0f", " %", false, false, false, 100.0f);
         }
         else if (curMode == 0 || curMode == 2) // Cosmos / Mono -> sub
         {
@@ -1620,19 +1838,31 @@ private:
         }
         else
         {
-            sectionTitle(24, g3.rowY, "OSC 3 / SUB");
-            text(178, g3.cy - 6.0f, 11.0f, lerpC(live.textPanel, live.panel, 0.4f), "(not used in this mode)", 0, false);
+            sectionTitle(24, g3.rowY, "AUX OSC");
+            text(178, g3.cy - 13.0f, 11.0f, whiteDimCol(),
+                 "NO AUXILIARY OSCILLATOR", 0, true);
+            text(178, g3.cy + 5.0f, 9.5f,
+                 lerpC(live.textPanel, live.panel, 0.42f),
+                 curMode == 1 ? "Oracle uses its two-oscillator poly-mod path"
+                              : "Acid uses its dedicated single oscillator",
+                 0, false);
         }
     }
 
     void drawMixerVoice()
     {
+        if (curMode == 5)
+        {
+            drawAcidCharacter();
+            return;
+        }
+
         // VOICE / CHARACTER — all 14 controls (10 knobs, 3 combos, 1 legato toggle).
         // Ten knobs sit in a 2-row x 5-col grid at the left; the three combos and the
         // LEGATO lamp stack in a right-hand column (x 246..336) wide enough that
         // "S-Curve"/"Linear" never clip. Two geometries share this one body:
         //
-        //   B  (modes 0-3,5): panel 376..542 (h166). r13 knobs — tick ring reaches
+        //   B  (modes 0-3): panel 376..542 (h166). r13 knobs — tick ring reaches
         //      R+6.5 -> ±19.5. font-10 knob labels (ink = 0.675*size = 6.75, ink top
         //      = y+1). row centres 430 / 494, label top = centre-32.
         //        Row1: label ink 399..405.75 | ring top 410.5 -> 4.75 px daylight.
@@ -1648,7 +1878,6 @@ private:
         //        Row1: label ink 431..437.075 | ring top 442.5 -> 5.425 px.
         //        Row2 ring bottom 531.5 clears the 539 inner floor by 7.5 px.
         //        Row1 labels clear the title (ink bottom 423.4) by 7.6 px.
-        // Verified on the Acid silver palette (mode 5, the hardest contrast).
         const bool prism  = (curMode == 4);
         const float pTop  = prism ? 412.0f : 376.0f;
         const float titleY= prism ? 415.0f : 379.0f;
@@ -1673,19 +1902,29 @@ private:
         panelBox(16, pTop, 340, 542);
         sectionTitle(24, titleY, "VOICE / CHARACTER");
         auto KX = [&](int c) { return KX0 + c * KDX; };
-        auto vLabel = [&](float cx, float y, const char* t) { text(cx, y, kFont, live.textPanel, t, 0, true); };
-        auto iLabel = [&](float cx, float cy, const char* t) { text(cx, cy - itemLabOff, iFont, live.textPanel, t, 0, true); };
+        auto vLabel = [&](float cx, float y, const char* t)
+        { text(cx, y, kFont, live.textPanel, t, 0, true); };
+        auto iLabel = [&](float cx, float cy, const char* t)
+        { text(cx, cy - itemLabOff, iFont, live.textPanel, t, 0, true); };
         auto iCombo = [&](const char* id, uint32_t p, float cy,
                           const char* const* opts, int n, const char* lab)
         { iLabel(colCx, cy, lab);
-          comboBox(id, p, colCx - colHw, cy - comboH, colCx + colHw, cy + comboH, opts, n, curMode == 5); };
+          comboBox(id, p, colCx - colHw, cy - comboH,
+                   colCx + colHw, cy + comboH, opts, n); };
 
         // Row 1 — CHARACTER (noise/analog/vintage/tune) + unison voices.
-        vLabel(KX(0), yc1 - labOff, "NOISE"); knob("noise", kParamNoiseLevel, KX(0), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(KX(1), yc1 - labOff, "ANALOG");knob("analog", kParamAnalogAmt, KX(1), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(0), yc1 - labOff, "NOISE");
+        knob("noise", kParamNoiseLevel, KX(0), yc1, kr,
+             "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(1), yc1 - labOff, "ANALOG");
+        knob("analog", kParamAnalogAmt, KX(1), yc1, kr,
+             "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(2), yc1 - labOff, "VNTG");  knob("vntg", kParamVintage, KX(2), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(KX(3), yc1 - labOff, "TUNE");  knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
-        vLabel(KX(4), yc1 - labOff, "UNI V"); knob("univ", kParamUnisonVoices, KX(4), yc1, kr, "%.0f", "", false, true);
+        vLabel(KX(3), yc1 - labOff, "TUNE");
+        knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
+        vLabel(KX(4), yc1 - labOff, "UNI V");
+        knob("univ", kParamUnisonVoices, KX(4), yc1, kr,
+             "%.0f", "", false, true);
 
         // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend). This is
         // the performance row, so it carries permanent read-outs (geometry B: ink
@@ -1694,18 +1933,61 @@ private:
         // 533..539.4 and cross the floor — so it is suppressed there; the hover
         // bubble still covers it. Row 1 is set-and-forget character, no read-outs.
         const bool ro = readoutsOn() && !prism;
-        vLabel(KX(0), yc2 - labOff, "UNI DT");knob("unidt", kParamUnisonDetune, KX(0), yc2, kr, "%.0f", " ct", false, false, ro);
-        vLabel(KX(1), yc2 - labOff, "UNI SP");knob("unisp", kParamUnisonSpread, KX(1), yc2, kr, "%.0f", " %", false, false, ro, 100.0f);
-        vLabel(KX(2), yc2 - labOff, "PORTA"); knob("porta", kParamPortaTime, KX(2), yc2, kr, "%.2f", " s", false, false, ro, 1.0f, 0.0f, true, true);
-        vLabel(KX(3), yc2 - labOff, "VEL");   knob("vels", kParamVelSens, KX(3), yc2, kr, "%.0f", " %", false, false, ro, 100.0f);
-        vLabel(KX(4), yc2 - labOff, "PB");    knob("pb", kParamPbRange, KX(4), yc2, kr, "%.0f", " st", false, true, ro);
+        vLabel(KX(0), yc2 - labOff, "UNI DT");
+        knob("unidt", kParamUnisonDetune, KX(0), yc2, kr,
+             "%.0f", " ct", false, false, ro);
+        vLabel(KX(1), yc2 - labOff, "UNI SP");
+        knob("unisp", kParamUnisonSpread, KX(1), yc2, kr,
+             "%.0f", " %", false, false, ro, 100.0f);
+        vLabel(KX(2), yc2 - labOff, "PORTA");
+        knob("porta", kParamPortaTime, KX(2), yc2, kr,
+             "%.2f", " s", false, false, ro, 1.0f, 0.0f, true, true);
+        vLabel(KX(3), yc2 - labOff, "VEL");
+        knob("vels", kParamVelSens, KX(3), yc2, kr,
+             "%.0f", " %", false, false, ro, 100.0f);
+        vLabel(KX(4), yc2 - labOff, "PB");
+        knob("pb", kParamPbRange, KX(4), yc2, kr,
+             "%.0f", " st", false, true, ro);
 
         // Right column — 3 combos + LEGATO lamp.
         iCombo("ovs",   kParamOversampling, is0, kOversmp, 3, "OVERSMP");
-        iCombo("glide", kParamGlideMode,    is1, kGlide,   2, "GLIDE");
-        iLabel(colCx, is2, "LEGATO");
-        ledButton("legato", kParamLegato, colCx - colHw, is2 - comboH, colCx + colHw, is2 + comboH, "", curMode == 5);
-        iCombo("vcrv",  kParamVelCurve,     is3, kVelCurve, 4, "V.CRV");
+        iCombo("glide", kParamGlideMode, is1, kGlide, 2, "GLIDE");
+        compactToggle("legato", kParamLegato, colCx - 33.0f, is2 - comboH,
+                      colCx + 33.0f, is2 + comboH, "LEGATO");
+        iCombo("vcrv", kParamVelCurve, is3, kVelCurve, 4, "V.CRV");
+    }
+
+    void drawAcidCharacter()
+    {
+        panelBox(16, 376, 340, 542);
+        sectionTitle(24, 379, "ACID CHARACTER");
+
+        // Only controls consumed by the dedicated Acid path or its shared output
+        // stage live here. The previous generic voice grid contained ten dim knobs
+        // and three N/A fields, making the two real controls harder to find.
+        klabel(82, 410, "VINTAGE");
+        knob("acid_vntg", kParamVintage, 82, 458, 24, "%.0f", " %",
+             false, false, readoutsOn(), 100.0f);
+
+        text(242, 408, 9.5f, live.textPanel, "OVERSAMPLING", 0, true);
+        comboBox("acid_ovs", kParamOversampling, 158, 422, 326, 446,
+                 kOversmp, 3, true);
+
+        text(242, 460, 9.0f, live.textPanel, "VOICE ARCHITECTURE", 0, true);
+        const char* const tags[3] = { "MONO", "LAST NOTE", "TIED SLIDES" };
+        const float tx[4] = { 158, 207, 267, 326 };
+        for (int i = 0; i < 3; ++i)
+        {
+            dl->AddRectFilled(P(tx[i], 476), P(tx[i + 1] - 4, 496),
+                              lerpC(IM_COL32(36, 38, 42, 255), live.accent, 0.10f),
+                              3.0f * s);
+            dl->AddRect(P(tx[i], 476), P(tx[i + 1] - 4, 496),
+                        withA(live.accent, 120), 3.0f * s, 0, 1.0f * s);
+            text(0.5f * (tx[i] + tx[i + 1] - 4), 482, i == 2 ? 7.5f : 8.0f,
+                 IM_COL32(222, 224, 228, 255), tags[i], 0, true);
+        }
+        text(242, 510, 9.0f, whiteDimCol(),
+             "Dedicated single-voice acid engine", 0, false);
     }
 
     //========================================================================
@@ -1819,6 +2101,12 @@ private:
 
     void drawEnvelopes()
     {
+        if (curMode == 5)
+        {
+            drawAcidEnvelope();
+            return;
+        }
+
         panelBox(348, 304, 548, 542);
         sectionTitle(356, 308, "AMP ENV");
         drawADSR(356, 320, 540, 420, kParamAmpA, kParamAmpS, ampEnv, ampHash, false);
@@ -1830,6 +2118,49 @@ private:
         drawADSR(560, 320, 744, 420, kParamFiltA, kParamFiltS, filtEnv, filtHash, true);
         drawADSRKnobs(584, kParamFiltA, "filt");
         comboBox("filtcrv", kParamFiltCurve, 564, 514, 740, 538, kEnvCurve, 4);
+    }
+
+    // Acid has one fixed-fast-attack envelope shared by amplitude and filter.
+    // Showing the two generic four-stage envelopes made six inert controls look
+    // editable, so this mode gets one truthful, wider envelope with only the
+    // Decay and Sustain parameters the engine actually consumes.
+    void drawAcidEnvelope()
+    {
+        panelBox(348, 304, 752, 542);
+        sectionTitle(356, 308, "ACID ENVELOPE \xC2\xB7 AMP + FILTER");
+
+        constexpr float rx0 = 356.0f, ry0 = 324.0f, rx1 = 744.0f, ry1 = 420.0f;
+        dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), IM_COL32(10, 12, 14, 255), 4.0f * s);
+
+        const float D = values[kParamAmpD], S = values[kParamAmpS];
+        if (!acidEnvValid || D != acidEnvDecay || S != acidEnvSustain)
+        {
+            computeADSR(rx0, ry0, rx1, ry1, 0.003f, D, S,
+                        msynth::AcidVoice::kRelease, 1, acidEnv);
+            acidEnvDecay = D;
+            acidEnvSustain = S;
+            acidEnvValid = true;
+        }
+        for (int i = 0; i + 1 < kAdsrN; ++i)
+            dl->AddQuadFilled(P(acidEnv[i].x, acidEnv[i].y),
+                              P(acidEnv[i + 1].x, acidEnv[i + 1].y),
+                              P(acidEnv[i + 1].x, ry1), P(acidEnv[i].x, ry1),
+                              withA(live.accent, 40));
+        ImVec2 line[kAdsrN];
+        for (int i = 0; i < kAdsrN; ++i) line[i] = P(acidEnv[i].x, acidEnv[i].y);
+        dl->AddPolyline(line, kAdsrN, live.accent, 0, 2.0f * s);
+        dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180),
+                    4.0f * s, 0, 1.2f * s);
+
+        const bool ro = readoutsOn();
+        klabel(470, 438, "DECAY");
+        knob("aciddecay", kParamAmpD, 470, 478, 22, "%.0f", " ms",
+             false, false, ro, 1000.0f, 0.0f, true, true);
+        klabel(630, 438, "SUSTAIN");
+        knob("acidsustain", kParamAmpS, 630, 478, 22, "%.0f", " %",
+             false, false, ro, 100.0f);
+        text(550, 520, 9.5f, whiteDimCol(),
+             "FAST ATTACK + RELEASE \xC2\xB7 SHARED SIGNAL SHAPE", 0, true);
     }
 
     // ADSR knob row: A,D,S,R at r18, spaced 46 px. The label+knob block is centered
@@ -1927,9 +2258,69 @@ private:
     //========================================================================
     void drawLFOs()
     {
+        if (curMode == 5)
+        {
+            drawAcidEngineOverview();
+            return;
+        }
         drawOneLFO(760, 60, 1000, 190, "LFO 1", kParamLfo1Rate, kParamLfo1Shape, kParamLfo1Fade, kParamLfo1Sync, "l1");
         drawOneLFO(760, 194, 1000, 324, "LFO 2", kParamLfo2Rate, kParamLfo2Shape, kParamLfo2Fade, kParamLfo2Sync, "l2");
     }
+
+    void drawAcidEngineOverview()
+    {
+        panelBox(760, 60, 1000, 324);
+        sectionTitle(768, 64, "ACID ENGINE");
+        text(880, 88, 9.5f, live.textPanel,
+             "DEDICATED MONO SIGNAL PATH", 0, true);
+
+        const float bx[4] = { 776, 838, 920, 984 };
+        const char* const blocks[3] = { "OSC", "18 dB FILTER", "VCA" };
+        for (int i = 0; i < 3; ++i)
+        {
+            dl->AddRectFilled(P(bx[i], 116), P(bx[i + 1] - 8, 158),
+                              lerpC(IM_COL32(30, 33, 36, 255), live.accent, 0.09f),
+                              4.0f * s);
+            dl->AddRect(P(bx[i], 116), P(bx[i + 1] - 8, 158),
+                        withA(live.accent, 145), 4.0f * s, 0, 1.1f * s);
+            text(0.5f * (bx[i] + bx[i + 1] - 8), 131,
+                 i == 1 ? 8.0f : 9.5f, IM_COL32(229, 231, 234, 255),
+                 blocks[i], 0, true);
+            if (i < 2)
+            {
+                const float ax = bx[i + 1] - 5;
+                dl->AddLine(P(ax - 4, 137), P(ax + 3, 137), live.accent, 1.5f * s);
+                dl->AddTriangleFilled(P(ax + 5, 137), P(ax, 133), P(ax, 141),
+                                      live.accent);
+            }
+        }
+
+        const int selectedWave = std::max(0, std::min(4,
+            (int)std::lround(values[kParamOsc1Wave])));
+        const int wi = (selectedWave == 1 || selectedWave == 4) ? 1 : 0;
+        char oscLine[48];
+        std::snprintf(oscLine, sizeof oscLine, "%s OSCILLATOR", kWave5[wi]);
+        text(880, 174, 9.0f, live.accent, oscLine, 0, true);
+
+        text(880, 208, 9.5f, live.textPanel, "PLAY BEHAVIOR", 0, true);
+        const char* const tags[3] = { "LAST NOTE", "ACCENT", "TIED SLIDES" };
+        const float tx[4] = { 776, 844, 910, 984 };
+        for (int i = 0; i < 3; ++i)
+        {
+            dl->AddRectFilled(P(tx[i], 228), P(tx[i + 1] - 6, 254),
+                              IM_COL32(35, 37, 41, 255), 4.0f * s);
+            dl->AddRect(P(tx[i], 228), P(tx[i + 1] - 6, 254),
+                        withA(live.accent, 120), 4.0f * s, 0, 1.0f * s);
+            text(0.5f * (tx[i] + tx[i + 1] - 6), 236,
+                 i == 2 ? 7.5f : 8.0f, IM_COL32(218, 220, 224, 255),
+                 tags[i], 0, true);
+        }
+        text(880, 274, 9.0f, whiteDimCol(),
+             "Accent and slide follow the pattern lanes below.", 0, false);
+        text(880, 292, 9.0f, whiteDimCol(),
+             "LFO and matrix routing are bypassed in this mode.", 0, false);
+    }
+
     void drawOneLFO(float x0, float y0, float x1, float y1, const char* title,
                     uint32_t rate, uint32_t shape, uint32_t fade, uint32_t sync, const char* pfx)
     {
@@ -1947,7 +2338,7 @@ private:
         std::snprintf(id, sizeof(id), "%sshape", pfx);
         comboBox(id, shape, x0 + 150, y0 + 38, x0 + 232, y0 + 58, kLfoShape, 5);
         std::snprintf(id, sizeof(id), "%ssync", pfx);
-        ledButton(id, sync, x0 + 150, y0 + 74, x0 + 232, y0 + 98, "SYNC");
+        compactToggle(id, sync, x0 + 160, y0 + 76, x0 + 222, y0 + 96, "SYNC");
     }
 
     void drawModeSubPanelRegion()
@@ -1982,100 +2373,141 @@ private:
     {
         text(768, 332, 11.0f, mulA(live.accent, a), "BBD CHORUS", -1, true);
         const int cur = (int)std::lround(values[kParamCosmosChorus]); // 0 off,1 I,2 II,3 both
-        const char* labs[3] = { "I", "II", "I+II" };
-        const int enumv[3] = { 1, 2, 3 };
-        const float cxs[3] = { 800, 880, 950 };
-        for (int i = 0; i < 3; ++i)
+        const char* const labs[4] = { "OFF", "I", "II", "I+II" };
+        const float edges[5] = { 776, 826, 876, 926, 984 };
+        text(880, 355, 9.0f, mulA(live.textPanel, a), "MODE", 0, true);
+        for (int i = 0; i < 4; ++i)
         {
-            const bool on = (cur == enumv[i]);
+            const bool on = (cur == i);
             char id[16]; std::snprintf(id, sizeof(id), "cho%d", i);
-            const ImVec2 c = P(cxs[i], 386);
-            const float rr = 16.0f * s;
+            const float x0 = edges[i], x1 = edges[i + 1];
+            const ImVec2 b0 = P(x0, 373), b1 = P(x1, 409);
             if (it)
             {
-                ImGui::SetCursorScreenPos(ImVec2(c.x - rr, c.y - rr));
-                ImGui::InvisibleButton(id, ImVec2(rr * 2, rr * 2));
-                if (ImGui::IsItemClicked()) setChoice(kParamCosmosChorus, on ? 0 : enumv[i]);
-                if (ImGui::IsItemHovered() && tips[kParamCosmosChorus]) ImGui::SetTooltip("%s", tips[kParamCosmosChorus]);
+                ImGui::SetCursorScreenPos(b0);
+                ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+                if (ImGui::IsItemClicked()) setChoice(kParamCosmosChorus, i);
+                if (tips[kParamCosmosChorus]
+                    && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                    ImGui::SetTooltip("%s", tips[kParamCosmosChorus]);
             }
-            dl->AddCircleFilled(c, rr, mulA(on ? live.ledOn : IM_COL32(44, 46, 50, 255), a), 24);
-            dl->AddCircle(c, rr, mulA(live.accent, a * (on ? 1.0f : 0.5f)), 24, 1.6f * s);
-            text(cxs[i], 378, 12.0f, mulA(on ? live.text : live.textPanel, a), labs[i], 0, on);
-            if (on) dl->AddRectFilled(P(cxs[i] - 16, 410), P(cxs[i] + 16, 413), mulA(live.accent, a), 2.0f * s);
+            const ImU32 off = IM_COL32(34, 36, 40, 255);
+            const ImDrawFlags corners =
+                i == 0 ? ImDrawFlags_RoundCornersLeft
+                       : i == 3 ? ImDrawFlags_RoundCornersRight : 0;
+            dl->AddRectFilled(b0, b1, mulA(on ? lerpC(off, live.accent, 0.30f) : off, a),
+                              4.0f * s, corners);
+            dl->AddRect(b0, b1,
+                        mulA(on ? live.accent : IM_COL32(78, 81, 86, 255), a),
+                        4.0f * s, corners,
+                        (on ? 1.6f : 1.0f) * s);
+            const float cx = 0.5f * (x0 + x1);
+            text(cx, 385, 10.0f,
+                 mulA(on ? IM_COL32(240, 241, 243, 255)
+                         : IM_COL32(158, 160, 165, 255), a),
+                 labs[i], 0, on);
+            if (on)
+                dl->AddRectFilled(P(x0 + 5, 405), P(x1 - 5, 408),
+                                  mulA(live.accent, a), 1.5f * s);
         }
+        text(880, 424, 9.0f, mulA(whiteDimCol(), a),
+             cur == 0 ? "BYPASSED"
+                      : cur == 1 ? "CHORUS I"
+                                 : cur == 2 ? "CHORUS II" : "CHORUS I + II",
+             0, true);
     }
     void drawSubOracle(float a, bool it)
     {
-        text(768, 332, 11.0f, mulA(live.accent, a), "POLY-MOD", -1, true);
-        const uint32_t pp[4] = { kParamPmFenvOscA, kParamPmOscBOscA, kParamPmOscBPWM, kParamPmFenvFilt };
-        // Clear routing labels (the font lacks a reliable arrow glyph, so "->").
-        const char* labs[4] = { "F.ENV->OSC1", "OSC2->OSC1", "OSC2->PW", "F.ENV->FILT" };
-        const float cx[4] = { 820, 940, 820, 940 };
-        const float cy[4] = { 386, 386, 436, 436 };  // row2 raised so r18 knobs clear the 462 panel bottom
-        for (int i = 0; i < 4; ++i)
+        text(768, 332, 11.0f, mulA(live.accent, a), "POLY-MOD \xC2\xB7 SYNC", -1, true);
+
+        // Two hardware sources, each able to reach all three destinations.
+        constexpr float dividerX = 883.0f;
+        dl->AddLine(P(dividerX, 350), P(dividerX, 450),
+                    mulA(lerpC(live.textPanel, live.panel, 0.68f), a), 1.0f * s);
+        text(825, 350, 9.5f, mulA(live.textPanel, a), "FILTER ENV", 0, true);
+        text(943, 350, 9.5f, mulA(live.textPanel, a), "OSC 2", 0, true);
+        dl->AddLine(P(778, 363), P(871, 363), mulA(live.accent, a * 0.55f), 1.0f * s);
+        dl->AddLine(P(895, 363), P(990, 363), mulA(live.accent, a * 0.55f), 1.0f * s);
+
+        const uint32_t pp[6] = {
+            kParamPmFenvOscA, kParamPmFenvPWM, kParamPmFenvFilt,
+            kParamPmOscBOscA, kParamPmOscBPWM, kParamPmOscBFilt
+        };
+        const char* const ids[6] = {
+            "pm_fenv_osc1", "pm_fenv_pwm", "pm_fenv_filter",
+            "pm_osc2_osc1", "pm_osc2_pwm", "pm_osc2_filter"
+        };
+        const char* const dest[6] = {
+            "OSC 1", "PW", "FILT", "OSC 1", "PW", "FILT"
+        };
+        const float cx[6] = { 790, 823, 856, 910, 943, 976 };
+        constexpr float cy = 387.0f;
+        for (int i = 0; i < 6; ++i)
         {
-            text(cx[i], cy[i] - 28, 9.0f, mulA(live.textPanel, a), labs[i], 0, true);
-            if (it) knob(labs[i], pp[i], cx[i], cy[i], 18, "%.0f", " %", false, false, false, 100.0f);
-            else    ghostKnob(pp[i], cx[i], cy[i], 18, a);
+            if (it) knob(ids[i], pp[i], cx[i], cy, 14, "%.0f", " %",
+                         false, false, false, 100.0f);
+            else    ghostKnob(pp[i], cx[i], cy, 14, a);
+            text(cx[i], 410, 8.5f, mulA(whiteDimCol(), a), dest[i], 0, true);
         }
+        compactToggle("oracle_sync", kParamHardSync, 850, 427, 916, 449,
+                      "SYNC", it, a);
+        text(956, 438, 8.5f, mulA(whiteDimCol(), a), "OSC 1 \xE2\x86\x92 OSC 2", 0, true);
     }
     void drawSubMono(float a, bool it)
     {
         text(768, 332, 11.0f, mulA(live.accent, a), "RING \xC2\xB7 SYNC", -1, true);
-        text(820, 356, 9.0f, mulA(live.textPanel, a), "RING", 0, true);
+        text(820, 356, 10.0f, mulA(live.textPanel, a), "RING", 0, true);
         if (it) knob("ringm", kParamRingMod, 820, 400, 22, "%.0f", " %", false, false, false, 100.0f);
         else    ghostKnob(kParamRingMod, 820, 400, 22, a);
-        if (it) ledButton("hsync", kParamHardSync, 900, 388, 984, 412, "HARD SYNC", true);
-        else { const ImVec2 c = P(942, 400); dl->AddCircleFilled(c, 10 * s, mulA(values[kParamHardSync] > 0.5f ? live.ledOn : IM_COL32(150,152,158,255), a), 20); }
+        text(940, 356, 10.0f, mulA(live.textPanel, a), "HARD SYNC", 0, true);
+        compactToggle("hsync", kParamHardSync, 909, 390, 971, 410, "",
+                      it, a);
     }
     void drawSubModular(float a, bool it)
     {
-        // Modular consumes ringMod + hardSync (engine + 4 factory presets) but the
-        // old layout only surfaced them in Mono; expose them here alongside S&H.
-        text(768, 332, 11.0f, mulA(live.accent, a), "S&H \xC2\xB7 RING \xC2\xB7 SYNC", -1, true);
-        text(798, 356, 9.0f, mulA(live.textPanel, a), "S&H", 0, true);
-        if (it) knob("shrate", kParamShRate, 798, 398, 18, "%.2f", " Hz");
-        else    ghostKnob(kParamShRate, 798, 398, 18, a);
-        text(852, 356, 9.0f, mulA(live.textPanel, a), "RING", 0, true);
-        if (it) knob("modring", kParamRingMod, 852, 398, 18, "%.0f", " %", false, false, false, 100.0f);
-        else    ghostKnob(kParamRingMod, 852, 398, 18, a);
-        if (it) ledButton("modsync", kParamHardSync, 786, 430, 862, 450, "SYNC");
-        else { const ImVec2 c = P(796, 440); dl->AddCircleFilled(c, 8 * s, mulA(values[kParamHardSync] > 0.5f ? live.ledOn : IM_COL32(150, 152, 158, 255), a), 16); }
-        // animated S&H staircase mini-scope (shrunk to the right column for room)
-        const float rx0 = 884, ry0 = 360, rx1 = 988, ry1 = 448;  // shortened so the lower jacks (ry1+8) clear the 462 panel bottom
-        dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), mulA(IM_COL32(10, 14, 12, 255), a), 3.0f * s);
-        const float rate = values[kParamShRate];
-        // Wrapped, not free-running. The staircase is sin((shPhase + k*1.37)*2.1),
-        // period 2*pi/2.1 in shPhase, so folding into one period is exact — and it
-        // has to be folded: at the 50 Hz top of the S&H range a raw accumulator
-        // passes 180000 inside an hour, where a float32 mantissa can no longer
-        // resolve a 16 ms step and the animation visibly quantises, then stalls.
-        shPhase = std::fmod(shPhase + ImGui::GetIO().DeltaTime * rate, kShPeriod);
-        const int steps = 8;
-        ImVec2 stair[steps * 2];
-        for (int i = 0; i < steps; ++i)
+        text(768, 332, 11.0f, mulA(live.accent, a), "AUDIO PATCH \xC2\xB7 FILTER", -1, true);
+        const float cx[4] = { 790, 842, 894, 946 };
+        const char* const labels[4] = { "S&H", "OSC2\xE2\x86\x92OSC1", "OSC3\xE2\x86\x92VCF", "RING" };
+        for (int i = 0; i < 4; ++i)
+            text(cx[i], 354, 8.5f, mulA(live.textPanel, a), labels[i], 0, true);
+        if (it)
         {
-            float v = std::sin((shPhase + i * 1.37f) * 2.1f) * 0.5f + 0.5f; // pseudo-random-ish
-            v = std::fmod(v * 3.1f, 1.0f);
-            const float y = ry1 - (ry1 - ry0) * (0.15f + 0.7f * v);
-            stair[i * 2]     = P(rx0 + (rx1 - rx0) * i / steps, y);
-            stair[i * 2 + 1] = P(rx0 + (rx1 - rx0) * (i + 1) / steps, y);
+            knob("shrate", kParamShRate, cx[0], 390, 16, "%.2f", " Hz");
+            knob("mod21", kParamModOsc2Osc1, cx[1], 390, 16, "%.0f", " %",
+                 false, false, false, 100.0f);
+            knob("mod3f", kParamModOsc3Filter, cx[2], 390, 16, "%.0f", " %",
+                 false, false, false, 100.0f);
+            knob("modring", kParamRingMod, cx[3], 390, 16, "%.0f", " %",
+                 false, false, false, 100.0f);
         }
-        dl->AddPolyline(stair, steps * 2, mulA(live.accent, a), 0, 1.8f * s);
-        // decorative patch jacks
-        for (float jx : { rx0 + 6.0f, rx1 - 6.0f })
-            for (float jy : { ry0 - 8.0f, ry1 + 8.0f })
-            { dl->AddCircleFilled(P(jx, jy), 5 * s, mulA(IM_COL32(30, 32, 30, 255), a), 16);
-              dl->AddCircleFilled(P(jx, jy), 2.4f * s, mulA(IM_COL32(70, 74, 70, 255), a), 12); }
+        else
+        {
+            ghostKnob(kParamShRate, cx[0], 390, 16, a);
+            ghostKnob(kParamModOsc2Osc1, cx[1], 390, 16, a);
+            ghostKnob(kParamModOsc3Filter, cx[2], 390, 16, a);
+            ghostKnob(kParamRingMod, cx[3], 390, 16, a);
+        }
+        compactToggle("modsync", kParamHardSync, 778, 428, 842, 450, "SYNC",
+                      it, a);
+        if (it)
+            comboBox("modfilt", kParamModFilterModel, 858, 425, 988, 451,
+                     kModFilterOpt, 2);
+        else
+        {
+            const int model = std::max(0, std::min(1,
+                (int)std::lround(values[kParamModFilterModel])));
+            readOnlyField("modfilt_fixed", 858, 425, 988, 451,
+                          kModFilterOpt[model], tips[kParamModFilterModel], a);
+        }
     }
     void drawSubPrism(float a, bool it) { drawAlgoWidget(760, 328, 1000, 462, a, it); }
     void drawSubAcid(float a, bool it)
     {
         text(768, 332, 11.0f, mulA(live.accent, a), "ACID", -1, true);
-        text(806, 356, 9.0f, mulA(live.textPanel, a), "ACCENT", 0, true);
+        text(806, 356, 10.0f, mulA(live.textPanel, a), "ACCENT", 0, true);
         if (it) knob("acc", kParamAcidAccentAmt, 806, 400, 22, "%.0f", " %", false, false, false, 100.0f);
         else    ghostKnob(kParamAcidAccentAmt, 806, 400, 22, a);
-        text(890, 356, 9.0f, mulA(live.textPanel, a), "SLIDE", 0, true);
+        text(890, 356, 10.0f, mulA(live.textPanel, a), "SLIDE", 0, true);
         if (it) knob("slide", kParamAcidSlideTime, 890, 400, 22, "%.0f", " ms", false, false, false, 1.0f, 0.0f, true, true);
         else    ghostKnob(kParamAcidSlideTime, 890, 400, 22, a);
         // big ACCENT lamp pulsing on accented steps
@@ -2196,29 +2628,57 @@ private:
     {
         text(x0 + 8, y0 + 4, 11.0f, mulA(live.accent, a), "ALGORITHM", -1, true);
         const int active = clampAlgo();
-        // 8 thumbnails 4x2 across the top
-        const float tw = 56.0f, th = 30.0f;
-        const float gx0 = x0 + 8, gy0 = y0 + 20;
+
+        // Eight tiny topology thumbnails were too small to decode and left only a
+        // shallow strip for the selected routing. Use a compact numbered/name
+        // selector on the left and devote the rest of the panel to one diagram
+        // large enough to trace.
+        const float listX0 = x0 + 8.0f, listX1 = x0 + 118.0f;
+        const float listY0 = y0 + 22.0f;
+        constexpr float rowPitch = 12.5f, rowH = 11.5f;
         for (int i = 0; i < 8; ++i)
         {
-            const float tx = gx0 + (i % 4) * 58.0f;
-            const float ty = gy0 + (i / 4) * 34.0f;
+            const float ty = listY0 + i * rowPitch;
             char id[16]; std::snprintf(id, sizeof(id), "algo%d", i);
             if (it)
             {
-                ImGui::SetCursorScreenPos(P(tx, ty));
-                ImGui::InvisibleButton(id, ImVec2(tw * s, th * s));
+                ImGui::SetCursorScreenPos(P(listX0, ty));
+                ImGui::InvisibleButton(id, ImVec2((listX1 - listX0) * s, rowH * s));
                 if (ImGui::IsItemClicked()) setChoice(kParamPrismAlgo, i);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", msynth::kPrismAlgos[i].name);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                    ImGui::SetTooltip("Algorithm %d: %s", i + 1, msynth::kPrismAlgos[i].name);
             }
             const bool on = (i == active);
-            dl->AddRectFilled(P(tx, ty), P(tx + tw, ty + th), mulA(IM_COL32(10, 20, 22, 255), a), 3.0f * s);
-            dl->AddRect(P(tx, ty), P(tx + tw, ty + th),
-                        mulA(on ? live.accent : IM_COL32(60, 70, 72, 255), a), 3.0f * s, 0, on ? 1.8f * s : 1.0f * s);
-            drawAlgoDiagram(i, tx + 4, ty + 3, tx + tw - 4, ty + th - 3, a * (on ? 1.0f : 0.55f), false);
+            dl->AddRectFilled(P(listX0, ty), P(listX1, ty + rowH),
+                              mulA(on ? lerpC(live.panel, live.accent, 0.20f)
+                                      : IM_COL32(10, 20, 22, 255), a),
+                              2.0f * s);
+            if (on)
+                dl->AddRectFilled(P(listX0, ty), P(listX0 + 3, ty + rowH),
+                                  mulA(live.accent, a), 1.0f * s);
+            char label[40];
+            std::snprintf(label, sizeof(label), "%d  %s", i + 1, msynth::kPrismAlgos[i].name);
+            text(listX0 + 7, ty + 1.0f, 8.5f,
+                 mulA(on ? live.textPanel : whiteDimCol(), a), label, -1, on);
         }
-        // large diagram of the active algorithm
-        drawAlgoDiagram(active, x0 + 60, y0 + 92, x1 - 60, y1 - 8, a, true);
+
+        const float dividerX = x0 + 124.0f;
+        dl->AddLine(P(dividerX, y0 + 20.0f), P(dividerX, y1 - 8.0f),
+                    mulA(lerpC(live.textPanel, live.panel, 0.65f), a), 1.0f * s);
+
+        const msynth::PrismAlgo& selected = msynth::kPrismAlgos[active];
+        int carrierCount = 0;
+        for (int i = 0; i < 4; ++i)
+            if ((selected.carrierMask >> i) & 1) ++carrierCount;
+        char selectedLabel[64];
+        std::snprintf(selectedLabel, sizeof(selectedLabel), "%d \xC2\xB7 %s \xC2\xB7 %d OUT%s",
+                      active + 1, selected.name, carrierCount, carrierCount == 1 ? "" : "S");
+        const float detailX0 = x0 + 128.0f;
+        const float detailX1 = x1 - 4.0f;
+        text(0.5f * (detailX0 + detailX1), y0 + 21.0f, 8.5f,
+             mulA(live.textPanel, a), selectedLabel, 0, true);
+
+        drawAlgoDiagram(active, detailX0, y0 + 32.0f, detailX1, y1 - 8.0f, a, true);
     }
 
     void drawAlgoDiagram(int idx, float x0, float y0, float x1, float y1, float a, bool big)
@@ -2266,7 +2726,16 @@ private:
             float minx = 1e9f, maxx = -1e9f;
             for (int i = 0; i < nb; ++i) { minx = std::min(minx, busPts[i].x); maxx = std::max(maxx, busPts[i].x); }
             const float by = P(0, busY).y;
+            // A single carrier previously produced a zero-length "bus", making
+            // the bottom of half the algorithms look unfinished.
+            if (maxx - minx < 2.0f * s)
+            {
+                minx -= 9.0f * s;
+                maxx += 9.0f * s;
+            }
             dl->AddLine(ImVec2(minx, by), ImVec2(maxx, by), mulA(live.accent, a), 2.2f * s);
+            text((0.5f * (minx + maxx) - org.x) / s, busY + 2.0f, 7.5f,
+                 mulA(live.accent, a), "OUT", 0, true);
         }
         // op boxes
         for (int i = 0; i < 4; ++i)
@@ -2289,6 +2758,9 @@ private:
             const float fb = values[kParamPrismFB];
             const float rr = box * (0.9f + 0.8f * fb);
             dl->AddCircle(ImVec2(c.x + box, c.y - box), rr, mulA(live.ledOn, a), 16, (1.0f + 2.0f * fb) * s);
+            text((c.x - org.x) / s + box / s + 2.0f,
+                 (c.y - org.y) / s - box / s - 6.0f, 7.0f,
+                 mulA(live.ledOn, a), "FB", -1, true);
         }
     }
 
@@ -2305,6 +2777,24 @@ private:
     }
     void drawModMatrixBar()
     {
+        if (curMode == 5)
+        {
+            // Acid is rendered by AcidVoice, outside the poly voice/mod-matrix
+            // path. Replace the clickable matrix launcher with an explicit routing
+            // summary so the surface never promises modulation that cannot sound.
+            panelBox(760, 466, 1000, 542);
+            sectionTitle(768, 470, "ACID ROUTING");
+            dl->AddRectFilled(P(768, 493), P(992, 534),
+                              IM_COL32(39, 40, 44, 255), 4.0f * s);
+            dl->AddRect(P(768, 493), P(992, 534), withA(live.accent, 110),
+                        4.0f * s, 0, 1.0f * s);
+            text(880, 499, 9.5f, IM_COL32(229, 231, 234, 255),
+                 "FIXED MONO ROUTING", 0, true);
+            text(880, 516, 8.5f, whiteDimCol(),
+                 "No modulation-matrix processing", 0, false);
+            return;
+        }
+
         // Panel extended 518 -> 542 (+24 lower-body shift); the clickable button grows
         // vertically, centred in the taller panel (mid 504).
         panelBox(760, 466, 1000, 542);
@@ -2312,7 +2802,8 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("modbar", ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) { showMod = !showMod; modPopupWasOpen = false; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the modulation matrix");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("Open the modulation matrix");
         dl->AddRectFilled(b0, b1, IM_COL32(40, 40, 43, 255), 4.0f * s);
         dl->AddRect(b0, b1, showMod ? live.accent : IM_COL32(90, 90, 94, 255), 4.0f * s, 0, 1.4f * s);
         panel.led(dl, 782, 504, showMod, 4.0f);
@@ -2346,7 +2837,8 @@ private:
         ImGui::SetCursorScreenPos(c0);
         ImGui::InvisibleButton("modclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
         if (ImGui::IsItemClicked()) showMod = false;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close the modulation matrix");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("Close the modulation matrix");
         dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
         drawX(1000, 140, 5.0f, live.text);
         text(240, 156, 10.0f, live.textPanel, "SOURCE", -1, true);
@@ -2381,7 +2873,8 @@ private:
             if (ImGui::IsItemClicked())
             { setChoice(kParamModSrc0 + r, 0); setChoice(kParamModDst0 + r, 0);
               pushParam(kParamModAmt0 + r, 0.0f); }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear this slot");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("Clear this slot");
             dl->AddRect(x0, x1, IM_COL32(120, 120, 124, 255), 3.0f * s, 0, 1.0f * s);
             drawX(984, y + 20, 4.0f, live.textPanel);
         }
@@ -2450,7 +2943,8 @@ private:
         ImGui::SetCursorScreenPos(c0);
         ImGui::InvisibleButton("saveclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
         if (ImGui::IsItemClicked()) showSaveModal = false;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close without saving");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("Close without saving");
         dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
         drawX(x1 - 20, y0 + 20, 5.0f, live.text);
 
@@ -2742,7 +3236,7 @@ private:
     // One preset cell. It does NOT apply anything itself: it reports through
     // applyIdx / closeNow so the whole grid is submitted before any parameter push
     // runs (a push mid-grid would reorder nothing today, but it keeps the frame's
-    // widget submission and the 223-param write strictly separated).
+    // widget submission and the full parameter write strictly separated).
     void drawBrowseCell(int fi, float x0, float y0, int& applyIdx, bool& closeNow)
     {
         const int idx = browseIdx[fi];
@@ -2759,7 +3253,7 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
         // One gesture must cost ONE patch load. A double-click is two clicks: the
-        // first loads, the second would load the same 223 values again (visible to
+        // first loads, the second would load the same parameter set again (visible to
         // the host as a second burst of automation writes), so the single-click
         // branch stands down once the click is part of a multi-click, and the
         // double-click branch only loads if click 1 did not already land it.
@@ -2803,7 +3297,7 @@ private:
         }
         else
             dl->AddRectFilled(P(x1 - 30, y0 + 11), P(x1 - 12, y0 + 27), mc, 3.0f * s);
-        if (hov)
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("%s \xC2\xB7 %s \xC2\xB7 %s preset%s", presetName(idx), kModeNames[m],
                               user ? "user" : "factory", cur ? " (loaded)" : "");
     }
@@ -2828,7 +3322,8 @@ private:
         ImGui::SetCursorScreenPos(c0);
         ImGui::InvisibleButton("brclose", ImVec2(c1.x - c0.x, c1.y - c0.y));
         if (ImGui::IsItemClicked()) showBrowse = false;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close the browser");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("Close the browser");
         dl->AddRect(c0, c1, IM_COL32(150, 150, 154, 255), 3.0f * s, 0, 1.2f * s);
         drawX(kBrX1 - 24, kBrY0 + 20, 5.0f, live.text);
 
@@ -3012,7 +3507,7 @@ private:
             && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
             showBrowse = false;
 
-        // Deferred load: applying pushes 223 parameters, so it runs once, here,
+        // Deferred load: applying pushes every core parameter, so it runs once, here,
         // after every widget in the frame has been submitted.
         if (applyIdx >= 0) applyCombined(applyIdx);
         if (closeNow) showBrowse = false;
@@ -3029,7 +3524,16 @@ private:
         dl->AddRectFilled(P(rx0, ry0), P(rx1, ry1), IM_COL32(9, 11, 13, 255), 4.0f * s);
         dl->PushClipRect(P(rx0, ry0), P(rx1, ry1), true);
         const float midY = 0.5f * (ry0 + ry1);
-        dl->AddLine(P(rx0, midY), P(rx1, midY), IM_COL32(255, 255, 255, 25), 1.0f * s);
+        // A restrained oscilloscope grid makes the large display intentional even
+        // before audio arrives and gives the live trace a useful reference.
+        for (int i = 1; i < 4; ++i)
+        {
+            const float x = rx0 + (rx1 - rx0) * (float)i / 4.0f;
+            const float y = ry0 + (ry1 - ry0) * (float)i / 4.0f;
+            dl->AddLine(P(x, ry0), P(x, ry1), IM_COL32(255, 255, 255, 12), 1.0f * s);
+            dl->AddLine(P(rx0, y), P(rx1, y),
+                        IM_COL32(255, 255, 255, i == 2 ? 30 : 12), 1.0f * s);
+        }
 
         int count = 0;
         // Copy the ring (oldest->newest) into our preallocated buffer via the
@@ -3037,6 +3541,7 @@ private:
         // pointer / writePos math.
         if (msynth::MultiSynthDSP* d = dspAccess())
             count = d->copyScope(scope, msynth::MultiSynthDSP::kScopeSize);
+        bool hasUsableSignal = false;
         if (count > 0)
         {
             // rising zero-cross trigger over the first quarter
@@ -3052,15 +3557,24 @@ private:
                 const float halfH = 0.5f * (ry1 - ry0) * 0.9f;
                 ImVec2 pts[204];
                 const float midYpx = P(0, midY).y;
+                float peak = 0.0f;
                 for (int i = 0; i < nPts; ++i)
                 {
                     const float x = rx0 + (rx1 - rx0) * (float)i / (float)(nPts - 1);
                     float v = scope[start + i]; if (v > 1) v = 1; if (v < -1) v = -1;
+                    peak = std::max(peak, std::fabs(v));
                     pts[i] = ImVec2(P(x, 0).x, midYpx - v * halfH * s);
                 }
-                dl->AddPolyline(pts, nPts, live.accent, 0, 1.6f * s);
+                if (peak > 1e-4f)
+                {
+                    dl->AddPolyline(pts, nPts, live.accent, 0, 1.8f * s);
+                    hasUsableSignal = true;
+                }
             }
         }
+        if (!hasUsableSignal)
+            text(1114, midY - 5.0f, 9.0f, withA(live.text, 105),
+                 "WAITING FOR SIGNAL", 0, true);
         dl->PopClipRect();
         dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180), 4.0f * s, 0, 1.2f * s);
     }
@@ -3122,7 +3636,7 @@ private:
     }
 
     //========================================================================
-    // Sequencer (mode-aware: single arp row, or 3-lane acid)
+    // Sequencer (mode-aware: arpeggiator or dedicated Acid pattern renderer)
     //========================================================================
     int liveStep() const
     {
@@ -3140,26 +3654,29 @@ private:
         // 552..606) carries the labels, controls and read-outs; the step lanes
         // occupy the remaining height down to the 692 floor.
         panelBox(16, 548, 700, 692);
-        const bool acid = (curMode == 5);
-        const char* const seqTitle = acid ? "PATTERN SEQUENCER" : "SEQUENCER / ARP";
+        if (curMode == 5)
+        {
+            sectionTitle(24, 552, "PATTERN SEQUENCER");
+            drawAcidSequencerBody();
+            return;
+        }
+        const char* const seqTitle = "SEQUENCER / ARP";
         sectionTitle(24, 552, seqTitle);
 
         // --- transport header: ONE rhythm, no dead air ------------------------
         // The row is six groups — ARP | MODE | RATE | OCT/GATE/SWING | LATCH |
         // VEL — laid out right-to-left off the 692 rule the step lane below also
         // ends on, with a single gap `g` repeated between EVERY pair including
-        // title -> ARP. `g` is solved rather than hardcoded because the title is
-        // ~23 px shorter outside Acid ("SEQUENCER / ARP" vs "PATTERN SEQUENCER"):
-        // the old fixed x=160 start balanced only the Acid string and left the
-        // other five modes opening on a 45 px hole while their own inter-group
-        // gaps were 6..11 px. Solving per mode gives 17 px (non-acid) / 13 px
-        // (Acid) — even inside whichever row you are actually looking at.
+        // title -> ARP. The old fixed x=160 start left the five arpeggiator
+        // modes opening on a 45 px hole while their own inter-group gaps were
+        // 6..11 px. Solving the gap from the title width keeps one even rhythm
+        // across the row.
         //
         // Knobs are r13 and TICKLESS, matching the FX strip idiom next door:
         // reach is r+3+1.2 = +/-17.2 (value arc + half its stroke) instead of the
         // tick ring's +/-20.5, which makes all three read as one family (as r14
         // ringed knobs they differed enough in apparent size/weight to look like
-        // three different widgets) and lifts the Acid GATE-lane clearance.
+        // three different widgets).
         //
         // MEASURED ink extents, not the 0.675*size convention the older comments in
         // this file use — that convention is wrong. Rendered at s=1 through this
@@ -3170,9 +3687,8 @@ private:
         //   knob centre hy = 580   -> arc top 562.8   =>  1.8 px clearance
         // hy was 578, which put the arc top at 560.8 and had the label ink
         // overlapping it by 0.2 px. Downstream of hy = 580 (all verified by pixel
-        // scan): Acid arc bottom 597.2 clears the GATE lane at y600 by 2.8 px, and
-        // the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the non-acid
-        // lane at y612 by 2.0 px.
+        // scan): the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the
+        // step lane at y612 by 2.0 px.
         const int  velMode  = (int)std::lround(values[kParamArpVelMode]);
         const bool velFixed = velMode == 1;
         const bool velAccent = velMode == 2;
@@ -3194,17 +3710,14 @@ private:
 
         const float hy = 580.0f;
         // Persistent read-outs for OCT/GATE/SWING (spec §3.1b step 7): drawn top
-        // hy + r + 8 = 601, ink bottom 610, clearing the non-acid lane top at 612.
-        // Acid packs four lanes from y600 and has no such band, so the read-outs
-        // are suppressed there and the hover bubble stays the read-out.
-        const bool ro = readoutsOn() && !acid;
+        // hy + r + 8 = 601, ink bottom 610, clearing the lane top at 612.
+        const bool ro = readoutsOn();
 
         // Walking left-to-right from the title only lands on the 692 rule while `g`
         // is the SOLVED value; once the clamp engages (a title wide enough to drive g
         // below 12) the row would march straight through the right wall and into the
-        // FX strip. Real headroom is thin — DejaVu bold "PATTERN SEQUENCER" leaves g
-        // barely above the floor — so pin the start to whatever still ends at xR and
-        // let the title gap absorb the difference instead.
+        // FX strip, so pin the start to whatever still ends at xR and let the
+        // title gap absorb the difference instead.
         float x = titleEnd + g;
         const float xMax = xR - wSum - 5.0f * g;
         if (x > xMax) x = xMax;
@@ -3213,10 +3726,10 @@ private:
         ledButton("arpon", kParamArpOn, x, 563, x + wArp, 587, "ARP");
         x += wArp + g;
         hlabel(x + 2, "MODE", -1);
-        comboBox("arpmode", kParamArpMode, x, 564, x + wMode, 586, kArpMode, 7, acid);
+        comboBox("arpmode", kParamArpMode, x, 564, x + wMode, 586, kArpMode, 7);
         x += wMode + g;
         hlabel(x + 2, "RATE", -1);
-        comboBox("arprate", kParamArpRate, x, 564, x + wRate, 586, kDivName, 14, acid);
+        comboBox("arprate", kParamArpRate, x, 564, x + wRate, 586, kDivName, 14);
         x += wRate + g;
         const float kx0 = x + khw;
         hlabel(kx0, "OCT", 0);
@@ -3231,7 +3744,8 @@ private:
         hlabel(x + 2, "VEL", -1);
         // Fixed mode: combo 58 wide + the value knob on the right end of the
         // group (centre xR-13 = 679, reach 696.5, inside the 700 panel wall).
-        comboBox("arpvel", kParamArpVelMode, x, 564, velFixed ? x + 58.0f : x + wVel, 586, kArpVel, 3, acid);
+        comboBox("arpvel", kParamArpVelMode, x, 564,
+                 velFixed ? x + 58.0f : x + wVel, 586, kArpVel, 3);
         if (velFixed)
         {
             const float fx = xR - kr;
@@ -3246,10 +3760,9 @@ private:
         //
         // It is NOT a seventh group in the solved rhythm, and that is arithmetic,
         // not taste. A seventh group of width W re-solves g to
-        // (692 - titleEnd - 475 - W)/7, which at the non-acid titleEnd of ~115
-        // hits the g >= 12 floor at W = 18 px and at the Acid titleEnd of ~139
-        // has no solution at all (W < 0). Splitting the existing 100 px VEL group
-        // in two does not work either: a combo spends 6 px of frame padding plus
+        // (692 - titleEnd - 475 - W)/7, which hits the g >= 12 floor at W = 18 px.
+        // Splitting the existing 100 px VEL group in two does not work either:
+        // a combo spends 6 px of frame padding plus
         // ~24 px of arrow before any text, so 100 px cannot carry two of them.
         // Widening the VEL group to fit both would reflow all six groups on a
         // velocity-mode change — precisely what the fixed 100 px width exists to
@@ -3259,15 +3772,12 @@ private:
         // aligned on the same 692 rule and the same 100 px wide, which keeps the
         // column and costs the row nothing. Vertical fit (ink extents measured the
         // same way as the rest of this header): VEL combo bottom 586 -> 2 px -> ACC
-        // 588..606 -> 6 px -> non-acid step lane at 612. The OCT/GATE/SWING read-
+        // 588..606 -> 6 px -> step lane at 612. The OCT/GATE/SWING read-
         // outs share the 601..610 band but end at x~501, well left of 592; the
         // Fixed-VEL knob's read-out does reach into this x-range, but Fixed and
         // Accent are mutually exclusive so the two can never draw together.
         //
-        // Suppressed in Acid, which has no free band (its GATE lane starts at
-        // y600) and does not use the arpeggiator at all — mode 5 runs AcidEngine's
-        // own sequencer with its own per-step ACC lane.
-        if (velAccent && !acid)
+        if (velAccent)
         {
             // x still holds the VEL group's left edge (last group in the walk);
             // deriving from it keeps ACC under VEL even if the walk's start
@@ -3278,34 +3788,72 @@ private:
         }
 
         const int step = liveStep();
+        // Single mute row, y 612..680 (h68), starting 6.6 px below the knob
+        // read-out ink. The 16 cells are split into four bar-groups with an
+        // 8 px gap between groups, so the pattern reads as 4 bars of 4.
+        drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
+    }
 
-        if (acid)
+    void drawAcidSequencerBody()
+    {
+        // AcidSequencer consumes RUN, RATE, GATE, SWING and LATCH. The generic
+        // arpeggiator's MODE, OCT and VEL controls are intentionally absent: the
+        // dedicated Acid path never reads them.
+        auto hlabel = [&](float x, const char* t, int align)
+        { text(x, 552, 10.0f, live.textPanel, t, align, true); };
+
+        ledButton("acid_run", kParamArpOn, 158, 563, 216, 587, "RUN");
+
+        hlabel(230, "RATE", -1);
+        comboBox("acid_rate", kParamArpRate, 228, 564, 294, 586,
+                 kDivName, 14, true);
+
+        constexpr float kr = 13.0f;
+        hlabel(326, "GATE", 0);
+        knob("acid_gate", kParamArpGate, 326, 580, kr, "%.0f", " %",
+             false, false, false, 100.0f, 0.0f, false);
+        hlabel(374, "SWING", 0);
+        knob("acid_swing", kParamArpSwing, 374, 580, kr, "%.0f", " %",
+             false, false, false, 100.0f, 0.0f, false);
+
+        ledButton("acid_latch", kParamArpLatch, 406, 563, 470, 587, "LATCH");
+
+        const int step = liveStep();
+        dl->AddRectFilled(P(484, 563), P(692, 587),
+                          IM_COL32(38, 39, 43, 255), 4.0f * s);
+        dl->AddRect(P(484, 563), P(692, 587), withA(live.accent, 120),
+                    4.0f * s, 0, 1.0f * s);
+        if (step >= 0 && step < 16)
         {
-            // 3-lane acid pattern sequencer with a left label gutter (x18..58) so
-            // lane names never overlap the first cell (defect 6). Lane heights are
-            // balanced so ACC/SLIDE stay real click targets (h15 cells, not slits):
-            // GATE 600..616 (h16), PITCH 620..654 (h34 — the per-cell "+0" readout
-            // keeps it precise, so it doesn't need more), ACC 658..673, SLIDE 677..692.
-            const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
-            drawLaneLabel(58, 600, 616, "GATE");
-            drawStepRow(gx, 600, 692, 16, kParamArpStep0, step, false, 0.0f);
-            drawLaneLabel(58, 620, 654, "PITCH");
-            drawPitchLane(gx, 620, cw, 34, step);
-            drawLaneLabel(58, 658, 673, "ACC");
-            drawLaneLabel(58, 677, 692, "SLIDE");
-            drawAccentSlideLanes(gx, 658, cw, step);
+            const bool accent = values[kParamSeqAccent0 + step] > 0.5f;
+            const bool slide  = values[kParamSeqSlide0 + step] > 0.5f;
+            char status[64];
+            std::snprintf(status, sizeof status, "STEP %02d  \xC2\xB7  %s%s",
+                          step + 1,
+                          accent ? "ACC" : "NORMAL",
+                          slide ? " + SLIDE" : "");
+            text(588, 570, 9.0f, IM_COL32(231, 233, 236, 255),
+                 status, 0, true);
         }
         else
         {
-            // Single mute row, y 612..680 (h68), starting 6.6 px below the knob
-            // read-out ink. The 16 cells are split into four bar-groups with an
-            // 8 px gap between groups, so the pattern reads as 4 bars of 4 at a
-            // glance — the old flush row relied on an alpha-40 hairline that was
-            // invisible against a lit (accent-filled) cell, i.e. against the
-            // default state, where all 16 read as one undivided beige slab.
-            drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
+            text(588, 570, 9.0f, whiteDimCol(),
+                 values[kParamArpOn] > 0.5f ? "WAITING FOR TRANSPORT" : "PATTERN READY",
+                 0, true);
         }
+
+        // Four truthful lanes with a left label gutter. ACC and SLIDE remain real
+        // click targets rather than compressed status marks.
+        const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
+        drawLaneLabel(58, 600, 616, "GATE");
+        drawStepRow(gx, 600, 692, 16, kParamArpStep0, step, false, 0.0f);
+        drawLaneLabel(58, 620, 654, "PITCH");
+        drawPitchLane(gx, 620, cw, 34, step);
+        drawLaneLabel(58, 658, 673, "ACC");
+        drawLaneLabel(58, 677, 692, "SLIDE");
+        drawAccentSlideLanes(gx, 658, cw, step);
     }
+
     // Right-aligned lane label sitting in the acid sequencer's left gutter.
     void drawLaneLabel(float xRight, float y0, float y1, const char* t)
     { text(xRight, 0.5f * (y0 + y1) - 5.0f, 8.5f, live.textPanel, t, 1, true); }
@@ -3349,7 +3897,8 @@ private:
             ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
             if (ImGui::IsItemClicked()) setChoice(base + i, on ? 0 : 1);
             const bool hov = ImGui::IsItemHovered();
-            if (hov && tips[base + i]) ImGui::SetTooltip("%s", tips[base + i]);
+            if (tips[base + i] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                ImGui::SetTooltip("%s", tips[base + i]);
             // Downbeats carry a touch more ink in BOTH states, so the beat grid is
             // legible whether the pattern is mostly lit or mostly muted.
             const ImU32 fill = on ? withA(live.accent, down ? 235 : 185)
@@ -3412,7 +3961,7 @@ private:
             if (!pitchDragging && !ImGui::GetIO().KeyCtrl && ImGui::IsItemHovered()
                 && ImGui::IsMouseDoubleClicked(0))
             { beginEdit(p); values[p] = 0; setParam(p, 0); endEdit(p); }
-            if (ImGui::IsItemHovered())
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             { char t[24]; std::snprintf(t, sizeof(t), "Step %d: %+d st", i + 1, (int)std::lround(values[p])); ImGui::SetTooltip("%s", t); }
             // filled bar from the 0-centre line to the value
             const float t01 = (values[p] + 24.0f) / 48.0f;
@@ -3451,7 +4000,8 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) setChoice(p, on ? 0 : 1);
         const bool hov = ImGui::IsItemHovered();
-        if (hov && tips[p]) ImGui::SetTooltip("%s", tips[p]);
+        if (tips[p] && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tips[p]);
         cellFace(x0, y0, x1, y1, on ? onCol : ((i % 4) == 0 ? IM_COL32(48, 50, 56, 255)
                                                            : IM_COL32(32, 34, 38, 255)), hov, 2.0f, !on);
         if (i == step) dl->AddRect(b0, b1, live.ledOn, 2.0f * s, 0, 1.4f * s);
@@ -3475,14 +4025,22 @@ private:
         // Drive
         panelBox(708, 552, 834, 688);
         sectionTitle(714, 556, "DRIVE");
-        ledButton("drvon", kParamDriveOn, 786, 556, 828, 572, "ON");
+        const bool acid = (curMode == 5);
+        ledButton("drvon", kParamDriveOn, 786, 556, 828, 572,
+                  acid ? "FX" : "ON");
+        if (acid)
+            text(716, 574, 7.5f, live.textPanel, "FX TYPE", -1, true);
         comboBox("drvtype", kParamDriveType, 716, 580, 828, 600, kDriveType, 3);
         // Tickless like the rest of the FX strip, centered in the body below the combo.
         // DRIVE and CHORUS have a free band under their knob row, so their read-outs
         // are permanent (ink 668..674.4 / 658..664.4 vs the 685 inner floor).
         const bool ro = readoutsOn();
-        klabel(748, 612, "AMT"); knob("drvamt", kParamDriveAmt, 748, 646, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
-        klabel(796, 612, "MIX"); knob("drvmix", kParamDriveMix, 796, 646, 14, "%.0f", " %", false, false, ro, 100.0f, 0.0f, false);
+        klabel(748, 612, acid ? "FILTER+FX" : "AMT");
+        knob("drvamt", kParamDriveAmt, 748, 646, 14, "%.0f", " %",
+             false, false, ro, 100.0f, 0.0f, false);
+        klabel(796, 612, acid ? "FX MIX" : "MIX");
+        knob("drvmix", kParamDriveMix, 796, 646, 14, "%.0f", " %",
+             false, false, ro, 100.0f, 0.0f, false);
 
         // Chorus — three tickless r14 knobs in ONE balanced row (the old layout
         // orphaned a smaller MIX bottom-right over dead space). Tickless reach is
@@ -3504,7 +4062,7 @@ private:
         sectionTitle(974, 556, "DELAY");
         ledButton("dlyon", kParamDelayOn, 1046, 556, 1088, 572, "ON");
         const bool sync = values[kParamDelaySync] > 0.5f;
-        ledButton("dlysync", kParamDelaySync, 976, 578, 1032, 596, "SYNC");
+        compactToggle("dlysync", kParamDelaySync, 976, 578, 1032, 596, "SYNC");
         // The knob row is boxed in (labels above, P-P/TAPE row at 664 below), so the
         // read-outs live in the LABEL slot and appear while the pointer is anywhere
         // in the DELAY panel — see klabelOrValue.
@@ -3536,13 +4094,16 @@ private:
         panelBox(1098, 552, 1224, 688);
         sectionTitle(1104, 556, "REVERB");
         ledButton("rvbon", kParamReverbOn, 1176, 556, 1218, 572, "ON");
-        // Modular auto-engages a spring reverb: show the badge as a bordered tag in
-        // the panel body (under the header) so it never collides with the title.
+        // Modular auto-engages a separate spring reverb at a fixed 15% mix. Say so
+        // explicitly: the five visible knobs still control the normal reverb.
         if (curMode == 3)
         {
-            dl->AddRectFilled(P(1104, 573), P(1158, 585), withA(live.accent, 40), 3.0f * s);
-            dl->AddRect(P(1104, 573), P(1158, 585), live.accent, 3.0f * s, 0, 1.0f * s);
-            text(1131, 575, 8.0f, live.accent, "SPRING", 0, true);
+            dl->AddRectFilled(P(1104, 573), P(1218, 585),
+                              withA(live.accent, 40), 3.0f * s);
+            dl->AddRect(P(1104, 573), P(1218, 585), live.accent,
+                        3.0f * s, 0, 1.0f * s);
+            text(1161, 575, 7.5f, live.accent,
+                 "FIXED SPRING \xC2\xB7 15%", 0, true);
         }
         // Two knob rows back to back: row 1's read-out band IS row 2's label band, and
         // row 2 ends 5 px above the panel floor. Both rows therefore read out through
@@ -3693,7 +4254,8 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool active  = enabled && ImGui::IsItemActive();
         const bool hovered = ImGui::IsItemHovered();
-        if (hovered && !active) ImGui::SetTooltip("%s", tip);
+        if (!active && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tip);
 
         if (active)
         {
@@ -3886,7 +4448,8 @@ private:
         // Note name + the velocity THIS pointer position would play: the only way the
         // strike-position mapping is discoverable. Suppressed while the button is
         // down so the tooltip does not chase the pointer during a glissando.
-        if (hov && !ImGui::IsMouseDown(0))
+        if (!ImGui::IsMouseDown(0)
+            && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
         {
             static const char* const kNoteNames[12] =
                 { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
@@ -3926,7 +4489,8 @@ private:
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         // Cap baseMidi at 84 so the top generated key (base + 35) stays <= 127 MIDI.
         if (ImGui::IsItemClicked()) { baseMidi += delta; if (baseMidi < 12) baseMidi = 12; if (baseMidi > 84) baseMidi = 84; }
-        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        if (tip && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+            ImGui::SetTooltip("%s", tip);
         dl->AddRectFilled(b0, b1, IM_COL32(38, 38, 41, 255), 3.0f * s);
         dl->AddRect(b0, b1, IM_COL32(90, 90, 94, 255), 3.0f * s, 0, 1.0f * s);
         text(0.5f * (x0 + x1), y0 + 8, 9.0f, live.text, lab, 0, true);
@@ -3971,8 +4535,13 @@ private:
         tips[kParamFMAmount] = "Linear FM from oscillator 1 into oscillator 2.";
         tips[kParamPmFenvOscA] = "Poly-mod: filter envelope to oscillator 1 pitch.";
         tips[kParamPmFenvFilt] = "Poly-mod: filter envelope added to the filter cutoff.";
+        tips[kParamPmFenvPWM] = "Poly-mod: filter envelope to oscillator 1 pulse width.";
         tips[kParamPmOscBOscA] = "Poly-mod: oscillator 2 to oscillator 1 pitch.";
         tips[kParamPmOscBPWM] = "Poly-mod: oscillator 2 to oscillator 1 pulse width.";
+        tips[kParamPmOscBFilt] = "Poly-mod: oscillator 2 to filter cutoff at audio rate.";
+        tips[kParamModFilterModel] = "Select the open early ladder or bandwidth-limited late revision.";
+        tips[kParamModOsc2Osc1] = "Audio-rate phase modulation from oscillator 2 to oscillator 1.";
+        tips[kParamModOsc3Filter] = "Audio-rate cutoff modulation from oscillator 3.";
         tips[kParamShRate] = "Sample-and-hold clock rate.";
         tips[kParamCosmosChorus] = "Built-in chorus mode: off, I, II, or both.";
         tips[kParamLfo1Rate] = tips[kParamLfo2Rate] = "Speed of the LFO.";
@@ -3988,7 +4557,7 @@ private:
         tips[kParamVelSens] = "How strongly velocity affects level.";
         tips[kParamVelCurve] = "Response curve applied to incoming velocity.";
         tips[kParamPbRange] = "Pitch-bend range, in semitones.";
-        tips[kParamArpOn] = "Enable the arpeggiator / step sequencer.";
+        tips[kParamArpOn] = "Enable the arpeggiator, or run the pattern sequencer in Acid.";
         tips[kParamArpMode] = "Note order the arpeggiator plays.";
         tips[kParamArpOctave] = "Range the arpeggio spans, in octaves.";
         tips[kParamArpRate] = "Step length as a note division.";
@@ -4000,10 +4569,10 @@ private:
         tips[kParamArpAccentPattern] = "Accent shape over the 16-step grid, "
                                        "used when the velocity mode is Accent.";
         for (int i = 0; i < 16; ++i) tips[kParamArpStep0 + i] = "Turn this step on or off.";
-        tips[kParamDriveOn] = "Enable the drive stage.";
-        tips[kParamDriveType] = "Drive character: soft, hard, or tube.";
-        tips[kParamDriveAmt] = "Amount of drive.";
-        tips[kParamDriveMix] = "Blend of driven and clean signal.";
+        tips[kParamDriveOn] = "Enable the post-synth drive effect. Acid filter drive remains active.";
+        tips[kParamDriveType] = "Post-synth drive character: soft, hard, or tube.";
+        tips[kParamDriveAmt] = "Drive amount. In Acid this always drives the filter input and also feeds enabled FX drive.";
+        tips[kParamDriveMix] = "Blend of post-synth driven and clean signal.";
         tips[kParamChorusOn] = "Enable the chorus.";
         tips[kParamChorusRate] = "Chorus modulation speed.";
         tips[kParamChorusDepth] = "Chorus modulation depth.";
@@ -4053,6 +4622,7 @@ private:
     // state
     //========================================================================
     duskdpf::DuskPanel panel;
+    duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::CrispFontSet fontSet;
     ImDrawList* dl = nullptr;
     float  values[kParamCount] = {};
@@ -4122,8 +4692,10 @@ private:
 
     // ADSR caches
     static constexpr int kAdsrN = 40;
-    ImVec2 ampEnv[kAdsrN], filtEnv[kAdsrN];
+    ImVec2 ampEnv[kAdsrN], filtEnv[kAdsrN], acidEnv[kAdsrN];
     float  ampHash = -1, filtHash = -1;
+    float  acidEnvDecay = 0.0f, acidEnvSustain = 0.0f;
+    bool   acidEnvValid = false;
 
     // scope
     float  scope[msynth::MultiSynthDSP::kScopeSize] = {};
@@ -4146,7 +4718,6 @@ private:
     int    fxReadoutPanel = 0;
 
     // misc animation
-    float  shPhase = 0.0f;
     bool   pitchDragging = false;
 
     // local skew/ratio-knob drag state (one knob active at a time, like the shared knob)

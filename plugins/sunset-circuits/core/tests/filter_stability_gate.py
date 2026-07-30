@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Filter self-oscillation gate — the filter must not ring at Nyquist.
+"""Filter stability/self-oscillation gate.
 
-FourPoleOTA (Cosmos / Oracle / Mono / Prism) integrates with naive forward
-Euler, s += g*(in - s) with g = tan(pi*fc/sr), whose pole is 1-g. That is
-unconditionally unstable for g > 2, and the resonance feedback path drags the
-limit down a long way further. Past it the filter does not ring musically: it
-alternates at EXACTLY Nyquist, at full scale, forever, with no input at all.
-The cutoff ceiling was 0.40*sr, which is well inside that region, and five
-factory presets were shipping the artefact at OS=Off.
+The TPT models are expected to decay at ordinary resonance and may sustain a
+bounded musical oscillation at maximum resonance.  What must never return is
+the former forward-Euler failure: a near-full-scale limit cycle at Nyquist.
 
 WHAT THIS RENDERS
     The voice must stay ALIVE with a silent input, which is the one state that
@@ -35,10 +31,9 @@ WHAT THIS RENDERS
     its own g to 0.95 and is stable, so it keeps its full cutoff range.
 
 LIMITS
-    tail RMS < -80 dBFS, which is ~180 dB above the post-fix reading and ~76 dB
-    below the pre-fix one, and no spectral peak at or above 0.45*sr. The peak
-    test is only meaningful when there is something to peak: below -140 dBFS the
-    argmax lands on denormal noise, so it is reported and not gated there.
+    resonance 0/0.5: tail RMS < -80 dBFS.
+    resonance 1.0: bounded below -6 dBFS; Oracle must sustain above -80 dBFS.
+    every audible tail: no spectral peak at or above 0.45*sr.
 """
 import sys
 import numpy as np
@@ -49,6 +44,7 @@ SECONDS = 2.0
 SILENCE_T = 0.3          # every source into the filter goes to zero here
 TAIL_T = 1.0             # free-tail analysis window starts here
 TAIL_MAX_DB = -80.0
+OSC_MAX_DB = -6.0
 NYQUIST_FRAC = 0.45      # no spectral peak at or above this fraction of sr
 PEAK_FLOOR_DB = -140.0   # below this there is no peak, only denormals
 
@@ -92,10 +88,15 @@ def main():
             _, x = render(mode, 60, SECONDS, 1, f"filtstab_{mode}_{res}",
                           filterRes=res, setat=SILENCE, **PATCH)
             rms, peak = tail_stats(x, SR)
-            quiet_ok = rms < TAIL_MAX_DB
+            if res < 1.0:
+                level_ok = rms < TAIL_MAX_DB
+            else:
+                # Oracle's defining self-oscillation must be present.  The other
+                # modes may ring or decay, but none may approach full scale.
+                level_ok = rms < OSC_MAX_DB and (mode != 1 or rms >= TAIL_MAX_DB)
             # Only judge the peak when the tail is loud enough to have one.
             peak_ok = (rms < PEAK_FLOOR_DB) or (peak < NYQUIST_FRAC * SR)
-            ok = quiet_ok and peak_ok
+            ok = level_ok and peak_ok
             if not ok:
                 fails.append(f"{name}/res{res}")
             print(f"{name:<9}{res:>5.1f}{rms:>11.2f}{peak:>10.1f}"
@@ -103,7 +104,8 @@ def main():
                   f"{'PASS' if ok else 'FAIL'}")
 
     print(f"\n(tail = RMS of {TAIL_T}-{SECONDS} s with every filter input at zero since "
-          f"{SILENCE_T} s; limit {TAIL_MAX_DB:.0f} dBFS, no peak at/above "
+          f"{SILENCE_T} s; res<1 must decay below {TAIL_MAX_DB:.0f} dBFS; "
+          f"max-res tails stay below {OSC_MAX_DB:.0f} dBFS; no peak at/above "
           f"{NYQUIST_FRAC:.2f}*sr)")
     print(f"filter_stability_gate: {'PASS' if not fails else 'FAIL (' + ','.join(fails) + ')'}")
     sys.exit(0 if not fails else 1)

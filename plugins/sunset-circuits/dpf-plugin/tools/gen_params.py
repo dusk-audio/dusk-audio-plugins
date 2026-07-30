@@ -152,6 +152,11 @@ for n in range(16): add(f"SeqSlide{n}",f"seqSlide{n}",f"Seq Slide {n+1}",0,1,0,B
 # topical siblings would renumber everything
 # after it. Grouping lives in the UI, not in the index.
 add("ArpAccentPattern","arpAccentPattern","Arp Accent Pattern",0,3,0,I)
+add("PmFenvPWM","pmFenvPWM","PM FEnv-PW",0,1,0,L)
+add("PmOscBFilt","pmOscBFilt","PM OscB-Filt",0,1,0,L)
+add("ModFilterModel","modFilterModel","Modular Filter",0,1,0,I)
+add("ModOsc2Osc1","modOsc2Osc1","Mod Osc2-Osc1",0,1,0,L)
+add("ModOsc3Filter","modOsc3Filter","Mod Osc3-Filter",0,1,0,L)
 
 NCORE = len(P)
 sym2enum = {p[1]: "kParam"+p[0] for p in P}
@@ -280,7 +285,7 @@ PRESETS = [
    "chorusOn":1,"chorusMix":0.25}),
  # Solid Bass: serial FM bass (algo 0, 4->3->2->1) with a touch of op4 feedback
  # for grit; filter-env pluck for punch.
- ("Solid Bass", {"mode":4,"prismAlgo":0,"prismFB":0.15,
+ ("Solid Bass", {"masterVol":-1.0,"mode":4,"prismAlgo":0,"prismFB":0.15,
    "op1Ratio":1,"op1Level":1.0,"op1A":0.001,"op1D":0.5,"op1S":0.6,"op1R":0.2,
    "op2Ratio":1,"op2Level":0.5,"op2A":0.001,"op2D":0.3,"op2S":0.2,"op2R":0.2,
    "op3Ratio":1,"op3Level":0.35,"op3A":0.001,"op3D":0.25,"op3S":0.1,"op3R":0.2,
@@ -298,7 +303,7 @@ PRESETS = [
    "reverbOn":1,"reverbSize":0.7,"reverbDecay":4.0,"reverbMix":0.3}),
  # Brass Machine: serial FM (algo 0) with strong op4 self-feedback growl and a
  # brass-style attack swell on the amp + modulator.
- ("Brass Machine", {"masterVol":-2.0,"mode":4,"prismAlgo":0,"prismFB":0.6,
+ ("Brass Machine", {"masterVol":-5.0,"mode":4,"prismAlgo":0,"prismFB":0.6,
    "op1Ratio":1,"op1Level":1.0,"op1A":0.06,"op1D":0.3,"op1S":0.8,"op1R":0.3,
    "op2Ratio":1,"op2Level":0.7,"op2A":0.1,"op2D":0.4,"op2S":0.6,"op2R":0.3,
    "op3Ratio":1,"op3Level":0.5,"op3A":0.08,"op3D":0.4,"op3S":0.5,"op3R":0.3,

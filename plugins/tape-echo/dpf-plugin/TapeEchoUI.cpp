@@ -11,6 +11,7 @@
 #include "TapeEchoParams.hpp"
 #include "TapeEchoVersion.hpp"
 #include "DuskImGuiFont.hpp"      // shared crisp-bold loader (candidate search + DPI)
+#include "DuskImGuiTextInput.hpp" // Windows host focus while typing values
 #include "DuskImGuiWidgets.hpp"   // shared DuskPanel: chrome knob, LED, text, value bubble
 #include "DuskSupportersOverlay.hpp" // shared DPF Patreon "Special Thanks" overlay
 #include "TapeEchoFontRegular.inc"
@@ -113,6 +114,7 @@ protected:
                       ? (int)index
                       : -1;
         currentUserName.clear();
+        currentUserPath.clear();
     }
 
     void onImGuiDisplay() override
@@ -184,6 +186,7 @@ protected:
 
         ImGui::End();
         ImGui::PopStyleVar(2);
+        textInputFocus.update(*this);
 
         // Cursor feedback. The DPF-Widgets ImGui backend never forwards
         // ImGui::SetMouseCursor() to the window, so drive DGL's cursor directly.
@@ -395,7 +398,7 @@ private:
               bool panelTicks = true, const char* fmt = nullptr,
               const char* suffix = "", float dispMul = 1.0f, float dispAdd = 0.0f,
               bool persistent = false, bool enabled = true,
-              const char* overrideText = nullptr, const char* /*tooltip*/ = nullptr)
+              const char* overrideText = nullptr, const char* tooltip = nullptr)
     {
         const float range = maxV - minV;
         float t = range > 0.0f ? (values[param] - minV) / range : 0.0f;
@@ -409,7 +412,7 @@ private:
                    values[param], kTeParams[param].def, stepped, panelTicks,
                    fmt != nullptr ? fmt : (stepped ? "%.0f" : "%.2f"), suffix,
                    /*faceColor*/ 0, /*bodyless*/ true, persistent,
-                   /*tooltip*/ nullptr, /*rightClickReset*/ false,
+                   tooltip, /*rightClickReset*/ false,
                    dispMul, dispAdd, /*name*/ nullptr,
                    /*contextMenu*/ true, bubbleText,
                    /*hasExternalReadout*/ false,
@@ -595,13 +598,22 @@ private:
             if (!userPresets.empty())
             {
                 ImGui::SeparatorText("User");
-                for (const auto& up : userPresets)
+                // Index-scoped IDs: two rows can carry the same display name (a
+                // hand-written file, or one with no name= line falling back to a
+                // stem another file already uses), and ImGui would then give both
+                // rows one shared ID. The label stays the name.
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    const UserPreset& up = userPresets[i];
+                    ImGui::PushID((int)i);
                     if (ImGui::Selectable(up.name.c_str(),
-                                          currentPreset < 0 && up.name == currentUserName))
+                                          currentPreset < 0 && up.path == currentUserPath))
                     {
                         loadUserPreset(up.path, up.name);
                         ImGui::CloseCurrentPopup();
                     }
+                    ImGui::PopID();
+                }
             }
             ImGui::EndCombo();
         }
@@ -703,6 +715,7 @@ private:
             return;
         currentPreset = idx;
         currentUserName.clear();
+        currentUserPath.clear();
         forEachPresetParam(idx, [this](uint32_t param, float value)
                                 { setP(param, value); });
     }
@@ -714,6 +727,7 @@ private:
     {
         currentPreset = -1;
         currentUserName.clear();
+        currentUserPath.clear();
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (teIsPresetParam(i))
                 setP(i, kTeParams[i].def);
@@ -883,6 +897,7 @@ private:
         scanUserPresets();
         currentPreset = -1;
         currentUserName = name;
+        currentUserPath = path;
     }
 
     void loadUserPreset(const std::string& path, const std::string& name)
@@ -919,6 +934,7 @@ private:
         }
         currentPreset = -1;
         currentUserName = name;
+        currentUserPath = path;
     }
 
     //--- preset identity recovery ----------------------------------------------
@@ -952,6 +968,21 @@ private:
 
     int deriveUserPreset() const
     {
+        // Preserve the loaded file's identity when duplicate presets contain the
+        // same values; parameter matching alone cannot distinguish those files.
+        if (!currentUserPath.empty())
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                if (userPresets[i].path == currentUserPath)
+                {
+                    bool ok = true;
+                    for (uint32_t id = 0; id < kParamCount && ok; ++id)
+                        if (teIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
+                            ok = false;
+                    if (ok)
+                        return (int)i;
+                    break;
+                }
+
         for (size_t i = 0; i < userPresets.size(); ++i)
         {
             bool ok = true;
@@ -968,11 +999,24 @@ private:
     void syncPresetSelection()
     {
         const int f = deriveFactoryPreset();
-        if (f >= 0) { currentPreset = f; currentUserName.clear(); return; }
+        if (f >= 0)
+        {
+            currentPreset = f;
+            currentUserName.clear();
+            currentUserPath.clear();
+            return;
+        }
         const int u = deriveUserPreset();
-        if (u >= 0) { currentPreset = -1; currentUserName = userPresets[(size_t)u].name; return; }
+        if (u >= 0)
+        {
+            currentPreset = -1;
+            currentUserName = userPresets[(size_t)u].name;
+            currentUserPath = userPresets[(size_t)u].path;
+            return;
+        }
         currentPreset = -1;
         currentUserName.clear();
+        currentUserPath.clear();
     }
 
     void drawMeterBlock(ImDrawList* dl)
@@ -1472,6 +1516,7 @@ private:
     };
 
     duskdpf::DuskPanel panel;
+    duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::CrispFontSet labelFonts;
     duskdpf::CrispFontSet regularFonts;
     ImFont* labelFont = nullptr;
@@ -1479,7 +1524,8 @@ private:
     float  needlePos = 0.0f;
     float  meterLevel = 0.0f;
     int    currentPreset = -1;
-    std::string currentUserName;   // non-empty when a user preset is active
+    std::string currentUserName;   // display name of the active user preset
+    std::string currentUserPath;   // stable identity of the active user preset
 
     // Cached user preset library (file name + display name + every preset param).
     struct UserPreset { std::string name, path; float vals[kParamCount]; };

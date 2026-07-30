@@ -77,6 +77,11 @@ const ParamDef kParamDefs[] = {
 
     // --- Acid globals (per-step seqPitch/Accent/Slide resolved by prefix below) ---
     { pAcidAccentAmt, "acidAccentAmt", 0.7f }, { pAcidSlideTime, "acidSlideTime", 60.0f },
+
+    // --- Append-only accuracy expansion ---
+    { pPmFenvPWM, "pmFenvPWM", 0 }, { pPmOscBFilt, "pmOscBFilt", 0 },
+    { pModFilterModel, "modFilterModel", 0 },
+    { pModOsc2Osc1, "modOsc2Osc1", 0 }, { pModOsc3Filter, "modOsc3Filter", 0 },
 };
 } // namespace
 
@@ -575,8 +580,13 @@ void MultiSynthDSP::snapshotParameters(int nSamples) noexcept
     vp.fmAmount = p(pFMAmount);
     vp.polyModFEnvOscA = p(pPmFenvOscA);
     vp.polyModFEnvFilt = p(pPmFenvFilt);
+    vp.polyModFEnvPWM = p(pPmFenvPWM);
     vp.polyModOscBOscA = p(pPmOscBOscA);
     vp.polyModOscBPWM = p(pPmOscBPWM);
+    vp.polyModOscBFilt = p(pPmOscBFilt);
+    vp.modularFilterModel = (ModularFilterModel)clampi((int)p(pModFilterModel), 0, 1);
+    vp.modularOsc2Osc1 = p(pModOsc2Osc1);
+    vp.modularOsc3Filter = p(pModOsc3Filter);
 
     // Prism (4-op FM) params — op blocks are 9 contiguous fields each.
     vp.prismAlgo = clampi((int)p(pPrismAlgo), 0, 7);

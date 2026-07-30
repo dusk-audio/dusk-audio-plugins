@@ -5,9 +5,9 @@
 // Framework-free C++17 (zero JUCE/DPF includes). Three classes:
 //
 //   * AcidFilter     — 3-pole (18 dB/oct) diode-ladder-flavoured resonant lowpass.
-//   * AcidVoice      — mono voice: one polyBLEP oscillator, a single fast-decay
-//                      envelope shared by amp + filter, the accent "wow" circuit
-//                      and exponential note-to-note slide (glide).
+//   * AcidVoice      — mono voice: one dedicated band-limited oscillator, a
+//                      single fast-decay envelope shared by amp + filter, the
+//                      two-rate accent circuit and logarithmic pitch slide.
 //   * AcidSequencer  — 16 steps × {on, pitchOffset, accent, slide}, clocked from
 //                      bpm + note division + swing + gate length, transposing the
 //                      pattern from the held root note. Emits note events.
@@ -25,32 +25,19 @@
 #include "Oscillator.hpp"
 #include "Envelope.hpp"
 
+#include <cstddef>
+
 namespace msynth
 {
 
 // =============================================================================
-//  AcidFilter — 3-pole diode-ladder-flavoured resonant lowpass (18 dB/oct)
+//  AcidFilter — nonlinear TPT 3-pole acid ladder (18 dB/oct)
 // =============================================================================
 //
-// Topology mirrors FourPoleOTA (FilterEngine.hpp) but with THREE one-pole stages
-// instead of four, and a diode-style (tanh-clipped) resonance feedback path:
-//
-//   * Each stage is the same naive zero-delay one-pole used by the OTA/ladder
-//     models: y = s + g*(in - s), s = tanh(y), with the exact bilinear coefficient
-//     g = gw/(1+gw) where gw = tan(pi*fc/sr) (always < 1 -> stable at the ceiling).
-//     Three of them cascade to give the canonical 18 dB/oct slope. tanh(y) keeps each
-//     stage output bounded to +-1 and gives unity small-signal gain (so at res 0
-//     the response is a clean linear 3-pole rolloff — see slope_gate).
-//   * Resonance feeds the third stage's output back to the input through a tanh
-//     "diode" clipper: fb = tanh(s2 * feedback). Because a pure 3-pole cascade
-//     only reaches 135 deg at cutoff, self-oscillation needs a generous feedback
-//     gain (the 180 deg point sits above cutoff where each pole gives ~60 deg,
-//     |pole| = 0.5, so loop gain 1 needs feedback ~= 8). kMaxFeedback = 8 puts
-//     res ~0.95 right at the edge of self-oscillation — the "scream" — while the
-//     per-stage tanh caps every state at +-1, so the loop can never blow up
-//     (bounded, finite; see scream_gate).
-//   * Input drive is a tanh waveshaper (classic acid "overdrive into the filter").
-//   * A one-pole DC blocker sits on the output; NaN/Inf guards reset dead state.
+// The three TPT integrators are solved with the same zero-delay state expansion
+// used by FilterEngine's four-pole models.  An asymmetric diode transfer sits at
+// the input and inside every pole.  This keeps the 18 dB slope, makes resonance
+// track cutoff cleanly, and produces even as well as odd harmonics when driven.
 //
 class AcidFilter
 {
@@ -73,38 +60,41 @@ public:
     void setParameters(float cutoffHz, float resonance, float driveAmount = 1.0f) noexcept
     {
         lastCutoff = cutoffHz;
-        const float fc = clampf(cutoffHz, 10.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
-        // Exact bilinear one-pole coefficient: gw = tan(pi*fc/sr), g = gw/(1+gw).
-        // g is always < 1 so the small-signal pole stays stable even at the 0.4x
-        // ceiling (a naive g = tan(...) reaches ~3.08 there -> |1-g| > 1).
+        const float fc = clampf(cutoffHz, 10.0f, sr * 0.45f);
         const float gw = std::tan(kPi * fc / sr);
-        g = gw / (1.0f + gw);
+        G = gw / (1.0f + gw);
         res = clampf(resonance, 0.0f, 1.0f);
-        feedback = res * kMaxFeedback;
+        feedback = kMaxFeedback * res * (0.78f + 0.22f * res);
         drive = maxf(0.1f, driveAmount);
     }
 
     float process(float input) noexcept
     {
-        // Diode-style resonance feedback from the last stage.
-        const float fb = std::tanh(s[2] * feedback);
-        // Input drive (tanh overdrive) minus the resonance feedback.
-        float in = std::tanh(input * drive) - fb;
-
+        const float oneMinusG = 1.0f - G;
+        const float G2 = G * G;
+        const float G3 = G2 * G;
+        const float sigma = oneMinusG * (G2 * z[0] + G * z[1] + z[2]);
+        float in = (diode(input * drive) - feedback * sigma)
+                 / (1.0f + feedback * G3);
+        in = diode(in);
         for (int i = 0; i < 3; ++i)
         {
-            const float y = s[i] + g * (in - s[i]);
-            s[i] = std::tanh(y);      // bounded, unity small-signal gain
-            in = s[i];
+            const float v = G * (in - z[i]);
+            float y = diode(z[i] + v);
+            z[i] = y + v;
+            if (isBad(z[i]))
+            {
+                z[i] = 0.0f;
+                y = 0.0f;
+            }
+            in = y;
         }
 
-        for (auto& st : s)
-            if (isBad(st)) st = 0.0f;
+        // Resonance bass compensation and the slight output compression of the
+        // original single-transistor VCA/filter output stage.
+        const float output = std::tanh((in + input * kBassComp * res) * 1.15f)
+                           / 1.15f;
 
-        // Resonance loses low end; add a touch back for body (bass compensation).
-        const float output = s[2] + input * kBassComp * res;
-
-        // One-pole DC blocker.
         const float dcOut = output - dcState + dcCoeff * dcPrev;
         dcPrev  = dcOut;
         dcState = output;
@@ -114,43 +104,125 @@ public:
 
     void reset() noexcept
     {
-        for (auto& st : s) st = 0.0f;
+        for (auto& st : z) st = 0.0f;
         dcState = 0.0f;
         dcPrev  = 0.0f;
     }
 
-    // Screaming near-self-oscillation without blowing up: see the header comment.
-    static constexpr float kMaxFeedback = 8.0f;
-    static constexpr float kBassComp    = 0.10f;
+    static constexpr float kMaxFeedback = 8.35f;
+    static constexpr float kBassComp    = 0.08f;
 
 private:
+    static float diode(float x) noexcept
+    {
+        // A small polarity-dependent gain mismatch approximates the diode
+        // string's asymmetric conduction while retaining unity small-signal gain.
+        const float asym = x >= 0.0f ? 1.08f : 0.92f;
+        return std::tanh(x * asym) / asym;
+    }
+
     float sr = 44100.0f;
-    float g = 0.0f, res = 0.0f, feedback = 0.0f, drive = 1.0f;
+    float G = 0.0f, res = 0.0f, feedback = 0.0f, drive = 1.0f;
     float lastCutoff = 1000.0f;
-    float s[3] = {};
+    float z[3] = {};
     float dcCoeff = 0.999f, dcState = 0.0f, dcPrev = 0.0f;
+};
+
+// Dedicated acid oscillator.  It starts with polyBLEP edges but then passes the
+// wave through an asymmetric transistor shaper and a fixed high-frequency pole,
+// avoiding the mathematically perfect ramps/rectangles of the general oscillator.
+class AcidOscillator
+{
+public:
+    void prepare(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate;
+        updateCoeff();
+        resetPhase();
+    }
+    void setSampleRate(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate;
+        updateCoeff();
+    }
+    void setFrequency(float hz) noexcept { dt = clampf(hz / sr, 0.0f, 0.45f); }
+    void setWaveform(Waveform w) noexcept
+    {
+        waveform = (w == Waveform::Square || w == Waveform::Pulse)
+            ? Waveform::Square : Waveform::Saw;
+    }
+    void setPulseWidth(float pw) noexcept { pulseWidth = clampf(pw, 0.42f, 0.58f); }
+
+    float processSample() noexcept
+    {
+        float raw;
+        if (waveform == Waveform::Square)
+        {
+            raw = phase < pulseWidth ? 1.0f : -1.0f;
+            raw += polyBlep(phase, dt);
+            raw -= polyBlep(std::fmod(phase + (1.0f - pulseWidth), 1.0f), dt);
+            // The square output is slightly softer and narrower than ideal.
+            raw = std::tanh((raw - 0.035f) * 1.18f) / 1.18f;
+        }
+        else
+        {
+            raw = 2.0f * phase - 1.0f;
+            raw -= polyBlep(phase, dt);
+            // Gentle curvature/asymmetry characteristic of the charging ramp.
+            raw += 0.075f * (raw * raw - 0.3333333f);
+            raw = std::tanh(raw * 1.08f) / 1.08f;
+        }
+
+        shapeState += (raw - shapeState) * shapeCoeff;
+        const float out = shapeState - dcIn + dcCoeff * dcOut;
+        dcIn = shapeState;
+        dcOut = isBad(out) ? 0.0f : out;
+
+        phase += dt;
+        if (phase >= 1.0f) phase -= std::floor(phase);
+        return dcOut;
+    }
+
+    void resetPhase() noexcept
+    {
+        phase = 0.0f;
+        shapeState = dcIn = dcOut = 0.0f;
+    }
+    void seedNoise(uint32_t) noexcept {}
+
+private:
+    void updateCoeff() noexcept
+    {
+        // Measured units retain substantial energy above 10 kHz but do not have
+        // ideal vertical edges.  Keep this pole independent of oversampling.
+        shapeCoeff = 1.0f - std::exp(-kTwoPi * 15500.0f / sr);
+        dcCoeff = std::exp(-kTwoPi * 8.0f / sr);
+    }
+
+    float sr = 44100.0f;
+    float dt = 0.01f, phase = 0.0f, pulseWidth = 0.5f;
+    float shapeCoeff = 1.0f, shapeState = 0.0f;
+    float dcCoeff = 0.999f, dcIn = 0.0f, dcOut = 0.0f;
+    Waveform waveform = Waveform::Saw;
 };
 
 // =============================================================================
 //  AcidVoice — mono voice
 // =============================================================================
 //
-// One polyBLEP oscillator (saw/square canonical, any waveform allowed) into the
+// One dedicated band-limited oscillator (saw/square) into the
 // AcidFilter, gated by a single fast-decay envelope that is REUSED for both the
 // amplitude and the filter cutoff modulation (the hallmark of the classic box:
 // one envelope makes the whole "wow"). Cutoff modulation follows the same
 // exponential rule as the poly voice: cutoff * 2^(env * envMod * kEnvOctaves).
 //
 // ACCENT circuit ("wow"): an accented note injects a charge into a leaky
-// accumulator (accentCharge) that leaks toward zero with a ~50 ms time constant.
-// Because the leak is slow relative to fast (e.g. 1/16) step rates, a run of
-// accented steps STACKS the charge -> brightness and level grow across the run,
-// then relax after it -> the characteristic accent "wow". The charge is clamped
-// (kAccentMax) so it can never run away. Each sample the charge drives three
-// things, exactly like the hardware accent bus:
-//     amp   *= 1 + accentCharge * kAccentAmp     (louder)
-//     envMod*= 1 + accentCharge * kAccentEnv     (brighter — deeper filter sweep)
-//     res   += accentCharge * kAccentRes         (more resonant "kick")
+// accumulator (accentCharge) that leaks toward zero with a ~180 ms time constant,
+// plus a faster VCA strike. Repeated accents recharge rather than sum either bus,
+// so the characteristic brightness and level emphasis cannot run away:
+//     amp   *= 1 + accentAttack * accentAmount * kAccentAmp
+//     envMod*= 1 + accentCharge * kAccentEnv
+//     res   += accentCharge * kAccentRes
 //
 // SLIDE: the played pitch (kept in log2-Hz) glides one-pole toward the target so
 // the 10..90 % transition ~= slideTime (configurable 10..200 ms). A slid note
@@ -160,6 +232,8 @@ private:
 class AcidVoice
 {
 public:
+    static constexpr float kRelease = 0.010f;  // 10 ms
+
     void prepare(double sampleRate) noexcept
     {
         sr = (float)sampleRate;
@@ -171,6 +245,7 @@ public:
         updateEnvelope();
         recomputeSlideCoeff();
         accentLeak = std::exp(-1.0f / (kAccentTau * sr));
+        accentAttackLeak = std::exp(-1.0f / (kAccentAttackTau * sr));
         reset();
     }
 
@@ -182,6 +257,7 @@ public:
         env.setSampleRate(sampleRate);
         recomputeSlideCoeff();
         accentLeak = std::exp(-1.0f / (kAccentTau * sr));
+        accentAttackLeak = std::exp(-1.0f / (kAccentAttackTau * sr));
     }
 
     // --- Voice parameters -----------------------------------------------------
@@ -218,7 +294,11 @@ public:
         }
 
         if (accent)
-            accentCharge = clampf(accentCharge + accentAmount, 0.0f, kAccentMax);
+        {
+            // The accent bus is recharged, not accumulated without bound.
+            accentCharge = maxf(accentCharge, accentAmount);
+            accentAttack = 1.0f;
+        }
     }
 
     void noteOff() noexcept { env.noteOff(); }
@@ -234,22 +314,30 @@ public:
         osc.setFrequency(std::exp2(curLogFreq));
         const float oscOut = osc.processSample();
 
-        // Accent charge leaks toward zero (the "wow").
+        // Two-rate accent contour: a fast VCA strike plus the slower filter
+        // "wow" discharge.  Repeated accents recharge the circuit naturally.
         accentCharge *= accentLeak;
+        accentAttack *= accentAttackLeak;
         if (accentCharge < 1.0e-6f) accentCharge = 0.0f;
+        if (accentAttack < 1.0e-6f) accentAttack = 0.0f;
 
         // Filter env-mod (brighter with accent), exponential cutoff sweep.
         const float envModEff = envMod * (1.0f + accentCharge * kAccentEnv);
         float cut = cutoffHz * std::exp2(e * envModEff * kEnvOctaves);
-        cut = clampf(cut, 20.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
-        const float resEff = clampf(resonance + accentCharge * kAccentRes, 0.0f, 0.99f);
+        // Conservative pre-limit below AcidFilter's sr * 0.45f TPT ceiling.
+        cut = clampf(cut, 20.0f, sr * 0.40f);
+        const float resEff = clampf(resonance + accentCharge * kAccentRes, 0.0f, 1.0f);
         filter.setParameters(cut, resEff, drive);
 
         const float filtered = filter.process(oscOut);
 
-        // Amplitude: env * base gain * velocity * accent boost.
-        const float amp = e * baseGain * vel * (1.0f + accentCharge * kAccentAmp);
-        float out = filtered * amp;
+        // Nonlinear VCA: accent hits quickly, while filter brightness decays on
+        // the slower bus.  The tanh knee is level-dependent rather than a clean
+        // multiplication after the filter.
+        const float amp = e * baseGain * vel
+                        * (1.0f + accentAttack * accentAmount * kAccentAmp);
+        const float vcaDrive = 1.0f + 0.65f * accentAttack;
+        float out = std::tanh(filtered * vcaDrive) / vcaDrive * amp;
         if (isBad(out)) out = 0.0f;
         return out;
     }
@@ -260,16 +348,17 @@ public:
         filter.reset();
         osc.resetPhase();
         accentCharge = 0.0f;
+        accentAttack = 0.0f;
         curLogFreq = targetLogFreq = std::log2(440.0f);
     }
 
     // Accent/env tuning constants (documented in the class header).
     static constexpr float kEnvOctaves = 4.0f;   // full env * envMod -> 4-octave sweep
-    static constexpr float kAccentAmp  = 1.2f;   // amp boost per unit charge
-    static constexpr float kAccentEnv  = 1.0f;   // env-depth (brightness) boost
-    static constexpr float kAccentRes  = 0.25f;  // resonance kick
-    static constexpr float kAccentMax  = 1.5f;   // charge clamp (no runaway)
-    static constexpr float kAccentTau  = 0.050f; // 50 ms leak
+    static constexpr float kAccentAmp  = 1.30f;
+    static constexpr float kAccentEnv  = 0.85f;
+    static constexpr float kAccentRes  = 0.18f;
+    static constexpr float kAccentTau  = 0.180f;
+    static constexpr float kAccentAttackTau = 0.045f;
 
 private:
     void updateEnvelope() noexcept
@@ -289,11 +378,10 @@ private:
     }
 
     static constexpr float kAttack  = 0.003f;  // 3 ms
-    static constexpr float kRelease = 0.010f;  // 10 ms
 
     float sr = 44100.0f;
 
-    Oscillator    osc;
+    AcidOscillator osc;
     AcidFilter    filter;
     ADSREnvelope  env;
 
@@ -311,7 +399,9 @@ private:
     // State.
     float vel           = 1.0f;
     float accentCharge  = 0.0f;
+    float accentAttack  = 0.0f;
     float accentLeak    = 0.999f;
+    float accentAttackLeak = 0.999f;
     float curLogFreq    = 8.78f;  // log2(440)
     float targetLogFreq = 8.78f;
     float slideCoeff    = 0.05f;

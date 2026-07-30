@@ -2,10 +2,10 @@
 //
 // user_preset_test — unit gate for dpf-plugin/UserPresetStore.hpp. Framework-free
 // (no JUCE/DPF); redirects the preset dir to a throwaway temp tree via
-// XDG_CONFIG_HOME so it never touches the real ~/.config. Exercised by
+// SUNSET_CIRCUITS_CONFIG_HOME so it never touches the real user library. Exercised by
 // core/tests/user_preset_gate.py and wired into run_all.sh.
 //
-// Covers: 223-float bit-exact round-trip, reset-then-apply defaults for missing
+// Covers: every-float bit-exact round-trip, reset-then-apply defaults for missing
 // symbols, malformed/unknown-version rejection, unknown-symbol skip, name
 // sanitization, overwrite, delete, exists().
 
@@ -33,22 +33,46 @@ int main()
 {
     using namespace scpreset;
 
-    // Redirect the app-data dir into a unique temp tree (Linux XDG path).
+    // Redirect the app-data dir into a unique temp tree through the dedicated
+    // portable/test key, without changing HOME or relying on a platform's normal
+    // configuration-root convention.
     const fs::path root = fs::temp_directory_path() /
         ("sc_upreset_" + std::to_string((unsigned long)::getpid()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root, ec);
-    if (::setenv("XDG_CONFIG_HOME", root.c_str(), 1) != 0)
+
+   #if defined(__APPLE__)
+    // XDG_CONFIG_HOME may legitimately exist in a normal macOS login. It must
+    // not displace the native Application Support library unless the dedicated
+    // portable key below is explicitly set.
+    CHECK(::unsetenv(kPortableConfigEnv) == 0,
+          "clear inherited portable preset root");
+    const fs::path ignoredXdg = root / "xdg-must-not-override";
+    CHECK(::setenv("XDG_CONFIG_HOME", ignoredXdg.c_str(), 1) == 0,
+          "set isolated XDG probe");
+    const char* home = std::getenv("HOME");
+    const fs::path nativeBase =
+        (home && *home) ? fs::path(home) : fs::current_path();
+    const fs::path nativeDir = nativeBase / "Library" / "Application Support" /
+                               "DuskAudio" / "SunsetCircuits" / "presets";
+    CHECK(presetDir() == nativeDir,
+          "macOS default ignores XDG_CONFIG_HOME");
+   #endif
+
+    if (::setenv(kPortableConfigEnv, root.c_str(), 1) != 0)
     {
-        std::fprintf(stderr, "FATAL: setenv(XDG_CONFIG_HOME) failed — aborting "
-                             "before touching any preset directory\n");
+        std::fprintf(stderr,
+                     "FATAL: setenv(%s) failed — aborting before touching "
+                     "any preset directory\n",
+                     kPortableConfigEnv);
         return 1;
     }
 
     const fs::path expectDir =
         root / "DuskAudio" / "SunsetCircuits" / "presets";
-    CHECK(presetDir() == expectDir, "presetDir resolves under XDG_CONFIG_HOME");
+    CHECK(presetDir() == expectDir,
+          "presetDir resolves under SUNSET_CIRCUITS_CONFIG_HOME");
     if (presetDir() != expectDir)
     {
         // Isolation failed: every later step writes/overwrites/DELETES presets,
@@ -60,11 +84,11 @@ int main()
 
     const int N = (int)kNumCoreParams;
     std::fprintf(stderr, "kNumCoreParams = %d\n", N);
-    CHECK(N == 223, "223 core params");
+    CHECK(N == 228, "228 core params");
 
     Store store;
 
-    // ---- 1. bit-exact round-trip of all 223 floats -------------------------
+    // ---- 1. bit-exact round-trip of every core float -----------------------
     std::vector<float> vin(N), vout(N, -12345.0f);
     std::mt19937 rng(0xC0FFEE);
     for (int i = 0; i < N; ++i)
@@ -86,7 +110,7 @@ int main()
         std::fprintf(stderr, "  round-trip mismatches=%d first=%d (%s: %.9g vs %.9g)\n",
                      mism, firstBad, kParamDefs[firstBad].symbol,
                      vin[firstBad], vout[firstBad]);
-    CHECK(mism == 0, "223/223 floats bit-exact after save+load");
+    CHECK(mism == 0, "all floats bit-exact after save+load");
 
     // ---- 2. missing symbols keep factory defaults --------------------------
     {

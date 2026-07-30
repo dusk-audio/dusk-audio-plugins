@@ -38,10 +38,17 @@ DROP_MIN = 0.30            # centroid must fall at least 30%
 # --- rate-independence check ---------------------------------------------------
 RATES = (48000, 96000, 192000)     # the 1x, 2x and 4x internal rates at 48 kHz host
 RATE_ATTACK = 0.02                 # long enough to time to better than 0.2%
-# 10-90% of the Exponential (p^2) curve is (sqrt(0.9) - sqrt(0.1)) * attack.
-RATE_IDEAL_RISE = (np.sqrt(0.9) - np.sqrt(0.1)) * RATE_ATTACK
+# The hardware-style EG snaps time to one of 48 logarithmic rates before running
+# its p^2 attack. Mirror that public mapping when computing the expected time.
+def quantized_time(seconds):
+    lo, hi, steps = np.log2(0.001), np.log2(10.0), 47.0
+    q = np.round((np.log2(seconds) - lo) * steps / (hi - lo))
+    return 2.0 ** (lo + np.clip(q, 0.0, steps) * (hi - lo) / steps)
+
+RATE_QUANTIZED_ATTACK = quantized_time(RATE_ATTACK)
+RATE_IDEAL_RISE = (np.sqrt(0.9) - np.sqrt(0.1)) * RATE_QUANTIZED_ATTACK
 RATE_TOL = 0.02                    # measured spread across the three rates: 0.00%
-RATE_IDEAL_TOL = 0.01              # measured error vs the ideal curve: -0.18%
+RATE_IDEAL_TOL = 0.03              # one carrier-period peak bins + rate quantisation
 
 # Algo 5 = (op2->op1) + (op4->op3). Tine stack: op2 high ratio, FAST decay to 0.
 # Body stack: op4->op3 gentle. Carriers op1 (body) and op3 sustain.
@@ -102,7 +109,9 @@ def rate_independence():
     ref = rises[0]
     ok = np.isfinite(ref) and ref > 0.0
     print(f"operator-envelope rate independence "
-          f"(attack {RATE_ATTACK*1000:.0f} ms, ideal 10-90 {RATE_IDEAL_RISE*1000:.3f} ms):")
+          f"(attack {RATE_ATTACK*1000:.0f} ms -> rate step "
+          f"{RATE_QUANTIZED_ATTACK*1000:.2f} ms, ideal 10-90 "
+          f"{RATE_IDEAL_RISE*1000:.3f} ms):")
     for sr_hz, r in zip(RATES, rises):
         if not np.isfinite(r) or r <= 0.0:
             print(f"   {sr_hz:7d} Hz: rise could not be measured -> FAIL")

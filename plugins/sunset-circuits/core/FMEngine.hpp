@@ -9,13 +9,12 @@
 // voice hands it the internal oversampled rate) and does no oversampling itself.
 //
 // Design (see docs/dpf-migration/09-multi-synth.md "Prism"):
-//   * 4 sine operators, each a phase accumulator + per-op ADSR (core ADSREnvelope).
+//   * 4 sine operators, each a phase accumulator + stepped digital rate envelope.
 //   * 8 routing algorithms from the shared kPrismAlgos table (FMAlgorithms.hpp),
 //     which the UI diagram widget renders from too.
-//   * Phase modulation: a modulator adds `env * level² · sin(...)` TURNS into its
-//     target's phase (square-law level — the classic FM level feel; one turn is
-//     the 2π radians the depth used to be expressed in). A carrier contributes
-//     `env · level · sin(...)` to the output bus.
+//   * Phase modulation: the normalized operator control follows a 48 dB
+//     logarithmic law. A full-level modulator reaches eight turns of deviation;
+//     carriers use the same law as output gain.
 //   * Op 4 self-feedback 0..1 with the classic 2-sample-average damping.
 //   * Per op: ratio, fine cents, level, velocity sensitivity, key-level scaling.
 //
@@ -25,7 +24,6 @@
 #pragma once
 
 #include "SynthCommon.hpp"
-#include "Envelope.hpp"
 #include "FMAlgorithms.hpp"
 
 #if defined(__FAST_MATH__)
@@ -34,6 +32,115 @@
 
 namespace msynth
 {
+
+// Four-operator hardware uses quantised rate/level envelope generators rather
+// than a continuously parameterised analogue ADSR.  Prism keeps the familiar
+// ADSR UI, but maps it onto stepped logarithmic times and stepped sustain levels
+// before running this exponential digital EG.
+class FMRateEnvelope
+{
+public:
+    enum class Stage { Idle, Attack, Decay, Sustain, Release };
+
+    void prepare(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate;
+        updateCoefficients();
+        reset();
+    }
+
+    void setSampleRate(double sampleRate) noexcept
+    {
+        sr = (float)sampleRate;
+        updateCoefficients();
+    }
+
+    void setParameters(float attack, float decay, float sustain, float release) noexcept
+    {
+        a = quantizeTime(attack);
+        d = quantizeTime(decay);
+        s = std::round(clampf(sustain, 0.0f, 1.0f) * 63.0f) / 63.0f;
+        r = quantizeTime(release);
+        updateCoefficients();
+    }
+
+    void noteOn() noexcept
+    {
+        attackPos = std::sqrt(clampf(value, 0.0f, 1.0f));
+        stage = Stage::Attack;
+    }
+    void noteOff() noexcept { if (stage != Stage::Idle) stage = Stage::Release; }
+    bool isActive() const noexcept { return stage != Stage::Idle; }
+
+    float processSample() noexcept
+    {
+        switch (stage)
+        {
+            case Stage::Idle: return 0.0f;
+            case Stage::Attack:
+                // Classic digital FM attacks accelerate toward the target,
+                // unlike an analogue RC rise.  A squared linear rate counter
+                // also makes the displayed attack's 10-90 interval predictable.
+                attackPos += attackInc;
+                if (attackPos >= 1.0f)
+                {
+                    attackPos = 1.0f;
+                    value = 1.0f;
+                    stage = Stage::Decay;
+                }
+                else
+                {
+                    value = attackPos * attackPos;
+                }
+                break;
+            case Stage::Decay:
+                value += (s - value) * cd;
+                if (std::abs(value - s) <= 0.0005f) { value = s; stage = Stage::Sustain; }
+                break;
+            case Stage::Sustain:
+                value = s;
+                break;
+            case Stage::Release:
+                value += (0.0f - value) * cr;
+                if (value <= 0.0001f) { value = 0.0f; stage = Stage::Idle; }
+                break;
+        }
+        if (isBad(value)) { value = 0.0f; stage = Stage::Idle; }
+        return value;
+    }
+
+    void reset() noexcept { value = attackPos = 0.0f; stage = Stage::Idle; }
+
+private:
+    static float quantizeTime(float seconds) noexcept
+    {
+        const float t = clampf(seconds, 0.001f, 10.0f);
+        constexpr float lo = -9.96578428f; // log2(0.001)
+        constexpr float hi =  3.32192809f; // log2(10)
+        constexpr float steps = 47.0f;
+        const float q = std::round((std::log2(t) - lo) * steps / (hi - lo));
+        return std::exp2(lo + clampf(q, 0.0f, steps) * (hi - lo) / steps);
+    }
+
+    float coeff(float seconds) const noexcept
+    {
+        // Reach within -60 dB of the target in the displayed time.
+        return 1.0f - std::exp(-6.90775528f / maxf(1.0f, seconds * sr));
+    }
+
+    void updateCoefficients() noexcept
+    {
+        attackInc = 1.0f / maxf(1.0f, a * sr);
+        cd = coeff(d);
+        cr = coeff(r);
+    }
+
+    float sr = 44100.0f;
+    float a = 0.005f, d = 0.4f, s = 0.7f, r = 0.4f;
+    float attackInc = 1.0f, cd = 1.0f, cr = 1.0f;
+    float value = 0.0f, attackPos = 0.0f;
+    Stage stage = Stage::Idle;
+};
 
 // sin(2π·x) with x in TURNS — the operator sine, replacing libm sinf in the FM
 // hot loop (4 ops × up to 16 unison banks × the internal rate; at 4x
@@ -96,10 +203,10 @@ namespace msynth
 // carrier, THD goes from 0.000027% to 0.000656% against a 1% gate.
 //
 // REACHABLE RANGE. The argument is phase + modAccum. modAccum is bounded
-// structurally: updateGain clamps the effective level to 4, so modDepth ≤ 16
-// turns; kPrismAlgos has a maximum in-degree of 2 (algorithms #2 and #3); and
-// op-4 feedback adds at most 1 turn. That is 2·16 + 1 + 1 = 34 turns, and a
-// swept-to-the-rails render over all 8 algorithms at feedback 1 measures 33.0.
+// structurally: modDepth is at most eight turns, the largest target in-degree is
+// two, and operator-4 feedback adds at most one turn. Including the phase, that
+// is 18 turns. The ±34-turn sin_gate deliberately exercises almost twice the
+// reachable range as a guard against future depth changes.
 // A non-finite argument is unreachable (every term is bounded and the output of
 // this function is bounded by construction), but if one ever arrived it would
 // propagate NaN rather than trap, and the isBad() guard at the end of
@@ -127,7 +234,6 @@ public:
     {
         for (int i = 0; i < kNumOps; ++i)
         {
-            op[i].env.setCurve(EnvelopeCurve::Exponential);
             op[i].env.setParameters(0.005f, 0.4f, 0.7f, 0.4f);
             updateGain(i);
         }
@@ -213,12 +319,16 @@ public:
 
     void setOpRatio(int i, float ratio) noexcept
     {
-        op[idx(i)].ratio = clampf(ratio, 0.0f, 32.0f);
+        // The chip frequency word is stepped.  1/64 ratio resolution retains
+        // imported TX-style fractional ratios while avoiding a continuously
+        // perfect oscillator relationship.
+        op[idx(i)].ratio = std::round(clampf(ratio, 0.0f, 32.0f) * 64.0f) / 64.0f;
         recomputeIncrement(idx(i));
     }
     void setOpFine(int i, float cents) noexcept
     {
-        op[idx(i)].fineMult = std::pow(2.0f, clampf(cents, -100.0f, 100.0f) / 1200.0f);
+        const float stepped = std::round(clampf(cents, -100.0f, 100.0f));
+        op[idx(i)].fineMult = std::pow(2.0f, stepped / 1200.0f);
         recomputeIncrement(idx(i));
     }
     void setOpLevel(int i, float level) noexcept
@@ -242,7 +352,10 @@ public:
     }
 
     // Op-4 self-feedback amount, 0..1.
-    void setFeedback(float fb) noexcept { feedback = clampf(fb, 0.0f, 1.0f); }
+    void setFeedback(float fb) noexcept
+    {
+        feedback = std::round(clampf(fb, 0.0f, 1.0f) * 7.0f) / 7.0f;
+    }
 
     // ---- audio -----------------------------------------------------------
     // Produces one mono sample of the raw FM voice. Ops are evaluated 3->0;
@@ -260,7 +373,10 @@ public:
         // 2-sample average damping keeps the loop from screaming).
         if (feedback > 0.0f)
         {
-            const float fbDepth = feedback * feedback;  // square-law, up to 1 turn
+            // Seven hardware feedback steps, with approximately exponential
+            // spacing; the highest step is one turn of phase modulation.
+            const float fbDepth = feedback <= 0.0f
+                ? 0.0f : std::exp2(feedback * 6.0f) / 64.0f;
             modAccum[A.fbOp] += fbDepth * 0.5f * (fbZ1 + fbZ2);
         }
 
@@ -312,11 +428,11 @@ private:
         float keyScale = 0.0f;
         // derived
         float inc         = 0.0f;   // phase increment per sample
-        float modDepth    = 0.0f;   // effLevel², in TURNS (as a modulator)
-        float carrierGain = 0.0f;   // effLevel          (as a carrier)
+        float modDepth    = 0.0f;   // log control mapped to turns (modulator)
+        float carrierGain = 0.0f;   // log control mapped to gain (carrier)
         // state
         float phase = 0.0f;
-        ADSREnvelope env;
+        FMRateEnvelope env;
     };
 
     static int idx(int i) noexcept { return clampi(i, 0, kNumOps - 1); }
@@ -330,9 +446,10 @@ private:
         for (int i = 0; i < kNumOps; ++i) recomputeIncrement(i);
     }
 
-    // Effective level after velocity sensitivity and key-level scaling, then the
-    // two output gains derived from it (square-law depth for modulators, linear
-    // for carriers). The modulator depth is in TURNS — see sinTurns.
+    // Effective level after velocity sensitivity and key-level scaling. Classic
+    // digital operator output levels are logarithmic, so the normalized UI value
+    // is converted through a 48 dB law. A full-level modulator reaches eight
+    // turns of phase deviation; carriers use the same amplitude law directly.
     void updateGain(int i) noexcept
     {
         Op& o = op[i];
@@ -341,9 +458,16 @@ private:
         // keyScale -1..+1: ±1 halves/doubles the level every two octaves from
         // note 60 (gentle enough for e-piano tine roll-off).
         const float keyFactor = std::pow(2.0f, o.keyScale * (note - 60.0f) / 24.0f);
-        const float eff = clampf(o.level * velFactor * keyFactor, 0.0f, 4.0f);
-        o.carrierGain = eff;
-        o.modDepth    = eff * eff;
+        const float control = clampf(o.level * velFactor * keyFactor, 0.0f, 1.0f);
+        if (control <= 0.0f)
+        {
+            o.carrierGain = 0.0f;
+            o.modDepth = 0.0f;
+            return;
+        }
+        const float linear = std::exp2((control - 1.0f) * 7.97262743f); // 48 dB
+        o.carrierGain = linear;
+        o.modDepth = linear * 8.0f;
     }
 
     Op  op[kNumOps];

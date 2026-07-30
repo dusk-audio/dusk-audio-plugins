@@ -43,24 +43,24 @@ struct PrismAlgo
 // The classic 4-op algorithm set. ASCII diagrams use "1".."4" (screen labels =
 // index+1); "a -> b" reads "a modulates b"; "===" is the output bus.
 //
-//  #1 serial            #2 (3+4)->2->1        #3 4->(2,3)->1        #4 4->3->(1,2)
-//     [4]                 [4] [3]                 [4]                    [4]
-//      |                    \ /                  /   \                    |
-//     [3]                   [2]                [2]   [3]                 [3]
-//      |                     |                   \   /                  /   \  .
-//     [2]                   [1]                   [1]                 [1]   [2]
-//      |                   =====                 =====               =========
+//  #1 serial            #2 (3+4)->2->1        #3 (3->2 + 4)->1      #4 (4->3 + 2)->1
+//     [4]                 [4] [3]                 [4]     [3]            [4]
+//      |                    \ /                      |       |             |
+//     [3]                   [2]                      |      [2]           [3] [2]
+//      |                     |                       |       |             \ /
+//     [2]                   [1]                        \     /             [1]
+//      |                   =====                       [1]               =====
 //     [1]
 //    =====
 //
-//  #5 (2->1)+(4->3)     #6 3->(1,2) + 4       #7 4->3 + 1,2         #8 additive
-//     [2] [4]              [3]      [4]           [4]                [1][2][3][4]
-//      |   |               / \       |             |                  | | | |
-//     [1] [3]            [1] [2]    (car)          [3]                =========
+//  #5 (2->1)+(4->3)     #6 4->(1,2,3)          #7 4->3 + 1,2         #8 additive
+//     [2] [4]                 [4]                  [4]                [1][2][3][4]
+//      |   |                 / | \                   |                  | | | |
+//     [1] [3]              [1][2][3]                [3]                =========
 //    =========          =============            [1][2][3]
 //                                                =========
 //
-static const PrismAlgo kPrismAlgos[8] = {
+static constexpr PrismAlgo kPrismAlgos[8] = {
     // ---- #1: 4 -> 3 -> 2 -> 1 serial (single carrier, brightest/metallic) ----
     {
         { {0,3,true}, {0,2,false}, {0,1,false}, {0,0,false} },   // op1..op4
@@ -71,25 +71,25 @@ static const PrismAlgo kPrismAlgos[8] = {
         { {0,2,true}, {0,1,false}, {1,0,false}, {0,0,false} },
         { {3,1}, {2,1}, {1,0} }, 3, 3, 0x01, "Stack-2M"
     },
-    // ---- #3: 4 -> (2,3) -> 1 branch (one mod fans into two, both into carrier) ----
+    // ---- #3: (3 -> 2) + 4 -> 1 (single carrier) ----
     {
-        { {0,2,true}, {0,1,false}, {1,1,false}, {0,0,false} },
-        { {3,1}, {3,2}, {1,0}, {2,0} }, 4, 3, 0x01, "Branch"
+        { {0,2,true}, {0,1,false}, {0,0,false}, {1,1,false} },
+        { {2,1}, {3,0}, {1,0} }, 3, 3, 0x01, "Split Stack"
     },
-    // ---- #4: 4 -> 3 -> (1,2) two carriers ----
+    // ---- #4: 4 -> 3, with 3 and 2 both modulating 1 ----
     {
-        { {0,2,true}, {1,2,true}, {0,1,false}, {0,0,false} },
-        { {3,2}, {2,0}, {2,1} }, 3, 3, 0x03, "Y-Split"
+        { {0,2,true}, {1,1,false}, {0,1,false}, {0,0,false} },
+        { {3,2}, {2,0}, {1,0} }, 3, 3, 0x01, "Stack Fork"
     },
     // ---- #5: (2->1) + (4->3) dual stacks — classic tine e-piano ----
     {
         { {0,1,true}, {0,0,false}, {1,1,true}, {1,0,false} },
         { {1,0}, {3,2} }, 2, 3, 0x05, "Dual"
     },
-    // ---- #6: 3 -> (1,2) + 4 standalone carrier ----
+    // ---- #6: one modulator (4) feeds three carriers (1,2,3) ----
     {
-        { {0,1,true}, {1,1,true}, {0,0,false}, {2,1,true} },
-        { {2,0}, {2,1} }, 2, 3, 0x0B, "Twin+1"
+        { {0,1,true}, {1,1,true}, {2,1,true}, {1,0,false} },
+        { {3,0}, {3,1}, {3,2} }, 3, 3, 0x07, "Three Carrier"
     },
     // ---- #7: 4 -> 3 + 1,2 clean carriers ----
     {
@@ -102,5 +102,42 @@ static const PrismAlgo kPrismAlgos[8] = {
         { }, 0, 3, 0x0F, "Additive"
     },
 };
+
+static_assert(kPrismAlgos[0].carrierMask == 0x01
+           && kPrismAlgos[1].carrierMask == 0x01
+           && kPrismAlgos[2].carrierMask == 0x01
+           && kPrismAlgos[3].carrierMask == 0x01,
+              "classic algorithms 1-4 are single-carrier");
+static_assert(kPrismAlgos[4].carrierMask == 0x05
+           && kPrismAlgos[5].carrierMask == 0x07
+           && kPrismAlgos[6].carrierMask == 0x07
+           && kPrismAlgos[7].carrierMask == 0x0F,
+              "classic algorithms 5-8 expose 2/3/3/4 carriers");
+static_assert(kPrismAlgos[5].nEdges == 3
+           && kPrismAlgos[5].edges[0].from == 3
+           && kPrismAlgos[5].edges[1].from == 3
+           && kPrismAlgos[5].edges[2].from == 3,
+              "algorithm 6 is one modulator feeding three carriers");
+static_assert(kPrismAlgos[2].nEdges == 3
+           && kPrismAlgos[2].edges[0].from == 2
+           && kPrismAlgos[2].edges[0].to == 1
+           && kPrismAlgos[2].edges[1].from == 3
+           && kPrismAlgos[2].edges[1].to == 0
+           && kPrismAlgos[3].nEdges == 3
+           && kPrismAlgos[3].edges[0].from == 3
+           && kPrismAlgos[3].edges[0].to == 2,
+              "algorithms 3 and 4 keep their distinct feedback-operator branch");
+
+constexpr bool prismCarrierFlagsMatchMasks() noexcept
+{
+    for (const PrismAlgo& algo : kPrismAlgos)
+        for (uint8_t i = 0; i < 4; ++i)
+            if (algo.ops[i].carrier != ((algo.carrierMask & (1u << i)) != 0))
+                return false;
+    return true;
+}
+
+static_assert(prismCarrierFlagsMatchMasks(),
+              "each operator carrier flag must match its carrier-mask bit");
 
 } // namespace msynth
