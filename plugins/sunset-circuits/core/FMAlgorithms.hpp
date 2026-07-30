@@ -128,4 +128,16 @@ static_assert(kPrismAlgos[2].nEdges == 3
            && kPrismAlgos[3].edges[0].to == 2,
               "algorithms 3 and 4 keep their distinct feedback-operator branch");
 
+constexpr bool prismCarrierFlagsMatchMasks() noexcept
+{
+    for (const PrismAlgo& algo : kPrismAlgos)
+        for (uint8_t i = 0; i < 4; ++i)
+            if (algo.ops[i].carrier != ((algo.carrierMask & (1u << i)) != 0))
+                return false;
+    return true;
+}
+
+static_assert(prismCarrierFlagsMatchMasks(),
+              "each operator carrier flag must match its carrier-mask bit");
+
 } // namespace msynth

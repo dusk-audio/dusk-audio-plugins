@@ -232,6 +232,8 @@ private:
 class AcidVoice
 {
 public:
+    static constexpr float kRelease = 0.010f;  // 10 ms
+
     void prepare(double sampleRate) noexcept
     {
         sr = (float)sampleRate;
@@ -322,7 +324,8 @@ public:
         // Filter env-mod (brighter with accent), exponential cutoff sweep.
         const float envModEff = envMod * (1.0f + accentCharge * kAccentEnv);
         float cut = cutoffHz * std::exp2(e * envModEff * kEnvOctaves);
-        cut = clampf(cut, 20.0f, sr * 0.40f); // 0.4x-rate ceiling (see FourPoleOTA)
+        // Conservative pre-limit below AcidFilter's sr * 0.45f TPT ceiling.
+        cut = clampf(cut, 20.0f, sr * 0.40f);
         const float resEff = clampf(resonance + accentCharge * kAccentRes, 0.0f, 1.0f);
         filter.setParameters(cut, resEff, drive);
 
@@ -375,7 +378,6 @@ private:
     }
 
     static constexpr float kAttack  = 0.003f;  // 3 ms
-    static constexpr float kRelease = 0.010f;  // 10 ms
 
     float sr = 44100.0f;
 

@@ -47,6 +47,7 @@ namespace
     constexpr float kDesignW = 1240.0f;
     constexpr float kDesignH = 780.0f;
     constexpr float kPi = 3.14159265358979f;
+    constexpr float kDimTextBlend = 0.25f;
 
     inline ImU32 hx(uint32_t rgb) { return IM_COL32((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255); }
 
@@ -257,7 +258,15 @@ protected:
 
         // ---- mode crossfade (spec §5) ----
         const int m = clampMode((int)std::lround(values[kParamMode]));
-        if (m != curMode) { fromPal = live; prevMode = curMode; curMode = m; modeBlend = 0.0f; }
+        if (m != curMode)
+        {
+            fromPal = live;
+            prevMode = curMode;
+            curMode = m;
+            modeBlend = 0.0f;
+            if (m == 5)
+                showMod = false;
+        }
         const float dt = ImGui::GetIO().DeltaTime;
         modeBlend = std::min(1.0f, modeBlend + (dt > 0.f ? dt : 0.016f) / 0.28f);
         const float e = modeBlend * modeBlend * (3.0f - 2.0f * modeBlend);
@@ -266,7 +275,7 @@ protected:
         // Push the blended palette into the shared panel (on-panel ink + accent).
         duskdpf::Palette pp;
         pp.white    = live.textPanel;
-        pp.whiteDim = lerpC(live.textPanel, live.panel, 0.38f);
+        pp.whiteDim = lerpC(live.textPanel, live.panel, kDimTextBlend);
         pp.accent   = live.accent;
         pp.ledOn    = live.ledOn;
         pp.ledOff   = live.ledOff;
@@ -748,7 +757,10 @@ private:
         if (neg > 1e-4f) arc(0.5f - 0.45f * neg);
     }
 
-    ImU32 whiteDimCol() const { return lerpC(live.textPanel, live.panel, 0.25f); }
+    ImU32 whiteDimCol() const
+    {
+        return lerpC(live.textPanel, live.panel, kDimTextBlend);
+    }
 
     // Chrome knob body (matches duskdpf::DuskPanel's chrome exactly) so the local
     // skew/ratio knobs are visually identical to the shared linear knobs.
@@ -1044,22 +1056,8 @@ private:
             ImGui::SetTooltip("%s", whyTip);
     }
 
-    void inertField(const char* id, float x0, float y0, float x1, float y1,
-                    const char* label, const char* whyTip)
-    {
-        const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
-        ImGui::SetCursorScreenPos(b0);
-        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-            ImGui::SetTooltip("%s", whyTip);
-        dl->AddRectFilled(b0, b1, IM_COL32(48, 49, 53, 210), 3.0f * s);
-        dl->AddRect(b0, b1, IM_COL32(80, 82, 88, 170), 3.0f * s, 0, 1.0f * s);
-        text(0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 9.5f,
-             IM_COL32(142, 144, 150, 255), label, 0, true);
-    }
-
     void readOnlyField(const char* id, float x0, float y0, float x1, float y1,
-                       const char* label, const char* whyTip)
+                       const char* label, const char* whyTip, float alpha = 1.0f)
     {
         const ImVec2 b0 = P(x0, y0), b1 = P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
@@ -1067,10 +1065,11 @@ private:
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
             ImGui::SetTooltip("%s", whyTip);
         const ImU32 bg = lerpC(IM_COL32(38, 38, 41, 255), live.accent, 0.08f);
-        dl->AddRectFilled(b0, b1, bg, 3.0f * s);
-        dl->AddRect(b0, b1, withA(live.accent, 150), 3.0f * s, 0, 1.0f * s);
+        dl->AddRectFilled(b0, b1, mulA(bg, alpha), 3.0f * s);
+        dl->AddRect(b0, b1, mulA(withA(live.accent, 150), alpha),
+                    3.0f * s, 0, 1.0f * s);
         text(0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 10.0f,
-             IM_COL32(230, 232, 235, 255), label, 0, true);
+             mulA(IM_COL32(230, 232, 235, 255), alpha), label, 0, true);
     }
 
     void setChoice(uint32_t p, int v)
@@ -1863,7 +1862,7 @@ private:
         // LEGATO lamp stack in a right-hand column (x 246..336) wide enough that
         // "S-Curve"/"Linear" never clip. Two geometries share this one body:
         //
-        //   B  (modes 0-3,5): panel 376..542 (h166). r13 knobs — tick ring reaches
+        //   B  (modes 0-3): panel 376..542 (h166). r13 knobs — tick ring reaches
         //      R+6.5 -> ±19.5. font-10 knob labels (ink = 0.675*size = 6.75, ink top
         //      = y+1). row centres 430 / 494, label top = centre-32.
         //        Row1: label ink 399..405.75 | ring top 410.5 -> 4.75 px daylight.
@@ -1879,7 +1878,6 @@ private:
         //        Row1: label ink 431..437.075 | ring top 442.5 -> 5.425 px.
         //        Row2 ring bottom 531.5 clears the 539 inner floor by 7.5 px.
         //        Row1 labels clear the title (ink bottom 423.4) by 7.6 px.
-        // Verified on the Acid silver palette (mode 5, the hardest contrast).
         const bool prism  = (curMode == 4);
         const float pTop  = prism ? 412.0f : 376.0f;
         const float titleY= prism ? 415.0f : 379.0f;
@@ -1904,32 +1902,29 @@ private:
         panelBox(16, pTop, 340, 542);
         sectionTitle(24, titleY, "VOICE / CHARACTER");
         auto KX = [&](int c) { return KX0 + c * KDX; };
-        auto vLabel = [&](float cx, float y, const char* t, bool enabled = true)
-        { text(cx, y, kFont, enabled ? live.textPanel
-                                    : lerpC(live.textPanel, live.panel, 0.48f), t, 0, true); };
-        auto iLabel = [&](float cx, float cy, const char* t, bool enabled = true)
-        { text(cx, cy - itemLabOff, iFont, enabled ? live.textPanel
-                                                  : lerpC(live.textPanel, live.panel, 0.48f), t, 0, true); };
+        auto vLabel = [&](float cx, float y, const char* t)
+        { text(cx, y, kFont, live.textPanel, t, 0, true); };
+        auto iLabel = [&](float cx, float cy, const char* t)
+        { text(cx, cy - itemLabOff, iFont, live.textPanel, t, 0, true); };
         auto iCombo = [&](const char* id, uint32_t p, float cy,
                           const char* const* opts, int n, const char* lab)
         { iLabel(colCx, cy, lab);
-          comboBox(id, p, colCx - colHw, cy - comboH, colCx + colHw, cy + comboH, opts, n, curMode == 5); };
-        const char* const acidUnused = "Not used by Acid's dedicated mono voice.";
+          comboBox(id, p, colCx - colHw, cy - comboH,
+                   colCx + colHw, cy + comboH, opts, n); };
 
         // Row 1 — CHARACTER (noise/analog/vintage/tune) + unison voices.
-        vLabel(KX(0), yc1 - labOff, "NOISE", curMode != 5);
-        if (curMode == 5) inertKnob("noise", kParamNoiseLevel, KX(0), yc1, kr, false, acidUnused);
-        else              knob("noise", kParamNoiseLevel, KX(0), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(KX(1), yc1 - labOff, "ANALOG", curMode != 5);
-        if (curMode == 5) inertKnob("analog", kParamAnalogAmt, KX(1), yc1, kr, false, acidUnused);
-        else              knob("analog", kParamAnalogAmt, KX(1), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(0), yc1 - labOff, "NOISE");
+        knob("noise", kParamNoiseLevel, KX(0), yc1, kr,
+             "%.0f", " %", false, false, false, 100.0f);
+        vLabel(KX(1), yc1 - labOff, "ANALOG");
+        knob("analog", kParamAnalogAmt, KX(1), yc1, kr,
+             "%.0f", " %", false, false, false, 100.0f);
         vLabel(KX(2), yc1 - labOff, "VNTG");  knob("vntg", kParamVintage, KX(2), yc1, kr, "%.0f", " %", false, false, false, 100.0f);
-        vLabel(KX(3), yc1 - labOff, "TUNE", curMode != 5);
-        if (curMode == 5) inertKnob("mtune", kParamMasterTune, KX(3), yc1, kr, true, acidUnused);
-        else              knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
-        vLabel(KX(4), yc1 - labOff, "UNI V", curMode != 5);
-        if (curMode == 5) inertKnob("univ", kParamUnisonVoices, KX(4), yc1, kr, false, acidUnused);
-        else              knob("univ", kParamUnisonVoices, KX(4), yc1, kr, "%.0f", "", false, true);
+        vLabel(KX(3), yc1 - labOff, "TUNE");
+        knob("mtune", kParamMasterTune, KX(3), yc1, kr, "%+.0f", " ct", true);
+        vLabel(KX(4), yc1 - labOff, "UNI V");
+        knob("univ", kParamUnisonVoices, KX(4), yc1, kr,
+             "%.0f", "", false, true);
 
         // Row 2 — VOICE (unison detune/spread, porta, velocity, pitch-bend). This is
         // the performance row, so it carries permanent read-outs (geometry B: ink
@@ -1938,43 +1933,28 @@ private:
         // 533..539.4 and cross the floor — so it is suppressed there; the hover
         // bubble still covers it. Row 1 is set-and-forget character, no read-outs.
         const bool ro = readoutsOn() && !prism;
-        vLabel(KX(0), yc2 - labOff, "UNI DT", curMode != 5);
-        if (curMode == 5) inertKnob("unidt", kParamUnisonDetune, KX(0), yc2, kr, false, acidUnused);
-        else              knob("unidt", kParamUnisonDetune, KX(0), yc2, kr, "%.0f", " ct", false, false, ro);
-        vLabel(KX(1), yc2 - labOff, "UNI SP", curMode != 5);
-        if (curMode == 5) inertKnob("unisp", kParamUnisonSpread, KX(1), yc2, kr, false, acidUnused);
-        else              knob("unisp", kParamUnisonSpread, KX(1), yc2, kr, "%.0f", " %", false, false, ro, 100.0f);
-        vLabel(KX(2), yc2 - labOff, "PORTA", curMode != 5);
-        if (curMode == 5) inertKnob("porta", kParamPortaTime, KX(2), yc2, kr, false, acidUnused);
-        else              knob("porta", kParamPortaTime, KX(2), yc2, kr, "%.2f", " s", false, false, ro, 1.0f, 0.0f, true, true);
-        vLabel(KX(3), yc2 - labOff, "VEL", curMode != 5);
-        if (curMode == 5) inertKnob("vels", kParamVelSens, KX(3), yc2, kr, false, acidUnused);
-        else              knob("vels", kParamVelSens, KX(3), yc2, kr, "%.0f", " %", false, false, ro, 100.0f);
-        vLabel(KX(4), yc2 - labOff, "PB", curMode != 5);
-        if (curMode == 5) inertKnob("pb", kParamPbRange, KX(4), yc2, kr, false, acidUnused);
-        else              knob("pb", kParamPbRange, KX(4), yc2, kr, "%.0f", " st", false, true, ro);
+        vLabel(KX(0), yc2 - labOff, "UNI DT");
+        knob("unidt", kParamUnisonDetune, KX(0), yc2, kr,
+             "%.0f", " ct", false, false, ro);
+        vLabel(KX(1), yc2 - labOff, "UNI SP");
+        knob("unisp", kParamUnisonSpread, KX(1), yc2, kr,
+             "%.0f", " %", false, false, ro, 100.0f);
+        vLabel(KX(2), yc2 - labOff, "PORTA");
+        knob("porta", kParamPortaTime, KX(2), yc2, kr,
+             "%.2f", " s", false, false, ro, 1.0f, 0.0f, true, true);
+        vLabel(KX(3), yc2 - labOff, "VEL");
+        knob("vels", kParamVelSens, KX(3), yc2, kr,
+             "%.0f", " %", false, false, ro, 100.0f);
+        vLabel(KX(4), yc2 - labOff, "PB");
+        knob("pb", kParamPbRange, KX(4), yc2, kr,
+             "%.0f", " st", false, true, ro);
 
         // Right column — 3 combos + LEGATO lamp.
         iCombo("ovs",   kParamOversampling, is0, kOversmp, 3, "OVERSMP");
-        if (curMode == 5)
-        {
-            iLabel(colCx, is1, "GLIDE", false);
-            inertField("glide", colCx - colHw, is1 - comboH, colCx + colHw, is1 + comboH,
-                       "N/A", acidUnused);
-            iLabel(colCx, is2, "LEGATO", false);
-            inertField("legato", colCx - colHw, is2 - comboH, colCx + colHw, is2 + comboH,
-                       "N/A", acidUnused);
-            iLabel(colCx, is3, "V.CRV", false);
-            inertField("vcrv", colCx - colHw, is3 - comboH, colCx + colHw, is3 + comboH,
-                       "N/A", acidUnused);
-        }
-        else
-        {
-            iCombo("glide", kParamGlideMode, is1, kGlide, 2, "GLIDE");
-            compactToggle("legato", kParamLegato, colCx - 33.0f, is2 - comboH,
-                          colCx + 33.0f, is2 + comboH, "LEGATO");
-            iCombo("vcrv", kParamVelCurve, is3, kVelCurve, 4, "V.CRV");
-        }
+        iCombo("glide", kParamGlideMode, is1, kGlide, 2, "GLIDE");
+        compactToggle("legato", kParamLegato, colCx - 33.0f, is2 - comboH,
+                      colCx + 33.0f, is2 + comboH, "LEGATO");
+        iCombo("vcrv", kParamVelCurve, is3, kVelCurve, 4, "V.CRV");
     }
 
     void drawAcidCharacter()
@@ -2157,7 +2137,8 @@ private:
         if (h != acidEnvHash)
         {
             acidEnvHash = h;
-            computeADSR(rx0, ry0, rx1, ry1, 0.003f, D, S, 0.03f, 1, acidEnv);
+            computeADSR(rx0, ry0, rx1, ry1, 0.003f, D, S,
+                        msynth::AcidVoice::kRelease, 1, acidEnv);
         }
         for (int i = 0; i + 1 < kAdsrN; ++i)
             dl->AddQuadFilled(P(acidEnv[i].x, acidEnv[i].y),
@@ -2313,8 +2294,9 @@ private:
             }
         }
 
-        const int wi = std::max(0, std::min(4,
-                            (int)std::lround(values[kParamOsc1Wave])));
+        const int selectedWave = std::max(0, std::min(4,
+            (int)std::lround(values[kParamOsc1Wave])));
+        const int wi = (selectedWave == 1 || selectedWave == 4) ? 1 : 0;
         char oscLine[48];
         std::snprintf(oscLine, sizeof oscLine, "%s OSCILLATOR", kWave5[wi]);
         text(880, 174, 9.0f, live.accent, oscLine, 0, true);
@@ -2506,8 +2488,16 @@ private:
         }
         compactToggle("modsync", kParamHardSync, 778, 428, 842, 450, "SYNC",
                       it, a);
-        comboBox("modfilt", kParamModFilterModel, 858, 425, 988, 451,
-                 kModFilterOpt, 2, !it);
+        if (it)
+            comboBox("modfilt", kParamModFilterModel, 858, 425, 988, 451,
+                     kModFilterOpt, 2);
+        else
+        {
+            const int model = std::max(0, std::min(1,
+                (int)std::lround(values[kParamModFilterModel])));
+            readOnlyField("modfilt_fixed", 858, 425, 988, 451,
+                          kModFilterOpt[model], tips[kParamModFilterModel], a);
+        }
     }
     void drawSubPrism(float a, bool it) { drawAlgoWidget(760, 328, 1000, 462, a, it); }
     void drawSubAcid(float a, bool it)
@@ -2791,7 +2781,6 @@ private:
             // Acid is rendered by AcidVoice, outside the poly voice/mod-matrix
             // path. Replace the clickable matrix launcher with an explicit routing
             // summary so the surface never promises modulation that cannot sound.
-            showMod = false;
             panelBox(760, 466, 1000, 542);
             sectionTitle(768, 470, "ACID ROUTING");
             dl->AddRectFilled(P(768, 493), P(992, 534),
@@ -3551,6 +3540,7 @@ private:
         // pointer / writePos math.
         if (msynth::MultiSynthDSP* d = dspAccess())
             count = d->copyScope(scope, msynth::MultiSynthDSP::kScopeSize);
+        bool hasUsableSignal = false;
         if (count > 0)
         {
             // rising zero-cross trigger over the first quarter
@@ -3575,12 +3565,15 @@ private:
                     pts[i] = ImVec2(P(x, 0).x, midYpx - v * halfH * s);
                 }
                 if (peak > 1e-4f)
+                {
                     dl->AddPolyline(pts, nPts, live.accent, 0, 1.8f * s);
-                else
-                    text(1114, midY - 5.0f, 9.0f, withA(live.text, 105),
-                         "WAITING FOR SIGNAL", 0, true);
+                    hasUsableSignal = true;
+                }
             }
         }
+        if (!hasUsableSignal)
+            text(1114, midY - 5.0f, 9.0f, withA(live.text, 105),
+                 "WAITING FOR SIGNAL", 0, true);
         dl->PopClipRect();
         dl->AddRect(P(rx0, ry0), P(rx1, ry1), IM_COL32(0, 0, 0, 180), 4.0f * s, 0, 1.2f * s);
     }
@@ -3642,7 +3635,7 @@ private:
     }
 
     //========================================================================
-    // Sequencer (mode-aware: single arp row, or 3-lane acid)
+    // Sequencer (mode-aware: arpeggiator or dedicated Acid pattern renderer)
     //========================================================================
     int liveStep() const
     {
@@ -3660,31 +3653,29 @@ private:
         // 552..606) carries the labels, controls and read-outs; the step lanes
         // occupy the remaining height down to the 692 floor.
         panelBox(16, 548, 700, 692);
-        const bool acid = (curMode == 5);
-        const char* const seqTitle = acid ? "PATTERN SEQUENCER" : "SEQUENCER / ARP";
-        sectionTitle(24, 552, seqTitle);
-        if (acid)
+        if (curMode == 5)
         {
+            sectionTitle(24, 552, "PATTERN SEQUENCER");
             drawAcidSequencerBody();
             return;
         }
+        const char* const seqTitle = "SEQUENCER / ARP";
+        sectionTitle(24, 552, seqTitle);
 
         // --- transport header: ONE rhythm, no dead air ------------------------
         // The row is six groups — ARP | MODE | RATE | OCT/GATE/SWING | LATCH |
         // VEL — laid out right-to-left off the 692 rule the step lane below also
         // ends on, with a single gap `g` repeated between EVERY pair including
-        // title -> ARP. `g` is solved rather than hardcoded because the title is
-        // ~23 px shorter outside Acid ("SEQUENCER / ARP" vs "PATTERN SEQUENCER"):
-        // the old fixed x=160 start balanced only the Acid string and left the
-        // other five modes opening on a 45 px hole while their own inter-group
-        // gaps were 6..11 px. Solving per mode gives 17 px (non-acid) / 13 px
-        // (Acid) — even inside whichever row you are actually looking at.
+        // title -> ARP. The old fixed x=160 start left the five arpeggiator
+        // modes opening on a 45 px hole while their own inter-group gaps were
+        // 6..11 px. Solving the gap from the title width keeps one even rhythm
+        // across the row.
         //
         // Knobs are r13 and TICKLESS, matching the FX strip idiom next door:
         // reach is r+3+1.2 = +/-17.2 (value arc + half its stroke) instead of the
         // tick ring's +/-20.5, which makes all three read as one family (as r14
         // ringed knobs they differed enough in apparent size/weight to look like
-        // three different widgets) and lifts the Acid GATE-lane clearance.
+        // three different widgets).
         //
         // MEASURED ink extents, not the 0.675*size convention the older comments in
         // this file use — that convention is wrong. Rendered at s=1 through this
@@ -3695,9 +3686,8 @@ private:
         //   knob centre hy = 580   -> arc top 562.8   =>  1.8 px clearance
         // hy was 578, which put the arc top at 560.8 and had the label ink
         // overlapping it by 0.2 px. Downstream of hy = 580 (all verified by pixel
-        // scan): Acid arc bottom 597.2 clears the GATE lane at y600 by 2.8 px, and
-        // the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the non-acid
-        // lane at y612 by 2.0 px.
+        // scan): the read-out (top hy+r+8 = 601) has ink bottom 610, clearing the
+        // step lane at y612 by 2.0 px.
         const int  velMode  = (int)std::lround(values[kParamArpVelMode]);
         const bool velFixed = velMode == 1;
         const bool velAccent = velMode == 2;
@@ -3719,17 +3709,14 @@ private:
 
         const float hy = 580.0f;
         // Persistent read-outs for OCT/GATE/SWING (spec §3.1b step 7): drawn top
-        // hy + r + 8 = 601, ink bottom 610, clearing the non-acid lane top at 612.
-        // Acid packs four lanes from y600 and has no such band, so the read-outs
-        // are suppressed there and the hover bubble stays the read-out.
-        const bool ro = readoutsOn() && !acid;
+        // hy + r + 8 = 601, ink bottom 610, clearing the lane top at 612.
+        const bool ro = readoutsOn();
 
         // Walking left-to-right from the title only lands on the 692 rule while `g`
         // is the SOLVED value; once the clamp engages (a title wide enough to drive g
         // below 12) the row would march straight through the right wall and into the
-        // FX strip. Real headroom is thin — DejaVu bold "PATTERN SEQUENCER" leaves g
-        // barely above the floor — so pin the start to whatever still ends at xR and
-        // let the title gap absorb the difference instead.
+        // FX strip, so pin the start to whatever still ends at xR and let the
+        // title gap absorb the difference instead.
         float x = titleEnd + g;
         const float xMax = xR - wSum - 5.0f * g;
         if (x > xMax) x = xMax;
@@ -3738,10 +3725,10 @@ private:
         ledButton("arpon", kParamArpOn, x, 563, x + wArp, 587, "ARP");
         x += wArp + g;
         hlabel(x + 2, "MODE", -1);
-        comboBox("arpmode", kParamArpMode, x, 564, x + wMode, 586, kArpMode, 7, acid);
+        comboBox("arpmode", kParamArpMode, x, 564, x + wMode, 586, kArpMode, 7);
         x += wMode + g;
         hlabel(x + 2, "RATE", -1);
-        comboBox("arprate", kParamArpRate, x, 564, x + wRate, 586, kDivName, 14, acid);
+        comboBox("arprate", kParamArpRate, x, 564, x + wRate, 586, kDivName, 14);
         x += wRate + g;
         const float kx0 = x + khw;
         hlabel(kx0, "OCT", 0);
@@ -3756,7 +3743,8 @@ private:
         hlabel(x + 2, "VEL", -1);
         // Fixed mode: combo 58 wide + the value knob on the right end of the
         // group (centre xR-13 = 679, reach 696.5, inside the 700 panel wall).
-        comboBox("arpvel", kParamArpVelMode, x, 564, velFixed ? x + 58.0f : x + wVel, 586, kArpVel, 3, acid);
+        comboBox("arpvel", kParamArpVelMode, x, 564,
+                 velFixed ? x + 58.0f : x + wVel, 586, kArpVel, 3);
         if (velFixed)
         {
             const float fx = xR - kr;
@@ -3771,10 +3759,9 @@ private:
         //
         // It is NOT a seventh group in the solved rhythm, and that is arithmetic,
         // not taste. A seventh group of width W re-solves g to
-        // (692 - titleEnd - 475 - W)/7, which at the non-acid titleEnd of ~115
-        // hits the g >= 12 floor at W = 18 px and at the Acid titleEnd of ~139
-        // has no solution at all (W < 0). Splitting the existing 100 px VEL group
-        // in two does not work either: a combo spends 6 px of frame padding plus
+        // (692 - titleEnd - 475 - W)/7, which hits the g >= 12 floor at W = 18 px.
+        // Splitting the existing 100 px VEL group in two does not work either:
+        // a combo spends 6 px of frame padding plus
         // ~24 px of arrow before any text, so 100 px cannot carry two of them.
         // Widening the VEL group to fit both would reflow all six groups on a
         // velocity-mode change — precisely what the fixed 100 px width exists to
@@ -3784,15 +3771,12 @@ private:
         // aligned on the same 692 rule and the same 100 px wide, which keeps the
         // column and costs the row nothing. Vertical fit (ink extents measured the
         // same way as the rest of this header): VEL combo bottom 586 -> 2 px -> ACC
-        // 588..606 -> 6 px -> non-acid step lane at 612. The OCT/GATE/SWING read-
+        // 588..606 -> 6 px -> step lane at 612. The OCT/GATE/SWING read-
         // outs share the 601..610 band but end at x~501, well left of 592; the
         // Fixed-VEL knob's read-out does reach into this x-range, but Fixed and
         // Accent are mutually exclusive so the two can never draw together.
         //
-        // Suppressed in Acid, which has no free band (its GATE lane starts at
-        // y600) and does not use the arpeggiator at all — mode 5 runs AcidEngine's
-        // own sequencer with its own per-step ACC lane.
-        if (velAccent && !acid)
+        if (velAccent)
         {
             // x still holds the VEL group's left edge (last group in the walk);
             // deriving from it keeps ACC under VEL even if the walk's start
@@ -3803,33 +3787,10 @@ private:
         }
 
         const int step = liveStep();
-
-        if (acid)
-        {
-            // 3-lane acid pattern sequencer with a left label gutter (x18..58) so
-            // lane names never overlap the first cell (defect 6). Lane heights are
-            // balanced so ACC/SLIDE stay real click targets (h15 cells, not slits):
-            // GATE 600..616 (h16), PITCH 620..654 (h34 — the per-cell "+0" readout
-            // keeps it precise, so it doesn't need more), ACC 658..673, SLIDE 677..692.
-            const float gx = 62.0f, cw = (692.0f - gx) / 16.0f;
-            drawLaneLabel(58, 600, 616, "GATE");
-            drawStepRow(gx, 600, 692, 16, kParamArpStep0, step, false, 0.0f);
-            drawLaneLabel(58, 620, 654, "PITCH");
-            drawPitchLane(gx, 620, cw, 34, step);
-            drawLaneLabel(58, 658, 673, "ACC");
-            drawLaneLabel(58, 677, 692, "SLIDE");
-            drawAccentSlideLanes(gx, 658, cw, step);
-        }
-        else
-        {
-            // Single mute row, y 612..680 (h68), starting 6.6 px below the knob
-            // read-out ink. The 16 cells are split into four bar-groups with an
-            // 8 px gap between groups, so the pattern reads as 4 bars of 4 at a
-            // glance — the old flush row relied on an alpha-40 hairline that was
-            // invisible against a lit (accent-filled) cell, i.e. against the
-            // default state, where all 16 read as one undivided beige slab.
-            drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
-        }
+        // Single mute row, y 612..680 (h68), starting 6.6 px below the knob
+        // read-out ink. The 16 cells are split into four bar-groups with an
+        // 8 px gap between groups, so the pattern reads as 4 bars of 4.
+        drawStepRow(24, 612, 692, 68, kParamArpStep0, step, true, 8.0f);
     }
 
     void drawAcidSequencerBody()

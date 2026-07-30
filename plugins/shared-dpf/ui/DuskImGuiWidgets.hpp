@@ -277,13 +277,11 @@ public:
     //   rightClickReset : right-click resets to default (in addition to Cmd-click)
     //   dispMul/dispAdd : the read-out / type-entry value is (value*dispMul+dispAdd)
     //                     so e.g. a 0..100 bias can read as relative -50..+50.
-    //   nameOnHover     : opt-in bubble policy (Sunset Circuits) — resting hover
-    //                     shows `name` instead of the value, and the bubble is not
-    //                     suppressed on persistent / external-readout knobs.
+    //   nameOnHover     : opt-in bubble policy (Sunset Circuits) — an eligible
+    //                     resting hover shows `name` instead of the value.
     //                     Default false keeps the fleet's value-on-hover behaviour.
-    //   bubbleOnActiveOnly: suppress the resting hover bubble while preserving a
-    //                     live value bubble during a drag. Useful when a separate
-    //                     descriptive tooltip already identifies the control.
+    //   bubbleOnActiveOnly: suppress the resting hover bubble while preserving an
+    //                     otherwise-eligible live value bubble during a drag.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -493,9 +491,8 @@ public:
             }
         }
         else if ((hovered || active) && valueEditId_ != id
-                 && (bubbleOnActiveOnly
-                         ? active
-                         : (nameOnHover || (!persistent && !hasExternalReadout))))
+                 && !persistent && !hasExternalReadout
+                 && (!bubbleOnActiveOnly || active))
         {
             // Floating value bubble — by default only for knobs with NO other live
             // readout. Knobs that already show their value beneath them (persistent,
@@ -505,10 +502,9 @@ public:
             // FOREGROUND draw list so it is never occluded by knobs / dividers
             // drawn after this one.
             //
-            // `nameOnHover` (opt-in; Sunset Circuits) selects the other policy:
-            // resting hover shows the parameter NAME, a drag still shows the value,
-            // and the suppression above does not apply — its panels label knobs in
-            // a separate text pass and rely on the bubble to name them.
+            // `nameOnHover` (opt-in; Sunset Circuits) selects the other content
+            // policy: an eligible resting hover shows the parameter NAME, while
+            // a drag still shows the value.
             char buf[48], num[32] = {};
             // Resting hover under the nameOnHover policy: the bubble text is the
             // parameter name, so the numeric formatting below is skipped entirely.

@@ -226,7 +226,12 @@ public:
         reset();
     }
 
-    void setMode(CosmosChorusMode m) noexcept { mode = m; }
+    void setMode(CosmosChorusMode m) noexcept
+    {
+        if (mode == CosmosChorusMode::Off && m != CosmosChorusMode::Off)
+            reset();
+        mode = m;
+    }
 
     void process(float& left, float& right) noexcept
     {

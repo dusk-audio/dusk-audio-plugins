@@ -246,9 +246,10 @@ private:
     TPTFourPole lpf;
 };
 
-// Semi-modular ladder with the two historically important revisions.  Model
-// The late revision intentionally stops opening around 12 kHz; the early
-// revision remains open to the engine's safe TPT ceiling.
+// Semi-modular ladder with the two historically important revisions.
+// ModularFilterModel selects the early or late circuit: the late revision
+// intentionally stops opening around 12 kHz, while the early revision remains
+// open to the engine's safe TPT ceiling.
 class LadderFilter
 {
 public:

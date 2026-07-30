@@ -215,7 +215,7 @@ Operators are numbered 1 to 4. In the table, `a to b` means operator `a` modulat
 | 7 | Tri+FM | 4 to 3 | 1, 2, 3 | One modulated tone plus two clean carriers. Mostly additive with a single FM color; organ-like with an edge. |
 | 8 | Additive | (none) | 1, 2, 3, 4 | Four parallel carriers, no modulation. Pure additive synthesis; drawbar-organ and formant tones. |
 
-```
+```text
   Alg 1 (serial)      Alg 4 (stack fork)     Alg 5 (dual stack)     Alg 8 (additive)
      [4]                  [4]   [2]              [2]   [4]            [1][2][3][4]
       |                    |     |                |     |              |  |  |  |
