@@ -22,6 +22,8 @@ The six modes cover the ground that defined subtractive and FM synthesis:
 
 The same bone structure is present in every mode. The oscillator and mixer panels sit on the left, the filter and two envelopes fill the center, the two LFOs and the mod matrix are on the right, and the sequencer and effects run along the bottom with a playable keyboard beneath them. Because the layout never moves, you keep your bearings when you switch circuits; only the colors, the mode sub-panel, and a handful of mode-specific controls change.
 
+![Sunset Circuits in Cosmos mode: the six mode rockers across the top, oscillator and mixer panels on the left, filter and the amp and filter envelopes in the center, the two LFOs and the mod matrix on the right, and the sequencer, effects and keyboard along the bottom](screenshots/sunset-circuits/01-main-ui.png)
+
 Sunset Circuits ships with 54 factory presets spread across all six modes, plus a user preset library you build yourself. It is a full instrument, not an effect: insert it on an instrument track, feed it MIDI, and play.
 
 ## Getting Started
@@ -119,6 +121,8 @@ Oracle is modeled on a late-70s American five-voice polysynth with two true anal
 
 The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **POLY-MOD / SYNC** section: filter envelope and oscillator 2 can each reach oscillator 1 pitch, oscillator 1 pulse width, and the filter.
 
+![Oracle mode: two oscillator panels with no sub oscillator, the auxiliary oscillator slot inactive, and the POLY-MOD and SYNC sub-panel with its filter envelope and oscillator 2 routing knobs](screenshots/sunset-circuits/02-mode-oracle.png)
+
 - **FEnv to OscA**: the filter envelope modulates oscillator 1 pitch, for pitched attack transients and bell tones.
 - **FEnv to PW**: the filter envelope modulates oscillator 1 pulse width, for moving attacks and animated pulse tones.
 - **FEnv to Filter**: the filter envelope is added on top of the filter cutoff, for extra bite.
@@ -133,11 +137,15 @@ Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync*
 
 Mono is modeled on a 70s Japanese monophonic synth voiced for aggression: two oscillators plus a sub, a fat driven filter, ring modulation, and hard sync. It is a single voice (one note at a time), which is exactly right for basses and leads that need weight and glide.
 
+![Mono mode: a grey panel with two oscillators plus the sub oscillator, and the RING and SYNC sub-panel carrying the ring modulation knob and the hard sync button](screenshots/sunset-circuits/03-mode-mono.png)
+
 Mode-specific controls visible in Mono: the **Sub** oscillator (wave and level), and the mode sub-panel's **RING / SYNC** section with the **Ring Mod** knob (ring modulation between oscillators 1 and 2) and the **Hard Sync** button (oscillator 2 hard-syncs to oscillator 1 for tearing, vocal-formant timbres). The oversized cutoff knob dominates the panel, as it should for a mono lead.
 
 ### Modular: semi-modular
 
 Modular is modeled on a 70s semi-modular synthesizer: three oscillators, a transistor-ladder filter, linear FM between oscillators, a sample and hold, and a real dispersive spring reverb. It is two-voice, so you can play the occasional dyad, but it is at its best on evolving drones, sci-fi effects, and sequences.
+
+![Modular mode: a green panel with a third oscillator panel, the audio patch and filter sub-panel carrying sample and hold, oscillator cross routing and ring modulation, and the reverb section showing its fixed spring send](screenshots/sunset-circuits/04-mode-modular.png)
 
 Mode-specific controls visible in Modular: the third oscillator (**Osc 3** wave and level), the **Ring Mod** knob, the **Hard Sync** button, the **FM Amount** knob (linear FM from oscillator 1 into oscillator 2), and the mode sub-panel's **SAMPLE & HOLD** section with the **S&H Rate** knob and an animated staircase display. The panel wears decorative patch jacks to complete the look; they are visual only and never interactive. When Modular is active the effects reverb panel shows **SPRING** to indicate the spring tank is engaged for that mode.
 
@@ -158,11 +166,15 @@ Operator 4 additionally carries the **Feedback** knob, which feeds the operator 
 
 The mode sub-panel is the **algorithm** widget: eight clickable thumbnail diagrams that select the operator routing, above a large diagram of the active algorithm. See the FM guide below for what each algorithm does.
 
+![Prism mode: the left column replaced by the four-operator matrix, each operator carrying ratio, fine, level, velocity, key scaling and its own envelope, with the algorithm list and the active routing diagram on the right](screenshots/sunset-circuits/05-mode-prism.png)
+
 ### Acid: bass box and pattern sequencer
 
 Acid is the silver bass box: one oscillator (saw or square) through a three-pole diode-ladder low-pass filter that screams near self-oscillation, with an accent circuit and note-to-note slide, driven by a sixteen-step pattern sequencer. It is monophonic. This is the sound of a thousand acid basslines.
 
 Acid wears a silver panel instead of the dark chassis of the other modes. The oscillator waveform combo defaults to saw and is intended to be saw or square, though the other waves remain available.
+
+![Acid mode: a single-oscillator engine with oscillator 2 bypassed, the acid engine signal path of oscillator into an 18 dB filter into the VCA, accent and slide controls, and the pattern sequencer with its gate, pitch, accent and slide lanes](screenshots/sunset-circuits/06-mode-acid.png)
 
 **The shared-knob mapping in Acid.** Rather than adding a wall of new controls, Acid re-purposes the standard panels you already know:
 
@@ -335,6 +347,8 @@ The drop-down is a list you scroll. The browser is the library you read. **BROWS
 - **Mouse.** A single click loads the preset and leaves the browser open, so you can audition down a list while the panel re-skins around you. A double click (or APPLY) loads and closes. The close button in the title bar, the CLOSE button, and a click outside all close the browser without loading.
 
 The footer shows how many presets the current filters match. The browser reads the preset library as it was last scanned; see the note on rescanning below.
+
+![The preset browser: factory presets laid out in a column per mode, Cosmos through Acid, with the user library in its own column](screenshots/sunset-circuits/07-preset-browser.png)
 
 ### The user preset library
 
