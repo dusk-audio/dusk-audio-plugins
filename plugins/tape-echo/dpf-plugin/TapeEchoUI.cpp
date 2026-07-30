@@ -114,6 +114,7 @@ protected:
                       ? (int)index
                       : -1;
         currentUserName.clear();
+        currentUserPath.clear();
     }
 
     void onImGuiDisplay() override
@@ -606,7 +607,7 @@ private:
                     const UserPreset& up = userPresets[i];
                     ImGui::PushID((int)i);
                     if (ImGui::Selectable(up.name.c_str(),
-                                          currentPreset < 0 && up.name == currentUserName))
+                                          currentPreset < 0 && up.path == currentUserPath))
                     {
                         loadUserPreset(up.path, up.name);
                         ImGui::CloseCurrentPopup();
@@ -714,6 +715,7 @@ private:
             return;
         currentPreset = idx;
         currentUserName.clear();
+        currentUserPath.clear();
         forEachPresetParam(idx, [this](uint32_t param, float value)
                                 { setP(param, value); });
     }
@@ -725,6 +727,7 @@ private:
     {
         currentPreset = -1;
         currentUserName.clear();
+        currentUserPath.clear();
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (teIsPresetParam(i))
                 setP(i, kTeParams[i].def);
@@ -894,6 +897,7 @@ private:
         scanUserPresets();
         currentPreset = -1;
         currentUserName = name;
+        currentUserPath = path;
     }
 
     void loadUserPreset(const std::string& path, const std::string& name)
@@ -930,6 +934,7 @@ private:
         }
         currentPreset = -1;
         currentUserName = name;
+        currentUserPath = path;
     }
 
     //--- preset identity recovery ----------------------------------------------
@@ -963,6 +968,21 @@ private:
 
     int deriveUserPreset() const
     {
+        // Preserve the loaded file's identity when duplicate presets contain the
+        // same values; parameter matching alone cannot distinguish those files.
+        if (!currentUserPath.empty())
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                if (userPresets[i].path == currentUserPath)
+                {
+                    bool ok = true;
+                    for (uint32_t id = 0; id < kParamCount && ok; ++id)
+                        if (teIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
+                            ok = false;
+                    if (ok)
+                        return (int)i;
+                    break;
+                }
+
         for (size_t i = 0; i < userPresets.size(); ++i)
         {
             bool ok = true;
@@ -979,11 +999,24 @@ private:
     void syncPresetSelection()
     {
         const int f = deriveFactoryPreset();
-        if (f >= 0) { currentPreset = f; currentUserName.clear(); return; }
+        if (f >= 0)
+        {
+            currentPreset = f;
+            currentUserName.clear();
+            currentUserPath.clear();
+            return;
+        }
         const int u = deriveUserPreset();
-        if (u >= 0) { currentPreset = -1; currentUserName = userPresets[(size_t)u].name; return; }
+        if (u >= 0)
+        {
+            currentPreset = -1;
+            currentUserName = userPresets[(size_t)u].name;
+            currentUserPath = userPresets[(size_t)u].path;
+            return;
+        }
         currentPreset = -1;
         currentUserName.clear();
+        currentUserPath.clear();
     }
 
     void drawMeterBlock(ImDrawList* dl)
@@ -1491,7 +1524,8 @@ private:
     float  needlePos = 0.0f;
     float  meterLevel = 0.0f;
     int    currentPreset = -1;
-    std::string currentUserName;   // non-empty when a user preset is active
+    std::string currentUserName;   // display name of the active user preset
+    std::string currentUserPath;   // stable identity of the active user preset
 
     // Cached user preset library (file name + display name + every preset param).
     struct UserPreset { std::string name, path; float vals[kParamCount]; };
