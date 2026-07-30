@@ -397,7 +397,7 @@ private:
               bool panelTicks = true, const char* fmt = nullptr,
               const char* suffix = "", float dispMul = 1.0f, float dispAdd = 0.0f,
               bool persistent = false, bool enabled = true,
-              const char* overrideText = nullptr, const char* /*tooltip*/ = nullptr)
+              const char* overrideText = nullptr, const char* tooltip = nullptr)
     {
         const float range = maxV - minV;
         float t = range > 0.0f ? (values[param] - minV) / range : 0.0f;
@@ -411,7 +411,7 @@ private:
                    values[param], kTeParams[param].def, stepped, panelTicks,
                    fmt != nullptr ? fmt : (stepped ? "%.0f" : "%.2f"), suffix,
                    /*faceColor*/ 0, /*bodyless*/ true, persistent,
-                   /*tooltip*/ nullptr, /*rightClickReset*/ false,
+                   tooltip, /*rightClickReset*/ false,
                    dispMul, dispAdd, /*name*/ nullptr,
                    /*contextMenu*/ true, bubbleText,
                    /*hasExternalReadout*/ false,
@@ -597,13 +597,22 @@ private:
             if (!userPresets.empty())
             {
                 ImGui::SeparatorText("User");
-                for (const auto& up : userPresets)
+                // Index-scoped IDs: two rows can carry the same display name (a
+                // hand-written file, or one with no name= line falling back to a
+                // stem another file already uses), and ImGui would then give both
+                // rows one shared ID. The label stays the name.
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    const UserPreset& up = userPresets[i];
+                    ImGui::PushID((int)i);
                     if (ImGui::Selectable(up.name.c_str(),
                                           currentPreset < 0 && up.name == currentUserName))
                     {
                         loadUserPreset(up.path, up.name);
                         ImGui::CloseCurrentPopup();
                     }
+                    ImGui::PopID();
+                }
             }
             ImGui::EndCombo();
         }
