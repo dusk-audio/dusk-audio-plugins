@@ -60,6 +60,22 @@ namespace
     constexpr float kWowDepth    = 0.0008f;
     constexpr float kNoiseDepth  = 0.0004f;
 
+    // Scrape flutter. The reference's flutter band (6-100 Hz) is stochastic,
+    // not a tone: band noise centred near 6 Hz, not a harmonic of the loop
+    // rate. Modelled as white noise through a resonant band-pass plus a
+    // one-pole skirt, so the resulting speed deviation (which differentiates
+    // the delay modulation, i.e. tilts +6 dB/oct) peaks just above 6 Hz and
+    // then falls away instead of running flat to Nyquist.
+    constexpr float kFlutterNoiseHz    = 6.0f;
+    constexpr float kFlutterNoiseQ     = 2.0f;
+    constexpr float kFlutterNoiseLPHz  = 9.0f;
+    constexpr float kFlutterNoiseDepth = 0.00515f;
+    // Age coupling. Measured reference flutter grows 1.00 / 1.76 / 3.36 over
+    // Loop Age 0 / 0.5 / 1.0. The common `wf` factor below already contributes
+    // (1 + 0.20*age), so this polynomial carries the remainder.
+    constexpr float kFlutterAgeLin = 0.589f;
+    constexpr float kFlutterAgeSq  = 1.214f;
+
     constexpr float kTwoPi = 6.28318530717958647692f;
 
     // clap-validator exercises fractional sample rates down to 1 kHz. Keep
@@ -401,7 +417,6 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     maxDelaySamples = (float)(tapeLen - 8);
     writeIdx        = 0;
 
-    float detune = 1.0f;
     for (auto& ch : channels)
     {
         ch.tape.assign((size_t)tapeLen, 0.0f);
@@ -434,11 +449,12 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
         ch.dryHighShelf.setCoeffs(Biquad::shelf(
             fs, safeBiquadFrequency(fs, 13762.47f),
             -6.13329f, 0.492299f, /*high=*/true));
-        ch.spring.prepare(fs, detune);
-        detune = 1.013f; // second channel slightly longer springs
     }
+    spring.prepare(fs, 1.0f);
 
     noiseLP.setCutoff(2.0f, fs);
+    flutterBand.set(kFlutterNoiseHz, kFlutterNoiseQ, fs);
+    flutterBandLP.setCutoff(kFlutterNoiseLPHz, fs);
     wowInc     = kTwoPi * kWowHz     / (float)fs;
     flutterInc = kTwoPi * kFlutterMaxHz / (float)fs;
     meterDecayPerSample = std::exp(-1.0f / (0.3f * (float)fs));
@@ -513,13 +529,16 @@ void TapeEchoDSP::reset()
         ch.trebleShelf.reset();
         ch.dryLowShelf.reset();
         ch.dryHighShelf.reset();
-        ch.spring.reset();
         ch.springCleanDelay.fill(0.0f);
         ch.springCleanDelayWriteIdx = 0;
         ch.recordEnvelope = 0.0f;
+        ch.loopEnvelope = 0.0f;
         ch.magneticEnvelope = 0.0f;
     }
+    spring.reset();
     noiseLP.reset();
+    flutterBand.reset();
+    flutterBandLP.reset();
     hissVoice.reset();
     wobbleLP.reset();
     writeIdx = 0;
@@ -730,8 +749,17 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float flutterDepth = 0.00237f + 0.00242f * slow01;
         const float flutterWave = std::sin(flutterPhase)
                                 + 0.088f * std::sin(2.0f * flutterPhase);
+        // Scrape flutter: band noise around 6 Hz. Age worsens it steeply on the
+        // reference, far faster than the loop-rate wow it rides on.
+        const float flutterNoiseGain =
+            kFlutterNoiseDepth
+            * (1.0f + age * (kFlutterAgeLin + kFlutterAgeSq * age));
+        const float flutterNoise =
+            flutterNoiseGain
+            * flutterBandLP.process(flutterBand.process(flutterRand()));
         const float mod = wf * (kWowDepth * std::sin(wowPhase)
                               + flutterDepth * flutterWave
+                              + flutterNoise
                               + kNoiseDepth * noiseLP.process(frand()));
 
         // The oversampled preamp delays the tape feed by a fixed group delay;
@@ -831,11 +859,14 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                                   ch, tapeInput * preDriveGain,
                                   kInputStageDrive))
                           * kInputStageTrim * postDriveGain;
-        // The spring send includes a clean feed around the record-stage
-        // shaper. This keeps the tank's drive and crest response while
-        // matching the hosted spring path's very low harmonic residue.
-        const float shapedSpringPre =
-            pre / std::max(postDriveGain, 0.5f);
+        // The spring send is taken entirely ahead of the record-stage shaper
+        // and its compressor. A drive ladder measured through the hosted
+        // spring (impulse and pink burst, 48 dB of input range, reverb level
+        // fixed) shows its tank gain constant to 0.00 dB: the hosted spring
+        // send is linear. A partly shaped send instead compressed by up to
+        // 3.9 dB across that ladder, which is what made the sparse-impulse and
+        // dense-program level errors disagree. Only the preamp-latency
+        // alignment below is kept, so the first arrival is unchanged.
         float cleanReadPos =
             (float)ch.springCleanDelayWriteIdx - kPreampLatencySamples;
         if (cleanReadPos < 0.0f)
@@ -853,14 +884,15 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         if (++ch.springCleanDelayWriteIdx >=
             (int)ch.springCleanDelay.size())
             ch.springCleanDelayWriteIdx = 0;
+        // Send trim, at measured parameter-matched parity. The former 0.60
+        // shaped / 0.40 clean blend had a small-signal gain of 1.1385 x
+        // tapeInput and read 1.60 dB hot against the hosted tank once its own
+        // compression was taken out of the reading, which puts the linear
+        // send at 0.9470 x tapeInput.
         constexpr float kCleanSpringSendGain =
-            0.84f * kInputStageDrive * kInputStageTrim;
-        const float cleanSpringPre =
-            kCleanSpringSendGain * delayedTapeInput;
-        constexpr float kCleanSpringSendMix = 0.40f;
+            0.77855f * kInputStageDrive * kInputStageTrim;
         const float springPre =
-            (1.0f - kCleanSpringSendMix) * shapedSpringPre
-            + kCleanSpringSendMix * cleanSpringPre;
+            kCleanSpringSendGain * delayedTapeInput;
 
         // Three playback heads off the shared tape.
         // The joined ends of the physical tape create a recurring dropout.
@@ -903,9 +935,41 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         // Record chain: program + feedback -> head EQ -> magnetic
         // saturation -> tape. Everything here is inside the loop, so
         // repeats darken and compress cumulatively.
+        const float loopDrive = hardKnee(
+            fbGain * softClip(headSum), kLoopCeilingKnee, kLoopCeiling);
+        // The low-flux gate below is a function of record flux, and the record
+        // head sees program AND regeneration. Gating it on the program alone
+        // left a runaway loop pinned in the low-flux region of the tape curve,
+        // where the low-level harmonic term is still fully active, folds the
+        // transfer back on itself and caps the tape at 0.130 - the whole
+        // measured 11 dB self-oscillation shortfall. The same flux driven from
+        // the input reached the matched plateau, because the input envelope
+        // opened the gate. Only that gate is moved onto total flux: the hot /
+        // very-hot Chebyshev terms and the magnetic makeup below stay on the
+        // program envelope, because they were fitted as program-level makeup
+        // laws. Feeding them total flux as well measured 0.5 dB worse on the
+        // factory octave-band gate (2.66 against a 2.50 limit) - they are
+        // harmonic generators, and opening them on program-plus-regeneration
+        // put content in bands the reference does not have.
+        const float loopMagnitude = loopDrive < 0.0f ? -loopDrive : loopDrive;
+        if (loopMagnitude > ch.loopEnvelope)
+            ch.loopEnvelope += recordEnvelopeAttack
+                             * (loopMagnitude - ch.loopEnvelope);
+        else
+            ch.loopEnvelope *= recordEnvelopeRelease;
+        // Referred back through the record-amp small-signal gain so the
+        // measured gate thresholds - all calibrated in input units against the
+        // program envelope - keep their meaning. Exactly zero with the
+        // feedback control at minimum, so the harmonic calibration is
+        // untouched there.
+        constexpr float kRecordDriveToInput =
+            1.0f / (kInputStageDrive * kInputStageTrim);
+        const float fluxEnvelope =
+            ch.recordEnvelope + ch.loopEnvelope * kRecordDriveToInput;
+
         const float recorded = ch.recordHP.process(
             ch.speedLP.process(
-                pre + hissL + fbGain * softClip(headSum)));
+                pre + hissL + loopDrive));
         // The tape's low-level magnetisation curve is more strongly curved
         // than the record preamp, but its slope remains positive at overload.
         // This bounded cubic term raises the odd-harmonic ladder without
@@ -918,7 +982,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         // main magnetic curve reaches its already-matched -18 dB operating
         // point.
         const float lowFloor01 = clamp01(
-            (ch.recordEnvelope - 0.02f) * (1.0f / 0.07f));
+            (fluxEnvelope - 0.02f) * (1.0f / 0.07f));
         const float lowFloorSmooth =
             lowFloor01 * lowFloor01 * (3.0f - 2.0f * lowFloor01);
         const float lowFloorFade = 1.0f - lowFloorSmooth;
@@ -986,7 +1050,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             ch.trebleShelf.process(ch.bassShelf.process(headSum));
 
         // Spring tank is fed from the same mono preamp signal.
-        const float rev = ch.spring.process(springPre * revSend);
+        const float rev = spring.process(springPre * revSend);
 
         // Both wet-path pan controls are measured linear amplitude laws.
         // In stereo, the x2 factor pairs with the input average above:
@@ -1009,7 +1073,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                             + echoLvl * echoWet * echoPanGain
                             + revLvl * rev * reverbPanGain;
             // POWER off: clean passthrough. The wet state is cleared on the
-            // falling edge, so re-engaging starts with an empty tape loop.
+            // rising bypass edge when POWER is switched off, with the clear
+            // applied in the next block. Re-engaging starts with an empty
+            // tape loop.
             outputs[c][n] = in + power * (outputGain * wet - in);
 
             const float output = outputGain * wet;

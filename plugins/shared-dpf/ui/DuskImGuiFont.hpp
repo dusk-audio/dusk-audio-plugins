@@ -134,4 +134,42 @@ inline CrispFontSet loadCrispFontSet(const float* designSizes, int n, float scal
     return set;
 }
 
+// Memory-backed counterpart used by plugins that bundle an OFL face so their
+// typography is identical on macOS, Windows and Linux. `ttfData` must remain
+// alive for the lifetime of the ImGui atlas; generated static byte arrays are
+// the intended input. FontDataOwnedByAtlas stays false so ImGui never attempts
+// to free that static storage.
+inline CrispFontSet loadEmbeddedCrispFontSet(
+    const unsigned char* ttfData, unsigned int ttfSize,
+    const float* designSizes, int n, float scaleFactor)
+{
+    CrispFontSet set;
+    if (ttfData == nullptr || ttfSize == 0)
+        return set;
+
+    ImGuiIO& io = ImGui::GetIO();
+    for (int i = 0; i < n && set.count < CrispFontSet::kMax; ++i)
+    {
+        ImFontConfig cfg;
+        cfg.OversampleH = 2;
+        cfg.OversampleV = 2;
+        cfg.PixelSnapH = false;
+        cfg.FontDataOwnedByAtlas = false;
+        cfg.GlyphRanges = crispGlyphRanges();
+
+        const float px = designSizes[i] * scaleFactor;
+        if (ImFont* f = io.Fonts->AddFontFromMemoryTTF(
+                const_cast<unsigned char*>(ttfData), static_cast<int>(ttfSize),
+                px, &cfg, crispGlyphRanges()))
+        {
+            set.faces[set.count]    = f;
+            set.nativePx[set.count] = px;
+            ++set.count;
+        }
+    }
+    if (set.count > 0)
+        io.Fonts->Build();
+    return set;
+}
+
 } // namespace duskdpf
