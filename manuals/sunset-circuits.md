@@ -18,7 +18,7 @@ The six modes cover the ground that defined subtractive and FM synthesis:
 - **Mono** is an aggressive 70s monophonic voice with two oscillators plus a sub, a fat driven filter, ring modulation, and hard sync.
 - **Modular** is a 70s semi-modular patchable voice with three oscillators, a transistor-ladder filter, sample and hold, and a spring reverb.
 - **Prism** is a mid-80s four-operator FM digital engine with eight routing algorithms and per-operator envelopes.
-- **Acid** is the silver bass box: one oscillator through a screaming diode-ladder filter, with accent and slide and a sixteen-step pitch pattern sequencer.
+- **Acid** is the bass box: one oscillator through a screaming diode-ladder filter, with accent and slide and a sixteen-step pitch pattern sequencer.
 
 The same bone structure is present in every mode. The oscillator and mixer panels sit on the left, the filter and two envelopes fill the center, the two LFOs and the mod matrix are on the right, and the sequencer and effects run along the bottom with a playable keyboard beneath them. Because the layout never moves, you keep your bearings when you switch circuits; only the colors, the mode sub-panel, and a handful of mode-specific controls change.
 
@@ -111,9 +111,9 @@ One caveat applies to program changes in the LV2 version only. A preset recalled
 
 Cosmos is modeled on an early-80s Japanese polysynth with digitally controlled oscillators. It is six-voice polyphonic. The DCO gives it rock-steady tuning, which is what made this class of synth a workhorse for pads, plucks, and arpeggios. The filter is a clean 24 dB per octave low-pass that does not self-oscillate, paired with a separate high-pass control for thinning the low end.
 
-The signature of Cosmos is the built-in bucket-brigade chorus. The mode sub-panel shows three round chorus buttons, **I**, **II**, and **I+II**, which set the `Chorus Mode`. Chorus I is the subtle single-rate chorus; Chorus II is faster and deeper; I+II runs both together for the lush, wide, slightly seasick wash this synth is famous for. This chorus is separate from the global chorus in the effects section, and it is the fastest way to get the classic warm poly sound.
+The signature of Cosmos is the built-in bucket-brigade chorus. The mode sub-panel is titled **BBD CHORUS** and offers four settings, **OFF**, **I**, **II**, and **I+II**, which set the `Chorus Mode`. Chorus I is the subtle single-rate chorus; Chorus II is faster and deeper; I+II runs both together for the lush, wide, slightly seasick wash this synth is famous for. This chorus is separate from the global chorus in the effects section, and it is the fastest way to get the classic warm poly sound.
 
-Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level), the filter **HP** knob, the **Cross Mod** knob (oscillator 2 modulating oscillator 1 at audio rate), and the three chorus buttons.
+Mode-specific controls visible in Cosmos: the **Sub** oscillator (wave and level), the filter **HP** knob, the **Cross Mod** knob (oscillator 2 modulating oscillator 1 at audio rate), and the four chorus buttons.
 
 ### Oracle: five-voice poly with poly-mod
 
@@ -131,7 +131,7 @@ The signature of Oracle is poly-modulation. The mode sub-panel is a six-knob **P
 - **OscB to Filter**: oscillator 2 modulates filter cutoff at audio rate, for growling and metallic filter FM.
 - **Sync**: oscillator 1 hard-syncs oscillator 2, creating swept harmonic edges when their pitches differ.
 
-Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync** button. There is no sub oscillator and no filter high-pass in this mode; the OSC3/SUB panel is inactive.
+Mode-specific controls visible in Oracle: the six poly-mod knobs and the **Sync** button. There is no sub oscillator and no filter high-pass in this mode; the third panel on the left reads **AUX OSC** with a note that Oracle uses its two-oscillator poly-mod path instead.
 
 ### Mono: aggressive monophonic
 
@@ -139,7 +139,7 @@ Mono is modeled on a 70s Japanese monophonic synth voiced for aggression: two os
 
 ![Mono mode: a grey panel with two oscillators plus the sub oscillator, and the RING and SYNC sub-panel carrying the ring modulation knob and the hard sync button](screenshots/sunset-circuits/03-mode-mono.png)
 
-Mode-specific controls visible in Mono: the **Sub** oscillator (wave and level), and the mode sub-panel's **RING / SYNC** section with the **Ring Mod** knob (ring modulation between oscillators 1 and 2) and the **Hard Sync** button (oscillator 2 hard-syncs to oscillator 1 for tearing, vocal-formant timbres). The oversized cutoff knob dominates the panel, as it should for a mono lead.
+Mode-specific controls visible in Mono: the **Sub** oscillator (wave and level), and the mode sub-panel's **RING / SYNC** section with the **Ring Mod** knob (ring modulation between oscillators 1 and 2) and the **Hard Sync** button (oscillator 2 hard-syncs to oscillator 1 for tearing, vocal-formant timbres).
 
 ### Modular: semi-modular
 
@@ -147,7 +147,14 @@ Modular is modeled on a 70s semi-modular synthesizer: three oscillators, a trans
 
 ![Modular mode: a green panel with a third oscillator panel, the audio patch and filter sub-panel carrying sample and hold, oscillator cross routing and ring modulation, and the reverb section showing its fixed spring send](screenshots/sunset-circuits/04-mode-modular.png)
 
-Mode-specific controls visible in Modular: the third oscillator (**Osc 3** wave and level), the **Ring Mod** knob, the **Hard Sync** button, the **FM Amount** knob (linear FM from oscillator 1 into oscillator 2), and the mode sub-panel's **SAMPLE & HOLD** section with the **S&H Rate** knob and an animated staircase display. The panel wears decorative patch jacks to complete the look; they are visual only and never interactive. When Modular is active the effects reverb panel shows **SPRING** to indicate the spring tank is engaged for that mode.
+Mode-specific controls visible in Modular: the third oscillator (**Osc 3** wave and level) and, beside it, the **Osc 1 to Osc 2** knob that sets the linear FM amount. The mode sub-panel is titled **AUDIO PATCH / FILTER** and carries the patch points as four knobs:
+
+- **S&H**: the sample and hold clock rate in Hz, which feeds the S&H modulation source.
+- **Osc 2 to Osc 1**: cross modulation depth between the first two oscillators.
+- **Osc 3 to VCF**: how far oscillator 3 modulates the filter cutoff, for audio-rate filter FM.
+- **Ring**: ring modulation depth.
+
+Below them sit a **SYNC** button (oscillator 2 hard-syncs to oscillator 1) and an **EARLY / LATE** selector that picks which revision of the transistor ladder the filter models. The late revision deliberately stops opening at around 12 kHz, the way the later hardware did; the early revision stays open across the full range. When Modular is active the effects reverb panel reads **FIXED SPRING** with its send percentage, to indicate the spring tank is engaged for that mode.
 
 ### Prism: four-operator FM
 
@@ -164,15 +171,15 @@ When Prism is active, the left column re-skins into an **operator matrix**: four
 
 Operator 4 additionally carries the **Feedback** knob, which feeds the operator back into its own phase for growl and edge. The filter section stays in circuit in Prism, so you can still filter the FM tone if a preset opens the cutoff.
 
-The mode sub-panel is the **algorithm** widget: eight clickable thumbnail diagrams that select the operator routing, above a large diagram of the active algorithm. See the FM guide below for what each algorithm does.
+The mode sub-panel is the **ALGORITHM** widget: a numbered list of the eight routings down the left, and a large diagram of the selected one filling the rest of the panel. Click a name to switch. Hovering a name shows its number and title as a tooltip. See the FM guide below for what each algorithm does.
 
 ![Prism mode: the left column replaced by the four-operator matrix, each operator carrying ratio, fine, level, velocity, key scaling and its own envelope, with the algorithm list and the active routing diagram on the right](screenshots/sunset-circuits/05-mode-prism.png)
 
 ### Acid: bass box and pattern sequencer
 
-Acid is the silver bass box: one oscillator (saw or square) through a three-pole diode-ladder low-pass filter that screams near self-oscillation, with an accent circuit and note-to-note slide, driven by a sixteen-step pattern sequencer. It is monophonic. This is the sound of a thousand acid basslines.
+Acid is the bass box: one oscillator (saw or square) through a three-pole diode-ladder low-pass filter that screams near self-oscillation, with an accent circuit and note-to-note slide, driven by a sixteen-step pattern sequencer. It is monophonic. This is the sound of a thousand acid basslines.
 
-Acid wears a silver panel instead of the dark chassis of the other modes. The oscillator waveform combo defaults to saw and is intended to be saw or square, though the other waves remain available.
+Acid keeps the dark chassis and marks itself with an orange accent, but its left column is rearranged around the dedicated engine: **OSC 2** reads "single-oscillator engine", **AUX OSC** reads "no auxiliary oscillator", and an **ACID CHARACTER** panel takes their place with the Vintage knob, the oversampling selector, and the voice architecture buttons. On the right, **ACID ENGINE** draws the mono signal path of oscillator into an 18 dB filter into the VCA, and **ACID ROUTING** states that the modulation matrix is not in circuit here. The oscillator waveform combo defaults to saw and is intended to be saw or square, though the other waves remain available.
 
 ![Acid mode: a single-oscillator engine with oscillator 2 bypassed, the acid engine signal path of oscillator into an 18 dB filter into the VCA, accent and slide controls, and the pattern sequencer with its gate, pitch, accent and slide lanes](screenshots/sunset-circuits/06-mode-acid.png)
 
@@ -199,7 +206,8 @@ The pattern itself lives in the sequencer, which expands to four lanes in Acid m
 | Ring Mod | no | no | yes | yes | no | no |
 | Hard Sync | no | yes | yes | yes | no | no |
 | FM Amount | no | no | no | yes | no | no |
-| S&H Rate | no | no | no | yes | no | no |
+| S&H rate | no | no | no | yes | no | no |
+| Ladder revision (Early / Late) | no | no | no | yes | no | no |
 | Chorus I / II / I+II | yes | no | no | no | no | no |
 | Operator strips and algorithm | no | no | no | no | yes | no |
 | Acid globals and 4 sequencer lanes | no | no | no | no | no | yes |
@@ -239,7 +247,7 @@ Operators are numbered 1 to 4. In the table, `a to b` means operator `a` modulat
    ==== output ====
 ```
 
-The algorithm diagram widget in the Prism sub-panel draws the active routing live, brightens the carriers, and shows the feedback loop on operator 4 with a thickness that tracks the Feedback knob. Click any of the eight thumbnails to switch algorithms.
+The algorithm diagram widget in the Prism sub-panel draws the active routing live, brightens the carriers, and shows the feedback loop on operator 4 with a thickness that tracks the Feedback knob. Click any name in the list beside it to switch algorithms.
 
 ## Sequencer and Arpeggiator
 
