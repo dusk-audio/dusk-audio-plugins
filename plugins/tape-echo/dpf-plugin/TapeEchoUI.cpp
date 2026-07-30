@@ -680,6 +680,8 @@ private:
 
     // Walk a factory preset's parameter/value pairs. Shared by applyPreset() and
     // the identity matcher so the two can never disagree about what a preset sets.
+    // BYPASS is deliberately absent: a preset recall must never fight the host's
+    // own bypass state (see teIsPresetParam).
     template <typename Fn>
     static void forEachPresetParam(int idx, Fn&& fn)
     {
@@ -691,7 +693,6 @@ private:
         fn((uint32_t)kParamReverbPan, preset.reverbPan);
         fn((uint32_t)kParamInputSend, preset.inputSend);
         fn((uint32_t)kParamWetSolo, preset.wetSolo);
-        fn((uint32_t)kParamBypass, preset.bypass);
     }
 
     void applyPreset(int idx)
@@ -720,10 +721,27 @@ private:
     }
 
     //--- user preset file library (~/.config/DuskAudio/TapeEcho2/presets) -------
+    // Base dir: %APPDATA% (or %LOCALAPPDATA%) on Windows, else $XDG_CONFIG_HOME,
+    // else $HOME/.config. macOS deliberately stays on the ~/.config layout the
+    // shipped builds already write, so an update never orphans a user's library.
+    // "." is the last resort only: never write relative to the host's CWD while
+    // any supported variable is set.
     std::string configDir() const
     {
-        const char* home = std::getenv("HOME");
-        return std::string(home ? home : ".") + "/.config/DuskAudio/TapeEcho2/presets";
+        std::string base;
+       #if defined(_WIN32)
+        for (const char* var : { "APPDATA", "LOCALAPPDATA" })
+            if (const char* v = std::getenv(var); v != nullptr && *v != '\0')
+            { base = v; break; }
+       #else
+        if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
+            base = xdg;
+        else if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+            base = std::string(home) + "/.config";
+       #endif
+        if (base.empty())
+            base = ".";
+        return base + "/DuskAudio/TapeEcho2/presets";
     }
 
     void scanUserPresets()

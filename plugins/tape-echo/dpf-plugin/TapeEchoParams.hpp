@@ -114,7 +114,8 @@ struct TapeEchoPreset
     float reverbPan = 0.5f;
     float inputSend = 1.0f;
     float wetSolo = 0.0f;
-    float bypass = 0.0f;
+    // No bypass field: see teIsPresetParam — a recall never touches the
+    // host-designated bypass, so a preset must not be able to carry one.
 };
 
 static constexpr TapeEchoPreset kFactoryPresets[] =

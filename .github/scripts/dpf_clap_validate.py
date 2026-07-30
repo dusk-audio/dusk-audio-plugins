@@ -85,6 +85,23 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+def _extract_zip_safely(archive, workdir):
+    """extractall() the archive, refusing any member that escapes workdir.
+
+    The pinned SHA-256 already fixes the archive's contents, so this is
+    defence in depth: absolute member paths, ../ traversals and separator
+    tricks all fail closed instead of writing outside the temp dir.
+    """
+    base = os.path.realpath(workdir)
+    for member in archive.namelist():
+        target = os.path.realpath(os.path.join(base, member))
+        if target != base and not target.startswith(base + os.sep):
+            log("::error::clap-validator archive member escapes the extraction "
+                f"directory: {member!r}")
+            sys.exit(2)
+    archive.extractall(workdir)
+
+
 def resolve_binary(workdir):
     """Return a path to a runnable clap-validator, downloading if necessary."""
     env_bin = os.environ.get("CLAP_VALIDATOR_BIN")
@@ -124,7 +141,7 @@ def resolve_binary(workdir):
     log(f"Verified SHA-256: {actual_sha256}")
 
     with zipfile.ZipFile(zpath) as z:
-        z.extractall(workdir)
+        _extract_zip_safely(z, workdir)
     # Linux/macOS assets wrap a .tar.gz; Windows ships the .exe directly.
     for tgz in glob.glob(os.path.join(workdir, "*.tar.gz")):
         with tarfile.open(tgz) as t:

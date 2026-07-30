@@ -231,7 +231,8 @@ protected:
         setParameterValue(kParamReverbPan, preset.reverbPan);
         setParameterValue(kParamInputSend, preset.inputSend);
         setParameterValue(kParamWetSolo, preset.wetSolo);
-        setParameterValue(kParamBypass, preset.bypass);
+        // BYPASS is not a preset parameter: a program change must never override
+        // the host-designated bypass the player set (see teIsPresetParam).
     }
 
     //--- lifecycle ---------------------------------------------------------------
