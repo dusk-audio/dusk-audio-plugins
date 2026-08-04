@@ -452,8 +452,13 @@ void FourKEQ::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& 
     for (auto ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
         buffer.clear(ch, 0, numSamples);
 
+    // Passthrough, exactly like the bypass branch below: report zero latency so
+    // the host does not compensate for oversampling delay we are not adding.
     if (!paramsValid)
+    {
+        setLatencySamples(0);
         return;
+    }
     if (bypassParam && bypassParam->load() > 0.5f)
     {
         setLatencySamples(0);
@@ -540,9 +545,13 @@ void FourKEQ::processFloatBlock(juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, blockSize);
 
-    // Critical safety check: skip processing if parameters failed to initialize
+    // Critical safety check: skip processing if parameters failed to initialize.
+    // Passthrough, so report zero latency for the same reason bypass does below.
     if (!paramsValid)
+    {
+        setLatencySamples(0);
         return;
+    }
 
     // Check bypass - skip ALL processing when bypassed (including output gain and saturation)
     // Report zero latency so host passes audio through undelayed
