@@ -29,8 +29,8 @@ wire up — call the setters from wherever the host delivers values.
 
 | ID | Name          | Setter            | Range      | Default | Notes |
 |----|---------------|-------------------|------------|---------|-------|
-| 0  | Mode Selector | `setMode`         | 1–12 (int, stepped) | 1 | 12-position rotary switch |
-| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | 0 = 178.50 ms (slow motor), 1 = 69.83 ms |
+| 0  | Mode          | `setMode`         | 1–12 (int, stepped) | 1 | three playback heads plus spring combinations |
+| 1  | Repeat Rate   | `setRepeatRate`   | 0–1        | 0.0     | head 1: about 177 ms (slow) to 69 ms (fast); heads 2/3 scale to 337/489 and 131/189 ms |
 | 2  | Intensity     | `setIntensity`    | 0–1        | 0.0     | self-oscillates above ~0.75 |
 | 3  | Echo Volume   | `setEchoLevel`    | 0–1        | 0.5     | |
 | 4  | Reverb Volume | `setReverbLevel`  | 0–1        | 0.0     | only audible in modes 5–12 |
@@ -38,23 +38,32 @@ wire up — call the setters from wherever the host delivers values.
 | 6  | Treble        | `setTreble`       | −1–+1      | 0.0     | ≈±17 dB shelf; separate boost/cut turnover laws reach ≈991/1441 Hz at half travel and ≈2.85/3.44 kHz at full travel; Q 0.545–0.443; echo path only |
 | 7  | Input Volume  | `setInputGain`    | 0–1        | 0.5     | preamp drive / saturation amount |
 | 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.0     | transport modulation amount; the whole motion signal (wow, capstan flutter and the stochastic ~6 Hz scrape-flutter band) is scaled by a shared 1 + 1.5·value + 0.20·age multiplier — this knob contributes the 1.5·value term, Tape Age the 0.20·age term (scrape flutter additionally has its own steeper age law, see Tape Age). 0 is NOT still: the intrinsic transport matches the reference (≈0.45 % wow, ≈0.033 % flutter at Tape Age 0) |
-| 9  | Dry Level     | `setDryLevel`     | 0–1        | 1.0     | instrument-through level |
-| 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks head-1 time to a host-tempo division, octave-folded into 69.83–178.50 ms |
-| 11 | Sync Division | (shell-level)     | 0–7 (int)  | 2 (1/16)| 1/32, 1/16T, 1/16, 1/8T, 1/16., 1/8, 1/8., 1/4 |
-| 12 | Tape Age      | `setTapeAge`      | 0–1        | 0.5     | 0 = fresh transport; worn settings add hiss, wow, HF loss, and level wobble. Scrape flutter degrades far faster than wow (measured reference: 0.033 / 0.058 / 0.111 % flutter at age 0 / 0.5 / 1.0 against 0.45 / 0.49 / 0.57 % wow) |
+| 9  | Dry Level (legacy) | `setDryLevel` | 0–1        | 1.0     | hidden compatibility control; retains old instrument-through automation |
+| 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks the leading active head to a host-tempo division, clamped to the physical motor range |
+| 11 | Sync Division | (shell-level)     | 0–13 (int) | 2 (1/16)| the original eight values plus 1/32., 1/32T, 1/64, 1/64., 1/4T, and 5/32; appended indices preserve 0.1-series sessions |
+| 12 | Tape Age      | `setTapeAge`      | New/Used/Old | Used | stepped cartridge states; Used/Old add hiss, wow, HF loss, and level wobble |
 | 13 | Bypass        | `setBypass`       | off/on     | off     | host-designated; UI POWER switch, click-free clean passthrough |
-| 14 | Out Level     | `getOutputLevel`  | 0–3 (out)  | —       | peak meter, ~300 ms release; exposed as a host OUTPUT parameter the UI reads through the shell (out-of-process-safe). Single-binary formats may read the DSP peak directly via the weak-symbol access bridge as an optimization, never a requirement |
+| 14 | Record VU     | `getRecordVuLevel` | 0–3 (out) | —       | average-responding record meter after Input Volume, including feedback; 225 ms attack / 200 ms release |
 | 15 | Output Volume | `setOutputVolume` | 0–1        | 0.5     | −20 dB to +20 dB; midpoint is unity |
 | 16 | Echo Pan      | `setEchoPan`      | 0–1        | 0.5     | 0 = left, 0.5 = center, 1 = right |
 | 17 | Reverb Pan    | `setReverbPan`    | 0–1        | 0.5     | 0 = left, 0.5 = center, 1 = right |
-| 18 | Input Send    | `setInputSend`    | off/on     | on      | feeds the tape and spring paths |
-| 19 | Wet Solo      | `setWetSolo`      | off/on     | off     | mutes the dry path |
-| 20 | Loop Splice   | `triggerLoopSplice` | trigger  | off     | relocates the circulating tape splice |
+| 18 | Input Send    | `setInputSend`    | off/on     | on      | interrupts only the tape-record feed; spring remains live for reverb-only operation |
+| 19 | Wet Solo (legacy) | `setWetSolo`  | off/on     | off     | hidden compatibility control; mutes the dry path |
+| 20 | Record Peak   | `getRecordPeakLevel` | 0–3 (out) | —     | transient record-path peak with a 300 ms release |
+| 21 | Mix           | `setMix`          | 0–1        | 0.5     | dry/combined-wet crossfade; 0 = dry, 0.5 = both paths at unity, 1 = wet-only |
 
-Tempo sync lives in the plugin shell, not the DSP core: the shell converts
-division + host BPM to an equivalent Repeat Rate each block (see
-`syncDelayMs` in `TapeEchoParams.hpp`), so the core stays host-agnostic and
-the motor-inertia smoother gives tape-style glides on tempo changes.
+Mix uses a unity-overlap balance law so the 50% default reproduces the
+previous parallel dry-plus-wet output exactly. Below 50% the dry path remains
+at unity while the combined echo/reverb bus fades in; above 50% the wet bus
+remains at unity while the dry path fades out. This keeps old sessions and
+factory-program calibration intact while providing exact dry-only and wet-only
+endpoints.
+
+Tempo sync lives in the plugin shell, not the DSP core. The shell converts a
+division plus host BPM into the leading active head's delay each block (see
+`syncDelayMs` in `TapeEchoParams.hpp`), derives head-1 time from the selected
+mode, and clamps the motor to its measured range. The core stays host-agnostic
+and its motor-inertia smoother supplies tape-style glides on tempo changes.
 
 Level note: with Intensity at maximum and all three heads active, the echo
 bus can peak near +9 dBFS during self-oscillation (as on the hardware, which
@@ -82,8 +91,8 @@ tape-echo-dpf/
 `DistrhoPluginInfo.h` essentials:
 
 ```cpp
-#define DISTRHO_PLUGIN_NAME  "Tape Echo"
-#define DISTRHO_PLUGIN_URI   "https://dusk-audio.github.io/tape-echo"
+#define DISTRHO_PLUGIN_NAME  "Tape Echo 2"
+#define DISTRHO_PLUGIN_URI   "https://dusk-audio.github.io/plugins/tape-echo"
 #define DISTRHO_PLUGIN_CLAP_ID "com.duskaudio.tape-echo"
 #define DISTRHO_PLUGIN_NUM_INPUTS  2
 #define DISTRHO_PLUGIN_NUM_OUTPUTS 2

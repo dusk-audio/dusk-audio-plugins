@@ -21,15 +21,24 @@ enum ParamId
     kParamTapeAge,      // 0 = fresh tape/serviced transport (bit-identical to before this knob existed)
     // IDs 13 and 14 shipped in Tape Echo 0.1.x; append new parameters after them.
     kParamBypass = 13,       // host-designated bypass; the UI POWER switch (1 = off)
-    kParamOutLevel = 14,     // output parameter: peak level for the VU meter
+    kParamOutLevel = 14,     // output parameter: record-path average VU
     kParamOutputVolume = 15, // post-mix output trim, -20 to +20 dB
     kParamEchoPan = 16,      // linear wet-path pan: 0 = left, 0.5 = center, 1 = right
     kParamReverbPan = 17,    // linear spring-path pan: 0 = left, 0.5 = center, 1 = right
-    kParamInputSend = 18,    // boolean input feed to tape and spring paths
+    kParamInputSend = 18,    // boolean program feed to the tape echo ("dub" switch)
     kParamWetSolo = 19,      // boolean dry-path mute
-    kParamLoopSplice = 20,   // momentary relocation of the circulating tape splice
-    kParamCount = 21
+    kParamPeakLevel = 20,    // output parameter: record-path transient peak
+    kParamMix = 21,          // dry / combined-wet crossfade
+    kParamCount = 22
 };
+
+// Only IDs 0-14 have ever shipped (tags tape-echo-dpf-v0.1.0 through v0.1.2);
+// those indices are saved-session ABI and must never move. IDs 15 and above
+// were added for the unreleased 1.0.0 and are still free to change until it
+// tags — which is why the retired Loop Splice slot was deleted outright rather
+// than kept as a hidden placeholder.
+static_assert(kParamDryLevel == 9 && kParamBypass == 13 && kParamOutLevel == 14,
+              "Tape Echo 0.1.x parameter IDs are part of the saved-session ABI");
 
 // Tempo-sync note divisions (fraction of a quarter-note beat).
 struct SyncDivision { const char* name; double beats; };
@@ -43,8 +52,87 @@ static constexpr SyncDivision kSyncDivisions[] =
     { "1/8",   0.5         },
     { "1/8.",  0.75        },
     { "1/4",   1.0         },
+    // Added after the original 0.1.x choices so stored division indices keep
+    // their meaning. These shorter values cover the remaining hosted rhythmic
+    // states; the motor clamp below handles rates outside the physical range.
+    { "1/32.", 3.0 / 16.0  },
+    { "1/32T", 1.0 / 12.0  },
+    { "1/64",  0.0625      },
+    { "1/64.", 0.09375     },
+    { "1/4T",  2.0 / 3.0   },
+    { "5/32",  0.625       },
 };
 static constexpr int kNumSyncDivisions = (int)(sizeof(kSyncDivisions) / sizeof(kSyncDivisions[0]));
+
+// STORAGE order above is frozen by the saved-session ABI, and indices 8..13 were
+// appended later, so it is NOT monotonic in time: a knob sweeping raw indices
+// runs long, snaps short, then long again. This table is the sweep order --
+// storage indices sorted by ascending note length -- so the knob reads musically
+// while the stored value keeps its meaning. UI-only; never serialized.
+static constexpr uint8_t kDivSweep[kNumSyncDivisions] =
+{
+    10, //  1/64   0.0625
+     9, //  1/32T  0.0833
+    11, //  1/64.  0.0938
+     0, //  1/32   0.125
+     1, //  1/16T  0.1667
+     8, //  1/32.  0.1875
+     2, //  1/16   0.25
+     3, //  1/8T   0.3333
+     4, //  1/16.  0.375
+     5, //  1/8    0.5
+    13, //  5/32   0.625
+    12, //  1/4T   0.6667
+     6, //  1/8.   0.75
+     7, //  1/4    1.0
+};
+
+// The table is hand-maintained alongside kSyncDivisions, so prove both of its
+// invariants at compile time: it must list every storage index exactly once,
+// and it must be sorted by ascending note length. Appending a division without
+// updating the sweep order is then a build error, not a silently wrong knob.
+static constexpr bool teDivSweepIsPermutation() noexcept
+{
+    bool seen[kNumSyncDivisions] = {};
+    for (int i = 0; i < kNumSyncDivisions; ++i)
+    {
+        const int v = (int)kDivSweep[i];
+        if (v < 0 || v >= kNumSyncDivisions || seen[v])
+            return false;
+        seen[v] = true;
+    }
+    return true;
+}
+static_assert(teDivSweepIsPermutation(),
+              "kDivSweep must list every sync division index exactly once");
+
+static constexpr bool teDivSweepIsAscending() noexcept
+{
+    for (int i = 1; i < kNumSyncDivisions; ++i)
+        if (!(kSyncDivisions[kDivSweep[i - 1]].beats
+                  < kSyncDivisions[kDivSweep[i]].beats))
+            return false;
+    return true;
+}
+static_assert(teDivSweepIsAscending(),
+              "kDivSweep must be sorted by ascending note length");
+
+// Sweep position -> storage index.
+static inline int teDivisionForSweepPos(int pos) noexcept
+{
+    if (pos < 0) pos = 0;
+    if (pos >= kNumSyncDivisions) pos = kNumSyncDivisions - 1;
+    return (int)kDivSweep[pos];
+}
+
+// Storage index -> sweep position (inverse of the table above).
+static inline int teSweepPosForDivision(int division) noexcept
+{
+    for (int i = 0; i < kNumSyncDivisions; ++i)
+        if ((int)kDivSweep[i] == division)
+            return i;
+    return 0;
+}
 
 // Per-parameter descriptor used by the UI: `id` is the DPF parameter symbol
 // (see TapeEchoPlugin::initParameter) and doubles as the key written into user
@@ -73,31 +161,30 @@ static constexpr TeParam kTeParams[kParamCount] =
     // never a file key and never has to match. min/max/def do mirror the
     // designation's range, which is what the UI's POWER switch reads.
     { "bypass",         0.0f,  1.0f, 0.0f }, // kParamBypass  (host designation)
-    { "out_level",      0.0f,  3.0f, 0.0f }, // kParamOutLevel (output-only meter)
+    { "out_level",      0.0f,  3.0f, 0.0f }, // kParamOutLevel (record-path VU)
     { "output_volume",  0.0f,  1.0f, 0.5f },
     { "echo_pan",       0.0f,  1.0f, 0.5f },
     { "reverb_pan",     0.0f,  1.0f, 0.5f },
     { "input_send",     0.0f,  1.0f, 1.0f },
     { "wet_solo",       0.0f,  1.0f, 0.0f },
-    { "loop_splice",    0.0f,  1.0f, 0.0f }, // momentary trigger
+    { "peak_level",     0.0f,  3.0f, 0.0f }, // kParamPeakLevel (output-only)
+    { "mix",            0.0f,  1.0f, 0.5f }, // kParamMix
 };
 
-// Parameters a preset (factory or user) is allowed to carry. The meter output,
-// the host-designated bypass and the momentary splice trigger are all excluded:
-// the first is not a control, the second must never be fought by a preset load,
-// and the third would fire a splice on recall.
+// Parameters a preset (factory or user) is allowed to carry. The meter outputs
+// and the host-designated bypass are excluded: the meters are not controls, and
+// bypass must never be fought by a preset load.
 static inline bool teIsPresetParam(uint32_t index)
 {
     return index < kParamCount
         && index != kParamOutLevel
-        && index != kParamBypass
-        && index != kParamLoopSplice;
+        && index != kParamPeakLevel
+        && index != kParamBypass;
 }
 
 // Requested head-1 delay for a division at the given tempo. The plugin wrapper
-// octave-folds this nominal value against TapeEchoDSP's measured motor bounds;
-// keeping that policy beside the DSP prevents these UI-facing definitions from
-// drifting away from the supported delay range.
+// clamps this nominal value against TapeEchoDSP's measured motor bounds, just
+// as the modeled transport does when a rhythmic value is out of range.
 static inline double syncDelayMs(double bpm, int divisionIndex)
 {
     if (bpm < 20.0 || bpm > 999.0) bpm = 120.0;
@@ -118,6 +205,7 @@ struct TapeEchoPreset
     float reverbPan = 0.5f;
     float inputSend = 1.0f;
     float wetSolo = 0.0f;
+    float mix = 0.5f;
     // No bypass field: see teIsPresetParam — a recall never touches the
     // host-designated bypass, so a preset must not be able to carry one.
 };
@@ -129,19 +217,19 @@ static constexpr TapeEchoPreset kFactoryPresets[] =
     { "Slapback Vocal",       {  1,   0.45498657f, 0.42501831f, 1.0f, 0.0f,
                                   0.11999512f, -0.08996582f, 0.51000977f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.48999023f, 0.5f, 0.49499512f },
+                                0.49298415f, 0.5f, 0.49499512f },
     { "Rockabilly Guitar",    {  1,   1.0f, 0.28646851f, 1.0f, 0.0f,
                                  -0.42553711f, -0.59252930f, 0.5f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.5f, 0.5f, 0.51315308f },
+                                0.49803940f, 0.5f, 0.51315308f },
     { "Classic Tape Echo",    {  6,   0.50497437f, 0.39001465f, 0.28500366f, 0.0f,
                                   0.01000977f, 0.02001953f, 0.51000977f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.47065759f },
+                                0.46741243f },
     { "Dub Throw",            {  6,   1.0f, 0.52313232f, 1.0f, 0.0f,
                                  -0.42553711f, -0.59252930f, 0.5f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.47153696f, 0.5f, 0.51315308f },
+                                0.46502309f, 0.5f, 0.51315308f },
     { "Synced 1/8 Dub",       {  6,   0.39999390f, 0.43499756f, 0.11499023f, 0.04000854f,
                                   0.0f, 0.0f, 0.29000854f, 0.0f, 1.0f,
                                   1, 5, 0.5f },
@@ -149,31 +237,34 @@ static constexpr TapeEchoPreset kFactoryPresets[] =
     { "Multi-Head Bounce",    {  9,   0.53500366f, 0.48001099f, 0.5f, 0.25997925f,
                                   0.66998291f, 0.0f, 0.5f, 0.0f, 1.0f,
                                   0, 2, 0.0f },
-                                0.5f, 1.0f },
+                                0.49048611f, 1.0f },
     { "Orbital Echo",         {  8,   0.39999390f, 0.45001221f, 0.5f, 0.66000366f,
                                   0.80999756f, -0.40997314f, 0.5f, 0.0f, 1.0f,
                                   1, 2, 0.5f },
                                 0.43145752f, 0.28500366f, 0.73001099f },
-    { "Full Wash",            { 11,   0.5f, 0.22f,0.7f, 0.45f,0.0f, -0.1f,0.5f, 0.55f,1.0f, 0,   2 ,   0 } },
+    { "Full Wash",            { 11,   0.81033325f, 0.61618042f, 0.53720093f,
+                                  0.58779907f, -1.0f, 0.21356201f,
+                                  0.47543335f, 0.0f, 1.0f, 0, 2, 1.0f },
+                                0.47718931f, 0.48483276f, 0.54565430f },
     { "Ambient Trails",       {  7,   0.81033325f, 0.57254028f, 0.53720093f,
                                   0.58779907f, -0.07104492f, -0.57696533f,
                                   0.47543335f, 0.0f, 1.0f, 0, 2, 1.0f },
-                                0.41147773f, 0.0f, 1.0f },
+                                0.43937928f, 0.0f, 1.0f },
     { "Worn Tape",            {  2,   0.20483398f, 0.61618042f, 0.53720093f, 0.0f,
-                                 -1.0f, 0.22f, 0.47543335f, 0.0f, 1.0f,
-                                  0, 2, 0.20f },
-                                0.492f, 0.48483276f, 0.54565430f },
+                                 -1.0f, 0.21356201f, 0.47543335f, 0.0f, 1.0f,
+                                  0, 2, 1.0f },
+                                0.48252278f, 0.48483276f, 0.54565430f },
     { "Runaway Drone",        { 10,   0.0f, 0.59866333f, 1.0f, 0.0f,
                                   0.66699219f, -0.49353027f, 0.30581665f,
                                   0.0f, 1.0f, 0, 2, 0.0f },
-                                0.58154625f, 0.53262329f, 0.5f },
-    // Output volume was 0.38354333f, set while the spring send ran about
-    // 1.6 dB hot; with the send calibrated to measured parity that trim left
-    // the program 1.33 dB under its hosted counterpart.
+                                0.58185389f, 0.53262329f, 0.5f },
+    // Output compensation is kept within 1.5 dB of the decoded counterpart;
+    // it balances the calibrated spring's sparse, transient and sustained
+    // program levels without altering the matched control state.
     { "Spring Only",          { 12,   0.0f, 0.0f, 0.5f, 0.91986084f,
                                  0.0f, 0.0f, 0.5f, 0.0f, 1.0f,
                                  0,   0,   0.5f },
-                               0.41680908f },
+                               0.41785440f },
 };
 static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets) / sizeof(kFactoryPresets[0]));
 

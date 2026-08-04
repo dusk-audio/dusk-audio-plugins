@@ -150,7 +150,10 @@ public:
             // → odd-order (H3) dominant, smoother/polished character.
             // Cleaner overall with ~60% of E-Series THD.
             b = 0.003f;    // H2 even — present but secondary
-            c = 0.008f;    // H3 odd  — dominant (symmetric push-pull)
+            // At nominal input levels x is below unity, so the cubic term must
+            // exceed the quadratic coefficient by enough to remain H3-dominant
+            // after its additional amplitude scaling.
+            c = 0.020f;    // H3 odd  — dominant (symmetric push-pull)
             d = 0.0005f;   // H4 even — negligible
             e = 0.001f;    // H5 odd  — negligible
         }

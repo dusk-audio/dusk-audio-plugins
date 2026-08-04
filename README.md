@@ -6,7 +6,7 @@ A collection of professional audio VST3/AU/LV2 plugins built with JUCE or DPF. S
 
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
-> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **TapeMachine 2**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are released and recommended for production use. **DuskVerb** is available as a pre-release. All other plugins are in active development.
+> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **TapeMachine 2**, **Tape Echo 2**, **Multi-Q**, **Chord Analyzer**, and **Spectrum Analyzer** are released and recommended for production use. **DuskVerb** is available as a pre-release. All other plugins are in active development.
 
 ## Plugins
 
@@ -52,7 +52,7 @@ DPF-based tape processing with distinct tracking and mastering deck models:
 - American head-width, crosstalk, transport, and transformer controls
 - Four-band Advanced reproduce EQ and 20 calibrated factory presets
 - Fixed, fitted 2x nonlinear core
-- macOS AU/VST3/CLAP/LV2 universal builds (Developer ID signed and notarized), Linux VST3/CLAP/LV2 builds (x64 and ARM64), and Windows builds
+- macOS AU/VST3/CLAP/LV2 universal builds (ad-hoc signed, not notarized), Linux VST3/CLAP/LV2 builds (x64 and ARM64), and Windows VST3/CLAP builds
 
 See the [TapeMachine 2 README](plugins/TapeMachine/README.md) and [manual](manuals/tapemachine-2.md).
 
@@ -101,14 +101,18 @@ Professional FFT spectrum analyzer with metering:
 - Mid/Side and Left/Right channel routing
 - VST3/AU/LV2/CLAP formats
 
-### Tape Echo - IN DEVELOPMENT
-Classic tape delay with spring reverb:
+### Tape Echo 2
+Three-head tape delay with spring reverb:
 - 12 echo modes
 - Spring reverb modeling
 - Tape saturation and wow/flutter
-- Tempo sync with multiple note divisions
+- Free-time head delays modeled across the 69-489 ms mechanical range
+- Tempo sync with 14 note divisions, held to the physical motor range as on the hardware
+- 13 factory presets, record-path VU/peak metering, dry/wet mix, echo and reverb pan, and a record-input switch
 - Animated tape visualization
-- Being ported to DPF (early builds tagged as `tape-echo-dpf`)
+- macOS AU/VST3/CLAP/LV2, Linux VST3/CLAP/LV2 (x64 and ARM64), and Windows VST3/CLAP
+
+See the [Tape Echo 2 manual](manuals/tape-echo-2.md).
 
 ### GrooveMind - IN DEVELOPMENT
 > ⚠️ Early development - not functional yet.
@@ -201,7 +205,7 @@ The DPF-based plugins use standalone builds rather than the top-level JUCE build
 cmake -S plugins/TapeMachine/dpf-plugin -B plugins/TapeMachine/dpf-plugin/build -G Ninja
 cmake --build plugins/TapeMachine/dpf-plugin/build
 
-# Tape Echo (DPF port, in progress)
+# Tape Echo 2
 cmake -S plugins/tape-echo/dpf-plugin -B plugins/tape-echo/dpf-plugin/build -G Ninja
 cmake --build plugins/tape-echo/dpf-plugin/build
 

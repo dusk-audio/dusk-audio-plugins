@@ -7,9 +7,9 @@
 #pragma once
 
 #ifndef TE2_VERSION_MAJOR
- #define TE2_VERSION_MAJOR 0
- #define TE2_VERSION_MINOR 1
- #define TE2_VERSION_PATCH 3
+ #define TE2_VERSION_MAJOR 1
+ #define TE2_VERSION_MINOR 0
+ #define TE2_VERSION_PATCH 0
 #endif
 
 #define TE2_STRINGIFY_IMPL(value) #value

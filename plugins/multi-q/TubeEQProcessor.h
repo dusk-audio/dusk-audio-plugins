@@ -710,12 +710,17 @@ public:
         // Apply pending parameter updates (deferred from setParameters for thread safety)
         if (parametersNeedUpdate.exchange(false, std::memory_order_acquire))
         {
+            const juce::SpinLock::ScopedTryLockType lock(paramLock);
+            if (!lock.isLocked())
             {
-                juce::SpinLock::ScopedLockType lock(paramLock);
-                params = pendingParams;
+                parametersNeedUpdate.store(true, std::memory_order_release);
             }
-            updateFilters();
-            tubeStage.setDrive(params.tubeDrive);
+            else
+            {
+                params = pendingParams;
+                updateFilters();
+                tubeStage.setDrive(params.tubeDrive);
+            }
         }
 
         if (params.bypass)

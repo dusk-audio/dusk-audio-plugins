@@ -45,7 +45,7 @@ namespace
     constexpr ImU32 kColGreenDk   = IM_COL32(39, 57, 24, 255);
     constexpr ImU32 kColWhite     = IM_COL32(241, 238, 226, 255);
     constexpr ImU32 kColWhiteDim  = IM_COL32(196, 193, 182, 255);
-    constexpr ImU32 kColRailInk   = IM_COL32(31, 31, 30, 255);
+    constexpr ImU32 kColRailInk   = IM_COL32(16, 16, 15, 255);
     constexpr ImU32 kColLedOn     = IM_COL32(255, 60, 40, 255);
     constexpr ImU32 kColLedGlow   = IM_COL32(255, 70, 45, 80);
 
@@ -58,7 +58,21 @@ public:
     //--- duskdpf::ParamHost: forward the shared widgets' edits to the host ------
     void beginEdit(uint32_t idx) override { editParameter(idx, true); }
     void endEdit(uint32_t idx) override   { editParameter(idx, false); }
-    void setParam(uint32_t idx, float v) override { setParameterValue(idx, v); }
+    void setParam(uint32_t idx, float v) override
+    {
+        if (idx >= kParamCount || !std::isfinite(v))
+            return;
+        // The Sync Division knob sweeps in musical order (kDivSweep), so what a
+        // widget hands back is a SWEEP POSITION, not a storage index. Translate
+        // here, at the one seam every widget edit passes through. Preset recall
+        // and INIT use setP() instead and already carry storage indices, so they
+        // must not -- and do not -- go through this mapping.
+        if (idx == kParamSyncDivision)
+            v = (float)teDivisionForSweepPos((int)(v + 0.5f));
+        v = normalizeParamValue(idx, v);
+        values[idx] = v;
+        setParameterValue(idx, v);
+    }
 
     TapeEchoUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
@@ -75,7 +89,7 @@ public:
         // native atlas sizes instead of baking only the launch DPI: 7..24 px
         // design text remains near-native from the 1x minimum through 3x.
         static constexpr float kLabelSizes[] =
-            { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 32.0f, 48.0f, 72.0f };
+            { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 28.0f, 32.0f, 48.0f, 72.0f };
         static constexpr float kRegularSizes[] =
             { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 32.0f, 48.0f };
         const float dpi = getScaleFactor();
@@ -96,6 +110,9 @@ protected:
     {
         if (index >= kParamCount)
             return;
+        if (!std::isfinite(value))
+            return;
+        value = normalizeParamValue(index, value);
         values[index] = value;
         // Re-derive the active preset from the current values. Preset identity is
         // UI-only state (not a DPF parameter), so it is lost across a project
@@ -119,13 +136,6 @@ protected:
 
     void onImGuiDisplay() override
     {
-        if (loopSpliceReleasePending)
-        {
-            setParameterValue(kParamLoopSplice, 0.0f);
-            editParameter(kParamLoopSplice, false);
-            loopSpliceReleasePending = false;
-        }
-
         const float winW = (float)getWidth();
         const float winH = (float)getHeight();
         s   = std::min(winW / kDesignW, winH / kDesignH);
@@ -166,7 +176,7 @@ protected:
         {
             dl->AddRectFilled(P(2, 50), P(kDesignW - 2, 289),
                               IM_COL32(0, 0, 0, 92));
-            text(dl, 450, 163, 18.0f, IM_COL32(220, 216, 204, 118),
+            text(dl, 450, 163, 18.0f, IM_COL32(220, 216, 204, 175),
                  "STANDBY", 0, true);
         }
         drawUtilityRail(dl);
@@ -301,20 +311,6 @@ private:
                     IM_COL32(225, 222, 211, 90), 1.0f * s);
     }
 
-    void drawDuskMark(ImDrawList* dl, float cx, float cy) const
-    {
-        const ImVec2 c = P(cx, cy);
-        const float r = 9.0f * s;
-        dl->AddCircle(c, r, kColWhiteDim, 32, 1.25f * s);
-        dl->AddLine(P(cx - 7.0f, cy + 1.0f), P(cx + 7.0f, cy + 1.0f),
-                    kColWhiteDim, 1.1f * s);
-        dl->PathClear();
-        dl->PathArcTo(P(cx, cy + 1.0f), 4.8f * s, kPi, 2.0f * kPi, 18);
-        dl->PathStroke(IM_COL32(184, 205, 151, 255), 0, 1.4f * s);
-        dl->AddCircleFilled(P(cx, cy + 1.0f), 1.4f * s,
-                            IM_COL32(196, 71, 49, 255), 12);
-    }
-
     void drawKnobBody(ImDrawList* dl, float cx, float cy, float radius,
                       float t, bool enabled = true, bool ticks = true) const
     {
@@ -398,10 +394,26 @@ private:
               bool panelTicks = true, const char* fmt = nullptr,
               const char* suffix = "", float dispMul = 1.0f, float dispAdd = 0.0f,
               bool persistent = false, bool enabled = true,
-              const char* overrideText = nullptr, const char* tooltip = nullptr)
+              const char* overrideText = nullptr)
     {
+        // Sync Division is stored in a frozen, non-monotonic ABI order but must
+        // SWEEP in musical order; translate on the way out here and back in
+        // setParam(). Every other parameter passes through untouched.
+        // Mutable: DuskPanel::knob takes `float&` and writes the edited value
+        // back through it. For the mapped parameter that write-back lands in
+        // this local and is discarded on purpose -- every such write is paired
+        // with a host->setParam() call, and setParam() above is what translates
+        // the sweep position back to a storage index and updates values[].
+        const bool sweepMapped = (param == kParamSyncDivision);
+        float shownValue = sweepMapped
+            ? (float)teSweepPosForDivision((int)(values[param] + 0.5f))
+            : values[param];
+        const float shownDefault = sweepMapped
+            ? (float)teSweepPosForDivision((int)(kTeParams[param].def + 0.5f))
+            : kTeParams[param].def;
+
         const float range = maxV - minV;
-        float t = range > 0.0f ? (values[param] - minV) / range : 0.0f;
+        float t = range > 0.0f ? (shownValue - minV) / range : 0.0f;
         t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
         drawKnobBody(ImGui::GetWindowDrawList(), cx, cy, radius, t, enabled, panelTicks);
 
@@ -409,31 +421,38 @@ private:
         if (!enabled && bubbleText == nullptr)
             bubbleText = "INACTIVE";
         panel.knob(id, param, minV, maxV, cx, cy, radius,
-                   values[param], kTeParams[param].def, stepped, panelTicks,
+                   shownValue, shownDefault, stepped, panelTicks,
                    fmt != nullptr ? fmt : (stepped ? "%.0f" : "%.2f"), suffix,
                    /*faceColor*/ 0, /*bodyless*/ true, persistent,
-                   tooltip, /*rightClickReset*/ false,
+                   /*tooltip*/ nullptr, /*rightClickReset*/ false,
                    dispMul, dispAdd, /*name*/ nullptr,
                    /*contextMenu*/ true, bubbleText,
-                   /*hasExternalReadout*/ false,
+                   /*hasExternalReadout*/ true,
                    /*dispMin*/ 0.0f, /*dispMax*/ 0.0f,
                    /*nameOnHover*/ false,
                    /*doubleClickReset*/ true,
                    /*persistentTextSize*/ 11.5f);
     }
 
-    void knobLabel(ImDrawList* dl, float cx, float topY, const char* l1,
-                   const char* l2 = nullptr, bool enabled = true) const
+    void knobLabel(ImDrawList* dl, float cx, float knobCy, float knobRadius,
+                   const char* l1, const char* l2 = nullptr,
+                   bool enabled = true) const
     {
-        const ImU32 ink = enabled ? kColWhite : IM_COL32(104, 103, 98, 255);
+        const ImU32 ink = enabled ? kColWhite : IM_COL32(148, 146, 139, 255);
         constexpr float kLabelSize = 12.0f;
         constexpr float kLineStep = 12.5f;
+        constexpr float kTriangleH = 5.5f;
+        // Meet the outer end of the emphasized 12-o'clock tick. Deriving the
+        // stack from each knob's geometry keeps every label/marker gap uniform.
+        const float tipY = knobCy - knobRadius - 8.0f;
+        const float triangleTopY = tipY - kTriangleH;
+        const float topY = triangleTopY - (l2 != nullptr ? 27.0f : 15.0f);
         text(dl, cx, topY, kLabelSize, ink, l1, 0, true);
         if (l2 != nullptr)
             text(dl, cx, topY + kLineStep, kLabelSize, ink, l2, 0, true);
-        const float ty = topY + (l2 != nullptr ? 27.0f : 15.0f);
-        dl->AddTriangleFilled(P(cx - 3.7f, ty), P(cx + 3.7f, ty),
-                              P(cx, ty + 5.5f), ink);
+        dl->AddTriangleFilled(P(cx - 3.7f, triangleTopY),
+                              P(cx + 3.7f, triangleTopY),
+                              P(cx, tipY), ink);
     }
 
     // Small chevron button ("<" / ">") for stepping the preset combo. Styled to
@@ -506,27 +525,17 @@ private:
             IM_COL32(16, 16, 17, 255), IM_COL32(19, 19, 20, 255));
         dl->AddRect(P(kPlateX0, kPlateY0), P(kPlateX1, kPlateY1),
                     IM_COL32(185, 184, 180, 220), 3.5f * s, 0, 1.2f * s);
-        dl->AddLine(P(40, 37), P(230, 37),
+        dl->AddLine(P(40, 37), P(308, 37),
                     IM_COL32(116, 145, 75, 210), 1.2f * s);
 
-        // Product wordmark: a single strong name plus a discrete model cartouche
-        // creates identity without impersonating any reference hardware.
+        // Product, version and model share one baseline; the green rule ties the
+        // complete identity block together across the width of the nameplate.
         text(dl, 42, 10.0f, 24.0f, kColWhite, "TAPE ECHO", -1, true);
-        dl->AddRectFilled(P(236, 12), P(263, 36),
-                          IM_COL32(66, 91, 41, 255), 2.5f * s);
-        dl->AddRect(P(236, 12), P(263, 36),
-                    IM_COL32(133, 163, 94, 180), 2.5f * s, 0, 0.9f * s);
-        text(dl, 249.5f, 13.0f, 18.0f, kColWhite, "2", 0, true);
-        regularText(dl, 286, 13.0f, 9.0f, IM_COL32(151, 149, 143, 255),
-                    "MODEL", 0);
-        text(dl, 286, 23.0f, 10.5f, kColWhiteDim, "TE-2", 0, true);
-        regularText(dl, 309, 30.5f, 7.5f, IM_COL32(128, 126, 121, 255),
+        text(dl, 202, 14.0f, 20.0f, kColWhite, "TE-2", 0, true);
+        regularText(dl, 306, 20.0f, 14.0f, kColWhiteDim,
                     "v" TE2_VERSION_STRING, 1);
 
-        drawDuskMark(dl, 782, kHdrCy);
-        text(dl, 799, 15.0f, 15.0f, kColWhite, "DUSK AUDIO", -1, true);
-        regularText(dl, 799, 28.5f, 8.0f, IM_COL32(143, 142, 136, 255),
-                    "ANALOGUE SIGNAL TOOLS", -1);
+        text(dl, 813, 12.0f, 22.0f, kColWhite, "DUSK AUDIO", 0, true);
 
         // Match the other DPF plugins: clicking the title nameplate opens the
         // generated Patreon "Special Thanks" panel.
@@ -555,9 +564,12 @@ private:
         // Lock the combo frame to the same 26 px height as the hand-drawn controls
         // (ImGui's default is font-size driven and would drift). Vertical padding
         // is the leftover half-height, which also keeps the preview text centred.
-        // No PushFont here: unlike TapeMachine this UI bakes a single large face,
-        // so the combo keeps ImGui's own atlas font for its preview/rows.
-        ImFont* presetFont = regularFonts.pick(12.0f * s);
+        // Use a dedicated native-size atlas face for both the preview and rows;
+        // this avoids scaling blur across the supported editor sizes.
+        // Presets are first-class control labels, so use the same semibold face
+        // as the rest of the panel and a larger 14 px design size. The font
+        // atlas includes the 28 px Retina counterpart above to keep it crisp.
+        ImFont* presetFont = labelFonts.pick(14.0f * s);
         if (presetFont != nullptr)
             ImGui::PushFont(presetFont);
         ImGui::PushStyleVar(
@@ -649,9 +661,12 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(40, 58, 27, 255));
         if (ImGui::BeginPopupModal("Save Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
+            const bool popupAppearing = ImGui::IsWindowAppearing();
+            if (popupAppearing)
+                saveFailed = false;
             ImGui::TextUnformatted("Preset name");
             ImGui::SetNextItemWidth(240.0f * s);
-            if (ImGui::IsWindowAppearing())
+            if (popupAppearing)
                 ImGui::SetKeyboardFocusHere();
             const bool enter = ImGui::InputText("##savename", saveBuf, sizeof(saveBuf),
                                                 ImGuiInputTextFlags_EnterReturnsTrue
@@ -661,11 +676,26 @@ private:
             const bool cancel = ImGui::Button("Cancel");
             if (doSave && saveBuf[0] != '\0')
             {
-                saveUserPreset(saveBuf);
+                // Only dismiss on a save that actually wrote a file. A failed
+                // write used to close the dialog too, which read as success.
+                if (saveUserPreset(saveBuf))
+                {
+                    saveFailed = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    saveFailed = true;
+                }
+            }
+            if (saveFailed)
+                ImGui::TextColored(ImVec4(0.90f, 0.42f, 0.35f, 1.0f),
+                                   "Could not save. Try a different name.");
+            if (cancel)
+            {
+                saveFailed = false;
                 ImGui::CloseCurrentPopup();
             }
-            if (cancel)
-                ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
         ImGui::PopStyleColor(9);
@@ -684,8 +714,41 @@ private:
 
     // Single write path for a UI-driven parameter change: keeps the local cache
     // in step and brackets the host write with the edit-gesture markers.
+    // Clamp to range and quantise the discrete parameters exactly the way the
+    // processing side reads them, so the cached value can never disagree with
+    // what the DSP acts on. values[] is not display-only: it feeds preset
+    // identity matching and is what a saved user preset writes to disk.
+    // Callers must range-check `idx` first.
+    static float normalizeParamValue(uint32_t idx, float v) noexcept
+    {
+        v = std::max(kTeParams[idx].min, std::min(kTeParams[idx].max, v));
+        switch (idx)
+        {
+        case kParamMode:
+        case kParamSyncDivision:
+            return std::round(v);
+        case kParamTapeAge:
+            return 0.5f * std::round(2.0f * v);
+        // All four booleans use the SAME threshold the plugin applies in
+        // setParameterValue (>= 0.5f). They previously disagreed for Bypass and
+        // Tempo Sync (> 0.5f here), so an incoming exact 0.5 latched ON in the
+        // plugin while the UI cache read OFF -- POWER showing ON while the DSP
+        // was bypassed.
+        case kParamBypass:
+        case kParamTempoSync:
+        case kParamInputSend:
+        case kParamWetSolo:
+            return v >= 0.5f ? 1.0f : 0.0f;
+        default:
+            return v;
+        }
+    }
+
     void setP(uint32_t param, float value)
     {
+        if (param >= kParamCount || !std::isfinite(value))
+            return;
+        value = normalizeParamValue(param, value);
         values[param] = value;
         editParameter(param, true);
         setParameterValue(param, value);
@@ -707,6 +770,7 @@ private:
         fn((uint32_t)kParamReverbPan, preset.reverbPan);
         fn((uint32_t)kParamInputSend, preset.inputSend);
         fn((uint32_t)kParamWetSolo, preset.wetSolo);
+        fn((uint32_t)kParamMix, preset.mix);
     }
 
     void applyPreset(int idx)
@@ -721,8 +785,7 @@ private:
     }
 
     // Reset every control to its factory default. BYPASS is left alone so INIT
-    // never fights the host's own bypass state, and the momentary splice trigger
-    // is not a state to restore.
+    // never fights the host's own bypass state.
     void initDefaults()
     {
         currentPreset = -1;
@@ -821,9 +884,15 @@ private:
                     if (teIsPresetParam(i) && key == kTeParams[i].id)
                     {
                         float v = 0.0f;
+                        // Normalise on the way in, exactly as loadUserPreset()'s
+                        // setP() will. This cache is compared against values[] to
+                        // recover preset identity, so an un-normalised discrete
+                        // value here (a hand-edited file, or one written before
+                        // the values were quantised) would fail to match the very
+                        // preset that had just been loaded.
                         if (parsePresetValue(line, eq + 1, i, v))
-                            up.vals[i] = v;   // else keep the default already in place
-                        break;
+                            up.vals[i] = normalizeParamValue(i, v);
+                        break;   // else keep the default already in place
                     }
             }
             userPresets.push_back(std::move(up));
@@ -844,18 +913,20 @@ private:
         return {};
     }
 
-    void saveUserPreset(const char* rawName)
+    // Returns false if nothing was written, so the caller can keep the dialog
+    // open and say so instead of closing on a save that silently did nothing.
+    bool saveUserPreset(const char* rawName)
     {
         std::string name(rawName);
         while (!name.empty() && name.back() == ' ')
             name.pop_back();
         if (name.empty())
-            return;
+            return false;
         const std::string dir = configDir();
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (ec)
-            return;   // no usable library directory (permissions, file in the way)
+            return false; // no usable library directory (permissions, file in the way)
         // Filename stem: every non-alphanumeric collapses to '_', so distinct
         // display names can share a stem ("A B" and "A-B" both give "A_B").
         // Re-saving the SAME name still overwrites its own file; a stem clash
@@ -882,10 +953,10 @@ private:
             usable = !present || storedPresetName(path) == name;
         }
         if (!usable)
-            return;   // 99 colliding stems: refuse rather than overwrite one
+            return false; // 99 colliding stems: refuse rather than overwrite one
         std::ofstream f(path, std::ios::trunc);
         if (!f)
-            return;
+            return false;
         // Classic locale so the values are written with '.' whatever locale the
         // host installed, matching parsePresetValue() on the way back in.
         f.imbue(std::locale::classic());
@@ -894,10 +965,13 @@ private:
             if (teIsPresetParam(i))
                 f << kTeParams[i].id << "=" << values[i] << "\n";
         f.close();
+        if (!f)
+            return false; // flush/close failed: the file on disk is not complete
         scanUserPresets();
         currentPreset = -1;
         currentUserName = name;
         currentUserPath = path;
+        return true;
     }
 
     void loadUserPreset(const std::string& path, const std::string& name)
@@ -941,8 +1015,8 @@ private:
     // The active preset is UI-only state; these re-derive it from the current
     // parameter values so a project reload (which restores parameters but not the
     // selection) shows the right preset again. Compares with a range-relative
-    // tolerance to absorb host parameter quantisation, and never compares BYPASS,
-    // the splice trigger or the meter output.
+    // tolerance to absorb host parameter quantisation, and never compares BYPASS
+    // or the meter output.
     bool paramMatches(uint32_t id, float v) const
     {
         const TeParam& d = kTeParams[id];
@@ -1021,9 +1095,10 @@ private:
 
     void drawMeterBlock(ImDrawList* dl)
     {
-        led(dl, 34, 93, meterLevel > 0.89f, 5.2f);
-        text(dl, 34, 105, 10.0f, kColWhite, "PEAK", 0, true);
-        regularText(dl, 34, 116.5f, 8.0f, kColWhiteDim, "LEVEL", 0);
+        // The reference Peak lamp starts to illuminate around -2 to -1.5 dBFS.
+        led(dl, 34, 93, peakLevel > 0.82f, 5.2f);
+        text(dl, 34, 104.5f, 11.0f, kColWhite, "PEAK", 0, true);
+        regularText(dl, 34, 116.5f, 9.5f, kColWhiteDim, "LEVEL", 0);
 
         constexpr float x0 = 70.0f, y0 = 60.0f, x1 = 274.0f, y1 = 153.0f;
         dl->AddRectFilled(P(x0 - 5, y0 - 5), P(x1 + 5, y1 + 5),
@@ -1036,21 +1111,33 @@ private:
             IM_COL32(23, 25, 20, 255), IM_COL32(14, 16, 13, 255),
             IM_COL32(7, 9, 7, 255), IM_COL32(10, 11, 9, 255));
 
-        // needle ballistics at frame rate; read the DSP meter directly when
-        // the plugin runs in-process (CLAP/LV2 hosts do not forward output
-        // parameters to the UI), else fall back to the output parameter.
-        const float dt   = ImGui::GetIO().DeltaTime;
+        // Read the DSP meter directly when the plugin runs in-process
+        // (CLAP/LV2 hosts do not forward output parameters to the UI), else
+        // fall back to the output parameter.
         float lvl = values[kParamOutLevel];
+        float peak = values[kParamPeakLevel];
        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-        if (tapeEchoGetOutputLevel != nullptr) // weak: null in the split LV2 UI
+        if (tapeEchoGetRecordVuLevel != nullptr) // weak: null in the split LV2 UI
             if (void* const inst = getPluginInstancePointer())
-                lvl = tapeEchoGetOutputLevel(inst);
-       #endif
+                lvl = tapeEchoGetRecordVuLevel(inst);
+        if (tapeEchoGetRecordPeakLevel != nullptr)
+            if (void* const inst = getPluginInstancePointer())
+                peak = tapeEchoGetRecordPeakLevel(inst);
+        #endif
         meterLevel = lvl;
-        const float dB   = 20.0f * std::log10(lvl > 1e-5f ? lvl : 1e-5f);
-        float target     = (dB + 20.0f) / 23.0f; // -20 dB .. +3 dB across the arc
+        peakLevel = peak;
+        // Hosted-reference calibration: a -18 dBFS RMS tone at unity Input
+        // Volume settles at 0 VU. The DSP publishes a sine-RMS-calibrated
+        // linear record level, so add 18 dB before mapping it to the face.
+        constexpr float kVuReferenceDbfs = -18.0f;
+        const float vuDb = 20.0f * std::log10(lvl > 1e-5f ? lvl : 1e-5f)
+                         - kVuReferenceDbfs;
+        float target = (vuDb + 20.0f) / 23.0f; // -20 VU .. +3 VU across the arc
         target = target < 0.0f ? 0.0f : (target > 1.0f ? 1.0f : target);
-        needlePos += (target - needlePos) * (1.0f - std::exp(-dt * 7.0f));
+        // TapeEchoDSP already applies the complete 225 ms attack / 200 ms
+        // release ballistic. A second visual smoother here would make the
+        // displayed needle lag the actual meter value and vary with frame rate.
+        needlePos = target;
 
         dl->PushClipRect(P(x0, y0), P(x1, y1), true);
 
@@ -1058,21 +1145,57 @@ private:
         const float rArc   = 155.0f * s;
         const float aMin   = -0.62f, aMax = 0.62f; // radians from vertical
 
-        // Minor scale marks plus calibrated major dB labels. The non-linear
-        // crowding toward zero is characteristic of a real VU face and makes the
-        // meter useful instead of merely animated.
-        for (int i = 0; i <= 24; ++i)
+        // Twin-rail scale inspired by classic illuminated VU faces: a broad,
+        // segmented outer band plus a slimmer inner rail. Both change from
+        // green to red exactly at 0 dB, with a dark outline keeping the color
+        // controlled against the black meter face.
+        constexpr float kZeroDbT = 20.0f / 23.0f;
+        const float redStart = aMin + (aMax - aMin) * kZeroDbT;
+        const float outerRadius = rArc + 7.0f * s;
+        const float innerRadius = rArc - 2.0f * s;
+        constexpr ImU32 kScaleGreen = IM_COL32(73, 183, 102, 230);
+        constexpr ImU32 kScaleRed = IM_COL32(226, 66, 46, 235);
+        constexpr ImU32 kScaleEdge = IM_COL32(5, 8, 5, 235);
+
+        const auto strokeArc = [&](float radius, float from, float to,
+                                   ImU32 color, float thickness, int segments)
         {
-            const float a = aMin + (aMax - aMin) * (float)i / 24.0f;
+            dl->PathClear();
+            dl->PathArcTo(pivot, radius, from - 0.5f * kPi,
+                          to - 0.5f * kPi, segments);
+            dl->PathStroke(color, 0, thickness * s);
+        };
+
+        strokeArc(outerRadius, aMin, aMax, kScaleEdge, 9.0f, 64);
+        strokeArc(innerRadius, aMin, aMax, kScaleEdge, 6.0f, 64);
+        strokeArc(outerRadius, aMin, redStart, kScaleGreen, 6.0f, 52);
+        strokeArc(outerRadius, redStart, aMax, kScaleRed, 6.0f, 18);
+        strokeArc(innerRadius, aMin, redStart, kScaleGreen, 3.5f, 52);
+        strokeArc(innerRadius, redStart, aMax, kScaleRed, 3.5f, 18);
+
+        // Major-value separators cut only the wide outer rail. The 0 dB split
+        // continues through both rails to make the color transition deliberate.
+        static constexpr float kSeparatorsDb[] = { -10.0f, -7.0f, -5.0f, -3.0f };
+        for (const float db : kSeparatorsDb)
+        {
+            const float t = (db + 20.0f) / 23.0f;
+            const float a = aMin + (aMax - aMin) * t;
             const ImVec2 dir(std::sin(a), -std::cos(a));
             dl->AddLine(
-                ImVec2(pivot.x + dir.x * (rArc - 3.8f * s),
-                       pivot.y + dir.y * (rArc - 3.8f * s)),
-                ImVec2(pivot.x + dir.x * (rArc + 0.7f * s),
-                       pivot.y + dir.y * (rArc + 0.7f * s)),
-                i >= 21 ? IM_COL32(217, 71, 50, 225)
-                        : IM_COL32(218, 216, 204, 190),
-                0.85f * s);
+                ImVec2(pivot.x + dir.x * (outerRadius - 4.8f * s),
+                       pivot.y + dir.y * (outerRadius - 4.8f * s)),
+                ImVec2(pivot.x + dir.x * (outerRadius + 4.8f * s),
+                       pivot.y + dir.y * (outerRadius + 4.8f * s)),
+                kScaleEdge, 1.25f * s);
+        }
+        {
+            const ImVec2 dir(std::sin(redStart), -std::cos(redStart));
+            dl->AddLine(
+                ImVec2(pivot.x + dir.x * (innerRadius - 3.2f * s),
+                       pivot.y + dir.y * (innerRadius - 3.2f * s)),
+                ImVec2(pivot.x + dir.x * (outerRadius + 4.8f * s),
+                       pivot.y + dir.y * (outerRadius + 4.8f * s)),
+                kScaleEdge, 1.5f * s);
         }
 
         struct MeterMark { float db; const char* label; };
@@ -1089,30 +1212,14 @@ private:
             const ImU32 ink = mark.db >= 0.0f
                             ? IM_COL32(235, 75, 54, 255)
                             : IM_COL32(229, 226, 213, 255);
-            dl->AddLine(
-                ImVec2(pivot.x + dir.x * (rArc - 7.0f * s),
-                       pivot.y + dir.y * (rArc - 7.0f * s)),
-                ImVec2(pivot.x + dir.x * (rArc + 3.0f * s),
-                       pivot.y + dir.y * (rArc + 3.0f * s)),
-                ink, 1.25f * s);
             regularText(dl, 172.0f + dir.x * 137.0f,
-                        239.0f + dir.y * 137.0f - 3.8f,
-                        7.8f, ink, mark.label, 0);
+                        239.0f + dir.y * 137.0f - 4.8f,
+                        9.5f, ink, mark.label, 0);
         }
-
-        // red zone arc band
-        dl->PathClear();
-        for (int i = 0; i <= 8; ++i)
-        {
-            const float a = aMin + (aMax - aMin) * (0.8f + 0.2f * (float)i / 8.0f);
-            dl->PathLineTo(ImVec2(pivot.x + std::sin(a) * (rArc + 5.0f * s),
-                                  pivot.y - std::cos(a) * (rArc + 5.0f * s)));
-        }
-        dl->PathStroke(IM_COL32(226, 66, 46, 235), 0, 1.8f * s);
 
         text(dl, 172, 119.5f, 13.5f, IM_COL32(151, 224, 117, 255), "VU", 0, true);
-        regularText(dl, 172, 135, 8.0f, IM_COL32(173, 175, 160, 255),
-                    "OUTPUT LEVEL", 0);
+        regularText(dl, 172, 134.5f, 9.5f, kColWhiteDim,
+                    "RECORD LEVEL", 0);
 
         // needle
         {
@@ -1140,28 +1247,25 @@ private:
 
     void drawInputRow(ImDrawList* dl)
     {
-        constexpr float kLabelY = 167.0f, kKnobY = 234.0f;
+        constexpr float kKnobY = 234.0f;
         constexpr float x[4] = { 38.0f, 106.0f, 174.0f, 242.0f };
 
-        knobLabel(dl, x[0], kLabelY, "INPUT", "DRIVE");
+        knobLabel(dl, x[0], kKnobY, 23.0f, "INPUT");
         knob("input", kParamInputGain, 0.0f, 1.0f, x[0], kKnobY, 23.0f,
-             false, true, "%.0f", "%", 100.0f, 0.0f, true, true, nullptr,
-             "Tape preamp drive");
+             false, true, "%.0f", "%", 100.0f, 0.0f, true, true);
 
-        knobLabel(dl, x[1], kLabelY, "DRY", "LEVEL");
-        knob("dry", kParamDryLevel, 0.0f, 1.0f, x[1], kKnobY, 22.0f,
-             false, true, "%.0f", "%", 100.0f, 0.0f, true, true, nullptr,
-             "Direct signal level");
+        knobLabel(dl, x[1], kKnobY, 22.0f, "MIX");
+        knob("mix", kParamMix, 0.0f, 1.0f, x[1], kKnobY, 22.0f,
+             false, true, "%.0f", "%", 100.0f, 0.0f, true, true);
 
-        knobLabel(dl, x[2], kLabelY, "WOW &", "FLUTTER");
+        knobLabel(dl, x[2], kKnobY, 22.0f, "WOW &", "FLUTTER");
         knob("wow", kParamWowFlutter, 0.0f, 1.0f, x[2], kKnobY, 22.0f,
-             false, true, "%.0f", "%", 100.0f, 0.0f, true, true, nullptr,
-             "Transport modulation depth");
+             false, true, "%.0f", "%", 100.0f, 0.0f, true, true);
 
-        knobLabel(dl, x[3], kLabelY, "OUTPUT", "TRIM");
+        knobLabel(dl, x[3], kKnobY, 23.0f, "OUTPUT");
         knob("output", kParamOutputVolume, 0.0f, 1.0f, x[3], kKnobY, 23.0f,
              false, true, "%+.1f", " dB", 40.0f, -20.0f, true, true,
-             nullptr, "Post-effect output trim");
+             nullptr);
     }
 
     void drawModeSelector(ImDrawList* dl)
@@ -1177,7 +1281,7 @@ private:
         dl->AddLine(P(x0 + 8, y0 + 4), P(x1 - 8, y0 + 4),
                     IM_COL32(191, 207, 163, 54), 0.9f * s);
 
-        text(dl, 375, 68, 14.0f, kColWhite,
+        text(dl, 375, 66, 17.0f, kColWhite,
              "HEAD SELECT", 0, true);
 
         const float cx = 375, cy = 157, R = 36;
@@ -1195,8 +1299,7 @@ private:
                             IM_COL32(29, 38, 20, 255), 56);
 
         knob("mode", kParamMode, 1.0f, 12.0f, cx, cy, R, true, false,
-             "%.0f", "", 1.0f, 0.0f, false, true, kModeShort[mode],
-             "Playback-head routing");
+             "%.0f", "", 1.0f, 0.0f, false, true, kModeShort[mode]);
 
         // Detent ticks + numbered arc. The tick ring sits in the gap between the
         // bezel and the numbers; the selected detent goes white along with its number.
@@ -1214,8 +1317,8 @@ private:
 
             char num[4];
             std::snprintf(num, sizeof(num), "%d", i + 1);
-            text(dl, cx + dir.x * 59.0f, cy + dir.y * 59.0f - 4.5f,
-                 cur ? 12.0f : 10.0f,
+            text(dl, cx + dir.x * 61.0f, cy + dir.y * 61.0f - 5.5f,
+                 cur ? 15.0f : 12.5f,
                  cur ? kColWhite : IM_COL32(209, 220, 191, 255),
                  num, 0, cur);
         }
@@ -1247,51 +1350,48 @@ private:
         const int mode = modeIndex();
         const bool reverbActive = mode >= 4;
         const bool echoActive = mode != 11;
-        const char* const inactiveEcho = "Inactive in Reverb Only mode; value is preserved";
-        const char* const inactiveReverb = "Inactive in this head mode; value is preserved";
 
-        knobLabel(dl, 520, 64, "BASS");
+        knobLabel(dl, 520, 121, 25, "BASS");
         knob("bass", kParamBass, -1.0f, 1.0f, 520, 121, 25,
-             false, true, "%+.1f", " dB", 17.0f, 0.0f, false, true, nullptr,
-             "Echo-path bass shelf");
-        knobLabel(dl, 620, 64, "TREBLE");
+             false, true, "%+.1f", " dB", 17.0f, 0.0f, true, true);
+        knobLabel(dl, 620, 121, 25, "TREBLE");
         knob("treble", kParamTreble, -1.0f, 1.0f, 620, 121, 25,
-             false, true, "%+.1f", " dB", 17.0f, 0.0f, false, true, nullptr,
-             "Echo-path treble shelf");
-        knobLabel(dl, 720, 64, "REVERB LEVEL", nullptr, reverbActive);
+             false, true, "%+.1f", " dB", 17.0f, 0.0f, true, true);
+        knobLabel(dl, 720, 121, 25, "REVERB LEVEL", nullptr, reverbActive);
         knob("reverbvol", kParamReverbLevel, 0.0f, 1.0f, 720, 121, 25,
-             false, true, "%.0f", "%", 100.0f, 0.0f, false, reverbActive,
-             nullptr, reverbActive ? "Spring reverb level" : inactiveReverb);
-        knobLabel(dl, 830, 64, "REVERB PAN", nullptr, reverbActive);
+             false, true, "%.0f", "%", 100.0f, 0.0f, true, reverbActive);
+        knobLabel(dl, 830, 121, 25, "REVERB PAN", nullptr, reverbActive);
         knob("reverbpan", kParamReverbPan, 0.0f, 1.0f, 830, 121, 25,
-             false, true, "%+.0f", "", 200.0f, -100.0f, false, reverbActive,
-             nullptr, reverbActive ? "-100 left / +100 right" : inactiveReverb);
+             false, true, "%+.0f", "", 200.0f, -100.0f, true, reverbActive);
 
-        knobLabel(dl, 520, 169, "REPEAT RATE", nullptr, echoActive);
+        knobLabel(dl, 520, 229, 25, "REPEAT RATE", nullptr, echoActive);
         const bool sync = values[kParamTempoSync] > 0.5f;
+        // Distinct ImGui ids per branch: DuskPanel keys its inline "Type value"
+        // edit state on this string, so sharing one id let a pending edit opened
+        // on Repeat Rate commit into Sync Division when TEMPO SYNC toggled
+        // mid-gesture.
         if (sync) // knob steps through note divisions while synced
-            knob("rate", kParamSyncDivision, 0.0f, (float)(kNumSyncDivisions - 1),
+            knob("rate_sync", kParamSyncDivision, 0.0f,
+                 (float)(kNumSyncDivisions - 1),
                  520, 229, 25, true, true, "%.0f", "", 1.0f, 0.0f, true,
-                 echoActive, kSyncDivisions[divIndex()].name,
-                 echoActive ? "Host-synced note division" : inactiveEcho);
+                 echoActive, kSyncDivisions[divIndex()].name);
         else
-            knob("rate", kParamRepeatRate, 0.0f, 1.0f, 520, 229, 25,
+            knob("rate_free", kParamRepeatRate, 0.0f, 1.0f, 520, 229, 25,
                  false, true, "%.0f", "%", 100.0f, 0.0f, true, echoActive,
-                 nullptr, echoActive ? "Tape motor speed" : inactiveEcho);
+                 nullptr);
 
-        knobLabel(dl, 620, 169, "INTENSITY", nullptr, echoActive);
+        knobLabel(dl, 620, 229, 25, "INTENSITY", nullptr, echoActive);
         knob("intensity", kParamIntensity, 0.0f, 1.0f, 620, 229, 25,
              false, true, "%.0f", "%", 100.0f, 0.0f, true, echoActive,
-             nullptr, echoActive ? "Feedback; self-oscillates at high settings"
-                                 : inactiveEcho);
-        knobLabel(dl, 720, 169, "ECHO LEVEL", nullptr, echoActive);
+             nullptr);
+        knobLabel(dl, 720, 229, 25, "ECHO LEVEL", nullptr, echoActive);
         knob("echovol", kParamEchoLevel, 0.0f, 1.0f, 720, 229, 25,
              false, true, "%.0f", "%", 100.0f, 0.0f, true, echoActive,
-             nullptr, echoActive ? "Tape echo return level" : inactiveEcho);
-        knobLabel(dl, 830, 169, "ECHO PAN", nullptr, echoActive);
+             nullptr);
+        knobLabel(dl, 830, 229, 25, "ECHO PAN", nullptr, echoActive);
         knob("echopan", kParamEchoPan, 0.0f, 1.0f, 830, 229, 25,
              false, true, "%+.0f", "", 200.0f, -100.0f, true, echoActive,
-             nullptr, echoActive ? "-100 left / +100 right" : inactiveEcho);
+             nullptr);
     }
 
     void drawHeadTimingStrip(ImDrawList* dl, bool sync)
@@ -1300,9 +1400,12 @@ private:
             values[kParamRepeatRate]);
         bool timingAvailable = true;
 
-        // Tempo sync octave-folds the selected division on the audio thread,
-        // so the manual Repeat Rate parameter no longer describes the motor.
-        // Read the effective target directly when the format is same-process.
+        // Tempo sync clamps the selected division to the motor range on the
+        // audio thread, so the manual Repeat Rate parameter no longer describes
+        // the motor. Read the effective target directly when the format is
+        // same-process -- this strip is the only place the true, post-clamp
+        // time is visible, which matters because divisions past the range all
+        // resolve to the same endpoint (matching the hardware).
         if (sync)
         {
             timingAvailable = false;
@@ -1326,12 +1429,10 @@ private:
                - duskaudio::TapeEchoDSP::kMinDelayMs);
         slow01 = slow01 < 0.0f ? 0.0f : (slow01 > 1.0f ? 1.0f : slow01);
 
-        // Front-panel nominal ranges. The first-head fast label is intentionally
-        // independent of the fixed mechanical head ratios, matching the visible
-        // timing convention while the calibrated DSP retains its measured
-        // audible arrival times.
-        constexpr float kFastMs[3] = { 60.0f, 131.0f, 189.0f };
-        constexpr float kSlowMs[3] = { 177.0f, 336.0f, 487.0f };
+        // Documented front-panel timing ranges. The calibrated DSP
+        // retains the more precise hosted arrival times internally.
+        constexpr float kFastMs[3] = { 69.0f, 131.0f, 189.0f };
+        constexpr float kSlowMs[3] = { 177.0f, 337.0f, 489.0f };
         // Bottom of the green head-select panel, three equal timing cells.
         constexpr float kCellX[4] =
             { 298.0f, 349.33333f, 400.66667f, 452.0f };
@@ -1359,8 +1460,8 @@ private:
                 dl->AddLine(P(kCellX[i], kStripY0 + 2.0f), P(kCellX[i], kStripY1 - 2.0f),
                             IM_COL32(78, 101, 58, 255), 1.0f * s);
 
-            text(dl, cx, 248.5f, 8.5f,
-                 active ? kColWhiteDim : IM_COL32(140, 154, 126, 255),
+            text(dl, cx, 247.0f, 10.5f,
+                 active ? kColWhiteDim : IM_COL32(159, 171, 146, 255),
                  kLabels[i], 0, active);
 
             char valueText[16];
@@ -1379,15 +1480,15 @@ private:
             {
                 std::snprintf(valueText, sizeof(valueText), "-- ms");
             }
-            regularText(dl, cx, 260, 10.0f,
-                 active ? kColWhite : IM_COL32(150, 164, 136, 255),
+            regularText(dl, cx, 259.5f, 12.0f,
+                 active ? kColWhite : IM_COL32(170, 183, 156, 255),
                  valueText, 0);
         }
     }
 
     bool railToggle(ImDrawList* dl, const char* id, uint32_t param,
                     float cx, const char* label, bool invert = false,
-                    bool stateLamp = true)
+                    float labelCx = -1.0f)
     {
         const bool on = invert ? values[param] < 0.5f : values[param] >= 0.5f;
         const ImVec2 hit0 = P(cx - 39, 292);
@@ -1401,7 +1502,8 @@ private:
             setP(param, nv);
         }
 
-        text(dl, cx, 293.5f, 10.5f, kColRailInk, label, 0, true);
+        text(dl, labelCx >= 0.0f ? labelCx : cx, 292.0f, 12.5f,
+             kColRailInk, label, 0, true);
         const float baseX = cx, baseY = 321.0f;
         dl->AddCircleFilled(P(baseX + 1.0f, baseY + 1.8f), 9.0f * s,
                             IM_COL32(0, 0, 0, 85), 28);
@@ -1420,15 +1522,10 @@ private:
                     IM_COL32(205, 204, 199, 255), 3.2f * s);
         dl->AddCircleFilled(P(ex, ey), 3.2f * s,
                             IM_COL32(225, 224, 219, 255), 18);
-        regularText(dl, cx - 20, 326, 7.5f,
-                    on ? IM_COL32(88, 86, 82, 255) : kColRailInk, "OFF", 0);
-        regularText(dl, cx + 20, 326, 7.5f,
-                    on ? kColRailInk : IM_COL32(88, 86, 82, 255), "ON", 0);
-        if (on && stateLamp)
-        {
-            dl->AddCircleFilled(P(cx + 29, 301), 4.0f * s, kColLedGlow, 16);
-            dl->AddCircleFilled(P(cx + 29, 301), 2.0f * s, kColLedOn, 12);
-        }
+        regularText(dl, cx - 20, 325.0f, 9.5f,
+                    on ? IM_COL32(70, 68, 65, 255) : kColRailInk, "OFF", 0);
+        regularText(dl, cx + 20, 325.0f, 9.5f,
+                    on ? kColRailInk : IM_COL32(70, 68, 65, 255), "ON", 0);
         return ImGui::IsItemClicked();
     }
 
@@ -1442,58 +1539,47 @@ private:
                     IM_COL32(246, 244, 235, 100), 1.0f * s);
         dl->AddLine(P(0, 339), P(kDesignW, 339),
                     IM_COL32(20, 20, 20, 180), 1.0f * s);
-        for (float x : { 172.0f, 328.0f, 490.0f, 646.0f, 775.0f })
+        for (float x : { 225.0f, 450.0f, 675.0f })
             dl->AddLine(P(x, 295), P(x, 336),
                         IM_COL32(48, 47, 45, 110), 1.0f * s);
 
-        railToggle(dl, "##rail_input", kParamInputSend, 92, "INPUT SEND");
-        railToggle(dl, "##rail_solo", kParamWetSolo, 250, "WET SOLO");
-        railToggle(dl, "##rail_sync", kParamTempoSync, 397, "TEMPO SYNC");
+        railToggle(dl, "##rail_input", kParamInputSend, 112.5f, "RECORD INPUT");
+        railToggle(dl, "##rail_sync", kParamTempoSync, 285, "TEMPO SYNC",
+                   false, 337.5f);
 
-        // A tiny electromechanical-style division window gives sync state an
-        // always-visible musical value while leaving the rate knob as the editor.
-        dl->AddRectFilled(P(443, 306), P(482, 331),
+        // Electromechanical-style readouts keep the current sync and tape states
+        // visible without requiring hover or opening a parameter menu.
+        dl->AddRectFilled(P(355, 307), P(425, 332),
                           IM_COL32(12, 20, 10, 255), 2.0f * s);
-        dl->AddRect(P(443, 306), P(482, 331),
+        dl->AddRect(P(355, 307), P(425, 332),
                     IM_COL32(53, 58, 49, 255), 2.0f * s, 0, 1.1f * s);
-        regularText(dl, 462.5f, 312.5f, 10.0f,
+        regularText(dl, 390, 312.5f, 11.0f,
                     values[kParamTempoSync] > 0.5f
                         ? IM_COL32(136, 230, 102, 255)
-                        : IM_COL32(65, 82, 57, 255),
+                        : IM_COL32(107, 130, 91, 255),
                     values[kParamTempoSync] > 0.5f
                         ? kSyncDivisions[divIndex()].name : "FREE", 0);
 
-        // Loop splice remains momentary and is deliberately a pushbutton, not a
-        // latching toggle, so its physical form communicates its behavior.
-        const ImVec2 sp0 = P(520, 294), sp1 = P(616, 338);
-        ImGui::SetCursorScreenPos(sp0);
-        ImGui::InvisibleButton("##rail_splice", ImVec2(sp1.x - sp0.x, sp1.y - sp0.y));
-        const bool pressed = ImGui::IsItemActive();
-        if (ImGui::IsItemClicked())
-        {
-            editParameter(kParamLoopSplice, true);
-            setParameterValue(kParamLoopSplice, 1.0f);
-            loopSpliceReleasePending = true;
-        }
-        text(dl, 568, 293.5f, 10.5f, kColRailInk, "LOOP SPLICE", 0, true);
-        dl->AddCircleFilled(P(568, 321.5f), 10.0f * s,
-                            IM_COL32(55, 54, 52, 255), 28);
-        dl->AddCircleFilled(P(568, pressed ? 322.5f : 320.5f), 7.2f * s,
-                            pressed ? IM_COL32(127, 46, 35, 255)
-                                    : IM_COL32(33, 33, 32, 255), 26);
-        dl->AddCircle(P(568, 320.5f), 7.2f * s,
-                      IM_COL32(211, 208, 198, 100), 26, 0.9f * s);
-
-        // Tape Age stays a sound control, but its smaller rail treatment correctly
-        // ranks it below Repeat/Intensity/Echo while keeping it always available.
-        text(dl, 710, 293.5f, 10.5f, kColRailInk, "TAPE AGE", 0, true);
-        knob("rail_age", kParamTapeAge, 0.0f, 1.0f, 710, 321, 13.5f,
-             false, false, "%.0f", "%", 100.0f, 0.0f, false, true, nullptr,
-             "Tape wear, hiss and transport instability");
+        // Three replaceable-cartridge conditions are exposed rather than a
+        // continuous wear percentage.
+        text(dl, 562.5f, 292.0f, 12.5f, kColRailInk, "TAPE AGE", 0, true);
+        const char* const ageText = values[kParamTapeAge] < 0.25f
+                                  ? "NEW"
+                                  : (values[kParamTapeAge] < 0.75f
+                                        ? "USED" : "OLD");
+        knob("rail_age", kParamTapeAge, 0.0f, 1.0f, 515, 321, 13.5f,
+             false, false, "%.0f", "", 1.0f, 0.0f, false, true, ageText);
+        dl->AddRectFilled(P(550, 307), P(625, 332),
+                          IM_COL32(12, 20, 10, 255), 2.0f * s);
+        dl->AddRect(P(550, 307), P(625, 332),
+                    IM_COL32(53, 58, 49, 255), 2.0f * s, 0, 1.1f * s);
+        regularText(dl, 587.5f, 312.5f, 11.0f,
+                    IM_COL32(196, 215, 178, 255), ageText, 0);
 
         const bool on = values[kParamBypass] < 0.5f;
-        railToggle(dl, "##rail_power", kParamBypass, 828, "POWER", true, false);
-        led(dl, 862, 319, on, 5.0f);
+        railToggle(dl, "##rail_power", kParamBypass, 770, "POWER",
+                   true, 787.5f);
+        led(dl, 828, 319, on, 5.0f);
     }
 
     int divIndex() const
@@ -1523,6 +1609,7 @@ private:
     float  values[kParamCount] = {};
     float  needlePos = 0.0f;
     float  meterLevel = 0.0f;
+    float  peakLevel = 0.0f;
     int    currentPreset = -1;
     std::string currentUserName;   // display name of the active user preset
     std::string currentUserPath;   // stable identity of the active user preset
@@ -1531,10 +1618,10 @@ private:
     struct UserPreset { std::string name, path; float vals[kParamCount]; };
     std::vector<UserPreset> userPresets;
     char   saveBuf[64] = {};
+    bool   saveFailed = false;      // last SAVE wrote nothing; dialog stays open
 
     bool   showSupporters = false;
     bool   gripCursorSet = false;   // NWSE cursor currently pushed to the window
-    bool   loopSpliceReleasePending = false;
     float  s = 1.0f;
     ImVec2 org = ImVec2(0, 0);
 

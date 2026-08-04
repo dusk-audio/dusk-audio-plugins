@@ -180,13 +180,19 @@ public:
         if (next > 0.5f && previous <= 0.5f)
             pClearRequest.fetch_add(1u, std::memory_order_relaxed);
     }
-    void setTapeAge(float v01) noexcept           { pTapeAge.store(clamp01(v01), std::memory_order_relaxed); }   // 0 = fresh (bit-identical); worn tape: hiss, extra wow, HF loss, level wobble
+    void setTapeAge(float v01) noexcept
+    {
+        // The three cartridge states use normalized 0/.5/1 host values so
+        // existing sessions and decoded reference states retain their meaning.
+        const float snapped = 0.5f * std::round(2.0f * clamp01(v01));
+        pTapeAge.store(snapped, std::memory_order_relaxed);
+    }
     void setOutputVolume(float v01) noexcept      { pOutputVolume.store(clamp01(v01), std::memory_order_relaxed); }
     void setEchoPan(float v01) noexcept           { pEchoPan.store(clamp01(v01), std::memory_order_relaxed); }
     void setReverbPan(float v01) noexcept         { pReverbPan.store(clamp01(v01), std::memory_order_relaxed); }
     void setInputSend(bool enabled) noexcept      { pInputSend.store(enabled ? 1.0f : 0.0f, std::memory_order_relaxed); }
     void setWetSolo(bool enabled) noexcept        { pWetSolo.store(enabled ? 1.0f : 0.0f, std::memory_order_relaxed); }
-    void triggerLoopSplice() noexcept             { pSpliceTrigger.fetch_add(1u, std::memory_order_relaxed); }
+    void setMix(float v01) noexcept               { pMix.store(clamp01(v01), std::memory_order_relaxed); }
 
     // The motor control is intentionally nonlinear. The inverse is used by
     // tempo sync so a requested musical delay still lands at the right time.
@@ -194,9 +200,11 @@ public:
     static float repeatRateForDelayMs(float delayMs) noexcept;
 
     //--- metering (thread-safe: read from any thread) --------------------------
-    // Peak output level with ~300 ms release, linear [0, ~3]. For VU/peak UI.
-    // Reads 0 while bypassed (a powered-off meter is a dead meter).
-    float getOutputLevel() const noexcept         { return outputPeak.load(std::memory_order_relaxed); }
+    // The meter is in the record path after Input Volume. It remains live when
+    // Input Send is muted and also sees feedback immediately before the tape
+    // record chain. Both readings are dead while POWER is off.
+    float getRecordVuLevel() const noexcept       { return recordVu.load(std::memory_order_relaxed); }
+    float getRecordPeakLevel() const noexcept     { return recordPeak.load(std::memory_order_relaxed); }
 
 private:
     //--- helpers -------------------------------------------------------------
@@ -389,8 +397,13 @@ private:
     double fs         = 44100.0;
 
     //--- metering ---------------------------------------------------------------
-    std::atomic<float> outputPeak { 0.0f };
-    float meterDecayPerSample = 1.0f;
+    std::atomic<float> recordVu { 0.0f };
+    std::atomic<float> recordPeak { 0.0f };
+    float meterVu = 0.0f;
+    float meterPeak = 0.0f;
+    float meterVuAttackCoeff = 1.0f;
+    float meterVuReleaseCoeff = 1.0f;
+    float meterPeakDecayPerSample = 1.0f;
     float recordEnvelopeAttack = 1.0f;
     float recordEnvelopeRelease = 1.0f;
 
@@ -438,6 +451,16 @@ private:
     OnePoleLP   flutterBandLP;                    // steepens the upper skirt
     uint32_t    flutterRngState = 0x2545F491u;
 
+    // Every modulator here is white noise through a fixed-Hz filter, whose
+    // output RMS scales as sqrt(fc / fs) -- i.e. the SAME filter fed the SAME
+    // noise gets quieter as the sample rate rises (measured: 0.707x at 96 kHz,
+    // 0.500x at 192 kHz). All four depths were voiced against the reference at
+    // 48 kHz, so without this the wow/flutter/hiss specs would only hold there.
+    // Pre-scaling the noise by sqrt(fs / 48k) restores the calibrated RMS at
+    // any rate. Exactly 1.0f at 48 kHz, so the calibrated path is bit-identical.
+    static constexpr double kNoiseCalibrationFs = 48000.0;
+    float noiseRateComp = 1.0f;
+
     float frand() noexcept  // uniform [-1, 1)
     {
         rngState = rngState * 1664525u + 1013904223u;
@@ -468,7 +491,7 @@ private:
     std::atomic<float> pReverbPan   { 0.5f };
     std::atomic<float> pInputSend   { 1.0f };
     std::atomic<float> pWetSolo     { 0.0f };
-    std::atomic<uint32_t> pSpliceTrigger { 0u };
+    std::atomic<float> pMix         { 0.5f };
     std::atomic<uint32_t> pClearRequest { 0u };
 
     //--- smoothed control signals ----------------------------------------------
@@ -480,6 +503,7 @@ private:
     SmoothedValue outputVolumeSmoother;
     SmoothedValue echoPanSmoother, reverbPanSmoother;
     SmoothedValue inputSendSmoother, wetSoloSmoother;
+    SmoothedValue mixSmoother;
     SmoothedValue driveSmoother, wowFlutterSmoother;
     SmoothedValue powerSmoother;                 // bypass crossfade, click-free
     SmoothedValue ageSmoother;                   // tape age morph
@@ -491,7 +515,6 @@ private:
     OnePoleLP wobbleLP;                           // slow playback-level wobble
     float     lastPlaybackCutoff = -1.0f;         // block-rate speed/age guard
     float     lastAntiAliasCutoff = -1.0f;
-    uint32_t  lastSpliceTrigger = 0u;
     uint32_t  lastClearRequest = 0u;
     float     spliceSamplesToHead1 = 0.0f;
     bool      spliceClockStarted = false;

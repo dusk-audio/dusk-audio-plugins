@@ -120,8 +120,18 @@ private:
 
     //==========================================================================
     // Active notes tracking
-    std::vector<int> activeNotes;
-    mutable juce::SpinLock notesLock;
+    std::array<std::atomic<uint64_t>, 2> activeNoteWords{
+        std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0} };
+
+    struct PendingAnalysis
+    {
+        std::array<uint64_t, 2> noteWords{};
+        double timeSec = 0.0;
+    };
+    static constexpr size_t analysisQueueCapacity = 64;
+    std::array<PendingAnalysis, analysisQueueCapacity> analysisQueue{};
+    std::atomic<size_t> analysisQueueWrite{0};
+    std::atomic<size_t> analysisQueueRead{0};
 
     //==========================================================================
     // Current analysis (atomic for thread-safe UI access)
@@ -129,7 +139,7 @@ private:
     ChordInfo currentChord;
     std::vector<ChordSuggestion> currentSuggestions;
 
-    // Ring buffer (preallocated, no reallocation on the audio thread).
+    // Ring buffer (preallocated, no reallocation while publishing analysis).
     // historyHead is the next write slot; historyCount is the number of
     // valid entries (0..maxHistorySize). Logical order is oldest..newest
     // = chordHistory[(historyHead - historyCount + N) % N .. historyHead).
@@ -154,7 +164,7 @@ private:
     //==========================================================================
     // Sustain pedal (CC 64) state — audio-thread only, mutated in processMidiInput.
     bool sustainPedalDown = false;
-    std::vector<int> sustainedReleasedNotes;  // notes released while pedal was down
+    std::array<uint64_t, 2> sustainedReleasedWords{};
 
     //==========================================================================
     // Timing
@@ -165,8 +175,7 @@ private:
     // std::atomic<double>::fetch_add isn't available until C++20, but
     // load+store is fine here because there's only one writer thread.
     std::atomic<double> currentTimeSec{0.0};
-    double lastAnalysisTime = 0.0;
-    static constexpr double analysisIntervalSec = 0.05;  // 50ms debounce
+    std::atomic<bool> analysisDirty{true};
 
     //==========================================================================
     // Recording
@@ -174,9 +183,21 @@ private:
 
     //==========================================================================
     void processMidiInput(const juce::MidiBuffer& midi);
+    // Clears every piece of note/pedal timeline state. Shared by prepareToPlay
+    // (so a re-prepare starts clean) and releaseResources (so a stopped
+    // instance cannot retain held notes or a stuck pedal).
+    void resetNoteState() noexcept;
+    bool activateNote(int note) noexcept;
+    bool deactivateNote(int note) noexcept;
+    std::array<uint64_t, 2> snapshotActiveNoteWords() const noexcept;
+    static std::vector<int> notesFromWords(const std::array<uint64_t, 2>& words);
+    std::vector<int> snapshotActiveNotes() const;
+    bool enqueueAnalysisSnapshot(double timeSec) noexcept;
+    bool dequeueAnalysisSnapshot(PendingAnalysis& snapshot) noexcept;
     void updateAnalysis();
-    void stageDetectedChord(const ChordInfo& chord);   // audio thread: store atomic snapshot
-    void timerCallback() override;                     // message thread: publish to host params
+    void updateAnalysis(const PendingAnalysis& snapshot);
+    void stageDetectedChord(const ChordInfo& chord);   // message thread: stage host values
+    void timerCallback() override;                     // message thread: analyze and publish
 
     //==========================================================================
     // Cached pointers to output parameters (populated in ctor).
@@ -185,9 +206,9 @@ private:
     juce::AudioParameterChoice* detectedBassParam = nullptr;
     juce::AudioParameterChoice* detectedInversionParam = nullptr;
 
-    // Atomic snapshot of detection results, written from the audio thread and
-    // published to the host on the message thread (Reaper and others don't
-    // refresh their parameter display from audio-thread setValueNotifyingHost).
+    // Atomic snapshot of detection results, published to the host by the timer
+    // (Reaper and others don't refresh their generic parameter display from
+    // direct background-thread writes).
     std::atomic<int>  pendingRootIndex{0};
     std::atomic<int>  pendingQualityIndex{0};
     std::atomic<int>  pendingBassIndex{0};
