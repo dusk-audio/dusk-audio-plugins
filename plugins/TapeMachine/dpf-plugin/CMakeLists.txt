@@ -44,4 +44,4 @@ target_compile_definitions(tape_machine_2 PUBLIC
     TM2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     TM2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
-dusk_dpf_install_local(tape_machine_2)
+dusk_dpf_install_local(tape_machine_2 LV2_PROGRAMS)

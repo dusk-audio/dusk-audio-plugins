@@ -134,6 +134,15 @@ static inline int teSweepPosForDivision(int division) noexcept
     return 0;
 }
 
+// New/Used/Old are the exact normalized half-step values used by the DSP,
+// plugin cache, and UI cache.
+static inline float teQuantizeTapeAge(float value) noexcept
+{
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    return value < 0.25f ? 0.0f : (value < 0.75f ? 0.5f : 1.0f);
+}
+
 // Per-parameter descriptor used by the UI: `id` is the DPF parameter symbol
 // (see TapeEchoPlugin::initParameter) and doubles as the key written into user
 // preset files, so it must stay in step with the symbols there. min/max/def

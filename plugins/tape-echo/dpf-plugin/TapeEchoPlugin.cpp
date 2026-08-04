@@ -214,7 +214,7 @@ protected:
                  || index == kParamWetSolo)
             value = value >= 0.5f ? 1.0f : 0.0f;
         if (index == kParamTapeAge)
-            value = 0.5f * std::round(2.0f * value);
+            value = teQuantizeTapeAge(value);
         values[index].store(value, std::memory_order_relaxed);
         switch (index)
         {
@@ -302,11 +302,8 @@ protected:
             // The selected note belongs to the first active playback head.
             // Convert it back to the equivalent head-1 motor time before
             // clamping to the physical transport range.
-            double leadingHeadRatio = 1.0;
-            if (mode == 2 || mode == 4 || mode == 6 || mode == 9)
-                leadingHeadRatio = duskaudio::TapeEchoDSP::kHeadRatio[1];
-            else if (mode == 3 || mode == 7)
-                leadingHeadRatio = duskaudio::TapeEchoDSP::kHeadRatio[2];
+            const double leadingHeadRatio =
+                duskaudio::TapeEchoDSP::leadingHeadRatioForMode(mode);
             const double requestedMs = syncDelayMs(lastBpm,
                 (int)(values[kParamSyncDivision].load(std::memory_order_relaxed) + 0.5f));
             const double requestedHead1Ms = requestedMs / leadingHeadRatio;

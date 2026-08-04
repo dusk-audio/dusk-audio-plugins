@@ -290,6 +290,7 @@ jobs:
 
       - name: Validate LV2 metadata and discovery (gate)
         working-directory: ${{ env.PLUGIN_DIR }}
+        shell: bash
         run: |
           set -o pipefail
           LV2_BUNDLE="build/bin/${PLUGIN_BASE}.lv2"

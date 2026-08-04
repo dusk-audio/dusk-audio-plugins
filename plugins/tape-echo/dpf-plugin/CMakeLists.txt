@@ -49,7 +49,7 @@ target_compile_definitions(tape_echo PUBLIC
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
-dusk_dpf_install_local(tape_echo)
+dusk_dpf_install_local(tape_echo LV2_PROGRAMS)
 
 if(NOT CMAKE_CROSSCOMPILING)
     # enable_testing() + add_test() are what make this reachable from ctest.
@@ -64,4 +64,15 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp")
     target_compile_features(TapeEchoCoreTest PRIVATE cxx_std_17)
     add_test(NAME TapeEchoCore COMMAND TapeEchoCoreTest)
+
+    find_program(DUSK_SERDI_EXECUTABLE serdi)
+    if(DUSK_SERDI_EXECUTABLE)
+        add_test(NAME DuskFixLv2Presets
+            COMMAND ${CMAKE_COMMAND}
+                "-DFIX_SCRIPT=${DUSK_SHARED_DPF_CMAKE_DIR}/DuskFixLv2Presets.cmake"
+                "-DFIXTURE=${DUSK_SHARED_DPF_CMAKE_DIR}/tests/fixtures/dpf-malformed-presets.ttl"
+                "-DSERDI_EXECUTABLE=${DUSK_SERDI_EXECUTABLE}"
+                "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lv2-preset-repair-test"
+                -P "${DUSK_SHARED_DPF_CMAKE_DIR}/tests/DuskFixLv2PresetsTest.cmake")
+    endif()
 endif()

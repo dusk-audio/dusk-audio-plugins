@@ -1,10 +1,10 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <array>
-#include <atomic>
 #include "ChordAnalyzer.h"
 #include "ChordRecorder.h"
+#include <array>
+#include <atomic>
 
 //==============================================================================
 class ChordAnalyzerProcessor : public juce::AudioProcessor,

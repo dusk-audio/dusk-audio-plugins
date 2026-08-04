@@ -728,7 +728,7 @@ private:
         case kParamSyncDivision:
             return std::round(v);
         case kParamTapeAge:
-            return 0.5f * std::round(2.0f * v);
+            return teQuantizeTapeAge(v);
         // All four booleans use the SAME threshold the plugin applies in
         // setParameterValue (>= 0.5f). They previously disagreed for Bypass and
         // Tempo Sync (> 0.5f here), so an incoming exact 0.5 latched ON in the

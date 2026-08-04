@@ -97,6 +97,15 @@ namespace
     constexpr float kDcBlockerCutoffHz = 19.122506f;
 }
 
+float TapeEchoDSP::leadingHeadRatioForMode(int mode1to12) noexcept
+{
+    const auto& mode = kModeTable[clampInt(mode1to12, 1, kNumModes) - 1];
+    if (mode.h1 > 0.0f) return kHeadRatio[0];
+    if (mode.h2 > 0.0f) return kHeadRatio[1];
+    if (mode.h3 > 0.0f) return kHeadRatio[2];
+    return 1.0f;
+}
+
 //==============================================================================
 // Oversampled preamp — halfband taps now shared (plugins/shared-dpf/dsp/
 // DuskOversampler.hpp, duskaudio::hbtaps::kA/kB; scipy remez, identical values).

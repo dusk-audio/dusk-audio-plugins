@@ -441,11 +441,26 @@ bool FourKEQ::isBusesLayoutSupported(const BusesLayout& layouts) const
 //==============================================================================
 void FourKEQ::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
 {
+    juce::ScopedNoDenormals noDenormals;
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
-    const int scratchCapacity = doublePrecisionScratchCapacity;
     if (numSamples <= 0)
         return;
+
+    const auto totalNumInputChannels = getTotalNumInputChannels();
+    const auto totalNumOutputChannels = getTotalNumOutputChannels();
+    for (auto ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
+        buffer.clear(ch, 0, numSamples);
+
+    if (!paramsValid)
+        return;
+    if (bypassParam && bypassParam->load() > 0.5f)
+    {
+        setLatencySamples(0);
+        return;
+    }
+
+    const int scratchCapacity = doublePrecisionScratchCapacity;
     if (numChannels > doublePrecisionScratchChannels
         || scratchCapacity <= 0)
     {

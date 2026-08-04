@@ -52,7 +52,7 @@ DPF-based tape processing with distinct tracking and mastering deck models:
 - American head-width, crosstalk, transport, and transformer controls
 - Four-band Advanced reproduce EQ and 20 calibrated factory presets
 - Fixed, fitted 2x nonlinear core
-- macOS AU/VST3/CLAP/LV2 universal builds (ad-hoc signed, not notarized), Linux VST3/CLAP/LV2 builds (x64 and ARM64), and Windows VST3/CLAP builds
+- macOS AU/VST3/CLAP/LV2 universal builds (ad-hoc signed and not notarized by default), Linux VST3/CLAP/LV2 builds (x64 and ARM64), and Windows VST3/CLAP builds
 
 See the [TapeMachine 2 README](plugins/TapeMachine/README.md) and [manual](manuals/tapemachine-2.md).
 

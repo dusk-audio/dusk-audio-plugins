@@ -117,13 +117,18 @@ platforms. It accepts mono or stereo program material and produces stereo
 output. Tempo Sync requires a host that supplies a valid tempo; 120 BPM is used
 as a safe fallback when tempo information is unavailable.
 
-macOS builds are ad-hoc signed rather than notarized. The first time a
-downloaded build is loaded, Gatekeeper may report that it cannot verify the
+By default, macOS builds are ad-hoc signed and are not notarized. The first time
+a downloaded build is loaded, Gatekeeper may report that it cannot verify the
 developer. Approve the plugin once under System Settings > Privacy & Security
 ("Open Anyway"), or remove the quarantine attribute from the installed bundle
 in Terminal, for example: `xattr -dr com.apple.quarantine
 ~/Library/Audio/Plug-Ins/Components/tape_echo.component`. Rescan or restart the
 host afterward; Logic Pro users should re-run the Audio Unit scan.
+
+When `MACOS_SIGNING_ENABLED=true` and the required Apple signing and
+notarization secrets are configured, the release workflow instead produces
+Developer ID signed and notarized AU, VST3, and CLAP bundles. The LV2 bundle is
+Developer ID signed but is not submitted for notarization.
 
 Parameter IDs from the 0.1 series are preserved. Mix was appended after all
 previously shipped IDs. The former Dry Level and Wet Solo parameters retain

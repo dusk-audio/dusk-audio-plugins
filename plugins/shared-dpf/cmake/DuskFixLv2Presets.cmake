@@ -9,20 +9,36 @@
 if(NOT DEFINED PRESETS_FILE OR PRESETS_FILE STREQUAL "")
     message(FATAL_ERROR "PRESETS_FILE is required")
 endif()
+if(NOT DEFINED EXPECT_PRESETS)
+    message(FATAL_ERROR "EXPECT_PRESETS is required")
+endif()
 if(NOT EXISTS "${PRESETS_FILE}")
-    # Plugins without programs legitimately do not emit presets.ttl.
-    return()
+    if(EXPECT_PRESETS)
+        message(FATAL_ERROR
+            "${PRESETS_FILE} is missing for an LV2 target that provides programs")
+    else()
+        # Plugins without host programs legitimately do not emit presets.ttl.
+        return()
+    endif()
 endif()
 
 file(READ "${PRESETS_FILE}" _dusk_lv2_presets)
-set(_dusk_bad_boundary "    ] .\n\n    [\n")
-set(_dusk_fixed_boundary "    ] ,\n    [\n")
-string(FIND "${_dusk_lv2_presets}" "${_dusk_bad_boundary}" _dusk_bad_index)
+string(REPLACE "\r\n" "\n" _dusk_lv2_presets "${_dusk_lv2_presets}")
+string(REPLACE "\r" "\n" _dusk_lv2_presets "${_dusk_lv2_presets}")
 
-if(NOT _dusk_bad_index EQUAL -1)
-    string(REPLACE
-        "${_dusk_bad_boundary}"
-        "${_dusk_fixed_boundary}"
+# Token-level form of the invalid non-terminal list boundary. Correct preset
+# resources end with `] .` followed by the next preset URI; only the exporter
+# bug produces `] .` followed by another anonymous port node (`[`). Match the
+# tokens independently of indentation, blank lines, or line endings.
+set(_dusk_bad_boundary_regex "\\][ \t\n]*\\.[ \t\n]*\\[")
+string(REGEX MATCH "${_dusk_bad_boundary_regex}" _dusk_bad_boundary
+    "${_dusk_lv2_presets}")
+
+if(NOT _dusk_bad_boundary STREQUAL ""
+   AND (NOT DEFINED DUSK_LV2_REPAIR OR DUSK_LV2_REPAIR))
+    string(REGEX REPLACE
+        "${_dusk_bad_boundary_regex}"
+        "] ,\n    ["
         _dusk_lv2_presets
         "${_dusk_lv2_presets}")
     file(WRITE "${PRESETS_FILE}" "${_dusk_lv2_presets}")
@@ -31,7 +47,10 @@ endif()
 
 # Refuse to package a file that still contains the known malformed boundary.
 file(READ "${PRESETS_FILE}" _dusk_lv2_verified)
-string(FIND "${_dusk_lv2_verified}" "${_dusk_bad_boundary}" _dusk_remaining)
-if(NOT _dusk_remaining EQUAL -1)
+string(REPLACE "\r\n" "\n" _dusk_lv2_verified "${_dusk_lv2_verified}")
+string(REPLACE "\r" "\n" _dusk_lv2_verified "${_dusk_lv2_verified}")
+string(REGEX MATCH "${_dusk_bad_boundary_regex}" _dusk_remaining
+    "${_dusk_lv2_verified}")
+if(NOT _dusk_remaining STREQUAL "")
     message(FATAL_ERROR "Malformed LV2 preset port-list boundary remains in ${PRESETS_FILE}")
 endif()

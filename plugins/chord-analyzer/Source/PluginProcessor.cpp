@@ -42,7 +42,7 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
 
     // Quality choices: index 0 = "-" (no chord). Indices 1..N follow ChordQuality
     // enum order — keep these in sync if the enum is ever reordered.
-    const juce::StringArray qualityChoices{
+    static constexpr const char* qualityChoiceLabels[]{
         "-",
         "maj", "m", "dim", "aug",
         "7", "maj7", "m7", "mMaj7", "dim7", "m7b5", "aug7", "augMaj7",
@@ -54,6 +54,13 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
         "maj13", "m13", "13",
         "5",
         "7b5", "7#5", "7b9", "7#9" };
+    constexpr int qualityChoiceCount =
+        static_cast<int>(sizeof(qualityChoiceLabels) / sizeof(qualityChoiceLabels[0]));
+    static_assert(qualityChoiceCount
+                      == static_cast<int>(ChordQuality::Unknown) + 1,
+                  "Detected-quality choices must match ChordQuality enum order");
+    const juce::StringArray qualityChoices(
+        qualityChoiceLabels, qualityChoiceCount);
 
     const juce::StringArray inversionChoices{ "-", "Root", "1st", "2nd", "3rd" };
 
@@ -225,6 +232,8 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                            juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
+    if (buffer.getNumSamples() == 0)
+        return;
 
 #if CHORD_ANALYZER_MIDI_MODE
     // MIDI-only mode: no audio buses (buffer is empty)
@@ -490,8 +499,13 @@ void ChordAnalyzerProcessor::stageDetectedChord(const ChordInfo& chord)
                                   ? chord.rootNote + 1 : 0;
     const int bassIndex      = (chord.isValid && chord.bassNote >= 0 && chord.bassNote < 12)
                                   ? chord.bassNote + 1 : 0;
-    const int qualityIndex   = (chord.isValid && chord.quality != ChordQuality::Unknown)
-                                  ? static_cast<int>(chord.quality) + 1 : 0;
+    const int rawQualityIndex =
+        (chord.isValid && chord.quality != ChordQuality::Unknown)
+            ? static_cast<int>(chord.quality) + 1 : 0;
+    const int maxQualityIndex = detectedQualityParam != nullptr
+        ? std::max(0, detectedQualityParam->choices.size() - 1) : 0;
+    const int qualityIndex = juce::jlimit(
+        0, maxQualityIndex, rawQualityIndex);
     const int inversionIndex = chord.isValid
                                   ? juce::jlimit(0, 4, chord.inversion + 1) : 0;
 

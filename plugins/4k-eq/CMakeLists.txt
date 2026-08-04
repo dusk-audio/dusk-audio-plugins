@@ -142,3 +142,32 @@ set_target_properties(FourKEQ PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(FourKEQDoubleBypassTest
+        tests/FourKEQDoubleBypassTest.cpp)
+    target_include_directories(FourKEQDoubleBypassTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/FourKEQ_artefacts/JuceLibraryCode)
+    target_compile_definitions(FourKEQDoubleBypassTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1)
+    target_compile_features(FourKEQDoubleBypassTest PRIVATE cxx_std_17)
+    target_link_libraries(FourKEQDoubleBypassTest PRIVATE
+        FourKEQ
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    add_test(NAME FourKEQDoubleBypass COMMAND FourKEQDoubleBypassTest)
+endif()

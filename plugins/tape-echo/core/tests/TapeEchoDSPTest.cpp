@@ -17,7 +17,13 @@ struct MeterResult
     float peak = 0.0f;
 };
 
-MeterResult renderWithBlockSize(int blockSize)
+struct RenderResult
+{
+    MeterResult meter;
+    bool zeroBlockStable = false;
+};
+
+RenderResult renderWithBlockSize(int blockSize)
 {
     duskaudio::TapeEchoDSP dsp;
     dsp.prepare(kSampleRate, blockSize);
@@ -47,23 +53,62 @@ MeterResult renderWithBlockSize(int blockSize)
     const float* inputs[] = { input[0].data(), input[1].data() };
     float* outputs[] = { output[0].data(), output[1].data() };
     dsp.processBlock(inputs, outputs, 2, 0);
-    if (dsp.getRecordPeakLevel() != peakBeforeZeroBlock)
-        return {};
-
-    return { dsp.getRecordVuLevel(), dsp.getRecordPeakLevel() };
+    return {
+        { dsp.getRecordVuLevel(), dsp.getRecordPeakLevel() },
+        dsp.getRecordPeakLevel() == peakBeforeZeroBlock };
 }
 
 bool approximatelyEqual(float a, float b) noexcept
 {
     return std::abs(a - b) <= 1.0e-6f * std::max(1.0f, std::max(std::abs(a), std::abs(b)));
 }
+
+std::vector<float> renderAtMix(float mix)
+{
+    constexpr int renderSamples = 8192;
+    constexpr int blockSize = 64;
+    duskaudio::TapeEchoDSP dsp;
+    dsp.setMix(mix);
+    dsp.setRepeatRate(1.0f);
+    dsp.prepare(kSampleRate, blockSize);
+
+    std::array<std::vector<float>, 2> input{
+        std::vector<float>(renderSamples, 0.0f),
+        std::vector<float>(renderSamples, 0.0f) };
+    std::array<std::vector<float>, 2> output{
+        std::vector<float>(renderSamples, 0.0f),
+        std::vector<float>(renderSamples, 0.0f) };
+    input[0][0] = 0.5f;
+    input[1][0] = 0.5f;
+
+    for (int offset = 0; offset < renderSamples; offset += blockSize)
+    {
+        const float* inputs[]{ input[0].data() + offset,
+                              input[1].data() + offset };
+        float* outputs[]{ output[0].data() + offset,
+                          output[1].data() + offset };
+        dsp.processBlock(inputs, outputs, 2, blockSize);
+    }
+    return output[0];
+}
 }
 
 int main()
 {
-    const MeterResult oneSample = renderWithBlockSize(1);
-    const MeterResult smallBlock = renderWithBlockSize(64);
-    const MeterResult wholeRender = renderWithBlockSize(kSamples);
+    const RenderResult oneSampleResult = renderWithBlockSize(1);
+    const RenderResult smallBlockResult = renderWithBlockSize(64);
+    const RenderResult wholeRenderResult = renderWithBlockSize(kSamples);
+    if (!oneSampleResult.zeroBlockStable
+        || !smallBlockResult.zeroBlockStable
+        || !wholeRenderResult.zeroBlockStable)
+    {
+        std::cerr << "zero-length block changed meter state\n";
+        return 1;
+    }
+
+    const MeterResult oneSample = oneSampleResult.meter;
+    const MeterResult smallBlock = smallBlockResult.meter;
+    const MeterResult wholeRender = wholeRenderResult.meter;
 
     const bool peakInvariant = oneSample.peak > 0.0f
         && approximatelyEqual(oneSample.peak, smallBlock.peak)
@@ -112,6 +157,62 @@ int main()
         return 1;
     }
 
-    std::cout << "Tape Echo meter tests passed\n";
+    const auto dryOnly = renderAtMix(0.0f);
+    const auto parallel = renderAtMix(0.5f);
+    const auto wetOnly = renderAtMix(1.0f);
+    bool heardWetPath = false;
+    for (size_t i = 0; i < parallel.size(); ++i)
+    {
+        heardWetPath = heardWetPath || std::abs(wetOnly[i]) > 1.0e-7f;
+        if (!approximatelyEqual(parallel[i], dryOnly[i] + wetOnly[i]))
+        {
+            std::cerr << "setMix(0.5) no longer preserves parallel dry-plus-wet output"
+                      << " at sample " << i << '\n';
+            return 1;
+        }
+    }
+    if (!heardWetPath)
+    {
+        std::cerr << "mix regression did not exercise the wet path\n";
+        return 1;
+    }
+
+    duskaudio::TapeEchoDSP ageCheck;
+    constexpr std::array<std::array<float, 2>, 9> ageCases{{
+        {{ -1.0f, 0.0f }},
+        {{ 0.10f, 0.0f }},
+        {{ 0.249f, 0.0f }},
+        {{ 0.25f, 0.5f }},
+        {{ 0.50f, 0.5f }},
+        {{ 0.749f, 0.5f }},
+        {{ 0.75f, 1.0f }},
+        {{ 0.90f, 1.0f }},
+        {{ 2.0f, 1.0f }} }};
+    for (const auto& testCase : ageCases)
+    {
+        ageCheck.setTapeAge(testCase[0]);
+        if (ageCheck.getTapeAge() != testCase[1])
+        {
+            std::cerr << "setTapeAge(" << testCase[0] << ") produced "
+                      << ageCheck.getTapeAge() << " instead of " << testCase[1]
+                      << '\n';
+            return 1;
+        }
+    }
+
+    constexpr std::array<float, duskaudio::TapeEchoDSP::kNumModes>
+        leadingHeadRatios{
+            1.0f, 1.90f, 2.75f, 1.90f,
+            1.0f, 1.90f, 2.75f, 1.0f,
+            1.90f, 1.0f, 1.0f, 1.0f };
+    for (int mode = 1; mode <= duskaudio::TapeEchoDSP::kNumModes; ++mode)
+        if (duskaudio::TapeEchoDSP::leadingHeadRatioForMode(mode)
+            != leadingHeadRatios[static_cast<size_t>(mode - 1)])
+        {
+            std::cerr << "wrong leading-head ratio for mode " << mode << '\n';
+            return 1;
+        }
+
+    std::cout << "Tape Echo DSP tests passed\n";
     return 0;
 }

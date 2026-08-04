@@ -40,6 +40,7 @@
 #include "DuskSmoothed.hpp"    // SmoothedValue
 #include "DuskFilters.hpp"     // OnePoleLP/HP, DCBlocker, Biquad (shelves)
 #include "DuskOversampler.hpp" // HalfbandFIR, hbtaps::kA/kB
+#include "../dpf-plugin/TapeEchoParams.hpp" // shared discrete-value helpers
 
 namespace duskaudio
 {
@@ -184,8 +185,7 @@ public:
     {
         // The three cartridge states use normalized 0/.5/1 host values so
         // existing sessions and decoded reference states retain their meaning.
-        const float snapped = 0.5f * std::round(2.0f * clamp01(v01));
-        pTapeAge.store(snapped, std::memory_order_relaxed);
+        pTapeAge.store(teQuantizeTapeAge(v01), std::memory_order_relaxed);
     }
     void setOutputVolume(float v01) noexcept      { pOutputVolume.store(clamp01(v01), std::memory_order_relaxed); }
     void setEchoPan(float v01) noexcept           { pEchoPan.store(clamp01(v01), std::memory_order_relaxed); }
@@ -193,11 +193,13 @@ public:
     void setInputSend(bool enabled) noexcept      { pInputSend.store(enabled ? 1.0f : 0.0f, std::memory_order_relaxed); }
     void setWetSolo(bool enabled) noexcept        { pWetSolo.store(enabled ? 1.0f : 0.0f, std::memory_order_relaxed); }
     void setMix(float v01) noexcept               { pMix.store(clamp01(v01), std::memory_order_relaxed); }
+    float getTapeAge() const noexcept             { return pTapeAge.load(std::memory_order_relaxed); }
 
     // The motor control is intentionally nonlinear. The inverse is used by
     // tempo sync so a requested musical delay still lands at the right time.
     static float delayMsForRepeatRate(float v01) noexcept;
     static float repeatRateForDelayMs(float delayMs) noexcept;
+    static float leadingHeadRatioForMode(int mode1to12) noexcept;
 
     //--- metering (thread-safe: read from any thread) --------------------------
     // The meter is in the record path after Input Volume. It remains live when
