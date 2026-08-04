@@ -500,6 +500,8 @@ bool MultiQ::isBusesLayoutSupported(const BusesLayout& layouts) const
 void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
 {
     juce::ScopedNoDenormals noDenormals;
+    if (buffer.getNumSamples() <= 0)
+        return;
 
     // Apply any pending FFT size change (deferred from parameterChanged to avoid data race)
     {
@@ -3115,12 +3117,16 @@ void MultiQ::processFFT()
     std::array<float, 2048> localPeaks = peakHoldValues;
     convertFFTToMagnitudes(slot.inputBuffer, localMags, localPeaks);
 
-    // Short lock to publish results
+    // Never wait for the editor on the audio thread. A skipped analyzer frame is
+    // preferable to delaying audio; the next FFT frame will refresh the display.
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        analyzerMagnitudes = localMags;
-        peakHoldValues = localPeaks;
-        analyzerDataReady.store(true);
+        const juce::SpinLock::ScopedTryLockType lock(analyzerMagnitudesLock);
+        if (lock.isLocked())
+        {
+            analyzerMagnitudes = localMags;
+            peakHoldValues = localPeaks;
+            analyzerDataReady.store(true);
+        }
     }
 }
 
@@ -3154,12 +3160,15 @@ void MultiQ::processPreFFT()
     std::array<float, 2048> localPrePeaks = prePeakHoldValues;
     convertFFTToMagnitudes(slot.preInputBuffer, localPreMags, localPrePeaks);
 
-    // Short lock to publish results
+    // Never wait for the editor on the audio thread (see processFFT()).
     {
-        juce::SpinLock::ScopedLockType lock(preAnalyzerMagnitudesLock);
-        preAnalyzerMagnitudes = localPreMags;
-        prePeakHoldValues = localPrePeaks;
-        preAnalyzerDataReady.store(true);
+        const juce::SpinLock::ScopedTryLockType lock(preAnalyzerMagnitudesLock);
+        if (lock.isLocked())
+        {
+            preAnalyzerMagnitudes = localPreMags;
+            prePeakHoldValues = localPrePeaks;
+            preAnalyzerDataReady.store(true);
+        }
     }
 }
 

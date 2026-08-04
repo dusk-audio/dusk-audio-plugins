@@ -79,11 +79,6 @@ public:
     // Public parameter access for GUI and inline display
     juce::AudioProcessorValueTreeState parameters;
 
-    // Audio buffers for spectrum analyzer (accessed from both audio and UI threads)
-    juce::AudioBuffer<float> spectrumBuffer;      // Post-EQ (default)
-    juce::AudioBuffer<float> spectrumBufferPre;   // Pre-EQ
-    juce::CriticalSection spectrumBufferLock;
-
     // Level meters (thread-safe atomic values for GUI display)
     std::atomic<float> inputLevelL{-96.0f};   // Input level left channel (dBFS)
     std::atomic<float> inputLevelR{-96.0f};   // Input level right channel (dBFS)
@@ -96,6 +91,8 @@ public:
 
 private:
     //==============================================================================
+    void processFloatBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&, bool publishMeters);
+
     // AudioProcessorValueTreeState::Listener implementation
     void parameterChanged(const juce::String& parameterID, float newValue) override
     {
@@ -302,6 +299,9 @@ private:
     double lastPreparedSampleRate = 0.0;
     int lastOversamplingFactor = 0;
     int lastPreparedBlockSize = 0;
+    juce::AudioBuffer<float> doublePrecisionScratch;
+    int doublePrecisionScratchChannels = 0;
+    int doublePrecisionScratchCapacity = 0;
 
     // Validation flags
     bool paramsValid = false;  // Set true only if all critical params initialized

@@ -95,4 +95,4 @@ endif()
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
-dusk_dpf_install_local(sunset_circuits)
+dusk_dpf_install_local(sunset_circuits LV2_PROGRAMS)

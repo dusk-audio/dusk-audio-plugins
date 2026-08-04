@@ -23,6 +23,9 @@
 //   duskverb_render "Lush Dark Hall"
 //   duskverb_render --vst3 ~/.vst3/DuskVerb.vst3 "Vintage Vocal Plate"
 //   duskverb_render --vst2 ~/.vst/yabridge/LexConcertHall.so --program "Concert Hall"
+//   duskverb_render --vst3 plugin.vst3 --program "Preset" --dump-nparams
+//   duskverb_render --vst3 plugin.vst3 --input-wav input.wav \
+//       --nparam-event "Input Send=0@1.0" --legacy-stem-name
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -30,10 +33,14 @@
 #include <juce_events/juce_events.h>
 
 #include <cerrno>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
+#include <string>
 
 namespace
 {
@@ -47,6 +54,53 @@ namespace
     constexpr int    kBlockSize    = 2048;
     constexpr int    kRenderSec    = 6;
     constexpr int    kTotalSamples = static_cast<int> (kSampleRate * kRenderSec);
+    // Silence tail appended after the opt-in long sine tone (Render 4). Shared so
+    // the --long-sine-seconds bound reserves exactly what the render then adds;
+    // reserving less lets sineSamples + tail overflow int.
+    constexpr int    kLongSineTailSamples = static_cast<int> (kSampleRate * 12.0);
+
+    bool parseFiniteDouble (const juce::String& text, double& value) noexcept
+    {
+        const std::string raw = text.trim().toStdString();
+        if (raw.empty())
+            return false;
+        char* end = nullptr;
+        errno = 0;
+        value = std::strtod (raw.c_str(), &end);
+        return end == raw.c_str() + raw.size()
+            && errno == 0 && std::isfinite (value);
+    }
+
+    bool parseInt (const juce::String& text, int& value) noexcept
+    {
+        const std::string raw = text.trim().toStdString();
+        if (raw.empty())
+            return false;
+        char* end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol (raw.c_str(), &end, 10);
+        if (end != raw.c_str() + raw.size() || errno != 0
+            || parsed < std::numeric_limits<int>::min()
+            || parsed > std::numeric_limits<int>::max())
+            return false;
+        value = static_cast<int> (parsed);
+        return true;
+    }
+
+    void printUsage()
+    {
+        std::cout
+            << "Usage: duskverb_render [preset_name] [options]\n"
+            << "  --au|--vst3|--vst2 PATH       Plugin bundle to host\n"
+            << "  --program NAME                Select a factory program\n"
+            << "  --output-dir DIR              Render destination\n"
+            << "  --list-params|--list-programs Inspect the hosted plugin\n"
+            << "  --dump-nparams               Dump normalized parameter values\n"
+            << "  --param NAME=VALUE            Set a displayed parameter value\n"
+            << "  --nparam NAME=VALUE           Set a normalized parameter value\n"
+            << "  --nparam-event NAME=VALUE@SEC Automate at an exact sample\n"
+            << "  --help                        Show this help\n";
+    }
 
     // Default DuskVerb plugin path: per-user install location for the
     // platform's native format. Overridable via --au / --vst3 / --vst2.
@@ -789,13 +843,24 @@ namespace
         }
     }
 
+    struct NormalizedParameterEvent
+    {
+        juce::String parameter;
+        float normalized = 0.0f;
+        int sampleOffset = 0;
+    };
+
     // Render a buffer of input through the plugin in fixed-size blocks.
+    // Optional parameter events split a block at the exact requested sample;
+    // this makes momentary controls and automation testable through the same
+    // hosted wrapper path a DAW uses.
     // The processBlock buffer must have max(totalInputChannels,
     // totalOutputChannels) channels so multi-bus plugins (Arturia LX-24
     // exposes 2 stereo input buses = 4 channels) don't read past the
     // buffer end and segfault.
     juce::AudioBuffer<float> renderThroughPlugin (juce::AudioPluginInstance& plugin,
-                                                   const juce::AudioBuffer<float>& input)
+                                                   const juce::AudioBuffer<float>& input,
+                                                   const std::vector<NormalizedParameterEvent>& events = {})
     {
         const int total      = input.getNumSamples();
         const int inChans    = plugin.getTotalNumInputChannels();
@@ -810,17 +875,35 @@ namespace
         juce::AudioBuffer<float> block (blockChans, kBlockSize);
         juce::MidiBuffer midi;
 
-        for (int pos = 0; pos < total; pos += kBlockSize)
+        int pos = 0;
+        size_t eventIndex = 0;
+        while (pos < total)
         {
-            const int n = std::min (kBlockSize, total - pos);
-            block.clear();
-            for (int ch = 0; ch < copyChans; ++ch)
-                block.copyFrom (ch, 0, input, ch, pos, n);
+            while (eventIndex < events.size()
+                   && events[eventIndex].sampleOffset <= pos)
+            {
+                const auto& event = events[eventIndex++];
+                if (auto* parameter = findParam (plugin, event.parameter))
+                    parameter->setValueNotifyingHost (event.normalized);
+            }
 
-            plugin.processBlock (block, midi);
+            int next = std::min (pos + kBlockSize, total);
+            if (eventIndex < events.size())
+                next = std::min (next, events[eventIndex].sampleOffset);
+            if (next <= pos)
+                continue;
+            const int n = next - pos;
+            juce::AudioBuffer<float> activeBlock (
+                block.getArrayOfWritePointers(), blockChans, n);
+            activeBlock.clear();
+            for (int ch = 0; ch < copyChans; ++ch)
+                activeBlock.copyFrom (ch, 0, input, ch, pos, n);
+
+            plugin.processBlock (activeBlock, midi);
 
             for (int ch = 0; ch < outCopy; ++ch)
-                output.copyFrom (ch, pos, block, ch, 0, n);
+                output.copyFrom (ch, pos, activeBlock, ch, 0, n);
+            pos = next;
         }
         return output;
     }
@@ -869,6 +952,7 @@ int main (int argc, char** argv)
     bool         listParamsOnly   = false;
     bool         listProgramsOnly = false;
     bool         dumpParams       = false;   // --dump-params: emit baked program
+    bool         dumpNParams      = false;   // --dump-nparams: normalized host values
                                              // params as JSON (Optuna warm-start
                                              // seed), then exit before rendering.
     bool         prePrepareApply  = false;
@@ -899,9 +983,15 @@ int main (int argc, char** argv)
     // the preset set. Works against any plugin — DuskVerb, Valhalla, Lex, etc.
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
     std::vector<std::pair<juce::String, juce::String>> nparamOverrides;
+    std::vector<NormalizedParameterEvent> nparamEvents;
     for (int i = 1; i < argc; ++i)
     {
         juce::String a = argv[i];
+        if (a == "--help" || a == "-h")
+        {
+            printUsage();
+            return 0;
+        }
         if      (a == "--au"        && i + 1 < argc) pluginPath   = argv[++i];
         else if (a == "--vst3"      && i + 1 < argc) pluginPath   = argv[++i];
         else if (a == "--vst2"      && i + 1 < argc) pluginPath   = argv[++i];
@@ -913,30 +1003,95 @@ int main (int argc, char** argv)
         else if (a == "--legacy-stem-name")          legacyStemName = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
         else if (a == "--program-index" && i + 1 < argc)
-                                                     programIndex = juce::String (argv[++i]).getIntValue();
+        {
+            if (! parseInt (argv[++i], programIndex) || programIndex < 0)
+            {
+                std::cerr << "Invalid --program-index (expected a non-negative integer)\n";
+                return 2;
+            }
+        }
         else if (a == "--wait-after-load" && i + 1 < argc)
-                                                     waitAfterLoadMs = juce::String (argv[++i]).getIntValue();
+        {
+            if (! parseInt (argv[++i], waitAfterLoadMs) || waitAfterLoadMs < 0)
+            {
+                std::cerr << "Invalid --wait-after-load (expected non-negative milliseconds)\n";
+                return 2;
+            }
+        }
         else if (a == "--per-param-delay-ms" && i + 1 < argc)
-                                                     perParamDelayMs = juce::String (argv[++i]).getIntValue();
+        {
+            if (! parseInt (argv[++i], perParamDelayMs) || perParamDelayMs < 0)
+            {
+                std::cerr << "Invalid --per-param-delay-ms (expected non-negative milliseconds)\n";
+                return 2;
+            }
+        }
         else if (a == "--save-state" && i + 1 < argc) saveStatePath = argv[++i];
         else if (a == "--screenshot" && i + 1 < argc) screenshotPath = argv[++i];
         else if (a == "--sixap-early-hpf" && i + 1 < argc)
-                                                     sixAPEarlyHighpassHz = juce::String (argv[++i]).getFloatValue();
+        {
+            double parsed = 0.0;
+            if (! parseFiniteDouble (argv[++i], parsed)
+                || (parsed < 0.0 && parsed != -1.0)
+                || parsed > std::numeric_limits<float>::max())
+            {
+                std::cerr << "Invalid --sixap-early-hpf (expected -1 or a finite non-negative value)\n";
+                return 2;
+            }
+            sixAPEarlyHighpassHz = static_cast<float> (parsed);
+        }
         else if (a == "--sixap-early-mix" && i + 1 < argc)
-                                                     sixAPEarlyMixOverride = juce::String (argv[++i]).getFloatValue();
+        {
+            double parsed = 0.0;
+            if (! parseFiniteDouble (argv[++i], parsed)
+                || (parsed < 0.0 && parsed != -1.0)
+                || parsed > 1.0)
+            {
+                std::cerr << "Invalid --sixap-early-mix (expected -1 or a value in [0,1])\n";
+                return 2;
+            }
+            sixAPEarlyMixOverride = static_cast<float> (parsed);
+        }
         else if (a == "--load-state" && i + 1 < argc) loadStatePath = argv[++i];
         else if (a == "--list-params")              listParamsOnly   = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
         else if (a == "--dump-params")              dumpParams       = true;
+        else if (a == "--dump-nparams")             dumpNParams      = true;
         else if (a == "--pre-prepare-apply")        prePrepareApply  = true;
         else if (a == "--dry-passthrough-test")     dryPassthroughTest = true;
         else if (a == "--gate-off")                 forceGateOff = true;
         else if (a == "--prerun-seconds" && i + 1 < argc)
-            prerunSeconds = juce::String (argv[++i]).getDoubleValue();
+        {
+            const double maxSeconds = static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
+            if (! parseFiniteDouble (argv[++i], prerunSeconds)
+                || prerunSeconds < 0.0 || prerunSeconds > maxSeconds)
+            {
+                std::cerr << "Invalid --prerun-seconds\n";
+                return 2;
+            }
+        }
         else if (a == "--sustained-pink-seconds" && i + 1 < argc)
-            sustainedPinkSeconds = juce::String (argv[++i]).getDoubleValue();
+        {
+            const double maxSeconds = static_cast<double> (std::numeric_limits<int>::max())
+                                    / (2.0 * kSampleRate);
+            if (! parseFiniteDouble (argv[++i], sustainedPinkSeconds)
+                || sustainedPinkSeconds < 0.0 || sustainedPinkSeconds > maxSeconds)
+            {
+                std::cerr << "Invalid --sustained-pink-seconds\n";
+                return 2;
+            }
+        }
         else if (a == "--long-sine-seconds" && i + 1 < argc)
-            longSineSeconds = juce::String (argv[++i]).getDoubleValue();
+        {
+            const double maxSeconds = static_cast<double> (
+                std::numeric_limits<int>::max() - kLongSineTailSamples) / kSampleRate;
+            if (! parseFiniteDouble (argv[++i], longSineSeconds)
+                || longSineSeconds < 0.0 || longSineSeconds > maxSeconds)
+            {
+                std::cerr << "Invalid --long-sine-seconds\n";
+                return 2;
+            }
+        }
         else if (a == "--param" && i + 1 < argc)
         {
             // Format: NAME=VALUE  (NAME may contain spaces; matches the
@@ -965,10 +1120,60 @@ int main (int argc, char** argv)
             else
                 std::cerr << "  ! ignoring malformed --nparam '" << spec << "' (expected NAME=NORMVALUE)" << std::endl;
         }
+        else if (a == "--nparam-event" && i + 1 < argc)
+        {
+            // Format: NAME=NORMVALUE@SECONDS. The event time is relative to
+            // the start of each rendered stimulus, after preroll.
+            const juce::String spec = argv[++i];
+            const int eq = spec.indexOfChar ('=');
+            const int at = spec.lastIndexOfChar ('@');
+            if (eq > 0 && at > eq + 1 && at < spec.length() - 1)
+            {
+                const juce::String valueText = spec.substring (eq + 1, at).trim();
+                const juce::String timeText = spec.substring (at + 1).trim();
+                double value = 0.0;
+                double seconds = 0.0;
+                // The event time becomes an int sample offset. Bound it here:
+                // llround of an out-of-int-range product would narrow to a
+                // garbage (possibly negative) offset that fires the event at
+                // the wrong sample instead of being rejected as invalid.
+                constexpr double kMaxEventSeconds =
+                    static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
+                if (parseFiniteDouble (valueText, value)
+                    && value >= 0.0 && value <= 1.0
+                    && parseFiniteDouble (timeText, seconds)
+                    && seconds >= 0.0 && seconds <= kMaxEventSeconds)
+                {
+                    nparamEvents.push_back ({
+                        spec.substring (0, eq).trim(),
+                        static_cast<float> (value),
+                        static_cast<int> (std::llround (seconds * kSampleRate))
+                    });
+                }
+                else
+                {
+                    std::cerr << "  ! ignoring invalid --nparam-event '"
+                              << spec << "'" << std::endl;
+                    return 2;
+                }
+            }
+            else
+            {
+                std::cerr << "  ! ignoring malformed --nparam-event '" << spec
+                          << "' (expected NAME=NORMVALUE@SECONDS)" << std::endl;
+                return 2;
+            }
+        }
         else if (! a.startsWith ("--"))
         {
             presetName     = a;
             presetExplicit = true;
+        }
+        else
+        {
+            std::cerr << "Unknown or incomplete option: " << a << "\n";
+            printUsage();
+            return 2;
         }
     }
 
@@ -1012,6 +1217,21 @@ int main (int argc, char** argv)
     {
         std::cerr << "Failed to instantiate plugin: " << error << std::endl;
         return 1;
+    }
+
+    std::stable_sort (
+        nparamEvents.begin(), nparamEvents.end(),
+        [] (const auto& left, const auto& right) {
+            return left.sampleOffset < right.sampleOffset;
+        });
+    for (const auto& event : nparamEvents)
+    {
+        if (findParam (*plugin, event.parameter) == nullptr)
+        {
+            std::cerr << "Parameter event target not found: "
+                      << event.parameter << std::endl;
+            return 1;
+        }
     }
 
     // Build a stereo bus layout that matches the plugin's bus topology.
@@ -1410,7 +1630,38 @@ int main (int argc, char** argv)
             const juce::String text = p->getText (p->getValue(), 100);
             const float raw = text.getFloatValue();   // leading float, 0 if none
             if (! std::isfinite (raw))         continue;
-            std::cout << (first ? "" : ", ") << "\"" << name << "\": " << raw;
+            // Escape the host-provided key exactly like --dump-nparams below.
+            std::cout << (first ? "" : ", ")
+                      << juce::JSON::toString (juce::var (name), true) << ": " << raw;
+            first = false;
+        }
+        std::cout << "}" << std::endl;
+        plugin->releaseResources();
+        return 0;
+    }
+
+    // Normalized counterpart to --dump-params. This is the authoritative
+    // factory-program state audit because it preserves enumerations (whose
+    // display text is non-numeric) and exactly matches --nparam input.
+    if (dumpNParams)
+    {
+        std::cout << std::setprecision (9);
+        std::cout << "{";
+        bool first = true;
+        for (auto* p : plugin->getParameters())
+        {
+            const juce::String name = p->getName (100);
+            if (name.isEmpty())
+                continue;
+            const float normalized = p->getValue();
+            if (! std::isfinite (normalized))
+                continue;
+            // Host-provided names may contain quotes, backslashes or control
+            // characters; JSON::toString emits the properly escaped, quoted key
+            // so the dict stays parseable by the tuner scripts.
+            std::cout << (first ? "" : ", ")
+                      << juce::JSON::toString (juce::var (name), true)
+                      << ": " << normalized;
             first = false;
         }
         std::cout << "}" << std::endl;
@@ -1519,7 +1770,11 @@ int main (int argc, char** argv)
                    : cwd.getChildFile ("duskverb_render_output").getFullPathName();
     }
     juce::File outDir (outDirPath);
-    outDir.createDirectory();
+    if (outDir.createDirectory().failed())
+    {
+        std::cerr << "Failed to create output directory: " << outDirPath << std::endl;
+        return 1;
+    }
     std::cout << "Output directory: " << outDir.getFullPathName() << std::endl;
 
     juce::String defaultSlug = presetName;
@@ -1560,7 +1815,7 @@ int main (int argc, char** argv)
         const int sineSamples = static_cast<int> (kSampleRate * 2.0);
         juce::AudioBuffer<float> input (2, sineSamples);
         fillSineTone (input, kSampleRate, 1000.0, -12.0);
-        auto output = renderThroughPlugin (*plugin, input);
+        auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_drytest.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
@@ -1568,11 +1823,42 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // Snapshot the fully configured parameter state: preset/program + --param /
+    // --nparam overrides + any --gate-off override applied above. --nparam-event
+    // mutates parameters mid-render, so without this every stimulus after the
+    // first would start from the PREVIOUS render's post-event values instead of
+    // the configured baseline. Restored before each later reset + preroll below;
+    // the first (impulse) render still runs straight off the live state.
+    // With no --nparam-event the params never move, so restores issue no host
+    // writes. Captures are NOT byte-identical to the pre-rewrite renderer:
+    // partial final blocks now process exactly n samples (host-accurate), and
+    // all cross-renderer-version render comparisons are invalid.
+    std::vector<float> configuredParamValues;
+    configuredParamValues.reserve (static_cast<size_t> (plugin->getParameters().size()));
+    for (auto* p : plugin->getParameters())
+        configuredParamValues.push_back (p->getValue());
+
+    auto restoreConfiguredParams = [&plugin, &configuredParamValues]()
+    {
+        const auto& params = plugin->getParameters();
+        const int count = std::min (params.size(),
+                                    static_cast<int> (configuredParamValues.size()));
+        for (int i = 0; i < count; ++i)
+        {
+            const float configured = configuredParamValues[static_cast<size_t> (i)];
+            // Only write params an event actually moved: setValueNotifyingHost is
+            // an IPC round-trip for yabridge-hosted plugins, and skipping the
+            // no-ops prevents host writes in event-free runs.
+            if (params[i]->getValue() != configured)
+                params[i]->setValueNotifyingHost (configured);
+        }
+    };
+
     // ---- Render 1: Impulse ----
     {
         juce::AudioBuffer<float> input (2, kTotalSamples);
         fillImpulse (input);
-        auto output = renderThroughPlugin (*plugin, input);
+        auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_impulse.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
@@ -1581,6 +1867,7 @@ int main (int argc, char** argv)
     // Reset plugin state between renders so noise burst doesn't ride the
     // impulse tail. Re-prerun so smoothers/LFOs settle into a clean,
     // steady realization before the next stimulus fires.
+    restoreConfiguredParams();
     plugin->reset();
     runPreroll (prerunSeconds);
 
@@ -1588,12 +1875,13 @@ int main (int argc, char** argv)
     {
         juce::AudioBuffer<float> input (2, kTotalSamples);
         fillNoiseBurst (input, kSampleRate);
-        auto output = renderThroughPlugin (*plugin, input);
+        auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_noiseburst.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
     }
 
+    restoreConfiguredParams();
     plugin->reset();
     runPreroll (prerunSeconds);
 
@@ -1628,13 +1916,14 @@ int main (int argc, char** argv)
         }();
         if (fillFromWav (input, snareWav))
         {
-            auto output = renderThroughPlugin (*plugin, input);
+            auto output = renderThroughPlugin (*plugin, input, nparamEvents);
             auto outFile = outDir.getChildFile (slug + "_snare.wav");
             if (writeWav (outFile, output, kSampleRate))
                 std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
         }
     }
 
+    restoreConfiguredParams();
     plugin->reset();
     runPreroll (prerunSeconds);
 
@@ -1678,7 +1967,7 @@ int main (int argc, char** argv)
                 if (reader->numChannels == 1)
                     sessionInput.copyFrom (1, 0, sessionInput, 0, 0, stemSamples);
 
-                auto output = renderThroughPlugin (*plugin, sessionInput);
+                auto output = renderThroughPlugin (*plugin, sessionInput, nparamEvents);
                 auto outFile = outDir.getChildFile (slug + "_session.wav");
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
@@ -1691,6 +1980,7 @@ int main (int argc, char** argv)
         }
     }
 
+    restoreConfiguredParams();
     plugin->reset();
     runPreroll (prerunSeconds);
 
@@ -1735,7 +2025,7 @@ int main (int argc, char** argv)
                 if (reader->numChannels == 1)
                     pianoInput.copyFrom (1, 0, pianoInput, 0, 0, stemSamples);
 
-                auto output = renderThroughPlugin (*plugin, pianoInput);
+                auto output = renderThroughPlugin (*plugin, pianoInput, nparamEvents);
                 auto outFile = outDir.getChildFile (slug + "_piano.wav");
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
@@ -1748,6 +2038,7 @@ int main (int argc, char** argv)
         }
     }
 
+    restoreConfiguredParams();
     plugin->reset();
     runPreroll (prerunSeconds);
 
@@ -1780,6 +2071,7 @@ int main (int argc, char** argv)
     {
         if (inputIndex > 0)
         {
+            restoreConfiguredParams();
             plugin->reset();
             runPreroll (prerunSeconds);
         }
@@ -1826,7 +2118,7 @@ int main (int argc, char** argv)
                 if (reader->numChannels == 1)
                     stemInput.copyFrom (1, 0, stemInput, 0, 0, stemSamples);
 
-                auto output = renderThroughPlugin (*plugin, stemInput);
+                auto output = renderThroughPlugin (*plugin, stemInput, nparamEvents);
                 const auto outputSlug = (inputWavPaths.size() == 1 && legacyStemName)
                     ? slug
                     : slug + "_" + stemFile.getFileNameWithoutExtension();
@@ -1862,6 +2154,7 @@ int main (int argc, char** argv)
         return 1;
     }
 
+    restoreConfiguredParams();
     plugin->reset();
     runPreroll (prerunSeconds);
 
@@ -1875,7 +2168,7 @@ int main (int argc, char** argv)
         const int sineSamples = static_cast<int> (kSampleRate * 2.0);
         juce::AudioBuffer<float> input (2, sineSamples);
         fillSineTone (input, kSampleRate, 1000.0, -12.0);
-        auto output = renderThroughPlugin (*plugin, input);
+        auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_sine1k.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
@@ -1889,7 +2182,9 @@ int main (int argc, char** argv)
     // → every existing render byte-identical (bit-null). 15 s matches the anchor protocol.
     if (longSineSeconds > 0.0)
     {
+        restoreConfiguredParams();
         plugin->reset();
+        runPreroll (prerunSeconds);
         // Tone + 12 s of SILENCE tail. The tail window exists so full_check's
         // low-rung-growth gate can see feedback-loop buildup: the Deep Blue Day
         // "never fades out" defect (recirculating sub voice past unity gain,
@@ -1897,7 +2192,7 @@ int main (int argc, char** argv)
         // sinelong was tone-only. Steady-state metrics (down-octave cascade)
         // window inside the tone portion and are unaffected.
         const int sineSamples  = static_cast<int> (kSampleRate * longSineSeconds);
-        const int tailSamples  = static_cast<int> (kSampleRate * 12.0);
+        const int tailSamples  = kLongSineTailSamples;
         juce::AudioBuffer<float> input (2, sineSamples + tailSamples);
         input.clear();
         {
@@ -1906,7 +2201,7 @@ int main (int argc, char** argv)
             for (int ch = 0; ch < 2; ++ch)
                 input.copyFrom (ch, 0, tone, ch, 0, sineSamples);
         }
-        auto output = renderThroughPlugin (*plugin, input);
+        auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_sinelong.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
@@ -1921,12 +2216,13 @@ int main (int argc, char** argv)
     // noiseburst measures. Skipped unless --sustained-pink-seconds > 0.
     if (sustainedPinkSeconds > 0.0)
     {
+        restoreConfiguredParams();
         plugin->reset();
         runPreroll (prerunSeconds);
         const int total = static_cast<int> (kSampleRate * sustainedPinkSeconds * 2.0);
         juce::AudioBuffer<float> input (2, total);
         fillSustainedPink (input, kSampleRate, sustainedPinkSeconds);
-        auto output = renderThroughPlugin (*plugin, input);
+        auto output = renderThroughPlugin (*plugin, input, nparamEvents);
         auto outFile = outDir.getChildFile (slug + "_sustained.wav");
         if (writeWav (outFile, output, kSampleRate))
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;

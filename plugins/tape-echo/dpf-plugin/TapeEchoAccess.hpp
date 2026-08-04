@@ -12,9 +12,10 @@
 
 #include "DuskAccessBridge.hpp"
 
-// Linear output peak (0..~3), ~300 ms release. Null in the split LV2 UI.
-DUSK_ACCESS_DECL(float, tapeEchoGetOutputLevel);
+// Record-path VU and transient peak (0..~3). Null in the split LV2 UI.
+DUSK_ACCESS_DECL(float, tapeEchoGetRecordVuLevel);
+DUSK_ACCESS_DECL(float, tapeEchoGetRecordPeakLevel);
 
-// Effective head-1 motor time in milliseconds after tempo-sync octave folding.
+// Effective head-1 motor time in milliseconds after physical motor-range clamping.
 // Null in the split LV2 UI.
 DUSK_ACCESS_DECL(float, tapeEchoGetHead1DelayMs);

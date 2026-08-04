@@ -5,18 +5,88 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
-// juce::SpinLock used instead of std::mutex for real-time safety
 #include <vector>
 
 template<typename T>
-struct DoubleBuffer
+struct PublishedBuffer
 {
-    std::array<T, 2> buffers{};
-    std::atomic<int> readIndex{0};
+    std::array<T, 3> buffers{};
+    mutable std::array<std::atomic<unsigned int>, 3> readerCounts{};
+    std::atomic<size_t> publishedIndex{0};
+    // Set when a one-shot update could not be placed in any spare buffer, so
+    // readers stop trusting the snapshot they can still see.
+    std::atomic<bool> staleSnapshot{false};
 
-    T& writeBuffer() { return buffers[1 - readIndex.load(std::memory_order_relaxed)]; }
-    void publish() { readIndex.fetch_xor(1, std::memory_order_release); }
-    const T& readBuffer() const { return buffers[readIndex.load(std::memory_order_acquire)]; }
+    PublishedBuffer() noexcept
+    {
+        for (auto& count : readerCounts)
+            count.store(0, std::memory_order_relaxed);
+    }
+
+    // Single-writer, multi-reader snapshot publication. If both spare buffers
+    // are still held by slow readers, skip this UI update instead of blocking
+    // the audio callback. Correct for learning frames: the next frame carries
+    // the full accumulated spectrum, so a dropped one costs nothing.
+    void publish(const T& value)
+    {
+        tryPublish(value);
+    }
+
+    // Publication for one-shot state changes (reset, clear, deserialize). No
+    // later update supersedes these, so dropping one strands readers on state
+    // the caller believes it discarded. Retries a bounded number of times —
+    // clearAll() runs on the audio thread, so this must never block
+    // unboundedly — then falls back to flagging the snapshot stale, which makes
+    // readers observe a default-constructed value instead of the old one.
+    bool publishDefinitive(const T& value)
+    {
+        for (int attempt = 0; attempt < publishRetries; ++attempt)
+            if (tryPublish(value))
+                return true;
+        staleSnapshot.store(true, std::memory_order_release);
+        return false;
+    }
+
+    // Return by value so readers never retain storage after releasing their
+    // reader count.
+    T readBuffer() const
+    {
+        for (;;)
+        {
+            const size_t index = publishedIndex.load(std::memory_order_acquire);
+            readerCounts[index].fetch_add(1, std::memory_order_acq_rel);
+            if (index == publishedIndex.load(std::memory_order_acquire))
+            {
+                T snapshot = buffers[index];
+                readerCounts[index].fetch_sub(1, std::memory_order_release);
+                if (staleSnapshot.load(std::memory_order_acquire))
+                    return T{};
+                return snapshot;
+            }
+            readerCounts[index].fetch_sub(1, std::memory_order_release);
+        }
+    }
+
+private:
+    // A held spare is only ever held for the length of one snapshot copy, so
+    // this is far more headroom than the race needs.
+    static constexpr int publishRetries = 256;
+
+    bool tryPublish(const T& value)
+    {
+        const size_t current = publishedIndex.load(std::memory_order_relaxed);
+        for (size_t candidate = 0; candidate < buffers.size(); ++candidate)
+        {
+            if (candidate == current
+                || readerCounts[candidate].load(std::memory_order_acquire) != 0)
+                continue;
+            buffers[candidate] = value;
+            publishedIndex.store(candidate, std::memory_order_release);
+            staleSnapshot.store(false, std::memory_order_release);
+            return true;
+        }
+        return false;
+    }
 };
 
 //==============================================================================
@@ -103,7 +173,9 @@ public:
         stopLearning();
         currentSpectrum.reset();
         referenceSpectrum.reset();
-        correctionValid = false;
+        resetPublishedSpectrum(currentSpectrumBuf);
+        resetPublishedSpectrum(referenceSpectrumBuf);
+        correctionValid.store(false, std::memory_order_release);
         correctionCurveDB.fill(0.0f);
     }
 
@@ -111,15 +183,8 @@ public:
 
     void startLearningCurrent()
     {
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            currentSpectrum.reset();
-            // Reset double-buffer under mutex to avoid racing with UI reads
-            currentSpectrumBuf.writeBuffer().reset();
-            currentSpectrumBuf.publish();
-            currentSpectrumBuf.writeBuffer().reset();
-            currentSpectrumBuf.publish();
-        }
+        currentSpectrum.reset();
+        resetPublishedSpectrum(currentSpectrumBuf);
         learningInputPos = 0;
         samplesSinceLastFrame = -(FFT_SIZE - HOP_SIZE);  // Require full window before first frame
         learningTarget.store(LearningTarget::Current, std::memory_order_release);
@@ -127,15 +192,8 @@ public:
 
     void startLearningReference()
     {
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            referenceSpectrum.reset();
-            // Reset double-buffer under mutex to avoid racing with UI reads
-            referenceSpectrumBuf.writeBuffer().reset();
-            referenceSpectrumBuf.publish();
-            referenceSpectrumBuf.writeBuffer().reset();
-            referenceSpectrumBuf.publish();
-        }
+        referenceSpectrum.reset();
+        resetPublishedSpectrum(referenceSpectrumBuf);
         learningInputPos = 0;
         samplesSinceLastFrame = -(FFT_SIZE - HOP_SIZE);  // Require full window before first frame
         learningTarget.store(LearningTarget::Reference, std::memory_order_release);
@@ -191,17 +249,18 @@ public:
     {
         auto target = learningTarget.load(std::memory_order_acquire);
         if (target == LearningTarget::Current)
-            return currentSpectrum.frameCount;
+            return currentSpectrumBuf.readBuffer().frameCount;
         if (target == LearningTarget::Reference)
-            return referenceSpectrum.frameCount;
+            return referenceSpectrumBuf.readBuffer().frameCount;
         // Return whichever was most recently active
-        return std::max(currentSpectrum.frameCount, referenceSpectrum.frameCount);
+        return std::max(currentSpectrumBuf.readBuffer().frameCount,
+                        referenceSpectrumBuf.readBuffer().frameCount);
     }
 
     // --- Spectrum state queries ---
 
-    bool hasCurrentSpectrum() const { return currentSpectrum.valid; }
-    bool hasReferenceSpectrum() const { return referenceSpectrum.valid; }
+    bool hasCurrentSpectrum() const { return currentSpectrumBuf.readBuffer().valid; }
+    bool hasReferenceSpectrum() const { return referenceSpectrumBuf.readBuffer().valid; }
 
     void getCurrentSpectrumDB(std::array<float, NUM_BINS>& outDB) const
     {
@@ -219,17 +278,16 @@ public:
                            float limitBoostDB, float limitCutDB,
                            bool minimumPhase)
     {
-        if (!currentSpectrum.valid || !referenceSpectrum.valid)
+        const LearnedSpectrum current = currentSpectrumBuf.readBuffer();
+        const LearnedSpectrum reference = referenceSpectrumBuf.readBuffer();
+        if (!current.valid || !reference.valid)
             return false;
 
         std::array<float, NUM_BINS> currentDB{};
         std::array<float, NUM_BINS> referenceDB{};
 
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            currentSpectrum.getAverageMagnitudeDB(currentDB);
-            referenceSpectrum.getAverageMagnitudeDB(referenceDB);
-        }
+        current.getAverageMagnitudeDB(currentDB);
+        reference.getAverageMagnitudeDB(referenceDB);
 
         // Compute difference curve: reference - current (what we need to add)
         std::array<float, NUM_BINS> diffCurve{};
@@ -322,14 +380,14 @@ public:
             }
         }
 
-        correctionValid = true;
+        correctionValid.store(true, std::memory_order_release);
         return true;
     }
 
     /** Get the correction FIR as a JUCE AudioBuffer (mono). */
     juce::AudioBuffer<float> getCorrectionIR() const
     {
-        if (!correctionValid)
+        if (!correctionValid.load(std::memory_order_acquire))
             return {};
 
         juce::AudioBuffer<float> ir(1, FIR_LENGTH);
@@ -343,25 +401,30 @@ public:
     /** Get the smoothed correction curve in dB for UI display. */
     void getCorrectionCurveDB(std::array<float, NUM_BINS>& outDB) const
     {
+        if (!correctionValid.load(std::memory_order_acquire))
+        {
+            outDB.fill(0.0f);
+            return;
+        }
         juce::SpinLock::ScopedLockType lock(correctionMutex);
         outDB = correctionCurveDB;
     }
 
-    bool hasCorrectionCurve() const { return correctionValid; }
+    bool hasCorrectionCurve() const
+    {
+        return correctionValid.load(std::memory_order_acquire);
+    }
 
     void clearAll()
     {
         stopLearning();
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            currentSpectrum.reset();
-            referenceSpectrum.reset();
-        }
-        {
-            juce::SpinLock::ScopedLockType lock(correctionMutex);
-            correctionValid = false;
-            correctionCurveDB.fill(0.0f);
-        }
+        currentSpectrum.reset();
+        referenceSpectrum.reset();
+        resetPublishedSpectrum(currentSpectrumBuf);
+        resetPublishedSpectrum(referenceSpectrumBuf);
+        // The curve/FIR are message-thread-owned. Invalidating them atomically
+        // is enough here and keeps clearAll() safe in processBlock.
+        correctionValid.store(false, std::memory_order_release);
     }
 
     double getSampleRate() const { return sampleRate; }
@@ -371,13 +434,8 @@ public:
     {
         auto* matchEl = parent.createNewChildElement("MatchEQ");
 
-        // Copy spectrum data under lock, then encode outside lock
-        LearnedSpectrum curCopy, refCopy;
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            curCopy = currentSpectrum;
-            refCopy = referenceSpectrum;
-        }
+        const LearnedSpectrum curCopy = currentSpectrumBuf.readBuffer();
+        const LearnedSpectrum refCopy = referenceSpectrumBuf.readBuffer();
 
         // Serialize current spectrum
         if (curCopy.valid)
@@ -400,7 +458,7 @@ public:
         }
 
         // Serialize correction curve and FIR
-        if (correctionValid)
+        if (correctionValid.load(std::memory_order_acquire))
         {
             auto* corrEl = matchEl->createNewChildElement("Correction");
 
@@ -425,27 +483,20 @@ public:
             return false;
 
         // Reset all state before selective hydration to avoid stale data
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            currentSpectrum.reset();
-            referenceSpectrum.reset();
-            currentSpectrumBuf.writeBuffer().reset();
-            currentSpectrumBuf.publish();
-            currentSpectrumBuf.writeBuffer().reset();
-            currentSpectrumBuf.publish();
-            referenceSpectrumBuf.writeBuffer().reset();
-            referenceSpectrumBuf.publish();
-            referenceSpectrumBuf.writeBuffer().reset();
-            referenceSpectrumBuf.publish();
-        }
+        currentSpectrum.reset();
+        referenceSpectrum.reset();
+        const bool currentResetPublished = resetPublishedSpectrum(currentSpectrumBuf);
+        const bool referenceResetPublished = resetPublishedSpectrum(referenceSpectrumBuf);
         {
             juce::SpinLock::ScopedLockType lock(correctionMutex);
-            correctionValid = false;
+            correctionValid.store(false, std::memory_order_release);
             correctionCurveDB.fill(0.0f);
             if (correctionFIR.size() < static_cast<size_t>(FIR_LENGTH))
                 correctionFIR.resize(static_cast<size_t>(FIR_LENGTH), 0.0f);
             std::fill(correctionFIR.begin(), correctionFIR.end(), 0.0f);
         }
+        if (!currentResetPublished || !referenceResetPublished)
+            return false;
 
         // Deserialize current spectrum
         if (auto* curEl = matchEl->getChildByName("CurrentSpectrum"))
@@ -454,13 +505,14 @@ public:
             if (block.fromBase64Encoding(curEl->getStringAttribute("data"))
                 && block.getSize() == currentSpectrum.powerSum.size() * sizeof(double))
             {
-                juce::SpinLock::ScopedLockType lock(spectrumMutex);
                 std::memcpy(currentSpectrum.powerSum.data(), block.getData(), block.getSize());
                 currentSpectrum.frameCount = curEl->getIntAttribute("frameCount", 0);
                 currentSpectrum.valid = currentSpectrum.frameCount >= 3;
-                // Publish to double buffer for UI
-                currentSpectrumBuf.writeBuffer() = currentSpectrum;
-                currentSpectrumBuf.publish();
+                // Publish an immutable snapshot for UI/host readers. Definitive:
+                // nothing republishes restored state, so a dropped publish would
+                // silently lose the loaded spectrum.
+                if (!currentSpectrumBuf.publishDefinitive(currentSpectrum))
+                    return false;
             }
         }
 
@@ -471,13 +523,14 @@ public:
             if (block.fromBase64Encoding(refEl->getStringAttribute("data"))
                 && block.getSize() == referenceSpectrum.powerSum.size() * sizeof(double))
             {
-                juce::SpinLock::ScopedLockType lock(spectrumMutex);
                 std::memcpy(referenceSpectrum.powerSum.data(), block.getData(), block.getSize());
                 referenceSpectrum.frameCount = refEl->getIntAttribute("frameCount", 0);
                 referenceSpectrum.valid = referenceSpectrum.frameCount >= 3;
-                // Publish to double buffer for UI
-                referenceSpectrumBuf.writeBuffer() = referenceSpectrum;
-                referenceSpectrumBuf.publish();
+                // Publish an immutable snapshot for UI/host readers. Definitive:
+                // nothing republishes restored state, so a dropped publish would
+                // silently lose the loaded spectrum.
+                if (!referenceSpectrumBuf.publishDefinitive(referenceSpectrum))
+                    return false;
             }
         }
 
@@ -498,7 +551,7 @@ public:
                 if (correctionFIR.size() < static_cast<size_t>(FIR_LENGTH))
                     correctionFIR.resize(static_cast<size_t>(FIR_LENGTH), 0.0f);
                 std::memcpy(correctionFIR.data(), firBlock.getData(), firBlock.getSize());
-                correctionValid = true;
+                correctionValid.store(true, std::memory_order_release);
             }
         }
 
@@ -514,8 +567,8 @@ private:
 
     LearnedSpectrum currentSpectrum;
     LearnedSpectrum referenceSpectrum;
-    DoubleBuffer<LearnedSpectrum> currentSpectrumBuf;
-    DoubleBuffer<LearnedSpectrum> referenceSpectrumBuf;
+    PublishedBuffer<LearnedSpectrum> currentSpectrumBuf;
+    PublishedBuffer<LearnedSpectrum> referenceSpectrumBuf;
 
     // Learning FFT
     juce::dsp::FFT learningFFT{FFT_ORDER};
@@ -530,10 +583,20 @@ private:
     // Correction state
     std::array<float, NUM_BINS> correctionCurveDB{};
     std::vector<float> correctionFIR;
-    bool correctionValid = false;
+    std::atomic<bool> correctionValid{false};
 
-    mutable juce::SpinLock spectrumMutex;     // Protects learned spectra (SpinLock = RT-safe)
-    mutable juce::SpinLock correctionMutex;   // Protects correction curve and FIR (SpinLock = RT-safe)
+    // Serializes message/host-thread correction access; never acquired by the
+    // audio callback.
+    mutable juce::SpinLock correctionMutex;
+
+    static bool resetPublishedSpectrum(PublishedBuffer<LearnedSpectrum>& buffer)
+    {
+        LearnedSpectrum empty;
+        empty.reset();
+        // Definitive: a dropped clear would leave the old spectrum readable, so
+        // hasCurrentSpectrum()/computeCorrection() would still act on it.
+        return buffer.publishDefinitive(empty);
+    }
 
     int getCurrentFrameCount() const
     {
@@ -565,26 +628,22 @@ private:
         // Forward FFT (in-place, interleaved complex output)
         learningFFT.performRealOnlyForwardTransform(learningFFTBuffer.data());
 
-        // Accumulate into the target spectrum (mutex for legacy + double buffer for lock-free UI reads)
-        {
-            juce::SpinLock::ScopedLockType lock(spectrumMutex);
-            LearnedSpectrum& spectrum = (target == LearningTarget::Current)
-                                         ? currentSpectrum : referenceSpectrum;
-            spectrum.addFrame(learningFFTBuffer.data(), FFT_SIZE);
-        }
+        // Learned spectra are audio-thread-owned. Readers consume published
+        // snapshots, so the callback never needs to lock against the editor.
+        LearnedSpectrum& spectrum = (target == LearningTarget::Current)
+                                     ? currentSpectrum : referenceSpectrum;
+        spectrum.addFrame(learningFFTBuffer.data(), FFT_SIZE);
 
-        // Publish full spectrum snapshot to double buffer for lock-free UI reads.
+        // Publish a full spectrum snapshot for lock-free UI reads.
         // Copy the complete accumulated spectrum (not just addFrame) so the read
         // buffer always reflects all frames, not just alternating ones.
         if (target == LearningTarget::Current)
         {
-            currentSpectrumBuf.writeBuffer() = currentSpectrum;
-            currentSpectrumBuf.publish();
+            currentSpectrumBuf.publish(currentSpectrum);
         }
         else
         {
-            referenceSpectrumBuf.writeBuffer() = referenceSpectrum;
-            referenceSpectrumBuf.publish();
+            referenceSpectrumBuf.publish(referenceSpectrum);
         }
     }
 

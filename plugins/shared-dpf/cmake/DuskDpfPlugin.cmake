@@ -14,6 +14,7 @@
 if(NOT DEFINED DUSK_SHARED_DPF_DIR)
     set(DUSK_SHARED_DPF_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 endif()
+set(DUSK_SHARED_DPF_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 # repo root is three levels up from plugins/<name>/dpf-plugin
 set(_dusk_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
@@ -45,6 +46,21 @@ set(DUSK_DPF_INCLUDE_DIRS
 option(DUSK_DPF_INSTALL_LOCAL "Copy built DPF plugins into the user plugin dirs after build" ON)
 
 function(dusk_dpf_install_local plugin_name)
+    cmake_parse_arguments(DUSK_DPF "LV2_PROGRAMS" "" "" ${ARGN})
+
+    # DPF's preset exporter can prematurely close an lv2:port list when an
+    # output parameter appears before later input parameters. Repair the
+    # generated Turtle before validation, packaging, or local installation.
+    if(TARGET ${plugin_name}-lv2)
+        add_custom_command(TARGET ${plugin_name}-lv2 POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                "-DPRESETS_FILE=${CMAKE_BINARY_DIR}/bin/${plugin_name}.lv2/presets.ttl"
+                "-DEXPECT_PRESETS=${DUSK_DPF_LV2_PROGRAMS}"
+                -P "${DUSK_SHARED_DPF_CMAKE_DIR}/DuskFixLv2Presets.cmake"
+            COMMENT "Checking ${plugin_name}.lv2 factory-preset metadata"
+            VERBATIM)
+    endif()
+
     if(NOT DUSK_DPF_INSTALL_LOCAL)
         return()
     endif()

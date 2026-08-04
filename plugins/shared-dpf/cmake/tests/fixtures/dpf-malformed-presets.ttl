@@ -1,0 +1,17 @@
+@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .
+@prefix pset: <http://lv2plug.in/ns/ext/presets#> .
+
+<https://dusk-audio.github.io/plugins/test#preset001>
+    lv2:port [
+        lv2:symbol "out_level" ;
+        pset:value 0 ;
+    ] .
+
+    [
+        lv2:symbol "input_send" ;
+        pset:value 1 ;
+    ] ,
+    [
+        lv2:symbol "mix" ;
+        pset:value 0.5 ;
+    ] .

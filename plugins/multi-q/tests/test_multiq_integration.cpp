@@ -337,65 +337,103 @@ static void testPan(MultiQ& plugin)
 // notification, so applyTube/BritishPreset(1) ("Default - flat") ran just after the editor was
 // built and wiped the loaded preset's params. Fix = dontSendNotification on those setSelectedId
 // calls. Needs a display (creates the real editor), so it self-skips on headless CI.
-static void testEditorPresetSurvivesOpen()
+static void testEditorPresetSurvivesOpen(const std::function<void()>& completion)
 {
     std::cout << "\n--- Test: Editor open must not reset British/Tube preset (issue #105) ---\n";
   #if JUCE_LINUX
     if (juce::SystemStats::getEnvironmentVariable ("DISPLAY", juce::String()).isEmpty())
     {
         std::cout << "  (skipped: no DISPLAY — the editor needs X)\n";
+        completion();
         return;
     }
   #endif
-    auto pump = []()
+    struct TestContext
     {
-        auto* mm = juce::MessageManager::getInstance();
-        mm->callAsync ([mm] { mm->stopDispatchLoop(); });
-        mm->runDispatchLoop();   // runs the queued async onChange (the old reset), then quits
+        std::unique_ptr<MultiQ> proc;
+        std::unique_ptr<juce::AudioProcessorEditor> editor;
+        juce::String paramId;
+        juce::String label;
+        float before = 0.0f;
+        bool isTube = false;
     };
 
-    auto testMode = [&pump] (int eqTypeVal, const juce::String& paramId, const juce::String& label)
+    auto setupMode = [] (int eqTypeVal, const juce::String& paramId,
+                         const juce::String& label)
     {
-        MultiQ proc;
-        proc.setPlayConfigDetails (2, 2, 44100.0, 512);
-        proc.prepareToPlay (44100.0, 512);
-        auto val = [&proc] (const juce::String& id) { auto* p = proc.parameters.getRawParameterValue (id); return p ? p->load() : -999.0f; };
+        TestContext context;
+        context.proc = std::make_unique<MultiQ>();
+        context.paramId = paramId;
+        context.label = label;
+        context.isTube = eqTypeVal == 3;
+        context.proc->setPlayConfigDetails (2, 2, 44100.0, 512);
+        context.proc->prepareToPlay (44100.0, 512);
+        auto val = [&context] (const juce::String& id) {
+            auto* p = context.proc->parameters.getRawParameterValue (id);
+            return p ? p->load() : -999.0f;
+        };
 
         // Pick a factory preset for this mode whose tracked param is clearly non-default.
-        const auto& presets = proc.getFactoryPresets();
+        const auto& presets = context.proc->getFactoryPresets();
         int chosen = -1; float before = 0.0f;
         for (size_t i = 0; i < presets.size(); ++i)
         {
             if (presets[i].eqType != eqTypeVal) continue;
-            proc.setCurrentProgram ((int) i + 1);
+            context.proc->setCurrentProgram ((int) i + 1);
             const float v = val (paramId);
             if (std::abs (v) > 0.01f) { chosen = (int) i; before = v; break; }
         }
         const juce::String n0 = label + ": found a non-default factory preset";
         check (n0.toRawUTF8(), chosen >= 0);
-        if (chosen < 0) return;
+        if (chosen < 0) return context;
 
-        std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
-        pump(); pump();   // let any queued async onChange fire (this was the reset)
+        context.before = before;
+        context.editor.reset (context.proc->createEditor());
+        return context;
+    };
 
-        const juce::String n1 = label + ": preset survives editor open";
-        checkDb (n1.toRawUTF8(), val (paramId), before, 0.05f);
+    auto verifyMode = [] (TestContext& context)
+    {
+        if (!context.editor)
+        {
+            check ((context.label + ": editor creation failed").toRawUTF8(), false);
+            return;
+        }
+        auto val = [&context] (const juce::String& id) {
+            auto* p = context.proc->parameters.getRawParameterValue (id);
+            return p ? p->load() : -999.0f;
+        };
+
+        const juce::String n1 = context.label + ": preset survives editor open";
+        checkDb (n1.toRawUTF8(), val (context.paramId), context.before, 0.05f);
 
         // #105 unify: the mode-panel preset combo must mirror the main dropdown (same preset shown).
-        auto* mqEd = dynamic_cast<MultiQEditor*> (ed.get());
-        check ((label + ": editor is MultiQEditor").toRawUTF8(), mqEd != nullptr);
+        auto* mqEd = dynamic_cast<MultiQEditor*> (context.editor.get());
+        check ((context.label + ": editor is MultiQEditor").toRawUTF8(), mqEd != nullptr);
         if (mqEd)
         {
             const juce::String mainTxt  = mqEd->getMainPresetText();
-            const juce::String panelTxt = (eqTypeVal == 3) ? mqEd->getTubePresetText() : mqEd->getBritishPresetText();
-            const juce::String n2 = label + ": panel combo mirrors main combo";
+            const juce::String panelTxt = context.isTube
+                ? mqEd->getTubePresetText() : mqEd->getBritishPresetText();
+            const juce::String n2 = context.label + ": panel combo mirrors main combo";
             check (n2.toRawUTF8(), mainTxt.isNotEmpty() && panelTxt == mainTxt);
         }
-        if (ed) { proc.editorBeingDeleted (ed.get()); ed.reset(); }
+        context.proc->editorBeingDeleted (context.editor.get());
+        context.editor.reset();
     };
 
-    testMode (3, ParamIDs::pultecLfBoostGain, "#105 Tube");
-    testMode (2, ParamIDs::britishLfGain,     "#105 British");
+    // Verify on the next message-loop turn so any async ComboBox notification
+    // queued by editor construction has fired. Nested dispatch loops are invalid
+    // on macOS and previously made this otherwise-passing test abort at exit.
+    auto tube = std::make_shared<TestContext> (
+        setupMode (3, ParamIDs::pultecLfBoostGain, "#105 Tube"));
+    auto british = std::make_shared<TestContext> (
+        setupMode (2, ParamIDs::britishLfGain, "#105 British"));
+    juce::MessageManager::callAsync ([tube, british, verifyMode, completion] {
+        verifyMode (*tube);
+        verifyMode (*british);
+        completion();
+    });
 }
 
 // Issue #105: British/Tube mode params must survive a getState/setState round-trip.
@@ -625,21 +663,22 @@ public:
         testPan(*plugin);
         testStateRoundTrip(*plugin);
         testBritishTubeStateRoundTrip(*plugin);
-        testEditorPresetSurvivesOpen();
         // LP+INV test skipped: FIR generation requires background thread + message loop
         // The LP+INV fix was verified manually and via pluginval automation tests
         // testINVLinearPhase(*plugin);
 
-        std::cout << "\n=============================\n";
-        std::cout << "Results: " << passed << "/" << (passed + failed) << " passed\n";
+        testEditorPresetSurvivesOpen ([this] {
+            std::cout << "\n=============================\n";
+            std::cout << "Results: " << passed << "/" << (passed + failed) << " passed\n";
 
-        if (failed > 0)
-            std::cout << "\033[31m" << failed << " FAILED\033[0m\n";
-        else
-            std::cout << "\033[32mAll tests passed!\033[0m\n";
+            if (failed > 0)
+                std::cout << "\033[31m" << failed << " FAILED\033[0m\n";
+            else
+                std::cout << "\033[32mAll tests passed!\033[0m\n";
 
-        setApplicationReturnValue(failed > 0 ? 1 : 0);
-        quit();
+            setApplicationReturnValue(failed > 0 ? 1 : 0);
+            quit();
+        });
     }
 };
 

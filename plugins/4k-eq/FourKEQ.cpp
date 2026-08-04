@@ -3,6 +3,27 @@
 #include <cmath>
 #include <complex>
 
+namespace
+{
+using IIRArrayCoefficients = juce::dsp::IIR::ArrayCoefficients<float>;
+
+std::array<float, 6> promoteFirstOrder(
+    const std::array<float, 4>& coefficients) noexcept
+{
+    return { coefficients[0], coefficients[1], 0.0f,
+             coefficients[2], coefficients[3], 0.0f };
+}
+
+void setStereoCoefficients(juce::dsp::IIR::Filter<float>& left,
+                           juce::dsp::IIR::Filter<float>& right,
+                           const std::array<float, 6>& coefficients)
+{
+    jassert(left.coefficients != nullptr && right.coefficients != nullptr);
+    *left.coefficients = coefficients;
+    *right.coefficients = coefficients;
+}
+}
+
 // Helper function to prevent frequency cramping at high frequencies
 // Based on console-style analog prototype matching for accurate HF response
 static float preWarpFrequency(float freq, double sampleRate)
@@ -273,12 +294,14 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     currentSampleRate = sampleRate;
 
-    // Initialize spectrum buffers with proper size to prevent crashes
-    const int numChannels = getTotalNumInputChannels();
     // Use output channels for UI mono/stereo display (like Multi-Comp)
     currentNumChannels.store(juce::jmax(1, getTotalNumOutputChannels()), std::memory_order_relaxed);
-    spectrumBuffer.setSize(numChannels, samplesPerBlock, false, true, true);
-    spectrumBufferPre.setSize(numChannels, samplesPerBlock, false, true, true);
+    doublePrecisionScratchChannels =
+        juce::jmax(1, juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels()));
+    doublePrecisionScratchCapacity = samplesPerBlock;
+    doublePrecisionScratch.setSize(
+        doublePrecisionScratchChannels,
+        samplesPerBlock, false, true, false);
 
     // Adaptive oversampling based on sample rate
     // At very high sample rates, oversampling provides diminishing returns for aliasing
@@ -418,45 +441,115 @@ bool FourKEQ::isBusesLayoutSupported(const BusesLayout& layouts) const
 //==============================================================================
 void FourKEQ::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
 {
-    // For now, convert to float, process, and convert back
-    // This maintains compatibility while avoiding the virtual function hiding warning
-    juce::AudioBuffer<float> floatBuffer(buffer.getNumChannels(), buffer.getNumSamples());
+    juce::ScopedNoDenormals noDenormals;
+    const int numChannels = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
+    if (numSamples <= 0)
+        return;
 
-    // Copy double to float
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    const auto totalNumInputChannels = getTotalNumInputChannels();
+    const auto totalNumOutputChannels = getTotalNumOutputChannels();
+    for (auto ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
+        buffer.clear(ch, 0, numSamples);
+
+    // Passthrough, exactly like the bypass branch below: report zero latency so
+    // the host does not compensate for oversampling delay we are not adding.
+    if (!paramsValid)
     {
-        const double* src = buffer.getReadPointer(ch);
-        float* dst = floatBuffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            dst[i] = static_cast<float>(src[i]);
+        setLatencySamples(0);
+        return;
+    }
+    if (bypassParam && bypassParam->load() > 0.5f)
+    {
+        setLatencySamples(0);
+        return;
     }
 
-    // Process as float
-    processBlock(floatBuffer, midiMessages);
-
-    // Copy float back to double
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    const int scratchCapacity = doublePrecisionScratchCapacity;
+    if (numChannels > doublePrecisionScratchChannels
+        || scratchCapacity <= 0)
     {
-        const float* src = floatBuffer.getReadPointer(ch);
-        double* dst = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            dst[i] = static_cast<double>(src[i]);
+        jassertfalse;
+        return;
+    }
+
+    std::array<float, 2> inputPeaks{};
+    std::array<float, 2> outputPeaks{};
+    for (int offset = 0; offset < numSamples; offset += scratchCapacity)
+    {
+        const int chunkSize = juce::jmin(scratchCapacity, numSamples - offset);
+        doublePrecisionScratch.setSize(
+            numChannels, chunkSize, false, false, true);
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const double* src = buffer.getReadPointer(ch, offset);
+            float* dst = doublePrecisionScratch.getWritePointer(ch);
+            for (int i = 0; i < chunkSize; ++i)
+                dst[i] = static_cast<float>(src[i]);
+        }
+
+        for (int ch = 0; ch < juce::jmin(numChannels, 2); ++ch)
+            inputPeaks[static_cast<size_t>(ch)] = std::max(
+                inputPeaks[static_cast<size_t>(ch)],
+                doublePrecisionScratch.getMagnitude(ch, 0, chunkSize));
+
+        processFloatBlock(doublePrecisionScratch, midiMessages, false);
+
+        for (int ch = 0; ch < juce::jmin(numChannels, 2); ++ch)
+            outputPeaks[static_cast<size_t>(ch)] = std::max(
+                outputPeaks[static_cast<size_t>(ch)],
+                doublePrecisionScratch.getMagnitude(ch, 0, chunkSize));
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* src = doublePrecisionScratch.getReadPointer(ch);
+            double* dst = buffer.getWritePointer(ch, offset);
+            for (int i = 0; i < chunkSize; ++i)
+                dst[i] = static_cast<double>(src[i]);
+        }
+    }
+
+    if (numChannels >= 1)
+    {
+        inputLevelL.store(juce::Decibels::gainToDecibels(inputPeaks[0], -96.0f),
+                          std::memory_order_relaxed);
+        outputLevelL.store(juce::Decibels::gainToDecibels(outputPeaks[0], -96.0f),
+                           std::memory_order_relaxed);
+    }
+    if (numChannels >= 2)
+    {
+        inputLevelR.store(juce::Decibels::gainToDecibels(inputPeaks[1], -96.0f),
+                          std::memory_order_relaxed);
+        outputLevelR.store(juce::Decibels::gainToDecibels(outputPeaks[1], -96.0f),
+                           std::memory_order_relaxed);
     }
 }
 
-void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
+void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    processFloatBlock(buffer, midiMessages, true);
+}
+
+void FourKEQ::processFloatBlock(juce::AudioBuffer<float>& buffer,
+                                juce::MidiBuffer& /*midiMessages*/,
+                                bool publishMeters)
 {
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
+    const int blockSize = buffer.getNumSamples();
+
+    if (blockSize <= 0)
+        return;
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear(i, 0, buffer.getNumSamples());
+        buffer.clear(i, 0, blockSize);
 
-    // Critical safety check: skip processing if parameters failed to initialize
+    // Critical safety check: skip processing if parameters failed to initialize.
+    // Passthrough, so report zero latency for the same reason bypass does below.
     if (!paramsValid)
     {
-        DBG("FourKEQ: Skipping processing - parameters not valid");
+        setLatencySamples(0);
         return;
     }
 
@@ -549,12 +642,12 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
     currentNumChannels.store(buffer.getNumChannels(), std::memory_order_relaxed);
 
     // Capture input levels for metering (before gain)
-    if (buffer.getNumChannels() >= 1)
+    if (publishMeters && buffer.getNumChannels() >= 1)
     {
         float peakL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
         inputLevelL.store(juce::Decibels::gainToDecibels(peakL, -96.0f), std::memory_order_relaxed);
     }
-    if (buffer.getNumChannels() >= 2)
+    if (publishMeters && buffer.getNumChannels() >= 2)
     {
         float peakR = buffer.getMagnitude(1, 0, buffer.getNumSamples());
         inputLevelR.store(juce::Decibels::gainToDecibels(peakR, -96.0f), std::memory_order_relaxed);
@@ -566,12 +659,6 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         float inputGainValue = inputGainParam->load();
         float inputGainLinear = juce::Decibels::decibelsToGain(inputGainValue);
         buffer.applyGain(inputGainLinear);
-    }
-
-    // Capture pre-EQ buffer for spectrum analyzer (thread-safe)
-    {
-        const juce::ScopedLock sl(spectrumBufferLock);
-        spectrumBufferPre.makeCopyOf(buffer, true);
     }
 
     // Use oversampling factor already calculated in prepareToPlay()
@@ -738,22 +825,17 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
     }
 
     // Capture output levels for metering (after processing)
-    if (buffer.getNumChannels() >= 1)
+    if (publishMeters && buffer.getNumChannels() >= 1)
     {
         float peakL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
         outputLevelL.store(juce::Decibels::gainToDecibels(peakL, -96.0f), std::memory_order_relaxed);
     }
-    if (buffer.getNumChannels() >= 2)
+    if (publishMeters && buffer.getNumChannels() >= 2)
     {
         float peakR = buffer.getMagnitude(1, 0, buffer.getNumSamples());
         outputLevelR.store(juce::Decibels::gainToDecibels(peakR, -96.0f), std::memory_order_relaxed);
     }
 
-    // Copy processed buffer for spectrum analyzer (thread-safe)
-    {
-        const juce::ScopedLock sl(spectrumBufferLock);
-        spectrumBuffer.makeCopyOf(buffer, true);
-    }
 }
 
 //==============================================================================
@@ -825,12 +907,10 @@ void FourKEQ::updateHPF(double sampleRate)
     //
     // Implementation: 3rd-order (1st-order + 2nd-order cascade)
     // Stage 1: 1st-order highpass (6dB/oct)
-    auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sampleRate, freq);
-    if (coeffs1st)
-    {
-        hpfFilter.stage1L.coefficients = coeffs1st;
-        hpfFilter.stage1R.coefficients = coeffs1st;
-    }
+    setStereoCoefficients(
+        hpfFilter.stage1L, hpfFilter.stage1R,
+        promoteFirstOrder(
+            IIRArrayCoefficients::makeFirstOrderHighPass(sampleRate, freq)));
 
     // Stage 2: 2nd-order highpass (12dB/oct)
     // Uses a custom slightly underdamped response (NOT standard Butterworth Q=0.707)
@@ -838,14 +918,9 @@ void FourKEQ::updateHPF(double sampleRate)
     // Measured from real console hardware: Q ≈ 0.54 (between critically damped and Butterworth)
     // This is what gives the HPF its characteristic "musical" sound vs. generic filters
     const float consoleHPFQ = 0.54f;  // Console-specific Q for musical character
-    auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(
-        sampleRate, freq, consoleHPFQ);
-
-    if (coeffs2nd)
-    {
-        hpfFilter.stage2.filter.coefficients = coeffs2nd;
-        hpfFilter.stage2.filterR.coefficients = coeffs2nd;
-    }
+    setStereoCoefficients(
+        hpfFilter.stage2.filter, hpfFilter.stage2.filterR,
+        IIRArrayCoefficients::makeHighPass(sampleRate, freq, consoleHPFQ));
 }
 
 void FourKEQ::updateLPF(double sampleRate)
@@ -876,14 +951,9 @@ void FourKEQ::updateLPF(double sampleRate)
     // Note: Both are 12dB/oct (2nd-order), the difference is in the Q value
     float q = isBlack ? 0.8f : 0.707f;  // Black has subtle resonance, Brown is flat
 
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, processFreq, q);
-
-    if (coeffs)
-    {
-        lpfFilter.filter.coefficients = coeffs;
-        lpfFilter.filterR.coefficients = coeffs;
-    }
+    setStereoCoefficients(
+        lpfFilter.filter, lpfFilter.filterR,
+        IIRArrayCoefficients::makeLowPass(sampleRate, processFreq, q));
 }
 
 // Parallel building blocks: each band's filter is a fixed-Q band-pass (peaks /
@@ -900,12 +970,16 @@ void FourKEQ::updateLFBand(double sampleRate)
     bool isBlack = (cachedParams.eqType > 0.5f);
     bool isBell = (cachedParams.lfBell > 0.5f);
 
-    auto coeffs = isBell
-        ? juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, freq, isBlack ? 0.9f : 0.6f)
-        : (isBlack ? juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq, 0.9f)
-                   : juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass(sampleRate, freq));
-    lfFilter.filter.coefficients = coeffs;
-    lfFilter.filterR.coefficients = coeffs;
+    std::array<float, 6> coefficients;
+    if (isBell)
+        coefficients = IIRArrayCoefficients::makeBandPass(
+            sampleRate, freq, isBlack ? 0.9f : 0.6f);
+    else if (isBlack)
+        coefficients = IIRArrayCoefficients::makeLowPass(sampleRate, freq, 0.9f);
+    else
+        coefficients = promoteFirstOrder(
+            IIRArrayCoefficients::makeFirstOrderLowPass(sampleRate, freq));
+    setStereoCoefficients(lfFilter.filter, lfFilter.filterR, coefficients);
     kLf = bandK(gain);
 }
 
@@ -923,9 +997,9 @@ void FourKEQ::updateLMBand(double sampleRate)
     if (isBlack)
         q = calculateDynamicQ(gain, q);
 
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, freq, q);
-    lmFilter.filter.coefficients = coeffs;
-    lmFilter.filterR.coefficients = coeffs;
+    setStereoCoefficients(
+        lmFilter.filter, lmFilter.filterR,
+        IIRArrayCoefficients::makeBandPass(sampleRate, freq, q));
     kLm = bandK(gain);
 }
 
@@ -954,9 +1028,9 @@ void FourKEQ::updateHMBand(double sampleRate)
     // Pre-warp above 3 kHz to prevent cramping.
     float processFreq = (freq > 3000.0f) ? preWarpFrequency(freq, sampleRate) : freq;
 
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, processFreq, q);
-    hmFilter.filter.coefficients = coeffs;
-    hmFilter.filterR.coefficients = coeffs;
+    setStereoCoefficients(
+        hmFilter.filter, hmFilter.filterR,
+        IIRArrayCoefficients::makeBandPass(sampleRate, processFreq, q));
     kHm = bandK(gain);
 }
 
@@ -973,12 +1047,17 @@ void FourKEQ::updateHFBand(double sampleRate)
     // Always pre-warp HF band frequencies to prevent cramping.
     float warpedFreq = preWarpFrequency(freq, sampleRate);
 
-    auto coeffs = isBell
-        ? juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, warpedFreq, isBlack ? 0.9f : 0.6f)
-        : (isBlack ? juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, warpedFreq, 0.9f)
-                   : juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sampleRate, warpedFreq));
-    hfFilter.filter.coefficients = coeffs;
-    hfFilter.filterR.coefficients = coeffs;
+    std::array<float, 6> coefficients;
+    if (isBell)
+        coefficients = IIRArrayCoefficients::makeBandPass(
+            sampleRate, warpedFreq, isBlack ? 0.9f : 0.6f);
+    else if (isBlack)
+        coefficients = IIRArrayCoefficients::makeHighPass(
+            sampleRate, warpedFreq, 0.9f);
+    else
+        coefficients = promoteFirstOrder(
+            IIRArrayCoefficients::makeFirstOrderHighPass(sampleRate, warpedFreq));
+    setStereoCoefficients(hfFilter.filter, hfFilter.filterR, coefficients);
     kHf = bandK(gain);
 }
 

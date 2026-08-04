@@ -87,6 +87,23 @@ namespace
             1.0f,
             std::min(frequency, 0.45f * (float)sampleRate));
     }
+
+    // DCBlocker's default pole (R = 0.9975) is FIXED, so its corner rides the
+    // sample rate: ~19 Hz at 48 kHz but ~38 Hz at 96 kHz and ~76 Hz at 192 kHz,
+    // audibly thinning the low end on high-rate sessions. Driving it from a
+    // cutoff instead makes the corner track fs. This value is the exact cutoff
+    // that reproduces R = 0.9975 at 48 kHz (-48000*ln(0.9975)/2pi), so the
+    // calibrated 48 kHz response is preserved bit-for-bit.
+    constexpr float kDcBlockerCutoffHz = 19.122506f;
+}
+
+float TapeEchoDSP::leadingHeadRatioForMode(int mode1to12) noexcept
+{
+    const auto& mode = kModeTable[clampInt(mode1to12, 1, kNumModes) - 1];
+    if (mode.h1 > 0.0f) return kHeadRatio[0];
+    if (mode.h2 > 0.0f) return kHeadRatio[1];
+    if (mode.h3 > 0.0f) return kHeadRatio[2];
+    return 1.0f;
 }
 
 //==============================================================================
@@ -127,10 +144,11 @@ void SpringReverb::Spring::prepare(double fs, float lengthSeconds, float fbAmoun
     len = std::max(16, (int)std::lround(lengthSeconds * fs));
     buf.assign((size_t)len + 8, 0.0f);
     // The return transducer and mounting add a short path beyond the nominal
-    // one-way spring length. This places the measured recurrences around
-    // 46--53 ms without moving the first pickup arrival.
+    // one-way spring length. The 7.9 ms return offset complements the 2.2 ms
+    // one-way pickup calibration below, keeping the measured recurrence period
+    // unchanged while placing the first arrival correctly.
     const int feedbackLen =
-        len + std::max(1, (int)std::lround(0.0035 * fs));
+        len + std::max(1, (int)std::lround(0.0079 * fs));
     feedbackBuf.assign((size_t)feedbackLen, 0.0f);
     writeIdx = 0;
     feedbackWriteIdx = 0;
@@ -223,10 +241,16 @@ void SpringReverb::prepare(double sampleRate, float detune)
     // Length-compensated feedback keeps the low-band decay close across the
     // four unequal paths. The high damping corner preserves the measured
     // upper-mid spring tail while still shortening the extreme top end.
-    springs[0].prepare(sampleRate, 0.0200f * detune, 0.8980f, 0.31f, 0.62f);
-    springs[1].prepare(sampleRate, 0.0215f * detune, 0.8900f, 0.47f, 0.66f);
-    springs[2].prepare(sampleRate, 0.0230f * detune, 0.8820f, 0.38f, 0.60f);
-    springs[3].prepare(sampleRate, 0.0245f * detune, 0.8740f, 0.53f, 0.68f);
+    constexpr float kPickupAdvanceSeconds = 0.0022f;
+    springs[0].prepare(sampleRate, (0.0200f - kPickupAdvanceSeconds) * detune,
+                       0.8980f, 0.31f, 0.62f);
+    springs[1].prepare(sampleRate, (0.0215f - kPickupAdvanceSeconds) * detune,
+                       0.8900f, 0.47f, 0.66f);
+    springs[2].prepare(sampleRate, (0.0230f - kPickupAdvanceSeconds) * detune,
+                       0.8820f, 0.38f, 0.60f);
+    springs[3].prepare(sampleRate, (0.0245f - kPickupAdvanceSeconds) * detune,
+                       0.8740f, 0.53f, 0.68f);
+    dcBlock.setSampleRate(sampleRate, kDcBlockerCutoffHz);
     pickupTap8  = std::max(1, (int)std::lround(0.008 * sampleRate));
     pickupTap18 = std::max(1, (int)std::lround(0.018 * sampleRate));
     pickupTap28 = std::max(1, (int)std::lround(0.028 * sampleRate));
@@ -265,7 +289,7 @@ void SpringReverb::prepare(double sampleRate, float detune)
         -5.0f, 2.0f));
     outputBody.setCoeffs(Biquad::peak(
         sampleRate, safeBiquadFrequency(sampleRate, 1000.0f),
-        1.6f, 0.70f));
+        0.5f, 0.70f));
     outputPresence.setCoeffs(Biquad::peak(
         sampleRate, safeBiquadFrequency(sampleRate, 5000.0f),
         5.0f, 3.0f));
@@ -408,6 +432,10 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
     fs = sampleRate;
 
+    // Noise-modulator rate compensation; see kNoiseCalibrationFs in the header.
+    // Exactly 1.0f at 48 kHz, so the calibrated render path is bit-identical.
+    noiseRateComp = std::sqrt((float)(fs / kNoiseCalibrationFs));
+
     // Longest possible read: head 3 at the slowest motor speed, plus wow
     // headroom, plus interpolation guard.
     const float maxDelaySec = (kMaxDelayMs * 0.001f) * kHeadRatio[2] * 1.05f;
@@ -420,6 +448,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     for (auto& ch : channels)
     {
         ch.tape.assign((size_t)tapeLen, 0.0f);
+        ch.preampDC.setSampleRate(fs, kDcBlockerCutoffHz);
         ch.recordHP.setCoeffs(Biquad::highPass(
             fs, safeBiquadFrequency(fs, 115.0f), 0.70710678f));
         const float initialMs = delayMsForRepeatRate(
@@ -457,11 +486,23 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     flutterBandLP.setCutoff(kFlutterNoiseLPHz, fs);
     wowInc     = kTwoPi * kWowHz     / (float)fs;
     flutterInc = kTwoPi * kFlutterMaxHz / (float)fs;
-    meterDecayPerSample = std::exp(-1.0f / (0.3f * (float)fs));
+    // The record VU owns the needle ballistics. Attack and release are split so
+    // the return can follow the reference more closely without making the rise
+    // too eager. The UI deliberately adds no second smoothing stage.
+    constexpr float kVuAttackSeconds = 0.225f;
+    constexpr float kVuReleaseSeconds = 0.2f;
+    meterVuAttackCoeff = 1.0f - std::exp(
+        -1.0f / (kVuAttackSeconds * (float)fs));
+    meterVuReleaseCoeff = 1.0f - std::exp(
+        -1.0f / (kVuReleaseSeconds * (float)fs));
+    meterPeakDecayPerSample = std::exp(-1.0f / (0.3f * (float)fs));
     recordEnvelopeAttack =
         1.0f - std::exp(-1.0f / (0.00005f * (float)fs));
     recordEnvelopeRelease = std::exp(-1.0f / (0.12f * (float)fs));
-    outputPeak.store(0.0f, std::memory_order_relaxed);
+    meterVu = 0.0f;
+    meterPeak = 0.0f;
+    recordVu.store(0.0f, std::memory_order_relaxed);
+    recordPeak.store(0.0f, std::memory_order_relaxed);
 
     delaySmoother.prepare(fs, 0.35f);        // motor/capstan inertia
     intensitySmoother.prepare(fs, 0.03f);
@@ -476,6 +517,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     reverbPanSmoother.prepare(fs, 0.02f);
     inputSendSmoother.prepare(fs, 0.01f);
     wetSoloSmoother.prepare(fs, 0.01f);
+    mixSmoother.prepare(fs, 0.02f);
     driveSmoother.prepare(fs, 0.02f);
     wowFlutterSmoother.prepare(fs, 0.05f);
     powerSmoother.prepare(fs, 0.03f);
@@ -502,6 +544,7 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     reverbPanSmoother.snap(pReverbPan.load(std::memory_order_relaxed));
     inputSendSmoother.snap(pInputSend.load(std::memory_order_relaxed));
     wetSoloSmoother.snap(pWetSolo.load(std::memory_order_relaxed));
+    mixSmoother.snap(pMix.load(std::memory_order_relaxed));
     driveSmoother.snap(pInputGain.load(std::memory_order_relaxed));
     wowFlutterSmoother.snap(pWowFlutter.load(std::memory_order_relaxed));
     powerSmoother.snap(1.0f - pBypass.load(std::memory_order_relaxed));
@@ -543,13 +586,15 @@ void TapeEchoDSP::reset()
     wobbleLP.reset();
     writeIdx = 0;
     wowPhase = flutterPhase = 0.0f;
+    meterVu = 0.0f;
+    meterPeak = 0.0f;
+    recordVu.store(0.0f, std::memory_order_relaxed);
+    recordPeak.store(0.0f, std::memory_order_relaxed);
     // Initial cartridge position is deterministic. Hosted captures place the
     // first head-1 splice at about 7.0 s over most of the motor range and
     // 9.1 s at the extreme fast end (after renderer pre-roll).
     spliceSamplesToHead1 = 7.58f * (float)fs;
     spliceClockStarted = false;
-    lastSpliceTrigger =
-        pSpliceTrigger.load(std::memory_order_relaxed);
     lastClearRequest =
         pClearRequest.load(std::memory_order_relaxed);
 }
@@ -610,20 +655,11 @@ void TapeEchoDSP::refreshBlockRateControls()
     reverbPanSmoother.setTarget(pReverbPan.load(std::memory_order_relaxed));
     inputSendSmoother.setTarget(pInputSend.load(std::memory_order_relaxed));
     wetSoloSmoother.setTarget(pWetSolo.load(std::memory_order_relaxed));
+    mixSmoother.setTarget(pMix.load(std::memory_order_relaxed));
     driveSmoother.setTarget(pInputGain.load(std::memory_order_relaxed));
     wowFlutterSmoother.setTarget(pWowFlutter.load(std::memory_order_relaxed));
     powerSmoother.setTarget(1.0f - pBypass.load(std::memory_order_relaxed));
     ageSmoother.setTarget(pTapeAge.load(std::memory_order_relaxed));
-
-    const uint32_t spliceTrigger =
-        pSpliceTrigger.load(std::memory_order_relaxed);
-    if (spliceTrigger != lastSpliceTrigger)
-    {
-        lastSpliceTrigger = spliceTrigger;
-        // A manual trigger drops the splice at the write head. It reaches the
-        // first read head one head-delay later.
-        spliceSamplesToHead1 = delaySmoother.value();
-    }
 
     // Playback bandwidth is proportional to tape speed. Worn tape narrows it
     // further. This replaces the fixed-frequency poles that made slow and fast
@@ -717,7 +753,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
     numChannels = clampInt(numChannels, 1, kMaxChannels);
     refreshBlockRateControls();
 
-    float blockPeak = 0.0f;
+    constexpr float kVuSineCalibration = 1.110720735f;
 
     for (int n = 0; n < numSamples; ++n)
     {
@@ -742,10 +778,14 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float wf  = 1.0f + 1.5f * wowFlutterSmoother.next() + 0.20f * age;
         // slow playback-level wobble (worn pinch roller / dropout precursor);
         // exactly 1.0 at age 0.
-        const float wobble = 1.0f + age * 0.11f * wobbleLP.process(ageRand());
+        const float wobble =
+            1.0f + age * 0.11f
+                 * wobbleLP.process(ageRand() * noiseRateComp);
         // hiss recorded onto the tape: regenerates with intensity like the
         // hardware. Voiced dark, exactly 0.0 at age 0.
-        const float hissL = age * 0.0000079f * hissVoice.process(ageRand());
+        const float hissL =
+            age * 0.0000079f
+                * hissVoice.process(ageRand() * noiseRateComp);
         const float flutterDepth = 0.00237f + 0.00242f * slow01;
         const float flutterWave = std::sin(flutterPhase)
                                 + 0.088f * std::sin(2.0f * flutterPhase);
@@ -756,11 +796,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             * (1.0f + age * (kFlutterAgeLin + kFlutterAgeSq * age));
         const float flutterNoise =
             flutterNoiseGain
-            * flutterBandLP.process(flutterBand.process(flutterRand()));
+            * flutterBandLP.process(
+                  flutterBand.process(flutterRand() * noiseRateComp));
         const float mod = wf * (kWowDepth * std::sin(wowPhase)
                               + flutterDepth * flutterWave
                               + flutterNoise
-                              + kNoiseDepth * noiseLP.process(frand()));
+                              + kNoiseDepth
+                                    * noiseLP.process(frand() * noiseRateComp));
 
         // The oversampled preamp delays the tape feed by a fixed group delay;
         // subtract it AFTER the head-ratio scaling so all three heads stay at
@@ -788,6 +830,13 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float revRaw    = reverbLevelSmoother.next();
         const float revLvl    = echoGainFromControl(revRaw) * revSend;
         const float dryLvl    = dryLevelSmoother.next();
+        const float mix       = mixSmoother.next();
+        // Unity-overlap balance law: both paths are unity at the 50% default,
+        // preserving the calibrated parallel mix (and old sessions that do not
+        // contain kParamMix). Moving toward either endpoint fades only the
+        // opposite path; 0% is dry-only and 100% is wet-only.
+        const float dryMixGain = std::min(1.0f, 2.0f * (1.0f - mix));
+        const float wetMixGain = std::min(1.0f, 2.0f * mix);
         const float outputVolume = outputVolumeSmoother.next();
         // Hosted output trim is linear in decibels: -20 dB at zero, unity at
         // midpoint, and +20 dB at maximum.
@@ -812,11 +861,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float inL = inputs[0][n];
         const float inR = numChannels > 1 ? inputs[1][n] : inL;
         const float inputSend = inputSendSmoother.next();
-        const float effectIn =
-            inputSend * power
-            * (numChannels > 1 ? 0.5f * (inL + inR) : inL);
+        const float monoInput =
+            power * (numChannels > 1 ? 0.5f * (inL + inR) : inL);
         Channel& ch = channels[0];
-        const float tapeInput = effectIn * inputGain;
+        const float drivenInput = monoInput * inputGain;
+        const float tapeInput = inputSend * drivenInput;
 
         // The hosted record path has a broad tape-compression knee above
         // nominal level and asymptotically reaches about 4.5 dB of gain
@@ -880,7 +929,9 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             + cleanReadFrac
                 * (ch.springCleanDelay[(size_t)cleanRead1]
                    - ch.springCleanDelay[(size_t)cleanRead0]);
-        ch.springCleanDelay[(size_t)ch.springCleanDelayWriteIdx] = tapeInput;
+        // Input Send is the original Echo/Normal "dub" switch. It interrupts
+        // the tape record feed, but not the independent spring-reverb path.
+        ch.springCleanDelay[(size_t)ch.springCleanDelayWriteIdx] = drivenInput;
         if (++ch.springCleanDelayWriteIdx >=
             (int)ch.springCleanDelay.size())
             ch.springCleanDelayWriteIdx = 0;
@@ -936,7 +987,21 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         // saturation -> tape. Everything here is inside the loop, so
         // repeats darken and compress cumulatively.
         const float loopDrive = hardKnee(
-            fbGain * softClip(headSum), kLoopCeilingKnee, kLoopCeiling);
+            fbGain * softClip(headSum),
+            kLoopCeilingKnee, kLoopCeiling);
+        // Meter point: after Input Volume, with regeneration injected just
+        // before detection. This deliberately ignores Input Send.
+        const float recordMeterSignal = drivenInput + power * loopDrive;
+        const float recordMeterMagnitude = std::abs(recordMeterSignal);
+        // Average-responding VU, calibrated so a sine's average rectified value
+        // reads its RMS amplitude. The peak lamp uses the unsmoothed magnitude.
+        const float vuCoeff = recordMeterMagnitude > meterVu
+                            ? meterVuAttackCoeff
+                            : meterVuReleaseCoeff;
+        meterVu += vuCoeff * (recordMeterMagnitude - meterVu);
+        meterPeak = std::max(
+            recordMeterMagnitude,
+            meterPeak * meterPeakDecayPerSample);
         // The low-flux gate below is a function of record flux, and the record
         // head sees program AND regeneration. Gating it on the program alone
         // left a runaway loop pinned in the low-flux region of the tape curve,
@@ -1069,18 +1134,16 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
                 ? 1.0f : 2.0f * (c == 0 ? 1.0f - echoPan : echoPan);
             const float reverbPanGain = numChannels == 1
                 ? 1.0f : 2.0f * (c == 0 ? 1.0f - reverbPan : reverbPan);
-            const float wet = dryEnable * dryLvl * inputGain * dry
-                            + echoLvl * echoWet * echoPanGain
-                            + revLvl * rev * reverbPanGain;
+            const float dryPath = dryEnable * dryLvl * inputGain * dry;
+            const float wetPath = echoLvl * echoWet * echoPanGain
+                                + revLvl * rev * reverbPanGain;
+            const float mixed = dryMixGain * dryPath + wetMixGain * wetPath;
             // POWER off: clean passthrough. The wet state is cleared on the
             // rising bypass edge when POWER is switched off, with the clear
             // applied in the next block. Re-engaging starts with an empty
             // tape loop.
-            outputs[c][n] = in + power * (outputGain * wet - in);
+            outputs[c][n] = in + power * (outputGain * mixed - in);
 
-            const float output = outputGain * wet;
-            const float mag = power * (output < 0.0f ? -output : output);
-            blockPeak = mag > blockPeak ? mag : blockPeak;
         }
 
         writeIdx = (writeIdx + 1) & mask;
@@ -1095,10 +1158,8 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         }
     }
 
-    const float decayed = outputPeak.load(std::memory_order_relaxed)
-                          * std::pow(meterDecayPerSample, (float)numSamples);
-    outputPeak.store(blockPeak > decayed ? blockPeak : decayed,
-                     std::memory_order_relaxed);
+    recordVu.store(kVuSineCalibration * meterVu, std::memory_order_relaxed);
+    recordPeak.store(meterPeak, std::memory_order_relaxed);
 }
 
 } // namespace duskaudio

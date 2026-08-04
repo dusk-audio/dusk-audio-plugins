@@ -98,10 +98,10 @@ jobs:
           # asset : release/website asset base (asset zip = <asset>-<os>.zip)
           cat > registry.json <<'JSON'
           [
-            {"key":"tapemachine-2","dir":"plugins/TapeMachine/dpf-plugin","base":"tape_machine_2","project":"TapeMachine2DPF","au":"DsTM","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
-            {"key":"4k-eq-2","dir":"plugins/4k-eq/dpf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
-            {"key":"tape-echo-2","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
-            {"key":"multi-q-2","dir":"plugins/multi-q/dpf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
+            {"key":"tapemachine-2","dir":"plugins/TapeMachine/dpf-plugin","base":"tape_machine_2","project":"TapeMachine2DPF","au":"DsTM","uri":"https://dusk-audio.github.io/plugins/tapemachine-2","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
+            {"key":"4k-eq-2","dir":"plugins/4k-eq/dpf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
+            {"key":"tape-echo-2","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
+            {"key":"multi-q-2","dir":"plugins/multi-q/dpf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
           ]
           JSON
 
@@ -158,8 +158,18 @@ jobs:
   # -------------------------------------------------------------------------
   build-linux:
     needs: plan
+    # 45 to match build-linux-arm64. 30 left no headroom: the pluginval gate
+    # alone budgets 15 minutes, and a healthy run of this job already takes ~15.
+    timeout-minutes: 45
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # Steps in this container job otherwise run under /bin/sh (dash), which has
+    # no ${PIPESTATUS[*]} — the pluginval gate needs it to read the exit status
+    # of a piped command, and failed with "Bad substitution" without this.
+    # Set once at job level so every step gets it, not just the ones that have
+    # already been caught out.
+    defaults:
+      run:
+        shell: bash
     container:
       # Build inside Ubuntu 22.04 (glibc 2.35) so the binaries load on
       # Ubuntu 22.04 / Debian 12 hosts. The container pins the glibc floor
@@ -178,6 +188,7 @@ jobs:
     env:
       PLUGIN_DIR: ${{ matrix.plugin.dir }}
       PLUGIN_BASE: ${{ matrix.plugin.base }}
+      PLUGIN_URI: ${{ matrix.plugin.uri }}
       ASSET: ${{ matrix.plugin.asset }}
     steps:
       # git + ca-certificates must exist BEFORE actions/checkout so the DPF
@@ -186,6 +197,16 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # Point apt at the Azure regional mirror before the first fetch.
+          # GitHub runners are Azure VMs and their own images do this; the bare
+          # ubuntu image still points at archive.ubuntu.com, which measured
+          # 724 B/s - 35 kB/s from a runner and spent 28 minutes downloading
+          # before the job hit its timeout. sed is a no-op if the pattern is
+          # absent, so this degrades to the stock mirror rather than breaking.
+          sed -i \
+            -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list
           apt-get update -o Acquire::Retries=3
           apt-get install -y --no-install-recommends git ca-certificates
 
@@ -221,12 +242,16 @@ jobs:
           # cmake/zip/curl are needed here too: the ubuntu:22.04 container is bare
           # (no sudo either — we run as root). Mirrors are intermittently
           # unreachable from GitHub runners, so retry the whole update+install.
+          # libasound2 + libfreetype6 are the two DT_NEEDED entries of the
+          # downloaded pluginval binary that this bare image does not already
+          # pull in; without them the VST3 gate dies in the dynamic loader.
           install_deps() {
             apt-get update -o Acquire::Retries=3 && \
             apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              build-essential pkg-config cmake ninja-build zip curl \
+              build-essential pkg-config cmake ninja-build zip unzip curl \
               libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev \
-              xvfb python3
+              libasound2 libfreetype6 \
+              xvfb python3 serdi lilv-utils
           }
           for i in 1 2 3 4 5; do
             install_deps && break
@@ -234,7 +259,16 @@ jobs:
             sleep 15
           done
           # Final check: fail loudly if deps still missing after all retries.
-          dpkg -s libgl1-mesa-dev >/dev/null 2>&1 || { echo "::error::apt deps unavailable after retries"; exit 1; }
+          # libasound2/libfreetype6 are pluginval's runtime libraries: verify them
+          # here so a missing one fails at install time with a clear message,
+          # instead of surfacing as a dynamic-loader error inside the VST3 gate.
+          for pkg in libgl1-mesa-dev libasound2 libfreetype6; do
+            dpkg -s "$pkg" >/dev/null 2>&1 \
+              || { echo "::error::apt dep unavailable after retries: $pkg"; exit 1; }
+          done
+          for tool in cmake ninja zip unzip curl python3 serdi lv2info xvfb-run; do
+            command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
+          done
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -251,6 +285,29 @@ jobs:
           cmake --build build --config Release -j"$(nproc)" \
             --target "${PLUGIN_BASE}-vst3" "${PLUGIN_BASE}-clap" "${PLUGIN_BASE}-lv2"
 
+      - name: Run DSP core unit tests (gate)
+        # Tape Echo registers a ctest target (TapeEchoCore) covering meter
+        # block-size invariance and reset behaviour. Plugins without such a
+        # target are skipped rather than failed, so this stays generic.
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          if ctest --test-dir build -N > ctest-discovery.log 2>&1; then
+            ctest_status=0
+          else
+            ctest_status=$?
+          fi
+          cat ctest-discovery.log
+          if [ "$ctest_status" -ne 0 ]; then
+            exit "$ctest_status"
+          fi
+          if grep -q "Total Tests: [1-9]" ctest-discovery.log; then
+            cmake --build build --config Release -j"$(nproc)" --target TapeEchoCoreTest \
+              || echo "::notice::no TapeEchoCoreTest target for this plugin"
+            ctest --test-dir build --output-on-failure
+          else
+            echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
+          fi
+
       - name: Validate CLAP (clap-validator gate)
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
@@ -260,6 +317,77 @@ jobs:
           # drives the plugin GUI, which needs an X display in this headless container.
           xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/dpf_clap_validate.py" \
             "build/bin/${PLUGIN_BASE}.clap"
+
+      - name: Validate LV2 metadata and discovery (gate)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        shell: bash
+        run: |
+          set -o pipefail
+          LV2_BUNDLE="build/bin/${PLUGIN_BASE}.lv2"
+          test -d "$LV2_BUNDLE"
+          for ttl in "$LV2_BUNDLE"/*.ttl; do
+            echo "serdi: $ttl"
+            serdi -q -i turtle -o turtle "$ttl" >/dev/null
+          done
+          VALIDATION_ROOT="$RUNNER_TEMP/lv2-validation"
+          rm -rf "$VALIDATION_ROOT"
+          mkdir -p "$VALIDATION_ROOT"
+          cp -R "$LV2_BUNDLE" "$VALIDATION_ROOT/"
+          LV2_PATH="$VALIDATION_ROOT" lv2info "$PLUGIN_URI" | tee lv2info.log
+          grep -q "Name:" lv2info.log
+
+      - name: Install pluginval
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
+          echo "69adc87d6bbb2f7224a038d8f8c5e737ea5c906ea153752b8a546b6125e0564f  pluginval.zip" \
+            | sha256sum -c -
+          unzip -o pluginval.zip -d pluginval
+          PV="$(find pluginval -type f -name pluginval | head -n1)"
+          test -n "$PV"
+          chmod +x "$PV"
+          echo "PLUGINVAL=$RUNNER_TEMP/$PV" >> "$GITHUB_ENV"
+
+      - name: Validate VST3 (pluginval gate)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          VST3="$(cd build/bin && pwd)/${PLUGIN_BASE}.vst3"
+          test -d "$VST3"
+          set +e
+          timeout 900 xvfb-run -a "$PLUGINVAL" \
+            --strictness-level 8 --skip-gui-tests --timeout-ms 270000 \
+            --validate "$VST3" 2>&1 | tee pluginval.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$STATUS" -eq 124 ]; then
+            echo "::error::pluginval timed out"
+            exit 1
+          fi
+          # The ONE tolerated non-zero status: DPF's VST3 wrapper can segfault
+          # while tearing the component down AFTER the whole suite has already
+          # passed (it warns "asked to delete component while audio processor
+          # still active"); the shell reports that as 128+SIGSEGV = 139.
+          # pluginval 1.0.3 prints NO final summary line (verified against a
+          # passing macOS run), so a completed suite is detected structurally:
+          # every "Starting tests in:" line has a matching "Completed tests in"
+          # line and no failure marker appears. A crash mid-suite leaves the
+          # last test unfinished, so it still fails the gate instead of
+          # passing as "clean teardown".
+          STARTED=$(grep -c '^Starting tests in:' pluginval.log || true)
+          COMPLETED=$(grep -c '^Completed tests in' pluginval.log || true)
+          if [ "$STATUS" -eq 139 ] \
+             && [ "$STARTED" -gt 0 ] \
+             && [ "$STARTED" -eq "$COMPLETED" ] \
+             && ! grep -qE 'FAILED|!!!' pluginval.log; then
+            echo "::warning::pluginval completed all $COMPLETED test groups then crashed in DPF teardown (exit $STATUS)"
+            exit 0
+          fi
+          echo "::error::pluginval failed (exit $STATUS) — incomplete suite ($COMPLETED of $STARTED test groups) or a reported test failure"
+          exit 1
 
       - name: Package
         working-directory: ${{ env.PLUGIN_DIR }}
@@ -305,6 +433,12 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+    # Same container shell default as build-linux: steps would otherwise run
+    # under /bin/sh (dash). Nothing here needs a bash-ism today, but this job
+    # mirrors build-linux, so anything added there lands here eventually.
+    defaults:
+      run:
+        shell: bash
     container:
       # glibc 2.35 for loadability on Ubuntu 22.04 / Debian 12 arm64 hosts —
       # the bare 24.04 runner links against glibc 2.38+ symbols. Same as
@@ -327,6 +461,12 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # Same Azure regional mirror switch as build-linux, but arm64 packages
+          # come from ports.ubuntu.com (/ubuntu-ports), whose flakiness this job
+          # already retries around. sed is a no-op if the pattern is absent.
+          sed -i \
+            -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
+            /etc/apt/sources.list
           apt-get update -o Acquire::Retries=3
           apt-get install -y --no-install-recommends git ca-certificates
 
@@ -518,13 +658,40 @@ jobs:
             vtool -show-build "$binary" | grep -q "minos 10.15"
           done
 
-      # Signing + notarization are OPTIONAL, matching build.yml (the JUCE pipeline):
-      # they run only when MACOS_SIGNING_ENABLED=true and the Apple secrets are set.
-      # Unset (the current repo default) => the release still ships, UNSIGNED, exactly
-      # like the JUCE plugins. To sign later, set the var + secrets; no workflow change.
-      - name: Warn if releasing unsigned
+      # Without an Apple identity, bundles carry only the linker's ad-hoc
+      # Mach-O signature (no resource seal) and `codesign --verify` fails.
+      # A full ad-hoc bundle signature (identity "-") is free, needs no Apple
+      # account, satisfies Apple Silicon's signature requirement, and lets
+      # auval/hosts load the bundles on end-user machines. Gatekeeper's
+      # download-quarantine prompt still applies; only notarization removes it.
+      - name: Ad-hoc sign bundles (no Apple identity)
+        if: ${{ needs.plan.outputs.is_release != 'true' || vars.MACOS_SIGNING_ENABLED != 'true' }}
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          # The packaged bundles are described as ad-hoc signed, so both signing
+          # and verification gate artifact publication.
+          for bundle in \
+            "build/bin/${PLUGIN_BASE}.component" \
+            "build/bin/${PLUGIN_BASE}.vst3" \
+            "build/bin/${PLUGIN_BASE}.clap"
+          do
+            codesign --force --deep --sign - "$bundle"
+            codesign --verify --deep --strict --verbose=2 "$bundle"
+          done
+          for dylib in build/bin/"${PLUGIN_BASE}".lv2/*.dylib; do
+            codesign --force --sign - "$dylib"
+            codesign --verify --strict --verbose=2 "$dylib"
+          done
+
+      # Developer ID signing + notarization are OPTIONAL, matching build.yml (the
+      # JUCE pipeline): they run only when MACOS_SIGNING_ENABLED=true and the Apple
+      # secrets are set. Unset (the current repo default) => the release still ships,
+      # carrying the ad-hoc signature applied above but no Apple identity and no
+      # notarization, exactly like the JUCE plugins. To sign later, set the var +
+      # secrets; no workflow change.
+      - name: Warn if releasing without an Apple identity
         if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED != 'true' }}
-        run: echo "::warning::MACOS_SIGNING_ENABLED is not set — shipping an UNSIGNED macOS build (Gatekeeper will warn users on first launch)."
+        run: echo "::warning::MACOS_SIGNING_ENABLED is not set — shipping ad-hoc signed, NOT Developer ID signed and NOT notarized (Gatekeeper will warn users on first launch)."
 
       - name: Import code-signing certificate
         if: ${{ needs.plan.outputs.is_release == 'true' && vars.MACOS_SIGNING_ENABLED == 'true' }}
@@ -585,7 +752,7 @@ jobs:
           xcrun stapler staple "build/bin/${PLUGIN_BASE}.clap"
 
       # Validate the finalized bundle: on a release this is the signed + stapled
-      # AU we actually ship; on PR/dispatch it is the unsigned build. Reinstall
+      # AU we actually ship; on PR/dispatch it is the ad-hoc-signed build. Reinstall
       # from build/bin (signed/stapled in place above) so auval gates the shipped
       # artifact, not a stale pre-signing copy.
       - name: Install component for auval
@@ -822,7 +989,7 @@ jobs:
             if [ "$SIGNED" = "true" ]; then
               echo "> macOS AU, VST3, and CLAP bundles are Developer ID signed and Apple-notarized. The LV2 bundle is Developer ID signed."
             else
-              echo "> macOS bundles are **not** code-signed. On first launch macOS Gatekeeper will warn; either right-click the plugin and choose **Open**, or clear the quarantine flag: \`xattr -dr com.apple.quarantine <bundle>\`."
+              echo "> macOS AU, VST3, and CLAP bundles are ad-hoc signed, as is the LV2 bundle's dylib. They are **not** Developer ID signed and **not** notarized, so on first launch macOS Gatekeeper will warn; either right-click the plugin and choose **Open**, or clear the quarantine flag: \`xattr -dr com.apple.quarantine <bundle>\`."
             fi
           } > release_body.md
           echo "=== collected artifacts ==="

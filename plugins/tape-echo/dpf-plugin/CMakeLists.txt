@@ -8,7 +8,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeEchoDPF VERSION 0.1.3)
+project(TapeEchoDPF VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,4 +49,30 @@ target_compile_definitions(tape_echo PUBLIC
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
-dusk_dpf_install_local(tape_echo)
+dusk_dpf_install_local(tape_echo LV2_PROGRAMS)
+
+if(NOT CMAKE_CROSSCOMPILING)
+    # enable_testing() + add_test() are what make this reachable from ctest.
+    # Without them the target still BUILDS but nothing ever runs it, so the
+    # block-size-invariance and reset assertions it encodes are silently dead.
+    enable_testing()
+    add_executable(TapeEchoCoreTest
+        ../core/tests/TapeEchoDSPTest.cpp
+        ../core/TapeEchoDSP.cpp)
+    target_include_directories(TapeEchoCoreTest PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp")
+    target_compile_features(TapeEchoCoreTest PRIVATE cxx_std_17)
+    add_test(NAME TapeEchoCore COMMAND TapeEchoCoreTest)
+
+    find_program(DUSK_SERDI_EXECUTABLE serdi)
+    if(DUSK_SERDI_EXECUTABLE)
+        add_test(NAME DuskFixLv2Presets
+            COMMAND ${CMAKE_COMMAND}
+                "-DFIX_SCRIPT=${DUSK_SHARED_DPF_CMAKE_DIR}/DuskFixLv2Presets.cmake"
+                "-DFIXTURE=${DUSK_SHARED_DPF_CMAKE_DIR}/tests/fixtures/dpf-malformed-presets.ttl"
+                "-DSERDI_EXECUTABLE=${DUSK_SERDI_EXECUTABLE}"
+                "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lv2-preset-repair-test"
+                -P "${DUSK_SHARED_DPF_CMAKE_DIR}/tests/DuskFixLv2PresetsTest.cmake")
+    endif()
+endif()
