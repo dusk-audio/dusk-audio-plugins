@@ -158,8 +158,10 @@ jobs:
   # -------------------------------------------------------------------------
   build-linux:
     needs: plan
+    # 45 to match build-linux-arm64. 30 left no headroom: the pluginval gate
+    # alone budgets 15 minutes, and a healthy run of this job already takes ~15.
+    timeout-minutes: 45
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
     # Steps in this container job otherwise run under /bin/sh (dash), which has
     # no ${PIPESTATUS[*]} — the pluginval gate needs it to read the exit status
     # of a piped command, and failed with "Bad substitution" without this.
@@ -195,6 +197,16 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # Point apt at the Azure regional mirror before the first fetch.
+          # GitHub runners are Azure VMs and their own images do this; the bare
+          # ubuntu image still points at archive.ubuntu.com, which measured
+          # 724 B/s - 35 kB/s from a runner and spent 28 minutes downloading
+          # before the job hit its timeout. sed is a no-op if the pattern is
+          # absent, so this degrades to the stock mirror rather than breaking.
+          sed -i \
+            -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list
           apt-get update -o Acquire::Retries=3
           apt-get install -y --no-install-recommends git ca-certificates
 
@@ -449,6 +461,12 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # Same Azure regional mirror switch as build-linux, but arm64 packages
+          # come from ports.ubuntu.com (/ubuntu-ports), whose flakiness this job
+          # already retries around. sed is a no-op if the pattern is absent.
+          sed -i \
+            -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
+            /etc/apt/sources.list
           apt-get update -o Acquire::Retries=3
           apt-get install -y --no-install-recommends git ca-certificates
 
