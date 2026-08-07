@@ -135,7 +135,7 @@ Build options:
 
 ## Project Structure
 
-```
+```text
 plugins/
 ├── plugins/
 │   ├── 4k-eq/
@@ -213,11 +213,30 @@ void getStateInformation(juce::MemoryBlock& destData) {
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
 }
-// Load: reverse the process, validate before applying
+// Load: reverse the process, validate before applying. Parse into a ValueTree,
+// TYPE-CHECK every custom property into a temporary first, and only then call
+// replaceState — a half-applied state is worse than a rejected one, so bail
+// without touching the APVTS if anything is missing or the wrong type.
 void setStateInformation(const void* data, int sizeInBytes) {
     auto xml = getXmlFromBinary(data, sizeInBytes);
-    if (xml && xml->hasTagName(apvts.state.getType()))
-        apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    if (xml == nullptr || !xml->hasTagName(apvts.state.getType()))
+        return;
+    auto state = juce::ValueTree::fromXml(*xml);
+    if (!state.isValid())
+        return;
+
+    // getProperty() returns a var: a missing or wrong-typed entry casts to 0
+    // silently, so check the type BEFORE converting. hasProperty() alone is not
+    // enough — it passes for a String that then reads as 0.0f. Numbers written
+    // by setProperty(float) come back as isDouble; isInt covers a whole number
+    // that JUCE narrowed on the way out.
+    const juce::var customVar = state.getProperty("customProp");
+    if (!customVar.isDouble() && !customVar.isInt())
+        return;                       // repeat for every required custom property
+    const float loadedValue = (float) customVar;
+
+    apvts.replaceState(state);        // only now: every property validated
+    value = loadedValue;              // apply the validated temporaries after
 }
 ```
 
@@ -343,8 +362,8 @@ tuning scripts now live in the private tools repo at
 `~/projects/dusk-audio-tools/tools/duskverb/tuner/` (see the tools repo README).
 
 NOTE: the DuskVerb tuner move is DONE (2026-08-07). All 64 scripts now live in
-the private tools repo at `plugins/DuskVerb/tools/tuner/` and are gone from this
-repo. The previous note here claimed "59 of the 64 are already mirrored in the
+the private tools repo at `~/projects/dusk-audio-tools/tools/duskverb/tuner/`
+(the canonical path named above) and are gone from this repo. The previous note here claimed "59 of the 64 are already mirrored in the
 private repo" with only `stereo_jnd_audit.py` / `stereo_profile_fit.py`
 outstanding -- that was WRONG. The tools repo contained zero DuskVerb tuner
 scripts; its 65 Python files were all TapeEcho and TapeMachine. Verify a mirror

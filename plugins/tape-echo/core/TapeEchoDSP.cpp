@@ -653,7 +653,15 @@ float TapeEchoDSP::repeatRateForDelayMs(float delayMs) noexcept
 
 float TapeEchoDSP::leadingHeadOffsetMsForMode(int mode1to12) noexcept
 {
-    return kHeadOffsetMs[(size_t)teLeadingHeadIndexForMode(mode1to12)];
+    // Same selection as leadingHeadRatioForMode above, off the same table, so
+    // the ratio and its companion offset can never disagree about which head
+    // leads. Reverb-only (mode 12) has no active head and falls through to the
+    // head-1 entry, which is 0 ms.
+    const auto& mode = kModeTable[clampInt(mode1to12, 1, kNumModes) - 1];
+    if (mode.h1 > 0.0f) return kHeadOffsetMs[0];
+    if (mode.h2 > 0.0f) return kHeadOffsetMs[1];
+    if (mode.h3 > 0.0f) return kHeadOffsetMs[2];
+    return 0.0f;
 }
 
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)

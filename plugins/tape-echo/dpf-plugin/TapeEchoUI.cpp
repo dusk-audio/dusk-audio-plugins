@@ -126,6 +126,27 @@ protected:
                       : -1;
         currentUserName.clear();
         currentUserPath.clear();
+        if (currentPreset < 0)
+            return;
+        // Re-derive the local cache from the preset. A host-driven program
+        // change does NOT deliver parameterChanged() for the values it moved:
+        // the VST3 wrapper calls loadProgram(), refreshes its own parameter
+        // cache, and then flags ONLY the program index for the UI
+        // (DistrhoPluginVST3.cpp, kVst3InternalParameterProgram). Without this
+        // every knob would keep drawing its pre-program value, and
+        // legacySyncDivisionOverride would keep the stale ownership the plugin
+        // has already changed -- so the head strip would name a division the
+        // DSP is not playing.
+        //
+        // Store only. The plugin applied these values itself when the host
+        // called loadProgram, so writing them back would be redundant traffic
+        // and, for the compatibility pair, would re-run the ownership latch
+        // from the UI side. storeParamLocally keeps that latch in step exactly
+        // as the plugin's own loadProgram does, because both walk the pair in
+        // the same order.
+        forEachPresetParam(currentPreset,
+                           [this](uint32_t param, float value)
+                           { storeParamLocally(param, normalizeParamValue(param, value)); });
     }
 
     void onImGuiDisplay() override
@@ -1000,8 +1021,24 @@ private:
         f.imbue(std::locale::classic());
         f << "name=" << name << "\n";
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if (teIsPresetParam(i))
-                f << kTeParams[i].id << "=" << values[i] << "\n";
+        {
+            if (!teIsPresetParam(i))
+                continue;
+            // Do not write the DERIVED half of the compatibility pair. While an
+            // old project's semantic division owns the delay, Echo Rate Note is
+            // only the nearest physical detent to it, and that division may not
+            // be representable on the current head at all. Writing both would
+            // lose the exact division on reload: the file is read in ascending
+            // index order, so echo_rate_note (21) would land after
+            // sync_division (12) and take ownership. Omitting it leaves
+            // loadUserPreset's default pass followed by the file's
+            // sync_division, which ends with the legacy value authoritative --
+            // and scanUserPresets already derives a detent for files without
+            // the key, so the preset browser still matches.
+            if (i == kParamEchoRateNote && legacySyncDivisionOverride)
+                continue;
+            f << kTeParams[i].id << "=" << values[i] << "\n";
+        }
         f.close();
         if (!f)
             return false; // flush/close failed: the file on disk is not complete

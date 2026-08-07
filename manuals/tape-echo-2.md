@@ -78,10 +78,10 @@ is off.
   divisions therefore converge on the same endpoint timing at a given tempo,
   and slow tempos reach the limit sooner. Use a shorter division, or a
   multi-head mode, when you need the repeat to track the bar at low tempos.
-- **Echo Rate Note** has the same eleven physical detents as the unsynced
-  Repeat Rate knob. With Tempo Sync enabled, each detent selects a rhythmic value for
-  the leading active head; the available values therefore change with Head
-  Select. The three head displays show the exact `d` (dotted), `t` (triplet),
+- **Echo Rate Note** replaces Repeat Rate while Tempo Sync is enabled, and steps
+  through eleven detents instead of sweeping continuously. Each detent selects a
+  rhythmic value for the leading active head, so the available values change with
+  Head Select. The three head displays show the exact `d` (dotted), `t` (triplet),
   `+`/`-`, and out-of-range blinking indications used by the reference unit.
   Changing Head Select keeps the knob at the same detent and updates its note
   assignment. The older Sync Division parameter remains hidden so projects and

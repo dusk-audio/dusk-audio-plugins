@@ -347,6 +347,14 @@ protected:
                 duskaudio::TapeEchoDSP::leadingHeadRatioForMode(mode);
             const double leadingHeadOffsetMs =
                 duskaudio::TapeEchoDSP::leadingHeadOffsetMsForMode(mode);
+            // The latch and the value it selects are separate relaxed loads, so
+            // a host write landing between them can make this block read the
+            // new latch against the old value (or vice versa). That is benign
+            // and deliberate: both are plain parameter reads, the worst case is
+            // one block of a stale division, and the motor-inertia smoother
+            // turns any resulting delay step into a glide rather than a click.
+            // Ordering them would cost an audio-thread fence for no audible
+            // gain, and matches how every other parameter is read here.
             const int division = legacySyncDivisionOverride.load(std::memory_order_relaxed)
                 ? (int)(values[kParamSyncDivision].load(std::memory_order_relaxed) + 0.5f)
                 : teDivisionForSyncKnobPos(

@@ -212,16 +212,23 @@ int main()
     const double firstPacket = windowEnergy(springImpulse, 0.020, 0.090);
     const double firstReturns = windowEnergy(springImpulse, 0.090, 0.300);
     const double lateTail = windowEnergy(springImpulse, 0.500, 1.500);
+    // Equal-length decay windows: the tail must still be DECAYING, not merely
+    // present. A loop that crept to unity would keep lateTail above its floor
+    // while holding or growing, which the thresholds alone cannot catch.
+    const double earlyDecay = windowEnergy(springImpulse, 0.500, 1.000);
+    const double lateDecay  = windowEnergy(springImpulse, 1.000, 1.500);
     if (!springFinite || preArrival > 1.0e-20
         || firstPacket < 1.0e-6 || firstReturns < 1.0e-8
-        || lateTail < 1.0e-10)
+        || lateTail < 1.0e-10 || !(lateDecay < earlyDecay))
     {
         std::cerr << "dispersive spring propagation regression\n"
                   << "  finite=" << springFinite
                   << " pre=" << preArrival
                   << " first=" << firstPacket
                   << " returns=" << firstReturns
-                  << " late=" << lateTail << '\n';
+                  << " late=" << lateTail
+                  << " earlyDecay=" << earlyDecay
+                  << " lateDecay=" << lateDecay << '\n';
         return 1;
     }
 
