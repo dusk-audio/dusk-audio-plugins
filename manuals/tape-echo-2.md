@@ -62,8 +62,9 @@ is off.
   amplifier and tape nonlinearity.
 - **Input Send** toggles new material into the tape loop. Switching it off lets
   existing repeats decay while the dry and spring paths continue.
-- **Tape Age** selects **New**, **Used**, or **Old** tape. Older states add
-  bandwidth loss, hiss, transport variation, and level wear.
+- **Tape Age** selects **New**, **Used**, or **Old** tape. New retains a very
+  quiet tape/electronics bed; older states progressively add bandwidth loss,
+  noise, transport variation, level wear, and a more audible tape splice.
 - **Wow & Flutter** extends the intrinsic transport movement from subtle
   mechanical motion to a creative wobble range.
 - **Power** is the host-designated bypass and uses a click-free transition.
@@ -77,11 +78,14 @@ is off.
   divisions therefore converge on the same endpoint timing at a given tempo,
   and slow tempos reach the limit sooner. Use a shorter division, or a
   multi-head mode, when you need the repeat to track the bar at low tempos.
-- **Sync Division** offers 1/64, 1/32T, 1/64., 1/32, 1/16T, 1/32., 1/16, 1/8T,
-  1/16., 1/8, 5/32, 1/4T, 1/8., and 1/4 values. The knob sweeps them in this
-  order, shortest to longest. Sessions saved in the 0.1 series store a different
-  internal ordering that is preserved on load; the displayed label is always
-  authoritative.
+- **Echo Rate Note** has the same eleven physical detents as the unsynced
+  Repeat Rate knob. With Tempo Sync enabled, each detent selects a rhythmic value for
+  the leading active head; the available values therefore change with Head
+  Select. The three head displays show the exact `d` (dotted), `t` (triplet),
+  `+`/`-`, and out-of-range blinking indications used by the reference unit.
+  Changing Head Select keeps the knob at the same detent and updates its note
+  assignment. The older Sync Division parameter remains hidden so projects and
+  automation saved by the 0.1 series continue to load correctly.
 - **Mix** crossfades the direct signal against the combined echo and spring
   returns. At 0% the output is dry-only, 50% preserves both paths at unity, and
   100% is fully wet for send/return use.
@@ -131,10 +135,9 @@ Developer ID signed and notarized AU, VST3, and CLAP bundles. The LV2 bundle is
 Developer ID signed but is not submitted for notarization.
 
 Parameter IDs from the 0.1 series are preserved. Mix was appended after all
-previously shipped IDs. The former Dry Level and Wet Solo parameters retain
-their original meanings for old project state and automation, but are hidden
-from the custom interface. Tape Age snaps stored continuous values to the
-nearest New/Used/Old state.
+previously shipped IDs. The hidden Dry Level parameter retains its original
+meaning for old project state and automation. Tape Age snaps stored continuous
+values to the nearest New/Used/Old state.
 
 ## Gain and safety
 

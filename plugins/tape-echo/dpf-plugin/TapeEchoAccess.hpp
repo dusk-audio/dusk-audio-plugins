@@ -19,3 +19,8 @@ DUSK_ACCESS_DECL(float, tapeEchoGetRecordPeakLevel);
 // Effective head-1 motor time in milliseconds after physical motor-range clamping.
 // Null in the split LV2 UI.
 DUSK_ACCESS_DECL(float, tapeEchoGetHead1DelayMs);
+
+// True while tempo sync asks for a note the transport cannot reach at the host
+// tempo, i.e. the motor-range clamp is active. Drives the blinking head readout.
+// Null in the split LV2 UI, which falls back to the captured 120 BPM table.
+DUSK_ACCESS_DECL(bool, tapeEchoGetSyncNoteOutOfRange);

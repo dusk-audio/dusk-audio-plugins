@@ -16,8 +16,8 @@ enum ParamId
     kParamInputGain,
     kParamWowFlutter,
     kParamDryLevel,
-    kParamTempoSync,    // 1 = head-1 delay locks to a division of host tempo
-    kParamSyncDivision, // note division index into kSyncDivisions
+    kParamTempoSync,    // 1 = the leading active head locks to host tempo
+    kParamSyncDivision, // shipped semantic division index; compatibility only
     kParamTapeAge,      // 0 = fresh tape/serviced transport (bit-identical to before this knob existed)
     // IDs 13 and 14 shipped in Tape Echo 0.1.x; append new parameters after them.
     kParamBypass = 13,       // host-designated bypass; the UI POWER switch (1 = off)
@@ -26,9 +26,11 @@ enum ParamId
     kParamEchoPan = 16,      // linear wet-path pan: 0 = left, 0.5 = center, 1 = right
     kParamReverbPan = 17,    // linear spring-path pan: 0 = left, 0.5 = center, 1 = right
     kParamInputSend = 18,    // boolean program feed to the tape echo ("dub" switch)
-    kParamWetSolo = 19,      // boolean dry-path mute
-    kParamPeakLevel = 20,    // output parameter: record-path transient peak
-    kParamMix = 21,          // dry / combined-wet crossfade
+    kParamPeakLevel = 19,    // output parameter: record-path transient peak
+    kParamMix = 20,          // dry / combined-wet crossfade
+    // Physical 1..11 tempo-sync detent. Appended so the shipped semantic
+    // kParamSyncDivision remains available for old sessions and automation.
+    kParamEchoRateNote = 21,
     kParamCount = 22
 };
 
@@ -39,100 +41,254 @@ enum ParamId
 // than kept as a hidden placeholder.
 static_assert(kParamDryLevel == 9 && kParamBypass == 13 && kParamOutLevel == 14,
               "Tape Echo 0.1.x parameter IDs are part of the saved-session ABI");
+static_assert(kParamOutputVolume == 15 && kParamEchoPan == 16
+              && kParamReverbPan == 17 && kParamInputSend == 18
+              && kParamPeakLevel == 19 && kParamMix == 20
+              && kParamEchoRateNote == 21 && kParamCount == 22,
+              "Tape Echo 1.0.0 parameter layout must remain append-only");
+
+// The compatibility pair is ORDER-DEPENDENT and that ordering is load-bearing.
+//
+// kParamSyncDivision and kParamEchoRateNote are two representations of one
+// control, and whichever is written LAST takes ownership of the delay (see
+// legacySyncDivisionOverride in TapeEchoPlugin.cpp). Every DPF backend replays
+// saved parameters in ascending index order, so a 1.0.0 session ends the
+// restore on kParamEchoRateNote (the detent wins, correct) while a 0.1.x
+// session has no kParamEchoRateNote to replay and therefore stays on its
+// stored semantic division (also correct). Both outcomes depend on the
+// appended parameter having the HIGHER index.
+static_assert(kParamSyncDivision < kParamEchoRateNote,
+              "the appended physical detent must load after the legacy "
+              "semantic division, or restoring a 1.0.0 session silently "
+              "hands the delay back to a stale compatibility value");
 
 // Tempo-sync note divisions (fraction of a quarter-note beat).
 struct SyncDivision { const char* name; double beats; };
 static constexpr SyncDivision kSyncDivisions[] =
 {
     { "1/32",  0.125       },
-    { "1/16T", 1.0 / 6.0   },
+    { "1/16t", 1.0 / 6.0   },
     { "1/16",  0.25        },
-    { "1/8T",  1.0 / 3.0   },
-    { "1/16.", 0.375       },
+    { "1/8t",  1.0 / 3.0   },
+    { "1/16d", 0.375       },
     { "1/8",   0.5         },
-    { "1/8.",  0.75        },
+    { "1/8d",  0.75        },
     { "1/4",   1.0         },
     // Added after the original 0.1.x choices so stored division indices keep
-    // their meaning. These shorter values cover the remaining hosted rhythmic
-    // states; the motor clamp below handles rates outside the physical range.
-    { "1/32.", 3.0 / 16.0  },
-    { "1/32T", 1.0 / 12.0  },
+    // their meaning. The motor clamp below handles rates outside the physical
+    // range.
+    { "1/32d", 3.0 / 16.0  },
+    { "1/32t", 1.0 / 12.0  },
     { "1/64",  0.0625      },
-    { "1/64.", 0.09375     },
-    { "1/4T",  2.0 / 3.0   },
+    { "1/64d", 0.09375     },
+    { "1/4t",  2.0 / 3.0   },
     { "5/32",  0.625       },
+    { "1/2t",  4.0 / 3.0   },
+    { "5/16",  1.25        },
 };
 static constexpr int kNumSyncDivisions = (int)(sizeof(kSyncDivisions) / sizeof(kSyncDivisions[0]));
 
-// STORAGE order above is frozen by the saved-session ABI, and indices 8..13 were
-// appended later, so it is NOT monotonic in time: a knob sweeping raw indices
-// runs long, snaps short, then long again. This table is the sweep order --
-// storage indices sorted by ascending note length -- so the knob reads musically
-// while the stored value keeps its meaning. UI-only; never serialized.
-static constexpr uint8_t kDivSweep[kNumSyncDivisions] =
+// STORAGE order above is frozen by the saved-session ABI, and indices 8..15 were
+// appended later. The reference control gives the same eleven physical tick
+// marks a DIFFERENT note table according to the leading active playback head.
+// Rows are leading Heads 1, 2, and 3; columns run counter-clockwise (long/slow)
+// to clockwise (short/fast). kParamEchoRateNote serializes the 1-based column;
+// kParamSyncDivision remains the compatibility representation of its note.
+static constexpr uint8_t kSyncKnobDivisions[3][11] =
 {
-    10, //  1/64   0.0625
-     9, //  1/32T  0.0833
-    11, //  1/64.  0.0938
-     0, //  1/32   0.125
-     1, //  1/16T  0.1667
-     8, //  1/32.  0.1875
-     2, //  1/16   0.25
-     3, //  1/8T   0.3333
-     4, //  1/16.  0.375
-     5, //  1/8    0.5
-    13, //  5/32   0.625
-    12, //  1/4T   0.6667
-     6, //  1/8.   0.75
-     7, //  1/4    1.0
+    { 13, 5, 4, 3, 2, 8, 1, 0, 11, 9, 10 },
+    {  7, 6,12,13, 5, 4, 3, 2,  8, 1,  0 },
+    { 14,15, 7, 6,12,13, 5, 4,  3, 2,  8 },
 };
+static constexpr int kNumSyncKnobPositions = 11;
+static_assert(kNumSyncKnobPositions == 11,
+              "the tempo-sync Echo Rate control has eleven detents");
 
-// The table is hand-maintained alongside kSyncDivisions, so prove both of its
-// invariants at compile time: it must list every storage index exactly once,
-// and it must be sorted by ascending note length. Appending a division without
-// updating the sweep order is then a build error, not a silently wrong knob.
-static constexpr bool teDivSweepIsPermutation() noexcept
+// Head combinations collapse to three leading-head cases. Reverb never changes
+// the sync table, so modes 1/5/8/10/11 share Head 1, modes 2/4/6/9 share Head 2,
+// and modes 3/7 share Head 3.
+static constexpr int teLeadingHeadIndexForMode(int mode1to12) noexcept
 {
-    bool seen[kNumSyncDivisions] = {};
-    for (int i = 0; i < kNumSyncDivisions; ++i)
+    switch (mode1to12)
     {
-        const int v = (int)kDivSweep[i];
-        if (v < 0 || v >= kNumSyncDivisions || seen[v])
-            return false;
-        seen[v] = true;
+    case 2: case 4: case 6: case 9:
+        return 1;
+    case 3: case 7:
+        return 2;
+    default:
+        return 0;
+    }
+}
+static_assert(teLeadingHeadIndexForMode(1) == 0
+              && teLeadingHeadIndexForMode(2) == 1
+              && teLeadingHeadIndexForMode(3) == 2
+              && teLeadingHeadIndexForMode(4) == 1
+              && teLeadingHeadIndexForMode(5) == 0
+              && teLeadingHeadIndexForMode(6) == 1
+              && teLeadingHeadIndexForMode(7) == 2
+              && teLeadingHeadIndexForMode(8) == 0
+              && teLeadingHeadIndexForMode(9) == 1
+              && teLeadingHeadIndexForMode(10) == 0
+              && teLeadingHeadIndexForMode(11) == 0,
+              "every echo mode must select the captured leading-head table");
+
+// The table is hand-maintained alongside kSyncDivisions, so prove that every
+// detent names a valid, unique storage value and that delay decreases clockwise.
+static constexpr bool teSyncKnobTableIsValid() noexcept
+{
+    for (int head = 0; head < 3; ++head)
+    {
+        bool seen[kNumSyncDivisions] = {};
+        for (int i = 0; i < kNumSyncKnobPositions; ++i)
+        {
+            const int v = (int)kSyncKnobDivisions[head][i];
+            if (v < 0 || v >= kNumSyncDivisions || seen[v])
+                return false;
+            seen[v] = true;
+        }
     }
     return true;
 }
-static_assert(teDivSweepIsPermutation(),
-              "kDivSweep must list every sync division index exactly once");
+static_assert(teSyncKnobTableIsValid(),
+              "tempo-sync knob detents must be valid and unique");
 
-static constexpr bool teDivSweepIsAscending() noexcept
+static constexpr bool teSyncKnobTableIsDescending() noexcept
 {
-    for (int i = 1; i < kNumSyncDivisions; ++i)
-        if (!(kSyncDivisions[kDivSweep[i - 1]].beats
-                  < kSyncDivisions[kDivSweep[i]].beats))
-            return false;
+    for (int head = 0; head < 3; ++head)
+        for (int i = 1; i < kNumSyncKnobPositions; ++i)
+            if (!(kSyncDivisions[kSyncKnobDivisions[head][i - 1]].beats
+                      > kSyncDivisions[kSyncKnobDivisions[head][i]].beats))
+                return false;
     return true;
 }
-static_assert(teDivSweepIsAscending(),
-              "kDivSweep must be sorted by ascending note length");
+static_assert(teSyncKnobTableIsDescending(),
+              "tempo-sync knob delay must decrease clockwise");
 
-// Sweep position -> storage index.
-static inline int teDivisionForSweepPos(int pos) noexcept
+// Front-panel knob position -> storage index.
+static constexpr int teDivisionForSyncKnobPos(int pos, int leadingHead) noexcept
 {
     if (pos < 0) pos = 0;
-    if (pos >= kNumSyncDivisions) pos = kNumSyncDivisions - 1;
-    return (int)kDivSweep[pos];
+    if (pos >= kNumSyncKnobPositions) pos = kNumSyncKnobPositions - 1;
+    if (leadingHead < 0) leadingHead = 0;
+    if (leadingHead > 2) leadingHead = 2;
+    return (int)kSyncKnobDivisions[leadingHead][pos];
 }
 
-// Storage index -> sweep position (inverse of the table above).
-static inline int teSweepPosForDivision(int division) noexcept
+// Storage index -> front-panel position. Old sessions and host automation can
+// supply a division absent from the current leading head's table; show it at the
+// nearest physical detent without rewriting the stored or automated value.
+static constexpr int teSyncKnobPosForDivision(int division, int leadingHead) noexcept
 {
-    for (int i = 0; i < kNumSyncDivisions; ++i)
-        if ((int)kDivSweep[i] == division)
+    if (division < 0) division = 0;
+    if (division >= kNumSyncDivisions) division = kNumSyncDivisions - 1;
+    if (leadingHead < 0) leadingHead = 0;
+    if (leadingHead > 2) leadingHead = 2;
+    for (int i = 0; i < kNumSyncKnobPositions; ++i)
+        if ((int)kSyncKnobDivisions[leadingHead][i] == division)
             return i;
-    return 0;
+
+    int nearest = 0;
+    double bestError = 1.0e9;
+    for (int i = 0; i < kNumSyncKnobPositions; ++i)
+    {
+        const double delta =
+            kSyncDivisions[kSyncKnobDivisions[leadingHead][i]].beats
+            - kSyncDivisions[division].beats;
+        const double error = delta < 0.0 ? -delta : delta;
+        if (error < bestError)
+        {
+            bestError = error;
+            nearest = i;
+        }
+    }
+    return nearest;
 }
+
+static constexpr bool teSyncKnobMappingsRoundTrip() noexcept
+{
+    for (int head = 0; head < 3; ++head)
+        for (int pos = 0; pos < kNumSyncKnobPositions; ++pos)
+            if (teSyncKnobPosForDivision(
+                    teDivisionForSyncKnobPos(pos, head), head) != pos)
+                return false;
+    return true;
+}
+static_assert(teSyncKnobMappingsRoundTrip(),
+              "each captured tempo-sync detent must round-trip exactly");
+
+// Exact LED strings captured from Galaxy 1.3.16 at all eleven detents. Each row
+// is selected by leading head; inactive earlier heads are null. A single blink
+// flag applies to every active display in the row, matching the reference UI.
+//
+// CROSS-CHECK, and how to redo it. Every entry should equal the leading head's
+// note scaled by kHeadRatio[display] / kHeadRatio[leading], named as the
+// nearest table note with '+' or '-' when it is off that note by more than
+// about a percent and no sign when it is within a few. Thirty-one of these
+// thirty-three satisfied that rule; the two that did not were both this row's
+// third column, both 8% BELOW their printed note while carrying a '+', and
+// both the same substitution (a triplet replaced by the dotted form of the
+// next longer note). Re-reading Galaxy at Head Select 11 (the only detent with
+// all three heads live), tempo sync on, 120 BPM settled it: the display reads
+// "1/8  -1/4  +1/2t", all three blinking. So position 1 below was a
+// transcription slip and is corrected; position 7 is the identical geometry
+// (0.3451 beats, 1/8t +3.5% vs 1/16d -8.0%) and is corrected the same way,
+// still pending its own eyeball -- see RELEASE_CHECKLIST item 8.
+//
+// The rule is a CHECK, not the source. Where a reading and the rule disagree,
+// the reading wins; do not regenerate this table from the ratios.
+static constexpr const char* kSyncReadoutText[3][11][3] =
+{
+    {
+        { "5/32",   "+1/4",    "+1/2t"  },
+        { "1/8",    "-1/4",    "+1/2t"  }, // read from Galaxy, was "+1/4d"
+        { "1/16d",  "-1/8d",   "+1/4"   },
+        { "1/8t",   "+5/32",   "-1/4"   },
+        { "1/16",   "-1/8",    "+1/4t"  },
+        { "1/32d",  "-1/16d",  "+1/8"   },
+        { "1/16t",  "-1/8t",   "-1/8"   },
+        { "1/32",   "-1/16",   "+1/8t"  }, // same slip as position 1, was "+1/16d"
+        { "1/64d",  "-1/32d",  "1/16"   },
+        { "1/32t",  "1/16t",   "-1/16"  },
+        { "1/64",   "1/32",    "-1/32d" },
+    },
+    {
+        { nullptr, "1/4",    "+1/2t"  },
+        { nullptr, "1/8d",   "+1/4"   },
+        { nullptr, "1/4t",   "-1/4"   },
+        { nullptr, "5/32",   "-1/4"   },
+        { nullptr, "1/8",    "-1/8d"  },
+        { nullptr, "1/16d",  "+1/8"   },
+        { nullptr, "1/8t",   "-1/8"   },
+        { nullptr, "1/16",   "-1/16d" },
+        { nullptr, "1/32d",  "+1/16"  },
+        { nullptr, "1/16t",  "1/16"   },
+        { nullptr, "1/32",   "1/32d"  },
+    },
+    {
+        { nullptr, nullptr, "1/2t"  },
+        { nullptr, nullptr, "5/16"  },
+        { nullptr, nullptr, "1/4"   },
+        { nullptr, nullptr, "1/8d"  },
+        { nullptr, nullptr, "1/4t"  },
+        { nullptr, nullptr, "5/32"  },
+        { nullptr, nullptr, "1/8"   },
+        { nullptr, nullptr, "1/16d" },
+        { nullptr, nullptr, "1/8t"  },
+        { nullptr, nullptr, "1/16"  },
+        { nullptr, nullptr, "1/32d" },
+    },
+};
+
+// Which detents blink, captured at 120 BPM. Blinking marks a note the transport
+// cannot reach, so the true condition is the tempo-dependent kMin/kMaxDelayMs
+// clamp the plugin applies in run() -- this row is exactly that clamp at 120 BPM
+// and is used only as the fallback where the UI cannot see the DSP (split LV2).
+static constexpr bool kSyncReadoutBlinks[3][11] =
+{
+    { true, true, true, false, false, false, false, true, true, true, true },
+    { true, true, false, false, false, false, false, true, true, true, true },
+    { true, true, true, false, false, false, false, true, true, true, true },
+};
 
 // New/Used/Old are the exact normalized half-step values used by the DSP,
 // plugin cache, and UI cache.
@@ -175,9 +331,9 @@ static constexpr TeParam kTeParams[kParamCount] =
     { "echo_pan",       0.0f,  1.0f, 0.5f },
     { "reverb_pan",     0.0f,  1.0f, 0.5f },
     { "input_send",     0.0f,  1.0f, 1.0f },
-    { "wet_solo",       0.0f,  1.0f, 0.0f },
     { "peak_level",     0.0f,  3.0f, 0.0f }, // kParamPeakLevel (output-only)
     { "mix",            0.0f,  1.0f, 0.5f }, // kParamMix
+    { "echo_rate_note", 1.0f, 11.0f, 5.0f }, // kParamEchoRateNote (physical detent)
 };
 
 // Parameters a preset (factory or user) is allowed to carry. The meter outputs
@@ -213,7 +369,6 @@ struct TapeEchoPreset
     float echoPan = 0.5f;
     float reverbPan = 0.5f;
     float inputSend = 1.0f;
-    float wetSolo = 0.0f;
     float mix = 0.5f;
     // No bypass field: see teIsPresetParam — a recall never touches the
     // host-designated bypass, so a preset must not be able to carry one.
@@ -226,19 +381,19 @@ static constexpr TapeEchoPreset kFactoryPresets[] =
     { "Slapback Vocal",       {  1,   0.45498657f, 0.42501831f, 1.0f, 0.0f,
                                   0.11999512f, -0.08996582f, 0.51000977f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.49298415f, 0.5f, 0.49499512f },
+                                0.48663175f, 0.5f, 0.49499512f },
     { "Rockabilly Guitar",    {  1,   1.0f, 0.28646851f, 1.0f, 0.0f,
                                  -0.42553711f, -0.59252930f, 0.5f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.49803940f, 0.5f, 0.51315308f },
+                                0.50108422f, 0.5f, 0.51315308f },
     { "Classic Tape Echo",    {  6,   0.50497437f, 0.39001465f, 0.28500366f, 0.0f,
                                   0.01000977f, 0.02001953f, 0.51000977f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.46741243f },
+                                0.47127065f },
     { "Dub Throw",            {  6,   1.0f, 0.52313232f, 1.0f, 0.0f,
                                  -0.42553711f, -0.59252930f, 0.5f,
                                   0.0f, 1.0f, 0, 2, 0.5f },
-                                0.46502309f, 0.5f, 0.51315308f },
+                                0.46571655f, 0.5f, 0.51315308f },
     { "Synced 1/8 Dub",       {  6,   0.39999390f, 0.43499756f, 0.11499023f, 0.04000854f,
                                   0.0f, 0.0f, 0.29000854f, 0.0f, 1.0f,
                                   1, 5, 0.5f },
@@ -246,7 +401,7 @@ static constexpr TapeEchoPreset kFactoryPresets[] =
     { "Multi-Head Bounce",    {  9,   0.53500366f, 0.48001099f, 0.5f, 0.25997925f,
                                   0.66998291f, 0.0f, 0.5f, 0.0f, 1.0f,
                                   0, 2, 0.0f },
-                                0.49048611f, 1.0f },
+                                0.49356983f, 1.0f },
     { "Orbital Echo",         {  8,   0.39999390f, 0.45001221f, 0.5f, 0.66000366f,
                                   0.80999756f, -0.40997314f, 0.5f, 0.0f, 1.0f,
                                   1, 2, 0.5f },
@@ -254,26 +409,26 @@ static constexpr TapeEchoPreset kFactoryPresets[] =
     { "Full Wash",            { 11,   0.81033325f, 0.61618042f, 0.53720093f,
                                   0.58779907f, -1.0f, 0.21356201f,
                                   0.47543335f, 0.0f, 1.0f, 0, 2, 1.0f },
-                                0.47718931f, 0.48483276f, 0.54565430f },
+                                0.49737567f, 0.48483276f, 0.54565430f },
     { "Ambient Trails",       {  7,   0.81033325f, 0.57254028f, 0.53720093f,
                                   0.58779907f, -0.07104492f, -0.57696533f,
                                   0.47543335f, 0.0f, 1.0f, 0, 2, 1.0f },
-                                0.43937928f, 0.0f, 1.0f },
+                                0.44742326f, 0.0f, 1.0f },
     { "Worn Tape",            {  2,   0.20483398f, 0.61618042f, 0.53720093f, 0.0f,
                                  -1.0f, 0.21356201f, 0.47543335f, 0.0f, 1.0f,
                                   0, 2, 1.0f },
-                                0.48252278f, 0.48483276f, 0.54565430f },
+                                0.47920631f, 0.48483276f, 0.54565430f },
     { "Runaway Drone",        { 10,   0.0f, 0.59866333f, 1.0f, 0.0f,
                                   0.66699219f, -0.49353027f, 0.30581665f,
                                   0.0f, 1.0f, 0, 2, 0.0f },
-                                0.58185389f, 0.53262329f, 0.5f },
+                                0.58150547f, 0.53262329f, 0.5f },
     // Output compensation is kept within 1.5 dB of the decoded counterpart;
     // it balances the calibrated spring's sparse, transient and sustained
     // program levels without altering the matched control state.
     { "Spring Only",          { 12,   0.0f, 0.0f, 0.5f, 0.91986084f,
                                  0.0f, 0.0f, 0.5f, 0.0f, 1.0f,
                                  0,   0,   0.5f },
-                               0.41785440f },
+                               0.41722554f },
 };
 static constexpr int kNumFactoryPresets = (int)(sizeof(kFactoryPresets) / sizeof(kFactoryPresets[0]));
 
