@@ -282,6 +282,8 @@ public:
     //                     Default false keeps the fleet's value-on-hover behaviour.
     //   bubbleOnActiveOnly: suppress the resting hover bubble while preserving an
     //                     otherwise-eligible live value bubble during a drag.
+    //   omitCenterTick: omit the 12-o'clock scale tick when a caller places a
+    //                   fixed triangle there as the scale marker.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -296,7 +298,8 @@ public:
               bool nameOnHover = false,
               bool doubleClickReset = false,
               float persistentTextSize = 9.5f,
-              bool bubbleOnActiveOnly = false)
+              bool bubbleOnActiveOnly = false,
+              bool omitCenterTick = false)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -425,6 +428,8 @@ public:
         if (panelTicks && !bodyless)
             for (int i = 0; i <= 10; ++i)
             {
+                if (omitCenterTick && i == 5)
+                    continue;
                 const float a = knobAngle((float)i / 10.0f);
                 const ImVec2 dir(std::sin(a), -std::cos(a));
                 dl->AddLine(ImVec2(c.x + dir.x * (R + 2.5f * s), c.y + dir.y * (R + 2.5f * s)),
