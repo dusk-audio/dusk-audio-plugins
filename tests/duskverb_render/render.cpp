@@ -44,7 +44,10 @@
 
 namespace
 {
-    constexpr double kSampleRate   = 48000.0;
+    // Runtime-selectable via --sample-rate. A plugin's response must be
+    // rate-invariant, so rendering the same comparison at the rate the session
+    // actually runs at is the only way to catch a rate-dependent defect.
+    double kSampleRate = 48000.0;
     // 2048 samples ≈ 43 ms blocks. 4096 triggered Wine-side stack overflows
     // inside Lex VST2 plugins after a full vpreset apply (yabridge handles
     // every Wine exception on a finite thread stack; deep call stacks
@@ -53,11 +56,11 @@ namespace
     // measured sweet spot: 8× fewer round-trips than 256, no stack issue.
     constexpr int    kBlockSize    = 2048;
     constexpr int    kRenderSec    = 6;
-    constexpr int    kTotalSamples = static_cast<int> (kSampleRate * kRenderSec);
+    int              kTotalSamples = static_cast<int> (kSampleRate * kRenderSec);
     // Silence tail appended after the opt-in long sine tone (Render 4). Shared so
     // the --long-sine-seconds bound reserves exactly what the render then adds;
     // reserving less lets sineSamples + tail overflow int.
-    constexpr int    kLongSineTailSamples = static_cast<int> (kSampleRate * 12.0);
+    int              kLongSineTailSamples = static_cast<int> (kSampleRate * 12.0);
 
     bool parseFiniteDouble (const juce::String& text, double& value) noexcept
     {
@@ -94,6 +97,8 @@ namespace
             << "  --au|--vst3|--vst2 PATH       Plugin bundle to host\n"
             << "  --program NAME                Select a factory program\n"
             << "  --output-dir DIR              Render destination\n"
+            << "  --sample-rate HZ              Render rate (default 48000)\n"
+            << "  --self-test-resampler         Check rate conversion is band-limited, then exit\n"
             << "  --list-params|--list-programs Inspect the hosted plugin\n"
             << "  --dump-nparams               Dump normalized parameter values\n"
             << "  --param NAME=VALUE            Set a displayed parameter value\n"
@@ -474,13 +479,83 @@ namespace
     // the dry input). Returns true on success. Used for the snare render —
     // a real percussive transient reveals burst-loudness disparities that
     // a steady sine tone hides.
-    bool fillFromWav (juce::AudioBuffer<float>& buf, const juce::File& wavFile)
+    // Linear-phase anti-alias low-pass, applied to the SOURCE before any rate
+    // conversion, whenever the target rate is below the file's.
+    //
+    // This is not optional. juce::LagrangeInterpolator -- and WindowedSinc
+    // equally, its kernel never sees speedRatio -- interpolates at the SOURCE
+    // bandwidth, so on decimation everything above targetRate/2 folds back
+    // into the band. At 48 -> 44.1 kHz that is a narrow sliver, but
+    // --sample-rate accepts 8000-384000: rendering a 48 kHz stimulus at
+    // 8 kHz would fold the entire 4-24 kHz range on top of the measurement.
+    //
+    // Butterworth is not steep enough here (8th order at 0.45*fs is only about
+    // -8 dB at Nyquist), so this is a windowed sinc: Blackman window, odd tap
+    // count for an integer group delay of M, which is compensated exactly so
+    // the filtered signal stays sample-aligned with the original.
+    void antiAliasLowPass (juce::AudioBuffer<float>& buf, double fileRate, double targetRate)
     {
-        buf.clear();
+        if (targetRate >= fileRate || buf.getNumSamples() <= 0)
+            return;
+
+        const double fc   = 0.5 * targetRate / fileRate;   // normalised to SOURCE rate
+        const int    taps = 257;
+        const int    M    = taps / 2;
+        std::vector<double> h ((size_t) taps);
+        double sum = 0.0;
+        for (int i = 0; i < taps; ++i)
+        {
+            const int    k = i - M;
+            const double s = (k == 0)
+                ? 2.0 * fc
+                : std::sin (2.0 * juce::MathConstants<double>::pi * fc * k)
+                      / (juce::MathConstants<double>::pi * k);
+            const double t = (double) i / (double) (taps - 1);
+            const double w = 0.42
+                           - 0.5  * std::cos (2.0 * juce::MathConstants<double>::pi * t)
+                           + 0.08 * std::cos (4.0 * juce::MathConstants<double>::pi * t);
+            h[(size_t) i] = s * w;
+            sum += s * w;
+        }
+        for (auto& v : h)
+            v /= sum;                                       // unity DC gain
+
+        const int n = buf.getNumSamples();
+        std::vector<float> in ((size_t) n);
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        {
+            std::copy (buf.getReadPointer (ch), buf.getReadPointer (ch) + n, in.begin());
+            float* out = buf.getWritePointer (ch);
+            for (int i = 0; i < n; ++i)
+            {
+                double acc = 0.0;
+                const int jlo = std::max (0, i + M - (n - 1));
+                const int jhi = std::min (taps - 1, i + M);
+                for (int j = jlo; j <= jhi; ++j)
+                    acc += h[(size_t) j] * (double) in[(size_t) (i + M - j)];
+                out[i] = (float) acc;
+            }
+        }
+    }
+
+    // Load a WAV fully into a stereo buffer AT targetRate, resampling when the
+    // file's own rate differs. Mono sources are duplicated to both channels.
+    // Returns an empty buffer on failure.
+    //
+    // The bundled stimuli (snare, session, piano) are all 48 kHz. They used to
+    // be copied into the render buffer sample-for-sample regardless of
+    // --sample-rate, so at 44.1 kHz every one of them played back 8.8 % flat
+    // and 8.8 % long -- silently, because only --input-wav checked for a rate
+    // mismatch. Resampling here preserves pitch and duration at any render
+    // rate, which is what the analysis actually needs; rejecting instead would
+    // simply delete these stimuli from every non-48 kHz comparison.
+    juce::AudioBuffer<float> loadWavAsStereo (const juce::File& wavFile, double targetRate)
+    {
+        juce::AudioBuffer<float> empty;
         if (! wavFile.existsAsFile())
         {
             std::cerr << "Test signal WAV not found: " << wavFile.getFullPathName() << std::endl;
-            return false;
+            return empty;
         }
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
@@ -488,11 +563,65 @@ namespace
         if (reader == nullptr)
         {
             std::cerr << "Could not open WAV: " << wavFile.getFullPathName() << std::endl;
-            return false;
+            return empty;
         }
-        const int n = static_cast<int> (std::min<juce::int64> (reader->lengthInSamples,
-                                                                buf.getNumSamples()));
-        reader->read (&buf, 0, n, 0, true, true);
+        if (reader->lengthInSamples <= 0
+            || reader->lengthInSamples > std::numeric_limits<int>::max())
+            return empty;
+
+        const int srcLen = static_cast<int> (reader->lengthInSamples);
+        juce::AudioBuffer<float> src (2, srcLen);
+        src.clear();
+        // A failed read leaves the buffer cleared, which would otherwise be
+        // rendered as legitimate silence and reported as a successful capture.
+        if (! reader->read (&src, 0, srcLen, 0, true, true))
+        {
+            std::cerr << "Failed to read WAV: " << wavFile.getFullPathName() << std::endl;
+            return empty;
+        }
+        if (reader->numChannels == 1)
+            src.copyFrom (1, 0, src, 0, 0, srcLen);
+
+        const double fileRate = reader->sampleRate;
+        if (fileRate <= 0.0 || std::abs (fileRate - targetRate) < 1.0e-6)
+            return src;
+
+        // Band-limit BEFORE converting; see antiAliasLowPass. No-op when the
+        // target rate is at or above the file's, so upsampling is bit-preserved.
+        antiAliasLowPass (src, fileRate, targetRate);
+
+        // speedRatio > 1 consumes input faster than it emits, i.e. downsamples.
+        // dstLen is floored so the interpolator can never read past srcLen:
+        // it consumes ceil(dstLen * ratio) <= srcLen input samples.
+        const double ratio  = fileRate / targetRate;
+        const int    dstLen = static_cast<int> (std::floor (static_cast<double> (srcLen) / ratio));
+        if (dstLen <= 0)
+            return empty;
+
+        juce::AudioBuffer<float> dst (2, dstLen);
+        dst.clear();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            juce::LagrangeInterpolator interp;
+            interp.reset();
+            interp.process (ratio, src.getReadPointer (ch), dst.getWritePointer (ch), dstLen);
+        }
+        std::cout << "  resampled " << wavFile.getFileName() << ": " << fileRate
+                  << " -> " << targetRate << " Hz (" << srcLen << " -> " << dstLen
+                  << " samples)" << std::endl;
+        return dst;
+    }
+
+    bool fillFromWav (juce::AudioBuffer<float>& buf, const juce::File& wavFile,
+                      double targetRate)
+    {
+        buf.clear();
+        auto src = loadWavAsStereo (wavFile, targetRate);
+        if (src.getNumSamples() <= 0)
+            return false;
+        const int n = std::min (src.getNumSamples(), buf.getNumSamples());
+        for (int ch = 0; ch < std::min (2, buf.getNumChannels()); ++ch)
+            buf.copyFrom (ch, 0, src, ch, 0, n);
         return true;
     }
 
@@ -537,8 +666,15 @@ namespace
             bR[0] = 0.99765f * bR[0] + wR * 0.0990460f;
             bR[1] = 0.96300f * bR[1] + wR * 0.2965164f;
             bR[2] = 0.57000f * bR[2] + wR * 1.0526913f;
-            buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2]));
-            buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2]));
+            // The direct white term is NOT optional. Kellett's economy filter is
+            // pink = b0 + b1 + b2 + white*0.1848; without it the three one-poles
+            // roll off together above the highest corner (a = 0.57 -> ~4.3 kHz),
+            // so the stimulus falls at 6 dB/oct instead of 3 and is ~7 dB light
+            // by 20 kHz. That starves every high-band measurement of SNR, and it
+            // measurably INVERTED the sign of a high-frequency A/B result that a
+            // flat impulse scored the other way.
+            buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2] + wL * 0.1848f));
+            buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2] + wR * 0.1848f));
         }
     }
 
@@ -566,8 +702,15 @@ namespace
             bR[0] = 0.99765f * bR[0] + wR * 0.0990460f;
             bR[1] = 0.96300f * bR[1] + wR * 0.2965164f;
             bR[2] = 0.57000f * bR[2] + wR * 1.0526913f;
-            buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2]));
-            buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2]));
+            // The direct white term is NOT optional. Kellett's economy filter is
+            // pink = b0 + b1 + b2 + white*0.1848; without it the three one-poles
+            // roll off together above the highest corner (a = 0.57 -> ~4.3 kHz),
+            // so the stimulus falls at 6 dB/oct instead of 3 and is ~7 dB light
+            // by 20 kHz. That starves every high-band measurement of SNR, and it
+            // measurably INVERTED the sign of a high-frequency A/B result that a
+            // flat impulse scored the other way.
+            buf.setSample (0, n, 0.1f * (bL[0] + bL[1] + bL[2] + wL * 0.1848f));
+            buf.setSample (1, n, 0.1f * (bR[0] + bR[1] + bR[2] + wR * 0.1848f));
         }
         // Samples [holdSamples .. end] remain silence so the decay tail
         // post-input shows the engine's natural per-band decay.
@@ -951,6 +1094,7 @@ int main (int argc, char** argv)
     float        sixAPEarlyMixOverride = -1.0f;  // -1 = no override
     bool         listParamsOnly   = false;
     bool         listProgramsOnly = false;
+    bool         selfTestResampler = false;  // --self-test-resampler: see below
     bool         dumpParams       = false;   // --dump-params: emit baked program
     bool         dumpNParams      = false;   // --dump-nparams: normalized host values
                                              // params as JSON (Optuna warm-start
@@ -984,6 +1128,21 @@ int main (int argc, char** argv)
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
     std::vector<std::pair<juce::String, juce::String>> nparamOverrides;
     std::vector<NormalizedParameterEvent> nparamEvents;
+    // Option parsing is ORDER-INDEPENDENT: nothing rate-dependent may be
+    // computed inside the loop, because --sample-rate can appear after the
+    // option that needs it. Event times and duration bounds are therefore
+    // collected as raw seconds here and resolved against the FINAL
+    // kSampleRate once the loop has finished. Before this split,
+    //   --nparam-event "X=1@2.0" --sample-rate 44100
+    // baked its sample offset at 48 kHz and fired ~2.18 s in.
+    struct PendingEvent
+    {
+        juce::String parameter;
+        float normalized = 0.0f;
+        double seconds = 0.0;
+        juce::String spec;   // retained verbatim for the diagnostic
+    };
+    std::vector<PendingEvent> pendingEvents;
     for (int i = 1; i < argc; ++i)
     {
         juce::String a = argv[i];
@@ -999,6 +1158,18 @@ int main (int argc, char** argv)
         else if (a == "--aupreset"  && i + 1 < argc) aupresetPath = argv[++i];
         else if (a == "--slug"      && i + 1 < argc) slugArg      = argv[++i];
         else if (a == "--output-dir" && i + 1 < argc) outDirArg   = argv[++i];
+        else if (a == "--sample-rate" && i + 1 < argc)
+        {
+            double rate = 0.0;
+            if (! parseFiniteDouble (argv[++i], rate) || rate < 8000.0 || rate > 384000.0)
+            {
+                std::cerr << "Invalid --sample-rate (expected 8000-384000)\n";
+                return 2;
+            }
+            kSampleRate          = rate;
+            kTotalSamples        = static_cast<int> (kSampleRate * kRenderSec);
+            kLongSineTailSamples = static_cast<int> (kSampleRate * 12.0);
+        }
         else if (a == "--input-wav"  && i + 1 < argc) inputWavPaths.emplace_back (argv[++i]);
         else if (a == "--legacy-stem-name")          legacyStemName = true;
         else if (a == "--program"   && i + 1 < argc) programArg   = argv[++i];
@@ -1055,16 +1226,18 @@ int main (int argc, char** argv)
         else if (a == "--load-state" && i + 1 < argc) loadStatePath = argv[++i];
         else if (a == "--list-params")              listParamsOnly   = true;
         else if (a == "--list-programs")            listProgramsOnly = true;
+        else if (a == "--self-test-resampler")      selfTestResampler = true;
         else if (a == "--dump-params")              dumpParams       = true;
         else if (a == "--dump-nparams")             dumpNParams      = true;
         else if (a == "--pre-prepare-apply")        prePrepareApply  = true;
         else if (a == "--dry-passthrough-test")     dryPassthroughTest = true;
         else if (a == "--gate-off")                 forceGateOff = true;
+        // The three duration options below validate only what does NOT depend
+        // on the sample rate. Their sample-count bounds are checked after the
+        // loop, once kSampleRate is final.
         else if (a == "--prerun-seconds" && i + 1 < argc)
         {
-            const double maxSeconds = static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
-            if (! parseFiniteDouble (argv[++i], prerunSeconds)
-                || prerunSeconds < 0.0 || prerunSeconds > maxSeconds)
+            if (! parseFiniteDouble (argv[++i], prerunSeconds) || prerunSeconds < 0.0)
             {
                 std::cerr << "Invalid --prerun-seconds\n";
                 return 2;
@@ -1072,10 +1245,8 @@ int main (int argc, char** argv)
         }
         else if (a == "--sustained-pink-seconds" && i + 1 < argc)
         {
-            const double maxSeconds = static_cast<double> (std::numeric_limits<int>::max())
-                                    / (2.0 * kSampleRate);
             if (! parseFiniteDouble (argv[++i], sustainedPinkSeconds)
-                || sustainedPinkSeconds < 0.0 || sustainedPinkSeconds > maxSeconds)
+                || sustainedPinkSeconds < 0.0)
             {
                 std::cerr << "Invalid --sustained-pink-seconds\n";
                 return 2;
@@ -1083,10 +1254,7 @@ int main (int argc, char** argv)
         }
         else if (a == "--long-sine-seconds" && i + 1 < argc)
         {
-            const double maxSeconds = static_cast<double> (
-                std::numeric_limits<int>::max() - kLongSineTailSamples) / kSampleRate;
-            if (! parseFiniteDouble (argv[++i], longSineSeconds)
-                || longSineSeconds < 0.0 || longSineSeconds > maxSeconds)
+            if (! parseFiniteDouble (argv[++i], longSineSeconds) || longSineSeconds < 0.0)
             {
                 std::cerr << "Invalid --long-sine-seconds\n";
                 return 2;
@@ -1133,21 +1301,20 @@ int main (int argc, char** argv)
                 const juce::String timeText = spec.substring (at + 1).trim();
                 double value = 0.0;
                 double seconds = 0.0;
-                // The event time becomes an int sample offset. Bound it here:
-                // llround of an out-of-int-range product would narrow to a
-                // garbage (possibly negative) offset that fires the event at
-                // the wrong sample instead of being rejected as invalid.
-                constexpr double kMaxEventSeconds =
-                    static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
+                // Rate-INDEPENDENT validation only. The event time becomes an
+                // int sample offset, but that conversion (and its overflow
+                // bound) needs the final kSampleRate, so it happens after the
+                // parse loop -- see the resolve step below.
                 if (parseFiniteDouble (valueText, value)
                     && value >= 0.0 && value <= 1.0
                     && parseFiniteDouble (timeText, seconds)
-                    && seconds >= 0.0 && seconds <= kMaxEventSeconds)
+                    && seconds >= 0.0)
                 {
-                    nparamEvents.push_back ({
+                    pendingEvents.push_back ({
                         spec.substring (0, eq).trim(),
                         static_cast<float> (value),
-                        static_cast<int> (std::llround (seconds * kSampleRate))
+                        seconds,
+                        spec
                     });
                 }
                 else
@@ -1174,6 +1341,129 @@ int main (int argc, char** argv)
             std::cerr << "Unknown or incomplete option: " << a << "\n";
             printUsage();
             return 2;
+        }
+    }
+
+    // ---- Resampler regression fixture (--self-test-resampler) ----
+    // Needs no plugin and ships no binary asset: it synthesises its own source.
+    // A 23 kHz tone in a 48 kHz file is above the 44.1 kHz Nyquist, so an
+    // interpolator without a band-limiting pre-filter folds it to
+    // |44100 - 23000| = 21100 Hz. Passing means that alias stays buried.
+    if (selfTestResampler)
+    {
+        const double srcRate = 48000.0, dstRate = 44100.0;
+        const double toneHz  = 23000.0;              // above dstRate/2 = 22050
+        const double aliasHz = std::abs (dstRate - toneHz);
+        const int    n       = static_cast<int> (srcRate * 2.0);
+
+        auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                       .getChildFile ("duskverb_render_srctest.wav");
+        {
+            juce::AudioBuffer<float> tone (2, n);
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = 0.5f * std::sin (2.0 * juce::MathConstants<double>::pi
+                                                 * toneHz * i / srcRate);
+                tone.setSample (0, i, s);
+                tone.setSample (1, i, s);
+            }
+            if (! writeWav (tmp, tone, srcRate))
+            {
+                std::cerr << "self-test: could not write fixture\n";
+                return 1;
+            }
+        }
+
+        auto got = loadWavAsStereo (tmp, dstRate);
+        tmp.deleteFile();
+        if (got.getNumSamples() <= 0)
+        {
+            std::cerr << "self-test: loader returned empty\n";
+            return 1;
+        }
+
+        // Goertzel power at a single frequency, relative to the source tone.
+        auto toneDb = [] (const float* x, int len, double f, double fs)
+        {
+            const double w = 2.0 * juce::MathConstants<double>::pi * f / fs;
+            const double cw = 2.0 * std::cos (w);
+            double s1 = 0.0, s2 = 0.0;
+            for (int i = 0; i < len; ++i)
+            {
+                const double s0 = x[i] + cw * s1 - s2;
+                s2 = s1; s1 = s0;
+            }
+            const double p = s1 * s1 + s2 * s2 - cw * s1 * s2;
+            return 10.0 * std::log10 (std::max (p / ((double) len * len), 1e-30));
+        };
+
+        const int   m       = got.getNumSamples();
+        const float* y      = got.getReadPointer (0);
+        const double alias  = toneDb (y, m, aliasHz, dstRate);
+        const double ref    = 20.0 * std::log10 (0.5 / 2.0);   // 0.5 peak sine
+        const double margin = alias - ref;
+
+        std::cout << "resampler self-test: " << srcRate << " -> " << dstRate << " Hz, "
+                  << toneHz << " Hz source tone\n"
+                  << "  alias at " << aliasHz << " Hz: " << margin
+                  << " dB relative to the source tone\n";
+        if (margin > -60.0)
+        {
+            std::cerr << "  FAIL: alias should be suppressed below -60 dB "
+                         "(no band-limiting before rate conversion?)\n";
+            return 1;
+        }
+        std::cout << "  PASS\n";
+        return 0;
+    }
+
+    // ---- Resolve everything rate-dependent, now that kSampleRate is final ----
+    // Runs regardless of the order the options were written in.
+    {
+        const double maxPrerun =
+            static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
+        if (prerunSeconds > maxPrerun)
+        {
+            std::cerr << "Invalid --prerun-seconds (max " << maxPrerun
+                      << " at " << kSampleRate << " Hz)\n";
+            return 2;
+        }
+        const double maxSustainedPink =
+            static_cast<double> (std::numeric_limits<int>::max()) / (2.0 * kSampleRate);
+        if (sustainedPinkSeconds > maxSustainedPink)
+        {
+            std::cerr << "Invalid --sustained-pink-seconds (max " << maxSustainedPink
+                      << " at " << kSampleRate << " Hz)\n";
+            return 2;
+        }
+        const double maxLongSine = static_cast<double> (
+            std::numeric_limits<int>::max() - kLongSineTailSamples) / kSampleRate;
+        if (longSineSeconds > maxLongSine)
+        {
+            std::cerr << "Invalid --long-sine-seconds (max " << maxLongSine
+                      << " at " << kSampleRate << " Hz)\n";
+            return 2;
+        }
+
+        // llround of an out-of-int-range product would narrow to a garbage
+        // (possibly negative) offset that fires the event at the wrong sample
+        // instead of being rejected, so bound before converting.
+        const double maxEventSeconds =
+            static_cast<double> (std::numeric_limits<int>::max()) / kSampleRate;
+        for (const auto& pending : pendingEvents)
+        {
+            if (pending.seconds > maxEventSeconds)
+            {
+                std::cerr << "  ! ignoring invalid --nparam-event '" << pending.spec
+                          << "' (time exceeds " << maxEventSeconds << " s at "
+                          << kSampleRate << " Hz)" << std::endl;
+                return 2;
+            }
+            nparamEvents.push_back ({
+                pending.parameter,
+                pending.normalized,
+                static_cast<int> (std::llround (pending.seconds * kSampleRate))
+            });
         }
     }
 
@@ -1746,6 +2036,24 @@ int main (int argc, char** argv)
         preRoll.clear();
         renderThroughPlugin (*plugin, preRoll);
     };
+
+    // A real state flush, for AudioUnits as well as VST3.
+    //
+    // plugin->reset() is a NO-OP for AUs: JUCE's AudioUnitPluginInstance never
+    // overrides AudioProcessor::reset(), whose base implementation is an empty
+    // body, while the VST3 host DOES override it with a full deactivate /
+    // reactivate cycle. Calling reset() between stimuli therefore hard-flushed
+    // our own VST3 and did nothing at all to a hosted AU reference -- the two
+    // sides of every A/B were measured under different conditions, with the
+    // AU's previous tail, tape position and modulator phase still running.
+    // releaseResources()/prepareToPlay() maps to AudioUnitUninitialize/
+    // Initialize, which genuinely clears it.
+    auto hardReset = [&plugin, sr = kSampleRate] () {
+        plugin->reset();
+        plugin->releaseResources();
+        plugin->prepareToPlay (sr, kBlockSize);
+    };
+
     runPreroll (prerunSeconds);
 
     // Output directory resolution priority:
@@ -1868,7 +2176,7 @@ int main (int argc, char** argv)
     // impulse tail. Re-prerun so smoothers/LFOs settle into a clean,
     // steady realization before the next stimulus fires.
     restoreConfiguredParams();
-    plugin->reset();
+    hardReset();
     runPreroll (prerunSeconds);
 
     // ---- Render 2: Pink noise burst (100ms then silence) ----
@@ -1882,8 +2190,13 @@ int main (int argc, char** argv)
     }
 
     restoreConfiguredParams();
-    plugin->reset();
+    hardReset();
     runPreroll (prerunSeconds);
+
+    // A bundled stimulus that resolves to an existing file but fails to load
+    // (corrupt/unreadable WAV) is a genuine failure, not the "stimulus not
+    // bundled" case these renders otherwise skip quietly.
+    int stimulusRenderFailures = 0;
 
     // ---- Render 4: snare hit (309 ms @ -12 dBFS peak) + 3.7 s tail ----
     // Real-world transient test — broadband percussive content reveals
@@ -1914,17 +2227,24 @@ int main (int argc, char** argv)
                 if (f.existsAsFile()) return f;
             return juce::File();
         }();
-        if (fillFromWav (input, snareWav))
+        const bool snareFileFound = snareWav.existsAsFile();
+        if (fillFromWav (input, snareWav, kSampleRate))
         {
             auto output = renderThroughPlugin (*plugin, input, nparamEvents);
             auto outFile = outDir.getChildFile (slug + "_snare.wav");
             if (writeWav (outFile, output, kSampleRate))
                 std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
         }
+        else if (snareFileFound)
+        {
+            std::cerr << "  ! failed to read snare stimulus: "
+                      << snareWav.getFullPathName() << std::endl;
+            ++stimulusRenderFailures;
+        }
     }
 
     restoreConfiguredParams();
-    plugin->reset();
+    hardReset();
     runPreroll (prerunSeconds);
 
     // ---- Render 4b: session stem (complex musical material, always on) ----
@@ -1952,25 +2272,27 @@ int main (int argc, char** argv)
 
         if (sessionWav.existsAsFile())
         {
-            juce::AudioFormatManager fmtMgr;
-            fmtMgr.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> reader (
-                fmtMgr.createReaderFor (sessionWav));
-            if (reader != nullptr)
+            auto stem = loadWavAsStereo (sessionWav, kSampleRate);
+            if (stem.getNumSamples() > 0)
             {
-                const int stemSamples  = static_cast<int> (reader->lengthInSamples);
+                const int stemSamples  = stem.getNumSamples();
                 const int tailSamples  = static_cast<int> (kRenderSec * kSampleRate);
                 const int totalSamples = stemSamples + tailSamples;
                 juce::AudioBuffer<float> sessionInput (2, totalSamples);
                 sessionInput.clear();
-                reader->read (&sessionInput, 0, stemSamples, 0, true, true);
-                if (reader->numChannels == 1)
-                    sessionInput.copyFrom (1, 0, sessionInput, 0, 0, stemSamples);
+                for (int ch = 0; ch < 2; ++ch)
+                    sessionInput.copyFrom (ch, 0, stem, ch, 0, stemSamples);
 
                 auto output = renderThroughPlugin (*plugin, sessionInput, nparamEvents);
                 auto outFile = outDir.getChildFile (slug + "_session.wav");
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+            }
+            else
+            {
+                std::cerr << "  ! failed to read session stimulus: "
+                          << sessionWav.getFullPathName() << std::endl;
+                ++stimulusRenderFailures;
             }
         }
         else
@@ -1981,7 +2303,7 @@ int main (int argc, char** argv)
     }
 
     restoreConfiguredParams();
-    plugin->reset();
+    hardReset();
     runPreroll (prerunSeconds);
 
     // ---- Render 4c: piano stem (user's ear-check material, always on) ----
@@ -2010,25 +2332,27 @@ int main (int argc, char** argv)
 
         if (pianoWav.existsAsFile())
         {
-            juce::AudioFormatManager fmtMgr;
-            fmtMgr.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> reader (
-                fmtMgr.createReaderFor (pianoWav));
-            if (reader != nullptr)
+            auto stem = loadWavAsStereo (pianoWav, kSampleRate);
+            if (stem.getNumSamples() > 0)
             {
-                const int stemSamples  = static_cast<int> (reader->lengthInSamples);
+                const int stemSamples  = stem.getNumSamples();
                 const int tailSamples  = static_cast<int> (kRenderSec * kSampleRate);
                 const int totalSamples = stemSamples + tailSamples;
                 juce::AudioBuffer<float> pianoInput (2, totalSamples);
                 pianoInput.clear();
-                reader->read (&pianoInput, 0, stemSamples, 0, true, true);
-                if (reader->numChannels == 1)
-                    pianoInput.copyFrom (1, 0, pianoInput, 0, 0, stemSamples);
+                for (int ch = 0; ch < 2; ++ch)
+                    pianoInput.copyFrom (ch, 0, stem, ch, 0, stemSamples);
 
                 auto output = renderThroughPlugin (*plugin, pianoInput, nparamEvents);
                 auto outFile = outDir.getChildFile (slug + "_piano.wav");
                 if (writeWav (outFile, output, kSampleRate))
                     std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
+            }
+            else
+            {
+                std::cerr << "  ! failed to read piano stimulus: "
+                          << pianoWav.getFullPathName() << std::endl;
+                ++stimulusRenderFailures;
             }
         }
         else
@@ -2038,8 +2362,15 @@ int main (int argc, char** argv)
         }
     }
 
+    if (stimulusRenderFailures > 0)
+    {
+        std::cerr << stimulusRenderFailures << " bundled stimulus render(s) failed; refusing to "
+                  << "report success on a partial capture set" << std::endl;
+        return 1;
+    }
+
     restoreConfiguredParams();
-    plugin->reset();
+    hardReset();
     runPreroll (prerunSeconds);
 
     // ---- Render 2b: arbitrary stems (--input-wav, repeatable) ----
@@ -2072,7 +2403,7 @@ int main (int argc, char** argv)
         if (inputIndex > 0)
         {
             restoreConfiguredParams();
-            plugin->reset();
+            hardReset();
             runPreroll (prerunSeconds);
         }
 
@@ -2114,7 +2445,14 @@ int main (int argc, char** argv)
                 stemInput.clear();
                 // JUCE reader pulls into the provided buffer's first N channels;
                 // for mono sources, copy channel 0 → 1 so the engine sees stereo.
-                reader->read (&stemInput, 0, stemSamples, 0, true, true);
+                // A failed read would leave the buffer cleared and render as
+                // silence, which this loop would then count as a success.
+                if (! reader->read (&stemInput, 0, stemSamples, 0, true, true))
+                {
+                    std::cerr << "  ! failed to read --input-wav: " << inputWavPath << std::endl;
+                    ++stemRenderFailures;
+                    continue;
+                }
                 if (reader->numChannels == 1)
                     stemInput.copyFrom (1, 0, stemInput, 0, 0, stemSamples);
 
@@ -2155,7 +2493,7 @@ int main (int argc, char** argv)
     }
 
     restoreConfiguredParams();
-    plugin->reset();
+    hardReset();
     runPreroll (prerunSeconds);
 
     // ---- Render 3: 2-sec 1 kHz sine at -12 dBFS RMS ----
@@ -2183,7 +2521,7 @@ int main (int argc, char** argv)
     if (longSineSeconds > 0.0)
     {
         restoreConfiguredParams();
-        plugin->reset();
+        hardReset();
         runPreroll (prerunSeconds);
         // Tone + 12 s of SILENCE tail. The tail window exists so full_check's
         // low-rung-growth gate can see feedback-loop buildup: the Deep Blue Day
@@ -2217,7 +2555,7 @@ int main (int argc, char** argv)
     if (sustainedPinkSeconds > 0.0)
     {
         restoreConfiguredParams();
-        plugin->reset();
+        hardReset();
         runPreroll (prerunSeconds);
         const int total = static_cast<int> (kSampleRate * sustainedPinkSeconds * 2.0);
         juce::AudioBuffer<float> input (2, total);
