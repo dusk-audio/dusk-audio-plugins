@@ -342,9 +342,19 @@ NOTE: an old `plugins/DuskVerb/tests/reference_comparison/` symlink no longer ex
 tuning scripts now live in the private tools repo at
 `~/projects/dusk-audio-tools/tools/duskverb/tuner/` (see the tools repo README).
 
-NOTE (post-merge): the tooling move is not finished. `plugins/DuskVerb/tools/tuner/`
-still exists in-tree because `main` added those scripts after the move commit landed
-on this branch; 59 of the 64 are already mirrored in the private repo (the 5 that are
-not are 3 superseded session handoffs plus `stereo_jnd_audit.py` /
-`stereo_profile_fit.py` from the stereo campaign). Finish the move in its own commit
-after mirroring those two — do not delete them as a side effect of an unrelated change.
+NOTE: the DuskVerb tuner move is DONE (2026-08-07). All 64 scripts now live in
+the private tools repo at `plugins/DuskVerb/tools/tuner/` and are gone from this
+repo. The previous note here claimed "59 of the 64 are already mirrored in the
+private repo" with only `stereo_jnd_audit.py` / `stereo_profile_fit.py`
+outstanding -- that was WRONG. The tools repo contained zero DuskVerb tuner
+scripts; its 65 Python files were all TapeEcho and TapeMachine. Verify a mirror
+exists before deleting anything on the strength of a note like that.
+
+STILL IN THIS REPO and NOT moved, deliberately:
+- `tests/duskverb_render/` is a CMake target (`add_subdirectory` in the root
+  CMakeLists) and the comparison harness runs the binary it builds, so moving it
+  is a build refactor, not a file move.
+- `plugins/sunset-circuits/dpf-plugin/tools/` (`gen_params.py`, `lv2_smoke.c`) is
+  build-adjacent codegen for that plugin.
+- `.github/scripts/dpf_clap_validate.py` and `manuals/build_manuals.py` /
+  `preflight.py` belong with the CI and manual pipelines they serve.
