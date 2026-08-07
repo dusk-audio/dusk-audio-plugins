@@ -594,9 +594,18 @@ namespace
         // dstLen is floored so the interpolator can never read past srcLen:
         // it consumes ceil(dstLen * ratio) <= srcLen input samples.
         const double ratio  = fileRate / targetRate;
-        const int    dstLen = static_cast<int> (std::floor (static_cast<double> (srcLen) / ratio));
-        if (dstLen <= 0)
+        const double dstLenExact = std::floor (static_cast<double> (srcLen) / ratio);
+        // Bound BEFORE the cast. A WAV declaring a very low sample rate against a
+        // high target rate makes 1/ratio enormous, and static_cast<int> of a
+        // value past INT_MAX is undefined -- the result would either ask
+        // AudioBuffer for an absurd allocation or hand it a negative length.
+        // Reject rather than clamp: a silently truncated stimulus is a
+        // measurement error, and the caller already treats an empty buffer as a
+        // load failure it reports.
+        if (! (dstLenExact > 0.0)
+            || dstLenExact > static_cast<double> (std::numeric_limits<int>::max()))
             return empty;
+        const int dstLen = static_cast<int> (dstLenExact);
 
         juce::AudioBuffer<float> dst (2, dstLen);
         dst.clear();
@@ -2037,22 +2046,6 @@ int main (int argc, char** argv)
         renderThroughPlugin (*plugin, preRoll);
     };
 
-    // A real state flush, for AudioUnits as well as VST3.
-    //
-    // plugin->reset() is a NO-OP for AUs: JUCE's AudioUnitPluginInstance never
-    // overrides AudioProcessor::reset(), whose base implementation is an empty
-    // body, while the VST3 host DOES override it with a full deactivate /
-    // reactivate cycle. Calling reset() between stimuli therefore hard-flushed
-    // our own VST3 and did nothing at all to a hosted AU reference -- the two
-    // sides of every A/B were measured under different conditions, with the
-    // AU's previous tail, tape position and modulator phase still running.
-    // releaseResources()/prepareToPlay() maps to AudioUnitUninitialize/
-    // Initialize, which genuinely clears it.
-    auto hardReset = [&plugin, sr = kSampleRate] () {
-        plugin->reset();
-        plugin->releaseResources();
-        plugin->prepareToPlay (sr, kBlockSize);
-    };
 
     runPreroll (prerunSeconds);
 
@@ -2162,6 +2155,29 @@ int main (int argc, char** argv)
         }
     };
 
+    // A real state flush, for AudioUnits as well as VST3.
+    //
+    // plugin->reset() is a NO-OP for AUs: JUCE's AudioUnitPluginInstance never
+    // overrides AudioProcessor::reset(), whose base implementation is an empty
+    // body, while the VST3 host DOES override it with a full deactivate /
+    // reactivate cycle. Calling reset() between stimuli therefore hard-flushed
+    // our own VST3 and did nothing at all to a hosted AU reference -- the two
+    // sides of every A/B were measured under different conditions, with the
+    // AU's previous tail, tape position and modulator phase still running.
+    // releaseResources()/prepareToPlay() maps to AudioUnitUninitialize/
+    // Initialize, which genuinely clears it.
+    auto hardReset = [&plugin, sr = kSampleRate, &restoreConfiguredParams] () {
+        plugin->reset();
+        plugin->releaseResources();
+        plugin->prepareToPlay (sr, kBlockSize);
+        // AFTER prepareToPlay, never before: releaseResources/prepareToPlay
+        // maps to AudioUnitUninitialize/Initialize, and nothing guarantees a
+        // plugin keeps its parameter values across that cycle. Restoring first
+        // would let the flush undo the restore and render the next stimulus at
+        // defaults.
+        restoreConfiguredParams();
+    };
+
     // ---- Render 1: Impulse ----
     {
         juce::AudioBuffer<float> input (2, kTotalSamples);
@@ -2175,7 +2191,6 @@ int main (int argc, char** argv)
     // Reset plugin state between renders so noise burst doesn't ride the
     // impulse tail. Re-prerun so smoothers/LFOs settle into a clean,
     // steady realization before the next stimulus fires.
-    restoreConfiguredParams();
     hardReset();
     runPreroll (prerunSeconds);
 
@@ -2189,7 +2204,6 @@ int main (int argc, char** argv)
             std::cout << "Wrote " << outFile.getFullPathName() << std::endl;
     }
 
-    restoreConfiguredParams();
     hardReset();
     runPreroll (prerunSeconds);
 
@@ -2243,7 +2257,6 @@ int main (int argc, char** argv)
         }
     }
 
-    restoreConfiguredParams();
     hardReset();
     runPreroll (prerunSeconds);
 
@@ -2302,7 +2315,6 @@ int main (int argc, char** argv)
         }
     }
 
-    restoreConfiguredParams();
     hardReset();
     runPreroll (prerunSeconds);
 
@@ -2369,7 +2381,6 @@ int main (int argc, char** argv)
         return 1;
     }
 
-    restoreConfiguredParams();
     hardReset();
     runPreroll (prerunSeconds);
 
@@ -2402,7 +2413,6 @@ int main (int argc, char** argv)
     {
         if (inputIndex > 0)
         {
-            restoreConfiguredParams();
             hardReset();
             runPreroll (prerunSeconds);
         }
@@ -2492,7 +2502,6 @@ int main (int argc, char** argv)
         return 1;
     }
 
-    restoreConfiguredParams();
     hardReset();
     runPreroll (prerunSeconds);
 
@@ -2520,7 +2529,6 @@ int main (int argc, char** argv)
     // → every existing render byte-identical (bit-null). 15 s matches the anchor protocol.
     if (longSineSeconds > 0.0)
     {
-        restoreConfiguredParams();
         hardReset();
         runPreroll (prerunSeconds);
         // Tone + 12 s of SILENCE tail. The tail window exists so full_check's
@@ -2554,7 +2562,6 @@ int main (int argc, char** argv)
     // noiseburst measures. Skipped unless --sustained-pink-seconds > 0.
     if (sustainedPinkSeconds > 0.0)
     {
-        restoreConfiguredParams();
         hardReset();
         runPreroll (prerunSeconds);
         const int total = static_cast<int> (kSampleRate * sustainedPinkSeconds * 2.0);
