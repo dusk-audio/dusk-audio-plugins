@@ -50,6 +50,7 @@ namespace
     constexpr ImU32 kColLedGlow   = IM_COL32(255, 70, 45, 80);
 
     constexpr float kPi = 3.14159265358979f;
+
 }
 
 class TapeEchoUI : public UI, public duskdpf::ParamHost
@@ -62,15 +63,8 @@ public:
     {
         if (idx >= kParamCount || !std::isfinite(v))
             return;
-        // The Sync Division knob sweeps in musical order (kDivSweep), so what a
-        // widget hands back is a SWEEP POSITION, not a storage index. Translate
-        // here, at the one seam every widget edit passes through. Preset recall
-        // and INIT use setP() instead and already carry storage indices, so they
-        // must not -- and do not -- go through this mapping.
-        if (idx == kParamSyncDivision)
-            v = (float)teDivisionForSweepPos((int)(v + 0.5f));
         v = normalizeParamValue(idx, v);
-        values[idx] = v;
+        storeParamLocally(idx, v);
         setParameterValue(idx, v);
     }
 
@@ -113,7 +107,7 @@ protected:
         if (!std::isfinite(value))
             return;
         value = normalizeParamValue(index, value);
-        values[index] = value;
+        storeParamLocally(index, value);
         // Re-derive the active preset from the current values. Preset identity is
         // UI-only state (not a DPF parameter), so it is lost across a project
         // reload even though the host restores every parameter value; matching
@@ -132,6 +126,27 @@ protected:
                       : -1;
         currentUserName.clear();
         currentUserPath.clear();
+        if (currentPreset < 0)
+            return;
+        // Re-derive the local cache from the preset. A host-driven program
+        // change does NOT deliver parameterChanged() for the values it moved:
+        // the VST3 wrapper calls loadProgram(), refreshes its own parameter
+        // cache, and then flags ONLY the program index for the UI
+        // (DistrhoPluginVST3.cpp, kVst3InternalParameterProgram). Without this
+        // every knob would keep drawing its pre-program value, and
+        // legacySyncDivisionOverride would keep the stale ownership the plugin
+        // has already changed -- so the head strip would name a division the
+        // DSP is not playing.
+        //
+        // Store only. The plugin applied these values itself when the host
+        // called loadProgram, so writing them back would be redundant traffic
+        // and, for the compatibility pair, would re-run the ownership latch
+        // from the UI side. storeParamLocally keeps that latch in step exactly
+        // as the plugin's own loadProgram does, because both walk the pair in
+        // the same order.
+        forEachPresetParam(currentPreset,
+                           [this](uint32_t param, float value)
+                           { storeParamLocally(param, normalizeParamValue(param, value)); });
     }
 
     void onImGuiDisplay() override
@@ -321,13 +336,16 @@ private:
         if (ticks)
             for (int i = 0; i <= 10; ++i)
             {
+                // The fixed triangle replaces the exact 12-o'clock scale mark.
+                if (i == 5)
+                    continue;
                 const float a = knobAngle((float)i / 10.0f);
                 const ImVec2 d(std::sin(a), -std::cos(a));
                 const float inner = R + 3.0f * s;
-                const float outer = R + (i == 5 ? 8.0f : 6.5f) * s;
+                const float outer = R + 6.5f * s;
                 dl->AddLine(ImVec2(c.x + d.x * inner, c.y + d.y * inner),
                             ImVec2(c.x + d.x * outer, c.y + d.y * outer),
-                            fade(kColWhiteDim, dim), (i == 5 ? 1.5f : 1.1f) * s);
+                            fade(kColWhiteDim, dim), 1.1f * s);
             }
 
         // Contact shadow, seating washer and ridged skirt.
@@ -396,21 +414,8 @@ private:
               bool persistent = false, bool enabled = true,
               const char* overrideText = nullptr)
     {
-        // Sync Division is stored in a frozen, non-monotonic ABI order but must
-        // SWEEP in musical order; translate on the way out here and back in
-        // setParam(). Every other parameter passes through untouched.
-        // Mutable: DuskPanel::knob takes `float&` and writes the edited value
-        // back through it. For the mapped parameter that write-back lands in
-        // this local and is discarded on purpose -- every such write is paired
-        // with a host->setParam() call, and setParam() above is what translates
-        // the sweep position back to a storage index and updates values[].
-        const bool sweepMapped = (param == kParamSyncDivision);
-        float shownValue = sweepMapped
-            ? (float)teSweepPosForDivision((int)(values[param] + 0.5f))
-            : values[param];
-        const float shownDefault = sweepMapped
-            ? (float)teSweepPosForDivision((int)(kTeParams[param].def + 0.5f))
-            : kTeParams[param].def;
+        float shownValue = values[param];
+        const float shownDefault = kTeParams[param].def;
 
         const float range = maxV - minV;
         float t = range > 0.0f ? (shownValue - minV) / range : 0.0f;
@@ -441,17 +446,18 @@ private:
         const ImU32 ink = enabled ? kColWhite : IM_COL32(148, 146, 139, 255);
         constexpr float kLabelSize = 12.0f;
         constexpr float kLineStep = 12.5f;
-        constexpr float kTriangleH = 5.5f;
-        // Meet the outer end of the emphasized 12-o'clock tick. Deriving the
-        // stack from each knob's geometry keeps every label/marker gap uniform.
-        const float tipY = knobCy - knobRadius - 8.0f;
+        constexpr float kTriangleH = 6.0f;
+        // Replace the 12-o'clock tick and meet the knob silhouette, matching
+        // TapeMachine 2. Deriving the stack from each knob's geometry keeps
+        // every label/marker gap uniform across the two panels.
+        const float tipY = knobCy - knobRadius;
         const float triangleTopY = tipY - kTriangleH;
         const float topY = triangleTopY - (l2 != nullptr ? 27.0f : 15.0f);
         text(dl, cx, topY, kLabelSize, ink, l1, 0, true);
         if (l2 != nullptr)
             text(dl, cx, topY + kLineStep, kLabelSize, ink, l2, 0, true);
-        dl->AddTriangleFilled(P(cx - 3.7f, triangleTopY),
-                              P(cx + 3.7f, triangleTopY),
+        dl->AddTriangleFilled(P(cx - 4.0f, triangleTopY),
+                              P(cx + 4.0f, triangleTopY),
                               P(cx, tipY), ink);
     }
 
@@ -726,10 +732,11 @@ private:
         {
         case kParamMode:
         case kParamSyncDivision:
+        case kParamEchoRateNote:
             return std::round(v);
         case kParamTapeAge:
             return teQuantizeTapeAge(v);
-        // All four booleans use the SAME threshold the plugin applies in
+        // All three booleans use the SAME threshold the plugin applies in
         // setParameterValue (>= 0.5f). They previously disagreed for Bypass and
         // Tempo Sync (> 0.5f here), so an incoming exact 0.5 latched ON in the
         // plugin while the UI cache read OFF -- POWER showing ON while the DSP
@@ -737,10 +744,45 @@ private:
         case kParamBypass:
         case kParamTempoSync:
         case kParamInputSend:
-        case kParamWetSolo:
             return v >= 0.5f ? 1.0f : 0.0f;
         default:
             return v;
+        }
+    }
+
+    // Keep the appended physical detent and the shipped semantic division in
+    // step without making the knob jump when Head Select changes. The detent is
+    // authoritative for new UI/host edits; writing the hidden legacy parameter
+    // derives the closest reference detent for old projects.
+    void storeParamLocally(uint32_t param, float value)
+    {
+        values[param] = value;
+        if (param == kParamSyncDivision)
+        {
+            const int knobPos = teSyncKnobPosForDivision(
+                (int)(value + 0.5f), leadingHeadIndex());
+            values[kParamEchoRateNote] = (float)(knobPos + 1);
+            legacySyncDivisionOverride = true;
+        }
+        else if (param == kParamEchoRateNote)
+        {
+            values[kParamSyncDivision] = (float)teDivisionForSyncKnobPos(
+                syncKnobPosition(), leadingHeadIndex());
+            legacySyncDivisionOverride = false;
+        }
+        else if (param == kParamMode)
+        {
+            if (legacySyncDivisionOverride)
+            {
+                const int knobPos = teSyncKnobPosForDivision(
+                    (int)(values[kParamSyncDivision] + 0.5f), leadingHeadIndex());
+                values[kParamEchoRateNote] = (float)(knobPos + 1);
+            }
+            else
+            {
+                values[kParamSyncDivision] = (float)teDivisionForSyncKnobPos(
+                    syncKnobPosition(), leadingHeadIndex());
+            }
         }
     }
 
@@ -749,7 +791,7 @@ private:
         if (param >= kParamCount || !std::isfinite(value))
             return;
         value = normalizeParamValue(param, value);
-        values[param] = value;
+        storeParamLocally(param, value);
         editParameter(param, true);
         setParameterValue(param, value);
         editParameter(param, false);
@@ -769,8 +811,12 @@ private:
         fn((uint32_t)kParamEchoPan, preset.echoPan);
         fn((uint32_t)kParamReverbPan, preset.reverbPan);
         fn((uint32_t)kParamInputSend, preset.inputSend);
-        fn((uint32_t)kParamWetSolo, preset.wetSolo);
         fn((uint32_t)kParamMix, preset.mix);
+        const int leadingHead = teLeadingHeadIndexForMode(
+            (int)(preset.v[kParamMode] + 0.5f));
+        const int knobPos = teSyncKnobPosForDivision(
+            (int)(preset.v[kParamSyncDivision] + 0.5f), leadingHead);
+        fn((uint32_t)kParamEchoRateNote, (float)(knobPos + 1));
     }
 
     void applyPreset(int idx)
@@ -873,6 +919,7 @@ private:
                 up.vals[i] = kTeParams[i].def;
             std::ifstream f(it->path());
             std::string line;
+            bool hasEchoRateNote = false;
             while (std::getline(f, line))
             {
                 const auto eq = line.find('=');
@@ -891,9 +938,21 @@ private:
                         // the values were quantised) would fail to match the very
                         // preset that had just been loaded.
                         if (parsePresetValue(line, eq + 1, i, v))
+                        {
                             up.vals[i] = normalizeParamValue(i, v);
+                            if (i == kParamEchoRateNote)
+                                hasEchoRateNote = true;
+                        }
                         break;   // else keep the default already in place
                     }
+            }
+            if (!hasEchoRateNote)
+            {
+                const int leadingHead = teLeadingHeadIndexForMode(
+                    (int)(up.vals[kParamMode] + 0.5f));
+                const int knobPos = teSyncKnobPosForDivision(
+                    (int)(up.vals[kParamSyncDivision] + 0.5f), leadingHead);
+                up.vals[kParamEchoRateNote] = (float)(knobPos + 1);
             }
             userPresets.push_back(std::move(up));
         }
@@ -962,8 +1021,24 @@ private:
         f.imbue(std::locale::classic());
         f << "name=" << name << "\n";
         for (uint32_t i = 0; i < kParamCount; ++i)
-            if (teIsPresetParam(i))
-                f << kTeParams[i].id << "=" << values[i] << "\n";
+        {
+            if (!teIsPresetParam(i))
+                continue;
+            // Do not write the DERIVED half of the compatibility pair. While an
+            // old project's semantic division owns the delay, Echo Rate Note is
+            // only the nearest physical detent to it, and that division may not
+            // be representable on the current head at all. Writing both would
+            // lose the exact division on reload: the file is read in ascending
+            // index order, so echo_rate_note (21) would land after
+            // sync_division (12) and take ownership. Omitting it leaves
+            // loadUserPreset's default pass followed by the file's
+            // sync_division, which ends with the legacy value authoritative --
+            // and scanUserPresets already derives a detent for files without
+            // the key, so the preset browser still matches.
+            if (i == kParamEchoRateNote && legacySyncDivisionOverride)
+                continue;
+            f << kTeParams[i].id << "=" << values[i] << "\n";
+        }
         f.close();
         if (!f)
             return false; // flush/close failed: the file on disk is not complete
@@ -1368,11 +1443,11 @@ private:
         const bool sync = values[kParamTempoSync] > 0.5f;
         // Distinct ImGui ids per branch: DuskPanel keys its inline "Type value"
         // edit state on this string, so sharing one id let a pending edit opened
-        // on Repeat Rate commit into Sync Division when TEMPO SYNC toggled
+        // on Repeat Rate commit into Echo Rate Note when TEMPO SYNC toggled
         // mid-gesture.
         if (sync) // knob steps through note divisions while synced
-            knob("rate_sync", kParamSyncDivision, 0.0f,
-                 (float)(kNumSyncDivisions - 1),
+            knob("rate_sync", kParamEchoRateNote, 1.0f,
+                 (float)kNumSyncKnobPositions,
                  520, 229, 25, true, true, "%.0f", "", 1.0f, 0.0f, true,
                  echoActive, kSyncDivisions[divIndex()].name);
         else
@@ -1398,30 +1473,6 @@ private:
     {
         float motorMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(
             values[kParamRepeatRate]);
-        bool timingAvailable = true;
-
-        // Tempo sync clamps the selected division to the motor range on the
-        // audio thread, so the manual Repeat Rate parameter no longer describes
-        // the motor. Read the effective target directly when the format is
-        // same-process -- this strip is the only place the true, post-clamp
-        // time is visible, which matters because divisions past the range all
-        // resolve to the same endpoint (matching the hardware).
-        if (sync)
-        {
-            timingAvailable = false;
-           #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
-            if (tapeEchoGetHead1DelayMs != nullptr)
-                if (void* const inst = getPluginInstancePointer())
-                {
-                    const float syncedMs = tapeEchoGetHead1DelayMs(inst);
-                    if (syncedMs > 0.0f)
-                    {
-                        motorMs = syncedMs;
-                        timingAvailable = true;
-                    }
-                }
-           #endif
-        }
 
         float slow01 =
             (motorMs - duskaudio::TapeEchoDSP::kMinDelayMs)
@@ -1441,6 +1492,21 @@ private:
         constexpr uint8_t kHeadMask[12] =
             { 1, 2, 4, 6, 1, 2, 4, 3, 6, 5, 7, 0 };
         const uint8_t activeMask = kHeadMask[modeIndex()];
+        const int leadingHead = leadingHeadIndex();
+        const int knobPos = syncKnobPosition();
+        // Blinking means "this note is outside the transport's physical range",
+        // which depends on host tempo: the captured table is that same decision
+        // at 120 BPM only. Read the clamp the audio path actually applied when
+        // the DSP is in-process, and keep the table for the split LV2 UI, where
+        // the bridge is null.
+        bool syncBlinks = kSyncReadoutBlinks[leadingHead][knobPos];
+       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+        if (tapeEchoGetSyncNoteOutOfRange != nullptr) // weak: null in split LV2
+            if (void* const inst = getPluginInstancePointer())
+                syncBlinks = tapeEchoGetSyncNoteOutOfRange(inst);
+       #endif
+        const bool flashVisible =
+            !syncBlinks || std::fmod(ImGui::GetTime(), 0.8) < 0.4;
 
         dl->AddRectFilled(P(kCellX[0], kStripY0), P(kCellX[3], kStripY1),
                           IM_COL32(30, 42, 22, 255), 4.0f * s);
@@ -1464,31 +1530,44 @@ private:
                  active ? kColWhiteDim : IM_COL32(159, 171, 146, 255),
                  kLabels[i], 0, active);
 
+            // Five dashes, not three: the reference's blanked head cells were
+            // photographed at "-----", and the widest live string in the sync
+            // table is six characters, so the cell already has the room.
+            static constexpr const char* kBlankReadout = "-----";
             char valueText[16];
             if (!active)
             {
-                std::snprintf(valueText, sizeof(valueText), "---");
+                std::snprintf(valueText, sizeof(valueText), "%s", kBlankReadout);
             }
-            else if (timingAvailable)
+            else if (sync)
+            {
+                // Galaxy uses a measured per-leading-head lookup, including
+                // intentional +/- omissions at the two shortest Head-2 values.
+                // Do not re-derive this from ideal head-spacing ratios.
+                const char* const readout =
+                    kSyncReadoutText[leadingHead][knobPos][i];
+                std::snprintf(valueText, sizeof(valueText), "%s",
+                              readout != nullptr ? readout : kBlankReadout);
+            }
+            else
             {
                 const int delayMs = (int)std::lround(
                     kFastMs[i] + slow01 * (kSlowMs[i] - kFastMs[i]));
                 std::snprintf(
                     valueText, sizeof(valueText), "%d ms", delayMs);
             }
-            else
-            {
-                std::snprintf(valueText, sizeof(valueText), "-- ms");
-            }
-            regularText(dl, cx, 259.5f, 12.0f,
-                 active ? kColWhite : IM_COL32(170, 183, 156, 255),
-                 valueText, 0);
+            // 14.5 px LCD-green value: the 12 px near-white original read as
+            // faint and small against the recessed cell.
+            if (!active || !sync || flashVisible)
+                regularText(dl, cx, 260.5f, 14.5f,
+                     active ? IM_COL32(136, 230, 102, 255)
+                            : IM_COL32(182, 195, 166, 255),
+                     valueText, 0);
         }
     }
 
     bool railToggle(ImDrawList* dl, const char* id, uint32_t param,
-                    float cx, const char* label, bool invert = false,
-                    float labelCx = -1.0f)
+                    float cx, const char* label, bool invert = false)
     {
         const bool on = invert ? values[param] < 0.5f : values[param] >= 0.5f;
         const ImVec2 hit0 = P(cx - 39, 292);
@@ -1502,9 +1581,11 @@ private:
             setP(param, nv);
         }
 
-        text(dl, labelCx >= 0.0f ? labelCx : cx, 292.0f, 12.5f,
-             kColRailInk, label, 0, true);
-        const float baseX = cx, baseY = 321.0f;
+        text(dl, cx, 292.0f, 12.5f, kColRailInk, label, 0, true);
+        // Lift the mechanism enough to give its state legends the same clear,
+        // semibold treatment as the rest of the panel instead of squeezing a
+        // tiny regular face against the lower chassis edge.
+        const float baseX = cx, baseY = 318.0f;
         dl->AddCircleFilled(P(baseX + 1.0f, baseY + 1.8f), 9.0f * s,
                             IM_COL32(0, 0, 0, 85), 28);
         dl->AddCircleFilled(P(baseX, baseY), 8.0f * s,
@@ -1522,10 +1603,10 @@ private:
                     IM_COL32(205, 204, 199, 255), 3.2f * s);
         dl->AddCircleFilled(P(ex, ey), 3.2f * s,
                             IM_COL32(225, 224, 219, 255), 18);
-        regularText(dl, cx - 20, 325.0f, 9.5f,
-                    on ? IM_COL32(70, 68, 65, 255) : kColRailInk, "OFF", 0);
-        regularText(dl, cx + 20, 325.0f, 9.5f,
-                    on ? kColRailInk : IM_COL32(70, 68, 65, 255), "ON", 0);
+        text(dl, cx - 22.0f, 328.0f, 10.0f,
+             on ? IM_COL32(52, 51, 49, 255) : kColRailInk, "OFF", 0, true);
+        text(dl, cx + 22.0f, 328.0f, 10.0f,
+             on ? kColRailInk : IM_COL32(52, 51, 49, 255), "ON", 0, true);
         return ImGui::IsItemClicked();
     }
 
@@ -1543,49 +1624,66 @@ private:
             dl->AddLine(P(x, 295), P(x, 336),
                         IM_COL32(48, 47, 45, 110), 1.0f * s);
 
+        // Each control sits on the centre line of its equal-width rail section.
         railToggle(dl, "##rail_input", kParamInputSend, 112.5f, "RECORD INPUT");
-        railToggle(dl, "##rail_sync", kParamTempoSync, 285, "TEMPO SYNC",
-                   false, 337.5f);
-
-        // Electromechanical-style readouts keep the current sync and tape states
-        // visible without requiring hover or opening a parameter menu.
-        dl->AddRectFilled(P(355, 307), P(425, 332),
-                          IM_COL32(12, 20, 10, 255), 2.0f * s);
-        dl->AddRect(P(355, 307), P(425, 332),
-                    IM_COL32(53, 58, 49, 255), 2.0f * s, 0, 1.1f * s);
-        regularText(dl, 390, 312.5f, 11.0f,
-                    values[kParamTempoSync] > 0.5f
-                        ? IM_COL32(136, 230, 102, 255)
-                        : IM_COL32(107, 130, 91, 255),
-                    values[kParamTempoSync] > 0.5f
-                        ? kSyncDivisions[divIndex()].name : "FREE", 0);
+        railToggle(dl, "##rail_sync", kParamTempoSync, 337.5f, "TEMPO SYNC");
 
         // Three replaceable-cartridge conditions are exposed rather than a
-        // continuous wear percentage.
+        // continuous wear percentage. A compact engraved scale replaces the
+        // detached LCD-style value box so the state reads as part of the rail.
         text(dl, 562.5f, 292.0f, 12.5f, kColRailInk, "TAPE AGE", 0, true);
-        const char* const ageText = values[kParamTapeAge] < 0.25f
-                                  ? "NEW"
-                                  : (values[kParamTapeAge] < 0.75f
-                                        ? "USED" : "OLD");
-        knob("rail_age", kParamTapeAge, 0.0f, 1.0f, 515, 321, 13.5f,
-             false, false, "%.0f", "", 1.0f, 0.0f, false, true, ageText);
-        dl->AddRectFilled(P(550, 307), P(625, 332),
-                          IM_COL32(12, 20, 10, 255), 2.0f * s);
-        dl->AddRect(P(550, 307), P(625, 332),
-                    IM_COL32(53, 58, 49, 255), 2.0f * s, 0, 1.1f * s);
-        regularText(dl, 587.5f, 312.5f, 11.0f,
-                    IM_COL32(196, 215, 178, 255), ageText, 0);
+        knob("rail_age", kParamTapeAge, 0.0f, 1.0f, 562.5f, 316.0f, 10.5f,
+             false, false, "%.0f", "", 1.0f, 0.0f, false, true);
+
+        static constexpr const char* kAgeLabels[] = { "NEW", "USED", "OLD" };
+        static constexpr float kAgeLabelX[] = { 533.0f, 562.5f, 592.0f };
+        const int ageIndex = values[kParamTapeAge] < 0.25f
+                           ? 0 : (values[kParamTapeAge] < 0.75f ? 1 : 2);
+        for (int i = 0; i < 3; ++i)
+        {
+            const bool selected = i == ageIndex;
+            text(dl, kAgeLabelX[i], 328.0f, 10.0f,
+                 selected ? kColRailInk : IM_COL32(52, 51, 49, 255),
+                 kAgeLabels[i], 0, true);
+            if (selected)
+                dl->AddLine(P(kAgeLabelX[i] - (i == 1 ? 11.0f : 9.0f), 338.0f),
+                            P(kAgeLabelX[i] + (i == 1 ? 11.0f : 9.0f), 338.0f),
+                            kColGreenDk, 1.4f * s);
+        }
 
         const bool on = values[kParamBypass] < 0.5f;
-        railToggle(dl, "##rail_power", kParamBypass, 770, "POWER",
-                   true, 787.5f);
-        led(dl, 828, 319, on, 5.0f);
+        railToggle(dl, "##rail_power", kParamBypass, 787.5f, "POWER", true);
+        led(dl, 828, 317, on, 5.0f);
     }
 
+    // Division the DSP is actually running. While an old project's semantic
+    // division owns the delay (see storeParamLocally), that stored value may be
+    // absent from the current head's table and its knob position is only the
+    // nearest detent -- report the stored value so the readouts cannot name a
+    // different note than the one being played.
     int divIndex() const
     {
-        int d = (int)(values[kParamSyncDivision] + 0.5f);
-        return d < 0 ? 0 : (d >= kNumSyncDivisions ? kNumSyncDivisions - 1 : d);
+        if (legacySyncDivisionOverride)
+        {
+            const int stored = (int)(values[kParamSyncDivision] + 0.5f);
+            return stored < 0 ? 0
+                              : (stored >= kNumSyncDivisions
+                                    ? kNumSyncDivisions - 1 : stored);
+        }
+        return teDivisionForSyncKnobPos(syncKnobPosition(), leadingHeadIndex());
+    }
+
+    int syncKnobPosition() const
+    {
+        int pos = (int)(values[kParamEchoRateNote] + 0.5f) - 1;
+        return pos < 0 ? 0
+                       : (pos >= kNumSyncKnobPositions
+                            ? kNumSyncKnobPositions - 1 : pos);
+    }
+
+    int leadingHeadIndex() const
+    {
+        return teLeadingHeadIndexForMode(modeIndex() + 1);
     }
 
     int modeIndex() const
@@ -1619,6 +1717,7 @@ private:
     std::vector<UserPreset> userPresets;
     char   saveBuf[64] = {};
     bool   saveFailed = false;      // last SAVE wrote nothing; dialog stays open
+    bool   legacySyncDivisionOverride = false;
 
     bool   showSupporters = false;
     bool   gripCursorSet = false;   // NWSE cursor currently pushed to the window

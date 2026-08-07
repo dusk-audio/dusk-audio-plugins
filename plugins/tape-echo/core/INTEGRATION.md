@@ -25,6 +25,26 @@ thread snapshots them once per block and per-sample smoothers do the rest.
 There is no message queue to service and no "parameter changed" callback to
 wire up — call the setters from wherever the host delivers values.
 
+`SpringReverb` is a three-spring bidirectional dispersive waveguide. Each spring
+has independent outgoing and returning delay lines, a 24-section second-order
+allpass cascade on each direction of travel, and frequency-dependent loss at
+the driver and pickup reflections. The fitted one-way group delay is flat below
+about 1.8 kHz, peaks near +21 ms at 3.6 kHz, and collapses by 4.2 kHz, so an
+impulse produces an ascending chirp and each physical round trip produces a
+successively more dispersed, darker chirp. The pickup hears the dispersed wave
+only. Input/output transducer filters limit the useful tank band to roughly
+100 Hz–5 kHz.
+
+The record path carries a repro noise bed at every Tape Age, including **New**:
+its amplitude law is `0.25 · exp(1.386 · age)`, i.e. New/Used/Old rise 1:2:4 and
+New is quiet (about −124 dBFS before Echo Volume and Output Volume) rather than
+digitally silent. This is deliberate and matches the reference cartridges, but
+it retires an invariant earlier releases relied on: **a render at Tape Age 0 is
+no longer bit-identical to one from a build without the tape-age knob**, so that
+comparison can no longer be used as a null control. The bed is still gated by
+Power (bypass returns the input untouched) and by Mix = 0 (dry-only output
+carries no wet path at all).
+
 ## Parameter table
 
 | ID | Name          | Setter            | Range      | Default | Notes |
@@ -40,17 +60,17 @@ wire up — call the setters from wherever the host delivers values.
 | 8  | Wow & Flutter | `setWowFlutter`   | 0–1        | 0.0     | transport modulation amount; the whole motion signal (wow, capstan flutter and the stochastic ~6 Hz scrape-flutter band) is scaled by a shared 1 + 1.5·value + 0.20·age multiplier — this knob contributes the 1.5·value term, Tape Age the 0.20·age term (scrape flutter additionally has its own steeper age law, see Tape Age). 0 is NOT still: the intrinsic transport matches the reference (≈0.45 % wow, ≈0.033 % flutter at Tape Age 0) |
 | 9  | Dry Level (legacy) | `setDryLevel` | 0–1        | 1.0     | hidden compatibility control; retains old instrument-through automation |
 | 10 | Tempo Sync    | (shell-level)     | off/on     | off     | locks the leading active head to a host-tempo division, clamped to the physical motor range |
-| 11 | Sync Division | (shell-level)     | 0–13 (int) | 2 (1/16)| the original eight values plus 1/32., 1/32T, 1/64, 1/64., 1/4T, and 5/32; appended indices preserve 0.1-series sessions |
-| 12 | Tape Age      | `setTapeAge`      | New/Used/Old | Used | stepped cartridge states; Used/Old add hiss, wow, HF loss, and level wobble |
+| 11 | Sync Division (legacy) | (shell-level) | 0–15 (int) | 2 (1/16)| hidden compatibility parameter; preserves the semantic divisions stored by 0.1-series sessions |
+| 12 | Tape Age      | `setTapeAge`      | New/Used/Old | Used | stepped cartridge states; every state includes the captured dark tape/electronics floor, while Used/Old progressively add noise, wow, HF loss, level wobble, and splice wear |
 | 13 | Bypass        | `setBypass`       | off/on     | off     | host-designated; UI POWER switch, click-free clean passthrough |
 | 14 | Record VU     | `getRecordVuLevel` | 0–3 (out) | —       | average-responding record meter after Input Volume, including feedback; 225 ms attack / 200 ms release |
 | 15 | Output Volume | `setOutputVolume` | 0–1        | 0.5     | −20 dB to +20 dB; midpoint is unity |
 | 16 | Echo Pan      | `setEchoPan`      | 0–1        | 0.5     | 0 = left, 0.5 = center, 1 = right |
 | 17 | Reverb Pan    | `setReverbPan`    | 0–1        | 0.5     | 0 = left, 0.5 = center, 1 = right |
 | 18 | Input Send    | `setInputSend`    | off/on     | on      | interrupts only the tape-record feed; spring remains live for reverb-only operation |
-| 19 | Wet Solo (legacy) | `setWetSolo`  | off/on     | off     | hidden compatibility control; mutes the dry path |
-| 20 | Record Peak   | `getRecordPeakLevel` | 0–3 (out) | —     | transient record-path peak with a 300 ms release |
-| 21 | Mix           | `setMix`          | 0–1        | 0.5     | dry/combined-wet crossfade; 0 = dry, 0.5 = both paths at unity, 1 = wet-only |
+| 19 | Record Peak   | `getRecordPeakLevel` | 0–3 (out) | —     | transient record-path peak with a 300 ms release |
+| 20 | Mix           | `setMix`          | 0–1        | 0.5     | dry/combined-wet crossfade; 0 = dry, 0.5 = both paths at unity, 1 = wet-only |
+| 21 | Echo Rate Note | (shell-level)    | 1–11 (int) | 5       | physical tempo-sync detent; its division table follows the leading active playback head, matching Galaxy |
 
 Mix uses a unity-overlap balance law so the 50% default reproduces the
 previous parallel dry-plus-wet output exactly. Below 50% the dry path remains
@@ -59,11 +79,15 @@ remains at unity while the dry path fades out. This keeps old sessions and
 factory-program calibration intact while providing exact dry-only and wet-only
 endpoints.
 
-Tempo sync lives in the plugin shell, not the DSP core. The shell converts a
-division plus host BPM into the leading active head's delay each block (see
-`syncDelayMs` in `TapeEchoParams.hpp`), derives head-1 time from the selected
-mode, and clamps the motor to its measured range. The core stays host-agnostic
-and its motor-inertia smoother supplies tape-style glides on tempo changes.
+Tempo sync lives in the plugin shell, not the DSP core. The shell maps the
+1–11 Echo Rate Note detent through the selected mode's leading-head table,
+converts that division plus host BPM into the leading active head's delay each
+block (see `syncDelayMs` in `TapeEchoParams.hpp`), derives head-1 time from the
+selected mode, and clamps the motor to its measured range. Changing Head Select
+therefore keeps the physical detent fixed while changing its note assignment,
+as on Galaxy. The hidden Sync Division parameter remains an exact compatibility
+path for old sessions. The core stays host-agnostic and its motor-inertia
+smoother supplies tape-style glides on tempo changes.
 
 Level note: with Intensity at maximum and all three heads active, the echo
 bus can peak near +9 dBFS during self-oscillation (as on the hardware, which
@@ -176,7 +200,8 @@ in-place and the block is optionally split for sample accuracy.
 Required extensions: `clap.audio-ports` (1 stereo in, 1 stereo out),
 `clap.params` (all input params from the table, mode/division flagged
 `CLAP_PARAM_IS_STEPPED`), `clap.state` (serialize every input-parameter
-value — including the shell-level `tempo_sync` and `sync_division`, which
+value — including the shell-level `tempo_sync`, compatibility
+`sync_division`, and physical `echo_rate_note`, which
 must round-trip with project state even though the DSP core never sees
 them), `clap.gui`.
 

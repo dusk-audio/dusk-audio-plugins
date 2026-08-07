@@ -35,10 +35,10 @@ public:
         values[kParamEchoPan]     = 0.5f;
         values[kParamReverbPan]   = 0.5f;
         values[kParamInputSend]   = 1.0f;
-        values[kParamWetSolo]     = 0.0f;
         values[kParamBypass]      = 0.0f;
         values[kParamPeakLevel]   = 0.0f;
         values[kParamMix]         = 0.5f;
+        values[kParamEchoRateNote] = 5.0f; // fifth physical detent (Head 1 = 1/16)
     }
 
 public:
@@ -49,7 +49,13 @@ public:
     {
         return effectiveHead1DelayMs.load(std::memory_order_relaxed);
     }
-
+    // True when the selected note asked for a motor time the transport cannot
+    // reach at the current tempo, i.e. run() had to clamp. Drives the blinking
+    // head readout, which is tempo-dependent and cannot be looked up statically.
+    bool getSyncNoteOutOfRangeForUI() const noexcept
+    {
+        return syncNoteOutOfRange.load(std::memory_order_relaxed);
+    }
 protected:
     //--- metadata --------------------------------------------------------------
     const char* getLabel() const override       { return "TapeEcho"; }
@@ -122,7 +128,23 @@ protected:
             p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
         case kParamSyncDivision:
-            p.hints |= kParameterIsInteger;
+            // Shipped in 0.1.x as a semantic division index. Keep it readable
+            // for old projects and automation, but expose the physical detent
+            // below for all new edits.
+            //
+            // kParameterIsHidden only reaches the LV2 exporter, which turns it
+            // into port-props#notOnGUI. The VST3, CLAP and AU backends never
+            // read the flag, so in those formats BOTH this and Echo Rate Note
+            // appear in the host's generic parameter list and both are
+            // automatable. Writing this one latches legacySyncDivisionOverride
+            // and the Echo Rate Note detent stops driving the delay until it is
+            // moved again. That is deliberate -- it is the only way 0.1.x
+            // automation lanes keep working, exactly as for Dry Level -- but it
+            // is a real trap for anyone who automates the wrong one of the
+            // pair, so RELEASE_CHECKLIST asks for it to be exercised by hand.
+            // Do NOT "fix" it by assigning p.hints to drop
+            // kParameterIsAutomatable: that silences shipped 0.1.x automation.
+            p.hints |= kParameterIsInteger | kParameterIsHidden;
             p.name = "Sync Division"; p.symbol = "sync_division";
             p.ranges.def = 2.0f;    p.ranges.min = 0.0f;
             p.ranges.max = (float)(kNumSyncDivisions - 1);
@@ -157,15 +179,6 @@ protected:
             p.name = "Input Send";  p.symbol = "input_send";
             p.ranges.def = 1.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
             break;
-        case kParamWetSolo:
-            p.hints |= kParameterIsBoolean | kParameterIsInteger;
-            // Legacy one-click dry mute. Keep its exact parameter identity and
-            // behavior so saved automation still works, but do not present it
-            // as a second wet-routing control beside Mix.
-            p.hints |= kParameterIsHidden;
-            p.name = "Wet Solo";    p.symbol = "wet_solo";
-            p.ranges.def = 0.0f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
-            break;
         case kParamBypass:
             // host-integrated bypass; shown as the POWER switch in our UI
             p.initDesignation(kParameterDesignationBypass);
@@ -183,6 +196,11 @@ protected:
         case kParamMix:
             p.name = "Mix";         p.symbol = "mix";
             p.ranges.def = 0.5f;    p.ranges.min = 0.0f;  p.ranges.max = 1.0f;
+            break;
+        case kParamEchoRateNote:
+            p.hints |= kParameterIsInteger;
+            p.name = "Echo Rate Note"; p.symbol = "echo_rate_note";
+            p.ranges.def = 5.0f;    p.ranges.min = 1.0f;  p.ranges.max = 11.0f;
             break;
         }
     }
@@ -206,12 +224,12 @@ protected:
             return;
         value = std::max(kTeParams[index].min,
                          std::min(kTeParams[index].max, value));
-        if (index == kParamMode || index == kParamSyncDivision)
+        if (index == kParamMode || index == kParamSyncDivision
+            || index == kParamEchoRateNote)
             value = std::round(value);
         else if (index == kParamBypass
                  || index == kParamTempoSync
-                 || index == kParamInputSend
-                 || index == kParamWetSolo)
+                 || index == kParamInputSend)
             value = value >= 0.5f ? 1.0f : 0.0f;
         if (index == kParamTapeAge)
             value = teQuantizeTapeAge(value);
@@ -223,14 +241,33 @@ protected:
             if (value < 0.5f) // sync released: hand control back to the knob
                 dsp.setRepeatRate(values[kParamRepeatRate].load(std::memory_order_relaxed));
             break;
-        case kParamSyncDivision: break; // applied per-block in run()
+        case kParamSyncDivision:
+            // Compatibility input: an old project may automate any semantic
+            // division, including values the reference's eleven detents cannot
+            // represent for the current head. Preserve that exact delay until a
+            // new Echo Rate Note value explicitly takes ownership. Do not also
+            // rewrite Echo Rate Note here: hosts require independently exposed
+            // parameters to remain stable when another parameter changes.
+            legacySyncDivisionOverride.store(true, std::memory_order_relaxed);
+            break;
+        case kParamEchoRateNote:
+            // The physical detent is authoritative for new edits. Keep the
+            // hidden legacy value intact so automation/state inspection never
+            // observes an undeclared sibling-parameter mutation; run() derives
+            // the effective semantic division without changing either value.
+            legacySyncDivisionOverride.store(false, std::memory_order_relaxed);
+            break;
         case kParamTapeAge:     dsp.setTapeAge(value);            break;
         case kParamOutputVolume:dsp.setOutputVolume(value);        break;
         case kParamEchoPan:     dsp.setEchoPan(value);             break;
         case kParamReverbPan:   dsp.setReverbPan(value);           break;
         case kParamInputSend:   dsp.setInputSend(value >= 0.5f);   break;
-        case kParamWetSolo:     dsp.setWetSolo(value >= 0.5f);     break;
-        case kParamMode:        dsp.setMode((int)(value + 0.5f)); break;
+        case kParamMode:
+            // A mode change selects a different captured note table for the
+            // same physical detent. run() performs that lookup; neither public
+            // parameter is rewritten as a side effect of changing Mode.
+            dsp.setMode((int)(value + 0.5f));
+            break;
         case kParamRepeatRate:
             if (values[kParamTempoSync].load(std::memory_order_relaxed) < 0.5f)
                 dsp.setRepeatRate(value);
@@ -265,8 +302,12 @@ protected:
         setParameterValue(kParamEchoPan, preset.echoPan);
         setParameterValue(kParamReverbPan, preset.reverbPan);
         setParameterValue(kParamInputSend, preset.inputSend);
-        setParameterValue(kParamWetSolo, preset.wetSolo);
         setParameterValue(kParamMix, preset.mix);
+        const int leadingHead = teLeadingHeadIndexForMode(
+            (int)(preset.v[kParamMode] + 0.5f));
+        const int knobPos = teSyncKnobPosForDivision(
+            (int)(preset.v[kParamSyncDivision] + 0.5f), leadingHead);
+        setParameterValue(kParamEchoRateNote, (float)(knobPos + 1));
         // BYPASS is not a preset parameter: a program change must never override
         // the host-designated bypass the player set (see teIsPresetParam).
     }
@@ -291,12 +332,12 @@ protected:
     {
         float effectiveMs = duskaudio::TapeEchoDSP::delayMsForRepeatRate(
             values[kParamRepeatRate].load(std::memory_order_relaxed));
+        bool outOfRange = false;
         if (values[kParamTempoSync].load(std::memory_order_relaxed) > 0.5f)
         {
             const TimePosition& tp = getTimePosition();
             if (tp.bbt.valid && tp.bbt.beatsPerMinute > 20.0)
                 lastBpm = tp.bbt.beatsPerMinute;
-
             const int mode = (int)(
                 values[kParamMode].load(std::memory_order_relaxed) + 0.5f);
             // The selected note belongs to the first active playback head.
@@ -304,9 +345,24 @@ protected:
             // clamping to the physical transport range.
             const double leadingHeadRatio =
                 duskaudio::TapeEchoDSP::leadingHeadRatioForMode(mode);
-            const double requestedMs = syncDelayMs(lastBpm,
-                (int)(values[kParamSyncDivision].load(std::memory_order_relaxed) + 0.5f));
-            const double requestedHead1Ms = requestedMs / leadingHeadRatio;
+            const double leadingHeadOffsetMs =
+                duskaudio::TapeEchoDSP::leadingHeadOffsetMsForMode(mode);
+            // The latch and the value it selects are separate relaxed loads, so
+            // a host write landing between them can make this block read the
+            // new latch against the old value (or vice versa). That is benign
+            // and deliberate: both are plain parameter reads, the worst case is
+            // one block of a stale division, and the motor-inertia smoother
+            // turns any resulting delay step into a glide rather than a click.
+            // Ordering them would cost an audio-thread fence for no audible
+            // gain, and matches how every other parameter is read here.
+            const int division = legacySyncDivisionOverride.load(std::memory_order_relaxed)
+                ? (int)(values[kParamSyncDivision].load(std::memory_order_relaxed) + 0.5f)
+                : teDivisionForSyncKnobPos(
+                    (int)(values[kParamEchoRateNote].load(std::memory_order_relaxed) + 0.5f) - 1,
+                    teLeadingHeadIndexForMode(mode));
+            const double requestedMs = syncDelayMs(lastBpm, division);
+            const double requestedHead1Ms =
+                (requestedMs - leadingHeadOffsetMs) / leadingHeadRatio;
 
             // CLAMP, do not octave-fold. This is measured reference behaviour,
             // not a limitation: the hardware pins a too-long note at the motor
@@ -314,9 +370,9 @@ protected:
             // show it directly -- "Basic Guitar Delay" reads 487.6 ms at both
             // 120 and 80 BPM (pinned, not proportional), "Vocal Bounce Delay"
             // reads 190.1 ms at 80/120/160 alike, and the pinned head-1 value
-            // lands on 178.1 ms against our kMaxDelayMs of 178.50. The longer
-            // readings are that same clamp scaled by the head ratios
-            // (178.50 x 1.90 = 339, x 2.75 = 491). An octave fold was tried and
+            // lands at the measured transport maximum. The longer readings
+            // are that same clamp scaled by the calibrated head ratios and
+            // fixed pickup offsets. An octave fold was tried and
             // measured: it breaks 5 tempo-sync gates because it transposes notes
             // the reference simply truncates. Divisions past the range therefore
             // DO collide at the endpoint on purpose -- that is what the hardware
@@ -325,6 +381,10 @@ protected:
             const double kMaxMs = (double)duskaudio::TapeEchoDSP::kMaxDelayMs;
             const double clampedMs =
                 std::max(kMinMs, std::min(requestedHead1Ms, kMaxMs));
+            // The UI blinks the head readouts exactly when this clamp bites, so
+            // publish the decision instead of letting the UI guess from a
+            // tempo-independent table.
+            outOfRange = requestedHead1Ms < kMinMs || requestedHead1Ms > kMaxMs;
 
             // Convert the clamped delay to the motor-speed knob's 0..1 range;
             // the DSP's inertia smoother turns tempo changes into tape glides.
@@ -333,6 +393,7 @@ protected:
             effectiveMs = (float)clampedMs;
         }
         effectiveHead1DelayMs.store(effectiveMs, std::memory_order_relaxed);
+        syncNoteOutOfRange.store(outOfRange, std::memory_order_relaxed);
 
         dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
     }
@@ -340,9 +401,19 @@ protected:
 private:
     void pushAllParams()
     {
+        const bool preserveLegacy =
+            legacySyncDivisionOverride.load(std::memory_order_relaxed);
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (i != kParamOutLevel && i != kParamPeakLevel)
+            {
+                // Replay only the authoritative side of the compatibility pair.
+                // Otherwise the later parameter would always take ownership and
+                // silently erase an old session's semantic division.
+                if ((i == kParamSyncDivision && !preserveLegacy)
+                    || (i == kParamEchoRateNote && preserveLegacy))
+                    continue;
                 setParameterValue(i, values[i].load(std::memory_order_relaxed));
+            }
     }
 
     duskaudio::TapeEchoDSP dsp;
@@ -350,6 +421,8 @@ private:
     std::atomic<float> effectiveHead1DelayMs {
         duskaudio::TapeEchoDSP::kMaxDelayMs
     };
+    std::atomic<bool> syncNoteOutOfRange { false };
+    std::atomic<bool> legacySyncDivisionOverride { false };
     // Parameter cache shared across threads: run() reads it on the audio thread
     // while setParameterValue()/loadProgram() write it from the host thread.
     // Atomic (relaxed) storage removes the data race — same pattern as the DSP
@@ -383,4 +456,10 @@ float tapeEchoGetHead1DelayMs(void* const pluginInstancePointer) noexcept
 {
     auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
     return plugin != nullptr ? plugin->getHead1DelayMsForUI() : 0.0f;
+}
+
+bool tapeEchoGetSyncNoteOutOfRange(void* const pluginInstancePointer) noexcept
+{
+    auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
+    return plugin != nullptr && plugin->getSyncNoteOutOfRangeForUI();
 }

@@ -91,6 +91,29 @@ std::vector<float> renderAtMix(float mix)
     }
     return output[0];
 }
+
+std::vector<float> renderSpringImpulse()
+{
+    constexpr int renderSamples = 96000;
+    duskaudio::SpringReverb spring;
+    spring.prepare(kSampleRate, 1.0f);
+    std::vector<float> output(renderSamples, 0.0f);
+    for (int i = 0; i < renderSamples; ++i)
+        output[(size_t)i] = spring.process(i == 0 ? 1.0f : 0.0f);
+    return output;
+}
+
+double windowEnergy(const std::vector<float>& signal,
+                    double startSeconds, double endSeconds)
+{
+    const size_t begin = (size_t)std::lround(startSeconds * kSampleRate);
+    const size_t end = std::min(signal.size(),
+        (size_t)std::lround(endSeconds * kSampleRate));
+    double energy = 0.0;
+    for (size_t i = begin; i < end; ++i)
+        energy += (double)signal[i] * (double)signal[i];
+    return energy;
+}
 }
 
 int main()
@@ -177,6 +200,38 @@ int main()
         return 1;
     }
 
+    // The spring is a propagation model, not an instantaneous resonator: the
+    // first packet must follow the one-way transit, and genuine round trips
+    // must remain present after it. This also guards against unstable allpass
+    // coefficients and accidentally disconnecting either wave direction.
+    const auto springImpulse = renderSpringImpulse();
+    const bool springFinite = std::all_of(
+        springImpulse.begin(), springImpulse.end(),
+        [](float sample) { return std::isfinite(sample) && std::abs(sample) < 100.0f; });
+    const double preArrival = windowEnergy(springImpulse, 0.0, 0.018);
+    const double firstPacket = windowEnergy(springImpulse, 0.020, 0.090);
+    const double firstReturns = windowEnergy(springImpulse, 0.090, 0.300);
+    const double lateTail = windowEnergy(springImpulse, 0.500, 1.500);
+    // Equal-length decay windows: the tail must still be DECAYING, not merely
+    // present. A loop that crept to unity would keep lateTail above its floor
+    // while holding or growing, which the thresholds alone cannot catch.
+    const double earlyDecay = windowEnergy(springImpulse, 0.500, 1.000);
+    const double lateDecay  = windowEnergy(springImpulse, 1.000, 1.500);
+    if (!springFinite || preArrival > 1.0e-20
+        || firstPacket < 1.0e-6 || firstReturns < 1.0e-8
+        || lateTail < 1.0e-10 || !(lateDecay < earlyDecay))
+    {
+        std::cerr << "dispersive spring propagation regression\n"
+                  << "  finite=" << springFinite
+                  << " pre=" << preArrival
+                  << " first=" << firstPacket
+                  << " returns=" << firstReturns
+                  << " late=" << lateTail
+                  << " earlyDecay=" << earlyDecay
+                  << " lateDecay=" << lateDecay << '\n';
+        return 1;
+    }
+
     duskaudio::TapeEchoDSP ageCheck;
     constexpr std::array<std::array<float, 2>, 9> ageCases{{
         {{ -1.0f, 0.0f }},
@@ -202,14 +257,21 @@ int main()
 
     constexpr std::array<float, duskaudio::TapeEchoDSP::kNumModes>
         leadingHeadRatios{
-            1.0f, 1.90f, 2.75f, 1.90f,
-            1.0f, 1.90f, 2.75f, 1.0f,
-            1.90f, 1.0f, 1.0f, 1.0f };
+            1.0f, 1.91172f, 2.76118f, 1.91172f,
+            1.0f, 1.91172f, 2.76118f, 1.0f,
+            1.91172f, 1.0f, 1.0f, 1.0f };
+    constexpr std::array<float, duskaudio::TapeEchoDSP::kNumModes>
+        leadingHeadOffsets{
+            0.0f, -1.428f, -2.141f, -1.428f,
+            0.0f, -1.428f, -2.141f, 0.0f,
+            -1.428f, 0.0f, 0.0f, 0.0f };
     for (int mode = 1; mode <= duskaudio::TapeEchoDSP::kNumModes; ++mode)
         if (duskaudio::TapeEchoDSP::leadingHeadRatioForMode(mode)
-            != leadingHeadRatios[static_cast<size_t>(mode - 1)])
+                != leadingHeadRatios[static_cast<size_t>(mode - 1)]
+            || duskaudio::TapeEchoDSP::leadingHeadOffsetMsForMode(mode)
+                != leadingHeadOffsets[static_cast<size_t>(mode - 1)])
         {
-            std::cerr << "wrong leading-head ratio for mode " << mode << '\n';
+            std::cerr << "wrong leading-head timing for mode " << mode << '\n';
             return 1;
         }
 

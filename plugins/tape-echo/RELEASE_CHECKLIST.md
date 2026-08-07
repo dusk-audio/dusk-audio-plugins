@@ -24,7 +24,23 @@ must match that value exactly; suffixes such as `-rc.1` are allowed.
    all Mix positions (including exact dry-only/wet-only endpoints),
    New/Used/Old tape states, tempo changes, and output automation in at least
    one AU, VST3, CLAP, and LV2 host as applicable. Restore an older project and
-   verify hidden Dry Level/Wet Solo state and automation still affect the DSP.
+   verify hidden Dry Level state and automation still affect the DSP.
+7. Exercise the tempo-sync compatibility pair by hand. Outside LV2 the host
+   shows both `Sync Division` and `Echo Rate Note` as automatable parameters,
+   and whichever is written last owns the delay. Confirm that: a 0.1.x project
+   still plays its stored division; a 1.0.0 project saved from the Echo Rate
+   Note knob reloads on that detent; and automating `Sync Division` in a 1.0.0
+   project hands control back to it until the detent is moved again.
+8. Sweep the eleven Echo Rate Note detents against the reference with tempo
+   sync on, in a leading-Head-1 mode, a leading-Head-2 mode and a
+   leading-Head-3 mode, so that all three rows of `kSyncReadoutText` and
+   `kSyncReadoutBlinks` are covered — 33 detent positions, each with up to
+   three head readouts plus its blink state. Head 1 leads modes 1/5/8/10/11,
+   Head 2 leads 2/4/6/9, and Head 3 leads 3/7; pick a mode from each group
+   with the far heads active (mode 11 shows all three at once). Thirty-one of
+   the thirty-three captured strings reproduce the calibrated head ratios;
+   the Head-1 row's detents 2 and 8 name the third head 8% away from their
+   printed note and are the two most likely to be transcription slips.
 
 ## Tagged release
 

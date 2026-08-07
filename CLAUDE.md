@@ -135,7 +135,7 @@ Build options:
 
 ## Project Structure
 
-```
+```text
 plugins/
 ├── plugins/
 │   ├── 4k-eq/
@@ -213,11 +213,30 @@ void getStateInformation(juce::MemoryBlock& destData) {
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
 }
-// Load: reverse the process, validate before applying
+// Load: reverse the process, validate before applying. Parse into a ValueTree,
+// TYPE-CHECK every custom property into a temporary first, and only then call
+// replaceState — a half-applied state is worse than a rejected one, so bail
+// without touching the APVTS if anything is missing or the wrong type.
 void setStateInformation(const void* data, int sizeInBytes) {
     auto xml = getXmlFromBinary(data, sizeInBytes);
-    if (xml && xml->hasTagName(apvts.state.getType()))
-        apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    if (xml == nullptr || !xml->hasTagName(apvts.state.getType()))
+        return;
+    auto state = juce::ValueTree::fromXml(*xml);
+    if (!state.isValid())
+        return;
+
+    // getProperty() returns a var: a missing or wrong-typed entry casts to 0
+    // silently, so check the type BEFORE converting. hasProperty() alone is not
+    // enough — it passes for a String that then reads as 0.0f. Numbers written
+    // by setProperty(float) come back as isDouble; isInt covers a whole number
+    // that JUCE narrowed on the way out.
+    const juce::var customVar = state.getProperty("customProp");
+    if (!customVar.isDouble() && !customVar.isInt())
+        return;                       // repeat for every required custom property
+    const float loadedValue = (float) customVar;
+
+    apvts.replaceState(state);        // only now: every property validated
+    value = loadedValue;              // apply the validated temporaries after
 }
 ```
 
@@ -342,9 +361,19 @@ NOTE: an old `plugins/DuskVerb/tests/reference_comparison/` symlink no longer ex
 tuning scripts now live in the private tools repo at
 `~/projects/dusk-audio-tools/tools/duskverb/tuner/` (see the tools repo README).
 
-NOTE (post-merge): the tooling move is not finished. `plugins/DuskVerb/tools/tuner/`
-still exists in-tree because `main` added those scripts after the move commit landed
-on this branch; 59 of the 64 are already mirrored in the private repo (the 5 that are
-not are 3 superseded session handoffs plus `stereo_jnd_audit.py` /
-`stereo_profile_fit.py` from the stereo campaign). Finish the move in its own commit
-after mirroring those two — do not delete them as a side effect of an unrelated change.
+NOTE: the DuskVerb tuner move is DONE (2026-08-07). All 64 scripts now live in
+the private tools repo at `~/projects/dusk-audio-tools/tools/duskverb/tuner/`
+(the canonical path named above) and are gone from this repo. The previous note here claimed "59 of the 64 are already mirrored in the
+private repo" with only `stereo_jnd_audit.py` / `stereo_profile_fit.py`
+outstanding -- that was WRONG. The tools repo contained zero DuskVerb tuner
+scripts; its 65 Python files were all TapeEcho and TapeMachine. Verify a mirror
+exists before deleting anything on the strength of a note like that.
+
+STILL IN THIS REPO and NOT moved, deliberately:
+- `tests/duskverb_render/` is a CMake target (`add_subdirectory` in the root
+  CMakeLists) and the comparison harness runs the binary it builds, so moving it
+  is a build refactor, not a file move.
+- `plugins/sunset-circuits/dpf-plugin/tools/` (`gen_params.py`, `lv2_smoke.c`) is
+  build-adjacent codegen for that plugin.
+- `.github/scripts/dpf_clap_validate.py` and `manuals/build_manuals.py` /
+  `preflight.py` belong with the CI and manual pipelines they serve.
