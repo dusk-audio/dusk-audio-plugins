@@ -981,7 +981,7 @@ private:
               bool linked = false, float linkOffset = 0.0f)
     {
         const TmParam& d = kTmParams[param];
-        panel.knobLabel(dl, cx, cy - 50.0f, l1);
+        panel.knobLabel(dl, cx, cy - 52.0f, l1);
         // GAIN LINK path (OUTPUT knob only): a MIRROR of INPUT. The knob shows the opposed
         // input (-input) on the normal ±12 dB output scale, so the two gains always read as
         // an opposed pair (+3 / -3). Its edits are routed to INPUT in the setParam adapter
@@ -997,7 +997,11 @@ private:
             const bool ch = panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, eff, 0.0f,
                        false, true, fmt, suffix, 0, false,
                        /*persistent*/ true, nullptr, /*rightClickReset*/ false, 1.0f,
-                       /*dispAdd*/ 0.0f, l1, /*contextMenu*/ true, overrideText);
+                       /*dispAdd*/ 0.0f, l1, /*contextMenu*/ true, overrideText,
+                       /*hasExternalReadout*/ false, /*dispMin*/ 0.0f, /*dispMax*/ 0.0f,
+                       /*nameOnHover*/ false, /*doubleClickReset*/ false,
+                       /*persistentTextSize*/ 9.5f, /*bubbleOnActiveOnly*/ false,
+                       /*omitCenterTick*/ true);
             outLinkActive_ = false;
             // The INPUT mirror is applied in the setParam adapter; the stored unlinked
             // OUTPUT value is left untouched, so nothing is stored back here.
@@ -1009,7 +1013,11 @@ private:
         return panel.knob(id, param, d.min, d.max, cx, cy, 32.0f, values[param], d.def,
                    false, true, fmt, suffix, 0, false,
                    /*persistent*/ true, nullptr, /*rightClickReset*/ false, 1.0f, dispAdd,
-                   /*hover name*/ l1, /*contextMenu*/ true, overrideText);
+                   /*hover name*/ l1, /*contextMenu*/ true, overrideText,
+                   /*hasExternalReadout*/ false, /*dispMin*/ 0.0f, /*dispMax*/ 0.0f,
+                   /*nameOnHover*/ false, /*doubleClickReset*/ false,
+                   /*persistentTextSize*/ 9.5f, /*bubbleOnActiveOnly*/ false,
+                   /*omitCenterTick*/ true);
     }
 
     // Machine-aware accent: Swiss (Swiss) cooler blue-grey, American (Classic
