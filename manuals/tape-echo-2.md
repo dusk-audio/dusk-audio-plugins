@@ -16,24 +16,30 @@ returns of a classic hardware echo workflow.
 
 ## Signal flow
 
-The stereo input is summed to the modeled record and spring paths. Input
-Volume drives both paths. Input Send interrupts the tape-record feed while the
-spring remains live, which makes dub-style echo tails and reverb-only operation
+The stereo input is summed to the modeled record and spring paths. Input drives
+both paths. Record Input interrupts the tape-record feed while the spring
+remains live, which makes dub-style echo tails and reverb-only operation
 possible. The selected playback heads feed both the echo output and the
 regeneration loop. Bass and Treble affect only the echo return. Echo and spring
-then receive their own volume and pan settings. Mix crossfades the direct path
-against the combined echo and spring returns before Output Volume applies the
-final stereo trim.
+then receive their own level and pan settings. Mix crossfades the direct path
+against the combined echo and spring returns before Output applies the final
+stereo trim.
 
-The VU and peak lamp monitor the record path after Input Volume and include
-regeneration. They remain active when Input Send is off and go dark when Power
-is off.
+The VU and peak lamp monitor the record path after Input and include
+regeneration. They remain active when Record Input is off and go dark when
+Power is off.
+
+Control names in this manual are the legends printed on the panel. Seven host
+automation parameters carry a different name from the legend that drives them,
+because those names were fixed by the 0.1 series and are kept so old projects
+keep loading; each one is noted in parentheses where the control is described.
 
 ## Controls
 
 ### Echo section
 
-- **Mode** chooses one of 12 head/spring routings:
+- **Head Select** (automation name: Mode) chooses one of 12 head/spring
+  routings:
   1. Head 1
   2. Head 2
   3. Head 3
@@ -51,17 +57,19 @@ is off.
   337 to 131 ms and Head 3 is 489 to 189 ms.
 - **Intensity** controls regeneration. High values can self-oscillate and become
   substantially louder than the input.
-- **Echo Volume** sets echo-return level.
-- **Reverb Volume** sets spring-return level in modes 5 through 12.
+- **Echo Level** (automation name: Echo Volume) sets echo-return level.
+- **Reverb Level** (automation name: Reverb Volume) sets spring-return level in
+  modes 5 through 12.
 - **Bass** and **Treble** shape the echo return without changing the dry or
   spring paths.
 
 ### Record and transport section
 
-- **Input Volume** sets record/spring send gain and drives the modeled input
-  amplifier and tape nonlinearity.
-- **Input Send** toggles new material into the tape loop. Switching it off lets
-  existing repeats decay while the dry and spring paths continue.
+- **Input** (automation name: Input Volume) sets record/spring send gain and
+  drives the modeled input amplifier and tape nonlinearity.
+- **Record Input** (automation name: Input Send) toggles new material into the
+  tape loop. Switching it off lets existing repeats decay while the dry and
+  spring paths continue.
 - **Tape Age** selects **New**, **Used**, or **Old** tape. New retains a very
   quiet tape/electronics bed; older states progressively add bandwidth loss,
   noise, transport variation, level wear, and a more audible tape splice.
@@ -78,10 +86,12 @@ is off.
   divisions therefore converge on the same endpoint timing at a given tempo,
   and slow tempos reach the limit sooner. Use a shorter division, or a
   multi-head mode, when you need the repeat to track the bar at low tempos.
-- **Echo Rate Note** replaces Repeat Rate while Tempo Sync is enabled, and steps
-  through eleven detents instead of sweeping continuously. Each detent selects a
-  rhythmic value for the leading active head, so the available values change with
-  Head Select. The three head displays show the exact `d` (dotted), `t` (triplet),
+- While Tempo Sync is enabled, the **Repeat Rate** knob becomes the note
+  selector (automation name: Echo Rate Note). It keeps its panel legend and
+  steps through eleven detents instead of sweeping continuously. Each detent
+  selects a rhythmic value for the leading active head, so the available values
+  change with Head Select. The three head displays show the exact `d` (dotted),
+  `t` (triplet),
   `+`/`-`, and out-of-range blinking indications used by the reference unit.
   Changing Head Select keeps the knob at the same detent and updates its note
   assignment. The older Sync Division parameter remains hidden so projects and
@@ -90,8 +100,8 @@ is off.
   returns. At 0% the output is dry-only, 50% preserves both paths at unity, and
   100% is fully wet for send/return use.
 - **Echo Pan** and **Reverb Pan** place the two wet returns independently.
-- **Output Volume** provides −20 dB to +20 dB after the complete mix; its
-  midpoint is unity gain.
+- **Output** (automation name: Output Volume) provides −20 dB to +20 dB after
+  the complete mix; its midpoint is unity gain.
 
 ## Factory presets
 
@@ -109,7 +119,7 @@ is off.
 | Ambient Trails | Old-tape Head 3 and spring ambience |
 | Worn Tape | Old-tape pitch and tone character |
 | Runaway Drone | High-feedback Heads 1 + 3 texture |
-| Spring Only | Mode 12 spring-reverb return |
+| Spring Only | Head Select 12 (Reverb Only) spring-reverb return |
 
 Factory programs never change host bypass or restore meter outputs. The two synced programs use host tempo; all other programs use the
 stored free-time rate.
@@ -142,8 +152,8 @@ values to the nearest New/Used/Old state.
 ## Gain and safety
 
 Self-oscillation is an intentional part of the model and can exceed 0 dBFS.
-Lower Intensity or Echo Volume before changing modes on loud material, and use
-Output Volume for final gain staging. Power clears the modeled loop so stale
+Lower Intensity or Echo Level before changing modes on loud material, and use
+Output for final gain staging. Power clears the modeled loop so stale
 regeneration does not return when the effect is enabled again.
 
 ## License and support
