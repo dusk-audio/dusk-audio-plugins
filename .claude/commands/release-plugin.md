@@ -168,23 +168,64 @@ Update `~/projects/dusk-audio.github.io/_data/plugins.yml`:
 
 For each plugin, use `sed` to update the version line. The file uses YAML format where version appears after the plugin's slug line. Use this approach:
 
+Use the portable `sed -i.bak … && rm` form (same as Step 3). Bare `sed -i ''` is
+BSD-only: on Linux GNU sed the `''` is consumed as the SCRIPT and the real script
+becomes a filename, so the command exits 2 with `sed: can't read s/...: No such
+file or directory` and silently edits nothing.
+
 ```bash
 WEBSITE_REPO=~/projects/dusk-audio.github.io
 
-# 1. Update _data/plugins.yml (version line after slug)
-SLUG_LINE=$(grep -n "slug: <slug>" "$WEBSITE_REPO/_data/plugins.yml" | cut -d: -f1)
-if [ -n "$SLUG_LINE" ]; then
-  sed -i '' "$((SLUG_LINE)),$(( SLUG_LINE + 10 ))s/version: .*/version: <new-version>/" "$WEBSITE_REPO/_data/plugins.yml"
+# 1. Update _data/plugins.yml (version line inside the target plugin's block)
+PLUGINS_YML="$WEBSITE_REPO/_data/plugins.yml"
+
+# Anchor the match and require EXACTLY ONE hit. "slug: tapemachine" is a prefix
+# of "slug: tapemachine-2" (likewise 4k-eq/4k-eq-2, multi-q/multi-q-2,
+# tape-echo/tape-echo-2), so an unanchored grep returns two line numbers and
+# $((SLUG_LINE)) then dies on a two-line value.
+SLUG_LINES=$(grep -nE "^[[:space:]]*slug: <slug>[[:space:]]*$" "$PLUGINS_YML" | cut -d: -f1)
+SLUG_COUNT=$(printf '%s' "$SLUG_LINES" | grep -c . || true)
+if [ "$SLUG_COUNT" -ne 1 ]; then
+  echo "ERROR: expected exactly 1 'slug: <slug>' entry in _data/plugins.yml, found $SLUG_COUNT"; exit 1
 fi
+SLUG_LINE="$SLUG_LINES"
+
+# Bound the edit to this plugin's block: from its slug line to the line before
+# the next top-level "- name:" entry (or EOF for the last one). Entries run 6 to
+# 12 lines, so a fixed +10 window overshoots the short ones and rewrites the
+# NEXT plugin's version.
+NEXT_NAME=$(awk -v s="$SLUG_LINE" 'NR > s && /^- name:/ { print NR; exit }' "$PLUGINS_YML")
+if [ -n "$NEXT_NAME" ]; then END_LINE=$((NEXT_NAME - 1)); else END_LINE=$(wc -l < "$PLUGINS_YML"); fi
+
+if sed -n "${SLUG_LINE},${END_LINE}p" "$PLUGINS_YML" | grep -qE "^[[:space:]]*version:"; then
+  sed -i.bak "${SLUG_LINE},${END_LINE}s/^\([[:space:]]*\)version: .*/\1version: <new-version>/" \
+    "$PLUGINS_YML" && rm "$PLUGINS_YML.bak"
+else
+  # First release: the entry carries no version key yet (see the pre-release
+  # block below). Append one at the end of this plugin's block.
+  awk -v e="$END_LINE" 'NR == e { print; print "  version: <new-version>"; next } { print }' \
+    "$PLUGINS_YML" > "$PLUGINS_YML.tmp" && mv "$PLUGINS_YML.tmp" "$PLUGINS_YML"
+  END_LINE=$((END_LINE + 1))
+fi
+
+# Verify INSIDE the block only. A whole-file grep passes whenever ANY other
+# plugin already carries this version number, hiding a sed that did nothing.
+sed -n "${SLUG_LINE},${END_LINE}p" "$PLUGINS_YML" | grep -qE "^[[:space:]]*version: <new-version>[[:space:]]*$" \
+  || { echo "ERROR: plugins.yml version bump did not apply"; exit 1; }
 
 # 2. Update _plugins/<slug>.md (front matter version field)
 PLUGIN_MD="$WEBSITE_REPO/_plugins/<slug>.md"
 if [ -f "$PLUGIN_MD" ]; then
-  sed -i '' 's/^version: ".*"/version: "<new-version>"/' "$PLUGIN_MD"
+  sed -i.bak 's/^version: ".*"/version: "<new-version>"/' "$PLUGIN_MD" && rm "$PLUGIN_MD.bak"
+  grep -q '^version: "<new-version>"' "$PLUGIN_MD" \
+    || { echo "ERROR: _plugins/<slug>.md version bump did not apply"; exit 1; }
+else
+  echo "ERROR: _plugins/<slug>.md missing — the plugin page, download links and changelog live there"; exit 1
 fi
 ```
 
 **IMPORTANT**: Use `sed` for in-place edits. Do NOT use Python `yaml.dump` - it destroys comments and formatting.
+**IMPORTANT**: A first-time release needs BOTH website files to exist before the skill runs. Neither is created here; a missing entry aborts the release rather than shipping a page with no download links.
 **IMPORTANT**: Both `_data/plugins.yml` AND `_plugins/<slug>.md` must be updated - the plugin pages read from the markdown files.
 
 If the plugin has a pre-release status (`status: in-dev` **or** `status: coming-soon`) and is
