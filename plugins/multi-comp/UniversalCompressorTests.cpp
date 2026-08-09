@@ -78,10 +78,6 @@ public:
 
         // Exhaustive comb filtering test: every mode × sample rate × OS × mix
         testCombFilteringComprehensive();
-
-        // IR comparison tests disabled by default - requires reference IR files
-        // beginTest("IR Comparison Tests");
-        // testIRComparison();
     }
 
 private:
@@ -850,79 +846,6 @@ private:
         expect(alignedTime < 5.0, "SIMD processing completes in reasonable time");
     }
 
-    // IR comparison tests disabled - requires juce_audio_formats module
-    // Uncomment and add juce_audio_formats to CMakeLists.txt to enable
-#if 0
-    void testIRComparison()
-    {
-        // Framework for IR (Impulse Response) comparison testing
-        // This test compares plugin output against reference hardware IRs
-        //
-        // To use this test:
-        // 1. Place reference IR files in: tests/reference_irs/
-        // 2. IR files should be named: <mode>_<setting>.wav
-        //    Example: opto_moderate.wav, fet_4to1.wav, vca_fast.wav, bus_slow.wav
-        // 3. Each IR should be processed with known settings documented in filename
-        // 4. MSE (Mean Squared Error) threshold determines pass/fail
-
-        logMessage("IR comparison tests require reference IR files");
-        logMessage("Place IR files in: tests/reference_irs/");
-
-        // Check if reference directory exists
-        juce::File irDir = juce::File::getCurrentWorkingDirectory()
-                               .getChildFile("tests")
-                               .getChildFile("reference_irs");
-
-        if (!irDir.exists())
-        {
-            logMessage("Reference IR directory not found - skipping IR tests");
-            logMessage("Create directory: " + irDir.getFullPathName());
-            return;
-        }
-
-        // Example IR test framework
-        auto irFiles = irDir.findChildFiles(juce::File::findFiles, false, "*.wav");
-
-        if (irFiles.isEmpty())
-        {
-            logMessage("No IR files found in: " + irDir.getFullPathName());
-            return;
-        }
-
-        logMessage("Found " + juce::String(irFiles.size()) + " IR files for testing");
-
-        // Process each IR file
-        for (const auto& irFile : irFiles)
-        {
-            logMessage("Testing IR: " + irFile.getFileName());
-
-            // Load reference IR
-            juce::AudioFormatManager formatManager;
-            formatManager.registerBasicFormats();
-
-            std::unique_ptr<juce::AudioFormatReader> reader(
-                formatManager.createReaderFor(irFile));
-
-            if (!reader)
-            {
-                logMessage("Failed to load: " + irFile.getFileName());
-                continue;
-            }
-
-            // Read IR into buffer
-            juce::AudioBuffer<float> referenceIR(reader->numChannels,
-                                                (int)reader->lengthInSamples);
-            reader->read(&referenceIR, 0, (int)reader->lengthInSamples, 0, true, true);
-
-            // TODO: Parse filename to determine compressor mode and settings
-            // TODO: Process test signal with plugin using same settings
-            // TODO: Compare output with reference IR using MSE
-            // TODO: expect(mse < threshold, "IR matches reference within threshold");
-
-            logMessage("IR test framework ready - implementation pending");
-        }
-    }
-#endif
 
     // Helper functions
 
