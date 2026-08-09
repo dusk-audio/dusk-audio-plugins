@@ -122,6 +122,12 @@ Audio readWav(const std::string& path)
         fail(path + " has no usable fmt/data chunk");
     if (format != 1 && format != 3)
         fail(path + " uses an unsupported WAV encoding (only PCM and IEEE float)");
+    // Depth must match the encoding, or a 16-bit float file would fall through to
+    // the PCM branches below and decode garbage instead of failing.
+    if (format == 3 && bits != 32 && bits != 64)
+        fail(path + " has an unsupported IEEE float bit depth (only 32 or 64)");
+    if (format == 1 && bits != 16 && bits != 24 && bits != 32)
+        fail(path + " has an unsupported PCM bit depth (only 16, 24 or 32)");
 
     const size_t bytesPerSample = bits / 8u;
     const size_t frameBytes = bytesPerSample * numChannels;

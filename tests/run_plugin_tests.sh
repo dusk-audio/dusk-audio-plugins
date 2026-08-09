@@ -419,7 +419,9 @@ run_pre35_tests() {
     local so="$vst3/Contents/$arch_dir/${PRE35_BUNDLE}.so"
     if [ -f "$so" ]; then
         print_pass "VST3 binary exists"
-        if nm -D "$so" 2>/dev/null | grep -q "GetPluginFactory"; then
+        if ! command -v nm &> /dev/null; then
+            print_skip "nm not installed, cannot check the GetPluginFactory symbol"
+        elif nm -D "$so" 2>/dev/null | grep -q "GetPluginFactory"; then
             print_pass "VST3 GetPluginFactory symbol found"
         else
             print_fail "VST3 GetPluginFactory symbol missing"

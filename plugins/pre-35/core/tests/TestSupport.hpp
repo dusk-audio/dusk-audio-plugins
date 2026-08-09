@@ -151,6 +151,8 @@ inline ThdResult measureThd(const std::vector<float>& y, double f0, double sr,
     };
 
     const double a1 = amp(f0);
+    if (! (a1 > 0.0))                       // silent or unmeasurable fundamental:
+        return { 0.0, 0.0, 0.0 };           // same sentinel as the guards above
     return { linToDb(amp(3.0 * f0) / a1), linToDb(amp(2.0 * f0) / a1), a1 };
 }
 
