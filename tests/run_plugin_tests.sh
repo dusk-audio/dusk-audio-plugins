@@ -39,6 +39,7 @@ PLUGINS=(
     "TapeMachine"
     "Vintage Tape Echo"
     "Sunset Circuits"
+    "PRE-35"
 )
 
 # Sunset Circuits is the DPF port, not a JUCE plugin: its bundle is named
@@ -47,6 +48,14 @@ PLUGINS=(
 # handled by run_sunset_circuits_tests() instead of the generic path below.
 SUNSET_NAME="Sunset Circuits"
 SUNSET_BUNDLE="sunset_circuits"
+
+# PRE-35 is the other DPF port and needs the same special handling for the same
+# reasons (bundle name pre_35, may live in its own build tree). Its gate suite is
+# ctest over plugins/pre-35/core rather than a shell script, so it gets its own
+# function; the two DPF paths below have converged enough that folding them into
+# one parameterised helper is the obvious next cleanup of this file.
+PRE35_NAME="PRE-35"
+PRE35_BUNDLE="pre_35"
 
 #------------------------------------------------------------------------------
 # Utility Functions
@@ -331,6 +340,135 @@ run_sunset_circuits_tests() {
 }
 
 #------------------------------------------------------------------------------
+# PRE-35 (DPF) - core ctest gates + pluginval on the built VST3
+#------------------------------------------------------------------------------
+
+# Prefer an installed bundle, fall back to the DPF build tree (which is where it
+# lands when the plugin is configured with -DDUSK_DPF_INSTALL_LOCAL=OFF).
+pre35_vst3_path() {
+    local installed="$VST3_DIR/${PRE35_BUNDLE}.vst3"
+    local built="$PROJECT_DIR/plugins/pre-35/dpf-plugin/build/bin/${PRE35_BUNDLE}.vst3"
+    if [ -d "$installed" ]; then
+        echo "$installed"
+    elif [ -d "$built" ]; then
+        echo "$built"
+    fi
+}
+
+run_pre35_tests() {
+    local skip_pluginval="$1"
+    local skip_audio="$2"
+    local core_dir="$PROJECT_DIR/plugins/pre-35/core"
+    local core_build="$PROJECT_DIR/build/pre35-core-gates"
+
+    # --- core gate suite (the authoritative DSP check for this plugin) --------
+    # ctest over the framework-free core: coeff/chain/iron/robust. iron_test
+    # renders tones and measures THD with a DFT, so this is offline audio
+    # rendering and honours --skip-audio like the Sunset Circuits suite does.
+    # Every stage is logged, because the stage most likely to fail here is the
+    # BUILD, and a compile error swallowed by /dev/null leaves "the suite failed"
+    # with nothing to act on. Same convention as the pluginval logs below.
+    local build_log="$TEST_OUTPUT_DIR/pre35_core_build.log"
+    local ctest_log="$TEST_OUTPUT_DIR/pre35_core_ctest.log"
+
+    print_section "Core gate suite: $PRE35_NAME"
+    if [ "$skip_audio" = true ]; then
+        print_skip "Core gate suite (--skip-audio); run it directly with: cmake -S $core_dir -B $core_build && cmake --build $core_build -j && ctest --test-dir $core_build --output-on-failure"
+    elif ! command -v cmake &> /dev/null; then
+        print_skip "cmake not installed, cannot build the PRE-35 core gates"
+    else
+        local stage_ok=true
+        if ! { cmake -S "$core_dir" -B "$core_build" \
+               && cmake --build "$core_build" -j"$(nproc 2>/dev/null || echo 4)"; } \
+               > "$build_log" 2>&1; then
+            print_fail "Core gates failed to configure/build (full log: $build_log)"
+            echo "--- last 25 lines of $build_log ---"
+            tail -25 "$build_log"
+            echo "--- end ---"
+            stage_ok=false
+        fi
+
+        if [ "$stage_ok" = true ]; then
+            # tee, not redirect: the per-test pass/fail lines stay on screen like
+            # every other suite, and the log keeps the whole run for later. The
+            # pipeline's own status is tee's (pipefail is off, so `set -e` cannot
+            # abort the script on a red gate) — ctest's real status is PIPESTATUS[0],
+            # which must be captured on the very next line before anything else runs.
+            ctest --test-dir "$core_build" --output-on-failure 2>&1 | tee "$ctest_log"
+            local ctest_status="${PIPESTATUS[0]}"
+            if [ "$ctest_status" -eq 0 ]; then
+                print_pass "Core gate suite green (4/4)"
+            else
+                print_fail "Core gate suite failed (full log: $ctest_log)"
+            fi
+        fi
+    fi
+
+    # --- bundle presence ------------------------------------------------------
+    print_section "Checking plugin files: $PRE35_NAME"
+    local vst3
+    vst3="$(pre35_vst3_path)"
+    if [ -z "$vst3" ]; then
+        print_skip "No ${PRE35_BUNDLE}.vst3 found (build dpf-plugin, or install to $VST3_DIR)"
+        return
+    fi
+    print_pass "VST3 exists: $vst3"
+
+    local arch_dir="x86_64-linux"
+    [ "$(uname -m)" = "aarch64" ] && arch_dir="aarch64-linux"
+    local so="$vst3/Contents/$arch_dir/${PRE35_BUNDLE}.so"
+    if [ -f "$so" ]; then
+        print_pass "VST3 binary exists"
+        if nm -D "$so" 2>/dev/null | grep -q "GetPluginFactory"; then
+            print_pass "VST3 GetPluginFactory symbol found"
+        else
+            print_fail "VST3 GetPluginFactory symbol missing"
+        fi
+    else
+        print_fail "VST3 binary missing: $so"
+    fi
+
+    local lv2="$LV2_DIR/${PRE35_BUNDLE}.lv2"
+    [ -d "$lv2" ] || lv2="$PROJECT_DIR/plugins/pre-35/dpf-plugin/build/bin/${PRE35_BUNDLE}.lv2"
+    if [ -f "$lv2/manifest.ttl" ]; then
+        print_pass "LV2 manifest.ttl exists"
+    else
+        print_skip "LV2 bundle not built/installed"
+    fi
+
+    # --- pluginval ------------------------------------------------------------
+    if [ "$skip_pluginval" = true ]; then
+        return
+    fi
+
+    print_section "Pluginval validation: $PRE35_NAME"
+    if ! command -v pluginval &> /dev/null; then
+        print_skip "pluginval not installed (https://github.com/Tracktion/pluginval)"
+        return
+    fi
+
+    # --skip-gui-tests is mandatory: pluginval's editor tests segfault headless
+    # for every DPF plugin (a host-side XEmbed issue, docs/dpf-migration
+    # 00-OVERVIEW.md landmine 9), so a GUI run says nothing about this plugin.
+    # Strictness 10 because PRE-35 has only seven input parameters and no preset
+    # bank, so the full fuzz/thread-safety sweep costs under a second.
+    local level=10
+    local output_file="$TEST_OUTPUT_DIR/pluginval_${PRE35_BUNDLE}_level${level}.log"
+    print_info "Running pluginval at strictness level $level (--skip-gui-tests)..."
+
+    if timeout 300 pluginval --validate "$vst3" --strictness-level "$level" \
+        --skip-gui-tests --timeout-ms 270000 --verbose > "$output_file" 2>&1; then
+        print_pass "Pluginval level $level passed"
+    elif grep -q "Starting test" "$output_file" && ! grep -q "FAILED" "$output_file"; then
+        # DPF tears down non-zero after a clean run on some hosts; tolerated only
+        # when the log proves tests ran and none failed (same rule as CI).
+        print_pass "Pluginval level $level passed (non-zero exit on teardown, tests clean)"
+    else
+        print_fail "Pluginval level $level failed (see $output_file)"
+    fi
+}
+
+#------------------------------------------------------------------------------
 # Main Test Runner
 #------------------------------------------------------------------------------
 
@@ -377,6 +515,10 @@ main() {
                 echo "gate suite (plugins/sunset-circuits/core/tests/run_all.sh, several"
                 echo "minutes) which --skip-audio skips, plus pluginval at strictness 8 with"
                 echo "--skip-gui-tests."
+                echo ""
+                echo "\"PRE-35\" (also accepted as \"pre-35\") is the other DPF port: its gate"
+                echo "suite is ctest over plugins/pre-35/core (seconds, also skipped by"
+                echo "--skip-audio) plus pluginval at strictness 10 with --skip-gui-tests."
                 exit 0
                 ;;
             *)
@@ -398,9 +540,13 @@ main() {
     for plugin in "${plugins_to_test[@]}"; do
         print_header "Testing: $plugin"
 
-        # DPF port with its own bundle name and gate suite; accept the slug too.
+        # DPF ports with their own bundle names and gate suites; accept the slug too.
         if [ "$plugin" = "$SUNSET_NAME" ] || [ "$plugin" = "sunset-circuits" ]; then
             run_sunset_circuits_tests "$skip_pluginval" "$skip_audio"
+            continue
+        fi
+        if [ "$plugin" = "$PRE35_NAME" ] || [ "$plugin" = "pre-35" ]; then
+            run_pre35_tests "$skip_pluginval" "$skip_audio"
             continue
         fi
 
