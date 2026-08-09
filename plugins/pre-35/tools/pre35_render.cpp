@@ -199,6 +199,20 @@ double parseDouble(const std::string& key, const std::string& v)
     return d;
 }
 
+/** parseDouble plus a documented range. The DSP setters clamp, so an unchecked
+    `trim=500` would render at 100 % and report "trim 500 %" in the summary — a
+    null test comparing that against a Python render at 500 would be comparing two
+    different settings and calling the difference a port bug. Reject it instead. */
+double parseDoubleInRange(const std::string& key, const std::string& v,
+                          double lo, double hi)
+{
+    const double d = parseDouble(key, v);
+    if (d < lo || d > hi)
+        fail("bad value for " + key + "=" + v + " (expected "
+             + std::to_string(lo) + ".." + std::to_string(hi) + ")");
+    return d;
+}
+
 /** Integers are parsed as integers, not as doubles that are then cast: casting an
     out-of-range double to an integral type is undefined behaviour, and "seed=1e30"
     is exactly the sort of thing a script generates by accident. */
@@ -266,8 +280,8 @@ int main(int argc, char** argv)
         const std::string k = arg.substr(0, eq), v = arg.substr(eq + 1);
 
         if      (k == "pad")      padLabel = (int)parseLong(k, v, -100, 100);
-        else if (k == "trim")     trim = parseDouble(k, v);
-        else if (k == "iron")     iron = parseDouble(k, v);
+        else if (k == "trim")     trim = parseDoubleInRange(k, v, 0.0, 100.0);
+        else if (k == "iron")     iron = parseDoubleInRange(k, v, 0.0, 2.0);
         else if (k == "outdb")    outDb = parseDouble(k, v);
         else if (k == "noise")    noise = parseLong(k, v, 0, 1) != 0;
         else if (k == "autogain") autoGain = parseLong(k, v, 0, 1) != 0;

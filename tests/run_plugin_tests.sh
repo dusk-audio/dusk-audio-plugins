@@ -456,15 +456,31 @@ run_pre35_tests() {
     local output_file="$TEST_OUTPUT_DIR/pluginval_${PRE35_BUNDLE}_level${level}.log"
     print_info "Running pluginval at strictness level $level (--skip-gui-tests)..."
 
-    if timeout 300 pluginval --validate "$vst3" --strictness-level "$level" \
-        --skip-gui-tests --timeout-ms 270000 --verbose > "$output_file" 2>&1; then
+    # Capture the status: the teardown tolerance below must apply ONLY to a real
+    # pluginval exit code. "Starting test present, FAILED absent" is also true of a
+    # run that segfaulted or that the timeout killed partway through, so the older
+    # form reported a crash as a pass. Reject 124 (timeout) and >= 128 (killed by
+    # signal) outright, and require the log's own terminal SUCCESS line before
+    # tolerating any other non-zero status.
+    local status=0
+    timeout 300 pluginval --validate "$vst3" --strictness-level "$level" \
+        --skip-gui-tests --timeout-ms 270000 --verbose > "$output_file" 2>&1 || status=$?
+
+    if [ "$status" -eq 0 ]; then
         print_pass "Pluginval level $level passed"
-    elif grep -q "Starting test" "$output_file" && ! grep -q "FAILED" "$output_file"; then
+    elif [ "$status" -eq 124 ]; then
+        print_fail "Pluginval level $level timed out after 300 s (see $output_file)"
+    elif [ "$status" -ge 128 ]; then
+        print_fail "Pluginval level $level killed by signal $((status - 128)) (see $output_file)"
+    elif grep -q "Starting test" "$output_file" \
+        && grep -q "^SUCCESS" "$output_file" \
+        && ! grep -q "FAILED" "$output_file"; then
         # DPF tears down non-zero after a clean run on some hosts; tolerated only
-        # when the log proves tests ran and none failed (same rule as CI).
-        print_pass "Pluginval level $level passed (non-zero exit on teardown, tests clean)"
+        # when the log proves the suite reached its own SUCCESS line and nothing
+        # failed (same rule as CI).
+        print_pass "Pluginval level $level passed (exit $status on teardown, tests clean)"
     else
-        print_fail "Pluginval level $level failed (see $output_file)"
+        print_fail "Pluginval level $level failed (exit $status, see $output_file)"
     fi
 }
 

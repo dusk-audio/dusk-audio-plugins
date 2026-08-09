@@ -332,6 +332,8 @@ void testResetIsSteadyState(Report& r)
     Pre35DSP dsp;
     dsp.setPadIndex(2);
     dsp.setTrimPercent(88.0);
+    dsp.setIronAmount(1.0);   // renderTone's value, set explicitly: the comparison
+                              // must not silently depend on ironTarget's default
     dsp.setNoiseEnabled(false);
     dsp.prepare(kSr, kOs);
     std::vector<float> warm = makeSine(1000.0, dbToLinT(-30.0), 0.3, kSr);

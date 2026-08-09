@@ -41,7 +41,15 @@ void testResamplerTaps(Report& r)
         // firwin(scale=True) normalises DC gain to exactly 1; a sum that is not 1
         // means the window or the normalisation moved.
         r.near(sum, 1.0, 1e-12, "resampler DC gain (" + std::to_string(factor) + "x)", "");
-        r.below(worstSym, 1e-18, "resampler linear phase (" + std::to_string(factor) + "x)", "");
+        // Symmetry is structural — mirrored indices give exactly negated `m`, and
+        // r*r, the Kaiser window and the (-a)/(-b) division are all sign-even — so
+        // this measures 0.0 exactly wherever libm's sin is exactly odd (it is on
+        // glibc for every argument used here). It is NOT guaranteed to be, and one
+        // ulp of a tap is 2.8e-17 at 8x, so a bit-exact 1e-18 gate would fail on a
+        // conforming libm that rounds sin(-x) differently. 1e-15 is ~40 ulp: still
+        // twelve orders of magnitude below the O(1e-2) error a genuine asymmetry
+        // (wrong alpha, wrong index) would produce.
+        r.below(worstSym, 1e-15, "resampler linear phase (" + std::to_string(factor) + "x)", "");
     }
 }
 

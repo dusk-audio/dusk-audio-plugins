@@ -157,7 +157,11 @@ void testParameterFuzz(Report& r)
     std::vector<float> buf(256);
     for (int block = 0; block < 400; ++block)
     {
-        dsp.setPadIndex((int)(next() * 3.0));
+        // next() is inclusive of 1.0 (the mask can return 0xFFFFFF), so the naive
+        // (int)(next() * 3.0) yields 3 once in 2^24. setPadIndex clamps, so that
+        // was never an out-of-range index into kPads — but it made the fuzz
+        // silently retest pad 2 instead of covering 0..2, so bound it here.
+        dsp.setPadIndex(std::min((int)(next() * 3.0), coeffs::kNumPads - 1));
         dsp.setTrimPercent(next() * 100.0);
         dsp.setIronAmount(next() * 2.0);
         dsp.setAutoGain(next() > 0.5);
