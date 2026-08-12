@@ -8,13 +8,13 @@
 //
 // Provenance
 //   model file    : model_ch1_send.json
-//   model sha256  : ab5e41c1e22d7fe0afcdb0a6dbf5e4fdc70fca43e6be32ff46f95ec3eb495311
+//   model sha256  : 66dd243f5a81e39d3223336bceb5788761ac83fcb8b39c14e054edea0e66cfe1
 //   schema        : m35-channel-model v1
 //   channel       : 1
 //   model created : 2026-08-11T10:56:38+00:00
 //   capture       : ch1-send-20260810
 //   emitter       : emit_coeffs.py v2
-//   header sha256 : af1000e27a63956d6c95ac8903e98293ef9afc3a6a253726e9e740a314dcdb74
+//   header sha256 : 284b8db482a5e600632456b63b350db72e40271867c27124fcff084fabe458f2
 //                    ^ sha256 of THIS FILE with the 64 hex chars above
 //                      replaced by zeros. The model hash says which fit the
 //                      numbers came from; this one says nobody has edited
@@ -179,6 +179,70 @@ inline constexpr SidechainSection kSidechain[kNumSidechainSections] = {
 
 // Overall gain of W. Together with the sections it gives |W(fRefHz)| = 1.
 inline constexpr double kSidechainGainDb = 25.65731184498781;
+
+//------------------------------------------------------------------------------
+// W2, the SECOND weighting filter, for the even harmonic.
+//
+// h2 needs its own frequency law: it falls at alpha2 (about -14 dB/oct) where
+// h3 falls at alpha3 (about -9.3). Sharing W would force both to the same
+// slope and get h2 wrong by ~10 dB across the band. Same machinery, steeper
+// target, its OWN normalising gain - see kIronW2 below, which binds the two
+// together so they cannot be mixed up.
+inline constexpr int kNumSidechain2Sections = 5;
+
+inline constexpr SidechainSection kSidechain2[kNumSidechain2Sections] = {
+    { 2.6277056050233636, 24.828124268888725 },
+    { 2.6278993643418462, 216.9497854037987 },
+    { 11.910685935483981, 2063.2230445791324 },
+    { 102.96762183907734, 0.0 },
+    { 919.7516395437851, 0.0 },
+};
+
+// Overall gain of W2. Gives |W2(fRefHz)| = 1, the same convention as W.
+inline constexpr double kSidechain2GainDb = 39.18013504295066;
+
+// A weighting filter is its sections, their count AND its own normalising
+// gain. Passing those three separately invites using W2's sections with W's
+// gain, which yields the right shape at the wrong level - a flat dB error in
+// h2, the one error shape a frequency-law gate is least likely to catch.
+// Bundled, that combination cannot be written down.
+struct WeightingFilter
+{
+    const SidechainSection* sections;
+    int    numSections;
+    double gainDb;
+};
+
+inline constexpr WeightingFilter kIronW  { kSidechain,  kNumSidechainSections,  kSidechainGainDb };
+inline constexpr WeightingFilter kIronW2 { kSidechain2, kNumSidechain2Sections, kSidechain2GainDb };
+
+// The even harmonic's DEPTH tracks drive, where the odd harmonic's does not.
+// d2Eff = d2Ref * (ax / axRefLin)^slope, with `ax` the envelope of the
+// UNWEIGHTED signal at the transformer.
+//
+// `ax` must NOT be the W2-weighted envelope. That is the obvious-looking
+// choice and it lands the frequency dependence twice, making the effective
+// exponent alpha2*(1+slope) instead of alpha2 - measured as a flat 16.7 dB
+// error at 50 Hz while the reference was being built. Flux is set by the
+// actual level at the transformer, not by a weighted copy of it.
+//
+// slope is the RATIO slope: the harmonic's own amplitude rises 1+slope dB
+// per dB, which is the square law the bench measured.
+struct IronH2Law
+{
+    double d2Ref;     ///< h2/h1 at fRefHz when ax == axRefLin
+    double slope;     ///< dB of h2/h1 per dB of drive
+    double axRefLin;  ///< drive the law is referenced to, in internal units
+};
+
+inline constexpr IronH2Law kIronH2 {
+    7.981948715840945e-05,
+    0.9136891732194938,
+    0.17080477200597077
+};
+
+// The exponent h2 falls at, for the published-law helper and the gates.
+inline constexpr double kIronH2Alpha = 2.3430315974049813;
 
 // Envelope detector: one-pole mean-square of the weighted sidechain.
 inline constexpr double kDetectorTauS     = 0.25;
