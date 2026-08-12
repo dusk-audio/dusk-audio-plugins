@@ -81,19 +81,42 @@ inline double sincPi(double x) noexcept
 }
 
 //==============================================================================
+inline constexpr int kMaxOversampleFactor = 8;
+inline constexpr int kMaxResamplerTaps    = 20 * kMaxOversampleFactor + 1;   // 161
+inline constexpr int kMaxTapsPerPhase     = kMaxResamplerTaps / kMaxOversampleFactor + 1;
+
+/** Every caller sizes its tap array off this, and designResamplerTaps() clamps
+    `factor` to the same range, so the two can never disagree. */
+inline constexpr int tapCountFor(int factor) noexcept
+{
+    return 20 * (factor < 1 ? 1 : (factor > kMaxOversampleFactor ? kMaxOversampleFactor
+                                                                 : factor)) + 1;
+}
+
 /** scipy resample_poly's prototype filter, tap for tap.
 
     firwin(numTaps, fc, window=('kaiser', 5.0)) with the default scale=True:
     a windowed sinc normalised so the DC gain is exactly 1.
 
-    @param factor   oversampling ratio
+    `factor` is clamped to 1..kMaxOversampleFactor HERE rather than trusted from
+    the caller: the tap arrays this writes into are fixed-size members sized off
+    kMaxResamplerTaps, so an out-of-range factor would be a buffer overrun and not
+    merely a wrong filter. Both current callers clamp too; this is the guarantee
+    that survives the next one.
+
+    @param factor   oversampling ratio, clamped to 1..kMaxOversampleFactor
     @param taps     output, at least tapCountFor(factor) doubles
     @returns        number of taps written
 */
 inline int designResamplerTaps(int factor, double* taps) noexcept
 {
+    if (factor < 1)
+        factor = 1;
+    else if (factor > kMaxOversampleFactor)
+        factor = kMaxOversampleFactor;
+
     const int    halfLen = 10 * factor;
-    const int    numTaps = 2 * halfLen + 1;
+    const int    numTaps = 2 * halfLen + 1;      // == tapCountFor(factor)
     const double fc      = 1.0 / static_cast<double>(factor);
     const double alpha   = 0.5 * static_cast<double>(numTaps - 1);
     const double beta    = 5.0;
@@ -114,10 +137,6 @@ inline int designResamplerTaps(int factor, double* taps) noexcept
 
     return numTaps;
 }
-
-inline constexpr int kMaxOversampleFactor = 8;
-inline constexpr int kMaxResamplerTaps    = 20 * kMaxOversampleFactor + 1;   // 161
-inline constexpr int kMaxTapsPerPhase     = kMaxResamplerTaps / kMaxOversampleFactor + 1;
 
 /** The decimator's window is anchored `factor - 1` samples behind the newest
     sample of the block it was just fed, so its ring has to be that much longer

@@ -36,6 +36,8 @@ namespace pre35
 // header, so they can change without anyone touching this file — pin them here.
 static_assert(coeffs::kNumSidechainSections <= AnalogZPK::kMaxTerms,
               "iron sidechain has more sections than AnalogZPK can hold");
+static_assert(coeffs::kNumSidechain2Sections <= AnalogZPK::kMaxTerms,
+              "iron sidechain 2 (h2 weighting) has more sections than AnalogZPK can hold");
 static_assert(coeffs::kNoise.lfSections + 1 <= AnalogZPK::kMaxTerms,
               "noise 1/f tail has more poles than AnalogZPK can hold");
 // Response: one LF pole, one HF pole, one optional GBW pole, plus their zeros.
@@ -198,19 +200,26 @@ inline double ironR3PowerLaw(double f) noexcept
     return pl.r3Ref * std::pow(f / pl.fRefHz, -pl.alpha);
 }
 
-/** Analog prototype of the iron sidechain weighting filter W.
+/** Analog prototype of an iron weighting filter.
 
-    |W(fRef)| = 1 by construction: the emitted gain_db carries exactly the
+    |W(fRef)| = 1 by construction: the emitted gainDb carries exactly the
     normalisation the fit produced.
+
+    Takes the whole `WeightingFilter` rather than three loose arguments. The
+    sections, their count and the normalising gain belong to each other, and
+    passing them separately is how you end up running W2's sections with W's
+    gain: the right shape at the wrong level, which is a flat dB error in the
+    harmonic it feeds and the hardest error shape for a frequency-law gate to
+    catch. Bundled, that call cannot be written.
 */
-inline AnalogZPK buildSidechainZPK() noexcept
+inline AnalogZPK buildWeightingZPK(const coeffs::WeightingFilter& wf) noexcept
 {
     AnalogZPK zpk;
-    double k = dbToLin(coeffs::kSidechainGainDb);
+    double k = dbToLin(wf.gainDb);
 
-    for (int i = 0; i < coeffs::kNumSidechainSections; ++i)
+    for (int i = 0; i < wf.numSections; ++i)
     {
-        const auto& sec = coeffs::kSidechain[i];
+        const auto& sec = wf.sections[i];
         const double p = -2.0 * kPi * sec.poleHz;
         zpk.addPole(p);
         k *= -p;
@@ -224,6 +233,32 @@ inline AnalogZPK buildSidechainZPK() noexcept
 
     zpk.gain = k;
     return zpk;
+}
+
+/** The odd harmonic's weighting filter W. */
+inline AnalogZPK buildSidechainZPK() noexcept
+{
+    return buildWeightingZPK(coeffs::kIronW);
+}
+
+/** The even harmonic's weighting filter W2, at its own steeper exponent. */
+inline AnalogZPK buildSidechain2ZPK() noexcept
+{
+    return buildWeightingZPK(coeffs::kIronW2);
+}
+
+/** Published h2 law: the even-harmonic ratio h2/h1 at frequency f and drive ax.
+
+    Counterpart to ironR3PowerLaw. Unlike h3 this is NOT level-independent - the
+    depth tracks drive, which is the whole point of the second filter.
+*/
+inline double ironR2PowerLaw(double f, double axLin) noexcept
+{
+    const double freqTerm = std::pow(f / coeffs::kIronPowerLaw.fRefHz,
+                                     -coeffs::kIronH2Alpha);
+    const double driveTerm = std::pow(axLin / coeffs::kIronH2.axRefLin,
+                                      coeffs::kIronH2.slope);
+    return coeffs::kIronH2.d2Ref * freqTerm * driveTerm;
 }
 
 //==============================================================================

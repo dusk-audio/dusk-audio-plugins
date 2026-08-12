@@ -40,7 +40,9 @@ constexpr double kToneDbfs = -45.0;
 constexpr double kToneSeconds = 6.0;
 constexpr double kSkipSeconds = 3.0;   // >= 12 detector time constants
 
-std::vector<float> renderThdTone(double f0, double levelDbfs, double ironAmount)
+struct ToneRender { std::vector<float> y; double driveEnv; };
+
+ToneRender renderThdTone(double f0, double levelDbfs, double ironAmount)
 {
     Pre35DSP dsp;
     dsp.setPadIndex(0);
@@ -53,7 +55,10 @@ std::vector<float> renderThdTone(double f0, double levelDbfs, double ironAmount)
     std::vector<float> buf = makeSine(f0, dbToLinT(levelDbfs) * std::sqrt(2.0),
                                       kToneSeconds, kSr);
     dsp.process(buf.data(), (int)buf.size());
-    return buf;
+    // Read the drive envelope out of the layer AFTER the render, so the h2 spec
+    // is evaluated at the drive the detector actually settled on rather than at
+    // a level the test assumed.
+    return { buf, dsp.ironLayer().driveEnvelope() };
 }
 
 void testThdVsSpec(Report& r)
@@ -61,10 +66,14 @@ void testThdVsSpec(Report& r)
     double worst3 = 0.0;
     for (double f0 : { 20.0, 40.0, 100.0 })
     {
-        const auto y = renderThdTone(f0, kToneDbfs, 1.0);
-        const ThdResult m = measureThd(y, f0, kSr, kSkipSeconds);
+        const auto t = renderThdTone(f0, kToneDbfs, 1.0);
+        const ThdResult m = measureThd(t.y, f0, kSr, kSkipSeconds);
         const double spec3 = linToDb(ironR3PowerLaw(f0));
-        const double spec2 = spec3 - coeffs::kIronH2OffsetDb;
+        // h2 has its OWN frequency exponent and a depth that tracks drive, so its
+        // spec needs the drive the layer actually saw. Read that out of the layer
+        // rather than recomputing it here: a test that keeps its own copy of the
+        // algebra stops being able to catch the algebra being wrong.
+        const double spec2 = linToDb(ironR2PowerLaw(f0, t.driveEnv));
 
         char buf[192];
         std::snprintf(buf, sizeof(buf), "h3 %.2f dBc vs spec %.2f (err %+.2f), h2 %.2f vs %.2f",
@@ -72,9 +81,10 @@ void testThdVsSpec(Report& r)
         r.note(std::to_string((int)f0) + " Hz: " + std::string(buf));
 
         r.near(m.thd3Dbc, spec3, 1.0, "THD3 at " + std::to_string((int)f0) + " Hz");
-        // h2's depth is a measured lower bound rather than an identification, so
-        // it gets the looser gate its provenance deserves.
-        r.near(m.thd2Dbc, spec2, 1.5, "THD2 at " + std::to_string((int)f0) + " Hz");
+        // TIGHTENED from 1.5 dB, not loosened. The old bound was right for an
+        // unidentified lower bound; h2 is now an identified law that the
+        // reference reproduces to 0.44 dB worst case, so it earns a real gate.
+        r.near(m.thd2Dbc, spec2, 0.75, "THD2 at " + std::to_string((int)f0) + " Hz");
         worst3 = std::max(worst3, std::fabs(m.thd3Dbc - spec3));
     }
     r.below(worst3, 1.0, "worst THD3 error across 20 / 40 / 100 Hz");
@@ -88,14 +98,25 @@ void testConstantPercentage(Report& r)
     for (double f0 : { 20.0, 40.0 })
     {
         double lo = 1e30, hi = -1e30;
+        double h2Lo = 0.0, h2Hi = 0.0;
         for (double lvl : { -55.0, -45.0, -35.0 })
         {
-            const ThdResult m = measureThd(renderThdTone(f0, lvl, 1.0), f0, kSr, kSkipSeconds);
+            const ThdResult m = measureThd(renderThdTone(f0, lvl, 1.0).y, f0, kSr, kSkipSeconds);
             lo = std::min(lo, m.thd3Dbc);
             hi = std::max(hi, m.thd3Dbc);
+            if (lvl == -55.0) h2Lo = m.thd2Dbc;
+            if (lvl == -35.0) h2Hi = m.thd2Dbc;
         }
         r.below(hi - lo, 0.05,
                 "THD3 is level-independent at " + std::to_string((int)f0) + " Hz (20 dB span)");
+
+        // h2 must do the OPPOSITE of h3 over the same span. This is the only gate
+        // in the suite that would catch the drive slope emitted with the wrong
+        // sign, which would otherwise sound like the layer getting quieter as it
+        // is pushed harder.
+        r.near(h2Hi - h2Lo, 20.0 * coeffs::kIronH2.slope, 0.3,
+               "h2 tracks drive at the fitted slope at " + std::to_string((int)f0) + " Hz",
+               "dB");
     }
 }
 
@@ -189,8 +210,8 @@ void testIronAmount(Report& r)
 
     // Doubling the amount doubles the harmonic (+6.02 dB): the layer is linear in
     // its own depth, which is what makes the control legible.
-    const ThdResult one = measureThd(renderThdTone(40.0, kToneDbfs, 1.0), 40.0, kSr, kSkipSeconds);
-    const ThdResult two = measureThd(renderThdTone(40.0, kToneDbfs, 2.0), 40.0, kSr, kSkipSeconds);
+    const ThdResult one = measureThd(renderThdTone(40.0, kToneDbfs, 1.0).y, 40.0, kSr, kSkipSeconds);
+    const ThdResult two = measureThd(renderThdTone(40.0, kToneDbfs, 2.0).y, 40.0, kSr, kSkipSeconds);
     r.near(two.thd3Dbc - one.thd3Dbc, 6.0206, 0.05, "iron amount 2 is +6 dB of h3");
 }
 

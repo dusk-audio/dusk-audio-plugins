@@ -258,8 +258,44 @@ void testIronCoefficients(Report& r)
     r.near(iron.detectorPoleValue(), std::exp(-1.0 / (coeffs::kDetectorTauS * sr)), 1e-15,
            "detector pole", "");
     r.near(iron.d3Value(), coeffs::kIronPowerLaw.r3Ref, 1e-18, "d3 = r3Ref", "");
-    r.near(linToDb(iron.d3Value() / iron.d2Value()), coeffs::kIronH2OffsetDb, 1e-9,
-           "d2 sits kIronH2OffsetDb below d3");
+    // The even depth is no longer a fixed ratio of the odd one, so the old exact
+    // identity would now assert a vestigial number. Three checks replace it and
+    // between them cover what it used to guarantee implicitly.
+
+    // 1. The law is pinned at its own reference. One assertion catches an
+    //    inverted ratio, a flipped slope sign and a dB-for-linear slip, because
+    //    all three break the pin at exactly this point.
+    r.near(iron.d2EffAt(coeffs::kIronH2.axRefLin), coeffs::kIronH2.d2Ref, 1e-18,
+           "the h2 drive law is unity at its reference drive", "");
+
+    // 2. The reference DRIVE is where the emitter said it is. axRefLin is the
+    //    only place the pad-0 OEM ceiling and the plugin's input mapping are
+    //    multiplied together, and getting it wrong slides the whole h2 curve up
+    //    or down without changing its shape, which no frequency-law gate can
+    //    see. -35 dBu at the transformer against 0 dBFS mapped to -19.65 dBu is
+    //    -15.35 dBFS in the units the layer carries.
+    //
+    //    NOT compared against kIronH2OffsetDb. That constant is the measured
+    //    median of a flat approximation the model itself records as overstating
+    //    h2 at low drive and understating it at high, so agreement with it would
+    //    be evidence of nothing. It stays emitted as provenance only.
+    r.near(linToDb(coeffs::kIronH2.axRefLin), -15.35, 0.01,
+           "the h2 reference drive matches the ceiling and the input mapping",
+           "dBFS");
+
+    // 3. Bounded and monotone across the drive window, which the exact identity
+    //    used to give for free.
+    const double dLo = iron.d2EffAt(dbToLin(coeffs::kDetectorFloorDbfs));
+    const double dHi = iron.d2EffAt(coeffs::kIronH2.axRefLin * 100.0);
+    r.check(std::isfinite(dLo) && dLo > 0.0 && dHi > dLo,
+            "the h2 drive law is finite, positive and monotone");
+    r.note("h2 depth swing across the drive window: "
+           + std::to_string(linToDb(dHi / dLo)) + " dB");
+
+    // Both weighting cascades must have actually realised. A failed cascade
+    // degrades to a wrong-gain pass-through rather than to silence, so nothing
+    // else in the suite would notice.
+    r.check(iron.cascadesAreValid(), "both iron weighting cascades realised");
 
     // The guard costs the model's own quoted "< 0.15 dB above 20 Hz" (it is
     // 0.143 dB at 100 Hz, rising as the law flattens) and diverges hard below the
