@@ -80,6 +80,10 @@ void testDenormalDecay(Report& r)
 {
     Pre35DSP dsp;
     dsp.setPadIndex(0);
+    // Explicit, not inherited from the core's default: the assertions below are
+    // for EXACT zero, so a future flip of that default would turn this gate into a
+    // hiss measurement rather than a denormal one. testSilenceIn says it too.
+    dsp.setNoiseEnabled(false);
     dsp.setTrimPercent(100.0);      // the longest tail the chain can have
     dsp.setIronAmount(1.0);
     dsp.prepare(kSr, kOs);
@@ -232,22 +236,30 @@ void testNoiseFloor(Report& r)
            + std::to_string(at40) + ", pad 0 trim 100 = " + std::to_string(at0Full));
 
     // Gated against the REFERENCE, measured the same way:
-    //     render(zeros, pad, trim, 48 kHz, oversample=8, noise=True, seed=0)
-    //     -> -75.8779 / -75.5421 / -51.1922 dBFS
+    //     render_ref.py --model model_ch1_send.json --pad P --trim T
+    //                   --oversample 8 --noise --seed 0     (silence in)
+    //     -> -79.6926 / -79.2751 / -54.9104 dBFS
     // and NOT against the naive -108.5 + taper, which is 0.79 dB high because it
     // ignores what the LF highpass does to the 1/f tail. The RNG differs from
     // numpy's by design, so the tolerance covers the seed-to-seed spread
     // (measured at 0.04 dB across six seeds) rather than demanding a bit-match.
-    r.near(at0, -75.8779, 0.2, "noise floor, pad 0 trim 0, vs the reference render", "dBFS");
-    r.near(at40, -75.5421, 0.2, "noise floor, pad 40 trim 0, vs the reference render", "dBFS");
-    r.near(at0Full, -51.1922, 0.2, "noise floor, pad 0 trim 100, vs the reference render", "dBFS");
+    //
+    // Re-baselined 2026-08-12 when the coefficients moved from the DIRECT-tap
+    // model to the SEND-tap one. The floor dropped 3.54 dB across the board,
+    // which is exactly the two models' taper difference (g0 33.411 -> 29.874):
+    // the noise is input-referred, so it scales with the taper. Nothing about
+    // the noise model itself changed.
+    r.near(at0, -79.6926, 0.2, "noise floor, pad 0 trim 0, vs the reference render", "dBFS");
+    r.near(at40, -79.2751, 0.2, "noise floor, pad 40 trim 0, vs the reference render", "dBFS");
+    r.near(at0Full, -54.9104, 0.2, "noise floor, pad 0 trim 100, vs the reference render", "dBFS");
 
     // The headline property: the pad is AHEAD of the amplifier the noise is
     // referred to, so 39 dB of pad must not take 39 dB off the hiss. What little
-    // it does change (0.34 dB) is its different LF highpass corner reshaping the
-    // 1/f tail, and the reference moves by the same 0.34 dB.
+    // it does change (0.42 dB) is its different LF highpass corner reshaping the
+    // 1/f tail, and the reference moves by the same 0.42 dB: the two reference
+    // floors quoted above differ by -79.2751 - -79.6926 = 0.4175 dB.
     r.below(std::fabs(at40 - at0), 1.0, "40 dB of pad does not attenuate the noise");
-    r.near(at40 - at0, 0.3358, 0.15, "pad 40 vs pad 0 floor difference matches the reference");
+    r.near(at40 - at0, 0.4175, 0.15, "pad 40 vs pad 0 floor difference matches the reference");
 
     r.near(at0Full - at0, coeffs::kTaper.g1Db - coeffs::kTaper.g0Db, 0.2,
            "noise tracks the trim taper one for one", "dB");

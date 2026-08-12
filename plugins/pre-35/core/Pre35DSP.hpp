@@ -46,8 +46,10 @@
 //     drive window. Below that window the real core is in its Rayleigh region and
 //     distorts measurably less; above it the amplifier clips. Neither end exists
 //     here, so the layer extrapolates rather than predicts outside that box.
-//   * There is no clipping, no rail, and no power-supply behaviour at all. Drive
-//     this hard and it stays politely linear-plus-harmonics forever.
+//   * The amp's supply rails ARE modelled (RailClip, measured 2026-08-12), but
+//     only as the memoryless hard clip the hardware measured as. There is no
+//     supply sag, no recovery time and no rail modulation, so sustained heavy
+//     clipping stays cleaner and more static than a real desk would.
 //   * h2 depth is a measured lower bound, not an identification (see the
 //     kIronH2OffsetDb note in the generated header).
 
@@ -58,6 +60,7 @@
 #include "Noise.hpp"
 #include "Pre35Coefficients.hpp"
 #include "Pre35Model.hpp"
+#include "RailClip.hpp"
 #include "Resampler.hpp"
 
 #include <atomic>
@@ -149,10 +152,17 @@ public:
     void process(float* buffer, int numSamples);
 
     //==========================================================================
-    // Parameters. Relaxed atomic stores; safe from any thread at any time. Each
-    // one reaches the signal through a ~20 ms smoother, including the two
-    // booleans (a bare auto-gain flip is a 58 dB step, and a bare pad flip a
-    // 39 dB one).
+    // Parameters. Relaxed atomic stores; safe from any thread at any time.
+    //
+    // Pad, trim, iron, output and AUTO GAIN reach the signal through a ~20 ms
+    // smoother, because each of them is a step the signal would otherwise take in
+    // one control tick: a bare auto-gain flip is up to 58 dB and a bare pad
+    // change 39 dB. Auto gain is smoothed as a 0..1 BLEND rather than a branch —
+    // see autoGainSm.
+    //
+    // Noise is the exception: it is not smoothed. It is snapshotted once per
+    // control step into noiseActive and applied at chunk boundaries, so a toggle
+    // lands on a chunk edge instead of on whatever buffer edge the host chose.
 
     /** 0 = no pad, 1 = 20 dB, 2 = 40 dB (see coeffs::kPads for the labels). */
     void setPadIndex(int padIndex);
@@ -163,8 +173,11 @@ public:
     void setIronAmount(double amount);
     void setNoiseEnabled(bool enabled);
     /** Cancels the modelled taper+pad gain at the output so trim and pad change
-        the CHARACTER without changing the level. Crossfaded, not switched. */
+        the CHARACTER without changing the level. Takes exclusive control of the
+        output stage while enabled, fading any legacy manual Output trim out. */
     void setAutoGain(bool enabled);
+    /** Compatibility-only manual output trim. It is active while Auto Gain is off
+        and smoothly ignored while Auto Gain is on. */
     void setOutputGainDb(double db);
 
     //==========================================================================
@@ -235,6 +248,7 @@ private:
     Downsampler       downsampler;
     IronLayer         iron;
     NoiseGenerator    noise;
+    RailClip          rail;
     FirstOrderCascade response;
 
     double osBuffer[kChunk * kMaxOversampleFactor] {};

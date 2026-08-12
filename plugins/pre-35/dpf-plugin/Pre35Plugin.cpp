@@ -99,10 +99,14 @@ protected:
         switch (index)
         {
         case kPad:
+            // Hidden tombstone: the index and its enumeration stay so an existing
+            // project's automation still lands somewhere valid, but the value is
+            // forced to 0 dB (see Pre35Params.hpp).
+            //
             // Integer + restricted enumeration, never a raw float bool/choice: a
             // continuous "choice" flakes host round-trip tests and lets a host land
             // between switch positions.
-            p.hints |= kParameterIsInteger;
+            p.hints |= kParameterIsInteger | kParameterIsHidden;
             p.name = "Pad"; p.symbol = "pad"; p.unit = "dB";
             rng(kParamDefaults[kPad], kParamMin[kPad], kParamMax[kPad]);
             p.enumValues.count = (uint8_t)kNumPads;
@@ -127,10 +131,12 @@ protected:
             rng(kParamDefaults[kNoise], kParamMin[kNoise], kParamMax[kNoise]);
             break;
         case kAutoGain:
+            p.hints = kParameterIsHidden;
             boolean(); p.name = "Auto Gain"; p.symbol = "auto_gain";
             rng(kParamDefaults[kAutoGain], kParamMin[kAutoGain], kParamMax[kAutoGain]);
             break;
         case kOutput:
+            p.hints = kParameterIsHidden;
             p.name = "Output"; p.symbol = "output"; p.unit = "dB";
             rng(kParamDefaults[kOutput], kParamMin[kOutput], kParamMax[kOutput]);
             break;
@@ -166,6 +172,12 @@ protected:
         if (! std::isfinite(value))
             return;
 
+        // Pad, Auto Gain and Output are ABI-preserving tombstones. An old project
+        // may restore any of them, and automation may still arrive at their stable
+        // ids, but none is allowed to reopen the raw +33..+58 dB gain path or to
+        // re-engage the pad's +20/+40 dB of hiss.
+        value = canonicalPre35InputValue(index, value);
+
         // The mirror is atomic for the same reason the core's own targets are: DPF
         // calls this from whatever thread the host's automation arrives on, while
         // getParameterValue() and pushAllParams() read it from others. Relaxed is
@@ -177,6 +189,8 @@ protected:
         switch (index)
         {
         case kPad:
+            // Forced above; the cast is kept so the call site still reads as the
+            // conversion it is, and so re-exposing the control is a one-line change.
             for (auto& d : dsp) d.setPadIndex((int)std::lround(value));
             break;
         case kTrim:
@@ -189,10 +203,10 @@ protected:
             for (auto& d : dsp) d.setNoiseEnabled(value > 0.5f);
             break;
         case kAutoGain:
-            for (auto& d : dsp) d.setAutoGain(value > 0.5f);
+            for (auto& d : dsp) d.setAutoGain(true);
             break;
         case kOutput:
-            for (auto& d : dsp) d.setOutputGainDb((double)value);
+            for (auto& d : dsp) d.setOutputGainDb(0.0);
             break;
         case kBypass:
             // Consumed in run(): the audio path and the reported latency both have
@@ -231,10 +245,10 @@ protected:
         if (key == nullptr || std::strcmp(key, kStateVersionKey) != 0)
             return;
 
-        // THE MIGRATION HOOK. Version 1 is the only format that exists, so there is
-        // nothing to migrate yet and nothing here changes behaviour — but when there
-        // is, this is the value it will branch on, so it has to be able to say "I do
-        // not know what this save is" out loud.
+        // THE MIGRATION HOOK. Version 2 retires Auto Gain and Output semantically,
+        // but their parameter values are canonicalized at the setter because hosts
+        // restore parameters independently of this tag. Keep parsing the version so
+        // future migrations can still distinguish a known save from corrupt state.
         //
         // std::atoi cannot: it returns 0 for "", for "banana" and for a genuine "0"
         // alike, so a corrupt or future-format tag would be indistinguishable from an
@@ -248,10 +262,15 @@ protected:
         char* end = nullptr;
         errno = 0;
         const long parsed = std::strtol(value, &end, 10);
+        // Capture "no digits at all" BEFORE skipping trailing blanks. strtol leaves
+        // end == value when it converts nothing, but it also skips LEADING
+        // whitespace, so for an all-blanks tag the loop below walked end to the
+        // terminator and the old `end == value` test then read as a clean "0".
+        const bool noConversion = (end == value);
         // Whole string consumed (trailing blanks tolerated), in range, non-negative.
-        while (end != nullptr && (*end == ' ' || *end == '\t'))
+        while (*end == ' ' || *end == '\t')
             ++end;
-        if (end == value || end == nullptr || *end != '\0' || errno == ERANGE
+        if (noConversion || *end != '\0' || errno == ERANGE
             || parsed < 0 || parsed > INT_MAX)
             return;
 
@@ -414,7 +433,7 @@ private:
     double   sampleRate  = 48000.0;
     float    meterRelease = 0.0f;
     uint32_t lastLatency = 0xffffffffu;
-    int      loadedStateVersion = 1;
+    int      loadedStateVersion = 2;
     bool     bypassResetPending = false;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Pre35Plugin)

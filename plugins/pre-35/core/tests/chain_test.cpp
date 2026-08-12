@@ -10,8 +10,10 @@
 
 #include "Pre35DSP.hpp"
 #include "TestSupport.hpp"
+#include "../../dpf-plugin/Pre35Params.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 using namespace pre35;
@@ -108,6 +110,131 @@ void testAutoGain(Report& r)
     // The user-visible claim: sweep trim across its whole 25 dB range and the
     // level does not move. 76 dB of raw range collapsing to this is the point.
     r.below(hi - lo, 0.1, "auto-gain output spread across the full pad+trim grid");
+}
+
+void testAutoGainOwnsOutputStage(Report& r)
+{
+    constexpr double f0 = 1000.0;
+    constexpr double legacyOutputDb = -13.9200077;
+
+    auto render = [&](bool autoGain, double outputDb) {
+        Pre35DSP dsp;
+        dsp.setPadIndex(0);
+        dsp.setTrimPercent(63.5);
+        dsp.setIronAmount(0.0);
+        dsp.setNoiseEnabled(false);
+        dsp.setAutoGain(autoGain);
+        dsp.setOutputGainDb(outputDb);
+        dsp.prepare(kSr, kOs);
+
+        std::vector<float> buf = makeSine(f0, dbToLinT(-60.0), 1.0, kSr);
+        for (size_t i = 0; i < buf.size(); i += 512)
+            dsp.process(buf.data() + i, (int)std::min((size_t)512, buf.size() - i));
+        return buf;
+    };
+
+    // Regression for old host state after removing Output from the custom UI:
+    // a restored hidden trim must not defeat Auto Gain's unity compensation.
+    const auto autoAtZero = render(true, 0.0);
+    const auto autoWithLegacyTrim = render(true, legacyOutputDb);
+    r.check(autoAtZero == autoWithLegacyTrim,
+            "auto-gain ignores a hidden legacy Output value bit-exactly");
+
+    // Preserve the framework-free core's explicit raw-reference mode for the
+    // measurement renderer. The shipped shell never forwards this combination:
+    // canonicalPre35InputValue() below forces its legacy host slots to 1 / 0.
+    const auto manualAtZero = render(false, 0.0);
+    const auto manualWithTrim = render(false, legacyOutputDb);
+    const double measuredDelta = linToDb(measureAmplitude(manualWithTrim, f0, kSr, 0.2))
+                               - linToDb(measureAmplitude(manualAtZero, f0, kSr, 0.2));
+    r.near(measuredDelta, legacyOutputDb, 0.001,
+           "raw-reference core mode retains its explicit output trim");
+}
+
+void testModernPluginLevelContract(Report& r)
+{
+    constexpr double f0 = 1000.0;
+    constexpr double referenceRmsDbfs = -18.0;
+    constexpr double sinePeakDbfs = referenceRmsDbfs + 3.010299956639812;
+
+    r.near(canonicalPre35InputValue(kAutoGain, 0.0f), 1.0, 0.0,
+           "legacy Auto Gain off is canonicalized on", "");
+    r.near(canonicalPre35InputValue(kOutput, -24.0f), 0.0, 0.0,
+           "legacy negative Output is canonicalized to zero", "dB");
+    r.near(canonicalPre35InputValue(kOutput, 24.0f), 0.0, 0.0,
+           "legacy positive Output is canonicalized to zero", "dB");
+    // Pad joined the tombstones once the plugin went unity in/out: engaging it
+    // buys +20/+40 dB of hiss and pushes the amp's clip point out of Trim's
+    // reach, so 0 dB is the only shipped position. An old project restoring -40
+    // must not reopen that.
+    r.near(canonicalPre35InputValue(kPad, 1.0f), 0.0, 0.0,
+           "legacy pad -20 dB is canonicalized to 0 dB", "");
+    r.near(canonicalPre35InputValue(kPad, 2.0f), 0.0, 0.0,
+           "legacy pad -40 dB is canonicalized to 0 dB", "");
+    r.near(canonicalPre35InputValue(kTrim, 37.5f), 37.5, 0.0,
+           "active parameters pass through canonicalization", "%");
+
+    double worstReferenceError = 0.0;
+    double lo = 1e30, hi = -1e30;
+    int clippedCases = 0;
+    for (int pad = 0; pad < coeffs::kNumPads; ++pad)
+        for (double trim : { 0.0, 50.0, 100.0 })
+            for (const auto legacy : { std::pair<float, float>{ 0.0f, -24.0f },
+                                       std::pair<float, float>{ 1.0f,  24.0f } })
+            {
+                Pre35DSP dsp;
+                dsp.setPadIndex(pad);
+                dsp.setTrimPercent(trim);
+                dsp.setIronAmount(1.0);
+                dsp.setNoiseEnabled(false);
+                dsp.setAutoGain(canonicalPre35InputValue(kAutoGain, legacy.first) > 0.5f);
+                dsp.setOutputGainDb(canonicalPre35InputValue(kOutput, legacy.second));
+                dsp.prepare(kSr, kOs);
+
+                std::vector<float> buf = makeSine(f0, dbToLinT(sinePeakDbfs), 1.0, kSr);
+                for (size_t i = 0; i < buf.size(); i += 512)
+                    dsp.process(buf.data() + i,
+                                (int)std::min((size_t)512, buf.size() - i));
+
+                const size_t skip = (size_t)(0.2 * kSr);
+                const double measured = linToDb(rms(buf.data() + skip, buf.size() - skip));
+
+                // Auto Gain inverts the LINEAR gain, so unity only holds while
+                // the chain is linear. Once the amp's rails are reached it
+                // cannot hold and must not: a mic pre at full gain fed a nominal
+                // DAW-level signal is supposed to clip. Predict which settings
+                // reach the rail rather than loosening the gate to hide them.
+                const double peakInternalDb = sinePeakDbfs
+                                            + taperGainDb(trim) + padOffsetDb(pad);
+                const double railDb = linToDb(coeffs::kRailPosLinear);
+
+                if (peakInternalDb < railDb)
+                {
+                    worstReferenceError = std::max(worstReferenceError,
+                                                   std::fabs(measured - referenceRmsDbfs));
+                    lo = std::min(lo, measured);
+                    hi = std::max(hi, measured);
+                }
+                else
+                {
+                    ++clippedCases;
+                    r.check(measured < referenceRmsDbfs - 0.1,
+                            "rail engages where predicted (pad " + std::to_string(pad) +
+                                ", trim " + std::to_string((int)trim) + ")",
+                            std::to_string(peakInternalDb - railDb) + " dB over, "
+                                + std::to_string(measured - referenceRmsDbfs) + " dB down");
+                }
+            }
+
+    r.below(worstReferenceError, 0.1,
+            "-18 dBFS RMS stays level matched across pad, trim, and legacy state "
+            "(linear settings only)");
+    // If this ever reaches zero the sweep has stopped exercising the rail at all,
+    // and the gate above would be passing for the wrong reason.
+    r.check(clippedCases > 0, "the sweep still reaches the rail somewhere",
+            std::to_string(clippedCases) + " of 18 settings clip");
+    r.below(hi - lo, 0.1,
+            "legacy state cannot reopen the raw-gain path across the control grid");
 }
 
 void testBlockSizeIndependence(Report& r)
@@ -372,6 +499,8 @@ int main()
     Report r("pre35 chain_test");
     testGainVsModel(r);
     testAutoGain(r);
+    testAutoGainOwnsOutputStage(r);
+    testModernPluginLevelContract(r);
     testBlockSizeIndependence(r);
     testToggleIsBlockSizeIndependent(r);
     testTogglesAreSmoothed(r);

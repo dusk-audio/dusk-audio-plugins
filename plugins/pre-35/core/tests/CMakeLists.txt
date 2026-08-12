@@ -8,7 +8,7 @@
 # the slow one (tens of seconds). That is the price of measuring THD the same way
 # the Python reference does instead of a way that would be quicker to disagree.
 
-set(PRE35_TESTS coeff_test chain_test iron_test robust_test)
+set(PRE35_TESTS coeff_test chain_test iron_test rail_test robust_test)
 
 foreach(test IN LISTS PRE35_TESTS)
     add_executable(${test} ${test}.cpp)

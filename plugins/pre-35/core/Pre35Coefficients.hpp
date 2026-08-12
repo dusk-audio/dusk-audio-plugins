@@ -7,14 +7,14 @@
 //                            --out <plugins-repo>/plugins/pre-35/core/Pre35Coefficients.hpp
 //
 // Provenance
-//   model file    : model_ch1.json
-//   model sha256  : fdc86650dc5f2aeb1273d8691dee386d444d15bd70567dcb4f952d34d7785551
+//   model file    : model_ch1_send.json
+//   model sha256  : ab5e41c1e22d7fe0afcdb0a6dbf5e4fdc70fca43e6be32ff46f95ec3eb495311
 //   schema        : m35-channel-model v1
 //   channel       : 1
-//   model created : 2026-08-08T22:53:09+00:00
-//   capture       : ch1-20260807
+//   model created : 2026-08-11T10:56:38+00:00
+//   capture       : ch1-send-20260810
 //   emitter       : emit_coeffs.py v2
-//   header sha256 : 54325c231869117fa92f75f36c6de1f41671c40c4bb40b698ff506e5bebb66f9
+//   header sha256 : af1000e27a63956d6c95ac8903e98293ef9afc3a6a253726e9e740a314dcdb74
 //                    ^ sha256 of THIS FILE with the 64 hex chars above
 //                      replaced by zeros. The model hash says which fit the
 //                      numbers came from; this one says nobody has edited
@@ -35,7 +35,7 @@ namespace coeffs {
 //==============================================================================
 // Measurement conventions. "cal" gain is the median of |H1| over 200 Hz-2 kHz;
 // the number quoted on the bench is cal + kRawMinusCalDb.
-inline constexpr double kRawMinusCalDb    = 3.03;
+inline constexpr double kRawMinusCalDb    = 0.067;
 inline constexpr double kMidbandLoHz      = 200.0;
 inline constexpr double kMidbandHiHz      = 2000.0;
 inline constexpr int    kMidbandGridPoints = 64;
@@ -59,10 +59,10 @@ struct TaperParams
 };
 
 inline constexpr TaperParams kTaper {
-    33.41120149774905,
-    58.20367036483841,
-    5.301242530210118,
-    0.49397237349048284
+    29.87385702687847,
+    54.65603237787491,
+    5.298505312900655,
+    0.49399287749489673
 };
 
 //==============================================================================
@@ -79,8 +79,8 @@ inline constexpr int kNumPads = 3;
 
 inline constexpr PadEntry kPads[kNumPads] = {
     {  0, 0.0 },
-    { 20, -19.86 },
-    { 40, -39.27 },
+    { 20, -19.843 },
+    { 40, -39.382 },
 };
 
 //==============================================================================
@@ -104,26 +104,26 @@ struct ResponseParams
 
 // Indexed the same as kPads.
 inline constexpr ResponseParams kResponse[kNumPads] = {
-    // pad  0
+    // pad  0  (GBW shelf inactive in the fit)
     {
-        3.8695973446911345,
-        33564.387652588906,
-        5579429.048916538,
-        0.19264930189131463
+        3.9587193514213794,
+        26444.574785917142,
+        842344900.1484587,
+        1.155714964394195e-28
     },
-    // pad 20  (GBW shelf inactive in the fit)
+    // pad 20
     {
-        10.366542482920968,
-        33526.83621398501,
-        560519959.7637541,
-        1.249986664453953e-28
+        8.375926258533413,
+        27858.228923394447,
+        2515997.8914972856,
+        0.13577205709029933
     },
     // pad 40
     {
-        8.851794304959705,
-        56751.6427039282,
-        7465339.209220147,
-        0.7336097600572383
+        6.663804290064796,
+        40626.86062194506,
+        4029800.8037794675,
+        0.6963049273116398
     },
 };
 
@@ -209,6 +209,37 @@ inline constexpr NoiseParams kNoise {
     2.0,
     3
 };
+
+//==============================================================================
+// The mic amp clipping into its supply rails. Memoryless and frequency-
+// independent by measurement: identical at 315 Hz, 1 kHz and 5 kHz to 0.03 dB
+// of gain and 0.5 dB of h3, so there is no slew limiting to model. The corner
+// is hard - flat to 0.000 dB one dB below onset, h3 up 55 dB across that dB.
+// The two thresholds differ because the measured h2 does not vanish.
+//
+// PLUGIN INPUT MAPPING. The threshold is quoted at the amp OUTPUT in dBu, so
+// the core needs a reference joining dBu to the plugin's dBFS. It is:
+//
+//     0 dBFS in  ->  kInputDbuAt0dBFS at the transformer input
+//
+// chosen so that at pad 0 with the trim at its CCW stop, a nominal -18 dBFS
+// DAW signal (+4 dBu) produces the console's own nominal -10 dBV (-7.78 dBu)
+// at its output. That puts the transformer 2.65 dB under its -35 dBu OEM
+// ceiling, which is where a console at its operating point belongs. The
+// Tascam is -10 dBV prosumer gear, so it runs 11.78 dB below DAW nominal and
+// the mapping carries that offset rather than equating dBu to dBu.
+//
+// Anchored at the TRANSFORMER INPUT, deliberately. Anchoring at the output
+// instead pins the amp node to the plugin's own output level, so the drive
+// can never change and the trim becomes a null knob.
+inline constexpr double kInputDbuAt0dBFS  = -19.65;
+inline constexpr double kRailThresholdDbu = 18.926;
+
+// Amp-output magnitudes in the core's internal units, i.e. relative to a
+// 0 dBFS plugin input carried through kInputDbuAt0dBFS. Derived here so the
+// core never repeats the arithmetic.
+inline constexpr double kRailPosLinear    = 84.87895030072433;
+inline constexpr double kRailNegLinear    = 82.99080935545712;
 
 } // namespace coeffs
 } // namespace pre35

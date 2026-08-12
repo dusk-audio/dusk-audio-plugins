@@ -5,16 +5,13 @@
 // Pre35UI.cpp — Dear ImGui UI for PRE-35, drawn in a fixed 640x380 design space
 // and uniformly scaled (letterboxed) to whatever size the host gives the window.
 //
-// Layout, left to right: a three-position PAD switch, the large TRIM knob, the
-// IRON and OUTPUT knobs, a segmented stereo output meter, and a bottom rail with
-// BYPASS / NOISE / AUTO GAIN. Chrome only — every gesture, the value bubble and
-// the type-in editor come from the shared duskdpf::DuskPanel, and the supporters
-// overlay from the shared DuskSupportersOverlay.
-//
-// PHASE 3 (polish) NOTE: this is a functional layout, not a finished front panel.
-// The geometry constants below are all in one block for exactly that reason.
+// The panel follows the photographed Tascam M-35 channel: MIC ATT above the red
+// TRIM control, a pair of warm horizontal meters, and the auxiliary controls in
+// a separate bay. Every gesture, value readout and type-in editor still comes
+// from the shared duskdpf::DuskPanel; only the hardware-style art is local.
 
 #include "DistrhoUI.hpp"
+#include "DistrhoPluginUtils.hpp"
 
 #include "Pre35Access.hpp"
 #include "Pre35Params.hpp"
@@ -28,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 START_NAMESPACE_DISTRHO
 
@@ -39,46 +37,41 @@ namespace
     // --- chassis ---------------------------------------------------------------
     constexpr float kHeaderH = 66.0f;
 
-    // --- pad switch ------------------------------------------------------------
-    constexpr float PADX0 = 26.0f, PADX1 = 132.0f;
-    constexpr float PADY0 = 108.0f, PADH = 38.0f, PADGAP = 6.0f;
+    // --- photographed channel module ------------------------------------------
+    constexpr float PADX0 = 42.0f, PADX1 = 212.0f;
+    constexpr float PADY0 = 108.0f, PADY1 = 142.0f;
 
     // --- knobs -----------------------------------------------------------------
-    constexpr float TRIM_CX = 242.0f, TRIM_CY = 178.0f, TRIM_R = 56.0f;
-    constexpr float IRON_CX = 378.0f, IRON_CY = 170.0f, IRON_R = 40.0f;
-    constexpr float OUT_CX  = 486.0f, OUT_CY  = 170.0f, OUT_R  = 40.0f;
+    constexpr float TRIM_CX = 124.0f, TRIM_CY = 224.0f, TRIM_R = 56.0f;
+    constexpr float IRON_CX = 436.0f, IRON_CY = 244.0f, IRON_R = 40.0f;
 
-    // --- meter -----------------------------------------------------------------
-    constexpr float METX0 = 560.0f, METY0 = 100.0f, METX1 = 624.0f, METY1 = 296.0f;
-    constexpr float kMeterMinDb = -48.0f, kMeterMaxDb = 6.0f;
+    // --- stereo meter pair -----------------------------------------------------
+    constexpr float VULX0 = 250.0f, VULX1 = 430.0f;
+    constexpr float VURX0 = 442.0f, VURX1 = 622.0f;
+    constexpr float VUY0  = 82.0f,  VUY1  = 176.0f;
 
     // --- bottom rail -----------------------------------------------------------
     constexpr float RAILY0 = 308.0f, RAILY1 = 338.0f;
     constexpr float BYPX0 = 26.0f,  BYPX1 = 132.0f;
     constexpr float NOISEX0 = 242.0f, NOISEX1 = 358.0f;
-    constexpr float AGX0 = 372.0f,  AGX1 = 512.0f;
+    constexpr float MATCHX0 = 372.0f, MATCHX1 = 512.0f;
 
     // --- palette ---------------------------------------------------------------
-    constexpr ImU32 kChassis  = IM_COL32(30, 30, 33, 255);
-    constexpr ImU32 kPanelBg  = IM_COL32(38, 37, 40, 255);
-    constexpr ImU32 kHeaderBg = IM_COL32(18, 18, 20, 255);
-    constexpr ImU32 kHairline = IM_COL32(62, 62, 66, 255);
-    constexpr ImU32 kInk      = IM_COL32(238, 236, 228, 255);
-    constexpr ImU32 kInkDim   = IM_COL32(150, 152, 156, 255);
-    // Knob faces: warm oxblood for the gain stage, steel for the tone/level pair.
-    constexpr ImU32 kFaceTrim = IM_COL32(126, 58, 48, 255);
-    constexpr ImU32 kFaceIron = IM_COL32(92, 78, 56, 255);
-    constexpr ImU32 kFaceOut  = IM_COL32(58, 64, 76, 255);
+    constexpr ImU32 kChassis   = IM_COL32(28, 28, 27, 255);
+    constexpr ImU32 kPanelBg   = IM_COL32(60, 60, 54, 255);
+    constexpr ImU32 kHeaderBg  = IM_COL32(16, 16, 16, 255);
+    constexpr ImU32 kHairline  = IM_COL32(92, 92, 84, 255);
+    constexpr ImU32 kInk       = IM_COL32(231, 224, 198, 255);
+    constexpr ImU32 kInkDim    = IM_COL32(164, 159, 140, 255);
+    constexpr ImU32 kFaceTrim  = IM_COL32(241, 71, 38, 255);
+    constexpr ImU32 kFaceIron  = IM_COL32(116, 96, 70, 255);
+    constexpr ImU32 kVuInk     = IM_COL32(33, 27, 23, 255);
+    constexpr ImU32 kVuRed     = IM_COL32(157, 41, 40, 255);
 
-    constexpr ImU32 kMetGreen = IM_COL32(74, 182, 102, 255);
-    constexpr ImU32 kMetAmber = IM_COL32(214, 168, 56, 255);
-    constexpr ImU32 kMetRed   = IM_COL32(226, 66, 46, 255);
-    constexpr ImU32 kMetOff   = IM_COL32(46, 48, 50, 255);
-
-    constexpr int   kMeterSegments = 24;
-    constexpr float kMeterScaleDb[] = { 6.0f, 0.0f, -6.0f, -12.0f, -24.0f, -36.0f, -48.0f };
-    const     char* kMeterScaleLbl[] = { "+6", "0", "-6", "-12", "-24", "-36", "-48" };
-    constexpr int   kMeterScaleCount = (int)(sizeof(kMeterScaleDb) / sizeof(kMeterScaleDb[0]));
+    constexpr float kVuReferenceDbfs = -18.0f;
+    constexpr float kVuScaleDb[] = { -20.0f, -10.0f, -7.0f, -5.0f, -3.0f, 0.0f, 3.0f };
+    const char* const kVuScaleLbl[] = { "20", "10", "7", "5", "3", "0", "3" };
+    constexpr int kVuScaleCount = (int)(sizeof(kVuScaleDb) / sizeof(kVuScaleDb[0]));
 }
 
 class Pre35UI : public UI, public duskdpf::ParamHost
@@ -87,6 +80,12 @@ public:
     Pre35UI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
     {
+        // Ardour and other LV2 hosts expose their own container resize handle and
+        // may omit the optional ui:resize feature. Do not show a grip that those
+        // hosts cannot service; their outer window corner remains fully usable.
+        const char* const format = getPluginFormatName();
+        useInternalResizeGrip = format == nullptr || std::strcmp(format, "LV2") != 0;
+
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kParamDefaults[i];
 
@@ -149,13 +148,13 @@ protected:
         drawHeader(dl);
         drawPadSwitch(dl);
         drawKnobs(dl);
-        drawMeter(dl);
+        drawMeters(dl);
         drawRail(dl);
         if (values[kBypass] > 0.5f)
         {
             dl->AddRectFilled(panel.P(8.0f, kHeaderH + 4.0f), panel.P(kDesignW - 8.0f, kDesignH - 8.0f),
                               IM_COL32(0, 0, 0, 96));
-            panel.text(dl, 0.5f * kDesignW, 186.0f, 20.0f, IM_COL32(224, 220, 208, 180),
+            panel.text(dl, 0.5f * kDesignW, 24.0f, 14.0f, IM_COL32(224, 220, 208, 210),
                        "BYPASSED", 0, true);
         }
 
@@ -167,9 +166,11 @@ protected:
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race and paints
         // over everything. AUv2 hosts (Logic) never provide a window grip of their
-        // own; on VST3/CLAP the host's grip stays available alongside it.
-        const duskdpf::ResizeGripState grip =
-            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, kMinScale);
+        // own; on VST3/CLAP the host's grip stays available alongside it. LV2 uses
+        // the host frame because ui:resize is optional and Ardour does not offer it.
+        duskdpf::ResizeGripState grip;
+        if (useInternalResizeGrip)
+            grip = panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, kMinScale);
 
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -194,7 +195,7 @@ protected:
 private:
     // Minimum window width in device pixels, and the matching scale floor the grip
     // is clamped to. These two MUST agree or the grip and the host constraint fight.
-    static constexpr uint kMinWidth = 420;
+    static constexpr uint kMinWidth = 480;
     static constexpr float kMinScale = (float)kMinWidth / kDesignW;
 
     float sc() const { return panel.scale(); }
@@ -203,11 +204,28 @@ private:
     void drawChassis(ImDrawList* dl)
     {
         dl->AddRectFilled(panel.P(0, kHeaderH), panel.P(kDesignW, kDesignH), kPanelBg);
-        // Section wells: the control field and the meter bay.
-        dl->AddRectFilled(panel.P(12, kHeaderH + 12), panel.P(544, 296), IM_COL32(33, 33, 36, 255), 6.0f * sc());
-        dl->AddRect      (panel.P(12, kHeaderH + 12), panel.P(544, 296), kHairline, 6.0f * sc(), 0, 1.2f * sc());
-        dl->AddRectFilled(panel.P(552, kHeaderH + 12), panel.P(kDesignW - 12, 296), IM_COL32(26, 26, 28, 255), 6.0f * sc());
-        dl->AddRect      (panel.P(552, kHeaderH + 12), panel.P(kDesignW - 12, 296), kHairline, 6.0f * sc(), 0, 1.2f * sc());
+
+        // Fixed, low-contrast speckle gives the powder-coated panel some depth
+        // without a bitmap or frame-to-frame randomness.
+        for (int i = 0; i < 190; ++i)
+        {
+            const float x = 8.0f + (float)((i * 83) % 624);
+            const float y = 70.0f + (float)((i * 47) % 226);
+            const ImU32 c = (i & 1) ? IM_COL32(255, 255, 236, 11)
+                                    : IM_COL32(0, 0, 0, 14);
+            dl->AddCircleFilled(panel.P(x, y), (0.35f + 0.18f * (float)(i % 3)) * sc(), c, 6);
+        }
+
+        // The photographed input strip is a separate, silver-edged module.
+        dl->AddRectFilled(panel.P(16, 76), panel.P(232, 298), IM_COL32(49, 49, 45, 255), 3.0f * sc());
+        dl->AddRect(panel.P(16, 76), panel.P(232, 298), IM_COL32(168, 167, 154, 210),
+                    3.0f * sc(), 0, 1.2f * sc());
+        dl->AddLine(panel.P(21, 78), panel.P(21, 296), IM_COL32(201, 199, 184, 145), 1.0f * sc());
+        dl->AddLine(panel.P(227, 78), panel.P(227, 296), IM_COL32(12, 12, 12, 190), 1.0f * sc());
+
+        // Auxiliary controls sit in the larger right-hand service bay.
+        dl->AddRectFilled(panel.P(242, 76), panel.P(628, 298), IM_COL32(48, 48, 44, 225), 4.0f * sc());
+        dl->AddRect(panel.P(242, 76), panel.P(628, 298), kHairline, 4.0f * sc(), 0, 1.0f * sc());
     }
 
     void drawHeader(ImDrawList* dl)
@@ -217,7 +235,7 @@ private:
         dl->AddLine(panel.P(0, kHeaderH), panel.P(kDesignW, kHeaderH), kHairline, 1.5f * sc());
 
         panel.text(dl, 24, 16, 26.0f, kInk, "PRE-35", -1, true);
-        panel.text(dl, 26, 46, 10.5f, kInkDim, "Console Mic Preamp", -1);
+        panel.text(dl, 26, 46, 10.5f, kInkDim, "M-35 CONSOLE MICROPHONE PREAMPLIFIER", -1);
         panel.text(dl, kDesignW - 24, 26, 10.5f, kInkDim, "DUSK AUDIO", 1, true);
         panel.text(dl, kDesignW - 24, 42, 9.5f, IM_COL32(108, 110, 114, 255),
                    "v" PRE35_VERSION_STRING, 1);
@@ -231,79 +249,229 @@ private:
     }
 
     //==========================================================================
-    // Three-position PAD switch. Written as three latching cells rather than a
-    // knob: it is a switch on the hardware and a restricted enumeration in the
-    // host, and a rotary would invite drags to values that do not exist.
+    // Three-position MIC ATT switch. The slot and ridged cap mirror the hardware,
+    // but each position remains its own latching hit target so no in-between host
+    // value can ever be emitted.
     void drawPadSwitch(ImDrawList* dl)
     {
-        panel.text(dl, 0.5f * (PADX0 + PADX1), 86.0f, 11.0f, kInk, "PAD", 0, true);
+        panel.text(dl, 31.0f, 87.0f, 12.0f, kInk, "MIC ATT", -1, true);
+        panel.text(dl, 214.0f, 96.0f, 8.0f, kInkDim, "dB", 1);
 
-        const int sel = (int)std::lround(values[kPad]);
+        static constexpr float kPosX[kNumPads] = { 61.0f, 127.0f, 193.0f };
+        static constexpr const char* kLabels[kNumPads] = { "0", "20", "40" };
+
+        // NOT a control any more. The pad is a tombstone forced to 0 dB
+        // (Pre35Params.hpp has the measurements): engaging it costs +20 or +40 dB
+        // of hiss and pushes the amp's clip point out of reach, which disables
+        // Trim as a drive control. The switch stays on the faceplate because the
+        // M-35 has one and drawing it at its real position is truthful, but it no
+        // longer takes clicks and no longer writes the parameter.
+        const int sel = 0;
         for (int i = 0; i < kNumPads; ++i)
+            panel.text(dl, kPosX[i], 98.0f, 10.0f,
+                       i == sel ? kInk : kInkDim, kLabels[i], 0, i == sel);
+
+        dl->AddRectFilled(panel.P(PADX0, PADY0), panel.P(PADX1, PADY1), IM_COL32(19, 19, 18, 255),
+                          2.0f * sc());
+        dl->AddRect(panel.P(PADX0, PADY0), panel.P(PADX1, PADY1), IM_COL32(8, 8, 8, 255),
+                    2.0f * sc(), 0, 2.0f * sc());
+
+        const float capX = kPosX[sel];
+        dl->AddRectFilled(panel.P(capX - 23.0f, PADY0 + 3.0f), panel.P(capX + 23.0f, PADY1 - 3.0f),
+                          IM_COL32(8, 8, 8, 255), 3.0f * sc());
+        dl->AddRect(panel.P(capX - 23.0f, PADY0 + 3.0f), panel.P(capX + 23.0f, PADY1 - 3.0f),
+                    IM_COL32(79, 78, 72, 210), 3.0f * sc(), 0, 1.0f * sc());
+        for (int ridge = -2; ridge <= 2; ++ridge)
         {
-            const float y0 = PADY0 + (float)i * (PADH + PADGAP);
-            const float y1 = y0 + PADH;
-            const bool on = (i == sel);
-
-            char id[24];
-            std::snprintf(id, sizeof(id), "pad%d", i);
-            const ImVec2 b0 = panel.P(PADX0, y0), b1 = panel.P(PADX1, y1);
-            ImGui::SetCursorScreenPos(b0);
-            ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
-            const bool hov = ImGui::IsItemHovered();
-            if (ImGui::IsItemClicked() && ! on)
-            {
-                editParameter(kPad, true);
-                values[kPad] = (float)i;
-                setParameterValue(kPad, values[kPad]);
-                editParameter(kPad, false);
-            }
-
-            dl->AddRectFilled(b0, b1, on ? IM_COL32(56, 52, 50, 255) : IM_COL32(40, 40, 43, 255), 4.0f * sc());
-            dl->AddRect(b0, b1,
-                        on  ? IM_COL32(200, 92, 62, 235)
-                            : (hov ? IM_COL32(150, 150, 155, 200) : IM_COL32(84, 84, 88, 200)),
-                        4.0f * sc(), 0, 1.4f * sc());
-            panel.led(dl, PADX0 + 15.0f, 0.5f * (y0 + y1), on, 4.2f);
-            panel.text(dl, PADX0 + 32.0f, 0.5f * (y0 + y1) - 6.5f, 12.5f,
-                       on ? kInk : kInkDim, kPadLabels[i], -1, on);
+            const float x = capX + (float)ridge * 7.0f;
+            dl->AddLine(panel.P(x, PADY0 + 6.0f), panel.P(x, PADY1 - 6.0f),
+                        ridge < 0 ? IM_COL32(65, 65, 61, 180) : IM_COL32(0, 0, 0, 190),
+                        1.2f * sc());
         }
-
-        panel.text(dl, 0.5f * (PADX0 + PADX1), 232.0f, 9.0f, IM_COL32(112, 114, 118, 255),
-                   "AHEAD OF THE IRON", 0);
     }
 
     //==========================================================================
+    static float knobAngle(float value, float minValue, float maxValue)
+    {
+        const float range = maxValue - minValue;
+        float t = range > 0.0f ? (value - minValue) / range : 0.0f;
+        t = std::max(0.0f, std::min(1.0f, t));
+        return (-135.0f + 270.0f * t) * duskdpf::DuskPanel::kPi / 180.0f;
+    }
+
+    void drawKnobScale(ImDrawList* dl, float cx, float cy, float radius, bool numbered)
+    {
+        for (int i = 0; i <= 10; ++i)
+        {
+            const float a = (-135.0f + 27.0f * (float)i) * duskdpf::DuskPanel::kPi / 180.0f;
+            const float dx = std::sin(a), dy = -std::cos(a);
+            dl->AddLine(panel.P(cx + dx * (radius + 3.0f), cy + dy * (radius + 3.0f)),
+                        panel.P(cx + dx * (radius + 7.0f), cy + dy * (radius + 7.0f)),
+                        kInkDim, 1.1f * sc());
+            if (numbered)
+            {
+                char label[4];
+                std::snprintf(label, sizeof(label), "%d", i);
+                panel.text(dl, cx + dx * (radius + 16.0f), cy + dy * (radius + 16.0f) - 4.0f,
+                           8.0f, kInk, label, 0, i == 0 || i == 5 || i == 10);
+            }
+        }
+    }
+
+    void drawHardwareKnob(ImDrawList* dl, float cx, float cy, float radius,
+                          float value, float minValue, float maxValue, ImU32 face)
+    {
+        const ImVec2 c = panel.P(cx, cy);
+        const float r = radius * sc();
+
+        dl->AddCircleFilled(panel.P(cx + 3.0f, cy + 4.0f), r * 1.04f, IM_COL32(0, 0, 0, 125), 48);
+        dl->AddCircleFilled(c, r, IM_COL32(13, 13, 13, 255), 48);
+        dl->AddCircleFilled(c, r * 0.88f, IM_COL32(45, 44, 41, 255), 48);
+        dl->AddCircleFilled(c, r * 0.70f, face, 48);
+        dl->AddCircleFilled(panel.P(cx - radius * 0.16f, cy - radius * 0.20f),
+                            r * 0.45f, IM_COL32(255, 245, 224, 24), 32);
+        dl->AddCircle(c, r * 0.70f, IM_COL32(0, 0, 0, 145), 48, 1.2f * sc());
+        dl->AddCircle(c, r, IM_COL32(3, 3, 3, 255), 48, 1.4f * sc());
+
+        const float a = knobAngle(value, minValue, maxValue);
+        const float dx = std::sin(a), dy = -std::cos(a);
+        const float px = -dy, py = dx;
+        dl->AddLine(panel.P(cx + dx * radius * 0.10f + px * 2.0f,
+                            cy + dy * radius * 0.10f + py * 2.0f),
+                    panel.P(cx + dx * radius * 0.80f + px * 2.0f,
+                            cy + dy * radius * 0.80f + py * 2.0f),
+                    IM_COL32(24, 20, 18, 230), 7.0f * sc());
+        dl->AddLine(panel.P(cx + dx * radius * 0.12f - px * 1.0f,
+                            cy + dy * radius * 0.12f - py * 1.0f),
+                    panel.P(cx + dx * radius * 0.78f - px * 1.0f,
+                            cy + dy * radius * 0.78f - py * 1.0f),
+                    IM_COL32(255, 231, 207, 175), 2.2f * sc());
+        dl->AddCircleFilled(c, r * 0.08f, IM_COL32(24, 20, 18, 235), 16);
+    }
+
     void drawKnobs(ImDrawList* dl)
     {
-        panel.knobLabel(dl, TRIM_CX, 94.0f, "TRIM");
+        panel.text(dl, 31.0f, 150.0f, 12.0f, kInk, "TRIM", -1, true);
+        drawKnobScale(dl, TRIM_CX, TRIM_CY, TRIM_R, true);
+        drawHardwareKnob(dl, TRIM_CX, TRIM_CY, TRIM_R,
+                         values[kTrim], kParamMin[kTrim], kParamMax[kTrim], kFaceTrim);
+        char trimReadout[32];
+        std::snprintf(trimReadout, sizeof(trimReadout), "%.1f  (%.0f%%)",
+                      values[kTrim] * 0.1f, values[kTrim]);
         panel.knob("trim", kTrim, kParamMin[kTrim], kParamMax[kTrim],
                    TRIM_CX, TRIM_CY, TRIM_R, values[kTrim], kParamDefaults[kTrim],
-                   /*stepped*/ false, /*panelTicks*/ true, "%.0f", " %", kFaceTrim,
-                   /*bodyless*/ false, /*persistent*/ true,
-                   "Preamp trim. Sets the amp gain and the transformer drive together.",
-                   /*rightClickReset*/ false, 1.0f, 0.0f, "Trim", /*contextMenu*/ true);
+                   /*stepped*/ false, /*panelTicks*/ false, "%.1f", "", 0,
+                   /*bodyless*/ true, /*persistent*/ true,
+                   "Preamp trim. Increases downstream amplifier drive; output level is matched automatically.",
+                   /*rightClickReset*/ false, 0.1f, 0.0f, "Trim", /*contextMenu*/ true,
+                   trimReadout);
 
-        panel.knobLabel(dl, IRON_CX, 102.0f, "IRON");
+        panel.knobLabel(dl, IRON_CX, 188.0f, "IRON");
+        drawKnobScale(dl, IRON_CX, IRON_CY, IRON_R, false);
+        drawHardwareKnob(dl, IRON_CX, IRON_CY, IRON_R,
+                         values[kIron], kParamMin[kIron], kParamMax[kIron], kFaceIron);
         panel.knob("iron", kIron, kParamMin[kIron], kParamMax[kIron],
                    IRON_CX, IRON_CY, IRON_R, values[kIron], kParamDefaults[kIron],
-                   false, true, "%.0f", " %", kFaceIron, false, true,
-                   "Input transformer amount. 0 % bypasses it, 100 % is the measured device.",
+                   false, false, "%.0f", " %", 0, true, true,
+                   "Input transformer amount. MIC ATT sets its input level; 100 % is the measured device.",
                    false, 1.0f, 0.0f, "Iron", true);
-
-        panel.knobLabel(dl, OUT_CX, 102.0f, "OUTPUT");
-        panel.knob("output", kOutput, kParamMin[kOutput], kParamMax[kOutput],
-                   OUT_CX, OUT_CY, OUT_R, values[kOutput], kParamDefaults[kOutput],
-                   false, true, "%+.1f", " dB", kFaceOut, false, true,
-                   "Output trim, applied after the whole chain.",
-                   false, 1.0f, 0.0f, "Output", true);
     }
 
     //==========================================================================
-    // Segmented stereo peak meter. The DSP publishes a linear peak with a ~300 ms
-    // release, so nothing is smoothed again here — a second visual smoother would
-    // make the display lag the meter and vary with the frame rate.
-    void drawMeter(ImDrawList* dl)
+    static float vuAngle(float db)
+    {
+        // A real VU face is voltage-linear, so its dB marks bunch toward the
+        // negative end instead of being evenly spaced around the arc.
+        db = std::max(-20.0f, std::min(3.0f, db));
+        const float low = std::pow(10.0f, -20.0f / 20.0f);
+        const float high = std::pow(10.0f, 3.0f / 20.0f);
+        const float t = (std::pow(10.0f, db / 20.0f) - low) / (high - low);
+        return -2.35f + t * 1.70f;
+    }
+
+    void drawVuFace(ImDrawList* dl, float x0, float x1, float linear, const char* channel)
+    {
+        dl->AddRectFilled(panel.P(x0, VUY0), panel.P(x1, VUY1), IM_COL32(7, 7, 7, 255),
+                          4.0f * sc());
+        dl->AddRect(panel.P(x0, VUY0), panel.P(x1, VUY1), IM_COL32(112, 110, 99, 180),
+                    4.0f * sc(), 0, 1.0f * sc());
+
+        const float ix0 = x0 + 7.0f, ix1 = x1 - 7.0f;
+        const float iy0 = VUY0 + 7.0f, iy1 = VUY1 - 7.0f;
+        dl->AddRectFilled(panel.P(ix0, iy0), panel.P(ix1, iy1), IM_COL32(209, 176, 130, 255),
+                          2.0f * sc());
+        dl->AddRectFilledMultiColor(panel.P(ix0 + 1.0f, iy0 + 1.0f), panel.P(ix1 - 1.0f, iy1 - 1.0f),
+                                    IM_COL32(133, 112, 91, 255), IM_COL32(133, 112, 91, 255),
+                                    IM_COL32(239, 203, 150, 255), IM_COL32(239, 203, 150, 255));
+
+        const float pivotX = 0.5f * (x0 + x1);
+        const float pivotY = VUY1 - 8.0f;
+        const float radius = 0.42f * (x1 - x0);
+        const ImVec2 pivot = panel.P(pivotX, pivotY);
+
+        dl->PathArcTo(pivot, radius * sc(), vuAngle(-20.0f), vuAngle(0.0f), 30);
+        dl->PathStroke(kVuInk, 0, 1.6f * sc());
+        dl->PathArcTo(pivot, radius * sc(), vuAngle(0.0f), vuAngle(3.0f), 14);
+        dl->PathStroke(kVuRed, 0, 2.3f * sc());
+
+        for (int i = 0; i < kVuScaleCount; ++i)
+        {
+            const float a = vuAngle(kVuScaleDb[i]);
+            const float dx = std::cos(a), dy = std::sin(a);
+            const ImU32 col = kVuScaleDb[i] >= 0.0f ? kVuRed : kVuInk;
+            dl->AddLine(panel.P(pivotX + dx * (radius - 8.0f), pivotY + dy * (radius - 8.0f)),
+                        panel.P(pivotX + dx * (radius + 1.0f), pivotY + dy * (radius + 1.0f)),
+                        col, 1.4f * sc());
+            panel.text(dl, pivotX + dx * (radius - 18.0f), pivotY + dy * (radius - 18.0f) - 4.0f,
+                       8.5f, col, kVuScaleLbl[i], 0, i == 5);
+
+            if (i + 1 < kVuScaleCount)
+            {
+                const float nextA = vuAngle(kVuScaleDb[i + 1]);
+                for (int minor = 1; minor <= 2; ++minor)
+                {
+                    const float ma = a + (nextA - a) * (float)minor / 3.0f;
+                    const float mdx = std::cos(ma), mdy = std::sin(ma);
+                    const ImU32 mcol = i >= 5 ? kVuRed : kVuInk;
+                    dl->AddLine(panel.P(pivotX + mdx * (radius - 4.0f), pivotY + mdy * (radius - 4.0f)),
+                                panel.P(pivotX + mdx * (radius + 1.0f), pivotY + mdy * (radius + 1.0f)),
+                                mcol, 0.9f * sc());
+                }
+            }
+        }
+
+        panel.text(dl, x0 + 19.0f, VUY0 + 10.0f, 9.0f, kVuInk, "-", 0, true);
+        panel.text(dl, x1 - 19.0f, VUY0 + 10.0f, 9.0f, kVuRed, "+", 0, true);
+        panel.text(dl, pivotX, VUY1 - 39.0f, 13.0f, kVuInk, "VU", 0, true);
+        panel.text(dl, x0 + 18.0f, VUY1 - 18.0f, 8.5f, kVuInk, channel, 0, true);
+
+        const float dbfs = 20.0f * std::log10(std::max(linear, 1.0e-6f));
+        const float needleA = vuAngle(dbfs - kVuReferenceDbfs);
+        const float ndx = std::cos(needleA), ndy = std::sin(needleA);
+        dl->AddLine(panel.P(pivotX + 1.0f, pivotY + 1.0f),
+                    panel.P(pivotX + ndx * (radius - 2.0f) + 1.0f,
+                            pivotY + ndy * (radius - 2.0f) + 1.0f),
+                    IM_COL32(0, 0, 0, 90), 2.2f * sc());
+        dl->AddLine(pivot, panel.P(pivotX + ndx * (radius - 2.0f),
+                                   pivotY + ndy * (radius - 2.0f)),
+                    IM_COL32(31, 28, 25, 255), 1.5f * sc());
+        dl->AddCircleFilled(pivot, 5.0f * sc(), IM_COL32(67, 55, 45, 255), 20);
+        dl->AddCircleFilled(panel.P(pivotX - 1.0f, pivotY - 1.0f), 2.7f * sc(),
+                            IM_COL32(206, 176, 134, 255), 16);
+
+        const bool peak = linear >= 1.0f;
+        const float peakX = x1 - 18.0f, peakY = VUY1 - 19.0f;
+        if (peak)
+            dl->AddCircleFilled(panel.P(peakX, peakY), 7.0f * sc(), IM_COL32(255, 40, 25, 60), 18);
+        dl->AddCircleFilled(panel.P(peakX, peakY), 4.0f * sc(),
+                            peak ? IM_COL32(211, 40, 30, 255) : IM_COL32(81, 26, 23, 255), 18);
+        panel.text(dl, peakX, VUY1 - 34.0f, 7.5f, kVuRed, "PEAK", 0, true);
+    }
+
+    // The DSP publishes linear peak with a ~300 ms release. The native meter art
+    // maps that signal onto a -18 dBFS DAW reference without adding a
+    // second UI smoother, so the telemetry and host fallback remain unchanged.
+    void drawMeters(ImDrawList* dl)
     {
         float l = values[kOutPeakL];
         float r = values[kOutPeakR];
@@ -317,53 +485,10 @@ private:
                 r = pre35GetOutPeakR(inst);
        #endif
 
-        panel.text(dl, 0.5f * (METX0 + METX1), 86.0f, 11.0f, kInk, "OUTPUT", 0, true);
-
-        dl->AddRectFilled(panel.P(METX0 - 4, METY0 - 4), panel.P(METX1 + 4, METY1 + 4),
-                          IM_COL32(12, 12, 14, 255), 4.0f * sc());
-
-        // dB scale, right-aligned just left of the bars.
-        for (int i = 0; i < kMeterScaleCount; ++i)
-        {
-            const float y = dbToY(kMeterScaleDb[i]);
-            panel.text(dl, METX0 - 8.0f, y - 5.0f, 8.5f, IM_COL32(120, 122, 126, 255),
-                       kMeterScaleLbl[i], 1);
-            dl->AddLine(panel.P(METX0 - 5.0f, y), panel.P(METX0 - 1.0f, y),
-                        IM_COL32(96, 98, 102, 255), 1.0f * sc());
-        }
-
-        const float barW = 0.5f * (METX1 - METX0) - 5.0f;
-        drawBar(dl, METX0 + 2.0f, METX0 + 2.0f + barW, l);
-        drawBar(dl, METX1 - 2.0f - barW, METX1 - 2.0f, r);
-        panel.text(dl, METX0 + 2.0f + 0.5f * barW, METY1 + 6.0f, 9.0f, kInkDim, "L", 0);
-        panel.text(dl, METX1 - 2.0f - 0.5f * barW, METY1 + 6.0f, 9.0f, kInkDim, "R", 0);
-    }
-
-    float dbToY(float db) const
-    {
-        const float t = (db - kMeterMinDb) / (kMeterMaxDb - kMeterMinDb);
-        return METY1 - std::min(std::max(t, 0.0f), 1.0f) * (METY1 - METY0);
-    }
-
-    void drawBar(ImDrawList* dl, float x0, float x1, float linear)
-    {
-        const float db = 20.0f * std::log10(std::max(linear, 1.0e-6f));
-        const float segH = (METY1 - METY0) / (float)kMeterSegments;
-
-        for (int i = 0; i < kMeterSegments; ++i)
-        {
-            // Segment i spans the dB band it occupies; lit once the level reaches
-            // its lower edge, so the topmost lit segment IS the current reading.
-            const float t0 = (float)i / (float)kMeterSegments;
-            const float segDb = kMeterMinDb + t0 * (kMeterMaxDb - kMeterMinDb);
-            const bool on = db >= segDb;
-
-            const float y1 = METY1 - (float)i * segH - 1.0f;
-            const float y0 = y1 - segH + 1.0f;
-            const ImU32 col = ! on ? kMetOff
-                            : (segDb >= 0.0f ? kMetRed : (segDb >= -6.0f ? kMetAmber : kMetGreen));
-            dl->AddRectFilled(panel.P(x0, y0), panel.P(x1, y1), col, 1.0f * sc());
-        }
+        drawVuFace(dl, VULX0, VULX1, l, "L");
+        drawVuFace(dl, VURX0, VURX1, r, "R");
+        panel.text(dl, 0.5f * (VULX0 + VURX1), VUY1 + 2.0f, 9.0f, kInkDim,
+                   "PEAK RESPONSE | 0 VU = -18 dBFS", 0, true);
     }
 
     //==========================================================================
@@ -371,7 +496,12 @@ private:
     {
         panel.toggle("bypass", kBypass, BYPX0, RAILY0, BYPX1, RAILY1, values[kBypass], "BYPASS");
         panel.toggle("noise", kNoise, NOISEX0, RAILY0, NOISEX1, RAILY1, values[kNoise], "NOISE");
-        panel.toggle("autogain", kAutoGain, AGX0, RAILY0, AGX1, RAILY1, values[kAutoGain], "AUTO GAIN");
+        dl->AddRectFilled(panel.P(MATCHX0, RAILY0), panel.P(MATCHX1, RAILY1),
+                          IM_COL32(36, 37, 35, 255), 3.0f * sc());
+        dl->AddRect(panel.P(MATCHX0, RAILY0), panel.P(MATCHX1, RAILY1), kHairline,
+                    3.0f * sc(), 0, 1.0f * sc());
+        panel.text(dl, 0.5f * (MATCHX0 + MATCHX1), RAILY0 + 8.0f, 9.0f, kInkDim,
+                   "LEVEL MATCHED", 0, true);
         panel.text(dl, kDesignW - 24.0f, RAILY0 + 9.0f, 9.0f, IM_COL32(104, 106, 110, 255),
                    "TASCAM M-35 MODEL", 1);
     }
@@ -384,6 +514,7 @@ private:
 
     float values[kParamCount] = {};
     bool  showSupporters = false;   // Patreon supporters overlay (title click)
+    bool  useInternalResizeGrip = true;
     bool  gripCursorSet  = false;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Pre35UI)

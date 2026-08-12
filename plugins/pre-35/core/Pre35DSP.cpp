@@ -63,6 +63,10 @@ void Pre35DSP::prepare(double sampleRate, int oversampleFactor)
     const double osRate = hostRate * factor;
     iron.prepare(osRate);
     noise.prepare(osRate, factor, noiseSeed);
+    // Fixed thresholds: the amp's rails do not move with the sample rate, the
+    // pad or the trim. What moves relative to them is the signal, which is the
+    // whole point of the trim being a drive control.
+    rail.setThresholds(coeffs::kRailPosLinear, coeffs::kRailNegLinear);
 
     const double stepSeconds = static_cast<double>(kChunk) / hostRate;
     trimSm.setTimeConstant(kSmoothingTauSeconds, stepSeconds);
@@ -88,6 +92,7 @@ void Pre35DSP::reset()
     // would make a one-off glitch repeat.
     iron.reset();
     noise.reset();
+    rail.reset();
     response.reset();
     chunkPhase = 0;
 
@@ -159,11 +164,13 @@ double Pre35DSP::currentGainCalDb() const noexcept
 
 double Pre35DSP::currentOutputGainDb() const noexcept
 {
-    // Blend, not branch. autoGainSm sits at exactly 0 or 1 once settled, so the
-    // steady-state answer is identical to the branch it replaced; in between it
-    // crossfades the cancellation in over ~20 ms instead of dropping 58 dB in a
-    // single control step.
-    return outputDbSm.value - autoGainSm.value * currentGainCalDb();
+    // Blend, not branch. Auto Gain owns the output stage while enabled: this is
+    // important now that Output is a compatibility-only host parameter with no
+    // custom-UI control. Old sessions may restore a non-zero Output value, but it
+    // must not offset level compensation invisibly. While Auto Gain fades in, the
+    // legacy trim fades out over the same ~20 ms instead of stepping either gain.
+    return (1.0 - autoGainSm.value) * outputDbSm.value
+         - autoGainSm.value * currentGainCalDb();
 }
 
 //==============================================================================
@@ -272,6 +279,7 @@ void Pre35DSP::process(float* buffer, int numSamples)
                 if (noiseActive)
                     s += noise.nextSample();              // referred to the amp input
                 s *= amp;                                 // the calibrated taper
+                s = rail.processSample(s);                // amp output: supply rails
                 osBuffer[k] = response.process(s);        // unity at midband
             }
 
