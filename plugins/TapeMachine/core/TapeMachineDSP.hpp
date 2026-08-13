@@ -551,7 +551,7 @@ public:
     float calculateModulation (float wowAmount, float flutterAmount,
                                float wowRate, float flutterRate, double sampleRate)
     {
-        if (sampleRate <= 0.0) sampleRate = 44100.0;
+        if (! std::isfinite (sampleRate) || sampleRate <= 0.0) sampleRate = 44100.0;
 
         const float osScale = static_cast<float> (oversamplingFactor);
         const double safeSampleRate = std::max (1.0, sampleRate);
@@ -786,7 +786,7 @@ public:
     // osRate/osFactor = oversampled rate/factor; maxOsRate sizes the wow/flutter buffer.
     void prepare (double osRate, int osFactor, double maxOsRate)
     {
-        if (osRate <= 0.0) osRate = 44100.0;
+        if (! std::isfinite (osRate) || osRate <= 0.0) osRate = 44100.0;
         if (osFactor < 1) osFactor = 1;
 
         currentSampleRate = osRate;

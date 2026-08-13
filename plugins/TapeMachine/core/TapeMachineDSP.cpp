@@ -106,7 +106,7 @@ static inline float autoCalBiasFromTypeSpeed (TapeCore::TapeType type, TapeCore:
 //==============================================================================
 void TapeMachineDSP::prepare (double sampleRate, int maxBlockSize)
 {
-    if (sampleRate <= 0.0) sampleRate = 44100.0;
+    if (! std::isfinite (sampleRate) || sampleRate <= 0.0) sampleRate = 44100.0;
     if (maxBlockSize <= 0) maxBlockSize = 512;
 
     baseSampleRate = sampleRate;
