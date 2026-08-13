@@ -323,6 +323,11 @@ protected:
         // touching outputs[1] there writes past the host's buffer list.
         if (values[kParamBypass].load(std::memory_order_relaxed) > 0.5f)
         {
+            if (lastLatency != 0)
+            {
+                lastLatency = 0;
+                setLatency(0);
+            }
             for (int c = 0; c < activeChannels; ++c)
                 if (outputs[c] != inputs[c])
                     std::memcpy(outputs[c], inputs[c], sizeof(float) * frames);

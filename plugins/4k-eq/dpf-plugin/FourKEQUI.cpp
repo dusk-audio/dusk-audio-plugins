@@ -770,9 +770,9 @@ private:
                 out[i] = normalizeParamValue(i, out[i]);
         for (uint32_t i = 0; i < kParamCount; ++i)
             if (present[i] && isFrequencyParam(i))
-                out[i] = effectiveHz
-                    ? controlForEffectiveFrequency(i, out[i], out)
-                    : normalizeParamValue(i, out[i]);
+                out[i] = normalizeParamValue(
+                    i, effectiveHz ? controlForEffectiveFrequency(i, out[i], out)
+                                   : out[i]);
         return true;
     }
 
@@ -1523,7 +1523,7 @@ private:
             // F[] is the frequency printed around the bezel. Convert that
             // effective corner back to the fitted UAD control coordinate before
             // handing it to the DSP, so the pointer and response agree.
-            f = dialForCalibrated(freqId, f);
+            f = normalizeParamValue(freqId, dialForCalibrated(freqId, f));
             values[freqId] = f;
             setParameterValue(freqId, f);
         }
@@ -1611,12 +1611,12 @@ private:
         float typed;
         if (panel.valueEdit(id, cx, cy, R, typed))
         {
-            // Typed frequency is the ACTUAL corner: map back to the dial law,
-            // then enable the filter and clamp to its range.
-            typed = dialForCalibrated(freqId, typed);
+            // Typed frequency is the ACTUAL corner: clamp it in that display
+            // domain, map back to the dial law, then normalize the control.
             float lo = F[1], hi = F[1];
             for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
+            typed = normalizeParamValue(freqId, dialForCalibrated(freqId, typed));
             editParameter(enId, true); editParameter(freqId, true);
             values[enId] = 1.f;    setParameterValue(enId, 1.f);
             values[freqId] = typed; setParameterValue(freqId, typed);
@@ -1722,8 +1722,9 @@ private:
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
         auto setFromT = [&](float tt) {
             const float shown = detentPosToVal(T, V, n, tt);
-            const float nv = frequencyKnob ? dialForCalibrated(paramId, shown)
-                                           : shown;
+            const float nv = normalizeParamValue(
+                paramId, frequencyKnob ? dialForCalibrated(paramId, shown)
+                                       : shown);
             values[paramId] = nv;
             setParameterValue(paramId, nv);
         };
@@ -1793,10 +1794,12 @@ private:
         {
             // Frequency knobs take the typed value as the ACTUAL centre and map
             // it back to the dial law; every other knob types the dial value.
-            typed = dialForCalibrated(paramId, typed);
             float lo = V[0], hi = V[0];
             for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
+            if (frequencyKnob)
+                typed = dialForCalibrated(paramId, typed);
+            typed = normalizeParamValue(paramId, typed);
             editParameter(paramId, true); values[paramId] = typed; setParameterValue(paramId, typed); editParameter(paramId, false);
         }
         else if ((hov || act) && !editing)
