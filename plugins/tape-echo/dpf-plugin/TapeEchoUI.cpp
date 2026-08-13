@@ -74,21 +74,25 @@ public:
     // machine unless they are helping debug a rendering report.
     static void logGlDiagnostics(GLint maxTextureSize, const duskdpf::AtlasFitResult& fit)
     {
-        if (std::getenv("DUSK_GL_DEBUG") == nullptr)
-            return;
-
         const char* const vendor   = (const char*)glGetString(GL_VENDOR);
         const char* const renderer = (const char*)glGetString(GL_RENDERER);
         const char* const version  = (const char*)glGetString(GL_VERSION);
 
         std::string path;
-       #ifdef DISTRHO_OS_WINDOWS
-        if (const char* const appData = std::getenv("LOCALAPPDATA"))
-            path = std::string(appData) + "\\dusk-gl-debug.log";
-       #else
-        if (const char* const home = std::getenv("HOME"))
-            path = std::string(home) + "/dusk-gl-debug.log";
-       #endif
+        const char* const roots[] = { std::getenv("LOCALAPPDATA"), std::getenv("USERPROFILE"),
+                                      std::getenv("HOME"), std::getenv("TEMP"), "." };
+        for (const char* const root : roots)
+        {
+            if (root == nullptr || root[0] == '\0')
+                continue;
+            path = std::string(root) + "/dusk-gl-debug.log";
+            if (FILE* const probe = std::fopen(path.c_str(), "a"))
+            {
+                std::fclose(probe);
+                break;
+            }
+            path.clear();
+        }
         if (path.empty())
             return;
 
