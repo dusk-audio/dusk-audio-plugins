@@ -46,6 +46,9 @@ on:
       - 'plugins/*/core/**'
       - 'plugins/shared-dpf/**'
       - '.github/workflows/dpf-build.yml'
+      # The gate scripts this workflow runs. Without this a PR that only edits
+      # dpf_clap_validate.py never runs the gate it just changed.
+      - '.github/scripts/**'
 
 # DPF is our fork (dusk-audio/DPF), branch main — the permanent source of truth
 # for our DPF patches (CLAP latency changes constrained to activate(), AU

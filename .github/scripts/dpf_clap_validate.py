@@ -13,13 +13,14 @@ violating the CLAP spec. This script runs clap-validator on a built .clap and:
              explicit signature check.)
 
   SUITE      Every other clap-validator test also gates the build, because the
-             workflow now sets SUITE_STRICT=1. Measured against clap-validator
-             0.4.1 on 2026-08-13, all four DPF plugins are clean:
+             workflow sets SUITE_STRICT=1. Failure is decided by BOTH the reported
+             failure tally and the process exit code, since the latency case above
+             is proof that the exit code alone can miss a real regression.
 
-               tapemachine-2  exit 0, 33 passed, 0 failed
-               4k-eq-2        exit 0, 33 passed, 0 failed
-               tape-echo-2    exit 0, 33 passed, 0 failed
-               multi-q-2      exit 0, 33 passed, 0 failed
+             CI is the source of truth for which plugins currently pass. No pass
+             counts are recorded here on purpose: they are a property of the
+             validator version as much as of the plugins, and a baked-in tally rots
+             silently into a lie the next time either moves.
 
              Both of the process-varying-sample-rates failures that kept this
              advisory (TapeMachine 2 at 8 kHz, 4K EQ 2 at 1234.57 Hz) had the same
@@ -29,9 +30,9 @@ violating the CLAP spec. This script runs clap-validator on a built .clap and:
              the shared duskaudio::Biquad designers respectively.
 
              process-audio-denormals can emit a timing WARNING on a loaded machine.
-             That is fine: timing warnings do not affect the validator exit status
-             and carry no gated signature, so they never gate. Note this is NOT a
-             general property of warnings, the latency check below deliberately
+             That one does not gate: it sets no failure tally and no exit code, and
+             it carries no gated signature. That is specific to timing warnings, NOT
+             a general property of warnings, the latency check above deliberately
              hard-fails on a WARNING by scanning for its signature.
 
              If a plugin ever has to be exempted, gate per plugin rather than
@@ -44,10 +45,15 @@ Env:
                           (Linux ARM64 has no prebuilt: cargo-install and point
                           this at it, or put clap-validator on PATH).
   CLAP_VALIDATOR_VERSION  Release tag to download (default 0.4.1).
-  SUITE_STRICT=1          Also fail the build on any failed validator test.
+  SUITE_STRICT=1          Also fail the build on any failed validator test. The
+                          workflow sets this; unset it (or set 0) only for a local
+                          advisory run. Unset, empty and whitespace-only all mean
+                          advisory. Any OTHER unrecognized value is an error rather
+                          than a silent fallback to advisory.
 """
 import glob
 import hashlib
+import re
 import os
 import platform
 import shutil
@@ -80,6 +86,54 @@ RUN_TIMEOUT_S = 600
 
 def log(msg):
     print(msg, flush=True)
+
+
+def _suite_strict():
+    """True when SUITE_STRICT asks for strict mode; exits on an unrecognized value.
+
+    Fails CLOSED on a value it cannot read. The obvious way to write this is
+    `os.environ.get(...) == "1"`, which silently drops the whole matrix back to
+    advisory the day somebody sets SUITE_STRICT: "true" in the workflow. A gate that
+    quietly stops gating is worse than no gate, so anything not clearly on or off is
+    an error -- with one deliberate exception: unset, empty and whitespace-only all
+    mean "not configured" and yield advisory, because an unset GHA expression
+    interpolates to the empty string and that is an absent setting, not a typo.
+    """
+    raw = os.environ.get("SUITE_STRICT")
+    # UNSET and EMPTY are the same thing, and whitespace-only counts as empty.
+    # `env: SUITE_STRICT: ${{ ... }}` with an unset expression interpolates to the
+    # empty string, which is a configuration that never reached this script rather
+    # than a value someone typed. Erroring on it would break the workflow for a
+    # non-decision; erroring on "maybe" catches a real one.
+    value = (raw or "").strip().lower()
+    if value == "":
+        return False
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    log(f"::error::SUITE_STRICT is set to {raw!r}, which is neither on nor off. "
+        "Use 1 or 0 (true/false, yes/no and on/off are also accepted). Refusing to "
+        "guess, because guessing wrong silently disables the suite gate.")
+    sys.exit(2)
+
+
+def _parse_failed_count(output):
+    """Pull the failure tally out of clap-validator's summary line.
+
+    The line looks like: '44 tests run, 33 passed, 0 failed, 0 warnings, 11 skipped'.
+    Returns None when no summary is found, which the caller treats as "no tally
+    signal" rather than as a pass, so a format change degrades to the exit code
+    instead of silently reporting success.
+    """
+    matches = re.findall(r"(\d+)\s+failed", _strip_ansi(output))
+    if not matches:
+        return None
+    return max(int(m) for m in matches)
+
+
+def _strip_ansi(text):
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def _asset_name():
@@ -212,6 +266,12 @@ def main():
         log(f"::error::plugin not found: {clap}")
         sys.exit(2)
 
+    # Resolve SUITE_STRICT UP FRONT, not lazily inside the failure branch. Checking
+    # it only when the suite already failed means a misconfigured value sails
+    # through every green run and is discovered on the day it matters least.
+    strict = _suite_strict()
+    log(f"suite gate: {'STRICT' if strict else 'ADVISORY'}")
+
     workdir = tempfile.mkdtemp(prefix="clapval_")
     try:
         vbin = resolve_binary(workdir)
@@ -241,10 +301,22 @@ def main():
                 "regressed. Check DPF_REF against dusk-audio/DPF main.")
             sys.exit(1)
 
-        # ADVISORY (or strict) on the remaining suite.
-        if proc.returncode != 0:
-            if os.environ.get("SUITE_STRICT") == "1":
-                log("::error::clap-validator reported failing tests (SUITE_STRICT=1).")
+        # STRICT (or advisory) on the remaining suite.
+        #
+        # Do NOT trust the exit code alone. This script exists because a
+        # clap-validator WARNING can carry a real regression while leaving the exit
+        # code at 0 (the latency contract above is exactly that case), so keying the
+        # suite gate purely on returncode repeats the mistake one level up. Parse the
+        # reported failure tally as well and fail on either signal: the tally catches
+        # a failing test that somehow exits 0, the returncode catches a crash or a
+        # timeout that never prints a tally.
+        failed = _parse_failed_count(out)
+        suite_bad = proc.returncode != 0 or (failed is not None and failed > 0)
+
+        if suite_bad:
+            if strict:
+                log(f"::error::clap-validator reported failing tests "
+                    f"(SUITE_STRICT=1; failed={failed}, exit={proc.returncode}).")
                 sys.exit(proc.returncode or 1)
             log("::warning::clap-validator reported failing tests (advisory -- not "
                 "gating). Fix the suite, then set SUITE_STRICT=1. Latency contract PASSED.")
