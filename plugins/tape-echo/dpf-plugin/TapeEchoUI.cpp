@@ -68,6 +68,44 @@ public:
         setParameterValue(idx, v);
     }
 
+    // Opt-in field diagnostic: set DUSK_GL_DEBUG=1 in the host's environment to
+    // drop one line per editor open describing the GL context and what the font
+    // atlas settled on. Silent otherwise, so nothing is written on a user's
+    // machine unless they are helping debug a rendering report.
+    static void logGlDiagnostics(GLint maxTextureSize, const duskdpf::AtlasFitResult& fit)
+    {
+        if (std::getenv("DUSK_GL_DEBUG") == nullptr)
+            return;
+
+        const char* const vendor   = (const char*)glGetString(GL_VENDOR);
+        const char* const renderer = (const char*)glGetString(GL_RENDERER);
+        const char* const version  = (const char*)glGetString(GL_VERSION);
+
+        std::string path;
+       #ifdef DISTRHO_OS_WINDOWS
+        if (const char* const appData = std::getenv("LOCALAPPDATA"))
+            path = std::string(appData) + "\\dusk-gl-debug.log";
+       #else
+        if (const char* const home = std::getenv("HOME"))
+            path = std::string(home) + "/dusk-gl-debug.log";
+       #endif
+        if (path.empty())
+            return;
+
+        if (FILE* const f = std::fopen(path.c_str(), "a"))
+        {
+            std::fprintf(f,
+                "tape-echo-2 vendor=%s renderer=%s version=%s max_texture=%d "
+                "atlas=%dx%d oversample=%d dropped=%d attempts=%d fits=%d\n",
+                vendor != nullptr ? vendor : "?",
+                renderer != nullptr ? renderer : "?",
+                version != nullptr ? version : "?",
+                (int)maxTextureSize, fit.atlasWidth, fit.atlasHeight,
+                fit.oversample, fit.droppedSizes, fit.attempts, fit.fits ? 1 : 0);
+            std::fclose(f);
+        }
+    }
+
     TapeEchoUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
     {
@@ -87,31 +125,43 @@ public:
             { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 28.0f, 32.0f, 48.0f, 72.0f };
         static constexpr float kRegularSizes[] =
             { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 32.0f, 48.0f };
-        int labelCount   = (int)(sizeof(kLabelSizes) / sizeof(kLabelSizes[0]));
-        int regularCount = (int)(sizeof(kRegularSizes) / sizeof(kRegularSizes[0]));
-
-        // Baking all of those needs a 2048 px font atlas. Microsoft's software
-        // OpenGL 1.1 (a virtual machine with no 3D acceleration, or a Remote
-        // Desktop session) caps textures at 1024 px, and ImGui's GL2 backend
-        // reports nothing at all when that upload fails: it leaves the atlas
-        // texture incomplete, fixed-function texturing drops out for the glyph
-        // quads, and every label paints as a solid rectangle in the text color
-        // while the knobs and meters still look right. Drop the largest bakes
-        // on such a context so the atlas fits in 1024 px; the biggest text is
-        // then scaled up from a smaller face rather than disappearing.
+        // Both faces share one ImGui atlas, so the size that matters is the one
+        // built from every bake together. Software OpenGL (a virtual machine with
+        // no 3D acceleration, a Remote Desktop session) caps textures far below
+        // what those bakes need at 2x2 oversampling, the oversized upload fails
+        // silently, and every label then paints as a solid rectangle in the text
+        // colour while the knobs and meters still look right. Hand the loader the
+        // real limit and let it measure the built atlas and shrink until it fits,
+        // rather than guessing a face count that happens to work on one machine.
         GLint maxTextureSize = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
-        if (maxTextureSize > 0 && maxTextureSize < 2048)
+
+        // DUSK_GL_MAX_TEXTURE reproduces a small-texture context on hardware that
+        // has no such limit, which is the only practical way to exercise the
+        // shrink path without the machine that reported the bug.
+        if (const char* const forced = std::getenv("DUSK_GL_MAX_TEXTURE"))
         {
-            labelCount   = 6;   // 7..24 px
-            regularCount = 5;   // 7..18 px
+            const int v = std::atoi(forced);
+            if (v > 0)
+                maxTextureSize = (GLint)v;
         }
 
+        const duskdpf::EmbeddedFontRequest fontRequests[2] = {
+            { kTeFontSemiBold, kTeFontSemiBold_len, kLabelSizes,
+              (int)(sizeof(kLabelSizes) / sizeof(kLabelSizes[0])) },
+            { kTeFontRegular, kTeFontRegular_len, kRegularSizes,
+              (int)(sizeof(kRegularSizes) / sizeof(kRegularSizes[0])) },
+        };
+        duskdpf::CrispFontSet fontSets[2];
+        duskdpf::AtlasFitResult fit;
+        duskdpf::loadEmbeddedCrispFontSets(
+            fontRequests, 2, fontSets, 1.0f, (int)maxTextureSize, &fit);
+
         const float dpi = getScaleFactor();
-        labelFonts = duskdpf::loadEmbeddedCrispFontSet(
-            kTeFontSemiBold, kTeFontSemiBold_len, kLabelSizes, labelCount, 1.0f);
-        regularFonts = duskdpf::loadEmbeddedCrispFontSet(
-            kTeFontRegular, kTeFontRegular_len, kRegularSizes, regularCount, 1.0f);
+        labelFonts   = fontSets[0];
+        regularFonts = fontSets[1];
+
+        logGlDiagnostics(maxTextureSize, fit);
         labelFont = labelFonts.pick(12.5f * dpi);
         panel.setFontSet(labelFonts);
 
