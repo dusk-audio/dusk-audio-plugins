@@ -74,6 +74,7 @@ public:
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kTeParams[i].def;
         setGeometryConstraints((uint32_t)kDesignW, (uint32_t)kDesignH, true);
+        adoptWindowSize();
 
         // Barlow Condensed is bundled under the SIL OFL. Unlike the previous
         // system-font search this produces identical metrics on every OS. Two
@@ -151,6 +152,12 @@ protected:
 
     void onImGuiDisplay() override
     {
+        // Cheap guard against the window and this widget drifting apart again
+        // after construction (see adoptWindowSize). A host resize normally
+        // reaches the widget through the window's own size event; when one is
+        // missed the whole frame would otherwise be scissored to a sliver.
+        adoptWindowSize();
+
         const float winW = (float)getWidth();
         const float winH = (float)getHeight();
         s   = std::min(winW / kDesignW, winH / kDesignH);
@@ -231,6 +238,33 @@ protected:
 
 private:
     //--- helpers -----------------------------------------------------------------
+
+    // Keep this widget the same size as the window it draws into.
+    //
+    // DPF sizes the plugin *window* at the design size multiplied by the host
+    // DPI scale (DistrhoUI.cpp, createNextWindow), then UI::UI puts this
+    // *widget* straight back to the unscaled size. The two are normally
+    // reconciled by the window's first size event, but on Windows that event is
+    // delivered while the window is still being created, before this widget
+    // exists, so a host that never resizes the view itself (MuLab 9, issue
+    // #154) is left with a widget smaller than the GL surface for good.
+    // Everything then draws unscaled into the corner of a black window, and the
+    // ImGui backend, which derives its scissor box from the widget size rather
+    // than from the surface, clips every frame to the bottom
+    // (surfaceHeight - widgetHeight) band: only the utility rail survives.
+    //
+    // Adopting the window's real size restores both the scale and a
+    // full-surface clip. It is a no-op whenever the two already agree, which is
+    // every other host and platform, and it stays correct across later resizes
+    // because this UI does not use DGL's automatic scaling (which deliberately
+    // keeps widget and window sizes apart).
+    void adoptWindowSize()
+    {
+        const auto windowSize = getWindow().getSize();
+        if (windowSize.isValid() && windowSize != getSize())
+            DGL_NAMESPACE::Widget::setSize(windowSize);
+    }
+
     ImVec2 P(float x, float y) const { return ImVec2(org.x + x * s, org.y + y * s); }
 
     static ImU32 fade(ImU32 c, float amount)
