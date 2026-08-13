@@ -13,10 +13,23 @@ violating the CLAP spec. This script runs clap-validator on a built .clap and:
              explicit signature check.)
 
   ADVISORY   The rest of the clap-validator suite is run and printed, but does
-             NOT gate the build yet: TapeMachine 2 currently fails
-             process-varying-sample-rates (subnormals at extreme sample rates),
-             a separate DSP issue. Once the suite is clean, set SUITE_STRICT=1
-             to also fail on any failed test. NEVER add a per-test allowlist --
+             NOT gate the build yet. Remaining blocker, measured against
+             clap-validator 0.4.1 on 2026-08-13:
+
+               4k-eq-2        FAILS process-varying-sample-rates (NaN at
+                              1234.57 Hz) -- same root cause TapeMachine 2 had:
+                              fixed filter design frequencies are not clamped to
+                              Nyquist, so at very low host rates the RBJ/bilinear
+                              prewarp wraps and the biquads get poles outside the
+                              unit circle.
+               tapemachine-2  clean (fixed: Nyquist-guarded designers).
+               tape-echo-2    clean.
+               multi-q-2      clean (process-audio-denormals can emit a timing
+                              WARNING on a loaded machine; warnings do not affect
+                              the validator exit status, so they never gate).
+
+             Flip SUITE_STRICT=1 once 4K EQ 2 is fixed -- doing it before that
+             breaks the 4k-eq-2 matrix leg. NEVER add a per-test allowlist --
              fix the plugin, then flip SUITE_STRICT on.
 
 Usage: dpf_clap_validate.py <path-to-plugin.clap>
