@@ -191,7 +191,12 @@ void writeWavFloat(const std::string& path, const Audio& a)
     if (numFrames)
         w(interleaved.data(), sizeof(float), interleaved.size());
 
-    std::fclose(f);
+    // fclose flushes, so a full disk can fail HERE with every fwrite above having
+    // reported success. Ignoring it would exit 0 having written a truncated WAV,
+    // and the null test would then compare the Python reference against a short
+    // file and report the missing tail as a port bug.
+    if (std::fclose(f) != 0)
+        fail("failed to flush/close " + path);
 }
 
 //==============================================================================

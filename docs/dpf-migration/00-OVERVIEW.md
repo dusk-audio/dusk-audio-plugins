@@ -49,8 +49,8 @@ Already written and validated inside tape-echo — reuse, do not rewrite:
 | Factory-preset table + host programs | `dpf-plugin/TapeEchoParams.hpp` + shell | preset headers |
 | CMake template | `dpf-plugin/CMakeLists.txt` | JUCE CMake |
 
-DPF checkout: `~/projects/DPF` — our fork `dusk-audio/DPF`, branch `main` (permanent home of our DPF patches: CLAP latency-in-activate, AU/CLAP/VST3 state hardening, Wayland LV2 UIs). Keep the checkout on the SHA pinned by `DPF_REF` in `.github/workflows/dpf-build.yml`. Needs `git submodule update --init` for pugl.
-DPF-Widgets checkout: `~/projects/DPF-Widgets` (DearImGui wrapper).
+DPF checkout: `~/projects/DPF` — our hard fork `dusk-audio/DPF`, branch `main` (permanent home of our DPF patches: CLAP latency-in-activate, AU/CLAP/VST3 state hardening, Wayland LV2 UIs). Keep the checkout on the SHA pinned by `DPF_REF` in `.github/workflows/dpf-build.yml`. Needs `git submodule update --init` for pugl.
+DPF-Widgets checkout: `~/projects/DPF-Widgets` — our hard fork `dusk-audio/DPF-Widgets` (DearImGui wrapper). Keep it on `DPFWIDGETS_REF`; never substitute an upstream checkout.
 
 ## Landmines (all hit and fixed during tape-echo — do not rediscover them)
 

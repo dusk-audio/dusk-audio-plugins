@@ -362,9 +362,11 @@ run_pre35_tests() {
     local core_build="$PROJECT_DIR/build/pre35-core-gates"
 
     # --- core gate suite (the authoritative DSP check for this plugin) --------
-    # ctest over the framework-free core: coeff/chain/iron/robust. iron_test
-    # renders tones and measures THD with a DFT, so this is offline audio
-    # rendering and honours --skip-audio like the Sunset Circuits suite does.
+    # ctest over the framework-free core, whatever gates are registered there.
+    # Deliberately not enumerated or counted here: gates get added (rail_test in
+    # 2026-08) and a list in this file would silently go stale. Some of them
+    # render tones and measure THD with a DFT, so this is offline audio rendering
+    # and honours --skip-audio like the Sunset Circuits suite does.
     # Every stage is logged, because the stage most likely to fail here is the
     # BUILD, and a compile error swallowed by /dev/null leaves "the suite failed"
     # with nothing to act on. Same convention as the pluginval logs below.
@@ -397,7 +399,7 @@ run_pre35_tests() {
             ctest --test-dir "$core_build" --output-on-failure 2>&1 | tee "$ctest_log"
             local ctest_status="${PIPESTATUS[0]}"
             if [ "$ctest_status" -eq 0 ]; then
-                print_pass "Core gate suite green (4/4)"
+                print_pass "Core gate suite green"
             else
                 print_fail "Core gate suite failed (full log: $ctest_log)"
             fi
@@ -414,14 +416,25 @@ run_pre35_tests() {
     fi
     print_pass "VST3 exists: $vst3"
 
-    local arch_dir="x86_64-linux"
-    [ "$(uname -m)" = "aarch64" ] && arch_dir="aarch64-linux"
-    local so="$vst3/Contents/$arch_dir/${PRE35_BUNDLE}.so"
+    # VST3 bundles are laid out per platform: Contents/MacOS/<name> on macOS,
+    # Contents/<arch>-linux/<name>.so on Linux. And the symbol probe has to match —
+    # Apple's nm has no -D, so `nm -D` there fails and would report a perfectly good
+    # bundle as "symbol missing". -gU is its equivalent (global, defined only).
+    local so nm_args
+    if [ "$(uname -s)" = "Darwin" ]; then
+        so="$vst3/Contents/MacOS/${PRE35_BUNDLE}"
+        nm_args=(-gU)
+    else
+        local arch_dir="x86_64-linux"
+        [ "$(uname -m)" = "aarch64" ] && arch_dir="aarch64-linux"
+        so="$vst3/Contents/$arch_dir/${PRE35_BUNDLE}.so"
+        nm_args=(-D)
+    fi
     if [ -f "$so" ]; then
         print_pass "VST3 binary exists"
         if ! command -v nm &> /dev/null; then
             print_skip "nm not installed, cannot check the GetPluginFactory symbol"
-        elif nm -D "$so" 2>/dev/null | grep -q "GetPluginFactory"; then
+        elif nm "${nm_args[@]}" "$so" 2>/dev/null | grep -q "GetPluginFactory"; then
             print_pass "VST3 GetPluginFactory symbol found"
         else
             print_fail "VST3 GetPluginFactory symbol missing"

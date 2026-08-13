@@ -18,15 +18,40 @@ set(DUSK_SHARED_DPF_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 # repo root is three levels up from plugins/<name>/dpf-plugin
 set(_dusk_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
-set(DPF_PATH        "${_dusk_repo_root}/../DPF"         CACHE PATH "Path to DISTRHO Plugin Framework")
-set(DPFWIDGETS_PATH "${_dusk_repo_root}/../DPF-Widgets" CACHE PATH "Path to DPF-Widgets (Dear ImGui wrapper)")
+set(DPF_PATH        "${_dusk_repo_root}/../DPF"         CACHE PATH "Path to the dusk-audio DPF hard fork")
+set(DPFWIDGETS_PATH "${_dusk_repo_root}/../DPF-Widgets" CACHE PATH "Path to the dusk-audio DPF-Widgets hard fork")
 
 if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
-    message(FATAL_ERROR "DPF not found at ${DPF_PATH} — clone https://github.com/dusk-audio/DPF (our fork; do not use upstream DISTRHO/DPF) or pass -DDPF_PATH=...")
+    message(FATAL_ERROR "DPF not found at ${DPF_PATH} — clone https://github.com/dusk-audio/DPF or pass -DDPF_PATH=...")
 endif()
 if(NOT EXISTS "${DPFWIDGETS_PATH}/opengl/DearImGui.cpp")
-    message(FATAL_ERROR "DPF-Widgets not found at ${DPFWIDGETS_PATH} — clone https://github.com/DISTRHO/DPF-Widgets or pass -DDPFWIDGETS_PATH=...")
+    message(FATAL_ERROR "DPF-Widgets not found at ${DPFWIDGETS_PATH} — clone https://github.com/dusk-audio/DPF-Widgets or pass -DDPFWIDGETS_PATH=...")
 endif()
+
+# Both framework repositories are hard forks. Refuse to configure against a
+# checkout whose origin is not the Dusk Audio repository, so a developer or CI
+# job cannot silently substitute either original upstream repository.
+find_package(Git REQUIRED)
+function(_dusk_require_framework_fork checkout repository)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${checkout}" remote get-url origin
+        RESULT_VARIABLE _dusk_remote_result
+        OUTPUT_VARIABLE _dusk_remote_url
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _dusk_remote_result EQUAL 0)
+        message(FATAL_ERROR
+            "${repository} at ${checkout} must be a Git checkout of dusk-audio/${repository} with an origin remote")
+    endif()
+
+    if(NOT _dusk_remote_url MATCHES "^(https://github\\.com/|git@github\\.com:|ssh://git@github\\.com/)dusk-audio/${repository}(\\.git)?/?$")
+        message(FATAL_ERROR
+            "Refusing ${repository} origin '${_dusk_remote_url}'. Only the hard fork https://github.com/dusk-audio/${repository} is allowed")
+    endif()
+endfunction()
+
+_dusk_require_framework_fork("${DPF_PATH}" DPF)
+_dusk_require_framework_fork("${DPFWIDGETS_PATH}" DPF-Widgets)
 
 if(NOT TARGET dpf)
     add_subdirectory("${DPF_PATH}" dpf EXCLUDE_FROM_ALL)

@@ -216,7 +216,7 @@ cmake --build plugins/sunset-circuits/dpf-plugin/build
 
 The container/CI path (`./docker/build_release.sh sunset`,
 `.github/workflows/dpf-release.yml`) is the reproducible way to build a DPF plugin
-from clean — it pins dusk-audio/DPF (our fork) and DISTRHO/DPF-Widgets at known-good SHAs.
+from clean — it pins our dusk-audio/DPF and dusk-audio/DPF-Widgets hard forks at known-good SHAs.
 
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`

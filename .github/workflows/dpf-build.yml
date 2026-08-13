@@ -49,8 +49,8 @@ on:
 
 # DPF is our fork (dusk-audio/DPF), branch main — the permanent source of truth
 # for our DPF patches (CLAP latency changes constrained to activate(), AU
-# preset + CLAP state hardening, Wayland/CI work). DPF-Widgets stays upstream
-# (DISTRHO/DPF-Widgets) — only DPF is forked.
+# preset + CLAP state hardening, Wayland/CI work). DPF-Widgets is also our hard
+# fork at dusk-audio/DPF-Widgets; neither framework checkout may use upstream.
 # To advance DPF: land changes on fork main in ~/projects/DPF, re-run
 # clap-validator and pluginval against the rebuilt plugins, push to
 # dusk-audio/DPF, THEN bump DPF_REF. Keep SHAs in sync with dpf-release.yml,
@@ -227,7 +227,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
@@ -487,7 +487,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
@@ -601,7 +601,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
@@ -848,7 +848,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive

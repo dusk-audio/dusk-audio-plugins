@@ -180,7 +180,7 @@ private:
 };
 ```
 
-UI: use DPF's `DearImGui` widget (github.com/DISTRHO/DPF-Widgets,
+UI: use DPF's `DearImGui` widget (github.com/dusk-audio/DPF-Widgets,
 `opengl/DearImGui.hpp`). Subclass `ImGuiTopLevelWidget`, draw knobs with
 `ImGui::SliderFloat`/custom knob code, and push edits through
 `setParameterValue(index, v)` + `editParameter(index, true/false)` for

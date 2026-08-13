@@ -24,8 +24,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # DPF comes from the dusk-audio/DPF fork (our patches live there);
-      # DPF-Widgets stays on upstream DISTRHO (no fork). Keep SHAs in sync
+      # DPF and DPF-Widgets come exclusively from the Dusk Audio hard forks.
+      # Keep SHAs in sync
       # with dpf-build.yml, dpf-release.yml and docker/build_release.sh.
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive

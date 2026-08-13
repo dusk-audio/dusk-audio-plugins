@@ -8,7 +8,7 @@ under the **GNU General Public License v3.0 or later** (see the repository
 These plugins incorporate the third-party components listed below. Each is under
 a permissive license that is compatible with the GPLv3, and its copyright and
 permission notice is reproduced here as those licenses require. Per the DPF
-[LICENSING.md](https://github.com/DISTRHO/DPF/blob/main/LICENSING.md), **DPF
+[LICENSING.md](https://github.com/dusk-audio/DPF/blob/main/LICENSING.md), **DPF
 itself must be attributed regardless of the plugin format built.**
 
 ---

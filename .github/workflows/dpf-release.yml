@@ -3,7 +3,8 @@ name: Build Sunset Circuits (DPF)
 # Release + CI-debug workflow for the DPF-based Sunset Circuits synth.
 #
 # The DPF ports live outside the JUCE release build graph (build.yml), so they
-# need their own matrix: this checks out dusk-audio/DPF (our fork) + DISTRHO/DPF-Widgets at
+# need their own matrix: this checks out the dusk-audio/DPF and
+# dusk-audio/DPF-Widgets hard forks at
 # pinned SHAs and builds plugins/sunset-circuits/dpf-plugin (VST3 + CLAP + LV2
 # everywhere, plus a notarizable AU on macOS with an auval pass).
 #
@@ -39,7 +40,7 @@ on:
 
 # DPF is pinned to the dusk-audio/DPF fork (branch main), which is the
 # permanent source of truth for our DPF patches (CLAP latency-in-activate fix
-# and later work). DPF-Widgets stays on upstream DISTRHO (no fork). Keep SHAs
+# and later work). DPF-Widgets is also pinned to our dusk-audio hard fork. Keep SHAs
 # in sync with dpf-build.yml, dpf-au-test.yml and docker/build_release.sh, and
 # re-run the dispatch matrix before tagging.
 env:
@@ -181,7 +182,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
@@ -293,7 +294,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
@@ -368,7 +369,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
@@ -541,7 +542,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
@@ -740,7 +741,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_SHA }}
           path: DPF-Widgets
           submodules: recursive
