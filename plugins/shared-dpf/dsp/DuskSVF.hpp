@@ -52,8 +52,16 @@ public:
         // one lands on nyq-1. Unreachable in practice either way, since the caller's
         // dirty-check compares abs(new - old) > eps and a NaN fails that. Same
         // ceiling-last idiom as nyquistSafeDesignHzD in DuskFilters.hpp.
+        // JUCE's nyq - 1 Hz margin is only a sane ceiling while nyq > 1 Hz; below
+        // that it turns negative and the ceiling-last order would then hand tan()
+        // a negative corner. Fall back to half of Nyquist there, which is positive,
+        // still below Nyquist, and continuous with nyq - 1 at nyq == 2. The 20 Hz
+        // floor needs no separate guard: applying the ceiling last already lowers
+        // it whenever the ceiling is the smaller of the two. fs is required to be
+        // positive and finite (see nyquistSafeDesignHzD in DuskFilters.hpp).
         const float nyq = (float)(0.5 * fs);
-        cutoff = std::min(nyq - 1.0f, std::max(cutoffHz, 20.0f));
+        const float maxCutoff = nyq > 2.0f ? nyq - 1.0f : nyq * 0.5f;
+        cutoff = std::min(maxCutoff, std::max(cutoffHz, 20.0f));
         g = std::tan(kDuskSvfPi * cutoff / (float)fs);
         updateH();
     }
