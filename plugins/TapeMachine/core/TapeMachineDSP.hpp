@@ -33,6 +33,33 @@ inline float  dbToGain (float db)  noexcept { return db > -100.0f ? std::pow (10
 inline double dbToGainD(double db) noexcept { return db > -100.0  ? std::pow (10.0,  db * 0.05)  : 0.0;  }
 
 //==============================================================================
+// Nyquist guard for FIXED filter design frequencies.
+//
+// Every bilinear/RBJ design here maps the analogue corner through tan(pi*f/fs) or
+// cos/sin(2*pi*f/fs), which are only meaningful for f < fs/2. Above Nyquist the
+// prewarp wraps: sin(w0) goes negative, so alpha goes negative, so the RBJ
+// denominator (1 + alpha/A) shrinks or changes sign and the resulting poles land
+// OUTSIDE the unit circle. The filter then diverges geometrically until float
+// overflow (+/-Inf), and the next transposed-direct-form-II update evaluates
+// Inf - Inf = NaN. That is exactly what happened at low host sample rates: the
+// core runs at 2x, so an 8 kHz host gives a 16 kHz internal rate with an 8 kHz
+// Nyquist, and the hardcoded 12 kHz alias/gap-loss shelves designed poles at
+// |z| ~ 2.4 (measured), blowing the output up inside ~70 samples.
+//
+// 0.45 * fs is the SAME ceiling the code already used ad hoc (safeFreq =
+// nyquist * 0.9 in TapeCore::prepare, maxFilterFreq = fs * 0.45 in
+// updateFilters); centralising it in the designers means no call site can skip
+// it. It is a no-op for every design frequency in this plugin at any host rate
+// >= 16.67 kHz (the highest fixed corner is 15 kHz), so all standard rates from
+// 22.05 kHz up are bit-for-bit unaffected.
+inline double nyquistSafeHz (double fs, double freq) noexcept
+{
+    const double maxFreq = fs * 0.45;
+    if (! (fs > 0.0) || ! std::isfinite (freq)) return 1.0;
+    return freq < 1.0 ? 1.0 : (freq > maxFreq ? maxFreq : freq);
+}
+
+//==============================================================================
 // DBiquad — DOUBLE-precision transposed-direct-form-II biquad (double for LF high-Q stability at 4x).
 //==============================================================================
 struct DBiquadCoeffs { double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0; };
@@ -54,6 +81,7 @@ public:
     // juce::dsp::IIR makePeakFilter (RBJ peaking EQ, alpha = sin(w0)/(2Q)).
     static DBiquadCoeffs peak (double fs, double freq, double gainDb, double Q) noexcept
     {
+        freq = nyquistSafeHz (fs, freq);
         const double A     = std::pow (10.0, gainDb / 40.0);
         const double w0    = kTwoPiD * freq / fs;
         const double cw    = std::cos (w0), sw = std::sin (w0);
@@ -71,6 +99,7 @@ public:
     // juce::dsp::IIR makeLowPass(fs, freq, Q).
     static DBiquadCoeffs lowPass (double fs, double freq, double Q) noexcept
     {
+        freq = nyquistSafeHz (fs, freq);
         const double n   = 1.0 / std::tan (kPiD * freq / fs);
         const double nSq = n * n;
         const double invQ = 1.0 / Q;
@@ -81,6 +110,7 @@ public:
     // juce::dsp::IIR makeHighPass(fs, freq, Q).
     static DBiquadCoeffs highPass (double fs, double freq, double Q) noexcept
     {
+        freq = nyquistSafeHz (fs, freq);
         const double n   = std::tan (kPiD * freq / fs);
         const double nSq = n * n;
         const double invQ = 1.0 / Q;
@@ -93,6 +123,7 @@ public:
     // matches the reference decks, which keep a broad LF bump nearly flat to ~10-15 Hz.
     static DBiquadCoeffs highPass1 (double fs, double freq) noexcept
     {
+        freq = nyquistSafeHz (fs, freq);
         const double k = std::tan (kPiD * freq / fs);
         const double n = 1.0 / (1.0 + k);
         return { n, -n, 0.0, (k - 1.0) * n, 0.0 };
@@ -101,6 +132,7 @@ public:
     // juce::dsp::IIR makeHighShelf / makeLowShelf (RBJ, alpha = sin(w0)/(2Q)).
     static DBiquadCoeffs shelf (double fs, double freq, double gainDb, double Q, bool high) noexcept
     {
+        freq = nyquistSafeHz (fs, freq);
         const double A     = std::pow (10.0, gainDb / 40.0);
         const double w0    = kTwoPiD * freq / fs;
         const double cw    = std::cos (w0), sw = std::sin (w0);
@@ -219,6 +251,11 @@ class SaturationSplitFilter
 public:
     void prepare (double sampleRate, double cutoffHz = 5000.0)
     {
+        // Same Nyquist guard as the DBiquad designers: this RBJ lowpass has no
+        // cancelling zeros, so an above-Nyquist corner puts both poles outside the
+        // unit circle and the split filter diverges on its own (measured |z| = 1.73
+        // at a 4 kHz host rate).
+        cutoffHz = nyquistSafeHz (sampleRate, cutoffHz);
         const double w0 = 2.0 * kPiD * cutoffHz / sampleRate;
         const double cosw0 = std::cos (w0);
         const double sinw0 = std::sin (w0);
@@ -320,7 +357,11 @@ public:
                 stages[i].state = 0.0f;
                 continue;
             }
-            float tanVal = std::tan (kPiF * breakFreqs[i] / static_cast<float> (currentSampleRate));
+            // Nyquist guard: tan(pi*f/fs) diverges at f == fs/2 and passes through -1
+            // just past it, where (tanVal + 1) is 0 and the coefficient becomes Inf/NaN.
+            const float bf = static_cast<float> (nyquistSafeHz (currentSampleRate,
+                                                               static_cast<double> (breakFreqs[i])));
+            float tanVal = std::tan (kPiF * bf / static_cast<float> (currentSampleRate));
             stages[i].coeff = (tanVal - 1.0f) / (tanVal + 1.0f);
             stages[i].active = true;
         }
@@ -375,7 +416,10 @@ struct ImprovedNoiseGenerator
         tiltCoeff = 1.0f - std::exp (-2.0f * kPiF * tiltFreq / static_cast<float> (sampleRate));
         envelopeCoeff = 1.0f - std::exp (-2.0f * kPiF * 100.0f / static_cast<float> (sampleRate));
 
-        float fc = 8500.0f, Q = 1.1f;   // HF-rise "scrape" band; fills the reference hiss rise up to 10 kHz
+        // HF-rise "scrape" band; fills the reference hiss rise up to 10 kHz. Nyquist-
+        // guarded like every other fixed corner: above Nyquist this RBJ bandpass has
+        // unstable poles and the idle hiss would diverge instead of hissing.
+        float fc = static_cast<float> (nyquistSafeHz (sampleRate, 8500.0)), Q = 1.1f;
         float w0 = 2.0f * kPiF * fc / static_cast<float> (sampleRate);
         float cosw0 = std::cos (w0), sinw0 = std::sin (w0);
         float alpha = sinw0 / (2.0f * Q);
@@ -507,7 +551,7 @@ public:
     float calculateModulation (float wowAmount, float flutterAmount,
                                float wowRate, float flutterRate, double sampleRate)
     {
-        if (sampleRate <= 0.0) sampleRate = 44100.0;
+        if (! std::isfinite (sampleRate) || sampleRate <= 0.0) sampleRate = 44100.0;
 
         const float osScale = static_cast<float> (oversamplingFactor);
         const double safeSampleRate = std::max (1.0, sampleRate);
@@ -742,7 +786,7 @@ public:
     // osRate/osFactor = oversampled rate/factor; maxOsRate sizes the wow/flutter buffer.
     void prepare (double osRate, int osFactor, double maxOsRate)
     {
-        if (osRate <= 0.0) osRate = 44100.0;
+        if (! std::isfinite (osRate) || osRate <= 0.0) osRate = 44100.0;
         if (osFactor < 1) osFactor = 1;
 
         currentSampleRate = osRate;
@@ -1989,7 +2033,11 @@ private:
         float biasFreq, biasGainDb;
         if (machine == Swiss) { biasFreq = 8000.0f; biasGainDb = -(biasAmount - 0.5f) * 8.0f + 1.0f; }
         else                     { biasFreq = 7000.0f; biasGainDb = (0.5f - biasAmount) * 5.0f + 1.5f; }
-        biasFilter.setCoeffs (Biquad::shelf (currentSampleRate, biasFreq, biasGainDb, 0.707f, true));
+        // Nyquist-guarded at the call site: Biquad (shared DuskFilters.hpp) is used by the
+        // other DPF plugins too, so the clamp lives here rather than in the shared designer.
+        biasFilter.setCoeffs (Biquad::shelf (currentSampleRate,
+            static_cast<float> (nyquistSafeHz (currentSampleRate, static_cast<double> (biasFreq))),
+            biasGainDb, 0.707f, true));
 
         // DC blocker: 1st-order (6 dB/oct). Both reference decks keep a broad LF head bump nearly
         // flat down to ~10-15 Hz, then roll off gently below — a 2nd-order Butterworth corner
