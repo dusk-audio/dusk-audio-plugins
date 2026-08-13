@@ -12,25 +12,31 @@ violating the CLAP spec. This script runs clap-validator on a built .clap and:
              fail any test, so the exit code alone would miss it -- hence the
              explicit signature check.)
 
-  ADVISORY   The rest of the clap-validator suite is run and printed, but does
-             NOT gate the build yet. Remaining blocker, measured against
-             clap-validator 0.4.1 on 2026-08-13:
+  SUITE      Every other clap-validator test also gates the build, because the
+             workflow now sets SUITE_STRICT=1. Measured against clap-validator
+             0.4.1 on 2026-08-13, all four DPF plugins are clean:
 
-               4k-eq-2        FAILS process-varying-sample-rates (NaN at
-                              1234.57 Hz) -- same root cause TapeMachine 2 had:
-                              fixed filter design frequencies are not clamped to
-                              Nyquist, so at very low host rates the RBJ/bilinear
-                              prewarp wraps and the biquads get poles outside the
-                              unit circle.
-               tapemachine-2  clean (fixed: Nyquist-guarded designers).
-               tape-echo-2    clean.
-               multi-q-2      clean (process-audio-denormals can emit a timing
-                              WARNING on a loaded machine; warnings do not affect
-                              the validator exit status, so they never gate).
+               tapemachine-2  exit 0, 33 passed, 0 failed
+               4k-eq-2        exit 0, 33 passed, 0 failed
+               tape-echo-2    exit 0, 33 passed, 0 failed
+               multi-q-2      exit 0, 33 passed, 0 failed
 
-             Flip SUITE_STRICT=1 once 4K EQ 2 is fixed -- doing it before that
-             breaks the 4k-eq-2 matrix leg. NEVER add a per-test allowlist --
-             fix the plugin, then flip SUITE_STRICT on.
+             Both of the process-varying-sample-rates failures that kept this
+             advisory (TapeMachine 2 at 8 kHz, 4K EQ 2 at 1234.57 Hz) had the same
+             root cause: filter design frequencies were not clamped to Nyquist, so
+             at low host rates the RBJ/bilinear prewarp wrapped and the biquads got
+             poles outside the unit circle. Fixed in the DBiquad designers and in
+             the shared duskaudio::Biquad designers respectively.
+
+             process-audio-denormals can emit a timing WARNING on a loaded machine.
+             That is fine: timing warnings do not affect the validator exit status
+             and carry no gated signature, so they never gate. Note this is NOT a
+             general property of warnings, the latency check below deliberately
+             hard-fails on a WARNING by scanning for its signature.
+
+             If a plugin ever has to be exempted, gate per plugin rather than
+             returning the whole matrix to advisory. NEVER add a per-test
+             allowlist -- fix the plugin instead.
 
 Usage: dpf_clap_validate.py <path-to-plugin.clap>
 Env:
