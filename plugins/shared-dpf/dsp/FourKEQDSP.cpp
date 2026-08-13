@@ -614,8 +614,9 @@ std::array<BiquadCoeffs, 3> FourKEQDSP::calibratedPairCorrection(
     const float secondFrequency = calibratedEqFrequency(
         secondControlHz, secondGainDb, secondBand, black, secondBell);
 
-    // Convert our physical controls back to the UAD normalized coordinates
-    // used by the measurement campaign. Q runs in the opposite direction.
+    // Convert our physical controls back to the normalized coordinates used by
+    // the British console EQ measurement campaign. Q runs in the opposite
+    // direction.
     float controls[6] = {
         clampf(firstGainDb / 15.0f, -1.0f, 1.0f),
         2.0f * inverseAnchorPosition(
@@ -767,7 +768,7 @@ void FourKEQDSP::prepare(double sampleRate, int maxBlockSize)
     reportedLatency.store((int)std::lround(os[0].latency()), std::memory_order_relaxed);
 
     consoleSat.setSampleRate(osRate);
-    consoleSat.setNoiseEnabled(false); // UAD EQ/filter path preserves digital silence.
+    consoleSat.setNoiseEnabled(false); // Measured EQ/filter path preserves digital silence.
     consoleSat.reset();
 
     meterDecay = std::exp(-1.0f / (0.3f * (float)baseSampleRate));
@@ -803,9 +804,10 @@ void FourKEQDSP::recomputeCoeffs(double fs) noexcept
 {
     const bool black = pEqType.load(R) > 0.5f;
 
-    // Captured UAD filters: Brown HPF is two-pole, Black is a split three-pole;
-    // both LPFs are two-pole. The dial-to-cutoff anchors and HPF insertion trim
-    // are fitted from all six hosted readback markings.
+    // Captured British console filters: Brown/E-series HPF is two-pole,
+    // Black/G-series is a split three-pole; both LPFs are two-pole. The
+    // dial-to-cutoff anchors and HPF insertion trim are fitted from all six
+    // hosted readback markings.
     const float hpfControl = pHpfFreq.load(R);
     // The sub-20 Hz HPF poles run at base rate. At 4x/192 kHz their float TDF-II
     // state can overflow for some in-between dial values due to coefficient
@@ -1004,7 +1006,8 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
         }
 
     //--- oversampled EQ + saturation chain ------------------------------------
-    // The hosted SSL path has a small native mode-dependent nonlinear residue
+    // The modeled British console path has a small native mode-dependent
+    // nonlinear residue
     // even with its excluded preamp/dynamics blocks neutral. The user control
     // adds color above that measured baseline; 0% remains the reference match.
     const float nativeSatAmt = black ? 0.50f : 0.25f;
@@ -1014,7 +1017,8 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
     // A 0 dB peaking/shelf section is mathematically unity. Running all ten
     // neutral biquads anyway leaves their near-unit float states active at up
     // to 192 kHz, producing an input-correlated sub-40 Hz floor around
-    // -100 dBFS. The UAD path is silent there, so bypass neutral stages exactly.
+    // -100 dBFS. The measured reference path is silent there, so bypass neutral
+    // stages exactly.
     const bool lfActive = std::abs(pLfGain.load(R)) > 1.0e-6f;
     const bool lmActive = std::abs(pLmGain.load(R)) > 1.0e-6f;
     const bool hmActive = std::abs(pHmGain.load(R)) > 1.0e-6f;
@@ -1082,11 +1086,10 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
                 }
                 if (lpfEn) x = cf.lpf.process(x);
                 x = consoleSat.processSample(x, satAmt, left);
-                return x;
+                // Measured post-EQ headroom: transparent below the rail,
+                // followed by sharp odd-harmonic overload at maximum boost.
+                return clampf(x, -rail, rail);
             });
-            // Measured post-EQ headroom: transparent below the rail, followed
-            // by the sharp odd-harmonic overload seen at maximum band boost.
-            wet[c][n] = clampf(wet[c][n], -rail, rail);
         }
     }
 
