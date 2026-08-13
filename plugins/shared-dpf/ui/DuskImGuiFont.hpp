@@ -172,4 +172,137 @@ inline CrispFontSet loadEmbeddedCrispFontSet(
     return set;
 }
 
+// One face family to bake: a static TTF blob plus the design sizes wanted from it.
+struct EmbeddedFontRequest
+{
+    const unsigned char* ttfData    = nullptr;
+    unsigned int         ttfSize    = 0;
+    const float*         designSizes = nullptr;
+    int                  count      = 0;
+};
+
+// What the fit loop settled on. Callers that want to report it (a debug log, an
+// about panel) can; nothing depends on it.
+struct AtlasFitResult
+{
+    int atlasWidth   = 0;
+    int atlasHeight  = 0;
+    int oversample   = 0;   // 2 = crisp, 1 = fell back
+    int droppedSizes = 0;   // largest bakes dropped per request
+    int attempts     = 0;
+    bool fits        = false;
+};
+
+// Bake every request into the shared ImGui atlas, shrinking until the BUILT
+// atlas fits maxTextureSize in both axes.
+//
+// Measuring beats predicting here. The atlas dimensions depend on the glyph
+// range, the oversampling factor (2x2 costs four times the area per glyph) and
+// stb's packing, so a face count that fits on one machine overflows on another.
+// A texture wider or taller than GL_MAX_TEXTURE_SIZE fails to upload, and the
+// GL2 backend does not report it: the atlas texture stays incomplete, texturing
+// drops out for the glyph quads, and every label paints as a solid rectangle in
+// the text colour while shapes still draw correctly.
+//
+// maxTextureSize comes from the caller because this header stays free of GL
+// includes. Pass GL_MAX_TEXTURE_SIZE, or 1024 if the query returned nothing:
+// unknown must mean conservative, never unlimited.
+inline void loadEmbeddedCrispFontSets(const EmbeddedFontRequest* requests, int requestCount,
+                                      CrispFontSet* outSets, float scaleFactor,
+                                      int maxTextureSize, AtlasFitResult* outFit = nullptr)
+{
+    if (requests == nullptr || outSets == nullptr || requestCount <= 0)
+        return;
+
+    if (maxTextureSize <= 0)
+        maxTextureSize = 1024;
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    // A request can only ever contribute CrispFontSet::kMax faces, so clamp here
+    // rather than at each use: an oversized count would otherwise drive the retry
+    // loop through attempts that cannot change the outcome, and a zero count with
+    // a non-null size array would still read designSizes[0] through the floor in
+    // `wanted` below.
+    const auto usableCount = [](const EmbeddedFontRequest& req) -> int
+    {
+        if (req.count <= 0)
+            return 0;
+        return req.count < CrispFontSet::kMax ? req.count : CrispFontSet::kMax;
+    };
+
+    int largestCount = 0;
+    for (int r = 0; r < requestCount; ++r)
+        if (usableCount(requests[r]) > largestCount)
+            largestCount = usableCount(requests[r]);
+
+    AtlasFitResult fit;
+
+    // Attempt 0 keeps 2x2 oversampling, attempt 1 drops to 1x1 (a quarter of the
+    // area, still legible), then each further attempt drops the largest bake from
+    // every request. Large text scaled up from a smaller face beats no text.
+    for (int attempt = 0;; ++attempt)
+    {
+        const int oversample = attempt == 0 ? 2 : 1;
+        const int dropped    = attempt <= 1 ? 0 : attempt - 1;
+
+        fit.attempts   = attempt + 1;
+        fit.oversample = oversample;
+        fit.droppedSizes = dropped;
+
+        io.Fonts->Clear();
+
+        for (int r = 0; r < requestCount; ++r)
+        {
+            outSets[r] = CrispFontSet();
+
+            const EmbeddedFontRequest& req = requests[r];
+            const int available = usableCount(req);
+            if (req.ttfData == nullptr || req.ttfSize == 0 || req.designSizes == nullptr
+                || available <= 0)
+                continue;
+
+            const int wanted = available - dropped > 1 ? available - dropped : 1;
+
+            for (int i = 0; i < wanted && outSets[r].count < CrispFontSet::kMax; ++i)
+            {
+                ImFontConfig cfg;
+                cfg.OversampleH = oversample;
+                cfg.OversampleV = oversample;
+                cfg.PixelSnapH = false;
+                cfg.FontDataOwnedByAtlas = false;
+                cfg.GlyphRanges = crispGlyphRanges();
+
+                const float px = req.designSizes[i] * scaleFactor;
+                if (ImFont* f = io.Fonts->AddFontFromMemoryTTF(
+                        const_cast<unsigned char*>(req.ttfData), static_cast<int>(req.ttfSize),
+                        px, &cfg, crispGlyphRanges()))
+                {
+                    outSets[r].faces[outSets[r].count]    = f;
+                    outSets[r].nativePx[outSets[r].count] = px;
+                    ++outSets[r].count;
+                }
+            }
+        }
+
+        io.Fonts->Build();
+
+        fit.atlasWidth  = io.Fonts->TexWidth;
+        fit.atlasHeight = io.Fonts->TexHeight;
+        fit.fits = io.Fonts->TexWidth <= maxTextureSize && io.Fonts->TexHeight <= maxTextureSize;
+
+        if (fit.fits)
+            break;
+
+        // Every request is down to a single face and it still does not fit: stop
+        // rather than loop forever. Text will be broken, but so would any other
+        // outcome on a context this small, and the caller can report it.
+        if (dropped >= largestCount - 1)
+            break;
+    }
+
+    if (outFit != nullptr)
+        *outFit = fit;
+}
+
 } // namespace duskdpf
