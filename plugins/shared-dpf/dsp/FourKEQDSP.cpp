@@ -728,19 +728,6 @@ float FourKEQDSP::voicedMidQ(float gainDb, float baseQ, bool black) noexcept
     return clampf(dq, 0.5f, 8.0f);
 }
 
-// Standard bilinear pre-warp (Multi-Q's britishPreWarpFrequency). Retained for
-// callers that want an fc estimate; the console coeff builders below pre-warp
-// internally, so recomputeCoeffs no longer applies the old piecewise HF fudge.
-float FourKEQDSP::preWarp(float freq, double sampleRate) noexcept
-{
-    const float nyquist = static_cast<float>(sampleRate * 0.5);
-    float safeFreq = std::min(freq, nyquist * 0.98f);
-    safeFreq = std::max(safeFreq, 1.0f);
-    const float omega = kDuskPi * safeFreq / static_cast<float>(sampleRate);
-    const float warped = static_cast<float>(sampleRate) / kDuskPi * std::tan(omega);
-    return std::min(std::max(warped, 1.0f), nyquist * 0.99f);
-}
-
 // mode: 0 = 1x (off), 1 = 2x, 2 = 4x. Capped so the oversampled rate stays sane
 // at already-high base rates (>=176.4k -> 1x, >=88.2k -> max 2x).
 int FourKEQDSP::chooseFactor(double baseSampleRate, int mode) noexcept

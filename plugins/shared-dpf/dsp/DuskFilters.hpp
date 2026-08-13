@@ -33,18 +33,27 @@ constexpr float kDuskPi    = 3.14159265358979323846f;
 // Every designer below prewarps through tan(pi*f/fs) or cos/sin(2*pi*f/fs),
 // which are only meaningful for f < fs/2. Past Nyquist the mapping wraps and
 // the coefficients stop describing the intended filter:
-//   - tan(pi*f/fs) diverges AT f == fs/2, so lowPass's 1/tan and the
-//     1/(k+1) reciprocals below overflow to Inf;
-//   - just above it tan goes negative and passes through -1, where
-//     firstOrderLowPass's (k+1) and firstOrderAllPass's (1+t) are zero
-//     (divide by zero);
-//   - sin(w0) goes negative, so alpha goes negative, so the RBJ denominator
-//     (1 + alpha/A) shrinks or flips sign and the poles land OUTSIDE the unit
-//     circle. The filter then diverges geometrically to +/-Inf, and the next
-//     transposed-direct-form-II update evaluates Inf - Inf = NaN.
-// That last path is how 4K EQ 2 produced a NaN at a 1234.57 Hz host rate under
+//   - tan(pi*f/fs) grows without bound as f approaches fs/2. It does NOT reach
+//     Inf: pi/2 is not representable in double, so tan tops out near 1.6e16
+//     (measured) and the reciprocals below stay finite. What it produces is a
+//     corner nowhere near the one requested;
+//   - at f == 0.75*fs tan passes through exactly -1, where firstOrderLowPass's
+//     (k+1) and firstOrderAllPass's (1+t) are zero. This one IS a divide by zero;
+//   - sin(w0) goes negative across (0.5*fs, fs), so alpha goes negative, so the
+//     RBJ denominator (1 + alpha/A) shrinks or flips sign and the poles land
+//     OUTSIDE the unit circle. The filter then diverges geometrically until the
+//     state overflows to +/-Inf, at which point a transposed-direct-form-II
+//     update evaluating Inf - Inf yields NaN.
+// The third path is how 4K EQ 2 produced a NaN at a 1234.57 Hz host rate under
 // clap-validator's process-varying-sample-rates: its band corners (up to 20 kHz)
 // sit far above Nyquist once the host rate drops that low.
+//
+// NaN is the loud failure, not the only one, and not the common one. Where a host
+// carries its own finiteness guard (Multi-Q's StereoBiquad and CytomicSVF zero the
+// state and return 0.0 on a non-finite sample) the same divergence never reaches
+// the output at all: it surfaces as repeated state resets, heard as dropouts or
+// crackle, and every output-level check sails straight past it. Do not treat a
+// clean NaN sweep as evidence that a designer is sound.
 //
 // Clamping HERE rather than at each call site is deliberate: this header is
 // compiled into every DPF plugin, and a guard that a call site can forget is a
