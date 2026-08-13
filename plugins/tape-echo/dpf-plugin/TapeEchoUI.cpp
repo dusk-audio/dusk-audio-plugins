@@ -87,13 +87,31 @@ public:
             { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 28.0f, 32.0f, 48.0f, 72.0f };
         static constexpr float kRegularSizes[] =
             { 7.0f, 9.0f, 11.0f, 14.0f, 18.0f, 24.0f, 32.0f, 48.0f };
+        int labelCount   = (int)(sizeof(kLabelSizes) / sizeof(kLabelSizes[0]));
+        int regularCount = (int)(sizeof(kRegularSizes) / sizeof(kRegularSizes[0]));
+
+        // Baking all of those needs a 2048 px font atlas. Microsoft's software
+        // OpenGL 1.1 (a virtual machine with no 3D acceleration, or a Remote
+        // Desktop session) caps textures at 1024 px, and ImGui's GL2 backend
+        // reports nothing at all when that upload fails: it leaves the atlas
+        // texture incomplete, fixed-function texturing drops out for the glyph
+        // quads, and every label paints as a solid rectangle in the text color
+        // while the knobs and meters still look right. Drop the largest bakes
+        // on such a context so the atlas fits in 1024 px; the biggest text is
+        // then scaled up from a smaller face rather than disappearing.
+        GLint maxTextureSize = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+        if (maxTextureSize > 0 && maxTextureSize < 2048)
+        {
+            labelCount   = 6;   // 7..24 px
+            regularCount = 5;   // 7..18 px
+        }
+
         const float dpi = getScaleFactor();
         labelFonts = duskdpf::loadEmbeddedCrispFontSet(
-            kTeFontSemiBold, kTeFontSemiBold_len, kLabelSizes,
-            (int)(sizeof(kLabelSizes) / sizeof(kLabelSizes[0])), 1.0f);
+            kTeFontSemiBold, kTeFontSemiBold_len, kLabelSizes, labelCount, 1.0f);
         regularFonts = duskdpf::loadEmbeddedCrispFontSet(
-            kTeFontRegular, kTeFontRegular_len, kRegularSizes,
-            (int)(sizeof(kRegularSizes) / sizeof(kRegularSizes[0])), 1.0f);
+            kTeFontRegular, kTeFontRegular_len, kRegularSizes, regularCount, 1.0f);
         labelFont = labelFonts.pick(12.5f * dpi);
         panel.setFontSet(labelFonts);
 
