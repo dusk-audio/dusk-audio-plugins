@@ -57,8 +57,19 @@ constexpr float kDuskPi    = 3.14159265358979323846f;
 //
 // Clamping HERE rather than at each call site is deliberate: this header is
 // compiled into every DPF plugin, and a guard that a call site can forget is a
-// guard that will be forgotten. Call sites that already clamp (FourKEQDSP's LPF,
-// TapeEcho's 0.45*fs sites) keep their clamp and simply never reach this one.
+// guard that will be forgotten. A few call sites still clamp on their own and are
+// commented where they do, because they are NOT redundant with this one: they
+// either feed a downstream derivation (TapeMachine's hfCutoff) or deliberately cap
+// tighter than this ceiling as part of the voicing (TapeMachine's recordHeadCutoff
+// and biasFilter, TapeEcho's 0.45*fs sites). Everything else relies on this.
+//
+// WHAT THE CEILING BUYS, AND WHAT IT DOES NOT. It trades divergence for a corner
+// parked just under Nyquist. At the ceiling the poles sit at |z| ~ 0.999, which
+// rings for on the order of a thousand samples rather than blowing up. That is an
+// unambiguous improvement on NaN, but it is NOT a voicing-safe clamp: a filter
+// whose corner has been pulled down to the ceiling is no longer the filter that was
+// asked for. The ceiling exists so degenerate rates stay bounded, not so they sound
+// right. Keep design frequencies below it by construction wherever tone matters.
 //
 // CEILING: kMaxDesignFreqRatio below. It is deliberately TIGHT to Nyquist, and it
 // is NOT the same number as the 0.45 * fs ceiling inside TapeMachine's private
@@ -69,8 +80,9 @@ constexpr float kDuskPi    = 3.14159265358979323846f;
 //     20000 / 44100 = 0.4535, so any ceiling at or below 0.4535 would detune a
 //     wide-open LPF at 44.1 kHz: an audible regression in shipping plugins. The
 //     ceiling must therefore stay >= 0.4535. 0.4998 is the value FourKEQDSP.cpp's
-//     own LPF clamp and every designer in Multi-Q's MqBiquad already use, so it
-//     also keeps one number across the family. At 44.1 kHz it is 22041 Hz, above
+//     LPF clamp used before this guard subsumed it, and the value Multi-Q's own
+//     amb::clampFreq uses, so it keeps one number across the family. At 44.1 kHz
+//     it is 22041 Hz, above
 //     every design frequency any of these plugins can request at any supported
 //     rate (highest: the 16 kHz British HF band, 0.363 of fs at 44.1 kHz).
 //
@@ -88,15 +100,27 @@ constexpr float kDuskPi    = 3.14159265358979323846f;
 // coefficients no matter what frequency this function hands back.
 constexpr double kMaxDesignFreqRatio = 0.4998;
 
-inline float nyquistSafeDesignHz(double fs, float freq,
-                                 double maxFraction = kMaxDesignFreqRatio) noexcept
+// The ONE implementation of the clamp ordering. TapeMachine's DBiquad guard
+// (nyquistSafeHz) is a thin alias over this at its own ceiling, so the two cannot
+// drift apart.
+//
+// maxFraction has NO default on purpose. It is a FRACTION of fs, and a defaulted
+// parameter of that shape invites a caller to pass a frequency in Hz and silently
+// get a ceiling of fs * 12000. Callers state the ceiling they mean; the float
+// wrapper below is the one that binds kMaxDesignFreqRatio.
+inline double nyquistSafeDesignHzD(double fs, double freq, double maxFraction) noexcept
 {
     // Floor FIRST, ceiling LAST. The reverse order lets the 1 Hz floor win at
     // absurdly low fs and hand the designer a corner at or above Nyquist, which
     // is the exact instability this guard exists to prevent. The order is also
     // what makes a NaN freq land on the ceiling instead of propagating: both
     // comparisons are false, so max returns the NaN and min then returns fs*frac.
-    return (float)std::min(fs * maxFraction, std::max((double)freq, 1.0));
+    return std::min(fs * maxFraction, std::max(freq, 1.0));
+}
+
+inline float nyquistSafeDesignHz(double fs, float freq) noexcept
+{
+    return (float)nyquistSafeDesignHzD(fs, (double)freq, kMaxDesignFreqRatio);
 }
 
 //==============================================================================

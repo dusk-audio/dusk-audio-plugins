@@ -3227,7 +3227,8 @@ private:
         }
         if (values[kLpfEnabled] > 0.5f)
         {
-            const float f = (float)std::max(1.0, std::min((double)values[kLpfFreq], fs * 0.4998));
+            const float f = (float)duskaudio::nyquistSafeDesignHzD(
+                fs, (double)values[kLpfFreq], duskaudio::kMaxDesignFreqRatio);
             Biquad lp; lp.setCoeffs(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f));
             filtMag *= lp.magnitude(w);
         }

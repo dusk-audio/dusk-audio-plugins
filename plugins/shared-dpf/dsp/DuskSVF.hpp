@@ -45,9 +45,13 @@ public:
         // Clamp away from 0 and Nyquist exactly like JUCE's update(), but with the
         // FLOOR applied first and the CEILING last. The other order lets the 20 Hz
         // floor win whenever fs < 42 Hz and hand back a cutoff above Nyquist, which
-        // is the one thing this clamp exists to prevent. Byte-identical at every
-        // real rate (the inversion needs fs < 42 Hz); same ceiling-last idiom as
-        // nyquistSafeDesignHz in DuskFilters.hpp.
+        // is the one thing this clamp exists to prevent. Identical for finite input
+        // at any fs >= 42 Hz, which is every real rate; the inversion needs less.
+        // Not identical for a NaN cutoff, and that is the point: the old form
+        // propagated the NaN into g and permanently poisoned ic1eq/ic2eq, while this
+        // one lands on nyq-1. Unreachable in practice either way, since the caller's
+        // dirty-check compares abs(new - old) > eps and a NaN fails that. Same
+        // ceiling-last idiom as nyquistSafeDesignHzD in DuskFilters.hpp.
         const float nyq = (float)(0.5 * fs);
         cutoff = std::min(nyq - 1.0f, std::max(cutoffHz, 20.0f));
         g = std::tan(kDuskSvfPi * cutoff / (float)fs);
