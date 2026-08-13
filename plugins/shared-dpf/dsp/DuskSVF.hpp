@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 namespace duskaudio
@@ -41,9 +42,26 @@ public:
 
     void setCutoff(float cutoffHz) noexcept
     {
-        // clamp away from 0 and Nyquist exactly like JUCE's update()
+        // Clamp away from 0 and Nyquist exactly like JUCE's update(), but with the
+        // FLOOR applied first and the CEILING last. The other order lets the 20 Hz
+        // floor win whenever fs < 42 Hz and hand back a cutoff above Nyquist, which
+        // is the one thing this clamp exists to prevent. Identical for finite input
+        // at any fs >= 42 Hz, which is every real rate; the inversion needs less.
+        // Not identical for a NaN cutoff, and that is the point: the old form
+        // propagated the NaN into g and permanently poisoned ic1eq/ic2eq, while this
+        // one lands on nyq-1. Unreachable in practice either way, since the caller's
+        // dirty-check compares abs(new - old) > eps and a NaN fails that. Same
+        // ceiling-last idiom as nyquistSafeDesignHzD in DuskFilters.hpp.
+        // JUCE's nyq - 1 Hz margin is only a sane ceiling while nyq > 1 Hz; below
+        // that it turns negative and the ceiling-last order would then hand tan()
+        // a negative corner. Fall back to half of Nyquist there, which is positive,
+        // still below Nyquist, and continuous with nyq - 1 at nyq == 2. The 20 Hz
+        // floor needs no separate guard: applying the ceiling last already lowers
+        // it whenever the ceiling is the smaller of the two. fs is required to be
+        // positive and finite (see nyquistSafeDesignHzD in DuskFilters.hpp).
         const float nyq = (float)(0.5 * fs);
-        cutoff = cutoffHz < 20.0f ? 20.0f : (cutoffHz > nyq - 1.0f ? nyq - 1.0f : cutoffHz);
+        const float maxCutoff = nyq > 2.0f ? nyq - 1.0f : nyq * 0.5f;
+        cutoff = std::min(maxCutoff, std::max(cutoffHz, 20.0f));
         g = std::tan(kDuskSvfPi * cutoff / (float)fs);
         updateH();
     }

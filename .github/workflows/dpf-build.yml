@@ -46,6 +46,9 @@ on:
       - 'plugins/*/core/**'
       - 'plugins/shared-dpf/**'
       - '.github/workflows/dpf-build.yml'
+      # The gate scripts this workflow runs. Without this a PR that only edits
+      # dpf_clap_validate.py never runs the gate it just changed.
+      - '.github/scripts/**'
 
 # DPF is our fork (dusk-audio/DPF), branch main — the permanent source of truth
 # for our DPF patches (CLAP latency changes constrained to activate(), AU
@@ -310,11 +313,18 @@ jobs:
 
       - name: Validate CLAP (clap-validator gate)
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          # STRICT: any failing clap-validator test fails the build, on top of the
+          # DPF CLAP latency hard gate (clap_host_latency::changed outside
+          # clap_plugin::activate()). All four DPF plugins run clean as of the
+          # Nyquist design-frequency clamp, so there is nothing left to be advisory
+          # about. If this ever needs backing off, gate per plugin rather than
+          # returning the whole matrix to advisory, and NEVER add a per-test
+          # allowlist (see .github/scripts/dpf_clap_validate.py).
+          SUITE_STRICT: "1"
         run: |
-          # Hard-fail on a DPF CLAP latency regression (clap_host_latency::changed
-          # outside clap_plugin::activate()); the rest of the suite is advisory for
-          # now (see .github/scripts/dpf_clap_validate.py). xvfb: clap-validator
-          # drives the plugin GUI, which needs an X display in this headless container.
+          # xvfb: clap-validator drives the plugin GUI, which needs an X display in
+          # this headless container.
           xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/dpf_clap_validate.py" \
             "build/bin/${PLUGIN_BASE}.clap"
 

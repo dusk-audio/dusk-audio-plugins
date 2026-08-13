@@ -169,7 +169,6 @@ public:
     // uses the older parallel topology independently of 4K EQ 2.
     static float voicedMidQ(float gainDb, float baseQ, bool black) noexcept;
     static float bandK(float gainDb) noexcept { return std::pow(10.0f, 0.05f * gainDb) - 1.0f; }
-    static float preWarp(float freq, double fs) noexcept;
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
 private:

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 
@@ -25,6 +26,102 @@ namespace duskaudio
 
 constexpr float kDuskTwoPi = 6.28318530717958647692f;
 constexpr float kDuskPi    = 3.14159265358979323846f;
+
+//==============================================================================
+// Nyquist guard for biquad DESIGN frequencies.
+//
+// Every designer below prewarps through tan(pi*f/fs) or cos/sin(2*pi*f/fs),
+// which are only meaningful for f < fs/2. Past Nyquist the mapping wraps and
+// the coefficients stop describing the intended filter:
+//   - tan(pi*f/fs) grows without bound as f approaches fs/2. It does NOT reach
+//     Inf: pi/2 is not representable in double, so tan tops out near 1.6e16
+//     (measured) and the reciprocals below stay finite. What it produces is a
+//     corner nowhere near the one requested;
+//   - at f == 0.75*fs tan passes through exactly -1, where firstOrderLowPass's
+//     (k+1) and firstOrderAllPass's (1+t) are zero. This one IS a divide by zero;
+//   - sin(w0) goes negative across (0.5*fs, fs), so alpha goes negative, so the
+//     RBJ denominator (1 + alpha/A) shrinks or flips sign and the poles land
+//     OUTSIDE the unit circle. The filter then diverges geometrically until the
+//     state overflows to +/-Inf, at which point a transposed-direct-form-II
+//     update evaluating Inf - Inf yields NaN.
+// The third path is how 4K EQ 2 produced a NaN at a 1234.57 Hz host rate under
+// clap-validator's process-varying-sample-rates: its band corners (up to 20 kHz)
+// sit far above Nyquist once the host rate drops that low.
+//
+// NaN is the loud failure, not the only one, and not the common one. Where a host
+// carries its own finiteness guard (Multi-Q's StereoBiquad and CytomicSVF zero the
+// state and return 0.0 on a non-finite sample) the same divergence never reaches
+// the output at all: it surfaces as repeated state resets, heard as dropouts or
+// crackle, and every output-level check sails straight past it. Do not treat a
+// clean NaN sweep as evidence that a designer is sound.
+//
+// Clamping HERE rather than at each call site is deliberate: this header is
+// compiled into every DPF plugin, and a guard that a call site can forget is a
+// guard that will be forgotten. A few call sites still clamp on their own and are
+// commented where they do, because they are NOT redundant with this one: they
+// either feed a downstream derivation (TapeMachine's hfCutoff) or deliberately cap
+// tighter than this ceiling as part of the voicing (TapeMachine's recordHeadCutoff
+// and biasFilter, TapeEcho's 0.45*fs sites). Everything else relies on this.
+//
+// WHAT THE CEILING BUYS, AND WHAT IT DOES NOT. It trades divergence for a corner
+// parked just under Nyquist. At the ceiling the poles sit at |z| ~ 0.999, which
+// rings for on the order of a thousand samples rather than blowing up. That is an
+// unambiguous improvement on NaN, but it is NOT a voicing-safe clamp: a filter
+// whose corner has been pulled down to the ceiling is no longer the filter that was
+// asked for. The ceiling exists so degenerate rates stay bounded, not so they sound
+// right. Keep design frequencies below it by construction wherever tone matters.
+//
+// CEILING: kMaxDesignFreqRatio below. It is deliberately TIGHT to Nyquist, and it
+// is NOT the same number as the 0.45 * fs ceiling inside TapeMachine's private
+// DBiquad. Do not "harmonize" them; each is set by its own hard constraint:
+//
+//   THIS header (0.4998): 4K EQ 2 and Multi-Q 2 design at the HOST rate (their
+//     oversampling defaults to 1x) and their LPF parameter tops out at 20000 Hz.
+//     20000 / 44100 = 0.4535, so any ceiling at or below 0.4535 would detune a
+//     wide-open LPF at 44.1 kHz: an audible regression in shipping plugins. The
+//     ceiling must therefore stay >= 0.4535. 0.4998 is the value FourKEQDSP.cpp's
+//     LPF clamp used before this guard subsumed it, and the value Multi-Q's own
+//     amb::clampFreq uses, so it keeps one number across the family. At 44.1 kHz
+//     it is 22041 Hz, above
+//     every design frequency any of these plugins can request at any supported
+//     rate (highest: the 16 kHz British HF band, 0.363 of fs at 44.1 kHz).
+//
+//   TapeMachine's DBiquad (0.45): that core runs at 2x the host rate, so its
+//     highest corner ratio is ~0.227 and the margin is enormous. Its 0.45 matches
+//     the safeFreq / maxFilterFreq convention that file was already written to.
+//
+// Stability at this ceiling is verified, not assumed: w0 = 0.9996*pi keeps
+// sin(w0) > 0, so alpha > 0 and |pole| < 1 for every RBJ designer here, and
+// tan(0.4998*pi) is ~1591, large but far from overflow in float.
+//
+// PRECONDITION: fs is positive and finite. Every caller's prepare path already
+// enforces that, and re-validating it here would be theatre: fs is a divisor in
+// every designer below, so a non-positive or non-finite fs produces NaN
+// coefficients no matter what frequency this function hands back.
+constexpr double kMaxDesignFreqRatio = 0.4998;
+
+// The ONE implementation of the clamp ordering. TapeMachine's DBiquad guard
+// (nyquistSafeHz) is a thin alias over this at its own ceiling, so the two cannot
+// drift apart.
+//
+// maxFraction has NO default on purpose. It is a FRACTION of fs, and a defaulted
+// parameter of that shape invites a caller to pass a frequency in Hz and silently
+// get a ceiling of fs * 12000. Callers state the ceiling they mean; the float
+// wrapper below is the one that binds kMaxDesignFreqRatio.
+inline double nyquistSafeDesignHzD(double fs, double freq, double maxFraction) noexcept
+{
+    // Floor FIRST, ceiling LAST. The reverse order lets the 1 Hz floor win at
+    // absurdly low fs and hand the designer a corner at or above Nyquist, which
+    // is the exact instability this guard exists to prevent. The order is also
+    // what makes a NaN freq land on the ceiling instead of propagating: both
+    // comparisons are false, so max returns the NaN and min then returns fs*frac.
+    return std::min(fs * maxFraction, std::max(freq, 1.0));
+}
+
+inline float nyquistSafeDesignHz(double fs, float freq) noexcept
+{
+    return (float)nyquistSafeDesignHzD(fs, (double)freq, kMaxDesignFreqRatio);
+}
 
 //==============================================================================
 class OnePoleLP
@@ -129,6 +226,7 @@ public:
     // JUCE ArrayCoefficients::makeFirstOrderHighPass -> {1, -1, n+1, n-1}
     static BiquadCoeffs firstOrderHighPass(double fs, float freq) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float n = std::tan(kDuskPi * freq / (float)fs);
         const float inv = 1.0f / (n + 1.0f);
         return { inv, -inv, 0.0f, (n - 1.0f) * inv, 0.0f };
@@ -138,6 +236,7 @@ public:
     // Matches FourKEQ TransformerPhaseShift::setFrequency.
     static BiquadCoeffs firstOrderAllPass(double fs, float freq) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float w0 = kDuskTwoPi * freq / (float)fs;
         const float t  = std::tan(w0 * 0.5f);
         const float a  = (1.0f - t) / (1.0f + t);
@@ -148,6 +247,7 @@ public:
     // parallel-shelf building block (dry + K*LP = first-order low shelf).
     static BiquadCoeffs firstOrderLowPass(double fs, float freq) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float k = std::tan(kDuskPi * freq / (float)fs);
         const float inv = 1.0f / (k + 1.0f);
         return { k * inv, k * inv, 0.0f, (k - 1.0f) * inv, 0.0f };
@@ -157,6 +257,7 @@ public:
     // The parallel EQ building block for peaks/bells (dry + K*BP = bell).
     static BiquadCoeffs bandPassConstantPeak(double fs, float freq, float Q) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float w0 = kDuskTwoPi * freq / (float)fs;
         const float cw = std::cos(w0), sw = std::sin(w0);
         const float alpha = sw / (2.0f * Q);
@@ -167,6 +268,7 @@ public:
     // JUCE ArrayCoefficients::makeLowPass(fs, freq, Q).
     static BiquadCoeffs lowPass(double fs, float freq, float Q) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float n = 1.0f / std::tan(kDuskPi * freq / (float)fs);
         const float nSq = n * n;
         const float invQ = 1.0f / Q;
@@ -177,6 +279,7 @@ public:
     // JUCE ArrayCoefficients::makeHighPass(fs, freq, Q).
     static BiquadCoeffs highPass(double fs, float freq, float Q) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float n = std::tan(kDuskPi * freq / (float)fs);
         const float nSq = n * n;
         const float invQ = 1.0f / Q;
@@ -187,6 +290,7 @@ public:
     // RBJ peaking EQ, alpha = sin(w0)/(2Q). Matches FourKEQ::makeConsolePeak raw math.
     static BiquadCoeffs peak(double fs, float freq, float gainDb, float Q) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float A = std::pow(10.0f, gainDb / 40.0f);
         const float w0 = kDuskTwoPi * freq / (float)fs;
         const float cw = std::cos(w0), sw = std::sin(w0);
@@ -204,6 +308,7 @@ public:
     // RBJ low/high shelf, alpha = sin(w0)/(2Q). Matches FourKEQ::makeConsoleShelf.
     static BiquadCoeffs shelf(double fs, float freq, float gainDb, float Q, bool high) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float A = std::pow(10.0f, gainDb / 40.0f);
         const float w0 = kDuskTwoPi * freq / (float)fs;
         const float cw = std::cos(w0), sw = std::sin(w0);
@@ -239,6 +344,7 @@ public:
     // bit-for-bit (offline null-render requirement). high=false selects the low shelf.
     static BiquadCoeffs shelfSlope1(double fs, float freq, float gainDb, bool high) noexcept
     {
+        freq = nyquistSafeDesignHz(fs, freq);
         const float A     = std::pow(10.0f, gainDb / 40.0f);
         const float w0    = kDuskTwoPi * freq / (float)fs;
         const float cosw  = std::cos(w0);

@@ -46,17 +46,48 @@ inline double dbToGainD(double db) noexcept { return db > -100.0  ? std::pow (10
 // Nyquist, and the hardcoded 12 kHz alias/gap-loss shelves designed poles at
 // |z| ~ 2.4 (measured), blowing the output up inside ~70 samples.
 //
-// 0.45 * fs is the SAME ceiling the code already used ad hoc (safeFreq =
-// nyquist * 0.9 in TapeCore::prepare, maxFilterFreq = fs * 0.45 in
-// updateFilters); centralising it in the designers means no call site can skip
-// it. It is a no-op for every design frequency in this plugin at any host rate
-// >= 16.67 kHz (the highest fixed corner is 15 kHz), so all standard rates from
-// 22.05 kHz up are bit-for-bit unaffected.
+// kTapeDesignFreqRatio is the SAME ceiling this file already used ad hoc, in two
+// now-deleted places (safeFreq = nyquist * 0.9 in TapeCore::prepare; maxFilterFreq
+// = fs * 0.45 in updateFilters). (osRate*0.5)*0.9 and osRate*0.45 agree bitwise in
+// double, but safeFreq then narrowed to FLOAT, so the old effective ceiling was
+// double(float(osRate*0.45)) and can differ from this one by an ulp. That only
+// matters where the ceiling actually engages, which for the corners it wrapped
+// means host rates below 17.8 kHz, outside the byte-compare matrix. This
+// helper is now the SINGLE clamp mechanism for every DBiquad design in the file:
+// centralising it in the designers means no call site can skip it. The shared
+// duskaudio::Biquad designers (DuskFilters.hpp) carry their own internal clamp at
+// their own ceiling, so the four Biquad sites here are covered too.
+//
+// The ceiling is NOT the 0.4998 used by the shared Biquad, and the two must not be
+// "harmonized": that one sits behind user-facing EQs whose bands reach 20 kHz and
+// has to stay above 0.4535 of fs, while this core runs at 2x the host rate where
+// even its highest corner has enormous margin. See DuskFilters.hpp for that side.
+//
+// Where the clamp actually engages, given this core runs at osRate = 2 * host rate:
+//   - fixed corners top out at 16 kHz (hfLossFilter1), which needs osRate < 35.6 kHz
+//     to clamp, i.e. a host rate below 17.8 kHz;
+//   - the COMPUTED hfCutoff (hfRolloffFreq * hfExt * hfLoss) reaches ~31.7 kHz, which
+//     needs osRate < 70.4 kHz, i.e. a host rate below 35.2 kHz. That path keeps its
+//     own float pre-clamp (see updateFilters) for bit-exactness reasons documented
+//     there; this helper is its backstop, not its primary ceiling.
+//   - recordHeadCutoff's 20 kHz likewise keeps an explicit 0.45 cap, because it feeds
+//     the SHARED Biquad whose ceiling is 0.4998 and the cap is part of the voicing.
+// Everything else is untouched at every standard rate, so renders at 22.05 kHz and
+// above are bit-for-bit unaffected (verified by byte-compare, not by inspection).
+//
+// PRECONDITION: fs is positive and finite. prepare() coerces a non-positive rate to
+// 44100 before any designer runs, and validating it here would be theatre anyway:
+// fs is a divisor in every designer below, so a bad fs yields NaN coefficients no
+// matter what frequency this returns.
+constexpr double kTapeDesignFreqRatio = 0.45;
+
 inline double nyquistSafeHz (double fs, double freq) noexcept
 {
-    const double maxFreq = fs * 0.45;
-    if (! (fs > 0.0) || ! std::isfinite (freq)) return 1.0;
-    return freq < 1.0 ? 1.0 : (freq > maxFreq ? maxFreq : freq);
+    // Thin alias over the shared primitive so there is ONE implementation of the
+    // floor-first/ceiling-last ordering in the codebase. The ordering matters: the
+    // reverse lets the 1 Hz floor win at absurdly low fs and hand back a corner at
+    // or above Nyquist, the exact instability this guard exists to prevent.
+    return nyquistSafeDesignHzD (fs, freq, kTapeDesignFreqRatio);
 }
 
 //==============================================================================
@@ -179,8 +210,12 @@ public:
 
     void prepare (double sampleRate, double cutoffHz)
     {
-        cutoffHz = std::min (cutoffHz, sampleRate * 0.45);
-        cutoffHz = std::max (cutoffHz, 20.0);
+        // This class designs its own Chebyshev sections rather than going through
+        // DBiquad, so it applies the shared ceiling itself. Floor first, ceiling
+        // last (via the helper): the old order applied the 20 Hz floor AFTER the
+        // ceiling, so below fs 44.4 Hz the floor won and handed the design a corner
+        // above Nyquist. Identical at every rate at or above that.
+        cutoffHz = nyquistSafeHz (sampleRate, std::max (cutoffHz, 20.0));
 
         constexpr int N = 8;
         constexpr double rippleDb = 0.5;
@@ -357,10 +392,12 @@ public:
                 stages[i].state = 0.0f;
                 continue;
             }
-            // Nyquist guard: tan(pi*f/fs) diverges at f == fs/2 and passes through -1
-            // just past it, where (tanVal + 1) is 0 and the coefficient becomes Inf/NaN.
-            const float bf = static_cast<float> (nyquistSafeHz (currentSampleRate,
-                                                               static_cast<double> (breakFreqs[i])));
+            // Nyquist guard. tan(pi*f/fs) diverges AT f == fs/2, and the whole band
+            // above it is unusable: the coefficient goes below -1, then at f ==
+            // 0.75*fs the (tanVal + 1) divisor is exactly 0 (Inf/NaN), then it comes
+            // back marginal. The hazard is the entire region past Nyquist, not a
+            // narrow neighbourhood of fs/2, so do not relax the ceiling toward 0.49.
+            const float bf = static_cast<float> (nyquistSafeHz (currentSampleRate, breakFreqs[i]));
             float tanVal = std::tan (kPiF * bf / static_cast<float> (currentSampleRate));
             stages[i].coeff = (tanVal - 1.0f) / (tanVal + 1.0f);
             stages[i].active = true;
@@ -419,7 +456,8 @@ struct ImprovedNoiseGenerator
         // HF-rise "scrape" band; fills the reference hiss rise up to 10 kHz. Nyquist-
         // guarded like every other fixed corner: above Nyquist this RBJ bandpass has
         // unstable poles and the idle hiss would diverge instead of hissing.
-        float fc = static_cast<float> (nyquistSafeHz (sampleRate, 8500.0)), Q = 1.1f;
+        const float fc = static_cast<float> (nyquistSafeHz (sampleRate, 8500.0));
+        const float Q  = 1.1f;
         float w0 = 2.0f * kPiF * fc / static_cast<float> (sampleRate);
         float cosw0 = std::cos (w0), sinw0 = std::sin (w0);
         float alpha = sinw0 / (2.0f * Q);
@@ -810,20 +848,22 @@ public:
 
         reset();
 
-        auto nyquist = osRate * 0.5;
-        auto safeMaxFreq = nyquist * 0.9;
-        auto safeFreq = [safeMaxFreq] (float freq) { return std::min (freq, static_cast<float> (safeMaxFreq)); };
-
+        // The safeFreq lambda that used to wrap every corner below is gone: DBiquad's
+        // designers now clamp internally at the same 0.45 ceiling, so wrapping the
+        // call sites as well was a second ceiling that could drift out of step with
+        // the first. The old lambda narrowed the ceiling to float before comparing,
+        // so the two can differ by an ulp, but only at host rates below 17.8 kHz
+        // where these corners actually reach the ceiling.
         headBumpFilter.setCoeffs (DBiquad::peak (osRate, 60.0, 3.0, 1.5));
-        hfLossFilter1.setCoeffs  (DBiquad::lowPass (osRate, static_cast<double> (safeFreq (16000.0f)), 0.707));
-        hfLossFilter2.setCoeffs  (DBiquad::shelf (osRate, static_cast<double> (safeFreq (10000.0f)), -2.0, 0.5, true));
-        gapLossFilter.setCoeffs  (DBiquad::shelf (osRate, static_cast<double> (safeFreq (12000.0f)), -1.5, 0.707, true));
-        headWidthFilter.setCoeffs (DBiquad::peak (osRate, static_cast<double> (safeFreq (7500.0f)), 0.0, 0.9)); // neutral until updateFilters
-        driveHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (2500.0f)), 0.0, 0.5, true)); // neutral until setDriveHfComp
-        levelHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (7900.0f)), 0.0, 0.45, true)); // neutral until setLevelComp
+        hfLossFilter1.setCoeffs  (DBiquad::lowPass (osRate, 16000.0, 0.707));
+        hfLossFilter2.setCoeffs  (DBiquad::shelf (osRate, 10000.0, -2.0, 0.5, true));
+        gapLossFilter.setCoeffs  (DBiquad::shelf (osRate, 12000.0, -1.5, 0.707, true));
+        headWidthFilter.setCoeffs (DBiquad::peak (osRate, 7500.0, 0.0, 0.9)); // neutral until updateFilters
+        driveHfShelf.setCoeffs   (DBiquad::shelf (osRate, 2500.0, 0.0, 0.5, true)); // neutral until setDriveHfComp
+        levelHfShelf.setCoeffs   (DBiquad::shelf (osRate, 7900.0, 0.0, 0.45, true)); // neutral until setLevelComp
         levelLfShelf.setCoeffs   (DBiquad::peak  (osRate,   32.0, 0.0, 1.4)); // neutral until setLevelComp
-        presetLevelHmfPeak.setCoeffs (DBiquad::peak  (osRate, static_cast<double> (safeFreq (6300.0f)),  0.0, 1.0));
-        presetLevelHfShelf.setCoeffs (DBiquad::shelf (osRate, static_cast<double> (safeFreq (11000.0f)), 0.0, 0.7, true));
+        presetLevelHmfPeak.setCoeffs (DBiquad::peak  (osRate, 6300.0,  0.0, 1.0));
+        presetLevelHfShelf.setCoeffs (DBiquad::shelf (osRate, 11000.0, 0.0, 0.7, true));
         // The two lines above reinstalled NEUTRAL preset-EQ coeffs. Invalidate the rebuild
         // cache so the next setPresetLevelEq() re-applies the active preset correction (at the
         // new fs) even when the preset params are unchanged — otherwise its "hmfDb/hfDb changed"
@@ -837,24 +877,38 @@ public:
         progLastHmf = progLastHf = 999.0f;
         reproLfShelf.setCoeffs   (DBiquad::shelf (osRate,   80.0, 0.0, 0.5, false)); // 4-band repro EQ, neutral until setReproEq
         reproLmfPeak.setCoeffs   (DBiquad::peak  (osRate,  160.0, 0.0, 0.9));
-        reproHmfPeak.setCoeffs   (DBiquad::peak  (osRate, static_cast<double> (safeFreq (5000.0f)), 0.0, 0.8));
-        reproHfShelf.setCoeffs   (DBiquad::shelf (osRate, static_cast<double> (safeFreq (9000.0f)), 0.0, 0.5, true));
+        reproHmfPeak.setCoeffs   (DBiquad::peak  (osRate, 5000.0, 0.0, 0.8));
+        reproHfShelf.setCoeffs   (DBiquad::shelf (osRate, 9000.0, 0.0, 0.5, true));
         reproSubBellPeak.setCoeffs (DBiquad::peak (osRate, 31.0, 0.0, 2.5)); reproSubBellActive = false; // neutral until setReproEq
         reproSubBellLast = 999.0f;   // invalidate rebuild cache (same fs-staleness fix as progLast above)
         slowModernPresencePeak.setCoeffs (DBiquad::peak (osRate,
-            static_cast<double> (safeFreq (2700.0f)), 0.0, 1.6));
+            2700.0, 0.0, 1.6));
         transformerLfShelf.setCoeffs (DBiquad::shelf (osRate, 48.0, 0.0, 0.7, false)); // neutral until setTransformerOff
         // Emphasis-rebalance G / 1-G pair — neutral defaults; updateFilters sets the per-machine values.
         emphLfPre.setCoeffs  (DBiquad::shelf (osRate, 150.0, 0.0, 0.5, false));
-        emphHfPre.setCoeffs  (DBiquad::peak  (osRate, static_cast<double> (safeFreq (5000.0f)), 0.0, 2.0));
-        emphHfPost.setCoeffs (DBiquad::peak  (osRate, static_cast<double> (safeFreq (5000.0f)), 0.0, 2.0));
+        emphHfPre.setCoeffs  (DBiquad::peak  (osRate, 5000.0, 0.0, 2.0));
+        emphHfPost.setCoeffs (DBiquad::peak  (osRate, 5000.0, 0.0, 2.0));
         emphLfPost.setCoeffs (DBiquad::shelf (osRate, 150.0, 0.0, 0.5, false));
-        aliasHfPre.setCoeffs  (DBiquad::shelf (osRate, static_cast<double> (safeFreq (12000.0f)), 0.0, 0.7, true));
-        aliasHfPost.setCoeffs (DBiquad::shelf (osRate, static_cast<double> (safeFreq (12000.0f)), 0.0, 0.7, true));
-        biasFilter.setCoeffs     (Biquad::shelf (osRate, safeFreq (8000.0f), 2.0f, 0.707f, true));
+        aliasHfPre.setCoeffs  (DBiquad::shelf (osRate, 12000.0, 0.0, 0.7, true));
+        aliasHfPost.setCoeffs (DBiquad::shelf (osRate, 12000.0, 0.0, 0.7, true));
+        // Explicit 0.45 cap, same reason as recordHeadCutoff below: biasFilter is the
+        // SHARED Biquad, whose ceiling is 0.4998, not this core's 0.45. Practical
+        // impact is nil because updateFilters overwrites these coeffs on the first
+        // processed block, but leaving it uncapped would make this file state a rule
+        // (shared-Biquad sites keep an explicit cap) that it then breaks ten lines up.
+        biasFilter.setCoeffs     (Biquad::shelf (osRate,
+            std::min (8000.0f, static_cast<float> (osRate * kTapeDesignFreqRatio)),
+            2.0f, 0.707f, true));
         dcBlocker.setCoeffs      (DBiquad::highPass1 (osRate, 18.0));
 
-        recordHeadCutoff = std::min (20000.0f, static_cast<float> (safeMaxFreq));
+        // recordHeadCutoff keeps an EXPLICIT 0.45 cap rather than leaning on the
+        // designer clamp, and that is deliberate, not a leftover: these two filters
+        // are the SHARED duskaudio::Biquad, whose ceiling is 0.4998, not 0.45.
+        // Dropping the cap here would raise the record-head corner from 0.45 to
+        // 0.4998 of osRate wherever 20 kHz exceeds it (host rates below 22.2 kHz),
+        // which changes the voicing at 22.05 kHz. The cap is part of the tuning; the
+        // shared designer's clamp is only a stability backstop underneath it.
+        recordHeadCutoff = std::min (20000.0f, static_cast<float> (osRate * kTapeDesignFreqRatio));
         recordHeadFilter1.setCoeffs (Biquad::lowPass (osRate, recordHeadCutoff, 1.3066f));
         recordHeadFilter2.setCoeffs (Biquad::lowPass (osRate, recordHeadCutoff, 0.5412f));
 
@@ -1965,7 +2019,13 @@ private:
             static_cast<double> (headBumpFreq), static_cast<double> (headBumpGain),
             static_cast<double> (headBumpQ)));
 
-        float maxFilterFreq = static_cast<float> (currentSampleRate * 0.45);
+        // The maxFilterFreq pre-clamp that used to guard the four corners below is
+        // gone: DBiquad clamps at the same 0.45 ceiling internally. Checked that the
+        // removal is bit-exact rather than assumed: the old path took
+        // float(currentSampleRate * 0.45) while the new one clamps in double, and
+        // those can differ by an ulp in principle, but across every host rate in the
+        // byte-compare matrix and every reachable hfCutoff the double product rounds
+        // to the same value, so the designed corner is identical.
         // Both reference decks keep HF far more extended than the shared 0.7/1.0/1.3
         // per-speed rolloff. American: ~flat to 15 kHz at every speed. Swiss:
         // bright at 15/30 IPS, ~-2 dB @15k at 7.5 IPS.
@@ -1977,7 +2037,17 @@ private:
             hfExt = (speed == Speed_3_75_IPS) ? 1.10f
                   : (speed == Speed_7_5_IPS) ? 1.10f : (speed == Speed_30_IPS ? 1.50f : 1.5f);
         float hfCutoff = machineChars.hfRolloffFreq * hfExt * tapeChars.hfLoss;
-        hfCutoff = std::min (hfCutoff, maxFilterFreq);
+        // LOAD-BEARING, do not delete as "redundant with the designer clamp". It is
+        // not redundant: the non-3.75-IPS branch below derives hfShelfFreq as
+        // hfCutoff * 0.6, so this clamp sets a DOWNSTREAM corner as well as the one
+        // designed on the next line. (The 3.75-IPS branch takes a fixed 11 kHz
+        // literal and never reads hfCutoff, so that speed shows nothing.) The case
+        // that breaks is Swiss at 15 or 30 IPS, where hfRolloffFreq 22000 * hfExt 1.5
+        // * hfLoss lands near 31.7 kHz: removing this clamp moved the shelf from
+        // 0.45*fs*0.6 to 0.6 * the raw 31.7 kHz and broke byte-identity at 22.05 kHz
+        // and 32 kHz. Measured, not theorised. The designer's internal clamp still
+        // backstops the line below.
+        hfCutoff = std::min (hfCutoff, static_cast<float> (currentSampleRate * kTapeDesignFreqRatio));
         hfLossFilter1.setCoeffs (DBiquad::lowPass (currentSampleRate, static_cast<double> (hfCutoff), 0.707));
 
         // American tracks nearly flat to ~15 kHz, so American's HF-loss shelves are scaled right down.
@@ -1989,11 +2059,11 @@ private:
         if (speed == Speed_3_75_IPS)
         {
             hfLossFilter2.setCoeffs (DBiquad::shelf (currentSampleRate,
-                std::min (11000.0f, maxFilterFreq), -3.5, 0.5, true));
+                11000.0, -3.5, 0.5, true));
         }
         else
         {
-            float hfShelfFreq = std::min (hfCutoff * 0.6f, maxFilterFreq);
+            float hfShelfFreq = hfCutoff * 0.6f;
             hfLossFilter2.setCoeffs (DBiquad::shelf (currentSampleRate, static_cast<double> (hfShelfFreq),
                 static_cast<double> (-2.0f * tapeChars.hfLoss * hfLossScale), 0.5, true));
         }
@@ -2006,7 +2076,7 @@ private:
         if (m_slowModernPresence != wasSlow900Presence)
             slowModernPresencePeak.reset();
         slowModernPresencePeak.setCoeffs (DBiquad::peak (currentSampleRate,
-            std::min (2700.0f, maxFilterFreq), m_slowModernPresence ? 5.8 : 0.0, 1.6));
+            2700.0, m_slowModernPresence ? 5.8 : 0.0, 1.6));
 
         // American Head Width HF character (American only; neutral at 1/2" so the
         // reference stays byte-identical and the filter is skipped in the chain). Both
@@ -2016,8 +2086,7 @@ private:
             const double hwGain = (headWidth == 0) ? 2.5   // 1/4"
                                 : (headWidth == 2) ? 3.2   // 1"
                                 : 0.0;                     // 1/2" (neutral)
-            headWidthFilter.setCoeffs (DBiquad::peak (currentSampleRate,
-                std::min (7500.0, currentSampleRate * 0.45), hwGain, 0.9));
+            headWidthFilter.setCoeffs (DBiquad::peak (currentSampleRate, 7500.0, hwGain, 0.9));
         }
 
         float gapLossFreq = speed == Speed_3_75_IPS ? 5000.0f
@@ -2033,11 +2102,7 @@ private:
         float biasFreq, biasGainDb;
         if (machine == Swiss) { biasFreq = 8000.0f; biasGainDb = -(biasAmount - 0.5f) * 8.0f + 1.0f; }
         else                     { biasFreq = 7000.0f; biasGainDb = (0.5f - biasAmount) * 5.0f + 1.5f; }
-        // Nyquist-guarded at the call site: Biquad (shared DuskFilters.hpp) is used by the
-        // other DPF plugins too, so the clamp lives here rather than in the shared designer.
-        biasFilter.setCoeffs (Biquad::shelf (currentSampleRate,
-            static_cast<float> (nyquistSafeHz (currentSampleRate, static_cast<double> (biasFreq))),
-            biasGainDb, 0.707f, true));
+        biasFilter.setCoeffs (Biquad::shelf (currentSampleRate, biasFreq, biasGainDb, 0.707f, true));
 
         // DC blocker: 1st-order (6 dB/oct). Both reference decks keep a broad LF head bump nearly
         // flat down to ~10-15 Hz, then roll off gently below — a 2nd-order Butterworth corner

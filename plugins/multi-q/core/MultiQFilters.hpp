@@ -29,6 +29,12 @@ namespace duskaudio
 // bit-identical to the JUCE build.
 inline constexpr double kMultiQPi = 3.14159265358979323846;
 
+// Nyquist ceiling for design frequencies AND for the prewarped bandwidth terms in
+// this file. Same value as duskaudio::kMaxDesignFreqRatio in shared-dpf; kept as a
+// separate constant so this header stays independent of the shared designers it
+// warns against below, but the two are meant to move together.
+inline constexpr double kMqMaxDesignFreqRatio = 0.4998;
+
 // Bitwise finite check (verbatim from SafeFloat.h) — immune to -ffast-math /
 // finite-math-only optimizations that make std::isfinite unreliable.
 inline bool safeIsFinite(float v)
@@ -273,9 +279,17 @@ struct StereoBiquad
 // alpha = sin(w0)/2Q, a different transfer function that CRAMS near Nyquist.
 namespace amb
 {
+    // Nyquist guard for design frequencies. 0.4998 matches
+    // duskaudio::kMaxDesignFreqRatio in shared-dpf/dsp/DuskFilters.hpp; the literal
+    // is kept here only so this header stays independent of the shared designers it
+    // warns against above.
+    //
+    // Floor FIRST, ceiling LAST. The old order applied the 1 Hz floor last, so below
+    // sr 2.002 Hz the floor won and returned a corner above Nyquist, the exact case
+    // the clamp exists to prevent. Identical for every sr above that.
     static inline double clampFreq(double fc, double sr)
     {
-        return std::max(1.0, std::min(fc, sr * 0.4998));
+        return std::min(sr * kMqMaxDesignFreqRatio, std::max(fc, 1.0));
     }
 
     static void computePeaking(MqBiquadCoeffs& c, double fc, double sr,
@@ -288,7 +302,7 @@ namespace amb
 
         const double W0d  = 2.0 * kMultiQPi * fc / sr;
         const double bw   = fc / Q;
-        const double kbw  = std::tan(kMultiQPi * std::min(bw, sr * 0.4998) / sr);
+        const double kbw  = std::tan(kMultiQPi * std::min(bw, sr * kMqMaxDesignFreqRatio) / sr);
         const double A    = std::pow(10.0, gainDB / 40.0);
         const double cosW = std::cos(W0d);
 
@@ -432,7 +446,7 @@ namespace amb
         Q  = std::max(0.01, Q);
         const double W0d  = 2.0 * kMultiQPi * fc / sr;
         const double cosW = std::cos(W0d);
-        const double kbw  = std::tan(kMultiQPi * std::min(fc / Q, sr * 0.4998) / sr);
+        const double kbw  = std::tan(kMultiQPi * std::min(fc / Q, sr * kMqMaxDesignFreqRatio) / sr);
         const double norm = 1.0 / (1.0 + kbw);
 
         c.coeffs[0] = static_cast<float>(norm);
@@ -449,7 +463,7 @@ namespace amb
         Q  = std::max(0.01, Q);
         const double W0d  = 2.0 * kMultiQPi * fc / sr;
         const double cosW = std::cos(W0d);
-        const double kbw  = std::tan(kMultiQPi * std::min(fc / Q, sr * 0.4998) / sr);
+        const double kbw  = std::tan(kMultiQPi * std::min(fc / Q, sr * kMqMaxDesignFreqRatio) / sr);
         const double norm = 1.0 / (1.0 + kbw);
 
         c.coeffs[0] = static_cast<float>(kbw * norm);
@@ -469,11 +483,11 @@ namespace svfdes
 {
     static void computePeaking(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
     {
-        freq = std::max(1.0, std::min(freq, sr * 0.4998));
+        freq = amb::clampFreq(freq, sr);
         double A   = std::pow(10.0, gainDB / 40.0);
         double g   = std::tan(kMultiQPi * freq / sr);
         double bw  = freq / std::max(0.01, (double)q);
-        double kbw = std::tan(kMultiQPi * std::min(bw, sr * 0.4998) / sr);
+        double kbw = std::tan(kMultiQPi * std::min(bw, sr * kMqMaxDesignFreqRatio) / sr);
         double k   = std::max(0.001, kbw / (g * A));
         c.a1 = (float)(1.0 / (1.0 + g * (g + k)));
         c.a2 = (float)(g * c.a1);
@@ -485,6 +499,14 @@ namespace svfdes
 
     static void computeLowShelf(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
     {
+        // Nyquist guard, same as computePeaking above. Without it the prewarp g runs
+        // away as freq approaches sr/2 and goes NEGATIVE past it, which is not the
+        // filter that was asked for: measured at a 4000 Hz band, g reaches 1.9e16 at
+        // an 8 kHz host rate and is -6052 at 7999 Hz, where a3 exceeds 1. It does not
+        // reach Inf or NaN, because pi/2 is not representable in double and tan tops
+        // out near 1.6e16. Reachable from the band dynamics path with a shelf shape
+        // at any host rate below twice the band frequency.
+        freq = amb::clampFreq(freq, sr);
         double A = std::pow(10.0, gainDB / 40.0);
         double g = std::tan(kMultiQPi * freq / sr) / std::sqrt(A);
         double k = 1.0 / q;
@@ -498,6 +520,8 @@ namespace svfdes
 
     static void computeHighShelf(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
     {
+        // Nyquist guard, same as computeLowShelf above.
+        freq = amb::clampFreq(freq, sr);
         double A = std::pow(10.0, gainDB / 40.0);
         double g = std::tan(kMultiQPi * freq / sr) * std::sqrt(A);
         double k = 1.0 / q;

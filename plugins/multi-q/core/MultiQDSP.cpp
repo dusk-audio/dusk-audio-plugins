@@ -128,6 +128,21 @@ void MultiQDSP::updateDynGainFilter(int band, float dynGainDb, const Params& p)
 void MultiQDSP::computeTiltShelf(MqBiquadCoeffs& c, double sr, double freq, float gainDB)
 {
     // 1st-order tilt shelf, bilinear transform of H(s)=(s+w0*sqrt(A))/(s+w0/sqrt(A)).
+    //
+    // Nyquist guard, matching every amb:: designer and updateHPF/updateLPF. Without
+    // it the prewarp tan(w0*T/2) goes negative once freq passes sr/2, which puts the
+    // pole a1/a0 outside the unit circle and the filter diverges.
+    //
+    // It is unstable at gainDB 0, not merely at high gain, and the coefficients are
+    // written unconditionally for every enabled band. Measured with a band left on
+    // Tilt Shelf at its 1000 Hz default, gain 0: pole 0.998 at a 2001 Hz host rate,
+    // 1.000 at 2000, -5.242 at 1234.567, 3.732 at 1500.
+    //
+    // The divergence does NOT surface as a NaN. StereoBiquad::processSampleL/R
+    // checks the output and, on a non-finite sample, zeroes its state and returns
+    // 0.0. So this failed as repeated state resets, heard as dropouts or crackle at
+    // degenerate rates, and passed every non-finite output sweep unnoticed.
+    freq = amb::clampFreq(freq, sr);
     double w0 = 2.0 * kMultiQPi * freq;
     double T = 1.0 / sr;
     double wc = (2.0 / T) * std::tan(w0 * T / 2.0);
