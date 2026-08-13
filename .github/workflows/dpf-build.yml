@@ -59,7 +59,7 @@ on:
 # dusk-audio/DPF, THEN bump DPF_REF. Keep SHAs in sync with dpf-release.yml,
 # dpf-au-test.yml and docker/build_release.sh. Bump deliberately.
 env:
-  DPF_REF: 45a7e30e5343231019e6d5f09629bae13f5899c7
+  DPF_REF: bca31ac656228e8271e5baccfd106fcef2e44145
   DPFWIDGETS_REF: 730da6397904da66d99667c1cb30fc77fc3d794a
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
