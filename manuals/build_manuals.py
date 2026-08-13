@@ -63,6 +63,7 @@ from preflight import (
 CHAPTER_ORDER = [
     "multi-comp",
     "multi-q",
+    "4k-eq-2",
     "4k-eq",
     "tapemachine",
     "duskverb",
@@ -119,13 +120,14 @@ def strip_front_matter(md: str) -> str:
 def cover_block_for(fm: dict) -> str:
     """Render a small cover-block at the top of a per-plugin chapter:
     plugin name, version, last-updated date. Fed into pandoc as raw markdown."""
-    title = fm.get("title") or ""  # tag-only chapters skip explicit title
+    title = fm.get("title") or ""
     slug = fm.get("slug", "")
     version = fm.get("version", "")
     tagline = fm.get("tagline", "")
     last_updated = fm.get("last_updated", "")
     parts = []
-    parts.append(f"\\begin{{center}}\n{{\\Huge\\bfseries {slug.replace('-', ' ').title()}}}\\par\n\\vspace{{4pt}}\n")
+    display_title = title or slug.replace('-', ' ').title()
+    parts.append(f"\\begin{{center}}\n{{\\Huge\\bfseries {display_title}}}\\par\n\\vspace{{4pt}}\n")
     if tagline:
         parts.append(f"{{\\large\\itshape {tagline}}}\\par\n")
     parts.append("\\vspace{6pt}\n")

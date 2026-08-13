@@ -110,7 +110,7 @@ protected:
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override  { return d_version(2, 0, 0); }
+    uint32_t    getVersion() const override  { return d_version(2, 0, 1); }
     int64_t     getUniqueId() const override { return d_cconst('D', 's', 'M', 'q'); } // DsMq
 
     //--- parameters ------------------------------------------------------------
@@ -307,13 +307,28 @@ protected:
             dsp.matchProcessor().deserialize(matchStateStr);
     }
 
+    void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
+    {
+        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DPF calls this while deactivated, so the audio thread sees a stable
+        // channel count when processing resumes.
+        activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
+    }
+
     //--- audio -----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         // Hard bypass (the core has no bypass path in Phase 2): pass input through.
+        // Bounded by activeChannels: a mono AU instance only owns outputs[0], and
+        // touching outputs[1] there writes past the host's buffer list.
         if (values[kParamBypass].load(std::memory_order_relaxed) > 0.5f)
         {
-            for (uint32_t c = 0; c < DISTRHO_PLUGIN_NUM_OUTPUTS; ++c)
+            if (lastLatency != 0)
+            {
+                lastLatency = 0;
+                setLatency(0);
+            }
+            for (int c = 0; c < activeChannels; ++c)
                 if (outputs[c] != inputs[c])
                     std::memcpy(outputs[c], inputs[c], sizeof(float) * frames);
             return;
@@ -321,7 +336,7 @@ protected:
 
         MultiQDSP::Params p;
         fillParams(p);
-        dsp.process(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames, p);
+        dsp.process(inputs, outputs, activeChannels, (int)frames, p);
         updateLatency(); // British oversampling changes reported latency
     }
 
@@ -429,6 +444,8 @@ private:
     }
 
     MultiQDSP dsp;
+    // Host-negotiated channel count (AU mono instances); see ioChanged().
+    int activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
     int lastLatency = -1;
     std::atomic<float> values[kParamCount] = {};
     std::atomic<int>  soloBand{-1};    // -1 = no solo (UI-driven, see setSoloForUI)

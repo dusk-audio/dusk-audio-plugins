@@ -8,7 +8,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(FourKEQ2DPF VERSION 2.0.0)
+project(FourKEQ2DPF VERSION 2.0.11)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,17 @@ target_include_directories(four_k_eq_2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp"
     ${DUSK_DPF_INCLUDE_DIRS})
+
+# Single source of truth for the plugin version: the project() VERSION above is
+# plumbed into getVersion() and the UI nameplate via these macros (see
+# FourKEQVersion.hpp). Bumped by the /release-plugin skill. PUBLIC because DPF
+# compiles the UI in a separate four_k_eq_2-ui target that links this one and
+# must see the same values — PRIVATE would leave the UI on the header's stale
+# fallback.
+target_compile_definitions(four_k_eq_2 PUBLIC
+    FOURKEQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    FOURKEQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    FOURKEQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).

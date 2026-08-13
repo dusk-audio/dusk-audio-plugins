@@ -9,7 +9,7 @@
 #ifndef TM2_VERSION_MAJOR
  #define TM2_VERSION_MAJOR 1
  #define TM2_VERSION_MINOR 0
- #define TM2_VERSION_PATCH 4
+ #define TM2_VERSION_PATCH 5
 #endif
 
 #define TM2_STRINGIFY_IMPL(value) #value

@@ -157,23 +157,34 @@ void MultiQDSP::computeBandCoeffs(int band, const Params& p, MqBiquadCoeffs& c) 
     float baseQ = p.bandQ[(size_t)band];
     float q = getQCoupledValue(baseQ, gain, (QCoupleMode)p.qCoupleMode);
 
+    // Gain-controlled shapes at exactly 0 dB are true bypasses. Designing a
+    // pole/zero-cancelled biquad still leaves a float recurrence running and
+    // can create the same deep-LF numerical floor found in 4K EQ 2. Emit exact
+    // identity coefficients instead; notch/band-pass/HP/LP shapes remain
+    // active because their response is not controlled by the gain parameter.
+    const int shape = p.bandShape[(size_t)band];
+    const bool gainControlledShape =
+        (band == 1 || band == 6) ? shape != 2 : (shape == 0 || shape == 3);
+    if (gainControlledShape && std::abs(gain) <= 1.0e-6f)
+    {
+        c.setIdentity();
+        return;
+    }
+
     if (band == 1)
     {
-        int shape = p.bandShape[1];
         if (shape == 1)      amb::computePeaking(c, freq, sr, gain, q);
         else if (shape == 2) amb::computeHighPass(c, freq, sr, q);
         else                 amb::computeLowShelf(c, freq, sr, gain, q);
     }
     else if (band == 6)
     {
-        int shape = p.bandShape[6];
         if (shape == 1)      amb::computePeaking(c, freq, sr, gain, q);
         else if (shape == 2) amb::computeLowPass(c, freq, sr, q);
         else                 amb::computeHighShelf(c, freq, sr, gain, q);
     }
     else
     {
-        int shape = p.bandShape[(size_t)band];
         if (shape == 1)      amb::computeNotch(c, freq, sr, q);
         else if (shape == 2) amb::computeBandPass(c, freq, sr, q);
         else if (shape == 3) computeTiltShelf(c, sr, freq, gain);

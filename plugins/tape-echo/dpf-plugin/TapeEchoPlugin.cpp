@@ -327,6 +327,14 @@ protected:
         pushAllParams();
     }
 
+    void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
+    {
+        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DPF calls this while deactivated, so the audio thread sees a stable
+        // channel count when processing resumes.
+        activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
+    }
+
     //--- audio -------------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
@@ -395,7 +403,7 @@ protected:
         effectiveHead1DelayMs.store(effectiveMs, std::memory_order_relaxed);
         syncNoteOutOfRange.store(outOfRange, std::memory_order_relaxed);
 
-        dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
+        dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
     }
 
 private:
@@ -417,6 +425,8 @@ private:
     }
 
     duskaudio::TapeEchoDSP dsp;
+    // Host-negotiated channel count (AU mono instances); see ioChanged().
+    int activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
     double lastBpm = 120.0;
     std::atomic<float> effectiveHead1DelayMs {
         duskaudio::TapeEchoDSP::kMaxDelayMs
