@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 namespace duskaudio
@@ -41,9 +42,14 @@ public:
 
     void setCutoff(float cutoffHz) noexcept
     {
-        // clamp away from 0 and Nyquist exactly like JUCE's update()
+        // Clamp away from 0 and Nyquist exactly like JUCE's update(), but with the
+        // FLOOR applied first and the CEILING last. The other order lets the 20 Hz
+        // floor win whenever fs < 42 Hz and hand back a cutoff above Nyquist, which
+        // is the one thing this clamp exists to prevent. Byte-identical at every
+        // real rate (the inversion needs fs < 42 Hz); same ceiling-last idiom as
+        // nyquistSafeDesignHz in DuskFilters.hpp.
         const float nyq = (float)(0.5 * fs);
-        cutoff = cutoffHz < 20.0f ? 20.0f : (cutoffHz > nyq - 1.0f ? nyq - 1.0f : cutoffHz);
+        cutoff = std::min(nyq - 1.0f, std::max(cutoffHz, 20.0f));
         g = std::tan(kDuskSvfPi * cutoff / (float)fs);
         updateH();
     }
