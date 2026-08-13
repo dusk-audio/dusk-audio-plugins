@@ -81,14 +81,19 @@ public:
         const char* const renderer = (const char*)glGetString(GL_RENDERER);
         const char* const version  = (const char*)glGetString(GL_VERSION);
 
+        // Try each plausible writable root rather than one per platform: a host
+        // can run without HOME set, and a log nobody can find is a log nobody reads.
         std::string path;
-       #ifdef DISTRHO_OS_WINDOWS
-        if (const char* const appData = std::getenv("LOCALAPPDATA"))
-            path = std::string(appData) + "\\dusk-gl-debug.log";
-       #else
-        if (const char* const home = std::getenv("HOME"))
-            path = std::string(home) + "/dusk-gl-debug.log";
-       #endif
+        const char* const roots[] = { std::getenv("LOCALAPPDATA"), std::getenv("HOME"),
+                                      std::getenv("USERPROFILE"), std::getenv("TMPDIR"),
+                                      std::getenv("TEMP") };
+        for (const char* const root : roots)
+        {
+            if (root == nullptr || root[0] == '\0')
+                continue;
+            path = std::string(root) + "/dusk-gl-debug.log";
+            break;
+        }
         if (path.empty())
             return;
 
