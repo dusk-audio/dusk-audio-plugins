@@ -219,10 +219,22 @@ inline void loadEmbeddedCrispFontSets(const EmbeddedFontRequest* requests, int r
 
     ImGuiIO& io = ImGui::GetIO();
 
+    // A request can only ever contribute CrispFontSet::kMax faces, so clamp here
+    // rather than at each use: an oversized count would otherwise drive the retry
+    // loop through attempts that cannot change the outcome, and a zero count with
+    // a non-null size array would still read designSizes[0] through the floor in
+    // `wanted` below.
+    const auto usableCount = [](const EmbeddedFontRequest& req) -> int
+    {
+        if (req.count <= 0)
+            return 0;
+        return req.count < CrispFontSet::kMax ? req.count : CrispFontSet::kMax;
+    };
+
     int largestCount = 0;
     for (int r = 0; r < requestCount; ++r)
-        if (requests[r].count > largestCount)
-            largestCount = requests[r].count;
+        if (usableCount(requests[r]) > largestCount)
+            largestCount = usableCount(requests[r]);
 
     AtlasFitResult fit;
 
@@ -245,10 +257,12 @@ inline void loadEmbeddedCrispFontSets(const EmbeddedFontRequest* requests, int r
             outSets[r] = CrispFontSet();
 
             const EmbeddedFontRequest& req = requests[r];
-            if (req.ttfData == nullptr || req.ttfSize == 0 || req.designSizes == nullptr)
+            const int available = usableCount(req);
+            if (req.ttfData == nullptr || req.ttfSize == 0 || req.designSizes == nullptr
+                || available <= 0)
                 continue;
 
-            const int wanted = req.count - dropped > 1 ? req.count - dropped : 1;
+            const int wanted = available - dropped > 1 ? available - dropped : 1;
 
             for (int i = 0; i < wanted && outSets[r].count < CrispFontSet::kMax; ++i)
             {

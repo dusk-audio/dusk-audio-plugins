@@ -83,7 +83,6 @@ public:
 
         // Try each plausible writable root rather than one per platform: a host
         // can run without HOME set, and a log nobody can find is a log nobody reads.
-        std::string path;
         const char* const roots[] = { std::getenv("LOCALAPPDATA"), std::getenv("HOME"),
                                       std::getenv("USERPROFILE"), std::getenv("TMPDIR"),
                                       std::getenv("TEMP") };
@@ -91,14 +90,15 @@ public:
         {
             if (root == nullptr || root[0] == '\0')
                 continue;
-            path = std::string(root) + "/dusk-gl-debug.log";
-            break;
-        }
-        if (path.empty())
-            return;
 
-        if (FILE* const f = std::fopen(path.c_str(), "a"))
-        {
+            // Keep trying: a root can exist in the environment and still be
+            // unwritable for this process, and stopping at the first candidate
+            // would then lose the log for no reason.
+            const std::string path = std::string(root) + "/dusk-gl-debug.log";
+            FILE* const f = std::fopen(path.c_str(), "a");
+            if (f == nullptr)
+                continue;
+
             std::fprintf(f,
                 "tape-echo-2 vendor=%s renderer=%s version=%s max_texture=%d "
                 "atlas=%dx%d oversample=%d dropped=%d attempts=%d fits=%d\n",
@@ -108,6 +108,7 @@ public:
                 (int)maxTextureSize, fit.atlasWidth, fit.atlasHeight,
                 fit.oversample, fit.droppedSizes, fit.attempts, fit.fits ? 1 : 0);
             std::fclose(f);
+            return;
         }
     }
 
