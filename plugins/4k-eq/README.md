@@ -94,8 +94,10 @@ cmake --build plugins/4k-eq/dpf-plugin/build --target \
   four_k_eq_2-vst3 four_k_eq_2-clap four_k_eq_2-lv2
 ```
 
-On macOS, add `four_k_eq_2-au`. Local installation after building is enabled
-by default; configure with `-DDUSK_DPF_INSTALL_LOCAL=OFF` for packaging or CI.
+The target list above is for Linux. On Windows, build only `four_k_eq_2-vst3`
+and `four_k_eq_2-clap`. On macOS, use the Linux list and add
+`four_k_eq_2-au`. Local installation after building is enabled by default;
+configure with `-DDUSK_DPF_INSTALL_LOCAL=OFF` for packaging or CI.
 
 ## Installation
 

@@ -258,8 +258,8 @@ from running nominally unity biquads.
 ## Troubleshooting
 
 **The EQ appears to do nothing.** Confirm Bypass is off and at least one band
-gain is away from 0 dB. The HPF and LPF remain bypassed while their knobs read
-OUT.
+gain is away from 0 dB, or an HPF/LPF knob is not OUT. The HPF and LPF remain
+bypassed only while their knobs read OUT.
 
 **The frequency bubble does not match the printed legend.** The legend is the
 console's control marking; the bubble is the measured audible frequency. Use
