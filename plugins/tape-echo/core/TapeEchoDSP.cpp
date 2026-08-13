@@ -1050,6 +1050,10 @@ void TapeEchoDSP::refreshBlockRateControls()
         if (ageContourDb != lastAgeContourDb)
         {
             lastAgeContourDb = ageContourDb;
+            const bool active = std::abs(ageContourDb) > 1.0e-6f;
+            if (active != ageContourActive)
+                for (auto& ch : channels) ch.ageContour.reset();
+            ageContourActive = active;
             for (int c = 0; c < kMaxChannels; ++c)
                 channels[(size_t)c].ageContour.setCoeffs(
                     Biquad::shelf(
@@ -1081,6 +1085,14 @@ void TapeEchoDSP::refreshBlockRateControls()
     {
         lastBass   = bass;
         lastTreble = treble;
+        const bool bassActive = std::abs(bass) > 1.0e-6f;
+        const bool trebleActive = std::abs(treble) > 1.0e-6f;
+        if (bassActive != bassShelfActive)
+            for (auto& ch : channels) ch.bassShelf.reset();
+        if (trebleActive != trebleShelfActive)
+            for (auto& ch : channels) ch.trebleShelf.reset();
+        bassShelfActive = bassActive;
+        trebleShelfActive = trebleActive;
         // Configure ALL channels (like the age-retune block above), not just the
         // current numChannels: a later mono→stereo switch without a knob move
         // would otherwise leave channels[1]'s shelves at their passthrough
@@ -1517,9 +1529,10 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         const float fluxEnvelope =
             ch.recordEnvelope + ch.loopEnvelope * kRecordDriveToInput;
 
-        const float recorded = ch.recordHP.process(
-            ch.ageContour.process(
-                ch.speedLP.process(pre + loopDrive)));
+        float recorded = ch.speedLP.process(pre + loopDrive);
+        if (ageContourActive)
+            recorded = ch.ageContour.process(recorded);
+        recorded = ch.recordHP.process(recorded);
         // The tape's low-level magnetisation curve is more strongly curved
         // than the record preamp, but its slope remains positive at overload.
         // This bounded cubic term raises the odd-harmonic ladder without
@@ -1640,8 +1653,11 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
         // Echo output path only: bass/treble shelves (dry and reverb
         // are unaffected, matching the hardware layout).
-        const float echoWet = ch.trebleShelf.process(
-            ch.bassShelf.process(amplifiedHeadSum + reproAgeNoise));
+        float echoWet = amplifiedHeadSum + reproAgeNoise;
+        if (bassShelfActive)
+            echoWet = ch.bassShelf.process(echoWet);
+        if (trebleShelfActive)
+            echoWet = ch.trebleShelf.process(echoWet);
 
         // Spring tank is fed from the same mono preamp signal.
         const float rev = spring.process(springPre * revSend);

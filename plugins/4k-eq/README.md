@@ -10,21 +10,16 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
 
 ### EQ Section
 - **4-band parametric EQ** (Low, Low-Mid, High-Mid, High)
-- **Brown/Black modes** - E-series vs G-series characteristics
-  - **Brown (E-series)**: Musical, broader curves, gentle shelves, fixed Q
-  - **Black (G-series)**: Surgical, proportional Q (increases with gain), tighter response
-- **High-pass/Low-pass filters** (18dB/oct HPF, 12dB/oct LPF)
-- **Bell/Shelf switching** on LF and HF bands (Black mode only)
+- **Brown/Black modes** with separately measured frequency, gain, Q, shelf/bell, and filter laws
+- **Shared-stage interaction modeling** for the original LF/LM and HM/HF circuit pairs
+- **High-pass/Low-pass filters** with measured mode-specific slopes, insertion trim, and control laws
+- **Bell/Shelf switching** on LF and HF bands
 
 ### Processing Quality
-- **2x/4x oversampling** - Anti-aliased processing (2x default, 4x for maximum quality)
-- **Analog saturation modeling** - Multi-stage: Input transformer → NE5534 op-amp → Output transformer (E-Series only)
-  - E-Series: Predominantly 2nd harmonic (warm, transformer-colored)
-  - G-Series: More 3rd harmonic (clean, transformerless)
-  - Clean by default (0% saturation) - transparent unless driven
-- **Per-band saturation** - Subtle harmonic enhancement on each EQ stage when boosting
+- **1x/2x/4x oversampling** - Anti-aliased processing (4x default)
+- **Measured native EQ-stage coloration and headroom** - mode-dependent low-level harmonics and calibrated overload rails
+- **Native console nonlinearity** - fixed Brown/Black coloration driven by the Input control, matching the reference signal flow
 - **Auto-gain compensation toggle** - Optional automatic output adjustment to maintain perceived loudness
-- **M/S processing mode** - Mid/Side encoding for stereo width control
 
 ### User Interface
 - **Real-time spectrum analyzer** - FFT-based frequency visualization (30 Hz)
@@ -32,7 +27,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
   - 🔴 Red: Gain controls
   - 🟢 Green: Frequency controls
   - 🔵 Blue: Q controls
-  - 🟠 Orange: Filters & saturation
+  - 🟠 Orange: Filters
 - **Professional tick markings** - British-style graduated scales with labeled frequency/Q values
   - LF: 30, 50, 100, 200, 300, 400, 480 Hz
   - LMF: 200, 300, 800, 1k, 1.5k, 2k, 2.5k Hz
@@ -40,7 +35,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
   - HF: 1.5k, 2k, 5k, 8k, 10k, 14k, 16k Hz
   - Q: 4, 3, 2, 1.5, 1, .5, .4
   - Gain knobs: 0dB center indicator highlighted
-- **Clear labeling** - All knobs labeled (GAIN, FREQ, Q, HPF, LPF, OUTPUT, DRIVE)
+- **Clear labeling** - All knobs labeled (GAIN, FREQ, Q, HPF, LPF, INPUT, OUTPUT)
 - **Mouse wheel support** - Scroll to adjust knobs
 - **Double-click to edit** - Type an exact value into any knob (Ctrl/Cmd+click resets to default)
 - **Preset browser** - 14 factory presets + user state saving
@@ -48,21 +43,24 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
 
 ## Factory Presets
 
-1. **Default** - Flat response, neutral starting point
-2. **Vocal Presence** - Clarity boost without harshness (+3dB@3.5kHz, -3dB@300Hz)
-3. **Kick Punch** - Tight low-end thump (+6dB@50Hz, -4dB@200Hz)
-4. **Snare Crack** - Body and snap (+4dB@250Hz, +5dB@5kHz)
-5. **Bass Warmth** - Definition without mud (+4dB@80Hz, +2dB@1.5kHz)
-6. **Bright Mix** - Polished enhancement (+2dB@60Hz, +3dB@12kHz)
-7. **Telephone EQ** - Lo-fi narrow bandwidth (HPF@300Hz, LPF@3kHz)
-8. **Air & Silk** - High-end sparkle (+3dB@7kHz, +4dB@15kHz)
-9. **Mix Bus Glue** - Subtle cohesion (+1.5dB@100Hz, 30% saturation)
-10. **Master Sheen** - Polished top-end for mastering (+1dB@5kHz, +1.5dB@16kHz, 10% saturation)
-11. **Bass Guitar Polish** - Definition and punch (+5dB@60Hz, -2dB@250Hz, +4dB@800Hz)
-12. **Drum Bus Punch** - Cohesive drum processing (+4dB@70Hz, +3dB@3.5kHz, 25% saturation)
-13. **Acoustic Guitar** - Clarity and sparkle (+2dB@200Hz, +3dB@2.5kHz, +4dB@12kHz)
-14. **Piano Brilliance** - Clarity and presence (+2dB@80Hz, -2.5dB@500Hz, +3dB@2kHz)
-15. **Master Bus Sweetening** - Final polish (+1dB@50Hz, +1.5dB@15kHz, 15% saturation)
+`INIT` provides the flat default. The preset browser contains these 14 calibrated
+factory programs; all listed frequencies are audible/effective targets rather
+than internal control coordinates.
+
+1. **Vocal Presence** - HPF 80 Hz; +3 dB at 100 Hz, -3 dB at 300 Hz, +4 dB at 3.5 kHz, +2 dB at 8 kHz
+2. **Kick Punch** - HPF 30 Hz; +4 dB at 50 Hz, -2.5 dB at 200 Hz, +3 dB at 2 kHz
+3. **Snare Crack** - HPF 150 Hz; +4 dB at 250 Hz, +5 dB at 5 kHz, +3 dB bell at 8 kHz
+4. **Drum Bus Punch** - Black mode; +4 dB at 70 Hz, -3 dB at 350 Hz, +3 dB at 3.5 kHz, +2.5 dB at 10 kHz
+5. **Bass Warmth** - LPF 10 kHz; +4 dB at 80 Hz, -3 dB at 400 Hz, +2 dB at 1.5 kHz
+6. **Bass Guitar Polish** - HPF 35 Hz; +5 dB at 60 Hz, -2 dB at 250 Hz, +3 dB at 1.2 kHz, +2 dB bell at 4.5 kHz
+7. **Acoustic Guitar** - HPF 80 Hz; -2 dB at 100 Hz, +2 dB at 200 Hz, +3 dB at 2.5 kHz, +4 dB at 12 kHz
+8. **Piano Brilliance** - HPF 30 Hz; +2 dB at 80 Hz, -2.5 dB at 500 Hz, +3 dB at 2 kHz, +3.5 dB at 8 kHz
+9. **Bright Mix** - +2 dB at 60 Hz, -2 dB at 2.5 kHz, +2.5 dB at 10 kHz
+10. **Glue Bus** - +2 dB at 100 Hz, -1.5 dB at 3 kHz, +2 dB at 10 kHz
+11. **Telephone EQ** - HPF 300 Hz, LPF 3 kHz, +6 dB at 1 kHz
+12. **Air & Silk** - +3 dB at 7 kHz, +4 dB at 15 kHz
+13. **Master Sheen** - +1 dB at 5 kHz, +1.5 dB at 16 kHz
+14. **Master Bus Sweetening** - +1 dB at 50 Hz, -1 dB at 600 Hz, +0.5 dB at 4 kHz, +1.5 dB at 15 kHz, -0.5 dB output
 
 ## DAW Compatibility
 
@@ -90,21 +88,20 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
 ### DSP Details
 - **Filter topology**: Biquad IIR with British-style coefficient shaping
 - **Frequency warping**: Pre-warped for HF accuracy (prevents digital cramping)
-- **Saturation model**: Asymmetric soft-clipping (NE5534 op-amp characteristic)
+- **Nonlinearity model**: Measured, mode-dependent native console coloration and overload rails; level is driven by Input
 - **Sample rates**: 44.1kHz - 192kHz (auto-limits oversampling at >96kHz)
 - **Latency**:
   - 2x oversampling: ~32 samples
   - 4x oversampling: ~96 samples (auto-disabled at high sample rates)
 
 ### Parameter Ranges (Console Hardware-Accurate)
-- **LF/HF Gain**: ±20dB (±15dB typical range + headroom)
-- **LF Freq**: 30-480Hz | **HF Freq**: 1.5kHz-16kHz
+- **LF/HF Gain**: ±15dB
+- **LF Freq**: 30-450Hz | **HF Freq**: 1.5kHz-16kHz
 - **LM Freq**: 200-2500Hz | **HM Freq**: 600-7000Hz
-- **Q Range**: 0.4-4.0 (realistic range, proportional in Black mode)
-- **HPF**: 16-350Hz (18dB/oct) | **LPF**: 22kHz-3kHz (12dB/oct)
-- **Saturation**: 0-100% (default 0% - clean unless driven)
-- **Output Gain**: ±12dB
-- **Auto-Gain**: ON/OFF toggle (default ON)
+- **Q Range**: 0.5-3.0
+- **HPF**: Out, 16-350Hz | **LPF**: Out, 15.201kHz-3kHz
+- **Input/Output Gain**: ±12dB
+- **Auto-Gain**: ON/OFF toggle (default OFF)
 
 ## Building from Source
 
@@ -180,6 +177,58 @@ cmake --build . --target FourKEQ_All -j8
 - **Efficiency**: Highly optimized - can be used on every channel in a mix without CPU issues
 
 ## Changelog
+
+### v2.0.11 (2026-08-12)
+
+- Migrated all 14 factory programs from legacy control coordinates to their
+  intended audible frequencies using the measured Brown/Black calibration.
+- Versioned new user-preset files with an explicit effective-Hz frequency
+  domain while preserving legacy user presets and existing DAW sessions.
+- Made factory recall deterministic by disabling Auto Gain and removed the
+  retired M/S compatibility slot from newly saved presets.
+- Corrected the documented factory-preset list and settings.
+
+### v2.0.10 (2026-08-12)
+
+- Tightened `4K-2 EQ` into a single left-aligned nameplate title while keeping
+  the version as the smaller right-aligned element.
+
+### v2.0.9 (2026-08-12)
+
+- Matched the `EQ` nameplate label to the size and baseline of `4K-2`.
+
+### v2.0.8 (2026-08-12)
+
+- Simplified the header lockup to prioritize the model name: `4K-2`, `EQ`,
+  then the version, removing the duplicated `4K` label.
+
+### v2.0.7 (2026-08-12)
+
+- Calibrated all six frequency-knob pointers, hover values, dragging, and typed
+  entry to the measured effective frequency. Hidden Brown/Black compensation
+  coordinates remain internal, so the matched DSP response is unchanged while
+  every visible frequency now agrees with the response graph and FFT.
+
+### v2.0.6 (2026-08-12)
+
+- Removed and neutralized the non-SSL M/S option while preserving its hidden
+  parameter slot for session compatibility.
+- Unified panel and header buttons with the silver SHELF-button treatment;
+  Brown/Black remains the only colored selector, with a true-black Black mode.
+
+### v2.0.5 (2026-08-11)
+
+- Aligned the Input and Output controls with the first and second EQ knob rows,
+  and moved Bypass and Auto Gain beneath the master knobs.
+
+### v2.0.4 (2026-08-11)
+- Added unlabeled minor bezel dots across the two wide upper gaps on every EQ frequency dial
+
+### v2.0.3 (2026-08-11)
+- Removed the user-facing Drive control; Input now sits above Output in the Master section
+- Preserved the old saturation parameter index as an inert compatibility slot for existing sessions
+- Native Brown/Black nonlinearity remains fixed and responds to Input level like the reference SSL path
+- Neutral EQ stages now bypass exactly and clear recursive state, eliminating the sub-40 Hz numerical floor
 
 ### v1.0.10 (2026-05-08)
 - ✅ Unified double-click-to-edit value entry across all knobs

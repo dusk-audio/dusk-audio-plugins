@@ -16,6 +16,9 @@
 
 #define DISTRHO_PLUGIN_NUM_INPUTS   2
 #define DISTRHO_PLUGIN_NUM_OUTPUTS  2
+// AU hosts filter insert menus by channel layout.  Keep stereo as the default
+// while also exposing a true mono instance for mono Logic channel strips.
+#define DISTRHO_PLUGIN_EXTRA_IO     { 1, 1 },
 #define DISTRHO_PLUGIN_HAS_UI       1
 #define DISTRHO_PLUGIN_IS_RT_SAFE   1
 // UI reads the meter/spectrum atomics straight from the DSP when same-process
@@ -30,7 +33,7 @@
 #define DISTRHO_UI_CUSTOM_INCLUDE_PATH  "DearImGui.hpp"
 #define DISTRHO_UI_CUSTOM_WIDGET_TYPE   DGL_NAMESPACE::ImGuiTopLevelWidget
 #define DISTRHO_UI_DEFAULT_WIDTH        960
-#define DISTRHO_UI_DEFAULT_HEIGHT       680
+#define DISTRHO_UI_DEFAULT_HEIGHT       640
 #define DISTRHO_UI_USER_RESIZABLE       1
 
 #define DISTRHO_PLUGIN_CLAP_FEATURES   "audio-effect", "equalizer", "stereo"

@@ -8,6 +8,8 @@
 #include "FourKEQAccess.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
+#include "FourKEQPresetRuntime.hpp"
+#include "FourKEQVersion.hpp"
 
 START_NAMESPACE_DISTRHO
 
@@ -17,12 +19,12 @@ public:
     FourKEQPlugin()
         : Plugin(kParamCount, kNumFactoryPresets, 0)
     {
-        // Seed the value mirror from the shared defaults table. (Calling
+        // Seed the value mirror from the shared parameter table. (Calling
         // initParameter() here would repeat the full parameter setup and
         // re-allocate the kEqType / kOversampling enumeration arrays each pass
         // just to read ranges.def — the table is the single source of truth.)
         for (uint32_t i = 0; i < kParamCount; ++i)
-            values[i] = kParamDefaults[i];
+            values[i] = kFourKParams[i].def;
     }
 
     //--- same-process accessors for the UI bridge -----------------------------
@@ -39,64 +41,90 @@ protected:
     const char* getDescription() const override
     {
         return "British console EQ emulation: 4-band parametric EQ with "
-               "high/low filters, Brown/Black voicings and console saturation, "
+               "high/low filters, Brown/Black voicings and native console nonlinearity, "
                "oversampled for cramp-free high-frequency response.";
     }
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override  { return d_version(2, 0, 0); }
+    // Version comes from the CMake project() VERSION via FourKEQVersion.hpp.
+    uint32_t    getVersion() const override
+    { return d_version(FOURKEQ2_VERSION_MAJOR, FOURKEQ2_VERSION_MINOR, FOURKEQ2_VERSION_PATCH); }
     int64_t     getUniqueId() const override { return d_cconst('D', 's', 'F', 'q'); } // DsFq
 
     //--- parameters -----------------------------------------------------------
     void initParameter(uint32_t index, Parameter& p) override
     {
+        if (index >= kParamCount)
+            return;
         p.hints = kParameterIsAutomatable;
-        auto rng = [&p](float def, float min, float max) { p.ranges.def = def; p.ranges.min = min; p.ranges.max = max; };
+        // Symbol and ranges come from the shared table (FourKEQParams.hpp), the
+        // same one the UI mirror and the user-preset file keys read — so the
+        // host-visible symbols can never drift from the preset format. The
+        // switch below only adds names, units, hints and enumerations.
+        p.symbol     = kFourKParams[index].key;
+        p.ranges.def = kFourKParams[index].def;
+        p.ranges.min = kFourKParams[index].min;
+        p.ranges.max = kFourKParams[index].max;
         auto boolean = [&p]() { p.hints |= kParameterIsBoolean | kParameterIsInteger; };
 
         switch (index)
         {
-        case kHpfFreq:   p.name = "HPF Frequency"; p.symbol = "hpf_freq"; p.unit = "Hz"; rng(20, 20, 500); break;
-        case kHpfEnabled:boolean(); p.name = "HPF Enabled"; p.symbol = "hpf_enabled"; rng(0, 0, 1); break;
-        case kLpfFreq:   p.name = "LPF Frequency"; p.symbol = "lpf_freq"; p.unit = "Hz"; rng(20000, 3000, 20000); break;
-        case kLpfEnabled:boolean(); p.name = "LPF Enabled"; p.symbol = "lpf_enabled"; rng(0, 0, 1); break;
-        case kLfGain:    p.name = "LF Gain"; p.symbol = "lf_gain"; p.unit = "dB"; rng(0, -20, 20); break;
-        case kLfFreq:    p.name = "LF Frequency"; p.symbol = "lf_freq"; p.unit = "Hz"; rng(100, 30, 480); break;
-        case kLfBell:    boolean(); p.name = "LF Bell Mode"; p.symbol = "lf_bell"; rng(0, 0, 1); break;
-        case kLmGain:    p.name = "LM Gain"; p.symbol = "lm_gain"; p.unit = "dB"; rng(0, -20, 20); break;
-        case kLmFreq:    p.name = "LM Frequency"; p.symbol = "lm_freq"; p.unit = "Hz"; rng(600, 200, 2500); break;
-        case kLmQ:       p.name = "LM Q"; p.symbol = "lm_q"; rng(0.7f, 0.4f, 4.0f); break;
-        case kHmGain:    p.name = "HM Gain"; p.symbol = "hm_gain"; p.unit = "dB"; rng(0, -20, 20); break;
-        case kHmFreq:    p.name = "HM Frequency"; p.symbol = "hm_freq"; p.unit = "Hz"; rng(2000, 600, 7000); break;
-        case kHmQ:       p.name = "HM Q"; p.symbol = "hm_q"; rng(0.7f, 0.4f, 4.0f); break;
-        case kHfGain:    p.name = "HF Gain"; p.symbol = "hf_gain"; p.unit = "dB"; rng(0, -20, 20); break;
-        case kHfFreq:    p.name = "HF Frequency"; p.symbol = "hf_freq"; p.unit = "Hz"; rng(8000, 1500, 16000); break;
-        case kHfBell:    boolean(); p.name = "HF Bell Mode"; p.symbol = "hf_bell"; rng(0, 0, 1); break;
-        case kEqType:    p.hints |= kParameterIsInteger; p.name = "EQ Type"; p.symbol = "eq_type"; rng(0, 0, 1);
+        case kHpfFreq:   p.name = "HPF Frequency"; p.unit = "Hz"; break;
+        case kHpfEnabled:boolean(); p.name = "HPF Enabled"; break;
+        case kLpfFreq:   p.name = "LPF Frequency"; p.unit = "Hz"; break;
+        case kLpfEnabled:boolean(); p.name = "LPF Enabled"; break;
+        case kLfGain:    p.name = "LF Gain"; p.unit = "dB"; break;
+        case kLfFreq:    p.name = "LF Frequency"; p.unit = "Hz"; break;
+        case kLfBell:    boolean(); p.name = "LF Bell Mode"; break;
+        case kLmGain:    p.name = "LM Gain"; p.unit = "dB"; break;
+        case kLmFreq:    p.name = "LM Frequency"; p.unit = "Hz"; break;
+        case kLmQ:       p.name = "LM Q"; break;
+        case kHmGain:    p.name = "HM Gain"; p.unit = "dB"; break;
+        case kHmFreq:    p.name = "HM Frequency"; p.unit = "Hz"; break;
+        case kHmQ:       p.name = "HM Q"; break;
+        case kHfGain:    p.name = "HF Gain"; p.unit = "dB"; break;
+        case kHfFreq:    p.name = "HF Frequency"; p.unit = "Hz"; break;
+        case kHfBell:    boolean(); p.name = "HF Bell Mode"; break;
+        case kEqType:    p.hints |= kParameterIsInteger; p.name = "EQ Type";
                          p.enumValues.count = 2; p.enumValues.restrictedMode = true;
                          { auto* e = new ParameterEnumerationValue[2];
                            e[0] = ParameterEnumerationValue(0.f, kEqTypeLabels[0]);
                            e[1] = ParameterEnumerationValue(1.f, kEqTypeLabels[1]);
                            p.enumValues.values = e; } break;
         case kBypass:    p.initDesignation(kParameterDesignationBypass); break;
-        case kInputGain: p.name = "Input Gain"; p.symbol = "input_gain"; p.unit = "dB"; rng(0, -12, 12); break;
-        case kOutputGain:p.name = "Output Gain"; p.symbol = "output_gain"; p.unit = "dB"; rng(0, -12, 12); break;
-        case kSaturation:p.name = "Saturation"; p.symbol = "saturation"; p.unit = "%"; rng(0, 0, 100); break;
-        case kOversampling: p.hints |= kParameterIsInteger; p.name = "Oversampling"; p.symbol = "oversampling"; rng(0, 0, 2);
+        case kInputGain: p.name = "Input Gain"; p.unit = "dB"; break;
+        case kOutputGain:p.name = "Output Gain"; p.unit = "dB"; break;
+        case kSaturation:
+            // ABI/state compatibility only. Removing this shipped index would
+            // remap every parameter after it in existing sessions. DPF only
+            // honours the hidden hint in some formats. Keep the shipped host
+            // name as well as the index so existing automation and the parity
+            // harness can still resolve it, even though it no longer acts on
+            // the standalone 4K DSP.
+            p.hints = kParameterIsHidden;
+            p.name = "Saturation";
+            p.unit = "%";
+            break;
+        case kOversampling: p.hints |= kParameterIsInteger; p.name = "Oversampling";
                          p.enumValues.count = 3; p.enumValues.restrictedMode = true;
                          { auto* e = new ParameterEnumerationValue[3];
                            e[0] = ParameterEnumerationValue(0.f, kOversampleLabels[0]);
                            e[1] = ParameterEnumerationValue(1.f, kOversampleLabels[1]);
                            e[2] = ParameterEnumerationValue(2.f, kOversampleLabels[2]);
                            p.enumValues.values = e; } break;
-        case kMsMode:    boolean(); p.name = "M/S Mode"; p.symbol = "ms_mode"; rng(0, 0, 1); break;
-        case kSpectrumPrePost: boolean(); p.name = "Spectrum Pre/Post"; p.symbol = "spectrum_prepost"; rng(0, 0, 1); break;
-        case kAutoGain:  boolean(); p.name = "Auto Gain Compensation"; p.symbol = "auto_gain"; rng(1, 0, 1); break;
+        case kMsMode:
+            // ABI/state compatibility only. The modeled SSL EQ has no M/S mode,
+            // so retain the shipped index without exposing or processing it.
+            p.hints = kParameterIsHidden;
+            p.name = "M/S Mode";
+            break;
+        case kSpectrumPrePost: boolean(); p.name = "Spectrum Pre/Post"; break;
+        case kAutoGain:  boolean(); p.name = "Auto Gain Compensation"; break;
         case kShowGraph: p.hints = kParameterIsBoolean | kParameterIsInteger; // UI-only, not automatable
-                         p.name = "Show Graph"; p.symbol = "show_graph"; rng(1, 0, 1); break;
-        case kOutPeakL:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak L"; p.symbol = "out_peak_l"; rng(0, 0, 2); break;
-        case kOutPeakR:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak R"; p.symbol = "out_peak_r"; rng(0, 0, 2); break;
+                         p.name = "Show Graph"; break;
+        case kOutPeakL:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak L"; break;
+        case kOutPeakR:  p.hints = kParameterIsAutomatable | kParameterIsOutput; p.name = "Out Peak R"; break;
         }
     }
 
@@ -137,9 +165,14 @@ protected:
         case kBypass:     dsp.setBypass(value > 0.5f); break;
         case kInputGain:  dsp.setInputGainDb(value); break;
         case kOutputGain: dsp.setOutputGainDb(value); break;
-        case kSaturation: dsp.setSaturation(value); break;
+        case kSaturation:
+            // The SSL EQ has no independent drive/mix control. Its calibrated
+            // native nonlinearity is the core's 0% reference state; Input Gain
+            // controls the level presented to that nonlinear path.
+            dsp.setSaturation(0.0f);
+            break;
         case kOversampling: dsp.setOversampling((int)(value + 0.5f)); break;
-        case kMsMode:     dsp.setMsMode(value > 0.5f); break;
+        case kMsMode:     dsp.setMsMode(false); break;
         case kSpectrumPrePost: break; // UI-only (analyzer source select)
         case kShowGraph:  break;      // UI-only (graph collapse), persisted in state
         case kAutoGain:   dsp.setAutoGain(value > 0.5f); break;
@@ -157,17 +190,8 @@ protected:
     {
         if (index >= (uint32_t)kNumFactoryPresets)
             return;
-        const FourKEQPreset& p = kFactoryPresets[index];
-        setParameterValue(kLfGain, p.lfGain); setParameterValue(kLfFreq, p.lfFreq); setParameterValue(kLfBell, p.lfBell);
-        setParameterValue(kLmGain, p.lmGain); setParameterValue(kLmFreq, p.lmFreq); setParameterValue(kLmQ, p.lmQ);
-        setParameterValue(kHmGain, p.hmGain); setParameterValue(kHmFreq, p.hmFreq); setParameterValue(kHmQ, p.hmQ);
-        setParameterValue(kHfGain, p.hfGain); setParameterValue(kHfFreq, p.hfFreq); setParameterValue(kHfBell, p.hfBell);
-        setParameterValue(kHpfFreq, p.hpfFreq); setParameterValue(kLpfFreq, p.lpfFreq);
-        setParameterValue(kSaturation, p.saturation); setParameterValue(kOutputGain, p.outputGain);
-        setParameterValue(kInputGain, p.inputGain); setParameterValue(kEqType, p.eqType);
-        // v2: engage the filters the preset implies (JUCE left them off -> inert).
-        setParameterValue(kHpfEnabled, p.hpfFreq > 20.5f ? 1.0f : 0.0f);
-        setParameterValue(kLpfEnabled, p.lpfFreq < 19999.0f ? 1.0f : 0.0f);
+        forEachFourKEQFactoryPresetParam((int)index,
+            [this](uint32_t param, float value) { setParameterValue(param, value); });
     }
 
     //--- lifecycle ------------------------------------------------------------
@@ -194,11 +218,18 @@ protected:
         pushAllParams();
         // (latency refreshed by activate()/run(), never here — see sampleRateChanged)
     }
+    void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
+    {
+        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DPF calls this while deactivated, so the audio thread sees a stable
+        // channel count when processing resumes.
+        activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
+    }
 
     //--- audio ----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
+        dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
         updateLatency();
     }
 
@@ -217,6 +248,7 @@ private:
     duskaudio::FourKEQDSP dsp;
     float values[kParamCount] = {};
     uint32_t lastLatency = 0xffffffffu;
+    uint16_t activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQPlugin)
 };

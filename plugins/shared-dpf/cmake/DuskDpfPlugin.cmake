@@ -61,6 +61,25 @@ function(dusk_dpf_install_local plugin_name)
             VERBATIM)
     endif()
 
+    # Apple's AU registrar validates the signature of the completed component
+    # bundle, including Info.plist.  The arm64 linker only ad-hoc signs the
+    # executable, which leaves a bundle that codesign --strict (and Logic) will
+    # reject once DPF adds the remaining bundle files.  Re-sign the finished AU
+    # before either validation or local installation.
+    # The verify pass is not decoration: a stale resource left in the bundle, or a
+    # post-sign edit of Info.plist, breaks the seal in a way that only shows up as
+    # the component silently missing from the host's plugin menu. Fail the build
+    # instead, matching the identical sign+verify pair in .github/workflows/dpf-build.yml.
+    if(CMAKE_HOST_APPLE AND TARGET ${plugin_name}-au)
+        add_custom_command(TARGET ${plugin_name}-au POST_BUILD
+            COMMAND /usr/bin/codesign --force --deep --sign -
+                "${CMAKE_BINARY_DIR}/bin/${plugin_name}.component"
+            COMMAND /usr/bin/codesign --verify --deep --strict --verbose=2
+                "${CMAKE_BINARY_DIR}/bin/${plugin_name}.component"
+            COMMENT "Signing ${plugin_name}.component"
+            VERBATIM)
+    endif()
+
     if(NOT DUSK_DPF_INSTALL_LOCAL)
         return()
     endif()
@@ -115,10 +134,22 @@ function(dusk_dpf_install_local plugin_name)
     endif()
     # AU is a macOS-only .component bundle; DPF only creates the -au target when
     # building on macOS, so this branch is inert (target absent) elsewhere.
+    # copy_directory MERGES, and the AU is code-signed: any file left over from an
+    # older build stays behind, is absent from the fresh _CodeSignature seal, and
+    # makes `codesign --verify` report "a sealed resource is missing or invalid" —
+    # which Apple's AU registrar turns into a component that loads nowhere. Wipe
+    # the installed bundle first so the copy is exactly what was signed.
     if(TARGET ${plugin_name}-au)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
+            set(_rm_installed_au ${CMAKE_COMMAND} -E rm -rf "${_au}/${plugin_name}.component")
+        else()
+            set(_rm_installed_au ${CMAKE_COMMAND} -E remove_directory "${_au}/${plugin_name}.component")
+        endif()
         add_custom_command(TARGET ${plugin_name}-au POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "${_au}"
+            COMMAND ${_rm_installed_au}
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${_bin}/${plugin_name}.component" "${_au}/${plugin_name}.component"
+            COMMAND /usr/bin/codesign --verify --deep --strict --verbose=2 "${_au}/${plugin_name}.component"
             COMMENT "Installing ${plugin_name}.component -> ${_au}"
             VERBATIM)
     endif()

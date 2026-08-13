@@ -344,9 +344,24 @@ public:
     void updateCoefficients(float boostGain, float attenGain, float frequency,
                             double sampleRate)
     {
+        const bool boostWasActive = cachedBoost > 0.01f;
+        const bool attenWasActive = cachedAtten > 0.01f;
         cachedBoost = boostGain;
         cachedAtten = attenGain;
         cachedFreq = frequency;
+        const bool boostIsActive = cachedBoost > 0.01f;
+        const bool attenIsActive = cachedAtten > 0.01f;
+
+        // Clear recursive/inductor state when either passive arm crosses its
+        // exact neutral point. The identity coefficients below are exact, but
+        // without this reset they can emit state accumulated before bypass.
+        if (boostWasActive != boostIsActive)
+        {
+            for (auto& ch : channels) ch.peakZ1 = ch.peakZ2 = 0.0f;
+            for (auto& inductor : inductors) inductor.reset();
+        }
+        if (attenWasActive != attenIsActive)
+            for (auto& ch : channels) ch.dipZ1 = ch.dipZ2 = 0.0f;
 
         float maxFreq = static_cast<float>(sampleRate) * 0.45f;
         frequency = std::clamp(frequency, 10.0f, maxFreq);

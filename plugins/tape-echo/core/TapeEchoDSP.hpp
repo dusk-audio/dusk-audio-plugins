@@ -671,6 +671,7 @@ private:
     float     lastPlaybackCutoff = -1.0f;         // block-rate speed/age guard
     float     lastAntiAliasCutoff = -1.0f;
     float     lastAgeContourDb = 999.0f;
+    bool      ageContourActive = false;
     uint32_t  lastClearRequest = 0u;
     float     spliceSamplesToHead1 = 0.0f;
     bool      spliceClockStarted = false;
@@ -689,6 +690,7 @@ private:
 
     // cached to detect shelf-coefficient changes at block rate
     float lastBass = -999.0f, lastTreble = -999.0f;
+    bool bassShelfActive = false, trebleShelfActive = false;
 };
 
 } // namespace duskaudio

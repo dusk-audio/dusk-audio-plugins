@@ -4,17 +4,15 @@
 //
 // FourKEQDSP.hpp — framework-free 4K console EQ core (C++17, no JUCE/DPF).
 //
-// Port of plugins/4k-eq/FourKEQ.{h,cpp}. The DSP is identical in structure to
-// the JUCE version; juce::dsp::IIR bands become shared duskaudio::Biquad
-// instances (bit-for-bit coefficient math), juce::dsp::Oversampling becomes the
-// shared streaming halfband Oversampler, and ConsoleSaturation becomes the
-// de-JUCE'd ConsoleSaturationCore. The whole filter + saturation chain runs
-// oversampled (>=2x) per the project "no EQ cramping" rule.
+// Reference-calibrated DPF implementation. Isolated band/filter laws, shared
+// LF/LM and HM/HF stage interactions, native nonlinear residue, and overload
+// rails are fitted from hosted SSL E-channel measurements. The EQ and
+// saturation chain is oversampled (>=2x) per the project "no EQ cramping" rule.
 //
 // Signal flow (reproduces FourKEQ::processBlock):
 //   in-meter -> input gain -> [pre-EQ spectrum tap] -> (M/S encode) ->
-//   OVERSAMPLE{ HPF(3rd) -> LF -> LM -> HM -> HF -> LPF -> transformer allpass
-//   (Brown only) -> console saturation } -> crosstalk -> (M/S decode) ->
+//   calibrated HPF -> OVERSAMPLE{ LF -> LM -> HM -> HF -> LPF ->
+//   native EQ-stage color } -> measured rail -> (M/S decode) ->
 //   output gain*autogain -> [post-EQ spectrum tap] -> bypass crossfade -> out.
 //
 // Contract: prepare()/reset() on the main thread; processBlock() RT-safe
@@ -137,19 +135,39 @@ public:
     const SpectrumRing& preSpectrum()  const noexcept { return preRing; }
     const SpectrumRing& postSpectrum() const noexcept { return postRing; }
 
-    //--- parallel-summing EQ, shared with the UI response curve ---------------
-    // The real 82E242 EQ sums fixed-Q band-pass / shelf blocks with the dry
-    // signal at one node: H = 1 + sum_i K_i * F_i, K_i = 10^(G_i/20) - 1. This
-    // makes band interaction, constant-Q (E) and asymmetric cut fall out of the
-    // structure instead of being faked. F_i come straight from Biquad designers
-    // (bandPassConstantPeak / firstOrderLowPass / firstOrderHighPass / lowPass /
-    // highPass); the two helpers below are the only band-specific voicing.
-    //
-    // Mid-band Q voicing: E-series (Brown) is constant-Q; G-series (Black) is
-    // proportional-Q (narrows on boost/cut). Single application.
+    //--- measured EQ calibration, shared with the UI response curve -----------
+    enum class Band { LF = 0, LM, HM, HF };
+    static float calibratedEqFrequency(float controlHz, float controlGainDb, Band band,
+                                       bool black, bool bell) noexcept;
+    // Inverse of calibratedEqFrequency(). Factory/user presets are authored in
+    // audible Hz, while the shipped host parameter remains the original
+    // control coordinate for session/automation compatibility.
+    static float controlForCalibratedEqFrequency(float frequencyHz, float controlGainDb,
+                                                 Band band, bool black, bool bell) noexcept;
+    static float calibratedEqGain(float controlDb, Band band,
+                                  bool black, bool bell) noexcept;
+    static float calibratedEqQ(float controlQ, float controlHz,
+                               float controlGainDb, Band band,
+                               bool black, bool bell) noexcept;
+    // The original circuit shares one active stage between LF/LM and another
+    // between HM/HF. These two small correction sections reproduce the
+    // measured interaction left after the isolated-band biquads. For the low
+    // pair, firstShape is LF bell (0/1) and secondShape is LM Q. For the high
+    // pair, firstShape is HM Q and secondShape is HF bell (0/1).
+    static std::array<BiquadCoeffs, 3> calibratedPairCorrection(
+        double sampleRate, bool highPair, bool black,
+        float firstGainDb, float firstControlHz, float firstShape,
+        float secondGainDb, float secondControlHz, float secondShape) noexcept;
+    static float calibratedFilterFrequency(float controlHz, bool highPass,
+                                           bool black) noexcept;
+    static float controlForCalibratedFilterFrequency(float frequencyHz, bool highPass,
+                                                     bool black) noexcept;
+    static float calibratedHpfTrimDb(float controlHz, bool black) noexcept;
+    static float calibratedFilterQ(bool highPass, bool black) noexcept;
+
+    // Legacy helpers remain public because Multi-Q's British response preview
+    // uses the older parallel topology independently of 4K EQ 2.
     static float voicedMidQ(float gainDb, float baseQ, bool black) noexcept;
-    // Parallel summing gain for a band: K = 10^(gainDb/20) - 1 (0 at unity,
-    // negative for cut -> the block subtracts, giving the console asymmetric cut).
     static float bandK(float gainDb) noexcept { return std::pow(10.0f, 0.05f * gainDb) - 1.0f; }
     static float preWarp(float freq, double fs) noexcept;
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
@@ -159,8 +177,15 @@ private:
 
     struct ChannelFilters
     {
-        Biquad hpf1, hpf2, lf, lm, hm, hf, lpf, allpass;
-        void reset() noexcept { hpf1.reset(); hpf2.reset(); lf.reset(); lm.reset(); hm.reset(); hf.reset(); lpf.reset(); allpass.reset(); }
+        Biquad hpf1, hpf2, lf, lm, lowCorrection1, lowCorrection2, lowCorrection3;
+        Biquad hm, hf, highCorrection1, highCorrection2, highCorrection3, lpf;
+        void reset() noexcept
+        {
+            hpf1.reset(); hpf2.reset();
+            lf.reset(); lm.reset(); lowCorrection1.reset(); lowCorrection2.reset(); lowCorrection3.reset();
+            hm.reset(); hf.reset(); highCorrection1.reset(); highCorrection2.reset(); highCorrection3.reset();
+            lpf.reset();
+        }
     };
 
     void recomputeCoeffs(double osRate) noexcept; // sets both channels from a snapshot
@@ -182,9 +207,7 @@ private:
     Oversampler          os[kMaxChannels];
     ConsoleSaturationCore consoleSat;
 
-    // Parallel summing gains per band (shared by both channels), set in
-    // recomputeCoeffs alongside the band filter coefficients.
-    float kLf = 0.f, kLm = 0.f, kHm = 0.f, kHf = 0.f;
+    float hpfTrimGain = 1.0f;
 
     std::vector<float> scratchL, scratchR;
 
@@ -210,12 +233,6 @@ private:
     float autoCompCached_ = 1.0f;
     bool  autoCompValid_  = false;
 
-    // E-series transformer core saturation (Brown only): the iron saturates
-    // where flux is highest (LF), so the added odd harmonics come from an LF
-    // flux estimate. Ported from Multi-Q's British mode.
-    float xfmrFlux[kMaxChannels] = { 0.0f, 0.0f }; // per-channel LF flux state
-    float xfmrLpCoef = 0.0f;                        // one-pole LF estimate coeff @ osRate
-
     //--- metering -------------------------------------------------------------
     std::atomic<float> inPeakL{0.f}, inPeakR{0.f}, outPeakL{0.f}, outPeakR{0.f};
     float meterDecay = 1.0f;
@@ -223,14 +240,14 @@ private:
     SpectrumRing preRing, postRing;
 
     //--- parameter atomics ----------------------------------------------------
-    std::atomic<float> pHpfFreq{20.f}, pHpfEnabled{0.f}, pLpfFreq{20000.f}, pLpfEnabled{0.f};
-    std::atomic<float> pLfGain{0.f}, pLfFreq{100.f}, pLfBell{0.f};
-    std::atomic<float> pLmGain{0.f}, pLmFreq{600.f}, pLmQ{0.7f};
-    std::atomic<float> pHmGain{0.f}, pHmFreq{2000.f}, pHmQ{0.7f};
+    std::atomic<float> pHpfFreq{16.f}, pHpfEnabled{0.f}, pLpfFreq{15201.f}, pLpfEnabled{0.f};
+    std::atomic<float> pLfGain{0.f}, pLfFreq{200.f}, pLfBell{0.f};
+    std::atomic<float> pLmGain{0.f}, pLmFreq{1000.f}, pLmQ{1.5f};
+    std::atomic<float> pHmGain{0.f}, pHmFreq{3000.f}, pHmQ{1.5f};
     std::atomic<float> pHfGain{0.f}, pHfFreq{8000.f}, pHfBell{0.f};
     std::atomic<float> pEqType{0.f}, pBypass{0.f};
     std::atomic<float> pInputGain{0.f}, pOutputGain{0.f}, pSaturation{0.f};
-    std::atomic<float> pOversampling{0.f}, pMsMode{0.f}, pAutoGain{1.f};
+    std::atomic<float> pOversampling{2.f}, pMsMode{0.f}, pAutoGain{0.f};
 };
 
 } // namespace duskaudio

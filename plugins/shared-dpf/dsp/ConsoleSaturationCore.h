@@ -44,6 +44,7 @@ public:
     }
 
     void setConsoleType(ConsoleType type) { consoleType = type; }
+    void setNoiseEnabled(bool enabled) { noiseEnabled = enabled; }
 
     void setSampleRate(double newSampleRate)
     {
@@ -109,8 +110,11 @@ public:
         y = applyDeEmphasis(y, isLeft);
         y = processDCBlocker(y, isLeft);
 
-        const float noiseLevel = 0.00002f * (1.0f + drive * 0.3f);
-        y += noiseDist(noiseGen) * noiseLevel;
+        if (noiseEnabled)
+        {
+            const float noiseLevel = 0.00002f * (1.0f + drive * 0.3f);
+            y += noiseDist(noiseGen) * noiseLevel;
+        }
 
         y *= 1.0f / (1.0f + drive * 0.15f);
         const float wetMix = clampf(drive * 1.4f, 0.0f, 1.0f);
@@ -124,6 +128,7 @@ private:
     static float clampf(float v, float lo, float hi) noexcept { return v < lo ? lo : (v > hi ? hi : v); }
 
     ConsoleType consoleType = ConsoleType::ESeries;
+    bool noiseEnabled = true;
     double sampleRate = 44100.0;
 
     float dcBlockerX1_L = 0.0f, dcBlockerY1_L = 0.0f;

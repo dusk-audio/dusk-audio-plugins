@@ -167,10 +167,18 @@ protected:
         updateLatency();
     }
 
+    void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
+    {
+        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DPF calls this while deactivated, so the audio thread sees a stable
+        // channel count when processing resumes.
+        activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
+    }
+
     //--- audio -----------------------------------------------------------------
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
+        dsp.processBlock(inputs, outputs, activeChannels, (int)frames);
         // Re-query latency each block: it changes on an oversampling-factor change AND on a
         // bypass toggle (bypass = zero-delay passthrough -> latencySamples() returns 0).
         // updateLatency() only forwards to setLatency() when the value actually changes, so
@@ -239,6 +247,8 @@ private:
     }
 
     duskaudio::TapeMachineDSP dsp;
+    // Host-negotiated channel count (AU mono instances); see ioChanged().
+    int activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
     int lastLatency = -1;
     // Parameter cache shared across threads (relaxed atomics), same pattern as
     // the DSP core's own parameter atomics.

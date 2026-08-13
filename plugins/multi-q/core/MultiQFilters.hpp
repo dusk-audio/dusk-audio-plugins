@@ -71,6 +71,12 @@ struct MqBiquadCoeffs
         coeffs[0] = 1.0f; coeffs[1] = 0.0f; coeffs[2] = 0.0f;
         coeffs[3] = 1.0f; coeffs[4] = 0.0f; coeffs[5] = 0.0f;
     }
+
+    bool isIdentity() const noexcept
+    {
+        return coeffs[0] == 1.0f && coeffs[1] == 0.0f && coeffs[2] == 0.0f
+            && coeffs[3] == 1.0f && coeffs[4] == 0.0f && coeffs[5] == 0.0f;
+    }
 };
 
 //==============================================================================
@@ -115,6 +121,8 @@ struct CytomicSVF
     {
         coeffs = target;
         converged = true;
+        if (coeffs.m0 == 1.0f && coeffs.m1 == 0.0f && coeffs.m2 == 0.0f)
+            reset();
     }
 
     void setSmoothCoeff(float c) { smoothCoeff = std::clamp(c, 0.0f, 1.0f); }
@@ -141,6 +149,11 @@ struct CytomicSVF
             {
                 coeffs = target;
                 converged = true;
+                // An identity mix ignores the SVF integrators, so stale state
+                // would otherwise sit frozen until dynamics re-engages. Clear
+                // it as soon as the neutral target is reached.
+                if (coeffs.m0 == 1.0f && coeffs.m1 == 0.0f && coeffs.m2 == 0.0f)
+                    reset();
             }
         }
     }
@@ -194,18 +207,39 @@ struct StereoBiquad
     MqBiquadCoeffs coeffs;
     MqBiquadCoeffs target;
     float smoothCoeff = 0.02f;
+    bool converged = true;
     float s1L = 0.0f, s2L = 0.0f;
     float s1R = 0.0f, s2R = 0.0f;
 
-    void setCoeffs(const MqBiquadCoeffs& c) { target = c; }
-    void reset() { s1L = s2L = s1R = s2R = 0.0f; coeffs = target; }
-    void snapToTarget() { coeffs = target; }
+    void setCoeffs(const MqBiquadCoeffs& c) { target = c; converged = false; }
+    void reset() { s1L = s2L = s1R = s2R = 0.0f; coeffs = target; converged = true; }
+    void snapToTarget()
+    {
+        coeffs = target;
+        converged = true;
+        if (coeffs.isIdentity())
+            s1L = s2L = s1R = s2R = 0.0f;
+    }
     void setSmoothCoeff(float c) { smoothCoeff = c; }
 
     void stepSmoothing()
     {
+        if (converged)
+            return;
         for (int i = 0; i < 6; ++i)
             coeffs.coeffs[i] += smoothCoeff * (target.coeffs[i] - coeffs.coeffs[i]);
+
+        constexpr float eps = 1.0e-7f;
+        bool settled = true;
+        for (int i = 0; i < 6; ++i)
+            settled = settled && std::abs(coeffs.coeffs[i] - target.coeffs[i]) < eps;
+        if (settled)
+        {
+            coeffs = target;
+            converged = true;
+            if (coeffs.isIdentity())
+                s1L = s2L = s1R = s2R = 0.0f;
+        }
     }
 
     float processSampleL(float x)

@@ -18,6 +18,9 @@
 
 #define DISTRHO_PLUGIN_NUM_INPUTS   2
 #define DISTRHO_PLUGIN_NUM_OUTPUTS  2
+// AU hosts filter insert menus by channel layout.  Keep stereo as the default
+// while also exposing a true mono instance for mono Logic channel strips.
+#define DISTRHO_PLUGIN_EXTRA_IO     { 1, 1 },
 #define DISTRHO_PLUGIN_HAS_UI       1
 #define DISTRHO_PLUGIN_IS_RT_SAFE   1
 // UI reads the VU meter atomics straight from the DSP when same-process (all

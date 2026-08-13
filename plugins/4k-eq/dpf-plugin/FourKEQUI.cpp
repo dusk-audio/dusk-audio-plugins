@@ -7,7 +7,7 @@
 // (FILTERS | LF | LMF | HMF | HF | MASTER) with per-band colour coding
 // (LF red, LMF orange, HMF green, HF blue), INPUT/OUTPUT edge meters, preset
 // and oversample selectors, a Brown/Black voicing toggle and Hide Graph.
-// All custom ImDrawList rendering in a 960x680 design space, uniformly scaled.
+// All custom ImDrawList rendering in a 960x640 design space, uniformly scaled.
 // The response curve is computed from the SAME coefficient math as the audio
 // path (FourKEQDSP designers), never by probing audio; a live FFT of the
 // pre/post spectrum is drawn behind it.
@@ -16,43 +16,56 @@
 #include "FourKEQAccess.hpp"
 #include "FourKEQParams.hpp"
 #include "FourKEQDSP.hpp"
+#include "FourKEQPresetRuntime.hpp"
+#include "FourKEQVersion.hpp"
 
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
-#include "PatreonBackersDpf.hpp"
+#include "DuskSupportersOverlay.hpp" // shared DPF Patreon "Special Thanks" overlay
 
+#include <algorithm>
+#include <cctype>
+#include <cfloat>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <algorithm>
 
 START_NAMESPACE_DISTRHO
 
 namespace
 {
     constexpr float kDesignW = 960.0f;
-    constexpr float kDesignH = 680.0f;             // graph shown
-    constexpr float kDesignHCollapsed = 556.0f;    // graph hidden (band removed)
+    constexpr float kDesignH = 640.0f;             // graph shown
+    constexpr float kDesignHCollapsed = 516.0f;    // graph hidden (band removed)
+    constexpr int kUserPresetFormatVersion = 2;
     constexpr float kDbRange = 20.0f;               // graph vertical: +-20 dB
     constexpr float kFMin = 20.0f, kFMax = 20000.0f;
 
     // graph + meter rects
-    constexpr float GX0 = 9, GY0 = 98, GX1 = 951, GY1 = 214; // outer frame lines up with IN/OUT meter outer edges
+    constexpr float GX0 = 9, GY0 = 58, GX1 = 951, GY1 = 174; // outer frame lines up with IN/OUT meter outer edges
     constexpr float INX0 = 8,   INX1 = 34,  MET_Y0 = 246, MET_Y1 = 656;
     constexpr float MET_LBL_Y = 228;  // INPUT/OUTPUT caption, inside the control band
     constexpr float OUTX0 = 926, OUTX1 = 952;
     // column dividers
     constexpr float COL[7] = { 40, 186, 331, 477, 622, 768, 920 };
 
-    // preset dropdown box (design coords) — shared by the header box + popup.
-    // Aligned to the header control-row height so the box + buttons line up.
-    constexpr float kPresetX0 = 200.f, kPresetY0 = 26.f, kPresetX1 = 396.f, kPresetY1 = 56.f;
-    constexpr float kPresetRowH = 22.f;
-    constexpr float kHdrY0 = 26.f, kHdrY1 = 56.f;   // header button row
+    // Header band (48 px, ONE row — the uniform Dusk DPF top row, Tape Echo 2
+    // reference): nameplate + < preset combo > INIT SAVE + this plugin's option
+    // buttons + brand, all centred on one line.
+    constexpr float kHdrCy = 24.f;                  // header centreline
 
     // band face colours
-    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // British LF maroon knob
+    constexpr ImU32 C_LF_BROWN  = IM_COL32(96, 56, 48, 255);   // British LF maroon knob (Brown/E-series)
+    constexpr ImU32 C_LF_BLACK  = IM_COL32(42, 42, 46, 255);   // British LF black knob (Black/G-series)
     constexpr ImU32 C_LMF_BLUE  = IM_COL32(56, 100, 156, 255); // British LMF blue knob
     constexpr ImU32 C_HMF_GREEN = IM_COL32(58, 108, 58, 255);  // British HMF green knob
     constexpr ImU32 C_HF_RED    = IM_COL32(158, 52, 46, 255);  // British HF red knob
@@ -72,11 +85,10 @@ namespace
     constexpr ImU32 kPanelDk = IM_COL32(24, 24, 26, 255);
     constexpr ImU32 kHeader  = IM_COL32(18, 18, 20, 255);
     constexpr ImU32 kAmber   = IM_COL32(150, 96, 32, 255);
-    constexpr ImU32 kGreenBtn = IM_COL32(48, 108, 56, 255);
 
-    // Alias the plugin's shared defaults table (FourKEQParams.hpp) so the UI and
-    // the DSP shell never drift out of sync — one source of truth, no duplicate list.
-    constexpr const float* kDefaults = kParamDefaults;
+    // Shared parameter table (FourKEQParams.hpp) so the UI, the DSP shell and
+    // the preset files never drift out of sync — one source of truth.
+    constexpr float kDefault(uint32_t i) { return kFourKParams[i].def; }
 
     const int   kGridF[]  = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     const char* kGridFL[] = { "20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
@@ -89,7 +101,7 @@ public:
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
-            values[i] = kDefaults[i];
+            values[i] = kDefault(i);
         // No hard aspect lock: the Hide Graph toggle changes the window aspect
         // between the shown/collapsed heights, and onImGuiDisplay letterboxes any
         // size cleanly (scale = min ratio), so free resize never distorts.
@@ -103,6 +115,7 @@ public:
         panel.setFontSet(fontSet);
         fft.prepare(kFftSize);
         specDb.assign(kFftSize / 2 + 1, -120.0f);
+        scanUserPresets();
     }
 
     void beginEdit(uint32_t idx) override { editParameter(idx, true); }
@@ -120,6 +133,30 @@ protected:
             showGraph = value > 0.5f;
             needResize = true;
         }
+        // Re-derive the active preset from the current values. Preset identity
+        // is UI-only state, so it is lost across a project reload even though
+        // the host restores every parameter value; matching the restored values
+        // back to a preset recovers the selection. It also clears once an edit
+        // diverges from every preset. Gated on the preset params so the
+        // per-frame meter outputs never trigger a scan.
+        if (fkIsPresetParam(index))
+            syncPresetSelection();
+    }
+
+    void programLoaded(uint32_t index) override
+    {
+        currentPreset = index < (uint32_t)kNumFactoryPresets ? (int)index : -1;
+        currentUserName.clear();
+        currentUserPath.clear();
+        if (currentPreset < 0)
+            return;
+        // A host-driven program change does NOT deliver parameterChanged() for
+        // the values it moved — the plugin applied them itself in loadProgram()
+        // and only the program index reaches the UI. Refresh the local mirror
+        // directly (store only, no write-back: the host already has the values).
+        forEachFourKEQFactoryPresetParam(currentPreset,
+                                         [this](uint32_t param, float value)
+                                         { values[param] = normalizeParamValue(param, value); });
     }
 
     void onImGuiDisplay() override
@@ -144,7 +181,7 @@ protected:
 
         // Control rows keep their design spacing (no vertical compression); shift
         // up when the graph is hidden to fill the reclaimed band.
-        ctlDstTop_ = showGraph ? 220.0f : 96.0f;
+        ctlDstTop_ = showGraph ? 180.0f : 56.0f;
         ctlScaleY_ = 1.0f;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -159,27 +196,27 @@ protected:
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(30, 30, 33, 255)); // chassis fills window
 
+        // Treat the supporters panel as a modal (the shared Dusk DPF pattern,
+        // see Tape Echo 2): background controls remain visible beneath its
+        // scrim but cannot receive click-through gestures. Snapshot before
+        // drawHeader(), where a title click can open it.
+        const bool modalOpen = showSupporters;
+        if (modalOpen)
+            ImGui::BeginDisabled();
         drawHeader(dl);
         if (showGraph)
             drawGraph(dl);
-        // While a modal (preset list / credits) is open, absorb input BEFORE the
-        // controls are submitted so knobs/buttons underneath don't react through
-        // it. Submitted here (before drawColumns) so it wins ImGui's hover — the
-        // modal's own rows are hit-tested manually, so they still work over it.
-        if (presetOpen || showCredits)
-        {
-            ImGui::SetCursorScreenPos(ImVec2(0, 0));
-            ImGui::InvisibleButton("modalblock", ImVec2(winW, winH));
-        }
         drawColumns(dl);
         drawMeters(dl);
-        if (presetOpen)
-            drawPresetPopup(dl, winW, winH);
-        if (showCredits)
-            drawCredits(dl, winW, winH);
+        if (modalOpen)
+            ImGui::EndDisabled();
+        if (showSupporters)
+            duskdpf::drawSupportersOverlay(
+                panel, dl, kDesignW, designH, showSupporters, "4K EQ 2",
+                FOURKEQ2_VERSION_STRING);
 
-        // Own resize grip, submitted LAST so it wins ImGui's hover race (over the
-        // preset popup and the credits card alike) and paints over everything.
+        // Own resize grip, submitted LAST so it wins ImGui's hover race (over
+        // the credits card too) and paints over everything.
         // AUv2 hosts (Logic) never provide a window grip of their own; on VST3/CLAP
         // the host's grip stays available and this is simply a second way to do the
         // same thing. `designH`, not kDesignH: the design is shorter with the graph
@@ -254,82 +291,280 @@ private:
     //========================================================================
     void drawHeader(ImDrawList* dl)
     {
-        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 88), kHeader);
+        dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 48), kHeader);
         dl->AddRectFilled(panel.P(0, 0), panel.P(kDesignW, 3), IM_COL32(150, 150, 152, 255));
-        dl->AddLine(panel.P(0, 88), panel.P(kDesignW, 88), IM_COL32(60, 60, 63, 255), 1.5f * sc());
+        dl->AddLine(panel.P(0, 48), panel.P(kDesignW, 48), IM_COL32(60, 60, 63, 255), 1.5f * sc());
 
-        panel.text(dl, 28, 28, 25, pal().white, "4K EQ 2", -1, true);
-        panel.text(dl, 30, 58, 10.5f, IM_COL32(150, 152, 156, 255), "British-style Equalizer", -1);
-        // Clickable title -> Patreon supporters overlay.
+        // One row, the uniform Dusk DPF top row (Tape Echo 2 reference):
+        // nameplate [TITLE  BADGE  vX.Y.Z], < [preset combo] > INIT SAVE, this
+        // plugin's option buttons, brand — everything centred on kHdrCy.
+        constexpr float kPlateX0 = 28.f, kPlateX1 = 222.f;
+        constexpr float kPlateY0 = 8.f,  kPlateY1 = 40.f;
+        dl->AddRectFilledMultiColor(
+            panel.P(kPlateX0, kPlateY0), panel.P(kPlateX1, kPlateY1),
+            IM_COL32(37, 37, 38, 255), IM_COL32(29, 29, 30, 255),
+            IM_COL32(16, 16, 17, 255), IM_COL32(19, 19, 20, 255));
+        dl->AddRect(panel.P(kPlateX0, kPlateY0), panel.P(kPlateX1, kPlateY1),
+                    IM_COL32(185, 184, 180, 220), 3.5f * sc(), 0, 1.2f * sc());
+        // Product, model and version share one bottom baseline; the amber rule
+        // ties the identity block together across the width of the nameplate.
+        dl->AddLine(panel.P(38, 36), panel.P(212, 36), IM_COL32(178, 118, 44, 210), 1.2f * sc());
+        panel.text(dl, 40, 12, 22, pal().white, "4K-2 EQ", -1, true);
+        panel.text(dl, 210, 21, 13, IM_COL32(160, 162, 166, 255), "v" FOURKEQ2_VERSION_STRING, 1);
+        // Clickable nameplate -> Patreon supporters overlay.
+        ImGui::SetCursorScreenPos(panel.P(kPlateX0, kPlateY0));
+        ImGui::InvisibleButton("titlecredits",
+                               ImVec2((kPlateX1 - kPlateX0) * sc(), (kPlateY1 - kPlateY0) * sc()));
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (ImGui::IsItemClicked()) showSupporters = true;
+
+        panel.text(dl, 878, 14, 20, pal().white, "DUSK AUDIO", 0, true);
+
+        // Preset browser: < [combo] > INIT SAVE, centred on the nameplate's
+        // centre line. Horizontal rhythm matches Tape Echo 2: 4 px inside the
+        // < combo > group, 8 px before INIT (group break), 6 px INIT-to-SAVE.
+        constexpr float kBandY0 = kHdrCy - 12.5f, kBandY1 = kHdrCy + 12.5f;
+        constexpr float kBandH  = kBandY1 - kBandY0;
+        if (chevron(dl, "##presetprev", 244.5f, kHdrCy, 0.5f * kBandH, true))
+            stepPreset(-1);
+        if (chevron(dl, "##presetnext", 421.5f, kHdrCy, 0.5f * kBandH, false))
+            stepPreset(1);
+
+        ImGui::SetCursorScreenPos(panel.P(258, kBandY0));
+        ImGui::SetNextItemWidth(150.0f * sc());
+        // Crisp combo text: a native-size face from the shared atlas, and a
+        // frame height locked to the 26 px band (ImGui's default is font-size
+        // driven and would drift; padY centres the preview text in the frame).
+        ImFont* presetFont = panel.pickFont(13.0f * sc());
+        if (presetFont != nullptr)
+            ImGui::PushFont(presetFont);
+        ImGui::PushStyleVar(
+            ImGuiStyleVar_FramePadding,
+            ImVec2(6.0f * sc(),
+                   std::max(0.0f, 0.5f * (kBandH * sc() - ImGui::GetFontSize()))));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(38, 38, 41, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(48, 48, 51, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(55, 55, 58, 255));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(24, 24, 26, 255));
+        ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(70, 90, 120, 255));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(86, 108, 140, 255));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(58, 76, 104, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(46, 46, 50, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(58, 58, 62, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(40, 40, 44, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(228, 228, 224, 255));
+        ImGui::PushStyleColor(ImGuiCol_NavHighlight, IM_COL32(120, 150, 200, 255));
+        const char* preview = (currentPreset >= 0 && currentPreset < kNumFactoryPresets)
+                                  ? kFactoryPresets[currentPreset].name
+                                  : (!currentUserName.empty() ? currentUserName.c_str()
+                                                              : "Default");
+        // BeginCombo otherwise caps its popup at eight entries. An explicit
+        // identity constraint makes it auto-fit all factory presets, so the
+        // complete list is visible without a scrollbar.
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+        if (ImGui::BeginCombo("##presets", preview))
         {
-            const ImVec2 t0 = panel.P(26, 20), t1 = panel.P(150, 48);
-            ImGui::SetCursorScreenPos(t0);
-            ImGui::InvisibleButton("titlecredits", ImVec2(t1.x - t0.x, t1.y - t0.y));
-            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked()) { showCredits = true; creditsArmed = false; }
+            for (int i = 0; i < kNumFactoryPresets; ++i)
+            {
+                if (ImGui::Selectable(kFactoryPresets[i].name, i == currentPreset))
+                {
+                    applyPreset(i);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            if (!userPresets.empty())
+            {
+                ImGui::SeparatorText("User");
+                // Index-scoped IDs: two rows can carry the same display name (a
+                // hand-written file, or one with no name= line falling back to a
+                // stem another file already uses), and ImGui would then give both
+                // rows one shared ID. The label stays the name.
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    const UserPreset& up = userPresets[i];
+                    ImGui::PushID((int)i);
+                    if (ImGui::Selectable(up.name.c_str(),
+                                          currentPreset < 0 && up.path == currentUserPath))
+                    {
+                        loadUserPreset(up.path, up.name);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndCombo();
         }
-        panel.text(dl, kDesignW - 26, 68, 10.5f, IM_COL32(140, 142, 146, 255), "DUSK AUDIO", 1, true);
+        ImGui::PopStyleColor(12);
+        ImGui::PopStyleVar();
+        if (presetFont != nullptr)
+            ImGui::PopFont();
 
-        // preset dropdown — custom widget (ImGui combo's SetWindowFontScale was
-        // blurry). Crisp panel.text; the expanded list is drawn later, on top.
+        // INIT (back to factory defaults) and SAVE (name + write a user preset),
+        // on the same band as the combo.
+        if (textButton(dl, "##init", 439, kBandY0, 481, kBandY1, "INIT"))
+            initDefaults();
+        if (textButton(dl, "##save", 487, kBandY0, 529, kBandY1, "SAVE"))
         {
-            const ImVec2 p0 = panel.P(kPresetX0, kPresetY0), p1 = panel.P(kPresetX1, kPresetY1);
-            dl->AddRectFilled(p0, p1, IM_COL32(46, 46, 50, 255), 3.f * sc());
-            dl->AddRect(p0, p1, presetOpen ? IM_COL32(120, 150, 200, 240) : IM_COL32(90, 90, 96, 220), 3.f * sc(), 0, 1.f * sc());
-            const char* preview = (currentPreset >= 0 && currentPreset < kNumFactoryPresets)
-                                      ? kFactoryPresets[currentPreset].name : "Default";
-            panel.text(dl, kPresetX0 + 9.f, 0.5f * (kPresetY0 + kPresetY1) - 6.5f, 13.f, IM_COL32(228, 228, 224, 255), preview, -1);
-            const ImVec2 ac = panel.P(kPresetX1 - 13.f, 0.5f * (kPresetY0 + kPresetY1));
-            dl->AddTriangleFilled(ImVec2(ac.x - 4.f * sc(), ac.y - 2.5f * sc()),
-                                  ImVec2(ac.x + 4.f * sc(), ac.y - 2.5f * sc()),
-                                  ImVec2(ac.x, ac.y + 3.5f * sc()), IM_COL32(180, 182, 186, 255));
-            ImGui::SetCursorScreenPos(p0);
-            ImGui::InvisibleButton("presetbox", ImVec2(p1.x - p0.x, p1.y - p0.y));
-            if (ImGui::IsItemClicked()) presetOpen = !presetOpen;
+            std::snprintf(saveBuf, sizeof(saveBuf), "%s", currentUserName.c_str());
+            ImGui::OpenPopup("Save Preset");
         }
+        drawSaveModal();
 
-        // Control row — evenly spaced, uniform height (kHdrY0..kHdrY1).
-        const ImU32 btnBg = IM_COL32(46, 46, 50, 255);
-
+        // Option buttons, kept from v2.0 with compact labels so the whole
+        // header stays one row: 12 px group break after SAVE, 8 px rhythm,
+        // clear of the right-aligned brand text.
         // Oversample (cycles 1x/2x/4x).
-        static const char* kOsBtn[3] = { "Oversample: 1x", "Oversample: 2x", "Oversample: 4x" };
+        static const char* kOsBtn[3] = { "OS: 1x", "OS: 2x", "OS: 4x" };
         int osi = (int)(values[kOversampling] + 0.5f); osi = osi < 0 ? 0 : (osi > 2 ? 2 : osi);
-        headerButton(dl, "os", 412, kHdrY0, 536, kHdrY1, kOsBtn[osi], btnBg, pal().white,
+        headerButton(dl, "os", 541, kBandY0, 589, kBandY1, kOsBtn[osi], false,
                      [&]{ cycleParam(kOversampling, 3); });
 
-        // Brown / Black voicing (amber when Brown, blue-grey when Black).
+        // Brown / Black is the sole coloured button: brown for E-series and
+        // true black (not the old blue-grey) for G-series.
         const bool brown = values[kEqType] < 0.5f;
-        headerButton(dl, "eqtype", 548, kHdrY0, 640, kHdrY1, brown ? "BROWN" : "BLACK",
-                     brown ? kAmber : IM_COL32(60, 74, 96, 255), IM_COL32(245, 240, 232, 255),
-                     [&]{ cycleParam(kEqType, 2); });
+        headerButton(dl, "eqtype", 597, kBandY0, 649, kBandY1, brown ? "BROWN" : "BLACK",
+                     false, [&]{ cycleParam(kEqType, 2); },
+                     true, brown ? kAmber : IM_COL32(12, 12, 14, 255));
 
         // --- Analyzer group: Graph collapse | FFT on/off | spectrum source ---
-        headerButton(dl, "hidegraph", 652, kHdrY0, 740, kHdrY1, showGraph ? "Hide Graph" : "Show Graph",
-                     btnBg, pal().white, [&]{ toggleGraph(); });
+        headerButton(dl, "hidegraph", 657, kBandY0, 707, kBandY1, "GRAPH",
+                     showGraph,
+                     [&]{ toggleGraph(); });
 
-        headerButton(dl, "fft", 752, kHdrY0, 822, kHdrY1, showFft ? "FFT: On" : "FFT: Off",
-                     showFft ? IM_COL32(52, 70, 92, 255) : btnBg,
-                     showFft ? IM_COL32(210, 224, 240, 255) : IM_COL32(150, 152, 156, 255),
+        headerButton(dl, "fft", 715, kBandY0, 755, kBandY1, "FFT",
+                     showFft,
                      [&]{ showFft = !showFft; });
 
-        headerButton(dl, "prepost", 834, kHdrY0, 920, kHdrY1,
-                     values[kSpectrumPrePost] > 0.5f ? "FFT PRE" : "FFT POST",
-                     btnBg, IM_COL32(180, 182, 186, 255),
+        headerButton(dl, "prepost", 763, kBandY0, 807, kBandY1,
+                     values[kSpectrumPrePost] > 0.5f ? "PRE" : "POST",
+                     values[kSpectrumPrePost] > 0.5f,
                      [&]{ toggleParam(kSpectrumPrePost); });
+    }
+
+    // Small chevron button ("<" / ">") for stepping the preset combo. Fill and
+    // hover match the combo's FrameBg so the < combo > group reads as one control.
+    bool chevron(ImDrawList* dl, const char* id, float cx, float cy,
+                 float halfH, bool left)
+    {
+        const float s = sc();
+        const ImVec2 b0 = panel.P(cx - 9.5f, cy - halfH);
+        const ImVec2 b1 = panel.P(cx + 9.5f, cy + halfH);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        drawSilverButtonFace(dl, b0, b1, false, hov, 2.0f);
+        const ImVec2 c = panel.P(cx, cy);
+        const float  d = 4.3f * s;
+        const ImU32 ink = IM_COL32(34, 34, 38, 255);
+        if (left)
+            dl->AddTriangleFilled(ImVec2(c.x + d * 0.5f, c.y - d),
+                                  ImVec2(c.x + d * 0.5f, c.y + d),
+                                  ImVec2(c.x - d * 0.7f, c.y), ink);
+        else
+            dl->AddTriangleFilled(ImVec2(c.x - d * 0.5f, c.y - d),
+                                  ImVec2(c.x - d * 0.5f, c.y + d),
+                                  ImVec2(c.x + d * 0.7f, c.y), ink);
+        return ImGui::IsItemClicked();
+    }
+
+    // Small header text button (INIT / SAVE), styled to match the chevrons that
+    // flank the preset combo.
+    bool textButton(ImDrawList* dl, const char* id, float x0, float y0,
+                    float x1, float y1, const char* label)
+    {
+        const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
+        ImGui::SetCursorScreenPos(b0);
+        ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
+        const bool hov = ImGui::IsItemHovered();
+        drawSilverButtonFace(dl, b0, b1, false, hov, 2.0f);
+        // panel.text takes the top edge, so centre the 11 px label explicitly.
+        constexpr float kTxt = 11.0f;
+        panel.text(dl, 0.5f * (x0 + x1), 0.5f * (y0 + y1 - kTxt), kTxt,
+                   IM_COL32(34, 34, 38, 255), label, 0, true);
+        return ImGui::IsItemClicked();
+    }
+
+    // Name-entry modal for SAVE. Dark styling to match this chassis; Enter or the
+    // Save button commits, Escape / Cancel dismisses.
+    void drawSaveModal()
+    {
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(26, 26, 28, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(228, 228, 224, 255));
+        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(90, 90, 94, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(40, 40, 43, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(50, 50, 54, 255));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(56, 56, 60, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 90, 120, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(86, 108, 140, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(58, 76, 104, 255));
+        if (ImGui::BeginPopupModal("Save Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            const bool popupAppearing = ImGui::IsWindowAppearing();
+            if (popupAppearing)
+                saveFailed = false;
+            ImGui::TextUnformatted("Preset name");
+            ImGui::SetNextItemWidth(240.0f * sc());
+            if (popupAppearing)
+                ImGui::SetKeyboardFocusHere();
+            const bool enter = ImGui::InputText("##savename", saveBuf, sizeof(saveBuf),
+                                                ImGuiInputTextFlags_EnterReturnsTrue
+                                                | ImGuiInputTextFlags_AutoSelectAll);
+            const bool doSave = ImGui::Button("Save") || enter;
+            ImGui::SameLine();
+            const bool cancel = ImGui::Button("Cancel");
+            if (doSave && saveBuf[0] != '\0')
+            {
+                // Only dismiss on a save that actually wrote a file; a failed
+                // write closing the dialog would read as success.
+                if (saveUserPreset(saveBuf))
+                {
+                    saveFailed = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    saveFailed = true;
+                }
+            }
+            if (saveFailed)
+                ImGui::TextColored(ImVec4(0.90f, 0.42f, 0.35f, 1.0f),
+                                   "Could not save. Try a different name.");
+            if (cancel)
+            {
+                saveFailed = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleColor(9);
     }
 
     template <class Fn>
     void headerButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
-                      const char* label, ImU32 bg, ImU32 fg, Fn onClick)
+                      const char* label, bool pressed, Fn onClick,
+                      bool customColour = false, ImU32 customBg = 0)
     {
         const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) onClick();
-        dl->AddRectFilled(b0, b1, bg, 4.0f * sc());
-        dl->AddRect(b0, b1, hov ? IM_COL32(200, 200, 205, 200) : IM_COL32(90, 90, 96, 200), 4.0f * sc(), 0, 1.2f * sc());
-        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.5f, fg, label, 0, true);
+        if (customColour)
+        {
+            dl->AddRectFilled(b0, b1, customBg, 4.0f * sc());
+            dl->AddRect(b0, b1, hov ? IM_COL32(220, 220, 216, 230)
+                                     : IM_COL32(90, 90, 94, 220),
+                        4.0f * sc(), 0, 1.2f * sc());
+        }
+        else
+        {
+            drawSilverButtonFace(dl, b0, b1, pressed, hov, 4.0f);
+        }
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.5f,
+                   customColour ? IM_COL32(245, 240, 232, 255)
+                                : IM_COL32(34, 34, 38, 255),
+                   label, 0, true);
     }
 
     void cycleParam(uint32_t id, int n)
@@ -343,24 +578,397 @@ private:
         editParameter(id, true); values[id] = nv; setParameterValue(id, nv); editParameter(id, false);
     }
 
+    //========================================================================
+    // presets — factory recall, INIT/SAVE, user preset library, identity
+    //========================================================================
+
+    // Clamp to range and quantise the discrete parameters exactly the way the
+    // DSP shell reads them, so the cached value can never disagree with what
+    // the DSP acts on. values[] is not display-only: it feeds preset identity
+    // matching and is what a saved user preset writes to disk.
+    static float normalizeParamValue(uint32_t idx, float v) noexcept
+    {
+        v = std::max(kFourKParams[idx].min, std::min(kFourKParams[idx].max, v));
+        switch (idx)
+        {
+        case kHpfEnabled: case kLpfEnabled: case kLfBell: case kHfBell:
+        case kEqType: case kBypass: case kMsMode: case kSpectrumPrePost:
+        case kAutoGain: case kShowGraph:
+            // Folded to an exact 0/1 so the DSP shell's > 0.5f reads can never
+            // disagree with this cache about which side a boundary value took.
+            return v >= 0.5f ? 1.0f : 0.0f;
+        case kOversampling:
+            return std::round(v);
+        default:
+            return v;
+        }
+    }
+
+    // Single write path for a preset-driven parameter change: normalises, keeps
+    // the local cache in step and brackets the host write with edit markers.
+    void setP(uint32_t param, float value)
+    {
+        if (param >= kParamCount || !std::isfinite(value))
+            return;
+        value = normalizeParamValue(param, value);
+        values[param] = value;
+        editParameter(param, true);
+        setParameterValue(param, value);
+        editParameter(param, false);
+    }
+
     void applyPreset(int idx)
     {
         if (idx < 0 || idx >= kNumFactoryPresets) return;
         currentPreset = idx;
-        const FourKEQPreset& p = kFactoryPresets[idx];
-        struct KV { uint32_t id; float v; };
-        const KV kv[] = {
-            {kLfGain,p.lfGain},{kLfFreq,p.lfFreq},{kLfBell,p.lfBell},
-            {kLmGain,p.lmGain},{kLmFreq,p.lmFreq},{kLmQ,p.lmQ},
-            {kHmGain,p.hmGain},{kHmFreq,p.hmFreq},{kHmQ,p.hmQ},
-            {kHfGain,p.hfGain},{kHfFreq,p.hfFreq},{kHfBell,p.hfBell},
-            {kHpfFreq,p.hpfFreq},{kLpfFreq,p.lpfFreq},
-            {kSaturation,p.saturation},{kOutputGain,p.outputGain},
-            {kInputGain,p.inputGain},{kEqType,p.eqType},
-            {kHpfEnabled, p.hpfFreq > 20.5f ? 1.0f : 0.0f},
-            {kLpfEnabled, p.lpfFreq < 19999.0f ? 1.0f : 0.0f},
-        };
-        for (const KV& e : kv) { editParameter(e.id, true); values[e.id] = e.v; setParameterValue(e.id, e.v); editParameter(e.id, false); }
+        currentUserName.clear();
+        currentUserPath.clear();
+        forEachFourKEQFactoryPresetParam(idx, [this](uint32_t param, float value)
+                                             { setP(param, value); });
+    }
+
+    // Clamped, never wrapping: stepping off either end parks on the end preset.
+    // With no preset loaded (currentPreset < 0) either direction lands on the first.
+    void stepPreset(int dir)
+    {
+        int i = currentPreset < 0 ? (dir < 0 ? 0 : -1) : currentPreset;
+        i += dir;
+        if (i < 0) i = 0;
+        if (i >= kNumFactoryPresets) i = kNumFactoryPresets - 1;
+        applyPreset(i);
+    }
+
+    // Reset every preset-owned control to its factory default (the "Default"
+    // state the combo names when nothing is selected). BYPASS, oversampling and
+    // the analyzer/graph state are left alone — see fkIsPresetParam.
+    void initDefaults()
+    {
+        currentPreset = -1;
+        currentUserName.clear();
+        currentUserPath.clear();
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (fkIsPresetParam(i))
+                setP(i, kFourKParams[i].def);
+        // Re-derive rather than assuming: a user preset saved at the defaults
+        // is a recognised state and should read as such in the combo.
+        syncPresetSelection();
+    }
+
+    //--- user preset file library (~/.config/DuskAudio/FourKEQ2/presets) --------
+    // Base dir: %APPDATA% (or %LOCALAPPDATA%) on Windows, else $XDG_CONFIG_HOME,
+    // else $HOME/.config. macOS deliberately stays on the ~/.config layout the
+    // other Dusk DPF plugins already write, so the libraries live side by side.
+    // "." is the last resort only: never write relative to the host's CWD while
+    // any supported variable is set.
+    std::string configDir() const
+    {
+        std::string base;
+       #if defined(_WIN32)
+        for (const char* var : { "APPDATA", "LOCALAPPDATA" })
+            if (const char* v = std::getenv(var); v != nullptr && *v != '\0')
+            { base = v; break; }
+       #elif defined(__APPLE__)
+        // XDG_CONFIG_HOME is deliberately NOT read here: a mac with it set in a
+        // dotfile would otherwise stop seeing the library earlier builds wrote.
+        if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+            base = std::string(home) + "/.config";
+       #else
+        if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
+            base = xdg;
+        else if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+            base = std::string(home) + "/.config";
+       #endif
+        if (base.empty())
+            base = ".";
+        return base + "/DuskAudio/FourKEQ2/presets";
+    }
+
+    // Strict field parse, shared by the library scan and the loader so a file
+    // can never mean two things. atof() reports failure as 0.0 and happily
+    // yields NaN/inf for "nan"/"1e999", all of which would reach the DSP through
+    // setP(); require the whole field to be one finite float. Range clamping is
+    // done after the file's frequency domain is known: effective LPF values can
+    // legitimately exceed the legacy host parameter's 15.201 kHz end stop.
+    //
+    // Locale-independent on purpose, in both directions (saveUserPreset() imbues
+    // the same classic locale): plugin hosts do call setlocale(), and a
+    // comma-decimal locale makes strtod() stop at the '.' in "0.5" — every value
+    // in every preset file would silently read as its default.
+    static bool parsePresetNumber(const std::string& line, std::size_t valueStart,
+                                  float& out)
+    {
+        std::istringstream field(line.substr(valueStart));
+        field.imbue(std::locale::classic());
+        double d = 0.0;
+        field >> d;
+        if (field.fail() || !std::isfinite(d)
+            || std::abs(d) > (double)std::numeric_limits<float>::max())
+            return false;
+        char trailing = '\0';
+        if (field >> trailing)                   // trailing junk: not a number
+            return false;
+        out = (float)d;
+        return true;
+    }
+
+    // Reads both legacy files (no frequency_domain line: raw/control Hz) and
+    // v2 files (effective_hz). The returned array is always in the INTERNAL
+    // host-parameter domain so preset identity and setP() see one representation.
+    static bool readUserPresetFile(const std::string& path, std::string& name,
+                                   float (&out)[kParamCount])
+    {
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            out[i] = kFourKParams[i].def;
+        bool present[kParamCount] = {};
+        bool effectiveHz = false;
+        bool supportedDomain = true;
+
+        std::ifstream f(path);
+        if (!f)
+            return false;
+        std::string line;
+        while (std::getline(f, line))
+        {
+            const auto eq = line.find('=');
+            if (eq == std::string::npos)
+                continue;
+            const std::string key = line.substr(0, eq);
+            const std::string field = line.substr(eq + 1);
+            if (key == "name") { name = field; continue; }
+            if (key == "frequency_domain")
+            {
+                effectiveHz = field == "effective_hz";
+                supportedDomain = effectiveHz || field == "control_hz";
+                continue;
+            }
+            if (key == "format_version")
+            {
+                float version = 0.0f;
+                if (!parsePresetNumber(line, eq + 1, version)
+                    || version != (float)kUserPresetFormatVersion)
+                    return false;
+                continue;
+            }
+            for (uint32_t i = 0; i < kParamCount; ++i)
+                if (fkIsPresetParam(i) && key == kFourKParams[i].key)
+                {
+                    float v = 0.0f;
+                    if (!parsePresetNumber(line, eq + 1, v))
+                        return false;
+                    out[i] = v;
+                    present[i] = true;
+                    break;
+                }
+        }
+        if (!supportedDomain)
+            return false;
+
+        // Normalise mode/gain/shape first: those values select the inverse
+        // frequency law used below, regardless of their order in the file.
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (present[i] && !isFrequencyParam(i))
+                out[i] = normalizeParamValue(i, out[i]);
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (present[i] && isFrequencyParam(i))
+                out[i] = effectiveHz
+                    ? controlForEffectiveFrequency(i, out[i], out)
+                    : normalizeParamValue(i, out[i]);
+        return true;
+    }
+
+    void scanUserPresets()
+    {
+        userPresets.clear();
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (fs::directory_iterator it(configDir(), ec), end; !ec && it != end; it.increment(ec))
+        {
+            if (it->path().extension() != ".4kpreset")
+                continue;
+            UserPreset up;
+            up.path = it->path().string();
+            up.name = it->path().stem().string();
+            if (readUserPresetFile(up.path, up.name, up.vals))
+                userPresets.push_back(std::move(up));
+        }
+        std::sort(userPresets.begin(), userPresets.end(),
+                  [](const UserPreset& a, const UserPreset& b) { return a.name < b.name; });
+    }
+
+    // Display name stored inside a preset file, or "" when the file is missing
+    // or carries no name= line (a foreign or truncated file in our directory).
+    static std::string storedPresetName(const std::string& path)
+    {
+        std::ifstream f(path);
+        std::string line;
+        while (std::getline(f, line))
+            if (line.compare(0, 5, "name=") == 0)
+                return line.substr(5);
+        return {};
+    }
+
+    // Returns false if nothing was written, so the caller can keep the dialog
+    // open and say so instead of closing on a save that silently did nothing.
+    bool saveUserPreset(const char* rawName)
+    {
+        std::string name(rawName);
+        while (!name.empty() && name.back() == ' ')
+            name.pop_back();
+        if (name.empty())
+            return false;
+        const std::string dir = configDir();
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec)
+            return false; // no usable library directory (permissions, file in the way)
+        // Filename stem: every non-alphanumeric collapses to '_', so distinct
+        // display names can share a stem ("A B" and "A-B" both give "A_B").
+        // Re-saving the SAME name still overwrites its own file; a stem clash
+        // with a different name takes the next free suffix instead of silently
+        // clobbering that preset.
+        std::string stem;
+        for (char c : name)
+            stem += std::isalnum((unsigned char)c) ? c : '_';
+        std::string path;
+        bool usable = false;
+        for (int n = 1; n <= 99 && !usable; ++n)
+        {
+            path = dir + "/" + stem
+                 + (n == 1 ? std::string() : "_" + std::to_string(n)) + ".4kpreset";
+            // A free path, or one whose file already stores THIS display name.
+            // An existing file without a name= line is not free: the library
+            // lists it under its stem, so overwriting it would drop a preset
+            // the player can see. A path that cannot be probed is never assumed
+            // free either - exists() reports an error as false.
+            ec.clear();
+            const bool present = std::filesystem::exists(path, ec);
+            if (ec)
+                continue;
+            usable = !present || storedPresetName(path) == name;
+        }
+        if (!usable)
+            return false; // 99 colliding stems: refuse rather than overwrite one
+        std::ofstream f(path, std::ios::trunc);
+        if (!f)
+            return false;
+        // Classic locale so the values are written with '.' whatever locale the
+        // host installed, matching parsePresetNumber() on the way back in.
+        f.imbue(std::locale::classic());
+        f << "name=" << name << "\n";
+        f << "format_version=" << kUserPresetFormatVersion << "\n";
+        f << "frequency_domain=effective_hz\n";
+        f << std::setprecision(std::numeric_limits<float>::max_digits10);
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (fkIsPresetParam(i))
+                f << kFourKParams[i].key << "="
+                  << (isFrequencyParam(i) ? displayValue(i) : values[i]) << "\n";
+        f.close();
+        if (!f)
+            return false; // flush/close failed: the file on disk is not complete
+        scanUserPresets();
+        currentPreset = -1;
+        currentUserName = name;
+        currentUserPath = path;
+        return true;
+    }
+
+    void loadUserPreset(const std::string& path, const std::string& name)
+    {
+        float loaded[kParamCount];
+        std::string storedName = name;
+        if (!readUserPresetFile(path, storedName, loaded))
+            return;
+        // Default every parameter first, then overlay the file's values. This
+        // matches the cache built in scanUserPresets() (missing keys -> table
+        // default), so an incomplete file loads to the exact values its cached
+        // identity records - otherwise a missing key would keep the current
+        // value and deriveUserPreset() could never match.
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (fkIsPresetParam(i))
+                setP(i, loaded[i]);
+        currentPreset = -1;
+        currentUserName = name;
+        currentUserPath = path;
+    }
+
+    //--- preset identity recovery -------------------------------------------
+    // The active preset is UI-only state; these re-derive it from the current
+    // parameter values so a project reload (which restores parameters but not
+    // the selection) shows the right preset again. Compares with a
+    // range-relative tolerance to absorb host parameter quantisation.
+    bool paramMatches(uint32_t id, float v) const
+    {
+        const FourKParam& d = kFourKParams[id];
+        const float tol = std::max(1.0e-3f, (d.max - d.min) * 1.0e-4f);
+        return std::fabs(values[id] - v) <= tol;
+    }
+
+    int deriveFactoryPreset() const
+    {
+        for (int idx = 0; idx < kNumFactoryPresets; ++idx)
+        {
+            bool ok = true;
+            forEachFourKEQFactoryPresetParam(idx, [&](uint32_t id, float v) {
+                if (ok && fkIsPresetParam(id) && !paramMatches(id, v))
+                    ok = false;
+            });
+            if (ok)
+                return idx;
+        }
+        return -1;
+    }
+
+    int deriveUserPreset() const
+    {
+        // Preserve the loaded file's identity when duplicate presets contain the
+        // same values; parameter matching alone cannot distinguish those files.
+        if (!currentUserPath.empty())
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                if (userPresets[i].path == currentUserPath)
+                {
+                    bool ok = true;
+                    for (uint32_t id = 0; id < kParamCount && ok; ++id)
+                        if (fkIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
+                            ok = false;
+                    if (ok)
+                        return (int)i;
+                    break;
+                }
+
+        for (size_t i = 0; i < userPresets.size(); ++i)
+        {
+            bool ok = true;
+            for (uint32_t id = 0; id < kParamCount && ok; ++id)
+                if (fkIsPresetParam(id) && !paramMatches(id, userPresets[i].vals[id]))
+                    ok = false;
+            if (ok)
+                return (int)i;
+        }
+        return -1;
+    }
+
+    // Recompute the active selection from the current values (factory wins).
+    void syncPresetSelection()
+    {
+        const int f = deriveFactoryPreset();
+        if (f >= 0)
+        {
+            currentPreset = f;
+            currentUserName.clear();
+            currentUserPath.clear();
+            return;
+        }
+        const int u = deriveUserPreset();
+        if (u >= 0)
+        {
+            currentPreset = -1;
+            currentUserName = userPresets[(size_t)u].name;
+            currentUserPath = userPresets[(size_t)u].path;
+            return;
+        }
+        currentPreset = -1;
+        currentUserName.clear();
+        currentUserPath.clear();
     }
 
     //========================================================================
@@ -379,48 +987,86 @@ private:
         const double fs = base * (double) FourKEQDSP::chooseFactor(base, (int)(values[kOversampling] + 0.5f));
         const double w = 2.0 * 3.14159265358979323846 * (double)freq / fs;
         const bool black = values[kEqType] > 0.5f;
-        // Series filter magnitudes (genuine HP/LP stages, mirrors recomputeCoeffs).
+        auto magnitudeAt = [](const BiquadCoeffs& c, double omega) {
+            Biquad b; b.setCoeffs(c); return b.magnitude(omega);
+        };
+        auto magnitude = [&](const BiquadCoeffs& c) {
+            return magnitudeAt(c, w);
+        };
+        // Calibrated series filter magnitudes, mirrors recomputeCoeffs().
         double filtMag = 1.0;
         if (values[kHpfEnabled] > 0.5f)
         {
-            Biquad h1; h1.setCoeffs(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
-            Biquad h2; h2.setCoeffs(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
-            filtMag *= h1.magnitude(w) * h2.magnitude(w);
+            const float f = std::min(
+                FourKEQDSP::calibratedFilterFrequency(values[kHpfFreq], true, black),
+                static_cast<float>(base * 0.49));
+            const double wBase = 2.0 * 3.14159265358979323846 * (double)freq / base;
+            if (black)
+                filtMag *= magnitudeAt(Biquad::firstOrderHighPass(base, f * 0.96134252f), wBase);
+            filtMag *= magnitudeAt(Biquad::highPass(
+                base, f, FourKEQDSP::calibratedFilterQ(true, black)), wBase);
+            filtMag *= std::pow(10.0, FourKEQDSP::calibratedHpfTrimDb(
+                values[kHpfFreq], black) / 20.0);
         }
         if (values[kLpfEnabled] > 0.5f)
         {
-            const float f = (float)std::max(1.0, std::min((double)values[kLpfFreq], fs * 0.4998));
-            Biquad lp; lp.setCoeffs(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f));
-            filtMag *= lp.magnitude(w);
+            const float f = std::min(
+                FourKEQDSP::calibratedFilterFrequency(values[kLpfFreq], false, black),
+                static_cast<float>(fs * 0.49));
+            filtMag *= magnitude(Biquad::lowPass(
+                fs, f, FourKEQDSP::calibratedFilterQ(false, black)));
         }
-        // Parallel-summing EQ: Heq = 1 + sum(K_i * F_i(w)), complex — mirrors the
-        // audio path (dry + summed fixed-Q band blocks) so the curve == the sound.
-        auto blockResp = [&](const BiquadCoeffs& c) {
-            Biquad b; b.setCoeffs(c); return b.response(w);
+        auto bandMagnitude = [&](FourKEQDSP::Band band, float controlGain,
+                                 float controlFreq, float controlQ,
+                                 bool bell, bool highShelf) {
+            const float f = std::min(
+                FourKEQDSP::calibratedEqFrequency(controlFreq, controlGain, band, black, bell),
+                static_cast<float>(fs * 0.49));
+            const float g = FourKEQDSP::calibratedEqGain(
+                controlGain, band, black, bell);
+            const float q = FourKEQDSP::calibratedEqQ(
+                controlQ, controlFreq, controlGain, band, black, bell);
+            return magnitude(bell || band == FourKEQDSP::Band::LM || band == FourKEQDSP::Band::HM
+                ? Biquad::peak(fs, f, g, q)
+                : Biquad::shelf(fs, f, g, q, highShelf));
         };
-        const float bellQ = black ? 0.9f : 0.6f;
-        std::complex<double> Heq(1.0, 0.0);
-        // LF
-        Heq += (double)FourKEQDSP::bandK(values[kLfGain]) * blockResp(values[kLfBell] > 0.5f
-            ? Biquad::bandPassConstantPeak(fs, values[kLfFreq], bellQ)
-            : (black ? Biquad::lowPass(fs, values[kLfFreq], 0.9f)
-                     : Biquad::firstOrderLowPass(fs, values[kLfFreq])));
-        // LM
-        Heq += (double)FourKEQDSP::bandK(values[kLmGain]) * blockResp(
-            Biquad::bandPassConstantPeak(fs, values[kLmFreq],
-                FourKEQDSP::voicedMidQ(values[kLmGain], values[kLmQ], black)));
-        // HM (Brown caps 7 kHz)
-        { float hmFreq = values[kHmFreq]; if (!black && hmFreq > 7000.f) hmFreq = 7000.f;
-          Heq += (double)FourKEQDSP::bandK(values[kHmGain]) * blockResp(
-              Biquad::bandPassConstantPeak(fs, hmFreq,
-                  FourKEQDSP::voicedMidQ(values[kHmGain], values[kHmQ], black))); }
-        // HF
-        Heq += (double)FourKEQDSP::bandK(values[kHfGain]) * blockResp(values[kHfBell] > 0.5f
-            ? Biquad::bandPassConstantPeak(fs, values[kHfFreq], bellQ)
-            : (black ? Biquad::highPass(fs, values[kHfFreq], 0.9f)
-                     : Biquad::firstOrderHighPass(fs, values[kHfFreq])));
+        double eqMag = 1.0;
+        const bool lfActive = std::abs(values[kLfGain]) > 1.0e-6f;
+        const bool lmActive = std::abs(values[kLmGain]) > 1.0e-6f;
+        const bool hmActive = std::abs(values[kHmGain]) > 1.0e-6f;
+        const bool hfActive = std::abs(values[kHfGain]) > 1.0e-6f;
+        if (lfActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::LF, values[kLfGain], values[kLfFreq],
+                                   1.5f, values[kLfBell] > 0.5f, false);
+        if (lmActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::LM, values[kLmGain], values[kLmFreq],
+                                   values[kLmQ], true, false);
+        if (hmActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::HM, values[kHmGain], values[kHmFreq],
+                                   values[kHmQ], true, false);
+        if (hfActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::HF, values[kHfGain], values[kHfFreq],
+                                   1.5f, values[kHfBell] > 0.5f, true);
+        if (lfActive && lmActive)
+        {
+            const auto lowCorrection = FourKEQDSP::calibratedPairCorrection(
+                fs, false, black,
+                values[kLfGain], values[kLfFreq], values[kLfBell],
+                values[kLmGain], values[kLmFreq], values[kLmQ]);
+            for (const BiquadCoeffs& correction : lowCorrection)
+                eqMag *= magnitude(correction);
+        }
+        if (hmActive && hfActive)
+        {
+            const auto highCorrection = FourKEQDSP::calibratedPairCorrection(
+                fs, true, black,
+                values[kHmGain], values[kHmFreq], values[kHmQ],
+                values[kHfGain], values[kHfFreq], values[kHfBell]);
+            for (const BiquadCoeffs& correction : highCorrection)
+                eqMag *= magnitude(correction);
+        }
 
-        const double magLin = std::abs(Heq) * filtMag;
+        const double magLin = eqMag * filtMag;
         return 20.0f * std::log10((float)std::max(magLin, 1e-6));
     }
 
@@ -441,98 +1087,6 @@ private:
         const float r = graphRangeDb();
         float d = db < -r ? -r : (db > r ? r : db);
         return 0.5f - 0.5f * (d / r);
-    }
-
-    // Expanded preset list — drawn on top, crisp panel.text, all presets (no
-    // scroll). Click a row to select; click outside or Esc to close.
-    void drawPresetPopup(ImDrawList* dl, float winW, float winH)
-    {
-        const int n = kNumFactoryPresets;
-        const float top = kPresetY1 + 2.f;
-        const float bot = top + n * kPresetRowH + 6.f;
-        const ImVec2 p0 = panel.P(kPresetX0, top), p1 = panel.P(kPresetX1, bot);
-        dl->AddRectFilled(p0, p1, IM_COL32(24, 24, 26, 255), 3.f * sc());
-        dl->AddRect(p0, p1, IM_COL32(96, 100, 108, 235), 3.f * sc(), 0, 1.f * sc());
-
-        // Manual hit-test (not ImGui items): the rows overlap the knob buttons
-        // underneath, and ImGui's hover goes to the earlier-submitted item (the
-        // knobs), so InvisibleButton rows over a knob were unclickable.
-        const ImVec2 m = ImGui::GetMousePos();
-        for (int i = 0; i < n; ++i)
-        {
-            const float ry0 = top + 3.f + i * kPresetRowH;
-            const ImVec2 r0 = panel.P(kPresetX0 + 2.f, ry0), r1 = panel.P(kPresetX1 - 2.f, ry0 + kPresetRowH);
-            const bool hov = m.x >= r0.x && m.x <= r1.x && m.y >= r0.y && m.y <= r1.y;
-            if (hov)              dl->AddRectFilled(r0, r1, IM_COL32(70, 90, 120, 255), 2.f * sc());
-            else if (i == currentPreset) dl->AddRectFilled(r0, r1, IM_COL32(48, 52, 58, 255), 2.f * sc());
-            panel.text(dl, kPresetX0 + 11.f, ry0 + 0.5f * kPresetRowH - 6.f, 12.f, IM_COL32(224, 224, 220, 255), kFactoryPresets[i].name, -1);
-            if (hov && ImGui::IsMouseClicked(0)) { applyPreset(i); presetOpen = false; }
-        }
-
-        // Close on Esc or a click outside the popup + box.
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { presetOpen = false; return; }
-        if (ImGui::IsMouseClicked(0))
-        {
-            const ImVec2 m = ImGui::GetMousePos();
-            const ImVec2 b0 = panel.P(kPresetX0, kPresetY0), b1 = panel.P(kPresetX1, kPresetY1);
-            const bool inPopup = m.x >= p0.x && m.x <= p1.x && m.y >= p0.y && m.y <= p1.y;
-            const bool inBox   = m.x >= b0.x && m.x <= b1.x && m.y >= b0.y && m.y <= b1.y;
-            if (!inPopup && !inBox) presetOpen = false;
-            (void)winW; (void)winH;
-        }
-    }
-
-    // Patreon supporters overlay (opened by clicking the title). Dim scrim +
-    // centered card listing tiers; click anywhere or press Esc to close.
-    void drawCredits(ImDrawList* dl, float winW, float winH)
-    {
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 205));
-
-        const float s = sc();
-        // Line heights (screen px). Content height is measured so the card fits.
-        const float LN = 21.f * s, LH = 26.f * s, GAP = 12.f * s;
-        const float titleH = 40.f * s, subH = 30.f * s, footH = 34.f * s, padY = 30.f * s;
-        const auto& tiers = duskdpf::patreonTiers();
-        float contentH = titleH + subH + footH;
-        for (const auto& t : tiers)
-            if (!t.names.empty()) contentH += LH + (float)t.names.size() * LN + GAP;
-
-        const float cardW = 480.f * s;
-        float cardH = contentH + 2.f * padY;
-        if (cardH > winH * 0.95f) cardH = winH * 0.95f;
-        const ImVec2 cc(winW * 0.5f, winH * 0.5f);
-        const ImVec2 c0(cc.x - cardW * 0.5f, cc.y - cardH * 0.5f), c1(cc.x + cardW * 0.5f, cc.y + cardH * 0.5f);
-        dl->AddRectFilled(c0, c1, IM_COL32(26, 27, 30, 255), 8.f * s);
-        dl->AddRect(c0, c1, IM_COL32(90, 92, 98, 255), 8.f * s, 0, 1.5f * s);
-
-        auto ctext = [&](float yPx, float sz, ImU32 col, const char* txt, bool bold) {
-            const float fsz = sz * s;
-            ImFont* f = panel.pickFont(fsz);
-            const ImVec2 ts = f->CalcTextSizeA(fsz, FLT_MAX, 0.f, txt);
-            const float px = std::floor(cc.x - ts.x * 0.5f + 0.5f), py = std::floor(yPx + 0.5f);
-            dl->AddText(f, fsz, ImVec2(px, py), col, txt);
-            (void)bold;
-        };
-
-        float y = c0.y + padY;
-        ctext(y, 24.f, IM_COL32(238, 236, 228, 255), "SUPPORTERS", true); y += titleH;
-        ctext(y, 13.f, IM_COL32(160, 162, 166, 255), "Thank you to our Patreon supporters", false); y += subH;
-
-        for (const auto& tier : tiers)
-        {
-            if (tier.names.empty()) continue;
-            ctext(y, 15.f, IM_COL32(150, 172, 214, 255), tier.title, true); y += LH;
-            for (const char* nm : tier.names) { ctext(y, 15.f, IM_COL32(220, 220, 216, 255), nm, false); y += LN; }
-            y += GAP;
-        }
-        ctext(c1.y - 24.f * s, 11.f, IM_COL32(140, 142, 148, 255), "click anywhere to close", false);
-
-        // Dismiss on any click or Esc (manual — the modal input blocker owns the
-        // ImGui hover/active id, so an InvisibleButton here would never click).
-        // Arm only after the opening click is released so it doesn't self-close.
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showCredits = false;
-        else if (!creditsArmed) { if (!ImGui::IsMouseDown(0)) creditsArmed = true; }
-        else if (ImGui::IsMouseClicked(0)) showCredits = false;
     }
 
     void drawGraph(ImDrawList* dl)
@@ -666,79 +1220,82 @@ private:
             panel.text(dl, cx, cY(232), 12, IM_COL32(210, 210, 214, 255), names[i], 0, true);
         }
 
-        // FILTERS — British-style stepped HPF & LPF (OUT folds in each enable), then
-        // the input trim. HPF ascends 20-350 Hz; LPF descends 12-3 kHz.
-        static const char* const HPFL[7] = { "OUT", "20", "70", "120", "200", "300", "350" };
-        static const float        HPFF[7] = { 20.f, 20.f, 70.f, 120.f, 200.f, 300.f, 350.f };
-        static const char* const LPFL[7] = { "OUT", "12", "8", "5", "4", "3.5", "3" };
-        static const float        LPFF[7] = { 12000.f, 12000.f, 8000.f, 5000.f, 4000.f, 3500.f, 3000.f };
+        // FILTERS — British-style stepped HPF & LPF (OUT folds in each enable).
+        // Values are the hosted UAD/LUNA dial readbacks.
+        static const char* const HPFL[7] = { "OUT", "16", "45", "120", "250", "320", "350" };
+        static const float        HPFF[7] = { 16.f, 16.f, 45.f, 120.f, 250.f, 320.f, 350.f };
+        static const char* const LPFL[7] = { "OUT", "15.2", "10", "5", "3.75", "3.3", "3" };
+        static const float        LPFF[7] = { 15201.f, 15201.f, 10000.f, 5000.f, 3750.f, 3300.f, 3000.f };
         const float fcx = 0.5f * (COL[0] + COL[1]);
         steppedFilterKnob(dl, "hpfknob", fcx, cY(314), 28.f, kHpfEnabled, kHpfFreq, HPFL, HPFF, false, "Hz");
         steppedFilterKnob(dl, "lpfknob", fcx, cY(452), 28.f, kLpfEnabled, kLpfFreq, LPFL, LPFF, true,  "kHz");
-        colMetalKnob(dl, "input", kInputGain, -12.f, 12.f, fcx, cY(568), 26, "INPUT", MK_GAIN_V, MK_GAIN_L, 5, "%.1f", " dB");
 
         // Shared GAIN (0 top, +-15 dB) and Q (.5-3 descending) detent tables.
         static const float GT[11] = { 0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f };
         static const float GV[11] = { -15.f, -12.f, -9.f, -6.f, -3.f, 0.f, 3.f, 6.f, 9.f, 12.f, 15.f };
         static const char* const GL[11] = { "-15", "12", "9", "6", "3", "0", "3", "6", "9", "12", "+15" };
         static const float QT[5] = { 0.f, .25f, .5f, .75f, 1.f };
-        static const float QV[5] = { 3.f, 2.f, 1.5f, 1.f, .5f };
-        static const char* const QL[5] = { "3", "2", "1.5", "1", ".5" };
-        static const float FT7[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f }; // 7 evenly-spaced detents
+        static const float QV[5] = { 3.f, 2.25f, 1.5f, .88f, .5f };
+        static const char* const QL[5] = { "3", "2.25", "1.5", ".88", ".5" };
+        static const float FT7[7] = { 0.f, .1f, .25f, .5f, .75f, .9f, 1.f };
 
         // LF — British brown band: GAIN + FREQ (30-450 Hz) + BELL/SHELF button.
+        // The LF caps signal the voicing like the consoles they emulate: maroon
+        // on Brown (E-series), black on Black (G-series).
         {
             const float lcx = 0.5f * (COL[1] + COL[2]);
-            static const float FT[7] = { 0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f };
-            static const float FV[7] = { 30.f, 50.f, 100.f, 200.f, 300.f, 400.f, 450.f };
-            static const char* const FL[7] = { "30", "50", "100", "200", "300", "400", "450" };
-            consoleDetentKnob(dl, "lfg", lcx, cY(314), 28.f, kLfGain, GT, GV, GL, 11, C_LF_BROWN, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT, FV, FL, 7, C_LF_BROWN, "Hz", "%.0f Hz");
+            static const float FT[7] = { 0.f, .1f, .25f, .5f, .75f, .9f, 1.f };
+            static const float FV[7] = { 30.f, 42.f, 75.f, 200.f, 338.f, 405.f, 450.f };
+            static const char* const FL[7] = { "30", "42", "75", "200", "338", "405", "450" };
+            const ImU32 lfCap = values[kEqType] > 0.5f ? C_LF_BLACK : C_LF_BROWN;
+            consoleDetentKnob(dl, "lfg", lcx, cY(314), 28.f, kLfGain, GT, GV, GL, 11, lfCap, "dB", "%.1f dB");
+            consoleDetentKnob(dl, "lff", lcx, cY(452), 28.f, kLfFreq, FT, FV, FL, 7, lfCap, "Hz", "%.0f Hz", true);
             metalButton(dl, "lfbell", lcx - 32.f, cY(560), lcx + 32.f, cY(584), kLfBell, "BELL", "SHELF");
         }
         // LMF — British blue band: GAIN + FREQ (.2-2.5 kHz, 1 at top) + Q
         // (.5-3, descending), with narrow/wide bandwidth symbols under Q.
         {
             const float mcx = 0.5f * (COL[2] + COL[3]);
-            static const float MFV[7] = { 200.f, 300.f, 800.f, 1000.f, 1500.f, 2000.f, 2500.f };
-            static const char* const MFL[7] = { ".2", ".3", ".8", "1", "1.5", "2", "2.5" };
+            static const float MFV[7] = { 200.f, 260.f, 550.f, 1000.f, 1750.f, 2200.f, 2500.f };
+            static const char* const MFL[7] = { ".2", ".26", ".55", "1", "1.75", "2.2", "2.5" };
             consoleDetentKnob(dl, "lmg", mcx, cY(314), 28.f, kLmGain, GT, GV, GL, 11, C_LMF_BLUE, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, FT7, MFV, MFL, 7, C_LMF_BLUE, "kHz", "%.0f Hz");
+            consoleDetentKnob(dl, "lmf", mcx, cY(452), 28.f, kLmFreq, FT7, MFV, MFL, 7, C_LMF_BLUE, "kHz", "%.0f Hz", true);
             consoleDetentKnob(dl, "lmq", mcx, cY(590), 28.f, kLmQ, QT, QV, QL, 5, C_LMF_BLUE, "", "Q %.2f");
             bandwidthIcons(dl, mcx, cY(590) + 40.f);
         }
         // HMF — British green band: GAIN + FREQ (.6-7 kHz, 3 at top) + Q.
         {
             const float hcx = 0.5f * (COL[3] + COL[4]);
-            static const float HFV[7] = { 600.f, 800.f, 1500.f, 3000.f, 4500.f, 6000.f, 7000.f };
-            static const char* const HFL[7] = { ".6", ".8", "1.5", "3", "4.5", "6", "7" };
+            static const float HFV[7] = { 600.f, 720.f, 1150.f, 3000.f, 5250.f, 6400.f, 7000.f };
+            static const char* const HFL[7] = { ".6", ".72", "1.15", "3", "5.25", "6.4", "7" };
             consoleDetentKnob(dl, "hmg", hcx, cY(314), 28.f, kHmGain, GT, GV, GL, 11, C_HMF_GREEN, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmFreq, FT7, HFV, HFL, 7, C_HMF_GREEN, "kHz", "%.0f Hz");
+            consoleDetentKnob(dl, "hmf", hcx, cY(452), 28.f, kHmFreq, FT7, HFV, HFL, 7, C_HMF_GREEN, "kHz", "%.0f Hz", true);
             consoleDetentKnob(dl, "hmq", hcx, cY(590), 28.f, kHmQ, QT, QV, QL, 5, C_HMF_GREEN, "", "Q %.2f");
             bandwidthIcons(dl, hcx, cY(590) + 40.f);
         }
         // HF — British red band: GAIN + FREQ (1.5-16 kHz, 8 at top) + BELL/SHELF.
         {
             const float hcx = 0.5f * (COL[4] + COL[5]);
-            static const float XFV[7] = { 1500.f, 2000.f, 5000.f, 8000.f, 10000.f, 14000.f, 16000.f };
-            static const char* const XFL[7] = { "1.5", "2", "5", "8", "10", "14", "16" };
+            static const float XFV[7] = { 1500.f, 1800.f, 3500.f, 8000.f, 12000.f, 14800.f, 16000.f };
+            static const char* const XFL[7] = { "1.5", "1.8", "3.5", "8", "12", "14.8", "16" };
             consoleDetentKnob(dl, "hfg", hcx, cY(314), 28.f, kHfGain, GT, GV, GL, 11, C_HF_RED, "dB", "%.1f dB");
-            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfFreq, FT7, XFV, XFL, 7, C_HF_RED, "kHz", "%.0f Hz");
+            consoleDetentKnob(dl, "hff", hcx, cY(452), 28.f, kHfFreq, FT7, XFV, XFL, 7, C_HF_RED, "kHz", "%.0f Hz", true);
             metalButton(dl, "hfbell", hcx - 32.f, cY(560), hcx + 32.f, cY(584), kHfBell, "BELL", "SHELF");
         }
 
         // MASTER
         const float mcx = 0.5f * (COL[5] + COL[6]);
-        panelButton(dl, "bypass", mcx - 40, cY(268), mcx + 40, cY(292),
+        // Keep the master gain stages on the same two row centres as the HF
+        // gain/frequency knobs, then group the master switches beneath them.
+        colMetalKnob(dl, "input", kInputGain, -12.f, 12.f, mcx, cY(314), 26, "INPUT", MK_GAIN_V, MK_GAIN_L, 5, "%.1f", " dB");
+        colMetalKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, cY(452), 26, "OUTPUT", MK_GAIN_V, MK_GAIN_L, 5, "%.1f", " dB");
+        panelButton(dl, "bypass", mcx - 40, cY(544), mcx + 40, cY(568),
                     values[kBypass] > 0.5f ? "BYPASSED" : "BYPASS",
-                    values[kBypass] > 0.5f ? IM_COL32(150, 60, 48, 255) : IM_COL32(50, 50, 54, 255),
+                    values[kBypass] > 0.5f,
                     [&]{ toggleParam(kBypass); });
-        panelButton(dl, "autogain", mcx - 40, cY(300), mcx + 40, cY(324), "AUTO GAIN",
-                    values[kAutoGain] > 0.5f ? kGreenBtn : IM_COL32(50, 50, 54, 255),
+        panelButton(dl, "autogain", mcx - 40, cY(576), mcx + 40, cY(600), "AUTO GAIN",
+                    values[kAutoGain] > 0.5f,
                     [&]{ toggleParam(kAutoGain); });
-        colMetalKnob(dl, "drive", kSaturation, 0.f, 100.f, mcx, cY(430), 26, "DRIVE", MK_DRIVE_V, MK_DRIVE_L, 5, "%.0f", "");
-        colMetalKnob(dl, "outg", kOutputGain, -12.f, 12.f, mcx, cY(556), 26, "OUTPUT", MK_GAIN_V, MK_GAIN_L, 5, "%.1f", " dB");
-        smallToggle(dl, "ms", kMsMode, mcx - 24, cY(606), mcx + 24, cY(628), values[kMsMode], "M/S");
     }
 
     // A parametric band column: GAIN (top) + FREQ (mid) + Q knob or BELL toggle.
@@ -768,7 +1325,7 @@ private:
                  float cx, float cy, float r, ImU32 face, const char* name,
                  const char* lmin, const char* lmax, const char* fmt, const char* suffix)
     {
-        panel.knob(id, param, minV, maxV, cx, cy, r, values[param], kDefaults[param],
+        panel.knob(id, param, minV, maxV, cx, cy, r, values[param], kDefault(param),
                    false, false, fmt, suffix, face);
         // dial-end tick labels
         const float a0 = duskdpf::DuskPanel::knobAngle(0.0f), a1 = duskdpf::DuskPanel::knobAngle(1.0f);
@@ -802,7 +1359,7 @@ private:
         }
         panel.text(dl, cx, cy + r + 10.f, 11.0f, IM_COL32(206, 208, 212, 255), name, 0, true);
         // gestures + value read-out on top (no body drawn)
-        panel.knob(id, param, minV, maxV, cx, cy, r, values[param], kDefaults[param],
+        panel.knob(id, param, minV, maxV, cx, cy, r, values[param], kDefault(param),
                    false, false, fmt, suffix, 0, /*bodyless*/true);
     }
 
@@ -814,23 +1371,115 @@ private:
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) toggleParam(param);
-        dl->AddRectFilled(b0, b1, on ? IM_COL32(64, 96, 130, 255) : IM_COL32(44, 44, 48, 255), 3.0f * sc());
-        dl->AddRect(b0, b1, IM_COL32(90, 90, 96, 220), 3.0f * sc(), 0, 1.0f * sc());
-        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 9.0f, on ? pal().white : IM_COL32(160, 162, 166, 255), label, 0, true);
+        drawSilverButtonFace(dl, b0, b1, on, ImGui::IsItemHovered(), 3.0f);
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.28f * (y1 - y0), 9.0f,
+                   IM_COL32(34, 34, 38, 255), label, 0, true);
     }
 
     template <class Fn>
     void panelButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
-                     const char* label, ImU32 bg, Fn onClick)
+                     const char* label, bool pressed, Fn onClick)
     {
         const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         const bool hov = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) onClick();
-        dl->AddRectFilled(b0, b1, bg, 4.0f * sc());
-        dl->AddRect(b0, b1, hov ? IM_COL32(200, 200, 205, 220) : IM_COL32(90, 90, 96, 200), 4.0f * sc(), 0, 1.2f * sc());
-        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.0f, pal().white, label, 0, true);
+        drawSilverButtonFace(dl, b0, b1, pressed, hov, 4.0f);
+        panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 10.0f,
+                   IM_COL32(34, 34, 38, 255), label, 0, true);
+    }
+
+    //========================================================================
+    // Calibrated frequency read-outs. The panel legends keep the reference's
+    // printed dial values, but the live value displays (hover/drag bubble and
+    // the double-click editor) show the frequency the section actually centres
+    // on — the same measured law the DSP and the response curve use, so the
+    // read-out always agrees with the graph and the FFT. Display-only: the
+    // parameter values, the automation domain and the emulation are untouched.
+    //========================================================================
+    float calibratedFreqFor(uint32_t paramId, float dialHz) const
+    {
+        using duskaudio::FourKEQDSP;
+        const bool black = values[kEqType] > 0.5f;
+        switch (paramId)
+        {
+        case kHpfFreq:
+            return FourKEQDSP::calibratedFilterFrequency(dialHz, true, black);
+        case kLpfFreq:
+            return FourKEQDSP::calibratedFilterFrequency(dialHz, false, black);
+        case kLfFreq:
+            return FourKEQDSP::calibratedEqFrequency(
+                dialHz, values[kLfGain], FourKEQDSP::Band::LF, black,
+                values[kLfBell] > 0.5f);
+        case kLmFreq:
+            return FourKEQDSP::calibratedEqFrequency(
+                dialHz, values[kLmGain], FourKEQDSP::Band::LM, black, true);
+        case kHmFreq:
+            return FourKEQDSP::calibratedEqFrequency(
+                dialHz, values[kHmGain], FourKEQDSP::Band::HM, black, true);
+        case kHfFreq:
+            return FourKEQDSP::calibratedEqFrequency(
+                dialHz, values[kHfGain], FourKEQDSP::Band::HF, black,
+                values[kHfBell] > 0.5f);
+        default:
+            return dialHz;   // not a frequency control: display = dial value
+        }
+    }
+
+    float displayValue(uint32_t paramId) const
+    {
+        return calibratedFreqFor(paramId, values[paramId]);
+    }
+
+    static bool isFrequencyParam(uint32_t paramId)
+    {
+        switch (paramId)
+        {
+        case kHpfFreq: case kLpfFreq:
+        case kLfFreq: case kLmFreq: case kHmFreq: case kHfFreq:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static float controlForEffectiveFrequency(uint32_t paramId, float target,
+                                              const float* state) noexcept
+    {
+        using duskaudio::FourKEQDSP;
+        const bool black = state[kEqType] > 0.5f;
+        switch (paramId)
+        {
+        case kHpfFreq:
+            return FourKEQDSP::controlForCalibratedFilterFrequency(target, true, black);
+        case kLpfFreq:
+            return FourKEQDSP::controlForCalibratedFilterFrequency(target, false, black);
+        case kLfFreq:
+            return FourKEQDSP::controlForCalibratedEqFrequency(
+                target, state[kLfGain], FourKEQDSP::Band::LF, black,
+                state[kLfBell] > 0.5f);
+        case kLmFreq:
+            return FourKEQDSP::controlForCalibratedEqFrequency(
+                target, state[kLmGain], FourKEQDSP::Band::LM, black, true);
+        case kHmFreq:
+            return FourKEQDSP::controlForCalibratedEqFrequency(
+                target, state[kHmGain], FourKEQDSP::Band::HM, black, true);
+        case kHfFreq:
+            return FourKEQDSP::controlForCalibratedEqFrequency(
+                target, state[kHfGain], FourKEQDSP::Band::HF, black,
+                state[kHfBell] > 0.5f);
+        default:
+            return target;
+        }
+    }
+
+    // Inverse of calibratedFreqFor for typed entry: the dial position whose
+    // ACTUAL frequency is `target`. This is the same core inverse used by
+    // factory and versioned user presets.
+    float dialForCalibrated(uint32_t paramId, float target) const
+    {
+        return controlForEffectiveFrequency(paramId, target, values);
     }
 
     //========================================================================
@@ -839,7 +1488,7 @@ private:
     // The OUT position folds in the filter enable (no separate IN switch). F[]
     // is t-indexed (F[0] == F[1]); frequencies may ascend (HPF) or descend (LPF).
     //========================================================================
-    static float stepLT(int i) { static const float t[7] = {0.f, 1.f/6, 2.f/6, 3.f/6, 4.f/6, 5.f/6, 1.f}; return t[i]; }
+    static float stepLT(int i) { static const float t[7] = {0.f, .1f, .25f, .5f, .75f, .9f, 1.f}; return t[i]; }
 
     void stepPosToState(const float* F, float t, bool& en, float& f) const
     {
@@ -869,7 +1518,15 @@ private:
     {
         bool en; float f; stepPosToState(F, t, en, f);
         values[enId] = en ? 1.f : 0.f; setParameterValue(enId, values[enId]);
-        if (en) { values[freqId] = f; setParameterValue(freqId, f); }
+        if (en)
+        {
+            // F[] is the frequency printed around the bezel. Convert that
+            // effective corner back to the fitted UAD control coordinate before
+            // handing it to the DSP, so the pointer and response agree.
+            f = dialForCalibrated(freqId, f);
+            values[freqId] = f;
+            setParameterValue(freqId, f);
+        }
     }
 
     void steppedFilterKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
@@ -882,7 +1539,10 @@ private:
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
         const bool en = values[enId] > 0.5f;
-        float t = stepStateToPos(F, en, values[freqId]);
+        // Position the pointer by the measured corner, not by the hidden fitted
+        // control coordinate. For example, a Brown HPF control value of 120 Hz
+        // actually turns over near 85 Hz and must point between those markings.
+        float t = stepStateToPos(F, en, displayValue(freqId));
 
         // interaction
         ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
@@ -905,8 +1565,8 @@ private:
                 t = stepDragT; stepApply(enId, freqId, F, t);
             }
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) { editParameter(enId, false); editParameter(freqId, false); } stepModReset_ = false; }
-            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a frequency
-            { panel.openValueEdit(id, values[freqId]); editParameter(enId, false); editParameter(freqId, false); }
+            if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0)) // double-click: type a frequency (actual Hz)
+            { panel.openValueEdit(id, displayValue(freqId)); editParameter(enId, false); editParameter(freqId, false); }
             else if (hov && !act)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
@@ -951,7 +1611,9 @@ private:
         float typed;
         if (panel.valueEdit(id, cx, cy, R, typed))
         {
-            // Typed frequency: enable the filter and clamp to its range.
+            // Typed frequency is the ACTUAL corner: map back to the dial law,
+            // then enable the filter and clamp to its range.
+            typed = dialForCalibrated(freqId, typed);
             float lo = F[1], hi = F[1];
             for (int i = 2; i <= 6; ++i) { lo = std::min(lo, F[i]); hi = std::max(hi, F[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
@@ -963,9 +1625,10 @@ private:
         else if ((hov || act) && !editing)
         {
             char buf[24];
+            const float shown = displayValue(freqId);
             if (!en) std::snprintf(buf, sizeof(buf), "OUT");
-            else if (values[freqId] >= 1000.f) std::snprintf(buf, sizeof(buf), "%.1f kHz", values[freqId] / 1000.f);
-            else std::snprintf(buf, sizeof(buf), "%.0f Hz", values[freqId]);
+            else if (shown >= 1000.f) std::snprintf(buf, sizeof(buf), "%.1f kHz", shown / 1000.f);
+            else std::snprintf(buf, sizeof(buf), "%.0f Hz", shown);
             panel.valueBubble(cx, cy, R, buf);
         }
     }
@@ -1035,22 +1698,44 @@ private:
     void consoleDetentKnob(ImDrawList* dl, const char* id, float cx, float cy, float R,
                            uint32_t paramId, const float* T, const float* V,
                            const char* const* labels, int n, ImU32 capCol,
-                           const char* unit, const char* fmt)
+                           const char* unit, const char* fmt,
+                           bool addWideGapDots = false)
     {
         const float s = sc();
         const ImVec2 c = panel.P(cx, cy);
         const float RR = R * s;
         auto c01 = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
 
-        float t = detentValToPos(T, V, n, values[paramId]);
+        const bool frequencyKnob = isFrequencyParam(paramId);
+        // Frequency parameters retain the captured UAD control coordinate for
+        // DSP/session compatibility, but the physical knob lives in effective
+        // Hz. This makes its pointer, legends and live read-out agree with the
+        // response curve and FFT in both Brown and Black modes.
+        float t = detentValToPos(T, V, n,
+                                frequencyKnob ? displayValue(paramId)
+                                              : values[paramId]);
 
         ImGui::SetCursorScreenPos(ImVec2(c.x - RR, c.y - RR));
         ImGui::InvisibleButton(id, ImVec2(2.f * RR, 2.f * RR));
         const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
         const bool editing = panel.isEditingValue(id);
         const bool modKey = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper;
-        auto setFromT = [&](float tt) { const float nv = detentPosToVal(T, V, n, tt); values[paramId] = nv; setParameterValue(paramId, nv); };
-        auto resetDefault = [&] { editParameter(paramId, true); values[paramId] = kDefaults[paramId]; setParameterValue(paramId, kDefaults[paramId]); editParameter(paramId, false); t = detentValToPos(T, V, n, values[paramId]); };
+        auto setFromT = [&](float tt) {
+            const float shown = detentPosToVal(T, V, n, tt);
+            const float nv = frequencyKnob ? dialForCalibrated(paramId, shown)
+                                           : shown;
+            values[paramId] = nv;
+            setParameterValue(paramId, nv);
+        };
+        auto resetDefault = [&] {
+            editParameter(paramId, true);
+            values[paramId] = kDefault(paramId);
+            setParameterValue(paramId, kDefault(paramId));
+            editParameter(paramId, false);
+            t = detentValToPos(T, V, n,
+                              frequencyKnob ? displayValue(paramId)
+                                            : values[paramId]);
+        };
         if (!editing)
         {
             if (ImGui::IsItemActivated())
@@ -1066,13 +1751,30 @@ private:
             }
             if (ImGui::IsItemDeactivated()) { if (!stepModReset_) editParameter(paramId, false); stepModReset_ = false; }
             if (!modKey && (hov || act) && ImGui::IsMouseDoubleClicked(0))
-            { panel.openValueEdit(id, values[paramId]); editParameter(paramId, false); } // double-click: type a value
+            { panel.openValueEdit(id, displayValue(paramId)); editParameter(paramId, false); } // double-click: type a value (freq knobs: actual Hz)
             else if (hov && !act)
             {
                 const float wh = ImGui::GetIO().MouseWheel;
                 if (wh != 0.f) { t = c01(t + wh * 0.02f); editParameter(paramId, true); setFromT(t); editParameter(paramId, false); }
             }
         }
+
+        // The console frequency scales have deliberately non-uniform major
+        // positions. Their two 0.25-wide segments leave conspicuous blank arcs
+        // around the top detent, so add one unlabeled minor dot at each midpoint
+        // (e.g. LF 75→200 and 200→338). This is visual only: interpolation
+        // and the labeled parameter detents remain exactly as before.
+        if (addWideGapDots)
+            for (int i = 0; i < n - 1; ++i)
+                if (T[i + 1] - T[i] >= 0.20f)
+                {
+                    const float mt = 0.5f * (T[i] + T[i + 1]);
+                    const float ma = duskdpf::DuskPanel::knobAngle(mt);
+                    const float mdx = std::sin(ma), mdy = -std::cos(ma);
+                    dl->AddCircleFilled(
+                        panel.P(cx + mdx * (R + 9.f), cy + mdy * (R + 9.f)),
+                        1.45f * s, IM_COL32(150, 152, 156, 255), 8);
+                }
 
         for (int i = 0; i < n; ++i)
         {
@@ -1089,6 +1791,9 @@ private:
         float typed;
         if (panel.valueEdit(id, cx, cy, R, typed))
         {
+            // Frequency knobs take the typed value as the ACTUAL centre and map
+            // it back to the dial law; every other knob types the dial value.
+            typed = dialForCalibrated(paramId, typed);
             float lo = V[0], hi = V[0];
             for (int i = 1; i < n; ++i) { lo = std::min(lo, V[i]); hi = std::max(hi, V[i]); }
             typed = typed < lo ? lo : (typed > hi ? hi : typed);
@@ -1096,7 +1801,7 @@ private:
         }
         else if ((hov || act) && !editing)
         {
-            char buf[24]; std::snprintf(buf, sizeof(buf), fmt, values[paramId]);
+            char buf[24]; std::snprintf(buf, sizeof(buf), fmt, displayValue(paramId));
             panel.valueBubble(cx, cy, R, buf);
         }
     }
@@ -1112,23 +1817,38 @@ private:
         dl->AddPolyline(wid, 6, col, 0, 1.4f * s);
     }
 
+    // Shared raised silver face for every ordinary button. Active controls keep
+    // the same material and read as pressed through the inverted gradient.
+    void drawSilverButtonFace(ImDrawList* dl, const ImVec2& b0, const ImVec2& b1,
+                              bool pressed, bool hovered, float rounding)
+    {
+        const float s = sc();
+        dl->AddRectFilled(b0, b1, IM_COL32(18, 18, 20, 255), rounding * s);
+        const ImVec2 f0(b0.x + 1.6f * s, b0.y + 1.6f * s);
+        const ImVec2 f1(b1.x - 1.6f * s, b1.y - 1.6f * s);
+        const ImU32 top = pressed ? IM_COL32(120, 122, 126, 255)
+                                  : (hovered ? IM_COL32(194, 196, 200, 255)
+                                             : IM_COL32(182, 184, 188, 255));
+        const ImU32 bot = pressed ? IM_COL32(150, 152, 156, 255)
+                                  : (hovered ? IM_COL32(150, 152, 156, 255)
+                                             : IM_COL32(138, 140, 144, 255));
+        dl->AddRectFilledMultiColor(f0, f1, top, top, bot, bot);
+        dl->AddLine(ImVec2(f0.x, f0.y), ImVec2(f1.x, f0.y),
+                    IM_COL32(255, 255, 255, pressed ? 40 : 150), 1.2f * s);
+        dl->AddLine(ImVec2(f0.x, f1.y), ImVec2(f1.x, f1.y),
+                    IM_COL32(0, 0, 0, pressed ? 120 : 60), 1.2f * s);
+    }
+
     // Raised silver metal button (BELL / SHELF). Beveled, pressed-in when active.
     void metalButton(ImDrawList* dl, const char* id, float x0, float y0, float x1, float y1,
                      uint32_t paramId, const char* onLabel, const char* offLabel)
     {
         const bool on = values[paramId] > 0.5f;
-        const float s = sc();
         const ImVec2 b0 = panel.P(x0, y0), b1 = panel.P(x1, y1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton(id, ImVec2(b1.x - b0.x, b1.y - b0.y));
         if (ImGui::IsItemClicked()) toggleParam(paramId);
-        dl->AddRectFilled(b0, b1, IM_COL32(18, 18, 20, 255), 5.f * s); // dark border
-        const ImVec2 f0(b0.x + 1.6f * s, b0.y + 1.6f * s), f1(b1.x - 1.6f * s, b1.y - 1.6f * s);
-        const ImU32 top = on ? IM_COL32(120, 122, 126, 255) : IM_COL32(182, 184, 188, 255);
-        const ImU32 bot = on ? IM_COL32(150, 152, 156, 255) : IM_COL32(138, 140, 144, 255);
-        dl->AddRectFilledMultiColor(f0, f1, top, top, bot, bot); // vertical gradient (inverted when pressed)
-        dl->AddLine(ImVec2(f0.x, f0.y), ImVec2(f1.x, f0.y), IM_COL32(255, 255, 255, on ? 40 : 150), 1.2f * s); // top highlight
-        dl->AddLine(ImVec2(f0.x, f1.y), ImVec2(f1.x, f1.y), IM_COL32(0, 0, 0, on ? 120 : 60), 1.2f * s);       // bottom shadow
+        drawSilverButtonFace(dl, b0, b1, on, ImGui::IsItemHovered(), 5.0f);
         panel.text(dl, 0.5f * (x0 + x1), y0 + 0.30f * (y1 - y0), 11.f, IM_COL32(34, 34, 38, 255), on ? onLabel : offLabel, 0, true);
     }
 
@@ -1221,14 +1941,19 @@ private:
     float values[kParamCount] = {};
     int currentPreset = -1;
     bool showGraph = true;
-    bool showCredits = false;    // Patreon supporters overlay (title click)
-    bool creditsArmed = false;   // ignore the opening click until mouse released
-    bool presetOpen = false;     // custom preset dropdown expanded
+    bool showSupporters = false; // Patreon supporters overlay (title click)
+    // User preset library (see scanUserPresets): vals[] caches each file's
+    // normalised values for identity matching against values[].
+    struct UserPreset { std::string name, path; float vals[kParamCount]; };
+    std::vector<UserPreset> userPresets;
+    std::string currentUserName, currentUserPath; // active user preset ("" = none)
+    char saveBuf[64] = {};       // SAVE modal name entry
+    bool saveFailed = false;     // SAVE modal: last write failed, keep it open
     bool showFft = true;         // spectrum analyzer overlay on the graph
     int  graphRangeIdx = 2;      // 0:+-6 1:+-12 2:+-18 3:+-30 4:Warped
     bool needResize = false;
     bool gripCursorSet = false;  // NWSE cursor currently pushed to the window
-    float ctlDstTop_ = 220.0f, ctlScaleY_ = 1.0f;
+    float ctlDstTop_ = 180.0f, ctlScaleY_ = 1.0f;
     float stepDragT = 0.0f; // stepped filter-knob drag origin (HPF/LPF)
     bool  stepModReset_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 

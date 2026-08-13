@@ -874,6 +874,10 @@ public:
     void setDriveHfComp (float gainDb) noexcept
     {
         const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
+        const bool active = std::abs (gainDb) > 1.0e-6f;
+        if (active != driveHfActive)
+            driveHfShelf.reset();
+        driveHfActive = active;
         driveHfShelf.setCoeffs (DBiquad::shelf (fs, 2500.0, static_cast<double> (gainDb), 0.5, true));
     }
 
@@ -905,8 +909,14 @@ public:
         // holds z1/z2, so a prior American shelf state would linger as a decaying
         // transient after a machine switch. Reset it so it can't remain active. Nonzero
         // HF keeps normal (stateful) shelf processing.
-        if (hfDb == 0.0f)
+        const bool hfActive = std::abs (hfDb) > 1.0e-6f;
+        const bool lfActive = std::abs (lfDb) > 1.0e-6f;
+        if (hfActive != levelHfActive)
             levelHfShelf.reset();
+        if (lfActive != levelLfActive)
+            levelLfShelf.reset();
+        levelHfActive = hfActive;
+        levelLfActive = lfActive;
         levelHfShelf.setCoeffs (DBiquad::shelf (fs, hfFc, static_cast<double> (hfDb), hfQ, true));
         levelLfShelf.setCoeffs (DBiquad::peak  (fs, lfFc, static_cast<double> (lfDb), lfQ));
     }
@@ -1024,6 +1034,18 @@ public:
     void setReproEq (float lfDb, float lmfDb, float hmfDb, float hfDb, float subBellDb) noexcept
     {
         const double fs = currentSampleRate > 0.0 ? currentSampleRate : 96000.0;
+        const bool lfActive = std::abs (lfDb) > 1.0e-6f;
+        const bool lmfActive = std::abs (lmfDb) > 1.0e-6f;
+        const bool hmfActive = std::abs (hmfDb) > 1.0e-6f;
+        const bool hfActive = std::abs (hfDb) > 1.0e-6f;
+        if (lfActive != reproLfActive) reproLfShelf.reset();
+        if (lmfActive != reproLmfActive) reproLmfPeak.reset();
+        if (hmfActive != reproHmfActive) reproHmfPeak.reset();
+        if (hfActive != reproHfActive) reproHfShelf.reset();
+        reproLfActive = lfActive;
+        reproLmfActive = lmfActive;
+        reproHmfActive = hmfActive;
+        reproHfActive = hfActive;
         reproLfShelf.setCoeffs  (DBiquad::shelf (fs,   80.0, static_cast<double> (lfDb),  0.5, false));
         reproLmfPeak.setCoeffs  (DBiquad::peak  (fs,  160.0, static_cast<double> (lmfDb), 0.9));
         reproHmfPeak.setCoeffs  (DBiquad::peak  (fs, 5000.0, static_cast<double> (hmfDb), 0.8));
@@ -1212,15 +1234,18 @@ public:
 
             // Drive-linked HF restore (neutral at reference drive; cancels the
             // waveshaper's HF compression so hot presets stay bright like the reference).
-            signal = static_cast<float> (driveHfShelf.process (static_cast<double> (signal)));
+            if (driveHfActive)
+                signal = static_cast<float> (driveHfShelf.process (static_cast<double> (signal)));
 
             // Signal-level FR compensation (HF restore + LF cut; both neutral at 0 dB =
             // flux <= -12 dBFS ref). Cancels the core's level-dependent HF droop / LF
-            // thickening so the FR-vs-level surface matches the reference on real program. Run
-            // unconditionally like the repro EQ (0 dB ~= identity to ~1e-6 dB); the
-            // reference/preset gate signals stay at 0 dB so their FR holds.
-            signal = static_cast<float> (levelHfShelf.process (static_cast<double> (signal)));
-            signal = static_cast<float> (levelLfShelf.process (static_cast<double> (signal)));
+            // thickening so the FR-vs-level surface matches the reference on real program.
+            // At 0 dB each stage is bypassed exactly; pole/zero cancellation is not
+            // bit-identity and can leave a deep-LF numerical residue at elevated rates.
+            if (levelHfActive)
+                signal = static_cast<float> (levelHfShelf.process (static_cast<double> (signal)));
+            if (levelLfActive)
+                signal = static_cast<float> (levelLfShelf.process (static_cast<double> (signal)));
             if (presetLevelEqConfigured)
             {
                 const double hmfDry = static_cast<double> (signal);
@@ -1255,12 +1280,16 @@ public:
                 signal = static_cast<float> (plfDry + static_cast<double> (progLfMix) * (plfWet - plfDry));
             }
 
-            // Advanced repro-head EQ trims (neutral at 0 dB; reproduce the reference factory
-            // presets' baked Repro HF/LF EQ so each preset's FR matches).
-            signal = static_cast<float> (reproLfShelf.process (static_cast<double> (signal)));
-            signal = static_cast<float> (reproLmfPeak.process (static_cast<double> (signal)));
-            signal = static_cast<float> (reproHmfPeak.process (static_cast<double> (signal)));
-            signal = static_cast<float> (reproHfShelf.process (static_cast<double> (signal)));
+            // Advanced repro-head EQ trims reproduce the reference factory presets'
+            // baked Repro HF/LF EQ. Each 0 dB band is skipped exactly.
+            if (reproLfActive)
+                signal = static_cast<float> (reproLfShelf.process (static_cast<double> (signal)));
+            if (reproLmfActive)
+                signal = static_cast<float> (reproLmfPeak.process (static_cast<double> (signal)));
+            if (reproHmfActive)
+                signal = static_cast<float> (reproHmfPeak.process (static_cast<double> (signal)));
+            if (reproHfActive)
+                signal = static_cast<float> (reproHfShelf.process (static_cast<double> (signal)));
             // Per-preset repro sub-bell (31 Hz Q2.5). Gated: skipped entirely at 0 dB so every
             // preset that leaves it neutral (all but GP9 Drum Bus) renders byte-identical.
             if (reproSubBellActive)
@@ -1365,8 +1394,10 @@ private:
     DBiquad gapLossFilter;                  // juce IIR<double>
     DBiquad headWidthFilter;                // American head-width HF peak (neutral otherwise)
     DBiquad driveHfShelf;                   // drive-linked HF restore (neutral at reference drive)
+    bool driveHfActive = false;             // exact bypass at 0 dB
     DBiquad levelHfShelf;                   // signal-level HF restore (neutral at 0 dB; keyed on instantaneous flux)
     DBiquad levelLfShelf;                   // signal-level LF cut (neutral at 0 dB; keyed on instantaneous flux)
+    bool levelHfActive = false, levelLfActive = false;
     DBiquad presetLevelHmfPeak;             // per-preset above-anchor 6.3 kHz correction
     DBiquad presetLevelHfShelf;             // per-preset above-anchor 11 kHz correction
     bool presetLevelEqConfigured = false;   // exact bypass for presets with zero correction data
@@ -1386,6 +1417,8 @@ private:
     float progLfMix = 0.0f;                 // = progFactor mix (0 at/below the -12 anchor)
     float progLfLastDb = 999.0f;
     DBiquad reproLfShelf, reproLmfPeak, reproHmfPeak, reproHfShelf; // advanced repro-head 4-band EQ (neutral at 0 dB)
+    bool reproLfActive = false, reproLmfActive = false;
+    bool reproHmfActive = false, reproHfActive = false;
     DBiquad reproSubBellPeak;               // per-preset repro sub-bell (31 Hz Q2.5); fills a narrow head-bump LF dip
     bool    reproSubBellActive = false;     // EXACT bypass at 0 dB: an always-on 0-dB peak biquad is NOT bit-identity
                                             // (numerator==denominator cancels in exact math, not in float rounding), so
