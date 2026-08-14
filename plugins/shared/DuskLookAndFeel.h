@@ -457,7 +457,8 @@ private:
     // value in the slider's native units. Heuristics:
     //   • "k" or "kHz" suffix multiplies by 1000
     //   • "%" suffix (or any % anywhere in the slider's display text) treats
-    //     the input as percent → multiplies by 0.01
+    //     the input as percent — scaled by 0.01 ONLY when the slider's native
+    //     units are a 0..1 fraction, see percentNeedsScaling() below
     //   • "ms" suffix when the slider's range max ≤ 60 (i.e. a seconds-scale
     //     knob like DECAY) divides by 1000 to convert ms → s
     //   • Other unit suffixes (Hz, dB, x, s) are stripped as decoration
@@ -522,8 +523,68 @@ private:
         }
 
         double value = text.getDoubleValue() * multiplier;
-        if (isPercent) value *= 0.01;
+        if (isPercent && percentNeedsScaling (slider)) value *= 0.01;
         return value;
+    }
+
+    // A "%" means one of two different things, and the difference decides
+    // whether a typed 50 is 0.5 or 50:
+    //
+    //   FRACTION units — native range 0..1. A typed 50 must become 0.5. This
+    //     is what the unconditional 0.01 was written for, and it is the common
+    //     case: DuskVerb prints v * 100.0, while Convolution Reverb's Mix
+    //     (NormalisableRange(0, 1) with a " %" suffix) prints the fraction
+    //     itself, so the two do NOT agree on what gets displayed at all.
+    //   PERCENT units — native range already counted in percent. Multi-Comp's
+    //     Mix is createKnob("Mix", 0, 100, 100, "%"), so a typed 50 must stay
+    //     50. Scaling it produced 0.5, which the knob displayed as 1%: a
+    //     silently wrong value rather than a visible failure. Measured in
+    //     Reaper on Windows, and the reason this function exists.
+    //
+    // The rule DEFAULTS to scaling and only opts out on positive evidence,
+    // because every way of getting this wrong except the Multi-Comp one is a
+    // regression against long-shipped behaviour. Two things must both hold:
+    //
+    //   1. The native maximum is itself percent-sized. Every genuinely
+    //      percent-native control in the fleet tops out at 100, 110 or +/-100,
+    //      so the bar is set at 50: comfortably below all of them and well
+    //      clear of DuskVerb's mod_rate, whose 0.1..10 Hz range the Shimmer
+    //      engine relabels FEEDBACK and displays as 0..95%. At a lower bar
+    //      that one would classify as percent-native and a typed 50% would
+    //      clamp to 10 Hz, i.e. maximum regeneration: the wrong direction to
+    //      fail in.
+    //   2. The slider prints roughly its own maximum rather than ~100x it, so
+    //      a 0..100 range that still renders as 0..10000% keeps scaling.
+    //
+    // KNOWN GAP, pre-existing and NOT fixed here: Convolution Reverb's MIX,
+    // LENGTH and OFFSET are 0..1 with a plain " %" suffix and no x100
+    // formatter, so the knob shows "0.50 %" at half wet. The pre-filled text
+    // is that display string, so committing it unedited parses 0.50 as a
+    // percent and writes 0.005. That round-trip was already broken before this
+    // change and is a Convolution Reverb display bug, not a parser one: the
+    // knob should render v * 100. Fixing it here would mean special-casing one
+    // plugin's formatting inside shared code.
+    static bool percentNeedsScaling (juce::Slider& slider)
+    {
+        const double maxV = slider.getMaximum();
+        if (! std::isfinite (maxV) || std::abs (maxV) < 50.0)
+            return true;
+
+        // Strip everything but the number. "100.0 %" and "-100%" parse; a
+        // non-numeric display ("Off", "-inf") yields 0, which is not evidence
+        // of anything and so falls through to the scaling default below.
+        const double shownAtMax = slider.getTextFromValue (maxV)
+                                        .retainCharacters ("0123456789.-+eE")
+                                        .getDoubleValue();
+
+        // Positive evidence only: the slider prints its own maximum, within a
+        // decade either way. A fraction slider prints ~100x (fails the upper
+        // bound) and an unparseable display prints 0 (fails the lower one);
+        // both keep the historical scaling rather than guessing.
+        const double m = std::abs (maxV), shown = std::abs (shownAtMax);
+        const bool printsItsOwnMaximum = shown >= m * 0.1 && shown <= m * 10.0;
+
+        return ! printsItsOwnMaximum;
     }
 };
 

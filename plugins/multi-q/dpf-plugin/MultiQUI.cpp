@@ -2995,12 +2995,18 @@ private:
         const double cosw = std::cos(omega), sinw = std::sin(omega), cos2w = std::cos(2 * omega), sin2w = std::sin(2 * omega);
         auto peakMag = [&](float fc, float q, float gainDB) -> double {
             const double tubeQ = std::max(0.01, (double)q * 0.85);
-            // Same ceiling as the core's amb::clampFreq, taken from the single
-            // shared constant rather than a hand-copied literal (see #157).
-            const double fcD = duskaudio::nyquistSafeDesignHzD(sr, (double)fc, duskaudio::kMaxDesignFreqRatio);
+            // Track the TUBE AUDIO path's own ceiling, not the shared-DPF one.
+            // amb::clampFreq in MultiQFilters.hpp uses kMqMaxDesignFreqRatio,
+            // which is deliberately a separate constant from
+            // duskaudio::kMaxDesignFreqRatio even though both are 0.4998 today.
+            // Naming the wrong one still draws correctly right now and silently
+            // desyncs this curve from tube audio the moment either constant
+            // moves, which is exactly the curve-vs-sound divergence #160 closed
+            // for British mode. Only the hand-copied 0.4998 literals are gone.
+            const double fcD = duskaudio::nyquistSafeDesignHzD(sr, (double)fc, duskaudio::kMqMaxDesignFreqRatio);
             const double bw = fcD / tubeQ;
             const double kbw = std::tan(duskaudio::kMultiQPi
-                * std::min(bw, sr * duskaudio::kMaxDesignFreqRatio) / sr);
+                * std::min(bw, sr * duskaudio::kMqMaxDesignFreqRatio) / sr);
             const double A = std::pow(10.0, (double)gainDB / 40.0);
             const double cW = std::cos(2.0 * duskaudio::kMultiQPi * fcD / sr);
             const double b0 = (1 + kbw * A) / (1 + kbw / A), b1 = (-2 * cW) / (1 + kbw / A), b2 = (1 - kbw * A) / (1 + kbw / A);
