@@ -165,12 +165,42 @@ public:
     static float calibratedHpfTrimDb(float controlHz, bool black) noexcept;
     static float calibratedFilterQ(bool highPass, bool black) noexcept;
 
-    // voicedMidQ/bandK used to live here so Multi-Q's British response preview
-    // could draw the older PARALLEL topology (summed bandK-weighted blocks)
-    // independently of 4K EQ 2. That preview now mirrors FourKEQUI and draws
-    // from the calibrated helpers above, so both legacy helpers are gone —
-    // keeping them would only leave a second, wrong model for a future reader
-    // to wire back up.
+    // Control-coordinate snapshot for the response curve: the values the UI
+    // shows on its knobs, NOT calibrated units. calibratedResponseDb() applies
+    // every calibration itself, so the two UIs cannot drift apart by applying a
+    // different subset.
+    //
+    // The shape fields (lfBell/hfBell/oversampling) stay FLOAT rather than
+    // bool/int because that is what the parameter arrays hold, and both the
+    // `> 0.5f` tests and calibratedPairCorrection's firstShape/secondShape take
+    // the raw value. Narrowing them here would change what the correction
+    // sections receive.
+    struct CurveControls
+    {
+        double baseSampleRate = 48000.0; // HOST rate; oversampling applied below
+        float  oversampling   = 0.0f;    // DSP mode: 0=1x, 1=2x, 2=4x
+        bool   black          = false;   // Brown(false) / Black(true) voicing
+        bool   hpfEnabled     = false;
+        bool   lpfEnabled     = false;
+        float  hpfFreq = 0.0f, lpfFreq = 0.0f;
+        float  lfGain  = 0.0f, lfFreq  = 0.0f, lfBell = 0.0f;
+        float  lmGain  = 0.0f, lmFreq  = 0.0f, lmQ    = 1.0f;
+        float  hmGain  = 0.0f, hmFreq  = 0.0f, hmQ    = 1.0f;
+        float  hfGain  = 0.0f, hfFreq  = 0.0f, hfBell = 0.0f;
+    };
+
+    // The ONE implementation of the drawn response, mirroring recomputeCoeffs().
+    // Both FourKEQUI and Multi-Q's British-mode preview delegate here; they used
+    // to carry byte-identical copies of this body, which is how Multi-Q's curve
+    // silently stayed on the pre-calibration model after the core was rewritten
+    // (GH #160). A future model change has exactly one place to land.
+    //
+    // voicedMidQ/bandK used to live here too, so that preview could draw the
+    // older PARALLEL topology (summed bandK-weighted blocks) independently of
+    // 4K EQ 2. Both are gone with it: keeping them would only leave a second,
+    // wrong model for a future reader to wire back up.
+    static float calibratedResponseDb(const CurveControls& c, float freq) noexcept;
+
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
 private:

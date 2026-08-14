@@ -711,6 +711,96 @@ float FourKEQDSP::calibratedFilterQ(bool highPass, bool black) noexcept
     return highPass ? (black ? 0.87429652f : 0.76532684f) : 0.706625f;
 }
 
+// Drawn response, in dB, at one frequency. See CurveControls in the header.
+//
+// Evaluate at the DSP's ACTUAL processing rate: host base rate * the rate-capped
+// oversampling factor, exactly as recomputeCoeffs() designs the biquads. A fixed
+// 96 kHz would warp the drawn curve away from the sound at any other host rate or
+// oversampling factor. The HPF is the exception: it is designed at the BASE rate
+// in the core, so it is evaluated against the base-rate omega here.
+float FourKEQDSP::calibratedResponseDb(const CurveControls& c, float freq) noexcept
+{
+    constexpr double kPi = 3.14159265358979323846;
+
+    const double base = c.baseSampleRate > 0.0 ? c.baseSampleRate : 48000.0;
+    const double fs   = base * (double) chooseFactor(base, (int)(c.oversampling + 0.5f));
+    const double w    = 2.0 * kPi * (double) freq / fs;
+    const bool black  = c.black;
+
+    auto magnitudeAt = [](const BiquadCoeffs& coeffs, double omega) {
+        Biquad b; b.setCoeffs(coeffs); return b.magnitude(omega);
+    };
+    auto magnitude = [&](const BiquadCoeffs& coeffs) {
+        return magnitudeAt(coeffs, w);
+    };
+
+    // Calibrated series filter magnitudes, mirrors recomputeCoeffs().
+    double filtMag = 1.0;
+    if (c.hpfEnabled)
+    {
+        const float f = std::min(calibratedFilterFrequency(c.hpfFreq, true, black),
+                                 static_cast<float>(base * 0.49));
+        const double wBase = 2.0 * kPi * (double) freq / base;
+        if (black)
+            filtMag *= magnitudeAt(Biquad::firstOrderHighPass(base, f * 0.96134252f), wBase);
+        filtMag *= magnitudeAt(Biquad::highPass(base, f, calibratedFilterQ(true, black)), wBase);
+        filtMag *= std::pow(10.0, calibratedHpfTrimDb(c.hpfFreq, black) / 20.0);
+    }
+    if (c.lpfEnabled)
+    {
+        const float f = std::min(calibratedFilterFrequency(c.lpfFreq, false, black),
+                                 static_cast<float>(fs * 0.49));
+        filtMag *= magnitude(Biquad::lowPass(fs, f, calibratedFilterQ(false, black)));
+    }
+
+    auto bandMagnitude = [&](Band band, float controlGain, float controlFreq,
+                             float controlQ, bool bell, bool highShelf) {
+        const float f = std::min(calibratedEqFrequency(controlFreq, controlGain, band, black, bell),
+                                 static_cast<float>(fs * 0.49));
+        const float g = calibratedEqGain(controlGain, band, black, bell);
+        const float q = calibratedEqQ(controlQ, controlFreq, controlGain, band, black, bell);
+        return magnitude(bell || band == Band::LM || band == Band::HM
+            ? Biquad::peak(fs, f, g, q)
+            : Biquad::shelf(fs, f, g, q, highShelf));
+    };
+
+    double eqMag = 1.0;
+    const bool lfActive = std::abs(c.lfGain) > 1.0e-6f;
+    const bool lmActive = std::abs(c.lmGain) > 1.0e-6f;
+    const bool hmActive = std::abs(c.hmGain) > 1.0e-6f;
+    const bool hfActive = std::abs(c.hfGain) > 1.0e-6f;
+    if (lfActive)
+        eqMag *= bandMagnitude(Band::LF, c.lfGain, c.lfFreq, 1.5f, c.lfBell > 0.5f, false);
+    if (lmActive)
+        eqMag *= bandMagnitude(Band::LM, c.lmGain, c.lmFreq, c.lmQ, true, false);
+    if (hmActive)
+        eqMag *= bandMagnitude(Band::HM, c.hmGain, c.hmFreq, c.hmQ, true, false);
+    if (hfActive)
+        eqMag *= bandMagnitude(Band::HF, c.hfGain, c.hfFreq, 1.5f, c.hfBell > 0.5f, true);
+
+    if (lfActive && lmActive)
+    {
+        const auto lowCorrection = calibratedPairCorrection(
+            fs, false, black,
+            c.lfGain, c.lfFreq, c.lfBell,
+            c.lmGain, c.lmFreq, c.lmQ);
+        for (const BiquadCoeffs& correction : lowCorrection)
+            eqMag *= magnitude(correction);
+    }
+    if (hmActive && hfActive)
+    {
+        const auto highCorrection = calibratedPairCorrection(
+            fs, true, black,
+            c.hmGain, c.hmFreq, c.hmQ,
+            c.hfGain, c.hfFreq, c.hfBell);
+        for (const BiquadCoeffs& correction : highCorrection)
+            eqMag *= magnitude(correction);
+    }
+
+    const double magLin = eqMag * filtMag;
+    return 20.0f * std::log10((float) std::max(magLin, 1e-6));
+}
+
 // mode: 0 = 1x (off), 1 = 2x, 2 = 4x. Capped so the oversampled rate stays sane
 // at already-high base rates (>=176.4k -> 1x, >=88.2k -> max 2x).
 int FourKEQDSP::chooseFactor(double baseSampleRate, int mode) noexcept
