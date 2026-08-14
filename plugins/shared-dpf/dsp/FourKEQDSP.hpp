@@ -187,6 +187,47 @@ public:
         float  lmGain  = 0.0f, lmFreq  = 0.0f, lmQ    = 1.0f;
         float  hmGain  = 0.0f, hmFreq  = 0.0f, hmQ    = 1.0f;
         float  hfGain  = 0.0f, hfFreq  = 0.0f, hfBell = 0.0f;
+        // Saturation knob percent, 0..100, as setSaturation() receives it.
+        // Feeds the console saturator's broadband insertion loss into the drawn
+        // curve (GH #169). Defaulting to 0 is the SAFE default rather than an
+        // arbitrary one: 0 still yields the always-on native loss, which is the
+        // only state the standalone 4K EQ can be in.
+        float  saturation = 0.0f;
+    };
+
+    // Console saturator drive actually presented to ConsoleSaturationCore, and
+    // the response that drive costs. Both processBlock() and designCurve() call
+    // consoleSatAmount(), so the audio path and the drawn curve cannot disagree,
+    // the same reason designCurve() itself is the one response model.
+    //
+    // The loss is NOT a nonlinearity artefact, which is why a closed form works
+    // at every setting rather than only at the saturation floor. It is a linear
+    // dry/wet mix around a linear wet branch, all of it at the end of
+    // ConsoleSaturationCore::processSample:
+    //     y = dcBlocker(y)                          // 5 Hz, one pole one zero
+    //     y *= 1 / (1 + drive * 0.15)               // makeup trim
+    //     result = input * (1 - wetMix) + y * wetMix, wetMix = min(1, drive * 1.4)
+    //
+    // The DC blocker is why this is a complex sum and not a scalar trim. Mixing
+    // a phase-shifted wet branch against a flat dry path is not a magnitude
+    // product, and the difference lands inside the drawn range: modelling only
+    // the flat term left the curve 0.16 dB optimistic at 20 Hz in Brown and
+    // 0.28 dB at full saturation. Measured against the processed output, the
+    // flat term alone is good to 0.02 dB above 100 Hz and wrong below it. GH
+    // #169's own "constant from 30 Hz" reading does not survive contact with a
+    // sine sweep: 30 Hz is already 0.08 dB down on 1 kHz.
+    //
+    // Deliberately NOT modelled, because none of it belongs on a magnitude plot:
+    // the ADAA waveshaper term (harmonics, not fundamental gain), the
+    // pre/de-emphasis shelf pair, and the hard rail clamp (inactive below about
+    // +3.5 dBFS). What they leave behind is the residual between this model and
+    // a measured sine sweep: worst case 0.0145 dB, at 20 Hz and full
+    // saturation, against 0.28 dB before the DC blocker was modelled.
+    struct ConsoleSatResponse
+    {
+        double dry     = 1.0;   // 1 - wetMix
+        double wet     = 0.0;   // wetMix * makeup trim
+        double dcCoeff = 0.0;   // DC blocker pole, at the OVERSAMPLED rate
     };
 
     // The ONE implementation of the drawn response, mirroring recomputeCoeffs().
@@ -212,6 +253,10 @@ public:
         bool hasHpfFirstOrder = false;   // Black voicing only
         bool hasHpf = false, hasLpf = false;
         double hpfTrimLinear = 1.0;
+        // Always-on console saturator. Its mix coefficients and DC-blocker pole
+        // do not vary with frequency, so they are designed here; the frequency
+        // sweep happens in consoleSatMagnitude().
+        ConsoleSatResponse saturation{};
         BiquadCoeffs bands[4]{};         // LF, LM, HM, HF
         bool hasBand[4] = { false, false, false, false };
         std::array<BiquadCoeffs, 3> lowCorrection{}, highCorrection{};
@@ -224,6 +269,11 @@ public:
     //     curveDbAt(designCurve(c), freq)
     static CurveCoeffs designCurve(const CurveControls& c) noexcept;
     static float curveDbAt(const CurveCoeffs& designed, float freq) noexcept;
+
+    static float consoleSatAmount(bool black, float saturationPercent) noexcept;
+    static ConsoleSatResponse consoleSatResponse(float satAmt, double oversampledRate) noexcept;
+    // omega is normalised to the oversampled rate, matching the band sections.
+    static double consoleSatMagnitude(const ConsoleSatResponse& r, double omega) noexcept;
 
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 

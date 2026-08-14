@@ -711,11 +711,55 @@ float FourKEQDSP::calibratedFilterQ(bool highPass, bool black) noexcept
     return highPass ? (black ? 0.87429652f : 0.76532684f) : 0.706625f;
 }
 
+// The modelled British console path has a small native mode-dependent nonlinear
+// residue even with its excluded preamp/dynamics blocks neutral. The user
+// control adds colour above that measured baseline; 0% remains the reference
+// match. See the header for why the resulting loss is a closed form.
+float FourKEQDSP::consoleSatAmount(bool black, float saturationPercent) noexcept
+{
+    const float nativeSatAmt = black ? 0.50f : 0.25f;
+    const float userSatAmt = clampf(saturationPercent * 0.01f, 0.0f, 1.0f);
+    return nativeSatAmt + userSatAmt * (1.0f - nativeSatAmt);
+}
+
+FourKEQDSP::ConsoleSatResponse
+FourKEQDSP::consoleSatResponse(float satAmt, double oversampledRate) noexcept
+{
+    // Mirrors the tail of ConsoleSaturationCore::processSample in float, in the
+    // same order, so these are the coefficients the audio path actually applies
+    // rather than a double-precision approximation of them.
+    const float trim   = 1.0f / (1.0f + satAmt * 0.15f);
+    const float wetMix = clampf(satAmt * 1.4f, 0.0f, 1.0f);
+
+    ConsoleSatResponse r;
+    r.dry = (double) (1.0f - wetMix);
+    r.wet = (double) (wetMix * trim);
+
+    // Same derivation as ConsoleSaturationCore::setSampleRate, at the same rate
+    // the core is prepared with (FourKEQDSP hands it the oversampled rate).
+    const float sr = (float) (oversampledRate > 0.0 ? oversampledRate : 48000.0);
+    const float dcCutoff = 5.0f;
+    const float dcRC = 1.0f / (kDuskTwoPi * dcCutoff);
+    r.dcCoeff = (double) (dcRC / (dcRC + 1.0f / sr));
+    return r;
+}
+
+double FourKEQDSP::consoleSatMagnitude(const ConsoleSatResponse& r, double omega) noexcept
+{
+    // Wet branch H_dc(z) = (1 - z^-1) / (1 - a z^-1), summed with the flat dry
+    // path. Complex, not a magnitude product: the dry path carries no phase
+    // shift and the two partially cancel near DC, which is the whole effect.
+    const std::complex<double> zInv = std::polar(1.0, -omega);
+    const std::complex<double> hDc = (1.0 - zInv) / (1.0 - r.dcCoeff * zInv);
+    return std::abs(r.dry + r.wet * hDc);
+}
+
 // Frequency-INDEPENDENT half of the drawn response: every biquad the curve
-// needs, designed once. Splitting this out matters because the graph evaluates
-// a few hundred points per repaint and all of this work (four calibrated band
-// designs, up to two three-section pair corrections, the filters and the HPF
-// trim) is identical at every one of them.
+// needs, designed once, plus the saturator's flat broadband trim. Splitting
+// this out matters because the graph evaluates a few hundred points per repaint
+// and all of this work (four calibrated band designs, up to two three-section
+// pair corrections, the filters and the HPF trim) is identical at every one of
+// them.
 //
 // Designs at the DSP's ACTUAL processing rate: host base rate * the rate-capped
 // oversampling factor, exactly as recomputeCoeffs() does. A fixed 96 kHz would
@@ -729,6 +773,11 @@ FourKEQDSP::CurveCoeffs FourKEQDSP::designCurve(const CurveControls& c) noexcept
     d.baseSampleRate = base;
     d.sampleRate = base * (double) chooseFactor(base, (int)(c.oversampling + 0.5f));
     const bool black = c.black;
+
+    // The saturator is always in circuit, so the flat-band response is not
+    // 0.000 dB and never was (GH #169). Designed at the oversampled rate,
+    // which is the rate FourKEQDSP prepares ConsoleSaturationCore with.
+    d.saturation = consoleSatResponse(consoleSatAmount(black, c.saturation), d.sampleRate);
 
     if (c.hpfEnabled)
     {
@@ -829,7 +878,7 @@ float FourKEQDSP::curveDbAt(const CurveCoeffs& d, float freq) noexcept
         for (const BiquadCoeffs& correction : d.highCorrection)
             eqMag *= magnitudeAt(correction, w);
 
-    const double magLin = eqMag * filtMag;
+    const double magLin = eqMag * filtMag * consoleSatMagnitude(d.saturation, w);
     return 20.0f * std::log10((float) std::max(magLin, 1e-6));
 }
 
@@ -1098,13 +1147,15 @@ void FourKEQDSP::processChunk(const float* const* inputs, float* const* outputs,
         }
 
     //--- oversampled EQ + saturation chain ------------------------------------
-    // The modeled British console path has a small native mode-dependent
-    // nonlinear residue
-    // even with its excluded preamp/dynamics blocks neutral. The user control
-    // adds color above that measured baseline; 0% remains the reference match.
-    const float nativeSatAmt = black ? 0.50f : 0.25f;
-    const float userSatAmt = clampf(pSaturation.load(R) * 0.01f, 0.0f, 1.0f);
-    const float satAmt = nativeSatAmt + userSatAmt * (1.0f - nativeSatAmt);
+    // Shared with designCurve() so the drawn curve shows the drive the audio
+    // path actually runs at; see the header. This is NOT a free refactor to
+    // assume: it changed processChunk's compiled size, and GCC contracts to FMA
+    // by default, so it was verified two ways rather than argued. Both forms
+    // return bit-identical floats across 204016 values spanning the whole
+    // 0..100 domain in both voicings, and a render of eight configurations
+    // (both voicings x four saturation settings, 102400 samples stereo each,
+    // all bands and both filters live) is byte-identical before and after.
+    const float satAmt = consoleSatAmount(black, pSaturation.load(R));
     const float rail = black ? 1.50602738f : 1.50020749f;
     // A 0 dB peaking/shelf section is mathematically unity. Running all ten
     // neutral biquads anyway leaves their near-unit float states active at up

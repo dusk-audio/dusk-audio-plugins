@@ -3258,6 +3258,11 @@ private:
         c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
         c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
         c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
+        // Live here, unlike 4K EQ's retired slot: MultiQDSP routes British
+        // through the same FourKEQDSP and forwards this knob via
+        // britishEQ.setSaturation(), so the insertion loss really does move
+        // from -0.11 dB to -1.21 dB across the range.
+        c.saturation = values[kSaturation];
         return c;
     }
 

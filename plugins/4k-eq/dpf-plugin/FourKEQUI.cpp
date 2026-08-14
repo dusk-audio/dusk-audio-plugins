@@ -988,6 +988,12 @@ private:
         c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
         c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
         c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
+        // NOT values[kSaturation]. That index is a retired compatibility slot
+        // kept so existing sessions do not remap; FourKEQPlugin.cpp answers it
+        // with dsp.setSaturation(0.0f), so the standalone 4K DSP always runs at
+        // the native drive. Drawing the slot's value would put a curve on screen
+        // that the audio path never produces.
+        c.saturation = 0.0f;
         return c;
     }
 
