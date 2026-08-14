@@ -28,12 +28,12 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | TapeMachine | tapemachine | plugins/TapeMachine | TAPEMACHINE | tape |
 | TapeMachine 2 | tapemachine-2 | plugins/TapeMachine/dpf-plugin | (inline: TapeMachine2DPF) | tape |
 | 4K EQ 2 | 4k-eq-2 | plugins/4k-eq/dpf-plugin | (inline: FourKEQ2DPF) | 4keq |
-| Tape Echo | tape-echo | plugins/tape-echo | TAPEECHO | tapeecho |
+| Tape Echo | tape-echo | plugins/tape-echo | (inline: TapeEcho) | tapeecho |
 | Tape Echo 2 | tape-echo-2 | plugins/tape-echo/dpf-plugin | (inline: TapeEchoDPF) | tapeecho |
-| Multi-Q | multi-q | plugins/multi-q | (inline: MultiQ) | multiq |
+| Multi-Q | multi-q | plugins/multi-q | MULTIQ | multiq |
 | Multi-Q 2 | multi-q-2 | plugins/multi-q/dpf-plugin | (inline: MultiQ2DPF) | multiq |
-| Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
-| GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
+| Convolution Reverb | convolution-reverb | plugins/convolution-reverb | (inline: ConvolutionReverb) | convolution |
+| GrooveMind | groovemind | plugins/groovemind | (PLUGIN_VERSION) | groovemind |
 | Sunset Circuits | sunset-circuits | plugins/sunset-circuits/dpf-plugin | SUNSETCIRCUITS (DPF) | sunset |
 
 **Sunset Circuits is DPF, but it is NOT one of the "-2" plugins.** The "-2" plugins
@@ -75,12 +75,24 @@ Do NOT proceed with any further steps. Do NOT offer to release anyway.
 
 For EACH plugin specified:
 
-1. **Find current version** from CMakeLists.txt:
-   - JUCE plugins, Multi-Q included: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`, with
-     `project(<Name> VERSION ${<VAR>_VERSION})` reading it a few lines below.
-     Multi-Q used to carry the version as a literal in its `project()` call and
-     no longer does; read the file rather than trusting this list, and update
-     this line if another plugin changes shape.
+1. **Find current version** from CMakeLists.txt. The JUCE plugins do NOT all
+   share one form, and assuming they do is how a release gets tagged at the old
+   version. There are three, verified against the files 2026-08-14:
+   - **`set(<VAR>_DEFAULT_VERSION "X.Y.Z")`**, with
+     `project(<Name> VERSION ${<VAR>_VERSION})` reading it a few lines below:
+     4k-eq (FOURKEQ), multi-comp (MULTICOMP), tapemachine (TAPEMACHINE),
+     multi-q (MULTIQ), duskverb (DUSKVERB), chord-analyzer (CHORDANALYZER),
+     duskamp (DUSKAMP). Multi-Q used to be a literal and no longer is.
+   - **Literal version inside `project()`**, no variable at all:
+     convolution-reverb → `project(ConvolutionReverb VERSION X.Y.Z)`,
+     tape-echo → `project(TapeEcho VERSION X.Y.Z)`.
+   - **`set(PLUGIN_VERSION "X.Y.Z")`**, consumed by a `VERSION ${PLUGIN_VERSION}`
+     further down: groovemind, spectrum-analyzer.
+
+   Read the file before editing rather than trusting this list, and update the
+   list if a plugin changes shape. The `grep -q` guards in Step 3 turn a wrong
+   entry into a loud abort rather than a silent no-op, but only if the guard is
+   written against the form the file actually uses.
    - **DPF "-2" plugins** use an inline `project(<Project> VERSION X.Y.Z)` in
      `plugins/<dir>/dpf-plugin/CMakeLists.txt` (version is plumbed into the code via
      compile definitions, so no other file needs editing). Project tokens:
@@ -119,18 +131,31 @@ git log <slug>-v<old-version>..HEAD --oneline -- plugins/shared/
 
 For EACH plugin, update the CMakeLists.txt:
 
-**JUCE plugins** (4k-eq, multi-comp, tapemachine, convolution-reverb, groovemind,
-multi-q):
-```
-set(<VAR>_DEFAULT_VERSION "<new-version>")
-```
-Multi-Q is NOT a special case any more; it uses the same var form as the rest
-(`MULTIQ_DEFAULT_VERSION`). Verify the replacement landed before committing, the
-same way Sunset Circuits does below, because a silently unmatched sed otherwise
-tags a release at the old version:
+Use the form Step 1 identified for THAT plugin. Editing the wrong form is a
+silent no-op, so each case below carries the guard that catches it.
+
+**Var form** (4k-eq, multi-comp, tapemachine, multi-q, duskverb, chord-analyzer,
+duskamp):
 ```bash
+set(<VAR>_DEFAULT_VERSION "<new-version>")
 grep -q "set(<VAR>_DEFAULT_VERSION \"<new-version>\")" <Directory>/CMakeLists.txt \
   || { echo "ERROR: <VAR> version bump did not apply"; exit 1; }
+```
+
+**Literal-in-project form** (convolution-reverb, tape-echo). These have no
+`_DEFAULT_VERSION` variable, so the var-form guard above would abort on them:
+```bash
+project(ConvolutionReverb VERSION <new-version>)   # convolution-reverb
+project(TapeEcho          VERSION <new-version>)   # tape-echo
+grep -q "project(<Project> VERSION <new-version>)" <Directory>/CMakeLists.txt \
+  || { echo "ERROR: <Project> version bump did not apply"; exit 1; }
+```
+
+**PLUGIN_VERSION form** (groovemind, spectrum-analyzer):
+```bash
+set(PLUGIN_VERSION "<new-version>")
+grep -q "set(PLUGIN_VERSION \"<new-version>\")" <Directory>/CMakeLists.txt \
+  || { echo "ERROR: PLUGIN_VERSION bump did not apply"; exit 1; }
 ```
 
 **DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`).
