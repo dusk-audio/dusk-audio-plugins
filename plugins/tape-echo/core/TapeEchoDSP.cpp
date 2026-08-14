@@ -683,6 +683,17 @@ float TapeEchoDSP::leadingHeadOffsetMsForMode(int mode1to12) noexcept
 
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
+    // Validate BEFORE anything reads it. `sampleRate <= 0.0` alone would let NaN
+    // through (every comparison against NaN is false) and +Inf through outright,
+    // and this rate then feeds three things that cannot cope: noiseRateComp
+    // takes its square root, the tape buffer length converts ceil(seconds * fs)
+    // to int (undefined for NaN or Inf), and safeBiquadFrequency documents a
+    // finite-positive precondition because fs divides in every designer behind
+    // it. 44100 is the member's own default, so a bad rate lands where an
+    // un-prepared instance already sits.
+    if (! std::isfinite(sampleRate) || sampleRate <= 0.0)
+        sampleRate = 44100.0;
+
     fs = sampleRate;
 
     // Noise-modulator rate compensation; see kNoiseCalibrationFs in the header.
