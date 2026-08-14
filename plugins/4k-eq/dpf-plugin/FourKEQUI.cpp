@@ -974,13 +974,8 @@ private:
     //========================================================================
     // response graph + spectrum
     //========================================================================
-    float responseDb(float freq) const
+    duskaudio::FourKEQDSP::CurveControls curveControls() const
     {
-        // The model itself lives in duskaudio::FourKEQDSP::calibratedResponseDb,
-        // next to the calibration tables it draws from. Multi-Q's British-mode
-        // preview calls the same helper; it used to carry a copy of this body,
-        // and that copy is how its curve silently stayed on the pre-calibration
-        // model after the core was rewritten (GH #160).
         duskaudio::FourKEQDSP::CurveControls c;
         c.baseSampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
         c.oversampling = values[kOversampling];
@@ -993,7 +988,7 @@ private:
         c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
         c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
         c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
-        return duskaudio::FourKEQDSP::calibratedResponseDb(c, freq);
+        return c;
     }
 
     // Selectable graph vertical scale (matches the JUCE ±12/±24/±30/±60/Warped).
@@ -1051,11 +1046,14 @@ private:
             drawSpectrum(dl);
         const int N = 240;
         std::vector<ImVec2> pts; pts.reserve(N);
+        // Design the curve's sections ONCE, then evaluate per point: everything
+        // except the magnitude lookup is identical at all N frequencies.
+        const auto curve = duskaudio::FourKEQDSP::designCurve(curveControls());
         for (int i = 0; i < N; ++i)
         {
             const float lx = (float)i / (N - 1);
             const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-            float ny = dbToNy(responseDb(freq));
+            float ny = dbToNy(duskaudio::FourKEQDSP::curveDbAt(curve, freq));
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
             pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }

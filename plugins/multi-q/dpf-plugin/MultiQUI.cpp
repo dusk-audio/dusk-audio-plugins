@@ -3218,13 +3218,28 @@ private:
     // pre-#155 parallel model (bandK/voicedMidQ/bellQ summed into one complex
     // response) while the core ran the calibrated series topology, so curve and
     // sound had silently diverged in British mode.
-    float responseDb(float freq) const
+    //
+    // Multi-Q's British parameter ranges are WIDER than the calibration anchors,
+    // and the values below are passed through raw on purpose. The anchor tables
+    // interpolate inside their domain and hold the endpoint outside it, so the
+    // overshoot is a dead zone. Measured against the anchors (bit-identical
+    // results at both ends of each pair):
+    //
+    //   gains  +/-20 exposed vs +/-15 calibrated   dead above 15 dB
+    //   Q      0.4-4.0        vs 0.5-3.0           dead below 0.5, above 3.0
+    //   LF f   30-480         vs 30-450            dead above 450 Hz
+    //   HPF    20-500         vs 16-350            dead above 350 Hz
+    //   LPF    3000-20000     vs 3000-15201        dead above 15201 Hz
+    //
+    // This is NOT a drawing bug and must not be "fixed" here: MultiQPlugin.cpp
+    // hands britishEQ the same raw control values, so the AUDIO clamps at the
+    // same anchors. Rescaling or re-domaining them for the curve alone would
+    // re-open exactly the curve-vs-sound divergence #160 closed. Narrowing the
+    // exposed ranges instead would change the normalised-to-real mapping of
+    // shipped host parameters and silently move every saved session and
+    // automation lane, so it is a deliberate product decision, not a cleanup.
+    duskaudio::FourKEQDSP::CurveControls curveControls() const
     {
-        // The model itself lives in duskaudio::FourKEQDSP::calibratedResponseDb,
-        // next to the calibration tables it draws from. Multi-Q's British-mode
-        // preview calls the same helper; it used to carry a copy of this body,
-        // and that copy is how its curve silently stayed on the pre-calibration
-        // model after the core was rewritten (GH #160).
         duskaudio::FourKEQDSP::CurveControls c;
         c.baseSampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
         c.oversampling = values[kOversampling];
@@ -3237,7 +3252,7 @@ private:
         c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
         c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
         c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
-        return duskaudio::FourKEQDSP::calibratedResponseDb(c, freq);
+        return c;
     }
 
     static constexpr const char* kRangeLabels[5] = { "+/-6 dB", "+/-12 dB", "+/-18 dB", "+/-30 dB", "Warped" };
@@ -3370,11 +3385,14 @@ private:
             drawSpectrum(dl, GX0, GY0, GX1, GY1);
         const int N = 240;
         std::vector<ImVec2> pts; pts.reserve(N);
+        // Design the curve's sections ONCE, then evaluate per point: everything
+        // except the magnitude lookup is identical at all N frequencies.
+        const auto curve = duskaudio::FourKEQDSP::designCurve(curveControls());
         for (int i = 0; i < N; ++i)
         {
             const float lx = (float)i / (N - 1);
             const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-            float ny = dbToNy(responseDb(freq));
+            float ny = dbToNy(duskaudio::FourKEQDSP::curveDbAt(curve, freq));
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
             pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }

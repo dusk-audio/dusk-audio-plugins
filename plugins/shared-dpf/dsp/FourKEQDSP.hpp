@@ -166,7 +166,7 @@ public:
     static float calibratedFilterQ(bool highPass, bool black) noexcept;
 
     // Control-coordinate snapshot for the response curve: the values the UI
-    // shows on its knobs, NOT calibrated units. calibratedResponseDb() applies
+    // shows on its knobs, NOT calibrated units. designCurve() applies
     // every calibration itself, so the two UIs cannot drift apart by applying a
     // different subset.
     //
@@ -191,7 +191,7 @@ public:
 
     // The ONE implementation of the drawn response, mirroring recomputeCoeffs().
     // Both FourKEQUI and Multi-Q's British-mode preview delegate here; they used
-    // to carry byte-identical copies of this body, which is how Multi-Q's curve
+    // to carry byte-identical copies of the model, which is how Multi-Q's curve
     // silently stayed on the pre-calibration model after the core was rewritten
     // (GH #160). A future model change has exactly one place to land.
     //
@@ -199,7 +199,31 @@ public:
     // older PARALLEL topology (summed bandK-weighted blocks) independently of
     // 4K EQ 2. Both are gone with it: keeping them would only leave a second,
     // wrong model for a future reader to wire back up.
-    static float calibratedResponseDb(const CurveControls& c, float freq) noexcept;
+    //
+    // Split into design and evaluate because the graph walks a few hundred
+    // frequencies per repaint and the design half does not vary across them:
+    // four calibrated band designs, up to two three-section pair corrections,
+    // the two filters and the HPF trim, all identical at every point.
+    struct CurveCoeffs
+    {
+        double sampleRate     = 48000.0; // oversampled; bands and LPF live here
+        double baseSampleRate = 48000.0; // host rate; the core designs the HPF here
+        BiquadCoeffs hpfFirstOrder{}, hpf{}, lpf{};
+        bool hasHpfFirstOrder = false;   // Black voicing only
+        bool hasHpf = false, hasLpf = false;
+        double hpfTrimLinear = 1.0;
+        BiquadCoeffs bands[4]{};         // LF, LM, HM, HF
+        bool hasBand[4] = { false, false, false, false };
+        std::array<BiquadCoeffs, 3> lowCorrection{}, highCorrection{};
+        bool hasLowCorrection = false, hasHighCorrection = false;
+    };
+    // There is deliberately NO one-shot calibratedResponseDb(controls, freq)
+    // convenience wrapper. It existed briefly and was the obvious thing for the
+    // next caller to loop over, which is the redesign-per-point cost this split
+    // exists to remove. A single probe is one readable line:
+    //     curveDbAt(designCurve(c), freq)
+    static CurveCoeffs designCurve(const CurveControls& c) noexcept;
+    static float curveDbAt(const CurveCoeffs& designed, float freq) noexcept;
 
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
