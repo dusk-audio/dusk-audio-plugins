@@ -251,14 +251,17 @@ public:
         if (topLevel == nullptr)
             return;
 
-        // Bail if there's already an editor in flight for this slider — the
+        // Bail if there's already a LIVE editor in flight for this slider — the
         // tag avoids double-popups when both the slider and label fire
-        // double-click in quick succession.
+        // double-click in quick succession. An editor that has already
+        // committed is skipped: it is off-screen awaiting a deferred delete,
+        // so re-focusing it would leave the user typing into nothing.
         const juce::int64 sliderTag = reinterpret_cast<juce::int64> (&slider);
         for (int i = 0; i < topLevel->getNumChildComponents(); ++i)
         {
             auto* c = topLevel->getChildComponent (i);
             if (c != nullptr
+                && !c->getProperties().contains ("dusk_valeditor_closing")
                 && static_cast<juce::int64> (c->getProperties().getWithDefault ("dusk_valeditor_for",
                                                                                 juce::var (juce::int64 (0))))
                    == sliderTag)
@@ -299,7 +302,7 @@ public:
         topLevel->addAndMakeVisible (editor);
         editor->grabKeyboardFocus();
 
-        // Hardened lifecycle. Three failure modes we previously hit:
+        // Hardened lifecycle. Four failure modes we previously hit:
         //   1) commit → setValue → APVTS sync notify → editor onFocusLost
         //      fires commit again recursively → both cleanups queue
         //      `delete editor` via callAsync → DOUBLE FREE.
@@ -310,31 +313,56 @@ public:
         //      message thread synchronously; if any listener tears down
         //      part of the UI (Advanced tab rebuild on certain params),
         //      the editor's parent goes away mid-callback.
+        //   4) cleanup used to clear editor->onReturnKey / onFocusLost /
+        //      onEscapeKey. JUCE runs those as
+        //      `NullCheckedInvocation::invoke (onFocusLost)`, i.e. it calls
+        //      the std::function IN PLACE, so assigning nullptr to it
+        //      destroys the closure — and every capture inside it — while
+        //      the closure body is still executing. The rest of the body
+        //      then read freed memory (`safeEditor`, `state`), which is the
+        //      intermittent "type a value, click outside, DAW crashes"
+        //      report from Reaper on Windows.
         //
         // Fix:
         //   • SafePointer<TextEditor> survives parent-destruction without
         //     dangling — every access to the editor checks .getComponent()
         //   • SafePointer<Slider> guards against the slider being
         //     destroyed before commit fires
-        //   • shared `state` flag short-circuits reentrant commit/cleanup
+        //   • shared `state` flag short-circuits reentrant commit/cleanup,
+        //     which is the ONLY re-entrancy guard: the callbacks stay
+        //     installed until the editor is deleted, so nothing ever
+        //     destroys a closure that is running
+        //   • both callbacks copy their captures into locals before doing
+        //     any work, so they stay correct even if some future edit
+        //     re-introduces a teardown that outlives the closure
         //   • sendNotificationAsync defers the param update one message-
         //     loop tick → no reentrancy from listener chains
-        //   • cleanup deletes via deleteSelf() → JUCE's safe-delete that
-        //     handles the case where the editor was already destroyed
         juce::Component::SafePointer<juce::TextEditor> safeEditor (editor);
         juce::Component::SafePointer<juce::Slider>     safeSlider (&slider);
         auto state = std::make_shared<bool> (false);
 
         auto cleanup = [safeEditor, state]()
         {
-            if (*state) return;
-            *state = true;
+            auto editorRef = safeEditor;   // locals first — see note 4 above
+            auto finished  = state;
 
-            if (auto* e = safeEditor.getComponent())
+            if (*finished) return;
+            *finished = true;
+
+            if (auto* e = editorRef.getComponent())
             {
-                e->onReturnKey = nullptr;
-                e->onFocusLost = nullptr;
-                e->onEscapeKey = nullptr;
+                // Mark as closing, but KEEP the "dusk_valeditor_for" tag.
+                //
+                // The tag has two readers with different needs. popUp()'s
+                // re-entry guard must treat this editor as gone, or a fresh
+                // double-click on the same slider re-focuses an off-screen
+                // corpse instead of opening a new field. anyOpen() must NOT:
+                // a host editor uses it to pause its repaint timer, and the
+                // component is still alive and still holds keyboard focus
+                // until the deferred delete runs. Resuming a full-editor
+                // repaint in the same tick that removeChildComponent() fires
+                // JUCE's focus-giveaway is failure mode 3 above.
+                e->getProperties().set ("dusk_valeditor_closing", true);
 
                 // Move off-screen synchronously so the editor frame
                 // disappears the instant the user commits, without invoking
@@ -348,9 +376,9 @@ public:
                 // dispatch, no reentrancy.
                 e->setBounds (-10000, -10000, 0, 0);
 
-                juce::MessageManager::callAsync ([safeEditor]()
+                juce::MessageManager::callAsync ([editorRef]()
                 {
-                    if (auto* e2 = safeEditor.getComponent())
+                    if (auto* e2 = editorRef.getComponent())
                     {
                         if (auto* parent = e2->getParentComponent())
                             parent->removeChildComponent (e2);
@@ -362,15 +390,20 @@ public:
 
         auto commit = [safeEditor, safeSlider, cleanup, state]()
         {
-            if (*state) return;
+            auto editorRef = safeEditor;   // locals first — see note 4 above
+            auto sliderRef = safeSlider;
+            auto finish    = cleanup;
+            auto finished  = state;
 
-            auto* e = safeEditor.getComponent();
-            if (e == nullptr) { cleanup(); return; }
+            if (*finished) return;
+
+            auto* e = editorRef.getComponent();
+            if (e == nullptr) { finish(); return; }
 
             const auto text = e->getText().trim();
             if (text.isNotEmpty())
             {
-                if (auto* s = safeSlider.getComponent())
+                if (auto* s = sliderRef.getComponent())
                 {
                     const double parsed = parseSmart (text, *s);
                     if (std::isfinite (parsed))
@@ -386,7 +419,7 @@ public:
                     }
                 }
             }
-            cleanup();
+            finish();
         };
 
         editor->onReturnKey = commit;
@@ -394,12 +427,17 @@ public:
         editor->onEscapeKey = cleanup;
     }
 
-    // True while a value editor is live anywhere under `ref`'s top-level window.
+    // True while a value editor EXISTS anywhere under `ref`'s top-level window.
     // Self-correcting (scans for the live editor's tag rather than a counter, so
     // a parent-destroyed editor can't leak the state). A host editor uses this to
     // PAUSE its repaint timer while the user types: a periodic full-editor repaint
     // races the in-window TextEditor's keystroke/focus handling on Linux and can
     // livelock the message thread (same race that crashes Logic — see above).
+    //
+    // Deliberately ignores "dusk_valeditor_closing": a committed editor is still
+    // a focused child until its deferred delete lands, so the timer has to stay
+    // paused across that window too. Only popUp()'s re-entry guard cares about
+    // the distinction.
     static bool anyOpen (juce::Component& ref)
     {
         auto* top = ref.getTopLevelComponent();
