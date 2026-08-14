@@ -104,11 +104,28 @@ namespace
     // clap-validator exercises fractional sample rates down to 1 kHz. Keep
     // every bilinear-transform design safely below Nyquist; this is a no-op
     // throughout the plug-in's normal supported audio-rate range.
+    //
+    // Thin alias over the ONE shared implementation (DuskFilters.hpp) rather
+    // than a private copy. The copy this replaces clamped ceiling-first /
+    // floor-last, the ordering the shared helper rejects: with the reverse
+    // order the 1 Hz floor wins once fs * 0.45 drops below 1 Hz and hands the
+    // designer a corner at or above Nyquist, the exact instability the guard
+    // exists to prevent. Harmless here (it needs fs < 2.22 Hz) but it was the
+    // last instance of the idiom in the tree, and the one a future reader would
+    // have copied.
+    //
+    // The ceiling stays 0.45 * fs, NOT the shared designers' 0.4998: this core
+    // has always used 0.45 and the highest frequency any of these call sites
+    // asks for is ~13.8 kHz fixed / ~11.6 kHz computed, so the clamp is inert at
+    // every rate at or above 25.9 kHz. It now evaluates in double rather than
+    // float, which can move the clamped value by an ulp, but only at rates where
+    // it engages at all -- below 25.9 kHz, outside the byte-compare matrix.
+    constexpr double kTapeEchoDesignFreqRatio = 0.45;
+
     inline float safeBiquadFrequency(double sampleRate, float frequency) noexcept
     {
-        return std::max(
-            1.0f,
-            std::min(frequency, 0.45f * (float)sampleRate));
+        return (float) nyquistSafeDesignHzD(sampleRate, (double) frequency,
+                                            kTapeEchoDesignFreqRatio);
     }
 
     // DCBlocker's default pole (R = 0.9975) is FIXED, so its corner rides the
@@ -666,6 +683,17 @@ float TapeEchoDSP::leadingHeadOffsetMsForMode(int mode1to12) noexcept
 
 void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
 {
+    // Validate BEFORE anything reads it. `sampleRate <= 0.0` alone would let NaN
+    // through (every comparison against NaN is false) and +Inf through outright,
+    // and this rate then feeds three things that cannot cope: noiseRateComp
+    // takes its square root, the tape buffer length converts ceil(seconds * fs)
+    // to int (undefined for NaN or Inf), and safeBiquadFrequency documents a
+    // finite-positive precondition because fs divides in every designer behind
+    // it. 44100 is the member's own default, so a bad rate lands where an
+    // un-prepared instance already sits.
+    if (! std::isfinite(sampleRate) || sampleRate <= 0.0)
+        sampleRate = 44100.0;
+
     fs = sampleRate;
 
     // Noise-modulator rate compensation; see kNoiseCalibrationFs in the header.

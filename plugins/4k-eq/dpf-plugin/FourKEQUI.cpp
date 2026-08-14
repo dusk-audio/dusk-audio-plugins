@@ -974,100 +974,21 @@ private:
     //========================================================================
     // response graph + spectrum
     //========================================================================
-    float responseDb(float freq) const
+    duskaudio::FourKEQDSP::CurveControls curveControls() const
     {
-        using duskaudio::Biquad; using duskaudio::BiquadCoeffs;
-        using duskaudio::FourKEQDSP;
-        // Evaluate at the DSP's ACTUAL processing rate: host base rate * the
-        // rate-capped oversampling factor, exactly as recomputeCoeffs() designs
-        // the biquads. A fixed 96 kHz warps the drawn curve away from the sound
-        // at any other host rate / oversampling factor. kOversampling is already
-        // the DSP mode (0=1x,1=2x,2=4x), so chooseFactor() applies the same cap.
-        const double base = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
-        const double fs = base * (double) FourKEQDSP::chooseFactor(base, (int)(values[kOversampling] + 0.5f));
-        const double w = 2.0 * 3.14159265358979323846 * (double)freq / fs;
-        const bool black = values[kEqType] > 0.5f;
-        auto magnitudeAt = [](const BiquadCoeffs& c, double omega) {
-            Biquad b; b.setCoeffs(c); return b.magnitude(omega);
-        };
-        auto magnitude = [&](const BiquadCoeffs& c) {
-            return magnitudeAt(c, w);
-        };
-        // Calibrated series filter magnitudes, mirrors recomputeCoeffs().
-        double filtMag = 1.0;
-        if (values[kHpfEnabled] > 0.5f)
-        {
-            const float f = std::min(
-                FourKEQDSP::calibratedFilterFrequency(values[kHpfFreq], true, black),
-                static_cast<float>(base * 0.49));
-            const double wBase = 2.0 * 3.14159265358979323846 * (double)freq / base;
-            if (black)
-                filtMag *= magnitudeAt(Biquad::firstOrderHighPass(base, f * 0.96134252f), wBase);
-            filtMag *= magnitudeAt(Biquad::highPass(
-                base, f, FourKEQDSP::calibratedFilterQ(true, black)), wBase);
-            filtMag *= std::pow(10.0, FourKEQDSP::calibratedHpfTrimDb(
-                values[kHpfFreq], black) / 20.0);
-        }
-        if (values[kLpfEnabled] > 0.5f)
-        {
-            const float f = std::min(
-                FourKEQDSP::calibratedFilterFrequency(values[kLpfFreq], false, black),
-                static_cast<float>(fs * 0.49));
-            filtMag *= magnitude(Biquad::lowPass(
-                fs, f, FourKEQDSP::calibratedFilterQ(false, black)));
-        }
-        auto bandMagnitude = [&](FourKEQDSP::Band band, float controlGain,
-                                 float controlFreq, float controlQ,
-                                 bool bell, bool highShelf) {
-            const float f = std::min(
-                FourKEQDSP::calibratedEqFrequency(controlFreq, controlGain, band, black, bell),
-                static_cast<float>(fs * 0.49));
-            const float g = FourKEQDSP::calibratedEqGain(
-                controlGain, band, black, bell);
-            const float q = FourKEQDSP::calibratedEqQ(
-                controlQ, controlFreq, controlGain, band, black, bell);
-            return magnitude(bell || band == FourKEQDSP::Band::LM || band == FourKEQDSP::Band::HM
-                ? Biquad::peak(fs, f, g, q)
-                : Biquad::shelf(fs, f, g, q, highShelf));
-        };
-        double eqMag = 1.0;
-        const bool lfActive = std::abs(values[kLfGain]) > 1.0e-6f;
-        const bool lmActive = std::abs(values[kLmGain]) > 1.0e-6f;
-        const bool hmActive = std::abs(values[kHmGain]) > 1.0e-6f;
-        const bool hfActive = std::abs(values[kHfGain]) > 1.0e-6f;
-        if (lfActive)
-            eqMag *= bandMagnitude(FourKEQDSP::Band::LF, values[kLfGain], values[kLfFreq],
-                                   1.5f, values[kLfBell] > 0.5f, false);
-        if (lmActive)
-            eqMag *= bandMagnitude(FourKEQDSP::Band::LM, values[kLmGain], values[kLmFreq],
-                                   values[kLmQ], true, false);
-        if (hmActive)
-            eqMag *= bandMagnitude(FourKEQDSP::Band::HM, values[kHmGain], values[kHmFreq],
-                                   values[kHmQ], true, false);
-        if (hfActive)
-            eqMag *= bandMagnitude(FourKEQDSP::Band::HF, values[kHfGain], values[kHfFreq],
-                                   1.5f, values[kHfBell] > 0.5f, true);
-        if (lfActive && lmActive)
-        {
-            const auto lowCorrection = FourKEQDSP::calibratedPairCorrection(
-                fs, false, black,
-                values[kLfGain], values[kLfFreq], values[kLfBell],
-                values[kLmGain], values[kLmFreq], values[kLmQ]);
-            for (const BiquadCoeffs& correction : lowCorrection)
-                eqMag *= magnitude(correction);
-        }
-        if (hmActive && hfActive)
-        {
-            const auto highCorrection = FourKEQDSP::calibratedPairCorrection(
-                fs, true, black,
-                values[kHmGain], values[kHmFreq], values[kHmQ],
-                values[kHfGain], values[kHfFreq], values[kHfBell]);
-            for (const BiquadCoeffs& correction : highCorrection)
-                eqMag *= magnitude(correction);
-        }
-
-        const double magLin = eqMag * filtMag;
-        return 20.0f * std::log10((float)std::max(magLin, 1e-6));
+        duskaudio::FourKEQDSP::CurveControls c;
+        c.baseSampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+        c.oversampling = values[kOversampling];
+        c.black        = values[kEqType] > 0.5f;
+        c.hpfEnabled   = values[kHpfEnabled] > 0.5f;
+        c.lpfEnabled   = values[kLpfEnabled] > 0.5f;
+        c.hpfFreq      = values[kHpfFreq];
+        c.lpfFreq      = values[kLpfFreq];
+        c.lfGain = values[kLfGain]; c.lfFreq = values[kLfFreq]; c.lfBell = values[kLfBell];
+        c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
+        c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
+        c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
+        return c;
     }
 
     // Selectable graph vertical scale (matches the JUCE ±12/±24/±30/±60/Warped).
@@ -1125,11 +1046,14 @@ private:
             drawSpectrum(dl);
         const int N = 240;
         std::vector<ImVec2> pts; pts.reserve(N);
+        // Design the curve's sections ONCE, then evaluate per point: everything
+        // except the magnitude lookup is identical at all N frequencies.
+        const auto curve = duskaudio::FourKEQDSP::designCurve(curveControls());
         for (int i = 0; i < N; ++i)
         {
             const float lx = (float)i / (N - 1);
             const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-            float ny = dbToNy(responseDb(freq));
+            float ny = dbToNy(duskaudio::FourKEQDSP::curveDbAt(curve, freq));
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
             pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }

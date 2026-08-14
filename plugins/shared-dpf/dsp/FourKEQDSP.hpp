@@ -165,10 +165,66 @@ public:
     static float calibratedHpfTrimDb(float controlHz, bool black) noexcept;
     static float calibratedFilterQ(bool highPass, bool black) noexcept;
 
-    // Legacy helpers remain public because Multi-Q's British response preview
-    // uses the older parallel topology independently of 4K EQ 2.
-    static float voicedMidQ(float gainDb, float baseQ, bool black) noexcept;
-    static float bandK(float gainDb) noexcept { return std::pow(10.0f, 0.05f * gainDb) - 1.0f; }
+    // Control-coordinate snapshot for the response curve: the values the UI
+    // shows on its knobs, NOT calibrated units. designCurve() applies
+    // every calibration itself, so the two UIs cannot drift apart by applying a
+    // different subset.
+    //
+    // The shape fields (lfBell/hfBell/oversampling) stay FLOAT rather than
+    // bool/int because that is what the parameter arrays hold, and both the
+    // `> 0.5f` tests and calibratedPairCorrection's firstShape/secondShape take
+    // the raw value. Narrowing them here would change what the correction
+    // sections receive.
+    struct CurveControls
+    {
+        double baseSampleRate = 48000.0; // HOST rate; oversampling applied below
+        float  oversampling   = 0.0f;    // DSP mode: 0=1x, 1=2x, 2=4x
+        bool   black          = false;   // Brown(false) / Black(true) voicing
+        bool   hpfEnabled     = false;
+        bool   lpfEnabled     = false;
+        float  hpfFreq = 0.0f, lpfFreq = 0.0f;
+        float  lfGain  = 0.0f, lfFreq  = 0.0f, lfBell = 0.0f;
+        float  lmGain  = 0.0f, lmFreq  = 0.0f, lmQ    = 1.0f;
+        float  hmGain  = 0.0f, hmFreq  = 0.0f, hmQ    = 1.0f;
+        float  hfGain  = 0.0f, hfFreq  = 0.0f, hfBell = 0.0f;
+    };
+
+    // The ONE implementation of the drawn response, mirroring recomputeCoeffs().
+    // Both FourKEQUI and Multi-Q's British-mode preview delegate here; they used
+    // to carry byte-identical copies of the model, which is how Multi-Q's curve
+    // silently stayed on the pre-calibration model after the core was rewritten
+    // (GH #160). A future model change has exactly one place to land.
+    //
+    // voicedMidQ/bandK used to live here too, so that preview could draw the
+    // older PARALLEL topology (summed bandK-weighted blocks) independently of
+    // 4K EQ 2. Both are gone with it: keeping them would only leave a second,
+    // wrong model for a future reader to wire back up.
+    //
+    // Split into design and evaluate because the graph walks a few hundred
+    // frequencies per repaint and the design half does not vary across them:
+    // four calibrated band designs, up to two three-section pair corrections,
+    // the two filters and the HPF trim, all identical at every point.
+    struct CurveCoeffs
+    {
+        double sampleRate     = 48000.0; // oversampled; bands and LPF live here
+        double baseSampleRate = 48000.0; // host rate; the core designs the HPF here
+        BiquadCoeffs hpfFirstOrder{}, hpf{}, lpf{};
+        bool hasHpfFirstOrder = false;   // Black voicing only
+        bool hasHpf = false, hasLpf = false;
+        double hpfTrimLinear = 1.0;
+        BiquadCoeffs bands[4]{};         // LF, LM, HM, HF
+        bool hasBand[4] = { false, false, false, false };
+        std::array<BiquadCoeffs, 3> lowCorrection{}, highCorrection{};
+        bool hasLowCorrection = false, hasHighCorrection = false;
+    };
+    // There is deliberately NO one-shot calibratedResponseDb(controls, freq)
+    // convenience wrapper. It existed briefly and was the obvious thing for the
+    // next caller to loop over, which is the redesign-per-point cost this split
+    // exists to remove. A single probe is one readable line:
+    //     curveDbAt(designCurve(c), freq)
+    static CurveCoeffs designCurve(const CurveControls& c) noexcept;
+    static float curveDbAt(const CurveCoeffs& designed, float freq) noexcept;
+
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
 private:

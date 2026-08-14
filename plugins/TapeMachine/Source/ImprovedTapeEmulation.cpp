@@ -210,7 +210,11 @@ void ImprovedNoiseGenerator::prepare(double sampleRate, int tapeSpeed)
                                     / static_cast<float>(sampleRate));
 
     // Scrape flutter bandpass (~4kHz, Q=2)
-    float fc = 4000.0f;
+    // At Nyquist sin(w0) is 0, so alpha is 0 and the section degenerates into a
+    // double pole at z = -1 (a self-oscillator); just above it alpha goes
+    // negative and a0 = 1 + alpha collapses toward 0. An 8 kHz internal rate is
+    // enough to reach that, so clamp the corner first.
+    float fc = nyquistSafeHzF(sampleRate, 4000.0f);
     float Q = 2.0f;
     float w0 = 2.0f * juce::MathConstants<float>::pi * fc / static_cast<float>(sampleRate);
     float cosw0 = std::cos(w0);
@@ -283,7 +287,10 @@ ImprovedTapeEmulation::ImprovedTapeEmulation()
 
 void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock, int oversamplingFactor)
 {
-    if (sampleRate <= 0.0) sampleRate = 44100.0;
+    // `sampleRate <= 0.0` alone lets NaN through (every comparison against NaN is
+    // false) and lets +Inf through outright, and this rate then divides in every
+    // designer below. Require a finite positive rate.
+    if (!std::isfinite(sampleRate) || sampleRate <= 0.0) sampleRate = 44100.0;
     if (samplesPerBlock <= 0) samplesPerBlock = 512;
     if (oversamplingFactor < 1) oversamplingFactor = 1;
 
@@ -329,51 +336,52 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock, int 
 
     reset();
 
-    // Initialize all filters with default coefficients
-    auto nyquist = sampleRate * 0.5;
-    auto safeMaxFreq = nyquist * 0.9;
-
-    auto safeFreq = [safeMaxFreq](float freq) {
-        return std::min(freq, static_cast<float>(safeMaxFreq));
-    };
-
+    // Initialize all filters with default coefficients.
+    // Every design frequency below goes through nyquistSafeHz, which is the same
+    // 0.45 * fs ceiling the old local safeFreq lambda applied (nyquist * 0.9 and
+    // fs * 0.45 are bitwise equal in double) but now covers the head-bump and
+    // DC-blocker corners the lambda skipped, and shares one implementation with
+    // the DPF core and the rest of the repo.
     // Head bump filter - double precision
     auto dCoeffs = juce::dsp::IIR::Coefficients<double>::makePeakFilter(
-        sampleRate, 60.0, 1.5, juce::Decibels::decibelsToGain(3.0));
+        sampleRate, nyquistSafeHz(sampleRate, 60.0), 1.5, juce::Decibels::decibelsToGain(3.0));
     if (validateCoefficients(dCoeffs))
         headBumpFilter.coefficients = dCoeffs;
 
     // HF loss filters - double precision
     dCoeffs = juce::dsp::IIR::Coefficients<double>::makeLowPass(
-        sampleRate, static_cast<double>(safeFreq(16000.0f)), 0.707);
+        sampleRate, nyquistSafeHz(sampleRate, 16000.0), 0.707);
     if (validateCoefficients(dCoeffs))
         hfLossFilter1.coefficients = dCoeffs;
 
     dCoeffs = juce::dsp::IIR::Coefficients<double>::makeHighShelf(
-        sampleRate, static_cast<double>(safeFreq(10000.0f)), 0.5, juce::Decibels::decibelsToGain(-2.0));
+        sampleRate, nyquistSafeHz(sampleRate, 10000.0), 0.5, juce::Decibels::decibelsToGain(-2.0));
     if (validateCoefficients(dCoeffs))
         hfLossFilter2.coefficients = dCoeffs;
 
     // Gap loss - double precision
     dCoeffs = juce::dsp::IIR::Coefficients<double>::makeHighShelf(
-        sampleRate, static_cast<double>(safeFreq(12000.0f)), 0.707, juce::Decibels::decibelsToGain(-1.5));
+        sampleRate, nyquistSafeHz(sampleRate, 12000.0), 0.707, juce::Decibels::decibelsToGain(-1.5));
     if (validateCoefficients(dCoeffs))
         gapLossFilter.coefficients = dCoeffs;
 
     // Bias filter (HF boost from bias current)
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        sampleRate, safeFreq(8000.0f), 0.707f, juce::Decibels::decibelsToGain(2.0f));
+        sampleRate, nyquistSafeHzF(sampleRate, 8000.0f), 0.707f, juce::Decibels::decibelsToGain(2.0f));
     if (validateCoefficients(coeffs))
         biasFilter.coefficients = coeffs;
 
     // DC blocker (subsonic filter at 25Hz)
     dCoeffs = juce::dsp::IIR::Coefficients<double>::makeHighPass(
-        sampleRate, 25.0, 0.707);
+        sampleRate, nyquistSafeHz(sampleRate, 25.0), 0.707);
     if (validateCoefficients(dCoeffs))
         dcBlocker.coefficients = dCoeffs;
 
-    // Record head gap filter - 4th-order Butterworth at 20kHz
-    recordHeadCutoff = std::min(20000.0f, static_cast<float>(safeMaxFreq));
+    // Record head gap filter - 4th-order Butterworth at 20kHz.
+    // Keeps its own explicit FLOAT cap rather than routing through nyquistSafeHz:
+    // 0.45 * 44100 is 19845, so this clamp really engages at 44.1 kHz, and moving
+    // it to the double-valued ceiling would shift shipping coefficients by an ulp.
+    recordHeadCutoff = std::min(20000.0f, static_cast<float>(sampleRate * kTapeV1DesignFreqRatio));
     coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 1.3066f);
     if (validateCoefficients(coeffs)) recordHeadFilter1.coefficients = coeffs;
     coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 0.5412f);
@@ -710,13 +718,19 @@ void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
     headBumpGain = juce::jlimit(1.5f, 5.0f, headBumpGain);
 
     headBumpFilter.coefficients = juce::dsp::IIR::Coefficients<double>::makePeakFilter(
-        currentSampleRate, static_cast<double>(headBumpFreq), static_cast<double>(headBumpQ),
+        currentSampleRate, nyquistSafeHz(currentSampleRate, static_cast<double>(headBumpFreq)),
+        static_cast<double>(headBumpQ),
         static_cast<double>(juce::Decibels::decibelsToGain(headBumpGain)));
 
     // ========================================================================
     // HF loss filters
     // ========================================================================
-    float maxFilterFreq = static_cast<float>(currentSampleRate * 0.45);
+    // hfCutoff keeps its own FLOAT pre-clamp rather than routing through
+    // nyquistSafeHz: the computed cutoff (hfRolloffFreq * hfExtension * hfLoss)
+    // reaches into the tens of kHz, so this clamp really engages at 44.1 kHz and
+    // moving it to the double-valued ceiling would shift shipping coefficients by
+    // an ulp. hfShelfFreq derives from the clamped value, so it is covered too.
+    float maxFilterFreq = static_cast<float>(currentSampleRate * kTapeV1DesignFreqRatio);
     float hfCutoff = machineChars.hfRolloffFreq * speedChars.hfExtension * tapeChars.hfLoss;
     hfCutoff = std::min(hfCutoff, maxFilterFreq);
     hfLossFilter1.coefficients = juce::dsp::IIR::Coefficients<double>::makeLowPass(
@@ -732,17 +746,21 @@ void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
     // ========================================================================
     float gapLossFreq = speed == Speed_7_5_IPS ? 8000.0f : (speed == Speed_30_IPS ? 15000.0f : 12000.0f);
     float gapLossAmount = speed == Speed_7_5_IPS ? -3.0f : (speed == Speed_30_IPS ? -0.5f : -1.5f);
+    // The unclamped 15 kHz corner is what designs poles at |z| ~ 2.4 on a
+    // 16 kHz internal rate. Inert at every internal rate at or above 33.3 kHz.
     gapLossFilter.coefficients = juce::dsp::IIR::Coefficients<double>::makeHighShelf(
-        currentSampleRate, static_cast<double>(gapLossFreq), 0.707,
+        currentSampleRate, nyquistSafeHz(currentSampleRate, static_cast<double>(gapLossFreq)), 0.707,
         static_cast<double>(juce::Decibels::decibelsToGain(gapLossAmount)));
 
     // ========================================================================
     // Bias filter (more bias = more HF boost)
     // ========================================================================
+    // biasFreq tops out at 10 kHz, so this is inert at any internal rate at or
+    // above 22.2 kHz.
     float biasFreq = 6000.0f + (biasAmount * 4000.0f);
     float biasGain = juce::Decibels::decibelsToGain(biasAmount * 3.0f);
     biasFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        currentSampleRate, biasFreq, 0.707f, biasGain);
+        currentSampleRate, nyquistSafeHzF(currentSampleRate, biasFreq), 0.707f, biasGain);
 
     // Update saturation envelope
     saturator.updateCoefficients(machineChars.compressionAttack,

@@ -2995,9 +2995,12 @@ private:
         const double cosw = std::cos(omega), sinw = std::sin(omega), cos2w = std::cos(2 * omega), sin2w = std::sin(2 * omega);
         auto peakMag = [&](float fc, float q, float gainDB) -> double {
             const double tubeQ = std::max(0.01, (double)q * 0.85);
-            const double fcD = std::max(1.0, std::min((double)fc, sr * 0.4998));
+            // Same ceiling as the core's amb::clampFreq, taken from the single
+            // shared constant rather than a hand-copied literal (see #157).
+            const double fcD = duskaudio::nyquistSafeDesignHzD(sr, (double)fc, duskaudio::kMaxDesignFreqRatio);
             const double bw = fcD / tubeQ;
-            const double kbw = std::tan(duskaudio::kMultiQPi * std::min(bw, sr * 0.4998) / sr);
+            const double kbw = std::tan(duskaudio::kMultiQPi
+                * std::min(bw, sr * duskaudio::kMaxDesignFreqRatio) / sr);
             const double A = std::pow(10.0, (double)gainDB / 40.0);
             const double cW = std::cos(2.0 * duskaudio::kMultiQPi * fcD / sr);
             const double b0 = (1 + kbw * A) / (1 + kbw / A), b1 = (-2 * cW) / (1 + kbw / A), b2 = (1 - kbw * A) / (1 + kbw / A);
@@ -3210,51 +3213,46 @@ private:
     //========================================================================
     // response graph + spectrum
     //========================================================================
-    float responseDb(float freq) const
+    // Multi-Q's British audio path IS duskaudio::FourKEQDSP (see MultiQDSP.cpp),
+    // so the curve is drawn by that core's own helper. It used to draw the
+    // pre-#155 parallel model (bandK/voicedMidQ/bellQ summed into one complex
+    // response) while the core ran the calibrated series topology, so curve and
+    // sound had silently diverged in British mode.
+    //
+    // Multi-Q's British parameter ranges are WIDER than the calibration anchors,
+    // and the values below are passed through raw on purpose. The anchor tables
+    // interpolate inside their domain and hold the endpoint outside it, so the
+    // overshoot is a dead zone. Measured against the anchors (bit-identical
+    // results at both ends of each pair):
+    //
+    //   gains  +/-20 exposed vs +/-15 calibrated   dead above 15 dB
+    //   Q      0.4-4.0        vs 0.5-3.0           dead below 0.5, above 3.0
+    //   LF f   30-480         vs 30-450            dead above 450 Hz
+    //   HPF    20-500         vs 16-350            dead above 350 Hz
+    //   LPF    3000-20000     vs 3000-15201        dead above 15201 Hz
+    //
+    // This is NOT a drawing bug and must not be "fixed" here: MultiQPlugin.cpp
+    // hands britishEQ the same raw control values, so the AUDIO clamps at the
+    // same anchors. Rescaling or re-domaining them for the curve alone would
+    // re-open exactly the curve-vs-sound divergence #160 closed. Narrowing the
+    // exposed ranges instead would change the normalised-to-real mapping of
+    // shipped host parameters and silently move every saved session and
+    // automation lane, so it is a deliberate product decision, not a cleanup.
+    duskaudio::FourKEQDSP::CurveControls curveControls() const
     {
-        using duskaudio::Biquad; using duskaudio::BiquadCoeffs;
-        using duskaudio::FourKEQDSP;
-        const double base = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
-        const double fs = base * (double) FourKEQDSP::chooseFactor(base, (int)(values[kOversampling] + 0.5f));
-        const double w = 2.0 * 3.14159265358979323846 * (double)freq / fs;
-        const bool black = values[kEqType] > 0.5f;
-        double filtMag = 1.0;
-        if (values[kHpfEnabled] > 0.5f)
-        {
-            Biquad h1; h1.setCoeffs(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
-            Biquad h2; h2.setCoeffs(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
-            filtMag *= h1.magnitude(w) * h2.magnitude(w);
-        }
-        if (values[kLpfEnabled] > 0.5f)
-        {
-            const float f = (float)duskaudio::nyquistSafeDesignHzD(
-                fs, (double)values[kLpfFreq], duskaudio::kMaxDesignFreqRatio);
-            Biquad lp; lp.setCoeffs(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f));
-            filtMag *= lp.magnitude(w);
-        }
-        auto blockResp = [&](const BiquadCoeffs& c) {
-            Biquad b; b.setCoeffs(c); return b.response(w);
-        };
-        const float bellQ = black ? 0.9f : 0.6f;
-        std::complex<double> Heq(1.0, 0.0);
-        Heq += (double)FourKEQDSP::bandK(values[kLfGain]) * blockResp(values[kLfBell] > 0.5f
-            ? Biquad::bandPassConstantPeak(fs, values[kLfFreq], bellQ)
-            : (black ? Biquad::lowPass(fs, values[kLfFreq], 0.9f)
-                     : Biquad::firstOrderLowPass(fs, values[kLfFreq])));
-        Heq += (double)FourKEQDSP::bandK(values[kLmGain]) * blockResp(
-            Biquad::bandPassConstantPeak(fs, values[kLmFreq],
-                FourKEQDSP::voicedMidQ(values[kLmGain], values[kLmQ], black)));
-        { float hmFreq = values[kHmFreq]; if (!black && hmFreq > 7000.f) hmFreq = 7000.f;
-          Heq += (double)FourKEQDSP::bandK(values[kHmGain]) * blockResp(
-              Biquad::bandPassConstantPeak(fs, hmFreq,
-                  FourKEQDSP::voicedMidQ(values[kHmGain], values[kHmQ], black))); }
-        Heq += (double)FourKEQDSP::bandK(values[kHfGain]) * blockResp(values[kHfBell] > 0.5f
-            ? Biquad::bandPassConstantPeak(fs, values[kHfFreq], bellQ)
-            : (black ? Biquad::highPass(fs, values[kHfFreq], 0.9f)
-                     : Biquad::firstOrderHighPass(fs, values[kHfFreq])));
-
-        const double magLin = std::abs(Heq) * filtMag;
-        return 20.0f * std::log10((float)std::max(magLin, 1e-6));
+        duskaudio::FourKEQDSP::CurveControls c;
+        c.baseSampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+        c.oversampling = values[kOversampling];
+        c.black        = values[kEqType] > 0.5f;
+        c.hpfEnabled   = values[kHpfEnabled] > 0.5f;
+        c.lpfEnabled   = values[kLpfEnabled] > 0.5f;
+        c.hpfFreq      = values[kHpfFreq];
+        c.lpfFreq      = values[kLpfFreq];
+        c.lfGain = values[kLfGain]; c.lfFreq = values[kLfFreq]; c.lfBell = values[kLfBell];
+        c.lmGain = values[kLmGain]; c.lmFreq = values[kLmFreq]; c.lmQ    = values[kLmQ];
+        c.hmGain = values[kHmGain]; c.hmFreq = values[kHmFreq]; c.hmQ    = values[kHmQ];
+        c.hfGain = values[kHfGain]; c.hfFreq = values[kHfFreq]; c.hfBell = values[kHfBell];
+        return c;
     }
 
     static constexpr const char* kRangeLabels[5] = { "+/-6 dB", "+/-12 dB", "+/-18 dB", "+/-30 dB", "Warped" };
@@ -3387,11 +3385,14 @@ private:
             drawSpectrum(dl, GX0, GY0, GX1, GY1);
         const int N = 240;
         std::vector<ImVec2> pts; pts.reserve(N);
+        // Design the curve's sections ONCE, then evaluate per point: everything
+        // except the magnitude lookup is identical at all N frequencies.
+        const auto curve = duskaudio::FourKEQDSP::designCurve(curveControls());
         for (int i = 0; i < N; ++i)
         {
             const float lx = (float)i / (N - 1);
             const float freq = std::pow(10.0f, std::log10(kFMin) + lx * (std::log10(kFMax) - std::log10(kFMin)));
-            float ny = dbToNy(responseDb(freq));
+            float ny = dbToNy(duskaudio::FourKEQDSP::curveDbAt(curve, freq));
             ny = ny < 0 ? 0 : (ny > 1 ? 1 : ny);
             pts.push_back(panel.P(GX0 + lx * (GX1 - GX0), GY0 + ny * (GY1 - GY0)));
         }
