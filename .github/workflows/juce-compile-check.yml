@@ -1,0 +1,153 @@
+name: JUCE compile check
+
+# Nothing built the JUCE plugins on a pull request (GH #173).
+#
+# build.yml is a RELEASE pipeline: it triggers only on '<slug>-v*' tags and
+# workflow_dispatch, derives its target from the tag, and runs four platform
+# jobs plus a publish job. So a PR that broke a JUCE plugin stayed green until
+# someone cut a tag, and the failure then landed inside a release.
+#
+# That gap has teeth because shared code crosses trees:
+#   - plugins/shared/** reaches ELEVEN JUCE plugins. DuskLookAndFeel.h alone is
+#     used by eight, and is where the #165, #167 and #168 fixes landed.
+#   - plugins/shared-dpf/dsp/DuskFilters.hpp reaches the JUCE TapeMachine via
+#     the cross-tree include added in #159, so that one header is compiled by
+#     both frameworks and only the DPF side had a PR build.
+#
+# This workflow is the JUCE-side mirror of dpf-build.yml's shared-code safety
+# net (its pull_request paths filter on plugins/shared-dpf/** builds every DPF
+# plugin for exactly the same reason).
+#
+# It is a COMPILE CHECK, not a release build. Deliberately different from
+# build.yml, and the differences are the point:
+#   - Runs on the ubuntu-22.04 runner directly, not in an ubuntu:20.04 container.
+#     The container exists to pin glibc 2.31 for binaries we SHIP; nothing here
+#     is shipped, and dropping it removes the flaky toolchain PPA step.
+#   - Builds VST3 only. juce_add_plugin compiles each plugin's sources once into
+#     its <Plugin>_SharedCode static library, which every format wrapper then
+#     links, so VST3 alone compiles 100% of the plugin and shared-header code.
+#     Adding CLAP and LV2 would buy link time, not coverage.
+#   - Linux only. Shared-header breakage is a compile error, not a platform one.
+#     A genuinely platform-specific break still surfaces at tag time, as before.
+on:
+  pull_request:
+    paths:
+      # Shared code, the reason this workflow exists.
+      - 'plugins/shared/**'
+      - 'plugins/shared-dpf/dsp/DuskFilters.hpp'
+      # The JUCE plugins themselves. Their own PRs were equally unbuilt, and
+      # these paths are narrow enough that DPF-only work does not trigger them.
+      - 'plugins/4k-eq/**'
+      - 'plugins/multi-comp/**'
+      - 'plugins/TapeMachine/Source/**'
+      - 'plugins/TapeMachine/CMakeLists.txt'
+      - 'plugins/tape-echo/Source/**'
+      - 'plugins/tape-echo/CMakeLists.txt'
+      - 'plugins/multi-q/**'
+      - 'plugins/convolution-reverb/**'
+      - 'plugins/DuskVerb/**'
+      - 'plugins/DuskAmp/**'
+      - 'plugins/chord-analyzer/**'
+      - 'plugins/spectrum-analyzer/**'
+      - 'plugins/groovemind/**'
+      # A root CMake change can break every plugin at once.
+      - 'CMakeLists.txt'
+      - '.github/workflows/juce-compile-check.yml'
+  workflow_dispatch:
+
+# A PR that gets pushed twice should not run two fleets. Never applied to
+# build.yml, where cancelling an in-flight release would be the wrong call.
+concurrency:
+  group: juce-compile-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: ${{ matrix.plugin }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    strategy:
+      # One broken plugin must not hide the others: the whole point is to learn
+      # the full blast radius of a shared-header change in a single run.
+      fail-fast: false
+      matrix:
+        # Every juce_add_plugin target in the tree, verified against
+        # `ninja -t targets` on a full configure rather than read off the
+        # add_subdirectory list: chord-analyzer declares TWO plugins, and
+        # spectrum-analyzer and groovemind name theirs through a ${PLUGIN_NAME}
+        # variable, so neither is greppable from juce_add_plugin alone.
+        #
+        # A plugin added to the root CMakeLists without a row here is silently
+        # unbuilt, which is the class of gap this workflow exists to close.
+        plugin:
+          - FourKEQ
+          - MultiComp
+          - TapeMachine
+          - TapeEcho
+          - MultiQ
+          - ConvolutionReverb
+          - DuskVerb
+          - DuskAmp
+          - ChordAnalyzer
+          - ChordAnalyzerMIDI
+          - SpectrumAnalyzer
+          - GrooveMind
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          path: JUCE
+          ref: 8.0.4  # Must match build.yml, or this checks a different JUCE
+
+      - name: Install Linux dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_COPY_AFTER_BUILD=OFF \
+            -DJUCE_PATH=$(pwd)/JUCE
+
+      - name: Build ${{ matrix.plugin }} VST3
+        # An unknown target fails here with a readable "No rule to make target"
+        # rather than needing a guard step of its own.
+        run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3 -j$(nproc)
+
+      - name: Verify a binary came out
+        # A target that silently produces nothing is indistinguishable from a
+        # passing build in the step status, so check for the .so itself.
+        run: |
+          found=$(find build -path '*.vst3/Contents/x86_64-linux/*.so' -print -quit)
+          if [ -z "$found" ]; then
+            echo "::error::${{ matrix.plugin }}_VST3 built without producing a VST3 binary"
+            exit 1
+          fi
+          echo "Built: $found"
