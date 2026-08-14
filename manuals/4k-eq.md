@@ -1,7 +1,7 @@
 ---
 slug: 4k-eq
-version: 1.0.10
-last_updated: 2026-05-08
+version: 1.0.11
+last_updated: 2026-08-14
 tagline: British-style 4-band parametric EQ with Brown and Black modes
 ---
 
