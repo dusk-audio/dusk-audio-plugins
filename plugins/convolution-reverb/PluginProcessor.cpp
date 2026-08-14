@@ -57,6 +57,36 @@ ConvolutionReverbProcessor::~ConvolutionReverbProcessor()
 }
 
 //==============================================================================
+namespace
+{
+    // MIX, LENGTH and IR OFFSET are stored as a 0..1 fraction but labelled "%",
+    // so JUCE's default two-decimal formatter renders half wet as "0.50 %"
+    // (GH #170). That is wrong on its face, and it also broke the type-in round
+    // trip: ValueEditor::popUp pre-fills its editor with the slider's display
+    // text, so committing "0.50 %" unedited parsed as a percentage and wrote
+    // 0.005, collapsing the knob.
+    //
+    // This has to live on the PARAMETER, not the slider. SliderParameterAttachment
+    // assigns slider.textFromValueFunction from the parameter in its constructor,
+    // and the editor builds every attachment after setupSlider(), so a slider-side
+    // formatter is silently overwritten.
+    //
+    // valueFromString is the required other half. Once the display reads "50.0",
+    // a host's generic editor hands that string back, and the default
+    // text.getFloatValue() would return 50 and clamp the parameter to full.
+    //
+    // The scale is deliberately a literal 100 rather than anything derived from
+    // the range: IR OFFSET spans 0..0.5 and still reads 0..50 %.
+    juce::AudioParameterFloatAttributes fractionShownAsPercent()
+    {
+        return juce::AudioParameterFloatAttributes()
+            .withLabel("%")
+            .withStringFromValueFunction([](float v, int) { return juce::String(v * 100.0f, 1); })
+            .withValueFromStringFunction([](const juce::String& text)
+                                         { return text.getFloatValue() * 0.01f; });
+    }
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
@@ -66,7 +96,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
         "mix", "Mix",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.5f,
-        juce::AudioParameterFloatAttributes().withLabel("%")));
+        fractionShownAsPercent()));
 
     // Pre-delay
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -90,7 +120,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
         "length", "Length",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         1.0f,
-        juce::AudioParameterFloatAttributes().withLabel("%")));
+        fractionShownAsPercent()));
 
     // Reverse
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -177,7 +207,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
         "ir_offset", "IR Offset",
         juce::NormalisableRange<float>(0.0f, 0.5f, 0.01f),  // Max 50% offset
         0.0f,
-        juce::AudioParameterFloatAttributes().withLabel("%")));
+        fractionShownAsPercent()));
 
     // Quality (sample rate divisor)
     params.push_back(std::make_unique<juce::AudioParameterChoice>(

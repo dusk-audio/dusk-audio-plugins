@@ -532,9 +532,7 @@ private:
     //
     //   FRACTION units — native range 0..1. A typed 50 must become 0.5. This
     //     is what the unconditional 0.01 was written for, and it is the common
-    //     case: DuskVerb prints v * 100.0, while Convolution Reverb's Mix
-    //     (NormalisableRange(0, 1) with a " %" suffix) prints the fraction
-    //     itself, so the two do NOT agree on what gets displayed at all.
+    //     case: DuskVerb and Convolution Reverb both print v * 100.0.
     //   PERCENT units — native range already counted in percent. Multi-Comp's
     //     Mix is createKnob("Mix", 0, 100, 100, "%"), so a typed 50 must stay
     //     50. Scaling it produced 0.5, which the knob displayed as 1%: a
@@ -556,14 +554,14 @@ private:
     //   2. The slider prints roughly its own maximum rather than ~100x it, so
     //      a 0..100 range that still renders as 0..10000% keeps scaling.
     //
-    // KNOWN GAP, pre-existing and NOT fixed here: Convolution Reverb's MIX,
-    // LENGTH and OFFSET are 0..1 with a plain " %" suffix and no x100
-    // formatter, so the knob shows "0.50 %" at half wet. The pre-filled text
-    // is that display string, so committing it unedited parses 0.50 as a
-    // percent and writes 0.005. That round-trip was already broken before this
-    // change and is a Convolution Reverb display bug, not a parser one: the
-    // knob should render v * 100. Fixing it here would mean special-casing one
-    // plugin's formatting inside shared code.
+    // The gap this used to document (Convolution Reverb's MIX, LENGTH and
+    // OFFSET rendering "0.50 %" at half wet, so the pre-filled text committed
+    // unedited wrote 0.005) is closed in the plugin, GH #170. It was a display
+    // bug, not a parser one, and the fix went on the parameters, not here:
+    // special-casing one plugin's formatting inside shared code is what this
+    // function exists to avoid. Note it had to go on the PARAMETER, because
+    // SliderParameterAttachment assigns slider.textFromValueFunction from the
+    // parameter and would overwrite anything a slider-side formatter set.
     static bool percentNeedsScaling (juce::Slider& slider)
     {
         const double maxV = slider.getMaximum();
