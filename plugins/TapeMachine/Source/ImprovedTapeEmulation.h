@@ -82,8 +82,14 @@ public:
 
     void prepare(double sampleRate, double cutoffHz)
     {
-        cutoffHz = std::min(cutoffHz, sampleRate * 0.45);
-        cutoffHz = std::max(cutoffHz, 20.0);
+        // Was ceiling-first / floor-last, which lets the 20 Hz floor beat the
+        // Nyquist ceiling once fs falls below 44.4 Hz and hands the prototype a
+        // corner above Nyquist. Latent rather than reachable, but it is the
+        // ordering the shared helper rejects, so it goes through the helper like
+        // every other design frequency here (the DPF core's counterpart clamps
+        // exactly this way). The 20 Hz floor is this filter's own, kept ahead of
+        // the ceiling; the result is unchanged at any fs at or above 44.5 Hz.
+        cutoffHz = nyquistSafeHz(sampleRate, std::max(cutoffHz, 20.0));
 
         constexpr int N = 8;
         constexpr double rippleDb = 0.5;
