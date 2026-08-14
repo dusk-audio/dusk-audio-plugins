@@ -76,8 +76,11 @@ Do NOT proceed with any further steps. Do NOT offer to release anyway.
 For EACH plugin specified:
 
 1. **Find current version** from CMakeLists.txt:
-   - Most JUCE plugins: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`
-   - Multi-Q (JUCE) uses: `project(MultiQ VERSION X.Y.Z)`
+   - JUCE plugins, Multi-Q included: `set(<VAR>_DEFAULT_VERSION "X.Y.Z")`, with
+     `project(<Name> VERSION ${<VAR>_VERSION})` reading it a few lines below.
+     Multi-Q used to carry the version as a literal in its `project()` call and
+     no longer does; read the file rather than trusting this list, and update
+     this line if another plugin changes shape.
    - **DPF "-2" plugins** use an inline `project(<Project> VERSION X.Y.Z)` in
      `plugins/<dir>/dpf-plugin/CMakeLists.txt` (version is plumbed into the code via
      compile definitions, so no other file needs editing). Project tokens:
@@ -116,14 +119,18 @@ git log <slug>-v<old-version>..HEAD --oneline -- plugins/shared/
 
 For EACH plugin, update the CMakeLists.txt:
 
-**Standard plugins** (4k-eq, multi-comp, tapemachine, convolution-reverb, groovemind):
+**JUCE plugins** (4k-eq, multi-comp, tapemachine, convolution-reverb, groovemind,
+multi-q):
 ```
 set(<VAR>_DEFAULT_VERSION "<new-version>")
 ```
-
-**Multi-Q** (uses inline project version):
-```
-project(MultiQ VERSION <new-version>)
+Multi-Q is NOT a special case any more; it uses the same var form as the rest
+(`MULTIQ_DEFAULT_VERSION`). Verify the replacement landed before committing, the
+same way Sunset Circuits does below, because a silently unmatched sed otherwise
+tags a release at the old version:
+```bash
+grep -q "set(<VAR>_DEFAULT_VERSION \"<new-version>\")" <Directory>/CMakeLists.txt \
+  || { echo "ERROR: <VAR> version bump did not apply"; exit 1; }
 ```
 
 **DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`).
@@ -227,6 +234,12 @@ fi
 **IMPORTANT**: Use `sed` for in-place edits. Do NOT use Python `yaml.dump` - it destroys comments and formatting.
 **IMPORTANT**: A first-time release needs BOTH website files to exist before the skill runs. Neither is created here; a missing entry aborts the release rather than shipping a page with no download links.
 **IMPORTANT**: Both `_data/plugins.yml` AND `_plugins/<slug>.md` must be updated - the plugin pages read from the markdown files.
+**IMPORTANT**: Not every `_plugins/<slug>.md` uses LF line endings. Any anchored
+match (`^changelog:$`, `^version: ".*"$`) silently matches NOTHING on a CRLF file,
+because the line really ends `changelog:\r`. That failure is invisible: the edit
+reports success and the release ships without a changelog entry. Always verify each
+edit landed (the `grep -q` guards above do this) and match the file's existing
+endings rather than converting it. `grep -c $'\r$' <file>` tells you which it is.
 
 If the plugin has a pre-release status (`status: in-dev` **or** `status: coming-soon`) and is
 being released for the first time, also update (in `_data/plugins.yml`, and in `_plugins/<slug>.md`
