@@ -841,98 +841,33 @@ jobs:
           echo "::error::pluginval reported a real failure (load error or failed test)"
           exit 1
 
-      - name: Install clap-validator
-        run: |
-          # The CLAP is built and shipped on every platform but was never
-          # validated anywhere -- pluginval only speaks VST3/AU. clap-validator
-          # is the reference CLAP conformance suite.
-          #
-          # SHA-256 pinned and staged in RUNNER_TEMP, exactly as pluginval above:
-          # the release asset is practically immutable but the tag is not
-          # cryptographically so, so verify before executing anything.
-          cd "$RUNNER_TEMP"
-          curl -fsSL -o clap-validator.zip \
-            https://github.com/free-audio/clap-validator/releases/download/0.4.1/clap-validator-0.4.1-127-g152b982-ubuntu-22.04.zip
-          echo "49edadcfb407ea0dd946ce418300e853fbd2660fa4b0d00e4f19ff8eef24ad90  clap-validator.zip" \
-            | sha256sum -c -
-          unzip -o clap-validator.zip -d clap-validator
-          # The published zip wraps a tarball, which holds the binary. Both
-          # layers are globbed rather than hardcoded (the inner tarball's
-          # embedded version string does not match the outer tag), and a layout
-          # change fails loudly below.
-          tar xzf clap-validator/clap-validator-*.tar.gz -C clap-validator
-          CV="$(find clap-validator -type f -name clap-validator | head -n1)"
-          if [ -z "$CV" ]; then
-            echo "::error::clap-validator binary not found after install"
-            exit 1
-          fi
-          chmod +x "$CV"
-          echo "CLAP_VALIDATOR=$RUNNER_TEMP/$CV" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/$CV" --version
-
-      - name: Validate CLAP (clap-validator)
+      - name: Validate CLAP (clap-validator gate)
         working-directory: ${{ env.PLUGIN_DIR }}
+        env:
+          # STRICT: any failing clap-validator test fails the release, exactly as
+          # on dpf-build.yml. Sunset Circuits runs clean, so there is nothing to
+          # be advisory about; if that ever changes, fix the plugin rather than
+          # loosening this (NEVER a per-test allowlist -- see the script).
+          SUITE_STRICT: "1"
         run: |
+          # This calls the SHARED gate rather than an inline classifier.
+          #
+          # The inline version this replaces downloaded its own pinned
+          # clap-validator and classified the JSON itself: it printed warnings as
+          # advisory and failed only on `failed` tests. That misses the
+          # clap_host_latency::changed regression, which clap-validator 0.4.1
+          # reports as a WARNING and does NOT count as a failed test, so a DPF
+          # latency-contract regression would have shipped through the release
+          # path while dpf-build.yml hard-failed the same plugin. One place now
+          # defines what makes a CLAP acceptable -- including the pinned
+          # validator version and its SHA-256, which the script resolves itself.
+          #
+          # xvfb: clap-validator drives the plugin GUI, which needs an X display.
+          set -o pipefail
           CLAP="$(cd build/bin && pwd)/sunset_circuits.clap"
           test -f "$CLAP"
-          # Machine-readable output, classified below. The exit status is still
-          # captured separately so a timeout is distinguishable from a test
-          # failure, but the JSON is what decides pass/fail.
-          set +e
-          timeout 600 "$CLAP_VALIDATOR" validate --json "$CLAP" > clap-validator.json 2> clap-validator.err
-          STATUS=$?
-          set -e
-          cat clap-validator.err || true
-          if [ "$STATUS" -eq 124 ]; then
-            echo "::error::clap-validator timed out after 600s"
-            exit 1
-          fi
-          # No tolerated failures: any failed test fails the job.
-          #
-          # There used to be an allowlist here for
-          #   clap_host_latency::changed / Must only be called within 'clap_plugin::activate'
-          # a DPF CLAP-wrapper bug that failed 24 of 44 tests on any DPF plugin
-          # declaring a latency. It is fixed in DistrhoPluginCLAP.cpp by only
-          # announcing latency changes from within clap_plugin::activate; see the
-          # DPF_SHA pin at the top of this file.
-          # Measured locally against the fixed DPF: 44 tests run, 33 passed,
-          # 10 skipped, 1 warning, 0 failed.
-          python3 - <<'PY'
-          import collections, json, sys
-
-          with open("clap-validator.json") as f:
-              results = json.load(f)["results"]
-
-          if not results:
-              print("::error::clap-validator produced no results")
-              sys.exit(1)
-
-          def test_name(r):
-              t = r["test"]
-              for k in ("plugin-instance", "plugin-library", "preset-discovery"):
-                  if k in t:
-                      return t[k]["test"]
-              return str(t)
-
-          counts = collections.Counter(r["status"]["code"] for r in results)
-          print("clap-validator: " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())))
-
-          failed = []
-          for r in results:
-              code = r["status"]["code"]
-              details = (r["status"].get("details") or "").strip()
-              if code == "failed":
-                  failed.append((test_name(r), details))
-              elif code == "warning":
-                  print(f"::warning::clap-validator {test_name(r)}: {details}")
-
-          if failed:
-              for name, details in failed:
-                  print(f"::error::clap-validator {name}: {details}")
-              sys.exit(1)
-
-          print("::notice::clap-validator: no failures")
-          PY
+          xvfb-run -a python3 "${GITHUB_WORKSPACE}/.github/scripts/dpf_clap_validate.py" \
+            "$CLAP" 2>&1 | tee clap-validator.log
 
       - name: Upload validation logs
         if: always()
@@ -941,8 +876,7 @@ jobs:
           name: ${{ env.SLUG }}-validation-linux-logs
           path: |
             ${{ env.PLUGIN_DIR }}/pluginval.log
-            ${{ env.PLUGIN_DIR }}/clap-validator.json
-            ${{ env.PLUGIN_DIR }}/clap-validator.err
+            ${{ env.PLUGIN_DIR }}/clap-validator.log
           retention-days: 14
           if-no-files-found: ignore
 
