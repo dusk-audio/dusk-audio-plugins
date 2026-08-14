@@ -50,17 +50,21 @@ on:
       # dpf_clap_validate.py never runs the gate it just changed.
       - '.github/scripts/**'
 
-# DPF is our fork (dusk-audio/DPF), branch main — the permanent source of truth
-# for our DPF patches (CLAP latency changes constrained to activate(), AU
-# preset + CLAP state hardening, Wayland/CI work). DPF-Widgets stays upstream
-# (DISTRHO/DPF-Widgets) — only DPF is forked.
+# Every framework dependency is a hard fork under dusk-audio and must be fetched
+# from there: DPF (CLAP latency constrained to activate(), AU preset + CLAP state
+# hardening, CLAP UI parameter delivery, UI size reconciliation, Wayland/CI work),
+# DPF-Widgets, and pugl. pugl is fetched through the url in the DPF fork's own
+# .gitmodules, not from anything here, which is how it kept pointing at upstream
+# unnoticed. check_fork_sources.sh below fails the build if any of that regresses.
 # To advance DPF: land changes on fork main in ~/projects/DPF, re-run
 # clap-validator and pluginval against the rebuilt plugins, push to
 # dusk-audio/DPF, THEN bump DPF_REF. Keep SHAs in sync with dpf-release.yml,
-# dpf-au-test.yml and docker/build_release.sh. Bump deliberately.
+# dpf-au-test.yml and docker/build_release.sh. Bump deliberately, and keep local
+# checkouts on the pinned SHAs (docker/check_dpf_pins.sh) so a hand-tested build
+# is the one CI produces.
 env:
-  DPF_REF: 45a7e30e5343231019e6d5f09629bae13f5899c7
-  DPFWIDGETS_REF: 730da6397904da66d99667c1cb30fc77fc3d794a
+  DPF_REF: d8e5bc69fd7bf355de548e0eafe0f3b7784c68c6
+  DPFWIDGETS_REF: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
@@ -230,11 +234,17 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
           persist-credentials: false
+
+      # Runs after the checkouts so it can inspect the fork's own .gitmodules,
+      # which is where pugl silently kept pointing at upstream. Cheap, so it
+      # gates the expensive build instead of reporting after it.
+      - name: Check framework sources are our forks
+        run: ./.github/scripts/check_fork_sources.sh "${GITHUB_WORKSPACE}/DPF"
 
       - name: Install Linux dependencies
         env:
@@ -497,7 +507,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
@@ -611,7 +621,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
@@ -858,7 +868,7 @@ jobs:
       - name: Checkout DPF-Widgets
         uses: actions/checkout@v4
         with:
-          repository: DISTRHO/DPF-Widgets
+          repository: dusk-audio/DPF-Widgets
           ref: ${{ env.DPFWIDGETS_REF }}
           path: DPF-Widgets
           submodules: recursive
