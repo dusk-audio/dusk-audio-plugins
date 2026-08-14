@@ -6,6 +6,61 @@
 #include <random>
 #include <complex>
 
+// The Nyquist-clamp primitive only. DuskFilters.hpp is framework-free (it pulls
+// in <algorithm>/<cmath>/<complex> and nothing else), so including it here does
+// not drag any DPF surface into the JUCE build.
+#include "../../shared-dpf/dsp/DuskFilters.hpp"
+
+//==============================================================================
+// Nyquist guard for FIXED filter design frequencies.
+//
+// Every bilinear/RBJ design in this file maps its analogue corner through
+// tan(pi*f/fs) or cos/sin(2*pi*f/fs), which are only meaningful for f < fs/2.
+// Above Nyquist the prewarp wraps: sin(w0) goes negative, so alpha goes
+// negative, so the RBJ denominator (1 + alpha) shrinks or changes sign and the
+// poles land OUTSIDE the unit circle. The filter then diverges geometrically
+// until float overflow, and the next transposed-direct-form-II update evaluates
+// Inf - Inf = NaN. That is the failure measured in the DPF tape core (pole
+// radius ~2.4 at an 8 kHz host rate, GH #137/#156); this file is the JUCE
+// original that core was ported from and carries the identical defect, so the
+// same guard applies. prepareToPlay at 8 kHz with 2x oversampling gives a
+// 16 kHz internal rate, where the 12 kHz gap-loss shelf blows up.
+//
+// The ceiling is 0.45 * fs, the same value the file already applied ad hoc
+// (safeFreq = nyquist * 0.9 in prepare, maxFilterFreq = fs * 0.45 in
+// updateFilters), and the same value the DPF core uses. It is NOT the 0.4998
+// the shared duskaudio::Biquad designers use, and the two must not be
+// "harmonized" -- that one sits behind user-facing EQs whose bands reach
+// 20 kHz. See DuskFilters.hpp for that side.
+//
+// Where it actually engages, given this emulation runs at oversamplingFactor x
+// the host rate:
+//   - the fixed corners top out at 16 kHz, which needs an internal rate below
+//     35.6 kHz to clamp at all;
+//   - recordHeadCutoff (20 kHz) and the COMPUTED hfCutoff keep their own
+//     explicit float caps, because those DO engage at 44.1 kHz and converting
+//     them to this double-valued ceiling would move coefficients by an ulp.
+// Everything else is untouched at every standard rate.
+//
+// PRECONDITION: fs is positive and finite. prepare() coerces a non-positive
+// rate to 44100 before any designer runs; re-validating here would be theatre,
+// since fs divides in every designer below.
+inline constexpr double kTapeV1DesignFreqRatio = 0.45;
+
+// Thin alias over the shared primitive so there is ONE implementation of the
+// floor-first/ceiling-last ordering in the repo. The ordering matters: the
+// reverse lets the 1 Hz floor win at absurdly low fs and hand back a corner at
+// or above Nyquist, the exact instability this guard exists to prevent.
+inline double nyquistSafeHz (double fs, double freq) noexcept
+{
+    return duskaudio::nyquistSafeDesignHzD (fs, freq, kTapeV1DesignFreqRatio);
+}
+
+inline float nyquistSafeHzF (double fs, float freq) noexcept
+{
+    return static_cast<float> (nyquistSafeHz (fs, static_cast<double> (freq)));
+}
+
 //==============================================================================
 // 8th-order Chebyshev Type I Anti-Aliasing Filter (0.5dB passband ripple)
 // Uses cascaded biquad sections with poles from analog prototype via bilinear transform
@@ -123,6 +178,10 @@ class SaturationSplitFilter
 public:
     void prepare(double sampleRate, double cutoffHz = 5000.0)
     {
+        // Unclamped this is an RBJ lowpass whose alpha flips sign above Nyquist
+        // (a 4 kHz host rate gives an 8 kHz internal rate, below this corner).
+        cutoffHz = nyquistSafeHz(sampleRate, cutoffHz);
+
         const double w0 = 2.0 * juce::MathConstants<double>::pi * cutoffHz / sampleRate;
         const double cosw0 = std::cos(w0);
         const double sinw0 = std::sin(w0);
@@ -196,6 +255,11 @@ private:
 
             void prepare(double sampleRate, float cutoffHz)
             {
+                // tan(pi*f/fs) goes negative above Nyquist, which drives the TPT
+                // coefficient past 1 and makes the one-pole diverge. The 5 kHz
+                // splitter corner reaches that at an 8 kHz internal rate.
+                cutoffHz = nyquistSafeHzF(sampleRate, cutoffHz);
+
                 float g = std::tan(juce::MathConstants<float>::pi * cutoffHz
                                   / static_cast<float>(sampleRate));
                 coeff = g / (1.0f + g);
@@ -604,7 +668,11 @@ public:
 
         for (int i = 0; i < NUM_STAGES; ++i)
         {
-            float tanVal = std::tan(juce::MathConstants<float>::pi * breakFreqs[i]
+            // tan(pi*f/fs) passes through -1 just above Nyquist, so the allpass
+            // denominator (tanVal + 1) divides by ~0 and the coefficient blows
+            // up. The 6-8 kHz stages hit that at an internal rate below 16 kHz.
+            const float bf = nyquistSafeHzF(currentSampleRate, breakFreqs[i]);
+            float tanVal = std::tan(juce::MathConstants<float>::pi * bf
                                     / static_cast<float>(currentSampleRate));
             stages[i].coeff = (tanVal - 1.0f) / (tanVal + 1.0f);
         }
@@ -696,17 +764,20 @@ public:
     {
         oversamplingFactor = std::max(1, osFactor);
 
-        smoothingAlpha = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * 70.0f
-                                          / static_cast<float>(sampleRate));
-
         static constexpr double MIN_SAMPLE_RATE = 8000.0;
         static constexpr double MAX_SAMPLE_RATE = 768000.0;
         static constexpr double MAX_DELAY_SECONDS = 0.05;
 
+        // Validate BEFORE the rate is used for anything. smoothingAlpha used to
+        // be computed above this guard, so a NaN or zero host rate produced a
+        // NaN coefficient that then poisoned every modulated sample.
         if (sampleRate <= 0.0 || !std::isfinite(sampleRate))
             sampleRate = 44100.0;
 
         sampleRate = std::clamp(sampleRate, MIN_SAMPLE_RATE, MAX_SAMPLE_RATE);
+
+        smoothingAlpha = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * 70.0f
+                                          / static_cast<float>(sampleRate));
 
         double bufferSizeDouble = sampleRate * MAX_DELAY_SECONDS;
 
