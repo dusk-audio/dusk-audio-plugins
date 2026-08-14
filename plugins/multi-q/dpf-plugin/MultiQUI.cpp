@@ -2995,9 +2995,12 @@ private:
         const double cosw = std::cos(omega), sinw = std::sin(omega), cos2w = std::cos(2 * omega), sin2w = std::sin(2 * omega);
         auto peakMag = [&](float fc, float q, float gainDB) -> double {
             const double tubeQ = std::max(0.01, (double)q * 0.85);
-            const double fcD = std::max(1.0, std::min((double)fc, sr * 0.4998));
+            // Same ceiling as the core's amb::clampFreq, taken from the single
+            // shared constant rather than a hand-copied literal (see #157).
+            const double fcD = duskaudio::nyquistSafeDesignHzD(sr, (double)fc, duskaudio::kMaxDesignFreqRatio);
             const double bw = fcD / tubeQ;
-            const double kbw = std::tan(duskaudio::kMultiQPi * std::min(bw, sr * 0.4998) / sr);
+            const double kbw = std::tan(duskaudio::kMultiQPi
+                * std::min(bw, sr * duskaudio::kMaxDesignFreqRatio) / sr);
             const double A = std::pow(10.0, (double)gainDB / 40.0);
             const double cW = std::cos(2.0 * duskaudio::kMultiQPi * fcD / sr);
             const double b0 = (1 + kbw * A) / (1 + kbw / A), b1 = (-2 * cW) / (1 + kbw / A), b2 = (1 - kbw * A) / (1 + kbw / A);
@@ -3210,50 +3213,104 @@ private:
     //========================================================================
     // response graph + spectrum
     //========================================================================
+    // Verbatim mirror of FourKEQUI::responseDb. Multi-Q's British audio path is
+    // duskaudio::FourKEQDSP itself (see MultiQDSP.cpp), so the curve has to be
+    // drawn from the SAME calibration helpers the core designs from. It used to
+    // draw the pre-#155 parallel model (bandK/voicedMidQ/bellQ summed into one
+    // complex response) while the core ran the calibrated series topology, so
+    // curve and sound had silently diverged in British mode.
     float responseDb(float freq) const
     {
         using duskaudio::Biquad; using duskaudio::BiquadCoeffs;
         using duskaudio::FourKEQDSP;
+        // Evaluate at the DSP's ACTUAL processing rate: host base rate * the
+        // rate-capped oversampling factor, exactly as recomputeCoeffs() designs
+        // the biquads. kOversampling is already the DSP mode (0=1x,1=2x,2=4x),
+        // so chooseFactor() applies the same cap.
         const double base = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
         const double fs = base * (double) FourKEQDSP::chooseFactor(base, (int)(values[kOversampling] + 0.5f));
         const double w = 2.0 * 3.14159265358979323846 * (double)freq / fs;
         const bool black = values[kEqType] > 0.5f;
+        auto magnitudeAt = [](const BiquadCoeffs& c, double omega) {
+            Biquad b; b.setCoeffs(c); return b.magnitude(omega);
+        };
+        auto magnitude = [&](const BiquadCoeffs& c) {
+            return magnitudeAt(c, w);
+        };
+        // Calibrated series filter magnitudes, mirrors recomputeCoeffs().
         double filtMag = 1.0;
         if (values[kHpfEnabled] > 0.5f)
         {
-            Biquad h1; h1.setCoeffs(Biquad::firstOrderHighPass(fs, values[kHpfFreq]));
-            Biquad h2; h2.setCoeffs(Biquad::highPass(fs, values[kHpfFreq], 1.0f));
-            filtMag *= h1.magnitude(w) * h2.magnitude(w);
+            const float f = std::min(
+                FourKEQDSP::calibratedFilterFrequency(values[kHpfFreq], true, black),
+                static_cast<float>(base * 0.49));
+            const double wBase = 2.0 * 3.14159265358979323846 * (double)freq / base;
+            if (black)
+                filtMag *= magnitudeAt(Biquad::firstOrderHighPass(base, f * 0.96134252f), wBase);
+            filtMag *= magnitudeAt(Biquad::highPass(
+                base, f, FourKEQDSP::calibratedFilterQ(true, black)), wBase);
+            filtMag *= std::pow(10.0, FourKEQDSP::calibratedHpfTrimDb(
+                values[kHpfFreq], black) / 20.0);
         }
         if (values[kLpfEnabled] > 0.5f)
         {
-            const float f = (float)duskaudio::nyquistSafeDesignHzD(
-                fs, (double)values[kLpfFreq], duskaudio::kMaxDesignFreqRatio);
-            Biquad lp; lp.setCoeffs(Biquad::lowPass(fs, f, black ? 0.8f : 0.707f));
-            filtMag *= lp.magnitude(w);
+            const float f = std::min(
+                FourKEQDSP::calibratedFilterFrequency(values[kLpfFreq], false, black),
+                static_cast<float>(fs * 0.49));
+            filtMag *= magnitude(Biquad::lowPass(
+                fs, f, FourKEQDSP::calibratedFilterQ(false, black)));
         }
-        auto blockResp = [&](const BiquadCoeffs& c) {
-            Biquad b; b.setCoeffs(c); return b.response(w);
+        auto bandMagnitude = [&](FourKEQDSP::Band band, float controlGain,
+                                 float controlFreq, float controlQ,
+                                 bool bell, bool highShelf) {
+            const float f = std::min(
+                FourKEQDSP::calibratedEqFrequency(controlFreq, controlGain, band, black, bell),
+                static_cast<float>(fs * 0.49));
+            const float g = FourKEQDSP::calibratedEqGain(
+                controlGain, band, black, bell);
+            const float q = FourKEQDSP::calibratedEqQ(
+                controlQ, controlFreq, controlGain, band, black, bell);
+            return magnitude(bell || band == FourKEQDSP::Band::LM || band == FourKEQDSP::Band::HM
+                ? Biquad::peak(fs, f, g, q)
+                : Biquad::shelf(fs, f, g, q, highShelf));
         };
-        const float bellQ = black ? 0.9f : 0.6f;
-        std::complex<double> Heq(1.0, 0.0);
-        Heq += (double)FourKEQDSP::bandK(values[kLfGain]) * blockResp(values[kLfBell] > 0.5f
-            ? Biquad::bandPassConstantPeak(fs, values[kLfFreq], bellQ)
-            : (black ? Biquad::lowPass(fs, values[kLfFreq], 0.9f)
-                     : Biquad::firstOrderLowPass(fs, values[kLfFreq])));
-        Heq += (double)FourKEQDSP::bandK(values[kLmGain]) * blockResp(
-            Biquad::bandPassConstantPeak(fs, values[kLmFreq],
-                FourKEQDSP::voicedMidQ(values[kLmGain], values[kLmQ], black)));
-        { float hmFreq = values[kHmFreq]; if (!black && hmFreq > 7000.f) hmFreq = 7000.f;
-          Heq += (double)FourKEQDSP::bandK(values[kHmGain]) * blockResp(
-              Biquad::bandPassConstantPeak(fs, hmFreq,
-                  FourKEQDSP::voicedMidQ(values[kHmGain], values[kHmQ], black))); }
-        Heq += (double)FourKEQDSP::bandK(values[kHfGain]) * blockResp(values[kHfBell] > 0.5f
-            ? Biquad::bandPassConstantPeak(fs, values[kHfFreq], bellQ)
-            : (black ? Biquad::highPass(fs, values[kHfFreq], 0.9f)
-                     : Biquad::firstOrderHighPass(fs, values[kHfFreq])));
+        double eqMag = 1.0;
+        const bool lfActive = std::abs(values[kLfGain]) > 1.0e-6f;
+        const bool lmActive = std::abs(values[kLmGain]) > 1.0e-6f;
+        const bool hmActive = std::abs(values[kHmGain]) > 1.0e-6f;
+        const bool hfActive = std::abs(values[kHfGain]) > 1.0e-6f;
+        if (lfActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::LF, values[kLfGain], values[kLfFreq],
+                                   1.5f, values[kLfBell] > 0.5f, false);
+        if (lmActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::LM, values[kLmGain], values[kLmFreq],
+                                   values[kLmQ], true, false);
+        if (hmActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::HM, values[kHmGain], values[kHmFreq],
+                                   values[kHmQ], true, false);
+        if (hfActive)
+            eqMag *= bandMagnitude(FourKEQDSP::Band::HF, values[kHfGain], values[kHfFreq],
+                                   1.5f, values[kHfBell] > 0.5f, true);
+        if (lfActive && lmActive)
+        {
+            const auto lowCorrection = FourKEQDSP::calibratedPairCorrection(
+                fs, false, black,
+                values[kLfGain], values[kLfFreq], values[kLfBell],
+                values[kLmGain], values[kLmFreq], values[kLmQ]);
+            for (const BiquadCoeffs& correction : lowCorrection)
+                eqMag *= magnitude(correction);
+        }
+        if (hmActive && hfActive)
+        {
+            const auto highCorrection = FourKEQDSP::calibratedPairCorrection(
+                fs, true, black,
+                values[kHmGain], values[kHmFreq], values[kHmQ],
+                values[kHfGain], values[kHfFreq], values[kHfBell]);
+            for (const BiquadCoeffs& correction : highCorrection)
+                eqMag *= magnitude(correction);
+        }
 
-        const double magLin = std::abs(Heq) * filtMag;
+        const double magLin = eqMag * filtMag;
         return 20.0f * std::log10((float)std::max(magLin, 1e-6));
     }
 

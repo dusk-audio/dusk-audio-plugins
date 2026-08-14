@@ -711,23 +711,6 @@ float FourKEQDSP::calibratedFilterQ(bool highPass, bool black) noexcept
     return highPass ? (black ? 0.87429652f : 0.76532684f) : 0.706625f;
 }
 
-// Mid-band Q voicing, applied ONCE (consolePeak no longer scales Q internally).
-// Matches the hardware topology confirmed by console/Waves docs:
-//   E-series (Brown): CONSTANT-Q — bandwidth is fixed regardless of gain
-//                     ("as the boost grows the base of the mountain stays put").
-//   G-series (Black): PROPORTIONAL-Q — Q narrows as boost/cut increases, so the
-//                     perceived energy change stays roughly constant.
-// (Earlier this file applied proportional-Q to BOTH — and to Black twice. Both
-//  were wrong; this is the single, correct, per-console application.)
-float FourKEQDSP::voicedMidQ(float gainDb, float baseQ, bool black) noexcept
-{
-    if (!black) return clampf(baseQ, 0.5f, 8.0f); // E-series: constant-Q
-    const float absGain = std::abs(gainDb);
-    const float scale = (gainDb >= 0.0f) ? 2.0f : 1.5f; // G-series: proportional
-    const float dq = baseQ * (1.0f + (absGain / 20.0f) * scale);
-    return clampf(dq, 0.5f, 8.0f);
-}
-
 // mode: 0 = 1x (off), 1 = 2x, 2 = 4x. Capped so the oversampled rate stays sane
 // at already-high base rates (>=176.4k -> 1x, >=88.2k -> max 2x).
 int FourKEQDSP::chooseFactor(double baseSampleRate, int mode) noexcept

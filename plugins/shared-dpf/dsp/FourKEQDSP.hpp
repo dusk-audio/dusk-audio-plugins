@@ -165,10 +165,12 @@ public:
     static float calibratedHpfTrimDb(float controlHz, bool black) noexcept;
     static float calibratedFilterQ(bool highPass, bool black) noexcept;
 
-    // Legacy helpers remain public because Multi-Q's British response preview
-    // uses the older parallel topology independently of 4K EQ 2.
-    static float voicedMidQ(float gainDb, float baseQ, bool black) noexcept;
-    static float bandK(float gainDb) noexcept { return std::pow(10.0f, 0.05f * gainDb) - 1.0f; }
+    // voicedMidQ/bandK used to live here so Multi-Q's British response preview
+    // could draw the older PARALLEL topology (summed bandK-weighted blocks)
+    // independently of 4K EQ 2. That preview now mirrors FourKEQUI and draws
+    // from the calibrated helpers above, so both legacy helpers are gone —
+    // keeping them would only leave a second, wrong model for a future reader
+    // to wire back up.
     static int   chooseFactor(double baseSampleRate, int mode) noexcept; // mode 0=1x,1=2x,2=4x
 
 private:
