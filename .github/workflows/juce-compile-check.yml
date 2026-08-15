@@ -50,9 +50,20 @@ on:
       - 'plugins/chord-analyzer/**'
       - 'plugins/spectrum-analyzer/**'
       - 'plugins/groovemind/**'
-      # A root CMake change can break every plugin at once.
+      # A root CMake change can break every plugin at once, and so can the
+      # shared modules it includes: GlobalSettings, JuceDefaults and
+      # ClapDefaults set fleet-wide flags and compile definitions, and
+      # PluginVersion is included by every plugin's own CMakeLists.
       - 'CMakeLists.txt'
+      - 'cmake/**'
       - '.github/workflows/juce-compile-check.yml'
+      # Subtract the DPF trees again. Several plugins above are wildcarded at
+      # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/dpf-plugin/**'
+      # too, so without these a DPF-only PR would fire all twelve JUCE jobs and
+      # dpf-build.yml would build it a second time. Negations must come LAST:
+      # GitHub applies the patterns in order and the final match wins.
+      - '!plugins/*/dpf-plugin/**'
+      - '!plugins/*/core/**'
   workflow_dispatch:
 
 # A PR that gets pushed twice should not run two fleets. Never applied to
