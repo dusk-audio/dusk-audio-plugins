@@ -220,7 +220,15 @@ jobs:
       - name: Verify a binary came out
         shell: bash
         run: |
-          found=$(find build -name '*.vst3' -path '*Release*' -print -quit)
+          # Match the bundle STRUCTURE, not a path substring. The first version
+          # of this looked for '*.vst3' under a '*Release*' path and failed on
+          # 4K EQ and Multi-Comp, whose bundles are relocated to build/bin/VST3
+          # while Chord Analyzer's and Spectrum Analyzer's stay in
+          # <plugin>_artefacts/Release/VST3. Both had compiled perfectly; only
+          # the check was wrong. This also matches the actual DLL inside the
+          # bundle rather than the bundle directory, which is what the Linux job
+          # does and is the stricter test.
+          found=$(find build -path '*.vst3/Contents/x86_64-win/*.vst3' -print -quit)
           if [ -z "$found" ]; then
             echo "::error::${{ matrix.plugin }}_VST3 built without producing a VST3 binary"
             exit 1
