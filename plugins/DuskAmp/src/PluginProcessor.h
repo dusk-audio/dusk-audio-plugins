@@ -3,6 +3,7 @@
 #pragma once
 
 #include "dsp/DuskAmpEngine.h"
+#include "CrashLog.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -18,6 +19,14 @@ namespace DuskAmpStateFormat
 
 class DuskAmpProcessor : public juce::AudioProcessor
 {
+    // FIRST member, deliberately ahead of the public section. Members are
+    // constructed in declaration order, so this arms the crash handler before
+    // anything else in the class is built (a fault inside createParameterLayout
+    // or the engine is then logged) and tears it down only after they are gone.
+    // It sat below the public `parameters` APVTS at first, which inverted both
+    // halves of that.
+    DuskCrashLog::ScopedRegistration crashLog_ { "DuskAmp", JucePlugin_VersionString };
+
 public:
     DuskAmpProcessor();
     ~DuskAmpProcessor() override = default;

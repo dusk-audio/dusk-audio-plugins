@@ -196,9 +196,8 @@ DuskAmpProcessor::DuskAmpProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, juce::Identifier ("DuskAmp"), createParameterLayout())
 {
-    // Register with the shared crash-log handler so any segfault/illegal-instr
-    // dumps a stack trace + plugin info to ~/Library/Application Support/Dusk Audio/crash.log.
-    DuskCrashLog::install ("DuskAmp", JucePlugin_VersionString);
+    // Crash-log registration is now the crashLog_ member declared in the header,
+    // so install() is paired with an uninstall() on teardown.
 
     // Discrete / choice params
     ampModeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_MODE);
