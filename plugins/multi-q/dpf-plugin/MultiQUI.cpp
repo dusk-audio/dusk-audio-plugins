@@ -29,6 +29,7 @@
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "PatreonBackersDpf.hpp"
+#include "util/CrashLog.hpp"
 
 #include <cmath>
 #include <complex>
@@ -3355,11 +3356,26 @@ private:
             for (const char* nm : tier.names) { ctext(y, 15.f, IM_COL32(220, 220, 216, 255), nm, false); y += LN; }
             y += GAP;
         }
-        ctext(c1.y - 24.f * s, 11.f, IM_COL32(140, 142, 148, 255), "click anywhere to close", false);
+        static const char* const actionLabel = "Open crash log folder";
+        ImFont* const actionFont = panel.pickFont(12.f * s);
+        const ImVec2 actionSize = actionFont->CalcTextSizeA(12.f * s, FLT_MAX, 0.f, actionLabel);
+        const ImVec2 actionPos(cc.x - 0.5f * actionSize.x, c1.y - 49.f * s);
+        ImGui::SetCursorScreenPos(ImVec2(actionPos.x - 5.f * s, actionPos.y - 3.f * s));
+        const bool actionClicked = ImGui::InvisibleButton(
+            "##creditsCrashLog", ImVec2(actionSize.x + 10.f * s, actionSize.y + 6.f * s));
+        const ImU32 actionColor = ImGui::IsItemHovered() ? IM_COL32(218, 178, 126, 255)
+                                                         : IM_COL32(184, 144, 96, 255);
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        dl->AddText(actionFont, 12.f * s, actionPos, actionColor, actionLabel);
+        dl->AddLine(ImVec2(actionPos.x, actionPos.y + actionSize.y + 1.f * s),
+                    ImVec2(actionPos.x + actionSize.x, actionPos.y + actionSize.y + 1.f * s),
+                    actionColor, 1.f * s);
+        ctext(c1.y - 22.f * s, 11.f, IM_COL32(140, 142, 148, 255), "click anywhere else to close", false);
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showCredits = false;
+        if (actionClicked) DuskCrashLog::openLogFolder();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showCredits = false;
         else if (!creditsArmed) { if (!ImGui::IsMouseDown(0)) creditsArmed = true; }
-        else if (ImGui::IsMouseClicked(0)) showCredits = false;
+        else if (ImGui::IsMouseReleased(0) && !ImGui::IsAnyItemActive()) showCredits = false;
     }
 
     void drawGraph(ImDrawList* dl)

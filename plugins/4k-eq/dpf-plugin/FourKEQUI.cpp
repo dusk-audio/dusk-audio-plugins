@@ -23,6 +23,7 @@
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp" // shared DPF Patreon "Special Thanks" overlay
+#include "util/CrashLog.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -100,6 +101,8 @@ public:
     FourKEQUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
     {
+        supportersOverlay.setActionLink("Open crash log folder",
+                                        [] { DuskCrashLog::openLogFolder(); });
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kDefault(i);
         // No hard aspect lock: the Hide Graph toggle changes the window aspect
@@ -213,7 +216,7 @@ protected:
         if (showSupporters)
             duskdpf::drawSupportersOverlay(
                 panel, dl, kDesignW, designH, showSupporters, "4K EQ 2",
-                FOURKEQ2_VERSION_STRING);
+                FOURKEQ2_VERSION_STRING, &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race (over
         // the credits card too) and paints over everything.
@@ -1862,6 +1865,7 @@ private:
     }
 
     duskdpf::DuskPanel panel;
+    duskdpf::SupportersOverlay supportersOverlay;
     duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::RealFFT fft;
     std::vector<float> specDb;

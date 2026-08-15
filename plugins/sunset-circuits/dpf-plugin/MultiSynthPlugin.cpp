@@ -13,22 +13,11 @@
 #include "MultiSynthAccess.hpp"
 #include "MultiSynthDSP.hpp"
 #include "MultiSynthParams.hpp"
+#include "SunsetVersion.hpp"
+#include "util/CrashLog.hpp"
 
 #include <atomic>
 #include <cstring>
-
-// Version is injected by CMake (SC_VERSION_* compile defs from project(VERSION),
-// which is single-sourced through get_plugin_version). These fallbacks only apply
-// to an ad-hoc compile with no build definitions and keep getVersion() valid.
-#ifndef SC_VERSION_MAJOR
- #define SC_VERSION_MAJOR 1
-#endif
-#ifndef SC_VERSION_MINOR
- #define SC_VERSION_MINOR 0
-#endif
-#ifndef SC_VERSION_PATCH
- #define SC_VERSION_PATCH 0
-#endif
 
 START_NAMESPACE_DISTRHO
 
@@ -152,6 +141,8 @@ static bool detectBbtBeatIsQuarterNote() noexcept
 
 class MultiSynthPlugin : public Plugin
 {
+    DuskCrashLog::ScopedRegistration crashLog_ { "Sunset Circuits", SC_VERSION_STRING };
+
 public:
     MultiSynthPlugin()
         : Plugin(kParamCount, kNumFactoryPresets, 0)

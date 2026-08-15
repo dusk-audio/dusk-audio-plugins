@@ -10,11 +10,14 @@
 #include "FourKEQParams.hpp"
 #include "FourKEQPresetRuntime.hpp"
 #include "FourKEQVersion.hpp"
+#include "util/CrashLog.hpp"
 
 START_NAMESPACE_DISTRHO
 
 class FourKEQPlugin : public Plugin
 {
+    DuskCrashLog::ScopedRegistration crashLog_ { "4K EQ 2", FOURKEQ2_VERSION_STRING };
+
 public:
     FourKEQPlugin()
         : Plugin(kParamCount, kNumFactoryPresets, 0)

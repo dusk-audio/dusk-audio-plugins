@@ -5,6 +5,7 @@
 #include "TapeEchoDSP.hpp"
 #include "TapeEchoParams.hpp"
 #include "TapeEchoVersion.hpp"
+#include "util/CrashLog.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -14,6 +15,8 @@ START_NAMESPACE_DISTRHO
 
 class TapeEchoPlugin : public Plugin
 {
+    DuskCrashLog::ScopedRegistration crashLog_ { "Tape Echo 2", TE2_VERSION_STRING };
+
 public:
     TapeEchoPlugin()
         : Plugin(kParamCount, kNumFactoryPresets, 0)
