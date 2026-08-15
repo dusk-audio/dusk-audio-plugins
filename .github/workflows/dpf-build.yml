@@ -434,15 +434,12 @@ jobs:
           fi
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
-          tar -czf "${STAGE}.tar.gz" "${STAGE}"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.plugin.asset }}-linux
-          path: |
-            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux.zip
-            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux.tar.gz
+          path: ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -573,15 +570,12 @@ jobs:
           fi
           echo "=== staged ==="; find "${STAGE}" -maxdepth 2
           zip -r "${STAGE}.zip" "${STAGE}"
-          tar -czf "${STAGE}.tar.gz" "${STAGE}"
 
       - name: Upload Linux ARM64 artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.plugin.asset }}-linux-arm64
-          path: |
-            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.zip
-            ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.tar.gz
+          path: ${{ env.PLUGIN_DIR }}/${{ matrix.plugin.asset }}-linux-arm64.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -1013,23 +1007,25 @@ jobs:
             fi
           } > release_body.md
           echo "=== collected artifacts ==="
-          find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \)
+          find dist -type f -name '*.zip'
           # Hash by published asset basename (Publish Release uploads dist/**/*.zip
           # flattened to basenames), not by the dist/<artifact-dir>/… path, so
           # SHA256SUMS entries match the actual release asset filenames. Basenames
           # are unique: a release tag builds a single plugin.
           : > dist/SHA256SUMS
-          find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 \
+          find dist -type f -name '*.zip' -print0 \
             | sort -z | while IFS= read -r -d '' f; do
                 ( cd "$(dirname "$f")" && shasum -a 256 "$(basename "$f")" )
               done >> dist/SHA256SUMS
+          if [ "$(wc -l < dist/SHA256SUMS)" -ne 4 ]; then
+            echo "::error::Expected checksums for four ZIP assets"; exit 1
+          fi
 
       - name: Publish Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 (Node 24)
         with:
           files: |
             dist/**/*.zip
-            dist/**/*.tar.gz
             dist/SHA256SUMS
           generate_release_notes: true
           body_path: release_body.md
