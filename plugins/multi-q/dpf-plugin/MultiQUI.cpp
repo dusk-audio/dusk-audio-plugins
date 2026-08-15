@@ -293,6 +293,8 @@ protected:
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(30, 30, 33, 255)); // chassis fills window
+        const bool helpOverlayWasOpen = showHelpOverlay_;
+        const bool creditsWasOpen = showCredits;
 
         if (british)
         {
@@ -337,7 +339,7 @@ protected:
         }
 
         if (showCredits)
-            drawCredits(dl, winW, winH);
+            drawCredits(dl, winW, winH, helpOverlayWasOpen || !creditsWasOpen);
 
         // Keyboard shortcuts (parity with JUCE MultiQEditor::keyPressed) + the
         // '?' help overlay. Handled last so it sees this frame's mode/selection.
@@ -679,7 +681,13 @@ private:
             ImGui::SetCursorScreenPos(t0);
             ImGui::InvisibleButton("titlecredits", ImVec2(t1.x - t0.x, t1.y - t0.y));
             if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked()) { showCredits = true; creditsArmed = false; }
+            if (ImGui::IsItemClicked())
+            {
+                showCredits = true;
+                creditsArmed = false;
+                creditsActionPressOwned = false;
+                creditsScroll = 0.f;
+            }
         }
         // "Dusk Audio" — small gray, top-right corner of the title band (JUCE y=32).
         panel.text(dl, kDesignW - 15, 34, 10.f, IM_COL32(96, 96, 96, 255), brand, 1);
@@ -3316,17 +3324,24 @@ private:
         }
     }
 
-    void drawCredits(ImDrawList* dl, float winW, float winH)
+    void drawCredits(ImDrawList* dl, float winW, float winH, bool blockAction)
     {
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(0, 0, 0, 205));
 
         const float s = sc();
+        constexpr std::size_t nameColumns = 3;
         const float LN = 21.f * s, LH = 26.f * s, GAP = 12.f * s;
-        const float titleH = 40.f * s, subH = 30.f * s, footH = 34.f * s, padY = 30.f * s;
+        const float titleH = 40.f * s, subH = 30.f * s, footH = 62.f * s, padY = 30.f * s;
         const auto& tiers = duskdpf::patreonTiers();
-        float contentH = titleH + subH + footH;
+        const auto rowsFor = [&](std::size_t count) {
+            return (count + nameColumns - 1) / nameColumns;
+        };
+        float tierContentH = 0.f;
         for (const auto& t : tiers)
-            if (!t.names.empty()) contentH += LH + (float)t.names.size() * LN + GAP;
+            if (!t.names.empty())
+                tierContentH += LH + (float)rowsFor(t.names.size()) * LN + GAP;
+        float contentH = titleH + subH + footH;
+        contentH += tierContentH;
 
         const float cardW = 480.f * s;
         float cardH = contentH + 2.f * padY;
@@ -3336,36 +3351,96 @@ private:
         dl->AddRectFilled(c0, c1, IM_COL32(26, 27, 30, 255), 8.f * s);
         dl->AddRect(c0, c1, IM_COL32(90, 92, 98, 255), 8.f * s, 0, 1.5f * s);
 
-        auto ctext = [&](float yPx, float sz, ImU32 col, const char* txt, bool bold) {
-            const float fsz = sz * s;
+        auto textAt = [&](float xCenter, float yPx, float sz, ImU32 col,
+                          const char* txt, bool bold, float fitWidth) {
+            float fsz = sz * s;
             ImFont* f = panel.pickFont(fsz);
-            const ImVec2 ts = f->CalcTextSizeA(fsz, FLT_MAX, 0.f, txt);
-            const float px = std::floor(cc.x - ts.x * 0.5f + 0.5f), py = std::floor(yPx + 0.5f);
+            ImVec2 ts = f->CalcTextSizeA(fsz, FLT_MAX, 0.f, txt);
+            for (int pass = 0; fitWidth > 0.f && ts.x > fitWidth && pass < 4; ++pass)
+            {
+                fsz *= 0.995f * fitWidth / ts.x;
+                f = panel.pickFont(fsz);
+                ts = f->CalcTextSizeA(fsz, FLT_MAX, 0.f, txt);
+            }
+            const float px = std::floor(xCenter - ts.x * 0.5f + 0.5f), py = std::floor(yPx + 0.5f);
             dl->AddText(f, fsz, ImVec2(px, py), col, txt);
             (void)bold;
+        };
+        auto ctext = [&](float yPx, float sz, ImU32 col, const char* txt, bool bold) {
+            textAt(cc.x, yPx, sz, col, txt, bold, 0.f);
         };
 
         float y = c0.y + padY;
         ctext(y, 24.f, IM_COL32(238, 236, 228, 255), "SUPPORTERS", true); y += titleH;
         ctext(y, 13.f, IM_COL32(160, 162, 166, 255), "Thank you to our Patreon supporters", false); y += subH;
 
+        const float listTop = y;
+        const float listBottom = c1.y - footH;
+        const float visibleListH = std::max(0.f, listBottom - listTop);
+        const float maxScroll = std::max(0.f, tierContentH + padY - visibleListH);
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const bool mouseOverList = mouse.x >= c0.x && mouse.x < c1.x
+                                && mouse.y >= listTop && mouse.y < listBottom;
+        if (!blockAction && mouseOverList && ImGui::GetIO().MouseWheel != 0.f)
+            creditsScroll -= ImGui::GetIO().MouseWheel * 42.f * s;
+        creditsScroll = std::max(0.f, std::min(creditsScroll, maxScroll));
+        y -= creditsScroll;
+        dl->PushClipRect(ImVec2(c0.x, listTop), ImVec2(c1.x, listBottom), true);
+
         for (const auto& tier : tiers)
         {
             if (tier.names.empty()) continue;
             ctext(y, 15.f, IM_COL32(150, 172, 214, 255), tier.title, true); y += LH;
-            for (const char* nm : tier.names) { ctext(y, 15.f, IM_COL32(220, 220, 216, 255), nm, false); y += LN; }
+            const float namesLeft = c0.x + 18.f * s;
+            const float columnWidth = (cardW - 36.f * s) / (float)nameColumns;
+            for (std::size_t i = 0; i < tier.names.size(); ++i)
+            {
+                const float columnCenter = namesLeft + ((float)(i % nameColumns) + 0.5f) * columnWidth;
+                const float rowY = y + (float)(i / nameColumns) * LN;
+                textAt(columnCenter, rowY, 15.f, IM_COL32(220, 220, 216, 255),
+                       tier.names[i], false, columnWidth - 8.f * s);
+            }
+            y += (float)rowsFor(tier.names.size()) * LN;
             y += GAP;
+        }
+        dl->PopClipRect();
+        if (maxScroll > 0.f)
+        {
+            const float trackTop = listTop + 4.f * s;
+            const float trackBottom = listBottom - 4.f * s;
+            const float trackH = trackBottom - trackTop;
+            const float thumbH = std::max(24.f * s,
+                trackH * visibleListH / (tierContentH + padY));
+            const float thumbY = trackTop + (trackH - thumbH) * creditsScroll / maxScroll;
+            const float scrollX = c1.x - 7.f * s;
+            dl->AddRectFilled(ImVec2(scrollX, trackTop), ImVec2(scrollX + 2.f * s, trackBottom),
+                              IM_COL32(70, 72, 78, 180), 1.f * s);
+            dl->AddRectFilled(ImVec2(scrollX - 1.f * s, thumbY),
+                              ImVec2(scrollX + 3.f * s, thumbY + thumbH),
+                              IM_COL32(150, 152, 158, 220), 2.f * s);
         }
         static const char* const actionLabel = "Open crash log folder";
         ImFont* const actionFont = panel.pickFont(12.f * s);
         const ImVec2 actionSize = actionFont->CalcTextSizeA(12.f * s, FLT_MAX, 0.f, actionLabel);
         const ImVec2 actionPos(cc.x - 0.5f * actionSize.x, c1.y - 49.f * s);
-        ImGui::SetCursorScreenPos(ImVec2(actionPos.x - 5.f * s, actionPos.y - 3.f * s));
-        const bool actionClicked = ImGui::InvisibleButton(
-            "##creditsCrashLog", ImVec2(actionSize.x + 10.f * s, actionSize.y + 6.f * s));
-        const ImU32 actionColor = ImGui::IsItemHovered() ? IM_COL32(218, 178, 126, 255)
-                                                         : IM_COL32(184, 144, 96, 255);
-        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const ImVec2 actionHitMin(actionPos.x - 5.f * s, actionPos.y - 3.f * s);
+        const ImVec2 actionHitMax(actionHitMin.x + actionSize.x + 10.f * s,
+                                  actionHitMin.y + actionSize.y + 6.f * s);
+        const bool actionHovered = !blockAction
+                                && mouse.x >= actionHitMin.x && mouse.x < actionHitMax.x
+                                && mouse.y >= actionHitMin.y && mouse.y < actionHitMax.y;
+        const bool mouseReleased = ImGui::IsMouseReleased(0);
+        if (creditsActionPressOwned && !ImGui::IsMouseDown(0) && !mouseReleased)
+            creditsActionPressOwned = false;
+        if (actionHovered && ImGui::IsMouseClicked(0))
+            creditsActionPressOwned = true;
+        const bool actionPressOwned = creditsActionPressOwned;
+        const bool actionClicked = actionPressOwned && actionHovered && mouseReleased;
+        if (mouseReleased)
+            creditsActionPressOwned = false;
+        const ImU32 actionColor = actionHovered ? IM_COL32(218, 178, 126, 255)
+                                                : IM_COL32(184, 144, 96, 255);
+        if (actionHovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         dl->AddText(actionFont, 12.f * s, actionPos, actionColor, actionLabel);
         dl->AddLine(ImVec2(actionPos.x, actionPos.y + actionSize.y + 1.f * s),
                     ImVec2(actionPos.x + actionSize.x, actionPos.y + actionSize.y + 1.f * s),
@@ -3373,9 +3448,15 @@ private:
         ctext(c1.y - 22.f * s, 11.f, IM_COL32(140, 142, 148, 255), "click anywhere else to close", false);
 
         if (actionClicked) DuskCrashLog::openLogFolder();
-        else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showCredits = false;
+        else if (!blockAction && ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            showCredits = false;
+            creditsActionPressOwned = false;
+        }
         else if (!creditsArmed) { if (!ImGui::IsMouseDown(0)) creditsArmed = true; }
-        else if (ImGui::IsMouseReleased(0) && !ImGui::IsAnyItemActive()) showCredits = false;
+        else if (!blockAction && mouseReleased && !mouseOverList
+                 && !actionPressOwned && !actionHovered && !ImGui::IsAnyItemActive())
+            showCredits = false;
     }
 
     void drawGraph(ImDrawList* dl)
@@ -4135,6 +4216,8 @@ private:
     bool showGraph = true;
     bool showCredits = false;
     bool creditsArmed = false;
+    bool creditsActionPressOwned = false;
+    float creditsScroll = 0.f;
     bool presetOpen = false;
     bool showFft = true;
     int  graphRangeIdx = 2;

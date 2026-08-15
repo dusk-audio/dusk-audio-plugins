@@ -246,16 +246,33 @@ const char* modulePath(const char* name)
 
 bool testHostHandlerStillRuns(bool mutant)
 {
-    gHostCalls = 0;
-    setSimpleHandler(SIGABRT, &hostHandler);
-    DuskCrashLog::install("host-chain", "1");
-    if (mutant)
-        DuskCrashLog::detail::previousActions()[DuskCrashLog::detail::signalSlot(SIGABRT)].sa_handler = SIG_DFL;
-    ::raise(SIGABRT);
-    DuskCrashLog::uninstall("host-chain", "1");
-    return expect(gHostCalls.load() == 1, "the pre-existing host handler ran exactly once")
-        && expect(readFile(DuskCrashLog::getLogFile()).find("host-chain v1") != std::string::npos,
-                  "the Dusk handler logged before chaining");
+    const pid_t child = ::fork();
+    if (child == 0)
+    {
+        gHostCalls = 0;
+        setSimpleHandler(SIGABRT, &hostHandler);
+        DuskCrashLog::install("host-chain", "1");
+        if (mutant)
+            DuskCrashLog::detail::previousActions()[DuskCrashLog::detail::signalSlot(SIGABRT)].sa_handler = SIG_DFL;
+        ::raise(SIGABRT);
+        DuskCrashLog::uninstall("host-chain", "1");
+        ::_exit(gHostCalls.load() == 1 ? 0 : 96);
+    }
+    if (child < 0)
+        return expect(false, "host-handler probe forked");
+
+    const ChildResult result = waitForChild(child, 2000);
+    bool ok = expect(!result.timedOut, "host-handler probe completed");
+    if (!result.timedOut && WIFSIGNALED(result.status))
+        ok = expect(false, "a broken chain terminated at the default signal disposition") && ok;
+    else if (!result.timedOut && WIFEXITED(result.status) && WEXITSTATUS(result.status) == 96)
+        ok = expect(false, "the pre-existing host handler ran zero or multiple times") && ok;
+    else if (!result.timedOut)
+        ok = expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "host-handler child returned its success status") && ok;
+    ok = expect(readFile(DuskCrashLog::getLogFile()).find("host-chain v1") != std::string::npos,
+                "the Dusk handler logged before chaining") && ok;
+    return ok;
 }
 
 bool testNoSigkill(bool mutant)
@@ -395,12 +412,24 @@ bool testSigIgnBoundedNoSpin(bool mutant)
     std::cout << "MEASURE\tsig-ign-bounded-no-spin\telapsed-ms=" << elapsedMs
               << "\tlog-bytes=" << (ec ? 0 : bytes)
               << "\trecords=" << countText(log, "Dusk Audio crash log") << '\n';
-    return expect(!result.timedOut, "non-resumable SIG_IGN did not spin")
-        && expect(WIFSIGNALED(result.status) && WTERMSIG(result.status) == SIGSEGV,
-                  "non-resumable SIG_IGN fell through to SIG_DFL")
-        && expect(ec || bytes < 256 * 1024, "fault-loop output stayed bounded")
-        && expect(countText(log, "Dusk Audio crash log") <= 64,
-                  "the record cap was not exceeded");
+    DuskCrashLog::detail::recordsWritten().store(
+        DuskCrashLog::detail::kMaxRecordsPerProcess, std::memory_order_relaxed);
+    DuskCrashLog::detail::suppressionNoticeWritten().store(false, std::memory_order_relaxed);
+    const bool noticePending = DuskCrashLog::detail::reportWritePending();
+    const bool noticeClaimed = DuskCrashLog::detail::claimSuppressionNotice();
+    const bool writePendingAfterNotice = DuskCrashLog::detail::reportWritePending();
+    std::cout << "MEASURE\tsig-ign-bounded-no-spin\tnotice-pending=" << noticePending
+              << "\tnotice-claimed=" << noticeClaimed
+              << "\tpost-budget-write-pending=" << writePendingAfterNotice << '\n';
+    bool ok = expect(!result.timedOut, "non-resumable SIG_IGN did not spin");
+    ok = expect(WIFSIGNALED(result.status) && WTERMSIG(result.status) == SIGSEGV,
+                "non-resumable SIG_IGN fell through to SIG_DFL") && ok;
+    ok = expect(ec || bytes < 256 * 1024, "fault-loop output stayed bounded") && ok;
+    ok = expect(countText(log, "Dusk Audio crash log") <= 64,
+                "the record cap was not exceeded") && ok;
+    ok = expect(noticePending && noticeClaimed && !writePendingAfterNotice,
+                "the spent budget stops further open attempts after one notice") && ok;
+    return ok;
 }
 
 bool testConcurrentThreads(bool mutant)
@@ -514,6 +543,42 @@ bool testPartialUnlink(bool mutant)
     ok = expect(controlAfterClose == 0,
                 "fully unlinked DPF module unloads (control measurement)") && ok;
 
+    const std::string pinFailurePath = modulePath("CRASHLOG_TEST_MODULE_PIN_FAILURE");
+    ok = expect(mappedLines(pinFailurePath) == 0,
+                "forced-pin-failure module starts unmapped") && ok;
+    const pid_t warningChild = ::fork();
+    if (warningChild == 0)
+    {
+        setSimpleHandler(SIGABRT, &hostHandler);
+        Module pinFailure;
+        if (!pinFailure.open(pinFailurePath))
+            ::_exit(97);
+        pinFailure.install();
+        setSiginfoHandler(SIGABRT, &upperHandler, &gUpperPrevious);
+        pinFailure.uninstall();
+        pinFailure.install();
+        pinFailure.uninstall();
+        if (::sigaction(SIGABRT, &gUpperPrevious, nullptr) != 0)
+            ::_exit(98);
+        pinFailure.install();
+        pinFailure.uninstall();
+        pinFailure.close();
+        ::_exit(mappedLines(pinFailurePath) == 0 ? 0 : 99);
+    }
+    if (warningChild < 0)
+        return expect(false, "module-pin warning probe forked");
+
+    const ChildResult warningResult = waitForChild(warningChild, 2000);
+    ok = expect(!warningResult.timedOut, "module-pin warning probe completed") && ok;
+    if (!warningResult.timedOut)
+        ok = expect(WIFEXITED(warningResult.status) && WEXITSTATUS(warningResult.status) == 0,
+                    "forced pin failure warned twice, fully unlinked, and unloaded") && ok;
+    const std::string warning = "could not pin crash-handler module after partial unlink";
+    const std::size_t warningCount = countText(readFile(DuskCrashLog::getLogFile()), warning);
+    std::cout << "MEASURE\tpartial-unlink\tmodule-pin-warnings=" << warningCount << '\n';
+    ok = expect(warningCount == 1,
+                "two uninstall pin failures write one bounded warning") && ok;
+
     gHostCalls = 0;
     gUpperCalls = 0;
     setSimpleHandler(SIGABRT, &hostHandler);
@@ -572,6 +637,7 @@ bool testSiglongjmpRecovery(bool mutant)
 
 bool testFullRegistry(bool mutant)
 {
+    constexpr int lastSlot = DuskCrashLog::detail::kMaxPlugins - 1;
     const int count = mutant ? DuskCrashLog::detail::kMaxPlugins - 1
                              : DuskCrashLog::detail::kMaxPlugins;
     for (int i = 0; i < count; ++i)
@@ -583,8 +649,9 @@ bool testFullRegistry(bool mutant)
 
     bool ok = expect(DuskCrashLog::detail::entryCount().load() == DuskCrashLog::detail::kMaxPlugins,
                      "all fixed registry slots are usable")
-           && expect(std::string(DuskCrashLog::detail::entries()[15]) == "Registry 15 v1",
-                     "the sixteenth registry entry is complete");
+           && expect(std::string(DuskCrashLog::detail::entries()[lastSlot])
+                         == "Registry " + std::to_string(lastSlot) + " v1",
+                     "the final registry entry is complete");
 
     const std::filesystem::path report = DuskCrashLog::getLogFolder() / "full-registry.txt";
     const int fd = ::open(report.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);

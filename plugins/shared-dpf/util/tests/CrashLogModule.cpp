@@ -19,6 +19,13 @@
  #define CRASHLOG_TEST_EXPORT __attribute__((visibility("default")))
 #endif
 
+#if defined(CRASHLOG_TEST_WRAP_DLADDR)
+extern "C" int __wrap_dladdr(const void*, Dl_info*)
+{
+    return 0;
+}
+#endif
+
 extern "C" CRASHLOG_TEST_EXPORT void crashlog_module_install()
 {
     DuskCrashLog::install(CRASHLOG_MODULE_NAME, CRASHLOG_MODULE_VERSION);

@@ -319,7 +319,11 @@ private:
         ImGui::InvisibleButton("titlecredits",
                                ImVec2((kPlateX1 - kPlateX0) * sc(), (kPlateY1 - kPlateY0) * sc()));
         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (ImGui::IsItemClicked()) showSupporters = true;
+        if (ImGui::IsItemClicked())
+        {
+            supportersOverlay.resetInteraction();
+            showSupporters = true;
+        }
 
         panel.text(dl, 878, 14, 20, pal().white, "DUSK AUDIO", 0, true);
 

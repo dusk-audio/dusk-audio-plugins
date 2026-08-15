@@ -42,11 +42,11 @@ DSO_COMMON=( "${COMMON[@]}" -fPIC -fvisibility=hidden -fno-gnu-unique -shared )
 # Real source mutant for the DPF-only unload hazard: retain the partial-unlink
 # policy but remove the module pin. The probe must see the .so disappear.
 cp "$UTIL_DIR/CrashLog.hpp" "$BUILD_DIR/mutant-no-pin/CrashLog.hpp"
-perl -0pi -e 's/else\n\s*\(void\) detail::pinContainingModule\(\);/else\n            (void) 0;/' \
+perl -0pi -e 's/else if \(! detail::pinContainingModule\(\)\)/else if (true)/' \
     "$BUILD_DIR/mutant-no-pin/CrashLog.hpp"
-if grep -Fq '(void) detail::pinContainingModule();' \
+if grep -Fq 'else if (! detail::pinContainingModule())' \
        "$BUILD_DIR/mutant-no-pin/CrashLog.hpp" \
-   || ! grep -Fq '(void) 0;' "$BUILD_DIR/mutant-no-pin/CrashLog.hpp"; then
+   || ! grep -Fq 'else if (true)' "$BUILD_DIR/mutant-no-pin/CrashLog.hpp"; then
     echo "failed to create no-pin mutant" >&2
     exit 2
 fi
@@ -55,12 +55,22 @@ fi
     -DCRASHLOG_MODULE_VERSION='"1.0.0"' \
     "$SCRIPT_DIR/CrashLogModule.cpp" -ldl -o "$BUILD_DIR/libcrashlog_no_pin.so"
 
+# GNU ld redirects this test DSO's dladdr reference to a wrapper that fails.
+# The production header is unchanged and no release-visible bypass exists.
+"$CXX" "${DSO_COMMON[@]}" -I"$UTIL_DIR" \
+    -DCRASHLOG_TEST_WRAP_DLADDR \
+    -DCRASHLOG_MODULE_NAME='"Pin Failure Module"' \
+    -DCRASHLOG_MODULE_VERSION='"1.0.0"' \
+    "$SCRIPT_DIR/CrashLogModule.cpp" -Wl,--wrap=dladdr -ldl \
+    -o "$BUILD_DIR/libcrashlog_pin_failure.so"
+
 "$CXX" "${COMMON[@]}" "$SCRIPT_DIR/CrashLogProbe.cpp" -ldl \
     -o "$BUILD_DIR/crashlog_probe"
 
 export CRASHLOG_TEST_MODULE_A="$BUILD_DIR/libcrashlog_a.so"
 export CRASHLOG_TEST_MODULE_B="$BUILD_DIR/libcrashlog_b.so"
 export CRASHLOG_TEST_MODULE_NO_PIN="$BUILD_DIR/libcrashlog_no_pin.so"
+export CRASHLOG_TEST_MODULE_PIN_FAILURE="$BUILD_DIR/libcrashlog_pin_failure.so"
 
 CASES=(
     host-handler-still-runs
@@ -96,6 +106,10 @@ declare -A MUTATION=(
     [scoped]="leak the scoped registration instead of destroying it"
 )
 
+# Every defect is translated by the probe into a failed assertion (status 1),
+# including fatal-signal mutants run in a child process. Any other status,
+# including setup failure 2 or timeout 124, is inconclusive.
+
 CORRECT_LOG="$BUILD_DIR/correct.tsv"
 MUTANT_LOG="$BUILD_DIR/mutants.tsv"
 : > "$CORRECT_LOG"
@@ -103,6 +117,7 @@ MUTANT_LOG="$BUILD_DIR/mutants.tsv"
 
 correct_passed=0
 mutants_rejected=0
+mutants_inconclusive=0
 
 for name in "${CASES[@]}"; do
     run_home=$(mktemp -d "$BUILD_DIR/runs/correct-${name}.XXXXXX")
@@ -125,13 +140,19 @@ for name in "${CASES[@]}"; do
         printf 'mutant SURVIVED\t%s\n' "$name"
     else
         status=$?
-        ((mutants_rejected += 1))
-        printf 'mutant REJECTED\t%s\tstatus=%s\n' "$name" "$status"
+        if (( status == 1 )); then
+            ((mutants_rejected += 1))
+            printf 'mutant REJECTED\t%s\tstatus=%s\n' "$name" "$status"
+        else
+            ((mutants_inconclusive += 1))
+            printf 'mutant INCONCLUSIVE\t%s\tstatus=%s\texpected=1\n' "$name" "$status"
+        fi
     fi
 done
 
-printf 'SUMMARY\tcorrect=%d/%d\tmutants-rejected=%d/%d\n' \
-    "$correct_passed" "${#CASES[@]}" "$mutants_rejected" "${#CASES[@]}"
+printf 'SUMMARY\tcorrect=%d/%d\tmutants-rejected=%d/%d\tmutants-inconclusive=%d\n' \
+    "$correct_passed" "${#CASES[@]}" "$mutants_rejected" "${#CASES[@]}" \
+    "$mutants_inconclusive"
 
 if (( correct_passed != ${#CASES[@]} || mutants_rejected != ${#CASES[@]} )); then
     echo "correct log: $CORRECT_LOG" >&2

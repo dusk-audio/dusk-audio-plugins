@@ -515,7 +515,10 @@ private:
         // JUCE plugins' click-title-to-see-supporters behaviour). Input-only; the visuals above stay.
         ImGui::SetCursorScreenPos(P(30, 12));
         if (ImGui::InvisibleButton("##titlecredits", ImVec2(217.0f * s, 28.0f * s)))
+        {
+            supportersOverlay.resetInteraction();
             showSupporters = true;
+        }
 
         // preset browser, centred between the title and the (right-anchored) bypass:
         //   < [combo] >  INIT  SAVE          (all on the 18..38 band)
