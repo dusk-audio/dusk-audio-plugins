@@ -17,6 +17,7 @@
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"   // shared DPF Patreon "Special Thanks" overlay (click title)
+#include "util/CrashLog.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -101,6 +102,9 @@ public:
         pal.whiteDim = IM_COL32(70, 68, 64, 255);   // darker than kColInkDim so knob readouts stay legible on the gray panel
         panel.setPalette(pal);
 
+        supportersOverlay.setActionLink("Open crash log folder",
+                                        [] { DuskCrashLog::openLogFolder(); });
+
         scanUserPresets();
     }
 
@@ -159,7 +163,8 @@ protected:
         if (showAdvanced) drawAdvanced(dl);
         if (showSupporters)
             duskdpf::drawSupportersOverlay(panel, dl, kDesignW, kDesignH, showSupporters,
-                                           "TapeMachine 2", TM2_VERSION_STRING);
+                                           "TapeMachine 2", TM2_VERSION_STRING,
+                                           &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race (over the
         // Advanced card and the supporters overlay alike) and paints over
@@ -1193,6 +1198,7 @@ private:
 
     //--- state -----------------------------------------------------------------
     duskdpf::DuskPanel panel;
+    duskdpf::SupportersOverlay supportersOverlay;
     duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;

@@ -14,6 +14,7 @@
 #include "DuskImGuiTextInput.hpp" // Windows host focus while typing values
 #include "DuskImGuiWidgets.hpp"   // shared DuskPanel: chrome knob, LED, text, value bubble
 #include "DuskSupportersOverlay.hpp" // shared DPF Patreon "Special Thanks" overlay
+#include "util/CrashLog.hpp"
 #include "TapeEchoFontRegular.inc"
 #include "TapeEchoFontSemiBold.inc"
 
@@ -115,6 +116,8 @@ public:
     TapeEchoUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
     {
+        supportersOverlay.setActionLink("Open crash log folder",
+                                        [] { DuskCrashLog::openLogFolder(); });
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kTeParams[i].def;
         setGeometryConstraints((uint32_t)kDesignW, (uint32_t)kDesignH, true);
@@ -274,7 +277,7 @@ protected:
         if (showSupporters)
             duskdpf::drawSupportersOverlay(
                 panel, dl, kDesignW, kDesignH, showSupporters, "Tape Echo 2",
-                TE2_VERSION_STRING);
+                TE2_VERSION_STRING, &supportersOverlay);
 
         // Own resize grip, submitted LAST so it wins ImGui's hover race and
         // paints over everything. AUv2 hosts (Logic) never provide a window
@@ -1777,6 +1780,7 @@ private:
     };
 
     duskdpf::DuskPanel panel;
+    duskdpf::SupportersOverlay supportersOverlay;
     duskdpf::DuskImGuiTextInputFocus textInputFocus;
     duskdpf::CrispFontSet labelFonts;
     duskdpf::CrispFontSet regularFonts;

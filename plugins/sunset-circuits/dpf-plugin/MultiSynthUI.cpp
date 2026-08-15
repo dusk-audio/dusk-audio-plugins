@@ -25,6 +25,8 @@
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
+#include "SunsetVersion.hpp"
+#include "util/CrashLog.hpp"
 
 #include <cfloat>
 #include <cmath>
@@ -33,12 +35,6 @@
 #include <cstring>
 #include <algorithm>
 #include <chrono>
-
-// Single-sourced from CMake project(VERSION) via SC_VERSION_STRING; fallback keeps
-// an ad-hoc compile (no build defs) valid. Shown in the nameplate hover tooltip.
-#ifndef SC_VERSION_STRING
- #define SC_VERSION_STRING "1.0.0"
-#endif
 
 START_NAMESPACE_DISTRHO
 
@@ -1243,6 +1239,8 @@ private:
             const ImVec2 np0 = P(14, 4), np1 = P(blockX1 + 6.0f, 50);
             ImGui::SetCursorScreenPos(np0);
             ImGui::InvisibleButton("nameplate", ImVec2(np1.x - np0.x, np1.y - np0.y));
+            if (ImGui::IsItemClicked())
+                DuskCrashLog::openLogFolder();
             // Full version (single-sourced from the git tag through CMake's
             // SC_VERSION_STRING, so it IS the build identity) plus the live
             // surface size and scale, which is the one other thing worth asking
@@ -1250,7 +1248,7 @@ private:
             // would make every rebuild a different binary and cost the release
             // builds their reproducibility for a line nobody can act on.
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-                ImGui::SetTooltip("Sunset Circuits v%s\nDusk Audio\n%d x %d \xC2\xB7 scale %.2f",
+                ImGui::SetTooltip("Sunset Circuits v%s\nDusk Audio\n%d x %d \xC2\xB7 scale %.2f\nClick to open crash log folder",
                                   SC_VERSION_STRING, (int)getWidth(), (int)getHeight(), s);
         }
 

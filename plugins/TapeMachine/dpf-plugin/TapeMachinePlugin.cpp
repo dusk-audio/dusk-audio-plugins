@@ -10,6 +10,7 @@
 #include "TapeMachinePresets.hpp"
 #include "TapeMachineVersion.hpp"
 #include "TapeMachineDSP.hpp"
+#include "util/CrashLog.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -18,6 +19,8 @@ START_NAMESPACE_DISTRHO
 
 class TapeMachinePlugin : public Plugin
 {
+    DuskCrashLog::ScopedRegistration crashLog_ { "TapeMachine 2", TM2_VERSION_STRING };
+
 public:
     TapeMachinePlugin()
         : Plugin(kParamCount, kNumTmPresets, 0)

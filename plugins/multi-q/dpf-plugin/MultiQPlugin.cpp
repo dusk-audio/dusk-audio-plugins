@@ -12,7 +12,9 @@
 #include "MultiQAccess.hpp"
 #include "MultiQParams.hpp"
 #include "MultiQProgramPresets.hpp"  // Digital factory presets (host programs)
+#include "MultiQVersion.hpp"
 #include "MultiQDSP.hpp"
+#include "util/CrashLog.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -23,6 +25,8 @@ START_NAMESPACE_DISTRHO
 
 class MultiQPlugin : public Plugin
 {
+    DuskCrashLog::ScopedRegistration crashLog_ { "Multi-Q 2", MQ2_VERSION_STRING };
+
 public:
     MultiQPlugin()
         : Plugin(kParamCount,
@@ -110,7 +114,8 @@ protected:
     const char* getMaker() const override    { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
-    uint32_t    getVersion() const override  { return d_version(2, 0, 1); }
+    uint32_t    getVersion() const override
+    { return d_version(MQ2_VERSION_MAJOR, MQ2_VERSION_MINOR, MQ2_VERSION_PATCH); }
     int64_t     getUniqueId() const override { return d_cconst('D', 's', 'M', 'q'); } // DsMq
 
     //--- parameters ------------------------------------------------------------

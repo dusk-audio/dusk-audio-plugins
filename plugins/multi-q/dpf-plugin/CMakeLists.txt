@@ -38,6 +38,12 @@ target_include_directories(multi_q_2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../core"
     ${DUSK_DPF_INCLUDE_DIRS})
 
+# Single source of truth for host metadata and crash-log diagnostics.
+target_compile_definitions(multi_q_2 PUBLIC
+    MQ2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    MQ2_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    MQ2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
+
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DPF_INSTALL_LOCAL=OFF).
 dusk_dpf_install_local(multi_q_2 LV2_PROGRAMS)
