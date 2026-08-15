@@ -1238,8 +1238,9 @@ private:
         {
             const ImVec2 np0 = P(14, 4), np1 = P(blockX1 + 6.0f, 50);
             ImGui::SetCursorScreenPos(np0);
-            ImGui::InvisibleButton("nameplate", ImVec2(np1.x - np0.x, np1.y - np0.y));
-            if (ImGui::IsItemClicked())
+            const bool nameplateClicked =
+                ImGui::InvisibleButton("nameplate", ImVec2(np1.x - np0.x, np1.y - np0.y));
+            if (nameplateClicked)
                 DuskCrashLog::openLogFolder();
             // Full version (single-sourced from the git tag through CMake's
             // SC_VERSION_STRING, so it IS the build identity) plus the live

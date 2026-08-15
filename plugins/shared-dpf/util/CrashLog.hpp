@@ -67,9 +67,13 @@
 //   * The registry is per-BINARY, not per-process. Each plugin has its own copy
 //     of these statics, so each logs only itself. Chaining is what makes the
 //     multi-plugin case work: every chained handler appends its own entry.
+//     Entries are append-only because the handler reads them lock-free; after
+//     16 distinct name/version pairs in one binary, later pairs are omitted.
 //   * If another handler chained on top of ours after we installed, we cannot
 //     safely unlink from the middle of the chain, so uninstall leaves it alone.
-//     See uninstall() for why that beats forcing SIG_DFL.
+//     See uninstall() for why that beats forcing SIG_DFL. The module is pinned
+//     in this case, but if the OS refuses that pin we can only append a warning:
+//     a later unload can still leave the upper handler with a dangling pointer.
 //   * The timestamp is a raw unix epoch, because localtime_r and strftime are
 //     not async-signal-safe. Convert when reading: `date -d @<value>`.
 //   * At most kMaxRecordsPerProcess records are written per process, so a host
@@ -125,6 +129,9 @@
     #include <sys/types.h>
     #include <sys/wait.h>
     #include <unistd.h>
+    #if defined(__APPLE__)
+        #include <crt_externs.h>
+    #endif
     #if __has_include(<execinfo.h>)
         #define DUSK_CRASHLOG_HAS_EXECINFO 1
         #include <execinfo.h>
@@ -133,7 +140,7 @@
     #endif
 #endif
 
-#if ! DUSK_CRASHLOG_WINDOWS
+#if ! DUSK_CRASHLOG_WINDOWS && ! defined(__APPLE__)
 extern char** environ;
 #endif
 
@@ -407,6 +414,12 @@ namespace DuskCrashLog
             return instance;
         }
 
+        inline std::atomic<bool>& suppressionNoticeWritten()
+        {
+            static std::atomic<bool> instance { false };
+            return instance;
+        }
+
         // Claim a record slot, SATURATING at the cap. A bare fetch_add would
         // keep incrementing past it and eventually wrap negative at INT_MAX,
         // silently re-enabling logging: precisely in the recoverable-fault loop
@@ -429,11 +442,18 @@ namespace DuskCrashLog
         // every subsequent fault.
         inline bool claimSuppressionNotice() noexcept
         {
-            static std::atomic<bool> written { false };
             bool expected = false;
-            return written.compare_exchange_strong (expected, true,
-                                                    std::memory_order_relaxed,
-                                                    std::memory_order_relaxed);
+            return suppressionNoticeWritten().compare_exchange_strong (
+                expected, true, std::memory_order_relaxed, std::memory_order_relaxed);
+        }
+
+        // Avoid an open()/close() pair on every recovered fault after both the
+        // budget and its one-time notice have been consumed. The actual claim
+        // stays after a successful open, so failed opens still spend no budget.
+        inline bool reportWritePending() noexcept
+        {
+            return recordsWritten().load (std::memory_order_relaxed) < kMaxRecordsPerProcess
+                || ! suppressionNoticeWritten().load (std::memory_order_relaxed);
         }
 
         //--------------------------------------------------------------------
@@ -779,16 +799,19 @@ namespace DuskCrashLog
                 // O_APPEND keeps concurrent writers appending rather than
                 // overwriting each other. open/write/close are all on the
                 // async-signal-safe list.
-                const int fd = ::open (logPath(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-                if (fd >= 0)
+                if (reportWritePending())
                 {
-                    const bool haveBudget = claimRecordSlot();
-                    if (haveBudget)
-                        writeReport (fd, "signal: ", (long long) sig);
-                    else if (claimSuppressionNotice())
-                        writeStr (fd, "\n[Dusk Audio] record budget spent; "
-                                      "further crash records suppressed.\n");
-                    ::close (fd);
+                    const int fd = ::open (logPath(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+                    if (fd >= 0)
+                    {
+                        const bool haveBudget = claimRecordSlot();
+                        if (haveBudget)
+                            writeReport (fd, "signal: ", (long long) sig);
+                        else if (claimSuppressionNotice())
+                            writeStr (fd, "\n[Dusk Audio] record budget spent; "
+                                          "further crash records suppressed.\n");
+                        ::close (fd);
+                    }
                 }
 
                 // Released BEFORE chaining, deliberately, and this is a real
@@ -846,23 +869,26 @@ namespace DuskCrashLog
                 // CreateFileW, not CreateFileA: the A form interprets the path
                 // in the system ANSI code page, so a UTF-8 path from a profile
                 // with any non-ASCII character in the user name fails to open.
-                const HANDLE h = ::CreateFileW (logPathW(), FILE_APPEND_DATA,
-                                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (h != INVALID_HANDLE_VALUE)
+                if (reportWritePending())
                 {
-                    const bool haveBudget = claimRecordSlot();
-                    if (haveBudget)
+                    const HANDLE h = ::CreateFileW (logPathW(), FILE_APPEND_DATA,
+                                                    FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (h != INVALID_HANDLE_VALUE)
                     {
-                        const long long code = ep != nullptr && ep->ExceptionRecord != nullptr
-                                                 ? (long long) ep->ExceptionRecord->ExceptionCode
-                                                 : 0;
-                        writeReport (h, "exception code: ", code, true);
+                        const bool haveBudget = claimRecordSlot();
+                        if (haveBudget)
+                        {
+                            const long long code = ep != nullptr && ep->ExceptionRecord != nullptr
+                                                     ? (long long) ep->ExceptionRecord->ExceptionCode
+                                                     : 0;
+                            writeReport (h, "exception code: ", code, true);
+                        }
+                        else if (claimSuppressionNotice())
+                            writeStr (h, "\n[Dusk Audio] record budget spent; "
+                                         "further crash records suppressed.\n");
+                        ::CloseHandle (h);
                     }
-                    else if (claimSuppressionNotice())
-                        writeStr (h, "\n[Dusk Audio] record budget spent; "
-                                     "further crash records suppressed.\n");
-                    ::CloseHandle (h);
                 }
 
                 leaveHandler (me);
@@ -906,6 +932,38 @@ namespace DuskCrashLog
                 return false;
             pinned = ::dlopen (info.dli_fname, RTLD_NOW | RTLD_LOCAL);
             return pinned != nullptr; // deliberately never dlclose(): see above
+        #endif
+        }
+
+        inline void writeModulePinFailureNote() noexcept
+        {
+            // uninstall() calls this under installLock(). Retry after an open
+            // failure, but never append the warning more than once.
+            static bool written = false;
+            if (written)
+                return;
+
+            static constexpr const char message[] =
+                "\n[Dusk Audio] WARNING: could not pin crash-handler module after "
+                "partial unlink; a later unload can leave a dangling handler.\n";
+        #if DUSK_CRASHLOG_WINDOWS
+            const HANDLE h = ::CreateFileW (logPathW(), FILE_APPEND_DATA,
+                                            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                writeStr (h, message);
+                written = true;
+                ::CloseHandle (h);
+            }
+        #else
+            const int fd = ::open (logPath(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (fd >= 0)
+            {
+                writeStr (fd, message);
+                written = true;
+                ::close (fd);
+            }
         #endif
         }
     }
@@ -1131,8 +1189,8 @@ namespace DuskCrashLog
         // the failure this file exists to remove.
         if (fullyUnlinked)
             detail::handlerInstalled() = false;
-        else
-            (void) detail::pinContainingModule();
+        else if (! detail::pinContainingModule())
+            detail::writeModulePinFailureNote();
     }
 
     // Preferred over calling install()/uninstall() by hand: hold one as a member
@@ -1202,8 +1260,13 @@ namespace DuskCrashLog
             const_cast<char*> (path.c_str()),
             nullptr
         };
+      #if defined(__APPLE__)
+        char** const environment = *_NSGetEnviron();
+      #else
+        char** const environment = environ;
+      #endif
         pid_t child = -1;
-        if (::posix_spawn (&child, "/bin/sh", nullptr, nullptr, arguments, environ) == 0)
+        if (::posix_spawn (&child, "/bin/sh", nullptr, nullptr, arguments, environment) == 0)
         {
             int status = 0;
             while (::waitpid (child, &status, 0) < 0 && errno == EINTR) {}

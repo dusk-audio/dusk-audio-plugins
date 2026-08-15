@@ -629,7 +629,10 @@ private:
         if (ImGui::InvisibleButton(
                 "##titlecredits",
                 ImVec2((kPlateX1 - kPlateX0) * s, (kPlateY1 - kPlateY0) * s)))
+        {
+            supportersOverlay.resetInteraction();
             showSupporters = true;
+        }
 
         // Preset browser: < [combo] > INIT SAVE, all centred on the nameplate's
         // centre line. The band is 26 px, not the plate's full 30: these are solid

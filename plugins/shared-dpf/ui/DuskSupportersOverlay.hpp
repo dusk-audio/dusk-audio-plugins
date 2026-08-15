@@ -50,11 +50,20 @@ public:
     bool isDismissArmed() const noexcept { return dismissArmed; }
     void armDismiss() noexcept { dismissArmed = true; }
     void resetDismiss() noexcept { dismissArmed = false; }
+    bool ownsActionPress() const noexcept { return actionPressOwned; }
+    void ownActionPress() noexcept { actionPressOwned = true; }
+    void releaseActionPress() noexcept { actionPressOwned = false; }
+    void resetInteraction() noexcept
+    {
+        dismissArmed = false;
+        actionPressOwned = false;
+    }
 
 private:
     std::string actionLabel;
     std::function<void()> onActionClick;
     bool dismissArmed = false;
+    bool actionPressOwned = false;
 };
 
 // Per-tier accent colour, matched to the JUCE SupportersOverlay palette (HUGS is DPF-only, warm).
@@ -178,29 +187,42 @@ inline void drawSupportersOverlay(DuskPanel& panel, ImDrawList* dl,
         ImFont* const font = panel.pickFont(10.0f * s);
         const ImVec2 textSize = font->CalcTextSizeA(10.0f * s, FLT_MAX, 0.0f,
                                                     overlay->actionLinkLabel().c_str());
-        const ImVec2 hitMin = panel.P(px + 0.5f * pw, linkY);
-        ImGui::SetCursorScreenPos(ImVec2(hitMin.x - 0.5f * textSize.x - 5.0f * s,
-                                        hitMin.y - 3.0f * s));
-        const bool actionPressed = ImGui::InvisibleButton(
-            "##supaction", ImVec2(textSize.x + 10.0f * s, textSize.y + 6.0f * s));
-        const bool actionHovered = ImGui::IsItemHovered();
+        const ImVec2 linkCenter = panel.P(px + 0.5f * pw, linkY);
+        const ImVec2 hitMin(linkCenter.x - 0.5f * textSize.x - 5.0f * s,
+                            linkCenter.y - 3.0f * s);
+        const ImVec2 hitMax(hitMin.x + textSize.x + 10.0f * s,
+                            hitMin.y + textSize.y + 6.0f * s);
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const bool actionHovered = mouse.x >= hitMin.x && mouse.x < hitMax.x
+                                && mouse.y >= hitMin.y && mouse.y < hitMax.y;
+        const bool mouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        if (overlay->ownsActionPress()
+            && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !mouseReleased)
+            overlay->releaseActionPress();
+        if (actionHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            overlay->ownActionPress();
+        const bool actionPressOwned = overlay->ownsActionPress();
+        const bool actionPressed = actionPressOwned && actionHovered && mouseReleased;
+        if (mouseReleased)
+            overlay->releaseActionPress();
         if (actionHovered)
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         const ImU32 linkColor = actionHovered ? IM_COL32(218, 178, 126, 255)
                                               : IM_COL32(184, 144, 96, 255);
         panel.text(dl, px + pw * 0.5f, linkY, 10.0f, linkColor,
                    overlay->actionLinkLabel().c_str(), 0);
-        dl->AddLine(ImVec2(hitMin.x - 0.5f * textSize.x, hitMin.y + textSize.y + 1.0f * s),
-                    ImVec2(hitMin.x + 0.5f * textSize.x, hitMin.y + textSize.y + 1.0f * s),
+        dl->AddLine(ImVec2(linkCenter.x - 0.5f * textSize.x,
+                           linkCenter.y + textSize.y + 1.0f * s),
+                    ImVec2(linkCenter.x + 0.5f * textSize.x,
+                           linkCenter.y + textSize.y + 1.0f * s),
                     linkColor, 1.0f * s);
         if (actionPressed)
         {
             overlay->triggerAction();
         }
-        else if (canDismiss && ImGui::IsMouseReleased(ImGuiMouseButton_Left)
+        else if (canDismiss && mouseReleased && !actionPressOwned
                  && !actionHovered && !ImGui::IsAnyItemActive())
         {
-            const ImVec2 mouse = ImGui::GetIO().MousePos;
             const bool overList = mouse.x >= listMin.x && mouse.x < listMax.x
                                && mouse.y >= listMin.y && mouse.y < listMax.y;
             if (!overList)
