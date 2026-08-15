@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "../../shared/CrashLog.h"
 #include "PluginEditor.h"
 #include <cmath>
 
@@ -655,6 +656,8 @@ void TapeMachineAudioProcessorEditor::showSupportersPanel()
     {
         supportersOverlay = std::make_unique<SupportersOverlay>("TapeMachine", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        supportersOverlay->setActionLink("Open crash log folder",
+                                         []() { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible(supportersOverlay.get());
     }
     supportersOverlay->setBounds(getLocalBounds());

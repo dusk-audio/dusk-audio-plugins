@@ -153,10 +153,13 @@ grep -q "set(<VAR>_DEFAULT_VERSION \"<new-version>\")" <Directory>/CMakeLists.tx
 `_DEFAULT_VERSION` variable, so the var-form guard above would abort on them:
 ```bash
 project(ConvolutionReverb VERSION <new-version>)   # convolution-reverb
-project(TapeEcho          VERSION <new-version>)   # tape-echo
+project(TapeEcho VERSION <new-version>)            # tape-echo
 grep -q "project(<Project> VERSION <new-version>)" <Directory>/CMakeLists.txt \
   || { echo "ERROR: <Project> version bump did not apply"; exit 1; }
 ```
+Both files use a SINGLE space between the project name and `VERSION`. Do not
+column-align the replacement: the guard above matches one space and would abort
+a perfectly good release. Match whatever the file already has.
 
 **PLUGIN_VERSION form** (groovemind only):
 ```bash

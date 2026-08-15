@@ -10,12 +10,22 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "../shared/CrashLog.h"
 #include "ConvolutionEngine.h"
 #include "EnvelopeProcessor.h"
 #include "WetSignalEQ.h"
 
 class ConvolutionReverbProcessor : public juce::AudioProcessor
 {
+    // FIRST member, so the crash handler is armed before anything else in this
+    // class is constructed and released only after they are gone (GH #172).
+    //
+    // This plugin has no supporters overlay, so there is no "Open crash log
+    // folder" link to offer. It still registers: the registry is per BINARY, so
+    // without this a session using only this plugin would produce no crash.log
+    // at all. The folder is the same one every Dusk plugin writes to.
+    DuskCrashLog::ScopedRegistration crashLog_ { "Convolution Reverb", JucePlugin_VersionString };
+
 public:
     ConvolutionReverbProcessor();
     ~ConvolutionReverbProcessor() override;

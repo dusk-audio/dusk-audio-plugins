@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../shared/CrashLog.h"
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <memory>
@@ -38,6 +39,13 @@ enum class DistortionType : int
 class UniversalCompressor : public juce::AudioProcessor,
                             private juce::AsyncUpdater
 {
+    // FIRST member, deliberately ahead of the public section. Members are
+    // constructed in declaration order, so the crash handler is armed before
+    // anything else in this class is built and released only after they are
+    // gone (GH #172). ScopedRegistration rather than a bare install() call so
+    // the pair cannot be broken by a defaulted destructor.
+    DuskCrashLog::ScopedRegistration crashLog_ { "Multi-Comp", JucePlugin_VersionString };
+
 public:
     UniversalCompressor();
     ~UniversalCompressor() override;

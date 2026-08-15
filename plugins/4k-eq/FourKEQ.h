@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "../shared/CrashLog.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -25,6 +26,13 @@
 class FourKEQ : public juce::AudioProcessor,
                 private juce::AudioProcessorValueTreeState::Listener
 {
+    // FIRST member, deliberately ahead of the public section. Members are
+    // constructed in declaration order, so the crash handler is armed before
+    // anything else in this class is built and released only after they are
+    // gone (GH #172). ScopedRegistration rather than a bare install() call so
+    // the pair cannot be broken by a defaulted destructor.
+    DuskCrashLog::ScopedRegistration crashLog_ { "4K EQ", JucePlugin_VersionString };
+
 public:
     //==============================================================================
     // Version information (injected from git tag via CMake)

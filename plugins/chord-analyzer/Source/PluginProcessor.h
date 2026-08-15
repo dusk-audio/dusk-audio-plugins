@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../../shared/CrashLog.h"
 #include "ChordAnalyzer.h"
 #include "ChordRecorder.h"
 #include <array>
@@ -11,6 +12,17 @@ class ChordAnalyzerProcessor : public juce::AudioProcessor,
                                 public juce::AudioProcessorValueTreeState::Listener,
                                 private juce::Timer
 {
+    // FIRST member, deliberately ahead of the public section. Members are
+    // constructed in declaration order, so the crash handler is armed before
+    // anything else in this class is built and released only after they are
+    // gone (GH #172). Named per variant to match the supporters overlay, since
+    // both plugins build from this one processor.
+#if CHORD_ANALYZER_MIDI_MODE
+    DuskCrashLog::ScopedRegistration crashLog_ { "Chord Analyzer MIDI", JucePlugin_VersionString };
+#else
+    DuskCrashLog::ScopedRegistration crashLog_ { "Chord Analyzer", JucePlugin_VersionString };
+#endif
+
 public:
     ChordAnalyzerProcessor();
     ~ChordAnalyzerProcessor() override;

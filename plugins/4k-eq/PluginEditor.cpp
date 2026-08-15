@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "../shared/CrashLog.h"
 
 //==============================================================================
 FourKEQEditor::FourKEQEditor(FourKEQ& p)
@@ -520,6 +521,8 @@ void FourKEQEditor::showSupportersPanel()
     {
         supportersOverlay = std::make_unique<SupportersOverlay>("4K EQ", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        supportersOverlay->setActionLink("Open crash log folder",
+                                         []() { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible(supportersOverlay.get());
     }
     supportersOverlay->setBounds(getLocalBounds());

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/DuskVerbEngine.h"
+#include "CrashLog.h"
 #include "dsp/ReverbDucker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -11,6 +12,13 @@ struct FactoryPreset;
 
 class DuskVerbProcessor : public juce::AudioProcessor
 {
+    // FIRST member, deliberately ahead of the public section. Members are
+    // constructed in declaration order, so the crash handler is armed before
+    // anything else in this class is built and released only after they are
+    // gone (GH #172). ScopedRegistration rather than a bare install() call so
+    // the pair cannot be broken by a defaulted destructor.
+    DuskCrashLog::ScopedRegistration crashLog_ { "DuskVerb", JucePlugin_VersionString };
+
 public:
     DuskVerbProcessor();
     ~DuskVerbProcessor() override = default;

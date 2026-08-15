@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "CrashLog.h"
 #include "FactoryPresets.h"
 #include "../../shared/DuskLookAndFeel.h"   // ValueEditor::popUp
 
@@ -1353,6 +1354,8 @@ void DuskVerbEditor::showSupportersPanel()
         if (safeThis != nullptr)
             safeThis->hideSupportersPanel();
     };
+    supportersOverlay_->setActionLink ("Open crash log folder",
+                                       [] { DuskCrashLog::openLogFolder(); });
     addAndMakeVisible (*supportersOverlay_);
     supportersOverlay_->setBounds (getLocalBounds());
 }

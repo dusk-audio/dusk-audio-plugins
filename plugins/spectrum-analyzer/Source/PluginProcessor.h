@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../../shared/CrashLog.h"
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <array>
@@ -16,6 +17,13 @@
 class SpectrumAnalyzerProcessor : public juce::AudioProcessor,
                                    public juce::AudioProcessorValueTreeState::Listener
 {
+    // FIRST member, deliberately ahead of the public section. Members are
+    // constructed in declaration order, so the crash handler is armed before
+    // anything else in this class is built and released only after they are
+    // gone (GH #172). ScopedRegistration rather than a bare install() call so
+    // the pair cannot be broken by a defaulted destructor.
+    DuskCrashLog::ScopedRegistration crashLog_ { "Spectrum Analyzer", JucePlugin_VersionString };
+
 public:
     //==========================================================================
     SpectrumAnalyzerProcessor();

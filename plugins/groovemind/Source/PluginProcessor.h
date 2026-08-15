@@ -14,6 +14,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "../../shared/CrashLog.h"
 #include "PatternLibrary.h"
 #include "DrummerEngine.h"
 #include "GrooveHumanizer.h"
@@ -24,6 +25,15 @@
 class GrooveMindProcessor : public juce::AudioProcessor,
                             public juce::VST3ClientExtensions
 {
+    // FIRST member, so the crash handler is armed before anything else in this
+    // class is constructed and released only after they are gone (GH #172).
+    //
+    // This plugin has no supporters overlay, so there is no "Open crash log
+    // folder" link to offer. It still registers: the registry is per BINARY, so
+    // without this a session using only this plugin would produce no crash.log
+    // at all. The folder is the same one every Dusk plugin writes to.
+    DuskCrashLog::ScopedRegistration crashLog_ { "GrooveMind", JucePlugin_VersionString };
+
 public:
     //==============================================================================
     GrooveMindProcessor();

@@ -82,6 +82,13 @@
 //   * A handler we chain into that recovers by siglongjmp rather than returning
 //     will make us log that thread's next fault twice. Bounded by the record
 //     cap, and preferred over the alternative; see crashHandler().
+//   * STACK OVERFLOW is not reliably covered. SA_ONSTACK is set, but it only
+//     takes effect if the faulting thread already has an alternate stack, and
+//     installing one ourselves is rejected in install() for the reasons given
+//     there. With no host-provided stack, an overflow SIGSEGV re-faults in the
+//     handler, the kernel forces SIG_DFL, and neither the log nor the chained
+//     host handler runs. The handler's own frame is kept small (a 512-byte
+//     buffer plus 64 frame pointers) to widen the margin, not to close it.
 
 #pragma once
 
@@ -294,13 +301,21 @@ namespace DuskCrashLog
             }
         }
 
-        // Hard cap on records per process. Recoverable SIGSEGV/SIGFPE are
-        // routine in some hosts (Wine/yabridge, anything embedding a JIT or a
-        // GC), and each record costs an open + backtrace + close on the
-        // faulting thread. Without a cap a host that recovers from faults in a
-        // loop would grow crash.log without bound; the SIG_IGN bug below
-        // produced 35k records and 34 MB in five seconds before it was fixed.
-        constexpr int kMaxRecordsPerProcess = 8;
+        // Cap on records per process, sized against the two failure modes it
+        // sits between.
+        //
+        // Too high and a runaway spin fills the disk: the SIG_IGN bug this file
+        // used to have produced 35398 records and 34 MB of crash.log in five
+        // seconds. Too low and it becomes the bug instead, because recovered
+        // SIGSEGV/SIGFPE are routine under Wine/yabridge and in hosts embedding
+        // a JIT or GC. Each of those burns a slot, so a small cap means the REAL
+        // crash arrives after the budget is spent and goes unlogged.
+        //
+        // At roughly 1 KB per record, 64 bounds a runaway at about 64 KB, which
+        // is nothing, while leaving room for a long session of recovered faults
+        // before the useful one. Hitting the cap also writes a one-line marker
+        // so a truncated log never passes for a complete one.
+        constexpr int kMaxRecordsPerProcess = 64;
 
         inline std::atomic<int>& recordsWritten()
         {
@@ -323,6 +338,18 @@ namespace DuskCrashLog
                     return true;
             }
             return false;
+        }
+
+        // True exactly once, for the first caller that finds the budget spent,
+        // so the suppression marker is written a single time rather than on
+        // every subsequent fault.
+        inline bool claimSuppressionNotice() noexcept
+        {
+            static std::atomic<bool> written { false };
+            bool expected = false;
+            return written.compare_exchange_strong (expected, true,
+                                                    std::memory_order_relaxed,
+                                                    std::memory_order_relaxed);
         }
 
         //--------------------------------------------------------------------
@@ -354,25 +381,10 @@ namespace DuskCrashLog
                 writeAll (fd, s, std::strlen (s));
         }
 
-        // Unsigned decimal into a caller-owned buffer. snprintf is not on the
-        // POSIX async-signal-safe list, so format by hand.
-        inline void writeUnsigned (LogHandle fd, unsigned long long v) noexcept
-        {
-            char buf[24];
-            int i = (int) sizeof (buf);
-            buf[--i] = '\0';
-            if (v == 0)
-                buf[--i] = '0';
-            while (v > 0 && i > 0)
-            {
-                buf[--i] = (char) ('0' + (int) (v % 10ULL));
-                v /= 10ULL;
-            }
-            writeStr (fd, buf + i);
-        }
-
-        // Hex, for anything that will be matched against a map file or a PDB.
-        // Addresses printed in decimal are useless for symbolisation.
+    #if JUCE_WINDOWS
+        // Hex, for anything matched against a map file or a PDB. Addresses in
+        // decimal are useless for symbolisation. POSIX has no caller: there the
+        // frames come out of backtrace_symbols_fd already formatted.
         inline void writeHex (LogHandle fd, unsigned long long v) noexcept
         {
             static const char digits[] = "0123456789abcdef";
@@ -388,19 +400,7 @@ namespace DuskCrashLog
             }
             writeStr (fd, buf + i);
         }
-
-        inline void writeSigned (LogHandle fd, long long v) noexcept
-        {
-            if (v < 0)
-            {
-                writeStr (fd, "-");
-                writeUnsigned (fd, (unsigned long long) (-v));
-            }
-            else
-            {
-                writeUnsigned (fd, (unsigned long long) v);
-            }
-        }
+    #endif
 
         // Copies at most destSize-1 bytes and always terminates. strncpy does
         // not guarantee the terminator.
@@ -413,35 +413,103 @@ namespace DuskCrashLog
             dest[i] = '\0';
         }
 
-        // Body shared by the POSIX and Windows handlers. fd is a real fd on
-        // POSIX and a HANDLE cast to int on Windows.
+        // Appends into a caller-owned buffer, FLUSHING when it fills rather than
+        // truncating. Used to assemble a whole record before a single write()
+        // instead of a dozen small ones; see writeReport for why that matters.
+        //
+        // Flush-on-full rather than a buffer sized for the worst case, because
+        // the worst case is kMaxPlugins * kMaxEntryLen = 1536 bytes of registry
+        // plus the header, and putting that much on a signal stack is its own
+        // hazard: SA_ONSTACK means we may be running on a host-provided
+        // alternate stack that can be as small as MINSIGSTKSZ. A realistic
+        // record is one write; only a fully populated 16-plugin registry costs
+        // two, and a spliced record beats a truncated one.
+        struct Appender
+        {
+            char* buf;
+            std::size_t cap;
+            LogHandle fd;
+            std::size_t len = 0;
+
+            void flush() noexcept
+            {
+                if (len > 0) { writeAll (fd, buf, len); len = 0; }
+            }
+
+            void str (const char* s) noexcept
+            {
+                if (s == nullptr) return;
+                while (*s != '\0')
+                {
+                    if (len + 1 >= cap) flush();
+                    buf[len++] = *s++;
+                }
+            }
+
+            void uns (unsigned long long v, bool hex = false) noexcept
+            {
+                char tmp[24];
+                int i = (int) sizeof (tmp);
+                tmp[--i] = '\0';
+                if (v == 0) tmp[--i] = '0';
+                if (hex)
+                {
+                    static const char digits[] = "0123456789abcdef";
+                    while (v > 0 && i > 0) { tmp[--i] = digits[(std::size_t) (v & 0xFULL)]; v >>= 4; }
+                }
+                else
+                {
+                    while (v > 0 && i > 0) { tmp[--i] = (char) ('0' + (int) (v % 10ULL)); v /= 10ULL; }
+                }
+                str (tmp + i);
+            }
+
+            void sgn (long long v) noexcept
+            {
+                if (v < 0) { str ("-"); uns ((unsigned long long) (-v)); }
+                else       { uns ((unsigned long long) v); }
+            }
+        };
+
+        // Body shared by the POSIX and Windows handlers.
         // causeAsHex: Windows exception codes are only recognisable in hex
         // (0xC0000005, not 3221225477); POSIX signal numbers read as decimal.
         inline void writeReport (LogHandle fd, const char* causeLabel, long long causeValue,
                                  bool causeAsHex = false) noexcept
         {
-            writeStr (fd, "============================================\n");
-            writeStr (fd, "Dusk Audio crash log\n");
-            writeStr (fd, causeLabel);
-            if (causeAsHex)
-            {
-                writeStr (fd, "0x");
-                writeHex (fd, (unsigned long long) causeValue);
-            }
-            else
-            {
-                writeSigned (fd, causeValue);
-            }
-            writeStr (fd, "\n");
+            // The whole metadata block is assembled here and emitted with ONE
+            // write(). Up to kMaxConcurrentHandlers threads are deliberately
+            // allowed inside the handler at once, and a dozen separate write()
+            // calls per record let two simultaneous faults splice their headers
+            // into one unattributable block in the very file the user is asked
+            // to attach to an issue. A single append-mode write of a whole
+            // record cannot interleave with another.
+            //
+            // Stack-allocated, so still no heap in the handler.
+            char buf[512];
+            Appender out { buf, sizeof (buf), fd };
+
+            out.str ("============================================\n");
+            out.str ("Dusk Audio crash log\n");
+            out.str (causeLabel);
+            if (causeAsHex) { out.str ("0x"); out.uns ((unsigned long long) causeValue, true); }
+            else            { out.sgn (causeValue); }
+            out.str ("\n");
+
+            // Thread id, so records that DO end up adjacent (the backtrace lines
+            // below still arrive as separate writes) can be told apart.
+            out.str ("thread: 0x");
+            out.uns ((unsigned long long) currentThreadId(), true);
+            out.str ("\n");
 
             // Raw unix epoch on both platforms. localtime_r and strftime are not
             // async-signal-safe, so no formatting happens here; convert when
             // reading with `date -d @<value>` (or `Get-Date -UnixTimeSeconds`).
             // Windows needs its own clock call because time() is not available
             // in the SEH filter path on all toolchains.
-            writeStr (fd, "unix time: ");
+            out.str ("unix time: ");
         #if ! JUCE_WINDOWS
-            writeSigned (fd, (long long) ::time (nullptr));
+            out.sgn ((long long) ::time (nullptr));
         #else
             {
                 FILETIME ft {};
@@ -450,21 +518,27 @@ namespace DuskCrashLog
                 // the offset to the unix epoch.
                 const unsigned long long ticks =
                     ((unsigned long long) ft.dwHighDateTime << 32) | ft.dwLowDateTime;
-                writeSigned (fd, (long long) (ticks / 10000000ULL) - 11644473600LL);
+                out.sgn ((long long) (ticks / 10000000ULL) - 11644473600LL);
             }
         #endif
-            writeStr (fd, "\n");
+            out.str ("\n");
 
-            writeStr (fd, "plugins in this binary:\n");
-            const int count = entryCount().load (std::memory_order_acquire);
-            for (int i = 0; i < count && i < kMaxPlugins; ++i)
+            out.str ("plugins in this binary:\n");
             {
-                writeStr (fd, "  - ");
-                writeStr (fd, entries()[i]);
-                writeStr (fd, "\n");
+                const int count = entryCount().load (std::memory_order_acquire);
+                for (int i = 0; i < count && i < kMaxPlugins; ++i)
+                {
+                    out.str ("  - ");
+                    out.str (entries()[i]);
+                    out.str ("\n");
+                }
             }
+            out.str ("stack:\n");
+            out.flush();
 
-            writeStr (fd, "stack:\n");
+            // Everything above is now durably on disk. The unwinder below can
+            // deadlock against the dynamic loader lock, so it deliberately runs
+            // last: a hang there costs the stack, not the whole record.
         #if ! JUCE_WINDOWS && DUSK_CRASHLOG_HAS_EXECINFO
             {
                 void* frames[64];
@@ -611,12 +685,17 @@ namespace DuskCrashLog
                 // O_APPEND keeps concurrent writers appending rather than
                 // overwriting each other. open/write/close are all on the
                 // async-signal-safe list.
-                if (claimRecordSlot())
+                const bool haveBudget = claimRecordSlot();
+                if (haveBudget || claimSuppressionNotice())
                 {
                     const int fd = ::open (logPath(), O_WRONLY | O_CREAT | O_APPEND, 0644);
                     if (fd >= 0)
                     {
-                        writeReport (fd, "signal: ", (long long) sig);
+                        if (haveBudget)
+                            writeReport (fd, "signal: ", (long long) sig);
+                        else
+                            writeStr (fd, "\n[Dusk Audio] record budget spent; "
+                                          "further crash records suppressed.\n");
                         ::close (fd);
                     }
                 }
@@ -673,7 +752,8 @@ namespace DuskCrashLog
 
             if (entry == HandlerEntry::Acquired)
             {
-                if (claimRecordSlot())
+                const bool haveBudget = claimRecordSlot();
+                if (haveBudget || claimSuppressionNotice())
                 {
                     // CreateFileW, not CreateFileA: the A form interprets the
                     // path in the system ANSI code page, so a UTF-8 path from a
@@ -684,10 +764,18 @@ namespace DuskCrashLog
                                                     OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
                     if (h != INVALID_HANDLE_VALUE)
                     {
-                        const long long code = ep != nullptr && ep->ExceptionRecord != nullptr
-                                                 ? (long long) ep->ExceptionRecord->ExceptionCode
-                                                 : 0;
-                        writeReport (h, "exception code: ", code, true);
+                        if (haveBudget)
+                        {
+                            const long long code = ep != nullptr && ep->ExceptionRecord != nullptr
+                                                     ? (long long) ep->ExceptionRecord->ExceptionCode
+                                                     : 0;
+                            writeReport (h, "exception code: ", code, true);
+                        }
+                        else
+                        {
+                            writeStr (h, "\n[Dusk Audio] record budget spent; "
+                                         "further crash records suppressed.\n");
+                        }
                         ::CloseHandle (h);
                     }
                 }
@@ -770,9 +858,18 @@ namespace DuskCrashLog
         struct sigaction action {};
         action.sa_sigaction = &detail::crashHandler;
         ::sigemptyset (&action.sa_mask);
-        // SA_ONSTACK so a stack-overflow SIGSEGV still has somewhere to run if
-        // the host installed an alternate stack. SA_NODEFER is deliberately NOT
-        // set: the reentrancy guard handles recursion.
+        // SA_ONSTACK is opportunistic, NOT a stack-overflow guarantee: it only
+        // does anything if an alternate stack already exists on the faulting
+        // thread, and we deliberately do not install one. sigaltstack() is
+        // per-thread, so installing it here would cover only the message thread
+        // and miss the audio thread where an overflow is most likely, and
+        // replacing a stack the host installed is the same class of harm as
+        // replacing its handler. So: free benefit when the host provides one,
+        // and a documented gap when it does not. See KNOWN LIMITS.
+        //
+        // SA_NODEFER is deliberately NOT set: the reentrancy guard handles
+        // recursion, and leaving the signal blocked inside the handler is what
+        // stops a fault in our own code looping.
         action.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
 
         // Arm each signal we are not already armed for. Doing this per signal,

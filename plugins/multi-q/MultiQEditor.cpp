@@ -1,4 +1,5 @@
 #include "MultiQEditor.h"
+#include "../shared/CrashLog.h"
 
 MultiQEditor::MultiQEditor(MultiQ& p)
     : AudioProcessorEditor(&p), processor(p)
@@ -305,6 +306,8 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Q", JucePlugin_VersionString);
     supportersOverlay->setVisible(false);
     supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+    supportersOverlay->setActionLink("Open crash log folder",
+                                     []() { DuskCrashLog::openLogFolder(); });
     addChildComponent(supportersOverlay.get());
 
     // Setup British mode controls

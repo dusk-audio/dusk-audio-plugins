@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "../../shared/CrashLog.h"
 
 //==============================================================================
 ChordAnalyzerEditor::ChordAnalyzerEditor(ChordAnalyzerProcessor& p)
@@ -700,6 +701,8 @@ void ChordAnalyzerEditor::showSupportersPanel()
         supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer", JucePlugin_VersionString);
 #endif
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        supportersOverlay->setActionLink("Open crash log folder",
+                                         []() { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible(supportersOverlay.get());
     }
 

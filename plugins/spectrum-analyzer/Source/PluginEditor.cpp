@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "../../shared/CrashLog.h"
 
 //==============================================================================
 SpectrumAnalyzerEditor::SpectrumAnalyzerEditor(SpectrumAnalyzerProcessor& p)
@@ -195,6 +196,8 @@ void SpectrumAnalyzerEditor::showSupportersPanel()
     {
         supportersOverlay = std::make_unique<SupportersOverlay>("Spectrum Analyzer", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        supportersOverlay->setActionLink("Open crash log folder",
+                                         []() { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible(supportersOverlay.get());
     }
     supportersOverlay->setBounds(getLocalBounds());

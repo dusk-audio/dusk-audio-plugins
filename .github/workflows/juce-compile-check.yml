@@ -27,8 +27,11 @@ name: JUCE compile check
 #     its <Plugin>_SharedCode static library, which every format wrapper then
 #     links, so VST3 alone compiles 100% of the plugin and shared-header code.
 #     Adding CLAP and LV2 would buy link time, not coverage.
-#   - Linux only. Shared-header breakage is a compile error, not a platform one.
-#     A genuinely platform-specific break still surfaces at tag time, as before.
+#   - Linux for the full fleet, plus a small Windows matrix. Shared-header
+#     breakage is usually a plain compile error, but CrashLog.h now carries a
+#     real Windows branch and drags windows.h into every processor TU, so that
+#     one platform needs covering here rather than at tag time. macOS is still
+#     left to the release build.
 on:
   pull_request:
     paths:
@@ -157,6 +160,67 @@ jobs:
         # passing build in the step status, so check for the .so itself.
         run: |
           found=$(find build -path '*.vst3/Contents/x86_64-linux/*.so' -print -quit)
+          if [ -z "$found" ]; then
+            echo "::error::${{ matrix.plugin }}_VST3 built without producing a VST3 binary"
+            exit 1
+          fi
+          echo "Built: $found"
+
+  # plugins/shared/ now carries a substantial platform-specific branch:
+  # CrashLog.h pulls in windows.h and compiles a whole SEH filter, CreateFileW
+  # and CaptureStackBackTrace path that the Linux jobs above never see. During
+  # its review a revision of that branch did not compile at all, and nothing on
+  # a PR would have caught it: build.yml only builds Windows on a release tag,
+  # so the first failure would have landed inside a release. That is the gap
+  # this workflow exists to close, and leaving it open for exactly the code most
+  # likely to break would be the wrong shape.
+  #
+  # A SMALL matrix, not one plugin and not all twelve.
+  #
+  # One is not enough: CrashLog.h does not only add its own Windows code, it
+  # drags windows.h plus NOMINMAX/WIN32_LEAN_AND_MEAN into every JUCE processor
+  # TU, ahead of the JUCE headers. A macro collision would therefore be a
+  # per-plugin problem, not a shared-header one, and checking a single plugin
+  # would not see it. Twelve Windows jobs is more than the risk justifies, so
+  # this covers the distinct shapes: a plain juce_dsp user, the heaviest DSP
+  # tree, an analyzer that pulls juce_dsp into the processor header, and one
+  # with no juce_dsp at all.
+  compile-windows:
+    name: ${{ matrix.plugin }} (windows)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [FourKEQ, MultiComp, SpectrumAnalyzer, ChordAnalyzer]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          path: JUCE
+          ref: 8.0.4  # Must match build.yml and the Linux jobs above
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSK_COPY_AFTER_BUILD=OFF \
+            -DJUCE_PATH="$(pwd)/JUCE"
+
+      - name: Build ${{ matrix.plugin }} VST3
+        run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3
+
+      - name: Verify a binary came out
+        shell: bash
+        run: |
+          found=$(find build -name '*.vst3' -path '*Release*' -print -quit)
           if [ -z "$found" ]; then
             echo "::error::${{ matrix.plugin }}_VST3 built without producing a VST3 binary"
             exit 1
