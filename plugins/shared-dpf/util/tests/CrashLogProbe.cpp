@@ -543,15 +543,41 @@ bool testPartialUnlink(bool mutant)
     ok = expect(controlAfterClose == 0,
                 "fully unlinked DPF module unloads (control measurement)") && ok;
 
-    DuskCrashLog::install("pin-warning-probe", "1");
-    DuskCrashLog::uninstall("pin-warning-probe", "1");
-    DuskCrashLog::detail::writeModulePinFailureNote();
-    DuskCrashLog::detail::writeModulePinFailureNote();
+    const std::string pinFailurePath = modulePath("CRASHLOG_TEST_MODULE_PIN_FAILURE");
+    ok = expect(mappedLines(pinFailurePath) == 0,
+                "forced-pin-failure module starts unmapped") && ok;
+    const pid_t warningChild = ::fork();
+    if (warningChild == 0)
+    {
+        setSimpleHandler(SIGABRT, &hostHandler);
+        Module pinFailure;
+        if (!pinFailure.open(pinFailurePath))
+            ::_exit(97);
+        pinFailure.install();
+        setSiginfoHandler(SIGABRT, &upperHandler, &gUpperPrevious);
+        pinFailure.uninstall();
+        pinFailure.install();
+        pinFailure.uninstall();
+        if (::sigaction(SIGABRT, &gUpperPrevious, nullptr) != 0)
+            ::_exit(98);
+        pinFailure.install();
+        pinFailure.uninstall();
+        pinFailure.close();
+        ::_exit(mappedLines(pinFailurePath) == 0 ? 0 : 99);
+    }
+    if (warningChild < 0)
+        return expect(false, "module-pin warning probe forked");
+
+    const ChildResult warningResult = waitForChild(warningChild, 2000);
+    ok = expect(!warningResult.timedOut, "module-pin warning probe completed") && ok;
+    if (!warningResult.timedOut)
+        ok = expect(WIFEXITED(warningResult.status) && WEXITSTATUS(warningResult.status) == 0,
+                    "forced pin failure warned twice, fully unlinked, and unloaded") && ok;
     const std::string warning = "could not pin crash-handler module after partial unlink";
     const std::size_t warningCount = countText(readFile(DuskCrashLog::getLogFile()), warning);
     std::cout << "MEASURE\tpartial-unlink\tmodule-pin-warnings=" << warningCount << '\n';
     ok = expect(warningCount == 1,
-                "a repeated module-pin failure writes one bounded warning") && ok;
+                "two uninstall pin failures write one bounded warning") && ok;
 
     gHostCalls = 0;
     gUpperCalls = 0;

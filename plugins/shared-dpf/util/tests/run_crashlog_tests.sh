@@ -55,12 +55,22 @@ fi
     -DCRASHLOG_MODULE_VERSION='"1.0.0"' \
     "$SCRIPT_DIR/CrashLogModule.cpp" -ldl -o "$BUILD_DIR/libcrashlog_no_pin.so"
 
+# GNU ld redirects this test DSO's dladdr reference to a wrapper that fails.
+# The production header is unchanged and no release-visible bypass exists.
+"$CXX" "${DSO_COMMON[@]}" -I"$UTIL_DIR" \
+    -DCRASHLOG_TEST_WRAP_DLADDR \
+    -DCRASHLOG_MODULE_NAME='"Pin Failure Module"' \
+    -DCRASHLOG_MODULE_VERSION='"1.0.0"' \
+    "$SCRIPT_DIR/CrashLogModule.cpp" -Wl,--wrap=dladdr -ldl \
+    -o "$BUILD_DIR/libcrashlog_pin_failure.so"
+
 "$CXX" "${COMMON[@]}" "$SCRIPT_DIR/CrashLogProbe.cpp" -ldl \
     -o "$BUILD_DIR/crashlog_probe"
 
 export CRASHLOG_TEST_MODULE_A="$BUILD_DIR/libcrashlog_a.so"
 export CRASHLOG_TEST_MODULE_B="$BUILD_DIR/libcrashlog_b.so"
 export CRASHLOG_TEST_MODULE_NO_PIN="$BUILD_DIR/libcrashlog_no_pin.so"
+export CRASHLOG_TEST_MODULE_PIN_FAILURE="$BUILD_DIR/libcrashlog_pin_failure.so"
 
 CASES=(
     host-handler-still-runs

@@ -294,6 +294,7 @@ protected:
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(winW, winH), IM_COL32(30, 30, 33, 255)); // chassis fills window
         const bool helpOverlayWasOpen = showHelpOverlay_;
+        const bool creditsWasOpen = showCredits;
 
         if (british)
         {
@@ -338,7 +339,7 @@ protected:
         }
 
         if (showCredits)
-            drawCredits(dl, winW, winH, helpOverlayWasOpen);
+            drawCredits(dl, winW, winH, helpOverlayWasOpen || !creditsWasOpen);
 
         // Keyboard shortcuts (parity with JUCE MultiQEditor::keyPressed) + the
         // '?' help overlay. Handled last so it sees this frame's mode/selection.
@@ -3447,14 +3448,14 @@ private:
         ctext(c1.y - 22.f * s, 11.f, IM_COL32(140, 142, 148, 255), "click anywhere else to close", false);
 
         if (actionClicked) DuskCrashLog::openLogFolder();
-        else if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        else if (!blockAction && ImGui::IsKeyPressed(ImGuiKey_Escape))
         {
             showCredits = false;
             creditsActionPressOwned = false;
         }
         else if (!creditsArmed) { if (!ImGui::IsMouseDown(0)) creditsArmed = true; }
-        else if (!blockAction && mouseReleased && !actionPressOwned && !actionHovered
-                 && !ImGui::IsAnyItemActive())
+        else if (!blockAction && mouseReleased && !mouseOverList
+                 && !actionPressOwned && !actionHovered && !ImGui::IsAnyItemActive())
             showCredits = false;
     }
 
