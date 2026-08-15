@@ -87,7 +87,14 @@ For EACH plugin specified:
      convolution-reverb → `project(ConvolutionReverb VERSION X.Y.Z)`,
      tape-echo → `project(TapeEcho VERSION X.Y.Z)`.
    - **`set(PLUGIN_VERSION "X.Y.Z")`**, consumed by a `VERSION ${PLUGIN_VERSION}`
-     further down: groovemind, spectrum-analyzer.
+     further down: groovemind ONLY.
+   - **NOT WIRED AT ALL: spectrum-analyzer.** It sets `PLUGIN_VERSION` but its
+     `juce_add_plugin()` never takes a `VERSION` argument, so the variable is
+     dead and the binaries are stamped with the root `project(DuskPlugins
+     VERSION 1.0.0)`. Bumping that variable edits nothing, and the `grep -q`
+     guard below would still pass because the `set()` line really did change.
+     Releasing this plugin needs `VERSION ${PLUGIN_VERSION}` added to its
+     `juce_add_plugin()` first. Do not ship a "version bump" for it until then.
 
    Read the file before editing rather than trusting this list, and update the
    list if a plugin changes shape. The `grep -q` guards in Step 3 turn a wrong
@@ -151,12 +158,17 @@ grep -q "project(<Project> VERSION <new-version>)" <Directory>/CMakeLists.txt \
   || { echo "ERROR: <Project> version bump did not apply"; exit 1; }
 ```
 
-**PLUGIN_VERSION form** (groovemind, spectrum-analyzer):
+**PLUGIN_VERSION form** (groovemind only):
 ```bash
 set(PLUGIN_VERSION "<new-version>")
 grep -q "set(PLUGIN_VERSION \"<new-version>\")" <Directory>/CMakeLists.txt \
   || { echo "ERROR: PLUGIN_VERSION bump did not apply"; exit 1; }
 ```
+The guard above is necessary but NOT sufficient for this form: it proves the
+`set()` was edited, not that anything reads it. Confirm the plugin's
+`juce_add_plugin()` actually carries `VERSION ${PLUGIN_VERSION}` before relying
+on it. spectrum-analyzer is the counter-example and cannot be released this way
+(see Step 1).
 
 **DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`).
 Use `<base-version>` — the numeric version with NO prerelease suffix. Any
