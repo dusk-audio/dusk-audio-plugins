@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../../shared-dpf/dsp/DuskFilters.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +19,30 @@ static constexpr float kDenormalPrevention = 1.0e-15f;
 // linearly via `sampleRate / kBaseSampleRate`. The plugin runs correctly at
 // any host sample rate — this is the calibration anchor, not an assumption.
 static constexpr double kBaseSampleRate = 44100.0;
+
+// DuskVerb's one-pole/TPT designers historically used a tighter 0.45 * fs
+// ceiling than the shared RBJ designers. Keep that voicing, but delegate the
+// floor-first/ceiling-last ordering to the repository's single implementation.
+inline constexpr float kDesignFreqRatio = 0.45f;
+
+#if defined(DUSKVERB_NYQUIST_TEST_HOOK)
+inline unsigned int nyquistSafeHzCallCount = 0;
+
+inline void resetNyquistSafeHzCallCount() noexcept
+{
+    nyquistSafeHzCallCount = 0;
+}
+#endif
+
+inline float nyquistSafeHz (double sampleRate, float frequency) noexcept
+{
+#if defined(DUSKVERB_NYQUIST_TEST_HOOK)
+    ++nyquistSafeHzCallCount;
+#endif
+    return static_cast<float> (duskaudio::nyquistSafeDesignHzD (
+        sampleRate, static_cast<double> (frequency),
+        static_cast<double> (kDesignFreqRatio)));
+}
 
 // Returns the smallest power of 2 >= v. For v <= 1 returns 1.
 inline int nextPowerOf2 (int v)

@@ -63,19 +63,18 @@ constexpr float kDuskPi    = 3.14159265358979323846f;
 // tighter than this ceiling as part of the voicing (TapeMachine's recordHeadCutoff
 // and biasFilter, TapeEcho's 0.45*fs sites). Everything else relies on this.
 //
-// The three NAMED clamp helpers in the tree now all delegate to
+// The four NAMED clamp helpers in the tree now all delegate to
 // nyquistSafeDesignHzD below at their own ceiling, rather than re-implementing
 // the comparison: TapeMachine 2's nyquistSafeHz, TapeEcho's
-// safeBiquadFrequency, and the JUCE TapeMachine v1's nyquistSafeHz are thin
-// aliases. Do not add a fourth implementation; alias this one.
+// safeBiquadFrequency, the JUCE TapeMachine v1's nyquistSafeHz, and DuskVerb's
+// DspUtils::nyquistSafeHz are thin aliases. Do not add another implementation;
+// alias this one.
 //
-// NOT yet covered, so do not read the above as "every clamp in the repo":
-// DuskVerb (a JUCE plugin that does not compile this header) still clamps
-// inline at roughly thirty sites, as std::min(fc, 0.45f * sr) or
-// std::clamp(fc, 20.0f, 0.45f * sr) -- ceiling-only, in float, and mostly
-// without the 1 Hz floor. Those are one-pole/TPT coefficients rather than RBJ
-// biquads, so the failure mode differs, but they are the remaining divergent
-// copies. Changing the ceiling here does NOT change them.
+// The eleven DuskVerb one-pole/TPT sites targeted by its clamp migration use
+// that 0.45 alias. Two keep an explicit 20 Hz floor ahead of the shared guard
+// because that floor is part of their existing filter contract. This is not a
+// claim that every DuskVerb float cap was migrated: its fixed 17 kHz FDN
+// anti-alias cap and its tighter 0.49 design caps are outside that migration.
 //
 // WHAT THE CEILING BUYS, AND WHAT IT DOES NOT. It trades divergence for a corner
 // parked just under Nyquist. At the ceiling the poles sit at |z| ~ 0.999, which

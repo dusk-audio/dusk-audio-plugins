@@ -330,15 +330,16 @@ jobs:
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
           fi
 
-      - name: DuskVerb stereo-image regression test
+      - name: DuskVerb regression tests
         # Only when DuskVerb is in scope: a bare/all build (empty target) or a
         # target list that includes DuskVerb. The build dir is configured for the
         # whole project, so the test target is always available to build here.
         if: ${{ needs.setup.outputs.plugin_target == '' || contains(needs.setup.outputs.plugin_target, 'DuskVerb') }}
         shell: bash
         run: |
-          cmake --build build --config ${{ env.BUILD_TYPE }} --target DuskVerbStereoImageTest -j$(nproc)
-          ctest --test-dir build -R DuskVerbStereoImage --output-on-failure --no-tests=error
+          cmake --build build --config ${{ env.BUILD_TYPE }} \
+            --target DuskVerbStereoImageTest DuskVerbNyquistClampTest -j"$(nproc)"
+          ctest --test-dir build -R '^DuskVerb' --output-on-failure --no-tests=error
 
       - name: Validate plugins
         shell: bash

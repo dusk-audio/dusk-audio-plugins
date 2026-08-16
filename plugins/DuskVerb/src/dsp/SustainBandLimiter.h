@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DspUtils.h"
+
 #include <cmath>
 #include <algorithm>
 
@@ -165,7 +167,7 @@ struct SustainBandLimiter
             const float bw = std::max (hiHz - loHz, 1.0f);
             const float Q  = std::clamp (fc / bw, 0.20f, 8.0f);
             const float A  = std::pow (10.0f, -std::clamp (cutDb, 0.0f, 24.0f) / 40.0f);
-            const float w0 = 6.28318530718f * std::min (fc, 0.45f * sr) / sr;
+            const float w0 = 6.28318530718f * DspUtils::nyquistSafeHz (sr, fc) / sr;
             const float alpha = std::sin (w0) / (2.0f * Q);
             const float cosw  = std::cos (w0);
             const float a0    = 1.0f + alpha / A;

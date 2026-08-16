@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DspUtils.h"
+
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -35,7 +37,7 @@ public:
         apR_.prepare (static_cast<int> (kDecorrMs * 0.001f * sampleRate_) + 8);
         apRLen_ = std::max (1, static_cast<int> (kDecorrMs * 0.001f * sampleRate_));
         lpCoeff_ = 1.0f - std::exp (-6.283185307f
-                       * std::min (kLpHz, 0.45f * sampleRate_) / sampleRate_);
+                       * DspUtils::nyquistSafeHz (sampleRate_, kLpHz) / sampleRate_);
         prepared_ = true;
         setParams (gain_, predelayMs_, t60Ms_);   // (re)compute feedback + predelay
     }
