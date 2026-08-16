@@ -44,7 +44,7 @@ void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
     // frontPredelayMs_ may exceed the tank pre-delay ring — saturate to its longest
     // representable delay so readAgo() can't (w-d)&mask wrap-alias to a shorter delay.
     frontPredelaySamp_ = std::min (frontPredelaySamp_, tankPreL_.mask);
-    erLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (frontLpHz_, 0.45f * sampleRate_) / sampleRate_);
+    erLpCoeff_ = 1.0f - std::exp (-6.283185307f * DspUtils::nyquistSafeHz (sampleRate_, frontLpHz_) / sampleRate_);
     erLpZL_ = erLpZR_ = 0.0f;
 
     // Post-main second-reflection tap ring (~300 ms headroom for a ~143 ms tap).
@@ -52,7 +52,7 @@ void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
     postMainL_.prepare (postMax); postMainR_.prepare (postMax);
     postMainDelayL_ = std::min (std::max (1, static_cast<int> (postMainMs_ * 0.001f * sampleRate_)), postMainL_.mask);
     postMainDelayR_ = std::min (std::max (1, static_cast<int> ((postMainMs_ + 9.0f) * 0.001f * sampleRate_)), postMainR_.mask);
-    postMainLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (postMainLpHz_, 0.45f * sampleRate_) / sampleRate_);
+    postMainLpCoeff_ = 1.0f - std::exp (-6.283185307f * DspUtils::nyquistSafeHz (sampleRate_, postMainLpHz_) / sampleRate_);
     postMainLpZL_ = postMainLpZR_ = 0.0f;
 
     // Dense early-field combs/allpasses + predelay (generous headroom).
@@ -69,7 +69,7 @@ void DattorroPlateVintage::prepare (double sampleRate, int maxBlockSize)
     dfPre_.prepare (static_cast<int> (0.30f * sampleRate_));   // up to 300 ms predelay
     dfApR_.prepare (static_cast<int> (kDfDecorrMs * 0.001f * sampleRate_) + 8);
     dfApRLen_ = std::max (1, static_cast<int> (kDfDecorrMs * 0.001f * sampleRate_));
-    dfLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (kDfLpHz, 0.45f * sampleRate_) / sampleRate_);
+    dfLpCoeff_ = 1.0f - std::exp (-6.283185307f * DspUtils::nyquistSafeHz (sampleRate_, kDfLpHz) / sampleRate_);
     dfLpZ_ = 0.0f;
     (void) rr;
 
@@ -286,7 +286,7 @@ void DattorroPlateVintage::setFrontLoad (float erGain, float predelayMs, float t
         // (w-d)&mask and silently alias to a SHORTER delay. Saturate to the longest
         // representable instead. (2026-06-23 review fix; latent — current callers stay small.)
         frontPredelaySamp_ = std::min (frontPredelaySamp_, tankPreL_.mask);
-        erLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (frontLpHz_, 0.45f * sampleRate_) / sampleRate_);
+        erLpCoeff_ = 1.0f - std::exp (-6.283185307f * DspUtils::nyquistSafeHz (sampleRate_, frontLpHz_) / sampleRate_);
     }
 }
 
@@ -300,7 +300,7 @@ void DattorroPlateVintage::setPostMainTap (float ms, float gain, float lpHz)
     {
         postMainDelayL_ = std::min (std::max (1, static_cast<int> (postMainMs_ * 0.001f * sampleRate_)), postMainL_.mask);
         postMainDelayR_ = std::min (std::max (1, static_cast<int> ((postMainMs_ + 9.0f) * 0.001f * sampleRate_)), postMainR_.mask);
-        postMainLpCoeff_ = 1.0f - std::exp (-6.283185307f * std::min (postMainLpHz_, 0.45f * sampleRate_) / sampleRate_);
+        postMainLpCoeff_ = 1.0f - std::exp (-6.283185307f * DspUtils::nyquistSafeHz (sampleRate_, postMainLpHz_) / sampleRate_);
     }
 }
 

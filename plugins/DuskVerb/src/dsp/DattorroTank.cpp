@@ -1057,7 +1057,8 @@ void DattorroTank::setModeNotch (float hz, float cutDb, float q)
     // compounds per pass, shortening the mode's T60 without a broadband dip.
     const float sr = static_cast<float> (sampleRate_);
     const float A  = std::pow (10.0f, std::clamp (cutDb, -12.0f, 0.0f) / 40.0f);
-    const float w0 = 6.283185307179586f * std::clamp (hz, 20.0f, 0.45f * sr) / sr;
+    const float w0 = 6.283185307179586f
+                   * DspUtils::nyquistSafeHz (sr, std::max (hz, 20.0f)) / sr;
     const float alpha = std::sin (w0) / (2.0f * mnQ_);
     const float cosw = std::cos (w0);
     const float a0 = 1.0f + alpha / A;

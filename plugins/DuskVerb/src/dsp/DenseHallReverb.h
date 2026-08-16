@@ -573,8 +573,8 @@ private:
             gHighB_ = std::clamp (std::pow (gMid, 1.0f / std::max (0.2f, trebMul_)), 0.0f, 0.999f);
         }
         // Tunable crossover one-pole coeffs (defaults 250 Hz / 3.5 kHz).
-        lCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (lowX_,  sr_ * 0.45f) / sr_);
-        hCoeff_ = 1.0f - std::exp (-6.2831853f * std::min (highX_, sr_ * 0.45f) / sr_);
+        lCoeff_ = 1.0f - std::exp (-6.2831853f * DspUtils::nyquistSafeHz (sr_, lowX_) / sr_);
+        hCoeff_ = 1.0f - std::exp (-6.2831853f * DspUtils::nyquistSafeHz (sr_, highX_) / sr_);
 
         // Per-octave GEQ coeffs (fork #2). Each ISO octave's per-pass loop gain
         // gk = 10^(-3·meanLen/(Tk·sr)) realizes target T60 Tk over the uniform

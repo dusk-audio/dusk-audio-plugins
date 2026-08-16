@@ -185,4 +185,31 @@ if(NOT CMAKE_CROSSCOMPILING)
     )
 
     add_test(NAME DuskVerbStereoImage COMMAND DuskVerbStereoImageTest)
+
+    # Issue #171 Nyquist-clamp regression: covers every migrated call site,
+    # compares helper/legacy bytes at standard rates, and exercises the real DSP types.
+    add_executable(DuskVerbNyquistClampTest
+        tests/test_nyquist_clamps.cpp
+        src/dsp/DattorroTank.cpp
+        src/dsp/DattorroPlateVintage.cpp
+        src/dsp/OctaveGEQDesign.cpp
+    )
+
+    target_include_directories(DuskVerbNyquistClampTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
+    )
+
+    target_compile_features(DuskVerbNyquistClampTest PRIVATE cxx_std_17)
+
+    target_compile_definitions(DuskVerbNyquistClampTest PRIVATE
+        DUSKVERB_NYQUIST_TEST_HOOK=1
+    )
+
+    if(MSVC)
+        target_compile_options(DuskVerbNyquistClampTest PRIVATE /W4)
+    else()
+        target_compile_options(DuskVerbNyquistClampTest PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME DuskVerbNyquistClamp COMMAND DuskVerbNyquistClampTest)
 endif()
