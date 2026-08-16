@@ -993,11 +993,13 @@ void ConvolutionReverbEditor::updateValueLabels()
     mixValueLabel->setText(formatPercent(static_cast<float>(mixSlider->getValue())),
                             juce::dontSendNotification);
 
-    // Attack (0-1, display as 0-500ms)
-    float attackMs = static_cast<float>(attackSlider->getValue()) * 500.0f;
-    attackValueLabel->setText(formatTime(attackMs), juce::dontSendNotification);
+    // Attack (0-1): label must match type-in editor units (#176). Showing ms
+    // here while the editor speaks 0..1 made typing the label value clamp to max.
+    attackValueLabel->setText(juce::String(attackSlider->getValue(), 2),
+                              juce::dontSendNotification);
 
-    // Decay (0-1, display as percentage)
+    // Decay / filter attack: same 0..1 native range as MIX — paint % via
+    // parameter string functions so label and ValueEditor agree (#176).
     decayValueLabel->setText(formatPercent(static_cast<float>(decaySlider->getValue())),
                               juce::dontSendNotification);
 
