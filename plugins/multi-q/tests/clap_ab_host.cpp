@@ -87,10 +87,15 @@ int main(int argc, char** argv) {
     }
     // CLAP_AB_SR overrides the session rate so run_ab_parity.sh can sweep
     // 44.1/48/96 kHz (the cramping check in GH #148) without a rebuild.
+    // strtol with a full-consumption check, not atoi: atoi("9600O") returns
+    // 9600, which is in range, so a typo'd rate would silently poison the
+    // measurement this harness exists to make. Reject anything that is not
+    // entirely a number.
     int sr = 48000;
     if (const char* e = std::getenv("CLAP_AB_SR")) {
-        const int v = atoi(e);
-        if (v >= 8000 && v <= 384000) sr = v;
+        char* end = nullptr;
+        const long v = strtol(e, &end, 10);
+        if (end != e && *end == '\0' && v >= 8000 && v <= 384000) sr = (int)v;
         else { fprintf(stderr, "bad CLAP_AB_SR '%s'\n", e); return 2; }
     }
     const int ch = 2, block = 512;
