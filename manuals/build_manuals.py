@@ -62,6 +62,7 @@ from preflight import (
 # happens to use.
 CHAPTER_ORDER = [
     "multi-comp",
+    "multi-q-2",
     "multi-q",
     "4k-eq-2",
     "4k-eq",
