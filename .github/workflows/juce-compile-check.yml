@@ -60,6 +60,11 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - '.github/workflows/juce-compile-check.yml'
+      # The scripts this workflow itself runs: the plugin selector and the shared
+      # apt installer. Without these a PR editing only one of them never fires
+      # this workflow, so the change lands untested by the jobs that execute it.
+      - '.github/scripts/select_juce_plugins.py'
+      - '.github/scripts/apt_install.sh'
       # Subtract the DPF trees again. Several plugins above are wildcarded at
       # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/dpf-plugin/**'
       # too, so without these a DPF-only PR would fire all twelve JUCE jobs and
@@ -76,8 +81,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Twelve jobs for a one-plugin change is not just wasted runner time, it is
+  # wasted WALL time: the legs queue against the runner pool, so a PR touching
+  # convolution-reverb waited on eleven builds that could not tell it anything.
+  # This narrows the matrix to what the change can actually reach, and still
+  # expands to the whole fleet the moment shared code is touched, which is the
+  # case the workflow was built for.
+  scope:
+    name: Select plugins
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    # Reads the diff and nothing else, so it needs nothing beyond contents:read.
+    permissions:
+      contents: read
+    outputs:
+      plugins: ${{ steps.pick.outputs.plugins }}
+      windows: ${{ steps.pick.outputs.windows }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # The selector diffs against the base branch, so it needs history...
+          fetch-depth: 0
+          # ...but not a credential left behind in .git/config afterwards. The
+          # diff is local once the fetch is done. Matches the other workflows.
+          persist-credentials: false
+
+      - name: Pick plugins
+        id: pick
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 .github/scripts/select_juce_plugins.py
+
   compile:
     name: ${{ matrix.plugin }}
+    needs: scope
+    if: needs.scope.outputs.plugins != '[]'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     strategy:
@@ -92,20 +132,10 @@ jobs:
         # variable, so neither is greppable from juce_add_plugin alone.
         #
         # A plugin added to the root CMakeLists without a row here is silently
-        # unbuilt, which is the class of gap this workflow exists to close.
-        plugin:
-          - FourKEQ
-          - MultiComp
-          - TapeMachine
-          - TapeEcho
-          - MultiQ
-          - ConvolutionReverb
-          - DuskVerb
-          - DuskAmp
-          - ChordAnalyzer
-          - ChordAnalyzerMIDI
-          - SpectrumAnalyzer
-          - GrooveMind
+        # unbuilt, which is the class of gap this workflow exists to close. The
+        # list itself now lives in .github/scripts/select_juce_plugins.py, which
+        # decides which of them this particular change needs.
+        plugin: ${{ fromJSON(needs.scope.outputs.plugins) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -122,10 +152,18 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+        # Backstop only. Every apt attempt inside the script is individually
+        # time-boxed, so this should never fire; it exists so a pathological case
+        # still fails inside the job's 45-minute budget with a readable status.
+        timeout-minutes: 20
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # The retry, timeout and mirror-fallback logic that used to be spelled
+          # out here now lives in the shared script, so this workflow and the two
+          # release pipelines all get the same behaviour from one implementation.
+          .github/scripts/apt_install.sh \
             build-essential \
+            ccache \
+            ninja-build \
             pkg-config \
             libasound2-dev \
             libjack-jackd2-dev \
@@ -143,9 +181,25 @@ jobs:
             libglu1-mesa-dev \
             mesa-common-dev
 
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-juce-linux-${{ matrix.plugin }}-${{ github.sha }}
+          restore-keys: |
+            ccache-juce-linux-${{ matrix.plugin }}-
+
       - name: Configure CMake
+        env:
+          # 350M x 12 plugins keeps the whole matrix inside GitHub's 10 GB
+          # per-repository cache budget with room for the DPF workflows.
+          CCACHE_MAXSIZE: 350M
         run: |
-          cmake -B build \
+          ccache --zero-stats >/dev/null 2>&1 || true
+          # Ninja over the default Make generator: it parallelises the configure
+          # side better and schedules a large object graph with less overhead,
+          # which matters when a single plugin drags in the entire JUCE tree.
+          cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSK_COPY_AFTER_BUILD=OFF \
             -DJUCE_PATH=$(pwd)/JUCE
@@ -153,7 +207,15 @@ jobs:
       - name: Build ${{ matrix.plugin }} VST3
         # An unknown target fails here with a readable "No rule to make target"
         # rather than needing a guard step of its own.
+        env:
+          CCACHE_MAXSIZE: 350M
         run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3 -j$(nproc)
+
+      - name: ccache statistics
+        # Printed so a regression in hit rate is visible in the log rather than
+        # only as a slower job.
+        if: always()
+        run: ccache --show-stats 2>/dev/null || true
 
       - name: Verify a binary came out
         # A target that silently produces nothing is indistinguishable from a
@@ -187,12 +249,15 @@ jobs:
   # with no juce_dsp at all.
   compile-windows:
     name: ${{ matrix.plugin }} (windows)
+    needs: scope
+    if: needs.scope.outputs.windows != '[]'
     runs-on: windows-2022
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        plugin: [FourKEQ, MultiComp, SpectrumAnalyzer, ChordAnalyzer]
+        # The four shapes above, narrowed to the ones this change reaches.
+        plugin: ${{ fromJSON(needs.scope.outputs.windows) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

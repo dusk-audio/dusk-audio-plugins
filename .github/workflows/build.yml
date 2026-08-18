@@ -205,8 +205,37 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates software-properties-common
+          # Inline rather than .github/scripts/apt_install.sh, unavoidably: git
+          # does not exist yet, so actions/checkout has not run and the script is
+          # not on disk. This is the step shape that failed the DPF build outright
+          # in 81 seconds (run 32176674366) with no retry to save it, and this is
+          # a RELEASE pipeline, so it gets the same defences in minimal form.
+          switch_mirror() {
+            # security.ubuntu.com is a separate host and stalls independently;
+            # apt-get update fetches from it too, so leaving it in place lets a
+            # stalled security host defeat the whole switch.
+            sed -i \
+              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
+              /etc/apt/sources.list
+            echo "::notice::switched apt to the Azure mirror"
+          }
+          bootstrap() {
+            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              git ca-certificates software-properties-common
+          }
+          for i in 1 2 3; do
+            bootstrap && break
+            if [ "$i" = "3" ]; then
+              echo "::error::apt bootstrap unavailable after 3 attempts"
+              exit 1
+            fi
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
+            [ "$i" = "1" ] && switch_mirror
+            sleep 10
+          done
 
       - name: Install GCC 11 toolchain
         env:
@@ -271,8 +300,16 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+          # This job is capped at 30 minutes and the bootstrap step above can
+          # already spend ~14 of them in its own worst case, so trim the shared
+          # script's budget here: 2 x (120 + 240) + 10s is ~12 minutes, leaving
+          # the pathological total under the job limit instead of dying to it.
+          APT_ATTEMPTS: 2
         run: |
-          apt-get install -y --no-install-recommends \
+          # Retry, timeout, mirror fallback and per-package verification come
+          # from the shared script; this step runs after checkout, so it is on
+          # disk here (unlike the bootstrap step above).
+          .github/scripts/apt_install.sh \
             build-essential \
             cmake \
             pkg-config \
@@ -437,8 +474,37 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates software-properties-common
+          # Inline rather than .github/scripts/apt_install.sh, unavoidably: git
+          # does not exist yet, so actions/checkout has not run and the script is
+          # not on disk. This is the step shape that failed the DPF build outright
+          # in 81 seconds (run 32176674366) with no retry to save it, and this is
+          # a RELEASE pipeline, so it gets the same defences in minimal form.
+          switch_mirror() {
+            # security.ubuntu.com is a separate host and stalls independently;
+            # apt-get update fetches from it too, so leaving it in place lets a
+            # stalled security host defeat the whole switch.
+            sed -i \
+              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
+              /etc/apt/sources.list
+            echo "::notice::switched apt to the Azure mirror"
+          }
+          bootstrap() {
+            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              git ca-certificates software-properties-common
+          }
+          for i in 1 2 3; do
+            bootstrap && break
+            if [ "$i" = "3" ]; then
+              echo "::error::apt bootstrap unavailable after 3 attempts"
+              exit 1
+            fi
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
+            [ "$i" = "1" ] && switch_mirror
+            sleep 10
+          done
 
       - name: Install GCC 11 toolchain
         env:
@@ -495,8 +561,16 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+          # This job is capped at 30 minutes and the bootstrap step above can
+          # already spend ~14 of them in its own worst case, so trim the shared
+          # script's budget here: 2 x (120 + 240) + 10s is ~12 minutes, leaving
+          # the pathological total under the job limit instead of dying to it.
+          APT_ATTEMPTS: 2
         run: |
-          apt-get install -y --no-install-recommends \
+          # Retry, timeout, mirror fallback and per-package verification come
+          # from the shared script; this step runs after checkout, so it is on
+          # disk here (unlike the bootstrap step above).
+          .github/scripts/apt_install.sh \
             build-essential \
             cmake \
             pkg-config \
