@@ -594,7 +594,11 @@ namespace DuskCrashLog
         {
             struct sigaction dfl {};
             dfl.sa_handler = SIG_DFL;
-            ::sigemptyset (&dfl.sa_mask);
+            // Unqualified on purpose: Darwin's signal.h defines sigemptyset as a
+            // function-like macro, so "::sigemptyset (&m)" expands to
+            // "::(*(&m) = 0, 0)" and fails to parse. The neighbouring ::sigaction
+            // and ::raise are real functions and keep their qualifier.
+            sigemptyset (&dfl.sa_mask);
             dfl.sa_flags = 0;
             ::sigaction (sig, &dfl, nullptr);
             ::raise (sig);
@@ -857,7 +861,7 @@ namespace DuskCrashLog
 
         struct sigaction action {};
         action.sa_sigaction = &detail::crashHandler;
-        ::sigemptyset (&action.sa_mask);
+        sigemptyset (&action.sa_mask);   // macro on Darwin; see restoreDefaultAndReraise
         // SA_ONSTACK is opportunistic, NOT a stack-overflow guarantee: it only
         // does anything if an alternate stack already exists on the faulting
         // thread, and we deliberately do not install one. sigaltstack() is
