@@ -141,38 +141,15 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
-        # Backstop only. Every attempt below is individually time-boxed, so this
-        # should never fire; it exists so a pathological case still fails inside
-        # the job's 45-minute budget with a readable status.
+        # Backstop only. Every apt attempt inside the script is individually
+        # time-boxed, so this should never fire; it exists so a pathological case
+        # still fails inside the job's 45-minute budget with a readable status.
         timeout-minutes: 20
         run: |
-          # A dead mirror does not fail apt, it STALLS it, and that distinction
-          # decides the whole design of this step. On run 32157020545 five of the
-          # eleven matrix jobs sat here until the job timeout killed them: three
-          # hours of runner time, reported as "cancelled" with no error to read.
-          #
-          # So a bare retry loop is not enough. A retry only helps a call that
-          # FAILS; a call that hangs never comes back to be retried. Every apt
-          # invocation is therefore wrapped in timeout(1), which converts a stall
-          # into a fast non-zero exit that the loop can actually act on. The apt
-          # Acquire options cut most stalls off earlier still.
-          #
-          # Retrying the same dead mirror is pointless, so attempt 2 onward
-          # switches away from it. The runner image ships pointed at the Azure
-          # regional mirror, which is the one observed hanging, so the fallback
-          # is the stock archive.ubuntu.com. sed is a no-op if the pattern is
-          # absent, which degrades to "retry the same mirror" rather than
-          # breaking.
-          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true"
-          use_fallback_mirror() {
-            echo "::notice::switching apt to archive.ubuntu.com for this attempt"
-            sudo sed -i \
-              -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
-              /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
-          }
-          install_deps() {
-            sudo timeout 240 apt-get update $APT_OPTS && \
-            sudo timeout 600 apt-get install -y --no-install-recommends $APT_OPTS \
+          # The retry, timeout and mirror-fallback logic that used to be spelled
+          # out here now lives in the shared script, so this workflow and the two
+          # release pipelines all get the same behaviour from one implementation.
+          .github/scripts/apt_install.sh \
             build-essential \
             ccache \
             ninja-build \
@@ -192,28 +169,7 @@ jobs:
             libwebkit2gtk-4.0-dev \
             libglu1-mesa-dev \
             mesa-common-dev
-          }
-          for i in 1 2 3 4 5; do
-            install_deps && exit 0
-            echo "::warning::apt attempt $i failed or timed out; retrying in 15s"
-            # Give the configured mirror exactly one chance, then move off it.
-            [ "$i" = "1" ] && use_fallback_mirror
-            sleep 15
-          done
-          echo "::error::apt dependencies unavailable after 5 attempts"
-          exit 1
 
-      # Every job here compiles the whole JUCE module set from scratch, because
-      # juce_add_plugin builds the modules into each plugin's own SharedCode
-      # library. Twelve jobs x every run x ~50 module TUs was the single largest
-      # cost in this workflow, and none of it changes between runs.
-      #
-      # cmake/GlobalSettings.cmake already wires CMAKE_CXX_COMPILER_LAUNCHER to
-      # ccache whenever find_program locates it, so installing ccache above is
-      # the entire integration; this step only has to carry the directory across
-      # runs. Keyed per plugin because each one caches its own copy of those
-      # module objects, and restore-keys lets a changed source file still land on
-      # the previous run's cache instead of starting cold.
       - name: Restore ccache
         uses: actions/cache@v4
         with:

@@ -214,8 +214,34 @@ jobs:
             -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
             -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
             /etc/apt/sources.list
-          apt-get update -o Acquire::Retries=3
-          apt-get install -y --no-install-recommends git ca-certificates
+          # ...but Azure is not always the healthy one. On 2026-08-18 it was the
+          # mirror that was degraded, and this step failed the whole job in 81
+          # seconds (run 32176674366) while the retry loop that would have saved
+          # it sat in the LATER dependency step, which never got to run. The
+          # first apt call in the container needs the same protection as the
+          # second: bounded attempts, and a way back off a bad mirror.
+          restore_stock_mirror() {
+            echo "::notice::switching apt back to archive.ubuntu.com for this attempt"
+            sed -i \
+              -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+              /etc/apt/sources.list
+          }
+          prereqs() {
+            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 300 apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 git ca-certificates
+          }
+          for i in 1 2 3 4 5; do
+            prereqs && break
+            if [ "$i" = "5" ]; then
+              echo "::error::apt prerequisites unavailable after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::prerequisite attempt $i failed or timed out; retrying in 15s"
+            # Give Azure one chance, then go back to the stock mirror.
+            [ "$i" = "1" ] && restore_stock_mirror
+            sleep 15
+          done
 
       - name: Checkout plugins repo
         uses: actions/checkout@v4
@@ -253,32 +279,20 @@ jobs:
           # DPF's OpenGL (DGL) UI resolves these via pkg-config in Makefile.base.mk:
           # gl (mesa), x11, dbus-1 (optional file browser).
           # cmake/zip/curl are needed here too: the ubuntu:22.04 container is bare
-          # (no sudo either — we run as root). Mirrors are intermittently
-          # unreachable from GitHub runners, so retry the whole update+install.
+          # (no sudo either — we run as root).
           # libasound2 + libfreetype6 are the two DT_NEEDED entries of the
           # downloaded pluginval binary that this bare image does not already
           # pull in; without them the VST3 gate dies in the dynamic loader.
-          install_deps() {
-            apt-get update -o Acquire::Retries=3 && \
-            apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              build-essential pkg-config cmake ninja-build zip unzip curl \
-              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev \
-              libasound2 libfreetype6 \
-              xvfb python3 serdi lilv-utils
-          }
-          for i in 1 2 3 4 5; do
-            install_deps && break
-            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
-            sleep 15
-          done
-          # Final check: fail loudly if deps still missing after all retries.
-          # libasound2/libfreetype6 are pluginval's runtime libraries: verify them
-          # here so a missing one fails at install time with a clear message,
-          # instead of surfacing as a dynamic-loader error inside the VST3 gate.
-          for pkg in libgl1-mesa-dev libasound2 libfreetype6; do
-            dpkg -s "$pkg" >/dev/null 2>&1 \
-              || { echo "::error::apt dep unavailable after retries: $pkg"; exit 1; }
-          done
+          # The retry, timeout and mirror-fallback handling, and the per-package
+          # verification that used to be open-coded here, now live in
+          # .github/scripts/apt_install.sh so every workflow gets the same one.
+          .github/scripts/apt_install.sh \
+            build-essential pkg-config cmake ninja-build zip unzip curl \
+            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev \
+            libasound2 libfreetype6 \
+            xvfb python3 serdi lilv-utils
+          # Binaries, not packages: these come from several of the packages above
+          # and a missing one should fail here rather than mid-gate.
           for tool in cmake ninja zip unzip curl python3 serdi lv2info xvfb-run; do
             command -v "$tool" >/dev/null || { echo "::error::missing dependency: $tool"; exit 1; }
           done
@@ -479,13 +493,36 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           # Same Azure regional mirror switch as build-linux, but arm64 packages
-          # come from ports.ubuntu.com (/ubuntu-ports), whose flakiness this job
-          # already retries around. sed is a no-op if the pattern is absent.
+          # come from ports.ubuntu.com (/ubuntu-ports). sed is a no-op if the
+          # pattern is absent.
           sed -i \
             -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
             /etc/apt/sources.list
-          apt-get update -o Acquire::Retries=3
-          apt-get install -y --no-install-recommends git ca-certificates
+          # Inline rather than the shared script, and this is the one place that
+          # cannot be otherwise: git does not exist yet, so actions/checkout has
+          # not run and .github/scripts/ is not on disk. Same defences, minimal
+          # form -- bounded attempts, and one fall back off the chosen mirror.
+          restore_ports_mirror() {
+            echo "::notice::switching apt back to ports.ubuntu.com for this attempt"
+            sed -i \
+              -e 's|http://azure.ports.ubuntu.com/ubuntu-ports|http://ports.ubuntu.com/ubuntu-ports|g' \
+              /etc/apt/sources.list
+          }
+          prereqs() {
+            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 300 apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=3 git ca-certificates
+          }
+          for i in 1 2 3 4 5; do
+            prereqs && break
+            if [ "$i" = "5" ]; then
+              echo "::error::apt prerequisites unavailable after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::prerequisite attempt $i failed or timed out; retrying in 15s"
+            [ "$i" = "1" ] && restore_ports_mirror
+            sleep 15
+          done
 
       - name: Checkout plugins repo
         uses: actions/checkout@v4
@@ -514,22 +551,14 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from GitHub
-          # runners, aborting apt with exit 100. Retry the whole update+install a few times.
-          # cmake/zip/curl needed too: bare ubuntu:22.04 container, run as root (no sudo).
-          install_deps() {
-            apt-get update -o Acquire::Retries=3 && \
-            apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              build-essential pkg-config cmake ninja-build zip curl \
-              libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
-          }
-          for i in 1 2 3 4 5; do
-            install_deps && break
-            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
-            sleep 15
-          done
-          # Final check: fail loudly if deps still missing after all retries.
-          dpkg -s libgl1-mesa-dev >/dev/null 2>&1 || { echo "::error::apt deps unavailable after retries"; exit 1; }
+          # ports.ubuntu.com (the arm64 mirror) is intermittently unreachable from
+          # GitHub runners, aborting apt with exit 100. cmake/zip/curl needed too:
+          # bare ubuntu:22.04 container, run as root (no sudo). Retry, timeout,
+          # mirror fallback and per-package verification all come from the shared
+          # script now.
+          .github/scripts/apt_install.sh \
+            build-essential pkg-config cmake ninja-build zip curl \
+            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}

@@ -130,8 +130,33 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates software-properties-common wget gpg
+          # Inline rather than .github/scripts/apt_install.sh, unavoidably: git
+          # does not exist yet, so actions/checkout has not run and the script is
+          # not on disk. This is the step shape that failed the DPF build outright
+          # in 81 seconds (run 32176674366) with no retry to save it, and this is
+          # a RELEASE pipeline, so it gets the same defences in minimal form.
+          switch_mirror() {
+            sed -i \
+              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
+              /etc/apt/sources.list
+            echo "::notice::switched apt to the Azure mirror"
+          }
+          bootstrap() {
+            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 300 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              git ca-certificates software-properties-common wget gpg
+          }
+          for i in 1 2 3 4 5; do
+            bootstrap && break
+            if [ "$i" = "5" ]; then
+              echo "::error::apt bootstrap unavailable after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 15s"
+            [ "$i" = "1" ] && switch_mirror
+            sleep 15
+          done
 
       - name: Install GCC 11 toolchain
         env:
@@ -246,8 +271,33 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates software-properties-common wget gpg
+          # Inline rather than .github/scripts/apt_install.sh, unavoidably: git
+          # does not exist yet, so actions/checkout has not run and the script is
+          # not on disk. This is the step shape that failed the DPF build outright
+          # in 81 seconds (run 32176674366) with no retry to save it, and this is
+          # a RELEASE pipeline, so it gets the same defences in minimal form.
+          switch_mirror() {
+            sed -i \
+              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
+              /etc/apt/sources.list
+            echo "::notice::switched apt to the Azure mirror"
+          }
+          bootstrap() {
+            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 300 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              git ca-certificates software-properties-common wget gpg
+          }
+          for i in 1 2 3 4 5; do
+            bootstrap && break
+            if [ "$i" = "5" ]; then
+              echo "::error::apt bootstrap unavailable after 5 attempts"
+              exit 1
+            fi
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 15s"
+            [ "$i" = "1" ] && switch_mirror
+            sleep 15
+          done
 
       - name: Install GCC 11 toolchain
         env:
@@ -687,12 +737,20 @@ jobs:
     env:
       PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.version }}
     steps:
+      # Checkout moved ahead of the dependency install so the shared apt script
+      # is on disk when that step runs. Safe here and only here: this job runs on
+      # a hosted runner, which already has git, unlike the bare containers above
+      # where the first apt call is what makes checkout possible at all.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Install build + test deps
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          .github/scripts/apt_install.sh \
             cmake ninja-build pkg-config unzip \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
@@ -703,11 +761,6 @@ jobs:
           # gate self-skips and the LV2 host path would go unvalidated, so fail
           # here rather than let the suite quietly skip it.
           pkg-config --modversion lilv-0
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
