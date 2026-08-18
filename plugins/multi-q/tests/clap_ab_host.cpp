@@ -12,6 +12,7 @@
 #include <clap/clap.h>
 #include <dlfcn.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <cmath>
@@ -84,7 +85,15 @@ int main(int argc, char** argv) {
             textParams.push_back({kv.substr(0,eq), kv.substr(eq+1)});
         }
     }
-    const int sr = 48000, ch = 2, block = 512;
+    // CLAP_AB_SR overrides the session rate so run_ab_parity.sh can sweep
+    // 44.1/48/96 kHz (the cramping check in GH #148) without a rebuild.
+    int sr = 48000;
+    if (const char* e = std::getenv("CLAP_AB_SR")) {
+        const int v = atoi(e);
+        if (v >= 8000 && v <= 384000) sr = v;
+        else { fprintf(stderr, "bad CLAP_AB_SR '%s'\n", e); return 2; }
+    }
+    const int ch = 2, block = 512;
     const int totalFrames = sr * 2; // 2 s
 
     void* lib = dlopen(clapPath.c_str(), RTLD_NOW | RTLD_LOCAL);
