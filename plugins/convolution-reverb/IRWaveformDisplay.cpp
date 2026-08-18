@@ -183,7 +183,7 @@ void IRWaveformDisplay::paint(juce::Graphics& g)
         tempEnvelope.setLength(lengthParam);
 
         int numPoints = static_cast<int>(envBounds.getWidth());
-        auto envelopeCurve = tempEnvelope.getEnvelopeCurve(numPoints);
+        auto envelopeCurve = buildEnvelopeCurve(tempEnvelope, numPoints);
         int actualPoints = static_cast<int>(envelopeCurve.size());
 
         if (actualPoints > 0)
@@ -284,10 +284,12 @@ void IRWaveformDisplay::paint(juce::Graphics& g)
                    30, 12, juce::Justification::centredRight);
     }
 
-    // Draw length cutoff line
-    if (lengthParam < 1.0f)
+    // Draw length cutoff line. Uses the surviving fraction, not the raw knob, so
+    // the line and the shading land where the envelope curve actually ends.
+    const float cutoffFraction = activeLengthFraction();
+    if (cutoffFraction < 1.0f)
     {
-        float cutoffX = waveformBounds.getX() + waveformBounds.getWidth() * lengthParam;
+        float cutoffX = waveformBounds.getX() + waveformBounds.getWidth() * cutoffFraction;
         g.setColour(envelopeColour.withAlpha(0.7f));
         g.drawVerticalLine(static_cast<int>(cutoffX), waveformBounds.getY(), waveformBounds.getBottom());
 
@@ -546,7 +548,7 @@ void IRWaveformDisplay::rebuildEnvelopePath()
     tempEnvelope.setDecay(decayParam);
     tempEnvelope.setLength(lengthParam);
 
-    auto envelopeCurve = tempEnvelope.getEnvelopeCurve(numPoints);
+    auto envelopeCurve = buildEnvelopeCurve(tempEnvelope, numPoints);
     int actualPoints = static_cast<int>(envelopeCurve.size());
 
     if (actualPoints == 0)

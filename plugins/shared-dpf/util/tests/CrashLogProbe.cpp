@@ -86,7 +86,9 @@ void setSimpleHandler(int sig, void (*handler)(int))
 {
     struct sigaction action {};
     action.sa_handler = handler;
-    ::sigemptyset(&action.sa_mask);
+    // Unqualified: Darwin defines sigemptyset as a function-like macro, so the
+    // "::" form expands to "::(*(&m) = 0, 0)" and will not parse.
+    sigemptyset(&action.sa_mask);
     action.sa_flags = SA_RESTART;
     if (::sigaction(sig, &action, nullptr) != 0)
     {
@@ -101,7 +103,7 @@ void setSiginfoHandler(int sig,
 {
     struct sigaction action {};
     action.sa_sigaction = handler;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);   // macro on Darwin; see setSimpleHandler
     action.sa_flags = SA_SIGINFO | SA_RESTART;
     if (::sigaction(sig, &action, previous) != 0)
     {

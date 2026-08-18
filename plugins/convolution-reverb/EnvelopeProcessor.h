@@ -55,6 +55,28 @@ public:
         return length * 100.0f;
     }
 
+    // Samples of an irNumSamples-long IR that survive processIR()'s length
+    // truncation. Mirrors it exactly, including the 64-sample floor and the fact
+    // that it only ever shrinks the buffer.
+    int getActiveSamples(int irNumSamples) const
+    {
+        if (irNumSamples <= 0)
+            return 0;
+        return std::min(std::max(64, static_cast<int>(irNumSamples * length)), irNumSamples);
+    }
+
+    // The same thing as a fraction of the untruncated IR. Every drawing that
+    // marks where the IR ends -- the envelope curve, the cutoff line, the shaded
+    // truncated region -- must use THIS and not `length`, or they disagree with
+    // each other and with the DSP once the 64-sample floor bites. With no IR
+    // there is no sample count to derive it from, so fall back to the knob.
+    float getActiveFraction(int irNumSamples) const
+    {
+        if (irNumSamples <= 0)
+            return length;
+        return static_cast<float>(getActiveSamples(irNumSamples)) / static_cast<float>(irNumSamples);
+    }
+
     // Process IR buffer in place
     void processIR(juce::AudioBuffer<float>& ir, double sampleRate) const
     {
@@ -92,28 +114,52 @@ public:
         }
     }
 
-    // Generate envelope curve for visualization
-    std::vector<float> getEnvelopeCurve(int numPoints) const
+    // Generate envelope curve for visualization.
+    //
+    // Takes the UNTRUNCATED IR's sample count and rate because the drawn curve
+    // has to reproduce processIR()'s arithmetic, not approximate it. The attack
+    // is a fixed wall-clock span (0..500 ms), so the FRACTION of the IR it
+    // occupies depends on how long that IR is: the same knob covers half of a 1 s
+    // IR and a tenth of a 5 s one. This used to pass a flat attack * 0.25f
+    // "scaled for visualization", which happens to be right only for a 2 s IR at
+    // full length and drew a visibly wrong envelope for everything else.
+    std::vector<float> getEnvelopeCurve(int numPoints, int irNumSamples, double irSampleRate) const
     {
         std::vector<float> curve(numPoints);
 
-        // Calculate normalized attack position
-        float attackNormalizedPos = attack * 0.5f / 5.0f; // Assuming max IR is ~5 seconds
+        // Mirror processIR() step for step, in samples: truncate to `length`,
+        // floor the result at 64 samples, never extend past the original buffer,
+        // then measure the attack against whatever survived. Working in seconds
+        // instead would drop the 64-sample floor and draw the wrong ramp for a
+        // short IR at a small length.
+        const int activeSamples = getActiveSamples(irNumSamples);
+        const float activeFraction = getActiveFraction(irNumSamples);
+
+        // Zero, not one: with no usable sample rate processIR() computes zero
+        // attack samples and applies NO fade, so the drawing must not paint one.
+        // An attackFraction of 1.0 would ramp the whole curve up from silence.
+        float attackFraction = 0.0f;
+        if (activeSamples > 0 && irSampleRate > 0.0)
+        {
+            const int attackSamples = std::min(static_cast<int>(attack * 0.5f * irSampleRate),
+                                               activeSamples);
+            attackFraction = static_cast<float>(attackSamples) / static_cast<float>(activeSamples);
+        }
 
         for (int i = 0; i < numPoints; ++i)
         {
             float position = static_cast<float>(i) / static_cast<float>(numPoints - 1);
 
-            // Only show envelope up to the length cutoff
-            if (position > length)
+            // Only show envelope up to the effective length cutoff
+            if (position > activeFraction || activeFraction <= 0.0f)
             {
                 curve[i] = 0.0f;
             }
             else
             {
-                // Normalize position within the active length
-                float normalizedPos = position / length;
-                curve[i] = getEnvelopeValue(normalizedPos, attack * 0.25f); // Scaled for visualization
+                // Normalize position within the surviving length
+                float normalizedPos = position / activeFraction;
+                curve[i] = getEnvelopeValue(normalizedPos, attackFraction);
             }
         }
 

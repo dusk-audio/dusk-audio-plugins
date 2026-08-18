@@ -106,15 +106,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
         juce::AudioParameterFloatAttributes().withLabel("ms")));
 
     // Envelope controls
+    // ATTACK is a 0..1 fraction of a fixed 500 ms envelope span, and it reads as
+    // a percentage rather than the milliseconds it actually drives (GH #176).
+    // Milliseconds are not available here: ValueEditor::parseSmart classifies any
+    // slider whose maximum is <= 60 and whose display ends in a time token as
+    // seconds-native, so a "250 ms" display would have a typed 250 come back as
+    // 0.25 -- half the intended value, silently. Percent keeps the round trip
+    // exact and matches DECAY and F.ATK, the other two envelope fractions.
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "attack", "Attack",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f));
+        0.0f,
+        fractionShownAsPercent()));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "decay", "Decay",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        1.0f));
+        1.0f,
+        fractionShownAsPercent()));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "length", "Length",
@@ -126,11 +135,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "reverse", "Reverse", false));
 
-    // Stereo width
+    // Stereo width. Native 0..2 shown as 0..200 %, so the literal x100 in
+    // fractionShownAsPercent() is again the right scale (GH #176). The knob
+    // painted "150%" while its editor spoke 0..2, so typing the number on
+    // screen clamped to maximum width. percentNeedsScaling() still scales here:
+    // a native maximum of 2 is far below its 50 percent-native bar.
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "width", "Stereo Width",
         juce::NormalisableRange<float>(0.0f, 2.0f, 0.01f),
-        1.0f));
+        1.0f,
+        fractionShownAsPercent()));
 
     // Filters
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -238,7 +252,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "filter_env_attack", "Filter Attack",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.3f));  // 30% of IR length for filter attack
+        0.3f,  // 30% of IR length for filter attack
+        fractionShownAsPercent()));
 
     // Stereo Mode
     params.push_back(std::make_unique<juce::AudioParameterChoice>(

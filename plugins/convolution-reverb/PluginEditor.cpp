@@ -53,8 +53,8 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     decayLabel = std::make_unique<juce::Label>();
     lengthLabel = std::make_unique<juce::Label>();
 
-    setupSlider(*attackSlider, *attackLabel, "ATTACK");
-    setupSlider(*decaySlider, *decayLabel, "DECAY");
+    setupSlider(*attackSlider, *attackLabel, "ATTACK", "%");
+    setupSlider(*decaySlider, *decayLabel, "DECAY", "%");
     setupSlider(*lengthSlider, *lengthLabel, "LENGTH", "%");
 
     reverseButton = std::make_unique<juce::ToggleButton>("REV");
@@ -69,7 +69,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     mixLabel = std::make_unique<juce::Label>();
 
     setupSlider(*preDelaySlider, *preDelayLabel, "PRE-DELAY", "ms");
-    setupSlider(*widthSlider, *widthLabel, "WIDTH");
+    setupSlider(*widthSlider, *widthLabel, "WIDTH", "%");
     setupSlider(*mixSlider, *mixLabel, "MIX", "%");
 
     // Filter controls
@@ -207,7 +207,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
 
     setupSlider(*filterEnvInitSlider, *filterEnvInitLabel, "INIT", "Hz");
     setupSlider(*filterEnvEndSlider, *filterEnvEndLabel, "END", "Hz");
-    setupSlider(*filterEnvAttackSlider, *filterEnvAttackLabel, "F.ATK");
+    setupSlider(*filterEnvAttackSlider, *filterEnvAttackLabel, "F.ATK", "%");
 
     // Meters (stereo mode)
     inputMeter = std::make_unique<LEDMeter>();
@@ -984,35 +984,37 @@ void ConvolutionReverbEditor::updateValueLabels()
     preDelayValueLabel->setText(formatTime(static_cast<float>(preDelaySlider->getValue())),
                                  juce::dontSendNotification);
 
-    // Width (0-200%, display as percentage)
-    float widthPercent = static_cast<float>(widthSlider->getValue()) * 100.0f;
-    widthValueLabel->setText(juce::String(static_cast<int>(widthPercent)) + "%",
+    // Width (0-2 native, display as 0-200%)
+    widthValueLabel->setText(formatPercent(static_cast<float>(widthSlider->getValue())),
                               juce::dontSendNotification);
 
     // Mix (0-100%)
     mixValueLabel->setText(formatPercent(static_cast<float>(mixSlider->getValue())),
                             juce::dontSendNotification);
 
-    // Attack (0-1, display as 0-500ms)
-    float attackMs = static_cast<float>(attackSlider->getValue()) * 500.0f;
-    attackValueLabel->setText(formatTime(attackMs), juce::dontSendNotification);
+    // Attack (0-1, display as percentage of the 500 ms envelope span). The label
+    // must speak the same units as the type-in editor (#176): ValueEditor pre-fills
+    // from slider.getTextFromValue(), so a label in any other unit invites the user
+    // to type a number the parser will misread.
+    attackValueLabel->setText(formatPercent(static_cast<float>(attackSlider->getValue())),
+                              juce::dontSendNotification);
 
     // Decay (0-1, display as percentage)
     decayValueLabel->setText(formatPercent(static_cast<float>(decaySlider->getValue())),
                               juce::dontSendNotification);
 
-    // Length (0-1, display as percentage or seconds based on IR)
+    // Length (0-1). The percentage leads and the resolved tail time follows in
+    // parentheses (#176). This label used to switch wholesale to seconds once an
+    // IR was loaded, while the parameter kept speaking percent: at a 5 s IR the
+    // knob read "3.8 s", and typing 3.8 into the editor wrote 0.038 -- a
+    // collapsed tail rather than a visible failure. Keeping percent first means
+    // the number nearest the knob is always the one the editor accepts.
     float lengthVal = static_cast<float>(lengthSlider->getValue());
     float irLengthSec = audioProcessor.getCurrentIRLengthSeconds();
+    juce::String lengthText = formatPercent(lengthVal);
     if (irLengthSec > 0.0f)
-    {
-        float actualLength = lengthVal * irLengthSec;
-        lengthValueLabel->setText(juce::String(actualLength, 1) + " s", juce::dontSendNotification);
-    }
-    else
-    {
-        lengthValueLabel->setText(formatPercent(lengthVal), juce::dontSendNotification);
-    }
+        lengthText += " (" + juce::String(lengthVal * irLengthSec, 1) + " s)";
+    lengthValueLabel->setText(lengthText, juce::dontSendNotification);
 
     // HPF (20-500 Hz)
     hpfValueLabel->setText(formatFrequency(static_cast<float>(hpfSlider->getValue())),
