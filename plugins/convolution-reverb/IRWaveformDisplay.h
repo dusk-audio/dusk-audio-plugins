@@ -75,6 +75,17 @@ private:
     // Envelope curve for the loaded IR. Forwards the untruncated sample count and
     // rate so EnvelopeProcessor can reproduce processIR()'s arithmetic exactly --
     // the attack is a wall-clock span, not a fraction of the IR.
+    // Fraction of the loaded IR that survives the length knob, from the same
+    // helper the envelope curve uses. The cutoff line and the shaded truncated
+    // region are drawn from this rather than lengthParam so all three agree once
+    // processIR's 64-sample floor raises the surviving buffer above the knob.
+    float activeLengthFraction() const
+    {
+        EnvelopeProcessor envelope;
+        envelope.setLength(lengthParam);
+        return envelope.getActiveFraction(irBuffer.getNumSamples());
+    }
+
     std::vector<float> buildEnvelopeCurve(const EnvelopeProcessor& envelope, int numPoints) const
     {
         return envelope.getEnvelopeCurve(numPoints, irBuffer.getNumSamples(), irSampleRate);

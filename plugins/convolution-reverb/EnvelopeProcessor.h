@@ -55,6 +55,28 @@ public:
         return length * 100.0f;
     }
 
+    // Samples of an irNumSamples-long IR that survive processIR()'s length
+    // truncation. Mirrors it exactly, including the 64-sample floor and the fact
+    // that it only ever shrinks the buffer.
+    int getActiveSamples(int irNumSamples) const
+    {
+        if (irNumSamples <= 0)
+            return 0;
+        return std::min(std::max(64, static_cast<int>(irNumSamples * length)), irNumSamples);
+    }
+
+    // The same thing as a fraction of the untruncated IR. Every drawing that
+    // marks where the IR ends -- the envelope curve, the cutoff line, the shaded
+    // truncated region -- must use THIS and not `length`, or they disagree with
+    // each other and with the DSP once the 64-sample floor bites. With no IR
+    // there is no sample count to derive it from, so fall back to the knob.
+    float getActiveFraction(int irNumSamples) const
+    {
+        if (irNumSamples <= 0)
+            return length;
+        return static_cast<float>(getActiveSamples(irNumSamples)) / static_cast<float>(irNumSamples);
+    }
+
     // Process IR buffer in place
     void processIR(juce::AudioBuffer<float>& ir, double sampleRate) const
     {
@@ -110,20 +132,13 @@ public:
         // then measure the attack against whatever survived. Working in seconds
         // instead would drop the 64-sample floor and draw the wrong ramp for a
         // short IR at a small length.
-        int activeSamples = std::max(64, static_cast<int>(irNumSamples * length));
-        activeSamples = std::min(activeSamples, irNumSamples);
+        const int activeSamples = getActiveSamples(irNumSamples);
+        const float activeFraction = getActiveFraction(irNumSamples);
 
-        // The cutoff and the position normalisation below must both use the
-        // fraction that SURVIVES, not the raw length knob. Where the 64-sample
-        // floor raises the surviving buffer above numSamples * length, drawing
-        // against `length` would cut the curve early and compress the position
-        // axis relative to the buffer the DSP actually shaped. With no IR loaded
-        // there is no sample count to derive it from, so fall back to the knob.
-        const float activeFraction = irNumSamples > 0
-                                   ? static_cast<float>(activeSamples) / static_cast<float>(irNumSamples)
-                                   : length;
-
-        float attackFraction = 1.0f;
+        // Zero, not one: with no usable sample rate processIR() computes zero
+        // attack samples and applies NO fade, so the drawing must not paint one.
+        // An attackFraction of 1.0 would ramp the whole curve up from silence.
+        float attackFraction = 0.0f;
         if (activeSamples > 0 && irSampleRate > 0.0)
         {
             const int attackSamples = std::min(static_cast<int>(attack * 0.5f * irSampleRate),
