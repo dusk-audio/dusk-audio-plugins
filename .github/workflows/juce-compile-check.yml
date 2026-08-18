@@ -122,23 +122,38 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
-        # Cap the step well under the job's 45-minute budget. An unreachable
-        # mirror does not fail apt, it stalls it: on run 32157020545 five of the
-        # eleven matrix jobs sat in this step until the JOB timeout killed them,
-        # burning about three hours of runner time and reporting as "cancelled"
-        # with no log to read. Failing here at 10 minutes turns that into a
-        # legible error, and the retry below usually means it never fires.
-        timeout-minutes: 10
+        # Backstop only. Every attempt below is individually time-boxed, so this
+        # should never fire; it exists so a pathological case still fails inside
+        # the job's 45-minute budget with a readable status.
+        timeout-minutes: 20
         run: |
-          # Mirrors are intermittently unreachable from GitHub runners, so retry
-          # the whole update+install rather than failing the matrix leg. Same
-          # approach as dpf-build.yml, which already hardened its apt step.
-          # No sources.list rewrite here: this runs on the ubuntu-22.04 runner
-          # image, which already points at the Azure regional mirror. That
-          # rewrite is specific to dpf-build.yml's bare ubuntu container.
+          # A dead mirror does not fail apt, it STALLS it, and that distinction
+          # decides the whole design of this step. On run 32157020545 five of the
+          # eleven matrix jobs sat here until the job timeout killed them: three
+          # hours of runner time, reported as "cancelled" with no error to read.
+          #
+          # So a bare retry loop is not enough. A retry only helps a call that
+          # FAILS; a call that hangs never comes back to be retried. Every apt
+          # invocation is therefore wrapped in timeout(1), which converts a stall
+          # into a fast non-zero exit that the loop can actually act on. The apt
+          # Acquire options cut most stalls off earlier still.
+          #
+          # Retrying the same dead mirror is pointless, so attempt 2 onward
+          # switches away from it. The runner image ships pointed at the Azure
+          # regional mirror, which is the one observed hanging, so the fallback
+          # is the stock archive.ubuntu.com. sed is a no-op if the pattern is
+          # absent, which degrades to "retry the same mirror" rather than
+          # breaking.
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true"
+          use_fallback_mirror() {
+            echo "::notice::switching apt to archive.ubuntu.com for this attempt"
+            sudo sed -i \
+              -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+              /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          }
           install_deps() {
-            sudo apt-get update -o Acquire::Retries=3 && \
-            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            sudo timeout 240 apt-get update $APT_OPTS && \
+            sudo timeout 600 apt-get install -y --no-install-recommends $APT_OPTS \
             build-essential \
             pkg-config \
             libasound2-dev \
@@ -159,7 +174,9 @@ jobs:
           }
           for i in 1 2 3 4 5; do
             install_deps && exit 0
-            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
+            echo "::warning::apt attempt $i failed or timed out; retrying in 15s"
+            # Give the configured mirror exactly one chance, then move off it.
+            [ "$i" = "1" ] && use_fallback_mirror
             sleep 15
           done
           echo "::error::apt dependencies unavailable after 5 attempts"
