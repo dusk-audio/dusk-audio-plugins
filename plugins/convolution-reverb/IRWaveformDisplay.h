@@ -72,13 +72,12 @@ private:
     void drawModeToggle(juce::Graphics& g);
     float calculateEQResponse(float frequencyHz);
 
-    // Duration of the loaded IR before any length truncation. The envelope curve
-    // needs it because the attack is a wall-clock span, not a fraction of the IR.
-    float getIRLengthSeconds() const
+    // Envelope curve for the loaded IR. Forwards the untruncated sample count and
+    // rate so EnvelopeProcessor can reproduce processIR()'s arithmetic exactly --
+    // the attack is a wall-clock span, not a fraction of the IR.
+    std::vector<float> buildEnvelopeCurve(const EnvelopeProcessor& envelope, int numPoints) const
     {
-        if (irSampleRate <= 0.0 || irBuffer.getNumSamples() == 0)
-            return 0.0f;
-        return static_cast<float>(irBuffer.getNumSamples() / irSampleRate);
+        return envelope.getEnvelopeCurve(numPoints, irBuffer.getNumSamples(), irSampleRate);
     }
 
     // Display mode

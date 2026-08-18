@@ -94,23 +94,32 @@ public:
 
     // Generate envelope curve for visualization.
     //
-    // irLengthSeconds is the duration of the UNTRUNCATED IR and is required for
-    // the drawn curve to match what processIR() actually applies. The attack is a
-    // fixed wall-clock span (0..500 ms), so the FRACTION of the IR it occupies
-    // depends on how long that IR is: the same knob covers half of a 1 s IR and a
-    // tenth of a 5 s one. This used to pass a flat attack * 0.25f "scaled for
-    // visualization", which happens to be right only for a 2 s IR at full length
-    // and drew a visibly wrong envelope for everything else.
-    std::vector<float> getEnvelopeCurve(int numPoints, float irLengthSeconds) const
+    // Takes the UNTRUNCATED IR's sample count and rate because the drawn curve
+    // has to reproduce processIR()'s arithmetic, not approximate it. The attack
+    // is a fixed wall-clock span (0..500 ms), so the FRACTION of the IR it
+    // occupies depends on how long that IR is: the same knob covers half of a 1 s
+    // IR and a tenth of a 5 s one. This used to pass a flat attack * 0.25f
+    // "scaled for visualization", which happens to be right only for a 2 s IR at
+    // full length and drew a visibly wrong envelope for everything else.
+    std::vector<float> getEnvelopeCurve(int numPoints, int irNumSamples, double irSampleRate) const
     {
         std::vector<float> curve(numPoints);
 
-        // Mirror processIR(): the buffer is truncated to `length` first, and the
-        // attack is then measured as a fraction of what survives.
-        const float activeSeconds = irLengthSeconds * length;
-        const float attackFraction = activeSeconds > 0.0f
-                                   ? std::min(attack * 0.5f, activeSeconds) / activeSeconds
-                                   : 1.0f;
+        // Mirror processIR() step for step, in samples: truncate to `length`,
+        // floor the result at 64 samples, never extend past the original buffer,
+        // then measure the attack against whatever survived. Working in seconds
+        // instead would drop the 64-sample floor and draw the wrong ramp for a
+        // short IR at a small length.
+        int activeSamples = std::max(64, static_cast<int>(irNumSamples * length));
+        activeSamples = std::min(activeSamples, irNumSamples);
+
+        float attackFraction = 1.0f;
+        if (activeSamples > 0 && irSampleRate > 0.0)
+        {
+            const int attackSamples = std::min(static_cast<int>(attack * 0.5f * irSampleRate),
+                                               activeSamples);
+            attackFraction = static_cast<float>(attackSamples) / static_cast<float>(activeSamples);
+        }
 
         for (int i = 0; i < numPoints; ++i)
         {
