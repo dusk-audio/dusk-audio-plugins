@@ -63,6 +63,9 @@ FLEET_WIDE = (
     "CMakeLists.txt",
     ".github/workflows/juce-compile-check.yml",
     ".github/scripts/select_juce_plugins.py",
+    # Every Linux compile job runs this installer before building anything, so a
+    # change to it is exercised by -- and must trigger -- the whole fleet.
+    ".github/scripts/apt_install.sh",
 )
 
 # Subtrees inside a plugin directory that no JUCE target compiles. The workflow's

@@ -50,6 +50,31 @@ INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-240}"
 RETRY_SLEEP="${APT_RETRY_SLEEP:-10}"
 APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 
+# A bad override must not pass silently, and ATTEMPTS is the one that would:
+# `for i in $(seq 1 abc)` prints an error, runs the body zero times, and leaves
+# the script exiting 0 having installed NOTHING. A typo'd APT_ATTEMPTS in a
+# workflow would therefore turn this into a no-op that reports success, and the
+# missing packages would surface much later as a confusing compile error.
+# Zero and negatives fail the same way. The timeouts are checked too, since a
+# non-numeric one makes every attempt fail for a reason that has nothing to do
+# with the mirror.
+require_positive_int() {
+    case "$2" in
+        '' | *[!0-9]* ) ;;
+        * ) [ "$2" -gt 0 ] && return 0 ;;
+    esac
+    echo "::error::$1 must be a positive integer, got '$2'" >&2
+    exit 2
+}
+require_positive_int APT_ATTEMPTS        "$ATTEMPTS"
+require_positive_int APT_UPDATE_TIMEOUT  "$UPDATE_TIMEOUT"
+require_positive_int APT_INSTALL_TIMEOUT "$INSTALL_TIMEOUT"
+case "$RETRY_SLEEP" in
+    '' | *[!0-9]* )
+        echo "::error::APT_RETRY_SLEEP must be a non-negative integer, got '$RETRY_SLEEP'" >&2
+        exit 2 ;;
+esac
+
 # Two mirror families, and arm64 is not a footnote: aarch64 Ubuntu serves from
 # ports.ubuntu.com/ubuntu-ports, which shares no substring with the x86 archive
 # host. The first version of this switched only the archive pair, so on the arm64

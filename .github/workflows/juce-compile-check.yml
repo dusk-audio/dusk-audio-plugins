@@ -60,6 +60,11 @@ on:
       - 'CMakeLists.txt'
       - 'cmake/**'
       - '.github/workflows/juce-compile-check.yml'
+      # The scripts this workflow itself runs: the plugin selector and the shared
+      # apt installer. Without these a PR editing only one of them never fires
+      # this workflow, so the change lands untested by the jobs that execute it.
+      - '.github/scripts/select_juce_plugins.py'
+      - '.github/scripts/apt_install.sh'
       # Subtract the DPF trees again. Several plugins above are wildcarded at
       # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/dpf-plugin/**'
       # too, so without these a DPF-only PR would fire all twelve JUCE jobs and
