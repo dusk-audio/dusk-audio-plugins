@@ -29,6 +29,7 @@
 
 #include "MultiQFilters.hpp"  // kMultiQPi, safeIsFinite
 #include "MultiQParams.hpp"   // LinearSmoothedValue
+#include "../../shared-dpf/dsp/DuskFft.hpp"  // duskaudio::FFTr2 (promoted from here)
 
 #include <array>
 #include <atomic>
@@ -64,25 +65,10 @@ struct MatchSpinLock
     void unlock() { flag.clear(std::memory_order_release); }
 };
 
-//==============================================================================
-// Self-contained iterative radix-2 complex FFT with precomputed twiddles +
-// bit-reversal. Operates in-place on separate real/imag arrays. inverse()
-// applies the 1/N normalisation (matching juce::dsp::FFT::performInverse*).
-//==============================================================================
-class FFTr2
-{
-public:
-    void prepare(int size);
-    void forward(float* re, float* im) const { transform(re, im, false); }
-    void inverse(float* re, float* im) const { transform(re, im, true); }
-    int size() const noexcept { return n; }
-
-private:
-    void transform(float* re, float* im, bool inv) const;
-    int n = 0;
-    std::vector<int>   rev;   // bit-reversal permutation
-    std::vector<float> twR, twI; // twiddles W[j] = exp(-2πi j / n), j in 0..n/2-1
-};
+// FFTr2 lived here until it was promoted VERBATIM to the shared tree
+// (plugins/shared-dpf/dsp/DuskFft.hpp) so the Spectrum Analyzer 2 port can
+// build on the same DSP-grade FFT. Same namespace, same name, same arithmetic;
+// the A/B harness gates that nothing moved.
 
 //==============================================================================
 // MultiQMatch — the spectrum-match EQ processor + correction convolver.
