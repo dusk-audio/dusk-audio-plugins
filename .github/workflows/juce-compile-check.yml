@@ -86,6 +86,9 @@ jobs:
     name: Select plugins
     runs-on: ubuntu-22.04
     timeout-minutes: 5
+    # Reads the diff and nothing else, so it needs nothing beyond contents:read.
+    permissions:
+      contents: read
     outputs:
       plugins: ${{ steps.pick.outputs.plugins }}
       windows: ${{ steps.pick.outputs.windows }}
@@ -93,8 +96,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # The selector diffs against the base branch, so it needs history.
+          # The selector diffs against the base branch, so it needs history...
           fetch-depth: 0
+          # ...but not a credential left behind in .git/config afterwards. The
+          # diff is local once the fetch is done. Matches the other workflows.
+          persist-credentials: false
 
       - name: Pick plugins
         id: pick

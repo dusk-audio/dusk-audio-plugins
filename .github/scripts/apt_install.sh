@@ -33,13 +33,33 @@
 # than configured, because the call sites are split between both.
 set -uo pipefail
 
-ATTEMPTS=5
-UPDATE_TIMEOUT=240
-INSTALL_TIMEOUT=600
+# The whole point of this script is to fail fast and legibly, so its own worst
+# case has to fit inside the caller's job budget -- otherwise a pathological run
+# is killed by the JOB timeout and reports as "cancelled" with no error, which is
+# the exact failure mode this exists to remove. Callers run under 30-, 40- and
+# 45-minute job limits, so the defaults are sized against the smallest:
+#
+#   3 x (120 update + 240 install) + 2 x 10s sleep = 1100s, about 18 minutes.
+#
+# Three attempts is enough because the mirror switch happens after the first
+# failure, so attempt 2 is already on the other mirror and attempt 3 is margin.
+# A caller with a tighter step budget can lower any of these from the workflow.
+ATTEMPTS="${APT_ATTEMPTS:-3}"
+UPDATE_TIMEOUT="${APT_UPDATE_TIMEOUT:-120}"
+INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-240}"
+RETRY_SLEEP="${APT_RETRY_SLEEP:-10}"
 APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 
+# Two mirror families, and arm64 is not a footnote: aarch64 Ubuntu serves from
+# ports.ubuntu.com/ubuntu-ports, which shares no substring with the x86 archive
+# host. The first version of this switched only the archive pair, so on the arm64
+# jobs the sed matched nothing, the switch silently did nothing, and every retry
+# went back to the same dead mirror. Each family is only ever swapped within
+# itself, so a ports source can never be rewritten to an x86 archive.
 AZURE_MIRROR="http://azure.archive.ubuntu.com/ubuntu"
 STOCK_MIRROR="http://archive.ubuntu.com/ubuntu"
+AZURE_PORTS="http://azure.ports.ubuntu.com/ubuntu-ports"
+STOCK_PORTS="http://ports.ubuntu.com/ubuntu-ports"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=()
@@ -70,30 +90,65 @@ mirror_files() {
     done
 }
 
+# Plain loop rather than `xargs -r grep`: -r is a GNU extension, so the xargs
+# form silently reported "no match" when this was exercised on macOS and both
+# mirror families looked identical. It would have worked on the Linux runners
+# and been untestable anywhere else.
+sources_match() {
+    local f
+    while read -r f; do
+        grep -q "$1" "$f" 2>/dev/null && return 0
+    done < <(mirror_files)
+    return 1
+}
+
+# Which family this machine serves from: ports on aarch64, archive on x86.
+mirror_family() {
+    if sources_match "ports\.ubuntu\.com"; then
+        echo ports
+    else
+        echo archive
+    fi
+}
+
 current_mirror() {
-    if mirror_files | xargs -r grep -lq "azure.archive.ubuntu.com" 2>/dev/null; then
+    if sources_match "azure\."; then
         echo azure
     else
         echo stock
     fi
 }
 
-# Move to whichever mirror we are NOT on. Called once, after the first failure,
-# so a healthy mirror is never abandoned on a transient blip.
+# Move to whichever mirror we are NOT on, within this machine's family. Called
+# once, after the first failure, so a healthy mirror is never abandoned on a
+# transient blip.
 switch_mirror() {
-    local from to
-    if [ "$(current_mirror)" = "azure" ]; then
-        from="$AZURE_MIRROR" to="$STOCK_MIRROR"
+    local from to security_to
+    if [ "$(mirror_family)" = "ports" ]; then
+        if [ "$(current_mirror)" = "azure" ]; then
+            from="$AZURE_PORTS" to="$STOCK_PORTS"
+        else
+            from="$STOCK_PORTS" to="$AZURE_PORTS"
+        fi
+        # aarch64 serves security from the ports host too, so it moves with it.
+        security_to="$to"
     else
-        from="$STOCK_MIRROR" to="$AZURE_MIRROR"
+        if [ "$(current_mirror)" = "azure" ]; then
+            from="$AZURE_MIRROR" to="$STOCK_MIRROR"
+        else
+            from="$STOCK_MIRROR" to="$AZURE_MIRROR"
+        fi
+        security_to="$to"
     fi
     echo "::notice::apt switching mirror to ${to}"
     mirror_files | while read -r f; do
         "${SUDO[@]}" sed -i -e "s|${from}|${to}|g" "$f" || true
     done
-    # security.ubuntu.com is a separate host and stalls independently.
+    # security.ubuntu.com is a separate host and stalls independently. Only ever
+    # present on the archive side; on ports the security suites already live on
+    # the ports host and were rewritten above.
     mirror_files | while read -r f; do
-        "${SUDO[@]}" sed -i -e "s|http://security.ubuntu.com/ubuntu|${to}|g" "$f" || true
+        "${SUDO[@]}" sed -i -e "s|http://security.ubuntu.com/ubuntu|${security_to}|g" "$f" || true
     done
 }
 
@@ -125,7 +180,7 @@ for i in $(seq 1 "$ATTEMPTS"); do
         exit 1
     fi
 
-    echo "::warning::apt attempt ${i} failed or timed out; retrying in 15s"
+    echo "::warning::apt attempt ${i} failed or timed out; retrying in ${RETRY_SLEEP}s"
     [ "$i" -eq 1 ] && switch_mirror
-    sleep 15
+    sleep "$RETRY_SLEEP"
 done

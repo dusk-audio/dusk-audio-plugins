@@ -218,19 +218,19 @@ jobs:
             echo "::notice::switched apt to the Azure mirror"
           }
           bootstrap() {
-            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
-            timeout 300 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               git ca-certificates software-properties-common
           }
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3; do
             bootstrap && break
-            if [ "$i" = "5" ]; then
-              echo "::error::apt bootstrap unavailable after 5 attempts"
+            if [ "$i" = "3" ]; then
+              echo "::error::apt bootstrap unavailable after 3 attempts"
               exit 1
             fi
-            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 15s"
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
             [ "$i" = "1" ] && switch_mirror
-            sleep 15
+            sleep 10
           done
 
       - name: Install GCC 11 toolchain
@@ -296,6 +296,11 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+          # This job is capped at 30 minutes and the bootstrap step above can
+          # already spend ~14 of them in its own worst case, so trim the shared
+          # script's budget here: 2 x (120 + 240) + 10s is ~12 minutes, leaving
+          # the pathological total under the job limit instead of dying to it.
+          APT_ATTEMPTS: 2
         run: |
           # Retry, timeout, mirror fallback and per-package verification come
           # from the shared script; this step runs after checkout, so it is on
@@ -478,19 +483,19 @@ jobs:
             echo "::notice::switched apt to the Azure mirror"
           }
           bootstrap() {
-            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
-            timeout 300 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               git ca-certificates software-properties-common
           }
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3; do
             bootstrap && break
-            if [ "$i" = "5" ]; then
-              echo "::error::apt bootstrap unavailable after 5 attempts"
+            if [ "$i" = "3" ]; then
+              echo "::error::apt bootstrap unavailable after 3 attempts"
               exit 1
             fi
-            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 15s"
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
             [ "$i" = "1" ] && switch_mirror
-            sleep 15
+            sleep 10
           done
 
       - name: Install GCC 11 toolchain
@@ -548,6 +553,11 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+          # This job is capped at 30 minutes and the bootstrap step above can
+          # already spend ~14 of them in its own worst case, so trim the shared
+          # script's budget here: 2 x (120 + 240) + 10s is ~12 minutes, leaving
+          # the pathological total under the job limit instead of dying to it.
+          APT_ATTEMPTS: 2
         run: |
           # Retry, timeout, mirror fallback and per-package verification come
           # from the shared script; this step runs after checkout, so it is on

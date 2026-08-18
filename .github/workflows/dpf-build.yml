@@ -227,20 +227,20 @@ jobs:
               /etc/apt/sources.list
           }
           prereqs() {
-            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
-            timeout 300 apt-get install -y --no-install-recommends \
+            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3; do
             prereqs && break
-            if [ "$i" = "5" ]; then
-              echo "::error::apt prerequisites unavailable after 5 attempts"
+            if [ "$i" = "3" ]; then
+              echo "::error::apt prerequisites unavailable after 3 attempts"
               exit 1
             fi
-            echo "::warning::prerequisite attempt $i failed or timed out; retrying in 15s"
+            echo "::warning::prerequisite attempt $i failed or timed out; retrying in 10s"
             # Give Azure one chance, then go back to the stock mirror.
             [ "$i" = "1" ] && restore_stock_mirror
-            sleep 15
+            sleep 10
           done
 
       - name: Checkout plugins repo
@@ -509,19 +509,19 @@ jobs:
               /etc/apt/sources.list
           }
           prereqs() {
-            timeout 240 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
-            timeout 300 apt-get install -y --no-install-recommends \
+            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 180 apt-get install -y --no-install-recommends \
               -o Acquire::Retries=3 git ca-certificates
           }
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3; do
             prereqs && break
-            if [ "$i" = "5" ]; then
-              echo "::error::apt prerequisites unavailable after 5 attempts"
+            if [ "$i" = "3" ]; then
+              echo "::error::apt prerequisites unavailable after 3 attempts"
               exit 1
             fi
-            echo "::warning::prerequisite attempt $i failed or timed out; retrying in 15s"
+            echo "::warning::prerequisite attempt $i failed or timed out; retrying in 10s"
             [ "$i" = "1" ] && restore_ports_mirror
-            sleep 15
+            sleep 10
           done
 
       - name: Checkout plugins repo
