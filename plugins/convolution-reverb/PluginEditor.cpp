@@ -54,7 +54,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     lengthLabel = std::make_unique<juce::Label>();
 
     setupSlider(*attackSlider, *attackLabel, "ATTACK");
-    setupSlider(*decaySlider, *decayLabel, "DECAY");
+    setupSlider(*decaySlider, *decayLabel, "DECAY", "%");
     setupSlider(*lengthSlider, *lengthLabel, "LENGTH", "%");
 
     reverseButton = std::make_unique<juce::ToggleButton>("REV");
@@ -207,7 +207,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
 
     setupSlider(*filterEnvInitSlider, *filterEnvInitLabel, "INIT", "Hz");
     setupSlider(*filterEnvEndSlider, *filterEnvEndLabel, "END", "Hz");
-    setupSlider(*filterEnvAttackSlider, *filterEnvAttackLabel, "F.ATK");
+    setupSlider(*filterEnvAttackSlider, *filterEnvAttackLabel, "F.ATK", "%");
 
     // Meters (stereo mode)
     inputMeter = std::make_unique<LEDMeter>();
@@ -993,9 +993,10 @@ void ConvolutionReverbEditor::updateValueLabels()
     mixValueLabel->setText(formatPercent(static_cast<float>(mixSlider->getValue())),
                             juce::dontSendNotification);
 
-    // Attack (0-1, display as 0-500ms)
-    float attackMs = static_cast<float>(attackSlider->getValue()) * 500.0f;
-    attackValueLabel->setText(formatTime(attackMs), juce::dontSendNotification);
+    // Attack (0-1): label must match type-in editor units (#176). Showing ms
+    // here while the editor speaks 0..1 made typing the label value clamp to max.
+    attackValueLabel->setText(juce::String(attackSlider->getValue(), 2),
+                              juce::dontSendNotification);
 
     // Decay (0-1, display as percentage)
     decayValueLabel->setText(formatPercent(static_cast<float>(decaySlider->getValue())),

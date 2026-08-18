@@ -114,7 +114,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "decay", "Decay",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        1.0f));
+        1.0f,
+        fractionShownAsPercent()));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "length", "Length",
@@ -238,7 +239,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "filter_env_attack", "Filter Attack",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.3f));  // 30% of IR length for filter attack
+        0.3f,  // 30% of IR length for filter attack
+        fractionShownAsPercent()));
 
     // Stereo Mode
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
