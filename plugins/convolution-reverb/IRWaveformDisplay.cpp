@@ -183,7 +183,7 @@ void IRWaveformDisplay::paint(juce::Graphics& g)
         tempEnvelope.setLength(lengthParam);
 
         int numPoints = static_cast<int>(envBounds.getWidth());
-        auto envelopeCurve = tempEnvelope.getEnvelopeCurve(numPoints);
+        auto envelopeCurve = tempEnvelope.getEnvelopeCurve(numPoints, getIRLengthSeconds());
         int actualPoints = static_cast<int>(envelopeCurve.size());
 
         if (actualPoints > 0)
@@ -546,7 +546,7 @@ void IRWaveformDisplay::rebuildEnvelopePath()
     tempEnvelope.setDecay(decayParam);
     tempEnvelope.setLength(lengthParam);
 
-    auto envelopeCurve = tempEnvelope.getEnvelopeCurve(numPoints);
+    auto envelopeCurve = tempEnvelope.getEnvelopeCurve(numPoints, getIRLengthSeconds());
     int actualPoints = static_cast<int>(envelopeCurve.size());
 
     if (actualPoints == 0)

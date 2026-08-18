@@ -72,6 +72,15 @@ private:
     void drawModeToggle(juce::Graphics& g);
     float calculateEQResponse(float frequencyHz);
 
+    // Duration of the loaded IR before any length truncation. The envelope curve
+    // needs it because the attack is a wall-clock span, not a fraction of the IR.
+    float getIRLengthSeconds() const
+    {
+        if (irSampleRate <= 0.0 || irBuffer.getNumSamples() == 0)
+            return 0.0f;
+        return static_cast<float>(irBuffer.getNumSamples() / irSampleRate);
+    }
+
     // Display mode
     DisplayMode displayMode = DisplayMode::IRWaveform;
     juce::Rectangle<int> irToggleBounds;

@@ -92,13 +92,25 @@ public:
         }
     }
 
-    // Generate envelope curve for visualization
-    std::vector<float> getEnvelopeCurve(int numPoints) const
+    // Generate envelope curve for visualization.
+    //
+    // irLengthSeconds is the duration of the UNTRUNCATED IR and is required for
+    // the drawn curve to match what processIR() actually applies. The attack is a
+    // fixed wall-clock span (0..500 ms), so the FRACTION of the IR it occupies
+    // depends on how long that IR is: the same knob covers half of a 1 s IR and a
+    // tenth of a 5 s one. This used to pass a flat attack * 0.25f "scaled for
+    // visualization", which happens to be right only for a 2 s IR at full length
+    // and drew a visibly wrong envelope for everything else.
+    std::vector<float> getEnvelopeCurve(int numPoints, float irLengthSeconds) const
     {
         std::vector<float> curve(numPoints);
 
-        // Calculate normalized attack position
-        float attackNormalizedPos = attack * 0.5f / 5.0f; // Assuming max IR is ~5 seconds
+        // Mirror processIR(): the buffer is truncated to `length` first, and the
+        // attack is then measured as a fraction of what survives.
+        const float activeSeconds = irLengthSeconds * length;
+        const float attackFraction = activeSeconds > 0.0f
+                                   ? std::min(attack * 0.5f, activeSeconds) / activeSeconds
+                                   : 1.0f;
 
         for (int i = 0; i < numPoints; ++i)
         {
@@ -113,7 +125,7 @@ public:
             {
                 // Normalize position within the active length
                 float normalizedPos = position / length;
-                curve[i] = getEnvelopeValue(normalizedPos, attack * 0.25f); // Scaled for visualization
+                curve[i] = getEnvelopeValue(normalizedPos, attackFraction);
             }
         }
 
