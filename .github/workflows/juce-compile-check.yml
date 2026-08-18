@@ -122,9 +122,23 @@ jobs:
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+        # Cap the step well under the job's 45-minute budget. An unreachable
+        # mirror does not fail apt, it stalls it: on run 32157020545 five of the
+        # eleven matrix jobs sat in this step until the JOB timeout killed them,
+        # burning about three hours of runner time and reporting as "cancelled"
+        # with no log to read. Failing here at 10 minutes turns that into a
+        # legible error, and the retry below usually means it never fires.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # Mirrors are intermittently unreachable from GitHub runners, so retry
+          # the whole update+install rather than failing the matrix leg. Same
+          # approach as dpf-build.yml, which already hardened its apt step.
+          # No sources.list rewrite here: this runs on the ubuntu-22.04 runner
+          # image, which already points at the Azure regional mirror. That
+          # rewrite is specific to dpf-build.yml's bare ubuntu container.
+          install_deps() {
+            sudo apt-get update -o Acquire::Retries=3 && \
+            sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
             build-essential \
             pkg-config \
             libasound2-dev \
@@ -142,6 +156,14 @@ jobs:
             libwebkit2gtk-4.0-dev \
             libglu1-mesa-dev \
             mesa-common-dev
+          }
+          for i in 1 2 3 4 5; do
+            install_deps && exit 0
+            echo "::warning::apt attempt $i failed (mirror unreachable); retrying in 15s"
+            sleep 15
+          done
+          echo "::error::apt dependencies unavailable after 5 attempts"
+          exit 1
 
       - name: Configure CMake
         run: |
