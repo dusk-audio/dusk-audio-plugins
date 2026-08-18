@@ -4,7 +4,8 @@
 //
 // MultiQDSP.cpp — Digital-character DSP for the Multi-Q core. Transcribed from
 // MultiQ::processBlock's Digital branch (per-band routing + saturation + enable
-// crossfades + delta-solo). Dynamics/British/Tube deferred to later sub-phases.
+// crossfades + delta-solo). Dynamics, British, and Tube paths are implemented
+// below alongside Match EQ and the master-bus utilities.
 
 #include "MultiQDSP.hpp"
 #include <cmath>
