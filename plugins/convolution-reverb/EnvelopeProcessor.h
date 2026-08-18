@@ -113,6 +113,16 @@ public:
         int activeSamples = std::max(64, static_cast<int>(irNumSamples * length));
         activeSamples = std::min(activeSamples, irNumSamples);
 
+        // The cutoff and the position normalisation below must both use the
+        // fraction that SURVIVES, not the raw length knob. Where the 64-sample
+        // floor raises the surviving buffer above numSamples * length, drawing
+        // against `length` would cut the curve early and compress the position
+        // axis relative to the buffer the DSP actually shaped. With no IR loaded
+        // there is no sample count to derive it from, so fall back to the knob.
+        const float activeFraction = irNumSamples > 0
+                                   ? static_cast<float>(activeSamples) / static_cast<float>(irNumSamples)
+                                   : length;
+
         float attackFraction = 1.0f;
         if (activeSamples > 0 && irSampleRate > 0.0)
         {
@@ -125,15 +135,15 @@ public:
         {
             float position = static_cast<float>(i) / static_cast<float>(numPoints - 1);
 
-            // Only show envelope up to the length cutoff
-            if (position > length)
+            // Only show envelope up to the effective length cutoff
+            if (position > activeFraction || activeFraction <= 0.0f)
             {
                 curve[i] = 0.0f;
             }
             else
             {
-                // Normalize position within the active length
-                float normalizedPos = position / length;
+                // Normalize position within the surviving length
+                float normalizedPos = position / activeFraction;
                 curve[i] = getEnvelopeValue(normalizedPos, attackFraction);
             }
         }
