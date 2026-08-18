@@ -71,11 +71,16 @@ parameter snapshot; no state-version migration.
 
 ## The hard parts and their answers
 
-1. **FFT without JUCE**: reuse `FFTr2` (`plugins/multi-q/core/MultiQMatch.hpp:72`),
-   the fleet's self-contained radix-2 FFT with precomputed twiddles. Step 1
-   of this port PROMOTES it to `plugins/shared-dpf/dsp/DuskFft.hpp` and
-   repoints Multi-Q at the shared copy (mechanical include change; Multi-Q's
-   A/B harness re-run guards it). Windowing: Hann, verified at
+1. **FFT without JUCE**: DONE (PR #194). `FFTr2` was promoted VERBATIM from
+   `plugins/multi-q/core/MultiQMatch.{hpp,cpp}` to the header-only
+   `plugins/shared-dpf/dsp/DuskFft.hpp`: same `duskaudio` namespace, same
+   class name, `prepare()` and `transform()` moved with identical
+   arithmetic, and the original declaration and definitions were removed
+   from the Match files. No build wiring changed, and none should:
+   `MultiQMatch.cpp` still holds the entire Match engine and the DPF target
+   keeps compiling it; only the FFT left that file. Guards that ran on the
+   move: MultiQMatchTest 21/21, JUCE AU + DPF vst3/clap/lv2/au builds, full
+   A/B parity harness green. Windowing for THIS port: Hann, verified at
    `FFTProcessor.cpp:216`; port the coefficient formula, including JUCE's
    normalisation, so bin magnitudes match to float tolerance.
 2. **Capture FIFO without `juce::AbstractFifo`**: use the Multi-Q analyzer
@@ -87,12 +92,35 @@ parameter snapshot; no state-version migration.
    into a framework-free `SpectrumCore` in `plugins/spectrum-analyzer/core/`.
 3. **Meter calibration must not move**: LUFS, K-System, correlation,
    true peak, RMS (300 ms integration), and peak are already plain C++.
-   Port them byte-for-byte, then LOCK them with golden-signal tests before
-   touching anything else: sine at -18 dBFS/1 kHz (LUFS, K), fully
-   correlated/anti-correlated/decorrelated noise (correlation), an
-   inter-sample-peak fixture (true peak reads above sample peak), and
-   silence (floor values). Compare JUCE vs DPF outputs on identical WAVs;
-   the gate is equality to float tolerance, not plausibility.
+   Port them byte-for-byte, then LOCK them with the golden-signal protocol
+   below before touching anything else. Both builds process the SAME
+   generated buffers (not resampled variants), starting from a fresh
+   `prepare()` + `reset()`, fed in identical block sizes, with outputs read
+   at the same sample offsets. Fixtures are generated, deterministic, and
+   stereo unless stated; where noise is used, it is `std::mt19937` seeded
+   with 0x5EED so both builds and every CI run see identical samples.
+
+   Run each fixture at 44.1, 48, and 96 kHz, block size 512 (plus one
+   repeat of the sine fixture at block 64 and at a ragged 483 to catch
+   block-boundary state bugs). Warm-up: discard the first 3 s of readings
+   for integrated/short-term LUFS and LRA; everything else reads after 1 s.
+
+   | fixture | observed outputs | expected | tolerance |
+   |---|---|---|---|
+   | 1 kHz sine, -18 dBFS, 10 s, both channels | momentary/short/integrated LUFS | -18 LUFS (BS.1770 sine calibration) | +/-0.1 LU vs JUCE, +/-0.5 LU absolute |
+   | same fixture | K-System K-12/K-14/K-20 level | 0 dB at reference minus 18 | +/-0.1 dB vs JUCE |
+   | same fixture | RMS, peak | -18 dBFS RMS +/-0.1; peak -18 dBFS +/-0.01 | vs JUCE: exact float equality |
+   | identical noise both channels | correlation (raw + smoothed) | +1.0 | +/-0.01; vs JUCE exact |
+   | right = -left noise | correlation | -1.0 | +/-0.01; vs JUCE exact |
+   | independent-seed noise per channel | correlation | ~0 (bounded +/-0.1 over 10 s) | vs JUCE exact |
+   | inter-sample-peak fixture: +0.5 dBFS true peak from a 0 dBFS-sample 11.025 kHz-at-44.1k phase-offset sine | true peak dB | reads ABOVE sample peak | +/-0.2 dB vs analytic; vs JUCE exact |
+   | 30 s silence | every meter | documented floor values (-100 dB conventions, LUFS -inf clamp) | exact |
+
+   "vs JUCE exact" means bitwise-equal floats when the ported code is
+   byte-identical and compiled with the same flags; any divergence is a
+   port defect until proven a compiler artifact, and an accepted artifact
+   loosens that meter's gate to the stated absolute tolerance with a
+   written note, never silently.
 4. **Editor**: rebuild HeaderBar/SpectrumDisplay/MeterPanel/SettingsOverlay
    in ImGui with DuskImGuiWidgets, uniform top row per the TE2 layout
    convention, DuskSupportersOverlay wired on the title. Hover readout
@@ -111,8 +139,18 @@ parameter snapshot; no state-version migration.
 3. DPF shell: 10-param table, passthrough, state, rings.
 4. ImGui editor.
 5. Registry entry + CI matrix; pluginval/clap-validator/LV2 gates.
-6. Validation checklist from GH #184 (bin/frequency/level checks at
-   2048/4096/8192 x 44.1/48/96 kHz; TSan or stress pass on the ring).
+6. Validation checklist from GH #184: bin/frequency/level checks at
+   2048/4096/8192 x 44.1/48/96 kHz, plus TWO separate ring checks:
+   - Race detector (required): build the ring's unit test with
+     ThreadSanitizer and run it with a writer thread pushing audio-rate
+     blocks against a reader thread snapshotting at display rate:
+     `clang++ -std=c++17 -O1 -g -fsanitize=thread plugins/spectrum-analyzer/core/tests/ring_tsan.cpp -o ring_tsan && ./ring_tsan`
+     Zero TSan reports is the gate. No such harness exists in the repo yet;
+     this port adds it (Linux CI or a local Linux/macOS run, either counts,
+     but the command must be in the test script, not folklore).
+   - Stress (additional, not a substitute): the same pair of threads for
+     60 s with randomized block sizes and resolution switches mid-flight;
+     gate is no torn snapshot (sentinel pattern check) and no crash.
 
 Do not start the editor before step 2's gates are green: a meter product
 with drifted calibration and a pretty UI is a regression that LOOKS done.
