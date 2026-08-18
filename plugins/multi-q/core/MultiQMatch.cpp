@@ -30,65 +30,8 @@ static double besselI0(double x)
     return sum;
 }
 
-//==============================================================================
-// FFTr2
-//==============================================================================
-void FFTr2::prepare(int size)
-{
-    n = size;
-    rev.assign((size_t)n, 0);
-    int logn = 0; while ((1 << logn) < n) ++logn;
-    for (int i = 0; i < n; ++i)
-    {
-        int r = 0, x = i;
-        for (int b = 0; b < logn; ++b) { r = (r << 1) | (x & 1); x >>= 1; }
-        rev[(size_t)i] = r;
-    }
-    twR.assign((size_t)(n / 2), 0.0f);
-    twI.assign((size_t)(n / 2), 0.0f);
-    const double twoPi = 2.0 * kMultiQPi;
-    for (int j = 0; j < n / 2; ++j)
-    {
-        const double a = -twoPi * (double)j / (double)n;
-        twR[(size_t)j] = (float)std::cos(a);
-        twI[(size_t)j] = (float)std::sin(a);
-    }
-}
-
-void FFTr2::transform(float* re, float* im, bool inv) const
-{
-    // bit-reversal permutation
-    for (int i = 0; i < n; ++i)
-    {
-        const int j = rev[(size_t)i];
-        if (j > i) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
-    }
-    for (int len = 2; len <= n; len <<= 1)
-    {
-        const int half = len >> 1;
-        const int step = n / len;
-        for (int i = 0; i < n; i += len)
-        {
-            for (int k = 0; k < half; ++k)
-            {
-                const int ti = k * step;
-                float wr = twR[(size_t)ti];
-                float wi = twI[(size_t)ti];
-                if (inv) wi = -wi;                    // conjugate twiddle for inverse
-                const int a = i + k, b = i + k + half;
-                const float vr = re[b] * wr - im[b] * wi;
-                const float vi = re[b] * wi + im[b] * wr;
-                re[b] = re[a] - vr; im[b] = im[a] - vi;
-                re[a] += vr;        im[a] += vi;
-            }
-        }
-    }
-    if (inv)
-    {
-        const float s = 1.0f / (float)n;
-        for (int i = 0; i < n; ++i) { re[i] *= s; im[i] *= s; }
-    }
-}
+// FFTr2's implementation moved with its declaration to
+// plugins/shared-dpf/dsp/DuskFft.hpp (header-only). See the note in the header.
 
 //==============================================================================
 // MultiQMatch — lifecycle
