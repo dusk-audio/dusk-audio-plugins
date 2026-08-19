@@ -46,7 +46,8 @@ set -uo pipefail
 # the exact failure mode this exists to remove. Callers run under 30-, 40- and
 # 45-minute job limits, so the defaults are sized against the smallest:
 #
-#   3 x (120 update + 240 install) + 2 x 10s sleep = 1100s, about 18 minutes.
+#   3 x (120 update + 240 install) + 2 x (45 dpkg repair + 10 sleep) = 1190s,
+#   just under 20 minutes.
 #
 # A caller with a tighter step budget can lower any of these from the workflow.
 ATTEMPTS="${APT_ATTEMPTS:-3}"
@@ -80,14 +81,17 @@ case "$RETRY_SLEEP" in
         exit 2 ;;
 esac
 
-# Two mirror families, and arm64 is not a footnote: aarch64 Ubuntu serves from
+# Two URL families, and arm64 is not a footnote: aarch64 Ubuntu serves from
 # ports.ubuntu.com/ubuntu-ports, which shares no substring with the x86 archive
-# host. The first version of this switched only the archive pair, so on the arm64
-# jobs the sed matched nothing, the switch silently did nothing, and every retry
-# went back to the same dead mirror. Each family is only ever swapped within
-# itself, so a ports source can never be rewritten to an x86 archive.
-STOCK_MIRROR="http://archive.ubuntu.com/ubuntu"
-STOCK_PORTS="http://ports.ubuntu.com/ubuntu-ports"
+# host. An earlier version rewrote only the archive pair, so on the arm64 jobs
+# the sed matched nothing and every fetch went back to the same dead mirror.
+# Rewritten at the HOST level so the scheme is preserved: an https:// azure
+# entry is just as real as an http:// one, and a URL-with-scheme pattern would
+# silently skip it (the verification below caught exactly that in testing).
+AZURE_ARCHIVE_HOST="azure.archive.ubuntu.com"
+STOCK_ARCHIVE_HOST="archive.ubuntu.com"
+AZURE_PORTS_HOST="azure.ports.ubuntu.com"
+STOCK_PORTS_HOST="ports.ubuntu.com"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=()
@@ -135,29 +139,40 @@ sources_match() {
     return 1
 }
 
-# Which family this machine serves from: ports on aarch64, archive on x86.
-mirror_family() {
-    if sources_match "ports\.ubuntu\.com"; then
-        echo ports
-    else
-        echo archive
-    fi
-}
-
+# A failed rewrite is not cosmetic here: the whole point of this script is that
+# apt never talks to azure, so a sed that could not write its file must be a
+# hard failure rather than a silent pass. The loop reads from a process
+# substitution, not a pipe, so it runs in this shell and its status survives.
 rewrite_sources() {
-    local from="$1" to="$2" f
+    local from="$1" to="$2" f rc=0
     while read -r f; do
-        "${SUDO[@]}" sed -i -e "s|${from}|${to}|g" "$f" || true
+        "${SUDO[@]}" sed -i -e "s|${from}|${to}|g" "$f" || rc=1
     done < <(mirror_files)
+    return "$rc"
 }
 
 # Purge azure from every mirror file (including the runner mirrorlist) before
-# the first attempt, so apt talks only to the stock Ubuntu archive.
+# the first attempt, so apt talks only to the stock Ubuntu archive. Both URL
+# families are rewritten unconditionally rather than picking one by
+# architecture: a machine listing both (a cross-arch image, or a stray
+# .sources) would otherwise keep whichever family was not chosen, which is
+# exactly the silent no-op this script exists to end.
 banish_azure() {
-    if [ "$(mirror_family)" = "ports" ]; then
-        rewrite_sources "http://azure.ports.ubuntu.com/ubuntu-ports" "$STOCK_PORTS"
-    else
-        rewrite_sources "http://azure.archive.ubuntu.com/ubuntu" "$STOCK_MIRROR"
+    local rc=0
+    rewrite_sources "$AZURE_ARCHIVE_HOST" "$STOCK_ARCHIVE_HOST" || rc=1
+    rewrite_sources "$AZURE_PORTS_HOST" "$STOCK_PORTS_HOST" || rc=1
+
+    if [ "$rc" -ne 0 ]; then
+        echo "::error::apt could not rewrite its mirror files to drop azure" >&2
+        exit 1
+    fi
+
+    # Verify rather than assume. Matched on the exact Ubuntu mirror hosts, so
+    # unrelated azure repositories on the runner (packages.microsoft.com's
+    # azure-cli, for one) are left alone and do not trip this.
+    if sources_match "azure\.archive\.ubuntu\.com" || sources_match "azure\.ports\.ubuntu\.com"; then
+        echo "::error::azure survived the mirror rewrite; refusing to fetch from it" >&2
+        exit 1
     fi
 }
 
@@ -172,7 +187,7 @@ attempt() {
 # dies on "dpkg was interrupted, you must manually run 'dpkg --configure -a'"
 # no matter how healthy the mirror is. Repair before each retry.
 repair_dpkg() {
-    "${SUDO[@]}" timeout 120 env DEBIAN_FRONTEND=noninteractive \
+    "${SUDO[@]}" timeout 45 env DEBIAN_FRONTEND=noninteractive \
         dpkg --configure -a || true
 }
 

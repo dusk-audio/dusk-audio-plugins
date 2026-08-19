@@ -219,7 +219,7 @@ jobs:
               exit 1
             fi
             echo "::warning::prerequisite attempt $i failed or timed out; retrying in 10s"
-            timeout 120 dpkg --configure -a || true
+            timeout 45 dpkg --configure -a || true
             sleep 10
           done
 
@@ -489,7 +489,7 @@ jobs:
               exit 1
             fi
             echo "::warning::prerequisite attempt $i failed or timed out; retrying in 10s"
-            timeout 120 dpkg --configure -a || true
+            timeout 45 dpkg --configure -a || true
             sleep 10
           done
 
