@@ -330,6 +330,11 @@ private:
     float processOpto(float input, int ch, float sidechain, const MultiCompParameterState& p) noexcept
     {
         auto& d = opto[ch];
+        // JUCE prepares OptoCompressor at the oversampled rate.  This method
+        // is called once per oversampled sample, so all state updates whose
+        // coefficients are expressed as invSampleRate must use that same
+        // rate rather than the host-rate fs.
+        const float sr = static_cast<float>(fs * osFactor);
         float x = inputTransformerOpto.processSample(input, ch);
         float compressed = x * d.gain;
         const float initialGr = 1.0f - d.gain;
@@ -377,28 +382,28 @@ private:
         else
         {
             const float slowDecayTime = 1.5f + d.charge * 3.0f;
-            const float phosphorReleaseCoeff = std::exp(-1.0f / (static_cast<float>(fs) * slowDecayTime));
+            const float phosphorReleaseCoeff = std::exp(-1.0f / (sr * slowDecayTime));
             d.glow = lightLevel + (d.glow - lightLevel) * phosphorReleaseCoeff;
         }
 
         const float afterglowAttackCoeff = std::pow(
-            std::exp(-1.0f / (5.0f * static_cast<float>(fs))), 0.25f);
+            std::exp(-1.0f / (5.0f * sr)), 0.25f);
         if (lightLevel > d.after)
             d.after = lightLevel + (d.after - lightLevel) * afterglowAttackCoeff;
         else
         {
             const float afterglowDecayTime = 5.0f + d.charge * 3.0f;
-            const float afterglowReleaseCoeff = std::exp(-1.0f / (static_cast<float>(fs) * afterglowDecayTime));
+            const float afterglowReleaseCoeff = std::exp(-1.0f / (sr * afterglowDecayTime));
             d.after = lightLevel + (d.after - lightLevel) * afterglowReleaseCoeff;
         }
-        d.charge = std::clamp(d.charge + d.cell * 0.15f / static_cast<float>(fs) - d.charge * 0.12f / static_cast<float>(fs), 0.0f, 1.0f);
+        d.charge = std::clamp(d.charge + d.cell * 0.15f / sr - d.charge * 0.12f / sr, 0.0f, 1.0f);
         const float response = std::clamp(d.cell + d.glow * 0.40f + d.after * 0.12f, 0.0f, 1.0f);
         const float conductance = response > 0.0f ? std::min(3.0f * std::pow(response, 0.7f), 6.0f) : 0.0f;
         const float cc = conductance > d.conductance ? optoCondAttack : optoCondRelease;
         d.conductance = std::clamp(d.conductance + cc * (conductance - d.conductance), 0.0f, 6.0f);
         float newGain = std::clamp(1.0f / (1.0f + d.conductance), 0.01f, 1.0f);
         float delta = newGain - d.gain;
-        if (delta > 0.0f) delta = std::min(delta, 10.0f / static_cast<float>(fs));
+        if (delta > 0.0f) delta = std::min(delta, 10.0f / sr);
         d.gain += delta;
         if (!std::isfinite(d.gain)) d.gain = 1.0f;
         const float grAmount = 1.0f - d.gain;
