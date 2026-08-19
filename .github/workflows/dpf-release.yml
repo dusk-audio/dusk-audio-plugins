@@ -149,7 +149,7 @@ jobs:
           bootstrap() {
             timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              git ca-certificates software-properties-common wget gpg
+              git ca-certificates
           }
           for i in 1 2 3; do
             bootstrap && break
@@ -162,16 +162,26 @@ jobs:
             sleep 10
           done
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Install GCC 11 toolchain
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # gcc-11 is not in focal's base repos; the toolchain PPA add is
-          # occasionally flaky, so retry (mirrors build.yml).
-          add_toolchain() { timeout 120 add-apt-repository -y ppa:ubuntu-toolchain-r/test && timeout 180 apt-get update; }
-          add_toolchain || { echo "PPA attempt 1 failed; retry in 15s"; sleep 15; add_toolchain; } \
-                        || { echo "PPA attempt 2 failed; retry in 30s"; sleep 30; add_toolchain; }
-          apt-get install -y gcc-11 g++-11
+          # The shared script is available after checkout. The PPA command is
+          # the only apt operation it cannot own, so bound it and retry once.
+          .github/scripts/apt_install.sh software-properties-common
+          for i in 1 2; do
+            timeout 120 add-apt-repository -y ppa:ubuntu-toolchain-r/test && break
+            [ "$i" = "2" ] && exit 1
+            echo "PPA attempt 1 failed; retrying in 15s"
+            sleep 15
+          done
+          .github/scripts/apt_install.sh --update-only
+          .github/scripts/apt_install.sh gcc-11 g++-11
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
           update-alternatives --install /usr/bin/cc  cc  /usr/bin/gcc-11 100
@@ -182,21 +192,16 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          .github/scripts/apt_install.sh wget gpg
           wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          apt-get update
-          apt-get install -y --no-install-recommends \
+          .github/scripts/apt_install.sh \
             cmake ninja-build pkg-config zip unzip \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libdbus-1-dev
           cmake --version
           ninja --version
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
@@ -294,7 +299,7 @@ jobs:
           bootstrap() {
             timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-              git ca-certificates software-properties-common wget gpg
+              git ca-certificates
           }
           for i in 1 2 3; do
             bootstrap && break
@@ -307,12 +312,17 @@ jobs:
             sleep 10
           done
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Install GCC 11 toolchain
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           # Ubuntu 22.04 ships gcc-11 natively — no PPA needed.
-          apt-get install -y gcc-11 g++-11
+          .github/scripts/apt_install.sh gcc-11 g++-11
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
           update-alternatives --install /usr/bin/cc  cc  /usr/bin/gcc-11 100
@@ -323,21 +333,16 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          .github/scripts/apt_install.sh wget gpg
           wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          apt-get update
-          apt-get install -y --no-install-recommends \
+          .github/scripts/apt_install.sh \
             cmake ninja-build pkg-config zip unzip \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libdbus-1-dev
           cmake --version
           ninja --version
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Checkout DPF
         uses: actions/checkout@v4
