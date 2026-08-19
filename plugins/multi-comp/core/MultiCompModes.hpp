@@ -27,7 +27,12 @@ public:
     {
         const double newFs = sampleRate > 0.0 ? sampleRate : 48000.0;
         const int newFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
-        if (newFs == fs && newFactor == osFactor) return;
+        // The skip is only safe once the one-time work below has actually run.
+        // Without the flag, a first prepare whose arguments happen to equal the
+        // member defaults (48 kHz, factor 1: a 48 kHz host with oversampling
+        // Off) returns here with digitalDelay still empty and the hardware
+        // stages unprepared, and Digital mode then indexes an empty ring buffer.
+        if (prepared && newFs == fs && newFactor == osFactor) return;
         fs = newFs;
         osFactor = newFactor;
         const double modeRate = fs * osFactor;
@@ -49,6 +54,7 @@ public:
         for (auto& delay : digitalDelay)
             delay.assign(static_cast<size_t>(std::ceil(fs * 0.01 * 4.0)) + 2, 0.0f);
         digitalWrite.fill(0);
+        prepared = true;
     }
 
     // Oversampling can be automated without reallocating or resetting the
@@ -80,19 +86,25 @@ public:
         transientShaper.reset();
     }
 
+    // `external` is the EFFECTIVE sidechain state (the parameter AND a host
+    // bus actually feeding us), not the raw parameter. Reading the parameter
+    // in here made every detector switch to its external topology the moment
+    // the user armed the switch, even with nothing connected, which changed
+    // the compression character instead of doing nothing.
     float process(MultiCompMode mode, float input, int ch, const float sc,
-                  const MultiCompParameterState& p, float localMix = 1.0f) noexcept
+                  const MultiCompParameterState& p, float localMix = 1.0f,
+                  bool external = false) noexcept
     {
         ch = std::clamp(ch, 0, 1);
         switch (mode)
         {
-            case MultiCompMode::Opto: return processOpto(input, ch, sc, p);
-            case MultiCompMode::FET: return processFET(input, ch, sc, p, false);
-            case MultiCompMode::VCA: return processVCA(input, ch, sc, p);
-            case MultiCompMode::Bus: return processBus(input, ch, sc, p, localMix);
-            case MultiCompMode::StudioFET: return processFET(input, ch, sc, p, true);
-            case MultiCompMode::StudioVCA: return processStudioVCA(input, ch, sc, p);
-            case MultiCompMode::Digital: return processDigital(input, ch, sc, p, localMix);
+            case MultiCompMode::Opto: return processOpto(input, ch, sc, p, external);
+            case MultiCompMode::FET: return processFET(input, ch, sc, p, false, external);
+            case MultiCompMode::VCA: return processVCA(input, ch, sc, p, external);
+            case MultiCompMode::Bus: return processBus(input, ch, sc, p, localMix, external);
+            case MultiCompMode::StudioFET: return processFET(input, ch, sc, p, true, external);
+            case MultiCompMode::StudioVCA: return processStudioVCA(input, ch, sc, p, external);
+            case MultiCompMode::Digital: return processDigital(input, ch, sc, p, localMix, external);
             case MultiCompMode::Multiband: return input;
         }
         return input;
@@ -146,6 +158,7 @@ private:
 
     double fs = 48000.0;
     int osFactor = 1;
+    bool prepared = false;
     std::array<OptoState, 2> opto{};
     std::array<FETState, 2> fet{};
     std::array<VCAState, 2> vca{};
@@ -278,7 +291,7 @@ private:
         }
     }
 
-    float processOpto(float input, int ch, float sidechain, const MultiCompParameterState& p) noexcept
+    float processOpto(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept
     {
         auto& d = opto[ch];
         // JUCE prepares OptoCompressor at the oversampled rate.  This method
@@ -296,7 +309,6 @@ private:
             compressed += initialGr * 0.12f * (sq - d.dc);
         }
         const bool limit = p.optoLimit.load(std::memory_order_relaxed);
-        const bool external = p.externalSidechain.load(std::memory_order_relaxed);
         float sc = external ? sidechain : compressed;
         if (external)
         {
@@ -364,7 +376,7 @@ private:
         return std::clamp(out, -2.0f, 2.0f);
     }
 
-    float processFET(float input, int ch, float sidechain, const MultiCompParameterState& p, bool studio) noexcept
+    float processFET(float input, int ch, float sidechain, const MultiCompParameterState& p, bool studio, bool external) noexcept
     {
         auto& d = studio ? static_cast<FETState&>(studioFet[ch]) : fet[ch];
         const float sr = static_cast<float>(fs * osFactor);
@@ -403,7 +415,6 @@ private:
         const float corner = 20000.0f - grNorm * 2000.0f;
         const float chokeCoeff = 1.0f - std::exp(-2.0f * kDuskPi * corner / sr);
         d.hf += chokeCoeff * (feedbackInput - d.hf);
-        const bool external = p.externalSidechain.load(std::memory_order_relaxed);
         float detect = 0.0f;
         if (external)
             detect = std::abs(sidechain * inputGain);
@@ -535,14 +546,14 @@ private:
         return std::clamp(out * decibelsToGain(p.fetOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
 
-    float processVCA(float input, int ch, float sidechain, const MultiCompParameterState& p) noexcept
+    float processVCA(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept
     {
         auto& d = vca[ch];
         const float sr = static_cast<float>(fs * osFactor);
         // JUCE's VCA is feed-forward: internal detection is the audio input
         // even when the host-side stereo-link buffer is populated.  Only an
         // actual external sidechain replaces the detector source.
-        const float detect = std::abs(p.externalSidechain.load(std::memory_order_relaxed) ? sidechain : input);
+        const float detect = std::abs(external ? sidechain : input);
         d.rate = d.rate * 0.95f + std::abs(detect - d.previous) * 0.05f;
         d.previous = detect;
         const float rmsMs = p.vcaClassicDetector.load(std::memory_order_relaxed) ? 0.010f : 0.005f + 0.030f * std::exp(-3.0f * std::clamp((gainToDecibels(std::max(detect, 0.0001f)) + 20.0f) / 30.0f, 0.0f, 1.0f));
@@ -600,7 +611,7 @@ private:
         return std::clamp(out * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
 
-    float processBus(float input, int ch, float sidechain, const MultiCompParameterState& p, float mix) noexcept
+    float processBus(float input, int ch, float sidechain, const MultiCompParameterState& p, float mix, bool external) noexcept
     {
         auto& d = bus[ch];
         const float sr = static_cast<float>(fs * osFactor);
@@ -608,7 +619,7 @@ private:
         const float alpha = 1.0f / (1.0f + kDuskTwoPi * 60.0f / sr);
         d.hp = alpha * (d.hp + fb - d.prev); d.prev = fb;
         d.hp2 = alpha * (d.hp2 + d.hp - d.prev2); d.prev2 = d.hp;
-        const float rect = p.externalSidechain.load(std::memory_order_relaxed) ? std::abs(sidechain) : std::abs(d.hp2);
+        const float rect = external ? std::abs(sidechain) : std::abs(d.hp2);
         const float rc = std::exp(-1.0f / (0.005f * sr));
         d.rms = rc * d.rms + (1.0f - rc) * rect * rect;
         const float level = std::sqrt(std::max(0.0f, d.rms));
@@ -643,12 +654,12 @@ private:
         return out * mix + input * (1.0f - mix);
     }
 
-    float processStudioVCA(float input, int ch, float sidechain, const MultiCompParameterState& p) noexcept
+    float processStudioVCA(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept
     {
         auto& d = studioVca[ch];
         const float sr = static_cast<float>(fs * osFactor);
         const float transformed = inputTransformerStudioVca[ch].processSample(input, ch);
-        const float x = p.externalSidechain.load(std::memory_order_relaxed) ? sidechain : input;
+        const float x = external ? sidechain : input;
         const float rc = std::exp(-1.0f / (0.010f * sr));
         d.rms = rc * d.rms + (1.0f - rc) * x * x;
         const float level = std::sqrt(std::max(0.0f, d.rms));
@@ -684,7 +695,7 @@ private:
         return std::clamp(out * decibelsToGain(p.studioVcaOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
 
-    float processDigital(float input, int ch, float sidechain, const MultiCompParameterState& p, float mix) noexcept
+    float processDigital(float input, int ch, float sidechain, const MultiCompParameterState& p, float mix, bool /*external*/) noexcept
     {
         auto& d = digital[ch];
         const float sr = static_cast<float>(fs * osFactor);

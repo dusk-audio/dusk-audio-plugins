@@ -138,20 +138,28 @@ protected:
                 float decoded = 0.0f;
                 if (multicompp::decodeStateFloat(token.substr(equal + 1), decoded))
                 {
+                    // Clamp to the descriptor range, as setParameterValue does
+                    // on the DSP side. The cache drives both the drawing and
+                    // the value a knob edit starts from, so an out-of-range
+                    // entry in a hand-edited or corrupt state would otherwise
+                    // be displayed and then handed back to the host.
                     const std::string_view id = token.substr(0, equal);
                     for (int i = 0; i < multicompp::kParamCount; ++i)
                         if (id == multicompp::kParams[static_cast<size_t>(i)].id)
-                            values[static_cast<size_t>(i)] = decoded;
+                        {
+                            const auto& d = multicompp::kParams[static_cast<size_t>(i)];
+                            values[static_cast<size_t>(i)] = std::clamp(decoded, d.min, d.max);
+                        }
                     for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
                     {
                         const int band = (i - multicompp::kBandBase) / 8;
                         const int field = (i - multicompp::kBandBase) % 8;
+                        const auto d = multicompp::bandParam(field, band);
                         char bandId[64];
-                        std::snprintf(bandId, sizeof(bandId), "%s_%d",
-                                      multicompp::bandParam(field, band).id, band);
+                        std::snprintf(bandId, sizeof(bandId), "%s_%d", d.id, band);
                         if (id == bandId)
                         {
-                            values[static_cast<size_t>(i)] = decoded;
+                            values[static_cast<size_t>(i)] = std::clamp(decoded, d.min, d.max);
                             break;
                         }
                     }

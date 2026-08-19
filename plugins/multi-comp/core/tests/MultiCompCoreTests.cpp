@@ -544,8 +544,40 @@ void testMultibandBypassAndZeroLatency()
 }
 }
 
+// A first prepare whose arguments match the member defaults (48 kHz, factor 1)
+// must still do the one-time setup. It previously returned early, leaving the
+// Digital lookahead ring buffer empty, and the first Digital block then wrote
+// past the end of it and divided by its zero size.
+void testPrepareAtDefaultRateAndFactor()
+{
+    MultiCompDSP dsp;
+    dsp.setOversampling(0);                     // factor 1, the member default
+    dsp.prepare(48000.0, 256);                  // 48 kHz, also the member default
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 5.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -30.0f);
+
+    std::array<float, 256> left{}, right{};
+    for (int i = 0; i < 256; ++i)
+        left[static_cast<size_t>(i)] = right[static_cast<size_t>(i)]
+            = 0.5f * std::sin(2.0f * kPi * 220.0f * static_cast<float>(i) / 48000.0f);
+
+    float* io[2] = {left.data(), right.data()};
+    const float* in[2] = {left.data(), right.data()};
+    for (int block = 0; block < 8; ++block)
+        dsp.processBlock(in, io, 2, 256);
+
+    for (int i = 0; i < 256; ++i)
+    {
+        require(std::isfinite(left[static_cast<size_t>(i)]), "default-rate prepare left finite");
+        require(std::isfinite(right[static_cast<size_t>(i)]), "default-rate prepare right finite");
+    }
+    std::puts("prepare at default rate/factor: initialised, Digital lookahead safe");
+}
+
 int main()
 {
+    testPrepareAtDefaultRateAndFactor();
     testCrossoverFlatness();
     testStaticCurves();
     testEnvelopeAndReset();

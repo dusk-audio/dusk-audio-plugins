@@ -478,7 +478,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             if (actualOs == 1)
             {
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
-                    return applyCoreDistortion(modes.process(mode, sample, ch, sc, params, localMix),
+                    return applyCoreDistortion(modes.process(mode, sample, ch, sc, params, localMix, external),
                                                distortionType, distortionAmount);
                 });
             }
@@ -487,7 +487,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 int osPhase = 0;
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
                     const float osSc = sc + (nextSc - sc) * static_cast<float>(osPhase++) / static_cast<float>(actualOs);
-                    return applyCoreDistortion(modes.process(mode, sample, ch, osSc, params, localMix),
+                    return applyCoreDistortion(modes.process(mode, sample, ch, osSc, params, localMix, external),
                                                distortionType, distortionAmount);
                 });
             }
