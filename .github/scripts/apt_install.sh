@@ -19,11 +19,18 @@
 #   from one place, rather than hand-copied into whichever step someone
 #   remembered.
 #
-# Both incidents were the same mirror. dpf-build.yml forces apt onto
-# azure.archive.ubuntu.com, documented at the time because archive.ubuntu.com
-# measured 724 B/s from a runner; on 2026-08-18 the polarity was reversed and
-# Azure was the sick one. Pinning EITHER mirror is the bug, so after the first
-# failed attempt this script switches to the other one and keeps going.
+#   WEDGED DPKG. A timed-out install can kill dpkg mid-transaction; every
+#   later attempt then fails on "dpkg was interrupted" no matter how healthy
+#   the network is (2026-08-19). Hence a bounded `dpkg --configure -a`
+#   before each retry.
+#
+# Mirror policy (owner decision, 2026-08-19): stock Ubuntu repos ONLY.
+# azure.archive.ubuntu.com has been the sick side of every incident to date
+# and is purged from every mirror file up front, including the hosted
+# runners' /etc/apt/apt-mirrors.txt mirrorlist, which earlier rewrites
+# missed entirely (apt kept fetching azure while the sources files looked
+# clean). No third-party mirrors: Ubuntu 22.04 is supported until 2027 and
+# the stock archive is the reference.
 #
 # Usage:
 #   apt_install.sh pkg [pkg...]   update, then install those packages
@@ -39,10 +46,9 @@ set -uo pipefail
 # the exact failure mode this exists to remove. Callers run under 30-, 40- and
 # 45-minute job limits, so the defaults are sized against the smallest:
 #
-#   3 x (120 update + 240 install) + 2 x 10s sleep = 1100s, about 18 minutes.
+#   3 x (120 update + 240 install) + 2 x (45 dpkg repair + 10 sleep) = 1190s,
+#   just under 20 minutes.
 #
-# Three attempts is enough because the mirror switch happens after the first
-# failure, so attempt 2 is already on the other mirror and attempt 3 is margin.
 # A caller with a tighter step budget can lower any of these from the workflow.
 ATTEMPTS="${APT_ATTEMPTS:-3}"
 UPDATE_TIMEOUT="${APT_UPDATE_TIMEOUT:-120}"
@@ -75,16 +81,17 @@ case "$RETRY_SLEEP" in
         exit 2 ;;
 esac
 
-# Two mirror families, and arm64 is not a footnote: aarch64 Ubuntu serves from
+# Two URL families, and arm64 is not a footnote: aarch64 Ubuntu serves from
 # ports.ubuntu.com/ubuntu-ports, which shares no substring with the x86 archive
-# host. The first version of this switched only the archive pair, so on the arm64
-# jobs the sed matched nothing, the switch silently did nothing, and every retry
-# went back to the same dead mirror. Each family is only ever swapped within
-# itself, so a ports source can never be rewritten to an x86 archive.
-AZURE_MIRROR="http://azure.archive.ubuntu.com/ubuntu"
-STOCK_MIRROR="http://archive.ubuntu.com/ubuntu"
-AZURE_PORTS="http://azure.ports.ubuntu.com/ubuntu-ports"
-STOCK_PORTS="http://ports.ubuntu.com/ubuntu-ports"
+# host. An earlier version rewrote only the archive pair, so on the arm64 jobs
+# the sed matched nothing and every fetch went back to the same dead mirror.
+# Rewritten at the HOST level so the scheme is preserved: an https:// azure
+# entry is just as real as an http:// one, and a URL-with-scheme pattern would
+# silently skip it (the verification below caught exactly that in testing).
+AZURE_ARCHIVE_HOST="azure.archive.ubuntu.com"
+STOCK_ARCHIVE_HOST="archive.ubuntu.com"
+AZURE_PORTS_HOST="azure.ports.ubuntu.com"
+STOCK_PORTS_HOST="ports.ubuntu.com"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=()
@@ -104,13 +111,18 @@ if [ "$update_only" -eq 0 ] && [ ${#packages[@]} -eq 0 ]; then
     exit 2
 fi
 
-# Both list formats: 24.04 images ship deb822 .sources files and no
-# sources.list, so touching only the latter would silently do nothing there.
+# All the places a mirror can hide. 24.04 images ship deb822 .sources files
+# and no sources.list; hosted runners additionally route apt through a
+# MIRRORLIST at /etc/apt/apt-mirrors.txt (the sources say
+# "mirror+file:/etc/apt/apt-mirrors.txt"). Run 32286384090's sibling proved
+# that skipping the mirrorlist makes every rewrite here a silent no-op: the
+# log said "mirror: stock" while every fetch still hit azure.
 mirror_files() {
     local f
     for f in /etc/apt/sources.list \
              /etc/apt/sources.list.d/*.list \
-             /etc/apt/sources.list.d/*.sources; do
+             /etc/apt/sources.list.d/*.sources \
+             /etc/apt/apt-mirrors.txt; do
         [ -f "$f" ] && printf '%s\n' "$f"
     done
 }
@@ -119,62 +131,72 @@ mirror_files() {
 # form silently reported "no match" when this was exercised on macOS and both
 # mirror families looked identical. It would have worked on the Linux runners
 # and been untestable anywhere else.
+#
+# grep runs under the same privilege as the sed that rewrites these files. A
+# file readable only by root must not come back as a clean "no match", because
+# the one caller is a verification pass and that is how such a pass talks
+# itself into succeeding. Three outcomes, kept distinct:
+#   0  matched somewhere
+#   1  no match, every file read
+#   2  at least one file could not be read, so the answer is unknown
 sources_match() {
-    local f
+    local f rc status=1
     while read -r f; do
-        grep -q "$1" "$f" 2>/dev/null && return 0
+        "${SUDO[@]}" grep -q "$1" "$f" 2>/dev/null
+        rc=$?
+        # A match anywhere is conclusive even if another file was unreadable.
+        [ "$rc" -eq 0 ] && return 0
+        [ "$rc" -ge 2 ] && status=2
     done < <(mirror_files)
-    return 1
+    return "$status"
 }
 
-# Which family this machine serves from: ports on aarch64, archive on x86.
-mirror_family() {
-    if sources_match "ports\.ubuntu\.com"; then
-        echo ports
-    else
-        echo archive
-    fi
+# A failed rewrite is not cosmetic here: the whole point of this script is that
+# apt never talks to azure, so a sed that could not write its file must be a
+# hard failure rather than a silent pass. The loop reads from a process
+# substitution, not a pipe, so it runs in this shell and its status survives.
+rewrite_sources() {
+    local from="$1" to="$2" f rc=0
+    while read -r f; do
+        "${SUDO[@]}" sed -i -e "s|${from}|${to}|g" "$f" || rc=1
+    done < <(mirror_files)
+    return "$rc"
 }
 
-current_mirror() {
-    if sources_match "azure\."; then
-        echo azure
-    else
-        echo stock
-    fi
-}
+# Purge azure from every mirror file (including the runner mirrorlist) before
+# the first attempt, so apt talks only to the stock Ubuntu archive. Both URL
+# families are rewritten unconditionally rather than picking one by
+# architecture: a machine listing both (a cross-arch image, or a stray
+# .sources) would otherwise keep whichever family was not chosen, which is
+# exactly the silent no-op this script exists to end.
+banish_azure() {
+    local rc=0
+    rewrite_sources "$AZURE_ARCHIVE_HOST" "$STOCK_ARCHIVE_HOST" || rc=1
+    rewrite_sources "$AZURE_PORTS_HOST" "$STOCK_PORTS_HOST" || rc=1
 
-# Move to whichever mirror we are NOT on, within this machine's family. Called
-# once, after the first failure, so a healthy mirror is never abandoned on a
-# transient blip.
-switch_mirror() {
-    local from to security_to
-    if [ "$(mirror_family)" = "ports" ]; then
-        if [ "$(current_mirror)" = "azure" ]; then
-            from="$AZURE_PORTS" to="$STOCK_PORTS"
-        else
-            from="$STOCK_PORTS" to="$AZURE_PORTS"
-        fi
-        # aarch64 serves security from the ports host too, so it moves with it.
-        security_to="$to"
-    else
-        if [ "$(current_mirror)" = "azure" ]; then
-            from="$AZURE_MIRROR" to="$STOCK_MIRROR"
-        else
-            from="$STOCK_MIRROR" to="$AZURE_MIRROR"
-        fi
-        security_to="$to"
+    if [ "$rc" -ne 0 ]; then
+        echo "::error::apt could not rewrite its mirror files to drop azure" >&2
+        exit 1
     fi
-    echo "::notice::apt switching mirror to ${to}"
-    mirror_files | while read -r f; do
-        "${SUDO[@]}" sed -i -e "s|${from}|${to}|g" "$f" || true
-    done
-    # security.ubuntu.com is a separate host and stalls independently. Only ever
-    # present on the archive side; on ports the security suites already live on
-    # the ports host and were rewritten above.
-    mirror_files | while read -r f; do
-        "${SUDO[@]}" sed -i -e "s|http://security.ubuntu.com/ubuntu|${security_to}|g" "$f" || true
-    done
+
+    # Verify rather than assume. Matched on the exact Ubuntu mirror hosts, so
+    # unrelated azure repositories on the runner (packages.microsoft.com's
+    # azure-cli, for one) are left alone and do not trip this.
+    local archive_rc ports_rc
+    sources_match "azure\.archive\.ubuntu\.com"; archive_rc=$?
+    sources_match "azure\.ports\.ubuntu\.com"; ports_rc=$?
+
+    # Unreadable is not the same as clean, and only one of those is safe to
+    # continue on.
+    if [ "$archive_rc" -ge 2 ] || [ "$ports_rc" -ge 2 ]; then
+        echo "::error::apt could not read its mirror files to confirm azure is gone" >&2
+        exit 1
+    fi
+
+    if [ "$archive_rc" -eq 0 ] || [ "$ports_rc" -eq 0 ]; then
+        echo "::error::azure survived the mirror rewrite; refusing to fetch from it" >&2
+        exit 1
+    fi
 }
 
 attempt() {
@@ -183,6 +205,16 @@ attempt() {
     "${SUDO[@]}" timeout "$INSTALL_TIMEOUT" env DEBIAN_FRONTEND=noninteractive \
         apt-get install -y --no-install-recommends "${APT_OPTS[@]}" "${packages[@]}"
 }
+
+# A timed-out install can kill dpkg mid-transaction; every later attempt then
+# dies on "dpkg was interrupted, you must manually run 'dpkg --configure -a'"
+# no matter how healthy the mirror is. Repair before each retry.
+repair_dpkg() {
+    "${SUDO[@]}" timeout 45 env DEBIAN_FRONTEND=noninteractive \
+        dpkg --configure -a || true
+}
+
+banish_azure
 
 for i in $(seq 1 "$ATTEMPTS"); do
     if attempt; then
@@ -201,11 +233,11 @@ for i in $(seq 1 "$ATTEMPTS"); do
     fi
 
     if [ "$i" -eq "$ATTEMPTS" ]; then
-        echo "::error::apt failed after ${ATTEMPTS} attempts (mirror: $(current_mirror))"
+        echo "::error::apt failed after ${ATTEMPTS} attempts (stock Ubuntu mirror)"
         exit 1
     fi
 
     echo "::warning::apt attempt ${i} failed or timed out; retrying in ${RETRY_SLEEP}s"
-    [ "$i" -eq 1 ] && switch_mirror
+    repair_dpkg
     sleep "$RETRY_SLEEP"
 done
