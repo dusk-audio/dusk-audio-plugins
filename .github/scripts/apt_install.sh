@@ -131,12 +131,24 @@ mirror_files() {
 # form silently reported "no match" when this was exercised on macOS and both
 # mirror families looked identical. It would have worked on the Linux runners
 # and been untestable anywhere else.
+#
+# grep runs under the same privilege as the sed that rewrites these files. A
+# file readable only by root must not come back as a clean "no match", because
+# the one caller is a verification pass and that is how such a pass talks
+# itself into succeeding. Three outcomes, kept distinct:
+#   0  matched somewhere
+#   1  no match, every file read
+#   2  at least one file could not be read, so the answer is unknown
 sources_match() {
-    local f
+    local f rc status=1
     while read -r f; do
-        grep -q "$1" "$f" 2>/dev/null && return 0
+        "${SUDO[@]}" grep -q "$1" "$f" 2>/dev/null
+        rc=$?
+        # A match anywhere is conclusive even if another file was unreadable.
+        [ "$rc" -eq 0 ] && return 0
+        [ "$rc" -ge 2 ] && status=2
     done < <(mirror_files)
-    return 1
+    return "$status"
 }
 
 # A failed rewrite is not cosmetic here: the whole point of this script is that
@@ -170,7 +182,18 @@ banish_azure() {
     # Verify rather than assume. Matched on the exact Ubuntu mirror hosts, so
     # unrelated azure repositories on the runner (packages.microsoft.com's
     # azure-cli, for one) are left alone and do not trip this.
-    if sources_match "azure\.archive\.ubuntu\.com" || sources_match "azure\.ports\.ubuntu\.com"; then
+    local archive_rc ports_rc
+    sources_match "azure\.archive\.ubuntu\.com"; archive_rc=$?
+    sources_match "azure\.ports\.ubuntu\.com"; ports_rc=$?
+
+    # Unreadable is not the same as clean, and only one of those is safe to
+    # continue on.
+    if [ "$archive_rc" -ge 2 ] || [ "$ports_rc" -ge 2 ]; then
+        echo "::error::apt could not read its mirror files to confirm azure is gone" >&2
+        exit 1
+    fi
+
+    if [ "$archive_rc" -eq 0 ] || [ "$ports_rc" -eq 0 ]; then
         echo "::error::azure survived the mirror rewrite; refusing to fetch from it" >&2
         exit 1
     fi
