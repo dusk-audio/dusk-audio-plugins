@@ -222,45 +222,62 @@ jobs:
             echo "::notice::switched apt to the Azure mirror"
           }
           bootstrap() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
-            timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            timeout 60 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 120 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               git ca-certificates
           }
-          for i in 1 2 3; do
+          for i in 1 2; do
             bootstrap && break
-            if [ "$i" = "3" ]; then
-              echo "::error::apt bootstrap unavailable after 3 attempts"
+            if [ "$i" = "2" ]; then
+              echo "::error::apt bootstrap unavailable after 2 attempts"
               exit 1
             fi
-            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 5s"
             [ "$i" = "1" ] && switch_mirror
-            sleep 10
+            sleep 5
           done
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false  # build job never pushes; don't leave the token in git config
 
-      - name: Install GCC 11 toolchain
+      - name: Install Linux apt dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+          # Worst case: bootstrap 2x(60+120)+5 = 6.1m; plain packages
+          # 2x(45+90)+5 = 4.6m; PPA retry = 2x60+5 = 2.1m; post-source
+          # update = 2x45+5 = 1.6m; final packages = 4.6m. Total apt
+          # ceiling is 18.9m, leaving over 11m in this 30m job for checkout,
+          # configuration, and compilation.
+          APT_ATTEMPTS: 2
+          APT_UPDATE_TIMEOUT: 45
+          APT_INSTALL_TIMEOUT: 90
+          APT_RETRY_SLEEP: 5
         run: |
           # This job builds inside an Ubuntu 20.04 (focal) container for glibc
           # compat, where gcc-11 is NOT in the base repos — it needs the
           # ubuntu-toolchain-r/test PPA. That PPA add is occasionally flaky
           # (launchpad resolution stalls), which failed past release builds, so
-          # The shared script is available after checkout. The PPA command is
-          # the only apt operation it cannot own, so bound it and retry once.
-          .github/scripts/apt_install.sh software-properties-common
+          # the PPA command is the only apt operation it cannot own.
+          .github/scripts/apt_install.sh software-properties-common wget gpg
           for i in 1 2; do
-            timeout 120 add-apt-repository -y ppa:ubuntu-toolchain-r/test && break
+            timeout 60 add-apt-repository -y ppa:ubuntu-toolchain-r/test && break
             [ "$i" = "2" ] && exit 1
-            echo "PPA attempt 1 failed; retrying in 15s"
-            sleep 15
+            echo "PPA attempt 1 failed; retrying in 5s"
+            sleep 5
           done
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
           .github/scripts/apt_install.sh --update-only
-          .github/scripts/apt_install.sh gcc-11 g++-11
+          .github/scripts/apt_install.sh \
+            gcc-11 g++-11 cmake build-essential pkg-config \
+            libasound2-dev libjack-jackd2-dev ladspa-sdk \
+            libcurl4-openssl-dev libfreetype6-dev libx11-dev \
+            libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev mesa-common-dev
           # Set GCC 11 as default for all compiler symlinks
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
@@ -268,16 +285,6 @@ jobs:
           update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-11 100
           gcc --version
           g++ --version
-
-      - name: Install modern CMake
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Install CMake 3.28 from Kitware's APT repo (JUCE 8 requires 3.22+)
-          .github/scripts/apt_install.sh wget
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          .github/scripts/apt_install.sh cmake
           cmake --version
 
       - name: Apply refreshed supporters list
@@ -301,38 +308,6 @@ jobs:
           repository: juce-framework/JUCE
           path: JUCE
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
-
-      - name: Install Linux dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-          # This job is capped at 30 minutes and the bootstrap step above can
-          # already spend ~14 of them in its own worst case, so trim the shared
-          # script's budget here: 2 x (120 + 240) + 10s is ~12 minutes, leaving
-          # the pathological total under the job limit instead of dying to it.
-          APT_ATTEMPTS: 2
-        run: |
-          # Retry, timeout, mirror fallback and per-package verification come
-          # from the shared script; this step runs after checkout, so it is on
-          # disk here (unlike the bootstrap step above).
-          .github/scripts/apt_install.sh \
-            build-essential \
-            cmake \
-            pkg-config \
-            libasound2-dev \
-            libjack-jackd2-dev \
-            ladspa-sdk \
-            libcurl4-openssl-dev \
-            libfreetype6-dev \
-            libx11-dev \
-            libxcomposite-dev \
-            libxcursor-dev \
-            libxext-dev \
-            libxinerama-dev \
-            libxrandr-dev \
-            libxrender-dev \
-            libwebkit2gtk-4.0-dev \
-            libglu1-mesa-dev \
-            mesa-common-dev
 
       - name: Configure CMake
         run: |
@@ -496,47 +471,57 @@ jobs:
             echo "::notice::switched apt to the Azure mirror"
           }
           bootstrap() {
-            timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
-            timeout 180 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            timeout 60 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
+            timeout 120 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
               git ca-certificates
           }
-          for i in 1 2 3; do
+          for i in 1 2; do
             bootstrap && break
-            if [ "$i" = "3" ]; then
-              echo "::error::apt bootstrap unavailable after 3 attempts"
+            if [ "$i" = "2" ]; then
+              echo "::error::apt bootstrap unavailable after 2 attempts"
               exit 1
             fi
-            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
+            echo "::warning::bootstrap attempt $i failed or timed out; retrying in 5s"
             [ "$i" = "1" ] && switch_mirror
-            sleep 10
+            sleep 5
           done
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false  # build job never pushes; don't leave the token in git config
 
-      - name: Install GCC 11 toolchain
+      - name: Install Linux apt dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
+          # Worst case: bootstrap 2x(60+120)+5 = 6.1m; plain packages
+          # 2x(45+90)+5 = 4.6m; post-source update = 2x45+5 = 1.6m;
+          # final packages = 4.6m. Total apt ceiling is 16.9m, leaving
+          # over 13m in this 30m job for checkout, configuration, and build.
+          APT_ATTEMPTS: 2
+          APT_UPDATE_TIMEOUT: 45
+          APT_INSTALL_TIMEOUT: 90
+          APT_RETRY_SLEEP: 5
         run: |
-          # Ubuntu 22.04 ships GCC 11 natively — no PPA needed
-          .github/scripts/apt_install.sh gcc-11 g++-11
+          # Ubuntu 22.04 ships GCC 11 natively — no PPA needed.
+          .github/scripts/apt_install.sh wget gpg
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          .github/scripts/apt_install.sh --update-only
+          .github/scripts/apt_install.sh \
+            gcc-11 g++-11 cmake build-essential pkg-config \
+            libasound2-dev libjack-jackd2-dev ladspa-sdk \
+            libcurl4-openssl-dev libfreetype6-dev libx11-dev \
+            libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev mesa-common-dev
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
           update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-11 100
           gcc --version
           g++ --version
-
-      - name: Install modern CMake
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          .github/scripts/apt_install.sh wget gpg
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          .github/scripts/apt_install.sh cmake
           cmake --version
 
       - name: Apply refreshed supporters list
@@ -560,38 +545,6 @@ jobs:
           repository: juce-framework/JUCE
           path: JUCE
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
-
-      - name: Install Linux dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-          # This job is capped at 30 minutes and the bootstrap step above can
-          # already spend ~14 of them in its own worst case, so trim the shared
-          # script's budget here: 2 x (120 + 240) + 10s is ~12 minutes, leaving
-          # the pathological total under the job limit instead of dying to it.
-          APT_ATTEMPTS: 2
-        run: |
-          # Retry, timeout, mirror fallback and per-package verification come
-          # from the shared script; this step runs after checkout, so it is on
-          # disk here (unlike the bootstrap step above).
-          .github/scripts/apt_install.sh \
-            build-essential \
-            cmake \
-            pkg-config \
-            libasound2-dev \
-            libjack-jackd2-dev \
-            ladspa-sdk \
-            libcurl4-openssl-dev \
-            libfreetype6-dev \
-            libx11-dev \
-            libxcomposite-dev \
-            libxcursor-dev \
-            libxext-dev \
-            libxinerama-dev \
-            libxrandr-dev \
-            libxrender-dev \
-            libwebkit2gtk-4.0-dev \
-            libglu1-mesa-dev \
-            mesa-common-dev
 
       - name: Configure CMake
         run: |
