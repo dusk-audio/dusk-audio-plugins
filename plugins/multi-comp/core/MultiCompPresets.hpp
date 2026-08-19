@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 // Framework-free factory preset data.  The values are copied from the JUCE
 // factory table; the JUCE state/application types are intentionally absent.
 #pragma once

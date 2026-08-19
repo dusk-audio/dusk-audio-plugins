@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 // Framework-free level matcher used by the Multi-Comp core.
 #pragma once
 

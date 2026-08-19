@@ -12,7 +12,7 @@ using duskaudio::MultiCompDSP;
 
 namespace
 {
-constexpr float kPi = 3.14159265358979323846f;
+constexpr float kPi = duskaudio::kDuskPi;
 
 void require(bool condition, const char* message)
 {
@@ -72,6 +72,23 @@ void testCrossoverFlatness()
             }
             const float ratio = rms(sum, 4096) / rms(original, 4096);
             require(std::abs(duskaudio::gainToDecibels(ratio)) < 0.001f, "LR4 flat-sum reconstruction");
+
+            DuskCrossover standard;
+            standard.prepare(sr, cfg[0]);
+            auto branchLevel = [&, sr](float frequency, bool low) {
+                standard.reset();
+                std::vector<float> values(8192);
+                for (int i = 0; i < 8192; ++i)
+                {
+                    const float x = std::sin(2.0f * kPi * frequency * static_cast<float>(i) / static_cast<float>(sr));
+                    float l, h;
+                    standard.processStandard(x, l, h);
+                    values[static_cast<size_t>(i)] = low ? l : h;
+                }
+                return rms(values, 4096);
+            };
+            require(branchLevel(cfg[0] * 0.25f, true) > branchLevel(cfg[0] * 0.25f, false), "standard LR4 low edge magnitude");
+            require(branchLevel(cfg[0] * 4.0f, false) > branchLevel(cfg[0] * 4.0f, true), "standard LR4 high edge magnitude");
         }
     }
     std::puts("LR4 flat-sum: 44.1/48/96 kHz, two 3-split configurations OK");
@@ -414,6 +431,52 @@ void testSidechainEq()
     require(boosted < flat - 0.2f, "sidechain high shelf increases HF compression");
     std::printf("sidechain EQ: GR %.4f dB -> %.4f dB with +12 dB HF shelf\n", flat, boosted);
 }
+
+void testMultibandBypassAndZeroLatency()
+{
+    MultiCompDSP reference, bypassed;
+    for (MultiCompDSP* dsp : {&reference, &bypassed})
+    {
+        dsp->prepare(48000.0, 256);
+        dsp->setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+        dsp->setParameter(MultiCompDSP::Parameter::MbMix, 100.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::MbOutput, 0.0f);
+        dsp->setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    }
+    bypassed.setMultibandParameter(0, MultiCompDSP::MultibandParameter::Bypass, 1.0f);
+    bypassed.setMultibandParameter(0, MultiCompDSP::MultibandParameter::Makeup, 12.0f);
+    std::vector<float> input(256), referenceOut(256), bypassedOut(256);
+    const float* ip[] = {input.data()};
+    float* referenceOp[] = {referenceOut.data()};
+    float* bypassedOp[] = {bypassedOut.data()};
+    float worst = 0.0f;
+    for (int block = 0; block < 20; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+            input[static_cast<size_t>(i)] = 0.25f * std::sin(2.0f * kPi * 997.0f * static_cast<float>(block * 256 + i) / 48000.0f);
+        reference.processBlock(ip, referenceOp, 1, 256);
+        bypassed.processBlock(ip, bypassedOp, 1, 256);
+        if (block >= 16)
+            for (int i = 0; i < 256; ++i)
+                worst = std::max(worst, std::abs(referenceOut[static_cast<size_t>(i)] - bypassedOut[static_cast<size_t>(i)]));
+    }
+    require(worst < 1.0e-6f, "disabled multiband band skips envelope and makeup");
+
+    MultiCompDSP zeroDelay;
+    zeroDelay.prepare(48000.0, 256);
+    zeroDelay.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    zeroDelay.setBypass(true);
+    zeroDelay.reset();
+    require(zeroDelay.getLatencySamples() == 0, "multiband bypass has zero latency");
+    std::vector<float> zeroIn(256), zeroOut(256);
+    for (int i = 0; i < 256; ++i)
+        zeroIn[static_cast<size_t>(i)] = 0.1f + 0.0003f * static_cast<float>(i);
+    const float* zeroIp[] = {zeroIn.data()}; float* zeroOp[] = {zeroOut.data()};
+    zeroDelay.processBlock(zeroIp, zeroOp, 1, 256);
+    for (int i = 0; i < 256; ++i)
+        require(zeroOut[static_cast<size_t>(i)] == zeroIn[static_cast<size_t>(i)], "zero-delay bypass is current-input bit-exact");
+    std::printf("multiband bypass/makeup: worst difference %.9g; zero-delay bypass: bit-exact\n", worst);
+}
 }
 
 int main()
@@ -425,6 +488,7 @@ int main()
     testLatencyMixBypassAndDigitalStereo();
     testMultibandMixAlignment();
     testSidechainEq();
+    testMultibandBypassAndZeroLatency();
     testGoldenVectors();
     std::puts("Multi-Comp core tests: PASS");
     return 0;

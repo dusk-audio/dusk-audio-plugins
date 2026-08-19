@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 // Framework-free transcriptions of the JUCE processor's detector helpers.
 #pragma once
 
@@ -20,45 +20,32 @@ public:
     void prepare(double rate) noexcept
     {
         sampleRate = rate > 0.0 ? rate : 44100.0;
+        currentFrequency = -1.0f;
+        setFrequency(80.0f);
         reset();
-        updateCoefficients(80.0f);
     }
 
     void setFrequency(float frequency) noexcept
     {
         const float f = std::clamp(frequency, 20.0f, 500.0f);
-        if (std::abs(f - currentFrequency) > 0.1f) updateCoefficients(f);
+        if (std::abs(f - currentFrequency) > 0.1f)
+        {
+            currentFrequency = f;
+            filter.setCoeffs(Biquad::highPass(sampleRate, f, 0.707f));
+        }
     }
 
     float process(float input) noexcept
     {
-        const float output = b0 * input + z1;
-        z1 = b1 * input - a1 * output + z2;
-        z2 = b2 * input - a2 * output;
-        return output;
+        return filter.process(input);
     }
 
-    void reset() noexcept { z1 = z2 = 0.0f; }
+    void reset() noexcept { filter.reset(); }
 
 private:
-    void updateCoefficients(float frequency) noexcept
-    {
-        currentFrequency = frequency;
-        const float omega = 2.0f * 3.14159265358979323846f * frequency / static_cast<float>(sampleRate);
-        const float c = std::cos(omega), s = std::sin(omega);
-        const float alpha = s / (2.0f * 0.707f);
-        const float invA0 = 1.0f / (1.0f + alpha);
-        b0 = ((1.0f + c) * 0.5f) * invA0;
-        b1 = -(1.0f + c) * invA0;
-        b2 = b0;
-        a1 = -2.0f * c * invA0;
-        a2 = (1.0f - alpha) * invA0;
-    }
-
     double sampleRate = 44100.0;
-    float currentFrequency = 80.0f;
-    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
-    float z1 = 0.0f, z2 = 0.0f;
+    float currentFrequency = -1.0f;
+    Biquad filter;
 };
 
 // JUCE multicomp.cpp:575-690. Two RBJ shelves in TDF-II, after the sidechain
@@ -69,21 +56,30 @@ public:
     void prepare(double rate) noexcept
     {
         sampleRate = rate > 0.0 ? rate : 44100.0;
+        lowFrequency = -1.0f; highFrequency = -1.0f;
         setLowShelf(100.0f, 0.0f);
         setHighShelf(8000.0f, 0.0f);
         reset();
     }
     void setLowShelf(float frequency, float gain) noexcept
     {
-        lowFrequency = std::clamp(frequency, 60.0f, 500.0f);
-        lowGain = std::clamp(gain, -12.0f, 12.0f);
-        low.setCoeffs(Biquad::shelf(sampleRate, lowFrequency, lowGain, 0.707f, false));
+        const float f = std::clamp(frequency, 60.0f, 500.0f);
+        const float g = std::clamp(gain, -12.0f, 12.0f);
+        if (std::abs(f - lowFrequency) > 0.001f || std::abs(g - lowGain) > 0.001f)
+        {
+            lowFrequency = f; lowGain = g;
+            low.setCoeffs(Biquad::shelfSlope1(sampleRate, f, g, false));
+        }
     }
     void setHighShelf(float frequency, float gain) noexcept
     {
-        highFrequency = std::clamp(frequency, 2000.0f, 16000.0f);
-        highGain = std::clamp(gain, -12.0f, 12.0f);
-        high.setCoeffs(Biquad::shelf(sampleRate, highFrequency, highGain, 0.707f, true));
+        const float f = std::clamp(frequency, 2000.0f, 16000.0f);
+        const float g = std::clamp(gain, -12.0f, 12.0f);
+        if (std::abs(f - highFrequency) > 0.001f || std::abs(g - highGain) > 0.001f)
+        {
+            highFrequency = f; highGain = g;
+            high.setCoeffs(Biquad::shelfSlope1(sampleRate, f, g, true));
+        }
     }
     float process(float input) noexcept { return high.process(low.process(input)); }
     void reset() noexcept { low.reset(); high.reset(); }
@@ -146,7 +142,8 @@ class MultiCompTruePeakDetector
 public:
     static constexpr int TAPS_PER_PHASE = 12;
     void prepare() noexcept { for (auto& c : channels) c = Channel{}; initialize(); }
-    void setOversamplingFactor(int factor) noexcept { oversamplingFactor = factor == 1 ? 8 : 4; }
+    enum class Quality { Standard4x, High8x };
+    void setQuality(Quality quality) noexcept { oversamplingFactor = quality == Quality::High8x ? 8 : 4; }
     float processSample(float sample, int channel) noexcept
     {
         if (channel < 0 || channel >= 2) return std::abs(sample);

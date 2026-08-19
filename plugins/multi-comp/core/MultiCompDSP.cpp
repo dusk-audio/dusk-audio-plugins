@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 #include "MultiCompDSP.hpp"
 
 #include <algorithm>
@@ -12,16 +12,15 @@ void MultiCompDSP::prepare(double sr, int blockSize)
 {
     sampleRate = std::isfinite(sr) && sr > 0.0 ? sr : 48000.0;
     maxBlock = std::max(1, blockSize);
-    preparedOversampling = params.oversampling.load(std::memory_order_relaxed) == 2 ? 4
-                         : params.oversampling.load(std::memory_order_relaxed) == 1 ? 2 : 1;
-    modes.prepare(sampleRate, maxBlock, preparedOversampling);
+    const int initialOversampling = params.oversampling.load(std::memory_order_relaxed) == 2 ? 4
+                                  : params.oversampling.load(std::memory_order_relaxed) == 1 ? 2 : 1;
+    modes.prepare(sampleRate, maxBlock, initialOversampling);
     truePeakDetector.prepare();
-    truePeakDetector.setOversamplingFactor(4);
+    truePeakDetector.setQuality(MultiCompTruePeakDetector::Quality::Standard4x);
     for (auto& os : oversamplers) { os.setFactor(4); os.prepare(maxBlock); os.reset(); }
     antiAliasLatency = static_cast<int>(std::lround(oversamplers[0].latency()));
-    for (auto& os : oversamplers) os.setFactor(preparedOversampling);
+    for (auto& os : oversamplers) os.setFactor(initialOversampling);
     for (auto& f : sidechainFilters) f.prepare(sampleRate);
-    for (auto& f : sidechainFiltersExternal) f.prepare(sampleRate);
     for (auto& f : sidechainEQ) f.prepare(sampleRate);
     for (auto& band : bands) for (auto& v : band) v.assign(static_cast<size_t>(maxBlock), 0.0f);
     for (auto& band : sidechainBands) for (auto& v : band) v.assign(static_cast<size_t>(maxBlock), 0.0f);
@@ -66,7 +65,6 @@ void MultiCompDSP::reset()
     truePeakDetector.prepare();
     for (auto& os : oversamplers) os.reset();
     for (auto& f : sidechainFilters) f.reset();
-    for (auto& f : sidechainFiltersExternal) f.reset();
     for (auto& f : sidechainEQ) f.reset();
     for (auto& c : crossover1) c.reset();
     for (auto& c : crossover2) c.reset();
@@ -237,16 +235,17 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     const float* processingIn[kMaxChannels] = {in[0], nCh > 1 ? in[1] : in[0]};
     const bool useExternalSidechain = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
+    const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
     for (int ch = 0; ch < nCh; ++ch)
     {
         const float* source = useExternalSidechain ? sidechain[ch] : in[ch];
-        sidechainFilters[ch].setFrequency(params.sidechainHP.load(std::memory_order_relaxed));
+        sidechainFilters[ch].setFrequency(sidechainHP);
         sidechainEQ[ch].setLowShelf(params.scLowFreq.load(std::memory_order_relaxed), params.scLowGain.load(std::memory_order_relaxed));
         sidechainEQ[ch].setHighShelf(params.scHighFreq.load(std::memory_order_relaxed), params.scHighGain.load(std::memory_order_relaxed));
         for (int i = 0; i < nSamples; ++i)
         {
             float sample = source[i];
-            if (params.sidechainHP.load(std::memory_order_relaxed) >= 1.0f)
+            if (sidechainHP >= 1.0f)
                 sample = sidechainFilters[ch].process(sample);
             processedSidechain[ch][static_cast<size_t>(i)] = sidechainEQ[ch].process(sample);
         }
@@ -282,7 +281,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         processingIn[0] = modeInput[0].data();
         processingIn[1] = modeInput[1].data();
     }
-    processRange(processingIn, filteredSidechain, out, nCh, 0, nSamples);
+    processRange(processingIn, filteredSidechain, out, nCh, nSamples);
     const MultiCompMode mode = static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
     const bool isMulti = mode == MultiCompMode::Multiband;
     if (params.globalSidechainListen.load(std::memory_order_relaxed))
@@ -371,9 +370,8 @@ void MultiCompDSP::processLatencyHistory(const float* const* in, float* const* o
         {
             auto& line = bypassDelay[static_cast<size_t>(ch)];
             const int read = (bypassWrite - delay + size) % size;
-            const float delayed = line[static_cast<size_t>(read)];
             line[static_cast<size_t>(bypassWrite)] = in[ch][i];
-            if (emit) out[ch][i] = delayed;
+            if (emit) out[ch][i] = line[static_cast<size_t>(read)];
         }
         bypassWrite = (bypassWrite + 1) % size;
     }
@@ -405,18 +403,21 @@ void MultiCompDSP::prepareLookahead(const float* const* in,
 }
 
 void MultiCompDSP::processRange(const float* const* in, const float* const* sidechain,
-                                float* const* out, int nCh, int /*first*/, int nSamples)
+                                float* const* out, int nCh, int nSamples)
 {
     const MultiCompMode mode = static_cast<MultiCompMode>(std::clamp(params.mode.load(std::memory_order_relaxed), 0, 7));
     const bool external = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     const int actualOs = params.oversampling.load(std::memory_order_relaxed) == 2 ? 4 : (params.oversampling.load(std::memory_order_relaxed) == 1 ? 2 : 1);
-    if (actualOs != preparedOversampling)
-    {
-        preparedOversampling = actualOs;
-        for (auto& os : oversamplers) os.setFactor(actualOs);
-        modes.setRate(sampleRate, actualOs);
-    }
-    truePeakDetector.setOversamplingFactor(params.truePeakQuality.load(std::memory_order_relaxed) == 1 ? 1 : 0);
+    const int linkMode = std::clamp(params.stereoLinkMode.load(std::memory_order_relaxed), 0, 2);
+    const float linkAmount = std::clamp(params.stereoLink.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
+    const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed);
+    const auto distortionType = static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3));
+    const float distortionAmount = std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
+    for (auto& os : oversamplers) os.setFactor(actualOs);
+    modes.setRate(sampleRate, actualOs);
+    truePeakDetector.setQuality(params.truePeakQuality.load(std::memory_order_relaxed) == 1
+                                    ? MultiCompTruePeakDetector::Quality::High8x
+                                    : MultiCompTruePeakDetector::Quality::Standard4x);
     if (params.globalSidechainListen.load(std::memory_order_relaxed))
     {
         for (int ch = 0; ch < nCh; ++ch)
@@ -426,7 +427,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     }
     if (mode == MultiCompMode::Multiband)
     {
-        processMultiband(in, external ? sidechain : nullptr, out, nCh, nSamples, params.mbMix.load(std::memory_order_relaxed) * 0.01f);
+        processMultiband(in, external ? sidechain : nullptr, out, nCh, nSamples);
         return;
     }
     for (auto& os : oversamplers) os.setFactor(actualOs);
@@ -446,14 +447,11 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float input = in[ch][i];
-            const int linkMode = std::clamp(params.stereoLinkMode.load(std::memory_order_relaxed), 0, 2);
-            const bool link = linkMode == 0 && params.stereoLink.load(std::memory_order_relaxed) > 0.01f && nCh > 1;
+            const bool link = linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
             const float ownSc = ch == 0 ? sc0 : sc1;
-            const float linkAmount = std::clamp(params.stereoLink.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
             const float midSideSc = ch == 0 ? (sc0 + sc1) * 0.5f : (sc0 - sc1) * 0.5f;
             const float scInput = link ? std::abs(ownSc) * (1.0f - linkAmount) + scLevel * linkAmount
                                        : linkMode == 1 ? midSideSc : ownSc;
-            const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed);
             const float peakSc = useTruePeak ? std::copysign(truePeakDetector.processSample(scInput, ch), scInput) : scInput;
             const float sc = peakSc;
             // JUCE pre-interpolates the already-filtered sidechain to the
@@ -480,8 +478,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             {
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
                     return applyCoreDistortion(modes.process(mode, sample, ch, sc, params, localMix),
-                                               static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3)),
-                                               std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
+                                               distortionType, distortionAmount);
                 });
             }
             else
@@ -490,8 +487,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
                     const float osSc = sc + (nextSc - sc) * static_cast<float>(osPhase++) / static_cast<float>(actualOs);
                     return applyCoreDistortion(modes.process(mode, sample, ch, osSc, params, localMix),
-                                               static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3)),
-                                               std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
+                                               distortionType, distortionAmount);
                 });
             }
         }
@@ -501,9 +497,11 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
 }
 
 void MultiCompDSP::processMultiband(const float* const* input, const float* const* sidechain,
-                                    float* const* output, int nCh, int nSamples, float mix)
+                                    float* const* output, int nCh, int nSamples)
 {
     updateCrossovers();
+    const auto distortionType = static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3));
+    const float distortionAmount = std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
     std::array<float, kMultiCompBands> maxGr{{0, 0, 0, 0}};
     bool anySolo = false;
     for (int band = 0; band < kMultiCompBands; ++band)
@@ -552,6 +550,13 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 envelope = 1.0f;
                 continue;
             }
+            const bool enabled = params.mbEnabled[bandIndex].load(std::memory_order_relaxed)
+                              && !params.mbBypass[bandIndex].load(std::memory_order_relaxed);
+            if (!enabled)
+            {
+                envelope = 1.0f;
+                continue;
+            }
             const float threshold = params.mbThreshold[static_cast<size_t>(band)].load(std::memory_order_relaxed);
             const float ratio = std::max(1.0f, params.mbRatio[static_cast<size_t>(band)].load(std::memory_order_relaxed));
             const float attack = std::max(0.0001f, params.mbAttack[static_cast<size_t>(band)].load(std::memory_order_relaxed) * 0.001f);
@@ -583,7 +588,6 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 const float target = decibelsToGain(-reduction);
                 const float c = std::exp(-1.0f / ((target < envelope ? attack : release) * sampleRate));
                 envelope = c * envelope + (1.0f - c) * target;
-                if (!params.mbEnabled[static_cast<size_t>(band)].load(std::memory_order_relaxed) || params.mbBypass[static_cast<size_t>(band)].load(std::memory_order_relaxed)) envelope = 1.0f;
                 bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)] *= envelope * decibelsToGain(params.mbMakeup[static_cast<size_t>(band)].load(std::memory_order_relaxed));
                 maxGr[static_cast<size_t>(band)] = std::min(maxGr[static_cast<size_t>(band)], gainToDecibels(envelope));
             }
@@ -597,13 +601,11 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
             if (std::abs(limited) > 1.5f)
                 limited = std::copysign(1.5f + 0.5f * std::tanh((std::abs(limited) - 1.5f) * 2.0f), limited);
             output[ch][i] = applyCoreDistortion(limited,
-                                                static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3)),
-                                                std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
+                                                distortionType, distortionAmount);
         }
     }
     for (int band = 0; band < kMultiCompBands; ++band) bandGR[static_cast<size_t>(band)].store(maxGr[static_cast<size_t>(band)], std::memory_order_relaxed);
     masterGR.store(*std::min_element(maxGr.begin(), maxGr.end()), std::memory_order_relaxed);
-    (void)mix; // The latency-aligned mix is applied by processBlock's shared 20 ms ramp.
 }
 
 void MultiCompDSP::updateCrossovers()

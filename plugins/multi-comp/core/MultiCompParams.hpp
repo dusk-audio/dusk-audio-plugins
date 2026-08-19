@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 // Framework-free parameter and enum definitions for Multi-Comp.
 #pragma once
 
@@ -6,6 +6,8 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+
+#include "../../shared-dpf/dsp/DuskFilters.hpp"
 
 namespace duskaudio
 {
@@ -31,16 +33,6 @@ constexpr float kStudioFetThresholdDb = -10.0f, kStudioFetHarmonicScale = 0.3f;
 constexpr float kStudioVcaMaxReductionDb = 40.0f, kStudioVcaKneeDb = 6.0f;
 constexpr float kSidechainHpMin = 20.0f, kSidechainHpMax = 500.0f, kSidechainHpDefault = 80.0f;
 constexpr float kOutputHardLimit = 2.0f, kEpsilon = 0.0001f;
-}
-
-inline float decibelsToGain(float db) noexcept
-{
-    return std::pow(10.0f, db * 0.05f);
-}
-
-inline float gainToDecibels(float gain) noexcept
-{
-    return 20.0f * std::log10(std::max(gain, 1.0e-9f));
 }
 
 inline float clampFinite(float value, float lo, float hi, float fallback) noexcept

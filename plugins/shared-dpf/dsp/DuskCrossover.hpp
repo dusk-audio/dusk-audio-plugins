@@ -1,6 +1,6 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 //
-// DuskCrossover.hpp — allocation-free Linkwitz-Riley 4th-order crossover.
+// DuskCrossover.hpp , allocation-free Linkwitz-Riley 4th-order crossover.
 // A LR4 branch is two cascaded Butterworth second-order sections (Q = 1/sqrt(2)).
 
 #pragma once
@@ -25,6 +25,8 @@ public:
     void setFrequency(float frequency) noexcept
     {
         frequency = nyquistSafeDesignHz(fs, frequency);
+        if (std::abs(frequency - currentFrequency) <= 0.001f) return;
+        currentFrequency = frequency;
         const auto lp = Biquad::lowPass(fs, frequency, kButterworthQ);
         const auto hp = Biquad::highPass(fs, frequency, kButterworthQ);
         lowA.setCoeffs(lp); lowB.setCoeffs(lp);
@@ -46,24 +48,19 @@ public:
         return highB.process(highA.process(input));
     }
 
-    // Process both branches from the same input. The returned branches have the
-    // standard LR4 complementary magnitude and phase response; their sum is an
-    // all-pass reconstruction, as required by Linkwitz-Riley crossovers.
+    // Process a low branch and its complementary residual. This is exact
+    // reconstruction, but the residual is not an LR4 high branch.
     void process(float input, float& low, float& high) noexcept
     {
         low = processLow(input);
-        // The two canonical LR4 branches are exposed independently above. For
-        // a splitter, use the complementary residual so summing the bands is
-        // sample-exact (the JUCE tree's all-pass phase rotation must not be
-        // mixed with a raw dry path). The residual still has the LR4 crossover
-        // corner and is the phase-compensated high branch used by Multi-Comp.
+        // This helper exposes the low branch plus a residual high value so the
+        // pair sums exactly to the input. The residual is not an LR4 high
+        // branch and the pair is not an all-pass reconstruction.
         high = input - low;
     }
 
-    // Standard LR4 branches. The complementary process() helper above is
-    // retained for callers that require sample-exact reconstruction; the
-    // compressor splitter uses these independently filtered branches to match
-    // JUCE's cascaded Butterworth low/high crossover topology.
+    // Standard LR4 branches. Multi-Comp uses these independently filtered
+    // branches to match its cascaded Butterworth low/high topology.
     void processStandard(float input, float& low, float& high) noexcept
     {
         low = processLow(input);
@@ -75,6 +72,7 @@ public:
 private:
     static constexpr float kButterworthQ = 0.7071067811865476f;
     double fs = 48000.0;
+    float currentFrequency = -1.0f;
     Biquad lowA, lowB, highA, highB;
 };
 

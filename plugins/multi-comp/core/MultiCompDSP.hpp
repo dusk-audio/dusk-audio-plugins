@@ -1,5 +1,5 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// MultiCompDSP — framework-free C++17 DSP core (zero JUCE/DPF includes).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
+// MultiCompDSP , framework-free C++17 DSP core (zero JUCE/DPF includes).
 #pragma once
 
 #include "MultiCompModes.hpp"
@@ -14,6 +14,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
 namespace duskaudio
@@ -74,11 +75,11 @@ private:
     static constexpr int kBypassRampMs = 30;
 
     void processRange(const float* const* in, const float* const* sidechain,
-                      float* const* out, int nCh, int first, int nSamples);
+                      float* const* out, int nCh, int nSamples);
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples);
     void processMultiband(const float* const* input, const float* const* sidechain,
-                          float* const* output, int nCh, int nSamples, float mix);
+                          float* const* output, int nCh, int nSamples);
     void updateCrossovers();
     float processOne(MultiCompMode mode, float input, float sc, int channel, int sampleIndex, int nSamples);
     void updateMeters(const float* const* in, float* const* out, int nCh, int nSamples);
@@ -88,11 +89,9 @@ private:
     MultiCompModes modes;
     double sampleRate = 48000.0;
     int maxBlock = 512;
-    int preparedOversampling = 2;
     std::array<MultiCompAntiAliasing, kMaxChannels> oversamplers;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
-    std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFiltersExternal;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
@@ -123,7 +122,7 @@ private:
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};
     std::atomic<float> masterGR{0.0f}, inputLevel{-60.0f}, outputLevel{-60.0f};
-    uint32_t noiseState = 0x6d2b79f5u;
+    std::uint32_t noiseState = 0x6d2b79f5u;
 };
 
 } // namespace duskaudio

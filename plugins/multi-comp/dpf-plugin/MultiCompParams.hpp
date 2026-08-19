@@ -10,6 +10,20 @@ using CoreParameter = duskaudio::MultiCompDSP::Parameter;
 struct Param { const char* id; const char* name; const char* unit; float min, max, def; CoreParameter core; bool integer; };
 struct BandParam { const char* id; const char* name; const char* unit; float min, max, def; duskaudio::MultiCompDSP::MultibandParameter core; bool integer; };
 
+enum class ParamId : uint32_t {
+ Mode, Bypass, StereoLink, Mix, SidechainHP, TruePeakEnable, TruePeakQuality,
+ ExternalSidechain, AutoMakeup, Distortion, DistortionAmount, Oversampling, GlobalLookahead,
+ OptoPeakReduction, OptoGain, OptoLimit, FetInput, FetOutput, FetAttack, FetRelease,
+ FetRatio, FetCurve, FetTransient, FetThreshold, VcaThreshold, VcaRatio, VcaAttack,
+ VcaRelease, VcaOutput, VcaOverEasy, VcaClassicDetector, BusThreshold, BusRatio,
+ BusAttack, BusRelease, BusMakeup, BusMix, StudioVcaThreshold, StudioVcaRatio,
+ StudioVcaAttack, StudioVcaRelease, StudioVcaOutput, DigitalThreshold, DigitalRatio,
+ DigitalKnee, DigitalAttack, DigitalRelease, DigitalLookahead, DigitalMix, DigitalOutput,
+ DigitalAdaptive, Crossover1, Crossover2, Crossover3, EnvelopeCurve, GlobalSidechainListen,
+ MbMix, MbOutput, NoiseEnable, SaturationMode, ScLowFreq, ScLowGain, ScHighFreq,
+ ScHighGain, StereoLinkMode, Count
+};
+
 // The first 65 entries mirror the active core/JUCE controls and ranges. The
 // retired studio_vca_mix parameter is intentionally absent.
 inline constexpr std::array<Param, 65> kParams = {{
@@ -40,6 +54,28 @@ inline constexpr std::array<Param, 65> kParams = {{
  {"stereo_link_mode","Link Mode","",0,2,0,CoreParameter::StereoLinkMode,true}
 }};
 inline constexpr int kParamCount = static_cast<int>(kParams.size());
+static_assert(kParamCount == static_cast<int>(ParamId::Count));
+#define MC_ASSERT_PARAM(name) static_assert(static_cast<uint32_t>(duskaudio::MultiCompDSP::Parameter::name) == static_cast<uint32_t>(ParamId::name));
+MC_ASSERT_PARAM(Mode) MC_ASSERT_PARAM(Bypass) MC_ASSERT_PARAM(StereoLink) MC_ASSERT_PARAM(Mix)
+MC_ASSERT_PARAM(SidechainHP) MC_ASSERT_PARAM(TruePeakEnable) MC_ASSERT_PARAM(TruePeakQuality)
+MC_ASSERT_PARAM(ExternalSidechain) MC_ASSERT_PARAM(AutoMakeup) MC_ASSERT_PARAM(Distortion)
+MC_ASSERT_PARAM(DistortionAmount) MC_ASSERT_PARAM(Oversampling) MC_ASSERT_PARAM(GlobalLookahead)
+MC_ASSERT_PARAM(OptoPeakReduction) MC_ASSERT_PARAM(OptoGain) MC_ASSERT_PARAM(OptoLimit)
+MC_ASSERT_PARAM(FetInput) MC_ASSERT_PARAM(FetOutput) MC_ASSERT_PARAM(FetAttack) MC_ASSERT_PARAM(FetRelease)
+MC_ASSERT_PARAM(FetRatio) MC_ASSERT_PARAM(FetCurve) MC_ASSERT_PARAM(FetTransient) MC_ASSERT_PARAM(FetThreshold)
+MC_ASSERT_PARAM(VcaThreshold) MC_ASSERT_PARAM(VcaRatio) MC_ASSERT_PARAM(VcaAttack) MC_ASSERT_PARAM(VcaRelease)
+MC_ASSERT_PARAM(VcaOutput) MC_ASSERT_PARAM(VcaOverEasy) MC_ASSERT_PARAM(VcaClassicDetector)
+MC_ASSERT_PARAM(BusThreshold) MC_ASSERT_PARAM(BusRatio) MC_ASSERT_PARAM(BusAttack) MC_ASSERT_PARAM(BusRelease)
+MC_ASSERT_PARAM(BusMakeup) MC_ASSERT_PARAM(BusMix) MC_ASSERT_PARAM(StudioVcaThreshold)
+MC_ASSERT_PARAM(StudioVcaRatio) MC_ASSERT_PARAM(StudioVcaAttack) MC_ASSERT_PARAM(StudioVcaRelease)
+MC_ASSERT_PARAM(StudioVcaOutput) MC_ASSERT_PARAM(DigitalThreshold) MC_ASSERT_PARAM(DigitalRatio)
+MC_ASSERT_PARAM(DigitalKnee) MC_ASSERT_PARAM(DigitalAttack) MC_ASSERT_PARAM(DigitalRelease)
+MC_ASSERT_PARAM(DigitalLookahead) MC_ASSERT_PARAM(DigitalMix) MC_ASSERT_PARAM(DigitalOutput)
+MC_ASSERT_PARAM(DigitalAdaptive) MC_ASSERT_PARAM(Crossover1) MC_ASSERT_PARAM(Crossover2) MC_ASSERT_PARAM(Crossover3)
+MC_ASSERT_PARAM(EnvelopeCurve) MC_ASSERT_PARAM(GlobalSidechainListen) MC_ASSERT_PARAM(MbMix) MC_ASSERT_PARAM(MbOutput)
+MC_ASSERT_PARAM(NoiseEnable) MC_ASSERT_PARAM(SaturationMode) MC_ASSERT_PARAM(ScLowFreq) MC_ASSERT_PARAM(ScLowGain)
+MC_ASSERT_PARAM(ScHighFreq) MC_ASSERT_PARAM(ScHighGain) MC_ASSERT_PARAM(StereoLinkMode)
+#undef MC_ASSERT_PARAM
 inline constexpr int kBandParamCount = 8 * duskaudio::kMultiCompBands;
 inline constexpr int kBandBase = kParamCount;
 inline constexpr int kMeterMaster = kBandBase + kBandParamCount;

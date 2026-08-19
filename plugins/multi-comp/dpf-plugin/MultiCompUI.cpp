@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 // Multi-Comp 2 Dear ImGui UI.  The controls mirror EnhancedCompressorEditor and
 // ModernCompressorPanels; the DSP and parameter ownership remain in the shell/core.
 
@@ -41,26 +41,28 @@ constexpr ImU32 kBandColors[4] = {
     IM_COL32(232, 185, 74, 255), IM_COL32(224, 100, 93, 255)
 };
 
-// Parameter indices are kept beside the UI so the design remains readable.  They
-// are the stable order in MultiCompParams.hpp, not private core implementation IDs.
-constexpr uint32_t P_MODE = 0, P_BYPASS = 1, P_LINK = 2, P_MIX = 3;
-constexpr uint32_t P_SC_HP = 4, P_TRUE_PEAK = 5, P_TP_QUALITY = 6, P_EXT_SC = 7;
-constexpr uint32_t P_AUTO = 8, P_DIST = 9, P_DIST_AMT = 10, P_OS = 11, P_LOOK = 12;
-constexpr uint32_t P_OPTO_PEAK = 13, P_OPTO_GAIN = 14, P_OPTO_LIMIT = 15;
-constexpr uint32_t P_FET_IN = 16, P_FET_OUT = 17, P_FET_ATTACK = 18, P_FET_RELEASE = 19;
-constexpr uint32_t P_FET_RATIO = 20, P_FET_CURVE = 21, P_FET_TRANSIENT = 22, P_FET_THRESHOLD = 23;
-constexpr uint32_t P_VCA_THRESHOLD = 24, P_VCA_RATIO = 25, P_VCA_ATTACK = 26, P_VCA_RELEASE = 27;
-constexpr uint32_t P_VCA_OUT = 28, P_VCA_OVER_EASY = 29, P_VCA_DETECTOR = 30;
-constexpr uint32_t P_BUS_THRESHOLD = 31, P_BUS_RATIO = 32, P_BUS_ATTACK = 33, P_BUS_RELEASE = 34;
-constexpr uint32_t P_BUS_MAKEUP = 35, P_BUS_MIX = 36;
-constexpr uint32_t P_SVCA_THRESHOLD = 37, P_SVCA_RATIO = 38, P_SVCA_ATTACK = 39;
-constexpr uint32_t P_SVCA_RELEASE = 40, P_SVCA_OUT = 41;
-constexpr uint32_t P_DIG_THRESHOLD = 42, P_DIG_RATIO = 43, P_DIG_KNEE = 44, P_DIG_ATTACK = 45;
-constexpr uint32_t P_DIG_RELEASE = 46, P_DIG_LOOK = 47, P_DIG_MIX = 48, P_DIG_OUT = 49;
-constexpr uint32_t P_DIG_ADAPT = 50, P_X1 = 51, P_X2 = 52, P_X3 = 53;
-constexpr uint32_t P_ENV = 54, P_SC_LISTEN = 55, P_MB_MIX = 56, P_MB_OUT = 57;
-constexpr uint32_t P_NOISE = 58, P_SAT_MODE = 59, P_SC_LOW_FREQ = 60, P_SC_LOW_GAIN = 61;
-constexpr uint32_t P_SC_HIGH_FREQ = 62, P_SC_HIGH_GAIN = 63, P_LINK_MODE = 64;
+// Parameter indices are aliases of the single table order in MultiCompParams.hpp.
+using ParamId = multicompp::ParamId;
+constexpr uint32_t P_MODE = static_cast<uint32_t>(ParamId::Mode), P_BYPASS = static_cast<uint32_t>(ParamId::Bypass), P_LINK = static_cast<uint32_t>(ParamId::StereoLink), P_MIX = static_cast<uint32_t>(ParamId::Mix);
+constexpr uint32_t P_SC_HP = static_cast<uint32_t>(ParamId::SidechainHP), P_TRUE_PEAK = static_cast<uint32_t>(ParamId::TruePeakEnable), P_TP_QUALITY = static_cast<uint32_t>(ParamId::TruePeakQuality), P_EXT_SC = static_cast<uint32_t>(ParamId::ExternalSidechain);
+#define MC_PID(name) static_cast<uint32_t>(ParamId::name)
+constexpr uint32_t P_AUTO = MC_PID(AutoMakeup), P_DIST = MC_PID(Distortion), P_DIST_AMT = MC_PID(DistortionAmount), P_OS = MC_PID(Oversampling), P_LOOK = MC_PID(GlobalLookahead);
+constexpr uint32_t P_OPTO_PEAK = MC_PID(OptoPeakReduction), P_OPTO_GAIN = MC_PID(OptoGain), P_OPTO_LIMIT = MC_PID(OptoLimit);
+constexpr uint32_t P_FET_IN = MC_PID(FetInput), P_FET_OUT = MC_PID(FetOutput), P_FET_ATTACK = MC_PID(FetAttack), P_FET_RELEASE = MC_PID(FetRelease);
+constexpr uint32_t P_FET_RATIO = MC_PID(FetRatio), P_FET_CURVE = MC_PID(FetCurve), P_FET_TRANSIENT = MC_PID(FetTransient), P_FET_THRESHOLD = MC_PID(FetThreshold);
+constexpr uint32_t P_VCA_THRESHOLD = MC_PID(VcaThreshold), P_VCA_RATIO = MC_PID(VcaRatio), P_VCA_ATTACK = MC_PID(VcaAttack), P_VCA_RELEASE = MC_PID(VcaRelease);
+constexpr uint32_t P_VCA_OUT = MC_PID(VcaOutput), P_VCA_OVER_EASY = MC_PID(VcaOverEasy), P_VCA_DETECTOR = MC_PID(VcaClassicDetector);
+constexpr uint32_t P_BUS_THRESHOLD = MC_PID(BusThreshold), P_BUS_RATIO = MC_PID(BusRatio), P_BUS_ATTACK = MC_PID(BusAttack), P_BUS_RELEASE = MC_PID(BusRelease);
+constexpr uint32_t P_BUS_MAKEUP = MC_PID(BusMakeup), P_BUS_MIX = MC_PID(BusMix);
+constexpr uint32_t P_SVCA_THRESHOLD = MC_PID(StudioVcaThreshold), P_SVCA_RATIO = MC_PID(StudioVcaRatio), P_SVCA_ATTACK = MC_PID(StudioVcaAttack);
+constexpr uint32_t P_SVCA_RELEASE = MC_PID(StudioVcaRelease), P_SVCA_OUT = MC_PID(StudioVcaOutput);
+constexpr uint32_t P_DIG_THRESHOLD = MC_PID(DigitalThreshold), P_DIG_RATIO = MC_PID(DigitalRatio), P_DIG_KNEE = MC_PID(DigitalKnee), P_DIG_ATTACK = MC_PID(DigitalAttack);
+constexpr uint32_t P_DIG_RELEASE = MC_PID(DigitalRelease), P_DIG_LOOK = MC_PID(DigitalLookahead), P_DIG_MIX = MC_PID(DigitalMix), P_DIG_OUT = MC_PID(DigitalOutput);
+constexpr uint32_t P_DIG_ADAPT = MC_PID(DigitalAdaptive), P_X1 = MC_PID(Crossover1), P_X2 = MC_PID(Crossover2), P_X3 = MC_PID(Crossover3);
+constexpr uint32_t P_ENV = MC_PID(EnvelopeCurve), P_SC_LISTEN = MC_PID(GlobalSidechainListen), P_MB_MIX = MC_PID(MbMix), P_MB_OUT = MC_PID(MbOutput);
+constexpr uint32_t P_NOISE = MC_PID(NoiseEnable), P_SAT_MODE = MC_PID(SaturationMode), P_SC_LOW_FREQ = MC_PID(ScLowFreq), P_SC_LOW_GAIN = MC_PID(ScLowGain);
+constexpr uint32_t P_SC_HIGH_FREQ = MC_PID(ScHighFreq), P_SC_HIGH_GAIN = MC_PID(ScHighGain), P_LINK_MODE = MC_PID(StereoLinkMode);
+#undef MC_PID
 
 constexpr uint32_t kMeterMaster = static_cast<uint32_t>(multicompp::kMeterMaster);
 constexpr uint32_t kMeterBand0 = static_cast<uint32_t>(multicompp::kMeterBand0);
@@ -88,7 +90,7 @@ public:
             if (i < static_cast<uint32_t>(multicompp::kParamCount))
                 values[i] = multicompp::kParams[i].def;
             else
-                values[i] = i == kMeterMaster ? -0.0f : 0.0f;
+                values[i] = 0.0f;
         }
         for (int b = 0; b < duskaudio::kMultiCompBands; ++b)
             for (int f = 0; f < 8; ++f)
@@ -105,7 +107,7 @@ public:
 
     void beginEdit(uint32_t idx) override { editParameter(idx, true); }
     void endEdit(uint32_t idx) override { editParameter(idx, false); }
-    void setParam(uint32_t idx, float value) override { setParameterValue(idx, value); }
+    void setParam(uint32_t idx, float value) override { currentPreset = -1; setParameterValue(idx, value); }
 
 protected:
     void parameterChanged(uint32_t index, float value) override
@@ -171,6 +173,7 @@ private:
 
     void setValue(uint32_t p, float v)
     {
+        currentPreset = -1;
         editParameter(p, true);
         values[p] = v;
         setParameterValue(p, v);
@@ -441,31 +444,33 @@ private:
         const float left = 28, right = kDesignW - 28, top = 342, bottom = 445;
         dl->AddRectFilled(panel.P(left, top), panel.P(right, bottom), IM_COL32(22, 24, 29, 255), 5 * panel.scale());
         panel.text(dl, 40, top + 10, 10, kDim, "CROSSOVERS / GAIN REDUCTION", -1, true);
-        crossover(dl, P_X1, 210, 0, 500, "XOVER 1");
-        crossover(dl, P_X2, 560, 200, 5000, "XOVER 2");
-        crossover(dl, P_X3, 850, 2000, 16000, "XOVER 3");
+        crossover(dl, P_X1, 180, 0, 500, "XOVER 1");
+        crossover(dl, P_X2, 430, 200, 5000, "XOVER 2");
+        crossover(dl, P_X3, 680, 2000, 16000, "XOVER 3");
         for (int b = 0; b < 4; ++b)
         {
+            char id[16];
+            auto bandId = [&id, b](const char* prefix) { std::snprintf(id, sizeof(id), "%s%d", prefix, b); return id; };
             const float x = 46 + b * 264.0f;
             const uint32_t base = static_cast<uint32_t>(multicompp::kBandBase + b * 8);
             dl->AddRectFilled(panel.P(x, 462), panel.P(x + 250, 730), IM_COL32(30, 32, 38, 255), 5 * panel.scale());
             dl->AddRect(panel.P(x, 462), panel.P(x + 250, 730), kBandColors[b], 5 * panel.scale(), 0, panel.scale());
             panel.text(dl, x + 12, 475, 12, kBandColors[b], bandName(b), -1, true);
-            panel.toggle((b == 0 ? "mb_en0" : b == 1 ? "mb_en1" : b == 2 ? "mb_en2" : "mb_en3"), base + 7,
+            panel.toggle(bandId("mb_en"), base + 7,
                          x + 112, 470, x + 178, 494, values[base + 7], "ENABLE");
-            panel.toggle((b == 0 ? "mb_bp0" : b == 1 ? "mb_bp1" : b == 2 ? "mb_bp2" : "mb_bp3"), base + 5,
+            panel.toggle(bandId("mb_bp"), base + 5,
                          x + 182, 470, x + 238, 494, values[base + 5], "BYP");
             drawMeter(dl, x + 22, 510, 26, 190, meter(kMeterBand0 + static_cast<uint32_t>(b)), kBandColors[b], "GR");
-            knob(dl, b == 0 ? "mb_t0" : b == 1 ? "mb_t1" : b == 2 ? "mb_t2" : "mb_t3", base, x + 75, 550, -60, 0, "THRESH", "%.1f", " dB");
-            knob(dl, b == 0 ? "mb_r0" : b == 1 ? "mb_r1" : b == 2 ? "mb_r2" : "mb_r3", base + 1, x + 145, 550, 1, 20, "RATIO", "%.1f", ":1");
-            knob(dl, b == 0 ? "mb_a0" : b == 1 ? "mb_a1" : b == 2 ? "mb_a2" : "mb_a3", base + 2, x + 215, 550, 0.1f, 100, "ATTACK", "%.1f", " ms");
-            knob(dl, b == 0 ? "mb_rel0" : b == 1 ? "mb_rel1" : b == 2 ? "mb_rel2" : "mb_rel3", base + 3, x + 75, 650, 10, 1000, "RELEASE", "%.0f", " ms");
-            knob(dl, b == 0 ? "mb_m0" : b == 1 ? "mb_m1" : b == 2 ? "mb_m2" : "mb_m3", base + 4, x + 145, 650, -12, 12, "MAKEUP", "%.1f", " dB");
-            panel.toggle((b == 0 ? "mb_s0" : b == 1 ? "mb_s1" : b == 2 ? "mb_s2" : "mb_s3"), base + 6,
+            knob(dl, bandId("mb_t"), base, x + 75, 550, -60, 0, "THRESH", "%.1f", " dB");
+            knob(dl, bandId("mb_r"), base + 1, x + 145, 550, 1, 20, "RATIO", "%.1f", ":1");
+            knob(dl, bandId("mb_a"), base + 2, x + 215, 550, 0.1f, 100, "ATTACK", "%.1f", " ms");
+            knob(dl, bandId("mb_rel"), base + 3, x + 75, 650, 10, 1000, "RELEASE", "%.0f", " ms");
+            knob(dl, bandId("mb_m"), base + 4, x + 145, 650, -12, 12, "MAKEUP", "%.1f", " dB");
+            panel.toggle(bandId("mb_s"), base + 6,
                          x + 180, 640, x + 238, 666, values[base + 6], "SOLO");
         }
-        knob(dl, "mb_mix", P_MB_MIX, 930, 630, 0, 100, "MB MIX", "%.0f", "%");
-        knob(dl, "mb_out", P_MB_OUT, 1035, 630, -24, 24, "MB OUTPUT", "%.1f", " dB");
+        knob(dl, "mb_mix", P_MB_MIX, 900, 395, 0, 100, "MB MIX", "%.0f", "%");
+        knob(dl, "mb_out", P_MB_OUT, 1005, 395, -24, 24, "MB OUTPUT", "%.1f", " dB");
     }
 
     static constexpr const char* busAttackLabels[6] = {"0.1 ms", "0.3 ms", "1 ms", "3 ms", "10 ms", "30 ms"};
@@ -473,9 +478,11 @@ private:
 
     void crossover(ImDrawList* dl, uint32_t p, float x, float min, float max, const char* label)
     {
+        const float trackStart = x - 100.0f;
+        const float trackEnd = x + 100.0f;
         const float t = std::clamp((value(p) - min) / (max - min), 0.0f, 1.0f);
-        const float handleX = 56 + t * 1000;
-        dl->AddLine(panel.P(56, 392), panel.P(1056, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());
+        const float handleX = trackStart + t * (trackEnd - trackStart);
+        dl->AddLine(panel.P(trackStart, 392), panel.P(trackEnd, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());
         dl->AddLine(panel.P(handleX, 376), panel.P(handleX, 408), kAccent, 3 * panel.scale());
         panel.text(dl, handleX, 414, 9, kText, label, 0, true);
         char text[32]; std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(value(p)));
@@ -488,7 +495,9 @@ private:
         if (ImGui::IsItemActive())
         {
             const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
-            setParameterValue(p, std::clamp(min + (mouseX - 56) / 1000 * (max - min), min, max));
+            const float next = std::clamp(min + (mouseX - trackStart) / (trackEnd - trackStart) * (max - min), min, max);
+            values[p] = next;
+            setParameterValue(p, next);
         }
         if (ImGui::IsItemDeactivated()) editParameter(p, false);
     }
@@ -500,10 +509,8 @@ private:
         if (instance != nullptr)
         {
             if (p == kMeterMaster && multiCompGetGainReduction != nullptr) return multiCompGetGainReduction(instance);
-            if (p == kMeterBand0 && multiCompGetBandGainReduction0 != nullptr) return multiCompGetBandGainReduction0(instance);
-            if (p == kMeterBand0 + 1 && multiCompGetBandGainReduction1 != nullptr) return multiCompGetBandGainReduction1(instance);
-            if (p == kMeterBand0 + 2 && multiCompGetBandGainReduction2 != nullptr) return multiCompGetBandGainReduction2(instance);
-            if (p == kMeterBand0 + 3 && multiCompGetBandGainReduction3 != nullptr) return multiCompGetBandGainReduction3(instance);
+            if (p >= kMeterBand0 && p <= kMeterBand0 + 3 && multiCompGetBandGainReduction != nullptr)
+                return multiCompGetBandGainReduction(instance, static_cast<int>(p - kMeterBand0));
         }
         return values[p];
     }

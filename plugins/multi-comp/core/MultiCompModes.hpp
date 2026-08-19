@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
+// Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
 // Framework-free compressor mode math.  The detector/gain-cell equations in
 // this file are direct C++17 transcriptions of multicomp.cpp; JUCE containers,
 // Decibels, jlimit and IIR filters are replaced by small local helpers/shared DSP.
@@ -18,24 +18,18 @@
 namespace duskaudio
 {
 
-inline float modeExp(float x) noexcept { return std::exp(x); }
-inline float modeDbRatio(float x) noexcept { return gainToDecibels(std::max(x, 1.0e-9f)); }
-
 class MultiCompModes
 {
 public:
     static constexpr int kChannels = 2;
 
-    void prepare(double sampleRate, int maxBlock, int oversamplingFactor)
+    void prepare(double sampleRate, int /*maxBlock*/, int oversamplingFactor)
     {
         fs = sampleRate > 0.0 ? sampleRate : 48000.0;
-        block = std::max(1, maxBlock);
         osFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
         const double modeRate = fs * osFactor;
         transientShaper.prepare(modeRate);
         lookupTables.prepare();
-        truePeak.prepare();
-        truePeak.setOversamplingFactor(4);
         for (auto& d : opto) d = OptoState{};
         for (auto& d : fet) d = FETState{};
         for (auto& d : vca) d = VCAState{};
@@ -81,7 +75,6 @@ public:
         digitalWrite.fill(0);
         resetHardware();
         transientShaper.reset();
-        truePeak.prepare();
     }
 
     float process(MultiCompMode mode, float input, int ch, const float sc,
@@ -123,7 +116,7 @@ private:
     struct OptoState
     {
         float el = 0, cell = 0, glow = 0, after = 0, charge = 0, conductance = 0;
-        float gain = 1, shelfX = 0, shelfY = 0, sc = 0, dc = 0;
+        float gain = 1, sc = 0, dc = 0;
     };
     struct FETState
     {
@@ -149,7 +142,7 @@ private:
     };
 
     double fs = 48000.0;
-    int block = 512, osFactor = 1;
+    int osFactor = 1;
     std::array<OptoState, 2> opto{};
     std::array<FETState, 2> fet{};
     std::array<VCAState, 2> vca{};
@@ -168,10 +161,9 @@ private:
     std::array<HardwareEmulation::TransformerEmulation, 2> inputTransformerStudioVca, outputTransformerStudioVca;
     HardwareEmulation::StereoConvolution fetConvolution, busConvolution;
     MultiCompTransientShaper transientShaper;
-    MultiCompTruePeakDetector truePeak;
     MultiCompLookupTables lookupTables;
 
-    float optoShelfB0 = 1, optoShelfB1 = 0, optoShelfA1 = 0;
+    Biquad optoTiltShelf;
     float optoAttack = 0, optoRelease = 0, optoGlowDecay = 0, optoGlowAttack = 0;
     float optoCondAttack = 0, optoCondRelease = 0, optoElAttack = 0, optoElRelease = 0, optoScSmooth = 0;
     float fetTilt = 0, optoHardwareGain = 1.0f, fetHardwareGain = 1.0f;
@@ -214,124 +206,59 @@ private:
         optoRelease = std::exp(-1.0f / (0.060f * sr));
         optoGlowDecay = std::exp(-1.0f / (1.5f * sr));
         optoGlowAttack = std::pow(optoGlowDecay, 0.3f);
-        optoCondAttack = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * 150.0f / sr);
-        optoCondRelease = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * 4.0f / sr);
-        optoElAttack = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * 150.0f / sr);
-        optoElRelease = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * 5.0f / sr);
-        optoScSmooth = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * 800.0f / sr);
-        fetTilt = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * 800.0f / sr);
-        const float wc = 2.0f * 3.14159265358979323846f * 1000.0f / sr;
-        const float A = std::pow(10.0f, 3.0f / 20.0f), alpha = std::tan(wc * 0.5f), sqrtA = std::sqrt(A);
-        const float norm = 1.0f / (1.0f + alpha * sqrtA);
-        optoShelfB0 = (A + sqrtA * alpha) * norm;
-        optoShelfB1 = (sqrtA * alpha - A) * norm;
-        optoShelfA1 = (alpha * sqrtA - 1.0f) * norm;
+        optoCondAttack = 1.0f - std::exp(-2.0f * kDuskPi * 150.0f / sr);
+        optoCondRelease = 1.0f - std::exp(-2.0f * kDuskPi * 4.0f / sr);
+        optoElAttack = 1.0f - std::exp(-2.0f * kDuskPi * 150.0f / sr);
+        optoElRelease = 1.0f - std::exp(-2.0f * kDuskPi * 5.0f / sr);
+        optoScSmooth = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
+        fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
+        optoTiltShelf.setCoeffs(Biquad::shelfSlope1(sr, 1000.0f, 3.0f, false));
+    }
+
+    template <typename ResetFn, typename SampleFn>
+    static float calibrateChain(double rate, ResetFn&& resetFn, SampleFn&& sampleFn)
+    {
+        constexpr int calibrationSamples = 4800;
+        constexpr float refAmplitude = 0.126f;
+        constexpr float refFreq = 1000.0f;
+        const float sr = static_cast<float>(rate);
+        const float angularStep = 2.0f * kDuskPi * refFreq / sr;
+        resetFn();
+        const int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+            (void)sampleFn(refAmplitude * std::sin(angularStep * static_cast<float>(i)));
+        double inputRmsSquared = 0.0, outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            const float input = refAmplitude * std::sin(angularStep * static_cast<float>(warmup + i));
+            const float output = sampleFn(input);
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(output * output);
+        }
+        resetFn();
+        return outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12
+            ? 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared)) : 1.0f;
     }
 
     void calibrateOptoHardwareGain(double rate)
     {
-        constexpr int calibrationSamples = 4800;
-        constexpr float refAmplitude = 0.126f;
-        constexpr float refFreq = 1000.0f;
-        const float sr = static_cast<float>(rate);
-        const float angularStep = 2.0f * 3.14159265358979323846f * refFreq / sr;
-
-        inputTransformerOpto.reset();
-        optoTube.reset();
-        outputTransformerOpto.reset();
-
-        const int warmup = static_cast<int>(sr * 0.05f);
-        for (int i = 0; i < warmup; ++i)
-        {
-            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
-            x = inputTransformerOpto.processSample(x, 0);
-            x = optoTube.processSample(x, 0);
-            outputTransformerOpto.processSample(x, 0);
-        }
-
-        double inputRmsSquared = 0.0;
-        double outputRmsSquared = 0.0;
-        for (int i = 0; i < calibrationSamples; ++i)
-        {
-            const float phase = angularStep * static_cast<float>(warmup + i);
-            const float input = refAmplitude * std::sin(phase);
-            float x = inputTransformerOpto.processSample(input, 0);
-            x = optoTube.processSample(x, 0);
-            x = outputTransformerOpto.processSample(x, 0);
-            inputRmsSquared += static_cast<double>(input * input);
-            outputRmsSquared += static_cast<double>(x * x);
-        }
-
-        if (outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12)
-            optoHardwareGain = 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared));
-        else
-            optoHardwareGain = 1.0f;
-
-        inputTransformerOpto.reset();
-        optoTube.reset();
-        outputTransformerOpto.reset();
+        optoHardwareGain = calibrateChain(rate,
+            [this] { inputTransformerOpto.reset(); optoTube.reset(); outputTransformerOpto.reset(); },
+            [this](float input) { float x = inputTransformerOpto.processSample(input, 0); x = optoTube.processSample(x, 0); return outputTransformerOpto.processSample(x, 0); });
     }
 
     void calibrateFetHardwareGain(double rate)
     {
-        constexpr int calibrationSamples = 4800;
-        constexpr float refAmplitude = 0.126f;
-        constexpr float refFreq = 1000.0f;
-        const float sr = static_cast<float>(rate);
-        const float angularStep = 2.0f * 3.14159265358979323846f * refFreq / sr;
-        inputTransformerFet[0].reset(); outputTransformerFet[0].reset(); fetConvolution.reset();
-        const int warmup = static_cast<int>(sr * 0.05f);
-        for (int i = 0; i < warmup; ++i)
-        {
-            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
-            x = inputTransformerFet[0].processSample(x, 0);
-            x = outputTransformerFet[0].processSample(x, 0);
-            fetConvolution.processSample(x, 0);
-        }
-        double inputRmsSquared = 0.0, outputRmsSquared = 0.0;
-        for (int i = 0; i < calibrationSamples; ++i)
-        {
-            const float input = refAmplitude * std::sin(angularStep * static_cast<float>(warmup + i));
-            float x = inputTransformerFet[0].processSample(input, 0);
-            x = outputTransformerFet[0].processSample(x, 0);
-            x = fetConvolution.processSample(x, 0);
-            inputRmsSquared += static_cast<double>(input * input);
-            outputRmsSquared += static_cast<double>(x * x);
-        }
-        fetHardwareGain = outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12
-            ? 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared)) : 1.0f;
-        inputTransformerFet[0].reset(); outputTransformerFet[0].reset(); fetConvolution.reset();
+        fetHardwareGain = calibrateChain(rate,
+            [this] { inputTransformerFet[0].reset(); outputTransformerFet[0].reset(); fetConvolution.reset(); },
+            [this](float input) { float x = inputTransformerFet[0].processSample(input, 0); x = outputTransformerFet[0].processSample(x, 0); return fetConvolution.processSample(x, 0); });
     }
 
     void calibrateBusHardwareGain(double rate)
     {
-        constexpr int calibrationSamples = 4800;
-        constexpr float refAmplitude = 0.126f;
-        constexpr float refFreq = 1000.0f;
-        const float sr = static_cast<float>(rate);
-        const float angularStep = 2.0f * 3.14159265358979323846f * refFreq / sr;
-        inputTransformerBus[0].reset(); outputTransformerBus[0].reset(); busConvolution.reset();
-        const int warmup = static_cast<int>(sr * 0.05f);
-        for (int i = 0; i < warmup; ++i)
-        {
-            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
-            x = inputTransformerBus[0].processSample(x, 0);
-            x = outputTransformerBus[0].processSample(x, 0);
-            busConvolution.processSample(x, 0);
-        }
-        double inputRmsSquared = 0.0, outputRmsSquared = 0.0;
-        for (int i = 0; i < calibrationSamples; ++i)
-        {
-            const float input = refAmplitude * std::sin(angularStep * static_cast<float>(warmup + i));
-            float x = inputTransformerBus[0].processSample(input, 0);
-            x = outputTransformerBus[0].processSample(x, 0);
-            x = busConvolution.processSample(x, 0);
-            inputRmsSquared += static_cast<double>(input * input);
-            outputRmsSquared += static_cast<double>(x * x);
-        }
-        busHardwareGain = outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12
-            ? 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared)) : 1.0f;
-        inputTransformerBus[0].reset(); outputTransformerBus[0].reset(); busConvolution.reset();
+        busHardwareGain = calibrateChain(rate,
+            [this] { inputTransformerBus[0].reset(); outputTransformerBus[0].reset(); busConvolution.reset(); },
+            [this](float input) { float x = inputTransformerBus[0].processSample(input, 0); x = outputTransformerBus[0].processSample(x, 0); return busConvolution.processSample(x, 0); });
     }
 
     void resetHardware() noexcept
@@ -371,13 +298,11 @@ private:
         {
             // JUCE bypasses the internal R37 shelf for an external source and
             // clears its state at the source transition.
-            d.shelfX = 0.0f;
-            d.shelfY = 0.0f;
+            optoTiltShelf.reset();
         }
         else if (!limit)
         {
-            const float shelf = optoShelfB0 * sc + optoShelfB1 * d.shelfX - optoShelfA1 * d.shelfY;
-            d.shelfX = sc; d.shelfY = shelf; sc = shelf;
+            sc = optoTiltShelf.process(sc);
         }
         else sc = input * 0.5f + compressed * 0.5f;
         const float pr = std::clamp(p.optoPeakReduction.load(std::memory_order_relaxed), 0.0f, 100.0f);
@@ -461,7 +386,7 @@ private:
             const float k3 = ratioIndex == 4 ? 0.005f + grNorm * 0.010f
                                              : 0.004f + grNorm * 0.008f;
             const float sq = saturated * saturated;
-            const float alpha = 1.0f / (1.0f + 6.2831853f * 10.0f / sr);
+            const float alpha = 1.0f / (1.0f + kDuskTwoPi * 10.0f / sr);
             const float h2 = alpha * (d.dc + sq - d.prevSq);
             d.dc = h2;
             d.prevSq = sq;
@@ -474,7 +399,7 @@ private:
         const float grDb = -gainToDecibels(d.envelope + 0.001f);
         const float grNorm = std::clamp(grDb / 20.0f, 0.0f, 1.0f);
         const float corner = 20000.0f - grNorm * 2000.0f;
-        const float chokeCoeff = 1.0f - std::exp(-2.0f * 3.14159265f * corner / sr);
+        const float chokeCoeff = 1.0f - std::exp(-2.0f * kDuskPi * corner / sr);
         d.hf += chokeCoeff * (feedbackInput - d.hf);
         const bool external = p.externalSidechain.load(std::memory_order_relaxed);
         float detect = 0.0f;
@@ -518,7 +443,7 @@ private:
             else if (studio)
             {
                 const float below = -gainToDecibels(std::max(detect, 0.0001f) / abiThreshold);
-                if (below > 0.0f && below < 3.0f) reduction = -std::sin((below / 3.0f) * 3.14159f);
+                if (below > 0.0f && below < 3.0f) reduction = -std::sin((below / 3.0f) * kDuskPi);
             }
         }
         else if (detect > threshold)
@@ -526,7 +451,8 @@ private:
             const float over = gainToDecibels(detect / threshold);
             reduction = std::min(over * (1.0f - 1.0f / ratio), 60.0f);
         }
-        reduction = std::clamp(reduction, 0.0f, 60.0f);
+        // Studio FET allows the JUCE expansion bump to survive below threshold.
+        reduction = std::clamp(reduction, -1.0f, 60.0f);
         const float minRelease = 0.05f, maxRelease = 1.1f;
         float attack = std::max(0.0001f, p.fetAttack.load(std::memory_order_relaxed) * 0.001f);
         const float releaseNorm = std::clamp(p.fetRelease.load(std::memory_order_relaxed) / 1100.0f, 0.0f, 1.0f);
@@ -592,7 +518,7 @@ private:
             const float k2 = (ratioIndex == 4 ? 0.04f + outputGrNorm * 0.12f : 0.004f) * scale;
             const float k3 = (ratioIndex == 4 ? 0.005f + outputGrNorm * 0.015f : 0.001f) * scale;
             const float sq = out * out;
-            const float hp = (d.dc + sq - d.prevSq) / (1.0f + 6.2831853f * 10.0f / sr);
+            const float hp = (d.dc + sq - d.prevSq) / (1.0f + kDuskTwoPi * 10.0f / sr);
             d.dc = hp;
             d.prevSq = sq;
             out += k2 * hp + k3 * out * out * out;
@@ -602,7 +528,7 @@ private:
         if (!studio) out = fetConvolution.processSample(out, ch) * fetHardwareGain;
         const float grHpf = -gainToDecibels(d.envelope + 0.001f);
         const float hpfCutoff = 20.0f + std::clamp(grHpf / 20.0f, 0.0f, 1.0f) * 60.0f;
-        const float hpfAlpha = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * hpfCutoff / sr);
+        const float hpfAlpha = 1.0f - std::exp(-2.0f * kDuskPi * hpfCutoff / sr);
         if (!studio) { d.subBassHpState += hpfAlpha * (out - d.subBassHpState); out -= d.subBassHpState; }
         return std::clamp(out * decibelsToGain(p.fetOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
@@ -663,7 +589,7 @@ private:
         float out = compressed;
         if (std::abs(out) > 0.01f)
         {
-            const float h2 = (d.dc + compressed * compressed - d.prevSq) / (1.0f + 6.2831853f * 10.0f / sr);
+            const float h2 = (d.dc + compressed * compressed - d.prevSq) / (1.0f + kDuskTwoPi * 10.0f / sr);
             d.dc = h2; d.prevSq = compressed * compressed;
             const float factor = reduction > 2.0f ? std::min(1.0f, reduction / 30.0f) : 0.0f;
             out += h2 * (0.0003f + 0.001f * factor) + compressed * compressed * compressed * (0.0006f + (reduction > 10.0f ? 0.0008f * factor : 0.0f));
@@ -677,7 +603,7 @@ private:
         auto& d = bus[ch];
         const float sr = static_cast<float>(fs * osFactor);
         const float fb = d.compressed;
-        const float alpha = 1.0f / (1.0f + 6.2831853f * 60.0f / sr);
+        const float alpha = 1.0f / (1.0f + kDuskTwoPi * 60.0f / sr);
         d.hp = alpha * (d.hp + fb - d.prev); d.prev = fb;
         d.hp2 = alpha * (d.hp2 + d.hp - d.prev2); d.prev2 = d.hp;
         const float rect = p.externalSidechain.load(std::memory_order_relaxed) ? std::abs(sidechain) : std::abs(d.hp2);

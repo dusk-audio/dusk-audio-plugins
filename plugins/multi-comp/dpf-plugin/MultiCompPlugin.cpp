@@ -35,7 +35,7 @@ public:
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
 
 protected:
-    const char* getLabel() const override { return "Multi-Comp 2"; }
+    const char* getLabel() const override { return "MultiComp2"; }
     const char* getDescription() const override { return "Eight-mode dynamics processor"; }
     const char* getMaker() const override { return "Dusk Audio"; }
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
@@ -65,25 +65,29 @@ protected:
             p.name = d.name; p.symbol = d.id; p.unit = d.unit;
             p.ranges.min = d.min; p.ranges.max = d.max; p.ranges.def = d.def;
             p.hints = kParameterIsAutomatable | (d.integer ? kParameterIsInteger : 0u);
-            if (index == 1) { p.initDesignation(kParameterDesignationBypass); return; }
-            if (index == 0) setEnum(p, multicompp::kModes, 8);
-            else if (index == 5 || index == 7 || index == 8 || index == 15 || index == 29 || index == 50 || index == 55 || index == 58)
+            using Id = multicompp::ParamId;
+            switch (static_cast<Id>(index))
             {
-                setEnum(p, multicompp::kOnOff, 2);
-                if (index == 58) p.hints |= kParameterIsBoolean;
+                case Id::Bypass: p.initDesignation(kParameterDesignationBypass); return;
+                case Id::Mode: setEnum(p, multicompp::kModes, 8); break;
+                case Id::TruePeakEnable: case Id::ExternalSidechain: case Id::AutoMakeup:
+                case Id::OptoLimit: case Id::VcaOverEasy: case Id::DigitalAdaptive:
+                case Id::GlobalSidechainListen: case Id::NoiseEnable:
+                    setEnum(p, multicompp::kOnOff, 2); p.hints |= kParameterIsBoolean; break;
+                case Id::TruePeakQuality: setEnum(p, multicompp::kTruePeakQuality, 2); break;
+                case Id::Distortion: setEnum(p, multicompp::kDistortion, 4); break;
+                case Id::Oversampling: setEnum(p, multicompp::kOversampling, 3); break;
+                case Id::FetRatio: setEnum(p, multicompp::kRatios, 5); break;
+                case Id::FetCurve: setEnum(p, multicompp::kFetCurve, 2); break;
+                case Id::VcaClassicDetector: setEnum(p, multicompp::kVcaDetector, 2); break;
+                case Id::BusRatio: setEnum(p, multicompp::kBusRatios, 3); break;
+                case Id::BusAttack: setEnum(p, multicompp::kBusAttack, 6); break;
+                case Id::BusRelease: setEnum(p, multicompp::kBusRelease, 5); break;
+                case Id::EnvelopeCurve: setEnum(p, multicompp::kEnvelopeCurve, 2); break;
+                case Id::SaturationMode: setEnum(p, multicompp::kSaturationMode, 3); break;
+                case Id::StereoLinkMode: setEnum(p, multicompp::kLinkMode, 3); break;
+                default: break;
             }
-            else if (index == 6) setEnum(p, multicompp::kTruePeakQuality, 2);
-            else if (index == 9) setEnum(p, multicompp::kDistortion, 4);
-            else if (index == 11) setEnum(p, multicompp::kOversampling, 3);
-            else if (index == 20) setEnum(p, multicompp::kRatios, 5);
-            else if (index == 21) setEnum(p, multicompp::kFetCurve, 2);
-            else if (index == 30) setEnum(p, multicompp::kVcaDetector, 2);
-            else if (index == 32) setEnum(p, multicompp::kBusRatios, 3);
-            else if (index == 33) setEnum(p, multicompp::kBusAttack, 6);
-            else if (index == 34) setEnum(p, multicompp::kBusRelease, 5);
-            else if (index == 54) setEnum(p, multicompp::kEnvelopeCurve, 2);
-            else if (index == 59) setEnum(p, multicompp::kSaturationMode, 3);
-            else if (index == 64) setEnum(p, multicompp::kLinkMode, 3);
             return;
         }
         if (index < multicompp::kMeterMaster)
@@ -260,9 +264,6 @@ END_NAMESPACE_DISTRHO
 
 static DISTRHO_NAMESPACE::MultiCompPlugin* asMultiComp(void* p) noexcept { return static_cast<DISTRHO_NAMESPACE::MultiCompPlugin*>(p); }
 float multiCompGetGainReduction(void* p) noexcept { return p ? asMultiComp(p)->gr() : 0.0f; }
-float multiCompGetBandGainReduction0(void* p) noexcept { return p ? asMultiComp(p)->bandGr(0) : 0.0f; }
-float multiCompGetBandGainReduction1(void* p) noexcept { return p ? asMultiComp(p)->bandGr(1) : 0.0f; }
-float multiCompGetBandGainReduction2(void* p) noexcept { return p ? asMultiComp(p)->bandGr(2) : 0.0f; }
-float multiCompGetBandGainReduction3(void* p) noexcept { return p ? asMultiComp(p)->bandGr(3) : 0.0f; }
+float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asMultiComp(p)->bandGr(band) : 0.0f; }
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
