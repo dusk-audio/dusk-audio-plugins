@@ -4,6 +4,7 @@
 
 #include "MultiCompParams.hpp"
 #include "../../shared-dpf/dsp/DuskOversampler.hpp"
+#include "../../shared-dpf/dsp/DuskFilters.hpp"
 
 #include <algorithm>
 #include <array>
@@ -58,6 +59,39 @@ private:
     float currentFrequency = 80.0f;
     float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
     float z1 = 0.0f, z2 = 0.0f;
+};
+
+// JUCE multicomp.cpp:575-690. Two RBJ shelves in TDF-II, after the sidechain
+// high-pass and before stereo linking.
+class MultiCompSidechainEQ
+{
+public:
+    void prepare(double rate) noexcept
+    {
+        sampleRate = rate > 0.0 ? rate : 44100.0;
+        setLowShelf(100.0f, 0.0f);
+        setHighShelf(8000.0f, 0.0f);
+        reset();
+    }
+    void setLowShelf(float frequency, float gain) noexcept
+    {
+        lowFrequency = std::clamp(frequency, 60.0f, 500.0f);
+        lowGain = std::clamp(gain, -12.0f, 12.0f);
+        low.setCoeffs(Biquad::shelf(sampleRate, lowFrequency, lowGain, 0.707f, false));
+    }
+    void setHighShelf(float frequency, float gain) noexcept
+    {
+        highFrequency = std::clamp(frequency, 2000.0f, 16000.0f);
+        highGain = std::clamp(gain, -12.0f, 12.0f);
+        high.setCoeffs(Biquad::shelf(sampleRate, highFrequency, highGain, 0.707f, true));
+    }
+    float process(float input) noexcept { return high.process(low.process(input)); }
+    void reset() noexcept { low.reset(); high.reset(); }
+
+private:
+    double sampleRate = 44100.0;
+    float lowFrequency = 100.0f, lowGain = 0.0f, highFrequency = 8000.0f, highGain = 0.0f;
+    Biquad low, high;
 };
 
 class MultiCompTransientShaper

@@ -208,6 +208,81 @@ void testGoldenVectors()
         std::printf("  mode=%d rms=%.9f peak=%.9f\n", mode, valueRms, peak);
     }
 }
+
+float renderMultibandTone(float mix, float frequency)
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    dsp.setParameter(MultiCompDSP::Parameter::MbMix, mix);
+    dsp.setParameter(MultiCompDSP::Parameter::MbOutput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+    }
+    std::vector<float> in(256), out(256);
+    float sum = 0.0f;
+    for (int block = 0; block < 200; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+            in[static_cast<size_t>(i)] = 0.25f * std::sin(2.0f * kPi * frequency * static_cast<float>(block * 256 + i) / 48000.0f);
+        const float* ip[] = {in.data()}; float* op[] = {out.data()};
+        dsp.processBlock(ip, op, 1, 256);
+        if (block == 199) for (float x : out) sum += x * x;
+    }
+    return std::sqrt(sum / 256.0f);
+}
+
+void testMultibandMixAlignment()
+{
+    float worstRippleDb = 0.0f;
+    for (float frequency : {50.0f, 500.0f, 3000.0f, 10000.0f, 18000.0f})
+    {
+        const float fullWet = renderMultibandTone(100.0f, frequency);
+        const float halfMix = renderMultibandTone(50.0f, frequency);
+        const float ratio = halfMix / std::max(fullWet, 1.0e-9f);
+        // A phase-misaligned dry path creates frequency-dependent combing. The
+        // latency-aligned Phase-2 path must remain within 0.1 dB of full wet.
+        worstRippleDb = std::max(worstRippleDb, std::abs(duskaudio::gainToDecibels(ratio)));
+    }
+    require(worstRippleDb < 0.1f, "multiband 50% mix has no comb ripple");
+    std::printf("multiband mix alignment: max ripple %.5f dB\n", worstRippleDb);
+}
+
+float renderSidechainEqGR(float highGain)
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -30.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 10.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighFreq, 8000.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighGain, highGain);
+    std::vector<float> input(256, 0.02f), sidechain(256), output(256);
+    float gr = 0.0f;
+    for (int block = 0; block < 120; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+            sidechain[static_cast<size_t>(i)] = 0.25f * std::sin(2.0f * kPi * 12000.0f * static_cast<float>(block * 256 + i) / 48000.0f);
+        const float* ip[] = {input.data()}; const float* sc[] = {sidechain.data()}; float* op[] = {output.data()};
+        dsp.processBlockExternal(ip, sc, op, 1, 256);
+        if (block == 119) gr = dsp.getGainReduction();
+    }
+    return gr;
+}
+
+void testSidechainEq()
+{
+    const float flat = renderSidechainEqGR(0.0f);
+    const float boosted = renderSidechainEqGR(12.0f);
+    require(std::isfinite(flat) && std::isfinite(boosted), "sidechain EQ meter finite");
+    require(boosted < flat - 0.2f, "sidechain high shelf increases HF compression");
+    std::printf("sidechain EQ: GR %.4f dB -> %.4f dB with +12 dB HF shelf\n", flat, boosted);
+}
 }
 
 int main()
@@ -216,6 +291,8 @@ int main()
     testStaticCurves();
     testEnvelopeAndReset();
     testMixBypassAndBlockEdges();
+    testMultibandMixAlignment();
+    testSidechainEq();
     testGoldenVectors();
     std::puts("Multi-Comp core tests: PASS");
     return 0;

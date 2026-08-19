@@ -31,8 +31,11 @@ public:
         BusThreshold, BusRatio, BusAttack, BusRelease, BusMakeup, BusMix,
         StudioVcaThreshold, StudioVcaRatio, StudioVcaAttack, StudioVcaRelease, StudioVcaOutput,
         DigitalThreshold, DigitalRatio, DigitalKnee, DigitalAttack, DigitalRelease, DigitalLookahead, DigitalMix, DigitalOutput, DigitalAdaptive,
-        Crossover1, Crossover2, Crossover3
+        Crossover1, Crossover2, Crossover3, EnvelopeCurve, GlobalSidechainListen,
+        MbMix, MbOutput, NoiseEnable, SaturationMode, ScLowFreq, ScLowGain,
+        ScHighFreq, ScHighGain, StereoLinkMode
     };
+    enum class MultibandParameter { Threshold, Ratio, Attack, Release, Makeup, Bypass, Solo, Enabled };
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
@@ -42,6 +45,7 @@ public:
                               float* const* out, int numChannels, int numSamples);
 
     void setParameter(Parameter parameter, float value) noexcept;
+    void setMultibandParameter(int band, MultibandParameter parameter, float value) noexcept;
     void setMode(int value) noexcept { setParameter(Parameter::Mode, static_cast<float>(value)); }
     void setBypass(bool value) noexcept { params.bypass.store(value, std::memory_order_relaxed); }
     void setMix(float value) noexcept { params.mix.store(value, std::memory_order_relaxed); }
@@ -88,10 +92,13 @@ private:
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFiltersExternal;
+    std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
     std::array<DuskCrossover, kMaxChannels> scCrossover1, scCrossover2, scCrossover3;
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
+    std::array<std::vector<float>, kMaxChannels> processedSidechain;
+    std::array<std::vector<float>, kMaxChannels> modeInput;
     std::vector<float> dry, mixCurve, bypassCurve, autoGainCurve;
     std::array<std::vector<float>, kMaxChannels> delayedInput;
     std::array<std::vector<float>, kMaxChannels> globalLookahead;
@@ -111,6 +118,7 @@ private:
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};
     std::atomic<float> masterGR{0.0f}, inputLevel{-60.0f}, outputLevel{-60.0f};
+    uint32_t noiseState = 0x6d2b79f5u;
 };
 
 } // namespace duskaudio

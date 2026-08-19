@@ -27,6 +27,7 @@ on:
       - '4k-eq-2-v*'
       - 'tape-echo-2-v*'
       - 'multi-q-2-v*'
+      - 'multi-comp-2-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -40,6 +41,7 @@ on:
           - '4k-eq-2'
           - 'tape-echo-2'
           - 'multi-q-2'
+          - 'multi-comp-2'
   pull_request:
     paths:
       - 'plugins/*/dpf-plugin/**'
@@ -109,6 +111,7 @@ jobs:
             {"key":"4k-eq-2","dir":"plugins/4k-eq/dpf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
             {"key":"tape-echo-2","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
             {"key":"multi-q-2","dir":"plugins/multi-q/dpf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
+            ,{"key":"multi-comp-2","dir":"plugins/multi-comp/dpf-plugin","base":"multi_comp_2","project":"MultiComp2DPF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
           ]
           JSON
 

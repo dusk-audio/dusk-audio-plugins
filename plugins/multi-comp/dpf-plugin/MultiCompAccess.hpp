@@ -1,0 +1,9 @@
+#pragma once
+#include "DuskAccessBridge.hpp"
+DUSK_ACCESS_DECL(float, multiCompGetGainReduction);
+DUSK_ACCESS_DECL(float, multiCompGetBandGainReduction0);
+DUSK_ACCESS_DECL(float, multiCompGetBandGainReduction1);
+DUSK_ACCESS_DECL(float, multiCompGetBandGainReduction2);
+DUSK_ACCESS_DECL(float, multiCompGetBandGainReduction3);
+DUSK_ACCESS_DECL(float, multiCompGetInputLevel);
+DUSK_ACCESS_DECL(float, multiCompGetOutputLevel);

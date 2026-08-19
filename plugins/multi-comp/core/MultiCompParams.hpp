@@ -99,6 +99,13 @@ struct MultiCompParameterState
     std::atomic<float> stereoLink{100.0f};
     std::atomic<float> mix{100.0f};
     std::atomic<float> sidechainHP{0.0f};
+    std::atomic<int> envelopeCurve{0};
+    std::atomic<bool> globalSidechainListen{false};
+    std::atomic<float> mbMix{100.0f}, mbOutput{0.0f};
+    std::atomic<bool> noiseEnable{true};
+    std::atomic<int> saturationMode{0};
+    std::atomic<float> scLowFreq{100.0f}, scLowGain{0.0f}, scHighFreq{8000.0f}, scHighGain{0.0f};
+    std::atomic<int> stereoLinkMode{0};
     std::atomic<bool> truePeakEnable{false};
     std::atomic<int> truePeakQuality{0};
     std::atomic<bool> externalSidechain{false};
@@ -133,6 +140,7 @@ struct MultiCompParameterState
     std::array<std::atomic<float>, kMultiCompBands> mbRelease{{100.0f, 100.0f, 100.0f, 100.0f}};
     std::array<std::atomic<float>, kMultiCompBands> mbMakeup{{0.0f, 0.0f, 0.0f, 0.0f}};
     std::array<std::atomic<bool>, kMultiCompBands> mbBypass{{false, false, false, false}};
+    std::array<std::atomic<bool>, kMultiCompBands> mbSolo{{false, false, false, false}};
     std::array<std::atomic<bool>, kMultiCompBands> mbEnabled{{true, true, true, true}};
 };
 
