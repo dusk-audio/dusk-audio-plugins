@@ -130,22 +130,10 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # Inline rather than .github/scripts/apt_install.sh, unavoidably: git
-          # does not exist yet, so actions/checkout has not run and the script is
-          # not on disk. This is the step shape that failed the DPF build outright
-          # in 81 seconds (run 32176674366) with no retry to save it, and this is
-          # a RELEASE pipeline, so it gets the same defences in minimal form.
-          switch_mirror() {
-            # security.ubuntu.com is a separate host and stalls independently;
-            # apt-get update fetches from it too, so leaving it in place lets a
-            # stalled security host defeat the whole switch.
-            sed -i \
-              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-              -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-              -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
-              /etc/apt/sources.list
-            echo "::notice::switched apt to the Azure mirror"
-          }
+          # Inline because checkout cannot run until git is installed and the
+          # shared script is not on disk yet. Stock Ubuntu repositories only.
+          # The timeout guards stalls, retries guard hard failures, and the
+          # dpkg repair handles interrupted transactions before the next try.
           bootstrap() {
             timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 150 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
@@ -158,7 +146,7 @@ jobs:
               exit 1
             fi
             echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
-            [ "$i" = "1" ] && switch_mirror
+            timeout 120 dpkg --configure -a || true
             sleep 10
           done
 
@@ -280,22 +268,10 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # Inline rather than .github/scripts/apt_install.sh, unavoidably: git
-          # does not exist yet, so actions/checkout has not run and the script is
-          # not on disk. This is the step shape that failed the DPF build outright
-          # in 81 seconds (run 32176674366) with no retry to save it, and this is
-          # a RELEASE pipeline, so it gets the same defences in minimal form.
-          switch_mirror() {
-            # security.ubuntu.com is a separate host and stalls independently;
-            # apt-get update fetches from it too, so leaving it in place lets a
-            # stalled security host defeat the whole switch.
-            sed -i \
-              -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-              -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-              -e 's|http://ports.ubuntu.com/ubuntu-ports|http://azure.ports.ubuntu.com/ubuntu-ports|g' \
-              /etc/apt/sources.list
-            echo "::notice::switched apt to the Azure mirror"
-          }
+          # Inline because checkout cannot run until git is installed and the
+          # shared script is not on disk yet. Stock Ubuntu repositories only.
+          # The timeout guards stalls, retries guard hard failures, and the
+          # dpkg repair handles interrupted transactions before the next try.
           bootstrap() {
             timeout 90 apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30 && \
             timeout 150 apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
@@ -308,7 +284,7 @@ jobs:
               exit 1
             fi
             echo "::warning::bootstrap attempt $i failed or timed out; retrying in 10s"
-            [ "$i" = "1" ] && switch_mirror
+            timeout 120 dpkg --configure -a || true
             sleep 10
           done
 
