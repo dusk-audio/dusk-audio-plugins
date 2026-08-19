@@ -18,23 +18,6 @@ enum class DistortionType : int { Off = 0, Soft, Hard, Clip };
 constexpr int kMultiCompModes = 8;
 constexpr int kMultiCompBands = 4;
 
-namespace MultiCompConstants
-{
-constexpr float kT4BAttack = 0.002f, kT4BFastRelease = 0.060f, kT4BPhosphorDecay = 1.5f;
-constexpr float kT4BAfterglowDecay = 5.0f, kT4BAfterglowAttackRatio = 0.25f, kT4BAfterglowCoupling = 0.12f;
-constexpr float kT4BPhosphorAttackRatio = 0.3f, kT4BGamma = 0.7f, kT4BConductanceK = 3.0f;
-constexpr float kT4BPhosphorCoupling = 0.40f, kT4BChargeRate = 0.15f, kT4BDischargeRate = 0.12f;
-constexpr float kT4BReleaseScale = 5.0f, kT4BPhosphorScale = 3.0f;
-constexpr float kSidechainDriverSaturation = 0.8f, kSidechainDriverOutput = 1.0f, kSidechainDriverThreshold = 0.03f;
-constexpr float kPeakReductionMaxSidechainGain = 14.0f, kT4BMaxConductance = 6.0f, kT4BMaxReleaseRate = 10.0f;
-constexpr float kFetThresholdDb = -10.0f, kFetMaxReductionDb = 30.0f, kVcaReleaseRate = 120.0f, kVcaMaxReductionDb = 60.0f;
-constexpr float kBusSidechainHz = 60.0f, kBusMaxReductionDb = 20.0f, kBusKneeDb = 10.0f, kBusRmsSeconds = 0.005f;
-constexpr float kStudioFetThresholdDb = -10.0f, kStudioFetHarmonicScale = 0.3f;
-constexpr float kStudioVcaMaxReductionDb = 40.0f, kStudioVcaKneeDb = 6.0f;
-constexpr float kSidechainHpMin = 20.0f, kSidechainHpMax = 500.0f, kSidechainHpDefault = 80.0f;
-constexpr float kOutputHardLimit = 2.0f, kEpsilon = 0.0001f;
-}
-
 inline float clampFinite(float value, float lo, float hi, float fallback) noexcept
 {
     return std::isfinite(value) ? std::clamp(value, lo, hi) : fallback;

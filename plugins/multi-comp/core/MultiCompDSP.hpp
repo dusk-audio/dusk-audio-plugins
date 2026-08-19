@@ -71,7 +71,6 @@ public:
 
 private:
     static constexpr int kMaxChannels = 2;
-    static constexpr int kMixRampMs = 20;
     static constexpr int kBypassRampMs = 30;
 
     void processRange(const float* const* in, const float* const* sidechain,
@@ -81,7 +80,6 @@ private:
     void processMultiband(const float* const* input, const float* const* sidechain,
                           float* const* output, int nCh, int nSamples);
     void updateCrossovers();
-    float processOne(MultiCompMode mode, float input, float sc, int channel, int sampleIndex, int nSamples);
     void updateMeters(const float* const* in, float* const* out, int nCh, int nSamples);
     void processLatencyHistory(const float* const* in, float* const* out, int nCh, int nSamples, bool emit) noexcept;
 

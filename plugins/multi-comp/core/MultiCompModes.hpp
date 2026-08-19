@@ -25,8 +25,11 @@ public:
 
     void prepare(double sampleRate, int /*maxBlock*/, int oversamplingFactor)
     {
-        fs = sampleRate > 0.0 ? sampleRate : 48000.0;
-        osFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
+        const double newFs = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const int newFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
+        if (newFs == fs && newFactor == osFactor) return;
+        fs = newFs;
+        osFactor = newFactor;
         const double modeRate = fs * osFactor;
         transientShaper.prepare(modeRate);
         lookupTables.prepare();
@@ -164,7 +167,7 @@ private:
     MultiCompLookupTables lookupTables;
 
     Biquad optoTiltShelf;
-    float optoAttack = 0, optoRelease = 0, optoGlowDecay = 0, optoGlowAttack = 0;
+    float optoAttack = 0, optoRelease = 0, optoGlowDecay = 0, optoGlowAttack = 0, optoAfterglowAttack = 0;
     float optoCondAttack = 0, optoCondRelease = 0, optoElAttack = 0, optoElRelease = 0, optoScSmooth = 0;
     float fetTilt = 0, optoHardwareGain = 1.0f, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
@@ -206,6 +209,7 @@ private:
         optoRelease = std::exp(-1.0f / (0.060f * sr));
         optoGlowDecay = std::exp(-1.0f / (1.5f * sr));
         optoGlowAttack = std::pow(optoGlowDecay, 0.3f);
+        optoAfterglowAttack = std::pow(std::exp(-1.0f / (5.0f * sr)), 0.25f);
         optoCondAttack = 1.0f - std::exp(-2.0f * kDuskPi * 150.0f / sr);
         optoCondRelease = 1.0f - std::exp(-2.0f * kDuskPi * 4.0f / sr);
         optoElAttack = 1.0f - std::exp(-2.0f * kDuskPi * 150.0f / sr);
@@ -331,10 +335,8 @@ private:
             d.glow = lightLevel + (d.glow - lightLevel) * phosphorReleaseCoeff;
         }
 
-        const float afterglowAttackCoeff = std::pow(
-            std::exp(-1.0f / (5.0f * sr)), 0.25f);
         if (lightLevel > d.after)
-            d.after = lightLevel + (d.after - lightLevel) * afterglowAttackCoeff;
+            d.after = lightLevel + (d.after - lightLevel) * optoAfterglowAttack;
         else
         {
             const float afterglowDecayTime = 5.0f + d.charge * 3.0f;

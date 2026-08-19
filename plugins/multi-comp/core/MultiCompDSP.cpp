@@ -384,7 +384,7 @@ void MultiCompDSP::prepareLookahead(const float* const* in,
     const int delay = static_cast<int>(std::round(std::clamp(
         params.globalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f)
         * 0.001f * static_cast<float>(sampleRate)));
-    if (delay <= 0 || globalLookahead[0].empty()) return;
+    if (globalLookahead[0].empty()) return;
 
     const int size = static_cast<int>(globalLookahead[0].size());
     for (int ch = 0; ch < nCh; ++ch)
@@ -395,10 +395,12 @@ void MultiCompDSP::prepareLookahead(const float* const* in,
         {
             const int read = (write - std::min(delay, size - 1) + size) % size;
             line[static_cast<size_t>(write)] = in[ch][i];
-            delayedInput[static_cast<size_t>(ch)][static_cast<size_t>(i)] = line[static_cast<size_t>(read)];
+            if (delay > 0)
+                delayedInput[static_cast<size_t>(ch)][static_cast<size_t>(i)] = line[static_cast<size_t>(read)];
             write = (write + 1) % size;
         }
-        processingIn[ch] = delayedInput[static_cast<size_t>(ch)].data();
+        if (delay > 0)
+            processingIn[ch] = delayedInput[static_cast<size_t>(ch)].data();
     }
 }
 
@@ -430,7 +432,6 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         processMultiband(in, external ? sidechain : nullptr, out, nCh, nSamples);
         return;
     }
-    for (auto& os : oversamplers) os.setFactor(actualOs);
     busMixRamp.setTarget(std::clamp(params.busMix.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
     digitalMixRamp.setTarget(std::clamp(params.digitalMix.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
     for (int i = 0; i < nSamples; ++i)
@@ -561,6 +562,7 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
             const float ratio = std::max(1.0f, params.mbRatio[static_cast<size_t>(band)].load(std::memory_order_relaxed));
             const float attack = std::max(0.0001f, params.mbAttack[static_cast<size_t>(band)].load(std::memory_order_relaxed) * 0.001f);
             const float release = std::max(0.001f, params.mbRelease[static_cast<size_t>(band)].load(std::memory_order_relaxed) * 0.001f);
+            const float makeupGain = decibelsToGain(params.mbMakeup[bandIndex].load(std::memory_order_relaxed));
             for (int i = 0; i < nSamples; ++i)
             {
                 const float own = sidechain != nullptr ? std::abs(sidechainBands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)]) : std::abs(bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)]);
@@ -588,15 +590,16 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 const float target = decibelsToGain(-reduction);
                 const float c = std::exp(-1.0f / ((target < envelope ? attack : release) * sampleRate));
                 envelope = c * envelope + (1.0f - c) * target;
-                bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)] *= envelope * decibelsToGain(params.mbMakeup[static_cast<size_t>(band)].load(std::memory_order_relaxed));
+                bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)] *= envelope * makeupGain;
                 maxGr[static_cast<size_t>(band)] = std::min(maxGr[static_cast<size_t>(band)], gainToDecibels(envelope));
             }
         }
+        const float mbOutputGain = decibelsToGain(params.mbOutput.load(std::memory_order_relaxed));
         for (int i = 0; i < nSamples; ++i)
         {
             float sum = 0.0f;
             for (int band = 0; band < kMultiCompBands; ++band) sum += bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)];
-            sum *= decibelsToGain(params.mbOutput.load(std::memory_order_relaxed));
+            sum *= mbOutputGain;
             float limited = sum;
             if (std::abs(limited) > 1.5f)
                 limited = std::copysign(1.5f + 0.5f * std::tanh((std::abs(limited) - 1.5f) * 2.0f), limited);

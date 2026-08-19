@@ -18,6 +18,7 @@ public:
     void prepare(double sampleRate, float frequency) noexcept
     {
         fs = sampleRate > 0.0 ? sampleRate : 48000.0;
+        currentFrequency = -1.0f;
         setFrequency(frequency);
         reset();
     }

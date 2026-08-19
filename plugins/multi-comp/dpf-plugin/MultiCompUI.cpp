@@ -13,8 +13,11 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <string_view>
 
 START_NAMESPACE_DISTRHO
 
@@ -113,6 +116,55 @@ protected:
     void parameterChanged(uint32_t index, float value) override
     {
         if (index < values.size()) values[index] = value;
+    }
+
+    void stateChanged(const char* key, const char* state) override
+    {
+        if (key == nullptr || state == nullptr || std::strcmp(key, "parameters") != 0) return;
+        currentPreset = -1;
+        const std::string_view serialized(state);
+        size_t begin = 0;
+        while (begin < serialized.size())
+        {
+            const size_t end = serialized.find(';', begin);
+            const std::string_view token = serialized.substr(begin,
+                end == std::string_view::npos ? serialized.size() - begin : end - begin);
+            const size_t equal = token.find('=');
+            if (equal != std::string_view::npos && token.substr(0, equal) != "v")
+            {
+                std::uint32_t bits = 0;
+                const std::string_view encoded = token.substr(equal + 1);
+                const auto parsed = std::from_chars(encoded.data(), encoded.data() + encoded.size(), bits, 16);
+                if (parsed.ec == std::errc() && parsed.ptr == encoded.data() + encoded.size())
+                {
+                    float decoded = 0.0f;
+                    std::memcpy(&decoded, &bits, sizeof(decoded));
+                    if (std::isfinite(decoded))
+                    {
+                        const std::string_view id = token.substr(0, equal);
+                        for (int i = 0; i < multicompp::kParamCount; ++i)
+                            if (id == multicompp::kParams[static_cast<size_t>(i)].id)
+                                values[static_cast<size_t>(i)] = decoded;
+                        for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
+                        {
+                            const int band = (i - multicompp::kBandBase) / 8;
+                            const int field = (i - multicompp::kBandBase) % 8;
+                            char bandId[64];
+                            std::snprintf(bandId, sizeof(bandId), "%s_%d",
+                                          multicompp::bandParam(field, band).id, band);
+                            if (id == bandId)
+                            {
+                                values[static_cast<size_t>(i)] = decoded;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (end == std::string_view::npos) break;
+            begin = end + 1;
+        }
+        repaint();
     }
 
     void programLoaded(uint32_t index) override
@@ -265,7 +317,6 @@ private:
                 if (ImGui::Selectable(multicompp::kFactoryPresets[i].name, selected))
                 {
                     applyPreset(static_cast<int>(i));
-                    currentPreset = static_cast<int>(i);
                 }
                 if (selected) ImGui::SetItemDefaultFocus();
             }
@@ -316,10 +367,7 @@ private:
         if (ImGui::IsItemClicked())
         {
             const float next = values[p] > 0.5f ? 0.0f : 1.0f;
-            editParameter(p, true);
-            values[p] = next;
-            setParameterValue(p, next);
-            editParameter(p, false);
+            setValue(p, next);
         }
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const bool on = values[p] > 0.5f;
@@ -444,7 +492,7 @@ private:
         const float left = 28, right = kDesignW - 28, top = 342, bottom = 445;
         dl->AddRectFilled(panel.P(left, top), panel.P(right, bottom), IM_COL32(22, 24, 29, 255), 5 * panel.scale());
         panel.text(dl, 40, top + 10, 10, kDim, "CROSSOVERS / GAIN REDUCTION", -1, true);
-        crossover(dl, P_X1, 180, 0, 500, "XOVER 1");
+        crossover(dl, P_X1, 180, 20, 500, "XOVER 1");
         crossover(dl, P_X2, 430, 200, 5000, "XOVER 2");
         crossover(dl, P_X3, 680, 2000, 16000, "XOVER 3");
         for (int b = 0; b < 4; ++b)
@@ -496,6 +544,7 @@ private:
         {
             const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
             const float next = std::clamp(min + (mouseX - trackStart) / (trackEnd - trackStart) * (max - min), min, max);
+            currentPreset = -1;
             values[p] = next;
             setParameterValue(p, next);
         }
@@ -549,6 +598,7 @@ private:
             {
                 setValue(static_cast<uint32_t>(multicompp::kBandBase + band * 8 + field), value);
             });
+        currentPreset = index;
     }
 };
 

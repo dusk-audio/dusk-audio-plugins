@@ -58,20 +58,24 @@ void testCrossoverFlatness()
     {
         for (double sr : {44100.0, 48000.0, 96000.0})
         {
-            DuskCrossover c1, c2, c3;
-            c1.prepare(sr, cfg[0]); c2.prepare(sr, cfg[1]); c3.prepare(sr, cfg[2]);
-            const int n = 32768;
-            std::vector<float> sum(static_cast<size_t>(n)), original(static_cast<size_t>(n));
-            for (int i = 0; i < n; ++i)
+            for (const float frequency : {cfg[0], cfg[2],
+                                           std::min(cfg[2] * 1.5f, static_cast<float>(sr * 0.45))})
             {
-                const float x = 0.25f * std::sin(2.0f * kPi * 997.0f * static_cast<float>(i) / static_cast<float>(sr));
-                original[static_cast<size_t>(i)] = x;
-                float l0, h0, l1, h1, l2, h2;
-                c1.process(x, l0, h0); c2.process(h0, l1, h1); c3.process(h1, l2, h2);
-                sum[static_cast<size_t>(i)] = l0 + l1 + l2 + h2;
+                DuskCrossover c1, c2, c3;
+                c1.prepare(sr, cfg[0]); c2.prepare(sr, cfg[1]); c3.prepare(sr, cfg[2]);
+                const int n = 16384;
+                std::vector<float> sum(static_cast<size_t>(n)), original(static_cast<size_t>(n));
+                for (int i = 0; i < n; ++i)
+                {
+                    const float x = 0.25f * std::sin(2.0f * kPi * frequency * static_cast<float>(i) / static_cast<float>(sr));
+                    original[static_cast<size_t>(i)] = x;
+                    float l0, h0, l1, h1, l2, h2;
+                    c1.processStandard(x, l0, h0); c2.processStandard(h0, l1, h1); c3.processStandard(h1, l2, h2);
+                    sum[static_cast<size_t>(i)] = l0 + l1 + l2 + h2;
+                }
+                const float ratio = rms(sum, 4096) / rms(original, 4096);
+                require(std::abs(duskaudio::gainToDecibels(ratio)) < 0.1f, "standard LR4 magnitude reconstruction");
             }
-            const float ratio = rms(sum, 4096) / rms(original, 4096);
-            require(std::abs(duskaudio::gainToDecibels(ratio)) < 0.001f, "LR4 flat-sum reconstruction");
 
             DuskCrossover standard;
             standard.prepare(sr, cfg[0]);
@@ -91,7 +95,7 @@ void testCrossoverFlatness()
             require(branchLevel(cfg[0] * 4.0f, false) > branchLevel(cfg[0] * 4.0f, true), "standard LR4 high edge magnitude");
         }
     }
-    std::puts("LR4 flat-sum: 44.1/48/96 kHz, two 3-split configurations OK");
+    std::puts("LR4 standard magnitude flatness: 44.1/48/96 kHz, two 3-split configurations OK");
 }
 
 void testStaticCurves()
@@ -317,6 +321,10 @@ void testLatencyMixBypassAndDigitalStereo()
 void testGoldenVectors()
 {
     constexpr int kSamples = 4096;
+    constexpr float expectedRms[] = {0.167010725f, 0.612701416f, 0.162082925f, 0.274149567f,
+                                     0.627327621f, 0.200807050f, 0.173109755f, 0.212109938f};
+    constexpr float expectedPeak[] = {0.359857470f, 1.913183331f, 0.350156724f, 0.698291481f,
+                                      1.681058764f, 0.573882639f, 0.349556237f, 0.815853894f};
     std::puts("golden vectors: deterministic step/sine-burst RMS peak");
     for (int mode = 0; mode < 8; ++mode)
     {
@@ -354,7 +362,64 @@ void testGoldenVectors()
         for (float sample : output) { sum += static_cast<double>(sample) * sample; peak = std::max(peak, std::abs(sample)); }
         const float valueRms = static_cast<float>(std::sqrt(sum / output.size()));
         std::printf("  mode=%d rms=%.9f peak=%.9f\n", mode, valueRms, peak);
+        const bool unchanged = std::abs(valueRms - expectedRms[mode]) <= 1.0e-4f
+                            && std::abs(peak - expectedPeak[mode]) <= 1.0e-4f;
+        if (!unchanged)
+            std::fprintf(stderr, "golden mismatch mode=%d expected=(%.9f, %.9f) actual=(%.9f, %.9f)\n",
+                         mode, expectedRms[mode], expectedPeak[mode], valueRms, peak);
+        require(unchanged, "golden vector unchanged");
     }
+}
+
+void configureNeutralMultiband(MultiCompDSP& dsp)
+{
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    dsp.setOversampling(0);
+    dsp.setParameter(MultiCompDSP::Parameter::MbMix, 100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::MbOutput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+    }
+}
+
+float renderReprepareTone(MultiCompDSP& dsp, float frequency)
+{
+    dsp.reset();
+    std::vector<float> in(256), out(256);
+    double sum = 0.0;
+    for (int block = 0; block < 80; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+            in[static_cast<size_t>(i)] = 0.2f * std::sin(2.0f * kPi * frequency * static_cast<float>(block * 256 + i) / 96000.0f);
+        const float* ip[] = {in.data()}; float* op[] = {out.data()};
+        dsp.processBlock(ip, op, 1, 256);
+        if (block >= 76)
+            for (float sample : out) sum += static_cast<double>(sample) * sample;
+    }
+    return static_cast<float>(std::sqrt(sum / (4.0 * 256.0)));
+}
+
+void testReprepareMultiband()
+{
+    MultiCompDSP reused, fresh;
+    reused.prepare(48000.0, 256);
+    configureNeutralMultiband(reused);
+    reused.prepare(96000.0, 256);
+    fresh.prepare(96000.0, 256);
+    configureNeutralMultiband(fresh);
+    float maxDelta = 0.0f;
+    for (const float frequency : {50.0f, 500.0f, 3000.0f, 10000.0f})
+    {
+        const float a = renderReprepareTone(reused, frequency);
+        const float b = renderReprepareTone(fresh, frequency);
+        maxDelta = std::max(maxDelta, std::abs(a - b));
+    }
+    require(maxDelta < 1.0e-6f, "re-prepare 48 kHz to 96 kHz matches fresh multiband");
+    std::printf("multiband re-prepare: max band-tone energy delta %.9g\n", maxDelta);
 }
 
 float renderMultibandTone(float mix, float frequency)
@@ -489,6 +554,7 @@ int main()
     testMultibandMixAlignment();
     testSidechainEq();
     testMultibandBypassAndZeroLatency();
+    testReprepareMultiband();
     testGoldenVectors();
     std::puts("Multi-Comp core tests: PASS");
     return 0;

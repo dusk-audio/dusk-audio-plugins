@@ -127,14 +127,14 @@ protected:
             const int band = static_cast<int>((index - multicompp::kBandBase) / 8);
             const int field = static_cast<int>((index - multicompp::kBandBase) % 8);
             const auto d = multicompp::bandParam(field, band);
-            const float v = value < d.min ? d.min : value > d.max ? d.max : value;
+            const float v = duskaudio::clampFinite(value, d.min, d.max, d.def);
             values[index].store(v, std::memory_order_relaxed);
             dsp.setMultibandParameter(band, d.core, v);
             return;
         }
         if (index >= multicompp::kParamCount) return;
         const auto& d = multicompp::kParams[index];
-        const float v = value < d.min ? d.min : value > d.max ? d.max : value;
+        const float v = duskaudio::clampFinite(value, d.min, d.max, d.def);
         values[index].store(v, std::memory_order_relaxed);
         dsp.setParameter(d.core, v);
     }
@@ -241,7 +241,7 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        const bool useSc = values[7].load(std::memory_order_relaxed) > 0.5f && inputs[2] != nullptr && inputs[3] != nullptr;
+        const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f && inputs[2] != nullptr && inputs[3] != nullptr;
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, 2, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, 2, static_cast<int>(frames));
         updateLatency();
