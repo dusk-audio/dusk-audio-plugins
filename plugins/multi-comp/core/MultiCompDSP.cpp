@@ -383,6 +383,25 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             const bool useTruePeak = params.truePeakEnable.load(std::memory_order_relaxed);
             const float peakSc = useTruePeak ? std::copysign(truePeakDetector.processSample(scInput, ch), scInput) : scInput;
             const float sc = peakSc;
+            // JUCE pre-interpolates the already-filtered sidechain to the
+            // oversampled rate before entering each mode.  The native-rate
+            // detector value above is retained for the non-oversampled path;
+            // for the oversampled path, derive the next native detector value
+            // and linearly interpolate it at the same phase positions as the
+            // Dusk halfband callback (0, 1/2, or 1/4 steps).
+            float nextSc = sc;
+            if (actualOs > 1 && !useTruePeak && i + 1 < nSamples)
+            {
+                const float next0 = sidechain != nullptr ? sidechain[0][i + 1] : in[0][i + 1];
+                const float next1 = sidechain != nullptr ? sidechain[std::min(1, nCh - 1)][i + 1] : in[std::min(1, nCh - 1)][i + 1];
+                const float nextLevel = std::max(std::abs(next0), std::abs(next1));
+                const float nextOwn = ch == 0 ? next0 : next1;
+                const float nextInput = link ? std::abs(nextOwn) * (1.0f - linkAmount) + nextLevel * linkAmount
+                                             : linkMode == 1 ? (ch == 0 ? (next0 + next1) * 0.5f
+                                                                         : (next0 - next1) * 0.5f)
+                                                             : nextOwn;
+                nextSc = nextInput;
+            }
             const float localMix = mode == MultiCompMode::Digital ? localDigitalMix : localBusMix;
             if (actualOs == 1)
                 out[ch][i] = applyCoreDistortion(modes.process(mode, input, ch, sc, params, localMix),
@@ -390,8 +409,10 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                                                  std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
             else
             {
+                int osPhase = 0;
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
-                    return applyCoreDistortion(modes.process(mode, sample, ch, scInput, params, localMix),
+                    const float osSc = sc + (nextSc - sc) * static_cast<float>(osPhase++) / static_cast<float>(actualOs);
+                    return applyCoreDistortion(modes.process(mode, sample, ch, osSc, params, localMix),
                                                static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3)),
                                                std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
                 });
@@ -413,7 +434,7 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
         {
             const float x = input[ch][i];
             float l0, h0, l1, h1, l2, h2;
-            crossover1[ch].process(x, l0, h0); crossover2[ch].process(h0, l1, h1); crossover3[ch].process(h1, l2, h2);
+            crossover1[ch].processStandard(x, l0, h0); crossover2[ch].processStandard(h0, l1, h1); crossover3[ch].processStandard(h1, l2, h2);
             bands[0][static_cast<size_t>(ch)][static_cast<size_t>(i)] = l0;
             bands[1][static_cast<size_t>(ch)][static_cast<size_t>(i)] = l1;
             bands[2][static_cast<size_t>(ch)][static_cast<size_t>(i)] = l2;
@@ -421,12 +442,22 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
             if (sidechain != nullptr)
             {
                 float sl0, sh0, sl1, sh1, sl2, sh2;
-                scCrossover1[ch].process(sidechain[std::min(ch, nCh - 1)][i], sl0, sh0); scCrossover2[ch].process(sh0, sl1, sh1); scCrossover3[ch].process(sh1, sl2, sh2);
+                scCrossover1[ch].processStandard(sidechain[std::min(ch, nCh - 1)][i], sl0, sh0); scCrossover2[ch].processStandard(sh0, sl1, sh1); scCrossover3[ch].processStandard(sh1, sl2, sh2);
                 sidechainBands[0][static_cast<size_t>(ch)][static_cast<size_t>(i)] = sl0;
                 sidechainBands[1][static_cast<size_t>(ch)][static_cast<size_t>(i)] = sl1;
                 sidechainBands[2][static_cast<size_t>(ch)][static_cast<size_t>(i)] = sl2;
                 sidechainBands[3][static_cast<size_t>(ch)][static_cast<size_t>(i)] = sh2;
             }
+        }
+        // JUCE captures the uncompressed split-band sum as the dry reference.
+        // It has the same all-pass phase rotation as the wet recombination,
+        // avoiding crossover comb filtering during the multiband mix ramp.
+        for (int i = 0; i < nSamples; ++i)
+        {
+            float splitDry = 0.0f;
+            for (int band = 0; band < kMultiCompBands; ++band)
+                splitDry += bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)];
+            dry[static_cast<size_t>(ch * maxBlock + i)] = splitDry;
         }
         for (int band = 0; band < kMultiCompBands; ++band)
         {
@@ -438,12 +469,27 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
             for (int i = 0; i < nSamples; ++i)
             {
                 const float own = sidechain != nullptr ? std::abs(sidechainBands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)]) : std::abs(bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)]);
-                const float other = nCh > 1 ? (sidechain != nullptr ? std::abs(sidechainBands[static_cast<size_t>(band)][static_cast<size_t>(1 - ch)][static_cast<size_t>(i)]) : std::abs(bands[static_cast<size_t>(band)][static_cast<size_t>(1 - ch)][static_cast<size_t>(i)])) : own;
-                const float link = std::clamp(params.stereoLink.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
-                const float detector = nCh > 1 && link > 0.01f ? own * (1.0f - link) + std::max(own, other) * link : own;
+                // JUCE's multiband compressor processes each split channel's
+                // detector independently; global stereo-link blending is not
+                // applied to this path.
+                const float detector = own;
                 const float db = gainToDecibels(std::max(detector, 1.0e-5f));
-                const float over = std::max(0.0f, db - threshold);
-                const float reduction = over * (1.0f - 1.0f / ratio);
+                constexpr float kneeDb = 6.0f;
+                const float kneeStart = threshold - kneeDb * 0.5f;
+                float reduction = 0.0f;
+                if (db > kneeStart)
+                {
+                    if (db < threshold + kneeDb * 0.5f)
+                    {
+                        const float x = db - kneeStart;
+                        reduction = (1.0f - 1.0f / ratio) * (x * x) / (2.0f * kneeDb);
+                    }
+                    else
+                    {
+                        const float over = db - threshold;
+                        reduction = over * (1.0f - 1.0f / ratio);
+                    }
+                }
                 const float target = decibelsToGain(-reduction);
                 const float c = std::exp(-1.0f / ((target < envelope ? attack : release) * sampleRate));
                 envelope = c * envelope + (1.0f - c) * target;
@@ -457,7 +503,10 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
             float sum = 0.0f;
             for (int band = 0; band < kMultiCompBands; ++band) sum += bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)];
             sum *= decibelsToGain(params.mbOutput.load(std::memory_order_relaxed));
-            output[ch][i] = applyCoreDistortion(sum,
+            float limited = sum;
+            if (std::abs(limited) > 1.5f)
+                limited = std::copysign(1.5f + 0.5f * std::tanh((std::abs(limited) - 1.5f) * 2.0f), limited);
+            output[ch][i] = applyCoreDistortion(limited,
                                                 static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3)),
                                                 std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
         }

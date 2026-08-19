@@ -60,6 +60,16 @@ public:
         high = input - low;
     }
 
+    // Standard LR4 branches. The complementary process() helper above is
+    // retained for callers that require sample-exact reconstruction; the
+    // compressor splitter uses these independently filtered branches to match
+    // JUCE's cascaded Butterworth low/high crossover topology.
+    void processStandard(float input, float& low, float& high) noexcept
+    {
+        low = processLow(input);
+        high = processHigh(input);
+    }
+
     static constexpr float butterworthQ() noexcept { return kButterworthQ; }
 
 private:

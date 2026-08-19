@@ -159,7 +159,7 @@ private:
     float optoShelfB0 = 1, optoShelfB1 = 0, optoShelfA1 = 0;
     float optoAttack = 0, optoRelease = 0, optoGlowDecay = 0, optoGlowAttack = 0;
     float optoCondAttack = 0, optoCondRelease = 0, optoElAttack = 0, optoElRelease = 0, optoScSmooth = 0;
-    float fetTilt = 0;
+    float fetTilt = 0, optoHardwareGain = 1.0f, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
 
     void prepareHardware(double rate)
@@ -173,6 +173,7 @@ private:
         optoTube.prepare(rate, 2);
         optoTube.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
         optoTube.setDrive(0.15f);
+        calibrateOptoHardwareGain(rate);
         const auto& fp = HardwareEmulation::HardwareProfiles::getFETCompressor();
         const auto& bp = HardwareEmulation::HardwareProfiles::getConsoleBus();
         const auto& sfp = HardwareEmulation::HardwareProfiles::getStudioFET();
@@ -186,6 +187,8 @@ private:
         }
         fetConvolution.prepare(rate); fetConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
         busConvolution.prepare(rate); busConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Console_Bus);
+        calibrateFetHardwareGain(rate);
+        calibrateBusHardwareGain(rate);
         const float sr = static_cast<float>(rate);
         optoAttack = std::exp(-1.0f / (0.002f * sr));
         optoRelease = std::exp(-1.0f / (0.060f * sr));
@@ -203,6 +206,112 @@ private:
         optoShelfB0 = (A + sqrtA * alpha) * norm;
         optoShelfB1 = (sqrtA * alpha - A) * norm;
         optoShelfA1 = (alpha * sqrtA - 1.0f) * norm;
+    }
+
+    void calibrateOptoHardwareGain(double rate)
+    {
+        constexpr int calibrationSamples = 4800;
+        constexpr float refAmplitude = 0.126f;
+        constexpr float refFreq = 1000.0f;
+        const float sr = static_cast<float>(rate);
+        const float angularStep = 2.0f * 3.14159265358979323846f * refFreq / sr;
+
+        inputTransformerOpto.reset();
+        optoTube.reset();
+        outputTransformerOpto.reset();
+
+        const int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+        {
+            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
+            x = inputTransformerOpto.processSample(x, 0);
+            x = optoTube.processSample(x, 0);
+            outputTransformerOpto.processSample(x, 0);
+        }
+
+        double inputRmsSquared = 0.0;
+        double outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            const float phase = angularStep * static_cast<float>(warmup + i);
+            const float input = refAmplitude * std::sin(phase);
+            float x = inputTransformerOpto.processSample(input, 0);
+            x = optoTube.processSample(x, 0);
+            x = outputTransformerOpto.processSample(x, 0);
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(x * x);
+        }
+
+        if (outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12)
+            optoHardwareGain = 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared));
+        else
+            optoHardwareGain = 1.0f;
+
+        inputTransformerOpto.reset();
+        optoTube.reset();
+        outputTransformerOpto.reset();
+    }
+
+    void calibrateFetHardwareGain(double rate)
+    {
+        constexpr int calibrationSamples = 4800;
+        constexpr float refAmplitude = 0.126f;
+        constexpr float refFreq = 1000.0f;
+        const float sr = static_cast<float>(rate);
+        const float angularStep = 2.0f * 3.14159265358979323846f * refFreq / sr;
+        inputTransformerFet[0].reset(); outputTransformerFet[0].reset(); fetConvolution.reset();
+        const int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+        {
+            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
+            x = inputTransformerFet[0].processSample(x, 0);
+            x = outputTransformerFet[0].processSample(x, 0);
+            fetConvolution.processSample(x, 0);
+        }
+        double inputRmsSquared = 0.0, outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            const float input = refAmplitude * std::sin(angularStep * static_cast<float>(warmup + i));
+            float x = inputTransformerFet[0].processSample(input, 0);
+            x = outputTransformerFet[0].processSample(x, 0);
+            x = fetConvolution.processSample(x, 0);
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(x * x);
+        }
+        fetHardwareGain = outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12
+            ? 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared)) : 1.0f;
+        inputTransformerFet[0].reset(); outputTransformerFet[0].reset(); fetConvolution.reset();
+    }
+
+    void calibrateBusHardwareGain(double rate)
+    {
+        constexpr int calibrationSamples = 4800;
+        constexpr float refAmplitude = 0.126f;
+        constexpr float refFreq = 1000.0f;
+        const float sr = static_cast<float>(rate);
+        const float angularStep = 2.0f * 3.14159265358979323846f * refFreq / sr;
+        inputTransformerBus[0].reset(); outputTransformerBus[0].reset(); busConvolution.reset();
+        const int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+        {
+            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
+            x = inputTransformerBus[0].processSample(x, 0);
+            x = outputTransformerBus[0].processSample(x, 0);
+            busConvolution.processSample(x, 0);
+        }
+        double inputRmsSquared = 0.0, outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            const float input = refAmplitude * std::sin(angularStep * static_cast<float>(warmup + i));
+            float x = inputTransformerBus[0].processSample(input, 0);
+            x = outputTransformerBus[0].processSample(x, 0);
+            x = busConvolution.processSample(x, 0);
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(x * x);
+        }
+        busHardwareGain = outputRmsSquared > 1.0e-12 && inputRmsSquared > 1.0e-12
+            ? 1.0f / static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared)) : 1.0f;
+        inputTransformerBus[0].reset(); outputTransformerBus[0].reset(); busConvolution.reset();
     }
 
     void resetHardware() noexcept
@@ -232,14 +341,20 @@ private:
         }
         const bool limit = p.optoLimit.load(std::memory_order_relaxed);
         const bool external = p.externalSidechain.load(std::memory_order_relaxed);
-        const bool linked = p.stereoLink.load(std::memory_order_relaxed) > 0.01f;
-        float sc = external ? sidechain : (linked ? sidechain : compressed);
-        if (!external && !limit)
+        float sc = external ? sidechain : compressed;
+        if (external)
+        {
+            // JUCE bypasses the internal R37 shelf for an external source and
+            // clears its state at the source transition.
+            d.shelfX = 0.0f;
+            d.shelfY = 0.0f;
+        }
+        else if (!limit)
         {
             const float shelf = optoShelfB0 * sc + optoShelfB1 * d.shelfX - optoShelfA1 * d.shelfY;
             d.shelfX = sc; d.shelfY = shelf; sc = shelf;
         }
-        else if (limit) sc = x * 0.5f + compressed * 0.5f;
+        else sc = input * 0.5f + compressed * 0.5f;
         const float pr = std::clamp(p.optoPeakReduction.load(std::memory_order_relaxed), 0.0f, 100.0f);
         const float peakReductionGain = std::pow(pr * 0.01f, 3.0f) * 14.0f;
         const float effectiveDrive = std::max(0.0f, std::abs(sc * peakReductionGain) - 0.03f);
@@ -247,14 +362,35 @@ private:
         d.sc += optoScSmooth * (scLevel - d.sc);
         const float elCoeff = d.sc > d.el ? optoElAttack : optoElRelease;
         d.el += elCoeff * (d.sc - d.el);
-        const float cellCoeff = d.el > d.cell ? optoAttack : optoRelease;
-        d.cell = d.el + (d.cell - d.el) * cellCoeff;
-        const float glowCoeff = d.el > d.glow ? optoGlowAttack : optoGlowDecay;
-        d.glow = d.el + (d.glow - d.el) * glowCoeff;
-        const float afterDecay = 5.0f + d.charge * 3.0f;
-        const float afterAttack = std::pow(std::exp(-1.0f / (afterDecay * static_cast<float>(fs))), 0.25f);
-        d.after = d.el > d.after ? d.el + (d.after - d.el) * afterAttack
-                                 : d.el + (d.after - d.el) * std::exp(-1.0f / (afterDecay * static_cast<float>(fs)));
+        const float lightLevel = d.el;
+        if (lightLevel > d.cell)
+            d.cell = lightLevel + (d.cell - lightLevel) * optoAttack;
+        else
+        {
+            const float progDepFactor = 1.0f + d.charge * 5.0f;
+            const float adjReleaseCoeff = std::pow(optoRelease, 1.0f / progDepFactor);
+            d.cell = lightLevel + (d.cell - lightLevel) * adjReleaseCoeff;
+        }
+
+        if (lightLevel > d.glow)
+            d.glow = lightLevel + (d.glow - lightLevel) * optoGlowAttack;
+        else
+        {
+            const float slowDecayTime = 1.5f + d.charge * 3.0f;
+            const float phosphorReleaseCoeff = std::exp(-1.0f / (static_cast<float>(fs) * slowDecayTime));
+            d.glow = lightLevel + (d.glow - lightLevel) * phosphorReleaseCoeff;
+        }
+
+        const float afterglowAttackCoeff = std::pow(
+            std::exp(-1.0f / (5.0f * static_cast<float>(fs))), 0.25f);
+        if (lightLevel > d.after)
+            d.after = lightLevel + (d.after - lightLevel) * afterglowAttackCoeff;
+        else
+        {
+            const float afterglowDecayTime = 5.0f + d.charge * 3.0f;
+            const float afterglowReleaseCoeff = std::exp(-1.0f / (static_cast<float>(fs) * afterglowDecayTime));
+            d.after = lightLevel + (d.after - lightLevel) * afterglowReleaseCoeff;
+        }
         d.charge = std::clamp(d.charge + d.cell * 0.15f / static_cast<float>(fs) - d.charge * 0.12f / static_cast<float>(fs), 0.0f, 1.0f);
         const float response = std::clamp(d.cell + d.glow * 0.40f + d.after * 0.12f, 0.0f, 1.0f);
         const float conductance = response > 0.0f ? std::min(3.0f * std::pow(response, 0.7f), 6.0f) : 0.0f;
@@ -272,6 +408,7 @@ private:
         optoTube.setDrive(0.15f + grAmount * 0.3f);
         float out = optoTube.processSample(compressed * makeup * tubeBoost, ch) / tubeBoost;
         out = outputTransformerOpto.processSample(out, ch);
+        out *= optoHardwareGain;
         return std::clamp(out, -2.0f, 2.0f);
     }
 
@@ -287,17 +424,60 @@ private:
         const float ratios[5] = {studio ? 4.0f : 3.85f, studio ? 8.0f : 7.40f, studio ? 12.0f : 12.50f, studio ? 20.0f : 21.50f, studio ? 20.0f : 21.50f};
         const float ratio = ratios[ratioIndex];
         const float compressed = gained * d.envelope;
-        float feedback = compressed;
+        float saturated = compressed;
+        if (!studio)
+        {
+            // Vintage FET saturation is inside the feedback loop.  The
+            // sidechain must see this signal, not the post-envelope shortcut.
+            const float grDb = -gainToDecibels(d.envelope + 0.001f);
+            const float grNorm = std::clamp(grDb / 20.0f, 0.0f, 1.0f);
+            const float k2 = ratioIndex == 4 ? 0.04f + grNorm * 0.04f
+                                             : 0.024f + grNorm * 0.026f;
+            const float k3 = ratioIndex == 4 ? 0.005f + grNorm * 0.010f
+                                             : 0.004f + grNorm * 0.008f;
+            const float sq = saturated * saturated;
+            const float alpha = 1.0f / (1.0f + 6.2831853f * 10.0f / sr);
+            const float h2 = alpha * (d.dc + sq - d.prevSq);
+            d.dc = h2;
+            d.prevSq = sq;
+            saturated += k2 * h2 + k3 * saturated * saturated * saturated;
+        }
+
+        // FET junction capacitance choke in the feedback path.  Studio FET
+        // uses the unsaturated compressed signal here, matching its JUCE class.
+        const float feedbackInput = studio ? compressed : saturated;
         const float grDb = -gainToDecibels(d.envelope + 0.001f);
         const float grNorm = std::clamp(grDb / 20.0f, 0.0f, 1.0f);
         const float corner = 20000.0f - grNorm * 2000.0f;
-        d.hf += (1.0f - std::exp(-2.0f * 3.14159265f * corner / sr)) * (feedback - d.hf);
-        feedback = d.hf;
-        const bool linked = p.stereoLink.load(std::memory_order_relaxed) > 0.01f;
-        float detect = p.externalSidechain.load(std::memory_order_relaxed) || linked ? std::abs(sidechain * inputGain) : std::abs(feedback);
+        const float chokeCoeff = 1.0f - std::exp(-2.0f * 3.14159265f * corner / sr);
+        d.hf += chokeCoeff * (feedbackInput - d.hf);
+        const bool external = p.externalSidechain.load(std::memory_order_relaxed);
+        float detect = 0.0f;
+        if (external)
+            detect = std::abs(sidechain * inputGain);
+        else if (ratioIndex == 4)
+        {
+            const float thresholdForPeak = decibelsToGain(studio ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed));
+            float instantLevel = std::abs(d.hf);
+            const float detCeiling = thresholdForPeak * 1.5f;
+            if (instantLevel > detCeiling)
+                instantLevel = detCeiling + (instantLevel - detCeiling) / (1.0f + (instantLevel - detCeiling));
+            const float peakAttackCoeff = std::exp(-1.0f / (0.00005f * sr));
+            const float peakReleaseCoeff = std::exp(-1.0f / (0.005f * sr));
+            if (instantLevel > d.peak)
+                d.peak += (1.0f - peakAttackCoeff) * (instantLevel - d.peak);
+            else
+                d.peak += (1.0f - peakReleaseCoeff) * (instantLevel - d.peak);
+            detect = d.peak;
+        }
+        else
+            detect = std::abs(d.hf);
         d.tilt += fetTilt * (detect - d.tilt);
         detect = std::max(detect + (detect - d.tilt) * 0.35f, 0.0f);
-        const float threshold = decibelsToGain((studio ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed)) + (ratioIndex == 4 ? -6.0206f : 0.0f));
+        // JUCE applies the all-buttons threshold shift exactly once below via
+        // abiThreshold = threshold * 0.5f.  Do not fold a second -6.0206 dB
+        // offset into the base threshold here.
+        const float threshold = decibelsToGain(studio ? -10.0f : p.fetThreshold.load(std::memory_order_relaxed));
         float reduction = 0.0f;
         if (ratioIndex == 4)
         {
@@ -377,18 +557,24 @@ private:
             d.voltageSag += (1.0f - coeffSag) * (targetSag - d.voltageSag);
             sagGain = decibelsToGain(-d.voltageSag);
         }
-        float out = gained * d.envelope * sagGain;
-        const float scale = studio ? 0.3f : 1.0f;
-        const float k2 = studio ? (ratioIndex == 4 ? 0.04f + grNorm * 0.12f : 0.004f) * scale
-                                : (ratioIndex == 4 ? 0.04f + grNorm * 0.04f : 0.024f + grNorm * 0.026f);
-        const float k3 = studio ? (ratioIndex == 4 ? 0.005f + grNorm * 0.015f : 0.001f) * scale
-                                : (ratioIndex == 4 ? 0.005f + grNorm * 0.010f : 0.004f + grNorm * 0.008f);
-        const float sq = out * out;
-        const float hp = (d.dc + sq - d.prevSq) / (1.0f + 6.2831853f * 10.0f / sr);
-        d.dc = hp; d.prevSq = sq;
-        out += k2 * hp + k3 * out * out * out;
+        float out = saturated;
+        if (studio)
+        {
+            out = gained * d.envelope;
+            const float outputGrDb = -gainToDecibels(d.envelope + 0.001f);
+            const float outputGrNorm = std::clamp(outputGrDb / 20.0f, 0.0f, 1.0f);
+            const float scale = 0.3f;
+            const float k2 = (ratioIndex == 4 ? 0.04f + outputGrNorm * 0.12f : 0.004f) * scale;
+            const float k3 = (ratioIndex == 4 ? 0.005f + outputGrNorm * 0.015f : 0.001f) * scale;
+            const float sq = out * out;
+            const float hp = (d.dc + sq - d.prevSq) / (1.0f + 6.2831853f * 10.0f / sr);
+            d.dc = hp;
+            d.prevSq = sq;
+            out += k2 * hp + k3 * out * out * out;
+        }
+        out *= sagGain;
         out = outT.processSample(out, ch);
-        if (!studio) out = fetConvolution.processSample(out, ch);
+        if (!studio) out = fetConvolution.processSample(out, ch) * fetHardwareGain;
         const float grHpf = -gainToDecibels(d.envelope + 0.001f);
         const float hpfCutoff = 20.0f + std::clamp(grHpf / 20.0f, 0.0f, 1.0f) * 60.0f;
         const float hpfAlpha = 1.0f - std::exp(-2.0f * 3.14159265358979323846f * hpfCutoff / sr);
@@ -400,8 +586,10 @@ private:
     {
         auto& d = vca[ch];
         const float sr = static_cast<float>(fs * osFactor);
-        const bool linked = p.stereoLink.load(std::memory_order_relaxed) > 0.01f;
-        const float detect = std::abs(p.externalSidechain.load(std::memory_order_relaxed) || linked ? sidechain : input);
+        // JUCE's VCA is feed-forward: internal detection is the audio input
+        // even when the host-side stereo-link buffer is populated.  Only an
+        // actual external sidechain replaces the detector source.
+        const float detect = std::abs(p.externalSidechain.load(std::memory_order_relaxed) ? sidechain : input);
         d.rate = d.rate * 0.95f + std::abs(detect - d.previous) * 0.05f;
         d.previous = detect;
         const float rmsMs = p.vcaClassicDetector.load(std::memory_order_relaxed) ? 0.010f : 0.005f + 0.030f * std::exp(-3.0f * std::clamp((gainToDecibels(std::max(detect, 0.0001f)) + 20.0f) / 30.0f, 0.0f, 1.0f));
@@ -467,8 +655,7 @@ private:
         const float alpha = 1.0f / (1.0f + 6.2831853f * 60.0f / sr);
         d.hp = alpha * (d.hp + fb - d.prev); d.prev = fb;
         d.hp2 = alpha * (d.hp2 + d.hp - d.prev2); d.prev2 = d.hp;
-        const bool linked = p.stereoLink.load(std::memory_order_relaxed) > 0.01f;
-        const float rect = p.externalSidechain.load(std::memory_order_relaxed) || linked ? std::abs(sidechain) : std::abs(d.hp2);
+        const float rect = p.externalSidechain.load(std::memory_order_relaxed) ? std::abs(sidechain) : std::abs(d.hp2);
         const float rc = std::exp(-1.0f / (0.005f * sr));
         d.rms = rc * d.rms + (1.0f - rc) * rect * rect;
         const float level = std::sqrt(std::max(0.0f, d.rms));
@@ -508,8 +695,7 @@ private:
         auto& d = studioVca[ch];
         const float sr = static_cast<float>(fs * osFactor);
         const float transformed = inputTransformerStudioVca[ch].processSample(input, ch);
-        const bool linked = p.stereoLink.load(std::memory_order_relaxed) > 0.01f;
-        const float x = p.externalSidechain.load(std::memory_order_relaxed) || linked ? sidechain : input;
+        const float x = p.externalSidechain.load(std::memory_order_relaxed) ? sidechain : input;
         const float rc = std::exp(-1.0f / (0.010f * sr));
         d.rms = rc * d.rms + (1.0f - rc) * x * x;
         const float level = std::sqrt(std::max(0.0f, d.rms));

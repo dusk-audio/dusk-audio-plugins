@@ -129,16 +129,75 @@ protected:
             setParameterValue(static_cast<uint32_t>(i), def);
         }
         const auto& q = multicompp::kFactoryPresets[index];
-        setParameterValue(0, static_cast<float>(q.mode));
-        const int t = q.mode == 0 ? 13 : q.mode == 1 || q.mode == 4 ? 23 : q.mode == 2 ? 24 : q.mode == 3 ? 31 : q.mode == 5 ? 37 : 41;
-        setParameterValue(static_cast<uint32_t>(t), q.threshold);
-        if (q.mode == 1 || q.mode == 4) { setParameterValue(20, static_cast<float>(q.fetRatio)); setParameterValue(22, q.fetRatio == 4 ? 50.0f : 0.0f); }
-        if (q.mode == 3) { setParameterValue(32, static_cast<float>(q.busAttack)); setParameterValue(33, static_cast<float>(q.busRelease)); setParameterValue(35, q.makeup); setParameterValue(36, q.mix); }
-        if (q.mode == 0) { setParameterValue(13, q.peakReduction); setParameterValue(14, 50.0f); }
-        if (q.mode == 2) { setParameterValue(25, q.ratio); setParameterValue(28, q.makeup); }
-        if (q.mode == 5) { setParameterValue(38, q.ratio); setParameterValue(42, q.makeup); }
-        if (q.mode == 6) { setParameterValue(42, q.threshold); setParameterValue(43, q.ratio); }
-        setParameterValue(3, q.mix); setParameterValue(4, q.sidechainHP); setParameterValue(8, q.autoMakeup ? 1.0f : 0.0f); setParameterValue(56, q.mix); setParameterValue(59, static_cast<float>(q.saturationMode)); setParameterValue(10, 50.0f);
+        using P = duskaudio::MultiCompDSP::Parameter;
+        const auto set = [this](P parameter, float value)
+        {
+            setParameterValue(static_cast<uint32_t>(parameter), value);
+        };
+
+        // Keep this mapping explicit: the JUCE preset application writes the
+        // mode-specific APVTS parameters by identity, not by table offsets.
+        set(P::Mode, static_cast<float>(q.mode));
+        set(P::Mix, q.mix);
+        set(P::SidechainHP, q.sidechainHP);
+        set(P::AutoMakeup, q.autoMakeup ? 1.0f : 0.0f);
+        set(P::SaturationMode, static_cast<float>(q.saturationMode));
+
+        switch (q.mode)
+        {
+            case 0: // Opto
+                set(P::OptoPeakReduction, q.peakReduction);
+                set(P::OptoGain, duskaudio::optoGainDbToKnob(q.makeup));
+                set(P::OptoLimit, q.limitMode ? 1.0f : 0.0f);
+                break;
+            case 1: // FET
+            case 4: // Studio FET
+                set(P::FetInput, -q.threshold);
+                set(P::FetOutput, q.makeup);
+                set(P::FetAttack, q.attack);
+                set(P::FetRelease, q.release);
+                set(P::FetRatio, static_cast<float>(q.fetRatio));
+                break;
+            case 2: // VCA
+                set(P::VcaThreshold, q.threshold);
+                set(P::VcaRatio, q.ratio);
+                set(P::VcaAttack, q.attack);
+                set(P::VcaRelease, q.release);
+                set(P::VcaOutput, q.makeup);
+                set(P::VcaOverEasy, q.vcaOverEasy);
+                break;
+            case 3: // Bus
+            {
+                // JUCE's choice range is 0..2; its preset values are the
+                // displayed ratio figures, so values >= 4 land on choice 2.
+                const int ratioChoice = q.ratio <= 2.0f ? 0 : q.ratio <= 3.0f ? 1 : 2;
+                set(P::BusThreshold, q.threshold);
+                set(P::BusRatio, static_cast<float>(ratioChoice));
+                set(P::BusAttack, static_cast<float>(q.busAttack));
+                set(P::BusRelease, static_cast<float>(q.busRelease));
+                set(P::BusMakeup, q.makeup);
+                set(P::BusMix, q.mix);
+                break;
+            }
+            case 5: // Studio VCA
+                set(P::StudioVcaThreshold, q.threshold);
+                set(P::StudioVcaRatio, q.ratio);
+                set(P::StudioVcaAttack, q.attack);
+                set(P::StudioVcaRelease, q.release);
+                set(P::StudioVcaOutput, q.makeup);
+                break;
+            case 6: // Digital
+                set(P::DigitalThreshold, q.threshold);
+                set(P::DigitalRatio, q.ratio);
+                set(P::DigitalAttack, q.attack);
+                set(P::DigitalRelease, q.release);
+                set(P::DigitalOutput, q.makeup);
+                break;
+            case 7: // Multiband presets currently carry no mode-specific data.
+                break;
+            default:
+                break;
+        }
     }
 
     void initState(uint32_t index, State& state) override
