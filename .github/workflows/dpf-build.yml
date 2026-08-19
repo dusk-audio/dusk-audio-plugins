@@ -331,8 +331,11 @@ jobs:
             exit "$ctest_status"
           fi
           if grep -q "Total Tests: [1-9]" ctest-discovery.log; then
-            cmake --build build --config Release -j"$(nproc)" --target TapeEchoCoreTest \
-              || echo "::notice::no TapeEchoCoreTest target for this plugin"
+            # The plugin build step only builds the -vst3/-clap/-lv2 targets,
+            # so the test executables ctest expects may not exist yet. Build
+            # the default target set (which includes them) rather than
+            # hardcoding any one plugin's test target name.
+            cmake --build build --config Release -j"$(nproc)"
             ctest --test-dir build --output-on-failure
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"

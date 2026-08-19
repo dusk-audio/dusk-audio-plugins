@@ -8,6 +8,8 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -159,24 +161,44 @@ protected:
     void initState(uint32_t index, State& state) override
     { if (index == 0) { state.key = "parameters"; state.label = "Multi-Comp Parameters"; state.defaultValue = ""; state.hints = kStateIsHostReadable; } }
 
+    // Locale-proof float text without the C++17 floating-point to_chars
+    // overloads: libc++ marks those "introduced in macOS 13.3", below our
+    // deployment target. The float's bit pattern goes through the integer
+    // overloads instead (baseline everywhere), hex, exact round-trip, and
+    // immune to LC_NUMERIC no matter what the host process set.
+    static void appendFloatBits(std::string& s, float value)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        char number[16];
+        const auto result = std::to_chars(number, number + sizeof(number), bits, 16);
+        if (result.ec == std::errc()) s.append(number, result.ptr);
+    }
+
+    static bool parseFloatBits(std::string_view text, float& out)
+    {
+        std::uint32_t bits = 0;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), bits, 16);
+        if (result.ec != std::errc() || result.ptr != text.data() + text.size()) return false;
+        std::memcpy(&out, &bits, sizeof(out));
+        return std::isfinite(out);
+    }
+
     String getState(const char* key) const override
     {
         if (std::strcmp(key, "parameters") != 0) return String();
-        std::string s = "v=1";
-        char number[64];
+        std::string s = "v=2";
         for (int i = 0; i < multicompp::kParamCount; ++i)
         {
             s.push_back(';'); s += multicompp::kParams[static_cast<size_t>(i)].id; s.push_back('=');
-            const auto result = std::to_chars(number, number + sizeof(number), values[static_cast<size_t>(i)].load(std::memory_order_relaxed), std::chars_format::general, 9);
-            if (result.ec == std::errc()) s.append(number, result.ptr);
+            appendFloatBits(s, values[static_cast<size_t>(i)].load(std::memory_order_relaxed));
         }
         for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
         {
             const int band = (i - multicompp::kBandBase) / 8;
             const int field = (i - multicompp::kBandBase) % 8;
             s.push_back(';'); s += stateBandId(field, band); s.push_back('=');
-            const auto result = std::to_chars(number, number + sizeof(number), values[static_cast<size_t>(i)].load(std::memory_order_relaxed), std::chars_format::general, 9);
-            if (result.ec == std::errc()) s.append(number, result.ptr);
+            appendFloatBits(s, values[static_cast<size_t>(i)].load(std::memory_order_relaxed));
         }
         return String(s.c_str());
     }
@@ -194,9 +216,7 @@ protected:
             if (equal != std::string_view::npos && token.substr(0, equal) != "v")
             {
                 float parsed = 0.0f;
-                const auto number = token.substr(equal + 1);
-                const auto result = std::from_chars(number.data(), number.data() + number.size(), parsed, std::chars_format::general);
-                if (result.ec == std::errc() && result.ptr == number.data() + number.size())
+                if (parseFloatBits(token.substr(equal + 1), parsed))
                 {
                     const std::string_view id = token.substr(0, equal);
                     for (int i = 0; i < multicompp::kParamCount; ++i)
