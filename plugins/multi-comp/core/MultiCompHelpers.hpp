@@ -100,12 +100,18 @@ public:
     void prepare(double rate) noexcept
     {
         sampleRate = rate > 0.0 ? rate : 44100.0;
+        setRate(sampleRate);
+        reset();
+    }
+
+    void setRate(double rate) noexcept
+    {
+        sampleRate = rate > 0.0 ? rate : 44100.0;
         fastAttack = std::exp(-1.0f / (0.0005f * static_cast<float>(sampleRate)));
         fastRelease = std::exp(-1.0f / (0.020f * static_cast<float>(sampleRate)));
         slowAttack = std::exp(-1.0f / (0.010f * static_cast<float>(sampleRate)));
         slowRelease = std::exp(-1.0f / (0.100f * static_cast<float>(sampleRate)));
         holdSamples = static_cast<int>(0.005f * static_cast<float>(sampleRate));
-        reset();
     }
 
     float process(float input, int channel, float sensitivity) noexcept
@@ -205,7 +211,7 @@ public:
     {
         const float wet = oversampler.processSample(input, static_cast<Fn&&>(fn));
         if (compensation.empty() || maxLatency <= 0) return wet;
-        const int current = oversamplingOff ? 0 : (use4x ? 27 : 23);
+        const int current = oversamplingOff ? 0 : static_cast<int>(std::lround(oversampler.latency()));
         const int delay = std::clamp(maxLatency - current, 0, maxLatency);
         compensation[static_cast<size_t>(writePosition)] = wet;
         const int read = (writePosition - delay + static_cast<int>(compensation.size())) % static_cast<int>(compensation.size());
@@ -220,7 +226,7 @@ private:
     Oversampler oversampler;
     bool oversamplingOff = false, use4x = false;
     std::vector<float> compensation;
-    int maxLatency = 27, writePosition = 0, factor = 2;
+    int maxLatency = 0, writePosition = 0, factor = 2;
 };
 
 class MultiCompLookupTables

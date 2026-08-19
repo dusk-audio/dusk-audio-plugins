@@ -3,17 +3,22 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 #include "MultiCompVersion.hpp"
+#include "util/CrashLog.hpp"
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 
 START_NAMESPACE_DISTRHO
 
 class MultiCompPlugin final : public Plugin
 {
+    DuskCrashLog::ScopedRegistration crashLog_ { "multi-comp-2", MULTICOMP2_VERSION_STRING };
+
 public:
     MultiCompPlugin() : Plugin(multicompp::kTotalParamCount, multicompp::kFactoryPresets.size(), 1)
     {
@@ -62,11 +67,20 @@ protected:
             p.hints = kParameterIsAutomatable | (d.integer ? kParameterIsInteger : 0u);
             if (index == 1) { p.initDesignation(kParameterDesignationBypass); return; }
             if (index == 0) setEnum(p, multicompp::kModes, 8);
-            else if (index == 5 || index == 7 || index == 8 || index == 15 || index == 29 || index == 30 || index == 50 || index == 55) setEnum(p, multicompp::kOnOff, 2);
+            else if (index == 5 || index == 7 || index == 8 || index == 15 || index == 29 || index == 50 || index == 55 || index == 58)
+            {
+                setEnum(p, multicompp::kOnOff, 2);
+                if (index == 58) p.hints |= kParameterIsBoolean;
+            }
             else if (index == 6) setEnum(p, multicompp::kTruePeakQuality, 2);
             else if (index == 9) setEnum(p, multicompp::kDistortion, 4);
             else if (index == 11) setEnum(p, multicompp::kOversampling, 3);
             else if (index == 20) setEnum(p, multicompp::kRatios, 5);
+            else if (index == 21) setEnum(p, multicompp::kFetCurve, 2);
+            else if (index == 30) setEnum(p, multicompp::kVcaDetector, 2);
+            else if (index == 32) setEnum(p, multicompp::kBusRatios, 3);
+            else if (index == 33) setEnum(p, multicompp::kBusAttack, 6);
+            else if (index == 34) setEnum(p, multicompp::kBusRelease, 5);
             else if (index == 54) setEnum(p, multicompp::kEnvelopeCurve, 2);
             else if (index == 59) setEnum(p, multicompp::kSaturationMode, 3);
             else if (index == 64) setEnum(p, multicompp::kLinkMode, 3);
@@ -95,7 +109,9 @@ protected:
         if (index < multicompp::kParamCount) return values[index].load(std::memory_order_relaxed);
         if (index < multicompp::kMeterMaster) return values[index].load(std::memory_order_relaxed);
         if (index == multicompp::kMeterMaster) return dsp.getGainReduction();
-        return dsp.getBandGainReduction(static_cast<int>(index - multicompp::kMeterBand0));
+        if (index >= multicompp::kMeterBand0 && index <= multicompp::kMeterBand3)
+            return dsp.getBandGainReduction(static_cast<int>(index - multicompp::kMeterBand0));
+        return 0.0f;
     }
 
     void setParameterValue(uint32_t index, float value) override
@@ -123,81 +139,17 @@ protected:
     void loadProgram(uint32_t index) override
     {
         if (index >= multicompp::kFactoryPresets.size()) return;
-        for (int i = 0; i < multicompp::kMeterMaster; ++i)
-        {
-            const float def = i < multicompp::kParamCount ? multicompp::kParams[static_cast<size_t>(i)].def : multicompp::bandParam((i - multicompp::kBandBase) % 8, (i - multicompp::kBandBase) / 8).def;
-            setParameterValue(static_cast<uint32_t>(i), def);
-        }
         const auto& q = multicompp::kFactoryPresets[index];
-        using P = duskaudio::MultiCompDSP::Parameter;
-        const auto set = [this](P parameter, float value)
+        multicompp::forEachPresetParam(q,
+        [this](multicompp::CoreParameter parameter, float value)
         {
-            setParameterValue(static_cast<uint32_t>(parameter), value);
-        };
-
-        // Keep this mapping explicit: the JUCE preset application writes the
-        // mode-specific APVTS parameters by identity, not by table offsets.
-        set(P::Mode, static_cast<float>(q.mode));
-        set(P::Mix, q.mix);
-        set(P::SidechainHP, q.sidechainHP);
-        set(P::AutoMakeup, q.autoMakeup ? 1.0f : 0.0f);
-        set(P::SaturationMode, static_cast<float>(q.saturationMode));
-
-        switch (q.mode)
+            const int parameterIndex = multicompp::coreParamIndex(parameter);
+            if (parameterIndex >= 0) setParameterValue(static_cast<uint32_t>(parameterIndex), value);
+        },
+        [this](int band, int field, float value)
         {
-            case 0: // Opto
-                set(P::OptoPeakReduction, q.peakReduction);
-                set(P::OptoGain, duskaudio::optoGainDbToKnob(q.makeup));
-                set(P::OptoLimit, q.limitMode ? 1.0f : 0.0f);
-                break;
-            case 1: // FET
-            case 4: // Studio FET
-                set(P::FetInput, -q.threshold);
-                set(P::FetOutput, q.makeup);
-                set(P::FetAttack, q.attack);
-                set(P::FetRelease, q.release);
-                set(P::FetRatio, static_cast<float>(q.fetRatio));
-                break;
-            case 2: // VCA
-                set(P::VcaThreshold, q.threshold);
-                set(P::VcaRatio, q.ratio);
-                set(P::VcaAttack, q.attack);
-                set(P::VcaRelease, q.release);
-                set(P::VcaOutput, q.makeup);
-                set(P::VcaOverEasy, q.vcaOverEasy);
-                break;
-            case 3: // Bus
-            {
-                // JUCE's choice range is 0..2; its preset values are the
-                // displayed ratio figures, so values >= 4 land on choice 2.
-                const int ratioChoice = q.ratio <= 2.0f ? 0 : q.ratio <= 3.0f ? 1 : 2;
-                set(P::BusThreshold, q.threshold);
-                set(P::BusRatio, static_cast<float>(ratioChoice));
-                set(P::BusAttack, static_cast<float>(q.busAttack));
-                set(P::BusRelease, static_cast<float>(q.busRelease));
-                set(P::BusMakeup, q.makeup);
-                set(P::BusMix, q.mix);
-                break;
-            }
-            case 5: // Studio VCA
-                set(P::StudioVcaThreshold, q.threshold);
-                set(P::StudioVcaRatio, q.ratio);
-                set(P::StudioVcaAttack, q.attack);
-                set(P::StudioVcaRelease, q.release);
-                set(P::StudioVcaOutput, q.makeup);
-                break;
-            case 6: // Digital
-                set(P::DigitalThreshold, q.threshold);
-                set(P::DigitalRatio, q.ratio);
-                set(P::DigitalAttack, q.attack);
-                set(P::DigitalRelease, q.release);
-                set(P::DigitalOutput, q.makeup);
-                break;
-            case 7: // Multiband presets currently carry no mode-specific data.
-                break;
-            default:
-                break;
-        }
+            setParameterValue(static_cast<uint32_t>(multicompp::kBandBase + band * 8 + field), value);
+        });
     }
 
     void initState(uint32_t index, State& state) override
@@ -206,22 +158,62 @@ protected:
     String getState(const char* key) const override
     {
         if (std::strcmp(key, "parameters") != 0) return String();
-        std::string s;
-        for (int i = 0; i < multicompp::kMeterMaster; ++i) { if (i) s.push_back(','); s += std::to_string(values[static_cast<size_t>(i)].load(std::memory_order_relaxed)); }
+        std::string s = "v=1";
+        char number[64];
+        for (int i = 0; i < multicompp::kParamCount; ++i)
+        {
+            s.push_back(';'); s += multicompp::kParams[static_cast<size_t>(i)].id; s.push_back('=');
+            const auto result = std::to_chars(number, number + sizeof(number), values[static_cast<size_t>(i)].load(std::memory_order_relaxed), std::chars_format::general, 9);
+            if (result.ec == std::errc()) s.append(number, result.ptr);
+        }
+        for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
+        {
+            const int band = (i - multicompp::kBandBase) / 8;
+            const int field = (i - multicompp::kBandBase) % 8;
+            s.push_back(';'); s += stateBandId(field, band); s.push_back('=');
+            const auto result = std::to_chars(number, number + sizeof(number), values[static_cast<size_t>(i)].load(std::memory_order_relaxed), std::chars_format::general, 9);
+            if (result.ec == std::errc()) s.append(number, result.ptr);
+        }
         return String(s.c_str());
     }
 
     void setState(const char* key, const char* value) override
     {
         if (std::strcmp(key, "parameters") != 0 || value == nullptr) return;
-        const char* p = value;
-        for (int i = 0; i < multicompp::kMeterMaster && *p; ++i) { char* end = nullptr; const float v = std::strtof(p, &end); if (end == p) break; setParameterValue(static_cast<uint32_t>(i), v); p = *end == ',' ? end + 1 : end; }
+        const std::string_view state(value);
+        size_t begin = 0;
+        while (begin < state.size())
+        {
+            const size_t end = state.find(';', begin);
+            const std::string_view token = state.substr(begin, end == std::string_view::npos ? state.size() - begin : end - begin);
+            const size_t equal = token.find('=');
+            if (equal != std::string_view::npos && token.substr(0, equal) != "v")
+            {
+                float parsed = 0.0f;
+                const auto number = token.substr(equal + 1);
+                const auto result = std::from_chars(number.data(), number.data() + number.size(), parsed, std::chars_format::general);
+                if (result.ec == std::errc() && result.ptr == number.data() + number.size())
+                {
+                    const std::string_view id = token.substr(0, equal);
+                    for (int i = 0; i < multicompp::kParamCount; ++i)
+                        if (id == multicompp::kParams[static_cast<size_t>(i)].id) { setParameterValue(static_cast<uint32_t>(i), parsed); break; }
+                    for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
+                    {
+                        const int band = (i - multicompp::kBandBase) / 8;
+                        const int field = (i - multicompp::kBandBase) % 8;
+                        if (id == stateBandId(field, band)) { setParameterValue(static_cast<uint32_t>(i), parsed); break; }
+                    }
+                }
+            }
+            if (end == std::string_view::npos) break;
+            begin = end + 1;
+        }
     }
 
     void activate() override { dsp.prepare(getSampleRate(), static_cast<int>(getBufferSize())); pushParameters(); updateLatency(); }
     void deactivate() override { dsp.reset(); }
-    void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); pushParameters(); }
-    void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); pushParameters(); }
+    void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); pushParameters(); updateLatency(); }
+    void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); pushParameters(); updateLatency(); }
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
@@ -232,6 +224,16 @@ protected:
     }
 
 private:
+    static std::string stateBandId(int field, int band)
+    {
+        char number[16];
+        const auto result = std::to_chars(number, number + sizeof(number), band);
+        std::string id = multicompp::bandParam(field, band).id;
+        id.push_back('_');
+        if (result.ec == std::errc()) id.append(number, result.ptr);
+        return id;
+    }
+
     static void setEnum(Parameter& p, const char* const* labels, int count)
     { p.enumValues.count = static_cast<uint8_t>(count); p.enumValues.restrictedMode = true; auto* e = new ParameterEnumerationValue[count]; for (int i = 0; i < count; ++i) e[i] = ParameterEnumerationValue(static_cast<float>(i), labels[i]); p.enumValues.values = e; }
     void pushParameters()

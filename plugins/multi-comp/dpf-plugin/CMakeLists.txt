@@ -17,3 +17,15 @@ dpf_add_plugin(multi_comp_2
 target_include_directories(multi_comp_2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core" ${DUSK_DPF_INCLUDE_DIRS})
 target_compile_definitions(multi_comp_2 PUBLIC MULTICOMP2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} MULTICOMP2_VERSION_MINOR=${PROJECT_VERSION_MINOR} MULTICOMP2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 dusk_dpf_install_local(multi_comp_2 LV2_PROGRAMS)
+
+if(NOT CMAKE_CROSSCOMPILING)
+  enable_testing()
+  add_executable(MultiCompCoreTest
+    ../core/tests/MultiCompCoreTests.cpp
+    ../core/MultiCompDSP.cpp)
+  target_include_directories(MultiCompCoreTest PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp")
+  target_compile_features(MultiCompCoreTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompCore COMMAND MultiCompCoreTest)
+endif()

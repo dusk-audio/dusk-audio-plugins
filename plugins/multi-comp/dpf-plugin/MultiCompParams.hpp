@@ -72,6 +72,11 @@ inline constexpr const char* const kOversampling[3] = {"Off","2x","4x"};
 inline constexpr const char* const kDistortion[4] = {"Off","Soft","Hard","Clip"};
 inline constexpr const char* const kTruePeakQuality[2] = {"4x (Standard)","8x (High)"};
 inline constexpr const char* const kEnvelopeCurve[2] = {"Logarithmic (Analog)","Linear (Digital)"};
+inline constexpr const char* const kFetCurve[2] = {"Modern", "Measured"};
+inline constexpr const char* const kVcaDetector[2] = {"Adaptive", "Classic"};
+inline constexpr const char* const kBusRatios[3] = {"2:1", "4:1", "10:1"};
+inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"};
+inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
 inline constexpr const char* const kSaturationMode[3] = {"Vintage (Warm)","Modern (Clean)","Pristine (Minimal)"};
 inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mono"};
 }

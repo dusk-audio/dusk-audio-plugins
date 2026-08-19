@@ -383,7 +383,7 @@ private:
         knob(dl, studio ? "sf_rel" : "fet_rel", P_FET_RELEASE, 510, 380, 50, 1100, "RELEASE", "%.0f", " ms");
         knob(dl, studio ? "sf_mix" : "fet_mix", P_MIX, 640, 380, 0, 100, "MIX", "%.0f", "%");
         combo(studio ? "sf_ratio" : "fet_ratio", P_FET_RATIO, multicompp::kRatios, 5, 775, 352, 118, "RATIO");
-        combo(studio ? "sf_curve" : "fet_curve", P_FET_CURVE, multicompp::kEnvelopeCurve, 2, 905, 352, 142, "CURVE");
+        combo(studio ? "sf_curve" : "fet_curve", P_FET_CURVE, multicompp::kFetCurve, 2, 905, 352, 142, "CURVE");
         knob(dl, studio ? "sf_trans" : "fet_trans", P_FET_TRANSIENT, 1020, 380, 0, 100, "TRANSIENT", "%.0f", "%");
         panel.text(dl, 560, 500, 12, studio ? IM_COL32(80, 215, 205, 255) : IM_COL32(235, 175, 80, 255),
                    studio ? "Clean FET response with controlled harmonics" : "Fast FET response with program-dependent release", 0);
@@ -394,18 +394,19 @@ private:
         knob(dl, "vca_thr", P_VCA_THRESHOLD, 170, 380, -38, 12, "THRESHOLD", "%.1f", " dB");
         knob(dl, "vca_ratio", P_VCA_RATIO, 320, 380, 1, 120, "RATIO", "%.1f", ":1");
         knob(dl, "vca_att", P_VCA_ATTACK, 470, 380, 0.1f, 50, "ATTACK", "%.1f", " ms");
-        knob(dl, "vca_out", P_VCA_OUT, 620, 380, -20, 20, "OUTPUT", "%.1f", " dB");
-        knob(dl, "vca_mix", P_MIX, 770, 380, 0, 100, "MIX", "%.0f", "%");
-        panel.toggle("vca_over", P_VCA_OVER_EASY, 860, 366, 1000, 392, values[P_VCA_OVER_EASY], "OVER EASY");
-        combo("vca_detector", P_VCA_DETECTOR, multicompp::kEnvelopeCurve, 2, 850, 428, 170, "DETECTOR");
+        knob(dl, "vca_rel", P_VCA_RELEASE, 620, 380, 10, 5000, "RELEASE", "%.0f", " ms");
+        knob(dl, "vca_out", P_VCA_OUT, 770, 380, -20, 20, "OUTPUT", "%.1f", " dB");
+        knob(dl, "vca_mix", P_MIX, 920, 380, 0, 100, "MIX", "%.0f", "%");
+        panel.toggle("vca_over", P_VCA_OVER_EASY, 860, 450, 1000, 476, values[P_VCA_OVER_EASY], "OVER EASY");
+        combo("vca_detector", P_VCA_DETECTOR, multicompp::kVcaDetector, 2, 670, 450, 170, "DETECTOR");
     }
 
     void drawBus(ImDrawList* dl)
     {
         knob(dl, "bus_thr", P_BUS_THRESHOLD, 160, 380, -30, 15, "THRESHOLD", "%.1f", " dB");
-        combo("bus_ratio", P_BUS_RATIO, multicompp::kRatios, 5, 300, 352, 100, "RATIO");
-        combo("bus_attack", P_BUS_ATTACK, busAttackLabels, 6, 440, 352, 108, "ATTACK");
-        combo("bus_release", P_BUS_RELEASE, busReleaseLabels, 5, 580, 352, 108, "RELEASE");
+        combo("bus_ratio", P_BUS_RATIO, multicompp::kBusRatios, 3, 300, 352, 100, "RATIO");
+        combo("bus_attack", P_BUS_ATTACK, multicompp::kBusAttack, 6, 440, 352, 108, "ATTACK");
+        combo("bus_release", P_BUS_RELEASE, multicompp::kBusRelease, 5, 580, 352, 108, "RELEASE");
         knob(dl, "bus_makeup", P_BUS_MAKEUP, 720, 380, 0, 20, "MAKEUP", "%.1f", " dB");
         knob(dl, "bus_mix", P_BUS_MIX, 860, 380, 0, 100, "BUS MIX", "%.0f", "%");
         panel.text(dl, 560, 500, 12, IM_COL32(152, 190, 228, 255), "Gentle bus glue with linked stereo detection", 0);
@@ -494,6 +495,7 @@ private:
 
     float meter(uint32_t p) const
     {
+        if (p >= values.size()) return 0.0f;
         void* instance = getPluginInstancePointer();
         if (instance != nullptr)
         {
@@ -529,21 +531,17 @@ private:
     void applyPreset(int index)
     {
         if (index < 0 || index >= static_cast<int>(multicompp::kFactoryPresets.size())) return;
-        for (uint32_t p = 0; p < static_cast<uint32_t>(multicompp::kParamCount); ++p)
-            setValue(p, multicompp::kParams[p].def);
         const auto& q = multicompp::kFactoryPresets[static_cast<size_t>(index)];
-        setValue(P_MODE, static_cast<float>(q.mode));
-        setValue(P_MIX, q.mix);
-        setValue(P_SC_HP, q.sidechainHP);
-        setValue(P_AUTO, q.autoMakeup ? 1.0f : 0.0f);
-        setValue(P_SAT_MODE, static_cast<float>(q.saturationMode));
-        setValue(P_OPTO_LIMIT, q.limitMode ? 1.0f : 0.0f);
-        if (q.mode == 0) { setValue(P_OPTO_PEAK, q.peakReduction); setValue(P_OPTO_GAIN, 50.0f); }
-        if (q.mode == 1 || q.mode == 4) { setValue(P_FET_THRESHOLD, q.threshold); setValue(P_FET_RATIO, static_cast<float>(q.fetRatio)); setValue(P_FET_TRANSIENT, q.fetRatio == 4 ? 50.0f : 0.0f); }
-        if (q.mode == 2) { setValue(P_VCA_THRESHOLD, q.threshold); setValue(P_VCA_RATIO, q.ratio); setValue(P_VCA_OUT, q.makeup); }
-        if (q.mode == 3) { setValue(P_BUS_THRESHOLD, q.threshold); setValue(P_BUS_RATIO, q.ratio == 2 ? 0.0f : 1.0f); setValue(P_BUS_ATTACK, static_cast<float>(q.busAttack)); setValue(P_BUS_RELEASE, static_cast<float>(q.busRelease)); setValue(P_BUS_MAKEUP, q.makeup); setValue(P_BUS_MIX, q.mix); }
-        if (q.mode == 5) { setValue(P_SVCA_THRESHOLD, q.threshold); setValue(P_SVCA_RATIO, q.ratio); setValue(P_SVCA_OUT, q.makeup); }
-        if (q.mode == 6) { setValue(P_DIG_THRESHOLD, q.threshold); setValue(P_DIG_RATIO, q.ratio); setValue(P_DIG_OUT, q.makeup); }
+        multicompp::forEachPresetParam(q,
+            [this](multicompp::CoreParameter parameter, float value)
+            {
+                const int index = multicompp::coreParamIndex(parameter);
+                if (index >= 0) setValue(static_cast<uint32_t>(index), value);
+            },
+            [this](int band, int field, float value)
+            {
+                setValue(static_cast<uint32_t>(multicompp::kBandBase + band * 8 + field), value);
+            });
     }
 };
 

@@ -149,9 +149,42 @@ void testMixBypassAndBlockEdges()
     float largestDelta = 0.0f;
     for (int i = 1; i < 256; ++i) largestDelta = std::max(largestDelta, std::abs(out[static_cast<size_t>(i)] - out[static_cast<size_t>(i - 1)]));
     require(largestDelta < 0.5f, "mix ramp bounded sample delta");
-    dsp.setBypass(true);
-    for (int block = 0; block < 10; ++block) dsp.processBlock(ip, op, 1, 256);
-    for (int i = 0; i < 256; ++i) require(out[static_cast<size_t>(i)] == in[static_cast<size_t>(i)], "settled bypass bit exact");
+    MultiCompDSP bypassCheck;
+    bypassCheck.prepare(48000.0, 256);
+    bypassCheck.setOversampling(0);
+    bypassCheck.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    bypassCheck.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+    bypassCheck.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    std::vector<float> bypassInput(256), bypassOutput(256);
+    const float* bypassIp[] = {bypassInput.data()}; float* bypassOp[] = {bypassOutput.data()};
+    for (int block = 0; block < 10; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+        {
+            bypassInput[static_cast<size_t>(i)] = 0.1f + 0.0001f * static_cast<float>(block * 256 + i);
+        }
+        bypassCheck.processBlock(bypassIp, bypassOp, 1, 256);
+    }
+    bypassCheck.setBypass(true);
+    for (int block = 0; block < 10; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+        {
+            bypassInput[static_cast<size_t>(i)] = 0.1f + 0.0001f * static_cast<float>(10 * 256 + block * 256 + i);
+        }
+        bypassCheck.processBlock(bypassIp, bypassOp, 1, 256);
+        if (block == 9)
+            for (int i = 0; i < 256; ++i)
+            {
+                const int absolute = 10 * 256 + block * 256 + i;
+                const float expected = absolute >= bypassCheck.getLatencySamples() ? 0.1f + 0.0001f * static_cast<float>(absolute - bypassCheck.getLatencySamples()) : 0.0f;
+                if (bypassOutput[static_cast<size_t>(i)] != expected)
+                {
+                    std::fprintf(stderr, "bypass mismatch i=%d out=%.9g expected=%.9g latency=%d\n", i, bypassOutput[static_cast<size_t>(i)], expected, bypassCheck.getLatencySamples());
+                    require(false, "settled bypass is delayed bit-exact passthrough");
+                }
+            }
+    }
     dsp.setBypass(false); dsp.processBlock(ip, op, 1, 256);
     float reentryDelta = 0.0f;
     for (int i = 0; i < 256; ++i)
@@ -164,6 +197,104 @@ void testMixBypassAndBlockEdges()
     dsp.processBlock(ip, op, 1, 1);
     (void)previous;
     std::puts("mix ramp, bypass, zero-sample and single-sample blocks OK");
+}
+
+float renderNeutralSine(int oversampling, float mix)
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setOversampling(oversampling);
+    dsp.setMix(mix);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    std::vector<float> in(256), out(256);
+    float result = 0.0f;
+    for (int block = 0; block < 32; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+            in[static_cast<size_t>(i)] = 0.25f * std::sin(2.0f * kPi * 997.0f * static_cast<float>(block * 256 + i) / 48000.0f);
+        const float* ip[] = {in.data()}; float* op[] = {out.data()};
+        dsp.processBlock(ip, op, 1, 256);
+        if (block >= 28) for (float x : out) result += x * x;
+    }
+    return std::sqrt(result / (4.0f * 256.0f));
+}
+
+void testLatencyMixBypassAndDigitalStereo()
+{
+    for (int oversampling : {0, 1, 2})
+    {
+        MultiCompDSP dsp;
+        dsp.prepare(48000.0, 512);
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+        dsp.setOversampling(oversampling);
+        dsp.setMix(100.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        const int latency = dsp.getLatencySamples();
+        require(latency == 27, "constant maximum anti-alias latency");
+
+        std::vector<float> impulse(512, 0.0f), output(512, 0.0f);
+        impulse[0] = 0.25f;
+        const float* ip[] = {impulse.data()}; float* op[] = {output.data()};
+        dsp.processBlock(ip, op, 1, static_cast<int>(impulse.size()));
+        int peakIndex = 0;
+        for (int i = 1; i < static_cast<int>(output.size()); ++i)
+            if (std::abs(output[static_cast<size_t>(i)]) > std::abs(output[static_cast<size_t>(peakIndex)])) peakIndex = i;
+        float peakValue = 0.0f; for (float x : output) peakValue = std::max(peakValue, std::abs(x));
+        std::printf("latency impulse: os=%d reported=%d peak=%d amplitude=%.6f\n", oversampling, latency, peakIndex, peakValue);
+        require(std::abs(peakIndex - latency) <= 2, "wet impulse group delay matches reported latency");
+
+        const float fullWet = renderNeutralSine(oversampling, 100.0f);
+        const float halfMix = renderNeutralSine(oversampling, 50.0f);
+        const float mixDelta = std::abs(duskaudio::gainToDecibels(halfMix / std::max(fullWet, 1.0e-9f)));
+        require(mixDelta < 0.05f, "phase-coherent 50% mix has no comb ripple");
+
+        MultiCompDSP bypass;
+        bypass.prepare(48000.0, 512);
+        bypass.setOversampling(oversampling);
+        bypass.setBypass(true);
+        bypass.reset();
+        std::vector<float> input(512), bypassed(512);
+        for (int i = 0; i < 512; ++i) input[static_cast<size_t>(i)] = 0.3f * std::sin(2.0f * kPi * 440.0f * i / 48000.0f);
+        const float* bip[] = {input.data()}; float* bop[] = {bypassed.data()};
+        bypass.processBlock(bip, bop, 1, 512);
+        for (int i = 0; i < 512; ++i)
+        {
+            const float expected = i >= latency ? input[static_cast<size_t>(i - latency)] : 0.0f;
+            require(bypassed[static_cast<size_t>(i)] == expected, "settled bypass is latency-aligned bit-exact passthrough");
+        }
+        std::printf("latency/mix: os=%d reported=%d mix_delta=%.5f dB\n", oversampling, latency, mixDelta);
+    }
+
+    MultiCompDSP stereo;
+    stereo.prepare(48000.0, 256);
+    stereo.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    stereo.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 5.0f);
+    stereo.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -20.0f);
+    stereo.setParameter(MultiCompDSP::Parameter::DigitalRatio, 4.0f);
+    std::vector<float> left(256), right(256, 0.0f), outLeft(256), outRight(256);
+    for (int i = 0; i < 256; ++i) left[static_cast<size_t>(i)] = 0.3f * std::sin(2.0f * kPi * 440.0f * i / 48000.0f);
+    const float* stereoIn[] = {left.data(), right.data()}; float* stereoOut[] = {outLeft.data(), outRight.data()};
+    float rightPeak = 0.0f, leftEnergy = 0.0f;
+    for (int block = 0; block < 8; ++block)
+    {
+        for (int i = 0; i < 256; ++i) left[static_cast<size_t>(i)] = 0.3f * std::sin(2.0f * kPi * 440.0f * (block * 256 + i) / 48000.0f);
+        stereo.processBlock(stereoIn, stereoOut, 2, 256);
+        if (block >= 6) for (int i = 0; i < 256; ++i) { rightPeak = std::max(rightPeak, std::abs(outRight[static_cast<size_t>(i)])); leftEnergy += outLeft[static_cast<size_t>(i)] * outLeft[static_cast<size_t>(i)]; }
+    }
+    std::printf("digital stereo: right_peak=%.9g left_energy=%.9g\n", rightPeak, leftEnergy);
+    require(rightPeak < 1.0e-7f && leftEnergy > 1.0e-5f, "digital lookahead keeps stereo channels independent");
+
+    std::vector<float> largeIn(1025, 0.1f), largeOut(1025);
+    const float* largeIp[] = {largeIn.data()}; float* largeOp[] = {largeOut.data()};
+    stereo.processBlock(largeIp, largeOp, 1, static_cast<int>(largeIn.size()));
+    for (float x : largeOut) require(std::isfinite(x), "oversized blocks are chunked");
+    std::puts("latency alignment, mix comb, bypass, digital stereo, oversized block: OK");
 }
 
 void testGoldenVectors()
@@ -291,6 +422,7 @@ int main()
     testStaticCurves();
     testEnvelopeAndReset();
     testMixBypassAndBlockEdges();
+    testLatencyMixBypassAndDigitalStereo();
     testMultibandMixAlignment();
     testSidechainEq();
     testGoldenVectors();

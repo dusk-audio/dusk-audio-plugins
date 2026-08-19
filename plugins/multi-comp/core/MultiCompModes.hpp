@@ -49,8 +49,22 @@ public:
             inputTransformerFet[ch].reset(); outputTransformerFet[ch].reset();
             inputTransformerBus[ch].reset(); outputTransformerBus[ch].reset();
         }
-        digitalDelay.assign(static_cast<size_t>(std::ceil(fs * 0.01 * 4.0)) + 2, 0.0f);
+        for (auto& delay : digitalDelay)
+            delay.assign(static_cast<size_t>(std::ceil(fs * 0.01 * 4.0)) + 2, 0.0f);
         digitalWrite.fill(0);
+    }
+
+    // Oversampling can be automated without reallocating or resetting the
+    // mode state.  The host-rate buffers are provisioned for the maximum
+    // factor in prepare(); only rate-dependent coefficients are refreshed at
+    // this block boundary.
+    void setRate(double sampleRate, int oversamplingFactor) noexcept
+    {
+        fs = sampleRate > 0.0 ? sampleRate : 48000.0;
+        osFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
+        const float sr = static_cast<float>(fs * osFactor);
+        transientShaper.setRate(sr);
+        updateRateCoefficients(sr);
     }
 
     void reset() noexcept
@@ -62,7 +76,8 @@ public:
         for (auto& d : studioFet) d = StudioFETState{};
         for (auto& d : studioVca) d = StudioVCAState{};
         for (auto& d : digital) d = DigitalState{};
-        for (auto& x : digitalDelay) x = 0.0f;
+        for (auto& delay : digitalDelay)
+            for (auto& x : delay) x = 0.0f;
         digitalWrite.fill(0);
         resetHardware();
         transientShaper.reset();
@@ -142,7 +157,7 @@ private:
     std::array<StudioFETState, 2> studioFet{};
     std::array<StudioVCAState, 2> studioVca{};
     std::array<DigitalState, 2> digital{};
-    std::vector<float> digitalDelay;
+    std::array<std::vector<float>, kChannels> digitalDelay;
     std::array<int, 2> digitalWrite{{0, 0}};
 
     HardwareEmulation::TransformerEmulation inputTransformerOpto, outputTransformerOpto;
@@ -190,6 +205,11 @@ private:
         calibrateFetHardwareGain(rate);
         calibrateBusHardwareGain(rate);
         const float sr = static_cast<float>(rate);
+        updateRateCoefficients(sr);
+    }
+
+    void updateRateCoefficients(float sr) noexcept
+    {
         optoAttack = std::exp(-1.0f / (0.002f * sr));
         optoRelease = std::exp(-1.0f / (0.060f * sr));
         optoGlowDecay = std::exp(-1.0f / (1.5f * sr));
@@ -741,10 +761,17 @@ private:
         auto& d = digital[ch];
         const float sr = static_cast<float>(fs * osFactor);
         const float lookahead = std::clamp(p.digitalLookahead.load(std::memory_order_relaxed), 0.0f, 10.0f);
-        const int delay = std::min(static_cast<int>(std::round(lookahead * 0.001f * sr)), static_cast<int>(digitalDelay.size()) - 1);
+        auto& delayLine = digitalDelay[static_cast<size_t>(ch)];
+        const int delay = std::min(static_cast<int>(std::round(lookahead * 0.001f * sr)), static_cast<int>(delayLine.size()) - 1);
         int& wp = digitalWrite[ch];
         float delayed = input;
-        if (delay > 0) { const int rp = (wp - delay + static_cast<int>(digitalDelay.size())) % static_cast<int>(digitalDelay.size()); delayed = digitalDelay[static_cast<size_t>(rp)]; digitalDelay[static_cast<size_t>(wp)] = input; wp = (wp + 1) % static_cast<int>(digitalDelay.size()); }
+        if (delay > 0)
+        {
+            const int rp = (wp - delay + static_cast<int>(delayLine.size())) % static_cast<int>(delayLine.size());
+            delayed = delayLine[static_cast<size_t>(rp)];
+        }
+        delayLine[static_cast<size_t>(wp)] = input;
+        wp = (wp + 1) % static_cast<int>(delayLine.size());
         const float detect = std::abs(sidechain);
         const float db = gainToDecibels(std::max(detect, 0.00001f));
         const float threshold = p.digitalThreshold.load(std::memory_order_relaxed), ratio = std::max(1.0f, p.digitalRatio.load(std::memory_order_relaxed)), knee = std::max(0.0f, p.digitalKnee.load(std::memory_order_relaxed));

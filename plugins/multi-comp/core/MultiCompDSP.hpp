@@ -82,6 +82,7 @@ private:
     void updateCrossovers();
     float processOne(MultiCompMode mode, float input, float sc, int channel, int sampleIndex, int nSamples);
     void updateMeters(const float* const* in, float* const* out, int nCh, int nSamples);
+    void processLatencyHistory(const float* const* in, float* const* out, int nCh, int nSamples, bool emit) noexcept;
 
     MultiCompParameterState params;
     MultiCompModes modes;
@@ -100,6 +101,10 @@ private:
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
     std::vector<float> dry, mixCurve, bypassCurve, autoGainCurve;
+    std::array<std::vector<float>, kMaxChannels> dryPathDelay;
+    std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
+    std::array<std::vector<float>, kMaxChannels> bypassDelay;
+    int bypassWrite = 0;
     std::array<std::vector<float>, kMaxChannels> delayedInput;
     std::array<std::vector<float>, kMaxChannels> globalLookahead;
     std::array<int, kMaxChannels> globalLookaheadWrite{{0, 0}};
@@ -114,7 +119,7 @@ private:
     bool bypassSettled = false;
     bool lastBypass = false;
     bool firstBlock = true;
-    int currentLatency = 59;
+    int antiAliasLatency = 0;
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};
     std::atomic<float> masterGR{0.0f}, inputLevel{-60.0f}, outputLevel{-60.0f};
