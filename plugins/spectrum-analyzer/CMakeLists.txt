@@ -60,14 +60,14 @@ target_sources(${PLUGIN_NAME}
         Source/PluginEditor.cpp
         Source/PluginEditor.h
         Source/SpectrumAnalyzerLookAndFeel.h
-        Source/DSP/FFTProcessor.cpp
-        Source/DSP/FFTProcessor.h
-        Source/DSP/LUFSMeter.cpp
-        Source/DSP/LUFSMeter.h
-        Source/DSP/KSystemMeter.h
-        Source/DSP/TruePeakDetector.h
-        Source/DSP/CorrelationMeter.h
-        Source/DSP/ChannelRouter.h
+        core/FFTProcessor.cpp
+        core/FFTProcessor.h
+        core/LUFSMeter.cpp
+        core/LUFSMeter.h
+        core/KSystemMeter.h
+        core/TruePeakDetector.h
+        core/CorrelationMeter.h
+        core/ChannelRouter.h
         Source/UI/SpectrumDisplay.cpp
         Source/UI/SpectrumDisplay.h
         Source/UI/MeterPanel.cpp
@@ -118,4 +118,35 @@ target_link_libraries(${PLUGIN_NAME}
 # Platform-specific settings
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PLUGIN_NAME} PRIVATE pthread)
+endif()
+
+# --- Framework-free core tests (GH #184) ------------------------------------
+# Golden-signal calibration suite for core/. Deliberately links NO JUCE: that
+# this target builds is itself the framework-freedom gate for core/, and the
+# assertions lock meter calibration so the DPF port cannot drift it.
+if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+    add_executable(SpectrumMetersGoldenTest
+        core/tests/test_meters_golden.cpp
+        core/FFTProcessor.cpp
+        core/LUFSMeter.cpp
+    )
+    set_target_properties(SpectrumMetersGoldenTest PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
+    # SpectrumRing writer-vs-reader stress harness. The gating run is the
+    # ThreadSanitizer build documented in docs/dpf-migration/10-spectrum-analyzer.md
+    # and in the file header; this plain build keeps the torn-read oracle
+    # exercised wherever TSan is unavailable.
+    add_executable(SpectrumRingStressTest
+        core/tests/ring_tsan.cpp
+    )
+    target_link_libraries(SpectrumRingStressTest PRIVATE pthread)
+    set_target_properties(SpectrumRingStressTest PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
 endif()

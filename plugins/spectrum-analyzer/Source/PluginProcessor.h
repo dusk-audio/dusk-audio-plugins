@@ -6,12 +6,12 @@
 #include <atomic>
 #include <array>
 
-#include "DSP/FFTProcessor.h"
-#include "DSP/LUFSMeter.h"
-#include "DSP/KSystemMeter.h"
-#include "DSP/TruePeakDetector.h"
-#include "DSP/CorrelationMeter.h"
-#include "DSP/ChannelRouter.h"
+#include "../core/FFTProcessor.h"
+#include "../core/LUFSMeter.h"
+#include "../core/KSystemMeter.h"
+#include "../core/TruePeakDetector.h"
+#include "../core/CorrelationMeter.h"
+#include "../core/ChannelRouter.h"
 
 //==============================================================================
 class SpectrumAnalyzerProcessor : public juce::AudioProcessor,
