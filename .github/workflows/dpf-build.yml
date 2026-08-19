@@ -65,7 +65,7 @@ on:
 # checkouts on the pinned SHAs (docker/check_dpf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DPF_REF: d8e5bc69fd7bf355de548e0eafe0f3b7784c68c6
+  DPF_REF: eb54f2f47db248d7414fe30d60d502827f56f8d2
   DPFWIDGETS_REF: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
