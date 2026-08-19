@@ -8,10 +8,12 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/cmake/DuskDpfPlugin.cmake")
 dpf_add_plugin(multi_comp_2
   TARGETS clap vst3 lv2 jack au
-  # Keep MONOLITHIC: direct access is required for the CLAP meter bridge and
-  # LV2 export otherwise declares a UI object that this Phase-2 shell has not got.
+  # Keep MONOLITHIC: the UI uses the same-process meter bridge and LV2 must
+  # advertise the embedded UI alongside the DSP binary.
   MONOLITHIC
-  FILES_DSP MultiCompPlugin.cpp ../core/MultiCompDSP.cpp)
+  UI_TYPE opengl
+  FILES_DSP MultiCompPlugin.cpp ../core/MultiCompDSP.cpp
+  FILES_UI MultiCompUI.cpp ${DUSK_DPF_UI_SOURCES})
 target_include_directories(multi_comp_2 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../core" ${DUSK_DPF_INCLUDE_DIRS})
 target_compile_definitions(multi_comp_2 PUBLIC MULTICOMP2_VERSION_MAJOR=${PROJECT_VERSION_MAJOR} MULTICOMP2_VERSION_MINOR=${PROJECT_VERSION_MINOR} MULTICOMP2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 dusk_dpf_install_local(multi_comp_2 LV2_PROGRAMS)

@@ -13,13 +13,19 @@
 // format supports them; JACK exposes all four inputs as named ports.
 #define DISTRHO_PLUGIN_NUM_INPUTS   4
 #define DISTRHO_PLUGIN_NUM_OUTPUTS  2
-#define DISTRHO_PLUGIN_HAS_UI       0
+#define DISTRHO_PLUGIN_HAS_UI       1
 #define DISTRHO_PLUGIN_IS_RT_SAFE   1
 #define DISTRHO_PLUGIN_WANT_DIRECT_ACCESS 1
 #define DISTRHO_PLUGIN_WANT_LATENCY 1
 #define DISTRHO_PLUGIN_WANT_PROGRAMS 1
 #define DISTRHO_PLUGIN_WANT_STATE 1
 #define DISTRHO_PLUGIN_WANT_FULL_STATE 1
+#define DISTRHO_UI_USE_CUSTOM           1
+#define DISTRHO_UI_CUSTOM_INCLUDE_PATH  "DearImGui.hpp"
+#define DISTRHO_UI_CUSTOM_WIDGET_TYPE   DGL_NAMESPACE::ImGuiTopLevelWidget
+#define DISTRHO_UI_DEFAULT_WIDTH        1120
+#define DISTRHO_UI_DEFAULT_HEIGHT       760
+#define DISTRHO_UI_USER_RESIZABLE       1
 #define DISTRHO_PLUGIN_CLAP_FEATURES "audio-effect", "compressor", "stereo"
 #define DISTRHO_PLUGIN_LV2_CATEGORY "lv2:CompressorPlugin"
 #define DISTRHO_PLUGIN_VST3_CATEGORIES "Fx|Dynamics|Compressor"
