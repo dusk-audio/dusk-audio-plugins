@@ -3,6 +3,12 @@
 #include "../core/MultiCompDSP.hpp"
 #include "../core/MultiCompPresets.hpp"
 #include <array>
+#include <charconv>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <string_view>
 
 namespace multicompp
 {
@@ -115,4 +121,48 @@ inline constexpr const char* const kBusAttack[6] = {"0.1ms", "0.3ms", "1ms", "3m
 inline constexpr const char* const kBusRelease[5] = {"0.1s", "0.3s", "0.6s", "1.2s", "Auto"};
 inline constexpr const char* const kSaturationMode[3] = {"Vintage (Warm)","Modern (Clean)","Pristine (Minimal)"};
 inline constexpr const char* const kLinkMode[3] = {"Stereo","Mid-Side","Dual Mono"};
+
+// State serialization, shared so the plugin and the UI cannot drift apart the
+// way their preset application once did.
+//
+// Version 1 wrote decimal floats. It never shipped in any build a user could
+// install, and reading it back needs the C++17 floating-point std::from_chars,
+// which libc++ marks "introduced in macOS 13.3", above our deployment target.
+// Version 2 therefore carries the float's bit pattern through the integer
+// overloads: exact, and immune to whatever LC_NUMERIC the host process set.
+inline constexpr int kStateVersion = 2;
+
+// A version we do not understand must be refused outright. Decoding it anyway
+// makes every value fail to parse and silently restores defaults, which reads
+// to the user as a session that quietly lost its settings.
+inline bool stateVersionSupported(std::string_view state) noexcept
+{
+    const size_t end = state.find(';');
+    const std::string_view token = state.substr(0, end == std::string_view::npos ? state.size() : end);
+    if (token.size() < 3 || token.substr(0, 2) != "v=") return false;
+
+    int version = 0;
+    const std::string_view digits = token.substr(2);
+    const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), version);
+    return parsed.ec == std::errc() && parsed.ptr == digits.data() + digits.size()
+        && version == kStateVersion;
+}
+
+inline bool decodeStateFloat(std::string_view text, float& out) noexcept
+{
+    std::uint32_t bits = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), bits, 16);
+    if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size()) return false;
+    std::memcpy(&out, &bits, sizeof(out));
+    return std::isfinite(out);
+}
+
+inline void appendStateFloat(std::string& out, float value)
+{
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    char number[16];
+    const auto result = std::to_chars(number, number + sizeof(number), bits, 16);
+    if (result.ec == std::errc()) out.append(number, result.ptr);
+}
 }

@@ -121,8 +121,11 @@ protected:
     void stateChanged(const char* key, const char* state) override
     {
         if (key == nullptr || state == nullptr || std::strcmp(key, "parameters") != 0) return;
-        currentPreset = -1;
         const std::string_view serialized(state);
+        // Same gate as the shell: a state we cannot decode is refused whole
+        // rather than applied piecemeal over the current settings.
+        if (! multicompp::stateVersionSupported(serialized)) return;
+        currentPreset = -1;
         size_t begin = 0;
         while (begin < serialized.size())
         {
@@ -132,31 +135,24 @@ protected:
             const size_t equal = token.find('=');
             if (equal != std::string_view::npos && token.substr(0, equal) != "v")
             {
-                std::uint32_t bits = 0;
-                const std::string_view encoded = token.substr(equal + 1);
-                const auto parsed = std::from_chars(encoded.data(), encoded.data() + encoded.size(), bits, 16);
-                if (parsed.ec == std::errc() && parsed.ptr == encoded.data() + encoded.size())
+                float decoded = 0.0f;
+                if (multicompp::decodeStateFloat(token.substr(equal + 1), decoded))
                 {
-                    float decoded = 0.0f;
-                    std::memcpy(&decoded, &bits, sizeof(decoded));
-                    if (std::isfinite(decoded))
+                    const std::string_view id = token.substr(0, equal);
+                    for (int i = 0; i < multicompp::kParamCount; ++i)
+                        if (id == multicompp::kParams[static_cast<size_t>(i)].id)
+                            values[static_cast<size_t>(i)] = decoded;
+                    for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
                     {
-                        const std::string_view id = token.substr(0, equal);
-                        for (int i = 0; i < multicompp::kParamCount; ++i)
-                            if (id == multicompp::kParams[static_cast<size_t>(i)].id)
-                                values[static_cast<size_t>(i)] = decoded;
-                        for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
+                        const int band = (i - multicompp::kBandBase) / 8;
+                        const int field = (i - multicompp::kBandBase) % 8;
+                        char bandId[64];
+                        std::snprintf(bandId, sizeof(bandId), "%s_%d",
+                                      multicompp::bandParam(field, band).id, band);
+                        if (id == bandId)
                         {
-                            const int band = (i - multicompp::kBandBase) / 8;
-                            const int field = (i - multicompp::kBandBase) % 8;
-                            char bandId[64];
-                            std::snprintf(bandId, sizeof(bandId), "%s_%d",
-                                          multicompp::bandParam(field, band).id, band);
-                            if (id == bandId)
-                            {
-                                values[static_cast<size_t>(i)] = decoded;
-                                break;
-                            }
+                            values[static_cast<size_t>(i)] = decoded;
+                            break;
                         }
                     }
                 }
