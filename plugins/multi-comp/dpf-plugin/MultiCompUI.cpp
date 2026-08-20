@@ -30,17 +30,14 @@ inline int loadProgramIntoMirror(uint32_t index, std::array<float, N>& values)
     return static_cast<int>(index);
 }
 
-template <size_t N>
-inline float effectiveCrossoverPlain(uint32_t index, const std::array<float, N>& values)
+template <size_t N, typename ReadParameter>
+inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter readParameter)
 {
     const auto x1 = static_cast<uint32_t>(ParamId::Crossover1);
-    const auto x2 = static_cast<uint32_t>(ParamId::Crossover2);
     const auto x3 = static_cast<uint32_t>(ParamId::Crossover3);
-    if (index < x1 || index > x3 || x3 >= N) return 0.0f;
-    const float f1 = hostToPlain(kParams[x1], values[x1]);
-    const float f2 = std::clamp(hostToPlain(kParams[x2], values[x2]), f1 * 1.5f, 5000.0f);
-    const float f3 = std::clamp(hostToPlain(kParams[x3], values[x3]), f2 * 1.5f, 16000.0f);
-    return index == x1 ? f1 : index == x2 ? f2 : f3;
+    if (x3 >= N) return;
+    for (uint32_t index = x1; index <= x3; ++index)
+        values[index] = readParameter(index);
 }
 } // namespace multicompp::ui_detail
 
@@ -55,6 +52,9 @@ inline float effectiveCrossoverPlain(uint32_t index, const std::array<float, N>&
 
 #include <cstdio>
 #include <cstring>
+
+DUSK_WEAK float multiCompGetParameterValue(void* pluginInstancePointer,
+                                            uint32_t index) noexcept;
 
 START_NAMESPACE_DISTRHO
 
@@ -150,19 +150,15 @@ public:
         if (idx >= static_cast<uint32_t>(multicompp::kMeterMaster)) return;
         currentPreset = -1;
         values[idx] = value;
-        if (idx >= P_X1 && idx <= P_X3)
-        {
-            const float effective = multicompp::ui_detail::effectiveCrossoverPlain(idx, values);
-            value = multicompp::plainToHost(multicompp::kParams[idx], effective);
-            values[idx] = value;
-        }
         setParameterValue(idx, value);
+        if (idx >= P_X1 && idx <= P_X3) refreshCrossoverMirror();
     }
 
 protected:
     void parameterChanged(uint32_t index, float value) override
     {
         if (index < values.size()) values[index] = value;
+        if (index >= P_X1 && index <= P_X3) refreshCrossoverMirror();
     }
 
     void stateChanged(const char* key, const char* state) override
@@ -181,7 +177,11 @@ protected:
         currentPreset = multicompp::ui_detail::loadProgramIntoMirror(index, values);
     }
 
-    void uiIdle() override { repaint(); }
+    void uiIdle() override
+    {
+        refreshCrossoverMirror();
+        repaint();
+    }
 
     void onImGuiDisplay() override
     {
@@ -231,6 +231,15 @@ private:
     int currentPreset = -1;
 
     float value(uint32_t p) const { return values[p]; }
+
+    void refreshCrossoverMirror()
+    {
+        if (multiCompGetParameterValue == nullptr) return;
+        void* const instance = getPluginInstancePointer();
+        if (instance == nullptr) return;
+        multicompp::ui_detail::refreshCrossoverMirror(values,
+            [instance](uint32_t index) { return multiCompGetParameterValue(instance, index); });
+    }
 
     void setValue(uint32_t p, float v)
     {
@@ -575,8 +584,7 @@ private:
     {
         const float trackStart = x - 100.0f;
         const float trackEnd = x + 100.0f;
-        const auto& d = multicompp::kParams[p];
-        const float physicalValue = multicompp::ui_detail::effectiveCrossoverPlain(p, values);
+        const float physicalValue = multicompp::hostToPlain(multicompp::kParams[p], values[p]);
         const float t = std::clamp(values[p], 0.0f, 1.0f);
         const float handleX = trackStart + t * (trackEnd - trackStart);
         dl->AddLine(panel.P(trackStart, 392), panel.P(trackEnd, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());

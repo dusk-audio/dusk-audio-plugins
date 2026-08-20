@@ -1166,21 +1166,58 @@ void testAutoGainResetsOnModeChange()
 
 void testBypassCompletesDuringSidechainListen()
 {
-    MultiCompDSP dsp;
-    dsp.prepare(48000.0, 256);
-    dsp.setOversampling(0);
-    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
-    std::vector<float> input(256, 0.1f), sidechain(256, 0.8f), output(256);
-    const float* ip[] = {input.data()}; const float* sc[] = {sidechain.data()}; float* op[] = {output.data()};
-    for (int block = 0; block < 8; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
-    dsp.setBypass(true);
-    for (int block = 0; block < 10; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
-    float maxDryError = 0.0f;
-    for (float sample : output) maxDryError = std::max(maxDryError, std::abs(sample - 0.1f));
-    std::printf("bypass during sidechain listen: final sample %.9g; dry error %.9g\n",
-                output.back(), maxDryError);
-    require(maxDryError < 1.0e-7f, "bypass reaches settled dry output while sidechain Listen remains on");
+    struct Result { float maxDryError; float minimumListenTail; };
+    auto exercise = [](int channels) {
+        MultiCompDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setOversampling(2);
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 10.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 10.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+        std::array<std::vector<float>, 2> input{
+            std::vector<float>(256, 0.1f), std::vector<float>(256, 0.1f)};
+        std::array<std::vector<float>, 2> sidechain{
+            std::vector<float>(256, 0.2f), std::vector<float>(256, 0.2f)};
+        std::array<std::vector<float>, 2> output{
+            std::vector<float>(256), std::vector<float>(256)};
+        const float* ip[] = {input[0].data(), input[1].data()};
+        const float* sc[] = {sidechain[0].data(), sidechain[1].data()};
+        float* op[] = {output[0].data(), output[1].data()};
+        for (int block = 0; block < 8; ++block)
+            dsp.processBlockExternal(ip, sc, op, channels, 256);
+        dsp.setBypass(true);
+        for (int block = 0; block < 10; ++block)
+            dsp.processBlockExternal(ip, sc, op, channels, 256);
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
+        for (auto& channel : sidechain) channel.assign(channel.size(), 0.8f);
+        for (int block = 0; block < 10; ++block)
+            dsp.processBlockExternal(ip, sc, op, channels, 256);
+        float maxDryError = 0.0f;
+        for (int ch = 0; ch < channels; ++ch)
+            for (float sample : output[static_cast<size_t>(ch)])
+                maxDryError = std::max(maxDryError, std::abs(sample - 0.1f));
+
+        dsp.setBypass(false);
+        dsp.processBlockExternal(ip, sc, op, channels, 256);
+        float minimumListenTail = output[0].back();
+        for (int ch = 1; ch < channels; ++ch)
+            minimumListenTail = std::min(minimumListenTail, output[static_cast<size_t>(ch)].back());
+        return Result{maxDryError, minimumListenTail};
+    };
+    const Result mono = exercise(1);
+    const Result stereo = exercise(2);
+    std::printf("bypass during Listen: mono/stereo dry errors %.9g/%.9g; current-sidechain tails %.9g/%.9g\n",
+                mono.maxDryError, stereo.maxDryError,
+                mono.minimumListenTail, stereo.minimumListenTail);
+    require(std::max(mono.maxDryError, stereo.maxDryError) < 1.0e-7f,
+            "mono and stereo bypass reach settled dry output while sidechain Listen remains on");
+    require(std::min(mono.minimumListenTail, stereo.minimumListenTail) > 0.18f,
+            "settled mono and stereo bypass advance the Listen ramp and latency delay together");
 }
 
 void testSidechainListenClearsGainReductionMeters()
@@ -1541,18 +1578,19 @@ void testMultibandSoloMasksDryReference()
     require(delta < 1.0e-5f, "multiband dry reference obeys the same solo mask as wet recombination");
 }
 
-std::vector<float> renderWithBlockSize(int oversampling, int blockSize)
+std::vector<float> renderWithBlockSize(int oversampling, int blockSize, bool autoMakeup)
 {
     constexpr int totalSamples = 16384;
     MultiCompDSP dsp;
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
     dsp.setOversampling(oversampling);
     dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -30.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 12.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -12.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 4.0f);
     dsp.setParameter(MultiCompDSP::Parameter::DigitalKnee, 0.0f);
     dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.1f);
     dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 50.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, autoMakeup ? 1.0f : 0.0f);
     dsp.prepare(48000.0, 512);
 
     std::vector<float> input(totalSamples), output(totalSamples);
@@ -1575,18 +1613,20 @@ std::vector<float> renderWithBlockSize(int oversampling, int blockSize)
 void testOversamplingBlockSizeInvariance()
 {
     bool invariant = true;
+    for (bool autoMakeup : {false, true})
     for (int oversampling : {0, 1, 2})
     {
-        const auto large = renderWithBlockSize(oversampling, 512);
-        const auto small = renderWithBlockSize(oversampling, 64);
+        const auto large = renderWithBlockSize(oversampling, 512, autoMakeup);
+        const auto small = renderWithBlockSize(oversampling, 128, autoMakeup);
         float maxDelta = 0.0f;
         for (size_t i = 0; i < large.size(); ++i)
             maxDelta = std::max(maxDelta, std::abs(large[i] - small[i]));
-        std::printf("oversampling block invariance: os=%d max_delta=%.9g\n",
-                    oversampling, maxDelta);
+        std::printf("oversampling block invariance: auto=%d os=%d max_delta=%.9g\n",
+                    autoMakeup ? 1 : 0, oversampling, maxDelta);
         invariant = invariant && maxDelta < 1.0e-7f;
     }
-    require(invariant, "oversampled render is invariant between 512- and 64-sample blocks");
+    require(invariant,
+            "oversampled render with Auto Makeup on and off is invariant between 512- and 128-sample blocks");
 }
 
 void testAllModesAreMonoSafe()
@@ -1699,6 +1739,7 @@ int main()
     testPublishedGainReductionRange();
     testAllModesAreMonoSafe();
     testOversamplingBlockSizeInvariance();
+    testBypassCompletesDuringSidechainListen();
     testMultibandSoloMasksDryReference();
     testInputMeterWithAliasedBuffers();
     testSingleBandModeClearsMultibandGainReductionMeters();
@@ -1711,7 +1752,6 @@ int main()
     testSidechainListenClearsGainReductionMeters();
     testSidechainListenSwitchIsSmoothed();
     testSidechainListenCrossfadeIsLatencyAligned();
-    testBypassCompletesDuringSidechainListen();
     testAutoGainResetsOnModeChange();
     testAutoGainNeutralisesManualOutput();
     testAutoGainBypassSettleBoundary();

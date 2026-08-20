@@ -60,6 +60,7 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     sidechainListenWrite = {{0, 0}};
     globalMixSmoother.prepare(sampleRate, 0.020f); globalMixSmoother.snap(params.mix.load(std::memory_order_relaxed) * 0.01f);
     autoGainMatcher.prepare(sampleRate);
+    resetAutoGainMeasurement();
     autoGainSmoother.prepare(sampleRate, static_cast<float>(kAutoGainTransitionMs) * 0.001f); autoGainSmoother.snap(1.0f);
     manualMakeupScaleRamp.prepare(sampleRate, static_cast<float>(kAutoGainTransitionMs) * 0.001f);
     manualMakeupScaleRamp.snap(params.autoMakeup.load(std::memory_order_relaxed) ? 0.0f : 1.0f);
@@ -111,6 +112,7 @@ void MultiCompDSP::reset()
     rebuildMultibandTopology(0x0f);
     globalMixSmoother.snap(params.mix.load(std::memory_order_relaxed) * 0.01f);
     autoGainMatcher.reset();
+    resetAutoGainMeasurement();
     autoGainSmoother.snap(1.0f);
     manualMakeupScaleRamp.snap(params.autoMakeup.load(std::memory_order_relaxed) ? 0.0f : 1.0f);
     busMixRamp.snap(params.busMix.load(std::memory_order_relaxed) * 0.01f);
@@ -272,16 +274,6 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         bypassSettled = false;
         bypassRamp.setTarget(requestedBypass ? 1.0f : 0.0f);
     }
-    processLatencyHistory(in, out, nCh, nSamples, blockLatency, requestedBypass && bypassSettled);
-    if (requestedBypass && bypassSettled)
-    {
-        for (int i = 0; i < nSamples; ++i) (void)sidechainListenRamp.next();
-        masterGR.store(0.0f, std::memory_order_relaxed);
-        for (auto& meter : bandGR) meter.store(0.0f, std::memory_order_relaxed);
-        updateMeters(blockInputPeak, out, nCh, nSamples);
-        return;
-    }
-    const float* processingIn[kMaxChannels] = {in[0], nCh > 1 ? in[1] : in[0]};
     const bool useExternalSidechain = params.externalSidechain.load(std::memory_order_relaxed) && sidechain != nullptr;
     const float* filteredSidechain[kMaxChannels] = {processedSidechain[0].data(), processedSidechain[1].data()};
     const float sidechainHP = params.sidechainHP.load(std::memory_order_relaxed);
@@ -314,6 +306,17 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             }
     }
     if (nCh == 1) filteredSidechain[1] = filteredSidechain[0];
+    processLatencyHistory(in, out, nCh, nSamples, blockLatency, requestedBypass && bypassSettled);
+    if (requestedBypass && bypassSettled)
+    {
+        processSidechainListenHistory(filteredSidechain, nCh, nSamples, blockLatency);
+        for (int i = 0; i < nSamples; ++i) (void)sidechainListenRamp.next();
+        masterGR.store(0.0f, std::memory_order_relaxed);
+        for (auto& meter : bandGR) meter.store(0.0f, std::memory_order_relaxed);
+        updateMeters(blockInputPeak, out, nCh, nSamples);
+        return;
+    }
+    const float* processingIn[kMaxChannels] = {in[0], nCh > 1 ? in[1] : in[0]};
     const int globalLookaheadDelay = static_cast<int>(std::round(
         globalLookaheadMs * 0.001f * static_cast<float>(sampleRate)));
     prepareLookahead(in, processingIn, nCh, nSamples, globalLookaheadDelay);
@@ -351,6 +354,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             autoGainHoldSamples = std::max(1, static_cast<int>(sampleRate * kAutoGainTransitionMs * 0.001));
         lastMode = modeIndex;
         autoGainMatcher.reset();
+        resetAutoGainMeasurement();
         autoGainSmoother.setTarget(1.0f);
     }
     if (useExternalSidechain != lastExternalSidechain)
@@ -359,6 +363,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         if (!firstBlock)
             autoGainHoldSamples = std::max(1, static_cast<int>(sampleRate * kAutoGainTransitionMs * 0.001));
         autoGainMatcher.reset();
+        resetAutoGainMeasurement();
         autoGainSmoother.setTarget(1.0f);
     }
     const bool autoMakeup = params.autoMakeup.load(std::memory_order_relaxed) && !useExternalSidechain;
@@ -368,6 +373,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         if (!firstBlock)
             autoGainHoldSamples = std::max(1, static_cast<int>(sampleRate * kAutoGainTransitionMs * 0.001));
         autoGainMatcher.reset();
+        resetAutoGainMeasurement();
         autoGainSmoother.setTarget(1.0f);
     }
     processRange(processingIn, filteredSidechain, out, nCh, nSamples,
@@ -399,22 +405,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     // lookaheads). Keep the monitor history running even while Listen is off so
     // either direction of the crossfade starts between time-aligned signals.
     const int listenDelay = blockLatency;
-    for (int ch = 0; ch < nCh; ++ch)
-    {
-        auto& line = sidechainListenDelay[static_cast<size_t>(ch)];
-        int& write = sidechainListenWrite[static_cast<size_t>(ch)];
-        const int size = static_cast<int>(line.size());
-        const int delay = std::clamp(listenDelay, 0, size - 1);
-        for (int i = 0; i < nSamples; ++i)
-        {
-            const int read = (write - delay + size) % size;
-            const float sample = filteredSidechain[ch][i];
-            line[static_cast<size_t>(write)] = sample;
-            processedSidechain[static_cast<size_t>(ch)][static_cast<size_t>(i)] =
-                delay > 0 ? line[static_cast<size_t>(read)] : sample;
-            write = (write + 1) % size;
-        }
-    }
+    processSidechainListenHistory(filteredSidechain, nCh, nSamples, listenDelay);
     for (int i = 0; i < nSamples; ++i)
         mixCurve[static_cast<size_t>(i)] = globalMixSmoother.next();
     // `dry` is one shared scratch line; copy the source per channel again before
@@ -430,27 +421,46 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         }
     }
 
-    if (autoMakeup && !requestedSidechainListen && autoGainHoldSamples <= 0)
-    {
-        double inSum = 0.0, outSum = 0.0;
-        for (int ch = 0; ch < nCh; ++ch)
-            for (int i = 0; i < nSamples; ++i)
-            {
-                const float drySample = dry[static_cast<size_t>(ch * maxBlock + i)];
-                inSum += static_cast<double>(drySample) * drySample;
-                outSum += static_cast<double>(out[ch][i]) * out[ch][i];
-            }
-        const float divisor = static_cast<float>(std::max(1, nCh * nSamples));
-        const float target = autoGainMatcher.update(std::sqrt(static_cast<float>(inSum) / divisor),
-                                                    std::sqrt(static_cast<float>(outSum) / divisor), nSamples);
-        autoGainSmoother.setTarget(target);
-    }
-    else
+    const bool measureAutoGain = autoMakeup && !requestedSidechainListen;
+    if (!measureAutoGain || autoGainHoldSamples > 0)
     {
         autoGainMatcher.reset();
+        resetAutoGainMeasurement();
         autoGainSmoother.setTarget(1.0f);
     }
-    for (int i = 0; i < nSamples; ++i) autoGainCurve[static_cast<size_t>(i)] = autoGainSmoother.next();
+    for (int i = 0; i < nSamples; ++i)
+    {
+        if (measureAutoGain)
+        {
+            if (autoGainHoldSamples <= 0)
+            {
+                double inPower = 0.0, outPower = 0.0;
+                for (int ch = 0; ch < nCh; ++ch)
+                {
+                    const float drySample = dry[static_cast<size_t>(ch * maxBlock + i)];
+                    inPower += static_cast<double>(drySample) * drySample;
+                    outPower += static_cast<double>(out[ch][i]) * out[ch][i];
+                }
+                const double channelDivisor = static_cast<double>(std::max(1, nCh));
+                // Carry one fixed measurement window across host calls. Target
+                // cadence then follows sample position, not buffer boundaries.
+                autoGainInputPower += inPower / channelDivisor;
+                autoGainOutputPower += outPower / channelDivisor;
+                if (++autoGainMeasurementCount == kAutoGainMeasurementWindow)
+                {
+                    const float sampleDivisor = static_cast<float>(autoGainMeasurementCount);
+                    const float target = autoGainMatcher.update(
+                        std::sqrt(static_cast<float>(autoGainInputPower) / sampleDivisor),
+                        std::sqrt(static_cast<float>(autoGainOutputPower) / sampleDivisor),
+                        autoGainMeasurementCount);
+                    autoGainSmoother.setTarget(target);
+                    resetAutoGainMeasurement();
+                }
+            }
+        }
+        autoGainCurve[static_cast<size_t>(i)] = autoGainSmoother.next();
+        if (autoGainHoldSamples > 0) --autoGainHoldSamples;
+    }
     for (int ch = 0; ch < nCh; ++ch)
         for (int i = 0; i < nSamples; ++i) out[ch][i] *= autoGainCurve[static_cast<size_t>(i)];
     if (params.noiseEnable.load(std::memory_order_relaxed) && mode != MultiCompMode::Digital && mode != MultiCompMode::Multiband)
@@ -477,8 +487,6 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
         masterGR.store(0.0f, std::memory_order_relaxed);
         for (auto& meter : bandGR) meter.store(0.0f, std::memory_order_relaxed);
     }
-    autoGainHoldSamples = std::max(0, autoGainHoldSamples - nSamples);
-
     // Bypass is the final gain-stage transition, so its 100% endpoint is the
     // same latency-aligned dry sample emitted by the settled-bypass fast path.
     for (int i = 0; i < nSamples; ++i)
@@ -518,6 +526,35 @@ void MultiCompDSP::processLatencyHistory(const float* const* in, float* const* o
         }
         bypassWrite = (bypassWrite + 1) % size;
     }
+}
+
+void MultiCompDSP::processSidechainListenHistory(const float* const* sidechain,
+                                                 int nCh, int nSamples,
+                                                 int delay) noexcept
+{
+    for (int ch = 0; ch < nCh; ++ch)
+    {
+        auto& line = sidechainListenDelay[static_cast<size_t>(ch)];
+        int& write = sidechainListenWrite[static_cast<size_t>(ch)];
+        const int size = static_cast<int>(line.size());
+        const int clampedDelay = std::clamp(delay, 0, size - 1);
+        for (int i = 0; i < nSamples; ++i)
+        {
+            const int read = (write - clampedDelay + size) % size;
+            const float sample = sidechain[ch][i];
+            line[static_cast<size_t>(write)] = sample;
+            processedSidechain[static_cast<size_t>(ch)][static_cast<size_t>(i)] =
+                clampedDelay > 0 ? line[static_cast<size_t>(read)] : sample;
+            write = (write + 1) % size;
+        }
+    }
+}
+
+void MultiCompDSP::resetAutoGainMeasurement() noexcept
+{
+    autoGainInputPower = 0.0;
+    autoGainOutputPower = 0.0;
+    autoGainMeasurementCount = 0;
 }
 
 void MultiCompDSP::prepareLookahead(const float* const* in,

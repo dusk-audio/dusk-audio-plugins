@@ -1,15 +1,27 @@
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <string>
+
+namespace multicompp::plugin_detail
+{
+inline bool hasStereoExternalSidechainPorts(int activeChannels,
+                                            const float* const* inputs) noexcept
+{
+    return activeChannels > 1 && inputs != nullptr
+        && inputs[2] != nullptr && inputs[3] != nullptr;
+}
+} // namespace multicompp::plugin_detail
+
+#ifndef MULTICOMP_PLUGIN_LOGIC_TEST
+
 #include "DistrhoPlugin.hpp"
 #include "MultiCompAccess.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 #include "MultiCompVersion.hpp"
 #include "util/CrashLog.hpp"
-
-#include <array>
-#include <atomic>
-#include <cstdint>
-#include <cstring>
-#include <string>
 
 START_NAMESPACE_DISTRHO
 
@@ -33,6 +45,11 @@ public:
     float bandGr(int b) const noexcept { return dsp.getBandGainReduction(b); }
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
+    float parameterValue(uint32_t index) const noexcept
+    {
+        return index < multicompp::kMeterMaster
+            ? values[index].load(std::memory_order_relaxed) : 0.0f;
+    }
 
 protected:
     const char* getLabel() const override { return "MultiComp2"; }
@@ -214,7 +231,8 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f && inputs[2] != nullptr && inputs[3] != nullptr;
+        const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
+            && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeChannels, inputs);
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
@@ -257,3 +275,7 @@ float multiCompGetGainReduction(void* p) noexcept { return p ? asMultiComp(p)->g
 float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asMultiComp(p)->bandGr(band) : 0.0f; }
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
+float multiCompGetParameterValue(void* p, uint32_t index) noexcept
+{ return p ? asMultiComp(p)->parameterValue(index) : 0.0f; }
+
+#endif // MULTICOMP_PLUGIN_LOGIC_TEST

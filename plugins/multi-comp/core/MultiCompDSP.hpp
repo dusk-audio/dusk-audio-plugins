@@ -85,6 +85,7 @@ private:
     static constexpr int kBypassRampMs = 30;
     static constexpr int kSidechainListenRampMs = 30;
     static constexpr int kAutoGainTransitionMs = 50;
+    static constexpr int kAutoGainMeasurementWindow = 64;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
 
@@ -107,6 +108,9 @@ private:
     void updateMeters(float inPeak, float* const* out, int nCh, int nSamples);
     void processLatencyHistory(const float* const* in, float* const* out, int nCh,
                                int nSamples, int delay, bool emit) noexcept;
+    void processSidechainListenHistory(const float* const* sidechain, int nCh,
+                                       int nSamples, int delay) noexcept;
+    void resetAutoGainMeasurement() noexcept;
     int latencySamplesForMode(MultiCompMode mode, float globalLookaheadMs,
                               float digitalLookaheadMs) const noexcept;
 
@@ -162,6 +166,9 @@ private:
     bool firstBlock = true;
     int lastMode = -1;
     int autoGainHoldSamples = 0;
+    double autoGainInputPower = 0.0;
+    double autoGainOutputPower = 0.0;
+    int autoGainMeasurementCount = 0;
     int antiAliasLatency = 0;
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};

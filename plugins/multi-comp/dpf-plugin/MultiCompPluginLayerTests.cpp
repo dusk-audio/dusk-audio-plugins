@@ -10,11 +10,21 @@
 #include "MultiCompUI.cpp"
 #undef MULTICOMP_UI_LOGIC_TEST
 
+#define MULTICOMP_PLUGIN_LOGIC_TEST
+#include "MultiCompPlugin.cpp"
+#undef MULTICOMP_PLUGIN_LOGIC_TEST
+
+#define DUSK_IMGUI_WIDGETS_LOGIC_TEST
+#include "../../shared-dpf/ui/DuskImGuiWidgets.hpp"
+#undef DUSK_IMGUI_WIDGETS_LOGIC_TEST
+
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 using duskaudio::MultiCompDSP;
@@ -29,6 +39,12 @@ static_assert(sizeof(kAdvertisedExtraIo) / sizeof(kAdvertisedExtraIo[0]) == 1
 void require(bool condition, const char* message)
 {
     if (!condition) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
+}
+
+int reviewFailureCount = 0;
+void reviewCheck(bool condition, const char* message)
+{
+    if (!condition) { std::fprintf(stderr, "FAIL: %s\n", message); ++reviewFailureCount; }
 }
 
 void testHostParameterTapers()
@@ -419,7 +435,7 @@ void testFractionalEnumUiAndDspAgreement()
     std::puts("fractional enum automation: UI and DSP select the same rounded index");
 }
 
-void testCrossoverReadoutUsesEffectiveOrdering()
+void testCrossoverMirrorRefreshesEveryPluginChangedValue()
 {
     multicompp::StateValues values{};
     for (int i = 0; i < multicompp::kMeterMaster; ++i)
@@ -428,12 +444,92 @@ void testCrossoverReadoutUsesEffectiveOrdering()
             [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
     const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
     const auto x2 = static_cast<uint32_t>(multicompp::ParamId::Crossover2);
+    const auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
     values[x1] = multicompp::plainToHost(multicompp::kParams[x1], 500.0f);
     values[x2] = multicompp::plainToHost(multicompp::kParams[x2], 300.0f);
-    const float effective = multicompp::ui_detail::effectiveCrossoverPlain(x2, values);
-    std::printf("ordered crossover readout: requested 300 Hz; effective %.0f Hz\n", effective);
-    require(effective == 750.0f,
-            "XOVER 2 readout reports the DSP's 1.5x ordering clamp");
+    values[x3] = multicompp::plainToHost(multicompp::kParams[x3], 2000.0f);
+    const auto staleValues = values;
+    auto pluginValues = values;
+    pluginValues[x2] = multicompp::plainToHost(multicompp::kParams[x2], 750.0f);
+    multicompp::ui_detail::refreshCrossoverMirror(values,
+        [&pluginValues](uint32_t index) { return pluginValues[index]; });
+    const float staleX2 = multicompp::hostToPlain(multicompp::kParams[x2], staleValues[x2]);
+    const float mirroredX2 = multicompp::hostToPlain(multicompp::kParams[x2], values[x2]);
+    values[x2] = multicompp::plainToHost(multicompp::kParams[x2], 5000.0f);
+    values[x3] = multicompp::plainToHost(multicompp::kParams[x3], 2000.0f);
+    pluginValues = values;
+    pluginValues[x3] = multicompp::plainToHost(multicompp::kParams[x3], 7500.0f);
+    multicompp::ui_detail::refreshCrossoverMirror(values,
+        [&pluginValues](uint32_t index) { return pluginValues[index]; });
+    const float mirroredX3 = multicompp::hostToPlain(multicompp::kParams[x3], values[x3]);
+    std::printf("ordered crossover mirror: stale X2 %.0f Hz; refreshed X2 %.0f Hz; sibling X3 %.0f Hz\n",
+                staleX2, mirroredX2, mirroredX3);
+    reviewCheck(values[x1] == pluginValues[x1]
+                    && values[x2] == pluginValues[x2]
+                    && values[x3] == pluginValues[x3],
+                "UI mirror refreshes the plugin's full ordered crossover set");
+    reviewCheck(mirroredX2 == 750.0f && mirroredX3 == 7500.0f,
+                "crossover handles and readouts use the refreshed plugin values");
+}
+
+std::string readSiblingSource(const char* filename)
+{
+    std::string sourcePath = __FILE__;
+    const size_t slash = sourcePath.rfind('/');
+    require(slash != std::string::npos, "plugin-layer test source path is recognisable");
+    sourcePath.replace(slash + 1, std::string::npos, filename);
+    std::ifstream input(sourcePath);
+    require(input.good(), "reviewed source file is available to structural regression");
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    return contents.str();
+}
+
+void testMonoRunGuardsStereoSidechainPorts()
+{
+    float main = 0.1f, sidechain = 0.8f;
+    const float* monoInputs[] = {&main};
+    const float* stereoInputs[] = {&main, &main, &sidechain, &sidechain};
+    const bool externalArmed = true;
+    const bool monoUsesSidechain = externalArmed
+        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(1, monoInputs);
+    const bool stereoUsesSidechain = externalArmed
+        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(2, stereoInputs);
+    std::printf("external sidechain armed: mono uses aux ports %s; stereo uses aux ports %s\n",
+                monoUsesSidechain ? "yes" : "no", stereoUsesSidechain ? "yes" : "no");
+    reviewCheck(!monoUsesSidechain,
+                "mono run path does not index absent stereo sidechain ports");
+    reviewCheck(stereoUsesSidechain,
+                "stereo run path still accepts its external sidechain ports");
+}
+
+void testQuantisedFineStepFallsBackToRestingPrecision()
+{
+    const float minValue = 0.0f, maxValue = 1.0f, value = 0.0f;
+    const float coordinateStep = 0.0008f * (maxValue - minValue);
+    const float adjacent = std::min(maxValue, value + coordinateStep);
+    const auto quantisedDisplay = [](float coordinate) {
+        return std::round(60.0f + coordinate * 100.0f);
+    };
+    const float fineStep = std::fabs(quantisedDisplay(adjacent) - quantisedDisplay(value));
+    const int decimals = duskdpf::dragDecimalPlaces(fineStep, "%.0f");
+    std::printf("quantised tapered fine-step: display delta %.1f, drag decimals %d\n",
+                fineStep, decimals);
+    reviewCheck(decimals == 0,
+                "a quantised fine-step collapse falls back to resting precision");
+    reviewCheck(duskdpf::dragDecimalPlaces(0.01f, "%.1f") == 2
+                    && duskdpf::dragDecimalPlaces(1.0f, "%.1f") == 1,
+                "nonzero fine steps still add precision only when needed");
+}
+
+void testShippingUiHasNoDeadCrossoverDescriptor()
+{
+    const std::string source = readSiblingSource("MultiCompUI.cpp");
+    const bool hasDeadDescriptor = source.find("const auto& d = multicompp::kParams[p];")
+        != std::string::npos;
+    std::printf("shipping UI dead crossover descriptor present: %s\n",
+                hasDeadDescriptor ? "yes" : "no");
+    reviewCheck(!hasDeadDescriptor, "shipping crossover UI has no unused descriptor variable");
 }
 
 void testHostProgramChangeUpdatesUiMirror()
@@ -519,7 +615,11 @@ void testFractionalIntegerAutomationStaysLoadable()
 
 int main()
 {
-    testCrossoverReadoutUsesEffectiveOrdering();
+    testMonoRunGuardsStereoSidechainPorts();
+    testQuantisedFineStepFallsBackToRestingPrecision();
+    testShippingUiHasNoDeadCrossoverDescriptor();
+    testCrossoverMirrorRefreshesEveryPluginChangedValue();
+    require(reviewFailureCount == 0, "review regressions are fixed");
     testHostParameterTapers();
     testParameterIntervals();
     testStrictStateValidationAndRoundTrip();
