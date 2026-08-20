@@ -1,9 +1,12 @@
 # Agent instructions for this repository
 
-OpenAI Codex loads this file automatically; it does not read `CLAUDE.md`.
-`CLAUDE.md` remains the fuller reference for humans and for Claude — read it as
-well when a task touches anything it covers. **Where the two disagree,
-`CLAUDE.md` wins**, and this file should be corrected.
+OpenAI Codex loads this file automatically; it does not load `CLAUDE.md`, but it
+can read it on demand like any other file. `CLAUDE.md` remains the fuller
+reference for humans and for Claude — consult it whenever a task touches
+anything it covers. **Where the two files disagree, `CLAUDE.md` wins.** That
+ranking applies only between these two repository documents — system, developer,
+and user instructions outrank both. Treat such a disagreement as a defect in
+this file and correct it here to match.
 
 The rules below are the ones whose absence has actually cost real defects.
 
@@ -16,18 +19,34 @@ finished work uncommitted and describe it in your report.
 ## The audio thread is real-time
 
 Everything reachable from `processBlock` (JUCE) or `run()` (DPF) is real-time.
-There:
+In both frameworks:
 
 - **No allocation.** No `new`, `make_unique`, `push_back`, `resize`,
   `std::string`, `juce::String`, or any container that can grow.
-- **No locks.** Use `juce::SpinLock::ScopedTryLockType` and bail out if it is
-  held.
+- **No locks.** Never block the callback. If shared state genuinely needs a
+  lock, use a non-blocking try-lock; when acquisition fails, clear the buffer
+  and return — never wait for the holder.
 - **No I/O.** No file access, no logging, no `DBG()`.
-- **No message-thread APIs.**
-- Use `juce::ScopedNoDenormals` at the top of every `processBlock`.
-- Cache `std::atomic<float>*` from `getRawParameterValue()` in the constructor.
+- **No message-thread / UI APIs.**
+- Flush denormals for the whole callback.
 - Metering atomics use `memory_order_relaxed`; state flags use release/acquire.
-- Handle `numSamples == 0` with an early return.
+- Handle a zero-sample block (`numSamples == 0` / zero `frames`) with an early
+  return.
+
+JUCE specifics:
+
+- `juce::ScopedNoDenormals` at the top of every `processBlock`.
+- The try-lock is `juce::SpinLock::ScopedTryLockType`.
+- Cache `std::atomic<float>*` from `getRawParameterValue()` in the constructor;
+  never call it from `processBlock`.
+
+DPF specifics:
+
+- `DuskAudio::ScopedFlushDenormals` (`plugins/shared-dpf/dsp/DuskDenormals.hpp`)
+  at the top of `run()` — the framework-free `ScopedNoDenormals` equivalent.
+- Parameters arrive on `setParameterValue()`; store each in a
+  `std::atomic<float>` and load it in `run()` (the pattern the existing DPF
+  ports use) — lock-free, no JUCE APIs.
 
 These rules govern the audio callback. They do **not** govern test executables or
 one-time setup such as `initParameter`, where allocation and printing are normal.

@@ -55,7 +55,7 @@ identical to the other plugins.
 
 ## Instructions
 
-When this skill is invoked, execute ALL steps automatically. Do NOT stop to ask questions unless there is an ambiguity that cannot be resolved. Speed is critical.
+When this skill is invoked, execute ALL steps automatically. Do NOT stop to ask questions unless there is an ambiguity that cannot be resolved. The verification guards in each step are mandatory — never skip one to save time.
 
 ### Step 0: Branch Guard
 
