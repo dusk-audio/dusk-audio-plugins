@@ -2,20 +2,67 @@
 // Multi-Comp 2 Dear ImGui UI.  The controls mirror EnhancedCompressorEditor and
 // ModernCompressorPanels; the DSP and parameter ownership remain in the shell/core.
 
-#include "DistrhoUI.hpp"
-#include "MultiCompAccess.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+
+namespace multicompp::ui_detail
+{
+inline int choiceIndex(float hostValue, int count) noexcept
+{
+    return std::clamp(static_cast<int>(std::round(hostValue)), 0, count - 1);
+}
+
+template <size_t N>
+inline int loadProgramIntoMirror(uint32_t index, std::array<float, N>& values)
+{
+    if (index >= kFactoryPresets.size()) return -1;
+    applyPresetToHostParameters(kFactoryPresets[index],
+        [&values](int parameterIndex, float hostValue)
+        {
+            if (parameterIndex >= 0 && static_cast<size_t>(parameterIndex) < values.size())
+                values[static_cast<size_t>(parameterIndex)] = hostValue;
+        });
+    return static_cast<int>(index);
+}
+
+// Mirrors the plugin's ordered crossover set, so raising one handle also shows
+// the DSP pushing its neighbours. skipIndex excludes the handle the user is
+// dragging: only the AU wrapper applies a UI parameter write synchronously
+// (CLAP queues it to the next process() call, LV2 to an atom port), so reading
+// that one back mid-gesture returns the pre-edit value and drags the handle
+// backwards under the mouse. Its neighbours have no such pending write.
+template <size_t N, typename ReadParameter>
+inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter readParameter,
+                                   uint32_t skipIndex = ~uint32_t(0))
+{
+    const auto x1 = static_cast<uint32_t>(ParamId::Crossover1);
+    const auto x3 = static_cast<uint32_t>(ParamId::Crossover3);
+    if (x3 >= N) return;
+    for (uint32_t index = x1; index <= x3; ++index)
+        if (index != skipIndex)
+            values[index] = readParameter(index);
+}
+} // namespace multicompp::ui_detail
+
+#ifndef MULTICOMP_UI_LOGIC_TEST
+
+#include "DistrhoUI.hpp"
+#include "MultiCompAccess.hpp"
 #include "MultiCompVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"
 
-#include <algorithm>
-#include <array>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
+
+DUSK_WEAK float multiCompGetParameterValue(void* pluginInstancePointer,
+                                            uint32_t index) noexcept;
 
 START_NAMESPACE_DISTRHO
 
@@ -112,12 +159,14 @@ public:
         currentPreset = -1;
         values[idx] = value;
         setParameterValue(idx, value);
+        if (idx >= P_X1 && idx <= P_X3) refreshCrossoverMirror();
     }
 
 protected:
     void parameterChanged(uint32_t index, float value) override
     {
         if (index < values.size()) values[index] = value;
+        if (index >= P_X1 && index <= P_X3) refreshCrossoverMirror();
     }
 
     void stateChanged(const char* key, const char* state) override
@@ -133,13 +182,30 @@ protected:
 
     void programLoaded(uint32_t index) override
     {
-        currentPreset = index < multicompp::kFactoryPresets.size() ? static_cast<int>(index) : -1;
+        currentPreset = multicompp::ui_detail::loadProgramIntoMirror(index, values);
     }
 
-    void uiIdle() override { repaint(); }
+    void uiIdle() override
+    {
+        refreshCrossoverMirror();
+        repaint();
+    }
 
     void onImGuiDisplay() override
     {
+        // The crossovers are only submitted in Multiband mode. If the host
+        // switches Mode away mid-drag the widget stops being drawn, so ImGui
+        // never reports IsItemDeactivated for it: the gesture would stay open on
+        // the host and the mirror would skip that crossover for the rest of the
+        // session. Close it here instead, from the fact that nothing re-armed
+        // the flag on the previous frame.
+        if (draggedCrossover != kNoCrossover && !draggedCrossoverStillDrawn)
+        {
+            editParameter(draggedCrossover, false);
+            draggedCrossover = kNoCrossover;
+        }
+        draggedCrossoverStillDrawn = false;
+
         const float winW = static_cast<float>(getWidth());
         const float winH = static_cast<float>(getHeight());
         const float scale = std::min(winW / kDesignW, winH / kDesignH);
@@ -183,9 +249,26 @@ private:
     ImFont* labelFont = nullptr;
     duskdpf::SupportersOverlay supporters;
     bool showSupporters = false;
+    static constexpr uint32_t kNoCrossover = ~uint32_t(0);
+    // The crossover handle under an active drag. Owns both the open automation
+    // gesture and the mirror's skip, so the two cannot disagree.
+    uint32_t draggedCrossover = kNoCrossover;
+    // Set by crossover() on every frame it submits the held handle, and read
+    // once per frame to notice a handle that stopped being drawn mid-drag.
+    bool draggedCrossoverStillDrawn = false;
     int currentPreset = -1;
 
     float value(uint32_t p) const { return values[p]; }
+
+    void refreshCrossoverMirror()
+    {
+        if (multiCompGetParameterValue == nullptr) return;
+        void* const instance = getPluginInstancePointer();
+        if (instance == nullptr) return;
+        multicompp::ui_detail::refreshCrossoverMirror(values,
+            [instance](uint32_t index) { return multiCompGetParameterValue(instance, index); },
+            draggedCrossover);
+    }
 
     void setValue(uint32_t p, float v)
     {
@@ -207,7 +290,8 @@ private:
     void titleHit(ImDrawList* dl)
     {
         panel.text(dl, 22, 11, 24, kText, "Multi-Comp 2", -1, true);
-        panel.text(dl, 24, 40, 10, kDim, modeName(static_cast<int>(value(P_MODE))), -1);
+        panel.text(dl, 24, 40, 10, kDim,
+                   modeName(multicompp::ui_detail::choiceIndex(value(P_MODE), 8)), -1);
         panel.text(dl, kDesignW - 20, 20, 11, kDim, "Dusk Audio", 1);
         ImGui::SetCursorScreenPos(panel.P(12, 7));
         ImGui::InvisibleButton("##mc_title", ImVec2(190 * panel.scale(), 44 * panel.scale()));
@@ -218,7 +302,7 @@ private:
                float x, float y, float w, const char* caption)
     {
         panel.text(ImGui::GetWindowDrawList(), x, y, 9.5f, kDim, caption, 0, true);
-        const int selected = std::clamp(static_cast<int>(value(p)), 0, count - 1);
+        const int selected = multicompp::ui_detail::choiceIndex(value(p), count);
         const ImVec2 p0 = panel.P(x - w * 0.5f, y + 16);
         const ImVec2 p1 = panel.P(x + w * 0.5f, y + 43);
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -401,8 +485,8 @@ private:
 
     void drawModePanel(ImDrawList* dl)
     {
-        drawSection(dl, kPanelTop, kDesignH - 8, modeName(static_cast<int>(value(P_MODE))));
-        const int mode = std::clamp(static_cast<int>(value(P_MODE)), 0, 7);
+        const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
+        drawSection(dl, kPanelTop, kDesignH - 8, modeName(mode));
         if (mode == 7)
             drawMeter(dl, 1062, kPanelTop + 24, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
         else
@@ -529,8 +613,7 @@ private:
     {
         const float trackStart = x - 100.0f;
         const float trackEnd = x + 100.0f;
-        const auto& d = multicompp::kParams[p];
-        const float physicalValue = multicompp::hostToPlain(d, values[p]);
+        const float physicalValue = multicompp::hostToPlain(multicompp::kParams[p], values[p]);
         const float t = std::clamp(values[p], 0.0f, 1.0f);
         const float handleX = trackStart + t * (trackEnd - trackStart);
         dl->AddLine(panel.P(trackStart, 392), panel.P(trackEnd, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());
@@ -542,7 +625,8 @@ private:
         char handleId[48];
         std::snprintf(handleId, sizeof(handleId), "##mc_%s", label);
         ImGui::InvisibleButton(handleId, ImVec2(24 * panel.scale(), 54 * panel.scale()));
-        if (ImGui::IsItemActivated()) editParameter(p, true);
+        if (ImGui::IsItemActivated()) { editParameter(p, true); draggedCrossover = p; }
+        if (draggedCrossover == p) draggedCrossoverStillDrawn = true;
         if (ImGui::IsItemActive())
         {
             const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
@@ -550,7 +634,13 @@ private:
                 (mouseX - trackStart) / (trackEnd - trackStart), 0.0f, 1.0f);
             setParam(p, normalized);
         }
-        if (ImGui::IsItemDeactivated()) editParameter(p, false);
+        if (ImGui::IsItemDeactivated())
+        {
+            editParameter(p, false);
+            // Released: the pending write has had the gesture to land, and the
+            // next refresh adopts whatever ordering the DSP settled on.
+            if (draggedCrossover == p) draggedCrossover = kNoCrossover;
+        }
     }
 
     float meter(uint32_t p) const
@@ -608,3 +698,5 @@ private:
 UI* createUI() { return new MultiCompUI(); }
 
 END_NAMESPACE_DISTRHO
+
+#endif // MULTICOMP_UI_LOGIC_TEST

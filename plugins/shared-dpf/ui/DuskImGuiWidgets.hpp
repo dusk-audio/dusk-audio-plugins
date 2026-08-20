@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -25,10 +26,38 @@
 #include <utility>   // std::swap (RealFFT::transform) — don't rely on transitive headers
 #include <vector>
 
+#ifndef DUSK_IMGUI_WIDGETS_LOGIC_TEST
 #include "DuskImGuiFont.hpp"  // CrispFontSet — nearest-size face per label
+#endif
 
 namespace duskdpf
 {
+
+inline int restingDecimalPlaces(const char* fmt) noexcept
+{
+    int decimals = 0;
+    if (fmt == nullptr) return decimals;
+    for (const char* p = fmt; *p; ++p)
+        if (*p == '.')
+        {
+            for (const char* q = p + 1; *q >= '0' && *q <= '9'; ++q)
+                decimals = decimals * 10 + (*q - '0');
+            break;
+        }
+    return decimals;
+}
+
+inline int dragDecimalPlaces(float fineStep, const char* fmt) noexcept
+{
+    const int resting = restingDecimalPlaces(fmt);
+    if (!std::isfinite(fineStep) || fineStep <= 1.0e-9f)
+        return resting;
+    int fine = static_cast<int>(std::ceil(-std::log10(fineStep)));
+    fine = std::clamp(fine, 0, 4);
+    return std::max(resting, fine);
+}
+
+#ifndef DUSK_IMGUI_WIDGETS_LOGIC_TEST
 
 // Adapter the UI implements to forward parameter edits to the host.
 struct ParamHost
@@ -540,12 +569,10 @@ public:
                 float adjacent = std::min(maxV, value + coordinateStep);
                 if (adjacent == value) adjacent = std::max(minV, value - coordinateStep);
                 const float fineStep = std::fabs(displayValue(adjacent) - displayValue(value));
-                int d = (int) std::ceil(-std::log10(fineStep > 1e-9f ? fineStep : 1e-9f));
-                d = d < 0 ? 0 : (d > 4 ? 4 : d);
+                const int d = dragDecimalPlaces(fineStep, fmt);
                 // resting precision from fmt (digits after the '.'); never show FEWER
                 // decimals than at rest -> if fine-step isn't finer, leave as-is.
-                int restD = 0; for (const char* p = fmt; *p; ++p)
-                    if (*p == '.') { for (const char* q = p + 1; *q >= '0' && *q <= '9'; ++q) restD = restD * 10 + (*q - '0'); break; }
+                const int restD = restingDecimalPlaces(fmt);
                 if (d <= restD)
                     std::snprintf(num, sizeof(num), fmt, displayValue(value));
                 else
@@ -816,5 +843,7 @@ private:
     int n = 0;
     std::vector<float> re, im, window;
 };
+
+#endif // DUSK_IMGUI_WIDGETS_LOGIC_TEST
 
 } // namespace duskdpf

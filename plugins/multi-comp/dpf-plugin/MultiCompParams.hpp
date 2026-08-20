@@ -73,6 +73,30 @@ inline constexpr std::array<Param, 63> kParams = {{
 inline constexpr int kParamCount = static_cast<int>(kParams.size());
 static_assert(kParamCount == static_cast<int>(ParamId::Count));
 static_assert(kParamCount == 63);
+#define MC_ASSERT_PARAM(name) \
+    static_assert(kParams[static_cast<size_t>(ParamId::name)].core == CoreParameter::name, \
+                  "kParams order does not match ParamId::" #name);
+MC_ASSERT_PARAM(Mode) MC_ASSERT_PARAM(Bypass) MC_ASSERT_PARAM(StereoLink) MC_ASSERT_PARAM(Mix)
+MC_ASSERT_PARAM(SidechainHP) MC_ASSERT_PARAM(TruePeakEnable) MC_ASSERT_PARAM(TruePeakQuality)
+MC_ASSERT_PARAM(ExternalSidechain) MC_ASSERT_PARAM(AutoMakeup) MC_ASSERT_PARAM(Distortion)
+MC_ASSERT_PARAM(DistortionAmount) MC_ASSERT_PARAM(Oversampling) MC_ASSERT_PARAM(GlobalLookahead)
+MC_ASSERT_PARAM(OptoPeakReduction) MC_ASSERT_PARAM(OptoGain) MC_ASSERT_PARAM(OptoLimit)
+MC_ASSERT_PARAM(FetInput) MC_ASSERT_PARAM(FetOutput) MC_ASSERT_PARAM(FetAttack) MC_ASSERT_PARAM(FetRelease)
+MC_ASSERT_PARAM(FetRatio) MC_ASSERT_PARAM(FetCurve) MC_ASSERT_PARAM(FetTransient) MC_ASSERT_PARAM(FetThreshold)
+MC_ASSERT_PARAM(VcaThreshold) MC_ASSERT_PARAM(VcaRatio) MC_ASSERT_PARAM(VcaAttack) MC_ASSERT_PARAM(VcaRelease)
+MC_ASSERT_PARAM(VcaOutput) MC_ASSERT_PARAM(VcaOverEasy) MC_ASSERT_PARAM(VcaClassicDetector)
+MC_ASSERT_PARAM(BusThreshold) MC_ASSERT_PARAM(BusRatio) MC_ASSERT_PARAM(BusAttack) MC_ASSERT_PARAM(BusRelease)
+MC_ASSERT_PARAM(BusMakeup) MC_ASSERT_PARAM(BusMix) MC_ASSERT_PARAM(StudioVcaThreshold)
+MC_ASSERT_PARAM(StudioVcaRatio) MC_ASSERT_PARAM(StudioVcaAttack) MC_ASSERT_PARAM(StudioVcaRelease)
+MC_ASSERT_PARAM(StudioVcaOutput) MC_ASSERT_PARAM(DigitalThreshold) MC_ASSERT_PARAM(DigitalRatio)
+MC_ASSERT_PARAM(DigitalKnee) MC_ASSERT_PARAM(DigitalAttack) MC_ASSERT_PARAM(DigitalRelease)
+MC_ASSERT_PARAM(DigitalLookahead) MC_ASSERT_PARAM(DigitalMix) MC_ASSERT_PARAM(DigitalOutput)
+MC_ASSERT_PARAM(DigitalAdaptive) MC_ASSERT_PARAM(Crossover1) MC_ASSERT_PARAM(Crossover2)
+MC_ASSERT_PARAM(Crossover3) MC_ASSERT_PARAM(GlobalSidechainListen) MC_ASSERT_PARAM(MbMix)
+MC_ASSERT_PARAM(MbOutput) MC_ASSERT_PARAM(NoiseEnable) MC_ASSERT_PARAM(ScLowFreq)
+MC_ASSERT_PARAM(ScLowGain) MC_ASSERT_PARAM(ScHighFreq) MC_ASSERT_PARAM(ScHighGain)
+MC_ASSERT_PARAM(StereoLinkMode)
+#undef MC_ASSERT_PARAM
 inline constexpr int kBandParamCount = 8 * duskaudio::kMultiCompBands;
 inline constexpr int kBandBase = kParamCount;
 inline constexpr int kMeterMaster = kBandBase + kBandParamCount;
@@ -121,9 +145,18 @@ template <class Descriptor>
 inline float hostMax(const Descriptor& d) noexcept { return hasSkew(d) ? 1.0f : d.max; }
 
 template <class Descriptor>
-inline float plainToHost(const Descriptor& d, float value) noexcept
+inline float snapPlainValue(const Descriptor& d, float value) noexcept
 {
     value = std::clamp(value, d.min, d.max);
+    if (d.interval > 0.0f)
+        value = d.min + d.interval * std::floor((value - d.min) / d.interval + 0.5f);
+    return std::clamp(value, d.min, d.max);
+}
+
+template <class Descriptor>
+inline float plainToHost(const Descriptor& d, float value) noexcept
+{
+    value = snapPlainValue(d, value);
     if (!hasSkew(d)) return value;
     const float proportion = (value - d.min) / (d.max - d.min);
     return std::pow(proportion, d.skew);
@@ -133,12 +166,9 @@ template <class Descriptor>
 inline float hostToPlain(const Descriptor& d, float value) noexcept
 {
     value = std::clamp(value, hostMin(d), hostMax(d));
-    if (!hasSkew(d)) return value;
+    if (!hasSkew(d)) return snapPlainValue(d, value);
     const float proportion = std::pow(value, 1.0f / d.skew);
-    float plain = d.min + (d.max - d.min) * proportion;
-    if (d.interval > 0.0f)
-        plain = d.min + d.interval * std::floor((plain - d.min) / d.interval + 0.5f);
-    return std::clamp(plain, d.min, d.max);
+    return snapPlainValue(d, d.min + (d.max - d.min) * proportion);
 }
 
 template <class Descriptor>

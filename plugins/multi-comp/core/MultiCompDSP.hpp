@@ -12,6 +12,7 @@
 #include "../../shared-dpf/dsp/DuskOversampler.hpp"
 #include "../../shared-dpf/dsp/DuskSmoothed.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -23,6 +24,9 @@ namespace duskaudio
 class MultiCompDSP
 {
 public:
+    static constexpr float kMinPublishedGainReductionDb = -60.0f;
+    static constexpr float kMaxPublishedGainReductionDb = 0.0f;
+
     enum class Parameter
     {
         Mode, Bypass, StereoLink, Mix, SidechainHP, TruePeakEnable, TruePeakQuality, ExternalSidechain, AutoMakeup, Distortion, DistortionAmount,
@@ -59,9 +63,16 @@ public:
 
     float getBandGainReduction(int band) const noexcept
     {
-        return band >= 0 && band < kMultiCompBands ? bandGR[static_cast<size_t>(band)].load(std::memory_order_relaxed) : 0.0f;
+        return band >= 0 && band < kMultiCompBands
+            ? std::clamp(bandGR[static_cast<size_t>(band)].load(std::memory_order_relaxed),
+                         kMinPublishedGainReductionDb, kMaxPublishedGainReductionDb)
+            : 0.0f;
     }
-    float getGainReduction() const noexcept { return masterGR.load(std::memory_order_relaxed); }
+    float getGainReduction() const noexcept
+    {
+        return std::clamp(masterGR.load(std::memory_order_relaxed),
+                          kMinPublishedGainReductionDb, kMaxPublishedGainReductionDb);
+    }
     float getInputLevel() const noexcept { return inputLevel.load(std::memory_order_relaxed); }
     float getOutputLevel() const noexcept { return outputLevel.load(std::memory_order_relaxed); }
 
@@ -74,15 +85,18 @@ private:
     static constexpr int kBypassRampMs = 30;
     static constexpr int kSidechainListenRampMs = 30;
     static constexpr int kAutoGainTransitionMs = 50;
+    static constexpr int kAutoGainMeasurementWindow = 64;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
 
     void processRange(const float* const* in, const float* const* sidechain,
                       float* const* out, int nCh, int nSamples,
-                      bool externalSidechain, bool autoMakeup);
-    void syncModeParameters(MultiCompMode mode) noexcept;
+                      bool externalSidechain, bool autoMakeup,
+                      MultiCompMode mode, int linkMode, int actualOversampling,
+                      float digitalLookaheadMs);
+    void syncModeParameters(MultiCompMode mode, float digitalLookaheadMs) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
-                          int nCh, int nSamples);
+                          int nCh, int nSamples, int delay);
     void processMultiband(const float* const* input, const float* const* sidechain,
                           float* const* output, int nCh, int nSamples);
     std::array<float, 3> crossoverTargets() const noexcept;
@@ -91,8 +105,14 @@ private:
     void updateCrossoverTargets() noexcept;
     void rebuildMultibandTopology(std::uint8_t mask) noexcept;
     DuskCrossover& crossoverForBoundary(int boundary, int channel, bool sidechain) noexcept;
-    void updateMeters(const float* const* in, float* const* out, int nCh, int nSamples);
-    void processLatencyHistory(const float* const* in, float* const* out, int nCh, int nSamples, bool emit) noexcept;
+    void updateMeters(float inPeak, float* const* out, int nCh, int nSamples);
+    void processLatencyHistory(const float* const* in, float* const* out, int nCh,
+                               int nSamples, int delay, bool emit) noexcept;
+    void processSidechainListenHistory(const float* const* sidechain, int nCh,
+                                       int nSamples, int delay) noexcept;
+    void resetAutoGainMeasurement() noexcept;
+    int latencySamplesForMode(MultiCompMode mode, float globalLookaheadMs,
+                              float digitalLookaheadMs) const noexcept;
 
     MultiCompParameterState params;
     MultiCompParameterState modeParams;
@@ -116,9 +136,13 @@ private:
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
     int bypassWrite = 0;
+    std::array<std::vector<float>, kMaxChannels> sidechainListenDelay;
+    std::array<int, kMaxChannels> sidechainListenWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> delayedInput;
     std::array<std::vector<float>, kMaxChannels> globalLookahead;
     std::array<int, kMaxChannels> globalLookaheadWrite{{0, 0}};
+    std::array<float, kMaxChannels> previousOversampledSidechain{{0.0f, 0.0f}};
+    std::array<bool, kMaxChannels> previousOversampledSidechainValid{{false, false}};
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
     std::uint8_t activeBandMask = 0x0f;
     std::array<int, kMultiCompBands> enabledBandIndices{{0, 1, 2, 3}};
@@ -142,6 +166,9 @@ private:
     bool firstBlock = true;
     int lastMode = -1;
     int autoGainHoldSamples = 0;
+    double autoGainInputPower = 0.0;
+    double autoGainOutputPower = 0.0;
+    int autoGainMeasurementCount = 0;
     int antiAliasLatency = 0;
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};

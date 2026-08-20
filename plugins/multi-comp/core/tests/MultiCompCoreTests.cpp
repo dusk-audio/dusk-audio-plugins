@@ -3,9 +3,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <thread>
 #include <vector>
 
 using duskaudio::DuskCrossover;
@@ -386,6 +392,47 @@ void testTruePeakOversampledPhaseInterpolation()
     const float spread = maximum - minimum;
     std::printf("true-peak 4x detector phases: held spread 0; interpolated spread %.6f\n", spread);
     require(spread > 0.5f, "fast true-peak transient changes across oversampled detector phases");
+}
+
+int detectorGainReductionOnset(int oversampling)
+{
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setOversampling(oversampling);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalKnee, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.01f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAdaptive, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.prepare(48000.0, 1);
+
+    float input = 0.25f, sidechain = 0.0f, output = 0.0f;
+    const float* inputs[] = {&input};
+    const float* sidechains[] = {&sidechain};
+    float* outputs[] = {&output};
+    constexpr int stepSample = 8;
+    for (int sample = 0; sample < 16; ++sample)
+    {
+        sidechain = sample >= stepSample ? 1.0f : 0.0f;
+        dsp.processBlockExternal(inputs, sidechains, outputs, 1, 1);
+        if (dsp.getGainReduction() < -0.0001f)
+            return sample;
+    }
+    return -1;
+}
+
+void testOversampledDetectorHasNativeRateStepTiming()
+{
+    const int oneXOnset = detectorGainReductionOnset(0);
+    const int fourXOnset = detectorGainReductionOnset(2);
+    std::printf("sidechain step at 8: 1x GR onset %d; 4x GR onset %d\n",
+                oneXOnset, fourXOnset);
+    require(oneXOnset == 8 && fourXOnset == oneXOnset,
+            "4x detector gain reduction starts on the same native sample as 1x");
 }
 
 void testLatencyMixBypassAndDigitalStereo()
@@ -849,6 +896,79 @@ void testMultibandMixAlignment()
     std::printf("multiband mix alignment: max ripple %.5f dB\n", worstRippleDb);
 }
 
+struct StereoRms
+{
+    float left;
+    float right;
+};
+
+StereoRms renderNeutralMultibandMidSide(float mix, bool autoMakeup)
+{
+    constexpr int blockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    dsp.setParameter(MultiCompDSP::Parameter::StereoLinkMode, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::MbMix, mix);
+    dsp.setParameter(MultiCompDSP::Parameter::MbOutput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, autoMakeup ? 1.0f : 0.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Makeup, 0.0f);
+    }
+    dsp.prepare(48000.0, blockSize);
+
+    std::array<float, blockSize> inputLeft{}, inputRight{}, outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    double leftSum = 0.0, rightSum = 0.0;
+    constexpr int totalBlocks = 240;
+    constexpr int measuredBlocks = 16;
+    for (int block = 0; block < totalBlocks; ++block)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const int sample = block * blockSize + i;
+            inputLeft[static_cast<size_t>(i)] = 0.6f * std::sin(
+                2.0f * kPi * 997.0f * static_cast<float>(sample) / 48000.0f);
+            inputRight[static_cast<size_t>(i)] = 0.25f * std::sin(
+                2.0f * kPi * 431.0f * static_cast<float>(sample) / 48000.0f);
+        }
+        dsp.processBlock(input, output, 2, blockSize);
+        if (block >= totalBlocks - measuredBlocks)
+            for (int i = 0; i < blockSize; ++i)
+            {
+                leftSum += static_cast<double>(outputLeft[static_cast<size_t>(i)])
+                         * outputLeft[static_cast<size_t>(i)];
+                rightSum += static_cast<double>(outputRight[static_cast<size_t>(i)])
+                          * outputRight[static_cast<size_t>(i)];
+            }
+    }
+    constexpr double measuredSamples = measuredBlocks * blockSize;
+    return {static_cast<float>(std::sqrt(leftSum / measuredSamples)),
+            static_cast<float>(std::sqrt(rightSum / measuredSamples))};
+}
+
+void testMultibandMidSideMixAndAutoMakeupDomains()
+{
+    const StereoRms fullWet = renderNeutralMultibandMidSide(100.0f, false);
+    const StereoRms halfMix = renderNeutralMultibandMidSide(50.0f, false);
+    const StereoRms autoMakeup = renderNeutralMultibandMidSide(100.0f, true);
+    const float halfLeftDb = duskaudio::gainToDecibels(halfMix.left / std::max(fullWet.left, 1.0e-9f));
+    const float halfRightDb = duskaudio::gainToDecibels(halfMix.right / std::max(fullWet.right, 1.0e-9f));
+    const float fullCombined = std::sqrt((fullWet.left * fullWet.left + fullWet.right * fullWet.right) * 0.5f);
+    const float autoCombined = std::sqrt((autoMakeup.left * autoMakeup.left + autoMakeup.right * autoMakeup.right) * 0.5f);
+    const float autoShiftDb = duskaudio::gainToDecibels(autoCombined / std::max(fullCombined, 1.0e-9f));
+    std::printf("multiband M/S domains: 50%% L %.4f dB R %.4f dB vs wet; auto-makeup %.4f dB\n",
+                halfLeftDb, halfRightDb, autoShiftDb);
+    require(std::abs(halfLeftDb) < 0.15f && std::abs(halfRightDb) < 0.15f
+                && std::abs(autoShiftDb) < 0.25f,
+            "multiband M/S mix and auto-makeup use an L/R split-dry reference");
+}
+
 float renderSidechainEqGR(float highGain)
 {
     MultiCompDSP dsp;
@@ -1089,21 +1209,58 @@ void testAutoGainResetsOnModeChange()
 
 void testBypassCompletesDuringSidechainListen()
 {
-    MultiCompDSP dsp;
-    dsp.prepare(48000.0, 256);
-    dsp.setOversampling(0);
-    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
-    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
-    std::vector<float> input(256, 0.1f), sidechain(256, 0.8f), output(256);
-    const float* ip[] = {input.data()}; const float* sc[] = {sidechain.data()}; float* op[] = {output.data()};
-    for (int block = 0; block < 8; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
-    dsp.setBypass(true);
-    for (int block = 0; block < 10; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
-    float maxDryError = 0.0f;
-    for (float sample : output) maxDryError = std::max(maxDryError, std::abs(sample - 0.1f));
-    std::printf("bypass during sidechain listen: final sample %.9g; dry error %.9g\n",
-                output.back(), maxDryError);
-    require(maxDryError < 1.0e-7f, "bypass reaches settled dry output while sidechain Listen remains on");
+    struct Result { float maxDryError; float minimumListenTail; };
+    auto exercise = [](int channels) {
+        MultiCompDSP dsp;
+        dsp.prepare(48000.0, 256);
+        dsp.setOversampling(2);
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 10.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 10.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+        std::array<std::vector<float>, 2> input{
+            std::vector<float>(256, 0.1f), std::vector<float>(256, 0.1f)};
+        std::array<std::vector<float>, 2> sidechain{
+            std::vector<float>(256, 0.2f), std::vector<float>(256, 0.2f)};
+        std::array<std::vector<float>, 2> output{
+            std::vector<float>(256), std::vector<float>(256)};
+        const float* ip[] = {input[0].data(), input[1].data()};
+        const float* sc[] = {sidechain[0].data(), sidechain[1].data()};
+        float* op[] = {output[0].data(), output[1].data()};
+        for (int block = 0; block < 8; ++block)
+            dsp.processBlockExternal(ip, sc, op, channels, 256);
+        dsp.setBypass(true);
+        for (int block = 0; block < 10; ++block)
+            dsp.processBlockExternal(ip, sc, op, channels, 256);
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
+        for (auto& channel : sidechain) channel.assign(channel.size(), 0.8f);
+        for (int block = 0; block < 10; ++block)
+            dsp.processBlockExternal(ip, sc, op, channels, 256);
+        float maxDryError = 0.0f;
+        for (int ch = 0; ch < channels; ++ch)
+            for (float sample : output[static_cast<size_t>(ch)])
+                maxDryError = std::max(maxDryError, std::abs(sample - 0.1f));
+
+        dsp.setBypass(false);
+        dsp.processBlockExternal(ip, sc, op, channels, 256);
+        float minimumListenTail = output[0].back();
+        for (int ch = 1; ch < channels; ++ch)
+            minimumListenTail = std::min(minimumListenTail, output[static_cast<size_t>(ch)].back());
+        return Result{maxDryError, minimumListenTail};
+    };
+    const Result mono = exercise(1);
+    const Result stereo = exercise(2);
+    std::printf("bypass during Listen: mono/stereo dry errors %.9g/%.9g; current-sidechain tails %.9g/%.9g\n",
+                mono.maxDryError, stereo.maxDryError,
+                mono.minimumListenTail, stereo.minimumListenTail);
+    require(std::max(mono.maxDryError, stereo.maxDryError) < 1.0e-7f,
+            "mono and stereo bypass reach settled dry output while sidechain Listen remains on");
+    require(std::min(mono.minimumListenTail, stereo.minimumListenTail) > 0.18f,
+            "settled mono and stereo bypass advance the Listen ramp and latency delay together");
 }
 
 void testSidechainListenClearsGainReductionMeters()
@@ -1132,6 +1289,64 @@ void testSidechainListenClearsGainReductionMeters()
                 activeMaster, activeBand, dsp.getGainReduction(), listenBandMagnitude);
     require(dsp.getGainReduction() == 0.0f && listenBandMagnitude == 0.0f,
             "sidechain Listen clears master and per-band gain-reduction meters");
+}
+
+void testSingleBandModeClearsMultibandGainReductionMeters()
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    std::array<float, 256> input{}, output{};
+    input.fill(0.8f);
+    const float* ip[] = {input.data()};
+    float* op[] = {output.data()};
+    for (int block = 0; block < 32; ++block) dsp.processBlock(ip, op, 1, 256);
+    float activeBand = 0.0f;
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+        activeBand = std::min(activeBand, dsp.getBandGainReduction(band));
+    require(activeBand < -1.0f, "single-band meter test establishes multiband gain reduction");
+
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    dsp.processBlock(ip, op, 1, 256);
+    float singleBandMagnitude = 0.0f;
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+        singleBandMagnitude = std::max(singleBandMagnitude, std::abs(dsp.getBandGainReduction(band)));
+    std::printf("single-band GR meters: prior multiband %.4f dB; max stale band %.4f dB\n",
+                activeBand, singleBandMagnitude);
+    require(singleBandMagnitude == 0.0f,
+            "single-band processing clears per-band gain-reduction meters");
+}
+
+void testInputMeterWithAliasedBuffers()
+{
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setOversampling(0);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalOutput, 6.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.prepare(48000.0, 256);
+
+    std::array<float, 256> inOut{};
+    const float* input[] = {inOut.data()};
+    float* output[] = {inOut.data()};
+    for (int block = 0; block < 16; ++block)
+    {
+        inOut.fill(0.25f);
+        dsp.processBlock(input, output, 1, 256);
+    }
+    const float expectedInputDb = duskaudio::gainToDecibels(0.25f);
+    const float inputMeterDb = dsp.getInputLevel();
+    const float outputMeterDb = dsp.getOutputLevel();
+    std::printf("aliased meters: input %.4f dB (expected %.4f); output %.4f dB\n",
+                inputMeterDb, expectedInputDb, outputMeterDb);
+    require(std::abs(inputMeterDb - expectedInputDb) < 0.05f
+                && outputMeterDb > inputMeterDb + 5.5f,
+            "input meter captures aliased input before output is written");
 }
 
 void testSidechainListenSwitchIsSmoothed()
@@ -1183,6 +1398,63 @@ void testSidechainListenSwitchIsSmoothed()
             "sidechain Listen on reaches the listened signal");
     require(std::abs(listenOff.endpoint - input.back()) <= endpointTolerance,
             "sidechain Listen off reaches the non-listened signal");
+}
+
+void testSidechainListenCrossfadeIsLatencyAligned()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    constexpr float amplitude = 0.5f;
+    constexpr float frequency = 121.6f;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setOversampling(2);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 10.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 10.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalOutput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.prepare(sampleRate, blockSize);
+
+    std::array<float, blockSize> input{}, output{};
+    const float* inputs[] = {input.data()};
+    float* outputs[] = {output.data()};
+    int64_t sample = 0;
+    auto renderBlock = [&]() {
+        for (int i = 0; i < blockSize; ++i, ++sample)
+            input[static_cast<size_t>(i)] = amplitude * std::sin(
+                2.0 * static_cast<double>(kPi) * frequency * static_cast<double>(sample) / sampleRate);
+        dsp.processBlock(inputs, outputs, 1, blockSize);
+    };
+
+    for (int block = 0; block < 32; ++block) renderBlock();
+    float beforePeak = 0.0f;
+    for (float value : output) beforePeak = std::max(beforePeak, std::abs(value));
+
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
+    constexpr int rampSamples = 1440;
+    std::array<float, 6 * blockSize> transition{};
+    for (int block = 0; block < 6; ++block)
+    {
+        renderBlock();
+        std::copy(output.begin(), output.end(), transition.begin() + block * blockSize);
+    }
+    float midRampPeak = 0.0f;
+    constexpr int halfWindow = blockSize / 2;
+    for (int i = rampSamples / 2 - halfWindow; i < rampSamples / 2 + halfWindow; ++i)
+        midRampPeak = std::max(midRampPeak, std::abs(transition[static_cast<size_t>(i)]));
+
+    renderBlock();
+    float afterPeak = 0.0f;
+    for (float value : output) afterPeak = std::max(afterPeak, std::abs(value));
+    const float endpointPeak = std::min(beforePeak, afterPeak);
+    std::printf("Listen latency crossfade: before %.6f; mid-ramp %.6f; after %.6f; ratio %.3f\n",
+                beforePeak, midRampPeak, afterPeak, midRampPeak / endpointPeak);
+    require(endpointPeak > 0.45f, "Listen latency test establishes full-level endpoints");
+    require(midRampPeak >= endpointPeak * 0.8f,
+            "Listen crossfade does not collapse when lookahead and oversampling latency are engaged");
 }
 
 void testSettledBypassClearsGainReductionMeters()
@@ -1301,8 +1573,285 @@ void testHardwareRateRefreshAfterOversamplingChange()
     }
 }
 
+float renderSoloedHighFrequencyPeak(float mix)
+{
+    constexpr int blockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    dsp.setParameter(MultiCompDSP::Parameter::MbMix, mix);
+    dsp.setParameter(MultiCompDSP::Parameter::MbOutput, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setMultibandParameter(0, MultiCompDSP::MultibandParameter::Solo, 1.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Makeup, 0.0f);
+    }
+    dsp.prepare(48000.0, blockSize);
+
+    std::array<float, blockSize> input{}, output{};
+    const float* inputs[] = {input.data()};
+    float* outputs[] = {output.data()};
+    float peak = 0.0f;
+    for (int block = 0; block < 100; ++block)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const int sample = block * blockSize + i;
+            input[static_cast<size_t>(i)] = 0.5f * std::sin(
+                2.0f * kPi * 12000.0f * static_cast<float>(sample) / 48000.0f);
+        }
+        dsp.processBlock(inputs, outputs, 1, blockSize);
+        if (block == 99)
+            for (float sample : output) peak = std::max(peak, std::abs(sample));
+    }
+    return peak;
+}
+
+void testMultibandSoloMasksDryReference()
+{
+    const float halfMixPeak = renderSoloedHighFrequencyPeak(50.0f);
+    const float wetPeak = renderSoloedHighFrequencyPeak(100.0f);
+    const float delta = std::abs(halfMixPeak - wetPeak);
+    std::printf("multiband solo dry mask: 50%% peak %.9g; wet peak %.9g; delta %.9g\n",
+                halfMixPeak, wetPeak, delta);
+    require(wetPeak < 0.01f, "low solo rejects a 12 kHz signal on the wet path");
+    require(delta < 1.0e-5f, "multiband dry reference obeys the same solo mask as wet recombination");
+}
+
+void testMultibandAutomationUsesOneStereoSnapshot()
+{
+    constexpr int blockSize = 32768;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Makeup, 0.0f);
+    }
+    dsp.prepare(48000.0, blockSize);
+
+    std::vector<float> input(static_cast<size_t>(blockSize));
+    std::vector<float> left(static_cast<size_t>(blockSize));
+    std::vector<float> right(static_cast<size_t>(blockSize));
+    for (int i = 0; i < blockSize; ++i)
+        input[static_cast<size_t>(i)] = 0.01f * std::sin(2.0f * kPi * 997.0f * i / 48000.0f);
+    const float* inputs[] = {input.data(), input.data()};
+    float* outputs[] = {left.data(), right.data()};
+
+    std::atomic<bool> writerReady{false};
+    std::atomic<bool> stopWriter{false};
+    std::atomic<unsigned> writes{0};
+    std::thread writer([&] {
+        writerReady.store(true, std::memory_order_release);
+        while (!stopWriter.load(std::memory_order_acquire))
+        {
+            const unsigned write = writes.fetch_add(1, std::memory_order_relaxed);
+            const float gainDb = (write & 1u) != 0u ? 12.0f : -12.0f;
+            dsp.setParameter(MultiCompDSP::Parameter::MbOutput, gainDb);
+            dsp.setMultibandParameter(0, MultiCompDSP::MultibandParameter::Makeup, gainDb);
+        }
+    });
+    while (!writerReady.load(std::memory_order_acquire)
+           || writes.load(std::memory_order_relaxed) < 100u)
+        std::this_thread::yield();
+
+    float worstDelta = 0.0f;
+    float signalPeak = 0.0f;
+    for (int block = 0; block < 16 && worstDelta < 1.0e-6f; ++block)
+    {
+        dsp.processBlock(inputs, outputs, 2, blockSize);
+        for (int i = 0; i < blockSize; ++i)
+        {
+            worstDelta = std::max(worstDelta, std::abs(left[static_cast<size_t>(i)] - right[static_cast<size_t>(i)]));
+            signalPeak = std::max(signalPeak, std::abs(left[static_cast<size_t>(i)]));
+            signalPeak = std::max(signalPeak, std::abs(right[static_cast<size_t>(i)]));
+        }
+    }
+    stopWriter.store(true, std::memory_order_release);
+    writer.join();
+
+    std::printf("multiband concurrent output/makeup: writes %u; signal peak %.9g; max L/R delta %.9g\n",
+                writes.load(std::memory_order_relaxed), signalPeak, worstDelta);
+    require(signalPeak > 1.0e-4f, "multiband stereo snapshot test processes nonzero signal");
+    require(worstDelta < 1.0e-6f,
+            "multiband parameter automation applies one parameter snapshot to both channels");
+}
+
+std::vector<float> renderWithBlockSize(int oversampling, int blockSize, bool autoMakeup)
+{
+    constexpr int totalSamples = 16384;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setOversampling(oversampling);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -12.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 4.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalKnee, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.1f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 50.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, autoMakeup ? 1.0f : 0.0f);
+    dsp.prepare(48000.0, 512);
+
+    std::vector<float> input(totalSamples), output(totalSamples);
+    for (int i = 0; i < totalSamples; ++i)
+    {
+        const float modulation = 0.55f + 0.4f * std::sin(2.0f * kPi * 3.7f * i / 48000.0f);
+        input[static_cast<size_t>(i)] = modulation
+            * std::sin(2.0f * kPi * 997.0f * static_cast<float>(i) / 48000.0f);
+    }
+    for (int offset = 0; offset < totalSamples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, totalSamples - offset);
+        const float* inputs[] = {input.data() + offset};
+        float* outputs[] = {output.data() + offset};
+        dsp.processBlock(inputs, outputs, 1, count);
+    }
+    return output;
+}
+
+void testOversamplingBlockSizeInvariance()
+{
+    bool invariant = true;
+    for (bool autoMakeup : {false, true})
+    for (int oversampling : {0, 1, 2})
+    {
+        const auto large = renderWithBlockSize(oversampling, 512, autoMakeup);
+        const auto small = renderWithBlockSize(oversampling, 128, autoMakeup);
+        float maxDelta = 0.0f;
+        for (size_t i = 0; i < large.size(); ++i)
+            maxDelta = std::max(maxDelta, std::abs(large[i] - small[i]));
+        std::printf("oversampling block invariance: auto=%d os=%d max_delta=%.9g\n",
+                    autoMakeup ? 1 : 0, oversampling, maxDelta);
+        invariant = invariant && maxDelta < 1.0e-7f;
+    }
+    require(invariant,
+            "oversampled render with Auto Makeup on and off is invariant between 512- and 128-sample blocks");
+}
+
+void testAllModesAreMonoSafe()
+{
+    constexpr int blockSize = 127;
+    for (int mode = 0; mode < 8; ++mode)
+    {
+        MultiCompDSP dsp;
+        dsp.setMode(mode);
+        dsp.setOversampling(2);
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 3.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 4.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::StereoLinkMode, 0.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+        dsp.prepare(48000.0, blockSize);
+        std::array<float, blockSize> input{}, sidechain{}, output{};
+        for (int i = 0; i < blockSize; ++i)
+        {
+            input[static_cast<size_t>(i)] = 0.4f * std::sin(2.0f * kPi * 431.0f * i / 48000.0f);
+            sidechain[static_cast<size_t>(i)] = 0.7f * std::sin(2.0f * kPi * 997.0f * i / 48000.0f);
+        }
+        const float* inputs[] = {input.data()};
+        const float* sidechains[] = {sidechain.data()};
+        float* outputs[] = {output.data()};
+        for (int block = 0; block < 20; ++block)
+            dsp.processBlockExternal(inputs, sidechains, outputs, 1, blockSize);
+        for (float sample : output)
+            require(std::isfinite(sample), "mono processing remains finite in every mode");
+    }
+    std::puts("mono safety: all modes exercised with 4x, lookahead, external sidechain and stereo-link state");
+}
+
+void testPublishedGainReductionRange()
+{
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -60.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalKnee, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.01f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 5000.0f);
+    dsp.prepare(48000.0, 256);
+    std::array<float, 256> input{}, output{};
+    input.fill(2.0f);
+    const float* inputs[] = {input.data()};
+    float* outputs[] = {output.data()};
+    for (int block = 0; block < 40; ++block) dsp.processBlock(inputs, outputs, 1, 256);
+    const float reduction = dsp.getGainReduction();
+    std::printf("published GR range: deep-compression reading %.9g dB\n", reduction);
+    require(reduction >= -60.0f && reduction <= 0.0f,
+            "published gain reduction stays inside its declared -60..0 dB range");
+}
+
+std::string sourceSection(const std::string& source, const char* begin, const char* end)
+{
+    const size_t first = source.find(begin);
+    const size_t last = source.find(end, first == std::string::npos ? 0 : first + 1);
+    require(first != std::string::npos && last != std::string::npos && last > first,
+            "DSP source snapshot section exists");
+    return source.substr(first, last - first);
+}
+
+size_t occurrenceCount(const std::string& text, const char* needle)
+{
+    size_t count = 0;
+    for (size_t at = 0; (at = text.find(needle, at)) != std::string::npos; at += std::strlen(needle))
+        ++count;
+    return count;
+}
+
+void testAtomicControlSnapshotsAreSingleLoad()
+{
+    std::string sourcePath = __FILE__;
+    const std::string suffix = "tests/MultiCompCoreTests.cpp";
+    const size_t suffixPosition = sourcePath.rfind(suffix);
+    require(suffixPosition != std::string::npos, "core-test source path is recognisable");
+    sourcePath.replace(suffixPosition, suffix.size(), "MultiCompDSP.cpp");
+    std::ifstream input(sourcePath);
+    require(input.good(), "MultiCompDSP source is available to structural regression");
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    const std::string source = contents.str();
+
+    const std::string prepare = sourceSection(source, "void MultiCompDSP::prepare(",
+                                               "void MultiCompDSP::reset(");
+    const std::string block = sourceSection(source, "void MultiCompDSP::processBlockExternal(",
+                                             "void MultiCompDSP::processLatencyHistory(");
+    const std::string range = sourceSection(source, "void MultiCompDSP::processRange(",
+                                             "void MultiCompDSP::processMultiband(");
+    const std::string lookahead = sourceSection(source, "void MultiCompDSP::prepareLookahead(",
+                                                 "void MultiCompDSP::syncModeParameters(");
+    require(occurrenceCount(prepare, "params.oversampling.load") == 1,
+            "prepare snapshots oversampling exactly once");
+    require(occurrenceCount(block, "params.oversampling.load") == 1,
+            "audio block snapshots oversampling exactly once");
+    require(occurrenceCount(block, "params.globalLookahead.load") == 1
+                && occurrenceCount(block, "params.digitalLookahead.load") == 1,
+            "audio block snapshots both lookaheads exactly once");
+    require(occurrenceCount(range, "params.oversampling.load") == 0
+                && occurrenceCount(range, "params.digitalLookahead.load") == 0
+                && occurrenceCount(lookahead, "params.globalLookahead.load") == 0,
+            "processing helpers consume block snapshots without atomic re-reads");
+    std::puts("atomic snapshots: oversampling/global lookahead/Digital lookahead loaded once per block");
+}
+
 int main()
 {
+    testAtomicControlSnapshotsAreSingleLoad();
+    testPublishedGainReductionRange();
+    testAllModesAreMonoSafe();
+    testOversamplingBlockSizeInvariance();
+    testBypassCompletesDuringSidechainListen();
+    testMultibandSoloMasksDryReference();
+    testInputMeterWithAliasedBuffers();
+    testSingleBandModeClearsMultibandGainReductionMeters();
+    testMultibandMidSideMixAndAutoMakeupDomains();
+    testMultibandAutomationUsesOneStereoSnapshot();
+    testOversampledDetectorHasNativeRateStepTiming();
     testTruePeakOversampledPhaseInterpolation();
     testCrossoverAutomationContinuity();
     testFourTimesHighFrequencyMixCoherence();
@@ -1310,7 +1859,7 @@ int main()
     testSettledBypassClearsGainReductionMeters();
     testSidechainListenClearsGainReductionMeters();
     testSidechainListenSwitchIsSmoothed();
-    testBypassCompletesDuringSidechainListen();
+    testSidechainListenCrossfadeIsLatencyAligned();
     testAutoGainResetsOnModeChange();
     testAutoGainNeutralisesManualOutput();
     testAutoGainBypassSettleBoundary();

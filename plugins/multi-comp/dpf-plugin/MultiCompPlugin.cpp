@@ -1,15 +1,47 @@
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <string>
+
+namespace multicompp::plugin_detail
+{
+// The aux ports exist only on the full DISTRHO_PLUGIN_NUM_INPUTS layout. The
+// output count cannot stand in for that: the AU { 2, 2 } layout is stereo out
+// with a two-channel input element, so a test against the channel count would
+// index inputs[2]/inputs[3] past the end of a two-element array.
+inline bool hasStereoExternalSidechainPorts(int activeInputs,
+                                            const float* const* inputs) noexcept
+{
+    return activeInputs >= 4 && inputs != nullptr
+        && inputs[2] != nullptr && inputs[3] != nullptr;
+}
+
+// The crossover frequencies the DSP will actually use, given the three the host
+// has set. Mirrors MultiCompDSP::crossoverTargets(), which re-derives this every
+// block from the raw parameters and never writes the result back.
+//
+// This must stay a pure read. Storing the ordered values into the parameter
+// array ratchets: raising Crossover 1 pushes Crossover 2 up, and lowering
+// Crossover 1 again leaves it there, so an automation pass permanently relocates
+// a neighbour the host never wrote and the parameter no longer matches its lane.
+inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noexcept
+{
+    const float o1 = f1 < 20.0f ? 20.0f : (f1 > 500.0f ? 500.0f : f1);
+    const float o2 = f2 < o1 * 1.5f ? o1 * 1.5f : (f2 > 5000.0f ? 5000.0f : f2);
+    const float o3 = f3 < o2 * 1.5f ? o2 * 1.5f : (f3 > 16000.0f ? 16000.0f : f3);
+    return {{o1, o2, o3}};
+}
+} // namespace multicompp::plugin_detail
+
+#ifndef MULTICOMP_PLUGIN_LOGIC_TEST
+
 #include "DistrhoPlugin.hpp"
 #include "MultiCompAccess.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 #include "MultiCompVersion.hpp"
 #include "util/CrashLog.hpp"
-
-#include <array>
-#include <atomic>
-#include <cstdint>
-#include <cstring>
-#include <string>
 
 START_NAMESPACE_DISTRHO
 
@@ -33,6 +65,25 @@ public:
     float bandGr(int b) const noexcept { return dsp.getBandGainReduction(b); }
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
+    // The UI's view of a parameter. Crossovers report the frequency the DSP
+    // will use rather than the raw setting, so raising one handle visibly pushes
+    // the handles above it. The host-facing getParameterValue() deliberately
+    // does not do this: an automation lane must read back what it wrote.
+    float parameterValue(uint32_t index) const noexcept
+    {
+        if (index >= multicompp::kMeterMaster) return 0.0f;
+        const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
+        const auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
+        if (index < x1 || index > x3) return values[index].load(std::memory_order_relaxed);
+        const auto plain = [this](uint32_t i) {
+            return multicompp::hostToPlain(multicompp::kParams[i],
+                                           values[i].load(std::memory_order_relaxed));
+        };
+        const auto ordered = multicompp::plugin_detail::orderedCrossovers(
+            plain(x1), plain(x1 + 1), plain(x3));
+        return multicompp::plainToHost(multicompp::kParams[index],
+                                       ordered[index - x1]);
+    }
 
 protected:
     const char* getLabel() const override { return "MultiComp2"; }
@@ -106,7 +157,9 @@ protected:
         // Output-only deliberately excludes kParameterIsAutomatable: hosts may
         // read these meters, but must never offer them as writable targets.
         p.hints = kParameterIsOutput;
-        p.ranges.min = -60.0f; p.ranges.max = 0.0f; p.ranges.def = 0.0f; p.unit = "dB";
+        p.ranges.min = duskaudio::MultiCompDSP::kMinPublishedGainReductionDb;
+        p.ranges.max = duskaudio::MultiCompDSP::kMaxPublishedGainReductionDb;
+        p.ranges.def = 0.0f; p.unit = "dB";
         if (index == multicompp::kMeterMaster) p.name = "GR";
         else { p.name = index == multicompp::kMeterBand0 ? "Low GR" : index == multicompp::kMeterBand1 ? "Low-Mid GR" : index == multicompp::kMeterBand2 ? "High-Mid GR" : "High GR"; }
         p.symbol = index == multicompp::kMeterMaster ? "gr_meter" : index == multicompp::kMeterBand0 ? "gr_low" : index == multicompp::kMeterBand1 ? "gr_lowmid" : index == multicompp::kMeterBand2 ? "gr_highmid" : "gr_high";
@@ -125,6 +178,9 @@ protected:
     void setParameterValue(uint32_t index, float value) override
     {
         if (index >= multicompp::kMeterMaster) return;
+        // Crossovers take the ordinary path: each one stores exactly what the
+        // host set. The DSP re-derives the ordering from all three every block,
+        // so nothing here needs to -- and must not -- rewrite its neighbours.
         multicompp::resolveParameter(static_cast<int>(index),
             [&](const multicompp::Param& d) {
                 const float v = multicompp::snapHostValue(d, value);
@@ -178,11 +234,23 @@ protected:
     void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); pushParameters(); updateLatency(); }
     void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); pushParameters(); updateLatency(); }
 
+    void ioChanged(uint16_t in, uint16_t out) override
+    {
+        // DISTRHO_PLUGIN_EXTRA_IO permits { 4, 2 }, { 2, 2 } and { 1, 1 }. The
+        // input count is kept separately from the processing width because the
+        // two disagree on { 4, 2 }, where the extra pair is the sidechain and
+        // not audio to compress. DPF calls this while deactivated, so run()
+        // observes a stable pair.
+        activeInputs = static_cast<int>(in);
+        activeChannels = (in == 1 && out == 1) ? 1 : 2;
+    }
+
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f && inputs[2] != nullptr && inputs[3] != nullptr;
-        if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, 2, static_cast<int>(frames)); }
-        else dsp.processBlock(inputs, outputs, 2, static_cast<int>(frames));
+        const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
+            && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
+        if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
+        else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
         // is the only point the CLAP spec allows the latency to move.
@@ -209,6 +277,11 @@ private:
     void updateLatency() { const int l = dsp.getLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }
 
     duskaudio::MultiCompDSP dsp;
+    // Formats other than AU always present the full input set, and ioChanged()
+    // is only called where a host narrows it, so the declared count is the
+    // correct default rather than a placeholder.
+    int activeInputs = DISTRHO_PLUGIN_NUM_INPUTS;
+    int activeChannels = DISTRHO_PLUGIN_NUM_OUTPUTS;
     std::array<std::atomic<float>, multicompp::kMeterMaster> values{};
     int lastLatency = -1;
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
@@ -222,3 +295,7 @@ float multiCompGetGainReduction(void* p) noexcept { return p ? asMultiComp(p)->g
 float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asMultiComp(p)->bandGr(band) : 0.0f; }
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }
 float multiCompGetOutputLevel(void* p) noexcept { return p ? asMultiComp(p)->outputLevel() : -60.0f; }
+float multiCompGetParameterValue(void* p, uint32_t index) noexcept
+{ return p ? asMultiComp(p)->parameterValue(index) : 0.0f; }
+
+#endif // MULTICOMP_PLUGIN_LOGIC_TEST

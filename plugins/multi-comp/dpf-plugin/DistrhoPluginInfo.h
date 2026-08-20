@@ -13,6 +13,15 @@
 // format supports them; JACK exposes all four inputs as named ports.
 #define DISTRHO_PLUGIN_NUM_INPUTS   4
 #define DISTRHO_PLUGIN_NUM_OUTPUTS  2
+// AU hosts filter insert menus by channel layout, and DPF's AU wrapper carries
+// every input channel on ONE element rather than a separate sidechain bus. The
+// base { 4, 2 } entry therefore describes a 4-in insert, which no stereo track
+// offers: without { 2, 2 } here auval reports the handling matrix as 1-1 and 4-2
+// only, and Logic omits the AU from every stereo channel strip. The three
+// entries are the three real layouts -- stereo with external sidechain, plain
+// stereo, and mono -- and run() picks the sidechain path off the input count
+// reported by ioChanged(), not off the output count.
+#define DISTRHO_PLUGIN_EXTRA_IO     { 2, 2 }, { 1, 1 },
 #define DISTRHO_PLUGIN_HAS_UI       1
 #define DISTRHO_PLUGIN_IS_RT_SAFE   1
 #define DISTRHO_PLUGIN_WANT_DIRECT_ACCESS 1
