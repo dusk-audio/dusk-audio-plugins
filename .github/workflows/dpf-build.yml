@@ -27,6 +27,7 @@ on:
       - '4k-eq-2-v*'
       - 'tape-echo-2-v*'
       - 'multi-q-2-v*'
+      - 'multi-comp-2-v*'
   workflow_dispatch:
     inputs:
       plugin:
@@ -40,6 +41,7 @@ on:
           - '4k-eq-2'
           - 'tape-echo-2'
           - 'multi-q-2'
+          - 'multi-comp-2'
   pull_request:
     paths:
       - 'plugins/*/dpf-plugin/**'
@@ -63,7 +65,7 @@ on:
 # checkouts on the pinned SHAs (docker/check_dpf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DPF_REF: d8e5bc69fd7bf355de548e0eafe0f3b7784c68c6
+  DPF_REF: eb54f2f47db248d7414fe30d60d502827f56f8d2
   DPFWIDGETS_REF: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
@@ -109,6 +111,7 @@ jobs:
             {"key":"4k-eq-2","dir":"plugins/4k-eq/dpf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
             {"key":"tape-echo-2","dir":"plugins/tape-echo/dpf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
             {"key":"multi-q-2","dir":"plugins/multi-q/dpf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
+            ,{"key":"multi-comp-2","dir":"plugins/multi-comp/dpf-plugin","base":"multi_comp_2","project":"MultiComp2DPF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
           ]
           JSON
 
@@ -308,8 +311,11 @@ jobs:
             exit "$ctest_status"
           fi
           if grep -q "Total Tests: [1-9]" ctest-discovery.log; then
-            cmake --build build --config Release -j"$(nproc)" --target TapeEchoCoreTest \
-              || echo "::notice::no TapeEchoCoreTest target for this plugin"
+            # The plugin build step only builds the -vst3/-clap/-lv2 targets,
+            # so the test executables ctest expects may not exist yet. Build
+            # the default target set (which includes them) rather than
+            # hardcoding any one plugin's test target name.
+            cmake --build build --config Release -j"$(nproc)"
             ctest --test-dir build --output-on-failure
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"

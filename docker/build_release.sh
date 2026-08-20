@@ -18,7 +18,7 @@ IMAGE_NAME="dusk-plugins-builder"
 # DPF / DPF-Widgets SHAs — keep in sync with dpf-build.yml, dpf-release.yml and dpf-au-test.yml.
 # DPF comes from the dusk-audio/DPF fork (our patches live there); DPF-Widgets
 # stays on upstream DISTRHO (no fork).
-DPF_SHA="d8e5bc69fd7bf355de548e0eafe0f3b7784c68c6"
+DPF_SHA="eb54f2f47db248d7414fe30d60d502827f56f8d2"
 DPFWIDGETS_SHA="668de17f06abdeb98d5a4b62594bd634f8d1ac2e"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)

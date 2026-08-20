@@ -11,7 +11,7 @@ on:
       - 'tape-echo-dpf-v*'
 
 env:
-  DPF_SHA: d8e5bc69fd7bf355de548e0eafe0f3b7784c68c6
+  DPF_SHA: eb54f2f47db248d7414fe30d60d502827f56f8d2
   DPFWIDGETS_SHA: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 
 jobs:

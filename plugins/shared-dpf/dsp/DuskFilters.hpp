@@ -27,6 +27,9 @@ namespace duskaudio
 constexpr float kDuskTwoPi = 6.28318530717958647692f;
 constexpr float kDuskPi    = 3.14159265358979323846f;
 
+inline float decibelsToGain(float db) noexcept { return std::pow(10.0f, db * 0.05f); }
+inline float gainToDecibels(float gain) noexcept { return 20.0f * std::log10(std::max(gain, 1.0e-9f)); }
+
 //==============================================================================
 // Nyquist guard for biquad DESIGN frequencies.
 //
