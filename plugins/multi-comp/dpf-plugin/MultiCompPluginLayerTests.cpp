@@ -31,10 +31,17 @@ using duskaudio::MultiCompDSP;
 
 namespace
 {
+// DPF prepends { DISTRHO_PLUGIN_NUM_INPUTS, DISTRHO_PLUGIN_NUM_OUTPUTS } to
+// this table, so the entries here are the two layouts narrower than the full
+// sidechain one. Dropping { 2, 2 } takes the AU off every stereo track, since
+// the base entry is a 4-in insert no stereo strip offers.
 constexpr uint16_t kAdvertisedExtraIo[][2] = {DISTRHO_PLUGIN_EXTRA_IO};
-static_assert(sizeof(kAdvertisedExtraIo) / sizeof(kAdvertisedExtraIo[0]) == 1
-              && kAdvertisedExtraIo[0][0] == 1 && kAdvertisedExtraIo[0][1] == 1,
-              "Multi-Comp AU extra I/O must be exactly one matched mono layout");
+static_assert(sizeof(kAdvertisedExtraIo) / sizeof(kAdvertisedExtraIo[0]) == 2
+              && kAdvertisedExtraIo[0][0] == 2 && kAdvertisedExtraIo[0][1] == 2
+              && kAdvertisedExtraIo[1][0] == 1 && kAdvertisedExtraIo[1][1] == 1,
+              "Multi-Comp AU extra I/O must advertise matched stereo then mono");
+static_assert(DISTRHO_PLUGIN_NUM_INPUTS == 4 && DISTRHO_PLUGIN_NUM_OUTPUTS == 2,
+              "the sidechain gate keys off an input count of 4; update it with the port count");
 
 void require(bool condition, const char* message)
 {
@@ -470,6 +477,26 @@ void testCrossoverMirrorRefreshesEveryPluginChangedValue()
                 "UI mirror refreshes the plugin's full ordered crossover set");
     reviewCheck(mirroredX2 == 750.0f && mirroredX3 == 7500.0f,
                 "crossover handles and readouts use the refreshed plugin values");
+
+    // Mid-drag: the plugin still reports the pre-edit value for the handle the
+    // user is holding, because only the AU wrapper writes a UI parameter change
+    // through synchronously. That handle must keep the value the mouse just set
+    // while its neighbours still adopt the DSP's ordering.
+    values[x2] = multicompp::plainToHost(multicompp::kParams[x2], 900.0f);
+    const float draggedHost = values[x2];
+    pluginValues = values;
+    pluginValues[x2] = multicompp::plainToHost(multicompp::kParams[x2], 750.0f);
+    pluginValues[x3] = multicompp::plainToHost(multicompp::kParams[x3], 9000.0f);
+    multicompp::ui_detail::refreshCrossoverMirror(values,
+        [&pluginValues](uint32_t index) { return pluginValues[index]; }, x2);
+    const float heldX2 = multicompp::hostToPlain(multicompp::kParams[x2], values[x2]);
+    const float siblingX3 = multicompp::hostToPlain(multicompp::kParams[x3], values[x3]);
+    std::printf("mid-drag mirror: held X2 %.0f Hz (plugin still says 750); sibling X3 %.0f Hz\n",
+                heldX2, siblingX3);
+    reviewCheck(values[x2] == draggedHost,
+                "the crossover under an active drag keeps the value the mouse set");
+    reviewCheck(siblingX3 == 9000.0f,
+                "crossovers not being dragged still follow the plugin's ordering");
 }
 
 std::string readSiblingSource(const char* filename)
@@ -485,22 +512,32 @@ std::string readSiblingSource(const char* filename)
     return contents.str();
 }
 
-void testMonoRunGuardsStereoSidechainPorts()
+// One case per DISTRHO_PLUGIN_EXTRA_IO layout. The { 2, 2 } row is the one the
+// output count could not express: it is stereo, so a channel-count test would
+// have called it sidechain-capable and read two elements past the end of the
+// array the host supplied.
+void testRunGuardsSidechainPortsPerLayout()
 {
     float main = 0.1f, sidechain = 0.8f;
     const float* monoInputs[] = {&main};
-    const float* stereoInputs[] = {&main, &main, &sidechain, &sidechain};
+    const float* stereoInputs[] = {&main, &main};
+    const float* sidechainInputs[] = {&main, &main, &sidechain, &sidechain};
     const bool externalArmed = true;
     const bool monoUsesSidechain = externalArmed
         && multicompp::plugin_detail::hasStereoExternalSidechainPorts(1, monoInputs);
     const bool stereoUsesSidechain = externalArmed
         && multicompp::plugin_detail::hasStereoExternalSidechainPorts(2, stereoInputs);
-    std::printf("external sidechain armed: mono uses aux ports %s; stereo uses aux ports %s\n",
-                monoUsesSidechain ? "yes" : "no", stereoUsesSidechain ? "yes" : "no");
+    const bool fullUsesSidechain = externalArmed
+        && multicompp::plugin_detail::hasStereoExternalSidechainPorts(4, sidechainInputs);
+    std::printf("external sidechain armed: 1-in uses aux ports %s; 2-in %s; 4-in %s\n",
+                monoUsesSidechain ? "yes" : "no", stereoUsesSidechain ? "yes" : "no",
+                fullUsesSidechain ? "yes" : "no");
     reviewCheck(!monoUsesSidechain,
                 "mono run path does not index absent stereo sidechain ports");
-    reviewCheck(stereoUsesSidechain,
-                "stereo run path still accepts its external sidechain ports");
+    reviewCheck(!stereoUsesSidechain,
+                "stereo-insert run path does not index absent sidechain ports");
+    reviewCheck(fullUsesSidechain,
+                "full input layout still accepts its external sidechain ports");
 }
 
 void testQuantisedFineStepFallsBackToRestingPrecision()
@@ -615,7 +652,7 @@ void testFractionalIntegerAutomationStaysLoadable()
 
 int main()
 {
-    testMonoRunGuardsStereoSidechainPorts();
+    testRunGuardsSidechainPortsPerLayout();
     testQuantisedFineStepFallsBackToRestingPrecision();
     testShippingUiHasNoDeadCrossoverDescriptor();
     testCrossoverMirrorRefreshesEveryPluginChangedValue();

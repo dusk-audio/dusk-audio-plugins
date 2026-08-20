@@ -30,14 +30,22 @@ inline int loadProgramIntoMirror(uint32_t index, std::array<float, N>& values)
     return static_cast<int>(index);
 }
 
+// Mirrors the plugin's ordered crossover set, so raising one handle also shows
+// the DSP pushing its neighbours. skipIndex excludes the handle the user is
+// dragging: only the AU wrapper applies a UI parameter write synchronously
+// (CLAP queues it to the next process() call, LV2 to an atom port), so reading
+// that one back mid-gesture returns the pre-edit value and drags the handle
+// backwards under the mouse. Its neighbours have no such pending write.
 template <size_t N, typename ReadParameter>
-inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter readParameter)
+inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter readParameter,
+                                   uint32_t skipIndex = ~uint32_t(0))
 {
     const auto x1 = static_cast<uint32_t>(ParamId::Crossover1);
     const auto x3 = static_cast<uint32_t>(ParamId::Crossover3);
     if (x3 >= N) return;
     for (uint32_t index = x1; index <= x3; ++index)
-        values[index] = readParameter(index);
+        if (index != skipIndex)
+            values[index] = readParameter(index);
 }
 } // namespace multicompp::ui_detail
 
@@ -228,6 +236,8 @@ private:
     ImFont* labelFont = nullptr;
     duskdpf::SupportersOverlay supporters;
     bool showSupporters = false;
+    // Index of the crossover handle under an active drag, or ~0 for none.
+    uint32_t draggedCrossover = ~uint32_t(0);
     int currentPreset = -1;
 
     float value(uint32_t p) const { return values[p]; }
@@ -238,7 +248,8 @@ private:
         void* const instance = getPluginInstancePointer();
         if (instance == nullptr) return;
         multicompp::ui_detail::refreshCrossoverMirror(values,
-            [instance](uint32_t index) { return multiCompGetParameterValue(instance, index); });
+            [instance](uint32_t index) { return multiCompGetParameterValue(instance, index); },
+            draggedCrossover);
     }
 
     void setValue(uint32_t p, float v)
@@ -596,7 +607,7 @@ private:
         char handleId[48];
         std::snprintf(handleId, sizeof(handleId), "##mc_%s", label);
         ImGui::InvisibleButton(handleId, ImVec2(24 * panel.scale(), 54 * panel.scale()));
-        if (ImGui::IsItemActivated()) editParameter(p, true);
+        if (ImGui::IsItemActivated()) { editParameter(p, true); draggedCrossover = p; }
         if (ImGui::IsItemActive())
         {
             const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
@@ -604,7 +615,13 @@ private:
                 (mouseX - trackStart) / (trackEnd - trackStart), 0.0f, 1.0f);
             setParam(p, normalized);
         }
-        if (ImGui::IsItemDeactivated()) editParameter(p, false);
+        if (ImGui::IsItemDeactivated())
+        {
+            editParameter(p, false);
+            // Released: the pending write has had the gesture to land, and the
+            // next refresh adopts whatever ordering the DSP settled on.
+            draggedCrossover = ~uint32_t(0);
+        }
     }
 
     float meter(uint32_t p) const

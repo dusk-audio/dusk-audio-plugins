@@ -6,10 +6,14 @@
 
 namespace multicompp::plugin_detail
 {
-inline bool hasStereoExternalSidechainPorts(int activeChannels,
+// The aux ports exist only on the full DISTRHO_PLUGIN_NUM_INPUTS layout. The
+// output count cannot stand in for that: the AU { 2, 2 } layout is stereo out
+// with a two-channel input element, so a test against the channel count would
+// index inputs[2]/inputs[3] past the end of a two-element array.
+inline bool hasStereoExternalSidechainPorts(int activeInputs,
                                             const float* const* inputs) noexcept
 {
-    return activeChannels > 1 && inputs != nullptr
+    return activeInputs >= 4 && inputs != nullptr
         && inputs[2] != nullptr && inputs[3] != nullptr;
 }
 } // namespace multicompp::plugin_detail
@@ -224,15 +228,19 @@ protected:
 
     void ioChanged(uint16_t in, uint16_t out) override
     {
-        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
-        // DPF calls this while deactivated, so run() observes a stable count.
+        // DISTRHO_PLUGIN_EXTRA_IO permits { 4, 2 }, { 2, 2 } and { 1, 1 }. The
+        // input count is kept separately from the processing width because the
+        // two disagree on { 4, 2 }, where the extra pair is the sidechain and
+        // not audio to compress. DPF calls this while deactivated, so run()
+        // observes a stable pair.
+        activeInputs = static_cast<int>(in);
         activeChannels = (in == 1 && out == 1) ? 1 : 2;
     }
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
-            && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeChannels, inputs);
+            && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
@@ -261,6 +269,10 @@ private:
     void updateLatency() { const int l = dsp.getLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }
 
     duskaudio::MultiCompDSP dsp;
+    // Formats other than AU always present the full input set, and ioChanged()
+    // is only called where a host narrows it, so the declared count is the
+    // correct default rather than a placeholder.
+    int activeInputs = DISTRHO_PLUGIN_NUM_INPUTS;
     int activeChannels = DISTRHO_PLUGIN_NUM_OUTPUTS;
     std::array<std::atomic<float>, multicompp::kMeterMaster> values{};
     int lastLatency = -1;
