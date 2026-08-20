@@ -310,6 +310,30 @@ void testFactoryPresetOwnership()
     std::puts("factory preset ownership: every active-mode control applied; machine/global controls untouched");
 }
 
+void testHostProgramChangeAppliesBandParameters()
+{
+    auto multibandProgram = multicompp::kFactoryPresets.front();
+    multibandProgram.mode = 7;
+    std::array<float, multicompp::kMeterMaster> hostValues{};
+    hostValues.fill(-123.0f);
+
+    multicompp::applyPresetToHostParameters(multibandProgram,
+        [&](int parameterIndex, float hostValue) {
+            hostValues[static_cast<size_t>(parameterIndex)] = hostValue;
+        });
+
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+        for (int field = 0; field < 8; ++field)
+        {
+            const int parameterIndex = multicompp::kBandBase + band * 8 + field;
+            const auto descriptor = multicompp::bandParam(field, band);
+            require(hostValues[static_cast<size_t>(parameterIndex)]
+                        == multicompp::plainToHost(descriptor, descriptor.def),
+                    "host program change applies every Multiband parameter in host space");
+        }
+    std::puts("host program change: every Multiband parameter applied in host space");
+}
+
 static_assert(multicompp::kParamCount == 63,
               "DPF host table must exclude the two JUCE-inert controls");
 } // namespace
@@ -319,6 +343,7 @@ int main()
     testHostParameterTapers();
     testStrictStateValidationAndRoundTrip();
     testFactoryPresetOwnership();
+    testHostProgramChangeAppliesBandParameters();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }

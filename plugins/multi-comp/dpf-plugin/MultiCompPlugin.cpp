@@ -147,15 +147,10 @@ protected:
     {
         if (index >= multicompp::kFactoryPresets.size()) return;
         const auto& q = multicompp::kFactoryPresets[index];
-        multicompp::forEachPresetParam(q,
-        [this](multicompp::CoreParameter parameter, float value)
+        multicompp::applyPresetToHostParameters(q,
+        [this](int parameterIndex, float hostValue)
         {
-            const int parameterIndex = multicompp::coreParamIndex(parameter);
-            if (parameterIndex >= 0)
-            {
-                const auto& d = multicompp::kParams[static_cast<size_t>(parameterIndex)];
-                setParameterValue(static_cast<uint32_t>(parameterIndex), multicompp::plainToHost(d, value));
-            }
+            setParameterValue(static_cast<uint32_t>(parameterIndex), hostValue);
         });
     }
 

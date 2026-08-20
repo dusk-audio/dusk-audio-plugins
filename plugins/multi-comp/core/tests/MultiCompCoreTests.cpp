@@ -1150,6 +1150,11 @@ void testSidechainListenSwitchIsSmoothed()
     const float* ip[] = {input.data()}; const float* sc[] = {sidechain.data()}; float* op[] = {output.data()};
     for (int block = 0; block < 16; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
     float previous = output.back();
+    struct TransitionResult
+    {
+        float largestStep;
+        float endpoint;
+    };
     auto measureTransition = [&](float target) {
         float largestStep = 0.0f;
         dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, target);
@@ -1161,14 +1166,23 @@ void testSidechainListenSwitchIsSmoothed()
                 largestStep = std::max(largestStep, std::abs(output[static_cast<size_t>(i)] - output[static_cast<size_t>(i - 1)]));
             previous = output.back();
         }
-        return largestStep;
+        return TransitionResult{largestStep, output.back()};
     };
-    const float listenOnStep = measureTransition(1.0f);
-    const float listenOffStep = measureTransition(0.0f);
-    std::printf("Listen switch maximum adjacent-sample step: on %.6f; off %.6f\n",
-                listenOnStep, listenOffStep);
-    require(listenOnStep < 0.01f, "sidechain Listen on uses a short monitor ramp");
-    require(listenOffStep < 0.01f, "sidechain Listen off uses a short monitor ramp");
+    const TransitionResult listenOn = measureTransition(1.0f);
+    const TransitionResult listenOff = measureTransition(0.0f);
+    // The sidechain monitor includes its configured filtering, so allow the
+    // small steady-state offset from the raw 0.8 test signal.
+    constexpr float endpointTolerance = 2.0e-4f;
+    std::printf("Listen switch maximum adjacent-sample step: on %.6f; off %.6f; "
+                "endpoints on %.6f off %.6f (tolerance %.1e)\n",
+                listenOn.largestStep, listenOff.largestStep,
+                listenOn.endpoint, listenOff.endpoint, endpointTolerance);
+    require(listenOn.largestStep < 0.01f, "sidechain Listen on uses a short monitor ramp");
+    require(listenOff.largestStep < 0.01f, "sidechain Listen off uses a short monitor ramp");
+    require(std::abs(listenOn.endpoint - sidechain.back()) <= endpointTolerance,
+            "sidechain Listen on reaches the listened signal");
+    require(std::abs(listenOff.endpoint - input.back()) <= endpointTolerance,
+            "sidechain Listen off reaches the non-listened signal");
 }
 
 void testSettledBypassClearsGainReductionMeters()

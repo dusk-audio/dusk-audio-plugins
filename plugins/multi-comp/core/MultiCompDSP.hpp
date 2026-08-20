@@ -111,7 +111,7 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
-    std::vector<float> dry, bypassDry, mixCurve, bypassCurve, sidechainListenCurve, autoGainCurve;
+    std::vector<float> dry, bypassDry, mixCurve, bypassCurve, autoGainCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;

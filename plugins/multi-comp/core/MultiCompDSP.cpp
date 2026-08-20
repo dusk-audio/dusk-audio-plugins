@@ -39,7 +39,6 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     bypassDry.assign(static_cast<size_t>(maxBlock * kMaxChannels), 0.0f);
     mixCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     bypassCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
-    sidechainListenCurve.assign(static_cast<size_t>(maxBlock), 0.0f);
     autoGainCurve.assign(static_cast<size_t>(maxBlock), 1.0f);
     for (auto& line : delayedInput) line.assign(static_cast<size_t>(maxBlock), 0.0f);
     const size_t lookaheadSize = static_cast<size_t>(std::ceil(sampleRate * 0.01)) + 1u;
@@ -109,7 +108,6 @@ void MultiCompDSP::reset()
     digitalMixRamp.snap(params.digitalMix.load(std::memory_order_relaxed) * 0.01f);
     bypassRamp.snap(params.bypass.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
     sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
-    std::fill(sidechainListenCurve.begin(), sidechainListenCurve.end(), sidechainListenRamp.value());
     bypassSettled = params.bypass.load(std::memory_order_relaxed);
     lastBypass = bypassSettled;
     lastExternalSidechain = false;
@@ -413,14 +411,14 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
             }
     }
     for (int i = 0; i < nSamples; ++i)
-        sidechainListenCurve[static_cast<size_t>(i)] = sidechainListenRamp.next();
-    for (int ch = 0; ch < nCh; ++ch)
-        for (int i = 0; i < nSamples; ++i)
+    {
+        const float listen = sidechainListenRamp.next();
+        for (int ch = 0; ch < nCh; ++ch)
         {
-            const float listen = sidechainListenCurve[static_cast<size_t>(i)];
             out[ch][i] = out[ch][i] * (1.0f - listen)
                        + filteredSidechain[ch][i] * listen;
         }
+    }
     if (requestedSidechainListen)
     {
         masterGR.store(0.0f, std::memory_order_relaxed);

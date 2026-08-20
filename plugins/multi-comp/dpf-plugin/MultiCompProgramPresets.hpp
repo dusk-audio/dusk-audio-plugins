@@ -101,10 +101,26 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
     }
 }
 
-template <class SetParameter>
-void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
-                        SetParameter&& setParameter)
+// Host-program adapter used by Plugin::loadProgram. Values passed to the
+// setter are host-domain values at their real DPF parameter indices.
+template <class SetHostParameter>
+void applyPresetToHostParameters(const duskaudio::MultiCompPreset& preset,
+                                 SetHostParameter&& setHostParameter)
 {
-    forEachPresetParam(preset, setParameter, [](int, int, float) {});
+    forEachPresetParam(preset,
+        [&](CoreParameter parameter, float value)
+        {
+            const int parameterIndex = coreParamIndex(parameter);
+            if (parameterIndex >= 0)
+            {
+                const auto& d = kParams[static_cast<size_t>(parameterIndex)];
+                setHostParameter(parameterIndex, plainToHost(d, value));
+            }
+        },
+        [&](int band, int field, float value)
+        {
+            const auto d = bandParam(field, band);
+            setHostParameter(kBandBase + band * 8 + field, plainToHost(d, value));
+        });
 }
 } // namespace multicompp
