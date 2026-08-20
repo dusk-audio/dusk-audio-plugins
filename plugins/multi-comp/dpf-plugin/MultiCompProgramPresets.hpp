@@ -12,29 +12,19 @@ inline int coreParamIndex(CoreParameter parameter) noexcept
     return -1;
 }
 
-// Shared factory-program walker.  The DPF host program path and the ImGui
-// selector both use this identity-based application, including the complete
-// default reset and all multiband fields.
-template <class SetParameter, class SetBandParameter>
+// Shared factory-program walker. A recall owns only the JUCE preset's common
+// controls and the controls for its selected compressor mode. Machine/global
+// choices (including Bypass, oversampling, external sidechain and lookahead)
+// and all multiband fields remain untouched.
+template <class SetParameter>
 void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
-                        SetParameter&& setParameter,
-                        SetBandParameter&& setBandParameter)
+                        SetParameter&& setParameter)
 {
-    for (const auto& parameter : kParams)
-        setParameter(parameter.core, parameter.def);
-    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
-        for (int field = 0; field < 8; ++field)
-        {
-            const auto parameter = bandParam(field, band);
-            setBandParameter(band, field, parameter.def);
-        }
-
     using P = CoreParameter;
     setParameter(P::Mode, static_cast<float>(preset.mode));
     setParameter(P::Mix, preset.mix);
     setParameter(P::SidechainHP, preset.sidechainHP);
     setParameter(P::AutoMakeup, preset.autoMakeup ? 1.0f : 0.0f);
-    setParameter(P::SaturationMode, static_cast<float>(preset.saturationMode));
 
     switch (preset.mode)
     {

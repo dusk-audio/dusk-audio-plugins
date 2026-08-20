@@ -13,11 +13,9 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <string_view>
 
 START_NAMESPACE_DISTRHO
 
@@ -30,15 +28,12 @@ constexpr float kGlobalH = 132.0f;
 constexpr float kSidechainH = 126.0f;
 constexpr float kPanelTop = kHeaderH + kGlobalH + kSidechainH;
 
-constexpr ImU32 kBg = IM_COL32(27, 28, 32, 255);
 constexpr ImU32 kPanel = IM_COL32(35, 37, 43, 255);
 constexpr ImU32 kPanelRaised = IM_COL32(43, 46, 54, 255);
 constexpr ImU32 kLine = IM_COL32(75, 79, 90, 255);
 constexpr ImU32 kText = IM_COL32(232, 234, 238, 255);
 constexpr ImU32 kDim = IM_COL32(162, 168, 180, 255);
 constexpr ImU32 kAccent = IM_COL32(65, 194, 220, 255);
-constexpr ImU32 kGreen = IM_COL32(56, 145, 88, 255);
-constexpr ImU32 kRed = IM_COL32(164, 65, 60, 255);
 constexpr ImU32 kBandColors[4] = {
     IM_COL32(92, 165, 235, 255), IM_COL32(92, 205, 150, 255),
     IM_COL32(232, 185, 74, 255), IM_COL32(224, 100, 93, 255)
@@ -62,8 +57,8 @@ constexpr uint32_t P_SVCA_RELEASE = MC_PID(StudioVcaRelease), P_SVCA_OUT = MC_PI
 constexpr uint32_t P_DIG_THRESHOLD = MC_PID(DigitalThreshold), P_DIG_RATIO = MC_PID(DigitalRatio), P_DIG_KNEE = MC_PID(DigitalKnee), P_DIG_ATTACK = MC_PID(DigitalAttack);
 constexpr uint32_t P_DIG_RELEASE = MC_PID(DigitalRelease), P_DIG_LOOK = MC_PID(DigitalLookahead), P_DIG_MIX = MC_PID(DigitalMix), P_DIG_OUT = MC_PID(DigitalOutput);
 constexpr uint32_t P_DIG_ADAPT = MC_PID(DigitalAdaptive), P_X1 = MC_PID(Crossover1), P_X2 = MC_PID(Crossover2), P_X3 = MC_PID(Crossover3);
-constexpr uint32_t P_ENV = MC_PID(EnvelopeCurve), P_SC_LISTEN = MC_PID(GlobalSidechainListen), P_MB_MIX = MC_PID(MbMix), P_MB_OUT = MC_PID(MbOutput);
-constexpr uint32_t P_NOISE = MC_PID(NoiseEnable), P_SAT_MODE = MC_PID(SaturationMode), P_SC_LOW_FREQ = MC_PID(ScLowFreq), P_SC_LOW_GAIN = MC_PID(ScLowGain);
+constexpr uint32_t P_SC_LISTEN = MC_PID(GlobalSidechainListen), P_MB_MIX = MC_PID(MbMix), P_MB_OUT = MC_PID(MbOutput);
+constexpr uint32_t P_NOISE = MC_PID(NoiseEnable), P_SC_LOW_FREQ = MC_PID(ScLowFreq), P_SC_LOW_GAIN = MC_PID(ScLowGain);
 constexpr uint32_t P_SC_HIGH_FREQ = MC_PID(ScHighFreq), P_SC_HIGH_GAIN = MC_PID(ScHighGain), P_LINK_MODE = MC_PID(StereoLinkMode);
 #undef MC_PID
 
@@ -91,13 +86,14 @@ public:
         for (uint32_t i = 0; i < multicompp::kTotalParamCount; ++i)
         {
             if (i < static_cast<uint32_t>(multicompp::kParamCount))
-                values[i] = multicompp::kParams[i].def;
+                values[i] = multicompp::hostDefault(multicompp::kParams[i]);
             else
                 values[i] = 0.0f;
         }
         for (int b = 0; b < duskaudio::kMultiCompBands; ++b)
             for (int f = 0; f < 8; ++f)
-                values[multicompp::kBandBase + b * 8 + f] = multicompp::bandParam(f, b).def;
+                values[multicompp::kBandBase + b * 8 + f] =
+                    multicompp::hostDefault(multicompp::bandParam(f, b));
 
         // DPF reports the actual window size.  The UI draws a fixed design space
         // with one uniform scale and letterboxes any extra width or height.
@@ -110,7 +106,14 @@ public:
 
     void beginEdit(uint32_t idx) override { editParameter(idx, true); }
     void endEdit(uint32_t idx) override { editParameter(idx, false); }
-    void setParam(uint32_t idx, float value) override { currentPreset = -1; setParameterValue(idx, value); }
+    void setParam(uint32_t idx, float value) override
+    {
+        if (idx >= static_cast<uint32_t>(multicompp::kMeterMaster)) return;
+        currentPreset = -1;
+        const float hostValue = hostValueForPlain(idx, value);
+        values[idx] = hostValue;
+        setParameterValue(idx, hostValue);
+    }
 
 protected:
     void parameterChanged(uint32_t index, float value) override
@@ -121,53 +124,11 @@ protected:
     void stateChanged(const char* key, const char* state) override
     {
         if (key == nullptr || state == nullptr || std::strcmp(key, "parameters") != 0) return;
-        const std::string_view serialized(state);
-        // Same gate as the shell: a state we cannot decode is refused whole
-        // rather than applied piecemeal over the current settings.
-        if (! multicompp::stateVersionSupported(serialized)) return;
+        multicompp::StateValues decoded{};
+        if (!multicompp::decodeState(state, decoded)) return;
+        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+            values[static_cast<size_t>(i)] = decoded[static_cast<size_t>(i)];
         currentPreset = -1;
-        size_t begin = 0;
-        while (begin < serialized.size())
-        {
-            const size_t end = serialized.find(';', begin);
-            const std::string_view token = serialized.substr(begin,
-                end == std::string_view::npos ? serialized.size() - begin : end - begin);
-            const size_t equal = token.find('=');
-            if (equal != std::string_view::npos && token.substr(0, equal) != "v")
-            {
-                float decoded = 0.0f;
-                if (multicompp::decodeStateFloat(token.substr(equal + 1), decoded))
-                {
-                    // Clamp to the descriptor range, as setParameterValue does
-                    // on the DSP side. The cache drives both the drawing and
-                    // the value a knob edit starts from, so an out-of-range
-                    // entry in a hand-edited or corrupt state would otherwise
-                    // be displayed and then handed back to the host.
-                    const std::string_view id = token.substr(0, equal);
-                    for (int i = 0; i < multicompp::kParamCount; ++i)
-                        if (id == multicompp::kParams[static_cast<size_t>(i)].id)
-                        {
-                            const auto& d = multicompp::kParams[static_cast<size_t>(i)];
-                            values[static_cast<size_t>(i)] = std::clamp(decoded, d.min, d.max);
-                        }
-                    for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
-                    {
-                        const int band = (i - multicompp::kBandBase) / 8;
-                        const int field = (i - multicompp::kBandBase) % 8;
-                        const auto d = multicompp::bandParam(field, band);
-                        char bandId[64];
-                        std::snprintf(bandId, sizeof(bandId), "%s_%d", d.id, band);
-                        if (id == bandId)
-                        {
-                            values[static_cast<size_t>(i)] = std::clamp(decoded, d.min, d.max);
-                            break;
-                        }
-                    }
-                }
-            }
-            if (end == std::string_view::npos) break;
-            begin = end + 1;
-        }
         repaint();
     }
 
@@ -231,8 +192,9 @@ private:
     {
         currentPreset = -1;
         editParameter(p, true);
-        values[p] = v;
-        setParameterValue(p, v);
+        const float hostValue = hostValueForPlain(p, v);
+        values[p] = hostValue;
+        setParameterValue(p, hostValue);
         editParameter(p, false);
     }
 
@@ -340,7 +302,6 @@ private:
         panel.toggle("mc_auto", P_AUTO, 568, 111, 680, 136, values[P_AUTO], "AUTO MAKEUP");
         panel.toggle("mc_tp", P_TRUE_PEAK, 688, 111, 790, 136, values[P_TRUE_PEAK], "TRUE PEAK");
         combo("mc_tpq", P_TP_QUALITY, multicompp::kTruePeakQuality, 2, 845, 103, 110, "QUALITY");
-        combo("mc_sat", P_SAT_MODE, multicompp::kSaturationMode, 3, 970, 103, 125, "SATURATION");
         knob(dl, "mc_dist", P_DIST_AMT, 1080, 125, 0, 100, "DRIVE", "%.0f", "%");
     }
 
@@ -354,7 +315,6 @@ private:
         knob(dl, "mc_sclg", P_SC_LOW_GAIN, 410, 251, -12, 12, "LOW GAIN", "%.1f", " dB");
         knob(dl, "mc_schf", P_SC_HIGH_FREQ, 520, 251, 2000, 16000, "HIGH FREQ", "%.0f", " Hz");
         knob(dl, "mc_schg", P_SC_HIGH_GAIN, 630, 251, -12, 12, "HIGH GAIN", "%.1f", " dB");
-        combo("mc_env", P_ENV, multicompp::kEnvelopeCurve, 2, 770, 230, 170, "ENVELOPE CURVE");
         combo("mc_disttype", P_DIST, multicompp::kDistortion, 4, 954, 230, 130, "DISTORTION");
         neutralToggle("##mc_noise", P_NOISE, 1000, 270, 1095, 295, "NOISE");
     }
@@ -387,7 +347,11 @@ private:
     void knob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
               float min, float max, const char* label, const char* fmt, const char* suffix)
     {
-        panel.knob(id, p, min, max, x, y, 25, values[p], defaultValue(p), false, true,
+        const float physicalMin = plainMin(p), physicalMax = plainMax(p);
+        (void)min; (void)max;
+        float physicalValue = plainValue(p);
+        panel.knob(id, p, physicalMin, physicalMax, x, y, 25, physicalValue,
+                   defaultValue(p), false, true,
                    fmt, suffix, kPanelRaised, false, true);
         panel.text(dl, x, y + 49, 9.5f, kText, label, 0, true);
     }
@@ -397,6 +361,36 @@ private:
         if (p < static_cast<uint32_t>(multicompp::kParamCount)) return multicompp::kParams[p].def;
         const int rel = static_cast<int>(p) - multicompp::kBandBase;
         return multicompp::bandParam(rel % 8, rel / 8).def;
+    }
+
+    float plainMin(uint32_t p) const
+    {
+        if (p < static_cast<uint32_t>(multicompp::kParamCount)) return multicompp::kParams[p].min;
+        const int rel = static_cast<int>(p) - multicompp::kBandBase;
+        return multicompp::bandParam(rel % 8, rel / 8).min;
+    }
+
+    float plainMax(uint32_t p) const
+    {
+        if (p < static_cast<uint32_t>(multicompp::kParamCount)) return multicompp::kParams[p].max;
+        const int rel = static_cast<int>(p) - multicompp::kBandBase;
+        return multicompp::bandParam(rel % 8, rel / 8).max;
+    }
+
+    float plainValue(uint32_t p) const
+    {
+        if (p < static_cast<uint32_t>(multicompp::kParamCount))
+            return multicompp::hostToPlain(multicompp::kParams[p], values[p]);
+        const int rel = static_cast<int>(p) - multicompp::kBandBase;
+        return multicompp::hostToPlain(multicompp::bandParam(rel % 8, rel / 8), values[p]);
+    }
+
+    float hostValueForPlain(uint32_t p, float plain) const
+    {
+        if (p < static_cast<uint32_t>(multicompp::kParamCount))
+            return multicompp::plainToHost(multicompp::kParams[p], plain);
+        const int rel = static_cast<int>(p) - multicompp::kBandBase;
+        return multicompp::plainToHost(multicompp::bandParam(rel % 8, rel / 8), plain);
     }
 
     void drawModePanel(ImDrawList* dl)
@@ -525,19 +519,19 @@ private:
         knob(dl, "mb_out", P_MB_OUT, 1005, 395, -24, 24, "MB OUTPUT", "%.1f", " dB");
     }
 
-    static constexpr const char* busAttackLabels[6] = {"0.1 ms", "0.3 ms", "1 ms", "3 ms", "10 ms", "30 ms"};
-    static constexpr const char* busReleaseLabels[5] = {"0.1 s", "0.3 s", "0.6 s", "1.2 s", "Auto"};
-
     void crossover(ImDrawList* dl, uint32_t p, float x, float min, float max, const char* label)
     {
+        (void)min; (void)max;
         const float trackStart = x - 100.0f;
         const float trackEnd = x + 100.0f;
-        const float t = std::clamp((value(p) - min) / (max - min), 0.0f, 1.0f);
+        const auto& d = multicompp::kParams[p];
+        const float physicalValue = multicompp::hostToPlain(d, values[p]);
+        const float t = std::clamp(values[p], 0.0f, 1.0f);
         const float handleX = trackStart + t * (trackEnd - trackStart);
         dl->AddLine(panel.P(trackStart, 392), panel.P(trackEnd, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());
         dl->AddLine(panel.P(handleX, 376), panel.P(handleX, 408), kAccent, 3 * panel.scale());
         panel.text(dl, handleX, 414, 9, kText, label, 0, true);
-        char text[32]; std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(value(p)));
+        char text[32]; std::snprintf(text, sizeof(text), "%.0f Hz", static_cast<double>(physicalValue));
         panel.text(dl, handleX, 428, 9, kDim, text, 0);
         ImGui::SetCursorScreenPos(panel.P(handleX - 12, 365));
         char handleId[48];
@@ -547,10 +541,9 @@ private:
         if (ImGui::IsItemActive())
         {
             const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
-            const float next = std::clamp(min + (mouseX - trackStart) / (trackEnd - trackStart) * (max - min), min, max);
-            currentPreset = -1;
-            values[p] = next;
-            setParameterValue(p, next);
+            const float normalized = std::clamp(
+                (mouseX - trackStart) / (trackEnd - trackStart), 0.0f, 1.0f);
+            setParam(p, multicompp::hostToPlain(d, normalized));
         }
         if (ImGui::IsItemDeactivated()) editParameter(p, false);
     }
@@ -597,10 +590,6 @@ private:
             {
                 const int index = multicompp::coreParamIndex(parameter);
                 if (index >= 0) setValue(static_cast<uint32_t>(index), value);
-            },
-            [this](int band, int field, float value)
-            {
-                setValue(static_cast<uint32_t>(multicompp::kBandBase + band * 8 + field), value);
             });
         currentPreset = index;
     }

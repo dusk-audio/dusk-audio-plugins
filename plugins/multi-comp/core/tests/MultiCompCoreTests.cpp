@@ -1,10 +1,15 @@
 #include "../MultiCompDSP.hpp"
 #include "../../../shared-dpf/dsp/DuskCrossover.hpp"
+#include "../../dpf-plugin/MultiCompParams.hpp"
+#include "../../dpf-plugin/MultiCompProgramPresets.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <vector>
 
 using duskaudio::DuskCrossover;
@@ -110,6 +115,8 @@ void testStaticCurves()
         const float medium = renderSine(mode, 0.25f);
         const float hot = renderSine(mode, 0.8f);
         require(std::isfinite(quiet) && std::isfinite(medium) && std::isfinite(hot), "static curve finite");
+        require(quiet > 1.0e-5f && medium > 1.0e-5f && hot > 1.0e-5f,
+                "static curve stimuli produce output");
         require(quiet <= medium * 1.05f && medium <= hot * 1.05f, "static curve monotonic");
     }
     const float inputDb = duskaudio::gainToDecibels(0.5f / std::sqrt(2.0f));
@@ -119,12 +126,65 @@ void testStaticCurves()
     std::puts("static curves: all eight modes finite and monotonic");
 }
 
+void configureStrongCompression(MultiCompDSP& dsp, int mode)
+{
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    switch (static_cast<duskaudio::MultiCompMode>(mode))
+    {
+        case duskaudio::MultiCompMode::Opto:
+            dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 100.0f);
+            break;
+        case duskaudio::MultiCompMode::FET:
+        case duskaudio::MultiCompMode::StudioFET:
+            dsp.setParameter(MultiCompDSP::Parameter::FetInput, 10.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::FetThreshold, -30.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::FetAttack, 0.1f);
+            dsp.setParameter(MultiCompDSP::Parameter::FetRelease, 50.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::FetRatio, 3.0f);
+            break;
+        case duskaudio::MultiCompMode::VCA:
+            dsp.setParameter(MultiCompDSP::Parameter::VcaThreshold, -30.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 10.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::VcaAttack, 0.1f);
+            dsp.setParameter(MultiCompDSP::Parameter::VcaRelease, 50.0f);
+            break;
+        case duskaudio::MultiCompMode::Bus:
+            dsp.setParameter(MultiCompDSP::Parameter::BusThreshold, -30.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::BusRatio, 2.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::BusAttack, 0.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::BusRelease, 0.0f);
+            break;
+        case duskaudio::MultiCompMode::StudioVCA:
+            dsp.setParameter(MultiCompDSP::Parameter::StudioVcaThreshold, -30.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRatio, 10.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::StudioVcaAttack, 0.3f);
+            dsp.setParameter(MultiCompDSP::Parameter::StudioVcaRelease, 100.0f);
+            break;
+        case duskaudio::MultiCompMode::Digital:
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -30.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 10.0f);
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.1f);
+            dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 50.0f);
+            break;
+        case duskaudio::MultiCompMode::Multiband:
+            for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+            {
+                dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, -30.0f);
+                dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 10.0f);
+                dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Attack, 0.1f);
+                dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Release, 50.0f);
+            }
+            break;
+    }
+}
+
 void testEnvelopeAndReset()
 {
     for (int mode = 0; mode < 8; ++mode)
     {
         MultiCompDSP dsp;
         dsp.prepare(48000.0, 256); dsp.setOversampling(0); dsp.setMode(mode);
+        configureStrongCompression(dsp, mode);
         constexpr int kStepBlocks = 64;
         std::vector<float> reference(static_cast<size_t>(kStepBlocks * 256)), second(static_cast<size_t>(kStepBlocks * 256)), in(256), out(256);
         float attackReduction = 0.0f, firstReleaseReduction = 0.0f, settledReleaseReduction = 0.0f;
@@ -134,14 +194,19 @@ void testEnvelopeAndReset()
             const float* ip[] = {in.data()}; float* op[] = {out.data()};
             dsp.processBlock(ip, op, 1, 256);
             std::copy(out.begin(), out.end(), reference.begin() + block * 256);
-            if (block == kStepBlocks / 2 - 1) attackReduction = dsp.getGainReduction();
+            if (block < kStepBlocks / 2)
+                attackReduction = std::min(attackReduction, dsp.getGainReduction());
             if (block == kStepBlocks / 2) firstReleaseReduction = dsp.getGainReduction();
             if (block == kStepBlocks - 1) settledReleaseReduction = dsp.getGainReduction();
         }
         for (float x : reference) require(std::isfinite(x), "envelope step finite");
+        require(rms(reference) > 1.0e-5f, "envelope/reset reference produces output");
         require(std::isfinite(attackReduction) && std::isfinite(firstReleaseReduction)
                     && std::isfinite(settledReleaseReduction), "envelope meter finite");
-        require(settledReleaseReduction >= attackReduction - 0.5f,
+        std::printf("envelope release: mode=%d attack=%.4f first=%.4f settled=%.4f\n",
+                    mode, attackReduction, firstReleaseReduction, settledReleaseReduction);
+        require(attackReduction < -0.5f, "envelope stimulus establishes gain reduction");
+        require(settledReleaseReduction > firstReleaseReduction + 0.05f,
                 "release returns toward unity at the configured time scale");
         dsp.reset();
         for (int block = 0; block < kStepBlocks; ++block)
@@ -174,8 +239,11 @@ void testMixBypassAndBlockEdges()
     bypassCheck.prepare(48000.0, 256);
     bypassCheck.setOversampling(0);
     bypassCheck.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
-    bypassCheck.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
-    bypassCheck.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    // Real compression, not 1:1. With a unity ratio the active and bypassed
+    // outputs are identical, so no assertion below can tell whether the
+    // un-bypass actually happened.
+    bypassCheck.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -30.0f);
+    bypassCheck.setParameter(MultiCompDSP::Parameter::DigitalRatio, 8.0f);
     std::vector<float> bypassInput(256), bypassOutput(256);
     const float* bypassIp[] = {bypassInput.data()}; float* bypassOp[] = {bypassOutput.data()};
     for (int block = 0; block < 10; ++block)
@@ -206,15 +274,42 @@ void testMixBypassAndBlockEdges()
                 }
             }
     }
-    dsp.setBypass(false); dsp.processBlock(ip, op, 1, 256);
+    // Un-bypass the object that was actually bypassed. This previously cleared
+    // bypass on `dsp`, which had never been bypassed, so the un-bypass path was
+    // never exercised and the assertions below could not fail.
+    bypassCheck.setBypass(false);
     float reentryDelta = 0.0f;
-    for (int i = 0; i < 256; ++i)
+    float reentryMaxAbs = 0.0f;
+    for (int block = 0; block < 4; ++block)
     {
-        require(std::isfinite(out[static_cast<size_t>(i)]), "bypass re-entry finite");
-        if (i > 0) reentryDelta = std::max(reentryDelta, std::abs(out[static_cast<size_t>(i)] - out[static_cast<size_t>(i - 1)]));
+        for (int i = 0; i < 256; ++i)
+            bypassInput[static_cast<size_t>(i)] = 0.1f + 0.0001f * static_cast<float>(20 * 256 + block * 256 + i);
+        bypassCheck.processBlock(bypassIp, bypassOp, 1, 256);
+        for (int i = 0; i < 256; ++i)
+        {
+            const float sample = bypassOutput[static_cast<size_t>(i)];
+            require(std::isfinite(sample), "bypass re-entry finite");
+            reentryMaxAbs = std::max(reentryMaxAbs, std::abs(sample));
+            if (i > 0)
+                reentryDelta = std::max(reentryDelta,
+                                        std::abs(sample - bypassOutput[static_cast<size_t>(i - 1)]));
+        }
     }
     require(reentryDelta < 1.0f, "bypass toggle bounded sample delta");
-    dsp.processBlock(ip, op, 1, 0);
+    // The decisive assertion: with a real ratio the un-bypassed output must be
+    // audibly BELOW the dry input it would pass while bypassed. Finiteness and
+    // bounded deltas hold in both states, so only this one can distinguish them
+    // and therefore only this one can fail if the un-bypass path breaks.
+    const float dryPeakAtReentry = 0.1f + 0.0001f * static_cast<float>(20 * 256 + 4 * 256 - 1);
+    require(reentryMaxAbs < dryPeakAtReentry * 0.9f, "bypass re-entry resumes compression");
+    // Guard the vacuous case: an all-zero buffer would satisfy the bound above.
+    require(reentryMaxAbs > 1.0e-4f, "bypass re-entry produced signal");
+    std::array<float, 8> zeroFrameOutput{{101.25f, -202.5f, 303.75f, -404.0f,
+                                          505.5f, -606.25f, 707.0f, -808.75f}};
+    const auto zeroFrameSentinel = zeroFrameOutput;
+    float* zeroFrameOp[] = {zeroFrameOutput.data()};
+    dsp.processBlock(ip, zeroFrameOp, 1, 0);
+    require(zeroFrameOutput == zeroFrameSentinel, "zero-frame process leaves output untouched");
     dsp.processBlock(ip, op, 1, 1);
     (void)previous;
     std::puts("mix ramp, bypass, zero-sample and single-sample blocks OK");
@@ -345,14 +440,25 @@ void testLatencyMixBypassAndDigitalStereo()
         std::printf("latency/mix: os=%d reported=%d mix_delta=%.5f dB\n", oversampling, latency, mixDelta);
     }
 
-    MultiCompDSP maximumLatency;
-    maximumLatency.prepare(48000.0, 512);
-    maximumLatency.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
-    maximumLatency.setOversampling(2);
-    maximumLatency.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 10.0f);
-    maximumLatency.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 10.0f);
-    require(maximumLatency.getLatencySamples() == 987, "maximum Digital lookaheads report their rendered delay");
-    std::printf("latency maximum: os=2 global=10ms digital=10ms reported=%d\n", maximumLatency.getLatencySamples());
+    MultiCompDSP latencyMatrix;
+    latencyMatrix.prepare(48000.0, 512);
+    latencyMatrix.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    for (int oversampling : {0, 1, 2})
+        for (float globalLookahead : {0.0f, 10.0f})
+            for (float digitalLookahead : {0.0f, 10.0f})
+            {
+                latencyMatrix.setOversampling(oversampling);
+                latencyMatrix.setParameter(MultiCompDSP::Parameter::GlobalLookahead, globalLookahead);
+                latencyMatrix.setParameter(MultiCompDSP::Parameter::DigitalLookahead, digitalLookahead);
+                const int expected = 27 + static_cast<int>(globalLookahead * 48.0f)
+                                        + static_cast<int>(digitalLookahead * 48.0f);
+                require(latencyMatrix.getLatencySamples() == expected,
+                        "Digital latency reports AA plus global and mode lookahead");
+            }
+    latencyMatrix.setMode(static_cast<int>(duskaudio::MultiCompMode::FET));
+    require(latencyMatrix.getLatencySamples() == 507,
+            "mode change removes Digital lookahead while retaining global lookahead");
+    std::printf("latency matrix: os=off/2x/4x, global=0/10ms, digital=0/10ms; Digital max=987 FET max=507\n");
 
     MultiCompDSP stereo;
     stereo.prepare(48000.0, 256);
@@ -380,6 +486,67 @@ void testLatencyMixBypassAndDigitalStereo()
     std::puts("latency alignment, mix comb, bypass, digital stereo, oversized block: OK");
 }
 
+std::array<float, 4> renderAnalogStereoLink(int mode, float linkAmount)
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setOversampling(0);
+    dsp.setMode(mode);
+    dsp.setStereoLink(linkAmount);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+    configureStrongCompression(dsp, mode);
+    std::array<float, 256> inputLeft{}, inputRight{}, sidechainLeft{}, sidechainRight{};
+    std::array<float, 256> outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    const float* sidechain[] = {sidechainLeft.data(), sidechainRight.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    double leftSum = 0.0, rightSum = 0.0;
+    float maxChannelDelta = 0.0f;
+    for (int block = 0; block < 8; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+        {
+            const float sample = 0.02f * std::sin(2.0f * kPi * 997.0f
+                * static_cast<float>(block * 256 + i) / 48000.0f);
+            inputLeft[static_cast<size_t>(i)] = sample;
+            inputRight[static_cast<size_t>(i)] = sample;
+            sidechainLeft[static_cast<size_t>(i)] = 0.8f;
+            sidechainRight[static_cast<size_t>(i)] = 0.0f;
+        }
+        dsp.processBlockExternal(input, sidechain, output, 2, 256);
+        if (block >= 4)
+            for (int i = 0; i < 256; ++i)
+            {
+                const float left = outputLeft[static_cast<size_t>(i)];
+                const float right = outputRight[static_cast<size_t>(i)];
+                leftSum += static_cast<double>(left) * left;
+                rightSum += static_cast<double>(right) * right;
+                maxChannelDelta = std::max(maxChannelDelta, std::abs(left - right));
+            }
+    }
+    constexpr double kMeasuredSamples = 4.0 * 256.0;
+    return {{static_cast<float>(std::sqrt(leftSum / kMeasuredSamples)),
+             static_cast<float>(std::sqrt(rightSum / kMeasuredSamples)),
+             maxChannelDelta, dsp.getGainReduction()}};
+}
+
+void testAnalogStereoLinkSharesEnvelope()
+{
+    for (int mode = static_cast<int>(duskaudio::MultiCompMode::Opto);
+         mode <= static_cast<int>(duskaudio::MultiCompMode::StudioVCA); ++mode)
+    {
+        const auto linked = renderAnalogStereoLink(mode, 100.0f);
+        const auto independent = renderAnalogStereoLink(mode, 0.0f);
+        std::printf("analog stereo link: mode=%d linked=(%.7g, %.7g) independent-right=%.7g delta=%.3g GR=%.3f\n",
+                    mode, linked[0], linked[1], independent[1], linked[2], linked[3]);
+        require(linked[3] < -0.5f, "analog stereo-link stimulus establishes gain reduction");
+        require(independent[1] > 1.0e-4f, "analog stereo-link reference produces right-channel signal");
+        require(linked[2] < 1.0e-5f, "100% analog stereo link gives both channels the same envelope");
+        require(linked[1] < independent[1] * 0.9f,
+                "100% analog stereo link makes the hot left detector compress the right channel");
+    }
+}
+
 void testDigitalLookaheadMixAlignment()
 {
     // 100 Hz against 5 ms of lookahead is half a period: a dry path taken from
@@ -399,14 +566,28 @@ void testDigitalLookaheadMixAlignment()
 void testGoldenVectors()
 {
     constexpr int kSamples = 4096;
+    // These vectors were recorded from this extracted core. They detect drift
+    // from its current behaviour; they do NOT prove parity with the JUCE
+    // original, which was not used as the recording oracle.
+    //
+    // Opto is intentionally absent. It is being rebuilt against measured
+    // commercial-hardware data, and its old recorded values describe
+    // superseded behaviour. Do not restore them or use them to judge the new
+    // implementation: the hardware reference is the only Opto oracle.
+    constexpr duskaudio::MultiCompMode modes[] = {
+        duskaudio::MultiCompMode::FET, duskaudio::MultiCompMode::VCA,
+        duskaudio::MultiCompMode::Bus, duskaudio::MultiCompMode::StudioFET,
+        duskaudio::MultiCompMode::StudioVCA, duskaudio::MultiCompMode::Digital,
+        duskaudio::MultiCompMode::Multiband};
     // Re-recorded 2026-08-19: affected hardware modes encoded stale oversampling-rate coefficients.
-    constexpr float expectedRms[] = {0.166987091f, 0.610338330f, 0.162082925f, 0.269918233f,
+    constexpr float expectedRms[] = {0.610338330f, 0.162082925f, 0.269918233f,
                                      0.618480802f, 0.195874527f, 0.173109755f, 0.212109938f};
-    constexpr float expectedPeak[] = {0.366553396f, 1.912103295f, 0.350156724f, 0.797850311f,
+    constexpr float expectedPeak[] = {1.912103295f, 0.350156724f, 0.797850311f,
                                       1.836098075f, 0.657691538f, 0.349556237f, 0.815853894f};
-    std::puts("golden vectors: deterministic step/sine-burst RMS peak");
-    for (int mode = 0; mode < 8; ++mode)
+    std::puts("golden vectors: seven non-Opto modes, deterministic step/sine-burst RMS peak");
+    for (size_t vectorIndex = 0; vectorIndex < std::size(modes); ++vectorIndex)
     {
+        const int mode = static_cast<int>(modes[vectorIndex]);
         MultiCompDSP dsp;
         dsp.prepare(48000.0, 256);
         dsp.setOversampling(0);
@@ -417,7 +598,6 @@ void testGoldenVectors()
         dsp.setParameter(MultiCompDSP::Parameter::FetOutput, -4.0f);
         dsp.setParameter(MultiCompDSP::Parameter::FetAttack, 0.8f);
         dsp.setParameter(MultiCompDSP::Parameter::FetRelease, 150.0f);
-        dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, 65.0f);
         dsp.setParameter(MultiCompDSP::Parameter::VcaThreshold, -20.0f);
         dsp.setParameter(MultiCompDSP::Parameter::VcaRatio, 4.0f);
         dsp.setParameter(MultiCompDSP::Parameter::BusThreshold, -18.0f);
@@ -441,11 +621,11 @@ void testGoldenVectors()
         for (float sample : output) { sum += static_cast<double>(sample) * sample; peak = std::max(peak, std::abs(sample)); }
         const float valueRms = static_cast<float>(std::sqrt(sum / output.size()));
         std::printf("  mode=%d rms=%.9f peak=%.9f\n", mode, valueRms, peak);
-        const bool unchanged = std::abs(valueRms - expectedRms[mode]) <= 1.0e-4f
-                            && std::abs(peak - expectedPeak[mode]) <= 1.0e-4f;
+        const bool unchanged = std::abs(valueRms - expectedRms[vectorIndex]) <= 1.0e-4f
+                            && std::abs(peak - expectedPeak[vectorIndex]) <= 1.0e-4f;
         if (!unchanged)
             std::fprintf(stderr, "golden mismatch mode=%d expected=(%.9f, %.9f) actual=(%.9f, %.9f)\n",
-                         mode, expectedRms[mode], expectedPeak[mode], valueRms, peak);
+                         mode, expectedRms[vectorIndex], expectedPeak[vectorIndex], valueRms, peak);
         require(unchanged, "golden vector unchanged");
     }
 }
@@ -567,10 +747,66 @@ void testReprepareMultiband()
     {
         const float a = renderReprepareTone(reused, frequency);
         const float b = renderReprepareTone(fresh, frequency);
+        require(a > 1.0e-5f && b > 1.0e-5f, "re-prepare band-tone comparison produces output");
         maxDelta = std::max(maxDelta, std::abs(a - b));
     }
     require(maxDelta < 1.0e-6f, "re-prepare 48 kHz to 96 kHz matches fresh multiband");
     std::printf("multiband re-prepare: max band-tone energy delta %.9g\n", maxDelta);
+}
+
+void testSameRateReprepare()
+{
+    auto configure = [](MultiCompDSP& dsp) {
+        dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+        dsp.setOversampling(2);
+        dsp.setMix(73.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 10.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 10.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -30.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 8.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.3f);
+        dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 80.0f);
+        dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    };
+
+    MultiCompDSP repeated, fresh;
+    configure(repeated);
+    repeated.prepare(48000.0, 256);
+    repeated.prepare(48000.0, 256);
+    configure(fresh);
+    fresh.prepare(48000.0, 256);
+
+    std::array<float, 256> inputLeft{}, inputRight{}, repeatedLeft{}, repeatedRight{}, freshLeft{}, freshRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    float* repeatedOutput[] = {repeatedLeft.data(), repeatedRight.data()};
+    float* freshOutput[] = {freshLeft.data(), freshRight.data()};
+    float maxDelta = 0.0f, outputPeak = 0.0f;
+    for (int block = 0; block < 8; ++block)
+    {
+        for (int i = 0; i < 256; ++i)
+        {
+            const int n = block * 256 + i;
+            inputLeft[static_cast<size_t>(i)] = 0.6f * std::sin(2.0f * kPi * 997.0f * static_cast<float>(n) / 48000.0f);
+            inputRight[static_cast<size_t>(i)] = 0.3f * std::sin(2.0f * kPi * 431.0f * static_cast<float>(n) / 48000.0f);
+        }
+        repeated.processBlock(input, repeatedOutput, 2, 256);
+        fresh.processBlock(input, freshOutput, 2, 256);
+        for (int i = 0; i < 256; ++i)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float a = ch == 0 ? repeatedLeft[static_cast<size_t>(i)] : repeatedRight[static_cast<size_t>(i)];
+                const float b = ch == 0 ? freshLeft[static_cast<size_t>(i)] : freshRight[static_cast<size_t>(i)];
+                maxDelta = std::max(maxDelta, std::abs(a - b));
+                outputPeak = std::max(outputPeak, std::abs(a));
+            }
+    }
+    require(outputPeak > 1.0e-3f, "same-rate re-prepare comparison produces signal");
+    require(repeated.getGainReduction() < -0.5f, "same-rate re-prepare comparison produces compression");
+    require(repeated.getLatencySamples() == fresh.getLatencySamples(),
+            "same-rate re-prepare preserves latency configuration");
+    require(maxDelta < 1.0e-7f, "same-rate re-prepare matches a freshly prepared core");
+    std::printf("same-rate re-prepare: latency=%d max output delta %.9g\n",
+                repeated.getLatencySamples(), maxDelta);
 }
 
 float renderMultibandTone(float mix, float frequency)
@@ -665,7 +901,7 @@ void testMultibandBypassAndZeroLatency()
     const float* ip[] = {input.data()};
     float* referenceOp[] = {referenceOut.data()};
     float* bypassedOp[] = {bypassedOut.data()};
-    float worst = 0.0f;
+    float worst = 0.0f, referencePeak = 0.0f;
     for (int block = 0; block < 20; ++block)
     {
         for (int i = 0; i < 256; ++i)
@@ -674,8 +910,12 @@ void testMultibandBypassAndZeroLatency()
         bypassed.processBlock(ip, bypassedOp, 1, 256);
         if (block >= 16)
             for (int i = 0; i < 256; ++i)
+            {
+                referencePeak = std::max(referencePeak, std::abs(referenceOut[static_cast<size_t>(i)]));
                 worst = std::max(worst, std::abs(referenceOut[static_cast<size_t>(i)] - bypassedOut[static_cast<size_t>(i)]));
+            }
     }
+    require(referencePeak > 1.0e-4f, "multiband bypass comparison produces output");
     require(worst < 1.0e-6f, "disabled multiband band skips envelope and makeup");
 
     MultiCompDSP zeroDelay;
@@ -754,6 +994,8 @@ void testAutoGainBypassSettleBoundary()
     const float boundaryStep = std::abs(firstSettledSample - lastTransitionSample);
     std::printf("auto gain bypass boundary: last=%.9g first=%.9g step=%.9g\n",
                 lastTransitionSample, firstSettledSample, boundaryStep);
+    require(std::abs(lastTransitionSample) > 1.0e-4f && std::abs(firstSettledSample) > 1.0e-4f,
+            "auto-gain bypass boundary produces output on both sides");
     require(boundaryStep < 1.0e-5f, "auto-gained bypass transition and settled bypass share one endpoint");
 }
 
@@ -808,6 +1050,8 @@ void testAutoGainNeutralisesManualOutput()
             neutralPeak = std::max(neutralPeak, std::abs(neutralOut[static_cast<size_t>(i)]));
             highPeak = std::max(highPeak, std::abs(highOut[static_cast<size_t>(i)]));
         }
+        require(neutralPeak > 1.0e-5f && highPeak > 1.0e-5f,
+                "auto-gain manual-output comparison produces output");
         if (mode == static_cast<int>(duskaudio::MultiCompMode::FET))
             fetPeakRatio = highPeak / std::max(neutralPeak, 1.0e-9f);
     }
@@ -862,6 +1106,70 @@ void testBypassCompletesDuringSidechainListen()
     std::printf("bypass during sidechain listen: final sample %.9g; dry error %.9g\n",
                 output.back(), maxDryError);
     require(maxDryError < 1.0e-7f, "bypass reaches settled dry output while sidechain Listen remains on");
+}
+
+void testSidechainListenClearsGainReductionMeters()
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    std::array<float, 256> input{}, output{};
+    input.fill(0.8f);
+    const float* ip[] = {input.data()}; float* op[] = {output.data()};
+    for (int block = 0; block < 16; ++block) dsp.processBlock(ip, op, 1, 256);
+    const float activeMaster = dsp.getGainReduction();
+    float activeBand = 0.0f;
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+        activeBand = std::min(activeBand, dsp.getBandGainReduction(band));
+    require(activeMaster < -1.0f && activeBand < -1.0f,
+            "Listen meter test establishes active multiband compression");
+
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
+    dsp.processBlock(ip, op, 1, 256);
+    float listenBandMagnitude = 0.0f;
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+        listenBandMagnitude = std::max(listenBandMagnitude, std::abs(dsp.getBandGainReduction(band)));
+    std::printf("Listen GR meters: active master %.4f max-band %.4f; Listen master %.4f max-band %.4f\n",
+                activeMaster, activeBand, dsp.getGainReduction(), listenBandMagnitude);
+    require(dsp.getGainReduction() == 0.0f && listenBandMagnitude == 0.0f,
+            "sidechain Listen clears master and per-band gain-reduction meters");
+}
+
+// Known failure, deliberately not called from main: Listen switches directly
+// between program and monitor audio. A correct fix needs persistent ramp state,
+// which would require changing MultiCompDSP.hpp outside this batch's hard scope.
+// Keep this compiled so enabling the call below reproduces the click as a test
+// failure instead of preserving the discontinuity as accepted behaviour.
+[[maybe_unused]] void testSidechainListenSwitchIsSmoothed()
+{
+    MultiCompDSP dsp;
+    dsp.prepare(48000.0, 256);
+    dsp.setOversampling(0);
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+    std::array<float, 256> input{}, sidechain{}, output{};
+    input.fill(0.1f);
+    sidechain.fill(0.8f);
+    const float* ip[] = {input.data()}; const float* sc[] = {sidechain.data()}; float* op[] = {output.data()};
+    for (int block = 0; block < 16; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
+    float previous = output.back(), largestStep = 0.0f;
+    auto measureBlock = [&] {
+        dsp.processBlockExternal(ip, sc, op, 1, 256);
+        largestStep = std::max(largestStep, std::abs(output.front() - previous));
+        for (int i = 1; i < 256; ++i)
+            largestStep = std::max(largestStep, std::abs(output[static_cast<size_t>(i)] - output[static_cast<size_t>(i - 1)]));
+        previous = output.back();
+    };
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
+    measureBlock();
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 0.0f);
+    measureBlock();
+    std::printf("Listen switch maximum adjacent-sample step %.6f\n", largestStep);
+    require(largestStep < 0.01f, "sidechain Listen on/off uses a short monitor ramp");
 }
 
 void testSettledBypassClearsGainReductionMeters()
@@ -939,8 +1247,10 @@ void testOptoStereoDetectorIsolation()
         (void)modes.process(duskaudio::MultiCompMode::Opto, 0.0f, 1, 0.0f, parameters);
     }
 
+    const float leftGr = modes.gainReduction(duskaudio::MultiCompMode::Opto, 0);
     const float rightGr = modes.gainReduction(duskaudio::MultiCompMode::Opto, 1);
-    std::printf("opto stereo isolation: silent-right GR %.9g dB\n", rightGr);
+    std::printf("opto stereo isolation: active-left GR %.4f; silent-right GR %.9g dB\n", leftGr, rightGr);
+    require(leftGr < -0.5f, "Opto isolation stimulus establishes left-channel gain reduction");
     require(std::abs(rightGr) < 1.0e-7f, "left-only Opto signal does not alter right detector gain reduction");
 }
 
@@ -963,26 +1273,137 @@ void testHardwareRateRefreshAfterOversamplingChange()
         fresh.prepare(48000.0, 256, 1);
         fresh.reset();
 
-        float maxDelta = 0.0f;
+        float maxDelta = 0.0f, signalPeak = 0.0f;
         for (int i = 0; i < 8192; ++i)
         {
             const float input = 0.2f * std::sin(2.0f * kPi * 997.0f * static_cast<float>(i) / 48000.0f);
             const float a = switched.process(mode, input, 0, input, parameters);
             const float b = fresh.process(mode, input, 0, input, parameters);
             maxDelta = std::max(maxDelta, std::abs(a - b));
+            signalPeak = std::max(signalPeak, std::max(std::abs(a), std::abs(b)));
         }
         std::printf("hardware rate refresh: mode=%d max_delta=%.9g\n", static_cast<int>(mode), maxDelta);
+        require(signalPeak > 1.0e-4f, "hardware rate-refresh comparison produces output");
         require(maxDelta < 1.0e-7f, "oversampling rate switch matches freshly prepared hardware coefficients");
     }
 }
 
+void testHostParameterTapers()
+{
+    const auto& ratio = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::VcaRatio)];
+    const auto& attack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::DigitalAttack)];
+    const float positions[] = {0.25f, 0.5f, 0.75f};
+    const float expectedRatio[] = {2.2f, 12.8f, 46.6f};
+    const float expectedAttack[] = {4.93f, 49.62f, 191.66f};
+    require(multicompp::hostMin(ratio) == 0.0f && multicompp::hostMax(ratio) == 1.0f,
+            "tapered VCA Ratio is declared in normalized host space");
+    require(multicompp::hostMin(attack) == 0.0f && multicompp::hostMax(attack) == 1.0f,
+            "tapered Digital Attack is declared in normalized host space");
+    for (size_t i = 0; i < 3; ++i)
+    {
+        require(std::abs(multicompp::hostToPlain(ratio, positions[i]) - expectedRatio[i]) < 0.011f,
+                "VCA Ratio follows JUCE skew at quarter points");
+        require(std::abs(multicompp::hostToPlain(attack, positions[i]) - expectedAttack[i]) < 0.011f,
+                "Digital Attack follows JUCE skew at quarter points");
+    }
+    std::puts("host tapers: VCA Ratio and Digital Attack match JUCE at 0.25/0.5/0.75");
+}
+
+void testStrictStateValidationAndRoundTrip()
+{
+    multicompp::StateValues saved{};
+    for (int i = 0; i < multicompp::kParamCount; ++i)
+    {
+        const auto& d = multicompp::kParams[static_cast<size_t>(i)];
+        saved[static_cast<size_t>(i)] = d.integer ? multicompp::hostDefault(d)
+            : multicompp::hostMin(d) + (multicompp::hostMax(d) - multicompp::hostMin(d))
+                * (0.1f + 0.8f * static_cast<float>((i * 37) % 101) / 100.0f);
+    }
+    for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
+    {
+        const int relative = i - multicompp::kBandBase;
+        const auto d = multicompp::bandParam(relative % 8, relative / 8);
+        saved[static_cast<size_t>(i)] = d.integer ? multicompp::hostDefault(d)
+            : multicompp::hostMin(d) + (multicompp::hostMax(d) - multicompp::hostMin(d))
+                * (0.1f + 0.8f * static_cast<float>((i * 29) % 101) / 100.0f);
+    }
+
+    const std::string valid = multicompp::encodeState(saved);
+    multicompp::StateValues restored{};
+    require(multicompp::decodeState(valid, restored), "complete state accepted");
+    require(std::memcmp(saved.data(), restored.data(), sizeof(saved)) == 0,
+            "state save/restore is bit-identical for every parameter");
+
+    auto rejectedWithoutMutation = [&](std::string invalid, const char* message) {
+        multicompp::StateValues before{};
+        before.fill(0.1234567f);
+        const auto unchanged = before;
+        require(!multicompp::decodeState(invalid, before), message);
+        require(std::memcmp(before.data(), unchanged.data(), sizeof(before)) == 0,
+                "rejected state changes zero parameters");
+    };
+
+    std::string malformed = valid;
+    const size_t ratio = malformed.find(";digital_ratio=");
+    const size_t ratioEnd = malformed.find(';', ratio + 1);
+    malformed.replace(ratio + std::strlen(";digital_ratio="),
+                      ratioEnd - ratio - std::strlen(";digital_ratio="), "garbage");
+    rejectedWithoutMutation(malformed, "malformed state rejected");
+
+    std::string truncated = valid;
+    truncated.erase(truncated.rfind(';'));
+    rejectedWithoutMutation(truncated, "truncated state rejected");
+
+    const size_t mix = valid.find(";mix=");
+    const size_t mixEnd = valid.find(';', mix + 1);
+    rejectedWithoutMutation(valid + valid.substr(mix, mixEnd - mix), "duplicate state key rejected");
+    rejectedWithoutMutation(valid + ";unknown=0", "unknown state key rejected");
+    std::puts("state validation: malformed/truncated/duplicate/unknown rejected atomically; round-trip exact");
+}
+
+void testFactoryPresetOwnership()
+{
+    for (const auto& preset : multicompp::kFactoryPresets)
+    {
+        std::array<float, multicompp::kParamCount> values{};
+        values.fill(-123.0f);
+        values[static_cast<size_t>(multicompp::ParamId::Bypass)] = 1.0f;
+        values[static_cast<size_t>(multicompp::ParamId::Oversampling)] = 2.0f;
+        values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)] = 1.0f;
+        multicompp::forEachPresetParam(preset,
+            [&](multicompp::CoreParameter parameter, float value) {
+                const int index = multicompp::coreParamIndex(parameter);
+                require(index >= 0, "preset-owned core parameter remains host-visible");
+                values[static_cast<size_t>(index)] = value;
+            });
+        require(values[static_cast<size_t>(multicompp::ParamId::Bypass)] == 1.0f,
+                "factory preset leaves Bypass set");
+        require(values[static_cast<size_t>(multicompp::ParamId::Oversampling)] == 2.0f,
+                "factory preset leaves Oversampling untouched");
+        require(values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)] == 1.0f,
+                "factory preset leaves External Sidechain untouched");
+    }
+    require(multicompp::coreParamIndex(MultiCompDSP::Parameter::EnvelopeCurve) < 0
+                && multicompp::coreParamIndex(MultiCompDSP::Parameter::SaturationMode) < 0,
+            "JUCE-inert controls are absent from the DPF parameter table");
+    std::puts("factory preset ownership: bypass/oversampling/external-SC/bands untouched");
+}
+
+static_assert(multicompp::kParamCount == 63,
+              "DPF host table must exclude the two JUCE-inert controls");
+
 int main()
 {
+    testHostParameterTapers();
+    testStrictStateValidationAndRoundTrip();
+    testFactoryPresetOwnership();
     testTruePeakOversampledPhaseInterpolation();
     testCrossoverAutomationContinuity();
     testFourTimesHighFrequencyMixCoherence();
     testMultibandEnabledTopology();
     testSettledBypassClearsGainReductionMeters();
+    testSidechainListenClearsGainReductionMeters();
+    // testSidechainListenSwitchIsSmoothed(); // Known failure; see test comment.
     testBypassCompletesDuringSidechainListen();
     testAutoGainResetsOnModeChange();
     testAutoGainNeutralisesManualOutput();
@@ -996,11 +1417,13 @@ int main()
     testEnvelopeAndReset();
     testMixBypassAndBlockEdges();
     testLatencyMixBypassAndDigitalStereo();
+    testAnalogStereoLinkSharesEnvelope();
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();
     testSidechainEq();
     testMultibandBypassAndZeroLatency();
     testReprepareMultiband();
+    testSameRateReprepare();
     testGoldenVectors();
     std::puts("Multi-Comp core tests: PASS");
     return 0;

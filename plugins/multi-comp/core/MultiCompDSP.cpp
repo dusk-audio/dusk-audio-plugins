@@ -564,6 +564,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         for (int ch = 0; ch < nCh; ++ch)
             std::memcpy(out[ch], sidechain[ch], static_cast<size_t>(nSamples) * sizeof(float));
         masterGR.store(0.0f, std::memory_order_relaxed);
+        for (auto& meter : bandGR) meter.store(0.0f, std::memory_order_relaxed);
         return;
     }
     if (mode == MultiCompMode::Multiband)
