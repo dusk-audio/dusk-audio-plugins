@@ -193,6 +193,19 @@ protected:
 
     void onImGuiDisplay() override
     {
+        // The crossovers are only submitted in Multiband mode. If the host
+        // switches Mode away mid-drag the widget stops being drawn, so ImGui
+        // never reports IsItemDeactivated for it: the gesture would stay open on
+        // the host and the mirror would skip that crossover for the rest of the
+        // session. Close it here instead, from the fact that nothing re-armed
+        // the flag on the previous frame.
+        if (draggedCrossover != kNoCrossover && !draggedCrossoverStillDrawn)
+        {
+            editParameter(draggedCrossover, false);
+            draggedCrossover = kNoCrossover;
+        }
+        draggedCrossoverStillDrawn = false;
+
         const float winW = static_cast<float>(getWidth());
         const float winH = static_cast<float>(getHeight());
         const float scale = std::min(winW / kDesignW, winH / kDesignH);
@@ -236,8 +249,13 @@ private:
     ImFont* labelFont = nullptr;
     duskdpf::SupportersOverlay supporters;
     bool showSupporters = false;
-    // Index of the crossover handle under an active drag, or ~0 for none.
-    uint32_t draggedCrossover = ~uint32_t(0);
+    static constexpr uint32_t kNoCrossover = ~uint32_t(0);
+    // The crossover handle under an active drag. Owns both the open automation
+    // gesture and the mirror's skip, so the two cannot disagree.
+    uint32_t draggedCrossover = kNoCrossover;
+    // Set by crossover() on every frame it submits the held handle, and read
+    // once per frame to notice a handle that stopped being drawn mid-drag.
+    bool draggedCrossoverStillDrawn = false;
     int currentPreset = -1;
 
     float value(uint32_t p) const { return values[p]; }
@@ -608,6 +626,7 @@ private:
         std::snprintf(handleId, sizeof(handleId), "##mc_%s", label);
         ImGui::InvisibleButton(handleId, ImVec2(24 * panel.scale(), 54 * panel.scale()));
         if (ImGui::IsItemActivated()) { editParameter(p, true); draggedCrossover = p; }
+        if (draggedCrossover == p) draggedCrossoverStillDrawn = true;
         if (ImGui::IsItemActive())
         {
             const float mouseX = (ImGui::GetMousePos().x - panel.P(0, 0).x) / panel.scale();
@@ -620,7 +639,7 @@ private:
             editParameter(p, false);
             // Released: the pending write has had the gesture to land, and the
             // next refresh adopts whatever ordering the DSP settled on.
-            draggedCrossover = ~uint32_t(0);
+            if (draggedCrossover == p) draggedCrossover = kNoCrossover;
         }
     }
 

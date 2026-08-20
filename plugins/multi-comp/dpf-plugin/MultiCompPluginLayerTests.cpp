@@ -512,6 +512,25 @@ std::string readSiblingSource(const char* filename)
     return contents.str();
 }
 
+// The parameter store keeps what the host wrote; only the read-back orders the
+// three. Sweeping Crossover 1 up and back down must therefore leave Crossover 2
+// exactly where it started -- if the ordering were stored, it would not.
+void testCrossoverOrderingDoesNotRatchet()
+{
+    // What the host owns: never rewritten by the ordering.
+    const float rawX1Start = 100.0f, rawX2 = 300.0f, rawX3 = 2000.0f;
+    const auto atRest = multicompp::plugin_detail::orderedCrossovers(rawX1Start, rawX2, rawX3);
+    const auto raised = multicompp::plugin_detail::orderedCrossovers(500.0f, rawX2, rawX3);
+    const auto returned = multicompp::plugin_detail::orderedCrossovers(rawX1Start, rawX2, rawX3);
+    std::printf("crossover sweep: X2 reads %.0f Hz at rest, %.0f Hz with X1 at 500, %.0f Hz back at 100\n",
+                static_cast<double>(atRest[1]), static_cast<double>(raised[1]),
+                static_cast<double>(returned[1]));
+    reviewCheck(raised[1] > atRest[1],
+                "raising Crossover 1 pushes the Crossover 2 the UI displays");
+    reviewCheck(returned[1] == atRest[1] && returned[2] == atRest[2],
+                "lowering Crossover 1 again returns the displayed neighbours");
+}
+
 // One case per DISTRHO_PLUGIN_EXTRA_IO layout. The { 2, 2 } row is the one the
 // output count could not express: it is stereo, so a channel-count test would
 // have called it sidechain-capable and read two elements past the end of the
@@ -653,6 +672,7 @@ void testFractionalIntegerAutomationStaysLoadable()
 int main()
 {
     testRunGuardsSidechainPortsPerLayout();
+    testCrossoverOrderingDoesNotRatchet();
     testQuantisedFineStepFallsBackToRestingPrecision();
     testShippingUiHasNoDeadCrossoverDescriptor();
     testCrossoverMirrorRefreshesEveryPluginChangedValue();

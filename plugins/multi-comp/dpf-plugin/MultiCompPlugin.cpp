@@ -16,6 +16,22 @@ inline bool hasStereoExternalSidechainPorts(int activeInputs,
     return activeInputs >= 4 && inputs != nullptr
         && inputs[2] != nullptr && inputs[3] != nullptr;
 }
+
+// The crossover frequencies the DSP will actually use, given the three the host
+// has set. Mirrors MultiCompDSP::crossoverTargets(), which re-derives this every
+// block from the raw parameters and never writes the result back.
+//
+// This must stay a pure read. Storing the ordered values into the parameter
+// array ratchets: raising Crossover 1 pushes Crossover 2 up, and lowering
+// Crossover 1 again leaves it there, so an automation pass permanently relocates
+// a neighbour the host never wrote and the parameter no longer matches its lane.
+inline std::array<float, 3> orderedCrossovers(float f1, float f2, float f3) noexcept
+{
+    const float o1 = f1 < 20.0f ? 20.0f : (f1 > 500.0f ? 500.0f : f1);
+    const float o2 = f2 < o1 * 1.5f ? o1 * 1.5f : (f2 > 5000.0f ? 5000.0f : f2);
+    const float o3 = f3 < o2 * 1.5f ? o2 * 1.5f : (f3 > 16000.0f ? 16000.0f : f3);
+    return {{o1, o2, o3}};
+}
 } // namespace multicompp::plugin_detail
 
 #ifndef MULTICOMP_PLUGIN_LOGIC_TEST
@@ -49,10 +65,24 @@ public:
     float bandGr(int b) const noexcept { return dsp.getBandGainReduction(b); }
     float inputLevel() const noexcept { return dsp.getInputLevel(); }
     float outputLevel() const noexcept { return dsp.getOutputLevel(); }
+    // The UI's view of a parameter. Crossovers report the frequency the DSP
+    // will use rather than the raw setting, so raising one handle visibly pushes
+    // the handles above it. The host-facing getParameterValue() deliberately
+    // does not do this: an automation lane must read back what it wrote.
     float parameterValue(uint32_t index) const noexcept
     {
-        return index < multicompp::kMeterMaster
-            ? values[index].load(std::memory_order_relaxed) : 0.0f;
+        if (index >= multicompp::kMeterMaster) return 0.0f;
+        const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
+        const auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
+        if (index < x1 || index > x3) return values[index].load(std::memory_order_relaxed);
+        const auto plain = [this](uint32_t i) {
+            return multicompp::hostToPlain(multicompp::kParams[i],
+                                           values[i].load(std::memory_order_relaxed));
+        };
+        const auto ordered = multicompp::plugin_detail::orderedCrossovers(
+            plain(x1), plain(x1 + 1), plain(x3));
+        return multicompp::plainToHost(multicompp::kParams[index],
+                                       ordered[index - x1]);
     }
 
 protected:
@@ -148,31 +178,9 @@ protected:
     void setParameterValue(uint32_t index, float value) override
     {
         if (index >= multicompp::kMeterMaster) return;
-        const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
-        const auto x2 = static_cast<uint32_t>(multicompp::ParamId::Crossover2);
-        const auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
-        if (index >= x1 && index <= x3)
-        {
-            const auto& changed = multicompp::kParams[index];
-            values[index].store(multicompp::snapHostValue(changed, value), std::memory_order_relaxed);
-            const float f1 = multicompp::hostToPlain(
-                multicompp::kParams[x1], values[x1].load(std::memory_order_relaxed));
-            const float f2 = std::clamp(multicompp::hostToPlain(
-                multicompp::kParams[x2], values[x2].load(std::memory_order_relaxed)),
-                f1 * 1.5f, 5000.0f);
-            const float f3 = std::clamp(multicompp::hostToPlain(
-                multicompp::kParams[x3], values[x3].load(std::memory_order_relaxed)),
-                f2 * 1.5f, 16000.0f);
-            const float ordered[] = {f1, f2, f3};
-            for (uint32_t crossover = x1; crossover <= x3; ++crossover)
-            {
-                const float plain = ordered[crossover - x1];
-                values[crossover].store(multicompp::plainToHost(
-                    multicompp::kParams[crossover], plain), std::memory_order_relaxed);
-                dsp.setParameter(multicompp::kParams[crossover].core, plain);
-            }
-            return;
-        }
+        // Crossovers take the ordinary path: each one stores exactly what the
+        // host set. The DSP re-derives the ordering from all three every block,
+        // so nothing here needs to -- and must not -- rewrite its neighbours.
         multicompp::resolveParameter(static_cast<int>(index),
             [&](const multicompp::Param& d) {
                 const float v = multicompp::snapHostValue(d, value);
