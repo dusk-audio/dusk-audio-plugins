@@ -106,7 +106,7 @@ DPF and DPF-Widgets are sibling checkouts of this repository (`../DPF`,
 `../DPF-Widgets`), as JUCE is. CMake finds them automatically in a normal layout;
 pass the paths explicitly only when yours differ.
 
-```
+```bash
 cmake -S plugins/<name>/dpf-plugin -B build-<name> -DCMAKE_BUILD_TYPE=Release \
   -DDUSK_DPF_INSTALL_LOCAL=OFF
 cmake --build build-<name> -j8
