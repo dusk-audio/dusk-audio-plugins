@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using duskaudio::DuskCrossover;
@@ -390,6 +392,47 @@ void testTruePeakOversampledPhaseInterpolation()
     const float spread = maximum - minimum;
     std::printf("true-peak 4x detector phases: held spread 0; interpolated spread %.6f\n", spread);
     require(spread > 0.5f, "fast true-peak transient changes across oversampled detector phases");
+}
+
+int detectorGainReductionOnset(int oversampling)
+{
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Digital));
+    dsp.setOversampling(oversampling);
+    dsp.setParameter(MultiCompDSP::Parameter::ExternalSidechain, 1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalThreshold, -1.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRatio, 20.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalKnee, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAttack, 0.01f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalRelease, 100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalLookahead, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::DigitalAdaptive, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.prepare(48000.0, 1);
+
+    float input = 0.25f, sidechain = 0.0f, output = 0.0f;
+    const float* inputs[] = {&input};
+    const float* sidechains[] = {&sidechain};
+    float* outputs[] = {&output};
+    constexpr int stepSample = 8;
+    for (int sample = 0; sample < 16; ++sample)
+    {
+        sidechain = sample >= stepSample ? 1.0f : 0.0f;
+        dsp.processBlockExternal(inputs, sidechains, outputs, 1, 1);
+        if (dsp.getGainReduction() < -0.0001f)
+            return sample;
+    }
+    return -1;
+}
+
+void testOversampledDetectorHasNativeRateStepTiming()
+{
+    const int oneXOnset = detectorGainReductionOnset(0);
+    const int fourXOnset = detectorGainReductionOnset(2);
+    std::printf("sidechain step at 8: 1x GR onset %d; 4x GR onset %d\n",
+                oneXOnset, fourXOnset);
+    require(oneXOnset == 8 && fourXOnset == oneXOnset,
+            "4x detector gain reduction starts on the same native sample as 1x");
 }
 
 void testLatencyMixBypassAndDigitalStereo()
@@ -1578,6 +1621,69 @@ void testMultibandSoloMasksDryReference()
     require(delta < 1.0e-5f, "multiband dry reference obeys the same solo mask as wet recombination");
 }
 
+void testMultibandAutomationUsesOneStereoSnapshot()
+{
+    constexpr int blockSize = 32768;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Multiband));
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+    {
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Threshold, 0.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Ratio, 1.0f);
+        dsp.setMultibandParameter(band, MultiCompDSP::MultibandParameter::Makeup, 0.0f);
+    }
+    dsp.prepare(48000.0, blockSize);
+
+    std::vector<float> input(static_cast<size_t>(blockSize));
+    std::vector<float> left(static_cast<size_t>(blockSize));
+    std::vector<float> right(static_cast<size_t>(blockSize));
+    for (int i = 0; i < blockSize; ++i)
+        input[static_cast<size_t>(i)] = 0.01f * std::sin(2.0f * kPi * 997.0f * i / 48000.0f);
+    const float* inputs[] = {input.data(), input.data()};
+    float* outputs[] = {left.data(), right.data()};
+
+    std::atomic<bool> writerReady{false};
+    std::atomic<bool> stopWriter{false};
+    std::atomic<unsigned> writes{0};
+    std::thread writer([&] {
+        writerReady.store(true, std::memory_order_release);
+        while (!stopWriter.load(std::memory_order_acquire))
+        {
+            const unsigned write = writes.fetch_add(1, std::memory_order_relaxed);
+            const float gainDb = (write & 1u) != 0u ? 12.0f : -12.0f;
+            dsp.setParameter(MultiCompDSP::Parameter::MbOutput, gainDb);
+            dsp.setMultibandParameter(0, MultiCompDSP::MultibandParameter::Makeup, gainDb);
+        }
+    });
+    while (!writerReady.load(std::memory_order_acquire)
+           || writes.load(std::memory_order_relaxed) < 100u)
+        std::this_thread::yield();
+
+    float worstDelta = 0.0f;
+    float signalPeak = 0.0f;
+    for (int block = 0; block < 16 && worstDelta < 1.0e-6f; ++block)
+    {
+        dsp.processBlock(inputs, outputs, 2, blockSize);
+        for (int i = 0; i < blockSize; ++i)
+        {
+            worstDelta = std::max(worstDelta, std::abs(left[static_cast<size_t>(i)] - right[static_cast<size_t>(i)]));
+            signalPeak = std::max(signalPeak, std::abs(left[static_cast<size_t>(i)]));
+            signalPeak = std::max(signalPeak, std::abs(right[static_cast<size_t>(i)]));
+        }
+    }
+    stopWriter.store(true, std::memory_order_release);
+    writer.join();
+
+    std::printf("multiband concurrent output/makeup: writes %u; signal peak %.9g; max L/R delta %.9g\n",
+                writes.load(std::memory_order_relaxed), signalPeak, worstDelta);
+    require(signalPeak > 1.0e-4f, "multiband stereo snapshot test processes nonzero signal");
+    require(worstDelta < 1.0e-6f,
+            "multiband parameter automation applies one parameter snapshot to both channels");
+}
+
 std::vector<float> renderWithBlockSize(int oversampling, int blockSize, bool autoMakeup)
 {
     constexpr int totalSamples = 16384;
@@ -1744,6 +1850,8 @@ int main()
     testInputMeterWithAliasedBuffers();
     testSingleBandModeClearsMultibandGainReductionMeters();
     testMultibandMidSideMixAndAutoMakeupDomains();
+    testMultibandAutomationUsesOneStereoSnapshot();
+    testOversampledDetectorHasNativeRateStepTiming();
     testTruePeakOversampledPhaseInterpolation();
     testCrossoverAutomationContinuity();
     testFourTimesHighFrequencyMixCoherence();

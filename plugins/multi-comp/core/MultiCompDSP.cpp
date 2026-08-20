@@ -784,13 +784,26 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
     const float distortionAmount = std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
     std::array<float, kMultiCompBands> maxGr{{0, 0, 0, 0}};
     std::array<bool, kMultiCompBands> solos{};
+    std::array<bool, kMultiCompBands> bypassed{};
+    std::array<float, kMultiCompBands> thresholds{};
+    std::array<float, kMultiCompBands> ratios{};
+    std::array<float, kMultiCompBands> attacks{};
+    std::array<float, kMultiCompBands> releases{};
+    std::array<float, kMultiCompBands> makeupGains{};
     bool anySolo = false;
     for (int band = 0; band < kMultiCompBands; ++band)
     {
-        solos[static_cast<size_t>(band)] =
-            params.mbSolo[static_cast<size_t>(band)].load(std::memory_order_relaxed);
-        anySolo = anySolo || solos[static_cast<size_t>(band)];
+        const size_t bandIndex = static_cast<size_t>(band);
+        solos[bandIndex] = params.mbSolo[bandIndex].load(std::memory_order_relaxed);
+        bypassed[bandIndex] = params.mbBypass[bandIndex].load(std::memory_order_relaxed);
+        thresholds[bandIndex] = params.mbThreshold[bandIndex].load(std::memory_order_relaxed);
+        ratios[bandIndex] = std::max(1.0f, params.mbRatio[bandIndex].load(std::memory_order_relaxed));
+        attacks[bandIndex] = std::max(0.0001f, params.mbAttack[bandIndex].load(std::memory_order_relaxed) * 0.001f);
+        releases[bandIndex] = std::max(0.001f, params.mbRelease[bandIndex].load(std::memory_order_relaxed) * 0.001f);
+        makeupGains[bandIndex] = decibelsToGain(params.mbMakeup[bandIndex].load(std::memory_order_relaxed));
+        anySolo = anySolo || solos[bandIndex];
     }
+    const float mbOutputGain = decibelsToGain(params.mbOutput.load(std::memory_order_relaxed));
     for (int band = 0; band < kMultiCompBands; ++band)
         if ((activeBandMask & static_cast<std::uint8_t>(1u << band)) == 0)
             for (int ch = 0; ch < nCh; ++ch)
@@ -863,16 +876,16 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 envelope = 1.0f;
                 continue;
             }
-            if (params.mbBypass[bandIndex].load(std::memory_order_relaxed))
+            if (bypassed[bandIndex])
             {
                 envelope = 1.0f;
                 continue;
             }
-            const float threshold = params.mbThreshold[static_cast<size_t>(band)].load(std::memory_order_relaxed);
-            const float ratio = std::max(1.0f, params.mbRatio[static_cast<size_t>(band)].load(std::memory_order_relaxed));
-            const float attack = std::max(0.0001f, params.mbAttack[static_cast<size_t>(band)].load(std::memory_order_relaxed) * 0.001f);
-            const float release = std::max(0.001f, params.mbRelease[static_cast<size_t>(band)].load(std::memory_order_relaxed) * 0.001f);
-            const float makeupGain = decibelsToGain(params.mbMakeup[bandIndex].load(std::memory_order_relaxed));
+            const float threshold = thresholds[bandIndex];
+            const float ratio = ratios[bandIndex];
+            const float attack = attacks[bandIndex];
+            const float release = releases[bandIndex];
+            const float makeupGain = makeupGains[bandIndex];
             for (int i = 0; i < nSamples; ++i)
             {
                 const float own = sidechain != nullptr ? std::abs(sidechainBands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)]) : std::abs(bands[static_cast<size_t>(band)][static_cast<size_t>(ch)][static_cast<size_t>(i)]);
@@ -904,7 +917,6 @@ void MultiCompDSP::processMultiband(const float* const* input, const float* cons
                 maxGr[static_cast<size_t>(band)] = std::min(maxGr[static_cast<size_t>(band)], gainToDecibels(envelope));
             }
         }
-        const float mbOutputGain = decibelsToGain(params.mbOutput.load(std::memory_order_relaxed));
         for (int i = 0; i < nSamples; ++i)
         {
             float sum = 0.0f;
