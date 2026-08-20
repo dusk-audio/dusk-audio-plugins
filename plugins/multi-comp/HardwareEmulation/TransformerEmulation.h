@@ -29,6 +29,15 @@ public:
         reset();
     }
 
+    // Coefficient-only update for real-time oversampling changes. Existing
+    // filter, hysteresis and detector history is intentionally preserved.
+    void setSampleRate(double newSampleRate) noexcept
+    {
+        sampleRate = newSampleRate;
+        updateDCBlocker(profile.dcBlockingFreq);
+        updateHFRolloff(profile.highFreqRolloff);
+    }
+
     void reset()
     {
         // Always reset all available channels to avoid stale state

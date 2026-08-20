@@ -189,6 +189,15 @@ private:
     }
 };
 
+inline float interpolateOversampledSidechain(float current, float next,
+                                              int phase, int factor) noexcept
+{
+    if (factor <= 1) return current;
+    const float position = static_cast<float>(std::clamp(phase, 0, factor - 1))
+                         / static_cast<float>(factor);
+    return current + (next - current) * position;
+}
+
 class MultiCompAntiAliasing
 {
 public:
@@ -202,11 +211,53 @@ public:
         writePosition = 0;
         setFactor(factor);
     }
-    void setFactor(int factorValue) noexcept { factor = factorValue; oversamplingOff = factorValue <= 1; use4x = factorValue >= 4; oversampler.setFactor(oversamplingOff ? 1 : (use4x ? 4 : 2)); }
-    void reset() noexcept { oversampler.reset(); std::fill(compensation.begin(), compensation.end(), 0.0f); writePosition = 0; }
+    void setFactor(int factorValue) noexcept
+    {
+        factor = factorValue;
+        oversamplingOff = factorValue <= 1;
+        use4x = factorValue >= 4;
+        oversampler.setFactor(oversamplingOff ? 1 : (use4x ? 4 : 2));
+        // The streaming decimators emit their odd polyphase sample, making the
+        // rendered delays 22.5 (2x) and 25.75 (4x). Exact phase-rate padding
+        // brings both paths to the helper's integer 27-sample contract.
+        const int requiredPhaseDelay = oversamplingOff ? 0 : (use4x ? 5 : 1);
+        if (requiredPhaseDelay != phaseDelaySamples)
+        {
+            phaseDelaySamples = requiredPhaseDelay;
+            phaseDelay.fill(0.0f);
+            phaseWritePosition = 0;
+        }
+    }
+    void reset() noexcept
+    {
+        oversampler.reset();
+        std::fill(compensation.begin(), compensation.end(), 0.0f);
+        phaseDelay.fill(0.0f);
+        writePosition = 0;
+        phaseWritePosition = 0;
+    }
     template <class Fn> float process(float input, Fn&& fn) noexcept
     {
-        const float wet = oversampler.processSample(input, static_cast<Fn&&>(fn));
+        if (phaseDelaySamples <= 0)
+        {
+            const float wet = oversampler.processSample(input, static_cast<Fn&&>(fn));
+            return compensateBaseRate(wet);
+        }
+        const float wet = oversampler.processSample(input, [this, &fn](float sample) noexcept {
+            const float processed = fn(sample);
+            const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
+            phaseDelay[static_cast<size_t>(phaseWritePosition)] = processed;
+            phaseWritePosition = (phaseWritePosition + 1) % phaseDelaySamples;
+            return delayed;
+        });
+        return compensateBaseRate(wet);
+    }
+    template <class Fn> float processSample(float input, Fn&& fn) noexcept { return process(input, static_cast<Fn&&>(fn)); }
+    float latency() const noexcept { return static_cast<float>(maxLatency); }
+    bool isOversamplingOff() const noexcept { return oversamplingOff; }
+private:
+    float compensateBaseRate(float wet) noexcept
+    {
         if (compensation.empty() || maxLatency <= 0) return wet;
         const int current = oversamplingOff ? 0 : static_cast<int>(std::lround(oversampler.latency()));
         const int delay = std::clamp(maxLatency - current, 0, maxLatency);
@@ -216,14 +267,12 @@ public:
         writePosition = (writePosition + 1) % static_cast<int>(compensation.size());
         return delay > 0 ? result : wet;
     }
-    template <class Fn> float processSample(float input, Fn&& fn) noexcept { return process(input, static_cast<Fn&&>(fn)); }
-    float latency() const noexcept { return static_cast<float>(maxLatency); }
-    bool isOversamplingOff() const noexcept { return oversamplingOff; }
-private:
     Oversampler oversampler;
     bool oversamplingOff = false, use4x = false;
     std::vector<float> compensation;
     int maxLatency = 0, writePosition = 0, factor = 2;
+    std::array<float, 5> phaseDelay{};
+    int phaseDelaySamples = 1, phaseWritePosition = 0;
 };
 
 class MultiCompLookupTables

@@ -103,7 +103,7 @@ protected:
             p.hints = kParameterIsAutomatable | (d.integer ? (kParameterIsInteger | kParameterIsBoolean) : 0u);
             return;
         }
-        p.hints = kParameterIsAutomatable | kParameterIsOutput;
+        p.hints = kParameterIsOutput;
         p.ranges.min = -60.0f; p.ranges.max = 0.0f; p.ranges.def = 0.0f; p.unit = "dB";
         if (index == multicompp::kMeterMaster) p.name = "GR";
         else { p.name = index == multicompp::kMeterBand0 ? "Low GR" : index == multicompp::kMeterBand1 ? "Low-Mid GR" : index == multicompp::kMeterBand2 ? "High-Mid GR" : "High GR"; }
@@ -222,6 +222,9 @@ protected:
         const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f && inputs[2] != nullptr && inputs[3] != nullptr;
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, 2, static_cast<int>(frames)); }
         else dsp.processBlock(inputs, outputs, 2, static_cast<int>(frames));
+        // setLatency() is documented as callable from run(). The CLAP wrapper
+        // latches a change here and publishes it at the next activate(), which
+        // is the only point the CLAP spec allows the latency to move.
         updateLatency();
     }
 

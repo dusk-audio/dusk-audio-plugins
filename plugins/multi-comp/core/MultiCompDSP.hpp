@@ -72,18 +72,29 @@ public:
 private:
     static constexpr int kMaxChannels = 2;
     static constexpr int kBypassRampMs = 30;
+    static constexpr int kAutoGainTransitionMs = 50;
+    static constexpr int kCrossoverRampMs = 20;
+    static constexpr int kCrossoverCoefficientInterval = 8;
 
     void processRange(const float* const* in, const float* const* sidechain,
-                      float* const* out, int nCh, int nSamples);
+                      float* const* out, int nCh, int nSamples,
+                      bool externalSidechain, bool autoMakeup);
+    void syncModeParameters(MultiCompMode mode) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples);
     void processMultiband(const float* const* input, const float* const* sidechain,
                           float* const* output, int nCh, int nSamples);
-    void updateCrossovers();
+    std::array<float, 3> crossoverTargets() const noexcept;
+    void prepareCrossovers() noexcept;
+    void resetCrossovers() noexcept;
+    void updateCrossoverTargets() noexcept;
+    void rebuildMultibandTopology(std::uint8_t mask) noexcept;
+    DuskCrossover& crossoverForBoundary(int boundary, int channel, bool sidechain) noexcept;
     void updateMeters(const float* const* in, float* const* out, int nCh, int nSamples);
     void processLatencyHistory(const float* const* in, float* const* out, int nCh, int nSamples, bool emit) noexcept;
 
     MultiCompParameterState params;
+    MultiCompParameterState modeParams;
     MultiCompModes modes;
     double sampleRate = 48000.0;
     int maxBlock = 512;
@@ -94,10 +105,12 @@ private:
 
     std::array<DuskCrossover, kMaxChannels> crossover1, crossover2, crossover3;
     std::array<DuskCrossover, kMaxChannels> scCrossover1, scCrossover2, scCrossover3;
+    std::array<LinearRamp, 3> crossoverRamps;
+    std::array<std::vector<float>, 3> crossoverCurves;
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
-    std::vector<float> dry, mixCurve, bypassCurve, autoGainCurve;
+    std::vector<float> dry, bypassDry, mixCurve, bypassCurve, autoGainCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -106,16 +119,27 @@ private:
     std::array<std::vector<float>, kMaxChannels> globalLookahead;
     std::array<int, kMaxChannels> globalLookaheadWrite{{0, 0}};
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
+    std::uint8_t activeBandMask = 0x0f;
+    std::array<int, kMultiCompBands> enabledBandIndices{{0, 1, 2, 3}};
+    std::array<int, kMultiCompBands - 1> stageBoundaryIndices{{0, 1, 2}};
+    int numEnabledBands = kMultiCompBands;
+    int numActiveStages = kMultiCompBands - 1;
+    int topBandIndex = kMultiCompBands - 1;
 
     LinearRamp busMixRamp;
     LinearRamp digitalMixRamp;
     SmoothedValue globalMixSmoother;
     LinearRamp bypassRamp;
+    LinearRamp manualMakeupScaleRamp;
     MultiCompAutoGainMatcher autoGainMatcher;
     SmoothedValue autoGainSmoother;
     bool bypassSettled = false;
     bool lastBypass = false;
+    bool lastExternalSidechain = false;
+    bool lastAutoMakeup = false;
     bool firstBlock = true;
+    int lastMode = -1;
+    int autoGainHoldSamples = 0;
     int antiAliasLatency = 0;
 
     std::array<std::atomic<float>, kMultiCompBands> bandGR{{0.0f, 0.0f, 0.0f, 0.0f}};

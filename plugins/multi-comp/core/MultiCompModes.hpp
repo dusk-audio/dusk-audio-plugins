@@ -63,11 +63,16 @@ public:
     // this block boundary.
     void setRate(double sampleRate, int oversamplingFactor) noexcept
     {
-        fs = sampleRate > 0.0 ? sampleRate : 48000.0;
-        osFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
+        const double newFs = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const int newFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
+        if (newFs == fs && newFactor == osFactor) return;
+        fs = newFs;
+        osFactor = newFactor;
         const float sr = static_cast<float>(fs * osFactor);
         transientShaper.setRate(sr);
         updateRateCoefficients(sr);
+        updateHardwareRate(sr);
+        selectHardwareGains();
     }
 
     void reset() noexcept
@@ -179,11 +184,14 @@ private:
     MultiCompTransientShaper transientShaper;
     MultiCompLookupTables lookupTables;
 
-    Biquad optoTiltShelf;
+    std::array<Biquad, 2> optoTiltShelf;
     float optoAttack = 0, optoRelease = 0, optoGlowDecay = 0, optoGlowAttack = 0, optoAfterglowAttack = 0;
     float optoCondAttack = 0, optoCondRelease = 0, optoElAttack = 0, optoElRelease = 0, optoScSmooth = 0;
     float fetTilt = 0, optoHardwareGain = 1.0f, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
+    std::array<float, 3> optoHardwareGains{{1.0f, 1.0f, 1.0f}};
+    std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
+    std::array<float, 3> busHardwareGains{{1.0f, 1.0f, 1.0f}};
 
     void prepareHardware(double rate)
     {
@@ -196,7 +204,6 @@ private:
         optoTube.prepare(rate, 2);
         optoTube.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
         optoTube.setDrive(0.15f);
-        calibrateOptoHardwareGain(rate);
         const auto& fp = HardwareEmulation::HardwareProfiles::getFETCompressor();
         const auto& bp = HardwareEmulation::HardwareProfiles::getConsoleBus();
         const auto& sfp = HardwareEmulation::HardwareProfiles::getStudioFET();
@@ -210,8 +217,10 @@ private:
         }
         fetConvolution.prepare(rate); fetConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
         busConvolution.prepare(rate); busConvolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Console_Bus);
-        calibrateFetHardwareGain(rate);
-        calibrateBusHardwareGain(rate);
+        cacheHardwareGains();
+        updateHardwareRate(rate);
+        selectHardwareGains();
+        resetHardware();
         const float sr = static_cast<float>(rate);
         updateRateCoefficients(sr);
     }
@@ -229,7 +238,55 @@ private:
         optoElRelease = 1.0f - std::exp(-2.0f * kDuskPi * 5.0f / sr);
         optoScSmooth = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
-        optoTiltShelf.setCoeffs(Biquad::shelfSlope1(sr, 1000.0f, 3.0f, false));
+        const auto shelf = Biquad::shelfSlope1(sr, 1000.0f, 3.0f, false);
+        for (auto& filter : optoTiltShelf) filter.setCoeffs(shelf);
+    }
+
+    static int hardwareGainIndex(int factor) noexcept
+    {
+        return factor == 4 ? 2 : (factor == 2 ? 1 : 0);
+    }
+
+    void updateHardwareRate(double rate) noexcept
+    {
+        inputTransformerOpto.setSampleRate(rate);
+        outputTransformerOpto.setSampleRate(rate);
+        optoTube.setSampleRate(rate);
+        auto updatePairs = [rate](auto& input, auto& output) {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                input[ch].setSampleRate(rate);
+                output[ch].setSampleRate(rate);
+            }
+        };
+        updatePairs(inputTransformerFet, outputTransformerFet);
+        updatePairs(inputTransformerBus, outputTransformerBus);
+        updatePairs(inputTransformerStudioFet, outputTransformerStudioFet);
+        updatePairs(inputTransformerStudioVca, outputTransformerStudioVca);
+    }
+
+    void cacheHardwareGains()
+    {
+        constexpr int factors[] = {1, 2, 4};
+        for (int i = 0; i < 3; ++i)
+        {
+            const double rate = fs * factors[i];
+            updateHardwareRate(rate);
+            calibrateOptoHardwareGain(rate);
+            calibrateFetHardwareGain(rate);
+            calibrateBusHardwareGain(rate);
+            optoHardwareGains[static_cast<size_t>(i)] = optoHardwareGain;
+            fetHardwareGains[static_cast<size_t>(i)] = fetHardwareGain;
+            busHardwareGains[static_cast<size_t>(i)] = busHardwareGain;
+        }
+    }
+
+    void selectHardwareGains() noexcept
+    {
+        const size_t index = static_cast<size_t>(hardwareGainIndex(osFactor));
+        optoHardwareGain = optoHardwareGains[index];
+        fetHardwareGain = fetHardwareGains[index];
+        busHardwareGain = busHardwareGains[index];
     }
 
     template <typename ResetFn, typename SampleFn>
@@ -314,11 +371,11 @@ private:
         {
             // JUCE bypasses the internal R37 shelf for an external source and
             // clears its state at the source transition.
-            optoTiltShelf.reset();
+            optoTiltShelf[static_cast<size_t>(ch)].reset();
         }
         else if (!limit)
         {
-            sc = optoTiltShelf.process(sc);
+            sc = optoTiltShelf[static_cast<size_t>(ch)].process(sc);
         }
         else sc = input * 0.5f + compressed * 0.5f;
         const float pr = std::clamp(p.optoPeakReduction.load(std::memory_order_relaxed), 0.0f, 100.0f);
@@ -740,7 +797,9 @@ private:
         const float c = std::exp(-1.0f / ((target < d.envelope ? attack : release) * sr));
         d.envelope = std::clamp(c * d.envelope + (1.0f - c) * target, 0.0001f, 1.0f);
         const float wet = std::clamp(delayed * d.envelope * decibelsToGain(p.digitalOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
-        return wet * mix + input * (1.0f - mix);
+        // The dry half of the local mix takes the same delayed sample as the wet
+        // half; blending against the undelayed input combs by the lookahead time.
+        return wet * mix + delayed * (1.0f - mix);
     }
 };
 
