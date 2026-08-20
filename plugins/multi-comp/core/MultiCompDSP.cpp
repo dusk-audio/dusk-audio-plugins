@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace duskaudio
 {
@@ -62,6 +61,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     busMixRamp.prepare(sampleRate, 0.020f); busMixRamp.snap(params.busMix.load(std::memory_order_relaxed) * 0.01f);
     digitalMixRamp.prepare(sampleRate, 0.020f); digitalMixRamp.snap(params.digitalMix.load(std::memory_order_relaxed) * 0.01f);
     bypassRamp.prepare(sampleRate, static_cast<float>(kBypassRampMs) * 0.001f); bypassRamp.snap(0.0f);
+    sidechainListenRamp.prepare(sampleRate, static_cast<float>(kSidechainListenRampMs) * 0.001f);
+    sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
     bypassSettled = false; lastBypass = false; lastExternalSidechain = false;
     lastAutoMakeup = false; firstBlock = true; lastMode = -1; autoGainHoldSamples = 0;
     noiseState = 0x6d2b79f5u;
@@ -106,6 +107,7 @@ void MultiCompDSP::reset()
     busMixRamp.snap(params.busMix.load(std::memory_order_relaxed) * 0.01f);
     digitalMixRamp.snap(params.digitalMix.load(std::memory_order_relaxed) * 0.01f);
     bypassRamp.snap(params.bypass.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
+    sidechainListenRamp.snap(params.globalSidechainListen.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
     bypassSettled = params.bypass.load(std::memory_order_relaxed);
     lastBypass = bypassSettled;
     lastExternalSidechain = false;
@@ -239,6 +241,8 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     }
     ScopedFlushDenormals guard;
     const bool requestedBypass = params.bypass.load(std::memory_order_relaxed);
+    const bool requestedSidechainListen = params.globalSidechainListen.load(std::memory_order_relaxed);
+    sidechainListenRamp.setTarget(requestedSidechainListen ? 1.0f : 0.0f);
     if (requestedBypass != lastBypass)
     {
         lastBypass = requestedBypass;
@@ -248,6 +252,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     processLatencyHistory(in, out, nCh, nSamples, requestedBypass && bypassSettled);
     if (requestedBypass && bypassSettled)
     {
+        for (int i = 0; i < nSamples; ++i) (void)sidechainListenRamp.next();
         masterGR.store(0.0f, std::memory_order_relaxed);
         for (auto& meter : bandGR) meter.store(0.0f, std::memory_order_relaxed);
         updateMeters(in, out, nCh, nSamples);
@@ -346,74 +351,78 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     processRange(processingIn, filteredSidechain, out, nCh, nSamples,
                  useExternalSidechain, autoMakeup);
     const bool isMulti = mode == MultiCompMode::Multiband;
-    const bool sidechainListen = params.globalSidechainListen.load(std::memory_order_relaxed);
-    if (!sidechainListen)
+    if (nCh > 1 && params.stereoLinkMode.load(std::memory_order_relaxed) == 1)
     {
-        if (nCh > 1 && params.stereoLinkMode.load(std::memory_order_relaxed) == 1)
-        {
-            for (int i = 0; i < nSamples; ++i)
-            {
-                const float mid = out[0][i], side = out[1][i];
-                out[0][i] = mid + side;
-                out[1][i] = mid - side;
-            }
-        }
-        const float targetMix = std::clamp((isMulti ? params.mbMix.load(std::memory_order_relaxed) : params.mix.load(std::memory_order_relaxed)) * 0.01f, 0.0f, 1.0f);
-        globalMixSmoother.setTarget(targetMix);
         for (int i = 0; i < nSamples; ++i)
-            mixCurve[static_cast<size_t>(i)] = globalMixSmoother.next();
-        // `dry` is one shared scratch line; copy the source per channel again before
-        // mixing. This is safe for in-place processing and avoids process-time allocs.
-        for (int ch = 0; ch < nCh; ++ch)
         {
-            float* dryChannel = dry.data() + static_cast<size_t>(ch * maxBlock);
+            const float mid = out[0][i], side = out[1][i];
+            out[0][i] = mid + side;
+            out[1][i] = mid - side;
+        }
+    }
+    const float targetMix = std::clamp((isMulti ? params.mbMix.load(std::memory_order_relaxed) : params.mix.load(std::memory_order_relaxed)) * 0.01f, 0.0f, 1.0f);
+    globalMixSmoother.setTarget(targetMix);
+    for (int i = 0; i < nSamples; ++i)
+        mixCurve[static_cast<size_t>(i)] = globalMixSmoother.next();
+    // `dry` is one shared scratch line; copy the source per channel again before
+    // mixing. This is safe for in-place processing and avoids process-time allocs.
+    for (int ch = 0; ch < nCh; ++ch)
+    {
+        float* dryChannel = dry.data() + static_cast<size_t>(ch * maxBlock);
+        for (int i = 0; i < nSamples; ++i)
+        {
+            const float wet = mixCurve[static_cast<size_t>(i)];
+            if (!isMulti || wet < 1.0f)
+                out[ch][i] = out[ch][i] * wet + dryChannel[i] * (1.0f - wet);
+        }
+    }
+
+    if (autoMakeup && !requestedSidechainListen && autoGainHoldSamples <= 0)
+    {
+        double inSum = 0.0, outSum = 0.0;
+        for (int ch = 0; ch < nCh; ++ch)
             for (int i = 0; i < nSamples; ++i)
             {
-                const float wet = mixCurve[static_cast<size_t>(i)];
-                if (!isMulti || wet < 1.0f)
-                    out[ch][i] = out[ch][i] * wet + dryChannel[i] * (1.0f - wet);
+                const float drySample = dry[static_cast<size_t>(ch * maxBlock + i)];
+                inSum += static_cast<double>(drySample) * drySample;
+                outSum += static_cast<double>(out[ch][i]) * out[ch][i];
             }
-        }
-
-        if (autoMakeup && autoGainHoldSamples <= 0)
-        {
-            double inSum = 0.0, outSum = 0.0;
-            for (int ch = 0; ch < nCh; ++ch)
-                for (int i = 0; i < nSamples; ++i)
-                {
-                    const float drySample = dry[static_cast<size_t>(ch * maxBlock + i)];
-                    inSum += static_cast<double>(drySample) * drySample;
-                    outSum += static_cast<double>(out[ch][i]) * out[ch][i];
-                }
-            const float divisor = static_cast<float>(std::max(1, nCh * nSamples));
-            const float target = autoGainMatcher.update(std::sqrt(static_cast<float>(inSum) / divisor),
-                                                        std::sqrt(static_cast<float>(outSum) / divisor), nSamples);
-            autoGainSmoother.setTarget(target);
-        }
-        else
-        {
-            autoGainMatcher.reset();
-            autoGainSmoother.setTarget(1.0f);
-        }
-        for (int i = 0; i < nSamples; ++i) autoGainCurve[static_cast<size_t>(i)] = autoGainSmoother.next();
-        for (int ch = 0; ch < nCh; ++ch)
-            for (int i = 0; i < nSamples; ++i) out[ch][i] *= autoGainCurve[static_cast<size_t>(i)];
-        if (params.noiseEnable.load(std::memory_order_relaxed) && mode != MultiCompMode::Digital && mode != MultiCompMode::Multiband)
-        {
-            for (int ch = 0; ch < nCh; ++ch)
-                for (int i = 0; i < nSamples; ++i)
-                {
-                    noiseState = noiseState * 1664525u + 1013904223u;
-                    const float unit = static_cast<float>((noiseState >> 8) & 0x00ffffffu) / 16777215.0f;
-                    out[ch][i] += (unit * 2.0f - 1.0f) * 0.0001f;
-                }
-        }
+        const float divisor = static_cast<float>(std::max(1, nCh * nSamples));
+        const float target = autoGainMatcher.update(std::sqrt(static_cast<float>(inSum) / divisor),
+                                                    std::sqrt(static_cast<float>(outSum) / divisor), nSamples);
+        autoGainSmoother.setTarget(target);
     }
     else
     {
         autoGainMatcher.reset();
         autoGainSmoother.setTarget(1.0f);
-        for (int i = 0; i < nSamples; ++i) (void)autoGainSmoother.next();
+    }
+    for (int i = 0; i < nSamples; ++i) autoGainCurve[static_cast<size_t>(i)] = autoGainSmoother.next();
+    for (int ch = 0; ch < nCh; ++ch)
+        for (int i = 0; i < nSamples; ++i) out[ch][i] *= autoGainCurve[static_cast<size_t>(i)];
+    if (params.noiseEnable.load(std::memory_order_relaxed) && mode != MultiCompMode::Digital && mode != MultiCompMode::Multiband)
+    {
+        for (int ch = 0; ch < nCh; ++ch)
+            for (int i = 0; i < nSamples; ++i)
+            {
+                noiseState = noiseState * 1664525u + 1013904223u;
+                const float unit = static_cast<float>((noiseState >> 8) & 0x00ffffffu) / 16777215.0f;
+                out[ch][i] += (unit * 2.0f - 1.0f) * 0.0001f;
+            }
+    }
+    for (int i = 0; i < nSamples; ++i)
+    {
+        const float listen = sidechainListenRamp.next();
+        for (int ch = 0; ch < nCh; ++ch)
+        {
+            out[ch][i] = out[ch][i] * (1.0f - listen)
+                       + filteredSidechain[ch][i] * listen;
+        }
+    }
+    if (requestedSidechainListen)
+    {
+        masterGR.store(0.0f, std::memory_order_relaxed);
+        for (auto& meter : bandGR) meter.store(0.0f, std::memory_order_relaxed);
     }
     autoGainHoldSamples = std::max(0, autoGainHoldSamples - nSamples);
 
@@ -558,14 +567,6 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     manualMakeupScaleRamp.setTarget(autoMakeup ? 0.0f : 1.0f);
     if (firstBlock) manualMakeupScaleRamp.snap(autoMakeup ? 0.0f : 1.0f);
     syncModeParameters(mode);
-    if (params.globalSidechainListen.load(std::memory_order_relaxed))
-    {
-        for (int i = 0; i < nSamples; ++i) (void)manualMakeupScaleRamp.next();
-        for (int ch = 0; ch < nCh; ++ch)
-            std::memcpy(out[ch], sidechain[ch], static_cast<size_t>(nSamples) * sizeof(float));
-        masterGR.store(0.0f, std::memory_order_relaxed);
-        return;
-    }
     if (mode == MultiCompMode::Multiband)
     {
         for (int i = 0; i < nSamples; ++i) (void)manualMakeupScaleRamp.next();

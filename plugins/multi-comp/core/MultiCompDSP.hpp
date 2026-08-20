@@ -72,6 +72,7 @@ public:
 private:
     static constexpr int kMaxChannels = 2;
     static constexpr int kBypassRampMs = 30;
+    static constexpr int kSidechainListenRampMs = 30;
     static constexpr int kAutoGainTransitionMs = 50;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
@@ -130,6 +131,7 @@ private:
     LinearRamp digitalMixRamp;
     SmoothedValue globalMixSmoother;
     LinearRamp bypassRamp;
+    LinearRamp sidechainListenRamp;
     LinearRamp manualMakeupScaleRamp;
     MultiCompAutoGainMatcher autoGainMatcher;
     SmoothedValue autoGainSmoother;

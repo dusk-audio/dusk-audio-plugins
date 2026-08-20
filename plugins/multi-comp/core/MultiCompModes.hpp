@@ -338,6 +338,13 @@ private:
     void resetHardware() noexcept
     {
         inputTransformerOpto.reset(); outputTransformerOpto.reset(); optoTube.reset();
+        // The Opto detector shelf holds filter state between blocks and is only
+        // cleared mid-stream while an external sidechain is armed. Without this
+        // it survived reset(), so a re-run after reset() did not reproduce the
+        // first run bit-for-bit. macOS hid it: the residue decays into denormals,
+        // which ARM flushes to zero, while Linux preserves them and the exact
+        // comparison in the reset-determinism test failed.
+        for (auto& filter : optoTiltShelf) filter.reset();
         fetConvolution.reset(); busConvolution.reset();
         for (int ch = 0; ch < 2; ++ch)
         {
