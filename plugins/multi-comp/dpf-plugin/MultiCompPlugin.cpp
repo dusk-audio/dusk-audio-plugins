@@ -22,10 +22,9 @@ public:
     {
         for (int i = 0; i < multicompp::kMeterMaster; ++i)
         {
-            const float def = i < multicompp::kParamCount
-                ? multicompp::hostDefault(multicompp::kParams[static_cast<size_t>(i)])
-                : multicompp::hostDefault(multicompp::bandParam(
-                    (i - multicompp::kBandBase) % 8, (i - multicompp::kBandBase) / 8));
+            const float def = multicompp::resolveParameter(i,
+                [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
+                [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
             values[static_cast<size_t>(i)].store(def, std::memory_order_relaxed);
         }
     }
@@ -60,51 +59,48 @@ protected:
 
     void initParameter(uint32_t index, Parameter& p) override
     {
-        if (index < multicompp::kParamCount)
-        {
-            const auto& d = multicompp::kParams[static_cast<size_t>(index)];
-            p.name = d.name; p.symbol = d.id;
-            // DPF has no arbitrary value<->text callback. Tapered parameters
-            // therefore expose their honest normalized coordinate without a
-            // misleading physical unit; the custom UI displays mapped units.
-            p.unit = multicompp::hasSkew(d) ? "" : d.unit;
-            p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
-            p.ranges.def = multicompp::hostDefault(d);
-            p.hints = kParameterIsAutomatable | (d.integer ? kParameterIsInteger : 0u);
-            using Id = multicompp::ParamId;
-            switch (static_cast<Id>(index))
-            {
-                case Id::Bypass: p.initDesignation(kParameterDesignationBypass); return;
-                case Id::Mode: setEnum(p, multicompp::kModes, 8); break;
-                case Id::TruePeakEnable: case Id::ExternalSidechain: case Id::AutoMakeup:
-                case Id::OptoLimit: case Id::VcaOverEasy: case Id::DigitalAdaptive:
-                case Id::GlobalSidechainListen: case Id::NoiseEnable:
-                    setEnum(p, multicompp::kOnOff, 2); p.hints |= kParameterIsBoolean; break;
-                case Id::TruePeakQuality: setEnum(p, multicompp::kTruePeakQuality, 2); break;
-                case Id::Distortion: setEnum(p, multicompp::kDistortion, 4); break;
-                case Id::Oversampling: setEnum(p, multicompp::kOversampling, 3); break;
-                case Id::FetRatio: setEnum(p, multicompp::kRatios, 5); break;
-                case Id::FetCurve: setEnum(p, multicompp::kFetCurve, 2); break;
-                case Id::VcaClassicDetector: setEnum(p, multicompp::kVcaDetector, 2); break;
-                case Id::BusRatio: setEnum(p, multicompp::kBusRatios, 3); break;
-                case Id::BusAttack: setEnum(p, multicompp::kBusAttack, 6); break;
-                case Id::BusRelease: setEnum(p, multicompp::kBusRelease, 5); break;
-                case Id::StereoLinkMode: setEnum(p, multicompp::kLinkMode, 3); break;
-                default: break;
-            }
-            return;
-        }
         if (index < multicompp::kMeterMaster)
         {
-            const int band = static_cast<int>((index - multicompp::kBandBase) / 8);
-            const int field = static_cast<int>((index - multicompp::kBandBase) % 8);
-            const auto d = multicompp::bandParam(field, band);
-            p.name = String(d.name) + " " + (band == 0 ? "Low" : band == 1 ? "Low-Mid" : band == 2 ? "High-Mid" : "High");
-            p.symbol = String(d.id) + "_" + std::to_string(band).c_str();
-            p.unit = multicompp::hasSkew(d) ? "" : d.unit;
-            p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
-            p.ranges.def = multicompp::hostDefault(d);
-            p.hints = kParameterIsAutomatable | (d.integer ? (kParameterIsInteger | kParameterIsBoolean) : 0u);
+            multicompp::resolveParameter(static_cast<int>(index),
+                [&](const multicompp::Param& d) {
+                    p.name = d.name; p.symbol = d.id;
+                    // DPF has no arbitrary value<->text callback. Tapered parameters
+                    // therefore expose their honest normalized coordinate without a
+                    // misleading physical unit; the custom UI displays mapped units.
+                    p.unit = multicompp::hasSkew(d) ? "" : d.unit;
+                    p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
+                    p.ranges.def = multicompp::hostDefault(d);
+                    p.hints = kParameterIsAutomatable | (d.integer ? kParameterIsInteger : 0u);
+                    using Id = multicompp::ParamId;
+                    switch (static_cast<Id>(index))
+                    {
+                        case Id::Bypass: p.initDesignation(kParameterDesignationBypass); return;
+                        case Id::Mode: setEnum(p, multicompp::kModes, 8); break;
+                        case Id::TruePeakEnable: case Id::ExternalSidechain: case Id::AutoMakeup:
+                        case Id::OptoLimit: case Id::VcaOverEasy: case Id::DigitalAdaptive:
+                        case Id::GlobalSidechainListen: case Id::NoiseEnable:
+                            setEnum(p, multicompp::kOnOff, 2); p.hints |= kParameterIsBoolean; break;
+                        case Id::TruePeakQuality: setEnum(p, multicompp::kTruePeakQuality, 2); break;
+                        case Id::Distortion: setEnum(p, multicompp::kDistortion, 4); break;
+                        case Id::Oversampling: setEnum(p, multicompp::kOversampling, 3); break;
+                        case Id::FetRatio: setEnum(p, multicompp::kRatios, 5); break;
+                        case Id::FetCurve: setEnum(p, multicompp::kFetCurve, 2); break;
+                        case Id::VcaClassicDetector: setEnum(p, multicompp::kVcaDetector, 2); break;
+                        case Id::BusRatio: setEnum(p, multicompp::kBusRatios, 3); break;
+                        case Id::BusAttack: setEnum(p, multicompp::kBusAttack, 6); break;
+                        case Id::BusRelease: setEnum(p, multicompp::kBusRelease, 5); break;
+                        case Id::StereoLinkMode: setEnum(p, multicompp::kLinkMode, 3); break;
+                        default: break;
+                    }
+                },
+                [&](const multicompp::BandParam& d, int band) {
+                    p.name = String(d.name) + " " + (band == 0 ? "Low" : band == 1 ? "Low-Mid" : band == 2 ? "High-Mid" : "High");
+                    p.symbol = String(d.id) + "_" + std::to_string(band).c_str();
+                    p.unit = multicompp::hasSkew(d) ? "" : d.unit;
+                    p.ranges.min = multicompp::hostMin(d); p.ranges.max = multicompp::hostMax(d);
+                    p.ranges.def = multicompp::hostDefault(d);
+                    p.hints = kParameterIsAutomatable | (d.integer ? (kParameterIsInteger | kParameterIsBoolean) : 0u);
+                });
             return;
         }
         // Output-only deliberately excludes kParameterIsAutomatable: hosts may
@@ -128,23 +124,20 @@ protected:
 
     void setParameterValue(uint32_t index, float value) override
     {
-        if (index >= multicompp::kParamCount && index < multicompp::kMeterMaster)
-        {
-            const int band = static_cast<int>((index - multicompp::kBandBase) / 8);
-            const int field = static_cast<int>((index - multicompp::kBandBase) % 8);
-            const auto d = multicompp::bandParam(field, band);
-            const float v = duskaudio::clampFinite(
-                value, multicompp::hostMin(d), multicompp::hostMax(d), multicompp::hostDefault(d));
-            values[index].store(v, std::memory_order_relaxed);
-            dsp.setMultibandParameter(band, d.core, multicompp::hostToPlain(d, v));
-            return;
-        }
-        if (index >= multicompp::kParamCount) return;
-        const auto& d = multicompp::kParams[index];
-        const float v = duskaudio::clampFinite(
-            value, multicompp::hostMin(d), multicompp::hostMax(d), multicompp::hostDefault(d));
-        values[index].store(v, std::memory_order_relaxed);
-        dsp.setParameter(d.core, multicompp::hostToPlain(d, v));
+        if (index >= multicompp::kMeterMaster) return;
+        multicompp::resolveParameter(static_cast<int>(index),
+            [&](const multicompp::Param& d) {
+                const float v = duskaudio::clampFinite(
+                    value, multicompp::hostMin(d), multicompp::hostMax(d), multicompp::hostDefault(d));
+                values[index].store(v, std::memory_order_relaxed);
+                dsp.setParameter(d.core, multicompp::hostToPlain(d, v));
+            },
+            [&](const multicompp::BandParam& d, int band) {
+                const float v = duskaudio::clampFinite(
+                    value, multicompp::hostMin(d), multicompp::hostMax(d), multicompp::hostDefault(d));
+                values[index].store(v, std::memory_order_relaxed);
+                dsp.setMultibandParameter(band, d.core, multicompp::hostToPlain(d, v));
+            });
     }
 
     void initProgramName(uint32_t index, String& name) override
@@ -208,18 +201,16 @@ private:
     { p.enumValues.count = static_cast<uint8_t>(count); p.enumValues.restrictedMode = true; auto* e = new ParameterEnumerationValue[count]; for (int i = 0; i < count; ++i) e[i] = ParameterEnumerationValue(static_cast<float>(i), labels[i]); p.enumValues.values = e; }
     void pushParameters()
     {
-        for (int i = 0; i < multicompp::kParamCount; ++i)
+        for (int i = 0; i < multicompp::kMeterMaster; ++i)
         {
-            const auto& d = multicompp::kParams[static_cast<size_t>(i)];
-            dsp.setParameter(d.core, multicompp::hostToPlain(
-                d, values[static_cast<size_t>(i)].load(std::memory_order_relaxed)));
-        }
-        for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
-        {
-            const int band = (i - multicompp::kBandBase) / 8;
-            const auto d = multicompp::bandParam((i - multicompp::kBandBase) % 8, band);
-            dsp.setMultibandParameter(band, d.core, multicompp::hostToPlain(
-                d, values[static_cast<size_t>(i)].load(std::memory_order_relaxed)));
+            const float value = values[static_cast<size_t>(i)].load(std::memory_order_relaxed);
+            multicompp::resolveParameter(i,
+                [&](const multicompp::Param& d) {
+                    dsp.setParameter(d.core, multicompp::hostToPlain(d, value));
+                },
+                [&](const multicompp::BandParam& d, int band) {
+                    dsp.setMultibandParameter(band, d.core, multicompp::hostToPlain(d, value));
+                });
         }
     }
     void updateLatency() { const int l = dsp.getLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }

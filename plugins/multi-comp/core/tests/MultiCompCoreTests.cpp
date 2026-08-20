@@ -1,15 +1,11 @@
 #include "../MultiCompDSP.hpp"
 #include "../../../shared-dpf/dsp/DuskCrossover.hpp"
-#include "../../dpf-plugin/MultiCompParams.hpp"
-#include "../../dpf-plugin/MultiCompProgramPresets.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <string>
 #include <vector>
 
 using duskaudio::DuskCrossover;
@@ -541,6 +537,8 @@ void testAnalogStereoLinkSharesEnvelope()
                     mode, linked[0], linked[1], independent[1], linked[2], linked[3]);
         require(linked[3] < -0.5f, "analog stereo-link stimulus establishes gain reduction");
         require(independent[1] > 1.0e-4f, "analog stereo-link reference produces right-channel signal");
+        require(linked[0] > 1.0e-4f && linked[1] > 1.0e-4f,
+                "analog stereo-link render produces nonzero output on both channels");
         require(linked[2] < 1.0e-5f, "100% analog stereo link gives both channels the same envelope");
         require(linked[1] < independent[1] * 0.9f,
                 "100% analog stereo link makes the hot left detector compress the right channel");
@@ -1136,12 +1134,7 @@ void testSidechainListenClearsGainReductionMeters()
             "sidechain Listen clears master and per-band gain-reduction meters");
 }
 
-// Known failure, deliberately not called from main: Listen switches directly
-// between program and monitor audio. A correct fix needs persistent ramp state,
-// which would require changing MultiCompDSP.hpp outside this batch's hard scope.
-// Keep this compiled so enabling the call below reproduces the click as a test
-// failure instead of preserving the discontinuity as accepted behaviour.
-[[maybe_unused]] void testSidechainListenSwitchIsSmoothed()
+void testSidechainListenSwitchIsSmoothed()
 {
     MultiCompDSP dsp;
     dsp.prepare(48000.0, 256);
@@ -1156,20 +1149,26 @@ void testSidechainListenClearsGainReductionMeters()
     sidechain.fill(0.8f);
     const float* ip[] = {input.data()}; const float* sc[] = {sidechain.data()}; float* op[] = {output.data()};
     for (int block = 0; block < 16; ++block) dsp.processBlockExternal(ip, sc, op, 1, 256);
-    float previous = output.back(), largestStep = 0.0f;
-    auto measureBlock = [&] {
-        dsp.processBlockExternal(ip, sc, op, 1, 256);
-        largestStep = std::max(largestStep, std::abs(output.front() - previous));
-        for (int i = 1; i < 256; ++i)
-            largestStep = std::max(largestStep, std::abs(output[static_cast<size_t>(i)] - output[static_cast<size_t>(i - 1)]));
-        previous = output.back();
+    float previous = output.back();
+    auto measureTransition = [&](float target) {
+        float largestStep = 0.0f;
+        dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, target);
+        for (int block = 0; block < 6; ++block)
+        {
+            dsp.processBlockExternal(ip, sc, op, 1, 256);
+            largestStep = std::max(largestStep, std::abs(output.front() - previous));
+            for (int i = 1; i < 256; ++i)
+                largestStep = std::max(largestStep, std::abs(output[static_cast<size_t>(i)] - output[static_cast<size_t>(i - 1)]));
+            previous = output.back();
+        }
+        return largestStep;
     };
-    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 1.0f);
-    measureBlock();
-    dsp.setParameter(MultiCompDSP::Parameter::GlobalSidechainListen, 0.0f);
-    measureBlock();
-    std::printf("Listen switch maximum adjacent-sample step %.6f\n", largestStep);
-    require(largestStep < 0.01f, "sidechain Listen on/off uses a short monitor ramp");
+    const float listenOnStep = measureTransition(1.0f);
+    const float listenOffStep = measureTransition(0.0f);
+    std::printf("Listen switch maximum adjacent-sample step: on %.6f; off %.6f\n",
+                listenOnStep, listenOffStep);
+    require(listenOnStep < 0.01f, "sidechain Listen on uses a short monitor ramp");
+    require(listenOffStep < 0.01f, "sidechain Listen off uses a short monitor ramp");
 }
 
 void testSettledBypassClearsGainReductionMeters()
@@ -1288,122 +1287,15 @@ void testHardwareRateRefreshAfterOversamplingChange()
     }
 }
 
-void testHostParameterTapers()
-{
-    const auto& ratio = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::VcaRatio)];
-    const auto& attack = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::DigitalAttack)];
-    const float positions[] = {0.25f, 0.5f, 0.75f};
-    const float expectedRatio[] = {2.2f, 12.8f, 46.6f};
-    const float expectedAttack[] = {4.93f, 49.62f, 191.66f};
-    require(multicompp::hostMin(ratio) == 0.0f && multicompp::hostMax(ratio) == 1.0f,
-            "tapered VCA Ratio is declared in normalized host space");
-    require(multicompp::hostMin(attack) == 0.0f && multicompp::hostMax(attack) == 1.0f,
-            "tapered Digital Attack is declared in normalized host space");
-    for (size_t i = 0; i < 3; ++i)
-    {
-        require(std::abs(multicompp::hostToPlain(ratio, positions[i]) - expectedRatio[i]) < 0.011f,
-                "VCA Ratio follows JUCE skew at quarter points");
-        require(std::abs(multicompp::hostToPlain(attack, positions[i]) - expectedAttack[i]) < 0.011f,
-                "Digital Attack follows JUCE skew at quarter points");
-    }
-    std::puts("host tapers: VCA Ratio and Digital Attack match JUCE at 0.25/0.5/0.75");
-}
-
-void testStrictStateValidationAndRoundTrip()
-{
-    multicompp::StateValues saved{};
-    for (int i = 0; i < multicompp::kParamCount; ++i)
-    {
-        const auto& d = multicompp::kParams[static_cast<size_t>(i)];
-        saved[static_cast<size_t>(i)] = d.integer ? multicompp::hostDefault(d)
-            : multicompp::hostMin(d) + (multicompp::hostMax(d) - multicompp::hostMin(d))
-                * (0.1f + 0.8f * static_cast<float>((i * 37) % 101) / 100.0f);
-    }
-    for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
-    {
-        const int relative = i - multicompp::kBandBase;
-        const auto d = multicompp::bandParam(relative % 8, relative / 8);
-        saved[static_cast<size_t>(i)] = d.integer ? multicompp::hostDefault(d)
-            : multicompp::hostMin(d) + (multicompp::hostMax(d) - multicompp::hostMin(d))
-                * (0.1f + 0.8f * static_cast<float>((i * 29) % 101) / 100.0f);
-    }
-
-    const std::string valid = multicompp::encodeState(saved);
-    multicompp::StateValues restored{};
-    require(multicompp::decodeState(valid, restored), "complete state accepted");
-    require(std::memcmp(saved.data(), restored.data(), sizeof(saved)) == 0,
-            "state save/restore is bit-identical for every parameter");
-
-    auto rejectedWithoutMutation = [&](std::string invalid, const char* message) {
-        multicompp::StateValues before{};
-        before.fill(0.1234567f);
-        const auto unchanged = before;
-        require(!multicompp::decodeState(invalid, before), message);
-        require(std::memcmp(before.data(), unchanged.data(), sizeof(before)) == 0,
-                "rejected state changes zero parameters");
-    };
-
-    std::string malformed = valid;
-    const size_t ratio = malformed.find(";digital_ratio=");
-    const size_t ratioEnd = malformed.find(';', ratio + 1);
-    malformed.replace(ratio + std::strlen(";digital_ratio="),
-                      ratioEnd - ratio - std::strlen(";digital_ratio="), "garbage");
-    rejectedWithoutMutation(malformed, "malformed state rejected");
-
-    std::string truncated = valid;
-    truncated.erase(truncated.rfind(';'));
-    rejectedWithoutMutation(truncated, "truncated state rejected");
-
-    const size_t mix = valid.find(";mix=");
-    const size_t mixEnd = valid.find(';', mix + 1);
-    rejectedWithoutMutation(valid + valid.substr(mix, mixEnd - mix), "duplicate state key rejected");
-    rejectedWithoutMutation(valid + ";unknown=0", "unknown state key rejected");
-    std::puts("state validation: malformed/truncated/duplicate/unknown rejected atomically; round-trip exact");
-}
-
-void testFactoryPresetOwnership()
-{
-    for (const auto& preset : multicompp::kFactoryPresets)
-    {
-        std::array<float, multicompp::kParamCount> values{};
-        values.fill(-123.0f);
-        values[static_cast<size_t>(multicompp::ParamId::Bypass)] = 1.0f;
-        values[static_cast<size_t>(multicompp::ParamId::Oversampling)] = 2.0f;
-        values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)] = 1.0f;
-        multicompp::forEachPresetParam(preset,
-            [&](multicompp::CoreParameter parameter, float value) {
-                const int index = multicompp::coreParamIndex(parameter);
-                require(index >= 0, "preset-owned core parameter remains host-visible");
-                values[static_cast<size_t>(index)] = value;
-            });
-        require(values[static_cast<size_t>(multicompp::ParamId::Bypass)] == 1.0f,
-                "factory preset leaves Bypass set");
-        require(values[static_cast<size_t>(multicompp::ParamId::Oversampling)] == 2.0f,
-                "factory preset leaves Oversampling untouched");
-        require(values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)] == 1.0f,
-                "factory preset leaves External Sidechain untouched");
-    }
-    require(multicompp::coreParamIndex(MultiCompDSP::Parameter::EnvelopeCurve) < 0
-                && multicompp::coreParamIndex(MultiCompDSP::Parameter::SaturationMode) < 0,
-            "JUCE-inert controls are absent from the DPF parameter table");
-    std::puts("factory preset ownership: bypass/oversampling/external-SC/bands untouched");
-}
-
-static_assert(multicompp::kParamCount == 63,
-              "DPF host table must exclude the two JUCE-inert controls");
-
 int main()
 {
-    testHostParameterTapers();
-    testStrictStateValidationAndRoundTrip();
-    testFactoryPresetOwnership();
     testTruePeakOversampledPhaseInterpolation();
     testCrossoverAutomationContinuity();
     testFourTimesHighFrequencyMixCoherence();
     testMultibandEnabledTopology();
     testSettledBypassClearsGainReductionMeters();
     testSidechainListenClearsGainReductionMeters();
-    // testSidechainListenSwitchIsSmoothed(); // Known failure; see test comment.
+    testSidechainListenSwitchIsSmoothed();
     testBypassCompletesDuringSidechainListen();
     testAutoGainResetsOnModeChange();
     testAutoGainNeutralisesManualOutput();

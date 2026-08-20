@@ -10,6 +10,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace multicompp
 {
@@ -96,6 +97,18 @@ inline constexpr BandParam bandParam(int field, int band)
         case 6: return {"mb_solo", names[field], units[field], 0, 1, 0, duskaudio::MultiCompDSP::MultibandParameter::Solo, true};
         default:return {"mb_enabled", names[field], units[field], 0, 1, 1, duskaudio::MultiCompDSP::MultibandParameter::Enabled, true};
     }
+}
+
+template <class GlobalFn, class BandFn>
+decltype(auto) resolveParameter(int index, GlobalFn&& globalFn, BandFn&& bandFn)
+{
+    if (index < kParamCount)
+        return std::forward<GlobalFn>(globalFn)(kParams[static_cast<size_t>(index)]);
+
+    const int relative = index - kBandBase;
+    const int band = relative / 8;
+    const int field = relative % 8;
+    return std::forward<BandFn>(bandFn)(bandParam(field, band), band);
 }
 
 template <class Descriptor>
@@ -212,14 +225,15 @@ inline int stateIndexForId(std::string_view id) noexcept
 inline bool hostValueInRange(int index, float value) noexcept
 {
     if (!std::isfinite(value)) return false;
-    if (index < kParamCount)
-    {
-        const auto& d = kParams[static_cast<size_t>(index)];
-        return value >= hostMin(d) && value <= hostMax(d);
-    }
-    const int relative = index - kBandBase;
-    const auto d = bandParam(relative % 8, relative / 8);
-    return value >= hostMin(d) && value <= hostMax(d);
+    return resolveParameter(index,
+        [value](const Param& d) {
+            return value >= hostMin(d) && value <= hostMax(d)
+                && (!d.integer || std::trunc(value) == value);
+        },
+        [value](const BandParam& d, int) {
+            return value >= hostMin(d) && value <= hostMax(d)
+                && (!d.integer || std::trunc(value) == value);
+        });
 }
 
 // Complete-set transactional decoder. The caller's output is untouched unless
@@ -269,15 +283,13 @@ inline std::string encodeState(const StateValues& values)
     for (int i = 0; i < kMeterMaster; ++i)
     {
         state.push_back(';');
-        if (i < kParamCount)
-            state += kParams[static_cast<size_t>(i)].id;
-        else
-        {
-            const int relative = i - kBandBase;
-            state += bandParam(relative % 8, relative / 8).id;
-            state.push_back('_');
-            state.push_back(static_cast<char>('0' + relative / 8));
-        }
+        resolveParameter(i,
+            [&state](const Param& d) { state += d.id; },
+            [&state](const BandParam& d, int band) {
+                state += d.id;
+                state.push_back('_');
+                state.push_back(static_cast<char>('0' + band));
+            });
         state.push_back('=');
         appendStateFloat(state, values[static_cast<size_t>(i)]);
     }

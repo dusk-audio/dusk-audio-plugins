@@ -14,11 +14,12 @@ inline int coreParamIndex(CoreParameter parameter) noexcept
 
 // Shared factory-program walker. A recall owns only the JUCE preset's common
 // controls and the controls for its selected compressor mode. Machine/global
-// choices (including Bypass, oversampling, external sidechain and lookahead)
-// and all multiband fields remain untouched.
-template <class SetParameter>
+// choices (including Bypass, oversampling, external sidechain and global
+// lookahead) remain untouched.
+template <class SetParameter, class SetBandParameter>
 void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
-                        SetParameter&& setParameter)
+                        SetParameter&& setParameter,
+                        SetBandParameter&& setBandParameter)
 {
     using P = CoreParameter;
     setParameter(P::Mode, static_cast<float>(preset.mode));
@@ -40,6 +41,9 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::FetAttack, preset.attack);
             setParameter(P::FetRelease, preset.release);
             setParameter(P::FetRatio, static_cast<float>(preset.fetRatio));
+            setParameter(P::FetCurve, kParams[static_cast<size_t>(ParamId::FetCurve)].def);
+            setParameter(P::FetTransient, kParams[static_cast<size_t>(ParamId::FetTransient)].def);
+            setParameter(P::FetThreshold, kParams[static_cast<size_t>(ParamId::FetThreshold)].def);
             break;
         case 2:
             setParameter(P::VcaThreshold, preset.threshold);
@@ -48,6 +52,8 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::VcaRelease, preset.release);
             setParameter(P::VcaOutput, preset.makeup);
             setParameter(P::VcaOverEasy, preset.vcaOverEasy);
+            setParameter(P::VcaClassicDetector,
+                         kParams[static_cast<size_t>(ParamId::VcaClassicDetector)].def);
             break;
         case 3:
         {
@@ -70,13 +76,35 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
         case 6:
             setParameter(P::DigitalThreshold, preset.threshold);
             setParameter(P::DigitalRatio, preset.ratio);
+            setParameter(P::DigitalKnee, kParams[static_cast<size_t>(ParamId::DigitalKnee)].def);
             setParameter(P::DigitalAttack, preset.attack);
             setParameter(P::DigitalRelease, preset.release);
+            setParameter(P::DigitalLookahead,
+                         kParams[static_cast<size_t>(ParamId::DigitalLookahead)].def);
+            setParameter(P::DigitalMix, kParams[static_cast<size_t>(ParamId::DigitalMix)].def);
             setParameter(P::DigitalOutput, preset.makeup);
+            setParameter(P::DigitalAdaptive,
+                         kParams[static_cast<size_t>(ParamId::DigitalAdaptive)].def);
             break;
         case 7:
+            setParameter(P::Crossover1, kParams[static_cast<size_t>(ParamId::Crossover1)].def);
+            setParameter(P::Crossover2, kParams[static_cast<size_t>(ParamId::Crossover2)].def);
+            setParameter(P::Crossover3, kParams[static_cast<size_t>(ParamId::Crossover3)].def);
+            setParameter(P::MbMix, kParams[static_cast<size_t>(ParamId::MbMix)].def);
+            setParameter(P::MbOutput, kParams[static_cast<size_t>(ParamId::MbOutput)].def);
+            for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+                for (int field = 0; field < 8; ++field)
+                    setBandParameter(band, field, bandParam(field, band).def);
+            break;
         default:
             break;
     }
+}
+
+template <class SetParameter>
+void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
+                        SetParameter&& setParameter)
+{
+    forEachPresetParam(preset, setParameter, [](int, int, float) {});
 }
 } // namespace multicompp

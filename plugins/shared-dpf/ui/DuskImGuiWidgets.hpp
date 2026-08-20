@@ -284,6 +284,9 @@ public:
     //                     otherwise-eligible live value bubble during a drag.
     //   omitCenterTick: omit the 12-o'clock scale tick when a caller places a
     //                   fixed triangle there as the scale marker.
+    //   toDisplay/fromDisplay: optional nonlinear display transforms. The knob
+    //                   still renders and gestures in [minV,maxV], while its
+    //                   readout and typed entry use the transformed domain.
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -299,13 +302,20 @@ public:
               bool doubleClickReset = false,
               float persistentTextSize = 9.5f,
               bool bubbleOnActiveOnly = false,
-              bool omitCenterTick = false)
+              bool omitCenterTick = false,
+              float (*toDisplay)(float, uint32_t, void*) = nullptr,
+              float (*fromDisplay)(float, uint32_t, void*) = nullptr,
+              void* displayContext = nullptr)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
         const ImVec2 c = P(cx, cy);
         const float range = maxV - minV;
         bool changed = false;
+        const auto displayValue = [=](float v) {
+            return toDisplay != nullptr ? toDisplay(v, param, displayContext)
+                                        : v * dispMul + dispAdd;
+        };
 
         ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
         ImGui::InvisibleButton(id, ImVec2(2.0f * R, 2.0f * R));
@@ -364,7 +374,7 @@ public:
                 }
                 else
                 {
-                    openValueEdit(id, value * dispMul + dispAdd);
+                    openValueEdit(id, displayValue(value));
                     host->endEdit(param); // close the gesture the press opened
                 }
             }
@@ -407,7 +417,7 @@ public:
                         host->setParam(param, value); host->endEdit(param); changed = true;
                     }
                     if (ImGui::MenuItem("Type value..."))
-                        openValueEdit(id, value * dispMul + dispAdd);
+                        openValueEdit(id, displayValue(value));
                     ImGui::EndPopup();
                 }
             }
@@ -486,7 +496,9 @@ public:
         float typed;
         if (valueEdit(id, cx, cy, radius, typed))
         {
-            typed = (typed - dispAdd) / (dispMul != 0.0f ? dispMul : 1.0f); // display -> actual
+            typed = fromDisplay != nullptr
+                ? fromDisplay(typed, param, displayContext)
+                : (typed - dispAdd) / (dispMul != 0.0f ? dispMul : 1.0f); // display -> actual
             typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
             if (stepped) typed = std::round(typed);
             if (typed != value)
@@ -524,7 +536,10 @@ public:
                 // shift-fine can land on values the resting readout rounds away
                 // (e.g. -2.0 dB at rest, -1.97 dB mid-drag). Precision follows the
                 // fine step (0.0008 * range in display units), not a fixed count.
-                const float fineStep = 0.0008f * range * (dispMul != 0.0f ? std::fabs(dispMul) : 1.0f);
+                const float coordinateStep = 0.0008f * range;
+                float adjacent = std::min(maxV, value + coordinateStep);
+                if (adjacent == value) adjacent = std::max(minV, value - coordinateStep);
+                const float fineStep = std::fabs(displayValue(adjacent) - displayValue(value));
                 int d = (int) std::ceil(-std::log10(fineStep > 1e-9f ? fineStep : 1e-9f));
                 d = d < 0 ? 0 : (d > 4 ? 4 : d);
                 // resting precision from fmt (digits after the '.'); never show FEWER
@@ -532,16 +547,16 @@ public:
                 int restD = 0; for (const char* p = fmt; *p; ++p)
                     if (*p == '.') { for (const char* q = p + 1; *q >= '0' && *q <= '9'; ++q) restD = restD * 10 + (*q - '0'); break; }
                 if (d <= restD)
-                    std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+                    std::snprintf(num, sizeof(num), fmt, displayValue(value));
                 else
                 {
                     bool plus = false; for (const char* p = fmt; *p; ++p) if (*p == '+') { plus = true; break; }
                     char f2[8]; std::snprintf(f2, sizeof(f2), plus ? "%%+.%df" : "%%.%df", d);
-                    std::snprintf(num, sizeof(num), f2, value * dispMul + dispAdd);
+                    std::snprintf(num, sizeof(num), f2, displayValue(value));
                 }
             }
             else   // hovering only -> value at resting precision
-                std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+                std::snprintf(num, sizeof(num), fmt, displayValue(value));
             if (overrideText == nullptr && !showName)
                 std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
             valueBubble(cx, cy, radius, buf);
@@ -553,7 +568,7 @@ public:
                 std::snprintf(buf, sizeof(buf), "%s", overrideText);
             else
             {
-                std::snprintf(num, sizeof(num), fmt, value * dispMul + dispAdd);
+                std::snprintf(num, sizeof(num), fmt, displayValue(value));
                 std::snprintf(buf, sizeof(buf), "%s%s", num, suffix);
             }
             // Brighten the resting readout while the knob is active so the live

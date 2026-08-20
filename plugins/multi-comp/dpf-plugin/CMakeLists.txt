@@ -28,4 +28,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp")
   target_compile_features(MultiCompCoreTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompCore COMMAND MultiCompCoreTest)
+
+  add_executable(MultiCompPluginLayerTest
+    MultiCompPluginLayerTests.cpp)
+  target_include_directories(MultiCompPluginLayerTest PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../core"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-dpf/dsp")
+  target_compile_features(MultiCompPluginLayerTest PRIVATE cxx_std_17)
+  add_test(NAME MultiCompPluginLayer COMMAND MultiCompPluginLayerTest)
 endif()

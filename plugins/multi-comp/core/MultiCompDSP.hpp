@@ -72,6 +72,7 @@ public:
 private:
     static constexpr int kMaxChannels = 2;
     static constexpr int kBypassRampMs = 30;
+    static constexpr int kSidechainListenRampMs = 30;
     static constexpr int kAutoGainTransitionMs = 50;
     static constexpr int kCrossoverRampMs = 20;
     static constexpr int kCrossoverCoefficientInterval = 8;
@@ -110,7 +111,7 @@ private:
     std::array<std::array<std::vector<float>, kMaxChannels>, kMultiCompBands> bands, sidechainBands;
     std::array<std::vector<float>, kMaxChannels> processedSidechain;
     std::array<std::vector<float>, kMaxChannels> modeInput;
-    std::vector<float> dry, bypassDry, mixCurve, bypassCurve, autoGainCurve;
+    std::vector<float> dry, bypassDry, mixCurve, bypassCurve, sidechainListenCurve, autoGainCurve;
     std::array<std::vector<float>, kMaxChannels> dryPathDelay;
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
@@ -130,6 +131,7 @@ private:
     LinearRamp digitalMixRamp;
     SmoothedValue globalMixSmoother;
     LinearRamp bypassRamp;
+    LinearRamp sidechainListenRamp;
     LinearRamp manualMakeupScaleRamp;
     MultiCompAutoGainMatcher autoGainMatcher;
     SmoothedValue autoGainSmoother;
