@@ -79,7 +79,8 @@ private:
 
     void processRange(const float* const* in, const float* const* sidechain,
                       float* const* out, int nCh, int nSamples,
-                      bool externalSidechain, bool autoMakeup);
+                      bool externalSidechain, bool autoMakeup,
+                      MultiCompMode mode, int linkMode);
     void syncModeParameters(MultiCompMode mode) noexcept;
     void prepareLookahead(const float* const* in, const float* (&processingIn)[kMaxChannels],
                           int nCh, int nSamples);
@@ -91,8 +92,10 @@ private:
     void updateCrossoverTargets() noexcept;
     void rebuildMultibandTopology(std::uint8_t mask) noexcept;
     DuskCrossover& crossoverForBoundary(int boundary, int channel, bool sidechain) noexcept;
-    void updateMeters(const float* const* in, float* const* out, int nCh, int nSamples);
-    void processLatencyHistory(const float* const* in, float* const* out, int nCh, int nSamples, bool emit) noexcept;
+    void updateMeters(float inPeak, float* const* out, int nCh, int nSamples);
+    void processLatencyHistory(const float* const* in, float* const* out, int nCh,
+                               int nSamples, int delay, bool emit) noexcept;
+    int latencySamplesForMode(MultiCompMode mode) const noexcept;
 
     MultiCompParameterState params;
     MultiCompParameterState modeParams;
@@ -116,6 +119,8 @@ private:
     std::array<int, kMaxChannels> dryPathWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> bypassDelay;
     int bypassWrite = 0;
+    std::array<std::vector<float>, kMaxChannels> sidechainListenDelay;
+    std::array<int, kMaxChannels> sidechainListenWrite{{0, 0}};
     std::array<std::vector<float>, kMaxChannels> delayedInput;
     std::array<std::vector<float>, kMaxChannels> globalLookahead;
     std::array<int, kMaxChannels> globalLookaheadWrite{{0, 0}};

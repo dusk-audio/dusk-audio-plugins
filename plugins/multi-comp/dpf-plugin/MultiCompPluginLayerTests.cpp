@@ -1,6 +1,10 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
 
+#define MULTICOMP_UI_LOGIC_TEST
+#include "MultiCompUI.cpp"
+#undef MULTICOMP_UI_LOGIC_TEST
+
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -36,6 +40,32 @@ void testHostParameterTapers()
                 "Digital Attack follows JUCE skew at quarter points");
     }
     std::puts("host tapers: VCA Ratio and Digital Attack match JUCE at 0.25/0.5/0.75");
+}
+
+void testParameterIntervals()
+{
+    const multicompp::Param linear = {
+        "linear_interval", "Linear Interval", "", 10.0f, 20.0f, 10.0f,
+        MultiCompDSP::Parameter::Mode, false, 2.0f, 1.0f};
+    require(multicompp::hostToPlain(linear, 13.1f) == 14.0f,
+            "linear host-to-plain mapping applies the descriptor interval");
+    require(multicompp::plainToHost(linear, 13.1f) == 14.0f,
+            "linear plain-to-host mapping applies the descriptor interval");
+
+    const multicompp::Param skewed = {
+        "skewed_interval", "Skewed Interval", "", 1.0f, 121.0f, 1.0f,
+        MultiCompDSP::Parameter::Mode, false, 5.0f, 0.5f};
+    const float expectedHost = std::pow((16.0f - skewed.min) / (skewed.max - skewed.min),
+                                        skewed.skew);
+    require(std::abs(multicompp::plainToHost(skewed, 14.0f) - expectedHost) < 1.0e-7f,
+            "skewed plain-to-host mapping snaps before applying the unchanged taper");
+    require(multicompp::hostToPlain(skewed, expectedHost) == 16.0f,
+            "skewed host-to-plain mapping snaps after applying the unchanged taper");
+    require(std::abs(multicompp::plainToHost(
+                         skewed, multicompp::hostToPlain(skewed, expectedHost)) - expectedHost)
+                <= 1.5e-8f,
+            "symmetric interval snapping preserves the skewed taper round trip");
+    std::puts("parameter intervals: applied symmetrically for linear and skewed mappings");
 }
 
 void testStrictStateValidationAndRoundTrip()
@@ -110,7 +140,43 @@ void testStrictStateValidationAndRoundTrip()
 
 void testFactoryPresetOwnership()
 {
-    auto verifyPreset = [](const duskaudio::MultiCompPreset& preset) {
+    using ParamId = multicompp::ParamId;
+    struct PresetOwnership
+    {
+        std::array<ParamId, 13> parameters;
+        size_t parameterCount;
+        bool ownsBandParameters;
+    };
+    const std::array<PresetOwnership, 8> expectedOwnership = {{
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::OptoPeakReduction, ParamId::OptoGain, ParamId::OptoLimit}, 7, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::FetInput, ParamId::FetOutput, ParamId::FetAttack, ParamId::FetRelease,
+          ParamId::FetRatio, ParamId::FetCurve, ParamId::FetTransient, ParamId::FetThreshold},
+         12, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::VcaThreshold, ParamId::VcaRatio, ParamId::VcaAttack, ParamId::VcaRelease,
+          ParamId::VcaOutput, ParamId::VcaOverEasy, ParamId::VcaClassicDetector}, 11, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::BusThreshold, ParamId::BusRatio, ParamId::BusAttack, ParamId::BusRelease,
+          ParamId::BusMakeup, ParamId::BusMix}, 10, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::FetInput, ParamId::FetOutput, ParamId::FetAttack, ParamId::FetRelease,
+          ParamId::FetRatio, ParamId::FetCurve, ParamId::FetTransient, ParamId::FetThreshold},
+         12, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::StudioVcaThreshold, ParamId::StudioVcaRatio, ParamId::StudioVcaAttack,
+          ParamId::StudioVcaRelease, ParamId::StudioVcaOutput}, 9, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::DigitalThreshold, ParamId::DigitalRatio, ParamId::DigitalKnee,
+          ParamId::DigitalAttack, ParamId::DigitalRelease, ParamId::DigitalLookahead,
+          ParamId::DigitalMix, ParamId::DigitalOutput, ParamId::DigitalAdaptive}, 13, false},
+        {{ParamId::Mode, ParamId::Mix, ParamId::SidechainHP, ParamId::AutoMakeup,
+          ParamId::Crossover1, ParamId::Crossover2, ParamId::Crossover3,
+          ParamId::MbMix, ParamId::MbOutput}, 9, true},
+    }};
+
+    auto verifyPreset = [&expectedOwnership](const duskaudio::MultiCompPreset& preset) {
         std::array<float, multicompp::kMeterMaster> values{};
         std::array<bool, multicompp::kMeterMaster> owned{};
         values.fill(-123.0f);
@@ -274,24 +340,17 @@ void testFactoryPresetOwnership()
                 break;
         }
 
-        for (const auto id : {multicompp::ParamId::Bypass,
-                              multicompp::ParamId::StereoLink,
-                              multicompp::ParamId::TruePeakEnable,
-                              multicompp::ParamId::TruePeakQuality,
-                              multicompp::ParamId::ExternalSidechain,
-                              multicompp::ParamId::Distortion,
-                              multicompp::ParamId::DistortionAmount,
-                              multicompp::ParamId::Oversampling,
-                              multicompp::ParamId::GlobalLookahead,
-                              multicompp::ParamId::GlobalSidechainListen,
-                              multicompp::ParamId::NoiseEnable,
-                              multicompp::ParamId::ScLowFreq,
-                              multicompp::ParamId::ScLowGain,
-                              multicompp::ParamId::ScHighFreq,
-                              multicompp::ParamId::ScHighGain,
-                              multicompp::ParamId::StereoLinkMode})
-            require(!owned[static_cast<size_t>(id)],
-                    "factory preset leaves machine/global parameter untouched");
+        require(preset.mode >= 0 && static_cast<size_t>(preset.mode) < expectedOwnership.size(),
+                "factory preset mode has an ownership table entry");
+        std::array<bool, multicompp::kMeterMaster> expected{};
+        const auto& modeOwnership = expectedOwnership[static_cast<size_t>(preset.mode)];
+        for (size_t i = 0; i < modeOwnership.parameterCount; ++i)
+            expected[static_cast<size_t>(modeOwnership.parameters[i])] = true;
+        if (modeOwnership.ownsBandParameters)
+            for (int i = multicompp::kBandBase; i < multicompp::kMeterMaster; ++i)
+                expected[static_cast<size_t>(i)] = true;
+        require(owned == expected,
+                "factory preset owns exactly the common and active-mode parameters");
     };
 
     for (const auto& preset : multicompp::kFactoryPresets)
@@ -317,10 +376,13 @@ void testHostProgramChangeAppliesBandParameters()
     std::array<float, multicompp::kMeterMaster> hostValues{};
     hostValues.fill(-123.0f);
 
-    multicompp::applyPresetToHostParameters(multibandProgram,
-        [&](int parameterIndex, float hostValue) {
+    auto setHostParameter = [&](int parameterIndex, float hostValue) {
+        const bool validIndex = parameterIndex >= 0 && parameterIndex < multicompp::kMeterMaster;
+        require(validIndex, "host program change emits an in-range parameter index");
+        if (validIndex)
             hostValues[static_cast<size_t>(parameterIndex)] = hostValue;
-        });
+    };
+    multicompp::applyPresetToHostParameters(multibandProgram, setHostParameter);
 
     for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
         for (int field = 0; field < 8; ++field)
@@ -332,6 +394,43 @@ void testHostProgramChangeAppliesBandParameters()
                     "host program change applies every Multiband parameter in host space");
         }
     std::puts("host program change: every Multiband parameter applied in host space");
+}
+
+void testFractionalEnumUiAndDspAgreement()
+{
+    for (const float hostValue : {0.4f, 0.6f, 1.4f, 1.6f, 6.6f})
+    {
+        const auto& mode = multicompp::kParams[static_cast<size_t>(multicompp::ParamId::Mode)];
+        const int dspIndex = static_cast<int>(multicompp::snapHostValue(mode, hostValue));
+        const int uiIndex = multicompp::ui_detail::choiceIndex(hostValue, 8);
+        require(uiIndex == dspIndex,
+                "fractional enum host values select the same UI and DSP index");
+    }
+    std::puts("fractional enum automation: UI and DSP select the same rounded index");
+}
+
+void testHostProgramChangeUpdatesUiMirror()
+{
+    for (size_t presetIndex = 0; presetIndex < multicompp::kFactoryPresets.size(); ++presetIndex)
+    {
+        multicompp::StateValues uiValues{};
+        for (size_t i = 0; i < uiValues.size(); ++i)
+            uiValues[i] = -123.0f + static_cast<float>(i) * 0.01f;
+        auto expected = uiValues;
+        multicompp::applyPresetToHostParameters(multicompp::kFactoryPresets[presetIndex],
+            [&](int parameterIndex, float hostValue)
+            {
+                expected[static_cast<size_t>(parameterIndex)] = hostValue;
+            });
+
+        const int selected = multicompp::ui_detail::loadProgramIntoMirror(
+            static_cast<uint32_t>(presetIndex), uiValues);
+        require(selected == static_cast<int>(presetIndex),
+                "host program change selects the recalled preset in the UI");
+        require(uiValues == expected,
+                "host program change updates the UI mirror to the applied preset values");
+    }
+    std::puts("host program change: UI mirror matches every applied factory preset");
 }
 
 static_assert(multicompp::kParamCount == 63,
@@ -394,9 +493,12 @@ void testFractionalIntegerAutomationStaysLoadable()
 int main()
 {
     testHostParameterTapers();
+    testParameterIntervals();
     testStrictStateValidationAndRoundTrip();
     testFactoryPresetOwnership();
     testHostProgramChangeAppliesBandParameters();
+    testHostProgramChangeUpdatesUiMirror();
+    testFractionalEnumUiAndDspAgreement();
     testFractionalIntegerAutomationStaysLoadable();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;

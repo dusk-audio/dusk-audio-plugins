@@ -2,18 +2,44 @@
 // Multi-Comp 2 Dear ImGui UI.  The controls mirror EnhancedCompressorEditor and
 // ModernCompressorPanels; the DSP and parameter ownership remain in the shell/core.
 
-#include "DistrhoUI.hpp"
-#include "MultiCompAccess.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+
+namespace multicompp::ui_detail
+{
+inline int choiceIndex(float hostValue, int count) noexcept
+{
+    return std::clamp(static_cast<int>(std::round(hostValue)), 0, count - 1);
+}
+
+template <size_t N>
+inline int loadProgramIntoMirror(uint32_t index, std::array<float, N>& values)
+{
+    if (index >= kFactoryPresets.size()) return -1;
+    applyPresetToHostParameters(kFactoryPresets[index],
+        [&values](int parameterIndex, float hostValue)
+        {
+            if (parameterIndex >= 0 && static_cast<size_t>(parameterIndex) < values.size())
+                values[static_cast<size_t>(parameterIndex)] = hostValue;
+        });
+    return static_cast<int>(index);
+}
+} // namespace multicompp::ui_detail
+
+#ifndef MULTICOMP_UI_LOGIC_TEST
+
+#include "DistrhoUI.hpp"
+#include "MultiCompAccess.hpp"
 #include "MultiCompVersion.hpp"
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"
 
-#include <algorithm>
-#include <array>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -133,7 +159,7 @@ protected:
 
     void programLoaded(uint32_t index) override
     {
-        currentPreset = index < multicompp::kFactoryPresets.size() ? static_cast<int>(index) : -1;
+        currentPreset = multicompp::ui_detail::loadProgramIntoMirror(index, values);
     }
 
     void uiIdle() override { repaint(); }
@@ -207,7 +233,8 @@ private:
     void titleHit(ImDrawList* dl)
     {
         panel.text(dl, 22, 11, 24, kText, "Multi-Comp 2", -1, true);
-        panel.text(dl, 24, 40, 10, kDim, modeName(static_cast<int>(value(P_MODE))), -1);
+        panel.text(dl, 24, 40, 10, kDim,
+                   modeName(multicompp::ui_detail::choiceIndex(value(P_MODE), 8)), -1);
         panel.text(dl, kDesignW - 20, 20, 11, kDim, "Dusk Audio", 1);
         ImGui::SetCursorScreenPos(panel.P(12, 7));
         ImGui::InvisibleButton("##mc_title", ImVec2(190 * panel.scale(), 44 * panel.scale()));
@@ -218,7 +245,7 @@ private:
                float x, float y, float w, const char* caption)
     {
         panel.text(ImGui::GetWindowDrawList(), x, y, 9.5f, kDim, caption, 0, true);
-        const int selected = std::clamp(static_cast<int>(value(p)), 0, count - 1);
+        const int selected = multicompp::ui_detail::choiceIndex(value(p), count);
         const ImVec2 p0 = panel.P(x - w * 0.5f, y + 16);
         const ImVec2 p1 = panel.P(x + w * 0.5f, y + 43);
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -401,8 +428,8 @@ private:
 
     void drawModePanel(ImDrawList* dl)
     {
-        drawSection(dl, kPanelTop, kDesignH - 8, modeName(static_cast<int>(value(P_MODE))));
-        const int mode = std::clamp(static_cast<int>(value(P_MODE)), 0, 7);
+        const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
+        drawSection(dl, kPanelTop, kDesignH - 8, modeName(mode));
         if (mode == 7)
             drawMeter(dl, 1062, kPanelTop + 24, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
         else
@@ -608,3 +635,5 @@ private:
 UI* createUI() { return new MultiCompUI(); }
 
 END_NAMESPACE_DISTRHO
+
+#endif // MULTICOMP_UI_LOGIC_TEST
