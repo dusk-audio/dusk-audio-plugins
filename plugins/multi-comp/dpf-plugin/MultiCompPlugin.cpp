@@ -127,14 +127,12 @@ protected:
         if (index >= multicompp::kMeterMaster) return;
         multicompp::resolveParameter(static_cast<int>(index),
             [&](const multicompp::Param& d) {
-                const float v = duskaudio::clampFinite(
-                    value, multicompp::hostMin(d), multicompp::hostMax(d), multicompp::hostDefault(d));
+                const float v = multicompp::snapHostValue(d, value);
                 values[index].store(v, std::memory_order_relaxed);
                 dsp.setParameter(d.core, multicompp::hostToPlain(d, v));
             },
             [&](const multicompp::BandParam& d, int band) {
-                const float v = duskaudio::clampFinite(
-                    value, multicompp::hostMin(d), multicompp::hostMax(d), multicompp::hostDefault(d));
+                const float v = multicompp::snapHostValue(d, value);
                 values[index].store(v, std::memory_order_relaxed);
                 dsp.setMultibandParameter(band, d.core, multicompp::hostToPlain(d, v));
             });

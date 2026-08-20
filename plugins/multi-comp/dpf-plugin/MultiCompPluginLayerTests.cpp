@@ -338,12 +338,66 @@ static_assert(multicompp::kParamCount == 63,
               "DPF host table must exclude the two JUCE-inert controls");
 } // namespace
 
+// A host ramping an integer parameter delivers fractional intermediates. Those
+// used to be stored verbatim, so getState() emitted a fractional integer and
+// decodeState() then rejected the ENTIRE state -- a project saved mid-ramp lost
+// every plugin setting on reload. setParameterValue() now snaps integer
+// descriptors, so anything that can be stored can also be loaded.
+void testFractionalIntegerAutomationStaysLoadable()
+{
+    const auto defaults = []() {
+        multicompp::StateValues v{};
+        for (int i = 0; i < multicompp::kMeterMaster; ++i)
+            v[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
+                [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
+                [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
+        return v;
+    };
+
+    int integerIndex = -1;
+    for (int i = 0; i < multicompp::kMeterMaster && integerIndex < 0; ++i)
+        if (multicompp::resolveParameter(i,
+                [](const multicompp::Param& d) { return d.integer; },
+                [](const multicompp::BandParam& d, int) { return d.integer; }))
+            integerIndex = i;
+    require(integerIndex >= 0, "an integer-valued host parameter exists");
+
+    // What a host actually sends part way through an automation ramp.
+    const float fractional = multicompp::resolveParameter(integerIndex,
+        [](const multicompp::Param& d) { return multicompp::hostMin(d) + 0.6f; },
+        [](const multicompp::BandParam& d, int) { return multicompp::hostMin(d) + 0.6f; });
+    const float snapped = multicompp::resolveParameter(integerIndex,
+        [fractional](const multicompp::Param& d) { return multicompp::snapHostValue(d, fractional); },
+        [fractional](const multicompp::BandParam& d, int) { return multicompp::snapHostValue(d, fractional); });
+    require(std::trunc(snapped) == snapped, "snapped automation value is integral");
+
+    multicompp::StateValues stored = defaults();
+    stored[static_cast<size_t>(integerIndex)] = snapped;
+    multicompp::StateValues restored = defaults();
+    require(multicompp::decodeState(multicompp::encodeState(stored), restored),
+            "state stored after fractional automation reloads");
+    require(restored[static_cast<size_t>(integerIndex)] == snapped, "reloaded integer value survives");
+
+    // Control: the unsnapped value is what used to be stored, and it makes the
+    // whole state unloadable while leaving the destination untouched.
+    multicompp::StateValues bad = defaults();
+    bad[static_cast<size_t>(integerIndex)] = fractional;
+    multicompp::StateValues destination = defaults();
+    const multicompp::StateValues before = destination;
+    require(!multicompp::decodeState(multicompp::encodeState(bad), destination),
+            "an unsnapped fractional integer would reject the whole state");
+    for (size_t i = 0; i < destination.size(); ++i)
+        require(destination[i] == before[i], "rejected state leaves the destination untouched");
+    std::puts("fractional integer automation: snapped on store, state stays loadable");
+}
+
 int main()
 {
     testHostParameterTapers();
     testStrictStateValidationAndRoundTrip();
     testFactoryPresetOwnership();
     testHostProgramChangeAppliesBandParameters();
+    testFractionalIntegerAutomationStaysLoadable();
     std::puts("Multi-Comp plugin-layer tests: PASS");
     return 0;
 }

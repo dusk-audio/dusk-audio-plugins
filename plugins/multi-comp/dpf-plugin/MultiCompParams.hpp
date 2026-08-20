@@ -222,6 +222,26 @@ inline int stateIndexForId(std::string_view id) noexcept
     return -1;
 }
 
+// Clamp a host value into its descriptor's range, and snap it to an integer
+// when the descriptor is integral.
+//
+// Snapping matters beyond tidiness. getState() serialises the stored host values
+// verbatim, and decodeState() rejects the WHOLE state if an integer-valued
+// parameter carries a fraction. A host ramping an integer parameter delivers
+// fractional intermediates, so without snapping a project saved mid-ramp stores
+// something like mode=0.6 and fails to load in its entirety.
+//
+// Rejecting fractional values here instead would be worse: the plugin would
+// ignore legitimate automation. Snapping keeps automation working and keeps
+// every stored value loadable. Rounding rather than truncating also handles a
+// host that delivers 0.9999999 for 1.
+template <class Descriptor>
+inline float snapHostValue(const Descriptor& d, float value) noexcept
+{
+    const float clamped = duskaudio::clampFinite(value, hostMin(d), hostMax(d), hostDefault(d));
+    return d.integer ? std::round(clamped) : clamped;
+}
+
 inline bool hostValueInRange(int index, float value) noexcept
 {
     if (!std::isfinite(value)) return false;
