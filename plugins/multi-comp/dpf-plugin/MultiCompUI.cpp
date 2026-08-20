@@ -29,6 +29,19 @@ inline int loadProgramIntoMirror(uint32_t index, std::array<float, N>& values)
         });
     return static_cast<int>(index);
 }
+
+template <size_t N>
+inline float effectiveCrossoverPlain(uint32_t index, const std::array<float, N>& values)
+{
+    const auto x1 = static_cast<uint32_t>(ParamId::Crossover1);
+    const auto x2 = static_cast<uint32_t>(ParamId::Crossover2);
+    const auto x3 = static_cast<uint32_t>(ParamId::Crossover3);
+    if (index < x1 || index > x3 || x3 >= N) return 0.0f;
+    const float f1 = hostToPlain(kParams[x1], values[x1]);
+    const float f2 = std::clamp(hostToPlain(kParams[x2], values[x2]), f1 * 1.5f, 5000.0f);
+    const float f3 = std::clamp(hostToPlain(kParams[x3], values[x3]), f2 * 1.5f, 16000.0f);
+    return index == x1 ? f1 : index == x2 ? f2 : f3;
+}
 } // namespace multicompp::ui_detail
 
 #ifndef MULTICOMP_UI_LOGIC_TEST
@@ -137,6 +150,12 @@ public:
         if (idx >= static_cast<uint32_t>(multicompp::kMeterMaster)) return;
         currentPreset = -1;
         values[idx] = value;
+        if (idx >= P_X1 && idx <= P_X3)
+        {
+            const float effective = multicompp::ui_detail::effectiveCrossoverPlain(idx, values);
+            value = multicompp::plainToHost(multicompp::kParams[idx], effective);
+            values[idx] = value;
+        }
         setParameterValue(idx, value);
     }
 
@@ -557,7 +576,7 @@ private:
         const float trackStart = x - 100.0f;
         const float trackEnd = x + 100.0f;
         const auto& d = multicompp::kParams[p];
-        const float physicalValue = multicompp::hostToPlain(d, values[p]);
+        const float physicalValue = multicompp::ui_detail::effectiveCrossoverPlain(p, values);
         const float t = std::clamp(values[p], 0.0f, 1.0f);
         const float handleX = trackStart + t * (trackEnd - trackStart);
         dl->AddLine(panel.P(trackStart, 392), panel.P(trackEnd, 392), IM_COL32(70, 75, 84, 255), 4 * panel.scale());

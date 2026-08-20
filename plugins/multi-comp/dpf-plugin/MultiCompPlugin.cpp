@@ -106,7 +106,9 @@ protected:
         // Output-only deliberately excludes kParameterIsAutomatable: hosts may
         // read these meters, but must never offer them as writable targets.
         p.hints = kParameterIsOutput;
-        p.ranges.min = -60.0f; p.ranges.max = 0.0f; p.ranges.def = 0.0f; p.unit = "dB";
+        p.ranges.min = duskaudio::MultiCompDSP::kMinPublishedGainReductionDb;
+        p.ranges.max = duskaudio::MultiCompDSP::kMaxPublishedGainReductionDb;
+        p.ranges.def = 0.0f; p.unit = "dB";
         if (index == multicompp::kMeterMaster) p.name = "GR";
         else { p.name = index == multicompp::kMeterBand0 ? "Low GR" : index == multicompp::kMeterBand1 ? "Low-Mid GR" : index == multicompp::kMeterBand2 ? "High-Mid GR" : "High GR"; }
         p.symbol = index == multicompp::kMeterMaster ? "gr_meter" : index == multicompp::kMeterBand0 ? "gr_low" : index == multicompp::kMeterBand1 ? "gr_lowmid" : index == multicompp::kMeterBand2 ? "gr_highmid" : "gr_high";
@@ -125,6 +127,31 @@ protected:
     void setParameterValue(uint32_t index, float value) override
     {
         if (index >= multicompp::kMeterMaster) return;
+        const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
+        const auto x2 = static_cast<uint32_t>(multicompp::ParamId::Crossover2);
+        const auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
+        if (index >= x1 && index <= x3)
+        {
+            const auto& changed = multicompp::kParams[index];
+            values[index].store(multicompp::snapHostValue(changed, value), std::memory_order_relaxed);
+            const float f1 = multicompp::hostToPlain(
+                multicompp::kParams[x1], values[x1].load(std::memory_order_relaxed));
+            const float f2 = std::clamp(multicompp::hostToPlain(
+                multicompp::kParams[x2], values[x2].load(std::memory_order_relaxed)),
+                f1 * 1.5f, 5000.0f);
+            const float f3 = std::clamp(multicompp::hostToPlain(
+                multicompp::kParams[x3], values[x3].load(std::memory_order_relaxed)),
+                f2 * 1.5f, 16000.0f);
+            const float ordered[] = {f1, f2, f3};
+            for (uint32_t crossover = x1; crossover <= x3; ++crossover)
+            {
+                const float plain = ordered[crossover - x1];
+                values[crossover].store(multicompp::plainToHost(
+                    multicompp::kParams[crossover], plain), std::memory_order_relaxed);
+                dsp.setParameter(multicompp::kParams[crossover].core, plain);
+            }
+            return;
+        }
         multicompp::resolveParameter(static_cast<int>(index),
             [&](const multicompp::Param& d) {
                 const float v = multicompp::snapHostValue(d, value);
@@ -178,11 +205,18 @@ protected:
     void sampleRateChanged(double sr) override { dsp.prepare(sr, static_cast<int>(getBufferSize())); pushParameters(); updateLatency(); }
     void bufferSizeChanged(uint32_t bs) override { dsp.prepare(getSampleRate(), static_cast<int>(bs)); pushParameters(); updateLatency(); }
 
+    void ioChanged(uint16_t in, uint16_t out) override
+    {
+        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DPF calls this while deactivated, so run() observes a stable count.
+        activeChannels = (in == 1 && out == 1) ? 1 : 2;
+    }
+
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f && inputs[2] != nullptr && inputs[3] != nullptr;
-        if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, 2, static_cast<int>(frames)); }
-        else dsp.processBlock(inputs, outputs, 2, static_cast<int>(frames));
+        if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }
+        else dsp.processBlock(inputs, outputs, activeChannels, static_cast<int>(frames));
         // setLatency() is documented as callable from run(). The CLAP wrapper
         // latches a change here and publishes it at the next activate(), which
         // is the only point the CLAP spec allows the latency to move.
@@ -209,6 +243,7 @@ private:
     void updateLatency() { const int l = dsp.getLatencySamples(); if (l != lastLatency) { lastLatency = l; setLatency(static_cast<uint32_t>(l < 0 ? 0 : l)); } }
 
     duskaudio::MultiCompDSP dsp;
+    int activeChannels = DISTRHO_PLUGIN_NUM_OUTPUTS;
     std::array<std::atomic<float>, multicompp::kMeterMaster> values{};
     int lastLatency = -1;
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)

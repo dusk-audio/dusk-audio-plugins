@@ -1,5 +1,10 @@
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
+#include "DistrhoPluginInfo.h"
+
+#ifndef DISTRHO_PLUGIN_EXTRA_IO
+#error "Multi-Comp must advertise its AU mono input/output layout"
+#endif
 
 #define MULTICOMP_UI_LOGIC_TEST
 #include "MultiCompUI.cpp"
@@ -16,6 +21,11 @@ using duskaudio::MultiCompDSP;
 
 namespace
 {
+constexpr uint16_t kAdvertisedExtraIo[][2] = {DISTRHO_PLUGIN_EXTRA_IO};
+static_assert(sizeof(kAdvertisedExtraIo) / sizeof(kAdvertisedExtraIo[0]) == 1
+              && kAdvertisedExtraIo[0][0] == 1 && kAdvertisedExtraIo[0][1] == 1,
+              "Multi-Comp AU extra I/O must be exactly one matched mono layout");
+
 void require(bool condition, const char* message)
 {
     if (!condition) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
@@ -409,6 +419,23 @@ void testFractionalEnumUiAndDspAgreement()
     std::puts("fractional enum automation: UI and DSP select the same rounded index");
 }
 
+void testCrossoverReadoutUsesEffectiveOrdering()
+{
+    multicompp::StateValues values{};
+    for (int i = 0; i < multicompp::kMeterMaster; ++i)
+        values[static_cast<size_t>(i)] = multicompp::resolveParameter(i,
+            [](const multicompp::Param& d) { return multicompp::hostDefault(d); },
+            [](const multicompp::BandParam& d, int) { return multicompp::hostDefault(d); });
+    const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
+    const auto x2 = static_cast<uint32_t>(multicompp::ParamId::Crossover2);
+    values[x1] = multicompp::plainToHost(multicompp::kParams[x1], 500.0f);
+    values[x2] = multicompp::plainToHost(multicompp::kParams[x2], 300.0f);
+    const float effective = multicompp::ui_detail::effectiveCrossoverPlain(x2, values);
+    std::printf("ordered crossover readout: requested 300 Hz; effective %.0f Hz\n", effective);
+    require(effective == 750.0f,
+            "XOVER 2 readout reports the DSP's 1.5x ordering clamp");
+}
+
 void testHostProgramChangeUpdatesUiMirror()
 {
     for (size_t presetIndex = 0; presetIndex < multicompp::kFactoryPresets.size(); ++presetIndex)
@@ -492,6 +519,7 @@ void testFractionalIntegerAutomationStaysLoadable()
 
 int main()
 {
+    testCrossoverReadoutUsesEffectiveOrdering();
     testHostParameterTapers();
     testParameterIntervals();
     testStrictStateValidationAndRoundTrip();

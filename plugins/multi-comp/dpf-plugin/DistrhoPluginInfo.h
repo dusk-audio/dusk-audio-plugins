@@ -13,6 +13,9 @@
 // format supports them; JACK exposes all four inputs as named ports.
 #define DISTRHO_PLUGIN_NUM_INPUTS   4
 #define DISTRHO_PLUGIN_NUM_OUTPUTS  2
+// AU hosts filter insert menus by channel layout. Keep stereo as the default
+// while also exposing a true mono instance for mono Logic channel strips.
+#define DISTRHO_PLUGIN_EXTRA_IO     { 1, 1 },
 #define DISTRHO_PLUGIN_HAS_UI       1
 #define DISTRHO_PLUGIN_IS_RT_SAFE   1
 #define DISTRHO_PLUGIN_WANT_DIRECT_ACCESS 1
