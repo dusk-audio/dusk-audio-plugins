@@ -718,7 +718,7 @@ OptoCrestResult measureOptoCrestResponse(OptoCrestStimulus stimulus)
             10.0f * std::log10(static_cast<float>(controlPower / activePower))};
 }
 
-void testOptoCrestResponse()
+void reportOptoCrestResponse()
 {
     const auto sine = measureOptoCrestResponse(OptoCrestStimulus::Sine);
     const auto burst = measureOptoCrestResponse(OptoCrestStimulus::Burst);
@@ -1226,7 +1226,7 @@ OptoAttackCrossings measureOptoAttackCrossings(float peakReduction, float levelD
     return {finalReduction, crossing(0.63f), crossing(0.90f)};
 }
 
-void testOptoAttackCrossings()
+void reportOptoAttackCrossings()
 {
     struct Row { float peakReduction, inputDbfs, exposure, crossing63, crossing90; };
     constexpr std::array<Row, 9> rows{{
@@ -1308,7 +1308,7 @@ OptoReleaseLocalTaus measureOptoReleaseLocalTaus(float peakReduction, float leve
             localTau(0.250f, 1.000f), localTau(2.000f, 4.000f)};
 }
 
-void testOptoReleaseLocalTaus()
+void reportOptoReleaseLocalTaus()
 {
     struct ExposureRow { float exposure, earlyTarget, midTarget, lateTarget; };
     constexpr std::array<ExposureRow, 4> rows{{
@@ -3258,15 +3258,15 @@ int main()
     testOptoDriveApplicability();
     testGoldenVectors();
     testOptoHarmonicContent();
-    testOptoCrestResponse();
+    reportOptoCrestResponse();
     testOptoCrestSweep();
     testOptoBroadbandStaticLaw();
     testOptoBurstRateSweep();
     testOptoPluginLevelReferencePoints();
     testOptoDetectorFrequencyWeighting();
     testOptoDetectorMemory();
-    testOptoAttackCrossings();
-    testOptoReleaseLocalTaus();
+    reportOptoAttackCrossings();
+    reportOptoReleaseLocalTaus();
     testOptoInactivePeakReduction();
     testOptoMeterMatchesOutputReduction();
     testOptoMeasuredOnsets();

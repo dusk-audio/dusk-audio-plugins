@@ -72,8 +72,12 @@ public:
     float parameterValue(uint32_t index) const noexcept
     {
         if (index >= multicompp::kMeterMaster) return 0.0f;
-        const auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
-        const auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
+        constexpr auto x1 = static_cast<uint32_t>(multicompp::ParamId::Crossover1);
+        constexpr auto x3 = static_cast<uint32_t>(multicompp::ParamId::Crossover3);
+        // plain(x1 + 1) and ordered[index - x1] below assume the three
+        // crossover ids are contiguous.
+        static_assert(x3 == x1 + 2,
+                      "Crossover1..Crossover3 must be contiguous parameter ids");
         if (index < x1 || index > x3) return values[index].load(std::memory_order_relaxed);
         const auto plain = [this](uint32_t i) {
             return multicompp::hostToPlain(multicompp::kParams[i],
