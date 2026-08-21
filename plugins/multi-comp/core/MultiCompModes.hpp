@@ -545,11 +545,12 @@ private:
         // follower on a 997 Hz sine.  At 48 kHz, fixed-point iteration of one
         // full-wave period gives peaks of 0.925093862 for the 0.4 ms / 8 ms
         // integrator and 0.994476788 for that peak follower.  Therefore the
-        // exact calibration-condition correction is
-        // 20*log10(0.994476788 / 0.925093862) = 0.628177 dB.
-        constexpr float detectorIntegrationCalibrationDb = 0.628177f;
+        // exact calibration-condition correction is the peak ratio
+        // 0.994476788 / 0.925093862 = 1.07500095 (= 0.628177 dB), stored as
+        // the linear factor so the per-sample path carries no pow().
+        constexpr float detectorIntegrationCalibrationGain = 1.07500095f;
         const float integratedDetectorLevel = d.detectorLevel
-            * decibelsToGain(detectorIntegrationCalibrationDb);
+            * detectorIntegrationCalibrationGain;
         const float effectiveDetectorLevel = std::min(
             d.detectorPeak, integratedDetectorLevel);
         const float uncorrectedInputLevelDb = gainToDecibels(effectiveDetectorLevel);
