@@ -731,6 +731,243 @@ void testOptoCrestResponse()
                 noise.crestDb, noise.reductionDb, noise.reductionDb - sine.reductionDb);
 }
 
+OptoCrestResult measureOptoCrestSweepPoint(int burstSamples)
+{
+    // Identical to the reference extraction: constant -24 dBFS RMS, 1 kHz
+    // bursts every 50 ms, settled over seconds 5.0-7.5.
+    constexpr int kSampleRate = 48000;
+    constexpr int kBlockSize = 256;
+    constexpr int kPeriodSamples = 50 * kSampleRate / 1000;
+    constexpr int kMeasureStart = 5 * kSampleRate;
+    constexpr int kMeasureSamples = 5 * kSampleRate / 2;
+    constexpr int kTotalSamples = kMeasureStart + kMeasureSamples;
+    constexpr float kTargetRms = 0.0630957344f;
+    std::vector<float> signal(static_cast<size_t>(kTotalSamples));
+    for (int sample = 0; sample < kTotalSamples; ++sample)
+        if (sample % kPeriodSamples < burstSamples)
+            signal[static_cast<size_t>(sample)] = std::sin(
+                2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
+
+    double inputPower = 0.0;
+    for (int sample = kMeasureStart; sample < kTotalSamples; ++sample)
+        inputPower += static_cast<double>(signal[static_cast<size_t>(sample)])
+            * signal[static_cast<size_t>(sample)];
+    const float inputRms = static_cast<float>(
+        std::sqrt(inputPower / kMeasureSamples));
+    const float normalisation = kTargetRms / std::max(inputRms, 1.0e-12f);
+    float peak = 0.0f;
+    for (auto& value : signal)
+    {
+        value *= normalisation;
+        peak = std::max(peak, std::abs(value));
+    }
+
+    MultiCompDSP control;
+    MultiCompDSP active;
+    prepareOptoDynamicsDsp(control, 0.0f);
+    prepareOptoDynamicsDsp(active, 70.0f);
+    control.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1869f);
+    active.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1869f);
+    std::array<float, kBlockSize> controlLeft{}, controlRight{};
+    std::array<float, kBlockSize> activeLeft{}, activeRight{};
+    double controlPower = 0.0;
+    double activePower = 0.0;
+    for (int blockStart = 0; blockStart < kTotalSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, kTotalSamples - blockStart);
+        const float* inputs[] = {signal.data() + blockStart,
+                                 signal.data() + blockStart};
+        float* controlOutputs[] = {controlLeft.data(), controlRight.data()};
+        float* activeOutputs[] = {activeLeft.data(), activeRight.data()};
+        control.processBlock(inputs, controlOutputs, 2, count);
+        active.processBlock(inputs, activeOutputs, 2, count);
+        for (int i = 0; i < count; ++i)
+        {
+            const int sample = blockStart + i;
+            if (sample < kMeasureStart) continue;
+            controlPower += static_cast<double>(controlLeft[static_cast<size_t>(i)])
+                * controlLeft[static_cast<size_t>(i)];
+            activePower += static_cast<double>(activeLeft[static_cast<size_t>(i)])
+                * activeLeft[static_cast<size_t>(i)];
+        }
+    }
+    return {duskaudio::gainToDecibels(peak / kTargetRms),
+            10.0f * std::log10(static_cast<float>(controlPower / activePower))};
+}
+
+void testOptoCrestSweep()
+{
+    constexpr std::array<int, 4> burstSamples{{2400, 144, 48, 17}};
+    constexpr std::array<float, 4> referenceCrestDb{{3.0103f, 15.2288f,
+                                                      20.0000f, 23.7901f}};
+    constexpr std::array<float, 4> referenceGrDb{{10.192f, 14.070f,
+                                                   11.328f, 8.520f}};
+    constexpr size_t kHeldOutRow = 2;
+    std::array<OptoCrestResult, burstSamples.size()> measured{};
+    float fittedSquaredError = 0.0f;
+    float fittedWorstError = 0.0f;
+    float heldOutError = 0.0f;
+    bool finiteAndCorrectCrest = true;
+    for (size_t row = 0; row < burstSamples.size(); ++row)
+    {
+        measured[row] = measureOptoCrestSweepPoint(burstSamples[row]);
+        const float delta = measured[row].reductionDb - referenceGrDb[row];
+        std::printf("opto crest sweep: crest %.6f dB reference %.3f dB "
+                    "measured %.6f dB delta %+.6f dB%s\n",
+                    measured[row].crestDb, referenceGrDb[row],
+                    measured[row].reductionDb, delta,
+                    row == kHeldOutRow ? " (held out)" : "");
+        finiteAndCorrectCrest = finiteAndCorrectCrest
+            && std::isfinite(measured[row].reductionDb)
+            && std::abs(measured[row].crestDb - referenceCrestDb[row]) < 0.02f;
+        if (row == kHeldOutRow)
+            heldOutError = delta;
+        else
+        {
+            fittedSquaredError += delta * delta;
+            fittedWorstError = std::max(fittedWorstError, std::abs(delta));
+        }
+    }
+    const float fittedRmsError = std::sqrt(fittedSquaredError / 3.0f);
+    const bool nonMonotonicShape = measured[1].reductionDb > measured[0].reductionDb
+        && measured[2].reductionDb < measured[1].reductionDb
+        && measured[3].reductionDb < measured[2].reductionDb;
+    std::printf("opto crest sweep summary: fitted 3.0/15.2/23.8 dB crest "
+                "RMS %.6f dB worst %.6f dB; held-out 20.0 dB crest "
+                "delta %+.6f dB\n",
+                fittedRmsError, fittedWorstError, heldOutError);
+    // No tested causal charge mechanism reconciled the 20 dB row with the
+    // burst-rate gate. Pin the reproduced non-monotonic shape and the known
+    // residual so a later mechanism cannot silently regress either side.
+    require(finiteAndCorrectCrest && nonMonotonicShape
+                && fittedRmsError < 0.40f && fittedWorstError < 0.40f
+                && std::abs(heldOutError) < 2.0f,
+            "Opto linked-stereo crest sweep preserves its measured shape and bounded residual");
+}
+
+float measureOptoBroadbandStaticLaw(const std::vector<float>& unitRmsNoise,
+                                    float inputDbfs)
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kBlockSize = 256;
+    constexpr int kMeasureStart = 4 * kSampleRate;
+    constexpr int kMeasureSamples = 7 * kSampleRate / 2;
+    const float amplitude = duskaudio::decibelsToGain(inputDbfs);
+    MultiCompDSP control;
+    MultiCompDSP active;
+    prepareOptoDynamicsDsp(control, 0.0f);
+    prepareOptoDynamicsDsp(active, 70.0f);
+    // The reference session stored the normalised Gain setting as 0.321869.
+    control.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1869f);
+    active.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1869f);
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> controlOutput{};
+    std::array<float, kBlockSize> activeOutput{};
+    double controlPower = 0.0;
+    double activePower = 0.0;
+    const int totalSamples = static_cast<int>(unitRmsNoise.size());
+    for (int blockStart = 0; blockStart < totalSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, totalSamples - blockStart);
+        for (int i = 0; i < count; ++i)
+            input[static_cast<size_t>(i)]
+                = amplitude * unitRmsNoise[static_cast<size_t>(blockStart + i)];
+        const float* inputs[] = {input.data()};
+        float* controlOutputs[] = {controlOutput.data()};
+        float* activeOutputs[] = {activeOutput.data()};
+        control.processBlock(inputs, controlOutputs, 1, count);
+        active.processBlock(inputs, activeOutputs, 1, count);
+        for (int i = 0; i < count; ++i)
+        {
+            const int sample = blockStart + i;
+            if (sample < kMeasureStart
+                || sample >= kMeasureStart + kMeasureSamples)
+                continue;
+            controlPower += static_cast<double>(controlOutput[static_cast<size_t>(i)])
+                * controlOutput[static_cast<size_t>(i)];
+            activePower += static_cast<double>(activeOutput[static_cast<size_t>(i)])
+                * activeOutput[static_cast<size_t>(i)];
+        }
+    }
+    require(controlPower > 1.0e-12 && activePower > 1.0e-12,
+            "Opto broadband-law comparison produces measurable output");
+    return 10.0f * std::log10(static_cast<float>(controlPower / activePower));
+}
+
+void testOptoBroadbandStaticLaw()
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kMeasureStart = 4 * kSampleRate;
+    constexpr int kMeasureSamples = 7 * kSampleRate / 2;
+    constexpr int kTotalSamples = 8 * kSampleRate;
+    std::vector<float> noise(static_cast<size_t>(kTotalSamples));
+    uint32_t randomState = 0x6d2b79f5u;
+    bool haveSpare = false;
+    float spare = 0.0f;
+    auto uniform = [&]() {
+        randomState ^= randomState << 13;
+        randomState ^= randomState >> 17;
+        randomState ^= randomState << 5;
+        return (static_cast<float>(randomState) + 0.5f) / 4294967296.0f;
+    };
+    auto gaussian = [&]() {
+        if (haveSpare)
+        {
+            haveSpare = false;
+            return spare;
+        }
+        const float radius = std::sqrt(
+            -2.0f * std::log(std::max(uniform(), 1.0e-12f)));
+        const float angle = 2.0f * kPi * uniform();
+        spare = radius * std::sin(angle);
+        haveSpare = true;
+        return radius * std::cos(angle);
+    };
+    for (auto& sample : noise) sample = gaussian();
+    double measuredPower = 0.0;
+    for (int sample = kMeasureStart;
+         sample < kMeasureStart + kMeasureSamples; ++sample)
+        measuredPower += static_cast<double>(noise[static_cast<size_t>(sample)])
+            * noise[static_cast<size_t>(sample)];
+    const float normalisation = 1.0f / static_cast<float>(
+        std::sqrt(measuredPower / kMeasureSamples));
+    for (auto& sample : noise) sample *= normalisation;
+
+    constexpr std::array<float, 5> levelsDbfs{{-36.0f, -30.0f, -24.0f,
+                                                -18.0f, -12.0f}};
+    constexpr std::array<float, 5> referenceGrDb{{3.209f, 7.459f, 12.026f,
+                                                   16.626f, 21.073f}};
+    constexpr size_t kHeldOutRow = 2;
+    float fittedSquaredError = 0.0f;
+    float fittedWorstError = 0.0f;
+    float heldOutError = 0.0f;
+    for (size_t row = 0; row < levelsDbfs.size(); ++row)
+    {
+        const float measured = measureOptoBroadbandStaticLaw(
+            noise, levelsDbfs[row]);
+        const float delta = measured - referenceGrDb[row];
+        std::printf("opto broadband law: input %.0f dBFS reference %.3f dB "
+                    "measured %.6f dB delta %+.6f dB%s\n",
+                    levelsDbfs[row], referenceGrDb[row], measured, delta,
+                    row == kHeldOutRow ? " (held out)" : "");
+        if (row == kHeldOutRow)
+            heldOutError = delta;
+        else
+        {
+            fittedSquaredError += delta * delta;
+            fittedWorstError = std::max(fittedWorstError, std::abs(delta));
+        }
+    }
+    const float fittedRmsError = std::sqrt(fittedSquaredError / 4.0f);
+    std::printf("opto broadband law summary: fitted -36/-30/-18/-12 dBFS "
+                "RMS %.6f dB worst %.6f dB; held-out -24 dBFS delta %+.6f dB\n",
+                fittedRmsError, fittedWorstError, heldOutError);
+    require(fittedRmsError < 0.25f && fittedWorstError < 0.35f,
+            "Opto broadband law matches the four fitted levels");
+    require(std::abs(heldOutError) < 0.25f,
+            "Opto broadband law generalises to the held-out level");
+}
+
 float measureOptoBurstRate(int rateHz)
 {
     // Identical to the reference extraction: 10 ms, -6 dBFS 1 kHz bursts,
@@ -3015,6 +3252,8 @@ int main()
     testGoldenVectors();
     testOptoHarmonicContent();
     testOptoCrestResponse();
+    testOptoCrestSweep();
+    testOptoBroadbandStaticLaw();
     testOptoBurstRateSweep();
     testOptoPluginLevelReferencePoints();
     testOptoDetectorFrequencyWeighting();

@@ -230,11 +230,11 @@ private:
     void updateRateCoefficients(float sr) noexcept
     {
         optoInvSampleRate = 1.0f / sr;
-        // The 0.6 ms / 8 ms rectifier supplies the programme integration that
+        // The 0.4 ms / 8 ms rectifier supplies the programme integration that
         // separates sustained energy from unsupported peaks.  The original
         // 50 us / 40 ms peak follower remains as a ceiling after calibration;
         // it does not drive a second gain-cell path.
-        constexpr float detectorAttackSeconds = 0.000600f;
+        constexpr float detectorAttackSeconds = 0.000400f;
         optoDetectorAttack = std::exp(-optoInvSampleRate / detectorAttackSeconds);
         optoDetectorRelease = std::exp(-optoInvSampleRate / 0.008f);
         optoDetectorPeakAttack = std::exp(-optoInvSampleRate / 0.000050f);
@@ -522,15 +522,37 @@ private:
             + (d.detectorPeak - detectorAbs) * detectorPeakCoeff;
         // The static law was measured with the original 50 us / 40 ms peak
         // follower on a 997 Hz sine.  At 48 kHz, fixed-point iteration of one
-        // full-wave period gives peaks of 0.902668850 for the 0.6 ms / 8 ms
+        // full-wave period gives peaks of 0.925093862 for the 0.4 ms / 8 ms
         // integrator and 0.994476788 for that peak follower.  Therefore the
         // exact calibration-condition correction is
-        // 20*log10(0.994476788 / 0.902668850) = 0.841324 dB.
-        constexpr float detectorIntegrationCalibrationDb = 0.841324f;
+        // 20*log10(0.994476788 / 0.925093862) = 0.628177 dB.
+        constexpr float detectorIntegrationCalibrationDb = 0.628177f;
+        const float integratedDetectorLevel = d.detectorLevel
+            * decibelsToGain(detectorIntegrationCalibrationDb);
         const float effectiveDetectorLevel = std::min(
-            d.detectorPeak,
-            d.detectorLevel * decibelsToGain(detectorIntegrationCalibrationDb));
-        const float inputLevelDb = gainToDecibels(effectiveDetectorLevel);
+            d.detectorPeak, integratedDetectorLevel);
+        const float uncorrectedInputLevelDb = gainToDecibels(effectiveDetectorLevel);
+        // A calibrated 997 Hz sine leaves at most 0.138029 dB between the peak
+        // reference and integrated detector, whereas the fitted gaussian
+        // waveform averages 3.629921 dB and peaks at 6.186975 dB.  The excess
+        // is therefore a measured fluctuating-signal term, not a knob offset.
+        constexpr float sineSeparationGuardDb = 0.15f;
+        constexpr float maximumFittedSeparationDb = 6.19f;
+        const float detectorSeparationDb = gainToDecibels(
+            d.detectorPeak / std::max(integratedDetectorLevel, 1.0e-12f));
+        const float fluctuationDb = std::clamp(
+            detectorSeparationDb - sineSeparationGuardDb,
+            0.0f, maximumFittedSeparationDb - sineSeparationGuardDb);
+        // The constrained fit uses the -36/-30/-18/-12 dBFS broadband points
+        // while retaining the crest triplet; -24 dBFS is held out.
+        constexpr float broadbandFitPivotDb = -18.0f;
+        constexpr float broadbandFitAtPivot = 0.010f;
+        constexpr float broadbandFitSlope = -0.0167f;
+        const float broadbandCorrectionDb = fluctuationDb
+            * (broadbandFitAtPivot + broadbandFitSlope
+                * (uncorrectedInputLevelDb - broadbandFitPivotDb));
+        const float inputLevelDb = uncorrectedInputLevelDb
+            + broadbandCorrectionDb;
         const float thresholdDb = optoThresholdDb(pr, limit);
         const float overdriveDb = inputLevelDb - thresholdDb;
         const float targetGrDb = pr <= 10.0f ? 0.0f : optoCurveDb(overdriveDb, limit);
