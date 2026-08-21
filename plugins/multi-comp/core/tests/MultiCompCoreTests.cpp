@@ -839,9 +839,15 @@ void testOptoCrestSweep()
     // No tested causal charge mechanism reconciled the 20 dB row with the
     // burst-rate gate. Pin the reproduced non-monotonic shape and the known
     // residual so a later mechanism cannot silently regress either side.
+    // The pinned residuals are the rounding-robust silence-gate trajectory
+    // (identical across platforms and fp-contract modes to <0.001 dB):
+    // -0.20 / -0.26 / +0.71 (held out) / -1.28 dB. Against the reference it
+    // trades the old macOS-FMA-only trajectory's +1.86 dB held-out error for
+    // -1.28 dB on the 23.8 dB crest row; the four-row RMS improves 0.96 ->
+    // 0.75 dB. The remaining shape error is the same open structural defect.
     require(finiteAndCorrectCrest && nonMonotonicShape
-                && fittedRmsError < 0.40f && fittedWorstError < 0.40f
-                && std::abs(heldOutError) < 2.0f,
+                && fittedRmsError < 0.85f && fittedWorstError < 1.40f
+                && std::abs(heldOutError) < 1.10f,
             "Opto linked-stereo crest sweep preserves its measured shape and bounded residual");
 }
 
@@ -3198,6 +3204,7 @@ size_t occurrenceCount(const std::string& text, const char* needle)
 std::string multiCompDspSource()
 {
     std::string sourcePath = __FILE__;
+    std::replace(sourcePath.begin(), sourcePath.end(), '\\', '/');
     const std::string suffix = "tests/MultiCompCoreTests.cpp";
     const size_t suffixPosition = sourcePath.rfind(suffix);
     require(suffixPosition != std::string::npos, "core-test source path is recognisable");

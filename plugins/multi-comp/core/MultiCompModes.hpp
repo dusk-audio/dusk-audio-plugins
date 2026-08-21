@@ -141,6 +141,8 @@ private:
         float colourPeak = 0, colourDc = 0;
         float fastGrDb = 0, midGrDb = 0, slowGrDb = 0;
         int detectorExposureSamples = 0, colourPeakHold = 0;
+        // Starts saturated so a freshly reset state counts as silent.
+        int detectorSilentSamples = 1 << 20;
     };
     struct FETState
     {
@@ -193,6 +195,7 @@ private:
     float optoDetectorPeakAttack = 0, optoDetectorPeakRelease = 0;
     float optoColourPeakRelease = 0, optoColourDcSmoothing = 0;
     int optoChargeTopOffSamples = 1, optoColourPeakHoldSamples = 1;
+    int optoDetectorSilenceHoldSamples = 1;
     float optoFastAttack = 0, optoSlowAttack = 0;
     float optoFastRelease = 0, optoMidRelease = 0, optoSlowRelease = 0;
     float fetTilt = 0, fetHardwareGain = 1.0f;
@@ -244,6 +247,8 @@ private:
             std::lround(0.020f * sr)));
         optoColourPeakHoldSamples = std::max(1, static_cast<int>(
             std::lround(0.002f * sr)));
+        optoDetectorSilenceHoldSamples = std::max(1, static_cast<int>(
+            std::lround(0.0005f * sr)));
         optoColourDcSmoothing = 1.0f - std::exp(
             -kDuskTwoPi * 10.0f * optoInvSampleRate);
         optoFastAttack = std::exp(-optoInvSampleRate / 0.021f);
@@ -502,7 +507,23 @@ private:
         float sc = useOptoDetector ? optoDetector
                                    : (external ? sidechain : input);
         const float detectorInputAbs = std::abs(sc);
-        const bool hasDetectorInput = detectorInputAbs > 1.0e-12f;
+        // Silence must be decided against the recent signal scale, never an
+        // absolute epsilon: the oversampler's FIR tail spends its last few
+        // samples in cancellation territory where whether it sits above or
+        // below any fixed threshold depends on per-op rounding (FMA
+        // contraction flipped hold-vs-discharge every burst and moved
+        // high-crest gain reduction by 1.5 dB between platforms). Relative to
+        // the 40 ms peak follower the crossing lands in the steep part of the
+        // tail at every signal level, and the short hold bridges the samples
+        // near a waveform zero crossing. The floor only keeps a long-silent
+        // peak from dragging the threshold into denormal territory.
+        const float silenceFloor = std::max(d.detectorPeak * 1.0e-4f, 1.0e-9f);
+        if (detectorInputAbs > silenceFloor)
+            d.detectorSilentSamples = 0;
+        else if (d.detectorSilentSamples < optoDetectorSilenceHoldSamples)
+            ++d.detectorSilentSamples;
+        const bool hasDetectorInput
+            = d.detectorSilentSamples < optoDetectorSilenceHoldSamples;
         d.detectorExposureSamples = hasDetectorInput
             ? std::min(d.detectorExposureSamples + 1, optoChargeTopOffSamples)
             : 0;
