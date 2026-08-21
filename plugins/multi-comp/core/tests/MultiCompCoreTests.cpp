@@ -1627,6 +1627,112 @@ void testAnalogStereoLinkSharesEnvelope()
     }
 }
 
+std::array<float, 2> renderOptoInternalStereo(float leftDbfs, float rightDbfs,
+                                               float peakReduction,
+                                               float linkAmount = 100.0f,
+                                               int oversampling = 1)
+{
+    constexpr int kSamples = 24000;
+    constexpr int kMeasureSamples = 4096;
+    constexpr int kBlockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Opto));
+    dsp.setStereoLink(linkAmount);
+    dsp.setOversampling(oversampling);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::TruePeakEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, peakReduction);
+    dsp.setParameter(MultiCompDSP::Parameter::OptoGain,
+                     duskaudio::optoGainDbToKnob(0.0f));
+    dsp.setParameter(MultiCompDSP::Parameter::OptoLimit, 0.0f);
+    dsp.prepare(48000.0, kBlockSize);
+
+    const std::array<float, 2> amplitudes{{
+        duskaudio::decibelsToGain(leftDbfs),
+        duskaudio::decibelsToGain(rightDbfs)}};
+    std::array<double, 2> power{{0.0, 0.0}};
+    std::array<float, kBlockSize> inputLeft{}, inputRight{};
+    std::array<float, kBlockSize> outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    for (int blockStart = 0; blockStart < kSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, kSamples - blockStart);
+        for (int i = 0; i < count; ++i)
+        {
+            const float sine = std::sin(2.0f * kPi * 997.0f
+                * static_cast<float>(blockStart + i) / 48000.0f);
+            inputLeft[static_cast<size_t>(i)] = amplitudes[0] * sine;
+            inputRight[static_cast<size_t>(i)] = amplitudes[1] * sine;
+        }
+        dsp.processBlock(input, output, 2, count);
+        for (int i = 0; i < count; ++i)
+        {
+            if (blockStart + i < kSamples - kMeasureSamples) continue;
+            power[0] += static_cast<double>(outputLeft[static_cast<size_t>(i)])
+                      * outputLeft[static_cast<size_t>(i)];
+            power[1] += static_cast<double>(outputRight[static_cast<size_t>(i)])
+                      * outputRight[static_cast<size_t>(i)];
+        }
+    }
+    return {{static_cast<float>(std::sqrt(power[0] / kMeasureSamples)),
+             static_cast<float>(std::sqrt(power[1] / kMeasureSamples))}};
+}
+
+void testOptoInternalStereoLinkUsesSignedMaximum()
+{
+    constexpr std::array<std::array<float, 2>, 2> levels{{
+        {{-12.0f, -40.0f}}, {{-40.0f, -12.0f}}}};
+    constexpr std::array<std::array<float, 2>, 2> referenceReduction{{
+        {{17.484f, 17.429f}}, {{17.429f, 17.484f}}}};
+    bool matches = true;
+    for (size_t row = 0; row < levels.size(); ++row)
+    {
+        const auto control = renderOptoInternalStereo(
+            levels[row][0], levels[row][1], 0.0f);
+        const auto active = renderOptoInternalStereo(
+            levels[row][0], levels[row][1], 70.0f);
+        for (size_t ch = 0; ch < 2; ++ch)
+        {
+            const float reduction = duskaudio::gainToDecibels(control[ch])
+                                  - duskaudio::gainToDecibels(active[ch]);
+            std::printf("opto internal stereo link: L %.0f R %.0f channel %c "
+                        "reference %.3f dB measured %.6f dB delta %+.6f dB\n",
+                        levels[row][0], levels[row][1], ch == 0 ? 'L' : 'R',
+                        referenceReduction[row][ch], reduction,
+                        reduction - referenceReduction[row][ch]);
+            // Keep the routing regression inside the same 0.5 dB envelope as
+            // the existing Opto processBlock static-law gate.  The important
+            // new failure is the quiet channel's former 0 dB reduction; this
+            // test does not retune the already-gated Opto model residual.
+            matches = matches
+                && std::abs(reduction - referenceReduction[row][ch]) < 0.5f;
+        }
+    }
+    for (const int oversampling : {0, 1, 2})
+    {
+        const auto independent = renderOptoInternalStereo(
+            -12.0f, -12.0f, 70.0f, 0.0f, oversampling);
+        const auto linked = renderOptoInternalStereo(
+            -12.0f, -12.0f, 70.0f, 100.0f, oversampling);
+        float worstDeltaDb = 0.0f;
+        for (size_t ch = 0; ch < 2; ++ch)
+            worstDeltaDb = std::max(worstDeltaDb, std::abs(
+                duskaudio::gainToDecibels(linked[ch] / independent[ch])));
+        std::printf("opto dual-mono link identity: os=%dx worst delta %.9f dB\n",
+                    oversampling == 2 ? 4 : oversampling == 1 ? 2 : 1,
+                    worstDeltaDb);
+        matches = matches && worstDeltaDb < 1.0e-5f;
+    }
+    require(matches,
+            "Opto internal stereo link uses the signed maximum detector on both channels");
+}
+
 void testDigitalLookaheadMixAlignment()
 {
     // 100 Hz against 5 ms of lookahead is half a period: a dry path taken from
@@ -2952,6 +3058,7 @@ int main()
     testMixBypassAndBlockEdges();
     testLatencyMixBypassAndDigitalStereo();
     testAnalogStereoLinkSharesEnvelope();
+    testOptoInternalStereoLinkUsesSignedMaximum();
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();
     testSidechainEq();

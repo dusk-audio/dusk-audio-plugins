@@ -27,8 +27,12 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     truePeakDetector.prepare();
     truePeakDetector.setQuality(MultiCompTruePeakDetector::Quality::Standard4x);
     for (auto& os : oversamplers) { os.setFactor(4); os.prepare(maxBlock); os.reset(); }
+    optoLinkedDetectorOversampler.setFactor(4);
+    optoLinkedDetectorOversampler.prepare(maxBlock);
+    optoLinkedDetectorOversampler.reset();
     antiAliasLatency = static_cast<int>(std::lround(oversamplers[0].latency()));
     for (auto& os : oversamplers) os.setFactor(initialOversampling);
+    optoLinkedDetectorOversampler.setFactor(initialOversampling);
     for (auto& f : sidechainFilters) f.prepare(sampleRate);
     for (auto& f : sidechainEQ) f.prepare(sampleRate);
     for (auto& band : bands) for (auto& v : band) v.assign(static_cast<size_t>(maxBlock), 0.0f);
@@ -47,6 +51,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     globalLookaheadWrite = {{0, 0}};
     previousOversampledSidechain = {{0.0f, 0.0f}};
     previousOversampledSidechainValid = {{false, false}};
+    previousOptoOwnSidechain = {{0.0f, 0.0f}};
+    previousOptoOwnSidechainValid = {{false, false}};
     const size_t dryDelaySize = static_cast<size_t>(std::max(1, antiAliasLatency + static_cast<int>(std::ceil(sampleRate * 0.01)) + 1));
     for (auto& line : dryPathDelay) line.assign(dryDelaySize, 0.0f);
     dryPathWrite = {{0, 0}};
@@ -87,6 +93,7 @@ void MultiCompDSP::reset()
     modes.reset();
     truePeakDetector.prepare();
     for (auto& os : oversamplers) os.reset();
+    optoLinkedDetectorOversampler.reset();
     for (auto& f : sidechainFilters) f.reset();
     for (auto& f : sidechainEQ) f.reset();
     resetCrossovers();
@@ -101,6 +108,8 @@ void MultiCompDSP::reset()
     globalLookaheadWrite = {{0, 0}};
     previousOversampledSidechain = {{0.0f, 0.0f}};
     previousOversampledSidechainValid = {{false, false}};
+    previousOptoOwnSidechain = {{0.0f, 0.0f}};
+    previousOptoOwnSidechainValid = {{false, false}};
     for (auto& line : dryPathDelay) std::fill(line.begin(), line.end(), 0.0f);
     dryPathWrite = {{0, 0}};
     for (auto& line : bypassDelay) std::fill(line.begin(), line.end(), 0.0f);
@@ -649,6 +658,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     const auto distortionType = static_cast<DistortionType>(std::clamp(params.distortion.load(std::memory_order_relaxed), 0, 3));
     const float distortionAmount = std::clamp(params.distortionAmount.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f);
     for (auto& os : oversamplers) os.setFactor(actualOs);
+    optoLinkedDetectorOversampler.setFactor(actualOs);
     modes.setRate(sampleRate, actualOs);
     manualMakeupScaleRamp.setTarget(autoMakeup ? 0.0f : 1.0f);
     if (firstBlock) manualMakeupScaleRamp.snap(autoMakeup ? 0.0f : 1.0f);
@@ -656,6 +666,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     if (mode == MultiCompMode::Multiband)
     {
         previousOversampledSidechainValid = {{false, false}};
+        previousOptoOwnSidechainValid = {{false, false}};
         for (int i = 0; i < nSamples; ++i) (void)manualMakeupScaleRamp.next();
         processMultiband(in, external ? sidechain : nullptr, out, nCh, nSamples);
         return;
@@ -697,10 +708,18 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
         const float sc0 = rawSc0;
         const float sc1 = nCh > 1 ? rawSc1 : sc0;
         const float scLevel = std::max(std::abs(sc0), std::abs(sc1));
+        const float scSigned = std::abs(sc0) >= std::abs(sc1) ? sc0 : sc1;
+        const bool link = linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
+        std::array<float, 4> optoLinkedPhases{};
+        int linkedPhase = 0;
+        (void)optoLinkedDetectorOversampler.processSample(
+            scSigned, [&](float sample) noexcept {
+                optoLinkedPhases[static_cast<size_t>(linkedPhase++)] = sample;
+                return sample;
+            });
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float input = in[ch][i];
-            const bool link = linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
             const float ownSc = ch == 0 ? sc0 : sc1;
             const float midSideSc = ch == 0 ? (sc0 + sc1) * 0.5f : (sc0 - sc1) * 0.5f;
             const float sc = link ? std::abs(ownSc) * (1.0f - linkAmount) + scLevel * linkAmount
@@ -715,11 +734,22 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 previousOversampledSidechainValid[channelIndex] = true;
             }
             const float previousSc = previousOversampledSidechain[channelIndex];
+            if (!previousOptoOwnSidechainValid[channelIndex])
+            {
+                previousOptoOwnSidechain[channelIndex] = ownSc;
+                previousOptoOwnSidechainValid[channelIndex] = true;
+            }
+            const float previousOptoOwnSc = previousOptoOwnSidechain[channelIndex];
             const float localMix = mode == MultiCompMode::Digital ? localDigitalMix : localBusMix;
             if (actualOs == 1)
             {
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
-                    return applyCoreDistortion(modes.process(mode, sample, ch, sc, modeParams, localMix, external),
+                    const float optoOwnDetector = external ? ownSc : sample;
+                    const float optoDetector = optoOwnDetector
+                        + (optoLinkedPhases[0] - optoOwnDetector) * linkAmount;
+                    return applyCoreDistortion(modes.process(
+                                                   mode, sample, ch, sc, modeParams,
+                                                   localMix, external, optoDetector, link),
                                                distortionType, distortionAmount);
                 });
             }
@@ -727,12 +757,24 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
             {
                 int osPhase = 0;
                 out[ch][i] = oversamplers[ch].processSample(input, [&](float sample) noexcept {
-                    const float osSc = interpolateOversampledSidechain(previousSc, sc, osPhase++, actualOs);
-                    return applyCoreDistortion(modes.process(mode, sample, ch, osSc, modeParams, localMix, external),
+                    const int phase = osPhase++;
+                    const float osSc = interpolateOversampledSidechain(
+                        previousSc, sc, phase, actualOs);
+                    const float optoOwnDetector = external
+                        ? interpolateOversampledSidechain(
+                              previousOptoOwnSc, ownSc, phase, actualOs)
+                        : sample;
+                    const float optoDetector = optoOwnDetector
+                        + (optoLinkedPhases[static_cast<size_t>(phase)]
+                           - optoOwnDetector) * linkAmount;
+                    return applyCoreDistortion(modes.process(
+                                                   mode, sample, ch, osSc, modeParams,
+                                                   localMix, external, optoDetector, link),
                                                distortionType, distortionAmount);
                 });
             }
             previousOversampledSidechain[channelIndex] = sc;
+            previousOptoOwnSidechain[channelIndex] = ownSc;
         }
     }
     const float gr = std::min(modes.gainReduction(mode, 0), nCh > 1 ? modes.gainReduction(mode, 1) : modes.gainReduction(mode, 0));

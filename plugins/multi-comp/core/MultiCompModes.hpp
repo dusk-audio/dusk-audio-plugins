@@ -98,12 +98,14 @@ public:
     // the compression character instead of doing nothing.
     float process(MultiCompMode mode, float input, int ch, const float sc,
                   const MultiCompParameterState& p, float localMix = 1.0f,
-                  bool external = false) noexcept
+                  bool external = false, float optoDetector = 0.0f,
+                  bool useOptoDetector = false) noexcept
     {
         ch = std::clamp(ch, 0, 1);
         switch (mode)
         {
-            case MultiCompMode::Opto: return processOpto(input, ch, sc, p, external);
+            case MultiCompMode::Opto: return processOpto(
+                input, ch, sc, p, external, optoDetector, useOptoDetector);
             case MultiCompMode::FET: return processFET(input, ch, sc, p, false, external);
             case MultiCompMode::VCA: return processVCA(input, ch, sc, p, external);
             case MultiCompMode::Bus: return processBus(input, ch, sc, p, localMix, external);
@@ -484,7 +486,9 @@ private:
         return std::copysign(limited, input);
     }
 
-    float processOpto(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept
+    float processOpto(float input, int ch, float sidechain,
+                      const MultiCompParameterState& p, bool external,
+                      float optoDetector, bool useOptoDetector) noexcept
     {
         auto& d = opto[ch];
         // `gain` is the physical cell gain applied to this sample. Colour is
@@ -495,7 +499,8 @@ private:
         const bool limit = p.optoLimit.load(std::memory_order_relaxed);
         // The measured detector tap is pre-gain. Weight only the selected
         // detector source; the audio path above remains untouched.
-        float sc = external ? sidechain : input;
+        float sc = useOptoDetector ? optoDetector
+                                   : (external ? sidechain : input);
         const float detectorInputAbs = std::abs(sc);
         const bool hasDetectorInput = detectorInputAbs > 1.0e-12f;
         d.detectorExposureSamples = hasDetectorInput
