@@ -74,6 +74,8 @@ constexpr float kHeaderH = 64.0f;
 constexpr float kGlobalH = 132.0f;
 constexpr float kSidechainH = 126.0f;
 constexpr float kPanelTop = kHeaderH + kGlobalH + kSidechainH;
+// Set to true only while collecting a host geometry measurement.
+constexpr bool kGeometryDiagnosticEnabled = false;
 
 constexpr ImU32 kPanel = IM_COL32(35, 37, 43, 255);
 constexpr ImU32 kPanelRaised = IM_COL32(43, 46, 54, 255);
@@ -142,9 +144,9 @@ public:
                 values[multicompp::kBandBase + b * 8 + f] =
                     multicompp::hostDefault(multicompp::bandParam(f, b));
 
-        // DPF reports the actual window size.  The UI draws a fixed design space
-        // with one uniform scale and letterboxes any extra width or height.
-        setGeometryConstraints(760, 520, false);
+        // Match the fixed design space and keep host-driven resizes on its aspect.
+        setGeometryConstraints(static_cast<uint32_t>(kDesignW),
+                               static_cast<uint32_t>(kDesignH), true);
         static const float kFontSizes[] = {9.f, 11.f, 13.f, 16.f, 20.f, 26.f, 30.f};
         fontSet = duskdpf::loadCrispFontSet(kFontSizes, 7, getScaleFactor());
         labelFont = fontSet.primary();
@@ -211,6 +213,24 @@ protected:
         const float scale = std::min(winW / kDesignW, winH / kDesignH);
         const ImVec2 origin((winW - kDesignW * scale) * 0.5f,
                             (winH - kDesignH * scale) * 0.5f);
+        if (kGeometryDiagnosticEnabled && !geometryDiagnosticLogged)
+        {
+            GLint viewport[4]{};
+            glGetIntegerv(GL_VIEWPORT, viewport);
+            std::fprintf(stderr,
+                         "[MultiCompUI geometry] width=%u height=%u scaleFactor=%.3f "
+                         "design=%.0fx%.0f scale=%.6f origin=(%.3f,%.3f) "
+                         "glViewport=(%d,%d %dx%d)\n",
+                         static_cast<unsigned>(getWidth()),
+                         static_cast<unsigned>(getHeight()),
+                         static_cast<double>(getScaleFactor()),
+                         static_cast<double>(kDesignW), static_cast<double>(kDesignH),
+                         static_cast<double>(scale), static_cast<double>(origin.x),
+                         static_cast<double>(origin.y), viewport[0], viewport[1],
+                         viewport[2], viewport[3]);
+            std::fflush(stderr);
+            geometryDiagnosticLogged = true;
+        }
         panel.begin(scale, origin, labelFont, this);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -249,6 +269,7 @@ private:
     ImFont* labelFont = nullptr;
     duskdpf::SupportersOverlay supporters;
     bool showSupporters = false;
+    bool geometryDiagnosticLogged = false;
     static constexpr uint32_t kNoCrossover = ~uint32_t(0);
     // The crossover handle under an active drag. Owns both the open automation
     // gesture and the mirror's skip, so the two cannot disagree.
@@ -385,7 +406,9 @@ private:
         panel.toggle("mc_auto", P_AUTO, 568, 111, 680, 136, values[P_AUTO], "AUTO MAKEUP");
         panel.toggle("mc_tp", P_TRUE_PEAK, 688, 111, 790, 136, values[P_TRUE_PEAK], "TRUE PEAK");
         combo("mc_tpq", P_TP_QUALITY, multicompp::kTruePeakQuality, 2, 845, 103, 110, "QUALITY");
-        knob(dl, "mc_dist", P_DIST_AMT, 1080, 125, "DRIVE", "%.0f", "%");
+        const bool driveApplicable = multicompp::ui_detail::choiceIndex(value(P_DIST), 4) != 0;
+        knob(dl, "mc_dist", P_DIST_AMT, 1080, 125, "DRIVE", "%.0f", "%",
+             driveApplicable);
     }
 
     void drawSidechain(ImDrawList* dl)
@@ -428,14 +451,22 @@ private:
     }
 
     void knob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
-              const char* label, const char* fmt, const char* suffix)
+              const char* label, const char* fmt, const char* suffix,
+              bool applicable = true)
     {
+        if (!applicable) ImGui::BeginDisabled();
         panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, 25, values[p],
                    hostDefaultValue(p), false, true,
                    fmt, suffix, kPanelRaised, false, true, nullptr, false, 1.0f, 0.0f,
                    nullptr, false, nullptr, false, 0.0f, 0.0f, false, false, 9.5f,
                    false, false, &knobHostToPlain, &knobPlainToHost, this);
-        panel.text(dl, x, y + 49, 9.5f, kText, label, 0, true);
+        if (!applicable)
+        {
+            ImGui::EndDisabled();
+            dl->AddCircleFilled(panel.P(x, y), 33.0f * panel.scale(),
+                                IM_COL32(21, 22, 25, 145), 48);
+        }
+        panel.text(dl, x, y + 49, 9.5f, applicable ? kText : kDim, label, 0, true);
     }
 
     float hostDefaultValue(uint32_t p) const

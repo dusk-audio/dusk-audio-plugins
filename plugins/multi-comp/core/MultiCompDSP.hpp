@@ -120,6 +120,7 @@ private:
     double sampleRate = 48000.0;
     int maxBlock = 512;
     std::array<MultiCompAntiAliasing, kMaxChannels> oversamplers;
+    MultiCompAntiAliasing optoLinkedDetectorOversampler;
     MultiCompTruePeakDetector truePeakDetector;
     std::array<MultiCompSidechainFilter, kMaxChannels> sidechainFilters;
     std::array<MultiCompSidechainEQ, kMaxChannels> sidechainEQ;
@@ -143,6 +144,8 @@ private:
     std::array<int, kMaxChannels> globalLookaheadWrite{{0, 0}};
     std::array<float, kMaxChannels> previousOversampledSidechain{{0.0f, 0.0f}};
     std::array<bool, kMaxChannels> previousOversampledSidechainValid{{false, false}};
+    std::array<float, kMaxChannels> previousOptoOwnSidechain{{0.0f, 0.0f}};
+    std::array<bool, kMaxChannels> previousOptoOwnSidechainValid{{false, false}};
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
     std::uint8_t activeBandMask = 0x0f;
     std::array<int, kMultiCompBands> enabledBandIndices{{0, 1, 2, 3}};
