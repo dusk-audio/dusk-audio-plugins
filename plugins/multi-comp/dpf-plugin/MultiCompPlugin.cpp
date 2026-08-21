@@ -247,6 +247,14 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
+        if (frames == 0)
+        {
+            // Still publish a latched latency change: some hosts probe with
+            // empty blocks and the CLAP wrapper picks the value up at the
+            // next activate() regardless of block size.
+            updateLatency();
+            return;
+        }
         const bool useSc = values[static_cast<size_t>(multicompp::ParamId::ExternalSidechain)].load(std::memory_order_relaxed) > 0.5f
             && multicompp::plugin_detail::hasStereoExternalSidechainPorts(activeInputs, inputs);
         if (useSc) { const float* sc[2] = {inputs[2], inputs[3]}; dsp.processBlockExternal(inputs, sc, outputs, activeChannels, static_cast<int>(frames)); }

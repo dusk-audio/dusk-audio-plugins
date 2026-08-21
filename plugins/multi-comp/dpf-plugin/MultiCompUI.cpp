@@ -74,8 +74,8 @@ constexpr float kHeaderH = 64.0f;
 constexpr float kGlobalH = 132.0f;
 constexpr float kSidechainH = 126.0f;
 constexpr float kPanelTop = kHeaderH + kGlobalH + kSidechainH;
-// Set to false after the host geometry measurement has been collected.
-constexpr bool kGeometryDiagnosticEnabled = true;
+// Set to true only while collecting a host geometry measurement.
+constexpr bool kGeometryDiagnosticEnabled = false;
 
 constexpr ImU32 kPanel = IM_COL32(35, 37, 43, 255);
 constexpr ImU32 kPanelRaised = IM_COL32(43, 46, 54, 255);
