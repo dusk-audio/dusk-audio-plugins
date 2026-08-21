@@ -23,17 +23,67 @@ inline float clampFinite(float value, float lo, float hi, float fallback) noexce
     return std::isfinite(value) ? std::clamp(value, lo, hi) : fallback;
 }
 
-// The Opto control is a hardware-style 0..100 dial.  50 is unity and each
-// division is 0.8 dB, matching OptoGainMapping.h exactly.
+struct OptoGainPoint
+{
+    float knob;
+    float gainDb;
+};
+
+inline constexpr float kOptoGainSilentKnobMax = 8.5f;
+inline constexpr float kOptoGainMuteDb = -160.0f;
+inline constexpr float kOptoGainUnityKnob =
+    20.0f + 3.017f / (3.017f + 0.214f) * 3.75f;
+inline constexpr std::array<OptoGainPoint, 15> kOptoGainTaper{{
+    {kOptoGainSilentKnobMax, kOptoGainMuteDb},
+    {10.0f, -21.951f}, {15.0f, -8.777f}, {20.0f, -3.017f},
+    {23.75f, 0.214f}, {30.0f, 4.191f}, {35.0f, 7.823f},
+    {40.0f, 10.615f}, {50.0f, 14.501f}, {60.0f, 18.813f},
+    {70.0f, 26.646f}, {80.0f, 33.269f}, {90.0f, 37.271f},
+    {95.0f, 37.702f}, {100.0f, 37.702f}
+}};
+
+// The measured hardware taper is interpolated in dB between observed knob
+// positions. It mutes below about 0.085 and its gain element, independently of
+// the output ceiling, has reached its +37.702 dB plateau by 0.95.
 inline float optoKnobToGainDb(float knob) noexcept
 {
-    const float clamped = std::clamp(knob, 0.0f, 100.0f);
-    return std::clamp((clamped - 50.0f) * 0.8f, -40.0f, 40.0f);
+    const float clamped = clampFinite(knob, 0.0f, 100.0f, kOptoGainUnityKnob);
+    if (clamped <= kOptoGainSilentKnobMax) return kOptoGainMuteDb;
+    for (size_t upper = 1; upper < kOptoGainTaper.size(); ++upper)
+    {
+        if (clamped > kOptoGainTaper[upper].knob) continue;
+        const auto& lo = kOptoGainTaper[upper - 1];
+        const auto& hi = kOptoGainTaper[upper];
+        const float fraction = (clamped - lo.knob) / (hi.knob - lo.knob);
+        return lo.gainDb + fraction * (hi.gainDb - lo.gainDb);
+    }
+    return kOptoGainTaper.back().gainDb;
+}
+
+inline float optoKnobToLinearGain(float knob) noexcept
+{
+    if (clampFinite(knob, 0.0f, 100.0f, kOptoGainUnityKnob)
+        <= kOptoGainSilentKnobMax)
+        return 0.0f;
+    return decibelsToGain(optoKnobToGainDb(knob));
 }
 
 inline float optoGainDbToKnob(float db) noexcept
 {
-    return std::clamp(50.0f + std::clamp(db, -40.0f, 40.0f) / 0.8f, 0.0f, 100.0f);
+    const float clamped = clampFinite(db, kOptoGainMuteDb,
+        kOptoGainTaper.back().gainDb, 0.0f);
+    if (clamped <= kOptoGainMuteDb) return 0.0f;
+    for (size_t upper = 1; upper < kOptoGainTaper.size(); ++upper)
+    {
+        if (clamped > kOptoGainTaper[upper].gainDb) continue;
+        const auto& lo = kOptoGainTaper[upper - 1];
+        const auto& hi = kOptoGainTaper[upper];
+        const float range = hi.gainDb - lo.gainDb;
+        if (range <= 0.0f) return hi.knob;
+        const float fraction = (clamped - lo.gainDb) / range;
+        return lo.knob + fraction * (hi.knob - lo.knob);
+    }
+    return 100.0f;
 }
 
 class LinearRamp
@@ -90,7 +140,7 @@ struct MultiCompParameterState
     std::atomic<int> oversampling{1}; // 0=off, 1=2x, 2=4x
     std::atomic<float> globalLookahead{0.0f};
 
-    std::atomic<float> optoPeakReduction{0.0f}, optoGain{50.0f};
+    std::atomic<float> optoPeakReduction{0.0f}, optoGain{kOptoGainUnityKnob};
     std::atomic<bool> optoLimit{false};
 
     std::atomic<float> fetInput{0.0f}, fetOutput{0.0f}, fetAttack{0.2f}, fetRelease{400.0f};
