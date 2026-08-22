@@ -101,7 +101,8 @@ public:
 
         // DAF reports the actual window size.  The UI draws a fixed design space
         // with one uniform scale and letterboxes any extra width or height.
-        setGeometryConstraints(760, 520, false);
+        setGeometryConstraints(static_cast<uint32_t>(kDesignW * 0.5f),
+                               static_cast<uint32_t>(kDesignH * 0.5f), true);
         static const float kFontSizes[] = {9.f, 11.f, 13.f, 16.f, 20.f, 26.f, 30.f};
         fontSet = duskdaf::loadCrispFontSet(kFontSizes, 7, getScaleFactor());
         labelFont = fontSet.primary();
@@ -210,7 +211,7 @@ protected:
                                            &supporters);
 
         const duskdaf::ResizeGripState grip =
-            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH);
+            panel.resizeGrip(dl, winW, winH, kDesignW, kDesignH, 0.5f);
         ImGui::End();
         ImGui::PopStyleVar(2);
         if (grip.resized) setSize(grip.width, grip.height);
