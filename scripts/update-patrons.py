@@ -33,9 +33,9 @@ Behaviour:
     plugins-multi-synth, or a path in DUSK_PLUGINS_PATH) are kept in sync too,
     per the note in the header itself.
   - Only the array bodies are touched; the rest of the header is left as-is.
-  - The framework-free DPF mirror plugins/shared-dpf/ui/PatreonBackersDpf.hpp is
-    fully regenerated from the same tier data (JUCE can't be included in a DPF
-    UI). It is created wherever the shared-dpf/ui directory exists, across the
+  - The framework-free DAF mirror plugins/shared-daf/ui/PatreonBackersDaf.hpp is
+    fully regenerated from the same tier data (JUCE can't be included in a DAF
+    UI). It is created wherever the shared-daf/ui directory exists, across the
     same set of worktrees, so the two headers never drift.
 
 Committing the result is left to you — review the diff first.
@@ -67,13 +67,13 @@ ARRAY_NAMES = [name for name, _ in TIERS] + ["pastSupporters"]
 # Path from this repo's root to the header.
 HEADER_RELPATH = Path("plugins") / "shared" / "PatreonBackers.h"
 
-# Framework-free mirror for DPF/ImGui UIs (no JUCE). Fully regenerated each run
-# from the same tier data so the two never drift. Used by all DPF plugins.
-DPF_HEADER_RELPATH = Path("plugins") / "shared-dpf" / "ui" / "PatreonBackersDpf.hpp"
-# Display titles for the DPF overlay, DERIVED from TIERS so the two can never
+# Framework-free mirror for DAF/ImGui UIs (no JUCE). Fully regenerated each run
+# from the same tier data so the two never drift. Used by all DAF plugins.
+DAF_HEADER_RELPATH = Path("plugins") / "shared-daf" / "ui" / "PatreonBackersDaf.hpp"
+# Display titles for the DAF overlay, DERIVED from TIERS so the two can never
 # drift (a hand-maintained second list silently dropped tiers / KeyError'd in
-# generate_dpf_header if edited out of sync). Title = tier name upper-cased.
-DPF_TIER_TITLES = [(name, name.upper()) for name, _ in TIERS]
+# generate_daf_header if edited out of sync). Title = tier name upper-cased.
+DAF_TIER_TITLES = [(name, name.upper()) for name, _ in TIERS]
 
 
 def write_config_secure(config):
@@ -299,27 +299,27 @@ def atomic_write_text(path, text):
         raise
 
 
-def find_dpf_headers(repo_root):
-    """Return every PatreonBackersDpf.hpp to (re)generate, canonical first.
+def find_daf_headers(repo_root):
+    """Return every PatreonBackersDaf.hpp to (re)generate, canonical first.
 
-    Mirrors find_headers, but the DPF header is fully generated — so a target is
+    Mirrors find_headers, but the DAF header is fully generated — so a target is
     included whenever its containing directory exists (creating the file if it
     is missing), rather than requiring the file itself to already be present.
     """
     found, seen = [], set()
-    candidates = [repo_root / DPF_HEADER_RELPATH]
+    candidates = [repo_root / DAF_HEADER_RELPATH]
 
     env_path = os.environ.get("DUSK_PLUGINS_PATH")
     if env_path:
-        candidates.append(Path(env_path) / DPF_HEADER_RELPATH)
+        candidates.append(Path(env_path) / DAF_HEADER_RELPATH)
 
     parent = repo_root.parent
-    candidates += [parent / s / DPF_HEADER_RELPATH
+    candidates += [parent / s / DAF_HEADER_RELPATH
                    for s in ("plugins-main", "plugins",
                              "plugins-worktree", "plugins-multi-synth")]
 
     for h in candidates:
-        if not h.parent.is_dir():  # only where shared-dpf/ui exists
+        if not h.parent.is_dir():  # only where shared-daf/ui exists
             continue
         key = h.resolve()
         if key in seen:
@@ -329,33 +329,33 @@ def find_dpf_headers(repo_root):
     return found
 
 
-def generate_dpf_header(new_tiers, new_past):
-    """Render the complete framework-free DPF backer header from tier data."""
+def generate_daf_header(new_tiers, new_past):
+    """Render the complete framework-free DAF backer header from tier data."""
     def block(title, names):
         if names:
             inner = ", ".join(f'"{cpp_escape(n)}"' for n in names)
             return f'        {{ "{title}", {{ {inner} }} }},'
         return f'        {{ "{title}", {{}} }},'
 
-    rows = [block(title, new_tiers[key]) for key, title in DPF_TIER_TITLES]
+    rows = [block(title, new_tiers[key]) for key, title in DAF_TIER_TITLES]
     rows.append(block("PAST SUPPORTERS", new_past))
     body = "\n".join(rows)
     return (
         "// Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).\n"
-        "// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and\n"
-        "// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.\n"
+        "// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and\n"
+        "// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.\n"
         "//\n"
-        "// PatreonBackersDpf.hpp — framework-free Patreon backer list for DPF/ImGui UIs.\n"
+        "// PatreonBackersDaf.hpp — framework-free Patreon backer list for DAF/ImGui UIs.\n"
         "//\n"
         "// GENERATED by scripts/update-patrons.py — do NOT hand-edit. Mirrors the\n"
-        "// JUCE-typed plugins/shared/PatreonBackers.h so DPF plugins (no JUCE) show the\n"
+        "// JUCE-typed plugins/shared/PatreonBackers.h so DAF plugins (no JUCE) show the\n"
         "// same credits. Tiers with no names are skipped by the credits overlay.\n"
         "\n"
         "#pragma once\n"
         "\n"
         "#include <vector>\n"
         "\n"
-        "namespace duskdpf\n"
+        "namespace duskdaf\n"
         "{\n"
         "\n"
         "struct BackerTier\n"
@@ -372,7 +372,7 @@ def generate_dpf_header(new_tiers, new_past):
         "    return tiers;\n"
         "}\n"
         "\n"
-        "} // namespace duskdpf\n"
+        "} // namespace duskdaf\n"
     )
 
 
@@ -461,11 +461,11 @@ def main():
     if dropped:
         print(f"Moved to past supporters: {', '.join(dropped)}")
 
-    dpf_headers = find_dpf_headers(repo_root)
+    daf_headers = find_daf_headers(repo_root)
 
     if args.dry_run:
-        print(f"\nWould also regenerate {len(dpf_headers)} DPF header(s): "
-              + (", ".join(str(h) for h in dpf_headers) or "(none)"))
+        print(f"\nWould also regenerate {len(daf_headers)} DAF header(s): "
+              + (", ".join(str(h) for h in daf_headers) or "(none)"))
         print("Dry run — nothing written.")
         return
 
@@ -477,10 +477,10 @@ def main():
         atomic_write_text(header, text)
         print(f"Updated {header}")
 
-    # Framework-free DPF mirror — fully regenerated from the same tier data.
-    dpf_text = generate_dpf_header(new_tiers, new_past)
-    for header in dpf_headers:
-        atomic_write_text(header, dpf_text)
+    # Framework-free DAF mirror — fully regenerated from the same tier data.
+    daf_text = generate_daf_header(new_tiers, new_past)
+    for header in daf_headers:
+        atomic_write_text(header, daf_text)
         print(f"Updated {header}")
 
     print("\nReview + commit the change, then tag the release.")

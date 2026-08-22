@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio - GNU GPL v3.0 or later (see repository LICENSE).
 //
 // Race-detector harness for SpectrumRing (GH #184; the command lives in
-// docs/dpf-migration/10-spectrum-analyzer.md):
+// docs/daf-migration/10-spectrum-analyzer.md):
 //
 //   clang++ -std=c++17 -O1 -g -fsanitize=thread \
 //       plugins/spectrum-analyzer/core/tests/ring_tsan.cpp -o ring_tsan && ./ring_tsan

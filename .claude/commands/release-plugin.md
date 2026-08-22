@@ -26,26 +26,26 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | 4K EQ | 4k-eq | plugins/4k-eq | FOURKEQ | 4keq |
 | Multi-Comp | multi-comp | plugins/multi-comp | MULTICOMP | compressor |
 | TapeMachine | tapemachine | plugins/TapeMachine | TAPEMACHINE | tape |
-| TapeMachine 2 | tapemachine-2 | plugins/TapeMachine/dpf-plugin | (inline: TapeMachine2DPF) | tape |
-| 4K EQ 2 | 4k-eq-2 | plugins/4k-eq/dpf-plugin | (inline: FourKEQ2DPF) | 4keq |
+| TapeMachine 2 | tapemachine-2 | plugins/TapeMachine/daf-plugin | (inline: TapeMachine2DAF) | tape |
+| 4K EQ 2 | 4k-eq-2 | plugins/4k-eq/daf-plugin | (inline: FourKEQ2DAF) | 4keq |
 | Tape Echo | tape-echo | plugins/tape-echo | (inline: TapeEcho) | tapeecho |
-| Tape Echo 2 | tape-echo-2 | plugins/tape-echo/dpf-plugin | (inline: TapeEchoDPF) | tapeecho |
+| Tape Echo 2 | tape-echo-2 | plugins/tape-echo/daf-plugin | (inline: TapeEchoDAF) | tapeecho |
 | Multi-Q | multi-q | plugins/multi-q | MULTIQ | multiq |
-| Multi-Q 2 | multi-q-2 | plugins/multi-q/dpf-plugin | (inline: MultiQ2DPF) | multiq |
+| Multi-Q 2 | multi-q-2 | plugins/multi-q/daf-plugin | (inline: MultiQ2DAF) | multiq |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | (inline: ConvolutionReverb) | convolution |
 | GrooveMind | groovemind | plugins/groovemind | (PLUGIN_VERSION) | groovemind |
-| Sunset Circuits | sunset-circuits | plugins/sunset-circuits/dpf-plugin | SUNSETCIRCUITS (DPF) | sunset |
+| Sunset Circuits | sunset-circuits | plugins/sunset-circuits/daf-plugin | SUNSETCIRCUITS (DAF) | sunset |
 
-**Sunset Circuits is DPF, but it is NOT one of the "-2" plugins.** The "-2" plugins
-are DPF rewrites that ship alongside a released JUCE original and take its version
+**Sunset Circuits is DAF, but it is NOT one of the "-2" plugins.** The "-2" plugins
+are DAF rewrites that ship alongside a released JUCE original and take its version
 lineage; Sunset Circuits has never been released as JUCE (the `multisynth` prototype
 still in-tree is unreleased and is not versioned or tagged), so it owns its own
 version line. It keeps a `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` var
-in `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt` (which single-sources
+in `plugins/sunset-circuits/daf-plugin/CMakeLists.txt` (which single-sources
 `project(VERSION)`, the C++ `getVersion()` via `SC_VERSION_*` compile defs, and the
 UI nameplate tooltip) rather than an inline `project()` literal, and it releases
-through its own `.github/workflows/dpf-release.yml` (tag `sunset-circuits-v*`),
-not `dpf-build.yml`. Everything else (website flow, changelog, push rules) is
+through its own `.github/workflows/daf-release.yml` (tag `sunset-circuits-v*`),
+not `daf-build.yml`. Everything else (website flow, changelog, push rules) is
 identical to the other plugins.
 
 ## Paths
@@ -55,7 +55,7 @@ identical to the other plugins.
 
 ## Instructions
 
-When this skill is invoked, execute ALL steps automatically. Do NOT stop to ask questions unless there is an ambiguity that cannot be resolved. Speed is critical.
+When this skill is invoked, execute ALL steps automatically. Do NOT stop to ask questions unless there is an ambiguity that cannot be resolved. The verification guards in each step are mandatory — never skip one to save time.
 
 ### Step 0: Branch Guard
 
@@ -100,20 +100,20 @@ For EACH plugin specified:
    list if a plugin changes shape. The `grep -q` guards in Step 3 turn a wrong
    entry into a loud abort rather than a silent no-op, but only if the guard is
    written against the form the file actually uses.
-   - **DPF "-2" plugins** use an inline `project(<Project> VERSION X.Y.Z)` in
-     `plugins/<dir>/dpf-plugin/CMakeLists.txt` (version is plumbed into the code via
+   - **DAF "-2" plugins** use an inline `project(<Project> VERSION X.Y.Z)` in
+     `plugins/<dir>/daf-plugin/CMakeLists.txt` (version is plumbed into the code via
      compile definitions, so no other file needs editing). Project tokens:
-     - tapemachine-2 → `project(TapeMachine2DPF …)`
-     - 4k-eq-2 → `project(FourKEQ2DPF …)`
-     - tape-echo-2 → `project(TapeEchoDPF …)`
-     - multi-q-2 → `project(MultiQ2DPF …)`
-     The DPF version guard in `dpf-build.yml` strips any `-beta`/`-rc`/`-alpha` suffix
+     - tapemachine-2 → `project(TapeMachine2DAF …)`
+     - 4k-eq-2 → `project(FourKEQ2DAF …)`
+     - tape-echo-2 → `project(TapeEchoDAF …)`
+     - multi-q-2 → `project(MultiQ2DAF …)`
+     The DAF version guard in `daf-build.yml` strips any `-beta`/`-rc`/`-alpha` suffix
      from the tag, then rejects the release unless the tag's numeric BASE version equals
      this `project()` VERSION — so bump it here to match exactly (e.g. tag
-     `tapemachine-2-v2.0.1-rc1` requires `project(TapeMachine2DPF VERSION 2.0.1)`).
-   - **Sunset Circuits** (DPF, own version line) uses
+     `tapemachine-2-v2.0.1-rc1` requires `project(TapeMachine2DAF VERSION 2.0.1)`).
+   - **Sunset Circuits** (DAF, own version line) uses
      `set(SUNSETCIRCUITS_DEFAULT_VERSION "X.Y.Z")` in
-     `plugins/sunset-circuits/dpf-plugin/CMakeLists.txt`.
+     `plugins/sunset-circuits/daf-plugin/CMakeLists.txt`.
 2. **Determine new version**:
    - If explicit version provided: use it
    - If omitted: auto-increment patch (1.0.2 → 1.0.3)
@@ -123,7 +123,7 @@ For EACH plugin specified:
 
 **For patch bumps (auto-increment)**: Auto-generate changelog from git log since the last tag.
 `<Directory>` is the full path from the slug table's Directory column (it already includes
-the `plugins/` prefix — do NOT add it again; DPF "-2" plugins end in `/dpf-plugin`):
+the `plugins/` prefix — do NOT add it again; DAF "-2" plugins end in `/daf-plugin`):
 ```bash
 git log <slug>-v<old-version>..HEAD --oneline -- <Directory>/
 ```
@@ -173,27 +173,27 @@ The guard above is necessary but NOT sufficient for this form: it proves the
 on it. spectrum-analyzer is the counter-example and cannot be released this way
 (see Step 1).
 
-**DPF "-2" plugins** (inline project version in `plugins/<dir>/dpf-plugin/CMakeLists.txt`).
+**DAF "-2" plugins** (inline project version in `plugins/<dir>/daf-plugin/CMakeLists.txt`).
 Use `<base-version>` — the numeric version with NO prerelease suffix. Any
 `-beta`/`-rc`/`-alpha` suffix belongs ONLY in the release tag, never in `project()`:
 ```
-project(TapeMachine2DPF VERSION <base-version>)   # tapemachine-2
-project(FourKEQ2DPF     VERSION <base-version>)   # 4k-eq-2
-project(TapeEchoDPF     VERSION <base-version>)   # tape-echo-2
-project(MultiQ2DPF      VERSION <base-version>)   # multi-q-2
+project(TapeMachine2DAF VERSION <base-version>)   # tapemachine-2
+project(FourKEQ2DAF     VERSION <base-version>)   # 4k-eq-2
+project(TapeEchoDAF     VERSION <base-version>)   # tape-echo-2
+project(MultiQ2DAF      VERSION <base-version>)   # multi-q-2
 ```
-Bump only the one being released. `dpf-build.yml`'s guard strips any
+Bump only the one being released. `daf-build.yml`'s guard strips any
 `-beta`/`-rc`/`-alpha` suffix from the tag and compares the numeric BASE version to
 this `project()` VERSION — they must match exactly or the release fails.
 
-**Sunset Circuits** (version var in the `dpf-plugin/` CMakeLists):
+**Sunset Circuits** (version var in the `daf-plugin/` CMakeLists):
 ```bash
 sed -i.bak 's/set(SUNSETCIRCUITS_DEFAULT_VERSION "[^"]*")/set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")/' \
-  plugins/sunset-circuits/dpf-plugin/CMakeLists.txt && rm plugins/sunset-circuits/dpf-plugin/CMakeLists.txt.bak
+  plugins/sunset-circuits/daf-plugin/CMakeLists.txt && rm plugins/sunset-circuits/daf-plugin/CMakeLists.txt.bak
 # Verify the replacement actually landed — a silently unmatched sed must stop
 # the release before commit/tag.
 grep -q 'set(SUNSETCIRCUITS_DEFAULT_VERSION "<new-version>")' \
-  plugins/sunset-circuits/dpf-plugin/CMakeLists.txt \
+  plugins/sunset-circuits/daf-plugin/CMakeLists.txt \
   || { echo "ERROR: Sunset Circuits version bump did not apply"; exit 1; }
 ```
 
@@ -350,8 +350,8 @@ If pandoc or xelatex is not installed locally, this step fails. The skill should
 # Stage ONLY each selected plugin's own CMakeLists.txt — no `plugins/*` wildcard,
 # no error suppression — so unrelated in-flight version bumps are never swept in and
 # a missing/failed add aborts the release loudly. PLUGIN_DIR = the full Directory
-# value from the slug table (JUCE e.g. plugins/4k-eq; DPF "-2" plugins e.g.
-# plugins/TapeMachine/dpf-plugin). Repeat this pair per selected plugin:
+# value from the slug table (JUCE e.g. plugins/4k-eq; DAF "-2" plugins e.g.
+# plugins/TapeMachine/daf-plugin). Repeat this pair per selected plugin:
 PLUGIN_DIR="<Directory from the slug table>"
 git add -- "$PLUGIN_DIR/CMakeLists.txt"
 # Issue #80: include any manual front-matter bumps from Step 3 (only if present)
@@ -392,13 +392,13 @@ The `<slug>-v<version>` form produces the tag each plugin's CI release workflow
 listens for:
 - **JUCE plugins** (4k-eq, multi-comp, tapemachine, tape-echo, multi-q, convolution-reverb, …)
   → matched by `.github/workflows/build.yml` (`<slug>-v*` triggers).
-- **DPF "-2" plugins** (tapemachine-2, 4k-eq-2, tape-echo-2, multi-q-2)
-  → matched by `.github/workflows/dpf-build.yml`, whose registry maps each `<slug>-v*`
-  tag to the right `plugins/<dir>/dpf-plugin` build. e.g. `tapemachine-2-v2.0.1`
+- **DAF "-2" plugins** (tapemachine-2, 4k-eq-2, tape-echo-2, multi-q-2)
+  → matched by `.github/workflows/daf-build.yml`, whose registry maps each `<slug>-v*`
+  tag to the right `plugins/<dir>/daf-plugin` build. e.g. `tapemachine-2-v2.0.1`
   triggers a TapeMachine 2 build + release.
-- **Sunset Circuits** → matched by `.github/workflows/dpf-release.yml`, which is
+- **Sunset Circuits** → matched by `.github/workflows/daf-release.yml`, which is
   dedicated to the one plugin (`sunset-circuits-v*`); it is not in the
-  `dpf-build.yml` registry.
+  `daf-build.yml` registry.
 
 ### Step 7: Push Everything
 

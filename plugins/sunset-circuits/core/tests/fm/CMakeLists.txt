@@ -1,4 +1,4 @@
-# Prism FM engine standalone validation harness (framework-free; no JUCE/DPF).
+# Prism FM engine standalone validation harness (framework-free; no JUCE/DAF).
 # Self-contained: does NOT touch ../CMakeLists.txt or the MultiSynthDSP build.
 cmake_minimum_required(VERSION 3.15)
 project(prism_fm_tests CXX)

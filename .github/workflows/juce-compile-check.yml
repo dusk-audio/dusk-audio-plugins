@@ -10,12 +10,12 @@ name: JUCE compile check
 # That gap has teeth because shared code crosses trees:
 #   - plugins/shared/** reaches ELEVEN JUCE plugins. DuskLookAndFeel.h alone is
 #     used by eight, and is where the #165, #167 and #168 fixes landed.
-#   - plugins/shared-dpf/dsp/DuskFilters.hpp reaches the JUCE TapeMachine via
+#   - plugins/shared-daf/dsp/DuskFilters.hpp reaches the JUCE TapeMachine via
 #     the cross-tree include added in #159, so that one header is compiled by
-#     both frameworks and only the DPF side had a PR build.
+#     both frameworks and only the DAF side had a PR build.
 #
-# This workflow is the JUCE-side mirror of dpf-build.yml's shared-code safety
-# net (its pull_request paths filter on plugins/shared-dpf/** builds every DPF
+# This workflow is the JUCE-side mirror of daf-build.yml's shared-code safety
+# net (its pull_request paths filter on plugins/shared-daf/** builds every DAF
 # plugin for exactly the same reason).
 #
 # It is a COMPILE CHECK, not a release build. Deliberately different from
@@ -37,9 +37,9 @@ on:
     paths:
       # Shared code, the reason this workflow exists.
       - 'plugins/shared/**'
-      - 'plugins/shared-dpf/dsp/DuskFilters.hpp'
+      - 'plugins/shared-daf/dsp/DuskFilters.hpp'
       # The JUCE plugins themselves. Their own PRs were equally unbuilt, and
-      # these paths are narrow enough that DPF-only work does not trigger them.
+      # these paths are narrow enough that DAF-only work does not trigger them.
       - 'plugins/4k-eq/**'
       - 'plugins/multi-comp/**'
       - 'plugins/TapeMachine/Source/**'
@@ -65,12 +65,12 @@ on:
       # this workflow, so the change lands untested by the jobs that execute it.
       - '.github/scripts/select_juce_plugins.py'
       - '.github/scripts/apt_install.sh'
-      # Subtract the DPF trees again. Several plugins above are wildcarded at
-      # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/dpf-plugin/**'
-      # too, so without these a DPF-only PR would fire all twelve JUCE jobs and
-      # dpf-build.yml would build it a second time. Negations must come LAST:
+      # Subtract the DAF trees again. Several plugins above are wildcarded at
+      # the plugin root, and 'plugins/4k-eq/**' matches 'plugins/4k-eq/daf-plugin/**'
+      # too, so without these a DAF-only PR would fire all twelve JUCE jobs and
+      # daf-build.yml would build it a second time. Negations must come LAST:
       # GitHub applies the patterns in order and the final match wins.
-      - '!plugins/*/dpf-plugin/**'
+      - '!plugins/*/daf-plugin/**'
       - '!plugins/*/core/**'
   workflow_dispatch:
 
@@ -192,7 +192,7 @@ jobs:
       - name: Configure CMake
         env:
           # 350M x 12 plugins keeps the whole matrix inside GitHub's 10 GB
-          # per-repository cache budget with room for the DPF workflows.
+          # per-repository cache budget with room for the DAF workflows.
           CCACHE_MAXSIZE: 350M
         run: |
           ccache --zero-stats >/dev/null 2>&1 || true

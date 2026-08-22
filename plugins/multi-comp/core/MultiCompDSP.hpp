@@ -1,16 +1,16 @@
 // Copyright (C) 2026 Dusk Audio , GNU GPL v3.0 or later (see repository LICENSE).
-// MultiCompDSP , framework-free C++17 DSP core (zero JUCE/DPF includes).
+// MultiCompDSP , framework-free C++17 DSP core (zero JUCE/DAF includes).
 #pragma once
 
 #include "MultiCompModes.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompAutoGain.hpp"
 #include "MultiCompHelpers.hpp"
-#include "../../shared-dpf/dsp/DuskCrossover.hpp"
-#include "../../shared-dpf/dsp/DuskDenormals.hpp"
-#include "../../shared-dpf/dsp/DuskFilters.hpp"
-#include "../../shared-dpf/dsp/DuskOversampler.hpp"
-#include "../../shared-dpf/dsp/DuskSmoothed.hpp"
+#include "../../shared-daf/dsp/DuskCrossover.hpp"
+#include "../../shared-daf/dsp/DuskDenormals.hpp"
+#include "../../shared-daf/dsp/DuskFilters.hpp"
+#include "../../shared-daf/dsp/DuskOversampler.hpp"
+#include "../../shared-daf/dsp/DuskSmoothed.hpp"
 
 #include <algorithm>
 #include <array>

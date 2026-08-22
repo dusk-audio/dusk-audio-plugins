@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
 //
-// user_preset_test — unit gate for dpf-plugin/UserPresetStore.hpp. Framework-free
-// (no JUCE/DPF); redirects the preset dir to a throwaway temp tree via
+// user_preset_test — unit gate for daf-plugin/UserPresetStore.hpp. Framework-free
+// (no JUCE/DAF); redirects the preset dir to a throwaway temp tree via
 // SUNSET_CIRCUITS_CONFIG_HOME so it never touches the real user library. Exercised by
 // core/tests/user_preset_gate.py and wired into run_all.sh.
 //

@@ -15,11 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="dusk-plugins-builder"
 
-# DPF / DPF-Widgets SHAs — keep in sync with dpf-build.yml, dpf-release.yml and dpf-au-test.yml.
-# DPF comes from the dusk-audio/DPF fork (our patches live there); DPF-Widgets
-# stays on upstream DISTRHO (no fork).
-DPF_SHA="eb54f2f47db248d7414fe30d60d502827f56f8d2"
-DPFWIDGETS_SHA="668de17f06abdeb98d5a4b62594bd634f8d1ac2e"
+# DAF / DAF-Widgets SHAs — keep in sync with daf-build.yml, daf-release.yml and daf-au-test.yml.
+# DAF comes from the dusk-audio/DAF fork (our patches live there); DAF-Widgets
+# stays on upstream DAF (no fork).
+DAF_SHA="788eb0193151a3e4afadb187cf72e6e57e6c2f69"
+DAFWIDGETS_SHA="91e0004e1ece0785d347801925d3e2518b0cbbda"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
@@ -58,7 +58,7 @@ get_plugin_name() {
     esac
 }
 
-# Is this shortcut the DPF-based Sunset Circuits plugin? (built out-of-graph)
+# Is this shortcut the DAF-based Sunset Circuits plugin? (built out-of-graph)
 is_sunset() {
     case "$1" in
         sunset|sunset-circuits|sc) return 0 ;;
@@ -66,13 +66,13 @@ is_sunset() {
     esac
 }
 
-# Build Sunset Circuits (DPF) in the container. Unlike the JUCE plugins this does
-# NOT use the top-level JUCE build graph: it clones dusk-audio/DPF (our fork) + dusk-audio/DPF-Widgets at
-# the pinned SHAs inside the container and builds plugins/sunset-circuits/dpf-plugin
-# standalone (mirrors .github/workflows/dpf-release.yml). Produces VST3/CLAP/LV2.
+# Build Sunset Circuits (DAF) in the container. Unlike the JUCE plugins this does
+# NOT use the top-level JUCE build graph: it clones dusk-audio/DAF (our fork) + dusk-audio/DAF-Widgets at
+# the pinned SHAs inside the container and builds plugins/sunset-circuits/daf-plugin
+# standalone (mirrors .github/workflows/daf-release.yml). Produces VST3/CLAP/LV2.
 build_sunset() {
-    echo "=== Building Sunset Circuits (DPF) ==="
-    echo "Using: $CONTAINER_CMD  (DPF ${DPF_SHA:0:12}, DPF-Widgets ${DPFWIDGETS_SHA:0:12})"
+    echo "=== Building Sunset Circuits (DAF) ==="
+    echo "Using: $CONTAINER_CMD  (DAF ${DAF_SHA:0:12}, DAF-Widgets ${DAFWIDGETS_SHA:0:12})"
 
     if ! $CONTAINER_CMD image inspect "$IMAGE_NAME" &>/dev/null; then
         echo "Building container image..."
@@ -88,16 +88,16 @@ build_sunset() {
         bash -c '
             set -e
             export DEBIAN_FRONTEND=noninteractive
-            DPF_SHA="'"$DPF_SHA"'"
-            DPFWIDGETS_SHA="'"$DPFWIDGETS_SHA"'"
+            DAF_SHA="'"$DAF_SHA"'"
+            DAFWIDGETS_SHA="'"$DAFWIDGETS_SHA"'"
 
-            # DPF opengl UI deps not baked into the JUCE image.
+            # DAF opengl UI deps not baked into the JUCE image.
             apt-get update
             apt-get install -y --no-install-recommends \
                 ninja-build libxext-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
 
             # Shallow-fetch each dependency at its exact pinned SHA. Submodule
-            # failures are NOT suppressed: DPF requires its pugl submodule, and a
+            # failures are NOT suppressed: DAF requires its pugl submodule, and a
             # hollow checkout must fail here, not as a confusing CMake error.
             fetch_sha() {
                 local url="$1" sha="$2" dir="$3"
@@ -110,16 +110,16 @@ build_sunset() {
                 cd /tmp
             }
             cd /tmp
-            fetch_sha https://github.com/dusk-audio/DPF.git      "$DPF_SHA"        /tmp/dpf
-            fetch_sha https://github.com/dusk-audio/DPF-Widgets.git  "$DPFWIDGETS_SHA" /tmp/dpf-widgets
-            test -n "$(ls -A /tmp/dpf/dgl/src/pugl-upstream 2>/dev/null)" \
-                || { echo "ERROR: DPF pugl submodule missing after fetch"; exit 1; }
+            fetch_sha https://github.com/dusk-audio/DAF.git      "$DAF_SHA"        /tmp/daf
+            fetch_sha https://github.com/dusk-audio/DAF-Widgets.git  "$DAFWIDGETS_SHA" /tmp/daf-widgets
+            test -n "$(ls -A /tmp/daf/dgl/src/pugl-upstream 2>/dev/null)" \
+                || { echo "ERROR: DAF pugl submodule missing after fetch"; exit 1; }
 
-            cmake -S /src/plugins/sunset-circuits/dpf-plugin -B /tmp/scbuild -G Ninja \
+            cmake -S /src/plugins/sunset-circuits/daf-plugin -B /tmp/scbuild -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DDUSK_DPF_INSTALL_LOCAL=OFF \
-                -DDPF_PATH=/tmp/dpf \
-                -DDPFWIDGETS_PATH=/tmp/dpf-widgets
+                -DDUSK_DAF_INSTALL_LOCAL=OFF \
+                -DDAF_PATH=/tmp/daf \
+                -DDAFWIDGETS_PATH=/tmp/daf-widgets
             cmake --build /tmp/scbuild \
                 --target sunset_circuits-vst3 sunset_circuits-clap sunset_circuits-lv2 \
                 -j"$(nproc)"
@@ -184,7 +184,7 @@ show_help() {
     echo "  spectrumanalyzer, spectrum-analyzer, spectrum, span, fft   Spectrum Analyzer"
     echo "  duskverb, dusk-verb, reverb   DuskVerb"
     echo "  duskamp, dusk-amp, amp   DuskAmp"
-    echo "  sunset, sunset-circuits, sc   Sunset Circuits (DPF: VST3/CLAP/LV2)"
+    echo "  sunset, sunset-circuits, sc   Sunset Circuits (DAF: VST3/CLAP/LV2)"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"
@@ -203,10 +203,10 @@ if [ $# -gt 0 ]; then
             exit 0
             ;;
         sunset|sunset-circuits|sc)
-            # DPF plugin — handled by build_sunset() after the container backend
+            # DAF plugin — handled by build_sunset() after the container backend
             # is selected below (out-of-graph, no JUCE required).
             BUILD_SUNSET=1
-            echo "Building Sunset Circuits (DPF)"
+            echo "Building Sunset Circuits (DAF)"
             ;;
         *)
             # Look up the target
@@ -254,7 +254,7 @@ fi
 OUTPUT_DIR="$PROJECT_DIR/release"
 mkdir -p "$OUTPUT_DIR"
 
-# Sunset Circuits is a DPF plugin built out-of-graph (no JUCE) — dispatch here,
+# Sunset Circuits is a DAF plugin built out-of-graph (no JUCE) — dispatch here,
 # before the JUCE_DIR check, so it doesn't require a JUCE checkout.
 if [ "$BUILD_SUNSET" -eq 1 ]; then
     build_sunset

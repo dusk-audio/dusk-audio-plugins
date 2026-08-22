@@ -63,8 +63,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 juce_add_plugin(<PluginName>
     PLUGIN_NAME "<Display Name>"
     PLUGIN_CODE <CODE>
-    PLUGIN_MANUFACTURER_CODE LunC
+    PLUGIN_MANUFACTURER_CODE Dusk
     FORMATS VST3 LV2 AU Standalone
+    VST3_AUTO_MANIFEST FALSE
     PRODUCT_NAME "<Display Name>"
     COMPANY_NAME "Dusk Audio"
     COMPANY_WEBSITE "https://dusk-audio.github.io"
@@ -104,7 +105,7 @@ target_link_libraries(<PluginName>
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        # juce::juce_recommended_lto_flags  # Disabled locally — CI release builds enable LTO; active LTO crashes MSVC (issue #10)
         juce::juce_recommended_warning_flags
 )
 ```

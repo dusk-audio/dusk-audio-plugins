@@ -68,7 +68,7 @@ echo "########## gen_params drift ##########"
 # with, and nothing else in this suite can see it: render_test's static_asserts
 # only compare INDICES, so a changed range/default/unit slips straight through.
 # Fatal, not report-only -- the drift is silent by construction.
-if ! python3 ../../dpf-plugin/tools/gen_params.py --check; then
+if ! python3 ../../daf-plugin/tools/gen_params.py --check; then
     echo "Re-run tools/gen_params.py and commit the result."
     fail=1
 fi
@@ -104,14 +104,14 @@ echo "########## lv2_smoke (LV2 host integration) ##########"
 #
 # Two optional dependencies, both skipped loudly rather than failed: lilv at
 # configure time (see the tests CMakeLists) and a locally built LV2 bundle.
-lv2_bundle_dir="../../dpf-plugin/build/bin"
+lv2_bundle_dir="../../daf-plugin/build/bin"
 if [ ! -x build/lv2_smoke ]; then
     echo "SKIP: lv2_smoke was not built (lilv-0 missing at cmake time; apt install liblilv-dev)"
 elif [ ! -d "$lv2_bundle_dir/sunset_circuits.lv2" ]; then
     echo "SKIP: no LV2 bundle at $lv2_bundle_dir/sunset_circuits.lv2"
-    echo "      build it with: (cd ../../dpf-plugin && cmake --build build --target sunset_circuits-lv2)"
+    echo "      build it with: (cd ../../daf-plugin && cmake --build build --target sunset_circuits-lv2)"
 else
-    # Point LV2_PATH at a directory holding ONLY the bundle: dpf-plugin/build/bin
+    # Point LV2_PATH at a directory holding ONLY the bundle: daf-plugin/build/bin
     # also contains the .vst3 and .clap, and lilv logs errors trying to read a
     # manifest.ttl out of each of them.
     # Guarded as one unit: under set -e a bare rm/mkdir/ln failure (read-only

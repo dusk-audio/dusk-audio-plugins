@@ -1,7 +1,7 @@
 # TapeEchoDSP — Framework Integration Guide
 
 `TapeEchoDSP` is a self-contained, framework-free vintage tape-echo emulation core
-(C++17, no JUCE). This guide maps it onto **DPF** and onto a **raw CLAP**
+(C++17, no JUCE). This guide maps it onto **DAF** and onto a **raw CLAP**
 plugin, both of which are first-class citizens on Linux/Wayland.
 
 ## Core contract
@@ -94,34 +94,34 @@ bus can peak near +9 dBFS during self-oscillation (as on the hardware, which
 gets *loud*). Either leave it to the user's Echo Volume, or add a host-side
 output trim.
 
-## Option A: DPF (recommended for Linux/Wayland)
+## Option A: DAF (recommended for Linux/Wayland)
 
-DPF builds VST3, CLAP, LV2, and a JACK standalone from one source tree, and
+DAF builds VST3, CLAP, LV2, and a JACK standalone from one source tree, and
 its windowing layer (pugl) works under Wayland (embedded GUIs go through
 XWayland in today's hosts, which is the practical norm; the JACK standalone
 runs native).
 
 ```
-tape-echo-dpf/
-├── dpf/                     # git submodule: github.com/dusk-audio/DPF (our fork)
+tape-echo-daf/
+├── daf/                     # git submodule: github.com/dusk-audio/DAF (our fork)
 ├── plugin/
-│   ├── DistrhoPluginInfo.h
+│   ├── DafPluginInfo.h
 │   ├── TapeEchoPlugin.cpp  # DSP wrapper (below)
-│   └── TapeEchoUI.cpp      # Dear ImGui UI via DPF's DearImGui wrapper
+│   └── TapeEchoUI.cpp      # Dear ImGui UI via DAF's DearImGui wrapper
 ├── core/                    # this directory, unchanged
 └── Makefile / CMakeLists.txt
 ```
 
-`DistrhoPluginInfo.h` essentials:
+`DafPluginInfo.h` essentials:
 
 ```cpp
-#define DISTRHO_PLUGIN_NAME  "Tape Echo 2"
-#define DISTRHO_PLUGIN_URI   "https://dusk-audio.github.io/plugins/tape-echo"
-#define DISTRHO_PLUGIN_CLAP_ID "com.duskaudio.tape-echo"
-#define DISTRHO_PLUGIN_NUM_INPUTS  2
-#define DISTRHO_PLUGIN_NUM_OUTPUTS 2
-#define DISTRHO_PLUGIN_HAS_UI      1
-#define DISTRHO_PLUGIN_IS_RT_SAFE  1
+#define DAF_PLUGIN_NAME  "Tape Echo 2"
+#define DAF_PLUGIN_URI   "https://dusk-audio.github.io/plugins/tape-echo"
+#define DAF_PLUGIN_CLAP_ID "com.duskaudio.tape-echo"
+#define DAF_PLUGIN_NUM_INPUTS  2
+#define DAF_PLUGIN_NUM_OUTPUTS 2
+#define DAF_PLUGIN_HAS_UI      1
+#define DAF_PLUGIN_IS_RT_SAFE  1
 ```
 
 Plugin class — the entire wrapper is ~100 lines:
@@ -150,7 +150,7 @@ protected:
         }
     }
 
-    // DPF calls this from the host's parameter thread; the setters are
+    // DAF calls this from the host's parameter thread; the setters are
     // atomic, so forward directly — no locking, no deferral.
     void setParameterValue(uint32_t index, float value) override
     {
@@ -171,7 +171,7 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
+        dsp.processBlock(inputs, outputs, DAF_PLUGIN_NUM_INPUTS, (int)frames);
     }
 
 private:
@@ -180,15 +180,15 @@ private:
 };
 ```
 
-UI: use DPF's `DearImGui` widget (github.com/DISTRHO/DPF-Widgets,
+UI: use DAF's `DearImGui` widget (github.com/dusk-audio/DAF-Widgets,
 `opengl/DearImGui.hpp`). Subclass `ImGuiTopLevelWidget`, draw knobs with
 `ImGui::SliderFloat`/custom knob code, and push edits through
 `setParameterValue(index, v)` + `editParameter(index, true/false)` for
 host automation handshakes. State flows host → UI via `parameterChanged()`;
-never touch the DSP object from the UI process (DPF may run it out-of-process).
+never touch the DSP object from the UI process (DAF may run it out-of-process).
 
-Build: `make` with DPF's `Makefile.plugins.mk`, or CMake via
-`dpf_add_plugin(tape_echo TARGETS clap vst3 lv2 jack FILES_DSP ...)`.
+Build: `make` with DAF's `Makefile.plugins.mk`, or CMake via
+`daf_add_plugin(tape_echo TARGETS clap vst3 lv2 jack FILES_DSP ...)`.
 Add `core/TapeEchoDSP.cpp` to `FILES_DSP`.
 
 ## Option B: raw CLAP

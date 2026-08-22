@@ -2,7 +2,7 @@
 //
 // SynthCommon.hpp — framework-free shared helpers for the Multi-Synth core.
 //
-// Zero JUCE/DPF includes. Constants, clamps, a MIDI-note frequency helper and a
+// Zero JUCE/DAF includes. Constants, clamps, a MIDI-note frequency helper and a
 // per-instance xorshift PRNG (replaces juce::Random / std::mt19937 / rand()).
 // Every stateful object seeds its own PRNG so voices are decorrelated without a
 // shared global generator (audio-thread safe, no rand()).

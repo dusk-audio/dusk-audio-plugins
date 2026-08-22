@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // MultiQTube.hpp — framework-free (ZERO JUCE) port of the Multi-Q "Tube"
 // character. Verbatim transcription of TubeEQProcessor.h (InductorModel,
@@ -29,8 +29,8 @@
 #include "../ADAASaturation.h"
 #include "../../shared/AnalogEmulation/AnalogEmulation.h"
 
-#include "../../shared-dpf/dsp/DuskDenormals.hpp"
-#include "../../shared-dpf/dsp/DuskOversampler.hpp"   // 2x/4x nonlinear-stage OS
+#include "../../shared-daf/dsp/DuskDenormals.hpp"
+#include "../../shared-daf/dsp/DuskOversampler.hpp"   // 2x/4x nonlinear-stage OS
 
 #include <array>
 #include <cmath>
@@ -484,7 +484,7 @@ private:
 //==============================================================================
 /** Framework-free port of TubeEQProcessor. Applies the full Tube signal path to
     a set of channel buffers in place. Parameters mirror
-    TubeEQProcessor::Parameters exactly (resolved Hz for stepped freqs — the DPF
+    TubeEQProcessor::Parameters exactly (resolved Hz for stepped freqs — the DAF
     shell applies the choice-index → Hz LUTs before filling this, matching the
     JUCE MultiQ shell at MultiQ.cpp:784-842). */
 class MultiQTube

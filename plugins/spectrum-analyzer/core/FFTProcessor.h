@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared-dpf/dsp/DuskFft.hpp"
+#include "../../shared-daf/dsp/DuskFft.hpp"
 #include "SpectrumRing.hpp"
 
 #include <array>
@@ -20,7 +20,7 @@
     - Peak hold with configurable decay
 
     Framework-free port of the JUCE original: juce::dsp::FFT is replaced by
-    duskaudio::FFTr2 (shared-dpf/dsp/DuskFft.hpp) plus an explicit magnitude
+    duskaudio::FFTr2 (shared-daf/dsp/DuskFft.hpp) plus an explicit magnitude
     pass, the Hann window table reproduces juce::dsp::WindowingFunction's
     normalise=true behaviour (coefficients scaled by size/sum so a full-scale
     sine reads 0 dB), and the two juce::AbstractFifo instances became

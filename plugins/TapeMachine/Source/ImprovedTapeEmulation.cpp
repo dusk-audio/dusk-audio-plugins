@@ -341,7 +341,7 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock, int 
     // 0.45 * fs ceiling the old local safeFreq lambda applied (nyquist * 0.9 and
     // fs * 0.45 are bitwise equal in double) but now covers the head-bump and
     // DC-blocker corners the lambda skipped, and shares one implementation with
-    // the DPF core and the rest of the repo.
+    // the DAF core and the rest of the repo.
     // Head bump filter - double precision
     auto dCoeffs = juce::dsp::IIR::Coefficients<double>::makePeakFilter(
         sampleRate, nyquistSafeHz(sampleRate, 60.0), 1.5, juce::Decibels::decibelsToGain(3.0));

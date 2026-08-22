@@ -30,6 +30,9 @@ If a plugin name was provided, map it to the build shortcut:
 | Tape Echo | `tapeecho`, `tape-echo` | tape-echo |
 | Multi-Q | `multiq`, `multi-q` | multi-q |
 | Convolution Reverb | `convolution`, `convolution-reverb` | convolution-reverb |
+| Chord Analyzer | `chord`, `chord-analyzer`, `chordanalyzer` | chord-analyzer |
+| DuskVerb | `duskverb`, `dusk-verb` | duskverb |
+| Sunset Circuits | `sunset`, `sunset-circuits`, `sc` | sunset-circuits |
 | GrooveMind | `groovemind` | groovemind |
 
 If no plugin provided, ask the user:
@@ -41,6 +44,9 @@ Which plugin would you like to build?
 - tapeecho (Tape Echo)
 - multiq (Multi-Q)
 - convolution (Convolution Reverb)
+- chord (Chord Analyzer)
+- duskverb (DuskVerb)
+- sunset (Sunset Circuits)
 - all (Build all plugins)
 ```
 
@@ -87,6 +93,8 @@ Plugin name mapping for validation:
 | tapeecho | "Tape Echo" |
 | multiq | "Multi-Q" |
 | convolution | "Convolution Reverb" |
+| chord | "Chord Analyzer" |
+| duskverb | "DuskVerb" |
 
 ### 5. Report Results
 
@@ -142,6 +150,6 @@ cmake --build . --target <PluginTarget>_All -j8
 
 Build targets:
 - `FourKEQ_All`, `MultiComp_All`, `TapeMachine_All`, `TapeEcho_All`
-- `MultiQ_All`, `ConvolutionReverb_All`
+- `MultiQ_All`, `ConvolutionReverb_All`, `ChordAnalyzer_All`, `DuskVerb_All`
 
 **Note:** Local builds may not be compatible across Linux distributions due to glibc version differences. Use Docker builds for releases.

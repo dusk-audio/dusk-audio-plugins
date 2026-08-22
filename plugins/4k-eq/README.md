@@ -1,11 +1,11 @@
 # 4K EQ 2
 
-4K EQ 2 is Dusk Audio's DPF-based British console equalizer. It models the EQ
+4K EQ 2 is Dusk Audio's DAF-based British console equalizer. It models the EQ
 and filter section of a classic E-series channel strip, including the distinct
 Brown and Black circuit revisions, their control laws, band interactions,
 native nonlinear residue, and overload headroom.
 
-The DPF build has its own plugin identity, so it can coexist with the original
+The DAF build has its own plugin identity, so it can coexist with the original
 JUCE 4K-EQ in existing sessions.
 
 ## Highlights
@@ -79,25 +79,25 @@ preferences are machine-level settings and are not changed by preset recall.
 
 ## Build
 
-DPF and DPF-Widgets are expected beside this repository by default. Their
+DAF and DAF-Widgets are expected beside this repository by default. Their
 locations can be overridden at configure time.
 
 ```sh
-cmake -S plugins/4k-eq/dpf-plugin \
-  -B plugins/4k-eq/dpf-plugin/build \
+cmake -S plugins/4k-eq/daf-plugin \
+  -B plugins/4k-eq/daf-plugin/build \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DDPF_PATH=/path/to/DPF \
-  -DDPFWIDGETS_PATH=/path/to/DPF-Widgets
+  -DDAF_PATH=/path/to/DAF \
+  -DDAFWIDGETS_PATH=/path/to/DAF-Widgets
 
-cmake --build plugins/4k-eq/dpf-plugin/build --target \
+cmake --build plugins/4k-eq/daf-plugin/build --target \
   four_k_eq_2-vst3 four_k_eq_2-clap four_k_eq_2-lv2
 ```
 
 The target list above is for Linux. On Windows, build only `four_k_eq_2-vst3`
 and `four_k_eq_2-clap`. On macOS, use the Linux list and add
 `four_k_eq_2-au`. Local installation after building is enabled by default;
-configure with `-DDUSK_DPF_INSTALL_LOCAL=OFF` for packaging or CI.
+configure with `-DDUSK_DAF_INSTALL_LOCAL=OFF` for packaging or CI.
 
 ## Installation
 
@@ -140,8 +140,8 @@ separate `dusk-audio-tools` repository.
 ## Licensing
 
 4K EQ 2 is GPL-3.0-or-later. See the repository `LICENSE` and
-[`plugins/shared-dpf/THIRD_PARTY_LICENSES.md`](../shared-dpf/THIRD_PARTY_LICENSES.md)
-for DPF, DPF-Widgets, and per-format notices.
+[`plugins/shared-daf/THIRD_PARTY_LICENSES.md`](../shared-daf/THIRD_PARTY_LICENSES.md)
+for DAF, DAF-Widgets, and per-format notices.
 
 This is an independent emulation inspired by classic British console EQs. It
 is not affiliated with or endorsed by any hardware or software manufacturer.

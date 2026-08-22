@@ -1,13 +1,13 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // MultiQDynamics.hpp — framework-free per-band dynamic EQ, ported from
 // DynamicEQProcessor.h. Each band is an independent downward compressor whose
 // gain-reduction drives a Cytomic dyn-gain SVF at the band's frequency.
 //
 // The JUCE original carries SeqLock/atomic UI->audio parameter transfer and an
-// optional lookahead peak buffer. Both are dropped here: the DPF shell snapshots
+// optional lookahead peak buffer. Both are dropped here: the DAF shell snapshots
 // parameters once per block (no cross-thread transfer needed) and Multi-Q never
 // engages lookahead (no lookahead parameter exists → 0 samples). The envelope,
 // soft-knee gain law, detection bandpass and 2 ms anti-zipper smoother are

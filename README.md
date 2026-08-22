@@ -1,6 +1,11 @@
 # Dusk Audio Plugins
 
-A collection of professional audio VST3/AU/LV2 plugins built with JUCE or DPF. Several titles also ship in CLAP format.
+A collection of professional audio VST3/AU/LV2 plugins built with JUCE or DAF. Several titles also ship in CLAP format.
+
+**DAF** is the Dusk Audio Framework: our maintained fork of the excellent
+[DISTRHO Plugin Framework (DPF)](https://github.com/DISTRHO/DPF) by Filipe Coelho and
+contributors. Nearly all of that code is theirs and is used under its ISC terms; the
+separate name exists only so our tree and DISTRHO's are never mistaken for each other.
 
 **Website & downloads**: https://dusk-audio.github.io/ | [GitHub Releases](https://github.com/dusk-audio/dusk-audio-plugins/releases)
 
@@ -43,7 +48,7 @@ Classic analog tape emulation (JUCE). The original tape plugin, still maintained
 Superseded by TapeMachine 2 below, which is a separate plugin with its own identity; both can be installed side by side.
 
 ### TapeMachine 2 - RELEASED
-DPF-based tape processing with distinct tracking and mastering deck models:
+DAF-based tape processing with distinct tracking and mastering deck models:
 - Swiss and American models with distinct plugin identity from TapeMachine 1.x
 - Type 456, GP9, 900, and 250 tape formulations
 - 7.5, 15, and 30 IPS on both decks; 3.75 IPS on American
@@ -135,7 +140,7 @@ Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution c
 - 2x/4x oversampling on nonlinear stages
 
 ### Sunset Circuits - RELEASED
-Six vintage synth circuits in one instrument (DPF, Dear ImGui UI):
+Six vintage synth circuits in one instrument (DAF, Dear ImGui UI):
 - Six mode "circuits": Cosmos (DCO poly), Oracle (poly-mod), Mono, Modular (semi-modular + spring), Prism (4-operator FM), Acid (bass box + pattern sequencer)
 - Per-mode panel skins, signature controls, and sub-panels sharing one fixed layout
 - Arpeggiator / 16-step sequencer, 8-slot mod matrix, dual LFOs, unison, effects chain (drive/chorus/delay/reverb)
@@ -159,7 +164,7 @@ For consistent, distributable binaries:
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh chord        # Chord Analyzer
 ./docker/build_release.sh spectrum     # Spectrum Analyzer
-./docker/build_release.sh sunset       # Sunset Circuits (DPF: VST3/CLAP/LV2)
+./docker/build_release.sh sunset       # Sunset Circuits (DAF: VST3/CLAP/LV2)
 
 # Build a single plugin (pre-release / in development)
 ./docker/build_release.sh duskverb     # DuskVerb
@@ -198,25 +203,25 @@ cmake --build . --target GrooveMind_All
 cmake --build . --target DuskAmp_All
 ```
 
-The DPF-based plugins use standalone builds rather than the top-level JUCE build:
+The DAF-based plugins use standalone builds rather than the top-level JUCE build:
 
 ```bash
 # TapeMachine 2
-cmake -S plugins/TapeMachine/dpf-plugin -B plugins/TapeMachine/dpf-plugin/build -G Ninja
-cmake --build plugins/TapeMachine/dpf-plugin/build
+cmake -S plugins/TapeMachine/daf-plugin -B plugins/TapeMachine/daf-plugin/build -G Ninja
+cmake --build plugins/TapeMachine/daf-plugin/build
 
 # Tape Echo 2
-cmake -S plugins/tape-echo/dpf-plugin -B plugins/tape-echo/dpf-plugin/build -G Ninja
-cmake --build plugins/tape-echo/dpf-plugin/build
+cmake -S plugins/tape-echo/daf-plugin -B plugins/tape-echo/daf-plugin/build -G Ninja
+cmake --build plugins/tape-echo/daf-plugin/build
 
 # Sunset Circuits
-cmake -S plugins/sunset-circuits/dpf-plugin -B plugins/sunset-circuits/dpf-plugin/build -G Ninja
-cmake --build plugins/sunset-circuits/dpf-plugin/build
+cmake -S plugins/sunset-circuits/daf-plugin -B plugins/sunset-circuits/daf-plugin/build -G Ninja
+cmake --build plugins/sunset-circuits/daf-plugin/build
 ```
 
 The container/CI path (`./docker/build_release.sh sunset`,
-`.github/workflows/dpf-release.yml`) is the reproducible way to build a DPF plugin
-from clean — it pins dusk-audio/DPF (our fork) and DISTRHO/DPF-Widgets at known-good SHAs.
+`.github/workflows/daf-release.yml`) is the reproducible way to build a DAF plugin
+from clean — it pins dusk-audio/DAF and dusk-audio/DAF-Widgets (our forks) at known-good SHAs.
 
 ### Installation Paths
 - **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`
@@ -282,7 +287,7 @@ Reusable analog hardware emulation components:
 - `SupportersOverlay.h` - Patreon supporter credits (click the plugin title)
 - `UserPresetManager.h` - User preset save/load
 
-DPF-based plugins share equivalent components in `plugins/shared-dpf/`.
+DAF-based plugins share equivalent components in `plugins/shared-daf/`.
 
 ## Contributing
 

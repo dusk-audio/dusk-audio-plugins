@@ -8,7 +8,7 @@
 // raw FM voice signal only. It renders at whatever sample rate it is given (the
 // voice hands it the internal oversampled rate) and does no oversampling itself.
 //
-// Design (see docs/dpf-migration/09-multi-synth.md "Prism"):
+// Design (see docs/daf-migration/09-multi-synth.md "Prism"):
 //   * 4 sine operators, each a phase accumulator + stepped digital rate envelope.
 //   * 8 routing algorithms from the shared kPrismAlgos table (FMAlgorithms.hpp),
 //     which the UI diagram widget renders from too.

@@ -30,6 +30,8 @@ Map the input to the correct plugin name for validation:
 | `tapeecho`, `tape-echo`, `"Tape Echo"` | "Tape Echo" |
 | `multiq`, `multi-q`, `"Multi-Q"` | "Multi-Q" |
 | `convolution`, `"Convolution Reverb"` | "Convolution Reverb" |
+| `chord`, `chord-analyzer`, `"Chord Analyzer"` | "Chord Analyzer" |
+| `duskverb`, `"DuskVerb"` | "DuskVerb" |
 
 ### 2. Quick Validation (Default)
 

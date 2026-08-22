@@ -3,8 +3,8 @@
 #pragma once
 
 #include "MultiCompParams.hpp"
-#include "../../shared-dpf/dsp/DuskOversampler.hpp"
-#include "../../shared-dpf/dsp/DuskFilters.hpp"
+#include "../../shared-daf/dsp/DuskOversampler.hpp"
+#include "../../shared-daf/dsp/DuskFilters.hpp"
 
 #include <algorithm>
 #include <array>

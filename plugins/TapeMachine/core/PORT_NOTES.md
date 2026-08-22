@@ -1,6 +1,6 @@
 # TapeMachine DSP Port Notes
 
-Framework-free (no-JUCE) port of the TapeMachine tape-emulation core for the DPF
+Framework-free (no-JUCE) port of the TapeMachine tape-emulation core for the DAF
 build. Source of truth:
 
 - `Source/ImprovedTapeEmulation.h` / `.cpp` — the DSP classes.
@@ -160,7 +160,7 @@ chain. It is **not** wired in (per instruction). The struct and its
 structurally faithful; they have no audible effect.
 
 ### 3.9 VU meter = output peak with ~300 ms release
-The DPF contract asks for "linear peak, ~300 ms release". The source instead kept
+The DAF contract asks for "linear peak, ~300 ms release". The source instead kept
 **300 ms RMS** on *separate* input and output meters. The port exposes the single
 `getVuL/R()` as an **output** peak follower with a 300 ms release coefficient
 (`exp(-1/(0.3*baseRate))`). Meter-only (cosmetic); does not affect audio, so it
@@ -170,7 +170,7 @@ does not impact the A/B null.
 - The source crossfades (S-curve) over 512 samples when the oversampling factor
   changes to mask the filter-state reset. The port **omits** the crossfade
   (transition-masking only; steady-state identical). A small click is possible on
-  a live OS switch — the DPF shell may add a crossfade if desired.
+  a live OS switch — the DAF shell may add a crossfade if desired.
 - The source re-`prepare()`s the tape on OS change but leaves `m_last*` stale, so
   the machine-specific coefficients are **not** re-applied until a machine param
   changes (latent staleness → neutral head-bump/HF curves after an OS switch). The
@@ -223,7 +223,7 @@ Shared wow/flutter modulation is computed **once per oversampled sample**
 ---
 
 ## 5. Verification
-`g++ -std=c++17 -fsyntax-only -I plugins/TapeMachine/core -I plugins/shared-dpf/dsp
+`g++ -std=c++17 -fsyntax-only -I plugins/TapeMachine/core -I plugins/shared-daf/dsp
 plugins/TapeMachine/core/TapeMachineDSP.cpp` — clean (also clean under
 `-O2 -Wall -Wextra`).
 
