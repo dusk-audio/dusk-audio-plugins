@@ -1,6 +1,6 @@
 name: DAF Plugins (build + release)
 
-# One reusable pipeline for ALL DAF (Dusk Audio Framework) plugins. Replaces
+# One reusable pipeline for ALL DAF (DISTRHO Plugin Framework) plugins. Replaces
 # the per-plugin ad-hoc DAF workflows (tapemachine2-release.yml, daf-au-test.yml).
 #
 # DAF plugins are NOT JUCE — each is built by its own standalone CMake under
@@ -8,9 +8,10 @@ name: DAF Plugins (build + release)
 # They do not go through the JUCE pipeline in build.yml.
 #
 # A single registry (see the "plan" step) drives a dynamic matrix:
-#   - PR touching any daf-plugin OR shared-daf   -> build ALL DAF plugins (smoke).
-#     This is the shared-code safety net: shared-daf/ is compiled into every DAF
-#     plugin, so a change there is verified against all of them.
+#   - PR touching plugin-local daf-plugin/core   -> build the touched plugin(s).
+#   - PR touching shared-daf, this workflow or its gate scripts -> build ALL DAF
+#     plugins. This is the shared-code safety net: shared-daf/ is compiled into
+#     every DAF plugin, so a change there is verified against all of them.
 #   - workflow_dispatch                          -> build one (input) or all.
 #   - push tag '<plugin>-v*'                      -> build + release THAT plugin.
 #
@@ -91,6 +92,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # PR planning compares the exact base and head commits. The default
+          # one-commit checkout contains only the synthetic merge commit.
+          fetch-depth: 0
 
       - name: Resolve build set + release info
         id: plan
@@ -99,19 +103,19 @@ jobs:
           # ---- Plugin registry (single source of truth) -------------------
           # key   : workflow_dispatch value + artifact base
           # dir   : standalone CMake dir
-          # base  : daf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
+          # base  : dpf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
           # project: project(<name> ...) token, for the tag<->CMake version guard
-          # au    : DAF_PLUGIN_UNIQUE_ID (AU subtype code)
+          # au    : DISTRHO_PLUGIN_UNIQUE_ID (AU subtype code)
           # name  : human display name
           # tag   : release tag PREFIX (version is the suffix)
           # asset : release/website asset base (asset zip = <asset>-<os>.zip)
           cat > registry.json <<'JSON'
           [
-            {"key":"tapemachine-2","dir":"plugins/TapeMachine/daf-plugin","base":"tape_machine_2","project":"TapeMachine2DAF","au":"DsTM","uri":"https://dusk-audio.github.io/plugins/tapemachine-2","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
-            {"key":"4k-eq-2","dir":"plugins/4k-eq/daf-plugin","base":"four_k_eq_2","project":"FourKEQ2DAF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
-            {"key":"tape-echo-2","dir":"plugins/tape-echo/daf-plugin","base":"tape_echo","project":"TapeEchoDAF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
-            {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi_q_2","project":"MultiQ2DAF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
-            ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi_comp_2","project":"MultiComp2DAF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
+            {"key":"tapemachine-2","dir":"plugins/TapeMachine/daf-plugin","base":"tape_machine_2","project":"TapeMachine2DPF","au":"DsTM","uri":"https://dusk-audio.github.io/plugins/tapemachine-2","name":"TapeMachine 2","tag":"tapemachine-2-v","asset":"tapemachine-2"},
+            {"key":"4k-eq-2","dir":"plugins/4k-eq/daf-plugin","base":"four_k_eq_2","project":"FourKEQ2DPF","au":"DsFq","uri":"https://dusk-audio.github.io/plugins/4k-eq-2","name":"4K EQ 2","tag":"4k-eq-2-v","asset":"4k-eq-2"},
+            {"key":"tape-echo-2","dir":"plugins/tape-echo/daf-plugin","base":"tape_echo","project":"TapeEchoDPF","au":"DsTE","uri":"https://dusk-audio.github.io/plugins/tape-echo","name":"Tape Echo 2","tag":"tape-echo-2-v","asset":"tape-echo-2"},
+            {"key":"multi-q-2","dir":"plugins/multi-q/daf-plugin","base":"multi_q_2","project":"MultiQ2DPF","au":"DsMq","uri":"https://dusk-audio.github.io/plugins/multi-q-2","name":"Multi-Q 2","tag":"multi-q-2-v","asset":"multi-q-2"}
+            ,{"key":"multi-comp-2","dir":"plugins/multi-comp/daf-plugin","base":"multi_comp_2","project":"MultiComp2DPF","au":"DsMc","uri":"https://dusk-audio.github.io/plugins/multi-comp-2","name":"Multi-Comp 2","tag":"multi-comp-2-v","asset":"multi-comp-2"}
           ]
           JSON
 
@@ -148,8 +152,44 @@ jobs:
             # --- Dispatch, single plugin ---
             MATRIX=$(jq -c --arg k "${{ github.event.inputs.plugin }}" 'map(select(.key==$k))' registry.json)
             if [ "$MATRIX" = "[]" ]; then echo "::error::unknown plugin '${{ github.event.inputs.plugin }}'"; exit 1; fi
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            # --- PR: build touched plugins, or all when shared infrastructure changed ---
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHANGED_PATHS=$(git diff --name-only --diff-filter=ACDMRT "$BASE_SHA" "$HEAD_SHA")
+            echo "=== changed paths ==="
+            printf '%s\n' "$CHANGED_PATHS"
+
+            BUILD_ALL=false
+            while IFS= read -r changed_path; do
+              case "$changed_path" in
+                plugins/shared-daf/*|.github/workflows/daf-build.yml|.github/scripts/*)
+                  BUILD_ALL=true
+                  break
+                  ;;
+              esac
+            done <<< "$CHANGED_PATHS"
+
+            if [ "$BUILD_ALL" = true ]; then
+              MATRIX=$(jq -c '.' registry.json)
+            else
+              CHANGED_JSON=$(printf '%s\n' "$CHANGED_PATHS" \
+                | jq -Rsc 'split("\n") | map(select(length > 0))')
+              # Each registry dir ends in /daf-plugin; its parent is the plugin
+              # root and therefore also owns the sibling core/ directory.
+              MATRIX=$(jq -c --argjson paths "$CHANGED_JSON" '
+                [.[]
+                 | . as $plugin
+                 | ($plugin.dir | sub("/daf-plugin$"; "")) as $root
+                 | select(any($paths[]; startswith($root + "/")))]
+              ' registry.json)
+              if [ "$MATRIX" = "[]" ]; then
+                echo "::error::PR matched the DAF workflow but no registered plugin owns its changed paths"
+                exit 1
+              fi
+            fi
           else
-            # --- PR / dispatch-all: build every DAF plugin ---
+            # --- Dispatch-all: build every DAF plugin ---
             MATRIX=$(jq -c '.' registry.json)
           fi
 
