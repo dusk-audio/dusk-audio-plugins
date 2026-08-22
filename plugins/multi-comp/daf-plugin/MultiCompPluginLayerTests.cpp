@@ -612,6 +612,31 @@ void testHostProgramChangeUpdatesUiMirror()
     std::puts("host program change: UI mirror matches every applied factory preset");
 }
 
+void testOptoFaceplateContract()
+{
+    constexpr float referenceAspect = 950.0f / 263.0f;
+    const float aspect = multicompp::ui_detail::optoFaceplateAspect();
+    require(std::abs(aspect - referenceAspect) < 0.01f,
+            "Opto faceplate follows the reference 950-by-263 proportions");
+
+    const float zero = multicompp::ui_detail::optoMeterNeedleAngle(0.0f);
+    const float ten = multicompp::ui_detail::optoMeterNeedleAngle(-10.0f);
+    const float twenty = multicompp::ui_detail::optoMeterNeedleAngle(-20.0f);
+    require(std::isfinite(zero) && std::isfinite(ten) && std::isfinite(twenty)
+                && zero > ten && ten > twenty,
+            "Opto GR needle moves monotonically from zero to 20 dB reduction");
+    require(std::strcmp(multicompp::ui_detail::optoModeLabel(0.0f), "COMP") == 0
+                && std::strcmp(multicompp::ui_detail::optoModeLabel(1.0f), "LIMIT") == 0,
+            "Opto mode control exposes the Comp and Limit panel labels");
+    require(std::strcmp(multicompp::ui_detail::optoMeterLabel(), "GR") == 0,
+            "Opto analogue meter is fixed to the GR panel readout");
+    std::printf("opto faceplate: aspect %.6f reference %.6f; meter angles "
+                "0/10/20 dB %.6f/%.6f/%.6f rad; modes %s/%s\n",
+                aspect, referenceAspect, zero, ten, twenty,
+                multicompp::ui_detail::optoModeLabel(0.0f),
+                multicompp::ui_detail::optoModeLabel(1.0f));
+}
+
 static_assert(multicompp::kParamCount == 63,
               "DAF host table must exclude the two JUCE-inert controls");
 } // namespace
@@ -675,6 +700,7 @@ int main()
     testCrossoverOrderingDoesNotRatchet();
     testQuantisedFineStepFallsBackToRestingPrecision();
     testShippingUiHasNoDeadCrossoverDescriptor();
+    testOptoFaceplateContract();
     testCrossoverMirrorRefreshesEveryPluginChangedValue();
     require(reviewFailureCount == 0, "review regressions are fixed");
     testHostParameterTapers();

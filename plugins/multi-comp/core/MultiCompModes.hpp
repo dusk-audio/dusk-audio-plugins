@@ -66,11 +66,35 @@ public:
         const double newFs = sampleRate > 0.0 ? sampleRate : 48000.0;
         const int newFactor = oversamplingFactor == 4 ? 4 : (oversamplingFactor == 2 ? 2 : 1);
         if (newFs == fs && newFactor == osFactor) return;
+        const double oldModeRate = fs * osFactor;
         fs = newFs;
         osFactor = newFactor;
         const float sr = static_cast<float>(fs * osFactor);
         transientShaper.setRate(sr);
         updateRateCoefficients(sr);
+        // The Opto fields below store elapsed or remaining samples. Preserve
+        // their physical time when runtime oversampling changes the rate.
+        const double counterScale = static_cast<double>(sr) / oldModeRate;
+        const auto scaleCounter = [counterScale](int value, int maximum) {
+            if (value <= 0) return 0;
+            return std::min(maximum, std::max(1, static_cast<int>(
+                std::lround(static_cast<double>(value) * counterScale))));
+        };
+        for (auto& d : opto)
+        {
+            d.detectorExposureSamples = scaleCounter(
+                d.detectorExposureSamples, optoChargeTopOffSamples);
+            d.detectorFloorOnlySamples = scaleCounter(
+                d.detectorFloorOnlySamples, optoDetectorFloorHoldSamples);
+            d.detectorUnsupportedSamples = scaleCounter(
+                d.detectorUnsupportedSamples, optoDetectorSilenceHoldSamples);
+            d.detectorReleaseExposureSamples = scaleCounter(
+                d.detectorReleaseExposureSamples, optoChargeTopOffSamples);
+            d.detectorSilentSamples = scaleCounter(
+                d.detectorSilentSamples, optoDetectorSilenceHoldSamples);
+            d.colourPeakHold = scaleCounter(
+                d.colourPeakHold, optoColourPeakHoldSamples);
+        }
         updateHardwareRate(sr);
         selectHardwareGains();
     }
@@ -140,7 +164,15 @@ private:
         float gain = 1, detectorLevel = 0, detectorPeak = 0;
         float colourPeak = 0, colourDc = 0;
         float fastGrDb = 0, midGrDb = 0, slowGrDb = 0;
-        int detectorExposureSamples = 0, colourPeakHold = 0;
+        float fastSustainedTargetDb = 0;
+        float fastAttackReferencePhase = 0;
+        float programmeMemory = 0;
+        float detectorFloorPeak = 0, nextEventWeight = 1;
+        int detectorExposureSamples = 0, detectorFloorOnlySamples = 0;
+        int detectorUnsupportedSamples = 0;
+        int detectorReleaseExposureSamples = 0;
+        int colourPeakHold = 0;
+        bool detectorEventActive = false;
         // Starts saturated so a freshly reset state counts as silent.
         int detectorSilentSamples = 1 << 20;
     };
@@ -192,12 +224,20 @@ private:
     std::array<std::array<Biquad, kOptoDetectorSections>, kChannels> optoDetectorWeighting;
     float optoInvSampleRate = 1.0f / 48000.0f;
     float optoDetectorAttack = 0, optoDetectorRelease = 0;
+    float optoDetectorFloorPeakAttack = 0, optoDetectorFloorPeakRelease = 0;
     float optoDetectorPeakAttack = 0, optoDetectorPeakRelease = 0;
     float optoColourPeakRelease = 0, optoColourDcSmoothing = 0;
-    int optoChargeTopOffSamples = 1, optoColourPeakHoldSamples = 1;
-    int optoDetectorSilenceHoldSamples = 1;
-    float optoFastAttack = 0, optoSlowAttack = 0;
-    float optoFastRelease = 0, optoMidRelease = 0, optoSlowRelease = 0;
+    int optoChargeTopOffSamples = 1, optoFastPathSamples = 1;
+    int optoColourPeakHoldSamples = 1;
+    int optoDetectorSilenceHoldSamples = 1, optoDetectorFloorHoldSamples = 1;
+    float optoSlowAttack = 0;
+    float optoSustainedTargetSmoothing = 0, optoSustainedTopOffAttack = 0;
+    float optoLimitFastTopOffAttack = 0, optoLimitSlowTopOffAttack = 0;
+    float optoFastAttackAtCalibrationRate = 0;
+    float optoCalibrationRateRatio = 1;
+    float optoFlashRelease = 0, optoFastRelease = 0;
+    float optoMidRelease = 0, optoSlowRelease = 0;
+    float optoProgrammeMemoryRelease = 0;
     float fetTilt = 0, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
     std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
@@ -234,28 +274,43 @@ private:
     {
         optoInvSampleRate = 1.0f / sr;
         // The 0.4 ms / 8 ms rectifier supplies the programme integration that
-        // separates sustained energy from unsupported peaks.  The original
-        // 50 us / 40 ms peak follower remains as a ceiling after calibration;
-        // it does not drive a second gain-cell path.
+        // separates sustained energy from unsupported peaks. The 50 us /
+        // 40 ms follower supplies both the calibrated ceiling and the first
+        // 1.5 ms of the isolated-event fast-cell target.
         constexpr float detectorAttackSeconds = 0.000400f;
         optoDetectorAttack = std::exp(-optoInvSampleRate / detectorAttackSeconds);
         optoDetectorRelease = std::exp(-optoInvSampleRate / 0.008f);
+        optoDetectorFloorPeakAttack = std::exp(-optoInvSampleRate / 0.010f);
+        optoDetectorFloorPeakRelease = std::exp(-optoInvSampleRate / 0.100f);
         optoDetectorPeakAttack = std::exp(-optoInvSampleRate / 0.000050f);
         optoDetectorPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
         optoChargeTopOffSamples = std::max(1, static_cast<int>(
             std::lround(0.020f * sr)));
+        optoFastPathSamples = std::max(1, static_cast<int>(
+            std::lround(0.0015f * sr)));
         optoColourPeakHoldSamples = std::max(1, static_cast<int>(
             std::lround(0.002f * sr)));
         optoDetectorSilenceHoldSamples = std::max(1, static_cast<int>(
             std::lround(0.0005f * sr)));
+        optoDetectorFloorHoldSamples = std::max(1, static_cast<int>(
+            std::lround(0.030f * sr)));
         optoColourDcSmoothing = 1.0f - std::exp(
             -kDuskTwoPi * 10.0f * optoInvSampleRate);
-        optoFastAttack = std::exp(-optoInvSampleRate / 0.021f);
+        constexpr float optoCalibrationRate = 96000.0f;
+        optoFastAttackAtCalibrationRate = std::exp(
+            -1.0f / (0.021f * optoCalibrationRate));
+        optoCalibrationRateRatio = optoCalibrationRate / sr;
         optoSlowAttack = std::exp(-optoInvSampleRate / 0.190f);
+        optoSustainedTargetSmoothing = std::exp(-optoInvSampleRate / 0.001f);
+        optoSustainedTopOffAttack = std::exp(-optoInvSampleRate / 0.014f);
+        optoLimitFastTopOffAttack = std::exp(-optoInvSampleRate / 0.0013f);
+        optoLimitSlowTopOffAttack = std::exp(-optoInvSampleRate / 0.0037f);
+        optoFlashRelease = std::exp(-optoInvSampleRate / 0.010f);
         optoFastRelease = std::exp(-optoInvSampleRate / 0.064f);
         optoMidRelease = std::exp(-optoInvSampleRate / 0.185f);
         optoSlowRelease = std::exp(-optoInvSampleRate / 1.174f);
+        optoProgrammeMemoryRelease = std::exp(-optoInvSampleRate / 0.250f);
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
         // Measured UAD LA-2A detector weighting. The shelf's equivalent Q is
         // the JSON fit's S=0.6998415302 converted to the RBJ shelf-Q form.
@@ -420,8 +475,43 @@ private:
         if (position <= 0.0f)
             return std::max(0.0f, curve[0] + position * (curve[1] - curve[0]));
         if (position >= static_cast<float>(curve.size() - 1))
-            return curve.back() + (position - static_cast<float>(curve.size() - 1))
-                * (curve.back() - curve[curve.size() - 2]);
+        {
+            const float extraPosition
+                = position - static_cast<float>(curve.size() - 1);
+            if (limit)
+                return curve.back() + extraPosition
+                    * (curve.back() - curve[curve.size() - 2]);
+
+            // Transition from the table's final measured slope to just below
+            // unity (1.90 dB GR per 2 dB input), then approach the Limit
+            // continuation smoothly. Both joins are C1: a hard slope change at
+            // the table edge and the old min() crossing produced unmeasured
+            // output-slope steps.
+            constexpr float compressInitialSlope = 1.90f;
+            constexpr float slopeTransitionPositions = 0.10f;
+            const float tableEndSlope = curve.back()
+                - curve[curve.size() - 2];
+            if (extraPosition < slopeTransitionPositions)
+                return curve.back() + tableEndSlope * extraPosition
+                    + (compressInitialSlope - tableEndSlope)
+                        * extraPosition * extraPosition
+                        / (2.0f * slopeTransitionPositions);
+            const float limitSlope = kOptoLimitCurve.back()
+                - kOptoLimitCurve[kOptoLimitCurve.size() - 2];
+            const float limitContinuation = kOptoLimitCurve.back()
+                + extraPosition * limitSlope;
+            const float transitionValue = curve.back()
+                + slopeTransitionPositions
+                    * (tableEndSlope + compressInitialSlope) * 0.5f;
+            const float limitAtTransition = kOptoLimitCurve.back()
+                + slopeTransitionPositions * limitSlope;
+            const float initialGap = limitAtTransition - transitionValue;
+            const float convergenceRate = (compressInitialSlope - limitSlope)
+                / initialGap;
+            return limitContinuation - initialGap
+                * std::exp(-convergenceRate
+                    * (extraPosition - slopeTransitionPositions));
+        }
         const size_t index = static_cast<size_t>(position);
         const float fraction = position - static_cast<float>(index);
         return curve[index] + fraction * (curve[index + 1] - curve[index]);
@@ -524,9 +614,6 @@ private:
             ++d.detectorSilentSamples;
         const bool hasDetectorInput
             = d.detectorSilentSamples < optoDetectorSilenceHoldSamples;
-        d.detectorExposureSamples = hasDetectorInput
-            ? std::min(d.detectorExposureSamples + 1, optoChargeTopOffSamples)
-            : 0;
         for (auto& filter : optoDetectorWeighting[static_cast<size_t>(ch)])
             sc = filter.process(sc);
         const float pr = std::clamp(p.optoPeakReduction.load(std::memory_order_relaxed), 0.0f, 100.0f);
@@ -541,6 +628,68 @@ private:
             ? optoDetectorPeakAttack : optoDetectorPeakRelease;
         d.detectorPeak = detectorAbs
             + (d.detectorPeak - detectorAbs) * detectorPeakCoeff;
+        constexpr float detectorSupportFloor = 0.006309573f; // -44 dBFS
+        const bool detectorAboveSupportFloor
+            = detectorInputAbs > detectorSupportFloor;
+        // A persistent sub-audible floor can keep the relative silence gate
+        // open. Require 30 ms: even a 20 Hz sine whose peak only just clears
+        // the support floor returns above it within 25 ms, so audible
+        // low-frequency zero crossings cannot masquerade as floor noise.
+        const bool hadPersistentFloor
+            = d.detectorFloorOnlySamples >= optoDetectorFloorHoldSamples;
+        if (detectorAboveSupportFloor
+            && hadPersistentFloor)
+        {
+            // A hard reset at detectorSupportFloor made otherwise identical
+            // events over -43 and -45 dBFS beds differ by 6.84 dB. Blend the
+            // retained exposure across the sub-audible floor range: a -80 dBFS
+            // or lower floor behaves as silence, while the blend reaches the
+            // uninterrupted-exposure path continuously at -44 dBFS.
+            constexpr float lowestExposureFloorDb = -80.0f;
+            constexpr float detectorSupportFloorDb = -44.0f;
+            const float floorExposurePosition = std::clamp(
+                (gainToDecibels(std::max(d.detectorFloorPeak, 1.0e-12f))
+                    - lowestExposureFloorDb)
+                    / (detectorSupportFloorDb - lowestExposureFloorDb),
+                0.0f, 1.0f);
+            const float floorExposureBlend = floorExposurePosition
+                * floorExposurePosition * (3.0f - 2.0f * floorExposurePosition);
+            d.detectorExposureSamples = static_cast<int>(std::lround(
+                static_cast<float>(d.detectorExposureSamples)
+                    * floorExposureBlend));
+            d.detectorEventActive = false;
+            d.nextEventWeight = 1.0f - floorExposureBlend;
+        }
+        // Once a real floor starts, bridge its exact waveform-zero samples;
+        // do not turn an untouched run of digital zero into floor history.
+        const bool floorSignalPresent = detectorInputAbs > 1.0e-12f
+            || d.detectorFloorOnlySamples > 0;
+        if (!detectorAboveSupportFloor && floorSignalPresent)
+        {
+            // Track the recent floor rather than freezing the first few
+            // samples after the signal crosses -44 dBFS. The 10 ms attack /
+            // 100 ms release spans low-frequency cycles but forgets a decayed
+            // tail before a later event. The slower attack also prevents the few
+            // below-threshold samples at an event's rising edge from
+            // materially contaminating the estimate before it is consumed.
+            const float floorPeakCoeff
+                = detectorInputAbs > d.detectorFloorPeak
+                    ? optoDetectorFloorPeakAttack
+                    : optoDetectorFloorPeakRelease;
+            d.detectorFloorPeak = detectorInputAbs
+                + (d.detectorFloorPeak - detectorInputAbs) * floorPeakCoeff;
+            d.detectorFloorOnlySamples = std::min(
+                d.detectorFloorOnlySamples + 1, optoDetectorFloorHoldSamples);
+        }
+        else
+        {
+            d.detectorFloorOnlySamples = 0;
+            d.detectorFloorPeak = 0.0f;
+        }
+        const int previousDetectorExposureSamples = d.detectorExposureSamples;
+        d.detectorExposureSamples = hasDetectorInput
+            ? std::min(d.detectorExposureSamples + 1, optoChargeTopOffSamples)
+            : 0;
         // The static law was measured with the original 50 us / 40 ms peak
         // follower on a 997 Hz sine.  At 48 kHz, fixed-point iteration of one
         // full-wave period gives peaks of 0.925093862 for the 0.4 ms / 8 ms
@@ -565,10 +714,20 @@ private:
         const float fluctuationDb = std::clamp(
             detectorSeparationDb - sineSeparationGuardDb,
             0.0f, maximumFittedSeparationDb - sineSeparationGuardDb);
+        const float exposureSaturation = std::clamp(
+            static_cast<float>(d.detectorExposureSamples)
+                / static_cast<float>(optoChargeTopOffSamples),
+            0.0f, 1.0f);
+        const float sustainedExposurePosition = std::clamp(
+            (exposureSaturation - 0.75f) / 0.25f, 0.0f, 1.0f);
+        const float sustainedExposureBlend = sustainedExposurePosition
+            * sustainedExposurePosition * (3.0f - 2.0f * sustainedExposurePosition);
         // The constrained fit uses the -36/-30/-18/-12 dBFS broadband points
-        // while retaining the crest triplet; -24 dBFS is held out.
+        // while retaining the crest triplet; -24 dBFS is held out. Sustained
+        // exposure uses the separately measured dense-programme correction.
         constexpr float broadbandFitPivotDb = -18.0f;
-        constexpr float broadbandFitAtPivot = 0.010f;
+        const float broadbandFitAtPivot = 0.010f
+            + (0.055f - 0.010f) * sustainedExposureBlend;
         constexpr float broadbandFitSlope = -0.0167f;
         const float broadbandCorrectionDb = fluctuationDb
             * (broadbandFitAtPivot + broadbandFitSlope
@@ -578,6 +737,29 @@ private:
         const float thresholdDb = optoThresholdDb(pr, limit);
         const float overdriveDb = inputLevelDb - thresholdDb;
         const float targetGrDb = pr <= 10.0f ? 0.0f : optoCurveDb(overdriveDb, limit);
+        // The fast cell has a second, peak-fed charge path. The isolated event
+        // grid shows full peak contribution at -12 dBFS but progressively
+        // companded contribution toward 0 dBFS; sustained signals are
+        // unchanged because their calibrated integrated and peak levels meet.
+        const float peakInputLevelDb = uncorrectedInputLevelDb
+            + std::max(0.0f, detectorSeparationDb);
+        const float peakSeparationDb = std::max(
+            0.0f, peakInputLevelDb - inputLevelDb);
+        const float fastLevelBlend = std::clamp(
+            -peakInputLevelDb / 12.0f, 0.0f, 1.0f);
+        const float fastExposureBlend = std::clamp(
+            1.0f - static_cast<float>(
+                d.detectorExposureSamples - optoDetectorSilenceHoldSamples)
+                / static_cast<float>(std::max(
+                    1, optoFastPathSamples - optoDetectorSilenceHoldSamples)),
+            0.0f, 1.0f);
+        const float fastPeakBlend = fastLevelBlend * fastExposureBlend;
+        const float fastInputLevelDb = inputLevelDb
+            + peakSeparationDb * fastPeakBlend;
+        const float fastTargetGrDb = pr <= 10.0f ? 0.0f
+            : fastPeakBlend > 0.0f
+                ? optoCurveDb(fastInputLevelDb - thresholdDb, limit)
+                : targetGrDb;
         // The release populations partition, rather than augment, the static
         // law. Their measured 11.02 / 8.01 / 3.20 dB amplitudes sum to the
         // 22.23 dB target at the memory-curve operating point.
@@ -593,47 +775,151 @@ private:
         constexpr float lowDriveSlowShare = 2.674f / lowDriveTotal;
         const float driveBlend = 1.0f / (1.0f + std::exp(
             -(overdriveDb - 5.0f) / 0.8f));
-        const float fastShare = lowDriveFastShare
+        const float baseFastShare = lowDriveFastShare
             + (highDriveFastShare - lowDriveFastShare) * driveBlend;
-        const float midShare = lowDriveMidShare
+        const float baseMidShare = lowDriveMidShare
             + (highDriveMidShare - lowDriveMidShare) * driveBlend;
+        const float limitFastShareBoost = limit ? 0.175f : 0.0f;
+        const float fastShare = baseFastShare + limitFastShareBoost;
+        const float midShare = baseMidShare - limitFastShareBoost;
         const float slowShare = lowDriveSlowShare
             + (highDriveSlowShare - lowDriveSlowShare) * driveBlend;
-        // The measured 21 ms fast charge applies at the amplitude-fit point.
-        // At high drive, the independent rate and remaining-capacity exponents
-        // are calibrated against the 2/5/20/40 Hz repeated-burst points (10 Hz
-        // held out). An empty population charges quickly, then its rate falls
-        // as it approaches capacity. This raises the per-event charge without
-        // turning dense repetition into an equivalent sustained tone.
+        // The base 21 ms fast charge applies at the amplitude-fit point. At
+        // high drive, the rate and remaining-capacity exponents are calibrated
+        // jointly against isolated events and the 2/5/20/40 Hz repeated-burst
+        // points (10 Hz held out). An empty population charges quickly, then
+        // slows as it approaches capacity.
         constexpr float lowDriveAttackRate = 2.1f;
-        constexpr float highDriveFastAttackRate = 200.0f;
+        constexpr float highDriveFastAttackRate = 1600.0f;
         constexpr float highDriveSlowAttackRate = 200.0f;
-        constexpr float highDriveFastChargeExponent = 3.0f;
+        constexpr float highDriveFastChargeExponent = 5.1f;
         constexpr float highDriveSlowChargeExponent = 1.5f;
         constexpr float highDriveFastMinimumChargeRate = 0.150f;
+        // The isolated-event grid shows that empty-cell charge is much less
+        // level-dependent than final GR capacity. Scale the high-drive rate
+        // inversely around the fitted 18 dB pivot; later fill remains limited
+        // by the capacity exponent below.
+        constexpr float fastRatePivotDb = 18.0f;
+        const float fastRateRatio
+            = fastRatePivotDb / std::max(targetGrDb, 1.0f);
+        const float fastRateRatioSquared = fastRateRatio * fastRateRatio;
+        const float fastRateCompanding = std::clamp(
+            fastRateRatioSquared * fastRateRatioSquared, 0.25f, 2.0f);
+        const float compandedFastAttackRate
+            = highDriveFastAttackRate * fastRateCompanding;
+        const float fastExposureRateScale = 1.0f - sustainedExposureBlend;
         const float fastAttackRate = lowDriveAttackRate
-            + (highDriveFastAttackRate - lowDriveAttackRate) * driveBlend;
+            + (compandedFastAttackRate * fastExposureRateScale
+                - lowDriveAttackRate) * driveBlend;
+        const float selectedHighDriveSlowAttackRate = limit
+            ? 50.0f : highDriveSlowAttackRate;
         const float slowAttackRate = lowDriveAttackRate
-            + (highDriveSlowAttackRate - lowDriveAttackRate) * driveBlend;
+            + (selectedHighDriveSlowAttackRate - lowDriveAttackRate) * driveBlend;
+        const float limitSlowRateBlend = std::clamp(
+            (pr - 60.0f) / 40.0f, 0.0f, 1.0f);
+        const float selectedLimitSlowPopulationAttackRate = 5.0f
+            + (35.0f - 5.0f) * limitSlowRateBlend;
+        const float limitSlowPopulationAttackRate = lowDriveAttackRate
+            + (selectedLimitSlowPopulationAttackRate - lowDriveAttackRate)
+                * driveBlend;
         const float fastChargeExponent = 1.0f
             + (highDriveFastChargeExponent - 1.0f) * driveBlend;
         const float slowChargeExponent = 1.0f
             + (highDriveSlowChargeExponent - 1.0f) * driveBlend;
-        // A finite top-off rate applies only after 20 ms of uninterrupted
-        // exposure. It lets a sustained source reach cell capacity without
-        // changing the charge of the measured 5 ms and 10 ms burst events.
-        const float fastMinimumChargeRate
-            = d.detectorExposureSamples >= optoChargeTopOffSamples
-                ? highDriveFastMinimumChargeRate * driveBlend : 0.0f;
-        const float fastAttackCoeff = std::max(
-            0.0f, 1.0f - (1.0f - optoFastAttack) * fastAttackRate);
+        const float fastCellTargetGrDb = fastShare * fastTargetGrDb;
+        d.fastSustainedTargetDb = fastCellTargetGrDb
+            + (d.fastSustainedTargetDb - fastCellTargetGrDb)
+                * optoSustainedTargetSmoothing;
+        // The nonlinear attack was fitted at the shipping 2x processing rate
+        // (96 kHz). Advance that discrete charge law on a fixed 96 kHz clock;
+        // scaling 1-coeff at the processing rate saturates at different attack
+        // rates for 1x, 2x and 4x.
+        const float fastAttackCoeffAtCalibrationRate = std::max(
+            0.0f, 1.0f
+                - (1.0f - optoFastAttackAtCalibrationRate) * fastAttackRate);
+        d.fastAttackReferencePhase += optoCalibrationRateRatio;
+        const int fastAttackReferenceSteps = static_cast<int>(
+            d.fastAttackReferencePhase);
+        d.fastAttackReferencePhase -= static_cast<float>(
+            fastAttackReferenceSteps);
         const float slowAttackCoeff = std::max(
             0.0f, 1.0f - (1.0f - optoSlowAttack) * slowAttackRate);
+        const float slowPopulationAttackCoeff = limit ? std::max(
+            0.0f, 1.0f - (1.0f - optoSlowAttack)
+                * limitSlowPopulationAttackRate) : slowAttackCoeff;
         const bool detectorDriven = detectorAbs > effectiveDetectorLevel * 0.4f;
-        const auto followTarget = [detectorDriven, hasDetectorInput](
+        // Support is intentionally judged against the frequency-weighted peak:
+        // replacing it with an unweighted peak preserves the 1 kHz grid but
+        // adds 0.55 dB of over-compression on the dense reference programme.
+        const bool detectorInputPeakSupported = detectorInputAbs
+                > detectorSupportFloor || detectorInputAbs
+            > std::max(d.detectorPeak * 0.04f, 1.0e-9f);
+        const bool detectorInputStartsNewEvent = detectorInputAbs
+            > std::max(d.detectorPeak * 0.50f, 1.0e-9f);
+        const int previousUnsupportedSamples = d.detectorUnsupportedSamples;
+        d.detectorUnsupportedSamples = detectorInputPeakSupported
+            ? 0 : std::min(d.detectorUnsupportedSamples + 1,
+                           optoDetectorSilenceHoldSamples);
+        const bool detectorSupported = detectorInputPeakSupported
+            || d.detectorUnsupportedSamples < optoDetectorSilenceHoldSamples;
+        d.programmeMemory *= optoProgrammeMemoryRelease;
+        if (hasDetectorInput && detectorAboveSupportFloor
+            && !d.detectorEventActive)
+        {
+            d.programmeMemory = std::min(
+                d.programmeMemory + 0.25f * d.nextEventWeight, 1.0f);
+            d.detectorEventActive = true;
+            d.nextEventWeight = 1.0f;
+        }
+        else if (!hasDetectorInput)
+        {
+            d.detectorEventActive = false;
+            d.nextEventWeight = 1.0f;
+        }
+        if (!detectorSupported
+            && previousUnsupportedSamples < optoDetectorSilenceHoldSamples)
+            d.detectorReleaseExposureSamples = previousDetectorExposureSamples;
+        else if (detectorInputStartsNewEvent)
+            d.detectorReleaseExposureSamples = 0;
+        const bool retainPreviousExposure
+            = d.detectorReleaseExposureSamples > 0;
+        const int releaseExposureSamples = retainPreviousExposure
+            ? d.detectorReleaseExposureSamples : d.detectorExposureSamples;
+        const float releaseExposureLinear = std::clamp(
+            static_cast<float>(releaseExposureSamples)
+                / static_cast<float>(optoChargeTopOffSamples),
+            0.0f, 1.0f);
+        const float releaseExposureBlend
+            = releaseExposureLinear * releaseExposureLinear;
+        const float repetitionBlend = std::clamp(
+            (d.programmeMemory - 0.25f) / 0.75f, 0.0f, 1.0f);
+        const float repeatedExposureTopOff = 0.90f * repetitionBlend * std::clamp(
+            (static_cast<float>(d.detectorExposureSamples)
+                - 0.40f * static_cast<float>(optoChargeTopOffSamples))
+                / (0.10f * static_cast<float>(optoChargeTopOffSamples)),
+            0.0f, 1.0f);
+        const float fastMinimumChargeRate = highDriveFastMinimumChargeRate
+            * driveBlend * repeatedExposureTopOff;
+        const float fastRecoveryBlend = std::max(
+            releaseExposureBlend, repetitionBlend);
+        const float exposureDependentFastRelease = optoFlashRelease
+            + (optoFastRelease - optoFlashRelease) * fastRecoveryBlend;
+        const float fastRelease = exposureDependentFastRelease
+            + (optoSlowRelease - exposureDependentFastRelease) * repetitionBlend;
+        const float midReleaseExposureBlend = std::clamp(
+            3.2f * static_cast<float>(releaseExposureSamples)
+                / static_cast<float>(optoChargeTopOffSamples),
+            0.0f, 1.0f);
+        const float exposureDependentMidRelease = detectorSupported ? optoMidRelease
+            : optoFlashRelease
+                + (optoMidRelease - optoFlashRelease)
+                    * std::max(midReleaseExposureBlend, repetitionBlend);
+        const auto followTarget = [detectorDriven, detectorSupported,
+                                   hasDetectorInput](
                                       float& state, float target, float attack,
                                       float release, float chargeExponent,
-                                      float minimumChargeRate) noexcept {
+                                      float minimumChargeRate,
+                                      int attackSteps = 1) noexcept {
             // Silence discharges the cells directly; cascading the detector's
             // 40 ms waveform integration into them is what produced D3e's
             // false 8-120 ms hold. A stale detector envelope may continue a
@@ -641,31 +927,64 @@ private:
             // the selected detector input supports it again.
             if (!hasDetectorInput)
                 state *= release;
+            else if (!detectorSupported)
+                state *= release;
             else if (!detectorDriven && target > state)
                 return;
             else if (target > state)
             {
-                const float remainingFraction = target > 1.0e-9f
-                    ? std::clamp((target - state) / target, 0.0f, 1.0f)
-                    : 0.0f;
-                const float curvedAttackStep = (1.0f - attack) * std::max(
-                    std::pow(remainingFraction, chargeExponent - 1.0f),
-                    minimumChargeRate);
-                state += curvedAttackStep * (target - state);
+                const auto advanceAttack = [&] {
+                    const float remainingFraction = target > 1.0e-9f
+                        ? std::clamp((target - state) / target, 0.0f, 1.0f)
+                        : 0.0f;
+                    const float curvedAttackStep = (1.0f - attack) * std::max(
+                        std::pow(remainingFraction, chargeExponent - 1.0f),
+                        minimumChargeRate);
+                    state += curvedAttackStep * (target - state);
+                };
+                for (int step = 0; step < attackSteps; ++step)
+                    advanceAttack();
             }
             else
                 state = target + (state - target) * release;
         };
-        // Three independent gain-reduction populations. Exposure changes only
-        // their fill; their discharge constants never change with drive,
-        // exposure, or Peak Reduction.
-        followTarget(d.fastGrDb, fastShare * targetGrDb,
-                     fastAttackCoeff, optoFastRelease, fastChargeExponent,
-                     fastMinimumChargeRate);
+        // Three gain-reduction populations share the static capacity. The
+        // fast and mid releases interpolate with event exposure and programme
+        // memory; the slow optical afterglow retains its measured 1.174 s tau.
+        followTarget(d.fastGrDb, fastCellTargetGrDb,
+                     fastAttackCoeffAtCalibrationRate, fastRelease,
+                     fastChargeExponent, fastMinimumChargeRate,
+                     fastAttackReferenceSteps);
         followTarget(d.midGrDb, midShare * targetGrDb,
-                     slowAttackCoeff, optoMidRelease, slowChargeExponent, 0.0f);
+                     slowAttackCoeff, exposureDependentMidRelease,
+                     slowChargeExponent, 0.0f);
         followTarget(d.slowGrDb, slowShare * targetGrDb,
-                     slowAttackCoeff, optoSlowRelease, slowChargeExponent, 0.0f);
+                     slowPopulationAttackCoeff, optoSlowRelease,
+                     slowChargeExponent, 0.0f);
+        const float sustainedTopOffBase = std::min(
+            d.fastSustainedTargetDb, fastCellTargetGrDb);
+        // The 0.12 dB full-scale bias closes the measured long-exposure
+        // residual. Scale it into the onset so a target crossing zero cannot
+        // toggle a 0.12 dB step; the exposure blend starts at 15 ms and reaches
+        // full strength at 20 ms.
+        const float sustainedTopOffTarget = sustainedTopOffBase > 0.0f
+            ? sustainedTopOffBase
+                + 0.12f * std::min(sustainedTopOffBase, 1.0f)
+            : 0.0f;
+        if (sustainedExposureBlend > 0.0f
+            && sustainedTopOffTarget > d.fastGrDb)
+        {
+            const float limitTopOffAttack = optoLimitFastTopOffAttack
+                + (optoLimitSlowTopOffAttack - optoLimitFastTopOffAttack)
+                    * limitSlowRateBlend;
+            const float sustainedTopOffAttack = limit
+                ? limitTopOffAttack : optoSustainedTopOffAttack;
+            const float blendedTopOffAttack = sustainedExposureBlend >= 1.0f
+                ? sustainedTopOffAttack
+                : std::pow(sustainedTopOffAttack, sustainedExposureBlend);
+            d.fastGrDb = sustainedTopOffTarget
+                + (d.fastGrDb - sustainedTopOffTarget) * blendedTopOffAttack;
+        }
         const float dynamicGrDb = std::max(
             0.0f, d.fastGrDb + d.midGrDb + d.slowGrDb);
         const float dynamicMeasuredGain = decibelsToGain(-dynamicGrDb);

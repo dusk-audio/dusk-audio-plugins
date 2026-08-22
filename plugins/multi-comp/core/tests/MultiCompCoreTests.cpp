@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -214,10 +215,13 @@ void testOptoDriveApplicability()
 }
 
 OptoStaticRender renderOptoStatic(float inputDbfs, float peakReduction, bool limit,
-                                  float frequencyHz = 997.0f)
+                                  float frequencyHz = 997.0f,
+                                  float gainKnob = duskaudio::optoGainDbToKnob(0.0f),
+                                  double sampleRate = 48000.0)
 {
-    constexpr int kSamples = 24000;
-    constexpr int kMeasureSamples = 4096;
+    const int kSamples = static_cast<int>(std::lround(0.5 * sampleRate));
+    const int kMeasureSamples = static_cast<int>(
+        std::lround((4096.0 / 48000.0) * sampleRate));
     constexpr int kBlockSize = 256;
     MultiCompDSP dsp;
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Opto));
@@ -229,9 +233,9 @@ OptoStaticRender renderOptoStatic(float inputDbfs, float peakReduction, bool lim
     dsp.setParameter(MultiCompDSP::Parameter::GlobalLookahead, 0.0f);
     dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
     dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, peakReduction);
-    dsp.setParameter(MultiCompDSP::Parameter::OptoGain, duskaudio::optoGainDbToKnob(0.0f));
+    dsp.setParameter(MultiCompDSP::Parameter::OptoGain, gainKnob);
     dsp.setParameter(MultiCompDSP::Parameter::OptoLimit, limit ? 1.0f : 0.0f);
-    dsp.prepare(48000.0, kBlockSize);
+    dsp.prepare(sampleRate, kBlockSize);
     const float amplitude = duskaudio::decibelsToGain(inputDbfs);
     double sum = 0.0;
     std::array<float, kBlockSize> input{};
@@ -241,7 +245,8 @@ OptoStaticRender renderOptoStatic(float inputDbfs, float peakReduction, bool lim
         const int count = std::min(kBlockSize, kSamples - blockStart);
         for (int i = 0; i < count; ++i)
             input[static_cast<size_t>(i)] = amplitude * std::sin(
-                2.0f * kPi * frequencyHz * static_cast<float>(blockStart + i) / 48000.0f);
+                2.0f * kPi * frequencyHz * static_cast<float>(blockStart + i)
+                / static_cast<float>(sampleRate));
         const float* inputs[] = {input.data()};
         float* outputs[] = {output.data()};
         dsp.processBlock(inputs, outputs, 1, count);
@@ -264,12 +269,16 @@ float renderOptoStaticMeter(float inputDbfs, float peakReduction, bool limit)
 }
 
 float measureOptoStaticGr(float inputDbfs, float peakReduction, bool limit,
-                          float frequencyHz = 997.0f)
+                          float frequencyHz = 997.0f,
+                          float gainKnob = duskaudio::optoGainDbToKnob(0.0f),
+                          double sampleRate = 48000.0)
 {
     // Reference definition: output(PR=0) minus output(PR=x), at identical
     // input level and Gain.  Input-minus-output is intentionally never used.
-    const float baseline = renderOptoStatic(inputDbfs, 0.0f, limit, frequencyHz).rms;
-    const float reduced = renderOptoStatic(inputDbfs, peakReduction, limit, frequencyHz).rms;
+    const float baseline = renderOptoStatic(
+        inputDbfs, 0.0f, limit, frequencyHz, gainKnob, sampleRate).rms;
+    const float reduced = renderOptoStatic(
+        inputDbfs, peakReduction, limit, frequencyHz, gainKnob, sampleRate).rms;
     require(baseline > 1.0e-7f && reduced > 1.0e-9f,
             "Opto static-law comparison produces measurable output");
     return duskaudio::gainToDecibels(baseline) - duskaudio::gainToDecibels(reduced);
@@ -351,6 +360,29 @@ void testOptoDetectorFrequencyWeighting()
                 meanDelta, shapeRms);
     require(shapeRms < 0.12f,
             "Opto detector weighting shape survives after removing broadband offset");
+}
+
+void testOptoSubBassFloorContinuity()
+{
+    constexpr std::array<float, 6> frequencies{{
+        32.0f, 33.0f, 33.4f, 33.5f, 34.0f, 35.0f}};
+    float previous = 0.0f;
+    float worstAdjacentDelta = 0.0f;
+    for (size_t i = 0; i < frequencies.size(); ++i)
+    {
+        const float reduction = measureOptoStaticGr(
+            -38.0f, 100.0f, false, frequencies[i]);
+        if (i > 0)
+            worstAdjacentDelta = std::max(
+                worstAdjacentDelta, std::abs(reduction - previous));
+        previous = reduction;
+        std::printf("opto sub-bass floor: %.1f Hz %.6f dB GR\n",
+                    frequencies[i], reduction);
+    }
+    std::printf("opto sub-bass floor: worst adjacent delta %.6f dB\n",
+                worstAdjacentDelta);
+    require(worstAdjacentDelta < 0.10f,
+            "Opto sustained sub-bass response is continuous across the floor hold boundary");
 }
 
 void testOptoInactivePeakReduction()
@@ -451,6 +483,107 @@ void testOptoLimitTopBrickWall()
             "Opto Limit reaches the measured near-brick-wall GR at high overshoot");
     require(std::abs((limit - compress) - 8.1815f) < 0.10f,
             "Opto Limit diverges from Compress by the measured amount at high overshoot");
+}
+
+void testOptoOverloadCompression()
+{
+    // Fresh licensed reference-AU renders captured 2026-08-21 at 48 kHz,
+    // Compress, PR=0.7, Gain=0.321868896. Each reduction is the same-Gain
+    // PR=0 control output minus the active output, so ceiling gain cancels.
+    struct Row { float inputDbfs, referenceReduction; };
+    constexpr std::array<Row, 2> rows{{
+        {6.0f, 25.391453f},
+        {12.0f, 24.107744f}
+    }};
+    float squaredError = 0.0f;
+    float worstError = 0.0f;
+    for (const auto& row : rows)
+    {
+        const float measured = measureOptoStaticGr(
+            row.inputDbfs, 70.0f, false, 1000.0f, 32.1868896f);
+        const float delta = measured - row.referenceReduction;
+        std::printf("opto overload: input %+.1f dBFS reference %.6f dB "
+                    "measured %.6f dB delta %+.6f dB\n",
+                    row.inputDbfs, row.referenceReduction, measured, delta);
+        squaredError += delta * delta;
+        worstError = std::max(worstError, std::abs(delta));
+    }
+    const float rmsError = std::sqrt(squaredError / rows.size());
+    std::printf("opto overload summary: RMS %.6f dB worst %.6f dB\n",
+                rmsError, worstError);
+    require(rmsError < 0.50f && worstError < 0.70f,
+            "Opto Compress matches measured +6/+12 dBFS overload reduction");
+}
+
+void testOptoOverloadOrderingAndMonotonicity()
+{
+    constexpr std::array<float, 22> levelsDbfs{{
+        -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f,
+        5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f,
+        13.0f, 14.0f, 15.0f, 16.0f, 17.0f, 18.0f
+    }};
+    float previousCompressOutputDb = 0.0f;
+    float worstCompressOverLimit = 0.0f;
+    float worstOutputDrop = 0.0f;
+    for (size_t row = 0; row < levelsDbfs.size(); ++row)
+    {
+        const float baselineOutputDb = duskaudio::gainToDecibels(
+            renderOptoStatic(levelsDbfs[row], 0.0f, false,
+                             1000.0f, 32.1868896f).rms);
+        const float compressOutputDb = duskaudio::gainToDecibels(
+            renderOptoStatic(levelsDbfs[row], 100.0f, false,
+                             1000.0f, 32.1868896f).rms);
+        const float limitOutputDb = duskaudio::gainToDecibels(
+            renderOptoStatic(levelsDbfs[row], 100.0f, true,
+                             1000.0f, 32.1868896f).rms);
+        const float compress = baselineOutputDb - compressOutputDb;
+        const float limit = baselineOutputDb - limitOutputDb;
+        worstCompressOverLimit = std::max(
+            worstCompressOverLimit, compress - limit);
+        if (row > 0)
+            worstOutputDrop = std::max(
+                worstOutputDrop, previousCompressOutputDb - compressOutputDb);
+        previousCompressOutputDb = compressOutputDb;
+        std::printf("opto overload invariant: input %+.1f dBFS Compress %.6f dB "
+                    "Limit %.6f dB separation %+.6f dB active output %.6f dBFS\n",
+                    levelsDbfs[row], compress, limit, limit - compress,
+                    compressOutputDb);
+    }
+    std::printf("opto overload invariant summary: Compress-over-Limit %.6f dB; "
+                "worst active-output drop %.6f dB\n",
+                worstCompressOverLimit, worstOutputDrop);
+    require(worstCompressOverLimit < 0.05f,
+            "Opto Limit remains at least as strong as Compress above the measured range");
+    require(worstOutputDrop < 0.01f,
+            "Opto Compress overload output remains monotonic with rising input");
+}
+
+void testOptoSampleRateParity()
+{
+    struct Row { double sampleRate; float referenceReduction; };
+    constexpr std::array<Row, 2> rows{{
+        {44100.0, 7.780751f},
+        {96000.0, 7.779223f}
+    }};
+    std::array<float, rows.size()> deltas{};
+    for (size_t row = 0; row < rows.size(); ++row)
+    {
+        const float measured = measureOptoStaticGr(
+            -24.0f, 70.0f, false, 1000.0f, 32.1868896f,
+            rows[row].sampleRate);
+        deltas[row] = measured - rows[row].referenceReduction;
+        std::printf("opto sample rate: %.1f kHz reference %.6f dB measured "
+                    "%.6f dB delta %+.6f dB\n",
+                    rows[row].sampleRate / 1000.0,
+                    rows[row].referenceReduction, measured, deltas[row]);
+        require(std::abs(deltas[row]) < 0.30f,
+                "Opto static reduction matches the reference across sample rates");
+    }
+    const float residualSpread = std::abs(deltas[1] - deltas[0]);
+    std::printf("opto sample rate summary: residual spread %.6f dB\n",
+                residualSpread);
+    require(residualSpread < 0.01f,
+            "Opto reference residual is invariant from 44.1 to 96 kHz");
 }
 
 void prepareOptoDynamicsDsp(MultiCompDSP& dsp, float peakReduction)
@@ -849,6 +982,361 @@ void testOptoCrestSweep()
                 && fittedRmsError < 0.85f && fittedWorstError < 1.40f
                 && std::abs(heldOutError) < 1.10f,
             "Opto linked-stereo crest sweep preserves its measured shape and bounded residual");
+}
+
+constexpr std::array<int, 7> kOptoShortEventTraceOffsets{{
+    0, 48, 96, 192, 384, 768, 1536}};
+
+std::array<float, kOptoShortEventTraceOffsets.size()>
+measureOptoShortEventTrace(int eventSamples, float peakDbfs,
+                           float preEventFloorDbfs = -200.0f,
+                           int repeatGapSamples = 0,
+                           float repeatGapFloorDbfs = -200.0f)
+{
+    // One event from reset, immediately followed by a -48 dBFS probe. The
+    // matched PR=0 control removes Gain/output-stage response; one complete
+    // 1 kHz cycle at probe start measures retained cell charge without
+    // averaging it into the subsequent release.
+    constexpr int kSampleRate = 48000;
+    constexpr int kBlockSize = 256;
+    constexpr int kEventStart = kSampleRate / 10;
+    constexpr int kProbeSamples = kSampleRate / 1000;
+    const int secondEventStart = repeatGapSamples > 0
+        ? kEventStart + eventSamples + repeatGapSamples : kEventStart;
+    const int eventEnd = secondEventStart + eventSamples;
+    MultiCompDSP control;
+    MultiCompDSP active;
+    prepareOptoDynamicsDsp(control, 0.0f);
+    prepareOptoDynamicsDsp(active, 70.0f);
+    control.setParameter(MultiCompDSP::Parameter::OptoGain, 23.754f);
+    active.setParameter(MultiCompDSP::Parameter::OptoGain, 23.754f);
+    const int latency = control.getLatencySamples();
+    const int tailSamples = latency + kOptoShortEventTraceOffsets.back()
+        + kProbeSamples;
+    const int totalSamples = eventEnd + tailSamples;
+    const float eventAmplitude = duskaudio::decibelsToGain(peakDbfs);
+    const float probeAmplitude = duskaudio::decibelsToGain(-48.0f);
+    const float preEventAmplitude = preEventFloorDbfs > -190.0f
+        ? duskaudio::decibelsToGain(preEventFloorDbfs) : 0.0f;
+    const float repeatGapAmplitude = repeatGapFloorDbfs > -190.0f
+        ? duskaudio::decibelsToGain(repeatGapFloorDbfs) : 0.0f;
+    std::vector<float> input(static_cast<size_t>(totalSamples));
+    for (int sample = 0; sample < totalSamples; ++sample)
+    {
+        const float amplitude = sample < kEventStart ? preEventAmplitude
+            : sample < kEventStart + eventSamples ? eventAmplitude
+            : sample < secondEventStart ? repeatGapAmplitude
+            : sample < eventEnd ? eventAmplitude : probeAmplitude;
+        input[static_cast<size_t>(sample)] = amplitude * std::sin(
+            2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
+    }
+
+    std::vector<float> controlOutput(static_cast<size_t>(totalSamples));
+    std::vector<float> activeOutput(static_cast<size_t>(totalSamples));
+    std::array<float, kBlockSize> controlBlock{};
+    std::array<float, kBlockSize> activeBlock{};
+    for (int blockStart = 0; blockStart < totalSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, totalSamples - blockStart);
+        const float* inputs[] = {input.data() + blockStart};
+        float* controlOutputs[] = {controlBlock.data()};
+        float* activeOutputs[] = {activeBlock.data()};
+        control.processBlock(inputs, controlOutputs, 1, count);
+        active.processBlock(inputs, activeOutputs, 1, count);
+        std::copy_n(controlBlock.data(), count, controlOutput.data() + blockStart);
+        std::copy_n(activeBlock.data(), count, activeOutput.data() + blockStart);
+    }
+
+    const int probeStart = eventEnd + latency;
+    const auto fundamentalAmplitude = [](const std::vector<float>& output,
+                                         int start) {
+        double sine = 0.0;
+        double cosine = 0.0;
+        for (int i = 0; i < kProbeSamples; ++i)
+        {
+            const double phase = 2.0 * static_cast<double>(kPi) * 1000.0
+                * static_cast<double>(start + i) / kSampleRate;
+            sine += output[static_cast<size_t>(start + i)] * std::sin(phase);
+            cosine += output[static_cast<size_t>(start + i)] * std::cos(phase);
+        }
+        return 2.0 / kProbeSamples * std::hypot(sine, cosine);
+    };
+    std::array<float, kOptoShortEventTraceOffsets.size()> trace{};
+    for (size_t i = 0; i < trace.size(); ++i)
+    {
+        const int start = probeStart + kOptoShortEventTraceOffsets[i];
+        trace[i] = 20.0f * std::log10(static_cast<float>(
+            fundamentalAmplitude(controlOutput, start)
+            / fundamentalAmplitude(activeOutput, start)));
+    }
+    return trace;
+}
+
+void testOptoNoiseFloorDoesNotPrechargeEvent()
+{
+    const float silent = measureOptoShortEventTrace(48, -4.0f)[0];
+    const float floored = measureOptoShortEventTrace(48, -4.0f, -90.0f)[0];
+    const float delta = floored - silent;
+    std::printf("opto pre-event floor: silence %.6f dB -90 dBFS %.6f dB "
+                "delta %+.6f dB\n", silent, floored, delta);
+    require(std::abs(delta) < 0.10f,
+            "Opto sub-audible input floor does not precharge a later event");
+}
+
+void testOptoEventChargeHasNoAbsoluteFloorCliff()
+{
+    constexpr std::array<std::array<float, 2>, 3> bedPairs{{
+        {{-45.0f, -43.0f}}, {{-63.0f, -61.0f}}, {{-79.0f, -77.0f}}
+    }};
+    float worstDelta = 0.0f;
+    for (const auto& pair : bedPairs)
+    {
+        const float lower = measureOptoShortEventTrace(
+            48, -4.0f, pair[0])[0];
+        const float upper = measureOptoShortEventTrace(
+            48, -4.0f, pair[1])[0];
+        const float delta = upper - lower;
+        worstDelta = std::max(worstDelta, std::abs(delta));
+        std::printf("opto event floor boundary: %.0f dBFS bed %.6f dB %.0f "
+                    "dBFS bed %.6f dB delta %+.6f dB\n",
+                    pair[0], lower, pair[1], upper, delta);
+    }
+    require(worstDelta < 0.50f,
+            "Opto event charge has no cliff at the detector support floor");
+}
+
+void testOptoNoiseFloorDoesNotPrechargeRepeatedEvent()
+{
+    constexpr int kGapSamples = 50 * 48000 / 1000;
+    const float silent = measureOptoShortEventTrace(
+        48, -4.0f, -200.0f, kGapSamples, -200.0f)[0];
+    const float floored = measureOptoShortEventTrace(
+        48, -4.0f, -200.0f, kGapSamples, -90.0f)[0];
+    const float delta = floored - silent;
+    std::printf("opto inter-event floor: silence %.6f dB -90 dBFS %.6f dB "
+                "delta %+.6f dB\n", silent, floored, delta);
+    require(std::abs(delta) < 0.10f,
+            "Opto sub-audible gap does not precharge a repeated event");
+}
+
+enum class OptoFloorCondition { Silence, DecayingTail, Hum };
+
+float measureOptoEventChargeAfterFloor(OptoFloorCondition condition,
+                                       float humPhase = 0.0f)
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kInitialEventSamples = kSampleRate / 10;
+    constexpr int kGapSamples = 2 * kSampleRate;
+    constexpr int kTailSamples = kSampleRate / 10;
+    constexpr int kTestEventSamples = kSampleRate / 1000;
+    duskaudio::MultiCompModes modes;
+    duskaudio::MultiCompParameterState parameters;
+    parameters.optoPeakReduction.store(70.0f, std::memory_order_relaxed);
+    parameters.optoGain.store(
+        duskaudio::kOptoGainUnityKnob, std::memory_order_relaxed);
+    parameters.noiseEnable.store(false, std::memory_order_relaxed);
+    modes.prepare(kSampleRate, 1, 1);
+    for (int sample = 0; sample < kInitialEventSamples; ++sample)
+    {
+        const float input = duskaudio::decibelsToGain(-6.0f) * std::sin(
+            2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
+        modes.process(duskaudio::MultiCompMode::Opto,
+                      input, 0, input, parameters);
+    }
+    for (int sample = 0; sample < kGapSamples; ++sample)
+    {
+        float input = 0.0f;
+        if (condition == OptoFloorCondition::DecayingTail)
+        {
+            const float levelDb = sample < kTailSamples
+                ? -40.0f - 50.0f * static_cast<float>(sample)
+                    / static_cast<float>(kTailSamples)
+                : -90.0f;
+            input = duskaudio::decibelsToGain(levelDb) * std::sin(
+                2.0f * kPi * 1000.0f * static_cast<float>(sample)
+                    / kSampleRate);
+        }
+        else if (condition == OptoFloorCondition::Hum)
+            input = duskaudio::decibelsToGain(-50.0f) * std::sin(
+                2.0f * kPi * 60.0f * static_cast<float>(sample) / kSampleRate
+                    + humPhase);
+        modes.process(duskaudio::MultiCompMode::Opto,
+                      input, 0, input, parameters);
+    }
+    const float reductionBefore
+        = -modes.gainReduction(duskaudio::MultiCompMode::Opto, 0);
+    for (int sample = 0; sample < kTestEventSamples; ++sample)
+    {
+        const float input = duskaudio::decibelsToGain(-4.0f) * std::sin(
+            2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
+        modes.process(duskaudio::MultiCompMode::Opto,
+                      input, 0, input, parameters);
+    }
+    return -modes.gainReduction(duskaudio::MultiCompMode::Opto, 0)
+        - reductionBefore;
+}
+
+void testOptoFloorHistoryDoesNotChangeEventCharge()
+{
+    const float silent = measureOptoEventChargeAfterFloor(
+        OptoFloorCondition::Silence);
+    const float decaying = measureOptoEventChargeAfterFloor(
+        OptoFloorCondition::DecayingTail);
+    float minimumHum = std::numeric_limits<float>::infinity();
+    float maximumHum = -std::numeric_limits<float>::infinity();
+    for (int phase = 0; phase < 16; ++phase)
+    {
+        const float charge = measureOptoEventChargeAfterFloor(
+            OptoFloorCondition::Hum,
+            2.0f * kPi * static_cast<float>(phase) / 16.0f);
+        minimumHum = std::min(minimumHum, charge);
+        maximumHum = std::max(maximumHum, charge);
+    }
+    std::printf("opto floor history: silence %.6f dB decaying-tail %.6f dB "
+                "delta %+.6f dB; 60 Hz phase range %.6f..%.6f dB "
+                "spread %.6f dB\n",
+                silent, decaying, decaying - silent,
+                minimumHum, maximumHum, maximumHum - minimumHum);
+    require(std::abs(decaying - silent) < 0.50f
+                && maximumHum - minimumHum < 0.50f,
+            "Opto floor history and hum phase do not change event charge");
+}
+
+void testOptoTrueSilenceRetainsExposureForRelease()
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kExposureSamples = kSampleRate / 10;
+    constexpr int kReleaseSamples = kSampleRate / 100;
+    duskaudio::MultiCompModes modes;
+    duskaudio::MultiCompParameterState parameters;
+    parameters.optoPeakReduction.store(70.0f, std::memory_order_relaxed);
+    parameters.optoGain.store(duskaudio::kOptoGainUnityKnob, std::memory_order_relaxed);
+    parameters.noiseEnable.store(false, std::memory_order_relaxed);
+    modes.prepare(kSampleRate, 1, 1);
+    for (int sample = 0; sample < kExposureSamples; ++sample)
+    {
+        const float input = duskaudio::decibelsToGain(-6.0f) * std::sin(
+            2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
+        modes.process(duskaudio::MultiCompMode::Opto, input, 0, input, parameters);
+    }
+    const float initialReduction = -modes.gainReduction(duskaudio::MultiCompMode::Opto, 0);
+    for (int sample = 0; sample < kReleaseSamples; ++sample)
+        modes.process(duskaudio::MultiCompMode::Opto, 0.0f, 0, 0.0f, parameters);
+    const float retainedReduction = -modes.gainReduction(duskaudio::MultiCompMode::Opto, 0);
+    const float retainedFraction = retainedReduction
+        / std::max(initialReduction, 1.0e-6f);
+    std::printf("opto true-silence release: initial %.6f dB retained@10ms "
+                "%.6f dB fraction %.6f\n",
+                initialReduction, retainedReduction, retainedFraction);
+    require(initialReduction > 10.0f && retainedFraction > 0.85f,
+            "Opto exact-silence release retains the preceding event exposure");
+}
+
+void testOptoShortEventCharge()
+{
+    constexpr std::array<int, 4> durations{{17, 48, 144, 480}};
+    constexpr std::array<float, 4> peaksDbfs{{-12.0f, -8.0f, -4.0f, -0.25f}};
+    constexpr std::array<std::array<float, 4>, 4> reference{{
+        {{6.92236f, 8.13157f, 8.82621f, 8.69921f}},
+        {{9.55162f, 10.59441f, 11.62389f, 12.72483f}},
+        {{13.34629f, 15.57380f, 17.44177f, 18.84350f}},
+        {{15.07678f, 17.90595f, 20.62950f, 23.07068f}}
+    }};
+    // These checkerboard points are excluded from the fitted summary so a
+    // charge-law change must generalise across both duration and amplitude.
+    constexpr std::array<std::array<bool, 4>, 4> heldOut{{
+        {{false, false, false, true}},
+        {{false, true, false, false}},
+        {{false, false, true, false}},
+        {{true, false, false, false}}
+    }};
+    float fittedSquaredError = 0.0f;
+    float fittedWorstError = 0.0f;
+    float heldOutSquaredError = 0.0f;
+    float heldOutWorstError = 0.0f;
+    int fittedCount = 0;
+    int heldOutCount = 0;
+    for (size_t duration = 0; duration < durations.size(); ++duration)
+        for (size_t peak = 0; peak < peaksDbfs.size(); ++peak)
+        {
+            const float measured = measureOptoShortEventTrace(
+                durations[duration], peaksDbfs[peak])[0];
+            const float delta = measured - reference[duration][peak];
+            std::printf("opto short-event charge: %.3f ms peak %.2f dBFS "
+                        "reference %.5f dB measured %.6f dB delta %+.6f dB%s\n",
+                        1000.0f * durations[duration] / 48000.0f,
+                        peaksDbfs[peak], reference[duration][peak], measured,
+                        delta, heldOut[duration][peak] ? " (held out)" : "");
+            if (heldOut[duration][peak])
+            {
+                heldOutSquaredError += delta * delta;
+                heldOutWorstError = std::max(heldOutWorstError, std::abs(delta));
+                ++heldOutCount;
+            }
+            else
+            {
+                fittedSquaredError += delta * delta;
+                fittedWorstError = std::max(fittedWorstError, std::abs(delta));
+                ++fittedCount;
+            }
+        }
+    const float fittedRms = std::sqrt(fittedSquaredError / fittedCount);
+    const float heldOutRms = std::sqrt(heldOutSquaredError / heldOutCount);
+    std::printf("opto short-event charge summary: fitted RMS %.6f dB worst %.6f dB; "
+                "held-out RMS %.6f dB worst %.6f dB\n",
+                fittedRms, fittedWorstError, heldOutRms, heldOutWorstError);
+    require(fittedRms < 0.42f && fittedWorstError < 0.75f
+                && heldOutRms < 0.50f && heldOutWorstError < 0.75f,
+            "Opto nonlinear charge law matches isolated duration/amplitude grid");
+}
+
+void testOptoShortEventRelease()
+{
+    struct Row
+    {
+        int durationSamples;
+        float peakDbfs;
+        std::array<float, kOptoShortEventTraceOffsets.size()> reference;
+    };
+    // Checkerboard rows span both axes of the charge grid. Scoring change from
+    // the first probe cycle isolates recovery shape from initial charge error.
+    constexpr std::array<Row, 4> rows{{
+        {17, -8.0f, {{8.131574f, 8.069341f, 7.722107f, 6.827592f,
+                       5.295952f, 3.266975f, 1.656423f}}},
+        {48, -4.0f, {{11.623894f, 11.018592f, 10.439475f, 9.360288f,
+                       7.511415f, 4.922399f, 2.667509f}}},
+        {144, -12.0f, {{13.346288f, 12.721900f, 12.122308f, 11.001453f,
+                         9.058014f, 6.256186f, 3.648758f}}},
+        {480, -0.25f, {{23.070678f, 22.489624f, 21.939834f, 20.905922f,
+                         19.062774f, 16.080678f, 12.110521f}}}
+    }};
+    float squaredError = 0.0f;
+    float worstError = 0.0f;
+    int count = 0;
+    for (const auto& row : rows)
+    {
+        const auto measured = measureOptoShortEventTrace(
+            row.durationSamples, row.peakDbfs);
+        std::printf("opto short-event release: %.3f ms peak %.2f dBFS decay",
+                    1000.0f * row.durationSamples / 48000.0f, row.peakDbfs);
+        for (size_t i = 1; i < measured.size(); ++i)
+        {
+            const float referenceDecay = row.reference[i] - row.reference[0];
+            const float measuredDecay = measured[i] - measured[0];
+            const float delta = measuredDecay - referenceDecay;
+            std::printf(" %dms:%+.3f", kOptoShortEventTraceOffsets[i] * 1000 / 48000,
+                        delta);
+            squaredError += delta * delta;
+            worstError = std::max(worstError, std::abs(delta));
+            ++count;
+        }
+        std::printf(" dB\n");
+    }
+    const float rmsError = std::sqrt(squaredError / count);
+    std::printf("opto short-event release summary: RMS %.6f dB worst %.6f dB\n",
+                rmsError, worstError);
+    require(rmsError < 0.75f && worstError < 1.50f,
+            "Opto short-event recovery follows the measured exposure-dependent shape");
 }
 
 float measureOptoBroadbandStaticLaw(const std::vector<float>& unitRmsNoise,
@@ -1250,6 +1738,217 @@ void reportOptoAttackCrossings()
                     row.crossing63, row.crossing90,
                     measured.crossing63, measured.crossing90, measured.finalReduction);
     }
+}
+
+struct OptoOutputDynamics
+{
+    float finalReduction = 0.0f;
+    float crossing90 = 0.0f;
+    bool crossing90Found = false;
+};
+
+OptoOutputDynamics measureOptoOutputDynamics(float peakReduction,
+                                              float inputDbfs,
+                                              float exposureSeconds,
+                                              bool limit)
+{
+    // Match the reference campaign's control/active output extraction. A
+    // four-cycle moving-power envelope avoids comparing its rendered audio
+    // metrics with the plugin's internal end-of-block meter.
+    constexpr int kSampleRate = 48000;
+    constexpr int kBlockSize = 64;
+    constexpr int kEventStart = kSampleRate;
+    constexpr int kEnvelopeSamples = 4 * kSampleRate / 1000;
+    constexpr int kTailSamples = kSampleRate / 5;
+    const int eventSamples = static_cast<int>(
+        std::lround(exposureSeconds * kSampleRate));
+    const int totalSamples = kEventStart + eventSamples + kTailSamples;
+    const float baselineAmplitude = duskaudio::decibelsToGain(-40.0f);
+    const float eventAmplitude = duskaudio::decibelsToGain(inputDbfs);
+
+    MultiCompDSP control;
+    MultiCompDSP active;
+    prepareOptoDynamicsDsp(control, 0.0f);
+    prepareOptoDynamicsDsp(active, peakReduction);
+    control.setParameter(MultiCompDSP::Parameter::OptoLimit, limit ? 1.0f : 0.0f);
+    active.setParameter(MultiCompDSP::Parameter::OptoLimit, limit ? 1.0f : 0.0f);
+    std::vector<float> controlOutput(static_cast<size_t>(totalSamples));
+    std::vector<float> activeOutput(static_cast<size_t>(totalSamples));
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> controlBlock{};
+    std::array<float, kBlockSize> activeBlock{};
+    for (int blockStart = 0; blockStart < totalSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, totalSamples - blockStart);
+        for (int i = 0; i < count; ++i)
+        {
+            const int sample = blockStart + i;
+            const float amplitude = sample >= kEventStart
+                    && sample < kEventStart + eventSamples
+                ? eventAmplitude : baselineAmplitude;
+            input[static_cast<size_t>(i)] = amplitude * std::sin(
+                2.0f * kPi * 1000.0f * static_cast<float>(sample)
+                / static_cast<float>(kSampleRate));
+        }
+        const float* inputs[] = {input.data()};
+        float* controlOutputs[] = {controlBlock.data()};
+        float* activeOutputs[] = {activeBlock.data()};
+        control.processBlock(inputs, controlOutputs, 1, count);
+        active.processBlock(inputs, activeOutputs, 1, count);
+        std::copy_n(controlBlock.data(), count,
+                    controlOutput.data() + blockStart);
+        std::copy_n(activeBlock.data(), count,
+                    activeOutput.data() + blockStart);
+    }
+
+    std::vector<double> controlPrefix(static_cast<size_t>(totalSamples + 1));
+    std::vector<double> activePrefix(static_cast<size_t>(totalSamples + 1));
+    for (int sample = 0; sample < totalSamples; ++sample)
+    {
+        const double controlSample = controlOutput[static_cast<size_t>(sample)];
+        const double activeSample = activeOutput[static_cast<size_t>(sample)];
+        controlPrefix[static_cast<size_t>(sample + 1)]
+            = controlPrefix[static_cast<size_t>(sample)]
+                + controlSample * controlSample;
+        activePrefix[static_cast<size_t>(sample + 1)]
+            = activePrefix[static_cast<size_t>(sample)]
+                + activeSample * activeSample;
+    }
+    auto reductionAt = [&](int sample) {
+        const int first = std::max(0, sample - kEnvelopeSamples / 2);
+        const int last = std::min(totalSamples, first + kEnvelopeSamples);
+        const double controlPower = controlPrefix[static_cast<size_t>(last)]
+            - controlPrefix[static_cast<size_t>(first)];
+        const double activePower = activePrefix[static_cast<size_t>(last)]
+            - activePrefix[static_cast<size_t>(first)];
+        return 10.0f * std::log10(static_cast<float>(
+            std::max(controlPower, 1.0e-24) / std::max(activePower, 1.0e-24)));
+    };
+    auto medianReduction = [&](int first, int last) {
+        std::vector<float> values;
+        values.reserve(static_cast<size_t>(std::max(0, last - first)));
+        for (int sample = first; sample < last; ++sample)
+            values.push_back(reductionAt(sample));
+        const auto middle = values.begin()
+            + static_cast<std::ptrdiff_t>(values.size() / 2);
+        std::nth_element(values.begin(), middle, values.end());
+        return *middle;
+    };
+
+    const int latency = control.getLatencySamples();
+    const int outputOn = kEventStart + latency;
+    const int outputOff = outputOn + eventSamples;
+    constexpr int kGuardSamples = 3 * kSampleRate / 1000;
+    const float finalWindowSeconds = std::min(
+        std::max(exposureSeconds * 0.40f, 0.004f), 0.050f);
+    const int finalStart = std::max(
+        outputOn + kGuardSamples,
+        outputOff - static_cast<int>(std::lround(
+            finalWindowSeconds * kSampleRate)));
+    const int finalStop = std::max(finalStart + 1, outputOff - kGuardSamples);
+    const float initialReduction = medianReduction(
+        outputOn - kSampleRate / 10, outputOn - kGuardSamples);
+    const float finalReduction = medianReduction(finalStart, finalStop);
+    const float target = initialReduction
+        + 0.90f * (finalReduction - initialReduction);
+    const int attackStart = outputOn + kGuardSamples;
+    const int attackStop = outputOff - kGuardSamples;
+    float crossing90 = exposureSeconds;
+    bool crossing90Found = false;
+    for (int sample = attackStart; sample < attackStop; ++sample)
+        if (reductionAt(sample) >= target)
+        {
+            crossing90 = static_cast<float>(sample - attackStart)
+                / static_cast<float>(kSampleRate);
+            crossing90Found = true;
+            break;
+        }
+    return {finalReduction, crossing90, crossing90Found};
+}
+
+void testOptoLimitDynamics()
+{
+    struct Row
+    {
+        float peakReduction;
+        float inputDbfs;
+        float exposureSeconds;
+        float finalReduction;
+        float crossing90;
+        bool heldOut;
+    };
+    constexpr std::array<Row, 12> rows{{
+        {60.0f, -12.0f, 0.010f, 9.391500f, 0.001646f, false},
+        {60.0f, -12.0f, 0.100f, 11.060040f, 0.007042f, false},
+        {60.0f, -12.0f, 1.000f, 11.832684f, 0.036000f, false},
+        {100.0f, -12.0f, 0.010f, 23.023195f, 0.002146f, false},
+        {100.0f, -12.0f, 0.100f, 31.567879f, 0.021208f, false},
+        {100.0f, -12.0f, 1.000f, 31.895535f, 0.023604f, false},
+        {30.0f, -24.0f, 0.100f, 0.003595f, 0.000000f, true},
+        {60.0f, -24.0f, 0.100f, 1.586796f, 0.033542f, true},
+        {100.0f, -24.0f, 0.100f, 18.567860f, 0.013604f, true},
+        {30.0f, -3.0f, 0.010f, 4.562598f, 0.001771f, true},
+        {60.0f, -3.0f, 0.100f, 19.506279f, 0.012063f, true},
+        {100.0f, -3.0f, 1.000f, 40.970371f, 0.035979f, true}
+    }};
+    float finalSquaredError = 0.0f;
+    float finalWorstError = 0.0f;
+    float crossingWorstError = 0.0f;
+    float heldOutSquaredError = 0.0f;
+    float heldOutWorstError = 0.0f;
+    float heldOutCrossingWorstError = 0.0f;
+    int fittedCount = 0;
+    int heldOutCount = 0;
+    bool allMeaningfulCrossingsFound = true;
+    for (const auto& row : rows)
+    {
+        const auto measured = measureOptoOutputDynamics(
+            row.peakReduction, row.inputDbfs, row.exposureSeconds, true);
+        const float finalDelta = measured.finalReduction - row.finalReduction;
+        const float crossingDelta = measured.crossing90 - row.crossing90;
+        if (row.finalReduction > 0.1f)
+            allMeaningfulCrossingsFound = allMeaningfulCrossingsFound
+                && measured.crossing90Found;
+        std::printf("opto Limit dynamics: PR %.1f input %.1f exposure %.3f "
+                    "final ref/measured "
+                    "%.6f/%.6f delta %+.6f dB; t90 ref/measured %.6f/%.6f "
+                    "delta %+.6f s%s\n",
+                    row.peakReduction * 0.01f, row.inputDbfs, row.exposureSeconds,
+                    row.finalReduction, measured.finalReduction, finalDelta,
+                    row.crossing90, measured.crossing90, crossingDelta,
+                    row.heldOut ? " (held out)" : "");
+        if (row.heldOut)
+        {
+            heldOutSquaredError += finalDelta * finalDelta;
+            heldOutWorstError = std::max(heldOutWorstError, std::abs(finalDelta));
+            if (row.finalReduction > 0.1f)
+                heldOutCrossingWorstError = std::max(
+                    heldOutCrossingWorstError, std::abs(crossingDelta));
+            ++heldOutCount;
+        }
+        else
+        {
+            finalSquaredError += finalDelta * finalDelta;
+            finalWorstError = std::max(finalWorstError, std::abs(finalDelta));
+            crossingWorstError = std::max(crossingWorstError,
+                                          std::abs(crossingDelta));
+            ++fittedCount;
+        }
+    }
+    const float finalRmsError = std::sqrt(finalSquaredError / fittedCount);
+    const float heldOutRmsError = std::sqrt(heldOutSquaredError / heldOutCount);
+    std::printf("opto Limit dynamics summary: final RMS %.6f dB worst %.6f dB; "
+                "t90 worst %.6f s; held-out RMS %.6f dB worst %.6f dB "
+                "t90 worst %.6f s\n",
+                finalRmsError, finalWorstError, crossingWorstError,
+                heldOutRmsError, heldOutWorstError,
+                heldOutCrossingWorstError);
+    require(allMeaningfulCrossingsFound
+                && finalRmsError < 0.50f && finalWorstError < 0.80f
+                && crossingWorstError < 0.013f
+                && heldOutRmsError < 0.80f && heldOutWorstError < 1.50f
+                && heldOutCrossingWorstError < 0.030f,
+            "Opto Limit charge follows the measured duration and PR grid");
 }
 
 struct OptoReleaseLocalTaus
@@ -1970,7 +2669,10 @@ void testOptoInternalStereoLinkUsesSignedMaximum()
         std::printf("opto dual-mono link identity: os=%dx worst delta %.9f dB\n",
                     oversampling == 2 ? 4 : oversampling == 1 ? 2 : 1,
                     worstDeltaDb);
-        matches = matches && worstDeltaDb < 1.0e-5f;
+        // FMA contraction moves the 4x accumulation by about 0.000012 dB.
+        // Keep the identity guard far below the 0.5 dB routing oracle while
+        // allowing that harmless compiler-level rounding difference.
+        matches = matches && worstDeltaDb < 1.0e-4f;
     }
     require(matches,
             "Opto internal stereo link uses the signed maximum detector on both channels");
@@ -2958,6 +3660,84 @@ void testHardwareRateRefreshAfterOversamplingChange()
     }
 }
 
+void testOptoExposureTimebaseSurvivesRateChange()
+{
+    duskaudio::MultiCompParameterState parameters;
+    parameters.optoPeakReduction.store(70.0f, std::memory_order_relaxed);
+    parameters.optoGain.store(duskaudio::optoGainDbToKnob(0.0f),
+                              std::memory_order_relaxed);
+    duskaudio::MultiCompModes switched;
+    duskaudio::MultiCompModes reference;
+    switched.prepare(48000.0, 256, 1);
+    reference.prepare(48000.0, 256, 2);
+    constexpr float kAmplitude = 0.6309573445f; // -4 dBFS
+    constexpr double kFrequency = 997.0;
+    double switchedTime = 0.0;
+    auto processDuration = [&](duskaudio::MultiCompModes& modes,
+                               double rate, double seconds, double& time) {
+        const int samples = static_cast<int>(std::lround(rate * seconds));
+        for (int sample = 0; sample < samples; ++sample)
+        {
+            const float input = kAmplitude * std::sin(
+                2.0 * static_cast<double>(kPi) * kFrequency * time);
+            (void)modes.process(duskaudio::MultiCompMode::Opto,
+                                input, 0, input, parameters);
+            time += 1.0 / rate;
+        }
+    };
+    processDuration(switched, 48000.0, 0.010, switchedTime);
+    switched.setRate(48000.0, 2);
+    processDuration(switched, 96000.0, 0.015, switchedTime);
+
+    double referenceTime = 0.0;
+    processDuration(reference, 96000.0, 0.025, referenceTime);
+    const float switchedGr = switched.gainReduction(
+        duskaudio::MultiCompMode::Opto, 0);
+    const float referenceGr = reference.gainReduction(
+        duskaudio::MultiCompMode::Opto, 0);
+    const float delta = switchedGr - referenceGr;
+    std::printf("opto exposure rate switch: 10 ms@48 + 15 ms@96 %.6f dB; "
+                "25 ms@96 %.6f dB; delta %+.6f dB\n",
+                switchedGr, referenceGr, delta);
+    require(std::abs(delta) < 0.20f,
+            "Opto exposure keeps its physical time across an oversampling-rate change");
+}
+
+void testOptoFastChargeIsOversamplingInvariant()
+{
+    duskaudio::MultiCompParameterState parameters;
+    parameters.optoPeakReduction.store(70.0f, std::memory_order_relaxed);
+    parameters.optoGain.store(duskaudio::kOptoGainUnityKnob,
+                              std::memory_order_relaxed);
+    constexpr float kAmplitude = 0.6309573445f; // -4 dBFS peak
+    std::array<float, 3> reductions{};
+    size_t row = 0;
+    for (const int factor : {1, 2, 4})
+    {
+        duskaudio::MultiCompModes modes;
+        modes.prepare(48000.0, 1, factor);
+        const int samples = static_cast<int>(
+            std::lround(0.00025 * 48000.0 * factor));
+        for (int sample = 0; sample < samples; ++sample)
+        {
+            const float input = kAmplitude * std::sin(
+                2.0f * kPi * 1000.0f * static_cast<float>(sample)
+                    / static_cast<float>(48000 * factor));
+            modes.process(duskaudio::MultiCompMode::Opto,
+                          input, 0, input, parameters);
+        }
+        reductions[row++] = -modes.gainReduction(
+            duskaudio::MultiCompMode::Opto, 0);
+    }
+    const auto spread = std::minmax_element(reductions.begin(), reductions.end());
+    const float difference = *spread.second - *spread.first;
+    std::printf("opto fast-charge rate parity: 1x %.6f dB 2x %.6f dB "
+                "4x %.6f dB spread %.6f dB\n",
+                reductions[0], reductions[1], reductions[2], difference);
+    require(*spread.first > 0.1f && difference < 0.25f,
+            "Opto isolated fast charge preserves physical time across oversampling factors");
+}
+
 float renderSoloedHighFrequencyPeak(float mix)
 {
     constexpr int blockSize = 256;
@@ -3259,19 +4039,31 @@ int main()
     testGoldenVectors();
     testOptoHarmonicContent();
     reportOptoCrestResponse();
+    testOptoShortEventRelease();
+    testOptoShortEventCharge();
+    testOptoNoiseFloorDoesNotPrechargeEvent();
+    testOptoEventChargeHasNoAbsoluteFloorCliff();
+    testOptoNoiseFloorDoesNotPrechargeRepeatedEvent();
+    testOptoFloorHistoryDoesNotChangeEventCharge();
+    testOptoTrueSilenceRetainsExposureForRelease();
     testOptoCrestSweep();
     testOptoBroadbandStaticLaw();
     testOptoBurstRateSweep();
     testOptoPluginLevelReferencePoints();
     testOptoDetectorFrequencyWeighting();
+    testOptoSubBassFloorContinuity();
     testOptoDetectorMemory();
     reportOptoAttackCrossings();
+    testOptoLimitDynamics();
     reportOptoReleaseLocalTaus();
     testOptoInactivePeakReduction();
     testOptoMeterMatchesOutputReduction();
     testOptoMeasuredOnsets();
     testOptoThresholdOnlyCurveCollapse();
     testOptoLimitTopBrickWall();
+    testOptoOverloadCompression();
+    testOptoOverloadOrderingAndMonotonicity();
+    testOptoSampleRateParity();
     testAtomicControlSnapshotsAreSingleLoad();
     testPublishedGainReductionRange();
     testAllModesAreMonoSafe();
@@ -3296,6 +4088,8 @@ int main()
     testAutoGainBypassSettleBoundary();
     testAutoGainEffectiveExternalSidechain();
     testHardwareRateRefreshAfterOversamplingChange();
+    testOptoExposureTimebaseSurvivesRateChange();
+    testOptoFastChargeIsOversamplingInvariant();
     testOptoStereoDetectorIsolation();
     testPrepareAtDefaultRateAndFactor();
     testCrossoverFlatness();

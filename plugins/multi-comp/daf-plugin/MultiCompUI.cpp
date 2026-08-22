@@ -17,6 +17,34 @@ inline int choiceIndex(float hostValue, int count) noexcept
     return std::clamp(static_cast<int>(std::round(hostValue)), 0, count - 1);
 }
 
+struct OptoFaceplateLayout
+{
+    static constexpr float left = 34.0f;
+    static constexpr float right = 1086.0f;
+    static constexpr float top = 362.0f;
+    static constexpr float bottom = 653.0f;
+};
+
+inline constexpr float optoFaceplateAspect() noexcept
+{
+    return (OptoFaceplateLayout::right - OptoFaceplateLayout::left)
+        / (OptoFaceplateLayout::bottom - OptoFaceplateLayout::top);
+}
+
+inline float optoMeterNeedleAngle(float gainReductionDb) noexcept
+{
+    constexpr float pi = 3.14159265358979323846f;
+    const float amount = std::clamp(-gainReductionDb / 20.0f, 0.0f, 1.0f);
+    return (55.0f - 110.0f * amount) * pi / 180.0f;
+}
+
+inline const char* optoModeLabel(float hostValue) noexcept
+{
+    return choiceIndex(hostValue, 2) == 0 ? "COMP" : "LIMIT";
+}
+
+inline constexpr const char* optoMeterLabel() noexcept { return "GR"; }
+
 template <size_t N>
 inline int loadProgramIntoMirror(uint32_t index, std::array<float, N>& values)
 {
@@ -74,6 +102,7 @@ constexpr float kHeaderH = 64.0f;
 constexpr float kGlobalH = 132.0f;
 constexpr float kSidechainH = 126.0f;
 constexpr float kPanelTop = kHeaderH + kGlobalH + kSidechainH;
+constexpr float kUiPi = duskdaf::DuskPanel::kPi;
 // Set to true only while collecting a host geometry measurement.
 constexpr bool kGeometryDiagnosticEnabled = false;
 
@@ -83,6 +112,11 @@ constexpr ImU32 kLine = IM_COL32(75, 79, 90, 255);
 constexpr ImU32 kText = IM_COL32(232, 234, 238, 255);
 constexpr ImU32 kDim = IM_COL32(162, 168, 180, 255);
 constexpr ImU32 kAccent = IM_COL32(65, 194, 220, 255);
+constexpr ImU32 kOptoFace = IM_COL32(211, 204, 184, 255);
+constexpr ImU32 kOptoFaceLight = IM_COL32(235, 229, 208, 255);
+constexpr ImU32 kOptoInk = IM_COL32(43, 41, 37, 255);
+constexpr ImU32 kOptoTrim = IM_COL32(92, 72, 54, 255);
+constexpr ImU32 kOptoRed = IM_COL32(159, 48, 39, 255);
 constexpr ImU32 kBandColors[4] = {
     IM_COL32(92, 165, 235, 255), IM_COL32(92, 205, 150, 255),
     IM_COL32(232, 185, 74, 255), IM_COL32(224, 100, 93, 255)
@@ -265,6 +299,7 @@ protected:
 private:
     std::array<float, multicompp::kTotalParamCount> values{};
     duskdaf::DuskPanel panel;
+    ImDrawListSplitter optoKnobSplitter;
     duskdaf::CrispFontSet fontSet;
     ImFont* labelFont = nullptr;
     duskdaf::SupportersOverlay supporters;
@@ -518,7 +553,11 @@ private:
     {
         const int mode = multicompp::ui_detail::choiceIndex(value(P_MODE), 8);
         drawSection(dl, kPanelTop, kDesignH - 8, modeName(mode));
-        if (mode == 7)
+        if (mode == 0)
+        {
+            // Opto owns a panel-integrated analogue GR meter.
+        }
+        else if (mode == 7)
             drawMeter(dl, 1062, kPanelTop + 24, 42, 92, meter(kMeterMaster), kAccent, "MASTER GR");
         else
             drawMeter(dl, 28, kPanelTop + 42, 48, 300, meter(kMeterMaster), kAccent, "MASTER GR");
@@ -538,11 +577,216 @@ private:
 
     void drawOpto(ImDrawList* dl)
     {
-        knob(dl, "opto_peak", P_OPTO_PEAK, 250, 380, "PEAK REDUCTION", "%.0f", "%");
-        knob(dl, "opto_gain", P_OPTO_GAIN, 420, 380, "GAIN", "%.0f", "%");
-        knob(dl, "opto_mix", P_MIX, 590, 380, "MIX", "%.0f", "%");
-        panel.toggle("opto_limit", P_OPTO_LIMIT, 690, 366, 820, 392, values[P_OPTO_LIMIT], "LIMIT");
-        panel.text(dl, 560, 500, 12, kDim, "Program-dependent optical envelope", 0);
+        using Layout = multicompp::ui_detail::OptoFaceplateLayout;
+        const float left = Layout::left;
+        const float right = Layout::right;
+        const float top = Layout::top;
+        const float bottom = Layout::bottom;
+
+        dl->AddRectFilled(panel.P(left + 4, top + 6), panel.P(right + 4, bottom + 6),
+                          IM_COL32(0, 0, 0, 90), 7.0f * panel.scale());
+        dl->AddRectFilled(panel.P(left, top), panel.P(right, bottom),
+                          kOptoTrim, 7.0f * panel.scale());
+        dl->AddRectFilled(panel.P(left + 5, top + 5), panel.P(right - 5, bottom - 5),
+                          kOptoFace, 4.0f * panel.scale());
+        dl->AddLine(panel.P(left + 8, top + 8), panel.P(right - 8, top + 8),
+                    IM_COL32(255, 252, 235, 145), panel.scale());
+        dl->AddLine(panel.P(left + 8, bottom - 8), panel.P(right - 8, bottom - 8),
+                    IM_COL32(74, 60, 48, 150), panel.scale());
+
+        for (const ImVec2 screw : {ImVec2(left + 18, top + 18),
+                                   ImVec2(right - 18, top + 18),
+                                   ImVec2(left + 18, bottom - 18),
+                                   ImVec2(right - 18, bottom - 18)})
+        {
+            dl->AddCircleFilled(panel.P(screw.x, screw.y), 6.0f * panel.scale(),
+                                IM_COL32(75, 73, 68, 255), 20);
+            dl->AddCircleFilled(panel.P(screw.x - 1.0f, screw.y - 1.0f),
+                                4.2f * panel.scale(), IM_COL32(177, 174, 163, 255), 20);
+            dl->AddLine(panel.P(screw.x - 2.5f, screw.y + 1.0f),
+                        panel.P(screw.x + 2.5f, screw.y - 1.0f),
+                        IM_COL32(72, 69, 63, 255), panel.scale());
+        }
+
+        panel.text(dl, 560, top + 13, 13.0f, kOptoInk, "DUSK OPTO LEVELER", 0, true);
+        panel.text(dl, 560, top + 31, 8.5f, IM_COL32(91, 84, 72, 255),
+                   "PROGRAM-DEPENDENT LEVELING AMPLIFIER", 0, true);
+        optoModeSwitch(dl, 112, 492);
+        optoKnob(dl, "opto_gain", P_OPTO_GAIN, 264, 505, 58.0f, "GAIN");
+        drawOptoMeter(dl, 389, 407, 324, 160, meter(kMeterMaster));
+        optoKnob(dl, "opto_peak", P_OPTO_PEAK, 829, 505, 58.0f,
+                 "PEAK REDUCTION");
+        optoKnob(dl, "opto_mix", P_MIX, 1000, 505, 39.0f, "MIX", false);
+    }
+
+    void optoKnob(ImDrawList* dl, const char* id, uint32_t p, float x, float y,
+                  float radius, const char* label, bool numberedScale = true)
+    {
+        // Put the shared gesture/editor layer above the custom body while
+        // letting it mutate the value first, so the pointer and readout update
+        // in the same frame. The active-only bubble exposes shift-fine values.
+        optoKnobSplitter.Split(dl, 2);
+        optoKnobSplitter.SetCurrentChannel(dl, 1);
+        panel.knob(id, p, hostMinimum(p), hostMaximum(p), x, y, radius,
+                   values[p], hostDefaultValue(p), false, false, "%.0f", "%",
+                   0, true, false, nullptr, false, 1.0f, 0.0f, label, true,
+                   nullptr, false, 0.0f, 0.0f, false, true, 9.5f, true, false,
+                   &knobHostToPlain, &knobPlainToHost, this);
+        optoKnobSplitter.SetCurrentChannel(dl, 0);
+
+        const float plain = plainValueForHost(p, values[p]);
+        const float minimum = plainValueForHost(p, hostMinimum(p));
+        const float maximum = plainValueForHost(p, hostMaximum(p));
+        const float t = std::clamp((plain - minimum)
+            / std::max(maximum - minimum, 1.0e-6f), 0.0f, 1.0f);
+        const ImVec2 center = panel.P(x, y);
+        const float scaledRadius = radius * panel.scale();
+
+        for (int tick = 0; tick <= 10; ++tick)
+        {
+            const float angle = duskdaf::DuskPanel::knobAngle(
+                static_cast<float>(tick) / 10.0f);
+            const ImVec2 direction(std::sin(angle), -std::cos(angle));
+            const float inner = scaledRadius + 5.0f * panel.scale();
+            const float outer = scaledRadius
+                + (tick % 5 == 0 ? 13.0f : 9.0f) * panel.scale();
+            dl->AddLine(ImVec2(center.x + direction.x * inner,
+                               center.y + direction.y * inner),
+                        ImVec2(center.x + direction.x * outer,
+                               center.y + direction.y * outer),
+                        kOptoInk, (tick % 5 == 0 ? 1.8f : 1.0f) * panel.scale());
+        }
+
+        dl->AddCircleFilled(ImVec2(center.x + 2.0f * panel.scale(),
+                                   center.y + 3.0f * panel.scale()),
+                            scaledRadius, IM_COL32(0, 0, 0, 85), 56);
+        dl->AddCircleFilled(center, scaledRadius, IM_COL32(28, 28, 27, 255), 56);
+        for (int ridge = 0; ridge < 24; ++ridge)
+        {
+            const float angle = 2.0f * kUiPi
+                * static_cast<float>(ridge) / 24.0f;
+            const ImVec2 direction(std::sin(angle), -std::cos(angle));
+            dl->AddLine(ImVec2(center.x + direction.x * scaledRadius * 0.82f,
+                               center.y + direction.y * scaledRadius * 0.82f),
+                        ImVec2(center.x + direction.x * scaledRadius * 0.97f,
+                               center.y + direction.y * scaledRadius * 0.97f),
+                        IM_COL32(116, 112, 102, 150), 1.4f * panel.scale());
+        }
+        dl->AddCircleFilled(center, scaledRadius * 0.72f,
+                            IM_COL32(56, 55, 52, 255), 48);
+        dl->AddCircleFilled(ImVec2(center.x - scaledRadius * 0.12f,
+                                   center.y - scaledRadius * 0.14f),
+                            scaledRadius * 0.57f, IM_COL32(78, 76, 70, 255), 42);
+        dl->AddCircle(center, scaledRadius, IM_COL32(12, 12, 11, 255), 56,
+                      1.5f * panel.scale());
+        const float pointerAngle = duskdaf::DuskPanel::knobAngle(t);
+        const ImVec2 pointer(std::sin(pointerAngle), -std::cos(pointerAngle));
+        dl->AddLine(ImVec2(center.x + pointer.x * scaledRadius * 0.18f,
+                           center.y + pointer.y * scaledRadius * 0.18f),
+                    ImVec2(center.x + pointer.x * scaledRadius * 0.88f,
+                           center.y + pointer.y * scaledRadius * 0.88f),
+                    kOptoFaceLight, 3.2f * panel.scale());
+
+        if (numberedScale)
+        {
+            panel.text(dl, x - radius - 16.0f, y + radius * 0.70f, 8.5f,
+                       kOptoInk, "0", 0, true);
+            panel.text(dl, x, y - radius - 24.0f, 8.5f, kOptoInk, "50", 0, true);
+            panel.text(dl, x + radius + 16.0f, y + radius * 0.70f, 8.5f,
+                       kOptoInk, "100", 0, true);
+        }
+        char readout[16];
+        std::snprintf(readout, sizeof(readout), "%.0f%%", static_cast<double>(plain));
+        dl->AddRectFilled(panel.P(x - 24.0f, y + radius + 10.0f),
+                          panel.P(x + 24.0f, y + radius + 29.0f),
+                          IM_COL32(43, 41, 37, 255), 2.0f * panel.scale());
+        panel.text(dl, x, y + radius + 14.0f, 9.5f, kOptoFaceLight,
+                   readout, 0, true);
+        panel.text(dl, x, y + radius + 35.0f, numberedScale ? 10.0f : 9.0f,
+                   kOptoInk, label, 0, true);
+        optoKnobSplitter.Merge(dl);
+    }
+
+    void optoModeSwitch(ImDrawList* dl, float x, float y)
+    {
+        const ImVec2 p0 = panel.P(x - 38.0f, y - 82.0f);
+        const ImVec2 p1 = panel.P(x + 38.0f, y + 78.0f);
+        ImGui::SetCursorScreenPos(p0);
+        ImGui::InvisibleButton("##opto_comp_limit", ImVec2(p1.x - p0.x, p1.y - p0.y));
+        if (ImGui::IsItemClicked())
+            setValue(P_OPTO_LIMIT, values[P_OPTO_LIMIT] > 0.5f ? 0.0f : 1.0f);
+
+        const bool limit = multicompp::ui_detail::choiceIndex(
+            values[P_OPTO_LIMIT], 2) == 1;
+        constexpr ImU32 inactiveMode = IM_COL32(111, 103, 88, 255);
+        panel.text(dl, x, y - 74.0f, 9.5f, limit ? kOptoRed : inactiveMode,
+                   multicompp::ui_detail::optoModeLabel(1.0f), 0, true);
+        panel.text(dl, x, y + 65.0f, 9.5f, !limit ? kOptoRed : inactiveMode,
+                   multicompp::ui_detail::optoModeLabel(0.0f), 0, true);
+        dl->AddRectFilled(panel.P(x - 14.0f, y - 42.0f),
+                          panel.P(x + 14.0f, y + 42.0f),
+                          IM_COL32(44, 42, 38, 255), 5.0f * panel.scale());
+        dl->AddRect(panel.P(x - 14.0f, y - 42.0f),
+                    panel.P(x + 14.0f, y + 42.0f),
+                    IM_COL32(18, 18, 17, 255), 5.0f * panel.scale(), 0,
+                    1.5f * panel.scale());
+        const float leverY = y + (limit ? -24.0f : 24.0f);
+        dl->AddLine(panel.P(x, y), panel.P(x, leverY),
+                    IM_COL32(168, 164, 151, 255), 5.0f * panel.scale());
+        dl->AddCircleFilled(panel.P(x, leverY), 8.0f * panel.scale(),
+                            IM_COL32(203, 198, 183, 255), 24);
+        dl->AddCircle(panel.P(x, leverY), 8.0f * panel.scale(),
+                      IM_COL32(34, 33, 30, 255), 24, 1.2f * panel.scale());
+        panel.text(dl, x, y + 93.0f, 8.5f, IM_COL32(91, 84, 72, 255),
+                   multicompp::ui_detail::optoModeLabel(values[P_OPTO_LIMIT]),
+                   0, true);
+    }
+
+    void drawOptoMeter(ImDrawList* dl, float x, float y, float w, float h, float gr)
+    {
+        dl->AddRectFilled(panel.P(x + 3.0f, y + 4.0f),
+                          panel.P(x + w + 3.0f, y + h + 4.0f),
+                          IM_COL32(0, 0, 0, 90), 5.0f * panel.scale());
+        dl->AddRectFilled(panel.P(x, y), panel.P(x + w, y + h),
+                          IM_COL32(47, 45, 41, 255), 5.0f * panel.scale());
+        dl->AddRectFilled(panel.P(x + 8.0f, y + 8.0f),
+                          panel.P(x + w - 8.0f, y + h - 8.0f),
+                          kOptoFaceLight, 2.0f * panel.scale());
+        const ImVec2 pivot = panel.P(x + w * 0.5f, y + h - 13.0f);
+        const float radius = 118.0f * panel.scale();
+        constexpr std::array<const char*, 5> labels{{"20", "15", "10", "5", "0"}};
+        for (size_t tick = 0; tick < labels.size(); ++tick)
+        {
+            const float amount = static_cast<float>(tick)
+                / static_cast<float>(labels.size() - 1);
+            const float angle = (-55.0f + 110.0f * amount)
+                * kUiPi / 180.0f;
+            const ImVec2 direction(std::sin(angle), -std::cos(angle));
+            dl->AddLine(ImVec2(pivot.x + direction.x * radius * 0.76f,
+                               pivot.y + direction.y * radius * 0.76f),
+                        ImVec2(pivot.x + direction.x * radius * 0.88f,
+                               pivot.y + direction.y * radius * 0.88f),
+                        kOptoInk, 1.4f * panel.scale());
+            panel.text(dl,
+                       x + w * 0.5f + direction.x * 76.0f,
+                       y + h - 17.0f - std::cos(angle) * 76.0f,
+                       8.0f, kOptoInk, labels[tick], 0, true);
+        }
+        panel.text(dl, x + w * 0.5f, y + 16.0f, 11.0f, kOptoRed,
+                   multicompp::ui_detail::optoMeterLabel(), 0, true);
+        const float needleAngle = multicompp::ui_detail::optoMeterNeedleAngle(gr);
+        const ImVec2 needle(std::sin(needleAngle), -std::cos(needleAngle));
+        dl->AddLine(pivot,
+                    ImVec2(pivot.x + needle.x * radius * 0.87f,
+                           pivot.y + needle.y * radius * 0.87f),
+                    kOptoRed, 2.2f * panel.scale());
+        dl->AddCircleFilled(pivot, 7.0f * panel.scale(), kOptoInk, 24);
+        char reading[24];
+        std::snprintf(reading, sizeof(reading), "%s %.1f dB",
+                      multicompp::ui_detail::optoMeterLabel(),
+                      static_cast<double>(std::clamp(-gr, 0.0f, 99.9f)));
+        panel.text(dl, x + w * 0.5f, y + h + 10.0f, 8.5f, kOptoInk,
+                   reading, 0, true);
     }
 
     void drawFet(ImDrawList* dl, bool studio)
