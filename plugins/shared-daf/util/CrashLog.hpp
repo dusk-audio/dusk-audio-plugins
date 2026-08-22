@@ -1197,7 +1197,7 @@ namespace DuskCrashLog
     // of the processor and the pair cannot be broken by an early return or a
     // defaulted destructor.
     //
-    //   class MyPlugin : public DISTRHO::Plugin
+    //   class MyPlugin : public DAF::Plugin
     //   {
     //       DuskCrashLog::ScopedRegistration crashLog_ { "My Plugin", VERSION_STRING };
     //   };

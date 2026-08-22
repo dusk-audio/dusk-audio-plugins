@@ -8,7 +8,7 @@
 // them as relaxed atomics, and snapshots them into a MultiQDSP::Params struct
 // once per block before calling MultiQDSP::process(). The DSP core is unchanged.
 
-#include "DistrhoPlugin.hpp"
+#include "DafPlugin.hpp"
 #include "MultiQAccess.hpp"
 #include "MultiQParams.hpp"
 #include "MultiQProgramPresets.hpp"  // Digital factory presets (host programs)
@@ -21,7 +21,7 @@
 #include <cstring>
 #include <string>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 class MultiQPlugin : public Plugin
 {
@@ -314,7 +314,7 @@ protected:
 
     void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
     {
-        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DAF_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
         // DAF calls this while deactivated, so the audio thread sees a stable
         // channel count when processing resumes.
         activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
@@ -450,7 +450,7 @@ private:
 
     MultiQDSP dsp;
     // Host-negotiated channel count (AU mono instances); see ioChanged().
-    int activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
+    int activeChannels = DAF_PLUGIN_NUM_INPUTS;
     int lastLatency = -1;
     std::atomic<float> values[kParamCount] = {};
     std::atomic<int>  soloBand{-1};    // -1 = no solo (UI-driven, see setSoloForUI)
@@ -459,7 +459,7 @@ private:
     std::string uiPresetsStr;          // persisted UI dropdown selection "d,b,t" (see initState)
     bool dspPrepared = false;
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQPlugin)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQPlugin)
 };
 
 Plugin* createPlugin()
@@ -467,13 +467,13 @@ Plugin* createPlugin()
     return new MultiQPlugin();
 }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF
 
 // same-process UI accessors (see MultiQAccess.hpp). Read straight off the live
 // DSP instance's lock-free atomics / analyzer ring; null-safe for the split UI.
-static DISTRHO_NAMESPACE::MultiQPlugin* asMq(void* p) noexcept
+static DAF_NAMESPACE::MultiQPlugin* asMq(void* p) noexcept
 {
-    return static_cast<DISTRHO_NAMESPACE::MultiQPlugin*>(p);
+    return static_cast<DAF_NAMESPACE::MultiQPlugin*>(p);
 }
 float multiQGetInputPeakL(void* p)  noexcept { return p ? asMq(p)->inPeakLForUI()  : 0.0f; }
 float multiQGetInputPeakR(void* p)  noexcept { return p ? asMq(p)->inPeakRForUI()  : 0.0f; }

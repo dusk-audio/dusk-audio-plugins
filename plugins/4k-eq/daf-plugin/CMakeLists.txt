@@ -18,9 +18,9 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-dpf_add_plugin(four_k_eq_2
+daf_add_plugin(four_k_eq_2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
-    # MONOLITHIC: DISTRHO_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
+    # MONOLITHIC: DAF_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
     # fail to load. Single-object LV2 also gives the meters/spectrum direct access.
     MONOLITHIC

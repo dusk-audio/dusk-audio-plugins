@@ -3,7 +3,7 @@
 # in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 #
 # Standalone CMake for the DAF-based Sunset Circuits plugin (Phase 4: DSP shell +
-# Dear ImGui UI — DISTRHO_PLUGIN_HAS_UI 1, UI_TYPE opengl, FILES_UI wired below).
+# Dear ImGui UI — DAF_PLUGIN_HAS_UI 1, UI_TYPE opengl, FILES_UI wired below).
 #   cmake -B build -GNinja [-DDAF_PATH=/path/to/DAF]
 #   cmake --build build
 
@@ -47,9 +47,9 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-dpf_add_plugin(sunset_circuits
+daf_add_plugin(sunset_circuits
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
-    # MONOLITHIC: DISTRHO_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
+    # MONOLITHIC: DAF_PLUGIN_WANT_DIRECT_ACCESS makes DAF's LV2 TTL export
     # declare the UI inside the dsp binary; the LV2 build must match or hosts
     # fail to load. Also gives the Phase-4 meter/scope bridge direct access.
     MONOLITHIC

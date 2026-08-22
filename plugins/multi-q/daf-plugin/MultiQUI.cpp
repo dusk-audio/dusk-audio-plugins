@@ -18,7 +18,7 @@
 // Everything is drawn in a 960x680 design space, uniformly scaled and letterboxed
 // inside the 1040x680 window (side chassis margins), exactly as FourKEQUI does.
 
-#include "DistrhoUI.hpp"
+#include "DafUI.hpp"
 #include "MultiQParams.hpp"
 #include "MultiQProgramPresets.hpp"  // Digital factory presets (header dropdown)
 #include "MultiQAccess.hpp"   // same-process meter/analyzer bridge (weak accessors)
@@ -37,7 +37,7 @@
 #include <vector>
 #include <algorithm>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 namespace
 {
@@ -210,7 +210,7 @@ class MultiQUI : public UI, public duskdaf::ParamHost
 {
 public:
     MultiQUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kMqParams[i].def;
@@ -251,7 +251,7 @@ protected:
         if (!uiPresetsSynced_)
         {
             uiPresetsSynced_ = true;
-           #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+           #if DAF_PLUGIN_WANT_DIRECT_ACCESS
             if (multiQGetUiPresets != nullptr)
                 if (void* inst = getPluginInstancePointer())
                 {
@@ -411,7 +411,7 @@ protected:
         if (!io.KeyShift && pressed(ImGuiKey_Q)) { cycleParam(kParamQCoupleMode, 9); return; }
         if (pressed(ImGuiKey_M)) { cycleParam(kParamProcessingMode, 5); return; }
         if (pressed(ImGuiKey_F)) { toggleFreeze(); return; }
-        if (io.KeyCtrl && pressed(ImGuiKey_0)) { setSize(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT); return; }
+        if (io.KeyCtrl && pressed(ImGuiKey_0)) { setSize(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT); return; }
 
         // ---- Digital / Match only (JUCE bails for British/Tube) ----
         const int mode = (int)std::lround(values[kParamEqType]);
@@ -890,7 +890,7 @@ private:
     void updateDynGains()
     {
         float raw[8] = {};
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         bool have = false;
         if (multiQGetBandDynGain != nullptr) // weak: null in the split LV2 UI
             if (void* inst = getPluginInstancePointer())
@@ -1095,7 +1095,7 @@ private:
     //---- Solo write/read bridge (weak-guarded like the meter/dyn-gain bridge) ----
     int digSoloBand()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQGetSoloBand != nullptr)
             if (void* inst = getPluginInstancePointer()) return multiQGetSoloBand(inst);
        #endif
@@ -1103,7 +1103,7 @@ private:
     }
     bool digSoloDelta()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQGetSoloDelta != nullptr)
             if (void* inst = getPluginInstancePointer()) return multiQGetSoloDelta(inst);
        #endif
@@ -1111,7 +1111,7 @@ private:
     }
     void digSetSolo(int band, bool delta)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQSetSolo != nullptr)
             if (void* inst = getPluginInstancePointer()) multiQSetSolo(inst, band, delta);
        #else
@@ -1126,14 +1126,14 @@ private:
     // In the split LV2 UI the weak symbols resolve to null -> controls grey out.
     bool matchBridge()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         return multiQMatchClear != nullptr && getPluginInstancePointer() != nullptr;
        #endif
         return false;
     }
     bool matchLearningCurrent()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchIsLearningCurrent != nullptr)
             if (void* i = getPluginInstancePointer()) return multiQMatchIsLearningCurrent(i);
        #endif
@@ -1141,7 +1141,7 @@ private:
     }
     bool matchLearningReference()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchIsLearningReference != nullptr)
             if (void* i = getPluginInstancePointer()) return multiQMatchIsLearningReference(i);
        #endif
@@ -1149,7 +1149,7 @@ private:
     }
     bool matchHasCurrent()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchHasCurrent != nullptr)
             if (void* i = getPluginInstancePointer()) return multiQMatchHasCurrent(i);
        #endif
@@ -1157,7 +1157,7 @@ private:
     }
     bool matchHasReference()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchHasReference != nullptr)
             if (void* i = getPluginInstancePointer()) return multiQMatchHasReference(i);
        #endif
@@ -1165,7 +1165,7 @@ private:
     }
     bool matchHasCorrection()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchHasCorrection != nullptr)
             if (void* i = getPluginInstancePointer()) return multiQMatchHasCorrection(i);
        #endif
@@ -1173,7 +1173,7 @@ private:
     }
     int matchFrames()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchFrameCount != nullptr)
             if (void* i = getPluginInstancePointer()) return multiQMatchFrameCount(i);
        #endif
@@ -1181,7 +1181,7 @@ private:
     }
     void matchStartCurrent(bool on)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchStartLearnCurrent != nullptr)
             if (void* i = getPluginInstancePointer()) multiQMatchStartLearnCurrent(i, on);
        #else
@@ -1190,7 +1190,7 @@ private:
     }
     void matchStartReference(bool on)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchStartLearnReference != nullptr)
             if (void* i = getPluginInstancePointer()) multiQMatchStartLearnReference(i, on);
        #else
@@ -1199,14 +1199,14 @@ private:
     }
     void matchCompute()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchCompute != nullptr)
             if (void* i = getPluginInstancePointer()) multiQMatchCompute(i);
        #endif
     }
     void matchClear()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQMatchClear != nullptr)
             if (void* i = getPluginInstancePointer()) multiQMatchClear(i);
        #endif
@@ -1216,7 +1216,7 @@ private:
     // bridge is unavailable (caller skips the curve).
     bool matchGetCurve(int which, float* out, int n)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (void* i = getPluginInstancePointer())
         {
             if (which == 0 && multiQMatchGetCurrentDb    != nullptr) { multiQMatchGetCurrentDb(i, out, n);    return true; }
@@ -2120,7 +2120,7 @@ private:
     void drawDigitalMeters(ImDrawList* dl)
     {
         float inL = 0, inR = 0, outL = 0, outR = 0;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQGetInputPeakL != nullptr) // weak: null in the split LV2 UI
             if (void* inst = getPluginInstancePointer())
             {
@@ -2850,7 +2850,7 @@ private:
     void drawLimiterGr(ImDrawList* dl, float x0, float y0, float x1, float y1)
     {
         float gr = 0.f;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQGetLimiterGR != nullptr)
             if (void* inst = getPluginInstancePointer()) gr = multiQGetLimiterGR(inst);
        #endif
@@ -3532,7 +3532,7 @@ private:
     // and maps log-freq X to the plot rect. Mirrors FourKEQUI::drawSpectrum.
     void drawSpectrum(ImDrawList* dl, float x0, float y0, float x1, float y1)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         const duskaudio::SpectrumRing* ring = nullptr;
         if (multiQGetOutputSpectrum != nullptr)
             if (void* inst = getPluginInstancePointer())
@@ -3615,7 +3615,7 @@ private:
     // Separate from British's drawSpectrum so that skin stays byte-for-byte unchanged.
     void drawDigitalSpectrum(ImDrawList* dl, float x0, float y0, float x1, float y1)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         const bool pre = values[kParamAnalyzerPrePost] > 0.5f;
         const duskaudio::SpectrumRing* ring = nullptr;
         if (void* inst = getPluginInstancePointer())
@@ -4162,7 +4162,7 @@ private:
     void drawMeters(ImDrawList* dl)
     {
         float inL = 0, inR = 0, outL = 0, outR = 0;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiQGetInputPeakL != nullptr) // weak: null in the split LV2 UI
             if (void* inst = getPluginInstancePointer())
             {
@@ -4263,9 +4263,9 @@ private:
     float stepDragT = 0.0f;
     bool  stepModReset_ = false;
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQUI)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQUI)
 };
 
 UI* createUI() { return new MultiQUI(); }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF

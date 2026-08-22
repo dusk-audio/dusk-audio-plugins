@@ -2,7 +2,7 @@
 // Multi-Comp 2 Dear ImGui UI.  The controls mirror EnhancedCompressorEditor and
 // ModernCompressorPanels; the DSP and parameter ownership remain in the shell/core.
 
-#include "DistrhoUI.hpp"
+#include "DafUI.hpp"
 #include "MultiCompAccess.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
@@ -19,7 +19,7 @@
 #include <cstring>
 #include <string_view>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 namespace
 {
@@ -86,7 +86,7 @@ class MultiCompUI final : public UI, public duskdaf::ParamHost
 {
 public:
     MultiCompUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT)
     {
         for (uint32_t i = 0; i < multicompp::kTotalParamCount; ++i)
         {
@@ -608,4 +608,4 @@ private:
 
 UI* createUI() { return new MultiCompUI(); }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF

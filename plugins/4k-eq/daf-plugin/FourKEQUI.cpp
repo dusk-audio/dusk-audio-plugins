@@ -12,7 +12,7 @@
 // path (FourKEQDSP designers), never by probing audio; a live FFT of the
 // pre/post spectrum is drawn behind it.
 
-#include "DistrhoUI.hpp"
+#include "DafUI.hpp"
 #include "FourKEQAccess.hpp"
 #include "FourKEQParams.hpp"
 #include "FourKEQDSP.hpp"
@@ -40,7 +40,7 @@
 #include <string>
 #include <vector>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 namespace
 {
@@ -99,7 +99,7 @@ class FourKEQUI : public UI, public duskdaf::ParamHost
 {
 public:
     FourKEQUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT)
     {
         supportersOverlay.setActionLink("Open crash log folder",
                                         [] { DuskCrashLog::openLogFolder(); });
@@ -1093,7 +1093,7 @@ private:
 
     void drawSpectrum(ImDrawList* dl)
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         const duskaudio::SpectrumRing* ring = nullptr;
         const bool pre = values[kSpectrumPrePost] > 0.5f;
         if ((pre ? fourKEQGetPreSpectrum : fourKEQGetPostSpectrum) != nullptr)
@@ -1799,7 +1799,7 @@ private:
     {
         float inL = 0, inR = 0, outL = 0, outR = 0;
         bool haveDirect = false;
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (fourKEQGetInputPeakL != nullptr)
             if (void* inst = getPluginInstancePointer())
             { inL = fourKEQGetInputPeakL(inst); inR = fourKEQGetInputPeakR(inst);
@@ -1898,9 +1898,9 @@ private:
     float stepDragT = 0.0f; // stepped filter-knob drag origin (HPF/LPF)
     bool  stepModReset_ = false; // Ctrl/Cmd+click reset in progress (suppress drag)
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQUI)
 };
 
 UI* createUI() { return new FourKEQUI(); }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF

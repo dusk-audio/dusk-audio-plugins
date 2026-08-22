@@ -20,7 +20,7 @@ CMakeLists, `ChAn`/`ChMi` codes). Minimal audio DSP (~14 param mentions,
    plain C++ — port verbatim, keep its test coverage if any exists in the
    repo tests.
 2. DAF MIDI plumbing:
-   - `DISTRHO_PLUGIN_WANT_MIDI_INPUT 1` (+ OUTPUT if the JUCE MIDI variant
+   - `DAF_PLUGIN_WANT_MIDI_INPUT 1` (+ OUTPUT if the JUCE MIDI variant
      passes/transforms MIDI through — check what `ChMi` does and mirror it,
      possibly as a second DAF target like the JUCE dual-target setup).
    - Events arrive in `run(inputs, outputs, frames, midiEvents, midiEventCount)`
@@ -30,7 +30,7 @@ CMakeLists, `ChAn`/`ChMi` codes). Minimal audio DSP (~14 param mentions,
    visualization (ImDrawList: piano keys = rects, highlight held notes).
    Chord/state flows DSP→UI via the direct-access bridge (a small struct of
    atomics: packed note bitmask + chord id), not output parameters.
-4. Headless variant: DAF target without UI (`DISTRHO_PLUGIN_HAS_UI 0`
+4. Headless variant: DAF target without UI (`DAF_PLUGIN_HAS_UI 0`
    variant) if the JUCE headless target has users.
 
 ## Validation

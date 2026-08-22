@@ -105,23 +105,23 @@ runs native).
 tape-echo-daf/
 ├── daf/                     # git submodule: github.com/dusk-audio/DAF (our fork)
 ├── plugin/
-│   ├── DistrhoPluginInfo.h
+│   ├── DafPluginInfo.h
 │   ├── TapeEchoPlugin.cpp  # DSP wrapper (below)
 │   └── TapeEchoUI.cpp      # Dear ImGui UI via DAF's DearImGui wrapper
 ├── core/                    # this directory, unchanged
 └── Makefile / CMakeLists.txt
 ```
 
-`DistrhoPluginInfo.h` essentials:
+`DafPluginInfo.h` essentials:
 
 ```cpp
-#define DISTRHO_PLUGIN_NAME  "Tape Echo 2"
-#define DISTRHO_PLUGIN_URI   "https://dusk-audio.github.io/plugins/tape-echo"
-#define DISTRHO_PLUGIN_CLAP_ID "com.duskaudio.tape-echo"
-#define DISTRHO_PLUGIN_NUM_INPUTS  2
-#define DISTRHO_PLUGIN_NUM_OUTPUTS 2
-#define DISTRHO_PLUGIN_HAS_UI      1
-#define DISTRHO_PLUGIN_IS_RT_SAFE  1
+#define DAF_PLUGIN_NAME  "Tape Echo 2"
+#define DAF_PLUGIN_URI   "https://dusk-audio.github.io/plugins/tape-echo"
+#define DAF_PLUGIN_CLAP_ID "com.duskaudio.tape-echo"
+#define DAF_PLUGIN_NUM_INPUTS  2
+#define DAF_PLUGIN_NUM_OUTPUTS 2
+#define DAF_PLUGIN_HAS_UI      1
+#define DAF_PLUGIN_IS_RT_SAFE  1
 ```
 
 Plugin class — the entire wrapper is ~100 lines:
@@ -171,7 +171,7 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
-        dsp.processBlock(inputs, outputs, DISTRHO_PLUGIN_NUM_INPUTS, (int)frames);
+        dsp.processBlock(inputs, outputs, DAF_PLUGIN_NUM_INPUTS, (int)frames);
     }
 
 private:
@@ -188,7 +188,7 @@ host automation handshakes. State flows host → UI via `parameterChanged()`;
 never touch the DSP object from the UI process (DAF may run it out-of-process).
 
 Build: `make` with DAF's `Makefile.plugins.mk`, or CMake via
-`dpf_add_plugin(tape_echo TARGETS clap vst3 lv2 jack FILES_DSP ...)`.
+`daf_add_plugin(tape_echo TARGETS clap vst3 lv2 jack FILES_DSP ...)`.
 Add `core/TapeEchoDSP.cpp` to `FILES_DSP`.
 
 ## Option B: raw CLAP

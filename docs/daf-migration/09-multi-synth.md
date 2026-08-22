@@ -57,7 +57,7 @@ plugins/sunset-circuits/
 │   ├── Effects.hpp           # drive/chorus/vintage-chorus/delay (ported), Freeverb (new, replaces juce::Reverb)
 │   └── tests/                # offline render harness (see Validation)
 └── daf-plugin/
-    ├── DistrhoPluginInfo.h
+    ├── DafPluginInfo.h
     ├── MultiSynthParams.hpp  # param enum + ranges + factory preset table
     ├── MultiSynthPlugin.cpp  # thin shell, MIDI → engine
     ├── MultiSynthAccess.hpp  # weak-symbol bridge (meters, scope, arp step)
@@ -65,7 +65,7 @@ plugins/sunset-circuits/
     └── CMakeLists.txt
 ```
 
-MIDI: DAF `DISTRHO_PLUGIN_WANT_MIDI_INPUT 1`; the shell converts `MidiEvent`s to
+MIDI: DAF `DAF_PLUGIN_WANT_MIDI_INPUT 1`; the shell converts `MidiEvent`s to
 sample-offset note events consumed by the engine inside processBlock (split-block
 rendering at each event offset, like every DAF synth).
 

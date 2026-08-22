@@ -9,7 +9,7 @@
 # with -DDAF_PATH=... / -DDAFWIDGETS_PATH=...), adds DAF as a subdirectory, and
 # exposes DUSK_DAF_UI_SOURCES (the DearImGui wrapper) and DUSK_DAF_INCLUDE_DIRS
 # (shared-daf dsp/ui + DAF-Widgets opengl) for the caller to attach. Plugins
-# still call dpf_add_plugin themselves so per-plugin TARGETS/FILES stay local.
+# still call daf_add_plugin themselves so per-plugin TARGETS/FILES stay local.
 
 if(NOT DEFINED DUSK_SHARED_DAF_DIR)
     set(DUSK_SHARED_DAF_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
@@ -18,14 +18,14 @@ set(DUSK_SHARED_DAF_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 # repo root is three levels up from plugins/<name>/daf-plugin
 set(_dusk_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
-set(DAF_PATH        "${_dusk_repo_root}/../DAF"         CACHE PATH "Path to DISTRHO Plugin Framework")
+set(DAF_PATH        "${_dusk_repo_root}/../DAF"         CACHE PATH "Path to Dusk Audio Framework")
 set(DAFWIDGETS_PATH "${_dusk_repo_root}/../DAF-Widgets" CACHE PATH "Path to DAF-Widgets (Dear ImGui wrapper)")
 
 if(NOT EXISTS "${DAF_PATH}/CMakeLists.txt")
     message(FATAL_ERROR "DAF not found at ${DAF_PATH} — clone https://github.com/dusk-audio/DAF (our fork; do not use upstream DISTRHO/DPF) or pass -DDAF_PATH=...")
 endif()
 if(NOT EXISTS "${DAFWIDGETS_PATH}/opengl/DearImGui.cpp")
-    message(FATAL_ERROR "DAF-Widgets not found at ${DAFWIDGETS_PATH} — clone https://github.com/dusk-audio/DAF-Widgets (our fork; do not use upstream DISTRHO) or pass -DDAFWIDGETS_PATH=...")
+    message(FATAL_ERROR "DAF-Widgets not found at ${DAFWIDGETS_PATH} — clone https://github.com/dusk-audio/DAF-Widgets (our fork; do not use upstream DAF) or pass -DDAFWIDGETS_PATH=...")
 endif()
 
 if(NOT TARGET daf)
@@ -41,7 +41,7 @@ set(DUSK_DAF_INCLUDE_DIRS
 
 # Copy the built CLAP/VST3/LV2 artefacts into the user plugin dirs after each
 # build, so hosts always load the freshly-built binary (DAF's ninja target only
-# writes to <build>/bin). Call AFTER dpf_add_plugin with the plugin base name.
+# writes to <build>/bin). Call AFTER daf_add_plugin with the plugin base name.
 # Disable with -DDUSK_DAF_INSTALL_LOCAL=OFF (e.g. on CI / release runners).
 option(DUSK_DAF_INSTALL_LOCAL "Copy built DAF plugins into the user plugin dirs after build" ON)
 

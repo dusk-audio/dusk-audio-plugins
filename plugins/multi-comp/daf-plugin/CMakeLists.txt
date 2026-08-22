@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
-dpf_add_plugin(multi_comp_2
+daf_add_plugin(multi_comp_2
   TARGETS clap vst3 lv2 jack au
   # Keep MONOLITHIC: the UI uses the same-process meter bridge and LV2 must
   # advertise the embedded UI alongside the DSP binary.

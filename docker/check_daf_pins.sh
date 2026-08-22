@@ -40,7 +40,9 @@ check_one() {
     local head remote dirty
     head="$(git -C "$path" rev-parse HEAD)"
     remote="$(git -C "$path" remote get-url origin 2>/dev/null || echo '(none)')"
-    dirty="$(git -C "$path" status --porcelain | wc -l)"
+    # tr: BSD wc pads its count with leading spaces, so a bare comparison
+    # against "0" is always false and every checkout reports DIRTY.
+    dirty="$(git -C "$path" status --porcelain | wc -l | tr -d "[:space:]")"
 
     case "$remote" in
         *"$expect_remote"*) ;;

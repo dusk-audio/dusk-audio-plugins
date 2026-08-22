@@ -109,9 +109,9 @@ floats locale-independently in both directions.
 ## DAF specifics
 
 - Build DAF from the `dusk-audio/DAF` fork, never upstream.
-- `setLatency()` from `run()` **is** supported: `DistrhoPlugin.hpp` documents it,
+- `setLatency()` from `run()` **is** supported: `DafPlugin.hpp` documents it,
   and the fork's CLAP wrapper latches the change and re-requests restart.
-- Every effect must declare `#define DISTRHO_PLUGIN_EXTRA_IO { 1, 1 },` — the
+- Every effect must declare `#define DAF_PLUGIN_EXTRA_IO { 1, 1 },` — the
   trailing comma is required — and track the host's choice via `ioChanged()`.
   Without it Logic omits the AU from every mono track's insert menu, and `auval`
   passes either way so it is not a gate.

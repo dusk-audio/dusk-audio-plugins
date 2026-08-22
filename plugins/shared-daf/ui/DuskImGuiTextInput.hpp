@@ -14,7 +14,7 @@
 
 #include "DearImGui.hpp"
 
-#if defined(DISTRHO_OS_WINDOWS)
+#if defined(DAF_OS_WINDOWS)
 # ifndef WIN32_LEAN_AND_MEAN
 #  define WIN32_LEAN_AND_MEAN
 # endif
@@ -33,7 +33,7 @@ public:
     template <class UIType>
     void update(UIType& ui) noexcept
     {
-#if defined(DISTRHO_OS_WINDOWS)
+#if defined(DAF_OS_WINDOWS)
         const bool wantsText = ImGui::GetIO().WantTextInput;
         HWND const editor = reinterpret_cast<HWND>(
             ui.getParentWindow().getNativeWindowHandle());
@@ -110,7 +110,7 @@ public:
     }
 
 private:
-#if defined(DISTRHO_OS_WINDOWS)
+#if defined(DAF_OS_WINDOWS)
     HWND restoreFocus_ = nullptr;
     bool wasActive_ = false;
 #endif

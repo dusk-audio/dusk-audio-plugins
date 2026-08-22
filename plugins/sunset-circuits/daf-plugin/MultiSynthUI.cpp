@@ -15,7 +15,7 @@
 // and duskdaf::CrispFontSet; meters/scope/step index come through the weak
 // MultiSynthAccess bridge with output-param fallback for split LV2 UIs.
 
-#include "DistrhoUI.hpp"
+#include "DafUI.hpp"
 
 #include "MultiSynthAccess.hpp"
 #include "MultiSynthParams.hpp"
@@ -36,7 +36,7 @@
 #include <algorithm>
 #include <chrono>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 namespace
 {
@@ -128,7 +128,7 @@ public:
     void setParam(uint32_t idx, float v) override { setParameterValue(idx, v); }
 
     MultiSynthUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT)
     {
         for (uint32_t i = 0; i < kNumCoreParams; ++i)
             defaults[i] = values[i] = kParamDefs[i].def;
@@ -1623,7 +1623,7 @@ private:
     {
         if (idx < 0 || idx >= kNumFactoryPresets) return;
         currentPreset = idx;
-        // NOTE (U1): DAF's DistrhoUI has no API for a UI to ask the host to load a
+        // NOTE (U1): DAF's DafUI has no API for a UI to ask the host to load a
         // program (only the host->UI programLoaded callback exists), so we mirror
         // the shell's loadProgram by pushing the preset's parameters directly.
         // Mirror the shell's loadProgram: default -> baseline -> preset overrides.
@@ -1649,7 +1649,7 @@ private:
     // something) — matching every other bridge accessor's fallback.
     void syncMidiProgramChange()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiSynthGetMidiProgramSignal == nullptr) return;
         void* const inst = getPluginInstancePointer();
         if (inst == nullptr) return;
@@ -3584,7 +3584,7 @@ private:
         sectionTitle(1012, 308, "OUTPUT");
 
         float lL = values[kParamOutLevelL], lR = values[kParamOutLevelR];
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         // BOTH accessors are tested: the bridge's contract is per-SYMBOL (each is
         // its own weak symbol, resolved or not on its own), so "L resolved" says
         // nothing about R. Taking L as proof of both is a null call away from a
@@ -3639,7 +3639,7 @@ private:
     //========================================================================
     int liveStep() const
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiSynthGetArpStep != nullptr)
             if (void* const inst = getPluginInstancePointer())
                 return multiSynthGetArpStep(inst);
@@ -4126,7 +4126,7 @@ private:
     // Live DSP instance, or null in a split LV2 UI (see DuskAccessBridge.hpp).
     msynth::MultiSynthDSP* dspAccess()
     {
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (multiSynthGetDSP != nullptr)
             if (void* const inst = getPluginInstancePointer())
                 return multiSynthGetDSP(inst);
@@ -4729,7 +4729,7 @@ private:
     int    vtxMax[kNumLayers] = {};   // running per-layer vertex maximum
    #endif
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiSynthUI)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiSynthUI)
 };
 
 UI* createUI()
@@ -4737,4 +4737,4 @@ UI* createUI()
     return new MultiSynthUI();
 }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF

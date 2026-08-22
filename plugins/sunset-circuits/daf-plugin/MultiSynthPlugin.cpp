@@ -8,8 +8,8 @@
 // event routing (split-block rendering at each event offset), transport tempo
 // forwarding, and the factory programs (kNumFactoryPresets). All DSP in the core.
 
-#include "DistrhoPlugin.hpp"
-#include "DistrhoPluginUtils.hpp"   // getPluginFormatName()
+#include "DafPlugin.hpp"
+#include "DafPluginUtils.hpp"   // getPluginFormatName()
 #include "MultiSynthAccess.hpp"
 #include "MultiSynthDSP.hpp"
 #include "MultiSynthParams.hpp"
@@ -19,7 +19,7 @@
 #include <atomic>
 #include <cstring>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 // The DAF parameter index must equal the core msynth::Param index 1:1, so
 // forwarding is a single dsp.setParameter(index, value). Spot-check the anchors
@@ -118,13 +118,13 @@ static_assert(paramMinI(kParamMode) == 0 && paramMinI(kParamArpRate) == 0
 // hand us time-signature-denominator beats.
 //
 // This has to be a RUNTIME query. Compile-time is not an option: DAF's CMake
-// applies DISTRHO_PLUGIN_TARGET_<FMT> only to the per-format module target
+// applies DAF_PLUGIN_TARGET_<FMT> only to the per-format module target
 // (DAF cmake/DAF-plugin.cmake:1688), while this file is compiled exactly once
 // into the shared <name>-dsp static library that every format binary links —
 // verified in our own build.ninja, where MultiSynthPlugin.cpp.o has no
-// DISTRHO_PLUGIN_TARGET_* define at all. One object, six wrappers.
+// DAF_PLUGIN_TARGET_* define at all. One object, six wrappers.
 //
-// DistrhoPluginUtils.hpp:45 says "DO NOT CHANGE PLUGIN BEHAVIOUR BASED ON PLUGIN
+// DafPluginUtils.hpp:45 says "DO NOT CHANGE PLUGIN BEHAVIOUR BASED ON PLUGIN
 // FORMAT". That rule exists so plugins do not offer different features per
 // format. This is the opposite: it normalises a documented disagreement between
 // the wrappers so the musical behaviour is IDENTICAL in every format. Without
@@ -184,7 +184,7 @@ protected:
     const char* getHomePage() const override { return "https://dusk-audio.github.io/"; }
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
     uint32_t    getVersion() const override  { return d_version(SC_VERSION_MAJOR, SC_VERSION_MINOR, SC_VERSION_PATCH); }
-    int64_t     getUniqueId() const override { return d_cconst('D', 's', 'S', 'C'); } // DsSC — matches DISTRHO_PLUGIN_UNIQUE_ID
+    int64_t     getUniqueId() const override { return d_cconst('D', 's', 'S', 'C'); } // DsSC — matches DAF_PLUGIN_UNIQUE_ID
 
     //--- parameters ------------------------------------------------------------
     void initParameter(uint32_t index, Parameter& p) override
@@ -311,26 +311,26 @@ protected:
         {
             // ---- PER-WRAPPER BBT BEAT SEMANTICS (S1) -------------------------
             // DAF's BarBeatTick struct is a copy of jack_position_t and its doc
-            // (DistrhoDetails.hpp:987-1000) only constrains beat <= beatsPerBar;
+            // (DafDetails.hpp:987-1000) only constrains beat <= beatsPerBar;
             // it never states the unit of a "beat". The wrappers disagree:
             //
             //   VST3, VST2, LV2, JACK  ->  beat/tick in TIME-SIGNATURE
             //                              DENOMINATOR units (in 6/8 a beat is an
             //                              eighth note, beat runs 1..6).
-            //     DistrhoPluginVST3.cpp:1422-1429  ppqPerBar = num*4/denom, then
+            //     DafPluginVST3.cpp:1422-1429  ppqPerBar = num*4/denom, then
             //       barBeats = fmod(ppq, ppqPerBar)/ppqPerBar * num  -> denominator
-            //     DistrhoPluginVST2.cpp:1036-1043  identical arithmetic
-            //     DistrhoPluginLV2.cpp:460-464     pass-through of time:barBeat,
+            //     DafPluginVST2.cpp:1036-1043  identical arithmetic
+            //     DafPluginLV2.cpp:460-464     pass-through of time:barBeat,
             //       which LV2 defines in time:beatUnit (denominator) units
-            //     DistrhoPluginJACK.cpp:394-396    verbatim jack_position_t copy
+            //     DafPluginJACK.cpp:394-396    verbatim jack_position_t copy
             //
             //   CLAP, AudioUnit        ->  beat/tick in QUARTER NOTES, merely
             //                              wrapped modulo the NUMERATOR.
-            //     DistrhoPluginCLAP.cpp:930-936    clapBeats = song_pos_beats >> 31,
+            //     DafPluginCLAP.cpp:930-936    clapBeats = song_pos_beats >> 31,
             //       and CLAP defines song_pos_beats in quarter notes
             //       (clap/events.h:219, fixedpoint.h:12 CLAP_BEATTIME_FACTOR).
             //       beat = clapBeats % tsig_num + 1; tick = frac(quarter)*1920.
-            //     DistrhoPluginAU.cpp:2334-2339    same shape, on the AU quarter-
+            //     DafPluginAU.cpp:2334-2339    same shape, on the AU quarter-
             //       note musical timeline divided by the numerator.
             //
             // So the raw sum below is denominator-beats on the first group and
@@ -353,7 +353,7 @@ protected:
         else
         {
             // No BBT, OR BBT with no sub-beat tick resolution (ticksPerBeat <= 0
-            // — only JACK can report that, DistrhoPluginJACK.cpp:392 sets valid
+            // — only JACK can report that, DafPluginJACK.cpp:392 sets valid
             // from the BBT flag alone while :408 copies ticks_per_beat unguarded).
             // In the latter case BBT is block-constant within a beat, so songBeat
             // would jump backward at each buffer start and machine-gun the arp/
@@ -362,11 +362,11 @@ protected:
             //
             // tp.frame is NOT a dependable song-position counter on every wrapper
             // (S3):
-            //   VST3 (DistrhoPluginVST3.cpp:1409-1412) has no else branch — when
+            //   VST3 (DafPluginVST3.cpp:1409-1412) has no else branch — when
             //     the host sets neither PROJECT_TIME_VALID nor CONT_TIME_VALID,
             //     fTimePosition.frame keeps its PREVIOUS value forever (0 until
             //     the first valid block).
-            //   CLAP (DistrhoPluginCLAP.cpp:916) uses process->steady_time, which
+            //   CLAP (DafPluginCLAP.cpp:916) uses process->steady_time, which
             //     is pinned to 0 on every block when the host reports -1
             //     ("not available", clap/process.h:36).
             // Either way the counter FREEZES, so songBeat is a constant. Reporting
@@ -650,22 +650,22 @@ private:
     // audio thread. Atomic (relaxed) removes the data race, same as the core.
     std::atomic<float> values[kNumCoreParams] = {};
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiSynthPlugin)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiSynthPlugin)
 };
 
 Plugin* createPlugin() { return new MultiSynthPlugin(); }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF
 
 // Same-process UI accessors (see MultiSynthAccess.hpp). Strong definitions; the
 // weak UI-side references resolve here in every single-binary format.
 float multiSynthGetOutLevelL(void* const p) noexcept
-{ return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getOutLevelLForUI() : 0.0f; }
+{ return p ? static_cast<DAF_NAMESPACE::MultiSynthPlugin*>(p)->getOutLevelLForUI() : 0.0f; }
 float multiSynthGetOutLevelR(void* const p) noexcept
-{ return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getOutLevelRForUI() : 0.0f; }
+{ return p ? static_cast<DAF_NAMESPACE::MultiSynthPlugin*>(p)->getOutLevelRForUI() : 0.0f; }
 int multiSynthGetArpStep(void* const p) noexcept
-{ return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getArpStepForUI() : -1; }
+{ return p ? static_cast<DAF_NAMESPACE::MultiSynthPlugin*>(p)->getArpStepForUI() : -1; }
 uint32_t multiSynthGetMidiProgramSignal(void* const p) noexcept
-{ return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getMidiProgramSignalForUI() : 0u; }
+{ return p ? static_cast<DAF_NAMESPACE::MultiSynthPlugin*>(p)->getMidiProgramSignalForUI() : 0u; }
 msynth::MultiSynthDSP* multiSynthGetDSP(void* const p) noexcept
-{ return p ? static_cast<DISTRHO_NAMESPACE::MultiSynthPlugin*>(p)->getDSPForUI() : nullptr; }
+{ return p ? static_cast<DAF_NAMESPACE::MultiSynthPlugin*>(p)->getDSPForUI() : nullptr; }

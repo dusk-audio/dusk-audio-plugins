@@ -37,7 +37,7 @@ the fleet (~40+ real params; mode-dependent panels). JUCE deps found:
    input within float noise), per-band compressors, per-band metering
    atomics (GR meters are core UX).
 4. Sidechain HP/filters via shared Biquad. External sidechain: DAF supports
-   extra input buses — check `DISTRHO_PLUGIN_NUM_INPUTS` + port groups; if
+   extra input buses — check `DAF_PLUGIN_NUM_INPUTS` + port groups; if
    the JUCE version has ext-SC, wire it, else skip.
 5. Gain-reduction metering: atomic per band + master, direct-access bridge
    to UI (CLAP output-param landmine applies — see overview).

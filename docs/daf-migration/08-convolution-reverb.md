@@ -92,7 +92,7 @@
      no other thread can still publish or dereference them. Never `detach()` the
      worker: a detached loader can wake up and call back into a half-destroyed
      plugin (swap a pointer, touch the SpinLock) after the object is gone.
-4. **State**: IR file path must persist → `DISTRHO_PLUGIN_WANT_STATE 1` +
+4. **State**: IR file path must persist → `DAF_PLUGIN_WANT_STATE 1` +
    `initState/setState` (first use of DAF state in the fleet — this port
    defines the pattern). File browser: DAF has a native file-request API
    (`requestStateFile`/UI file browser support with USE_FILE_BROWSER) —

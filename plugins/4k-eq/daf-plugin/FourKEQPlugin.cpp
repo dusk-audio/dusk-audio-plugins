@@ -4,7 +4,7 @@
 //
 // FourKEQPlugin.cpp — DAF shell around the framework-free FourKEQDSP core.
 
-#include "DistrhoPlugin.hpp"
+#include "DafPlugin.hpp"
 #include "FourKEQAccess.hpp"
 #include "FourKEQDSP.hpp"
 #include "FourKEQParams.hpp"
@@ -12,7 +12,7 @@
 #include "FourKEQVersion.hpp"
 #include "util/CrashLog.hpp"
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 class FourKEQPlugin : public Plugin
 {
@@ -223,7 +223,7 @@ protected:
     }
     void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
     {
-        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DAF_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
         // DAF calls this while deactivated, so the audio thread sees a stable
         // channel count when processing resumes.
         activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
@@ -251,17 +251,17 @@ private:
     duskaudio::FourKEQDSP dsp;
     float values[kParamCount] = {};
     uint32_t lastLatency = 0xffffffffu;
-    uint16_t activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
+    uint16_t activeChannels = DAF_PLUGIN_NUM_INPUTS;
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQPlugin)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQPlugin)
 };
 
 Plugin* createPlugin() { return new FourKEQPlugin(); }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF
 
 //--- same-process UI accessors (see FourKEQAccess.hpp) -----------------------
-using DISTRHO_NAMESPACE::FourKEQPlugin;
+using DAF_NAMESPACE::FourKEQPlugin;
 static FourKEQPlugin* asPlugin(void* p) { return static_cast<FourKEQPlugin*>(p); }
 
 float fourKEQGetInputPeakL(void* p) noexcept  { return p ? asPlugin(p)->inPeakL() : 0.0f; }

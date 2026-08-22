@@ -37,7 +37,10 @@ for f in "${CONFIG_FILES[@]}"; do
 
     # Strip comments before matching: a comment explaining the fork policy is
     # allowed to name upstream, a `repository:` field is not.
-    if hits="$(sed 's/#.*$//' "$f" | grep -nE 'DISTRHO/(DAF|DAF-Widgets|pugl)' || true)"; [ -n "$hits" ]; then
+    # Match any DISTRHO/ repository, not a fixed list of names. The list used to
+    # be DPF/DPF-Widgets/pugl and was silently rewritten to DAF/DAF-Widgets by the
+    # 2026-08-22 rename, which matches nothing upstream and disarmed this guard.
+    if hits="$(sed 's/#.*$//' "$f" | grep -nE 'DISTRHO/' || true)"; [ -n "$hits" ]; then
         echo "FAIL  ${f#"$REPO_ROOT"/} fetches framework source from upstream:"
         echo "$hits" | sed 's/^/        /'
         failed=1

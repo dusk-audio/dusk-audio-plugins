@@ -17,7 +17,7 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
-dpf_add_plugin(tape_machine_2
+daf_add_plugin(tape_machine_2
     TARGETS clap vst3 lv2 jack au # au builds on macOS only, silently skipped elsewhere
     MONOLITHIC
     UI_TYPE opengl

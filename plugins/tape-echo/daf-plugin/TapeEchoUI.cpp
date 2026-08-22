@@ -5,7 +5,7 @@
 // for mic routing) is intentionally not reproduced.
 // All rendering is custom ImDrawList work in a 900x340 design space.
 
-#include "DistrhoUI.hpp"
+#include "DafUI.hpp"
 #include "TapeEchoAccess.hpp"
 #include "TapeEchoDSP.hpp"
 #include "TapeEchoParams.hpp"
@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 namespace
 {
@@ -114,7 +114,7 @@ public:
     }
 
     TapeEchoUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT)
     {
         supportersOverlay.setActionLink("Open crash log folder",
                                         [] { DuskCrashLog::openLogFolder(); });
@@ -209,7 +209,7 @@ protected:
         // change does NOT deliver parameterChanged() for the values it moved:
         // the VST3 wrapper calls loadProgram(), refreshes its own parameter
         // cache, and then flags ONLY the program index for the UI
-        // (DistrhoPluginVST3.cpp, kVst3InternalParameterProgram). Without this
+        // (DafPluginVST3.cpp, kVst3InternalParameterProgram). Without this
         // every knob would keep drawing its pre-program value, and
         // legacySyncDivisionOverride would keep the stale ownership the plugin
         // has already changed -- so the head strip would name a division the
@@ -1274,7 +1274,7 @@ private:
         // fall back to the output parameter.
         float lvl = values[kParamOutLevel];
         float peak = values[kParamPeakLevel];
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (tapeEchoGetRecordVuLevel != nullptr) // weak: null in the split LV2 UI
             if (void* const inst = getPluginInstancePointer())
                 lvl = tapeEchoGetRecordVuLevel(inst);
@@ -1583,7 +1583,7 @@ private:
         // the DSP is in-process, and keep the table for the split LV2 UI, where
         // the bridge is null.
         bool syncBlinks = kSyncReadoutBlinks[leadingHead][knobPos];
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (tapeEchoGetSyncNoteOutOfRange != nullptr) // weak: null in split LV2
             if (void* const inst = getPluginInstancePointer())
                 syncBlinks = tapeEchoGetSyncNoteOutOfRange(inst);
@@ -1808,7 +1808,7 @@ private:
     float  s = 1.0f;
     ImVec2 org = ImVec2(0, 0);
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeEchoUI)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeEchoUI)
 };
 
 constexpr const char* TapeEchoUI::kModeShort[12];
@@ -1818,4 +1818,4 @@ UI* createUI()
     return new TapeEchoUI();
 }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF

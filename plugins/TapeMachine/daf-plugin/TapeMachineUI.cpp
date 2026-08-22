@@ -8,7 +8,7 @@
 // row. Chrome knobs via the shared duskdaf::DuskPanel. All drawn strings are
 // ASCII (the atlas font lacks some Unicode glyphs).
 
-#include "DistrhoUI.hpp"
+#include "DafUI.hpp"
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
 #include "TapeMachinePresets.hpp"
@@ -30,7 +30,7 @@
 #include <algorithm>
 #include <cctype>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 namespace {
     constexpr float kDesignW = 800.0f;
@@ -77,7 +77,7 @@ public:
     }
 
     TapeMachineUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DAF_UI_DEFAULT_WIDTH, DAF_UI_DEFAULT_HEIGHT)
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
             values[i] = kTmParams[i].def;
@@ -205,7 +205,7 @@ private:
     {
         const bool out = meterSource != 0;
         float v = values[ch == 0 ? kParamVuL : kParamVuR]; // output params (generic-UI fallback)
-       #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+       #if DAF_PLUGIN_WANT_DIRECT_ACCESS
         if (void* const inst = getPluginInstancePointer())
         {
             if (out) { if (tapeMachineGetVuL)   v = ch == 0 ? tapeMachineGetVuL(inst)   : tapeMachineGetVuR(inst); }
@@ -1224,7 +1224,7 @@ private:
     bool    showSupporters = false; // Patreon "Special Thanks" overlay (click the title nameplate)
     bool    gripCursorSet = false;  // NWSE cursor currently pushed to the window
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineUI)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineUI)
 };
 
 UI* createUI()
@@ -1232,4 +1232,4 @@ UI* createUI()
     return new TapeMachineUI();
 }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF

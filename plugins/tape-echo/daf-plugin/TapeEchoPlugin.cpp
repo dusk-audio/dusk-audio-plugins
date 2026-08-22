@@ -1,6 +1,6 @@
 // TapeEchoPlugin.cpp — DAF shell around the framework-free TapeEchoDSP core.
 
-#include "DistrhoPlugin.hpp"
+#include "DafPlugin.hpp"
 #include "TapeEchoAccess.hpp"
 #include "TapeEchoDSP.hpp"
 #include "TapeEchoParams.hpp"
@@ -11,7 +11,7 @@
 #include <atomic>
 #include <cmath>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 class TapeEchoPlugin : public Plugin
 {
@@ -73,7 +73,7 @@ protected:
     // Version comes from the CMake project() VERSION via TapeEchoVersion.hpp.
     uint32_t    getVersion() const override
     { return d_version(TE2_VERSION_MAJOR, TE2_VERSION_MINOR, TE2_VERSION_PATCH); }
-    int64_t     getUniqueId() const override    { return d_cconst('D', 's', 'T', 'E'); } // must match DISTRHO_PLUGIN_UNIQUE_ID (DsTE)
+    int64_t     getUniqueId() const override    { return d_cconst('D', 's', 'T', 'E'); } // must match DAF_PLUGIN_UNIQUE_ID (DsTE)
 
     //--- parameters ------------------------------------------------------------
     void initParameter(uint32_t index, Parameter& p) override
@@ -332,7 +332,7 @@ protected:
 
     void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
     {
-        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DAF_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
         // DAF calls this while deactivated, so the audio thread sees a stable
         // channel count when processing resumes.
         activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
@@ -429,7 +429,7 @@ private:
 
     duskaudio::TapeEchoDSP dsp;
     // Host-negotiated channel count (AU mono instances); see ioChanged().
-    int activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
+    int activeChannels = DAF_PLUGIN_NUM_INPUTS;
     double lastBpm = 120.0;
     std::atomic<float> effectiveHead1DelayMs {
         duskaudio::TapeEchoDSP::kMaxDelayMs
@@ -442,7 +442,7 @@ private:
     // core's parameter atomics. The ctor stores below run before any concurrency.
     std::atomic<float> values[kParamCount] = {};
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeEchoPlugin)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeEchoPlugin)
 };
 
 Plugin* createPlugin()
@@ -450,29 +450,29 @@ Plugin* createPlugin()
     return new TapeEchoPlugin();
 }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF
 
 // same-process UI accessor (see TapeEchoAccess.hpp)
 float tapeEchoGetRecordVuLevel(void* const pluginInstancePointer) noexcept
 {
-    auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
+    auto* const plugin = static_cast<DAF_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
     return plugin != nullptr ? plugin->getRecordVuLevelForUI() : 0.0f;
 }
 
 float tapeEchoGetRecordPeakLevel(void* const pluginInstancePointer) noexcept
 {
-    auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
+    auto* const plugin = static_cast<DAF_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
     return plugin != nullptr ? plugin->getRecordPeakLevelForUI() : 0.0f;
 }
 
 float tapeEchoGetHead1DelayMs(void* const pluginInstancePointer) noexcept
 {
-    auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
+    auto* const plugin = static_cast<DAF_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
     return plugin != nullptr ? plugin->getHead1DelayMsForUI() : 0.0f;
 }
 
 bool tapeEchoGetSyncNoteOutOfRange(void* const pluginInstancePointer) noexcept
 {
-    auto* const plugin = static_cast<DISTRHO_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
+    auto* const plugin = static_cast<DAF_NAMESPACE::TapeEchoPlugin*>(pluginInstancePointer);
     return plugin != nullptr && plugin->getSyncNoteOutOfRangeForUI();
 }

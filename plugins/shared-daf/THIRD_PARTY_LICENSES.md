@@ -23,6 +23,8 @@ regardless of the plugin format built.**
 
 DAF ([dusk-audio/DAF](https://github.com/dusk-audio/DAF)) is a fork of the
 DISTRHO Plugin Framework ([DISTRHO/DPF](https://github.com/DISTRHO/DPF)).
+The DAF API names (`DAF_PLUGIN_*`, `START_NAMESPACE_DAF`, `DafPlugin.hpp`) are
+renames of DPF's; the code they name is DISTRHO's work, used under ISC.
 Includes DGL, the VST3 and AudioUnit "travesty" backends, and the LV2 support
 code. Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>.
 

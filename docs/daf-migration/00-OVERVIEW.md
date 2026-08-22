@@ -6,7 +6,7 @@ everything in here.
 
 ## Mission
 
-Convert the Dusk Audio JUCE plugins to DAF (DISTRHO Plugin Framework) with
+Convert the Dusk Audio JUCE plugins to DAF (Dusk Audio Framework) with
 Dear ImGui UIs, following the completed **Tape Echo** migration as the proven
 template. Tape Echo lives at:
 
@@ -54,10 +54,10 @@ DAF-Widgets checkout: `~/projects/DAF-Widgets` (DearImGui wrapper).
 
 ## Landmines (all hit and fixed during tape-echo — do not rediscover them)
 
-1. **LV2 + direct access = MONOLITHIC.** `DISTRHO_PLUGIN_WANT_DIRECT_ACCESS 1`
+1. **LV2 + direct access = MONOLITHIC.** `DAF_PLUGIN_WANT_DIRECT_ACCESS 1`
    makes DAF's LV2 TTL export declare the UI inside the dsp binary
-   (`DistrhoPluginLV2export.cpp:70`). You MUST pass `MONOLITHIC` to
-   `dpf_add_plugin` or LV2 hosts refuse to load the plugin.
+   (`DafPluginLV2export.cpp:70`). You MUST pass `MONOLITHIC` to
+   `daf_add_plugin` or LV2 hosts refuse to load the plugin.
 2. **CLAP never forwards output parameters to the UI.** VST3 does, CLAP does
    not, LV2 uses port events. For meters: read the DSP atomic via
    `getPluginInstancePointer()` through a weak-linked bridge function
@@ -151,7 +151,7 @@ pluginval --strictness-level 8 --timeout-ms 120000 --validate ~/.vst3/<Name>.vst
   featured list only after the v2 is proven. Everything lives in THIS repo
   (the A/B validation renders JUCE and DAF builds from the same commit).
   Note: the completed tape-echo DAF port still displays plain "Tape Echo" —
-  rename its DISTRHO_PLUGIN_NAME to "Tape Echo 2" as a first task.
+  rename its DAF_PLUGIN_NAME to "Tape Echo 2" as a first task.
 - No third-party trademarks anywhere in names, strings, UI, or docs
   (no Roland/RE-201/British/Neve/Pultec/tracking deck etc. — describe hardware
   generically).

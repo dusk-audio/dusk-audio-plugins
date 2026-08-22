@@ -940,7 +940,7 @@ Per frame, after `panel.begin(s, org, font, this)` and palette blend:
 ### 8.7 Keyboard widget (playable, → MIDI)
 - Draw 21 white keys then black keys on top (§1.5). Track `heldKey` (mouse). On
   `InvisibleButton` press over a key: compute `note = baseMidi + keyIndexToSemitone(i)`;
-  `UI::sendNote(0, note, vel)` (DAF, requires `DISTRHO_PLUGIN_WANT_MIDI_INPUT` — this is
+  `UI::sendNote(0, note, vel)` (DAF, requires `DAF_PLUGIN_WANT_MIDI_INPUT` — this is
   the fleet's first synth, so the shell sets it). On release / drag-off: `sendNote(0,
   prevNote, 0)`. **Glissando**: while dragging, if the hovered key changes, note-off the
   old and note-on the new.
@@ -1239,7 +1239,7 @@ USER column scrolling. Vertex cost is in §9.1.
   - **Algorithm diagram**: static per algo; cache nothing heavy (few dozen primitives).
   - Mode crossfade touches only colors — no re-layout, no re-cache.
 - **Bridge reads** (`getOutputLevelL/R`, `getScope`, step index, active notes) are one
-  call each per frame, guarded by `#if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS` + null check,
+  call each per frame, guarded by `#if DAF_PLUGIN_WANT_DIRECT_ACCESS` + null check,
   exactly like `TapeEchoUI`'s `tapeEchoGetOutputLevel`. The contract is **per symbol** —
   each accessor is its own weak symbol, resolved or not on its own — so a call site that
   uses two of them must null-check **both**; taking L as proof of R is a null call away

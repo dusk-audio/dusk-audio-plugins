@@ -1,4 +1,4 @@
-#include "DistrhoPlugin.hpp"
+#include "DafPlugin.hpp"
 #include "MultiCompAccess.hpp"
 #include "MultiCompParams.hpp"
 #include "MultiCompProgramPresets.hpp"
@@ -15,7 +15,7 @@
 #include <string>
 #include <string_view>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 class MultiCompPlugin final : public Plugin
 {
@@ -257,13 +257,13 @@ private:
     duskaudio::MultiCompDSP dsp;
     std::array<std::atomic<float>, multicompp::kMeterMaster> values{};
     int lastLatency = -1;
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiCompPlugin)
 };
 
 Plugin* createPlugin() { return new MultiCompPlugin(); }
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF
 
-static DISTRHO_NAMESPACE::MultiCompPlugin* asMultiComp(void* p) noexcept { return static_cast<DISTRHO_NAMESPACE::MultiCompPlugin*>(p); }
+static DAF_NAMESPACE::MultiCompPlugin* asMultiComp(void* p) noexcept { return static_cast<DAF_NAMESPACE::MultiCompPlugin*>(p); }
 float multiCompGetGainReduction(void* p) noexcept { return p ? asMultiComp(p)->gr() : 0.0f; }
 float multiCompGetBandGainReduction(void* p, int band) noexcept { return p ? asMultiComp(p)->bandGr(band) : 0.0f; }
 float multiCompGetInputLevel(void* p) noexcept { return p ? asMultiComp(p)->inputLevel() : -60.0f; }

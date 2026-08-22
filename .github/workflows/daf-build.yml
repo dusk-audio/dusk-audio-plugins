@@ -1,6 +1,6 @@
 name: DAF Plugins (build + release)
 
-# One reusable pipeline for ALL DAF (DISTRHO Plugin Framework) plugins. Replaces
+# One reusable pipeline for ALL DAF (Dusk Audio Framework) plugins. Replaces
 # the per-plugin ad-hoc DAF workflows (tapemachine2-release.yml, daf-au-test.yml).
 #
 # DAF plugins are NOT JUCE — each is built by its own standalone CMake under
@@ -65,8 +65,8 @@ on:
 # checkouts on the pinned SHAs (docker/check_daf_pins.sh) so a hand-tested build
 # is the one CI produces.
 env:
-  DAF_REF: eb54f2f47db248d7414fe30d60d502827f56f8d2
-  DAFWIDGETS_REF: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+  DAF_REF: 788eb0193151a3e4afadb187cf72e6e57e6c2f69
+  DAFWIDGETS_REF: 91e0004e1ece0785d347801925d3e2518b0cbbda
   AU_TYPE: aufx
   AU_MANUFACTURER: Dusk
 
@@ -99,9 +99,9 @@ jobs:
           # ---- Plugin registry (single source of truth) -------------------
           # key   : workflow_dispatch value + artifact base
           # dir   : standalone CMake dir
-          # base  : dpf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
+          # base  : daf_add_plugin() name -> build/bin/<base>.{vst3,clap,lv2,component}
           # project: project(<name> ...) token, for the tag<->CMake version guard
-          # au    : DISTRHO_PLUGIN_UNIQUE_ID (AU subtype code)
+          # au    : DAF_PLUGIN_UNIQUE_ID (AU subtype code)
           # name  : human display name
           # tag   : release tag PREFIX (version is the suffix)
           # asset : release/website asset base (asset zip = <asset>-<os>.zip)

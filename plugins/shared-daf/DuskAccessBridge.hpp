@@ -22,7 +22,7 @@
 //     (LV2 forwards those via port events). Always guard the call:
 //
 //         float v = fallbackFromOutputParam;
-//        #if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+//        #if DAF_PLUGIN_WANT_DIRECT_ACCESS
 //         if (myAccessor != nullptr)                    // weak: null in split UI
 //             if (void* const inst = getPluginInstancePointer())
 //                 v = myAccessor(inst);

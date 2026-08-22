@@ -4,7 +4,7 @@
 //
 // TapeMachinePlugin.cpp — DAF shell around the framework-free TapeMachineDSP core.
 
-#include "DistrhoPlugin.hpp"
+#include "DafPlugin.hpp"
 #include "TapeMachineAccess.hpp"
 #include "TapeMachineParams.hpp"
 #include "TapeMachinePresets.hpp"
@@ -15,7 +15,7 @@
 #include <atomic>
 #include <cmath>
 
-START_NAMESPACE_DISTRHO
+START_NAMESPACE_DAF
 
 class TapeMachinePlugin : public Plugin
 {
@@ -48,7 +48,7 @@ protected:
     const char* getLicense() const override  { return "GPL-3.0-or-later"; }
     // Version comes from the CMake project() VERSION via TapeMachineVersion.hpp.
     uint32_t    getVersion() const override  { return d_version(TM2_VERSION_MAJOR, TM2_VERSION_MINOR, TM2_VERSION_PATCH); }
-    int64_t     getUniqueId() const override { return d_cconst('D', 's', 'T', 'M'); } // matches DISTRHO_PLUGIN_UNIQUE_ID (DsTM)
+    int64_t     getUniqueId() const override { return d_cconst('D', 's', 'T', 'M'); } // matches DAF_PLUGIN_UNIQUE_ID (DsTM)
 
     //--- parameters ------------------------------------------------------------
     void initParameter(uint32_t index, Parameter& p) override
@@ -172,7 +172,7 @@ protected:
 
     void ioChanged(uint16_t numInputs, uint16_t numOutputs) override
     {
-        // DISTRHO_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
+        // DAF_PLUGIN_EXTRA_IO permits only matched mono or stereo layouts.
         // DAF calls this while deactivated, so the audio thread sees a stable
         // channel count when processing resumes.
         activeChannels = (numInputs == 1 && numOutputs == 1) ? 1 : 2;
@@ -186,7 +186,7 @@ protected:
         // bypass toggle (bypass = zero-delay passthrough -> latencySamples() returns 0).
         // updateLatency() only forwards to setLatency() when the value actually changes, so
         // the host re-runs PDC once per transition, never per block. DAF permits setLatency()
-        // from run() (see DistrhoPlugin.hpp setLatency docs).
+        // from run() (see DafPlugin.hpp setLatency docs).
         updateLatency();
     }
 
@@ -251,13 +251,13 @@ private:
 
     duskaudio::TapeMachineDSP dsp;
     // Host-negotiated channel count (AU mono instances); see ioChanged().
-    int activeChannels = DISTRHO_PLUGIN_NUM_INPUTS;
+    int activeChannels = DAF_PLUGIN_NUM_INPUTS;
     int lastLatency = -1;
     // Parameter cache shared across threads (relaxed atomics), same pattern as
     // the DSP core's own parameter atomics.
     std::atomic<float> values[kParamCount] = {};
 
-    DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachinePlugin)
+    DAF_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachinePlugin)
 };
 
 Plugin* createPlugin()
@@ -265,46 +265,46 @@ Plugin* createPlugin()
     return new TapeMachinePlugin();
 }
 
-END_NAMESPACE_DISTRHO
+END_NAMESPACE_DAF
 
 // same-process UI accessors (see TapeMachineAccess.hpp)
 float tapeMachineGetVuL(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getVuLForUI() : 0.0f;
 }
 float tapeMachineGetVuR(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getVuRForUI() : 0.0f;
 }
 float tapeMachineGetInVuL(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getInVuLForUI() : 0.0f;
 }
 float tapeMachineGetInVuR(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getInVuRForUI() : 0.0f;
 }
 float tapeMachineGetInPeakL(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getInPeakLForUI() : 0.0f;
 }
 float tapeMachineGetInPeakR(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getInPeakRForUI() : 0.0f;
 }
 float tapeMachineGetOutPeakL(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getOutPeakLForUI() : 0.0f;
 }
 float tapeMachineGetOutPeakR(void* const pluginInstancePointer) noexcept
 {
-    auto* const p = static_cast<DISTRHO_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
+    auto* const p = static_cast<DAF_NAMESPACE::TapeMachinePlugin*>(pluginInstancePointer);
     return p != nullptr ? p->getOutPeakRForUI() : 0.0f;
 }

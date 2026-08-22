@@ -30,7 +30,7 @@ plugins/shared-daf/
 │   │                         #   knobLabel with triangle marker, text helper
 │   └── DuskImGuiFont.hpp     # crisp bold font loader with fallback list
 ├── DuskAccessBridge.hpp      # documented weak-symbol pattern (template/macro)
-└── cmake/DuskDafPlugin.cmake # wrapper around dpf_add_plugin encoding the
+└── cmake/DuskDafPlugin.cmake # wrapper around daf_add_plugin encoding the
                               #   MONOLITHIC + include-path conventions
 ```
 

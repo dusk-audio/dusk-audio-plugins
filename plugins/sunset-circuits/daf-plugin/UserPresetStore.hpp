@@ -5,7 +5,7 @@
 // UserPresetStore.hpp — Sunset Circuits user-preset library (UI-side only).
 //
 // A file-based patch bank. The host already persists all core params inside
-// its session (DISTRHO_PLUGIN_WANT_STATE stays 0), so this is purely a personal
+// its session (DAF_PLUGIN_WANT_STATE stays 0), so this is purely a personal
 // library the player can save to / recall from, independent of any DAW.
 //
 // Format: versioned plain text, one preset per file:
