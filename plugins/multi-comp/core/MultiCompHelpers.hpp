@@ -193,7 +193,7 @@ inline float interpolateOversampledSidechain(float current, float next,
                                               int phase, int factor) noexcept
 {
     if (factor <= 1) return current;
-    const float position = static_cast<float>(std::clamp(phase, 0, factor - 1))
+    const float position = static_cast<float>(std::clamp(phase, 0, factor - 1) + 1)
                          / static_cast<float>(factor);
     return current + (next - current) * position;
 }

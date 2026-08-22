@@ -12,29 +12,20 @@ inline int coreParamIndex(CoreParameter parameter) noexcept
     return -1;
 }
 
-// Shared factory-program walker.  The DAF host program path and the ImGui
-// selector both use this identity-based application, including the complete
-// default reset and all multiband fields.
+// Shared factory-program walker. A recall owns only the JUCE preset's common
+// controls and the controls for its selected compressor mode. Machine/global
+// choices (including Bypass, oversampling, external sidechain and global
+// lookahead) remain untouched.
 template <class SetParameter, class SetBandParameter>
 void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
                         SetParameter&& setParameter,
                         SetBandParameter&& setBandParameter)
 {
-    for (const auto& parameter : kParams)
-        setParameter(parameter.core, parameter.def);
-    for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
-        for (int field = 0; field < 8; ++field)
-        {
-            const auto parameter = bandParam(field, band);
-            setBandParameter(band, field, parameter.def);
-        }
-
     using P = CoreParameter;
     setParameter(P::Mode, static_cast<float>(preset.mode));
     setParameter(P::Mix, preset.mix);
     setParameter(P::SidechainHP, preset.sidechainHP);
     setParameter(P::AutoMakeup, preset.autoMakeup ? 1.0f : 0.0f);
-    setParameter(P::SaturationMode, static_cast<float>(preset.saturationMode));
 
     switch (preset.mode)
     {
@@ -50,6 +41,9 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::FetAttack, preset.attack);
             setParameter(P::FetRelease, preset.release);
             setParameter(P::FetRatio, static_cast<float>(preset.fetRatio));
+            setParameter(P::FetCurve, kParams[static_cast<size_t>(ParamId::FetCurve)].def);
+            setParameter(P::FetTransient, kParams[static_cast<size_t>(ParamId::FetTransient)].def);
+            setParameter(P::FetThreshold, kParams[static_cast<size_t>(ParamId::FetThreshold)].def);
             break;
         case 2:
             setParameter(P::VcaThreshold, preset.threshold);
@@ -58,6 +52,8 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
             setParameter(P::VcaRelease, preset.release);
             setParameter(P::VcaOutput, preset.makeup);
             setParameter(P::VcaOverEasy, preset.vcaOverEasy);
+            setParameter(P::VcaClassicDetector,
+                         kParams[static_cast<size_t>(ParamId::VcaClassicDetector)].def);
             break;
         case 3:
         {
@@ -80,13 +76,51 @@ void forEachPresetParam(const duskaudio::MultiCompPreset& preset,
         case 6:
             setParameter(P::DigitalThreshold, preset.threshold);
             setParameter(P::DigitalRatio, preset.ratio);
+            setParameter(P::DigitalKnee, kParams[static_cast<size_t>(ParamId::DigitalKnee)].def);
             setParameter(P::DigitalAttack, preset.attack);
             setParameter(P::DigitalRelease, preset.release);
+            setParameter(P::DigitalLookahead,
+                         kParams[static_cast<size_t>(ParamId::DigitalLookahead)].def);
+            setParameter(P::DigitalMix, kParams[static_cast<size_t>(ParamId::DigitalMix)].def);
             setParameter(P::DigitalOutput, preset.makeup);
+            setParameter(P::DigitalAdaptive,
+                         kParams[static_cast<size_t>(ParamId::DigitalAdaptive)].def);
             break;
         case 7:
+            setParameter(P::Crossover1, kParams[static_cast<size_t>(ParamId::Crossover1)].def);
+            setParameter(P::Crossover2, kParams[static_cast<size_t>(ParamId::Crossover2)].def);
+            setParameter(P::Crossover3, kParams[static_cast<size_t>(ParamId::Crossover3)].def);
+            setParameter(P::MbMix, kParams[static_cast<size_t>(ParamId::MbMix)].def);
+            setParameter(P::MbOutput, kParams[static_cast<size_t>(ParamId::MbOutput)].def);
+            for (int band = 0; band < duskaudio::kMultiCompBands; ++band)
+                for (int field = 0; field < 8; ++field)
+                    setBandParameter(band, field, bandParam(field, band).def);
+            break;
         default:
             break;
     }
+}
+
+// Host-program adapter used by Plugin::loadProgram. Values passed to the
+// setter are host-domain values at their real DAF parameter indices.
+template <class SetHostParameter>
+void applyPresetToHostParameters(const duskaudio::MultiCompPreset& preset,
+                                 SetHostParameter&& setHostParameter)
+{
+    forEachPresetParam(preset,
+        [&](CoreParameter parameter, float value)
+        {
+            const int parameterIndex = coreParamIndex(parameter);
+            if (parameterIndex >= 0)
+            {
+                const auto& d = kParams[static_cast<size_t>(parameterIndex)];
+                setHostParameter(parameterIndex, plainToHost(d, value));
+            }
+        },
+        [&](int band, int field, float value)
+        {
+            const auto d = bandParam(field, band);
+            setHostParameter(kBandBase + band * 8 + field, plainToHost(d, value));
+        });
 }
 } // namespace multicompp
