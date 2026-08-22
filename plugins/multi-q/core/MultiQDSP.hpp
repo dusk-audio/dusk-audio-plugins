@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
-// MultiQDSP.hpp — framework-free Multi-Q DSP core (zero JUCE/DPF).
+// MultiQDSP.hpp — framework-free Multi-Q DSP core (zero JUCE/DAF).
 //
 // Full port of MultiQ::processBlock. The DIGITAL character path — 8-band EQ
 // (variable-slope HPF, low/high shelves, 4 parametric bands, variable-slope LPF),
@@ -22,8 +22,8 @@
 #include "MultiQMatch.hpp"                         // Match character (spectrum-match EQ + FIR conv)
 #include "MultiQTube.hpp"                         // Tube character (framework-free TubeEQ port)
 #include "MultiQLimiter.hpp"                      // output brickwall limiter (framework-free)
-#include "../../shared-dpf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
-#include "../../shared-dpf/dsp/DuskOversampler.hpp" // 2x/4x OS for Digital per-band saturation
+#include "../../shared-daf/dsp/FourKEQDSP.hpp"   // British character = upgraded 4K EQ core
+#include "../../shared-daf/dsp/DuskOversampler.hpp" // 2x/4x OS for Digital per-band saturation
 #include "../../shared/AnalogEmulation/WaveshaperCurves.h"
 
 #include <array>

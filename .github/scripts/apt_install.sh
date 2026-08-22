@@ -13,7 +13,7 @@
 #   help here, because a call that hangs never comes back to be retried. Hence
 #   timeout(1) around every apt invocation.
 #
-#   HARD FAIL. On run 32176674366 the DPF container's prerequisite step failed
+#   HARD FAIL. On run 32176674366 the DAF container's prerequisite step failed
 #   outright in 81 seconds. That one WOULD have survived a retry, but the loop
 #   only existed in a later step which never ran. Hence retries everywhere,
 #   from one place, rather than hand-copied into whichever step someone

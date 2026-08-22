@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# ab_null.py — null-compare two float32 WAV renders (JUCE vs DPF Multi-Q).
+# ab_null.py — null-compare two float32 WAV renders (JUCE vs DAF Multi-Q).
 # Cross-correlates channel 0 to remove any reported-latency offset, aligns, then
 # reports max-abs and RMS sample difference in dBFS. Exit 0 if under threshold.
 #
-#   ab_null.py JUCE.wav DPF.wav [--thresh-db -120] [--max-shift 4096] [--label X]
+#   ab_null.py JUCE.wav DAF.wav [--thresh-db -120] [--max-shift 4096] [--label X]
 #
 # Threshold guidance: bit-identical DSP nulls near the float floor (< -140 dB).
 # 1x transparent paths should pass -120 dB. Oversampled (2x/4x) paths use a
@@ -63,7 +63,7 @@ def best_shift(a, b, max_shift):
 def main():
     args = sys.argv[1:]
     if len(args) < 2:
-        raise SystemExit("usage: ab_null.py JUCE.wav DPF.wav [--thresh-db N] [--max-shift N] [--label X]")
+        raise SystemExit("usage: ab_null.py JUCE.wav DAF.wav [--thresh-db N] [--max-shift N] [--label X]")
     jpath, dpath = args[0], args[1]
     thresh, max_shift, label, skip = -120.0, 4096, "", 0.25
     spectral = False

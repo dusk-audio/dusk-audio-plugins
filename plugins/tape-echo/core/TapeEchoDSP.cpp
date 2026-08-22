@@ -152,7 +152,7 @@ float TapeEchoDSP::leadingHeadRatioForMode(int mode1to12) noexcept
 }
 
 //==============================================================================
-// Oversampled preamp — halfband taps now shared (plugins/shared-dpf/dsp/
+// Oversampled preamp — halfband taps now shared (plugins/shared-daf/dsp/
 // DuskOversampler.hpp, duskaudio::hbtaps::kA/kB; scipy remez, identical values).
 //==============================================================================
 float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
@@ -177,7 +177,7 @@ float TapeEchoDSP::preampOversampled(Channel& ch, float x, float drive) noexcept
 
 //==============================================================================
 // (ShelfFilter coefficient design moved to shared Biquad::shelfSlope1 — see
-//  plugins/shared-dpf/dsp/DuskFilters.hpp. Bit-identical float op-order.)
+//  plugins/shared-daf/dsp/DuskFilters.hpp. Bit-identical float op-order.)
 //==============================================================================
 
 //==============================================================================

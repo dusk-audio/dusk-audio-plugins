@@ -7,7 +7,7 @@
 //
 // The factory presets are static param-value rows (MultiSynthParams.hpp) and the
 // DSP core is framework-free, so this tool includes BOTH directly — no plugin
-// hosting, no MIDI file injection. It applies preset N exactly as the DPF shell's
+// hosting, no MIDI file injection. It applies preset N exactly as the DAF shell's
 // loadProgram() does (reset-to-default -> baseline -> overrides), then plays a
 // mode-appropriate MIDI performance and writes a float32 stereo WAV.
 //
@@ -263,7 +263,7 @@ int main(int argc, char** argv)
     msynth::MultiSynthDSP synth;
     synth.prepare(sampleRate, blockSize);
 
-    // Apply the preset exactly as the DPF shell's loadProgram() does.
+    // Apply the preset exactly as the DAF shell's loadProgram() does.
     for (int i = 0; i < kNumCoreParams; ++i)
         synth.setParameter(i, kParamDefs[i].def);
     for (int r = 0; r < kBaselineRows; ++r)

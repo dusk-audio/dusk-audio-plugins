@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cmath>
 
-#include "../../shared-dpf/dsp/DuskFilters.hpp"
+#include "../../shared-daf/dsp/DuskFilters.hpp"
 
 namespace duskaudio
 {

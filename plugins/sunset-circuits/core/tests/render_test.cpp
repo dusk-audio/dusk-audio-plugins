@@ -75,14 +75,14 @@
 //                       polyphonic key pressure (MIDI 0xA0) for one note.
 //                       Repeatable.
 //   chanat=<sec>:<0..1> channel pressure (MIDI 0xD0). Repeatable.
-//   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DPF
+//   progat=<sec>:<n>    load factory program <n> at this time, exactly as the DAF
 //                       shell's loadProgram() does (every parameter to its
 //                       default, then the shared baseline, then the preset's own
 //                       rows, then notifyProgramChange). Repeatable. NOTE: this
 //                       harness links the CORE only, so it reproduces what
 //                       loadProgram DOES, not the shell function itself -- the
 //                       shell's MIDI 0xC0 -> loadProgram wiring is covered
-//                       host-side by dpf-plugin/tools/lv2_smoke.c.
+//                       host-side by daf-plugin/tools/lv2_smoke.c.
 
 #include "MultiSynthDSP.hpp"
 #include "MultiSynthParams.hpp"   // factory preset table (progat=), shell-side
@@ -112,7 +112,7 @@ static_assert((int)kNumCoreParams  == (int)msynth::kNumParams, "core param count
 
 namespace
 {
-// Apply a factory program the way the DPF shell's loadProgram() does: every
+// Apply a factory program the way the DAF shell's loadProgram() does: every
 // parameter to its default (so the result cannot depend on what was loaded
 // before), then the shared baseline, then the preset's own rows, and finally the
 // explicit program-change signal that makes the smoothers land instead of glide.

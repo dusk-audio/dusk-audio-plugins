@@ -306,7 +306,7 @@ When creating a new plugin, ensure all of these are addressed:
 Before a structural refactor on a large file, strip dead weight first — unused includes, dead functions, commented-out blocks, debug logging — and keep that cleanup separate from the functional change so both diffs review cleanly. (The user makes every commit.)
 
 ## Renames and Cross-Cutting Edits
-The compiler catches C++ references, but not everything here is compiled. When renaming a function, type, or parameter ID, also check string literals, `plugins/shared/` and `plugins/shared-dpf/` (several plugins compile them), tests, build scripts, and per-format plugin metadata — one grep rarely catches everything.
+The compiler catches C++ references, but not everything here is compiled. When renaming a function, type, or parameter ID, also check string literals, `plugins/shared/` and `plugins/shared-daf/` (several plugins compile them), tests, build scripts, and per-format plugin metadata — one grep rarely catches everything.
 
 ## Private Tools Repo
 
@@ -356,7 +356,7 @@ STILL IN THIS REPO and NOT moved, deliberately:
 - `tests/duskverb_render/` is a CMake target (`add_subdirectory` in the root
   CMakeLists) and the comparison harness runs the binary it builds, so moving it
   is a build refactor, not a file move.
-- `plugins/sunset-circuits/dpf-plugin/tools/` (`gen_params.py`, `lv2_smoke.c`) is
+- `plugins/sunset-circuits/daf-plugin/tools/` (`gen_params.py`, `lv2_smoke.c`) is
   build-adjacent codegen for that plugin.
-- `.github/scripts/dpf_clap_validate.py` and `manuals/build_manuals.py` /
+- `.github/scripts/daf_clap_validate.py` and `manuals/build_manuals.py` /
   `preflight.py` belong with the CI and manual pipelines they serve.

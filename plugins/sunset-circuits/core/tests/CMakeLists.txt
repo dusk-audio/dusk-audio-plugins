@@ -1,4 +1,4 @@
-# Multi-Synth core offline validation harness (framework-free; no JUCE/DPF).
+# Multi-Synth core offline validation harness (framework-free; no JUCE/DAF).
 cmake_minimum_required(VERSION 3.15)
 project(multisynth_core_tests CXX)
 
@@ -9,26 +9,26 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CORE_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/..)
-set(SHARED_DSP ${CMAKE_CURRENT_SOURCE_DIR}/../../../shared-dpf/dsp)
-set(DPF_PLUGIN ${CMAKE_CURRENT_SOURCE_DIR}/../../dpf-plugin)
+set(SHARED_DSP ${CMAKE_CURRENT_SOURCE_DIR}/../../../shared-daf/dsp)
+set(DAF_PLUGIN ${CMAKE_CURRENT_SOURCE_DIR}/../../daf-plugin)
 
 add_executable(render_test
     render_test.cpp
     ${CORE_DIR}/MultiSynthDSP.cpp)
 
-# DPF_PLUGIN is on the include path for MultiSynthParams.hpp only (the static
+# DAF_PLUGIN is on the include path for MultiSynthParams.hpp only (the static
 # factory-preset table behind progat=); render_test still links the core alone.
-target_include_directories(render_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DPF_PLUGIN})
+target_include_directories(render_test PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
 target_compile_options(render_test PRIVATE -O2 -Wall -Wextra)
 
 # preset_render — includes the static factory-preset table (MultiSynthParams.hpp)
-# from the DPF shell plus the core DSP; renders mode-appropriate performances for
+# from the DAF shell plus the core DSP; renders mode-appropriate performances for
 # the Phase 5 preset re-voice + audit (no plugin hosting / MIDI injection).
 add_executable(preset_render
     presets/preset_render.cpp
     ${CORE_DIR}/MultiSynthDSP.cpp)
 
-target_include_directories(preset_render PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DPF_PLUGIN})
+target_include_directories(preset_render PRIVATE ${CORE_DIR} ${SHARED_DSP} ${DAF_PLUGIN})
 target_compile_options(preset_render PRIVATE -O2 -Wall -Wextra)
 
 # cpu_bench — offline worst-case CPU profiler (Phase 5 QA). Times the
@@ -42,13 +42,13 @@ target_include_directories(cpu_bench PRIVATE ${CORE_DIR} ${SHARED_DSP})
 # -O2 here already produced one wrong perf conclusion; do not add one back.
 target_compile_options(cpu_bench PRIVATE -Wall -Wextra)
 
-# user_preset_test — unit gate for dpf-plugin/UserPresetStore.hpp (file-based user
+# user_preset_test — unit gate for daf-plugin/UserPresetStore.hpp (file-based user
 # preset library). Header-only; pulls MultiSynthParams.hpp for the symbol table.
 add_executable(user_preset_test user_preset_test.cpp)
-target_include_directories(user_preset_test PRIVATE ${DPF_PLUGIN})
+target_include_directories(user_preset_test PRIVATE ${DAF_PLUGIN})
 target_compile_options(user_preset_test PRIVATE -O2 -Wall -Wextra)
 
-# lv2_smoke — LV2 host-integration smoke test (dpf-plugin/tools/lv2_smoke.c).
+# lv2_smoke — LV2 host-integration smoke test (daf-plugin/tools/lv2_smoke.c).
 # Unlike every other target here it hosts the BUILT LV2 bundle through lilv (the
 # library jalv uses) rather than linking the core: instantiate + activate + run,
 # oversampling-vs-reported-latency sweep, MIDI note-on, MIDI program change.
@@ -64,7 +64,7 @@ endif()
 
 if(LILV_FOUND)
     enable_language(C)
-    add_executable(lv2_smoke ${DPF_PLUGIN}/tools/lv2_smoke.c)
+    add_executable(lv2_smoke ${DAF_PLUGIN}/tools/lv2_smoke.c)
     target_include_directories(lv2_smoke PRIVATE ${LILV_INCLUDE_DIRS})
     # LINK_LIBRARIES carries absolute paths, so no target_link_directories search
     # path is needed and the linker cannot pick up a same-named library from an

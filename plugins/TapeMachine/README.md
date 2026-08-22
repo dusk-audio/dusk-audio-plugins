@@ -1,6 +1,6 @@
 # TapeMachine 2
 
-TapeMachine 2 is Dusk Audio's DPF-based tape processor with distinct tracking
+TapeMachine 2 is Dusk Audio's DAF-based tape processor with distinct tracking
 and mastering deck models. It replaces the JUCE TapeMachine 1.x line with a
 distinct plugin identity, so both versions can coexist in old sessions.
 
@@ -63,23 +63,23 @@ TapeMachine 2 does not currently ship a Windows or Standalone build.
 
 ## Build
 
-DPF and DPF-Widgets are expected beside this repository by default. Override
+DAF and DAF-Widgets are expected beside this repository by default. Override
 their paths when needed.
 
 ```sh
-cmake -S plugins/TapeMachine/dpf-plugin \
-  -B plugins/TapeMachine/dpf-plugin/build \
+cmake -S plugins/TapeMachine/daf-plugin \
+  -B plugins/TapeMachine/daf-plugin/build \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DDPF_PATH=/path/to/DPF \
-  -DDPFWIDGETS_PATH=/path/to/DPF-Widgets
+  -DDAF_PATH=/path/to/DAF \
+  -DDAFWIDGETS_PATH=/path/to/DAF-Widgets
 
-cmake --build plugins/TapeMachine/dpf-plugin/build --target \
+cmake --build plugins/TapeMachine/daf-plugin/build --target \
   tape_machine_2-vst3 tape_machine_2-clap tape_machine_2-lv2
 ```
 
 On macOS, add `tape_machine_2-au`. Local installation after building is enabled
-by default; configure with `-DDUSK_DPF_INSTALL_LOCAL=OFF` for packaging or CI.
+by default; configure with `-DDUSK_DAF_INSTALL_LOCAL=OFF` for packaging or CI.
 
 ## Validation
 
@@ -96,5 +96,5 @@ comparison tooling and calibration data are maintained outside this repository.
 ## Licensing
 
 TapeMachine 2 is GPL-3.0-or-later. See the repository `LICENSE` and
-[`plugins/shared-dpf/THIRD_PARTY_LICENSES.md`](../shared-dpf/THIRD_PARTY_LICENSES.md)
-for DPF, DPF-Widgets, and per-format notices.
+[`plugins/shared-daf/THIRD_PARTY_LICENSES.md`](../shared-daf/THIRD_PARTY_LICENSES.md)
+for DAF, DAF-Widgets, and per-format notices.

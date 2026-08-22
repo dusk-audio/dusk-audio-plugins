@@ -2,7 +2,7 @@
 // Component-modeled vintage three-head tape echo with spring reverb.
 //
 // Framework-free: standard C++17 only. No JUCE, no host dependencies.
-// Designed to be wrapped by DPF, raw CLAP, or any other plugin shell.
+// Designed to be wrapped by DAF, raw CLAP, or any other plugin shell.
 //
 // Signal flow (stereo input, mono wet paths, stereo dry path):
 //
@@ -36,17 +36,17 @@
 
 // Shared DSP primitives (namespace duskaudio) — these replace the building
 // blocks that used to be defined locally here. All lifted from this very file
-// during the shared-dpf extraction, so consuming them is bit-identical.
+// during the shared-daf extraction, so consuming them is bit-identical.
 #include "DuskSmoothed.hpp"    // SmoothedValue
 #include "DuskFilters.hpp"     // OnePoleLP/HP, DCBlocker, Biquad (shelves)
 #include "DuskOversampler.hpp" // HalfbandFIR, hbtaps::kA/kB
-#include "../dpf-plugin/TapeEchoParams.hpp" // shared discrete-value helpers
+#include "../daf-plugin/TapeEchoParams.hpp" // shared discrete-value helpers
 
 namespace duskaudio
 {
 
 //==============================================================================
-// Small framework-free building blocks now live in plugins/shared-dpf/dsp:
+// Small framework-free building blocks now live in plugins/shared-daf/dsp:
 //   SmoothedValue            -> DuskSmoothed.hpp
 //   OnePoleLP / OnePoleHP    -> DuskFilters.hpp
 //   DCBlocker                -> DuskFilters.hpp (default R = 0.9975, ~20 Hz @ 48k;

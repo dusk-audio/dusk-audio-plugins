@@ -3,8 +3,8 @@
 // MultiSynthDSP.hpp — top-level Multi-Synth engine (framework-free C++17).
 // Product name: Sunset Circuits (internal class/namespace names stay stable).
 //
-// Zero JUCE/DPF includes. One class wrapping the whole instrument: voices,
-// mod matrix, arpeggiator, effects. The DPF shell owns MIDI parsing and the
+// Zero JUCE/DAF includes. One class wrapping the whole instrument: voices,
+// mod matrix, arpeggiator, effects. The DAF shell owns MIDI parsing and the
 // parameter table; it forwards everything through the thread-safe atomic API
 // below.
 //

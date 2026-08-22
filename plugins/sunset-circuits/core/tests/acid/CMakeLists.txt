@@ -1,4 +1,4 @@
-# Acid engine standalone offline validation harness (framework-free; no JUCE/DPF).
+# Acid engine standalone offline validation harness (framework-free; no JUCE/DAF).
 # Self-contained: builds acid_test directly against the header-only AcidEngine.
 cmake_minimum_required(VERSION 3.15)
 project(acid_core_tests CXX)

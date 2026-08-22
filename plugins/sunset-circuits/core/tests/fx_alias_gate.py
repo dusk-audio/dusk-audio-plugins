@@ -65,7 +65,7 @@ from _harness import render, scratch_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_BIN = os.path.join(HERE, "build", "preset_render")
-PARAMS_HPP = os.path.join(HERE, "..", "..", "dpf-plugin", "MultiSynthParams.hpp")
+PARAMS_HPP = os.path.join(HERE, "..", "..", "daf-plugin", "MultiSynthParams.hpp")
 OUT = scratch_dir("msynth_fxalias")
 
 # alias_gate's published voice-path reference at 2x oversampling, quoted by the

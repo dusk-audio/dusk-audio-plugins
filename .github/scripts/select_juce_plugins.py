@@ -58,7 +58,7 @@ WINDOWS_PLUGINS = ["FourKEQ", "MultiComp", "SpectrumAnalyzer", "ChordAnalyzer"]
 # cross-tree include.
 FLEET_WIDE = (
     "plugins/shared/",
-    "plugins/shared-dpf/dsp/DuskFilters.hpp",
+    "plugins/shared-daf/dsp/DuskFilters.hpp",
     "cmake/",
     "CMakeLists.txt",
     ".github/workflows/juce-compile-check.yml",
@@ -69,9 +69,9 @@ FLEET_WIDE = (
 )
 
 # Subtrees inside a plugin directory that no JUCE target compiles. The workflow's
-# own paths filter already subtracts these; repeated here so a DPF-only change
+# own paths filter already subtracts these; repeated here so a DAF-only change
 # that slips through the filter still selects nothing rather than everything.
-NON_JUCE_SUBTREES = ("/dpf-plugin/", "/core/")
+NON_JUCE_SUBTREES = ("/daf-plugin/", "/core/")
 
 
 def changed_files(base_ref: str) -> list[str]:

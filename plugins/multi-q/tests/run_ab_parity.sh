@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# run_ab_parity.sh — JUCE-vs-DPF Multi-Q parity harness (one command).
+# run_ab_parity.sh — JUCE-vs-DAF Multi-Q parity harness (one command).
 #
-# Proves the DPF port ("Multi-Q 2") matches the JUCE original:
+# Proves the DAF port ("Multi-Q 2") matches the JUCE original:
 #   1. Parameter names + order identical (catches silent reorders).
 #   2. Choice-driven params resolve on both (params set by display text).
 #   3. Digital / bypass at 1x null to the float floor (bit-exact DSP).
@@ -10,15 +10,15 @@
 #
 # Out of scope by decision: British (accepted upgraded 4K core). The 1x latency-
 # reporting difference (JUCE reports constant max-oversampler latency for PDC;
-# DPF Digital reports 0) is reported, not gated.
+# DAF Digital reports 0) is reported, not gated.
 #
-# Usage: run_ab_parity.sh [JUCE.clap] [DPF.clap]
+# Usage: run_ab_parity.sh [JUCE.clap] [DAF.clap]
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 JCLAP="${1:-$REPO/build/bin/CLAP/Multi-Q.clap}"
-DCLAP="${2:-$REPO/plugins/multi-q/dpf-plugin/build/bin/multi_q_2.clap}"
+DCLAP="${2:-$REPO/plugins/multi-q/daf-plugin/build/bin/multi_q_2.clap}"
 CLAPINC="$REPO/external/clap-juce-extensions/clap-libs/clap/include"
 WORK="$(mktemp -d)"
 HOST="$WORK/clap_ab_host"
@@ -48,7 +48,7 @@ nul()  { python3 "$NULL" "$WORK/j_$1.wav" "$WORK/d_$1.wav" --label "$2" "${@:3}"
 echo "== 2. bit-exact null @ 1x =="
 render def  --signal noise
 nul def "Digital-defaults"
-render byp  --signal noise --param "Bypass=On"          # DPF accepts On/1 alike
+render byp  --signal noise --param "Bypass=On"          # DAF accepts On/1 alike
 nul byp "Bypass-passthru"
 
 echo "== 3. magnitude parity (active / Tube / oversampled) =="
@@ -75,7 +75,7 @@ def off(p):
     s=struct.unpack('<%df'%(len(d)//4),d);x=list(s[0::ch])
     return next((i for i,v in enumerate(x) if abs(v)>1e-6),-1)
 j,dp=off(sys.argv[1]),off(sys.argv[2])
-print(f"  JUCE latency={j} smp  DPF latency={dp} smp  (delta {j-dp} — JUCE reports constant max-OS latency for PDC)")
+print(f"  JUCE latency={j} smp  DAF latency={dp} smp  (delta {j-dp} — JUCE reports constant max-OS latency for PDC)")
 PY
 
 echo

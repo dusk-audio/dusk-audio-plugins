@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // MultiQMatch.cpp — implementation of the framework-free spectrum-match EQ core.
 // See MultiQMatch.hpp for the thread model. The learning + correction math is a
@@ -31,7 +31,7 @@ static double besselI0(double x)
 }
 
 // FFTr2's implementation moved with its declaration to
-// plugins/shared-dpf/dsp/DuskFft.hpp (header-only). See the note in the header.
+// plugins/shared-daf/dsp/DuskFft.hpp (header-only). See the note in the header.
 
 //==============================================================================
 // MultiQMatch — lifecycle

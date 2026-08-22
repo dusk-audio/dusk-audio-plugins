@@ -41,8 +41,8 @@ PLUGINS=(
     "Sunset Circuits"
 )
 
-# Sunset Circuits is the DPF port, not a JUCE plugin: its bundle is named
-# sunset_circuits (not after the display name), it may live in the DPF build
+# Sunset Circuits is the DAF port, not a JUCE plugin: its bundle is named
+# sunset_circuits (not after the display name), it may live in the DAF build
 # tree rather than ~/.vst3, and it carries its own offline gate suite. It is
 # handled by run_sunset_circuits_tests() instead of the generic path below.
 SUNSET_NAME="Sunset Circuits"
@@ -226,14 +226,14 @@ run_audio_tests() {
 }
 
 #------------------------------------------------------------------------------
-# Sunset Circuits (DPF) - core gate suite + pluginval on the built VST3
+# Sunset Circuits (DAF) - core gate suite + pluginval on the built VST3
 #------------------------------------------------------------------------------
 
-# Prefer an installed bundle, fall back to the DPF build tree (which is where it
-# lands when the plugin is configured with -DDUSK_DPF_INSTALL_LOCAL=OFF).
+# Prefer an installed bundle, fall back to the DAF build tree (which is where it
+# lands when the plugin is configured with -DDUSK_DAF_INSTALL_LOCAL=OFF).
 sunset_vst3_path() {
     local installed="$VST3_DIR/${SUNSET_BUNDLE}.vst3"
-    local built="$PROJECT_DIR/plugins/sunset-circuits/dpf-plugin/build/bin/${SUNSET_BUNDLE}.vst3"
+    local built="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.vst3"
     if [ -d "$installed" ]; then
         echo "$installed"
     elif [ -d "$built" ]; then
@@ -271,7 +271,7 @@ run_sunset_circuits_tests() {
     local vst3
     vst3="$(sunset_vst3_path)"
     if [ -z "$vst3" ]; then
-        print_skip "No ${SUNSET_BUNDLE}.vst3 found (build dpf-plugin, or install to $VST3_DIR)"
+        print_skip "No ${SUNSET_BUNDLE}.vst3 found (build daf-plugin, or install to $VST3_DIR)"
         return
     fi
     print_pass "VST3 exists: $vst3"
@@ -291,7 +291,7 @@ run_sunset_circuits_tests() {
     fi
 
     local lv2="$LV2_DIR/${SUNSET_BUNDLE}.lv2"
-    [ -d "$lv2" ] || lv2="$PROJECT_DIR/plugins/sunset-circuits/dpf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
+    [ -d "$lv2" ] || lv2="$PROJECT_DIR/plugins/sunset-circuits/daf-plugin/build/bin/${SUNSET_BUNDLE}.lv2"
     if [ -f "$lv2/manifest.ttl" ]; then
         print_pass "LV2 manifest.ttl exists"
     else
@@ -310,7 +310,7 @@ run_sunset_circuits_tests() {
     fi
 
     # --skip-gui-tests is mandatory: pluginval's editor tests segfault headless
-    # for every DPF plugin (a host-side XEmbed issue, docs/dpf-migration
+    # for every DAF plugin (a host-side XEmbed issue, docs/daf-migration
     # 00-OVERVIEW.md landmine 9), so a GUI run says nothing about this plugin.
     # Strictness 8 is the bar the Sunset Circuits QA checklist declares
     # authoritative for the 222-parameter state round-trip.
@@ -322,7 +322,7 @@ run_sunset_circuits_tests() {
         --skip-gui-tests --timeout-ms 270000 --verbose > "$output_file" 2>&1; then
         print_pass "Pluginval level $level passed"
     elif grep -q "Starting test" "$output_file" && ! grep -q "FAILED" "$output_file"; then
-        # DPF tears down non-zero after a clean run on some hosts; tolerated only
+        # DAF tears down non-zero after a clean run on some hosts; tolerated only
         # when the log proves tests ran and none failed (same rule as CI).
         print_pass "Pluginval level $level passed (non-zero exit on teardown, tests clean)"
     else
@@ -373,7 +373,7 @@ main() {
                 echo "  --help            Show this help"
                 echo ""
                 echo "Note: \"Sunset Circuits\" (also accepted as \"sunset-circuits\") is the"
-                echo "DPF port. Instead of the shared audio analyzer it runs its own offline"
+                echo "DAF port. Instead of the shared audio analyzer it runs its own offline"
                 echo "gate suite (plugins/sunset-circuits/core/tests/run_all.sh, several"
                 echo "minutes) which --skip-audio skips, plus pluginval at strictness 8 with"
                 echo "--skip-gui-tests."
@@ -398,7 +398,7 @@ main() {
     for plugin in "${plugins_to_test[@]}"; do
         print_header "Testing: $plugin"
 
-        # DPF port with its own bundle name and gate suite; accept the slug too.
+        # DAF port with its own bundle name and gate suite; accept the slug too.
         if [ "$plugin" = "$SUNSET_NAME" ] || [ "$plugin" = "sunset-circuits" ]; then
             run_sunset_circuits_tests "$skip_pluginval" "$skip_audio"
             continue

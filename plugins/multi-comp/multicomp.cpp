@@ -4810,7 +4810,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
     // DEAD PARAMETER: nothing reads "studio_vca_mix" — Studio VCA uses the
     // global "mix". Keep it in the JUCE layout for saved-session compatibility;
-    // do not wire or remove it here. It is intentionally dropped by the DPF port
+    // do not wire or remove it here. It is intentionally dropped by the DAF port
     // in #130, where JUCE session compatibility no longer applies.
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_mix", "Mix",

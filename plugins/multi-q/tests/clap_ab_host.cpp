@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
     // args: --clap PATH --out WAV --mix N [--signal noise|impulse] [--param "Name=val"]...
     //       --dump-params        print each param (index, name, stepped, choice
     //                            labels) as a stable table to stdout and exit.
-    //                            Diff two dumps (JUCE vs DPF .clap) to prove the
+    //                            Diff two dumps (JUCE vs DAF .clap) to prove the
     //                            parameter lists match by name/order/choices —
     //                            catches silent reorders the count static_assert
     //                            in MultiQParams.hpp cannot.
@@ -130,11 +130,11 @@ int main(int argc, char** argv) {
     uint32_t pc = params->count(plug);
 
     // --dump-params: emit a stable, framework-neutral parameter table for A/B
-    // diffing (JUCE MultiQ.clap vs DPF multi_q_2.clap). We deliberately print
+    // diffing (JUCE MultiQ.clap vs DAF multi_q_2.clap). We deliberately print
     // only cross-framework-comparable fields: index order, display name, whether
     // the param is stepped (choice/bool), and the enumerated choice labels
     // (value_to_text over the integer range). Raw min/max/skew are NOT printed —
-    // clap-juce-extensions and DPF normalise ranges differently, and any range
+    // clap-juce-extensions and DAF normalise ranges differently, and any range
     // mismatch that actually matters shows up in the audio null test instead.
     if (dumpParams) {
         printf("# param dump: %s (%u params)\n", desc->name ? desc->name : "?", pc);
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
             // stepped flag: clap-juce-extensions omits CLAP_PARAM_IS_STEPPED for
             // AudioParameterChoice, so we can't trust it to decide which params
             // are choices. The runner compares choice labels only on indices the
-            // DPF dump marks stepped, so continuous small-range params printed
+            // DAF dump marks stepped, so continuous small-range params printed
             // here (e.g. Gain -24..24) are ignored downstream.
             const long lo = (long)std::lround(info.min_value);
             const long hi = (long)std::lround(info.max_value);

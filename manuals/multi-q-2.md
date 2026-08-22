@@ -24,7 +24,7 @@ saturation, and Tube for vintage low-end weight and air. It is not a
 linear-phase mastering EQ and not a de-noiser; the built-in limiter is a safety
 ceiling, not a loudness maximizer.
 
-Multi-Q 2 is the DPF successor to the JUCE Multi-Q. All 190 host parameters
+Multi-Q 2 is the DAF successor to the JUCE Multi-Q. All 190 host parameters
 match the original in name, order, and range, and the Digital path nulls
 against it bit-exactly at 1x, so existing ears carry over even though sessions
 from the JUCE build do not load into it.

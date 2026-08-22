@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
-// MultiQMatch.hpp — framework-free spectrum-match EQ core (zero JUCE/DPF).
+// MultiQMatch.hpp — framework-free spectrum-match EQ core (zero JUCE/DAF).
 //
 // Line-for-line port of plugins/multi-q/EQMatchProcessor.h (Logic-Pro-style Match
 // EQ): Welch-method spectrum capture (learn current + reference), correction-curve
@@ -29,7 +29,7 @@
 
 #include "MultiQFilters.hpp"  // kMultiQPi, safeIsFinite
 #include "MultiQParams.hpp"   // LinearSmoothedValue
-#include "../../shared-dpf/dsp/DuskFft.hpp"  // duskaudio::FFTr2 (promoted from here)
+#include "../../shared-daf/dsp/DuskFft.hpp"  // duskaudio::FFTr2 (promoted from here)
 
 #include <array>
 #include <atomic>
@@ -66,7 +66,7 @@ struct MatchSpinLock
 };
 
 // FFTr2 lived here until it was promoted VERBATIM to the shared tree
-// (plugins/shared-dpf/dsp/DuskFft.hpp) so the Spectrum Analyzer 2 port can
+// (plugins/shared-daf/dsp/DuskFft.hpp) so the Spectrum Analyzer 2 port can
 // build on the same DSP-grade FFT. Same namespace, same name, same arithmetic;
 // the A/B harness gates that nothing moved.
 

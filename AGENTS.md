@@ -18,7 +18,7 @@ finished work uncommitted and describe it in your report.
 
 ## The audio thread is real-time
 
-Everything reachable from `processBlock` (JUCE) or `run()` (DPF) is real-time.
+Everything reachable from `processBlock` (JUCE) or `run()` (DAF) is real-time.
 In both frameworks:
 
 - **No allocation.** No `new`, `make_unique`, `push_back`, `resize`,
@@ -40,12 +40,12 @@ JUCE specifics:
 - Cache `std::atomic<float>*` from `getRawParameterValue()` in the constructor;
   never call it from `processBlock`.
 
-DPF specifics:
+DAF specifics:
 
-- `DuskAudio::ScopedFlushDenormals` (`plugins/shared-dpf/dsp/DuskDenormals.hpp`)
+- `DuskAudio::ScopedFlushDenormals` (`plugins/shared-daf/dsp/DuskDenormals.hpp`)
   at the top of `run()` — the framework-free `ScopedNoDenormals` equivalent.
 - Parameters arrive on `setParameterValue()`; store each in a
-  `std::atomic<float>` and load it in `run()` (the pattern the existing DPF
+  `std::atomic<float>` and load it in `run()` (the pattern the existing DAF
   ports use) — lock-free, no JUCE APIs.
 
 These rules govern the audio callback. They do **not** govern test executables or
@@ -90,7 +90,7 @@ Parameter IDs are `PARAM_*` constants. Define ranges once in a shared table and
 drive `initParameter`, the UI mirror and preset keys from that one table, so they
 cannot drift.
 
-DPF exposes no taper mechanism the shipping formats honour —
+DAF exposes no taper mechanism the shipping formats honour —
 `kParameterIsLogarithmic` is read only by VST2 and LV2 metadata, not by VST3,
 CLAP or AU. Non-linear parameters therefore expose a normalised 0..1 host domain
 and map internally.
@@ -106,28 +106,28 @@ half-applied state is worse than a rejected one. Type-check every property befor
 converting; a missing or wrong-typed entry casts to 0 silently. Parse and format
 floats locale-independently in both directions.
 
-## DPF specifics
+## DAF specifics
 
-- Build DPF from the `dusk-audio/DPF` fork, never upstream.
+- Build DAF from the `dusk-audio/DAF` fork, never upstream.
 - `setLatency()` from `run()` **is** supported: `DistrhoPlugin.hpp` documents it,
   and the fork's CLAP wrapper latches the change and re-requests restart.
 - Every effect must declare `#define DISTRHO_PLUGIN_EXTRA_IO { 1, 1 },` — the
   trailing comma is required — and track the host's choice via `ioChanged()`.
   Without it Logic omits the AU from every mono track's insert menu, and `auval`
   passes either way so it is not a gate.
-- Shared UI and DSP code lives in `plugins/shared-dpf/`. Check there before
+- Shared UI and DSP code lives in `plugins/shared-daf/`. Check there before
   writing anything new, and keep changes to shared headers additive — several
   plugins compile them.
 
-## Building and testing a DPF plugin
+## Building and testing a DAF plugin
 
-DPF and DPF-Widgets are sibling checkouts of this repository (`../DPF`,
-`../DPF-Widgets`), as JUCE is. CMake finds them automatically in a normal layout;
+DAF and DAF-Widgets are sibling checkouts of this repository (`../DAF`,
+`../DAF-Widgets`), as JUCE is. CMake finds them automatically in a normal layout;
 pass the paths explicitly only when yours differ.
 
 ```bash
-cmake -S plugins/<name>/dpf-plugin -B build-<name> -DCMAKE_BUILD_TYPE=Release \
-  -DDUSK_DPF_INSTALL_LOCAL=OFF
+cmake -S plugins/<name>/daf-plugin -B build-<name> -DCMAKE_BUILD_TYPE=Release \
+  -DDUSK_DAF_INSTALL_LOCAL=OFF
 cmake --build build-<name> -j8
 ctest --test-dir build-<name> --output-on-failure
 ```

@@ -8,8 +8,8 @@
 
 // The Nyquist-clamp primitive only. DuskFilters.hpp is framework-free (it pulls
 // in <algorithm>/<cmath>/<complex> and nothing else), so including it here does
-// not drag any DPF surface into the JUCE build.
-#include "../../shared-dpf/dsp/DuskFilters.hpp"
+// not drag any DAF surface into the JUCE build.
+#include "../../shared-daf/dsp/DuskFilters.hpp"
 
 //==============================================================================
 // Nyquist guard for FIXED filter design frequencies.
@@ -20,7 +20,7 @@
 // negative, so the RBJ denominator (1 + alpha) shrinks or changes sign and the
 // poles land OUTSIDE the unit circle. The filter then diverges geometrically
 // until float overflow, and the next transposed-direct-form-II update evaluates
-// Inf - Inf = NaN. That is the failure measured in the DPF tape core (pole
+// Inf - Inf = NaN. That is the failure measured in the DAF tape core (pole
 // radius ~2.4 at an 8 kHz host rate, GH #137/#156); this file is the JUCE
 // original that core was ported from and carries the identical defect, so the
 // same guard applies. prepareToPlay at 8 kHz with 2x oversampling gives a
@@ -28,7 +28,7 @@
 //
 // The ceiling is 0.45 * fs, the same value the file already applied ad hoc
 // (safeFreq = nyquist * 0.9 in prepare, maxFilterFreq = fs * 0.45 in
-// updateFilters), and the same value the DPF core uses. It is NOT the 0.4998
+// updateFilters), and the same value the DAF core uses. It is NOT the 0.4998
 // the shared duskaudio::Biquad designers use, and the two must not be
 // "harmonized" -- that one sits behind user-facing EQs whose bands reach
 // 20 kHz. See DuskFilters.hpp for that side.
@@ -86,7 +86,7 @@ public:
         // Nyquist ceiling once fs falls below 44.4 Hz and hands the prototype a
         // corner above Nyquist. Latent rather than reachable, but it is the
         // ordering the shared helper rejects, so it goes through the helper like
-        // every other design frequency here (the DPF core's counterpart clamps
+        // every other design frequency here (the DAF core's counterpart clamps
         // exactly this way). The 20 Hz floor is this filter's own, kept ahead of
         // the ceiling; the result is unchanged at any fs at or above 44.5 Hz.
         cutoffHz = nyquistSafeHz(sampleRate, std::max(cutoffHz, 20.0));

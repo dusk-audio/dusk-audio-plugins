@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // MultiQFilters.hpp — framework-free filter primitives for the Multi-Q DSP core.
 //
@@ -30,7 +30,7 @@ namespace duskaudio
 inline constexpr double kMultiQPi = 3.14159265358979323846;
 
 // Nyquist ceiling for design frequencies AND for the prewarped bandwidth terms in
-// this file. Same value as duskaudio::kMaxDesignFreqRatio in shared-dpf; kept as a
+// this file. Same value as duskaudio::kMaxDesignFreqRatio in shared-daf; kept as a
 // separate constant so this header stays independent of the shared designers it
 // warns against below, but the two are meant to move together.
 inline constexpr double kMqMaxDesignFreqRatio = 0.4998;
@@ -88,7 +88,7 @@ struct MqBiquadCoeffs
 //==============================================================================
 // Cytomic SVF (Andrew Simper's "Linear Trapezoidal Integrated SVF").
 // Used for the Digital dynamic-gain filters. NOTE: this is a DIFFERENT topology
-// and coefficient set from shared-dpf DuskSVF (JUCE-TPT {g,R2,h}); do not
+// and coefficient set from shared-daf DuskSVF (JUCE-TPT {g,R2,h}); do not
 // substitute — the dynamic-EQ response depends on this exact form.
 struct SVFCoeffs
 {
@@ -275,12 +275,12 @@ struct StereoBiquad
 // RBJ shelf/HP/LP). Pre-warps BANDWIDTH (kbw = tan(pi*bw/sr)) for peak/notch/BP
 // and turnover (k = tan(pi*fc/sr)) for shelves/HP/LP.
 //
-// ⚠ Do NOT swap these for shared-dpf DuskFilters::peak/shelf — those use RBJ
+// ⚠ Do NOT swap these for shared-daf DuskFilters::peak/shelf — those use RBJ
 // alpha = sin(w0)/2Q, a different transfer function that CRAMS near Nyquist.
 namespace amb
 {
     // Nyquist guard for design frequencies. 0.4998 matches
-    // duskaudio::kMaxDesignFreqRatio in shared-dpf/dsp/DuskFilters.hpp; the literal
+    // duskaudio::kMaxDesignFreqRatio in shared-daf/dsp/DuskFilters.hpp; the literal
     // is kept here only so this header stays independent of the shared designers it
     // warns against above.
     //

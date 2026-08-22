@@ -123,7 +123,7 @@ endif()
 # --- Framework-free core tests (GH #184) ------------------------------------
 # Golden-signal calibration suite for core/. Deliberately links NO JUCE: that
 # this target builds is itself the framework-freedom gate for core/, and the
-# assertions lock meter calibration so the DPF port cannot drift it.
+# assertions lock meter calibration so the DAF port cannot drift it.
 if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     add_executable(SpectrumMetersGoldenTest
         core/tests/test_meters_golden.cpp
@@ -137,7 +137,7 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     )
 
     # SpectrumRing writer-vs-reader stress harness. The gating run is the
-    # ThreadSanitizer build documented in docs/dpf-migration/10-spectrum-analyzer.md
+    # ThreadSanitizer build documented in docs/daf-migration/10-spectrum-analyzer.md
     # and in the file header; this plain build keeps the torn-read oracle
     # exercised wherever TSan is unavailable.
     add_executable(SpectrumRingStressTest

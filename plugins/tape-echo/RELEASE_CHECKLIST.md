@@ -1,6 +1,6 @@
 # Tape Echo 2 release checklist
 
-The production version is declared in `dpf-plugin/CMakeLists.txt`. A release tag
+The production version is declared in `daf-plugin/CMakeLists.txt`. A release tag
 must be named `tape-echo-2-v<version>`. The base version before the first `-`
 must match that value exactly; suffixes such as `-rc.1` are allowed.
 
@@ -44,7 +44,7 @@ must match that value exactly; suffixes such as `-rc.1` are allowed.
 
 ## Tagged release
 
-The `DPF build and release` workflow builds Linux x64/ARM64, macOS universal,
+The `DAF build and release` workflow builds Linux x64/ARM64, macOS universal,
 and Windows x64 artifacts. By default, the workflow ad-hoc signs the macOS
 bundles (a valid signature, but with no Apple identity behind it); they are not
 Developer ID signed or notarized. The workflow warns, packages them, and the

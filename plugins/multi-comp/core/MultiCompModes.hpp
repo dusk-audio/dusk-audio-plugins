@@ -6,8 +6,8 @@
 
 #include "MultiCompParams.hpp"
 #include "MultiCompHelpers.hpp"
-#include "../../shared-dpf/dsp/DuskCrossover.hpp"
-#include "../../shared-dpf/dsp/DuskFilters.hpp"
+#include "../../shared-daf/dsp/DuskCrossover.hpp"
+#include "../../shared-daf/dsp/DuskFilters.hpp"
 #include "MultiCompHardware.hpp"
 
 #include <algorithm>

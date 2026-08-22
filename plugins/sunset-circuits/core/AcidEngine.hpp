@@ -2,7 +2,7 @@
 //
 // AcidEngine.hpp — the "classic acid box" voice + 16-step pattern sequencer.
 //
-// Framework-free C++17 (zero JUCE/DPF includes). Three classes:
+// Framework-free C++17 (zero JUCE/DAF includes). Three classes:
 //
 //   * AcidFilter     — 3-pole (18 dB/oct) diode-ladder-flavoured resonant lowpass.
 //   * AcidVoice      — mono voice: one dedicated band-limited oscillator, a

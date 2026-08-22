@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio — GNU GPL v3.0 or later (see repository LICENSE).
-// Third-party components in the built plugins (DPF — ISC; Dear ImGui — MIT; and
-// others) are attributed in plugins/shared-dpf/THIRD_PARTY_LICENSES.md.
+// Third-party components in the built plugins (DAF — ISC; Dear ImGui — MIT; and
+// others) are attributed in plugins/shared-daf/THIRD_PARTY_LICENSES.md.
 //
 // MultiQDSP.cpp — Digital-character DSP for the Multi-Q core. Transcribed from
 // MultiQ::processBlock's Digital branch (per-band routing + saturation + enable
