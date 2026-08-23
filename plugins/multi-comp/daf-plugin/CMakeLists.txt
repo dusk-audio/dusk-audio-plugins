@@ -37,4 +37,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
   target_compile_features(MultiCompPluginLayerTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompPluginLayer COMMAND MultiCompPluginLayerTest)
+
+  add_executable(DuskUserPresetStoreTest
+    ../../shared-daf/ui/tests/DuskUserPresetStoreTest.cpp)
+  target_include_directories(DuskUserPresetStoreTest PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/ui")
+  target_compile_features(DuskUserPresetStoreTest PRIVATE cxx_std_17)
+  add_test(NAME DuskUserPresetStore COMMAND DuskUserPresetStoreTest)
 endif()

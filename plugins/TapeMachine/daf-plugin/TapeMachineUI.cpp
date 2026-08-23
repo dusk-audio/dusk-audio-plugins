@@ -17,6 +17,7 @@
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"   // shared DAF Patreon "Special Thanks" overlay (click title)
+#include "DuskUserPresetStore.hpp"
 #include "util/CrashLog.hpp"
 
 #include <cmath>
@@ -229,60 +230,60 @@ private:
     }
 
     //--- user preset file library (~/.config/DuskAudio/TapeMachine2/presets) ---
-    std::string configDir() const
+    std::filesystem::path configDir() const
     {
-        const char* home = std::getenv("HOME");
-        return std::string(home ? home : ".") + "/.config/DuskAudio/TapeMachine2/presets";
+        return duskdaf::userPresetDirectory("TapeMachine2");
     }
 
     void scanUserPresets()
     {
-        userPresets.clear();
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        for (fs::directory_iterator it(configDir(), ec), end; !ec && it != end; it.increment(ec))
-        {
-            if (it->path().extension() != ".tmpreset") continue;
-            UserPreset up;
-            up.path = it->path().string();
-            up.name = it->path().stem().string();
-            for (uint32_t i = 0; i < kParamVuL; ++i) up.vals[i] = kTmParams[i].def;
-            std::ifstream f(it->path());
-            std::string line;
-            while (std::getline(f, line))
-            {
-                const auto eq = line.find('=');
-                if (eq == std::string::npos) continue;
-                const std::string key = line.substr(0, eq);
-                if (key == "name") { up.name = line.substr(eq + 1); continue; }
-                const float v = (float) std::atof(line.c_str() + eq + 1);
+        duskdaf::scanUserPresets(
+            configDir(), ".tmpreset", userPresets,
+            [](const std::filesystem::path& path, UserPreset& preset) {
                 for (uint32_t i = 0; i < kParamVuL; ++i)
-                    if (key == kTmParams[i].id) { up.vals[i] = v; break; }
-            }
-            userPresets.push_back(std::move(up));
-        }
-        std::sort(userPresets.begin(), userPresets.end(),
-                  [](const UserPreset& a, const UserPreset& b) { return a.name < b.name; });
+                    preset.vals[i] = kTmParams[i].def;
+                std::ifstream input(path);
+                std::string line;
+                while (std::getline(input, line))
+                {
+                    const auto equals = line.find('=');
+                    if (equals == std::string::npos) continue;
+                    const std::string key = line.substr(0, equals);
+                    if (key == "name")
+                    {
+                        preset.name = line.substr(equals + 1);
+                        continue;
+                    }
+                    const float value = static_cast<float>(
+                        std::atof(line.c_str() + equals + 1));
+                    for (uint32_t i = 0; i < kParamVuL; ++i)
+                        if (key == kTmParams[i].id)
+                        {
+                            preset.vals[i] = value;
+                            break;
+                        }
+                }
+                // Preserve the existing browser behavior: an unreadable file
+                // still appears under its stem with parameter defaults.
+                return true;
+            });
     }
 
-    void saveUserPreset(const char* rawName)
+    bool saveUserPreset(const char* rawName)
     {
-        std::string name(rawName);
-        while (!name.empty() && name.back() == ' ') name.pop_back();
-        if (name.empty()) return;
-        std::error_code ec;
-        std::filesystem::create_directories(configDir(), ec);
-        std::string fn;
-        for (char c : name) fn += std::isalnum((unsigned char)c) ? c : '_';
-        std::ofstream f(configDir() + "/" + fn + ".tmpreset", std::ios::trunc);
-        if (!f) return;
-        f << "name=" << name << "\n";
-        for (uint32_t i = 0; i < kParamVuL; ++i)
-            if (i != kParamBypass) f << kTmParams[i].id << "=" << values[i] << "\n";
-        f.close();
+        const auto saved = duskdaf::writeUserPreset(
+            configDir(), ".tmpreset", rawName,
+            [this](std::ostream& output) {
+                for (uint32_t i = 0; i < kParamVuL; ++i)
+                    if (i != kParamBypass)
+                        output << kTmParams[i].id << '=' << values[i] << '\n';
+            });
+        if (!saved)
+            return false;
         scanUserPresets();
         currentPreset = -1;
-        currentUserName = name;
+        currentUserName = saved.name;
+        return true;
     }
 
     void loadUserPreset(const std::string& path, const std::string& name)
@@ -739,16 +740,36 @@ private:
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(190, 191, 193, 255));
         if (ImGui::BeginPopupModal("Save Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
+            const bool popupAppearing = ImGui::IsWindowAppearing();
+            if (popupAppearing) saveFailed = false;
             ImGui::TextUnformatted("Preset name");
             ImGui::SetNextItemWidth(240.0f * s);
-            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            if (popupAppearing) ImGui::SetKeyboardFocusHere();
             const bool enter = ImGui::InputText("##savename", saveBuf, sizeof(saveBuf),
                                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
             const bool doSave = ImGui::Button("Save") || enter;
             ImGui::SameLine();
             const bool cancel = ImGui::Button("Cancel");
-            if (doSave && saveBuf[0] != '\0') { saveUserPreset(saveBuf); ImGui::CloseCurrentPopup(); }
-            if (cancel) ImGui::CloseCurrentPopup();
+            if (doSave && saveBuf[0] != '\0')
+            {
+                if (saveUserPreset(saveBuf))
+                {
+                    saveFailed = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    saveFailed = true;
+                }
+            }
+            if (saveFailed)
+                ImGui::TextColored(ImVec4(0.75f, 0.16f, 0.12f, 1.0f),
+                                   "Could not save. Try a different name.");
+            if (cancel)
+            {
+                saveFailed = false;
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::EndPopup();
         }
         ImGui::PopStyleColor(6);
@@ -1220,6 +1241,7 @@ private:
     struct UserPreset { std::string name, path; float vals[kParamVuL]; };
     std::vector<UserPreset> userPresets;
     char    saveBuf[64] = {};
+    bool    saveFailed = false;   // last SAVE wrote nothing; dialog stays open
     bool    showAdvanced = false;   // hidden advanced (Repro EQ) panel toggle
     bool    showSupporters = false; // Patreon "Special Thanks" overlay (click the title nameplate)
     bool    gripCursorSet = false;  // NWSE cursor currently pushed to the window
