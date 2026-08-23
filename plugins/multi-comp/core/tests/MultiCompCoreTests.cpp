@@ -1870,6 +1870,239 @@ void testAnalogStereoLinkSharesEnvelope()
     }
 }
 
+std::array<float, 2> renderInternalStereoLink(int mode, float linkAmount,
+                                               int oversampling)
+{
+    constexpr int blockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(mode);
+    dsp.setOversampling(oversampling);
+    dsp.setStereoLink(linkAmount);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScLowGain, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighGain, 0.0f);
+    configureStrongCompression(dsp, mode);
+    dsp.prepare(48000.0, blockSize);
+
+    std::array<float, blockSize> inputLeft{}, inputRight{};
+    std::array<float, blockSize> outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    std::array<double, 2> power{{0.0, 0.0}};
+    constexpr int totalBlocks = 120;
+    constexpr int measuredBlocks = 8;
+    for (int block = 0; block < totalBlocks; ++block)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const float carrier = std::sin(2.0f * kPi * 997.0f
+                * static_cast<float>(block * blockSize + i) / 48000.0f);
+            inputLeft[static_cast<size_t>(i)] = 0.5f * carrier;
+            inputRight[static_cast<size_t>(i)] = 0.02f * carrier;
+        }
+        dsp.processBlock(input, output, 2, blockSize);
+        if (block >= totalBlocks - measuredBlocks)
+            for (int i = 0; i < blockSize; ++i)
+            {
+                power[0] += static_cast<double>(outputLeft[static_cast<size_t>(i)])
+                          * outputLeft[static_cast<size_t>(i)];
+                power[1] += static_cast<double>(outputRight[static_cast<size_t>(i)])
+                          * outputRight[static_cast<size_t>(i)];
+            }
+    }
+    constexpr double sampleCount = measuredBlocks * blockSize;
+    return {{static_cast<float>(std::sqrt(power[0] / sampleCount)),
+             static_cast<float>(std::sqrt(power[1] / sampleCount))}};
+}
+
+void testSplitOversamplingMatchesFunctorPath()
+{
+    for (const int factor : {1, 2, 4})
+    {
+        duskaudio::MultiCompAntiAliasing direct, split;
+        direct.setFactor(factor);
+        split.setFactor(factor);
+        direct.prepare(64);
+        split.prepare(64);
+        direct.setFactor(factor);
+        split.setFactor(factor);
+        direct.reset();
+        split.reset();
+        float maxDelta = 0.0f;
+        float signalPeak = 0.0f;
+        for (int sampleIndex = 0; sampleIndex < 4096; ++sampleIndex)
+        {
+            const float input = 0.47f * std::sin(2.0f * kPi * 7313.0f
+                * static_cast<float>(sampleIndex) / 48000.0f);
+            const auto process = [](float sample) noexcept {
+                return 0.75f * sample + 0.1f * sample * sample * sample;
+            };
+            const float expected = direct.processSample(input, process);
+            std::array<float, 4> phases{};
+            split.upsampleSample(input, phases.data());
+            for (int phase = 0; phase < factor; ++phase)
+                phases[static_cast<size_t>(phase)] = process(
+                    phases[static_cast<size_t>(phase)]);
+            const float actual = split.downsampleSample(phases.data());
+            maxDelta = std::max(maxDelta, std::abs(actual - expected));
+            signalPeak = std::max(signalPeak, std::max(std::abs(actual), std::abs(expected)));
+        }
+        std::printf("split oversampling: factor=%dx signal peak %.9g max delta %.9g\n",
+                    factor, signalPeak, maxDelta);
+        require(signalPeak > 1.0e-4f,
+                "split oversampling comparison produces output");
+        require(maxDelta == 0.0f,
+                "split oversampling is sample-identical to the functor path");
+    }
+}
+
+float renderInternalSidechainShelf(duskaudio::MultiCompMode mode, float highGainDb)
+{
+    constexpr int blockSize = 256;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(mode));
+    dsp.setOversampling(0);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScLowGain, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighFreq, 2000.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighGain, highGainDb);
+    configureStrongCompression(dsp, static_cast<int>(mode));
+    dsp.prepare(48000.0, blockSize);
+
+    std::array<float, blockSize> input{}, output{};
+    const float* inputs[] = {input.data()};
+    float* outputs[] = {output.data()};
+    double power = 0.0;
+    constexpr int totalBlocks = 120;
+    constexpr int measuredBlocks = 8;
+    for (int block = 0; block < totalBlocks; ++block)
+    {
+        for (int i = 0; i < blockSize; ++i)
+            input[static_cast<size_t>(i)] = 0.2f * std::sin(2.0f * kPi * 8000.0f
+                * static_cast<float>(block * blockSize + i) / 48000.0f);
+        dsp.processBlock(inputs, outputs, 1, blockSize);
+        if (block >= totalBlocks - measuredBlocks)
+            for (float sample : output) power += static_cast<double>(sample) * sample;
+    }
+    return static_cast<float>(std::sqrt(power / (measuredBlocks * blockSize)));
+}
+
+void testVcaAndBusInternalDetectorControls()
+{
+    for (const auto mode : {duskaudio::MultiCompMode::VCA,
+                            duskaudio::MultiCompMode::Bus})
+        for (const int oversampling : {0, 1, 2})
+        {
+            const auto independent = renderInternalStereoLink(
+                static_cast<int>(mode), 0.0f, oversampling);
+            const auto linked = renderInternalStereoLink(
+                static_cast<int>(mode), 100.0f, oversampling);
+            const auto partial = renderInternalStereoLink(
+                static_cast<int>(mode), 50.0f, oversampling);
+            const float quietRatio = linked[1] / independent[1];
+            const float partialQuietRatio = partial[1] / independent[1];
+            const float loudDeltaDb = duskaudio::gainToDecibels(linked[0] / independent[0]);
+            std::printf("internal detector link: mode=%d os=%dx quiet ratio "
+                        "full %.6f partial %.6f loud delta %+.6f dB\n",
+                        static_cast<int>(mode), oversampling == 2 ? 4 : oversampling == 1 ? 2 : 1,
+                        quietRatio, partialQuietRatio, loudDeltaDb);
+            require(independent[0] > 1.0e-5f && independent[1] > 1.0e-5f
+                        && linked[0] > 1.0e-5f && linked[1] > 1.0e-5f,
+                    "internal detector link comparison produces stereo output");
+            require(quietRatio < 0.8f,
+                    "100% internal stereo link makes the loud channel compress the quiet channel");
+            require(quietRatio < partialQuietRatio && partialQuietRatio < 1.0f,
+                    "partial internal stereo link stays between independent and fully linked");
+            require(std::abs(loudDeltaDb) < 0.1f,
+                    "internal stereo link leaves the already-dominant channel unchanged");
+        }
+
+    for (const auto mode : {duskaudio::MultiCompMode::VCA,
+                            duskaudio::MultiCompMode::Bus})
+    {
+        const float cut = renderInternalSidechainShelf(mode, -12.0f);
+        const float boost = renderInternalSidechainShelf(mode, 12.0f);
+        const float shelfDeltaDb = duskaudio::gainToDecibels(boost / cut);
+        std::printf("internal sidechain shelf: mode=%d -12 dB RMS %.9g; "
+                    "+12 dB RMS %.9g; output delta %+.6f dB\n",
+                    static_cast<int>(mode), cut, boost, shelfDeltaDb);
+        require(cut > 1.0e-5f && boost > 1.0e-5f,
+                "internal sidechain shelf comparison produces output");
+        require(shelfDeltaDb < -3.0f,
+                "internal detector consumes the sidechain shelf EQ");
+    }
+}
+
+void testLinkedBusResetDeterminism()
+{
+    constexpr int blockSize = 256;
+    constexpr int blocks = 16;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
+    dsp.setOversampling(2);
+    dsp.setStereoLink(65.0f);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 180.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScLowFreq, 120.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScLowGain, -6.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighFreq, 3000.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::ScHighGain, 9.0f);
+    configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Bus));
+    dsp.prepare(48000.0, blockSize);
+
+    std::array<float, blockSize> inputLeft{}, inputRight{};
+    std::array<float, blockSize> outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    auto render = [&]() {
+        std::vector<float> result(static_cast<size_t>(2 * blocks * blockSize));
+        for (int block = 0; block < blocks; ++block)
+        {
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const int sampleIndex = block * blockSize + i;
+                inputLeft[static_cast<size_t>(i)] = 0.45f * std::sin(
+                    2.0f * kPi * 713.0f * static_cast<float>(sampleIndex) / 48000.0f);
+                inputRight[static_cast<size_t>(i)] = 0.07f * std::sin(
+                    2.0f * kPi * 3299.0f * static_cast<float>(sampleIndex) / 48000.0f);
+            }
+            dsp.processBlock(input, output, 2, blockSize);
+            std::copy(outputLeft.begin(), outputLeft.end(),
+                result.begin() + static_cast<ptrdiff_t>(2 * block * blockSize));
+            std::copy(outputRight.begin(), outputRight.end(),
+                result.begin() + static_cast<ptrdiff_t>((2 * block + 1) * blockSize));
+        }
+        return result;
+    };
+
+    const auto first = render();
+    dsp.reset();
+    const auto second = render();
+    float signalPeak = 0.0f;
+    float maxDelta = 0.0f;
+    for (size_t i = 0; i < first.size(); ++i)
+    {
+        signalPeak = std::max(signalPeak, std::max(std::abs(first[i]), std::abs(second[i])));
+        maxDelta = std::max(maxDelta, std::abs(first[i] - second[i]));
+    }
+    std::printf("linked Bus reset: signal peak %.9g max delta %.9g\n",
+                signalPeak, maxDelta);
+    require(signalPeak > 1.0e-4f, "linked Bus reset comparison produces output");
+    require(maxDelta == 0.0f,
+            "reset clears linked Bus detector, filter and split-oversampling state");
+}
+
 std::array<float, 2> renderOptoInternalStereo(float leftDbfs, float rightDbfs,
                                                float peakReduction,
                                                float linkAmount = 100.0f,
@@ -3304,6 +3537,9 @@ int main()
     testMixBypassAndBlockEdges();
     testLatencyMixBypassAndDigitalStereo();
     testAnalogStereoLinkSharesEnvelope();
+    testSplitOversamplingMatchesFunctorPath();
+    testVcaAndBusInternalDetectorControls();
+    testLinkedBusResetDeterminism();
     testOptoInternalStereoLinkUsesSignedMaximum();
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();

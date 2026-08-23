@@ -126,6 +126,60 @@ public:
         return process2x(x, [this, &f](float s) noexcept { return process4xInner(s, f); });
     }
 
+    // Split form for a caller that must process multiple channels in lockstep.
+    // `phases` has room for four samples; only getFactor() entries are used.
+    // Calling upsampleSample() followed by downsampleSample() advances exactly
+    // the same filter state as processSample().
+    void upsampleSample(float x, float* phases) noexcept
+    {
+        if (factor == 1)
+        {
+            phases[0] = x;
+            return;
+        }
+
+        upA.push(x);
+        const float a0 = 2.0f * upA.out(hbtaps::kA);
+        upA.push(0.0f);
+        const float a1 = 2.0f * upA.out(hbtaps::kA);
+        if (factor == 2)
+        {
+            phases[0] = a0;
+            phases[1] = a1;
+            return;
+        }
+
+        upB.push(a0);
+        phases[0] = 2.0f * upB.out(hbtaps::kB);
+        upB.push(0.0f);
+        phases[1] = 2.0f * upB.out(hbtaps::kB);
+        upB.push(a1);
+        phases[2] = 2.0f * upB.out(hbtaps::kB);
+        upB.push(0.0f);
+        phases[3] = 2.0f * upB.out(hbtaps::kB);
+    }
+
+    float downsampleSample(const float* phases) noexcept
+    {
+        if (factor == 1) return phases[0];
+        if (factor == 2)
+        {
+            downA.push(phases[0]);
+            downA.push(phases[1]);
+            return downA.out(hbtaps::kA);
+        }
+
+        downB.push(phases[0]);
+        downB.push(phases[1]);
+        const float a0 = downB.out(hbtaps::kB);
+        downB.push(phases[2]);
+        downB.push(phases[3]);
+        const float a1 = downB.out(hbtaps::kB);
+        downA.push(a0);
+        downA.push(a1);
+        return downA.out(hbtaps::kA);
+    }
+
 private:
     // base <-> 2x via stage A.
     template <class Fn>

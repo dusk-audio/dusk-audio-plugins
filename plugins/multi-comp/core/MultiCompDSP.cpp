@@ -53,6 +53,8 @@ void MultiCompDSP::prepare(double sr, int blockSize)
     previousOversampledSidechainValid = {{false, false}};
     previousOptoOwnSidechain = {{0.0f, 0.0f}};
     previousOptoOwnSidechainValid = {{false, false}};
+    previousBusSidechain = {{0.0f, 0.0f}};
+    previousBusSidechainValid = {{false, false}};
     const size_t dryDelaySize = static_cast<size_t>(std::max(1, antiAliasLatency + static_cast<int>(std::ceil(sampleRate * 0.01)) + 1));
     for (auto& line : dryPathDelay) line.assign(dryDelaySize, 0.0f);
     dryPathWrite = {{0, 0}};
@@ -110,6 +112,8 @@ void MultiCompDSP::reset()
     previousOversampledSidechainValid = {{false, false}};
     previousOptoOwnSidechain = {{0.0f, 0.0f}};
     previousOptoOwnSidechainValid = {{false, false}};
+    previousBusSidechain = {{0.0f, 0.0f}};
+    previousBusSidechainValid = {{false, false}};
     for (auto& line : dryPathDelay) std::fill(line.begin(), line.end(), 0.0f);
     dryPathWrite = {{0, 0}};
     for (auto& line : bypassDelay) std::fill(line.begin(), line.end(), 0.0f);
@@ -660,6 +664,13 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     for (auto& os : oversamplers) os.setFactor(actualOs);
     optoLinkedDetectorOversampler.setFactor(actualOs);
     modes.setRate(sampleRate, actualOs);
+    if (mode == MultiCompMode::Bus)
+        modes.setBusSidechainControls(
+            params.sidechainHP.load(std::memory_order_relaxed),
+            params.scLowFreq.load(std::memory_order_relaxed),
+            params.scLowGain.load(std::memory_order_relaxed),
+            params.scHighFreq.load(std::memory_order_relaxed),
+            params.scHighGain.load(std::memory_order_relaxed));
     manualMakeupScaleRamp.setTarget(autoMakeup ? 0.0f : 1.0f);
     if (firstBlock) manualMakeupScaleRamp.snap(autoMakeup ? 0.0f : 1.0f);
     syncModeParameters(mode, digitalLookaheadMs);
@@ -667,6 +678,7 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     {
         previousOversampledSidechainValid = {{false, false}};
         previousOptoOwnSidechainValid = {{false, false}};
+        previousBusSidechainValid = {{false, false}};
         for (int i = 0; i < nSamples; ++i) (void)manualMakeupScaleRamp.next();
         processMultiband(in, external ? sidechain : nullptr, out, nCh, nSamples);
         return;
@@ -717,6 +729,51 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
                 optoLinkedPhases[static_cast<size_t>(linkedPhase++)] = sample;
                 return sample;
             });
+        if (mode == MultiCompMode::Bus && link)
+        {
+            std::array<float, 4> inputLeftPhases{}, inputRightPhases{};
+            std::array<float, 4> outputLeftPhases{}, outputRightPhases{};
+            oversamplers[0].upsampleSample(in[0][i], inputLeftPhases.data());
+            oversamplers[1].upsampleSample(in[1][i], inputRightPhases.data());
+            for (int ch = 0; ch < 2; ++ch)
+                if (!previousBusSidechainValid[static_cast<size_t>(ch)])
+                {
+                    previousBusSidechain[static_cast<size_t>(ch)] = ch == 0 ? sc0 : sc1;
+                    previousBusSidechainValid[static_cast<size_t>(ch)] = true;
+                }
+            for (int phase = 0; phase < actualOs; ++phase)
+            {
+                const float phaseSc0 = actualOs == 1 ? sc0
+                    : interpolateOversampledSidechain(
+                        previousBusSidechain[0], sc0, phase, actualOs);
+                const float phaseSc1 = actualOs == 1 ? sc1
+                    : interpolateOversampledSidechain(
+                        previousBusSidechain[1], sc1, phase, actualOs);
+                modes.processBusPair(
+                    inputLeftPhases[static_cast<size_t>(phase)],
+                    inputRightPhases[static_cast<size_t>(phase)],
+                    phaseSc0, phaseSc1, modeParams, localBusMix,
+                    external, linkAmount,
+                    outputLeftPhases[static_cast<size_t>(phase)],
+                    outputRightPhases[static_cast<size_t>(phase)]);
+                outputLeftPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
+                    outputLeftPhases[static_cast<size_t>(phase)],
+                    distortionType, distortionAmount);
+                outputRightPhases[static_cast<size_t>(phase)] = applyCoreDistortion(
+                    outputRightPhases[static_cast<size_t>(phase)],
+                    distortionType, distortionAmount);
+            }
+            out[0][i] = oversamplers[0].downsampleSample(outputLeftPhases.data());
+            out[1][i] = oversamplers[1].downsampleSample(outputRightPhases.data());
+            previousBusSidechain = {{sc0, sc1}};
+            // The generic per-channel path is skipped this sample, so its
+            // carried endpoints stop tracking the input.  Invalidate them here
+            // and let the next generic sample re-seed instead of interpolating
+            // from an arbitrarily old value when the link is switched off.
+            previousOversampledSidechainValid = {{false, false}};
+            previousOptoOwnSidechainValid = {{false, false}};
+            continue;
+        }
         for (int ch = 0; ch < nCh; ++ch)
         {
             const float input = in[ch][i];
