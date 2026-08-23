@@ -578,6 +578,29 @@ void testQuantisedFineStepFallsBackToRestingPrecision()
                 "nonzero fine steps still add precision only when needed");
 }
 
+void testOptoSidechainHpUsesPhysicalDragDomain()
+{
+    const auto parameter = static_cast<uint32_t>(multicompp::ParamId::SidechainHP);
+    const auto& descriptor = multicompp::kParams[parameter];
+    const float draggedHz = duskdaf::dragKnobCoordinate(
+        0.0f, -66.0f, descriptor.min, descriptor.max, false);
+    const float draggedHost = multicompp::plainToHost(descriptor, draggedHz);
+    const float resultingHz = multicompp::hostToPlain(descriptor, draggedHost);
+    const float oldHostDrag = duskdaf::dragKnobCoordinate(
+        0.0f, -66.0f, multicompp::hostMin(descriptor),
+        multicompp::hostMax(descriptor), false);
+    const float oldResultingHz = multicompp::hostToPlain(descriptor, oldHostDrag);
+
+    require(multicompp::ui_detail::optoKnobUsesPlainDomainDrag(parameter)
+                && !multicompp::ui_detail::optoKnobUsesPlainDomainDrag(
+                    static_cast<uint32_t>(multicompp::ParamId::Mix)),
+            "only the tapered Opto SC HP knob opts into physical-domain dragging");
+    require(resultingHz == 165.0f && oldResultingHz == 54.0f,
+            "a 66-pixel SC HP drag reaches 165 Hz instead of the old 54 Hz");
+    std::printf("Opto SC HP drag: 66 px reaches %.0f Hz (old host-domain drag %.0f Hz)\n",
+                resultingHz, oldResultingHz);
+}
+
 void testShippingUiHasNoDeadCrossoverDescriptor()
 {
     const std::string source = readSiblingSource("MultiCompUI.cpp");
@@ -586,6 +609,61 @@ void testShippingUiHasNoDeadCrossoverDescriptor()
     std::printf("shipping UI dead crossover descriptor present: %s\n",
                 hasDeadDescriptor ? "yes" : "no");
     reviewCheck(!hasDeadDescriptor, "shipping crossover UI has no unused descriptor variable");
+}
+
+void testShippingUiUsesConformingHeaderWithoutUtilityBands()
+{
+    const std::string source = readSiblingSource("MultiCompUI.cpp");
+    const std::string info = readSiblingSource("DafPluginInfo.h");
+    auto countText = [&source](const char* text) {
+        size_t count = 0;
+        for (size_t at = source.find(text); at != std::string::npos;
+             at = source.find(text, at + 1))
+            ++count;
+        return count;
+    };
+    const bool drawsGlobalBand = source.find("drawGlobal(dl);") != std::string::npos;
+    const bool drawsSidechainBand = source.find("drawSidechain(dl);") != std::string::npos;
+    const bool hasConformingIdentity = source.find("\"MULTI-COMP\"") != std::string::npos
+        && source.find("\"MC-2\"") != std::string::npos
+        && source.find("\"DUSK AUDIO\"") != std::string::npos;
+    const bool hasPresetActions = source.find("##mc_presetprev") != std::string::npos
+        && source.find("##mc_presetnext") != std::string::npos
+        && source.find("##mc_init") != std::string::npos
+        && source.find("##mc_save") != std::string::npos;
+    const bool hasCompactDefaultHeight =
+        info.find("#define DAF_UI_DEFAULT_HEIGHT       380") != std::string::npos;
+    const bool hasSingleHeaderIdentity = countText("\"DUSK AUDIO\"") == 1
+        && source.find("\"DUSK\"") == std::string::npos;
+    const bool hasSimplifiedOptoTitle =
+        source.find("\"LEVELING AMPLIFIER\"") != std::string::npos
+        && source.find("\"OPTICAL LEVELING AMPLIFIER\"") == std::string::npos;
+    const bool hasOptoSidechainHp =
+        source.find("optoKnob(dl, \"opto_sc_hp\", P_SC_HP") != std::string::npos;
+    const bool hasModeButtonRow =
+        source.find("##mc_mode_button_%d") != std::string::npos;
+    const bool hasModeDropdown = source.find("ImGui::BeginCombo(\"##mc_mode\"")
+        != std::string::npos;
+
+    std::printf("header conformity: global=%s sidechain=%s identity=%s actions=%s height380=%s "
+                "single-brand=%s opto-title=%s\n",
+                drawsGlobalBand ? "drawn" : "removed",
+                drawsSidechainBand ? "drawn" : "removed",
+                hasConformingIdentity ? "yes" : "no",
+                hasPresetActions ? "yes" : "no",
+                hasCompactDefaultHeight ? "yes" : "no",
+                hasSingleHeaderIdentity ? "yes" : "no",
+                hasSimplifiedOptoTitle ? "yes" : "no");
+    reviewCheck(!drawsGlobalBand && !drawsSidechainBand,
+                "shipping UI omits the visible Global and Sidechain utility bands");
+    reviewCheck(hasConformingIdentity && hasPresetActions && hasCompactDefaultHeight,
+                "shipping UI follows the MC-2 identity, preset-action, and compact-height contract");
+    reviewCheck(hasSingleHeaderIdentity && hasSimplifiedOptoTitle,
+                "Dusk Audio appears only in the header and Opto uses the simplified faceplate title");
+    reviewCheck(hasOptoSidechainHp,
+                "Opto faceplate exposes the existing Sidechain HP parameter");
+    reviewCheck(hasModeButtonRow && !hasModeDropdown,
+                "all eight compressor modes are exposed as top-row buttons");
 }
 
 void testHostProgramChangeUpdatesUiMirror()
@@ -610,6 +688,82 @@ void testHostProgramChangeUpdatesUiMirror()
                 "host program change updates the UI mirror to the applied preset values");
     }
     std::puts("host program change: UI mirror matches every applied factory preset");
+}
+
+void testPresetIdentityFollowsPresetOwnership()
+{
+    const int factoryPreset = 5;
+    const auto mode = static_cast<uint32_t>(multicompp::ParamId::Mode);
+    const auto bypass = static_cast<uint32_t>(multicompp::ParamId::Bypass);
+    const auto oversampling = static_cast<uint32_t>(multicompp::ParamId::Oversampling);
+    const auto externalSidechain =
+        static_cast<uint32_t>(multicompp::ParamId::ExternalSidechain);
+
+    const bool factoryContract =
+        multicompp::ui_detail::selectionOwnsParam(factoryPreset, false, false, mode)
+        && !multicompp::ui_detail::selectionOwnsParam(
+            factoryPreset, false, false, bypass)
+        && !multicompp::ui_detail::selectionOwnsParam(
+            factoryPreset, false, false, oversampling)
+        && !multicompp::ui_detail::selectionOwnsParam(
+            factoryPreset, false, false, externalSidechain);
+    const bool userContract =
+        multicompp::ui_detail::selectionOwnsParam(-1, true, false, oversampling)
+        && !multicompp::ui_detail::selectionOwnsParam(-1, true, false, bypass);
+    const bool defaultContract =
+        multicompp::ui_detail::selectionOwnsParam(-1, false, true, oversampling)
+        && !multicompp::ui_detail::selectionOwnsParam(-1, false, true, bypass);
+    const bool customContract =
+        !multicompp::ui_detail::selectionOwnsParam(-1, false, false, mode);
+
+    require(factoryContract && userContract && defaultContract && customContract,
+            "preset identity clears only when an edit changes state that selection owns");
+    std::puts("preset identity: factory machine controls and every bypass preserve selection");
+}
+
+void testOptoFaceplateContract()
+{
+    using Layout = multicompp::ui_detail::OptoFaceplateLayout;
+    constexpr float referenceAspect = 1120.0f / 310.0f;
+    const float aspect = multicompp::ui_detail::optoFaceplateAspect();
+    require(Layout::left == 0.0f && Layout::right == 1120.0f
+                && Layout::top == 344.0f && Layout::bottom == 654.0f
+                && std::abs(aspect - referenceAspect) < 0.01f,
+            "Opto faceplate fills the complete mode canvas below the toolbar");
+    require(multicompp::ui_detail::designHeightForMode(0.0f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(0.4f) == 380.0f
+                && multicompp::ui_detail::designHeightForMode(0.6f) == 486.0f
+                && multicompp::ui_detail::designHeightForMode(7.0f) == 486.0f,
+            "Opto uses the compact rack canvas while every other mode keeps the full canvas");
+
+    const float zero = multicompp::ui_detail::optoMeterNeedleAngle(0.0f);
+    const float ten = multicompp::ui_detail::optoMeterNeedleAngle(-10.0f);
+    const float twenty = multicompp::ui_detail::optoMeterNeedleAngle(-20.0f);
+    require(std::isfinite(zero) && std::isfinite(ten) && std::isfinite(twenty)
+                && zero > ten && ten > twenty,
+            "Opto GR needle moves monotonically from zero to 20 dB reduction");
+    require(std::strcmp(multicompp::ui_detail::optoModeLabel(0.0f), "COMPRESS") == 0
+                && std::strcmp(multicompp::ui_detail::optoModeLabel(1.0f), "LIMIT") == 0,
+            "Opto mode control exposes the Comp and Limit panel labels");
+    require(std::strcmp(multicompp::ui_detail::optoMeterLabel(), "GR") == 0,
+            "Opto analogue meter is fixed to the GR panel readout");
+    const float afterOneTimeConstant =
+        multicompp::ui_detail::optoMeterBallisticStep(0.0f, -20.0f, 0.300f);
+    reviewCheck(std::abs(afterOneTimeConstant + 12.64241f) < 0.001f,
+                "Opto needle applies a 300 ms RC response instead of raw block GR");
+    reviewCheck(std::strcmp(multicompp::ui_detail::optoKnobValueSuffix(), "") == 0,
+                "Opto knob value bubbles show unitless 0-100 values");
+    const float idleReadout = multicompp::ui_detail::optoMeterReadoutAmount(0.0f);
+    require(idleReadout == 0.0f && !std::signbit(idleReadout)
+                && multicompp::ui_detail::optoMeterReadoutAmount(-12.5f) == 12.5f
+                && multicompp::ui_detail::optoMeterReadoutAmount(1.0f) == 0.0f
+                && multicompp::ui_detail::optoMeterReadoutAmount(-150.0f) == 99.9f,
+            "Opto GR readout is positive, bounded, and never displays negative zero");
+    std::printf("opto faceplate: aspect %.6f reference %.6f; meter angles "
+                "0/10/20 dB %.6f/%.6f/%.6f rad; modes %s/%s\n",
+                aspect, referenceAspect, zero, ten, twenty,
+                multicompp::ui_detail::optoModeLabel(0.0f),
+                multicompp::ui_detail::optoModeLabel(1.0f));
 }
 
 static_assert(multicompp::kParamCount == 63,
@@ -674,7 +828,10 @@ int main()
     testRunGuardsSidechainPortsPerLayout();
     testCrossoverOrderingDoesNotRatchet();
     testQuantisedFineStepFallsBackToRestingPrecision();
+    testOptoSidechainHpUsesPhysicalDragDomain();
     testShippingUiHasNoDeadCrossoverDescriptor();
+    testShippingUiUsesConformingHeaderWithoutUtilityBands();
+    testOptoFaceplateContract();
     testCrossoverMirrorRefreshesEveryPluginChangedValue();
     require(reviewFailureCount == 0, "review regressions are fixed");
     testHostParameterTapers();
@@ -683,6 +840,7 @@ int main()
     testFactoryPresetOwnership();
     testHostProgramChangeAppliesBandParameters();
     testHostProgramChangeUpdatesUiMirror();
+    testPresetIdentityFollowsPresetOwnership();
     testFractionalEnumUiAndDspAgreement();
     testFractionalIntegerAutomationStaysLoadable();
     std::puts("Multi-Comp plugin-layer tests: PASS");

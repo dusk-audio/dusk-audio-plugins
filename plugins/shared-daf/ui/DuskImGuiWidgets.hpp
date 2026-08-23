@@ -57,6 +57,15 @@ inline int dragDecimalPlaces(float fineStep, const char* fmt) noexcept
     return std::max(resting, fine);
 }
 
+inline float dragKnobCoordinate(float value, float mouseDeltaY,
+                                float minimum, float maximum,
+                                bool fine) noexcept
+{
+    const float speed = fine ? 0.0008f : 0.005f;
+    return std::clamp(value - mouseDeltaY * speed * (maximum - minimum),
+                      minimum, maximum);
+}
+
 #ifndef DUSK_IMGUI_WIDGETS_LOGIC_TEST
 
 // Adapter the UI implements to forward parameter edits to the host.
@@ -316,6 +325,9 @@ public:
     //   toDisplay/fromDisplay: optional nonlinear display transforms. The knob
     //                   still renders and gestures in [minV,maxV], while its
     //                   readout and typed entry use the transformed domain.
+    //   dragInDisplayDomain: opt into gestures and wheel steps in the transformed
+    //                   domain (for example, equal Hz per pixel on a tapered host
+    //                   parameter). The value sent to the host remains [minV,maxV].
     bool knob(const char* id, uint32_t param, float minV, float maxV,
               float cx, float cy, float radius, float& value, float defaultVal,
               bool stepped = false, bool panelTicks = true,
@@ -334,7 +346,8 @@ public:
               bool omitCenterTick = false,
               float (*toDisplay)(float, uint32_t, void*) = nullptr,
               float (*fromDisplay)(float, uint32_t, void*) = nullptr,
-              void* displayContext = nullptr)
+              void* displayContext = nullptr,
+              bool dragInDisplayDomain = false)
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float R  = radius * s;
@@ -344,6 +357,16 @@ public:
         const auto displayValue = [=](float v) {
             return toDisplay != nullptr ? toDisplay(v, param, displayContext)
                                         : v * dispMul + dispAdd;
+        };
+        const auto valueFromDisplay = [=](float v) {
+            return fromDisplay != nullptr
+                ? fromDisplay(v, param, displayContext)
+                : (v - dispAdd) / (dispMul != 0.0f ? dispMul : 1.0f);
+        };
+        const float dragMinimum = dragInDisplayDomain ? displayValue(minV) : minV;
+        const float dragMaximum = dragInDisplayDomain ? displayValue(maxV) : maxV;
+        const auto beginDragValue = [&]() {
+            dragValue = dragInDisplayDomain ? displayValue(value) : value;
         };
 
         ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
@@ -370,18 +393,21 @@ public:
             {
                 if (modKey) // Alt+click (or Cmd on macOS / Ctrl elsewhere): reset, no drag
                 {
-                    host->beginEdit(param); value = defaultVal; dragValue = value;
+                    host->beginEdit(param); value = defaultVal; beginDragValue();
                     host->setParam(param, value); host->endEdit(param); changed = true;
                     modResetActive_ = true;
                 }
-                else { host->beginEdit(param); dragValue = value; modResetActive_ = false; }
+                else { host->beginEdit(param); beginDragValue(); modResetActive_ = false; }
             }
             if (active && !modResetActive_)
             {
-                const float speed = ImGui::GetIO().KeyShift ? 0.0008f : 0.005f;
-                dragValue -= ImGui::GetIO().MouseDelta.y * speed * range;
-                dragValue = dragValue < minV ? minV : (dragValue > maxV ? maxV : dragValue);
-                const float nv = stepped ? std::round(dragValue) : dragValue;
+                dragValue = dragKnobCoordinate(dragValue, ImGui::GetIO().MouseDelta.y,
+                                               dragMinimum, dragMaximum,
+                                               ImGui::GetIO().KeyShift);
+                if (stepped && dragInDisplayDomain) dragValue = std::round(dragValue);
+                float nv = dragInDisplayDomain ? valueFromDisplay(dragValue) : dragValue;
+                nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                if (stepped && !dragInDisplayDomain) nv = std::round(nv);
                 if (nv != value) { value = nv; host->setParam(param, nv); changed = true; }
             }
             if (ImGui::IsItemDeactivated()) { if (!modResetActive_) host->endEdit(param); modResetActive_ = false; }
@@ -395,7 +421,7 @@ public:
                 if (doubleClickReset)
                 {
                     value = defaultVal;
-                    dragValue = defaultVal;
+                    beginDragValue();
                     host->setParam(param, value);
                     host->endEdit(param);
                     changed = true;
@@ -415,10 +441,17 @@ public:
                 const float wheel = ImGui::GetIO().MouseWheel;
                 if (wheel != 0.0f)
                 {
-                    const float wheelStep = ImGui::GetIO().KeyShift ? range * 0.004f : range * 0.02f;
-                    float nv = value + wheel * (stepped ? 1.0f : wheelStep);
+                    const float dragRange = dragMaximum - dragMinimum;
+                    const float wheelStep = ImGui::GetIO().KeyShift
+                        ? dragRange * 0.004f : dragRange * 0.02f;
+                    float wheelValue = dragInDisplayDomain ? displayValue(value) : value;
+                    wheelValue += wheel * (stepped ? 1.0f : wheelStep);
+                    wheelValue = wheelValue < dragMinimum ? dragMinimum
+                        : (wheelValue > dragMaximum ? dragMaximum : wheelValue);
+                    if (stepped && dragInDisplayDomain) wheelValue = std::round(wheelValue);
+                    float nv = dragInDisplayDomain ? valueFromDisplay(wheelValue) : wheelValue;
                     nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-                    nv = stepped ? std::round(nv) : nv;
+                    if (stepped && !dragInDisplayDomain) nv = std::round(nv);
                     if (nv != value)
                     {
                         host->beginEdit(param); value = nv;
@@ -525,9 +558,7 @@ public:
         float typed;
         if (valueEdit(id, cx, cy, radius, typed))
         {
-            typed = fromDisplay != nullptr
-                ? fromDisplay(typed, param, displayContext)
-                : (typed - dispAdd) / (dispMul != 0.0f ? dispMul : 1.0f); // display -> actual
+            typed = valueFromDisplay(typed); // display -> actual
             typed = typed < minV ? minV : (typed > maxV ? maxV : typed);
             if (stepped) typed = std::round(typed);
             if (typed != value)

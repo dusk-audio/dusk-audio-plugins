@@ -123,4 +123,51 @@ void applyPresetToHostParameters(const duskaudio::MultiCompPreset& preset,
             setHostParameter(kBandBase + band * 8 + field, plainToHost(d, value));
         });
 }
+
+struct ExpandedFactoryPreset
+{
+    std::array<float, kMeterMaster> hostValues{};
+    std::array<bool, kMeterMaster> ownsParameter{};
+};
+
+// Expand the small core preset records into their exact host-domain writes once
+// at module load.  The UI receives a parameter callback for every automation
+// change, so rebuilding all 13 records there made preset-name synchronisation
+// needlessly quadratic in the parameter table size.
+inline const std::array<ExpandedFactoryPreset, kFactoryPresets.size()>
+    kExpandedFactoryPresets = [] {
+        std::array<ExpandedFactoryPreset, kFactoryPresets.size()> expanded{};
+        for (size_t presetIndex = 0; presetIndex < kFactoryPresets.size(); ++presetIndex)
+            applyPresetToHostParameters(kFactoryPresets[presetIndex],
+                [&expanded, presetIndex](int parameterIndex, float hostValue)
+                {
+                    if (parameterIndex < 0 || parameterIndex >= kMeterMaster) return;
+                    auto& preset = expanded[presetIndex];
+                    preset.hostValues[static_cast<size_t>(parameterIndex)] = hostValue;
+                    preset.ownsParameter[static_cast<size_t>(parameterIndex)] = true;
+                });
+        return expanded;
+    }();
+
+inline bool presetOwnsParam(int presetIndex, uint32_t parameterIndex) noexcept
+{
+    return presetIndex >= 0
+        && static_cast<size_t>(presetIndex) < kExpandedFactoryPresets.size()
+        && parameterIndex < static_cast<uint32_t>(kMeterMaster)
+        && kExpandedFactoryPresets[static_cast<size_t>(presetIndex)]
+               .ownsParameter[static_cast<size_t>(parameterIndex)];
+}
+
+template <class SetHostParameter>
+void applyFactoryPresetToHostParameters(uint32_t presetIndex,
+                                        SetHostParameter&& setHostParameter)
+{
+    if (presetIndex >= kExpandedFactoryPresets.size()) return;
+    const auto& preset = kExpandedFactoryPresets[presetIndex];
+    for (int parameterIndex = 0; parameterIndex < kMeterMaster; ++parameterIndex)
+        if (presetOwnsParam(static_cast<int>(presetIndex),
+                            static_cast<uint32_t>(parameterIndex)))
+            setHostParameter(parameterIndex,
+                             preset.hostValues[static_cast<size_t>(parameterIndex)]);
+}
 } // namespace multicompp
