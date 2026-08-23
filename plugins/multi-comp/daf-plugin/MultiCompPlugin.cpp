@@ -204,8 +204,7 @@ protected:
     void loadProgram(uint32_t index) override
     {
         if (index >= multicompp::kFactoryPresets.size()) return;
-        const auto& q = multicompp::kFactoryPresets[index];
-        multicompp::applyPresetToHostParameters(q,
+        multicompp::applyFactoryPresetToHostParameters(index,
         [this](int parameterIndex, float hostValue)
         {
             setParameterValue(static_cast<uint32_t>(parameterIndex), hostValue);

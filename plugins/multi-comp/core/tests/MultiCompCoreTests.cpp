@@ -319,8 +319,10 @@ void testOptoPluginLevelReferencePoints()
 
 void testOptoDetectorFrequencyWeighting()
 {
-    // The broadband offset belongs to the later colouration phase. This gate
-    // removes its mean and judges only the measured detector-weighting shape.
+    // Detector weighting is normalised at 1 kHz, so its shape score removes a
+    // uniform operating-point offset. Absolute mean and 1 kHz anchors below
+    // keep that removal from hiding a real detector-level regression; the
+    // static-law and broadband gates independently own level accuracy.
     constexpr std::array<float, 31> frequencies{{
         20.0f, 25.178508f, 31.697864f, 39.905247f, 50.237728f,
         63.245552f, 79.621437f, 100.237450f, 126.191467f, 158.865646f,
@@ -356,8 +358,13 @@ void testOptoDetectorFrequencyWeighting()
     for (const float delta : deltas)
         shapeSquaredError += (delta - meanDelta) * (delta - meanDelta);
     const float shapeRms = std::sqrt(shapeSquaredError / static_cast<float>(deltas.size()));
-    std::printf("opto detector weighting summary: mean offset %+.6f dB shape RMS %.6f dB\n",
-                meanDelta, shapeRms);
+    constexpr size_t kOneKhzRow = 17;
+    const float oneKhzDelta = deltas[kOneKhzRow];
+    std::printf("opto detector weighting summary: mean offset %+.6f dB "
+                "1 kHz offset %+.6f dB shape RMS %.6f dB\n",
+                meanDelta, oneKhzDelta, shapeRms);
+    require(std::abs(meanDelta) < 0.30f && std::abs(oneKhzDelta) < 0.25f,
+            "Opto detector weighting keeps its absolute operating-point anchor");
     require(shapeRms < 0.12f,
             "Opto detector weighting shape survives after removing broadband offset");
 }
@@ -972,12 +979,11 @@ void testOptoCrestSweep()
     // No tested causal charge mechanism reconciled the 20 dB row with the
     // burst-rate gate. Pin the reproduced non-monotonic shape and the known
     // residual so a later mechanism cannot silently regress either side.
-    // The pinned residuals are the rounding-robust silence-gate trajectory
-    // (identical across platforms and fp-contract modes to <0.001 dB):
-    // -0.20 / -0.26 / +0.71 (held out) / -1.28 dB. Against the reference it
-    // trades the old macOS-FMA-only trajectory's +1.86 dB held-out error for
-    // -1.28 dB on the 23.8 dB crest row; the four-row RMS improves 0.96 ->
-    // 0.75 dB. The remaining shape error is the same open structural defect.
+    // The current rounding-robust residuals are -0.141 / -0.540 / +0.615
+    // (held out) / -0.709 dB: 0.546 dB RMS across all four rows and 0.521 dB
+    // across the three fitted rows. The older -0.20 / -0.26 / +0.71 / -1.28
+    // dB trajectory and its 0.96 -> 0.75 dB comparison are historical. The
+    // remaining shape error is the same open structural defect.
     require(finiteAndCorrectCrest && nonMonotonicShape
                 && fittedRmsError < 0.85f && fittedWorstError < 1.40f
                 && std::abs(heldOutError) < 1.10f,
