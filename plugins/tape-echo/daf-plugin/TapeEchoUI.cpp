@@ -14,6 +14,7 @@
 #include "DuskImGuiTextInput.hpp" // Windows host focus while typing values
 #include "DuskImGuiWidgets.hpp"   // shared DuskPanel: chrome knob, LED, text, value bubble
 #include "DuskSupportersOverlay.hpp" // shared DAF Patreon "Special Thanks" overlay
+#include "DuskUserPresetStore.hpp"
 #include "util/CrashLog.hpp"
 #include "TapeEchoFontRegular.inc"
 #include "TapeEchoFontSemiBold.inc"
@@ -929,32 +930,9 @@ private:
     }
 
     //--- user preset file library (~/.config/DuskAudio/TapeEcho2/presets) -------
-    // Base dir: %APPDATA% (or %LOCALAPPDATA%) on Windows, else $XDG_CONFIG_HOME,
-    // else $HOME/.config. macOS deliberately stays on the ~/.config layout the
-    // shipped builds already write, so an update never orphans a user's library.
-    // "." is the last resort only: never write relative to the host's CWD while
-    // any supported variable is set.
-    std::string configDir() const
+    std::filesystem::path configDir() const
     {
-        std::string base;
-       #if defined(_WIN32)
-        for (const char* var : { "APPDATA", "LOCALAPPDATA" })
-            if (const char* v = std::getenv(var); v != nullptr && *v != '\0')
-            { base = v; break; }
-       #elif defined(__APPLE__)
-        // XDG_CONFIG_HOME is deliberately NOT read here: a mac with it set in a
-        // dotfile would otherwise stop seeing the library shipped builds wrote.
-        if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
-            base = std::string(home) + "/.config";
-       #else
-        if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
-            base = xdg;
-        else if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
-            base = std::string(home) + "/.config";
-       #endif
-        if (base.empty())
-            base = ".";
-        return base + "/DuskAudio/TapeEcho2/presets";
+        return duskdaf::userPresetDirectory("TapeEcho2");
     }
 
     // Strict field parse, shared by the library scan and the loader so a file can
@@ -986,149 +964,81 @@ private:
         return true;
     }
 
-    void scanUserPresets()
+    struct UserPreset { std::string name, path; float vals[kParamCount]; };
+
+    static bool readUserPresetFile(const std::filesystem::path& path, UserPreset& up)
     {
-        userPresets.clear();
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        for (fs::directory_iterator it(configDir(), ec), end; !ec && it != end; it.increment(ec))
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            up.vals[i] = kTeParams[i].def;
+        std::ifstream input(path);
+        std::string line;
+        bool hasEchoRateNote = false;
+        while (std::getline(input, line))
         {
-            if (it->path().extension() != ".tepreset")
+            const auto equals = line.find('=');
+            if (equals == std::string::npos)
                 continue;
-            UserPreset up;
-            up.path = it->path().string();
-            up.name = it->path().stem().string();
+            const std::string key = line.substr(0, equals);
+            if (key == "name") { up.name = line.substr(equals + 1); continue; }
             for (uint32_t i = 0; i < kParamCount; ++i)
-                up.vals[i] = kTeParams[i].def;
-            std::ifstream f(it->path());
-            std::string line;
-            bool hasEchoRateNote = false;
-            while (std::getline(f, line))
-            {
-                const auto eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
-                const std::string key = line.substr(0, eq);
-                if (key == "name") { up.name = line.substr(eq + 1); continue; }
-                for (uint32_t i = 0; i < kParamCount; ++i)
-                    if (teIsPresetParam(i) && key == kTeParams[i].id)
+                if (teIsPresetParam(i) && key == kTeParams[i].id)
+                {
+                    float value = 0.0f;
+                    // Cache the same normalised value loadUserPreset() sends
+                    // through setP(), so preset identity survives hand edits.
+                    if (parsePresetValue(line, equals + 1, i, value))
                     {
-                        float v = 0.0f;
-                        // Normalise on the way in, exactly as loadUserPreset()'s
-                        // setP() will. This cache is compared against values[] to
-                        // recover preset identity, so an un-normalised discrete
-                        // value here (a hand-edited file, or one written before
-                        // the values were quantised) would fail to match the very
-                        // preset that had just been loaded.
-                        if (parsePresetValue(line, eq + 1, i, v))
-                        {
-                            up.vals[i] = normalizeParamValue(i, v);
-                            if (i == kParamEchoRateNote)
-                                hasEchoRateNote = true;
-                        }
-                        break;   // else keep the default already in place
+                        up.vals[i] = normalizeParamValue(i, value);
+                        if (i == kParamEchoRateNote)
+                            hasEchoRateNote = true;
                     }
-            }
-            if (!hasEchoRateNote)
-            {
-                const int leadingHead = teLeadingHeadIndexForMode(
-                    (int)(up.vals[kParamMode] + 0.5f));
-                const int knobPos = teSyncKnobPosForDivision(
-                    (int)(up.vals[kParamSyncDivision] + 0.5f), leadingHead);
-                up.vals[kParamEchoRateNote] = (float)(knobPos + 1);
-            }
-            userPresets.push_back(std::move(up));
+                    break;
+                }
         }
-        std::sort(userPresets.begin(), userPresets.end(),
-                  [](const UserPreset& a, const UserPreset& b) { return a.name < b.name; });
+        if (!hasEchoRateNote)
+        {
+            const int leadingHead = teLeadingHeadIndexForMode(
+                static_cast<int>(up.vals[kParamMode] + 0.5f));
+            const int knobPosition = teSyncKnobPosForDivision(
+                static_cast<int>(up.vals[kParamSyncDivision] + 0.5f), leadingHead);
+            up.vals[kParamEchoRateNote] = static_cast<float>(knobPosition + 1);
+        }
+        return true;
     }
 
-    // Display name stored inside a preset file, or "" when the file is missing or
-    // carries no name= line (a foreign or truncated file in our own directory).
-    static std::string storedPresetName(const std::string& path)
+    void scanUserPresets()
     {
-        std::ifstream f(path);
-        std::string line;
-        while (std::getline(f, line))
-            if (line.compare(0, 5, "name=") == 0)
-                return line.substr(5);
-        return {};
+        duskdaf::scanUserPresets(
+            configDir(), ".tepreset", userPresets,
+            [](const std::filesystem::path& path, UserPreset& preset) {
+                return readUserPresetFile(path, preset);
+            });
     }
 
     // Returns false if nothing was written, so the caller can keep the dialog
     // open and say so instead of closing on a save that silently did nothing.
     bool saveUserPreset(const char* rawName)
     {
-        std::string name(rawName);
-        while (!name.empty() && name.back() == ' ')
-            name.pop_back();
-        if (name.empty())
+        const auto saved = duskdaf::writeUserPreset(
+            configDir(), ".tepreset", rawName,
+            [this](std::ostream& output) {
+                for (uint32_t i = 0; i < kParamCount; ++i)
+                {
+                    if (!teIsPresetParam(i))
+                        continue;
+                    // Preserve an authoritative legacy semantic division by
+                    // omitting its derived physical-detent mirror.
+                    if (i == kParamEchoRateNote && legacySyncDivisionOverride)
+                        continue;
+                    output << kTeParams[i].id << "=" << values[i] << '\n';
+                }
+            });
+        if (!saved)
             return false;
-        const std::string dir = configDir();
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        if (ec)
-            return false; // no usable library directory (permissions, file in the way)
-        // Filename stem: every non-alphanumeric collapses to '_', so distinct
-        // display names can share a stem ("A B" and "A-B" both give "A_B").
-        // Re-saving the SAME name still overwrites its own file; a stem clash
-        // with a different name takes the next free suffix instead of silently
-        // clobbering that preset.
-        std::string stem;
-        for (char c : name)
-            stem += std::isalnum((unsigned char)c) ? c : '_';
-        std::string path;
-        bool usable = false;
-        for (int n = 1; n <= 99 && !usable; ++n)
-        {
-            path = dir + "/" + stem
-                 + (n == 1 ? std::string() : "_" + std::to_string(n)) + ".tepreset";
-            // A free path, or one whose file already stores THIS display name.
-            // An existing file without a name= line is not free: the library
-            // lists it under its stem, so overwriting it would drop a preset
-            // the player can see. A path that cannot be probed is never assumed
-            // free either - exists() reports an error as false.
-            ec.clear();
-            const bool present = std::filesystem::exists(path, ec);
-            if (ec)
-                continue;
-            usable = !present || storedPresetName(path) == name;
-        }
-        if (!usable)
-            return false; // 99 colliding stems: refuse rather than overwrite one
-        std::ofstream f(path, std::ios::trunc);
-        if (!f)
-            return false;
-        // Classic locale so the values are written with '.' whatever locale the
-        // host installed, matching parsePresetValue() on the way back in.
-        f.imbue(std::locale::classic());
-        f << "name=" << name << "\n";
-        for (uint32_t i = 0; i < kParamCount; ++i)
-        {
-            if (!teIsPresetParam(i))
-                continue;
-            // Do not write the DERIVED half of the compatibility pair. While an
-            // old project's semantic division owns the delay, Echo Rate Note is
-            // only the nearest physical detent to it, and that division may not
-            // be representable on the current head at all. Writing both would
-            // lose the exact division on reload: the file is read in ascending
-            // index order, so echo_rate_note (21) would land after
-            // sync_division (12) and take ownership. Omitting it leaves
-            // loadUserPreset's default pass followed by the file's
-            // sync_division, which ends with the legacy value authoritative --
-            // and scanUserPresets already derives a detent for files without
-            // the key, so the preset browser still matches.
-            if (i == kParamEchoRateNote && legacySyncDivisionOverride)
-                continue;
-            f << kTeParams[i].id << "=" << values[i] << "\n";
-        }
-        f.close();
-        if (!f)
-            return false; // flush/close failed: the file on disk is not complete
         scanUserPresets();
         currentPreset = -1;
-        currentUserName = name;
-        currentUserPath = path;
+        currentUserName = saved.name;
+        currentUserPath = saved.path;
         return true;
     }
 
@@ -1797,7 +1707,6 @@ private:
     std::string currentUserPath;   // stable identity of the active user preset
 
     // Cached user preset library (file name + display name + every preset param).
-    struct UserPreset { std::string name, path; float vals[kParamCount]; };
     std::vector<UserPreset> userPresets;
     char   saveBuf[64] = {};
     bool   saveFailed = false;      // last SAVE wrote nothing; dialog stays open

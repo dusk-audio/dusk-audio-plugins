@@ -23,6 +23,7 @@
 #include "DuskImGuiTextInput.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp" // shared DAF Patreon "Special Thanks" overlay
+#include "DuskUserPresetStore.hpp"
 #include "util/CrashLog.hpp"
 
 #include <algorithm>
@@ -662,32 +663,9 @@ private:
     }
 
     //--- user preset file library (~/.config/DuskAudio/FourKEQ2/presets) --------
-    // Base dir: %APPDATA% (or %LOCALAPPDATA%) on Windows, else $XDG_CONFIG_HOME,
-    // else $HOME/.config. macOS deliberately stays on the ~/.config layout the
-    // other Dusk DAF plugins already write, so the libraries live side by side.
-    // "." is the last resort only: never write relative to the host's CWD while
-    // any supported variable is set.
-    std::string configDir() const
+    std::filesystem::path configDir() const
     {
-        std::string base;
-       #if defined(_WIN32)
-        for (const char* var : { "APPDATA", "LOCALAPPDATA" })
-            if (const char* v = std::getenv(var); v != nullptr && *v != '\0')
-            { base = v; break; }
-       #elif defined(__APPLE__)
-        // XDG_CONFIG_HOME is deliberately NOT read here: a mac with it set in a
-        // dotfile would otherwise stop seeing the library earlier builds wrote.
-        if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
-            base = std::string(home) + "/.config";
-       #else
-        if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
-            base = xdg;
-        else if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
-            base = std::string(home) + "/.config";
-       #endif
-        if (base.empty())
-            base = ".";
-        return base + "/DuskAudio/FourKEQ2/presets";
+        return duskdaf::userPresetDirectory("FourKEQ2");
     }
 
     // Strict field parse, shared by the library scan and the loader so a file
@@ -785,97 +763,35 @@ private:
 
     void scanUserPresets()
     {
-        userPresets.clear();
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        for (fs::directory_iterator it(configDir(), ec), end; !ec && it != end; it.increment(ec))
-        {
-            if (it->path().extension() != ".4kpreset")
-                continue;
-            UserPreset up;
-            up.path = it->path().string();
-            up.name = it->path().stem().string();
-            if (readUserPresetFile(up.path, up.name, up.vals))
-                userPresets.push_back(std::move(up));
-        }
-        std::sort(userPresets.begin(), userPresets.end(),
-                  [](const UserPreset& a, const UserPreset& b) { return a.name < b.name; });
-    }
-
-    // Display name stored inside a preset file, or "" when the file is missing
-    // or carries no name= line (a foreign or truncated file in our directory).
-    static std::string storedPresetName(const std::string& path)
-    {
-        std::ifstream f(path);
-        std::string line;
-        while (std::getline(f, line))
-            if (line.compare(0, 5, "name=") == 0)
-                return line.substr(5);
-        return {};
+        duskdaf::scanUserPresets(
+            configDir(), ".4kpreset", userPresets,
+            [](const std::filesystem::path&, UserPreset& preset) {
+                return readUserPresetFile(preset.path, preset.name, preset.vals);
+            });
     }
 
     // Returns false if nothing was written, so the caller can keep the dialog
     // open and say so instead of closing on a save that silently did nothing.
     bool saveUserPreset(const char* rawName)
     {
-        std::string name(rawName);
-        while (!name.empty() && name.back() == ' ')
-            name.pop_back();
-        if (name.empty())
+        const auto saved = duskdaf::writeUserPreset(
+            configDir(), ".4kpreset", rawName,
+            [this](std::ostream& output) {
+                output << "format_version=" << kUserPresetFormatVersion << '\n';
+                output << "frequency_domain=effective_hz\n";
+                output << std::setprecision(std::numeric_limits<float>::max_digits10);
+                for (uint32_t i = 0; i < kParamCount; ++i)
+                    if (fkIsPresetParam(i))
+                        output << kFourKParams[i].key << '='
+                               << (isFrequencyParam(i) ? displayValue(i) : values[i])
+                               << '\n';
+            });
+        if (!saved)
             return false;
-        const std::string dir = configDir();
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        if (ec)
-            return false; // no usable library directory (permissions, file in the way)
-        // Filename stem: every non-alphanumeric collapses to '_', so distinct
-        // display names can share a stem ("A B" and "A-B" both give "A_B").
-        // Re-saving the SAME name still overwrites its own file; a stem clash
-        // with a different name takes the next free suffix instead of silently
-        // clobbering that preset.
-        std::string stem;
-        for (char c : name)
-            stem += std::isalnum((unsigned char)c) ? c : '_';
-        std::string path;
-        bool usable = false;
-        for (int n = 1; n <= 99 && !usable; ++n)
-        {
-            path = dir + "/" + stem
-                 + (n == 1 ? std::string() : "_" + std::to_string(n)) + ".4kpreset";
-            // A free path, or one whose file already stores THIS display name.
-            // An existing file without a name= line is not free: the library
-            // lists it under its stem, so overwriting it would drop a preset
-            // the player can see. A path that cannot be probed is never assumed
-            // free either - exists() reports an error as false.
-            ec.clear();
-            const bool present = std::filesystem::exists(path, ec);
-            if (ec)
-                continue;
-            usable = !present || storedPresetName(path) == name;
-        }
-        if (!usable)
-            return false; // 99 colliding stems: refuse rather than overwrite one
-        std::ofstream f(path, std::ios::trunc);
-        if (!f)
-            return false;
-        // Classic locale so the values are written with '.' whatever locale the
-        // host installed, matching parsePresetNumber() on the way back in.
-        f.imbue(std::locale::classic());
-        f << "name=" << name << "\n";
-        f << "format_version=" << kUserPresetFormatVersion << "\n";
-        f << "frequency_domain=effective_hz\n";
-        f << std::setprecision(std::numeric_limits<float>::max_digits10);
-        for (uint32_t i = 0; i < kParamCount; ++i)
-            if (fkIsPresetParam(i))
-                f << kFourKParams[i].key << "="
-                  << (isFrequencyParam(i) ? displayValue(i) : values[i]) << "\n";
-        f.close();
-        if (!f)
-            return false; // flush/close failed: the file on disk is not complete
         scanUserPresets();
         currentPreset = -1;
-        currentUserName = name;
-        currentUserPath = path;
+        currentUserName = saved.name;
+        currentUserPath = saved.path;
         return true;
     }
 

@@ -134,6 +134,7 @@ inline void refreshCrossoverMirror(std::array<float, N>& values, ReadParameter r
 #include "DuskImGuiFont.hpp"
 #include "DuskImGuiWidgets.hpp"
 #include "DuskSupportersOverlay.hpp"
+#include "DuskUserPresetStore.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -877,30 +878,9 @@ private:
         clearPresetSelection(true);
     }
 
-    std::string configDir() const
+    std::filesystem::path configDir() const
     {
-        std::string base;
-       #if defined(_WIN32)
-        for (const char* variable : {"APPDATA", "LOCALAPPDATA"})
-            if (const char* value = std::getenv(variable);
-                value != nullptr && value[0] != '\0')
-            {
-                base = value;
-                break;
-            }
-       #elif defined(__APPLE__)
-        if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0')
-            base = std::string(home) + "/.config";
-       #else
-        if (const char* xdg = std::getenv("XDG_CONFIG_HOME");
-            xdg != nullptr && xdg[0] != '\0')
-            base = xdg;
-        else if (const char* home = std::getenv("HOME");
-                 home != nullptr && home[0] != '\0')
-            base = std::string(home) + "/.config";
-       #endif
-        if (base.empty()) base = ".";
-        return base + "/DuskAudio/MultiComp2/presets";
+        return duskdaf::userPresetDirectory("MultiComp2");
     }
 
     static bool readUserPresetFile(const std::filesystem::path& path, UserPreset& preset)
@@ -925,78 +905,34 @@ private:
 
     void scanUserPresets()
     {
-        userPresets.clear();
-        std::error_code error;
-        namespace fs = std::filesystem;
-        for (fs::directory_iterator it(configDir(), error), end;
-             !error && it != end; it.increment(error))
-        {
-            if (it->path().extension() != ".mcpreset") continue;
-            UserPreset preset;
-            if (readUserPresetFile(it->path(), preset))
-                userPresets.push_back(std::move(preset));
-        }
-        std::sort(userPresets.begin(), userPresets.end(),
-                  [](const UserPreset& a, const UserPreset& b) {
-                      return a.name < b.name;
-                  });
-    }
-
-    static std::string storedPresetName(const std::string& path)
-    {
-        UserPreset preset;
-        return readUserPresetFile(path, preset) ? preset.name : std::string();
+        duskdaf::scanUserPresets(
+            configDir(), ".mcpreset", userPresets,
+            [](const std::filesystem::path& path, UserPreset& preset) {
+                return readUserPresetFile(path, preset);
+            });
     }
 
     bool saveUserPreset(const char* rawName)
     {
-        std::string name(rawName);
-        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front())))
-            name.erase(name.begin());
-        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())))
-            name.pop_back();
-        if (name.empty()) return false;
-
-        const std::string directory = configDir();
-        std::error_code error;
-        std::filesystem::create_directories(directory, error);
-        if (error) return false;
-
-        std::string stem;
-        for (const unsigned char character : name)
-            stem += std::isalnum(character) ? static_cast<char>(character) : '_';
-        if (stem.empty()) stem = "Preset";
-
-        std::string path;
-        bool usable = false;
-        for (int suffix = 1; suffix <= 99 && !usable; ++suffix)
-        {
-            path = directory + "/" + stem
-                + (suffix == 1 ? std::string()
-                               : "_" + std::to_string(suffix))
-                + ".mcpreset";
-            error.clear();
-            const bool exists = std::filesystem::exists(path, error);
-            if (!error) usable = !exists || storedPresetName(path) == name;
-        }
-        if (!usable) return false;
-
         multicompp::StateValues snapshot{};
         std::copy_n(values.begin(), snapshot.size(), snapshot.begin());
         snapshot[P_BYPASS] = multicompp::hostDefault(
             multicompp::kParams[static_cast<size_t>(P_BYPASS)]);
-        std::ofstream output(path, std::ios::trunc);
-        if (!output) return false;
-        output.imbue(std::locale::classic());
-        output << "name=" << name << '\n';
-        output << "state=" << multicompp::encodeState(snapshot) << '\n';
-        output.close();
-        if (!output) return false;
+        const auto saved = duskdaf::writeUserPreset(
+            configDir(), ".mcpreset", rawName,
+            [&snapshot](std::ostream& output) {
+                output << "state=" << multicompp::encodeState(snapshot) << '\n';
+            },
+            [](const std::filesystem::path& path) {
+                UserPreset preset;
+                return readUserPresetFile(path, preset) ? preset.name : std::string();
+            });
+        if (!saved) return false;
 
         scanUserPresets();
         currentPreset = -1;
-        currentUserName = name;
-        currentUserPath = path;
+        currentUserName = saved.name;
+        currentUserPath = saved.path;
         defaultsActive = false;
         return true;
     }
