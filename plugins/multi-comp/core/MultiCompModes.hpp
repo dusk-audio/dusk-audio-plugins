@@ -45,6 +45,9 @@ public:
         for (auto& d : studioFet) d = StudioFETState{};
         for (auto& d : studioVca) d = StudioVCAState{};
         for (auto& d : digital) d = DigitalState{};
+        for (auto& filter : busSidechainHighPass) filter.reset();
+        for (auto& filter : busSidechainLowShelf) filter.reset();
+        for (auto& filter : busSidechainHighShelf) filter.reset();
         prepareHardware(modeRate);
         for (int ch = 0; ch < kChannels; ++ch)
         {
@@ -108,6 +111,9 @@ public:
         for (auto& d : studioFet) d = StudioFETState{};
         for (auto& d : studioVca) d = StudioVCAState{};
         for (auto& d : digital) d = DigitalState{};
+        for (auto& filter : busSidechainHighPass) filter.reset();
+        for (auto& filter : busSidechainLowShelf) filter.reset();
+        for (auto& filter : busSidechainHighShelf) filter.reset();
         for (auto& delay : digitalDelay)
             for (auto& x : delay) x = 0.0f;
         digitalWrite.fill(0);
@@ -156,6 +162,56 @@ public:
             case MultiCompMode::Multiband: break;
         }
         return 0.0f;
+    }
+
+    void setBusSidechainControls(float highPassFrequency,
+                                 float lowFrequency, float lowGain,
+                                 float highFrequency, float highGain) noexcept
+    {
+        const float rate = static_cast<float>(fs * osFactor);
+        const float hp = std::clamp(highPassFrequency, 0.0f, 500.0f);
+        const float lowF = std::clamp(lowFrequency, 60.0f, 500.0f);
+        const float lowG = std::clamp(lowGain, -12.0f, 12.0f);
+        const float highF = std::clamp(highFrequency, 2000.0f, 16000.0f);
+        const float highG = std::clamp(highGain, -12.0f, 12.0f);
+        if (rate != busSidechainRate || hp != busSidechainHighPassFrequency)
+            for (auto& filter : busSidechainHighPass)
+                filter.setCoeffs(Biquad::highPass(rate, std::max(hp, 20.0f), 0.707f));
+        if (rate != busSidechainRate || lowF != busSidechainLowFrequency
+            || lowG != busSidechainLowGain)
+            for (auto& filter : busSidechainLowShelf)
+                filter.setCoeffs(Biquad::shelfSlope1(rate, lowF, lowG, false));
+        if (rate != busSidechainRate || highF != busSidechainHighFrequency
+            || highG != busSidechainHighGain)
+            for (auto& filter : busSidechainHighShelf)
+                filter.setCoeffs(Biquad::shelfSlope1(rate, highF, highG, true));
+        busSidechainRate = rate;
+        busSidechainHighPassFrequency = hp;
+        busSidechainLowFrequency = lowF;
+        busSidechainLowGain = lowG;
+        busSidechainHighFrequency = highF;
+        busSidechainHighGain = highG;
+    }
+
+    void processBusPair(float inputLeft, float inputRight,
+                        float sidechainLeft, float sidechainRight,
+                        const MultiCompParameterState& p, float mix,
+                        bool external, float linkAmount,
+                        float& outputLeft, float& outputRight) noexcept
+    {
+        auto& left = bus[0];
+        auto& right = bus[1];
+        const float sr = static_cast<float>(fs * osFactor);
+        const float leftLevel = busRmsLevel(left,
+            external ? std::abs(sidechainLeft) : busFeedbackRect(left, 0, sr), sr);
+        const float rightLevel = busRmsLevel(right,
+            external ? std::abs(sidechainRight) : busFeedbackRect(right, 1, sr), sr);
+        const float linkedLevel = std::max(leftLevel, rightLevel);
+        const float amount = std::clamp(linkAmount, 0.0f, 1.0f);
+        advanceBusEnvelope(left, leftLevel + (linkedLevel - leftLevel) * amount, p, sr);
+        advanceBusEnvelope(right, rightLevel + (linkedLevel - rightLevel) * amount, p, sr);
+        outputLeft = renderBusOutput(inputLeft, 0, p, mix);
+        outputRight = renderBusOutput(inputRight, 1, p, mix);
     }
 
 private:
@@ -209,6 +265,12 @@ private:
     std::array<StudioFETState, 2> studioFet{};
     std::array<StudioVCAState, 2> studioVca{};
     std::array<DigitalState, 2> digital{};
+    std::array<Biquad, 2> busSidechainHighPass, busSidechainLowShelf,
+                          busSidechainHighShelf;
+    float busSidechainRate = 0.0f;
+    float busSidechainHighPassFrequency = -1.0f;
+    float busSidechainLowFrequency = -1.0f, busSidechainLowGain = 0.0f;
+    float busSidechainHighFrequency = -1.0f, busSidechainHighGain = 0.0f;
     std::array<std::vector<float>, kChannels> digitalDelay;
     std::array<int, 2> digitalWrite{{0, 0}};
 
@@ -1212,14 +1274,16 @@ private:
         return std::clamp(out * decibelsToGain(p.fetOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
 
-    float processVCA(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept
+    float processVCA(float input, int ch, float sidechain,
+                     const MultiCompParameterState& p, bool /*external*/) noexcept
     {
         auto& d = vca[ch];
         const float sr = static_cast<float>(fs * osFactor);
-        // JUCE's VCA is feed-forward: internal detection is the audio input
-        // even when the host-side stereo-link buffer is populated.  Only an
-        // actual external sidechain replaces the detector source.
-        const float detect = std::abs(external ? sidechain : input);
+        // The DSP has already selected, filtered and stereo-linked the
+        // detector signal for both internal and external operation. VCA is
+        // feed-forward, so consuming that signal preserves its topology while
+        // making the global sidechain controls effective.
+        const float detect = std::abs(sidechain);
         d.rate = d.rate * 0.95f + std::abs(detect - d.previous) * 0.05f;
         d.previous = detect;
         const float rmsMs = p.vcaClassicDetector.load(std::memory_order_relaxed) ? 0.010f : 0.005f + 0.030f * std::exp(-3.0f * std::clamp((gainToDecibels(std::max(detect, 0.0001f)) + 20.0f) / 30.0f, 0.0f, 1.0f));
@@ -1277,47 +1341,98 @@ private:
         return std::clamp(out * decibelsToGain(p.vcaOutput.load(std::memory_order_relaxed)), -2.0f, 2.0f);
     }
 
-    float processBus(float input, int ch, float sidechain, const MultiCompParameterState& p, float mix, bool external) noexcept
+    float busFeedbackRect(BusState& d, int ch, float sr) noexcept
     {
-        auto& d = bus[ch];
-        const float sr = static_cast<float>(fs * osFactor);
-        const float fb = d.compressed;
         const float alpha = 1.0f / (1.0f + kDuskTwoPi * 60.0f / sr);
-        d.hp = alpha * (d.hp + fb - d.prev); d.prev = fb;
-        d.hp2 = alpha * (d.hp2 + d.hp - d.prev2); d.prev2 = d.hp;
-        const float rect = external ? std::abs(sidechain) : std::abs(d.hp2);
-        const float rc = std::exp(-1.0f / (0.005f * sr));
-        d.rms = rc * d.rms + (1.0f - rc) * rect * rect;
-        const float level = std::sqrt(std::max(0.0f, d.rms));
+        d.hp = alpha * (d.hp + d.compressed - d.prev);
+        d.prev = d.compressed;
+        d.hp2 = alpha * (d.hp2 + d.hp - d.prev2);
+        d.prev2 = d.hp;
+        float detector = d.hp2;
+        const size_t channel = static_cast<size_t>(std::clamp(ch, 0, 1));
+        if (busSidechainHighPassFrequency >= 1.0f)
+            detector = busSidechainHighPass[channel].process(detector);
+        if (std::abs(busSidechainLowGain) > 0.001f)
+            detector = busSidechainLowShelf[channel].process(detector);
+        if (std::abs(busSidechainHighGain) > 0.001f)
+            detector = busSidechainHighShelf[channel].process(detector);
+        return std::abs(detector);
+    }
+
+    static float busRmsLevel(BusState& d, float rectified, float sr) noexcept
+    {
+        const float coefficient = std::exp(-1.0f / (0.005f * sr));
+        d.rms = coefficient * d.rms
+              + (1.0f - coefficient) * rectified * rectified;
+        return std::sqrt(std::max(0.0f, d.rms));
+    }
+
+    static float busReduction(float level, const MultiCompParameterState& p) noexcept
+    {
         const float ratios[3] = {2.0f, 4.0f, 10.0f};
-        const float ratio = ratios[std::clamp(p.busRatio.load(std::memory_order_relaxed), 0, 2)];
-        const float over = gainToDecibels(std::max(level, 1.0e-9f) / decibelsToGain(p.busThreshold.load(std::memory_order_relaxed)));
+        const float ratio = ratios[std::clamp(
+            p.busRatio.load(std::memory_order_relaxed), 0, 2)];
+        const float over = gainToDecibels(std::max(level, 1.0e-9f)
+            / decibelsToGain(p.busThreshold.load(std::memory_order_relaxed)));
         const float slope = 1.0f - 1.0f / ratio;
-        float reduction = over <= -5.0f ? 0.0f : (over >= 5.0f ? over * slope : slope * (over + 5.0f) * (over + 5.0f) / (2.0f * 10.0f));
-        reduction = std::min(reduction, 20.0f);
-        const float attacks[6] = {0.1f, 0.3f, 1, 3, 10, 30};
-        const float releases[5] = {100, 300, 600, 1200, -1};
-        const float attack = attacks[std::clamp(p.busAttack.load(std::memory_order_relaxed), 0, 5)] * 0.001f;
-        float release = releases[std::clamp(p.busRelease.load(std::memory_order_relaxed), 0, 4)] * 0.001f;
+        const float reduction = over <= -5.0f ? 0.0f
+            : (over >= 5.0f ? over * slope
+                            : slope * (over + 5.0f) * (over + 5.0f) / 20.0f);
+        return std::min(reduction, 20.0f);
+    }
+
+    static void advanceBusEnvelope(BusState& d, float level,
+                                   const MultiCompParameterState& p,
+                                   float sr) noexcept
+    {
+        const float reduction = busReduction(level, p);
+        const float attacks[6] = {0.1f, 0.3f, 1.0f, 3.0f, 10.0f, 30.0f};
+        const float releases[5] = {100.0f, 300.0f, 600.0f, 1200.0f, -1.0f};
+        const float attack = attacks[std::clamp(
+            p.busAttack.load(std::memory_order_relaxed), 0, 5)] * 0.001f;
+        float release = releases[std::clamp(
+            p.busRelease.load(std::memory_order_relaxed), 0, 4)] * 0.001f;
         if (release < 0.0f)
         {
             const float delta = std::abs(level - d.previous);
             d.previous = d.previous * 0.95f + level * 0.05f;
             const float transientDensity = std::clamp(delta * 20.0f, 0.0f, 1.0f);
             const float compressionFactor = std::clamp(reduction / 12.0f, 0.0f, 1.0f);
-            release = 0.15f + (1.0f - transientDensity) * compressionFactor * (0.45f - 0.15f);
+            release = 0.15f + (1.0f - transientDensity) * compressionFactor * 0.30f;
         }
         const float target = decibelsToGain(-reduction);
-        const float coeff = std::exp(-1.0f / (std::max(1.0f, (target < d.envelope ? attack : release) * sr)));
-        d.envelope = target + (d.envelope - target) * coeff;
+        const float time = target < d.envelope ? attack : release;
+        const float coefficient = std::exp(-1.0f
+            / std::max(1.0f, time * sr));
+        d.envelope = target + (d.envelope - target) * coefficient;
+        if (!std::isfinite(d.envelope)) d.envelope = 1.0f;
+    }
+
+    float renderBusOutput(float input, int ch,
+                          const MultiCompParameterState& p, float mix) noexcept
+    {
+        auto& d = bus[ch];
         const float transformed = inputTransformerBus[ch].processSample(input, ch);
         float out = transformed * d.envelope;
         d.compressed = out;
         out += 0.004f * out * out + 0.003f * out * out * out;
         out = outputTransformerBus[ch].processSample(out, ch);
-        out = busConvolution.processSample(out, ch) * busHardwareGain * decibelsToGain(p.busMakeup.load(std::memory_order_relaxed));
+        out = busConvolution.processSample(out, ch) * busHardwareGain
+            * decibelsToGain(p.busMakeup.load(std::memory_order_relaxed));
         out = std::clamp(out, -2.0f, 2.0f);
         return out * mix + input * (1.0f - mix);
+    }
+
+    float processBus(float input, int ch, float sidechain,
+                     const MultiCompParameterState& p, float mix,
+                     bool external) noexcept
+    {
+        auto& d = bus[ch];
+        const float sr = static_cast<float>(fs * osFactor);
+        const float level = busRmsLevel(d,
+            external ? std::abs(sidechain) : busFeedbackRect(d, ch, sr), sr);
+        advanceBusEnvelope(d, level, p, sr);
+        return renderBusOutput(input, ch, p, mix);
     }
 
     float processStudioVCA(float input, int ch, float sidechain, const MultiCompParameterState& p, bool external) noexcept

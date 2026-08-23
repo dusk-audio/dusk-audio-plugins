@@ -253,6 +253,24 @@ public:
         return compensateBaseRate(wet);
     }
     template <class Fn> float processSample(float input, Fn&& fn) noexcept { return process(input, static_cast<Fn&&>(fn)); }
+    int getFactor() const noexcept { return oversampler.getFactor(); }
+    void upsampleSample(float input, float* phases) noexcept
+    {
+        oversampler.upsampleSample(input, phases);
+    }
+    float downsampleSample(float* phases) noexcept
+    {
+        const int phaseCount = oversampler.getFactor();
+        if (phaseDelaySamples > 0)
+            for (int phase = 0; phase < phaseCount; ++phase)
+            {
+                const float delayed = phaseDelay[static_cast<size_t>(phaseWritePosition)];
+                phaseDelay[static_cast<size_t>(phaseWritePosition)] = phases[phase];
+                phaseWritePosition = (phaseWritePosition + 1) % phaseDelaySamples;
+                phases[phase] = delayed;
+            }
+        return compensateBaseRate(oversampler.downsampleSample(phases));
+    }
     float latency() const noexcept { return static_cast<float>(maxLatency); }
     bool isOversamplingOff() const noexcept { return oversamplingOff; }
 private:

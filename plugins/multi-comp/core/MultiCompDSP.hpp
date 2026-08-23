@@ -21,6 +21,8 @@
 namespace duskaudio
 {
 
+struct MultiCompDSPTestAccess;
+
 class MultiCompDSP
 {
 public:
@@ -81,6 +83,8 @@ public:
     int getLatencySamples() const noexcept;
 
 private:
+    friend struct MultiCompDSPTestAccess;
+
     static constexpr int kMaxChannels = 2;
     static constexpr int kBypassRampMs = 30;
     static constexpr int kSidechainListenRampMs = 30;
@@ -146,6 +150,8 @@ private:
     std::array<bool, kMaxChannels> previousOversampledSidechainValid{{false, false}};
     std::array<float, kMaxChannels> previousOptoOwnSidechain{{0.0f, 0.0f}};
     std::array<bool, kMaxChannels> previousOptoOwnSidechainValid{{false, false}};
+    std::array<float, kMaxChannels> previousBusSidechain{{0.0f, 0.0f}};
+    std::array<bool, kMaxChannels> previousBusSidechainValid{{false, false}};
     std::array<float, kMultiCompBands * kMaxChannels> multibandEnvelopes{};
     std::uint8_t activeBandMask = 0x0f;
     std::array<int, kMultiCompBands> enabledBandIndices{{0, 1, 2, 3}};
