@@ -5402,7 +5402,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (bypassAlignSize > 1)
     {
         const int ns = buffer.getNumSamples();
-        for (int ch = 0; ch < juce::jmin(buffer.getNumChannels(), 2); ++ch)
+        // bypassAlignBuf is sized jmin(preparedChannels, 2), so a mono-prepared
+        // instance owns ONE channel. The host can still present a wider buffer;
+        // indexing past the allocation returns a null write pointer and stores
+        // to address 0. Bound the loop by what was allocated.
+        const int alignChannels = juce::jmin(buffer.getNumChannels(),
+                                             bypassAlignBuf.getNumChannels());
+        for (int ch = 0; ch < alignChannels; ++ch)
         {
             int wp = bypassAlignWritePos[static_cast<size_t>(ch)];
             const float* in = buffer.getReadPointer(ch);
@@ -5430,7 +5436,11 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // allocate on the real-time path).
         if (bypassAlignSize <= 1 || D + ns >= bypassAlignSize)
             return;
-        for (int ch = 0; ch < juce::jmin(buf.getNumChannels(), 2); ++ch)
+        // Same clamp as the writer above. Channels with no recorded history keep
+        // the dry input already in buf, which is the same graceful degradation
+        // the oversized-block fallback above relies on.
+        for (int ch = 0; ch < juce::jmin(buf.getNumChannels(),
+                                         bypassAlignBuf.getNumChannels()); ++ch)
         {
             const int preWp = (ch == 0) ? alignPreWp0 : alignPreWp1;
             float* out = buf.getWritePointer(ch);
@@ -5478,7 +5488,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             // current audio for time-aligned dry capture on unbypass.
             if (bypassFadeDelaySize > 1)
             {
-                for (int ch = 0; ch < nc; ++ch)
+                // prepareToPlay sizes these from getTotalNumOutputChannels().
+                // A host can hand processBlock a buffer with more channels than
+                // that; writing past the allocation makes getWritePointer return
+                // null and the store lands at address 0. Clamp to what was
+                // actually allocated rather than trusting the buffer's count.
+                const int warmChannels = juce::jmin(nc,
+                    bypassFadeDelayBuf.getNumChannels(),
+                    static_cast<int>(bypassFadeDelayWritePos.size()));
+                for (int ch = 0; ch < warmChannels; ++ch)
                 {
                     int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
                     for (int i = 0; i < ns; ++i)
@@ -5589,7 +5607,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
             if (bypassFadeDelaySize > 1)
             {
-                for (int ch = 0; ch < nc; ++ch)
+                // prepareToPlay sizes these from getTotalNumOutputChannels().
+                // A host can hand processBlock a buffer with more channels than
+                // that; writing past the allocation makes getWritePointer return
+                // null and the store lands at address 0. Clamp to what was
+                // actually allocated rather than trusting the buffer's count.
+                const int warmChannels = juce::jmin(nc,
+                    bypassFadeDelayBuf.getNumChannels(),
+                    static_cast<int>(bypassFadeDelayWritePos.size()));
+                for (int ch = 0; ch < warmChannels; ++ch)
                 {
                     int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
                     for (int i = 0; i < ns; ++i)
@@ -5740,7 +5766,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             // Feed each input sample through the dedicated delay line and capture
             // the delayed output. This produces a properly sequenced block of
             // time-aligned dry audio without touching the processing lookahead.
-            for (int ch = 0; ch < fadeChannels; ++ch)
+            // fadeChannels is clamped to bypassFadeBuffer only; the delay
+            // line and its write positions are separate allocations.
+            const int delayChannels = juce::jmin(fadeChannels,
+                bypassFadeDelayBuf.getNumChannels(),
+                static_cast<int>(bypassFadeDelayWritePos.size()));
+            for (int ch = 0; ch < delayChannels; ++ch)
             {
                 float* dst = bypassFadeBuffer.getWritePointer(ch);
                 int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
@@ -6454,7 +6485,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         {
             int fadeSamples = juce::jmin(bypassFadeRemaining, numSamples);
             float fadeLen = static_cast<float>(bypassFadeActualLength);
-            for (int ch = 0; ch < numChannels; ++ch)
+            // numChannels comes from the buffer; bypassFadeBuffer was sized in
+            // prepareToPlay. Reading past it returns null and dereferencing that
+            // crashes the render thread mid-crossfade.
+            const int xfadeChannels = juce::jmin(numChannels,
+                                                 bypassFadeBuffer.getNumChannels());
+            for (int ch = 0; ch < xfadeChannels; ++ch)
             {
                 float* out = buffer.getWritePointer(ch);
                 const float* dry = bypassFadeBuffer.getReadPointer(ch);
@@ -6852,7 +6888,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     {
         int fadeSamples = juce::jmin(bypassFadeRemaining, numSamples);
         float fadeLen = static_cast<float>(bypassFadeActualLength);
-        for (int ch = 0; ch < numChannels; ++ch)
+        // Same clamp as the standard path's crossfade.
+        const int xfadeChannels = juce::jmin(numChannels,
+                                             bypassFadeBuffer.getNumChannels());
+        for (int ch = 0; ch < xfadeChannels; ++ch)
         {
             float* out = buffer.getWritePointer(ch);
             const float* dry = bypassFadeBuffer.getReadPointer(ch);
