@@ -14,6 +14,17 @@
 #include <thread>
 #include <vector>
 
+namespace duskaudio
+{
+struct MultiCompDSPTestAccess
+{
+    static std::array<bool, 2> busSidechainValidity(const MultiCompDSP& dsp) noexcept
+    {
+        return dsp.previousBusSidechainValid;
+    }
+};
+}
+
 using duskaudio::DuskCrossover;
 using duskaudio::MultiCompDSP;
 
@@ -2103,6 +2114,86 @@ void testLinkedBusResetDeterminism()
             "reset clears linked Bus detector, filter and split-oversampling state");
 }
 
+void testLinkedBusReentryReseedsSidechainInterpolation()
+{
+    constexpr int blockSize = 64;
+    MultiCompDSP dsp;
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
+    dsp.setOversampling(2);
+    dsp.setStereoLink(100.0f);
+    dsp.setExternalSidechain(true);
+    dsp.setMix(100.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::AutoMakeup, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::Distortion, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    dsp.setParameter(MultiCompDSP::Parameter::SidechainHP, 0.0f);
+    configureStrongCompression(dsp, static_cast<int>(duskaudio::MultiCompMode::Bus));
+    dsp.prepare(48000.0, blockSize);
+
+    std::array<float, blockSize> inputLeft{}, inputRight{}, sidechain{};
+    std::array<float, blockSize> outputLeft{}, outputRight{};
+    const float* input[] = {inputLeft.data(), inputRight.data()};
+    const float* external[] = {sidechain.data(), sidechain.data()};
+    float* output[] = {outputLeft.data(), outputRight.data()};
+    for (int i = 0; i < blockSize; ++i)
+    {
+        inputLeft[static_cast<size_t>(i)] = 0.4f * std::sin(
+            2.0f * kPi * 997.0f * static_cast<float>(i) / 48000.0f);
+        inputRight[static_cast<size_t>(i)] = 0.2f * std::sin(
+            2.0f * kPi * 1709.0f * static_cast<float>(i) / 48000.0f);
+        sidechain[static_cast<size_t>(i)] = 0.8f;
+    }
+
+    const auto validity = [&] {
+        return duskaudio::MultiCompDSPTestAccess::busSidechainValidity(dsp);
+    };
+    const auto both = [](const std::array<bool, 2>& value, bool expected) {
+        return value[0] == expected && value[1] == expected;
+    };
+
+    dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), true),
+            "linked stereo Bus processing retains interpolation endpoints");
+
+    dsp.setStereoLink(0.0f);
+    dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), false),
+            "unlinked Bus processing invalidates linked interpolation endpoints");
+
+    dsp.setStereoLink(100.0f);
+    dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), true),
+            "linked Bus processing re-seeds invalid interpolation endpoints");
+
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::VCA));
+    dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), false),
+            "a non-Bus mode invalidates linked Bus interpolation endpoints");
+
+    dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Bus));
+    dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), true),
+            "returning to linked Bus processing re-seeds interpolation endpoints");
+
+    dsp.setBypass(true);
+    for (int block = 0; block < 32; ++block)
+        dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), false),
+            "settled bypass invalidates linked Bus interpolation endpoints");
+
+    dsp.setBypass(false);
+    dsp.processBlockExternal(input, external, output, 2, blockSize);
+    require(both(validity(), true),
+            "leaving bypass re-seeds linked Bus interpolation endpoints");
+
+    const float* monoInput[] = {inputLeft.data()};
+    const float* monoExternal[] = {sidechain.data()};
+    float* monoOutput[] = {outputLeft.data()};
+    dsp.processBlockExternal(monoInput, monoExternal, monoOutput, 1, blockSize);
+    require(both(validity(), false),
+            "mono Bus processing invalidates stereo linked interpolation endpoints");
+}
+
 std::array<float, 2> renderOptoInternalStereo(float leftDbfs, float rightDbfs,
                                                float peakReduction,
                                                float linkAmount = 100.0f,
@@ -3540,6 +3631,7 @@ int main()
     testSplitOversamplingMatchesFunctorPath();
     testVcaAndBusInternalDetectorControls();
     testLinkedBusResetDeterminism();
+    testLinkedBusReentryReseedsSidechainInterpolation();
     testOptoInternalStereoLinkUsesSignedMaximum();
     testDigitalLookaheadMixAlignment();
     testMultibandMixAlignment();

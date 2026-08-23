@@ -322,6 +322,7 @@ void MultiCompDSP::processBlockExternal(const float* const* in, const float* con
     processLatencyHistory(in, out, nCh, nSamples, blockLatency, requestedBypass && bypassSettled);
     if (requestedBypass && bypassSettled)
     {
+        previousBusSidechainValid = {{false, false}};
         processSidechainListenHistory(filteredSidechain, nCh, nSamples, blockLatency);
         for (int i = 0; i < nSamples; ++i) (void)sidechainListenRamp.next();
         masterGR.store(0.0f, std::memory_order_relaxed);
@@ -697,6 +698,10 @@ void MultiCompDSP::processRange(const float* const* in, const float* const* side
     }
     busMixRamp.setTarget(std::clamp(params.busMix.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
     digitalMixRamp.setTarget(std::clamp(params.digitalMix.load(std::memory_order_relaxed) * 0.01f, 0.0f, 1.0f));
+    const bool linkedBusPathActive = mode == MultiCompMode::Bus
+        && linkMode == 0 && linkAmount > 0.0001f && nCh > 1;
+    if (!linkedBusPathActive)
+        previousBusSidechainValid = {{false, false}};
     for (int i = 0; i < nSamples; ++i)
     {
         const float scaledOutputDb = manualOutputDb * manualMakeupScaleRamp.next();

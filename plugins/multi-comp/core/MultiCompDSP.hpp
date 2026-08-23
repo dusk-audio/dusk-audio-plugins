@@ -21,6 +21,8 @@
 namespace duskaudio
 {
 
+struct MultiCompDSPTestAccess;
+
 class MultiCompDSP
 {
 public:
@@ -81,6 +83,8 @@ public:
     int getLatencySamples() const noexcept;
 
 private:
+    friend struct MultiCompDSPTestAccess;
+
     static constexpr int kMaxChannels = 2;
     static constexpr int kBypassRampMs = 30;
     static constexpr int kSidechainListenRampMs = 30;
