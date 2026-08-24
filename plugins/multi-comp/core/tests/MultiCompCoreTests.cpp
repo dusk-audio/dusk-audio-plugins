@@ -1770,6 +1770,8 @@ OptoDenseProgrammeMetrics measureOptoDenseProgramme(
     const int latency = control.getLatencySamples();
     require(active.getLatencySamples() == latency,
             "Opto dense-programme control and active paths have equal latency");
+    require(static_cast<int>(programme.size()) == 80 * kFrameSamples,
+            "Opto dense-programme frame grid covers the whole stimulus exactly");
     const int totalSamples = static_cast<int>(programme.size()) + latency;
     std::vector<float> controlOutput(static_cast<size_t>(totalSamples));
     std::vector<float> activeOutput(static_cast<size_t>(totalSamples));
@@ -1846,7 +1848,9 @@ OptoDenseProgrammeMetrics measureOptoDenseProgramme(
 void testOptoDenseProgrammeParity()
 {
     // Captured from the live reference AU with matched PR=0 controls, Gain at
-    // 0.321868896, Compress mode, and 2x oversampling.  The deterministic
+    // 0.321868896, Compress mode.  ("2x oversampling" describes OUR DSP
+    // instances below; the reference has no such control and its envelopes are
+    // independent of it.)  The deterministic
     // generator above is shared with the capture recipe; 100 ms RMS frames
     // retain the envelope defect that remained with wider analysis windows.
     constexpr std::array<float, 80> referenceAt40{{
@@ -1873,23 +1877,80 @@ void testOptoDenseProgrammeParity()
         16.990066f, 17.952907f, 16.958054f, 17.823901f, 17.159247f, 16.979283f, 17.944300f, 17.186154f,
         18.723287f, 17.587928f, 16.948212f, 17.939089f, 16.956146f, 17.839403f, 16.925629f, 13.546612f,
     }};
+    constexpr std::array<float, 80> referenceAt85{{
+        20.104985f, 22.494186f, 23.913226f, 23.746440f, 23.250015f, 24.204495f, 23.295250f, 24.129026f,
+        23.534977f, 23.335332f, 24.334897f, 23.455749f, 24.004013f, 23.577777f, 23.408511f, 24.338007f,
+        23.388864f, 24.184784f, 23.246999f, 19.557724f, 21.689873f, 23.154776f, 24.101613f, 23.586273f,
+        23.214226f, 24.130939f, 23.266835f, 24.112291f, 23.461601f, 23.320176f, 24.498404f, 23.459580f,
+        24.013886f, 23.712592f, 23.374801f, 24.276987f, 23.281214f, 24.117632f, 23.167519f, 19.560860f,
+        21.831556f, 22.960261f, 23.593394f, 23.494477f, 23.042502f, 24.192743f, 23.144226f, 24.056533f,
+        23.429952f, 23.294971f, 24.331714f, 23.430099f, 23.711183f, 23.425275f, 23.429654f, 24.358604f,
+        23.380003f, 24.160456f, 23.334399f, 19.629106f, 21.447051f, 22.866222f, 23.362534f, 23.379004f,
+        22.710676f, 24.109749f, 22.891065f, 23.714838f, 23.239478f, 23.083730f, 23.663855f, 23.240345f,
+        24.184290f, 23.385169f, 23.254947f, 24.208047f, 23.312112f, 24.102489f, 23.251892f, 19.708311f,
+    }};
+
+    constexpr std::array<float, 80> referenceAt100{{
+        21.735970f, 23.995080f, 25.559316f, 25.621867f, 25.095696f, 26.063887f, 25.127617f, 25.983373f,
+        25.446505f, 25.255980f, 26.154718f, 25.306286f, 25.741573f, 25.155472f, 25.302920f, 26.298391f,
+        25.288222f, 26.075446f, 25.118816f, 21.396813f, 23.566963f, 24.884442f, 25.765422f, 25.344489f,
+        25.015732f, 26.077456f, 25.198250f, 26.099997f, 25.421426f, 25.300623f, 26.195441f, 25.335950f,
+        25.735408f, 25.461058f, 25.295602f, 26.219607f, 25.209053f, 26.040818f, 25.057249f, 21.393446f,
+        23.623492f, 24.562633f, 25.404302f, 25.377116f, 24.760915f, 26.004137f, 24.899502f, 25.863144f,
+        25.232584f, 25.103475f, 25.990417f, 25.197579f, 25.550791f, 25.016438f, 25.323736f, 26.295938f,
+        25.296739f, 26.067982f, 25.205038f, 21.459274f, 23.141421f, 24.545988f, 25.092825f, 24.972450f,
+        24.350842f, 25.862734f, 24.578558f, 25.445877f, 24.979513f, 24.832923f, 25.267004f, 24.924035f,
+        25.924300f, 25.011722f, 25.029261f, 26.066780f, 25.183565f, 26.022492f, 25.134097f, 21.540473f,
+    }};
     const auto programme = makeOptoDenseProgramme();
     const auto low = measureOptoDenseProgramme(programme, 40.0f, referenceAt40);
     const auto high = measureOptoDenseProgramme(programme, 70.0f, referenceAt70);
+    const auto at85 = measureOptoDenseProgramme(programme, 85.0f, referenceAt85);
+    const auto at100 = measureOptoDenseProgramme(programme, 100.0f, referenceAt100);
     std::printf("opto dense programme: PR 0.40 mean %+.6f dB RMS %.6f dB "
                 "correlation %.6f; PR 0.70 mean %+.6f dB RMS %.6f dB "
+                "correlation %.6f; PR 0.85 mean %+.6f dB RMS %.6f dB "
+                "correlation %.6f; PR 1.00 mean %+.6f dB RMS %.6f dB "
                 "correlation %.6f\n",
                 low.meanErrorDb, low.rmsErrorDb, low.correlation,
-                high.meanErrorDb, high.rmsErrorDb, high.correlation);
-    // The RMS ceilings reject the issue baseline (1.600 / 3.163 dB) with
-    // margin.  Correlation is gated separately so a uniform offset cannot
-    // conceal a flattened or time-inverted gain-reduction envelope.
+                high.meanErrorDb, high.rmsErrorDb, high.correlation,
+                at85.meanErrorDb, at85.rmsErrorDb, at85.correlation,
+                at100.meanErrorDb, at100.rmsErrorDb, at100.correlation);
+    // For the PR 0.40/0.70 rows, the RMS ceilings reject the issue #210
+    // baseline (1.600 / 3.163 dB) with margin.  Correlation is gated separately
+    // so a uniform offset cannot conceal a time-inverted or shape-mismatched
+    // envelope.  (Pearson correlation is invariant to uniform offset AND
+    // uniform positive scaling, so flattening per se is owned by the RMS term,
+    // not this one.)
     require(std::abs(low.meanErrorDb) < 0.60f && low.rmsErrorDb < 0.75f
                 && low.correlation > 0.75f,
             "Opto low-PR dense-programme envelope stays inside the reference gate");
     require(std::abs(high.meanErrorDb) < 1.75f && high.rmsErrorDb < 1.90f
                 && high.correlation > 0.72f,
             "Opto high-PR dense-programme envelope stays inside the reference gate");
+    // The PR 0.85/1.00 rows are different in kind: their ceilings snapshot the
+    // CURRENT build (measured 2026-08-24: PR 0.85 +2.015929 / 2.130637 dB /
+    // 0.774589; PR 1.00 +2.445327 / 2.561165 dB / 0.726289) with 0.269-0.305 dB
+    // and ~0.075 correlation margin.  They document the open PR-dependent gap
+    // and reject regression beyond it; they do NOT certify parity, and they
+    // must be tightened when the event-boundary charge mechanism lands.
+    // Baselines were measured with the manual -O2 clang recipe and also pass
+    // under the ctest -O3 build; the margins cover the documented contraction
+    // baseline.  Hazard noted in review: the two reference envelopes sit only
+    // ~1.8 dB apart while these ceilings span ~2.3-2.9 dB, so a swapped
+    // PR/reference pairing could pass — convert the four rows to a paired
+    // table when these ceilings are next touched.  The mean gates are floored
+    // at -0.30 dB so a sign-flipped (under-compressing) regression cannot hide
+    // inside a two-sided ceiling.  Structural blind spots: these rows run mono
+    // (nCh = 1), so the linked-stereo Opto detector path is never exercised
+    // here (the stereo-link gates own it), and Linux arm64 has not yet run
+    // these rows (matrix: macOS clang, macOS no-contract, Linux gcc 12 x86-64).
+    require(at85.meanErrorDb > -0.30f && at85.meanErrorDb < 2.30f
+                && at85.rmsErrorDb < 2.40f && at85.correlation > 0.70f,
+            "Opto PR 0.85 dense-programme error stays within the documented gap ceiling (tripwire, not parity)");
+    require(at100.meanErrorDb > -0.30f && at100.meanErrorDb < 2.75f
+                && at100.rmsErrorDb < 2.85f && at100.correlation > 0.65f,
+            "Opto PR 1.00 dense-programme error stays within the documented gap ceiling (tripwire, not parity)");
 }
 
 struct OptoAttackCrossings
