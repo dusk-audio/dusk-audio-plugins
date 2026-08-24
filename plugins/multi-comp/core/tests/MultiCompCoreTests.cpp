@@ -32,6 +32,7 @@ using duskaudio::MultiCompDSP;
 namespace
 {
 constexpr float kPi = duskaudio::kDuskPi;
+constexpr int kOversampling2xSetting = 1;
 
 void require(bool condition, const char* message)
 {
@@ -604,7 +605,8 @@ void testOptoSampleRateParity()
             "Opto reference residual is invariant from 44.1 to 96 kHz");
 }
 
-void prepareOptoDynamicsDsp(MultiCompDSP& dsp, float peakReduction)
+void prepareOptoDynamicsDsp(MultiCompDSP& dsp, float peakReduction,
+                            int oversamplingSetting = kOversampling2xSetting)
 {
     dsp.setMode(static_cast<int>(duskaudio::MultiCompMode::Opto));
     dsp.setMix(100.0f);
@@ -617,6 +619,7 @@ void prepareOptoDynamicsDsp(MultiCompDSP& dsp, float peakReduction)
     dsp.setParameter(MultiCompDSP::Parameter::OptoPeakReduction, peakReduction);
     dsp.setParameter(MultiCompDSP::Parameter::OptoGain, duskaudio::optoGainDbToKnob(0.0f));
     dsp.setParameter(MultiCompDSP::Parameter::OptoLimit, 0.0f);
+    dsp.setOversampling(oversamplingSetting);
     dsp.prepare(48000.0, 256);
 }
 
@@ -1760,8 +1763,8 @@ OptoDenseProgrammeMetrics measureOptoDenseProgramme(
     constexpr int kFrameSamples = 4800; // Non-overlapping 100 ms RMS frames.
     MultiCompDSP control;
     MultiCompDSP active;
-    prepareOptoDynamicsDsp(control, 0.0f);
-    prepareOptoDynamicsDsp(active, peakReduction);
+    prepareOptoDynamicsDsp(control, 0.0f, kOversampling2xSetting);
+    prepareOptoDynamicsDsp(active, peakReduction, kOversampling2xSetting);
     control.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1868896f);
     active.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1868896f);
     const int latency = control.getLatencySamples();
