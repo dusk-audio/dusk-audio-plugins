@@ -1658,18 +1658,235 @@ void testOptoReferenceOutputMemory()
     {
         const float measured = measureOptoReferenceOutputMemory(gapsMs[row]);
         const float delta = measured - reference[row];
-        std::printf("opto output memory: gap %d ms reference %.3f dB "
-                    "measured %.6f dB delta %+.6f dB\n",
-                    gapsMs[row], reference[row], measured, delta);
         squaredError += delta * delta;
         worstError = std::max(worstError, std::abs(delta));
     }
     const float rmsError = std::sqrt(squaredError / static_cast<float>(gapsMs.size()));
-    std::printf("opto output memory: RMS error %.6f dB worst %.6f dB\n",
-                rmsError, worstError);
     // Reference and implementation both use the same plain-RMS extraction.
     require(rmsError < 0.125f && worstError < 0.26f,
             "Opto end-to-end output memory matches the sixteen-point reference curve");
+}
+
+std::vector<float> makeOptoDenseProgramme()
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kSeconds = 8;
+    constexpr int kSampleCount = kSeconds * kSampleRate;
+    std::vector<double> programme(static_cast<size_t>(kSampleCount), 0.0);
+    constexpr std::array<std::array<double, 3>, 4> chords{{
+        {{110.0, 164.81, 220.0}}, {{130.81, 196.0, 261.63}},
+        {{98.0, 146.83, 196.0}}, {{82.41, 123.47, 164.81}}
+    }};
+    for (size_t bar = 0; bar < chords.size(); ++bar)
+    {
+        const int start = static_cast<int>(bar) * 2 * kSampleRate;
+        const int stop = std::min(kSampleCount, start + 2 * kSampleRate);
+        for (int sample = start; sample < stop; ++sample)
+        {
+            const double time = static_cast<double>(sample - start) / kSampleRate;
+            const double envelope = std::min(time / 0.03, 1.0)
+                * std::min((2.0 - time) / 0.15, 1.0);
+            for (size_t harmonic = 0; harmonic < chords[bar].size(); ++harmonic)
+                programme[static_cast<size_t>(sample)] += 0.16
+                    / static_cast<double>(harmonic + 1) * envelope
+                    * std::sin(2.0 * static_cast<double>(kPi)
+                        * chords[bar][harmonic] * time);
+        }
+    }
+    const auto uniformNoise = [](uint32_t& state) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return static_cast<double>(state) / 4294967295.0 * 2.0 - 1.0;
+    };
+    uint32_t hitState = 0x9e3779b9u;
+    for (int beat = 0; beat < kSeconds * 4; ++beat)
+    {
+        const int start = beat * kSampleRate / 4;
+        const int length = std::min(
+            static_cast<int>(0.18 * kSampleRate), kSampleCount - start);
+        for (int sample = 0; sample < length; ++sample)
+        {
+            const double time = static_cast<double>(sample) / kSampleRate;
+            const double hit = (beat / 2) % 2 == 0
+                ? std::sin(2.0 * static_cast<double>(kPi)
+                    * (55.0 + 45.0 * std::exp(-time / 0.02)) * time)
+                    * std::exp(-time / 0.07)
+                : uniformNoise(hitState) * std::exp(-time / 0.035);
+            programme[static_cast<size_t>(start + sample)] += 0.30 * hit;
+        }
+    }
+    uint32_t bedState = 0x4d433243u;
+    double filteredNoise = 0.0;
+    for (auto& sample : programme)
+    {
+        const double white = uniformNoise(bedState);
+        filteredNoise = 0.985 * filteredNoise + 0.015 * white;
+        sample += 0.025 * (0.65 * white + 0.35 * filteredNoise);
+    }
+    constexpr int kFadeSamples = 20 * kSampleRate / 1000;
+    for (int sample = 0; sample < kFadeSamples; ++sample)
+    {
+        const double fadeIn = static_cast<double>(sample) / kFadeSamples;
+        const double fadeOut = static_cast<double>(kFadeSamples - 1 - sample)
+            / kFadeSamples;
+        programme[static_cast<size_t>(sample)] *= fadeIn;
+        programme[static_cast<size_t>(kSampleCount - kFadeSamples + sample)]
+            *= fadeOut;
+    }
+    double peak = 0.0;
+    for (const double sample : programme)
+        peak = std::max(peak, std::abs(sample));
+    const double scale = static_cast<double>(duskaudio::decibelsToGain(-8.0f))
+        / std::max(peak, 1.0e-12);
+    std::vector<float> result(static_cast<size_t>(kSampleCount));
+    for (size_t sample = 0; sample < result.size(); ++sample)
+        result[sample] = static_cast<float>(programme[sample] * scale);
+    return result;
+}
+
+struct OptoDenseProgrammeMetrics
+{
+    float meanErrorDb = 0.0f;
+    float rmsErrorDb = 0.0f;
+    float correlation = 0.0f;
+};
+
+OptoDenseProgrammeMetrics measureOptoDenseProgramme(
+    const std::vector<float>& programme, float peakReduction,
+    const std::array<float, 80>& referenceEnvelope)
+{
+    constexpr int kBlockSize = 256;
+    constexpr int kFrameSamples = 4800; // Non-overlapping 100 ms RMS frames.
+    MultiCompDSP control;
+    MultiCompDSP active;
+    prepareOptoDynamicsDsp(control, 0.0f);
+    prepareOptoDynamicsDsp(active, peakReduction);
+    control.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1868896f);
+    active.setParameter(MultiCompDSP::Parameter::OptoGain, 32.1868896f);
+    const int latency = control.getLatencySamples();
+    require(active.getLatencySamples() == latency,
+            "Opto dense-programme control and active paths have equal latency");
+    const int totalSamples = static_cast<int>(programme.size()) + latency;
+    std::vector<float> controlOutput(static_cast<size_t>(totalSamples));
+    std::vector<float> activeOutput(static_cast<size_t>(totalSamples));
+    std::array<float, kBlockSize> input{};
+    std::array<float, kBlockSize> controlBlock{};
+    std::array<float, kBlockSize> activeBlock{};
+    for (int blockStart = 0; blockStart < totalSamples; blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, totalSamples - blockStart);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const int sourceSample = blockStart + sample;
+            input[static_cast<size_t>(sample)]
+                = sourceSample < static_cast<int>(programme.size())
+                    ? programme[static_cast<size_t>(sourceSample)] : 0.0f;
+        }
+        const float* inputs[] = {input.data()};
+        float* controlOutputs[] = {controlBlock.data()};
+        float* activeOutputs[] = {activeBlock.data()};
+        control.processBlock(inputs, controlOutputs, 1, count);
+        active.processBlock(inputs, activeOutputs, 1, count);
+        std::copy_n(controlBlock.data(), count, controlOutput.data() + blockStart);
+        std::copy_n(activeBlock.data(), count, activeOutput.data() + blockStart);
+    }
+    std::array<float, 80> measuredEnvelope{};
+    for (size_t frame = 0; frame < measuredEnvelope.size(); ++frame)
+    {
+        const int start = latency + static_cast<int>(frame) * kFrameSamples;
+        double controlPower = 0.0;
+        double activePower = 0.0;
+        for (int sample = 0; sample < kFrameSamples; ++sample)
+        {
+            const float controlSample
+                = controlOutput[static_cast<size_t>(start + sample)];
+            const float activeSample
+                = activeOutput[static_cast<size_t>(start + sample)];
+            controlPower += static_cast<double>(controlSample) * controlSample;
+            activePower += static_cast<double>(activeSample) * activeSample;
+        }
+        measuredEnvelope[frame] = 10.0f * std::log10(static_cast<float>(
+            (controlPower + 1.0e-30) / (activePower + 1.0e-30)));
+    }
+    double referenceMean = 0.0;
+    double measuredMean = 0.0;
+    double squaredError = 0.0;
+    for (size_t frame = 0; frame < referenceEnvelope.size(); ++frame)
+    {
+        referenceMean += referenceEnvelope[frame];
+        measuredMean += measuredEnvelope[frame];
+        const double error = measuredEnvelope[frame] - referenceEnvelope[frame];
+        squaredError += error * error;
+    }
+    referenceMean /= referenceEnvelope.size();
+    measuredMean /= measuredEnvelope.size();
+    double covariance = 0.0;
+    double referenceVariance = 0.0;
+    double measuredVariance = 0.0;
+    for (size_t frame = 0; frame < referenceEnvelope.size(); ++frame)
+    {
+        const double referenceDelta = referenceEnvelope[frame] - referenceMean;
+        const double measuredDelta = measuredEnvelope[frame] - measuredMean;
+        covariance += referenceDelta * measuredDelta;
+        referenceVariance += referenceDelta * referenceDelta;
+        measuredVariance += measuredDelta * measuredDelta;
+    }
+    return {
+        static_cast<float>(measuredMean - referenceMean),
+        static_cast<float>(std::sqrt(squaredError / referenceEnvelope.size())),
+        static_cast<float>(covariance / std::sqrt(
+            std::max(referenceVariance * measuredVariance, 1.0e-30)))
+    };
+}
+
+void testOptoDenseProgrammeParity()
+{
+    // Captured from the live reference AU with matched PR=0 controls, Gain at
+    // 0.321868896, Compress mode, and 2x oversampling.  The deterministic
+    // generator above is shared with the capture recipe; 100 ms RMS frames
+    // retain the envelope defect that remained with wider analysis windows.
+    constexpr std::array<float, 80> referenceAt40{{
+        4.678101f, 4.804975f, 5.371509f, 5.037769f, 4.704782f, 5.310720f, 4.680708f, 5.213288f,
+        4.815061f, 4.546864f, 6.638811f, 5.006345f, 5.698022f, 5.596746f, 4.774736f, 5.515971f,
+        4.687577f, 5.407262f, 4.788301f, 3.326948f, 5.560364f, 5.003565f, 6.150897f, 5.582094f,
+        4.926047f, 5.442073f, 4.682782f, 5.308673f, 4.736460f, 4.463318f, 6.501792f, 4.911393f,
+        5.883970f, 5.463069f, 4.700910f, 5.495205f, 4.649648f, 5.310791f, 4.759596f, 3.340146f,
+        5.165737f, 5.139545f, 5.930709f, 5.516829f, 5.014696f, 5.661359f, 4.955315f, 5.541442f,
+        5.031242f, 4.782400f, 6.543997f, 5.026670f, 5.808061f, 5.619396f, 4.779205f, 5.621126f,
+        4.709073f, 5.268908f, 4.815944f, 3.333637f, 5.753230f, 5.182112f, 5.799463f, 5.638040f,
+        5.147764f, 5.776921f, 5.057772f, 5.807666f, 5.181100f, 4.927483f, 5.726680f, 5.098088f,
+        6.551258f, 5.563705f, 4.832070f, 5.631370f, 4.762319f, 5.514551f, 4.840456f, 3.363744f,
+    }};
+    constexpr std::array<float, 80> referenceAt70{{
+        15.482611f, 16.851750f, 17.896457f, 17.521057f, 17.044112f, 17.847969f, 17.016222f, 17.756700f,
+        17.204546f, 16.949476f, 18.842610f, 17.179530f, 18.070807f, 17.740867f, 17.025793f, 17.979406f,
+        16.990076f, 17.829499f, 16.909756f, 13.463429f, 17.036409f, 17.052952f, 18.357538f, 17.647516f,
+        16.994067f, 17.756139f, 16.906915f, 17.734576f, 17.068864f, 16.868262f, 18.844047f, 17.108888f,
+        18.145505f, 17.647855f, 16.954388f, 17.910899f, 16.888395f, 17.730082f, 16.839019f, 13.477085f,
+        16.947910f, 17.177237f, 17.862250f, 17.554443f, 17.003666f, 17.920045f, 16.988555f, 17.807569f,
+        17.169406f, 16.981416f, 18.699973f, 17.180529f, 17.932969f, 17.722775f, 17.039548f, 18.029931f,
+        16.981497f, 17.745234f, 16.987801f, 13.497576f, 17.138513f, 17.120387f, 17.750245f, 17.683297f,
+        16.990066f, 17.952907f, 16.958054f, 17.823901f, 17.159247f, 16.979283f, 17.944300f, 17.186154f,
+        18.723287f, 17.587928f, 16.948212f, 17.939089f, 16.956146f, 17.839403f, 16.925629f, 13.546612f,
+    }};
+    const auto programme = makeOptoDenseProgramme();
+    const auto low = measureOptoDenseProgramme(programme, 40.0f, referenceAt40);
+    const auto high = measureOptoDenseProgramme(programme, 70.0f, referenceAt70);
+    std::printf("opto dense programme: PR 0.40 mean %+.6f dB RMS %.6f dB "
+                "correlation %.6f; PR 0.70 mean %+.6f dB RMS %.6f dB "
+                "correlation %.6f\n",
+                low.meanErrorDb, low.rmsErrorDb, low.correlation,
+                high.meanErrorDb, high.rmsErrorDb, high.correlation);
+    // The RMS ceilings reject the issue baseline (1.600 / 3.163 dB) with
+    // margin.  Correlation is gated separately so a uniform offset cannot
+    // conceal a flattened or time-inverted gain-reduction envelope.
+    require(std::abs(low.meanErrorDb) < 0.60f && low.rmsErrorDb < 0.75f
+                && low.correlation > 0.75f,
+            "Opto low-PR dense-programme envelope stays inside the reference gate");
+    require(std::abs(high.meanErrorDb) < 1.75f && high.rmsErrorDb < 1.90f
+                && high.correlation > 0.72f,
+            "Opto high-PR dense-programme envelope stays inside the reference gate");
 }
 
 struct OptoAttackCrossings
@@ -4381,6 +4598,7 @@ int main()
     testOptoDetectorFrequencyWeighting();
     testOptoSubBassFloorContinuity();
     testOptoReferenceOutputMemory();
+    testOptoDenseProgrammeParity();
     reportOptoAttackCrossings();
     testOptoLimitDynamics();
     reportOptoReleaseLocalTaus();
