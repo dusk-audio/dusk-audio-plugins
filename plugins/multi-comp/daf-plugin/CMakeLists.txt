@@ -38,6 +38,18 @@ if(NOT CMAKE_CROSSCOMPILING)
   target_compile_features(MultiCompPluginLayerTest PRIVATE cxx_std_17)
   add_test(NAME MultiCompPluginLayer COMMAND MultiCompPluginLayerTest)
 
+  if(APPLE)
+    add_executable(MultiCompAUTest MultiCompAUTests.cpp)
+    target_compile_features(MultiCompAUTest PRIVATE cxx_std_17)
+    target_compile_definitions(MultiCompAUTest PRIVATE
+      MULTICOMP_AU_BINARY="$<TARGET_FILE:multi_comp_2-au>")
+    target_link_libraries(MultiCompAUTest PRIVATE
+      "-framework AudioToolbox"
+      "-framework AudioUnit")
+    add_dependencies(MultiCompAUTest multi_comp_2-au)
+    add_test(NAME MultiCompAU COMMAND MultiCompAUTest)
+  endif()
+
   add_executable(DuskUserPresetStoreTest
     ../../shared-daf/ui/tests/DuskUserPresetStoreTest.cpp)
   target_include_directories(DuskUserPresetStoreTest PRIVATE

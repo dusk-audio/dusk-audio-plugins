@@ -13,14 +13,11 @@
 // format supports them; JACK exposes all four inputs as named ports.
 #define DAF_PLUGIN_NUM_INPUTS   4
 #define DAF_PLUGIN_NUM_OUTPUTS  2
-// AU hosts filter insert menus by channel layout, and DAF's AU wrapper carries
-// every input channel on ONE element rather than a separate sidechain bus. The
-// base { 4, 2 } entry therefore describes a 4-in insert, which no stereo track
-// offers: without { 2, 2 } here auval reports the handling matrix as 1-1 and 4-2
-// only, and Logic omits the AU from every stereo channel strip. The three
-// entries are the three real layouts -- stereo with external sidechain, plain
-// stereo, and mono -- and run() picks the sidechain path off the input count
-// reported by ioChanged(), not off the output count.
+// The three total-port layouts are stereo with external sidechain, plain
+// stereo, and mono. DAF's AU wrapper projects these onto the main input bus for
+// host channel-capability matching and exposes ports 2-3 on a separate input
+// element. run() still picks the sidechain path from the total active input
+// count reported by ioChanged(), not from the output count.
 #define DAF_PLUGIN_EXTRA_IO     { 2, 2 }, { 1, 1 },
 #define DAF_PLUGIN_HAS_UI       1
 #define DAF_PLUGIN_IS_RT_SAFE   1

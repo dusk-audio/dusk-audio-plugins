@@ -31,10 +31,10 @@ using duskaudio::MultiCompDSP;
 
 namespace
 {
-// DAF prepends { DAF_PLUGIN_NUM_INPUTS, DAF_PLUGIN_NUM_OUTPUTS } to
-// this table, so the entries here are the two layouts narrower than the full
-// sidechain one. Dropping { 2, 2 } takes the AU off every stereo track, since
-// the base entry is a 4-in insert no stereo strip offers.
+// DAF prepends { DAF_PLUGIN_NUM_INPUTS, DAF_PLUGIN_NUM_OUTPUTS } to this table,
+// so the entries here are the two total-port layouts narrower than the full
+// sidechain one. The AU wrapper projects the full layout onto its main bus and
+// deduplicates the resulting { 2, 2 } capability.
 constexpr uint16_t kAdvertisedExtraIo[][2] = {DAF_PLUGIN_EXTRA_IO};
 static_assert(sizeof(kAdvertisedExtraIo) / sizeof(kAdvertisedExtraIo[0]) == 2
               && kAdvertisedExtraIo[0][0] == 2 && kAdvertisedExtraIo[0][1] == 2
