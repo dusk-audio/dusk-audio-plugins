@@ -1578,11 +1578,16 @@ float measureOptoReferenceOutputMemory(int gapMs)
     constexpr int kProbeSamples = 300 * kSampleRate / 1000;
     constexpr int kMeasureSamples = 4 * kSampleRate / 1000;
     const int gapSamples = gapMs * kSampleRate / 1000;
-    const int totalSamples = kBurstSamples + gapSamples + kProbeSamples;
     MultiCompDSP control;
     MultiCompDSP active;
     prepareOptoDynamicsDsp(control, 0.0f);
     prepareOptoDynamicsDsp(active, 70.0f);
+    const int latency = control.getLatencySamples();
+    require(active.getLatencySamples() == latency,
+            "Opto output-memory control and active paths have equal latency");
+    const int probeStart = kBurstSamples + gapSamples;
+    const int measuredProbeStart = probeStart + latency;
+    const int totalSamples = probeStart + kProbeSamples + latency;
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> controlOutput{};
     std::array<float, kBlockSize> activeOutput{};
@@ -1590,7 +1595,6 @@ float measureOptoReferenceOutputMemory(int gapMs)
     double activePower = 0.0;
     for (int blockStart = 0; blockStart < totalSamples;)
     {
-        const int probeStart = kBurstSamples + gapSamples;
         int count = std::min(kBlockSize, totalSamples - blockStart);
         if (blockStart < kBurstSamples && blockStart + count > kBurstSamples)
             count = kBurstSamples - blockStart;
@@ -1605,7 +1609,8 @@ float measureOptoReferenceOutputMemory(int gapMs)
             float amplitude = 0.0f;
             if (sample < kBurstSamples)
                 amplitude = duskaudio::decibelsToGain(-6.0f);
-            else if (sample >= kBurstSamples + gapSamples)
+            else if (sample >= probeStart
+                     && sample < probeStart + kProbeSamples)
                 amplitude = duskaudio::decibelsToGain(-40.0f);
             input[static_cast<size_t>(i)] = amplitude * std::sin(
                 2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
@@ -1617,7 +1622,7 @@ float measureOptoReferenceOutputMemory(int gapMs)
         active.processBlock(inputs, activeOutputs, 1, count);
         for (int i = 0; i < count; ++i)
         {
-            const int probeSample = blockStart + i - probeStart;
+            const int probeSample = blockStart + i - measuredProbeStart;
             if (probeSample >= 0 && probeSample < kMeasureSamples)
             {
                 controlPower += static_cast<double>(controlOutput[static_cast<size_t>(i)])
