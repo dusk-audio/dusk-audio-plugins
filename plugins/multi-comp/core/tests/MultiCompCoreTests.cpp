@@ -1570,7 +1570,7 @@ void testOptoBurstRateSweep()
             "Opto charging law generalises to the held-out 10 Hz burst rate");
 }
 
-float measureOptoDetectorMemory(int gapMs)
+float measureOptoReferenceOutputMemory(int gapMs)
 {
     constexpr int kSampleRate = 48000;
     constexpr int kBlockSize = 256;
@@ -1578,21 +1578,23 @@ float measureOptoDetectorMemory(int gapMs)
     constexpr int kProbeSamples = 300 * kSampleRate / 1000;
     constexpr int kMeasureSamples = 4 * kSampleRate / 1000;
     const int gapSamples = gapMs * kSampleRate / 1000;
-    const int totalSamples = kBurstSamples + gapSamples + kProbeSamples;
     MultiCompDSP control;
     MultiCompDSP active;
     prepareOptoDynamicsDsp(control, 0.0f);
     prepareOptoDynamicsDsp(active, 70.0f);
+    const int latency = control.getLatencySamples();
+    require(active.getLatencySamples() == latency,
+            "Opto output-memory control and active paths have equal latency");
+    const int probeStart = kBurstSamples + gapSamples;
+    const int measuredProbeStart = probeStart + latency;
+    const int totalSamples = probeStart + kProbeSamples + latency;
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> controlOutput{};
     std::array<float, kBlockSize> activeOutput{};
     double controlPower = 0.0;
     double activePower = 0.0;
-    double controlSum = 0.0;
-    double activeSum = 0.0;
     for (int blockStart = 0; blockStart < totalSamples;)
     {
-        const int probeStart = kBurstSamples + gapSamples;
         int count = std::min(kBlockSize, totalSamples - blockStart);
         if (blockStart < kBurstSamples && blockStart + count > kBurstSamples)
             count = kBurstSamples - blockStart;
@@ -1607,7 +1609,8 @@ float measureOptoDetectorMemory(int gapMs)
             float amplitude = 0.0f;
             if (sample < kBurstSamples)
                 amplitude = duskaudio::decibelsToGain(-6.0f);
-            else if (sample >= kBurstSamples + gapSamples)
+            else if (sample >= probeStart
+                     && sample < probeStart + kProbeSamples)
                 amplitude = duskaudio::decibelsToGain(-40.0f);
             input[static_cast<size_t>(i)] = amplitude * std::sin(
                 2.0f * kPi * 1000.0f * static_cast<float>(sample) / kSampleRate);
@@ -1619,32 +1622,30 @@ float measureOptoDetectorMemory(int gapMs)
         active.processBlock(inputs, activeOutputs, 1, count);
         for (int i = 0; i < count; ++i)
         {
-            const int probeSample = blockStart + i - probeStart;
+            const int probeSample = blockStart + i - measuredProbeStart;
             if (probeSample >= 0 && probeSample < kMeasureSamples)
             {
                 controlPower += static_cast<double>(controlOutput[static_cast<size_t>(i)])
                     * controlOutput[static_cast<size_t>(i)];
                 activePower += static_cast<double>(activeOutput[static_cast<size_t>(i)])
                     * activeOutput[static_cast<size_t>(i)];
-                controlSum += controlOutput[static_cast<size_t>(i)];
-                activeSum += activeOutput[static_cast<size_t>(i)];
             }
         }
         blockStart += count;
     }
-    // Remove the window mean so the detector-memory gate measures the probe
-    // carrier, not the unrelated colour chain's level-step DC transient.
-    const double controlAcPower = controlPower
-        - controlSum * controlSum / static_cast<double>(kMeasureSamples);
-    const double activeAcPower = activePower
-        - activeSum * activeSum / static_cast<double>(kMeasureSamples);
-    return 10.0f * std::log10(static_cast<float>(controlAcPower / activeAcPower));
+    // Match the live-reference extraction: this is an end-to-end output-memory
+    // gate, so its first-4-ms RMS deliberately includes the colour path's
+    // level-step transient.  Removing the mean only from our side made the
+    // former gate asymmetric.  Probe-level comparisons use a separate,
+    // symmetric AC-carrier measurement because the transient dominates quiet
+    // probes; this fixed -40 dBFS comparison remains a valid output-parity gate.
+    return 10.0f * std::log10(static_cast<float>(controlPower / activePower));
 }
 
-void testOptoDetectorMemory()
+void testOptoReferenceOutputMemory()
 {
     const float burstStaticReduction = measureOptoStaticGr(-6.0f, 70.0f, false);
-    std::printf("opto detector memory: burst static-law reduction %.6f dB\n",
+    std::printf("opto output memory: burst static-law reduction %.6f dB\n",
                 burstStaticReduction);
     constexpr std::array<int, 16> gapsMs{{
         1, 2, 3, 5, 8, 10, 15, 25, 30, 40, 60, 120, 250, 500, 1000, 2000}};
@@ -1655,23 +1656,20 @@ void testOptoDetectorMemory()
     float worstError = 0.0f;
     for (size_t row = 0; row < gapsMs.size(); ++row)
     {
-        const float measured = measureOptoDetectorMemory(gapsMs[row]);
+        const float measured = measureOptoReferenceOutputMemory(gapsMs[row]);
         const float delta = measured - reference[row];
-        std::printf("opto detector memory: gap %d ms reference %.3f dB "
+        std::printf("opto output memory: gap %d ms reference %.3f dB "
                     "measured %.6f dB delta %+.6f dB\n",
                     gapsMs[row], reference[row], measured, delta);
         squaredError += delta * delta;
         worstError = std::max(worstError, std::abs(delta));
     }
     const float rmsError = std::sqrt(squaredError / static_cast<float>(gapsMs.size()));
-    std::printf("opto detector memory: RMS error %.6f dB worst %.6f dB\n",
+    std::printf("opto output memory: RMS error %.6f dB worst %.6f dB\n",
                 rmsError, worstError);
-    // The retained 64/185/1174 ms populations match at probe start; the
-    // remaining local residual is the same cell decay averaged into the
-    // prescribed first 4 ms output probe.  Keep a narrow bound around that
-    // measured extraction rather than moving the physical release constants.
+    // Reference and implementation both use the same plain-RMS extraction.
     require(rmsError < 0.125f && worstError < 0.26f,
-            "Opto three-population memory matches the corrected sixteen-point curve");
+            "Opto end-to-end output memory matches the sixteen-point reference curve");
 }
 
 struct OptoAttackCrossings
@@ -4382,7 +4380,7 @@ int main()
     testOptoPluginLevelReferencePoints();
     testOptoDetectorFrequencyWeighting();
     testOptoSubBassFloorContinuity();
-    testOptoDetectorMemory();
+    testOptoReferenceOutputMemory();
     reportOptoAttackCrossings();
     testOptoLimitDynamics();
     reportOptoReleaseLocalTaus();
