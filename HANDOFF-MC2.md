@@ -5,13 +5,20 @@ You are the planner and reviewer; delegate implementation to Codex via the
 file. The campaign log memory `mc2-la2a-campaign.md` is the long-form record;
 this file is the working state.
 
-**Snapshot authority:** the renamed campaign worktree named in section 2, at
-committed HEAD `d090a7b`, is the current source tree for the measurements below.
-It is based on `origin/main` at `f7edaea`. The measurements were first recorded
-from the historical pre-rename `e0a4f21` worktree plus its listed changes, then
-the campaign state was ported and verified with identical gate output. Do not
-substitute `origin/main`, the historical worktree, or files from the unrelated
-primary checkout.
+**Snapshot authority (updated 2026-08-24):** the campaign branch
+`multi-comp-2/opto-campaign-snapshot` lives in the worktree
+`/private/tmp/dusk-audio-plugins-opto-campaign`. The snapshot has MERGED to
+`origin/main` through PR #228 (`582ab99`: ff57a16 dense-programme parity gate,
+0110ff9 AU sidechain-bus tests, 8d602d7 2x pin); the branch now carries the PR
+0.85/1.00 parity-gate rows. The Opto code paths are unchanged since the
+`d090a7b` state these measurements were taken on, so the gate table below is
+current (Bus/VCA detector fixes landed after it via PR #224). Re-measure
+before using any row as a DSP-decision baseline. The worktree path named in section 2 (`.../mc2-port`) is historical
+and gone. The original authority statement follows for provenance: HEAD
+`d090a7b` was based on `origin/main` at `f7edaea`; the measurements were first
+recorded from the historical pre-rename `e0a4f21` worktree plus its listed
+changes, then the campaign state was ported and verified with identical gate
+output. Do not substitute files from the unrelated primary checkout.
 
 ---
 
@@ -59,9 +66,11 @@ sustained 0.5 ms). Rules earned:
   conform to TapeMachine 2 / Tape Echo 2. That shell change applies across all
   modes; it does not authorise DSP or per-mode panel changes. Keep UI and DSP
   iterations isolated. Bugs found in
-  other modes get issues, not fixes (#220 deferred; same
-  `external ? sidechain : input` dead-link bug likely in VCA ~line 854 and
-  Bus ~line 960 of MultiCompModes.hpp — needs its own issue).
+  other modes get issues, not fixes (#220 was closed 2026-08-23 by the same
+  fix). The
+  `external ? sidechain : input` dead-link bug was fixed for VCA and Bus by
+  452b13b (PR #224); the remaining instance is processStudioVCA
+  (MultiCompModes.hpp:1443) — needs its own issue.
 - **The hardware reference is the only oracle.** Old JUCE implementation is
   not a reference; its Opto golden vectors were deleted deliberately.
 - **Parameter laws follow the reference** ("stick with parity, the goal is to
@@ -73,14 +82,21 @@ sustained 0.5 ms). Rules earned:
 
 ## 2. Repository state
 
-Worktree (all work happens here):
+Worktree (all work happens here): `/private/tmp/dusk-audio-plugins-opto-campaign`
+(branch `multi-comp-2/opto-campaign-snapshot`). The build-recipe,
+measurements-pointer, and DAF-pin bullets below remain CURRENT; the
+worktree/branch lineage bullets are historical provenance for the 2026-08-22
+measurements — the `mc2-port` scratchpad worktree they name is gone; do not
+recreate it.
+
+Historical worktree of the 2026-08-22 snapshot:
 `/private/tmp/claude-502/-Users-marckorte-projects-dusk-audio-plugins/d3a95f36-6e62-4446-9f5b-32717dcb08a6/scratchpad/mc2-port`
 
 - **Authoritative 2026-08-22 campaign snapshot:** worktree branch
   `multi-comp-2/opto-campaign-snapshot` at `d090a7b`, based on `origin/main`
   `f7edaea` (merged PR #223). Its tracked tree contains the faithfully ported
-  campaign changes and the selective DAF build-workflow edit; a clean checkout
-  of `origin/main` does not contain the same gate set.
+  campaign changes and the selective DAF build-workflow edit (historical: since
+  PRs #225-#228, `origin/main` contains the full gate set).
 - **Historical pre-rename 2026-08-22 source:** branch
   `multi-comp-2/review-followups` at `e0a4f21`, plus its five then-uncommitted
   files, with `origin/main` at `c1f9ae4`. This identifies the source from which
@@ -93,33 +109,37 @@ Worktree (all work happens here):
   `MultiCompPluginLayerTests.cpp`, and `MultiCompUI.cpp`. They are committed in
   the authoritative snapshot. The workflow change remains owner-controlled and
   outside the Opto task; do not modify it.
-- Pre-existing untracked `b/` is the configured build directory, not a source
-  change. Preserve it; configure command if needed:
+- (HISTORICAL: the `b/` build directory belonged to the dead mc2-port worktree.
+  The current worktree's build dir is `build-validation/`.) Configure command:
   ```bash
   cmake -U 'SDL2*' -U 'pkgcfg_lib_SDL2*' -S plugins/multi-comp/daf-plugin \
     -B b -DCMAKE_BUILD_TYPE=Release -DDAF_PATH=$HOME/projects/DAF \
     -DDAFWIDGETS_PATH=$HOME/projects/DAF-Widgets -DDUSK_DAF_INSTALL_LOCAL=OFF \
     -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE
   ```
-- DAF fork `~/projects/DAF`: pinned at `788eb019`; DAF-Widgets is pinned at
-  `91e0004e`. Do not modify either checkout or point builds away from these hard
-  forks.
+- DAF fork pins live in `.github/workflows/daf-build.yml` (`DAF_REF` /
+  `DAFWIDGETS_REF`). Do not modify `~/projects/DAF` / `~/projects/DAF-Widgets`
+  or point builds away from these hard forks.
 - Measurements: `~/projects/dusk-audio-tools/plugins/MultiComp/measurements/`
   (17 JSON + probe scripts). Read before measuring anything new.
 
 ## 3. Where Opto stands — authoritative 2026-08-22 macOS re-run
+
+(2026-08-24: `testOptoDenseProgrammeParity` also carries PR 0.85/1.00
+gap-tripwire rows snapshotting the current build — ceilings and the tightening
+obligation live in that test's comment block, not here.)
 
 | gate | current |
 | --- | --- |
 | static law (sine), 4 deltas | -0.021 / -0.145 / -0.085 / -0.196 dB |
 | broadband static law | fitted RMS 0.073 dB, held-out -24 dBFS +0.016 dB |
 | detector weighting | mean -0.237 dB; shape RMS 0.097 dB |
-| detector memory, 16 pts | RMS 0.070 dB, worst 0.142 dB |
+| detector memory, 16 pts (gate since reworked by bf2e797/1a3e018 into the symmetric 'output memory' probe — re-measure before citing) | RMS 0.070 dB, worst 0.142 dB |
 | make-up taper | worst 0.0029 dB |
 | output ceiling | worst 0.230 dB, peak +4.68 dBFS |
 | burst-rate sweep, 2/5/10/20/40 Hz | +0.407 / +0.563 / +0.187 / +0.384 / +0.792 dB |
 | crest sweep | -0.141 / -0.540 / **+0.615 held out** / -0.709 dB |
-| dense programme, PR 0.4/0.55/0.7/0.85/1.0 | +0.224 / +0.033 / +1.000 / +1.488 / +2.012 dB |
+| dense programme, PR 0.4/0.55/0.7/0.85/1.0 (renderer A/B metric; the in-test gate rows use a different stimulus and scoring — never cross-compare) | +0.224 / +0.033 / +1.000 / +1.488 / +2.012 dB |
 | harmonics | fundamental 0.0002 dB; compressed H2-H5 worst 0.071 dB |
 | sample-rate invariance | 0.002 dB spread |
 | asymmetric stereo | -0.19 / -0.25 dB, symmetric |
