@@ -623,6 +623,474 @@ void prepareOptoDynamicsDsp(MultiCompDSP& dsp, float peakReduction,
     dsp.prepare(48000.0, 256);
 }
 
+constexpr int kOptoPedestalEventTraceStartMs = -5;
+constexpr int kOptoPedestalEventTraceStopMs = 80;
+constexpr size_t kOptoPedestalEventTracePoints
+    = kOptoPedestalEventTraceStopMs - kOptoPedestalEventTraceStartMs;
+
+struct OptoPedestalEventReference
+{
+    float pedestalDbfs;
+    float eventDbfs;
+    float peakReduction;
+    float pedestalGrDb;
+    float liftAtPlus2MsDb;
+    float earlyTauMs;
+};
+
+// The sixteen uncontaminated rows from pedestal_event.json.  The five
+// -90 dBFS operational-silence rows are rendered below only as the pedestal-GR
+// baseline; their carrier-start extraction is not a reference target.
+constexpr std::array<OptoPedestalEventReference, 16>
+kOptoPedestalEventReference{{
+    {-33.0f, -12.0f, 0.70f,  1.395682f, 11.061453f, 18.907986f},
+    {-33.0f,  -6.0f, 0.70f,  1.395682f, 13.670871f, 21.704937f},
+    {-33.0f,   0.0f, 0.70f,  1.395682f, 15.463770f, 24.083064f},
+    {-27.0f, -12.0f, 0.70f,  5.459101f,  7.603374f, 16.555105f},
+    {-27.0f,  -6.0f, 0.70f,  5.459101f, 10.438680f, 20.405661f},
+    {-27.0f,   0.0f, 0.70f,  5.459101f, 12.360860f, 23.212061f},
+    {-21.0f, -12.0f, 0.70f, 10.181594f,  3.766819f, 11.084493f},
+    {-21.0f,  -6.0f, 0.70f, 10.181594f,  6.737326f, 16.608847f},
+    {-21.0f,   0.0f, 0.70f, 10.181594f,  8.837106f, 20.544415f},
+    {-15.0f, -12.0f, 0.70f, 15.055978f,  0.788700f,  6.713385f},
+    {-15.0f,  -6.0f, 0.70f, 15.055978f,  3.194736f, 10.462360f},
+    {-15.0f,   0.0f, 0.70f, 15.055978f,  5.474565f, 15.479484f},
+    {-27.0f,  -6.0f, 0.40f, -0.002905f,  5.563935f, 14.045118f},
+    {-15.0f,  -6.0f, 0.40f,  2.030112f,  3.841599f, 12.031171f},
+    {-27.0f,  -6.0f, 1.00f, 14.696565f,  6.657798f, 18.844623f},
+    {-15.0f,  -6.0f, 1.00f, 24.321150f,  1.979050f, 11.279049f},
+}};
+
+struct OptoPedestalEventMeasurement
+{
+    float pedestalOutputRms = 0.0f;
+    float pedestalGrDb = 0.0f;
+    float liftAtPlus2MsDb = 0.0f;
+    float earlyTauMs = std::numeric_limits<float>::quiet_NaN();
+    float preEventMaximumAbsDb = 0.0f;
+    float postEventMaximumDb = 0.0f;
+    float meterPostEventMaximumDb = 0.0f;
+    int postEventMaximumOffsetMs = 0;
+    int meterPostEventMaximumOffsetMs = 0;
+    int signalStartSample = 0;
+    float meterEarlyTauMs = std::numeric_limits<float>::quiet_NaN();
+    std::array<float, kOptoPedestalEventTracePoints> traceDb{};
+    std::array<float, kOptoPedestalEventTracePoints> meterTraceDb{};
+};
+
+float optoPedestalEventCycleRms(const std::vector<float>& signal, int begin)
+{
+    constexpr int kCycleSamples = 48;
+    require(begin >= 0 && begin + kCycleSamples <= static_cast<int>(signal.size()),
+            "Opto pedestal-event cycle is inside the rendered signal");
+    double mean = 0.0;
+    for (int sample = 0; sample < kCycleSamples; ++sample)
+        mean += signal[static_cast<size_t>(begin + sample)];
+    mean /= kCycleSamples;
+    double power = 0.0;
+    for (int sample = 0; sample < kCycleSamples; ++sample)
+    {
+        const double centred
+            = signal[static_cast<size_t>(begin + sample)] - mean;
+        power += centred * centred;
+    }
+    const float value = static_cast<float>(std::sqrt(power / kCycleSamples));
+    require(value > 1.0e-30f,
+            "Opto pedestal-event cycle has non-zero DC-removed RMS");
+    return value;
+}
+
+int locateOptoPedestalEventCarrierStart(const std::vector<float>& control)
+{
+    constexpr int kCycleSamples = 48;
+    float peak = 0.0f;
+    for (const float sample : control) peak = std::max(peak, std::abs(sample));
+    const float threshold = peak * 0.10f;
+    int crossing = -1;
+    for (size_t sample = 0; sample < control.size(); ++sample)
+        if (std::abs(control[sample]) > threshold)
+        {
+            crossing = static_cast<int>(sample);
+            break;
+        }
+    require(crossing >= 0,
+            "Opto pedestal-event control render has a detectable carrier");
+    const int low = std::max(0, crossing - 2 * kCycleSamples);
+    for (int sample = crossing - 1; sample >= low; --sample)
+        if (control[static_cast<size_t>(sample)] <= 0.0f
+            && control[static_cast<size_t>(sample + 1)] > 0.0f)
+            return sample;
+    return crossing;
+}
+
+float optoPedestalEventLocalTauMs(
+    const std::array<float, kOptoPedestalEventTracePoints>& trace,
+    int startMs, int stopMs)
+{
+    double sumTime = 0.0;
+    double sumLog = 0.0;
+    double sumTimeSquared = 0.0;
+    double sumTimeLog = 0.0;
+    int count = 0;
+    for (int offsetMs = startMs; offsetMs < stopMs; ++offsetMs)
+    {
+        const float value = trace[static_cast<size_t>(
+            offsetMs - kOptoPedestalEventTraceStartMs)];
+        if (value <= 1.0e-6f) continue;
+        const double logValue = std::log(static_cast<double>(value));
+        sumTime += offsetMs;
+        sumLog += logValue;
+        sumTimeSquared += static_cast<double>(offsetMs) * offsetMs;
+        sumTimeLog += static_cast<double>(offsetMs) * logValue;
+        ++count;
+    }
+    if (count < 2) return std::numeric_limits<float>::quiet_NaN();
+    const double denominator = count * sumTimeSquared - sumTime * sumTime;
+    const double slope = (count * sumTimeLog - sumTime * sumLog) / denominator;
+    return slope < -1.0e-12
+        ? static_cast<float>(-1.0 / slope)
+        : std::numeric_limits<float>::quiet_NaN();
+}
+
+OptoPedestalEventMeasurement measureOptoPedestalEventCell(
+    float pedestalDbfs, float eventDbfs, float peakReduction)
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kBlockSize = kSampleRate / 1000;
+    constexpr int kStimulusSamples = 9 * kSampleRate / 2;
+    constexpr int kEventStart = 4 * kSampleRate;
+    constexpr int kEventSamples = 2 * kSampleRate / 1000;
+    constexpr int kCycleSamples = kSampleRate / 1000;
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+    static_assert(kBlockSize == kCycleSamples);
+    static_assert(kEventStart % kCycleSamples == 0);
+    static_assert(kEventSamples == 2 * kCycleSamples);
+    static_assert(kOptoPedestalEventTracePoints == 85);
+    static_assert(kEventStart
+            + kOptoPedestalEventTraceStopMs * kCycleSamples
+            + kCycleSamples
+        <= kStimulusSamples);
+
+    const float pedestalAmplitude = duskaudio::decibelsToGain(pedestalDbfs);
+    const float eventAmplitude = duskaudio::decibelsToGain(eventDbfs);
+    std::vector<float> withEventInput(static_cast<size_t>(kStimulusSamples));
+    std::vector<float> withoutEventInput(static_cast<size_t>(kStimulusSamples));
+    for (int sample = 0; sample < kStimulusSamples; ++sample)
+    {
+        const float carrier = static_cast<float>(std::sin(
+            kTwoPi * 1000.0 * static_cast<double>(sample) / kSampleRate));
+        withoutEventInput[static_cast<size_t>(sample)]
+            = pedestalAmplitude * carrier;
+        const float amplitude = sample >= kEventStart
+                && sample < kEventStart + kEventSamples
+            ? eventAmplitude : pedestalAmplitude;
+        withEventInput[static_cast<size_t>(sample)] = amplitude * carrier;
+    }
+    constexpr int kQuarterCycleSamples = kCycleSamples / 4;
+    require(withEventInput[static_cast<size_t>(kEventStart - 1)]
+                == withoutEventInput[static_cast<size_t>(kEventStart - 1)]
+            && withEventInput[static_cast<size_t>(
+                    kEventStart + kEventSamples)]
+                == withoutEventInput[static_cast<size_t>(
+                    kEventStart + kEventSamples)]
+            && std::abs(withEventInput[static_cast<size_t>(
+                    kEventStart + kQuarterCycleSamples)] - eventAmplitude)
+                < 1.0e-6f
+            && std::abs(withoutEventInput[static_cast<size_t>(
+                    kEventStart + kQuarterCycleSamples)] - pedestalAmplitude)
+                < 1.0e-6f,
+            "Opto pedestal-event stimulus has a phase-continuous two-cycle amplitude event");
+
+    MultiCompDSP withEvent;
+    MultiCompDSP withoutEvent;
+    prepareOptoDynamicsDsp(withEvent, peakReduction * 100.0f);
+    prepareOptoDynamicsDsp(withoutEvent, peakReduction * 100.0f);
+    withEvent.setParameter(
+        MultiCompDSP::Parameter::OptoGain, 32.1868896f);
+    withoutEvent.setParameter(
+        MultiCompDSP::Parameter::OptoGain, 32.1868896f);
+
+    std::vector<float> withEventOutput(static_cast<size_t>(kStimulusSamples));
+    std::vector<float> withoutEventOutput(static_cast<size_t>(kStimulusSamples));
+    std::array<float, kBlockSize> withInputBlock{};
+    std::array<float, kBlockSize> withoutInputBlock{};
+    std::array<float, kBlockSize> withOutputLeft{}, withOutputRight{};
+    std::array<float, kBlockSize> withoutOutputLeft{}, withoutOutputRight{};
+    OptoPedestalEventMeasurement measurement;
+    int meterFramesCaptured = 0;
+    for (int blockStart = 0; blockStart < kStimulusSamples;
+         blockStart += kBlockSize)
+    {
+        const int count = std::min(kBlockSize, kStimulusSamples - blockStart);
+        std::copy_n(withEventInput.data() + blockStart, count,
+                    withInputBlock.data());
+        std::copy_n(withoutEventInput.data() + blockStart, count,
+                    withoutInputBlock.data());
+        const float* withInputs[] = {
+            withInputBlock.data(), withInputBlock.data()};
+        const float* withoutInputs[] = {
+            withoutInputBlock.data(), withoutInputBlock.data()};
+        float* withOutputs[] = {withOutputLeft.data(), withOutputRight.data()};
+        float* withoutOutputs[] = {
+            withoutOutputLeft.data(), withoutOutputRight.data()};
+        withEvent.processBlock(withInputs, withOutputs, 2, count);
+        withoutEvent.processBlock(withoutInputs, withoutOutputs, 2, count);
+        std::copy_n(withOutputLeft.data(), count,
+                    withEventOutput.data() + blockStart);
+        std::copy_n(withoutOutputLeft.data(), count,
+                    withoutEventOutput.data() + blockStart);
+        const int meterOffsetMs = (blockStart - kEventStart) / kCycleSamples;
+        if (blockStart >= kEventStart
+                + kOptoPedestalEventTraceStartMs * kCycleSamples
+            && blockStart < kEventStart
+                + kOptoPedestalEventTraceStopMs * kCycleSamples)
+            measurement.meterTraceDb[static_cast<size_t>(
+                meterOffsetMs - kOptoPedestalEventTraceStartMs)]
+                    = withoutEvent.getGainReduction()
+                        - withEvent.getGainReduction();
+        if (blockStart >= kEventStart
+                + kOptoPedestalEventTraceStartMs * kCycleSamples
+            && blockStart < kEventStart
+                + kOptoPedestalEventTraceStopMs * kCycleSamples)
+            ++meterFramesCaptured;
+    }
+    require(meterFramesCaptured
+                == static_cast<int>(kOptoPedestalEventTracePoints),
+            "Opto pedestal-event meter covers every one-millisecond trace frame");
+
+    measurement.signalStartSample
+        = locateOptoPedestalEventCarrierStart(withoutEventOutput);
+    const int eventOutputStart = measurement.signalStartSample + kEventStart;
+    for (int offsetMs = kOptoPedestalEventTraceStartMs;
+         offsetMs < kOptoPedestalEventTraceStopMs; ++offsetMs)
+    {
+        const int outputBegin = eventOutputStart + offsetMs * kCycleSamples;
+        const int inputBegin = kEventStart + offsetMs * kCycleSamples;
+        const float withOutputRms
+            = optoPedestalEventCycleRms(withEventOutput, outputBegin);
+        const float withoutOutputRms
+            = optoPedestalEventCycleRms(withoutEventOutput, outputBegin);
+        const float withInputRms
+            = optoPedestalEventCycleRms(withEventInput, inputBegin);
+        const float withoutInputRms
+            = optoPedestalEventCycleRms(withoutEventInput, inputBegin);
+        const float inputCorrectionDb = duskaudio::gainToDecibels(
+            withInputRms / withoutInputRms);
+        const float outputRatioDb = duskaudio::gainToDecibels(
+            withOutputRms / withoutOutputRms);
+        measurement.traceDb[static_cast<size_t>(
+            offsetMs - kOptoPedestalEventTraceStartMs)]
+                = inputCorrectionDb - outputRatioDb;
+    }
+
+    double pedestalPower = 0.0;
+    for (int offsetMs = kOptoPedestalEventTraceStartMs; offsetMs < 0;
+         ++offsetMs)
+    {
+        const float cycle = optoPedestalEventCycleRms(
+            withoutEventOutput, eventOutputStart + offsetMs * kCycleSamples);
+        pedestalPower += static_cast<double>(cycle) * cycle;
+    }
+    measurement.pedestalOutputRms = static_cast<float>(
+        std::sqrt(pedestalPower / -kOptoPedestalEventTraceStartMs));
+    for (int offsetMs = kOptoPedestalEventTraceStartMs; offsetMs < 0;
+         ++offsetMs)
+        measurement.preEventMaximumAbsDb = std::max(
+            measurement.preEventMaximumAbsDb,
+            std::abs(measurement.traceDb[static_cast<size_t>(
+                offsetMs - kOptoPedestalEventTraceStartMs)]));
+    measurement.liftAtPlus2MsDb = measurement.traceDb[static_cast<size_t>(
+        2 - kOptoPedestalEventTraceStartMs)];
+    measurement.postEventMaximumDb = measurement.liftAtPlus2MsDb;
+    measurement.postEventMaximumOffsetMs = 2;
+    for (int offsetMs = 3; offsetMs < kOptoPedestalEventTraceStopMs; ++offsetMs)
+    {
+        const float value = measurement.traceDb[static_cast<size_t>(
+            offsetMs - kOptoPedestalEventTraceStartMs)];
+        if (value > measurement.postEventMaximumDb)
+        {
+            measurement.postEventMaximumDb = value;
+            measurement.postEventMaximumOffsetMs = offsetMs;
+        }
+    }
+    measurement.earlyTauMs
+        = optoPedestalEventLocalTauMs(measurement.traceDb, 2, 10);
+    measurement.meterPostEventMaximumDb
+        = measurement.meterTraceDb[static_cast<size_t>(
+            2 - kOptoPedestalEventTraceStartMs)];
+    measurement.meterPostEventMaximumOffsetMs = 2;
+    for (int offsetMs = 3; offsetMs < kOptoPedestalEventTraceStopMs; ++offsetMs)
+    {
+        const float value = measurement.meterTraceDb[static_cast<size_t>(
+            offsetMs - kOptoPedestalEventTraceStartMs)];
+        if (value > measurement.meterPostEventMaximumDb)
+        {
+            measurement.meterPostEventMaximumDb = value;
+            measurement.meterPostEventMaximumOffsetMs = offsetMs;
+        }
+    }
+    measurement.meterEarlyTauMs = optoPedestalEventLocalTauMs(
+        measurement.meterTraceDb, 2, 10);
+    return measurement;
+}
+
+struct OptoPedestalEventGrid
+{
+    std::array<OptoPedestalEventMeasurement,
+               kOptoPedestalEventReference.size()> cells{};
+};
+
+const OptoPedestalEventGrid& measureOptoPedestalEventGrid()
+{
+    static const OptoPedestalEventGrid measured = [] {
+        OptoPedestalEventGrid result;
+        for (size_t row = 0; row < kOptoPedestalEventReference.size(); ++row)
+        {
+            const auto& reference = kOptoPedestalEventReference[row];
+            result.cells[row] = measureOptoPedestalEventCell(
+                reference.pedestalDbfs, reference.eventDbfs,
+                reference.peakReduction);
+            const auto silence = measureOptoPedestalEventCell(
+                -90.0f, reference.eventDbfs, reference.peakReduction);
+            const float inputDeltaDb = reference.pedestalDbfs + 90.0f;
+            const float outputDeltaDb = duskaudio::gainToDecibels(
+                result.cells[row].pedestalOutputRms
+                    / silence.pedestalOutputRms);
+            result.cells[row].pedestalGrDb = inputDeltaDb - outputDeltaDb;
+        }
+        return result;
+    }();
+    return measured;
+}
+
+float optoPedestalEventSlope(float eventDbfs)
+{
+    const auto& grid = measureOptoPedestalEventGrid();
+    double sumX = 0.0;
+    double sumY = 0.0;
+    double sumXX = 0.0;
+    double sumXY = 0.0;
+    int count = 0;
+    for (size_t row = 0; row < kOptoPedestalEventReference.size(); ++row)
+    {
+        const auto& reference = kOptoPedestalEventReference[row];
+        if (reference.peakReduction != 0.70f
+            || reference.eventDbfs != eventDbfs)
+            continue;
+        const double x = grid.cells[row].pedestalGrDb;
+        const double y = grid.cells[row].liftAtPlus2MsDb;
+        sumX += x;
+        sumY += y;
+        sumXX += x * x;
+        sumXY += x * y;
+        ++count;
+    }
+    return static_cast<float>((count * sumXY - sumX * sumY)
+        / (count * sumXX - sumX * sumX));
+}
+
+void reportOptoPedestalEventGrid()
+{
+    const auto& grid = measureOptoPedestalEventGrid();
+    // These are the measured reference laws from
+    // measurements/mechanism_findings_2026-08-24.md. They become assertions
+    // again when a real, always-active mechanism lands.
+    std::puts("opto pedestal-event measured reference laws: report-only until "
+              "an always-active mechanism lands "
+              "(measurements/mechanism_findings_2026-08-24.md)");
+    std::puts("opto pedestal-event grid: ped/event/PR | pedestal GR ref/mine/delta | "
+              "lift@+2ms ref/mine/delta | tau2-10 ref/mine/delta | mine peak offset/rise");
+    size_t outputNoRiseCells = 0;
+    size_t populationNoRiseCells = 0;
+    size_t finiteTauCells = 0;
+    for (size_t row = 0; row < kOptoPedestalEventReference.size(); ++row)
+    {
+        const auto& reference = kOptoPedestalEventReference[row];
+        const auto& mine = grid.cells[row];
+        std::printf("opto pedestal-event: %+.0f/%+.0f/%.2f | "
+                    "%.6f/%.6f/%+.6f | %.6f/%.6f/%+.6f | "
+                    "%.6f/%.6f/%+.6f | %+dms/%+.6f dB pre %.6f dB start %d\n",
+                    reference.pedestalDbfs, reference.eventDbfs,
+                    reference.peakReduction,
+                    reference.pedestalGrDb, mine.pedestalGrDb,
+                    mine.pedestalGrDb - reference.pedestalGrDb,
+                    reference.liftAtPlus2MsDb, mine.liftAtPlus2MsDb,
+                    mine.liftAtPlus2MsDb - reference.liftAtPlus2MsDb,
+                    reference.earlyTauMs, mine.earlyTauMs,
+                    mine.earlyTauMs - reference.earlyTauMs,
+                    mine.postEventMaximumOffsetMs,
+                    mine.postEventMaximumDb - mine.liftAtPlus2MsDb,
+                    mine.preEventMaximumAbsDb, mine.signalStartSample);
+        std::printf("  output incremental GR +0/+1/+2/+3ms "
+                    "%.6f/%.6f/%.6f/%.6f dB; meter +2/+3/+10ms "
+                    "%.6f/%.6f/%.6f dB tau %.6fms peak %+dms rise %+.6f dB\n",
+                    mine.traceDb[static_cast<size_t>(
+                        0 - kOptoPedestalEventTraceStartMs)],
+                    mine.traceDb[static_cast<size_t>(
+                        1 - kOptoPedestalEventTraceStartMs)],
+                    mine.traceDb[static_cast<size_t>(
+                        2 - kOptoPedestalEventTraceStartMs)],
+                    mine.traceDb[static_cast<size_t>(
+                        3 - kOptoPedestalEventTraceStartMs)],
+                    mine.meterTraceDb[static_cast<size_t>(
+                        2 - kOptoPedestalEventTraceStartMs)],
+                    mine.meterTraceDb[static_cast<size_t>(
+                        3 - kOptoPedestalEventTraceStartMs)],
+                    mine.meterTraceDb[static_cast<size_t>(
+                        10 - kOptoPedestalEventTraceStartMs)],
+                    mine.meterEarlyTauMs,
+                    mine.meterPostEventMaximumOffsetMs,
+                    mine.meterPostEventMaximumDb
+                        - mine.meterTraceDb[static_cast<size_t>(
+                            2 - kOptoPedestalEventTraceStartMs)]);
+        if (mine.postEventMaximumDb <= mine.liftAtPlus2MsDb + 0.10f)
+            ++outputNoRiseCells;
+        if (mine.meterPostEventMaximumDb
+            <= mine.meterTraceDb[static_cast<size_t>(
+                2 - kOptoPedestalEventTraceStartMs)] + 0.10f)
+            ++populationNoRiseCells;
+        if (std::isfinite(mine.earlyTauMs)) ++finiteTauCells;
+    }
+    std::printf("opto pedestal-event slopes at PR 0.70: E -12/-6/0 "
+                "%.6f / %.6f / %.6f dB/dB\n",
+                optoPedestalEventSlope(-12.0f),
+                optoPedestalEventSlope(-6.0f),
+                optoPedestalEventSlope(0.0f));
+    bool tauShrinksWithState = true;
+    bool tauGrowsWithEvent = true;
+    for (size_t event = 0; event < 3; ++event)
+        for (size_t pedestal = 1; pedestal < 4; ++pedestal)
+            tauShrinksWithState = tauShrinksWithState
+                && grid.cells[pedestal * 3 + event].earlyTauMs
+                    < grid.cells[(pedestal - 1) * 3 + event].earlyTauMs;
+    for (size_t pedestal = 0; pedestal < 4; ++pedestal)
+        for (size_t event = 1; event < 3; ++event)
+            tauGrowsWithEvent = tauGrowsWithEvent
+                && grid.cells[pedestal * 3 + event].earlyTauMs
+                    > grid.cells[pedestal * 3 + event - 1].earlyTauMs;
+    std::printf("opto pedestal-event report-only law summary: output no-rise "
+                "%zu/%zu cells; population no-rise %zu/%zu cells; finite "
+                "tau %zu/%zu cells; tau shrinks with state %s; tau grows "
+                "with event %s\n",
+                outputNoRiseCells, grid.cells.size(), populationNoRiseCells,
+                grid.cells.size(), finiteTauCells, grid.cells.size(),
+                tauShrinksWithState ? "yes" : "no",
+                tauGrowsWithEvent ? "yes" : "no");
+}
+
+void testOptoPedestalEventHarnessInvariants()
+{
+    const auto& grid = measureOptoPedestalEventGrid();
+    for (size_t row = 0; row < grid.cells.size(); ++row)
+    {
+        const auto& cell = grid.cells[row];
+        require(cell.signalStartSample == 26,
+                "Opto in-process pedestal-event extraction stays cycle-aligned");
+        require(cell.preEventMaximumAbsDb < 0.10f,
+                "Opto in-process pedestal-event render stays below the clean-cell contamination limit");
+    }
+}
+
 struct OptoHarmonicMeasurement
 {
     float fundamentalDbfs = -120.0f;
@@ -3241,7 +3709,6 @@ void testOptoInternalStereoLinkUsesSignedMaximum()
         {{-12.0f, -40.0f}}, {{-40.0f, -12.0f}}}};
     constexpr std::array<std::array<float, 2>, 2> referenceReduction{{
         {{17.484f, 17.429f}}, {{17.429f, 17.484f}}}};
-    bool matches = true;
     for (size_t row = 0; row < levels.size(); ++row)
     {
         const auto control = renderOptoInternalStereo(
@@ -3261,8 +3728,13 @@ void testOptoInternalStereoLinkUsesSignedMaximum()
             // the existing Opto processBlock static-law gate.  The important
             // new failure is the quiet channel's former 0 dB reduction; this
             // test does not retune the already-gated Opto model residual.
-            matches = matches
-                && std::abs(reduction - referenceReduction[row][ch]) < 0.5f;
+            // Per-check require (not a folded boolean): a long-lived matches
+            // accumulator was miscompiled at -O2 -ffp-contract=off (values
+            // printed in-tolerance, folded result false; any observation of
+            // the flag restored correctness).  Immediate asserts are also the
+            // better diagnostic.
+            require(std::abs(reduction - referenceReduction[row][ch]) < 0.5f,
+                    "Opto internal stereo link keeps both channels within the routing envelope");
         }
     }
     for (const int oversampling : {0, 1, 2})
@@ -3281,10 +3753,9 @@ void testOptoInternalStereoLinkUsesSignedMaximum()
         // FMA contraction moves the 4x accumulation by about 0.000012 dB.
         // Keep the identity guard far below the 0.5 dB routing oracle while
         // allowing that harmless compiler-level rounding difference.
-        matches = matches && worstDeltaDb < 1.0e-4f;
+        require(worstDeltaDb < 1.0e-4f,
+                "Opto internal stereo link is a dual-mono identity at every oversampling factor");
     }
-    require(matches,
-            "Opto internal stereo link uses the signed maximum detector on both channels");
 }
 
 void testDigitalLookaheadMixAlignment()
@@ -4646,6 +5117,8 @@ int main()
     testOptoMeasuredOutputCeiling();
     testOptoDriveApplicability();
     testGoldenVectors();
+    reportOptoPedestalEventGrid();
+    testOptoPedestalEventHarnessInvariants();
     testOptoHarmonicContent();
     reportOptoCrestResponse();
     testOptoShortEventRelease();
