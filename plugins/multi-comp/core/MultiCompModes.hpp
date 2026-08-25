@@ -217,12 +217,13 @@ public:
 private:
     struct OptoState
     {
-        float gain = 1, detectorLevel = 0, detectorPeak = 0;
+        float gain = 1, detectorLevel = 0, detectorPeak = 0, chargePeak = 0;
         float colourPeak = 0, colourDc = 0;
         float fastGrDb = 0, midGrDb = 0, slowGrDb = 0;
         float fastSustainedTargetDb = 0;
         float fastAttackReferencePhase = 0;
         float programmeMemory = 0;
+        float previousCellGrDb = 0, recentEventCharge = 1;
         float detectorFloorPeak = 0, nextEventWeight = 1;
         int detectorExposureSamples = 0, detectorFloorOnlySamples = 0;
         int detectorUnsupportedSamples = 0;
@@ -288,6 +289,7 @@ private:
     float optoDetectorAttack = 0, optoDetectorRelease = 0;
     float optoDetectorFloorPeakAttack = 0, optoDetectorFloorPeakRelease = 0;
     float optoDetectorPeakAttack = 0, optoDetectorPeakRelease = 0;
+    float optoChargePeakRelease = 0;
     float optoColourPeakRelease = 0, optoColourDcSmoothing = 0;
     int optoChargeTopOffSamples = 1, optoFastPathSamples = 1;
     int optoColourPeakHoldSamples = 1;
@@ -300,6 +302,7 @@ private:
     float optoFlashRelease = 0, optoFastRelease = 0;
     float optoMidRelease = 0, optoSlowRelease = 0;
     float optoProgrammeMemoryRelease = 0;
+    float optoRecentEventChargeRelease = 0, optoRecentEventChargeReset = 0;
     float fetTilt = 0, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
     std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
@@ -346,6 +349,7 @@ private:
         optoDetectorFloorPeakRelease = std::exp(-optoInvSampleRate / 0.100f);
         optoDetectorPeakAttack = std::exp(-optoInvSampleRate / 0.000050f);
         optoDetectorPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
+        optoChargePeakRelease = std::exp(-optoInvSampleRate / 0.00025f);
         optoColourPeakRelease = std::exp(-optoInvSampleRate / 0.040f);
         optoChargeTopOffSamples = std::max(1, static_cast<int>(
             std::lround(0.020f * sr)));
@@ -373,6 +377,8 @@ private:
         optoMidRelease = std::exp(-optoInvSampleRate / 0.185f);
         optoSlowRelease = std::exp(-optoInvSampleRate / 1.174f);
         optoProgrammeMemoryRelease = std::exp(-optoInvSampleRate / 0.250f);
+        optoRecentEventChargeRelease = std::exp(-optoInvSampleRate / 1.000f);
+        optoRecentEventChargeReset = std::exp(-optoInvSampleRate / 0.012f);
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
         // Measured UAD LA-2A detector weighting. The shelf's equivalent Q is
         // the JSON fit's S=0.6998415302 converted to the RBJ shelf-Q form.
@@ -690,6 +696,10 @@ private:
             ? optoDetectorPeakAttack : optoDetectorPeakRelease;
         d.detectorPeak = detectorAbs
             + (d.detectorPeak - detectorAbs) * detectorPeakCoeff;
+        const float chargePeakCoeff = detectorAbs > d.chargePeak
+            ? optoDetectorPeakAttack : optoChargePeakRelease;
+        d.chargePeak = detectorAbs
+            + (d.chargePeak - detectorAbs) * chargePeakCoeff;
         constexpr float detectorSupportFloor = 0.006309573f; // -44 dBFS
         const bool detectorAboveSupportFloor
             = detectorInputAbs > detectorSupportFloor;
@@ -909,6 +919,61 @@ private:
         const float slowPopulationAttackCoeff = limit ? std::max(
             0.0f, 1.0f - (1.0f - optoSlowAttack)
                 * limitSlowPopulationAttackRate) : slowAttackCoeff;
+        const float midCellTargetGrDb = midShare * targetGrDb;
+        const float slowCellTargetGrDb = slowShare * targetGrDb;
+        const float standingGrDb = d.fastGrDb + d.midGrDb + d.slowGrDb;
+        const float positiveCellChargeDb = std::max(
+            standingGrDb - d.previousCellGrDb, 0.0f);
+        d.previousCellGrDb = standingGrDb;
+        const float detectorSupport = std::clamp(
+            d.detectorPeak / detectorSupportFloor, 0.0f, 1.0f);
+        const float cellLoaded = std::clamp(standingGrDb / 0.50f, 0.0f, 1.0f);
+        const float recentEventChargeTarget = 1.0f
+            - exposureSaturation * detectorSupport * cellLoaded;
+        const float recentEventChargeCoeff
+            = recentEventChargeTarget > d.recentEventCharge
+                ? optoRecentEventChargeReset : optoRecentEventChargeRelease;
+        d.recentEventCharge = recentEventChargeTarget
+            + (d.recentEventCharge - recentEventChargeTarget)
+                * recentEventChargeCoeff;
+        constexpr float eventHistoryPerChargedDb = 0.000020f;
+        d.recentEventCharge = std::min(
+            d.recentEventCharge
+                + eventHistoryPerChargedDb * positiveCellChargeDb,
+            1.0f);
+        const float settledEventHistory = 1.0f - d.recentEventCharge;
+        const float settledHistorySquared
+            = settledEventHistory * settledEventHistory;
+        const float settledHistoryFourth
+            = settledHistorySquared * settledHistorySquared;
+        const float settledEventWeight = settledHistoryFourth
+            * settledHistoryFourth * settledHistoryFourth;
+        const float settledEventDrainWeight
+            = settledHistoryFourth * settledEventHistory;
+        const float pedestalAttackStrength = 1.75f
+            + 24.0f * std::exp(-standingGrDb / 6.5f);
+        const float continuousAttackScale = 1.0f
+            + settledEventWeight * (pedestalAttackStrength - 1.0f);
+        // 1e-9 is a linear-amplitude denominator floor for a peak/peak
+        // ratio (both operands at audio scale); the 1e-12 below is a log-domain
+        // floor before dB conversion.  Different domains, deliberately
+        // different constants; neither is a gating branch (the decisions flow
+        // through the continuous clamps above).
+        const float chargePeakRatio = d.chargePeak
+            / std::max(d.detectorPeak, 1.0e-9f);
+        const float fastChargeSupport = std::clamp(
+            (chargePeakRatio - 0.10f) / 0.20f, 0.0f, 1.0f);
+        const float continuousChargeSupport = 1.0f
+            - settledEventDrainWeight * (1.0f - fastChargeSupport);
+        const float coherentFastAttack = std::max(
+            0.0f, 1.0f - (1.0f - fastAttackCoeffAtCalibrationRate)
+                * continuousAttackScale);
+        const float coherentSlowAttack = std::max(
+            0.0f, 1.0f - (1.0f - slowAttackCoeff)
+                * continuousAttackScale);
+        const float coherentSlowPopulationAttack = std::max(
+            0.0f, 1.0f - (1.0f - slowPopulationAttackCoeff)
+                * continuousAttackScale);
         const bool detectorDriven = detectorAbs > effectiveDetectorLevel * 0.4f;
         // Support is intentionally judged against the frequency-weighted peak:
         // replacing it with an unweighted peak preserves the 1 kHz grid but
@@ -977,7 +1042,7 @@ private:
                 + (optoMidRelease - optoFlashRelease)
                     * std::max(midReleaseExposureBlend, repetitionBlend);
         const auto followTarget = [detectorDriven, detectorSupported,
-                                   hasDetectorInput](
+                                   hasDetectorInput, continuousChargeSupport](
                                       float& state, float target, float attack,
                                       float release, float chargeExponent,
                                       float minimumChargeRate,
@@ -1001,7 +1066,7 @@ private:
                         : 0.0f;
                     const float curvedAttackStep = (1.0f - attack) * std::max(
                         std::pow(remainingFraction, chargeExponent - 1.0f),
-                        minimumChargeRate);
+                        minimumChargeRate) * continuousChargeSupport;
                     state += curvedAttackStep * (target - state);
                 };
                 for (int step = 0; step < attackSteps; ++step)
@@ -1014,14 +1079,14 @@ private:
         // fast and mid releases interpolate with event exposure and programme
         // memory; the slow optical afterglow retains its measured 1.174 s tau.
         followTarget(d.fastGrDb, fastCellTargetGrDb,
-                     fastAttackCoeffAtCalibrationRate, fastRelease,
+                     coherentFastAttack, fastRelease,
                      fastChargeExponent, fastMinimumChargeRate,
                      fastAttackReferenceSteps);
-        followTarget(d.midGrDb, midShare * targetGrDb,
-                     slowAttackCoeff, exposureDependentMidRelease,
+        followTarget(d.midGrDb, midCellTargetGrDb,
+                     coherentSlowAttack, exposureDependentMidRelease,
                      slowChargeExponent, 0.0f);
-        followTarget(d.slowGrDb, slowShare * targetGrDb,
-                     slowPopulationAttackCoeff, optoSlowRelease,
+        followTarget(d.slowGrDb, slowCellTargetGrDb,
+                     coherentSlowPopulationAttack, optoSlowRelease,
                      slowChargeExponent, 0.0f);
         const float sustainedTopOffBase = std::min(
             d.fastSustainedTargetDb, fastCellTargetGrDb);
@@ -1046,6 +1111,30 @@ private:
                 : std::pow(sustainedTopOffAttack, sustainedExposureBlend);
             d.fastGrDb = sustainedTopOffTarget
                 + (d.fastGrDb - sustainedTopOffTarget) * blendedTopOffAttack;
+        }
+        const float chargeInputLevelDb = gainToDecibels(
+            std::max(d.chargePeak, 1.0e-12f));
+        const float chargeTargetGrDb = pr <= 10.0f ? 0.0f
+            : optoCurveDb(chargeInputLevelDb - thresholdDb, limit);
+        const float chargedTotalGrDb
+            = d.fastGrDb + d.midGrDb + d.slowGrDb;
+        const float eventExcessGrDb = std::max(
+            chargedTotalGrDb - chargeTargetGrDb, 0.0f);
+        if (eventExcessGrDb > 0.0f && chargedTotalGrDb > 1.0e-9f)
+        {
+            const float eventReleaseSeconds = 0.007f
+                + (0.024f - 0.007f)
+                    * std::clamp(eventExcessGrDb / 15.0f, 0.0f, 1.0f);
+            const float eventRelease = std::exp(
+                -optoInvSampleRate / eventReleaseSeconds);
+            const float drainEngagement = settledEventDrainWeight
+                * (1.0f - fastChargeSupport);
+            const float excessFraction = eventExcessGrDb / chargedTotalGrDb;
+            const float drainGain = 1.0f
+                - drainEngagement * (1.0f - eventRelease) * excessFraction;
+            d.fastGrDb *= drainGain;
+            d.midGrDb *= drainGain;
+            d.slowGrDb *= drainGain;
         }
         const float dynamicGrDb = std::max(
             0.0f, d.fastGrDb + d.midGrDb + d.slowGrDb);
