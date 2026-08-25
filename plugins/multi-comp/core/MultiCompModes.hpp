@@ -220,10 +220,13 @@ private:
         float gain = 1, detectorLevel = 0, detectorPeak = 0, chargePeak = 0;
         float colourPeak = 0, colourDc = 0;
         float fastGrDb = 0, midGrDb = 0, slowGrDb = 0;
+        float isolatedEventGrDb = 0;
         float fastSustainedTargetDb = 0;
         float fastAttackReferencePhase = 0;
         float programmeMemory = 0;
-        float previousCellGrDb = 0, recentEventCharge = 1;
+        float previousCellGrDb = 0, previousSustainedTargetDb = 0;
+        float recentEventCharge = 1;
+        float programmeMotion = 0, programmeActivity = 0;
         float detectorFloorPeak = 0, nextEventWeight = 1;
         int detectorExposureSamples = 0, detectorFloorOnlySamples = 0;
         int detectorUnsupportedSamples = 0;
@@ -303,6 +306,8 @@ private:
     float optoMidRelease = 0, optoSlowRelease = 0;
     float optoProgrammeMemoryRelease = 0;
     float optoRecentEventChargeRelease = 0, optoRecentEventChargeReset = 0;
+    float optoProgrammeMotionRelease = 0, optoProgrammeActivityAttack = 0;
+    float optoIsolatedEventAttack = 0, optoIsolatedEventRelease = 0;
     float fetTilt = 0, fetHardwareGain = 1.0f;
     float busHardwareGain = 1.0f;
     std::array<float, 3> fetHardwareGains{{1.0f, 1.0f, 1.0f}};
@@ -379,6 +384,10 @@ private:
         optoProgrammeMemoryRelease = std::exp(-optoInvSampleRate / 0.250f);
         optoRecentEventChargeRelease = std::exp(-optoInvSampleRate / 1.000f);
         optoRecentEventChargeReset = std::exp(-optoInvSampleRate / 0.012f);
+        optoProgrammeMotionRelease = std::exp(-optoInvSampleRate / 0.500f);
+        optoProgrammeActivityAttack = std::exp(-optoInvSampleRate / 0.100f);
+        optoIsolatedEventAttack = std::exp(-optoInvSampleRate / 0.00020f);
+        optoIsolatedEventRelease = std::exp(-optoInvSampleRate / 0.015f);
         fetTilt = 1.0f - std::exp(-2.0f * kDuskPi * 800.0f / sr);
         // Measured UAD LA-2A detector weighting. The shelf's equivalent Q is
         // the JSON fit's S=0.6998415302 converted to the RBJ shelf-Q form.
@@ -529,6 +538,22 @@ private:
             return thresholds[0] + thresholdCorrection
                 + (normalised - 0.2f) * (thresholds[1] - thresholds[0]) * 10.0f;
         if (normalised >= 1.0f) return thresholds.back() + thresholdCorrection;
+        // The original tenth-step sweep did not sample PR 0.55.  A dedicated
+        // steady-state capture there places the Compress threshold 0.53 dB
+        // below the linear 0.50 -> 0.60 interpolation (measured GR residuals
+        // were -0.239/-0.377/-0.500 dB at -24/-18/-12 dBFS).  Preserve the
+        // measured endpoints and interpolate through the new midpoint.
+        if (!limit && normalised >= 0.5f && normalised < 0.6f)
+        {
+            constexpr float midpointThreshold = -24.1428f;
+            if (normalised < 0.55f)
+                return thresholds[3] + thresholdCorrection
+                    + (normalised - 0.5f)
+                        * (midpointThreshold - thresholds[3]) * 20.0f;
+            return midpointThreshold + thresholdCorrection
+                + (normalised - 0.55f)
+                    * (thresholds[4] - midpointThreshold) * 20.0f;
+        }
         const float position = (normalised - 0.2f) * 10.0f;
         const size_t index = static_cast<size_t>(position);
         const float fraction = position - static_cast<float>(index);
@@ -902,6 +927,25 @@ private:
         d.fastSustainedTargetDb = fastCellTargetGrDb
             + (d.fastSustainedTargetDb - fastCellTargetGrDb)
                 * optoSustainedTargetSmoothing;
+        // Positive motion of the already-smoothed cell target distinguishes a
+        // settled pedestal from continuing programme without inspecting the
+        // waveform or switching regimes.  Normalising the leaky result by PR
+        // separates the measured pedestal ceiling (0.102) from sustained
+        // broadband onset (0.155); the slower follower makes that boundary a
+        // continuous 100 ms attack / 500 ms release transition.
+        const float positiveSustainedTargetChargeDb = std::max(
+            d.fastSustainedTargetDb - d.previousSustainedTargetDb, 0.0f);
+        d.previousSustainedTargetDb = d.fastSustainedTargetDb;
+        d.programmeMotion = std::min(
+            d.programmeMotion * optoProgrammeMotionRelease
+                + 0.010f * positiveSustainedTargetChargeDb,
+            1.0f);
+        const float programmeActivityCoeff
+            = d.programmeMotion > d.programmeActivity
+                ? optoProgrammeActivityAttack : optoProgrammeMotionRelease;
+        d.programmeActivity = d.programmeMotion
+            + (d.programmeActivity - d.programmeMotion)
+                * programmeActivityCoeff;
         // The nonlinear attack was fitted at the shipping 2x processing rate
         // (96 kHz). Advance that discrete charge law on a fixed 96 kHz clock;
         // scaling 1-coeff at the processing rate saturates at different attack
@@ -954,6 +998,27 @@ private:
             + 24.0f * std::exp(-standingGrDb / 6.5f);
         const float continuousAttackScale = 1.0f
             + settledEventWeight * (pedestalAttackStrength - 1.0f);
+        // The live dense trace overcharged only while a high-drive, already
+        // loaded cell was leaving its reset state.  Fade that startup charge
+        // over the same event-history reservoir; an empty short-event cell and
+        // the independently calibrated Limit path remain unchanged.
+        const float highDriveChargePosition = std::clamp(
+            (pr * 0.01f - 0.70f) / 0.30f, 0.0f, 1.0f);
+        const float highDriveChargeWeight = highDriveChargePosition
+            * highDriveChargePosition
+            * (3.0f - 2.0f * highDriveChargePosition);
+        const float programmeLoadPosition = std::clamp(
+            (standingGrDb - 1.5f) / 1.5f, 0.0f, 1.0f);
+        const float programmeLoadWeight = programmeLoadPosition
+            * programmeLoadPosition
+            * (3.0f - 2.0f * programmeLoadPosition);
+        const float loadedHighDriveWeight
+            = highDriveChargeWeight * programmeLoadWeight;
+        const float startupAttackWeight = std::sqrt(d.recentEventCharge);
+        const float startupAttackScale = 1.0f
+            - 0.90f * startupAttackWeight * loadedHighDriveWeight;
+        const float programmeAttackScale = continuousAttackScale
+            * (limit ? 1.0f : startupAttackScale);
         // 1e-9 is a linear-amplitude denominator floor for a peak/peak
         // ratio (both operands at audio scale); the 1e-12 below is a log-domain
         // floor before dB conversion.  Different domains, deliberately
@@ -967,13 +1032,13 @@ private:
             - settledEventDrainWeight * (1.0f - fastChargeSupport);
         const float coherentFastAttack = std::max(
             0.0f, 1.0f - (1.0f - fastAttackCoeffAtCalibrationRate)
-                * continuousAttackScale);
+                * programmeAttackScale);
         const float coherentSlowAttack = std::max(
             0.0f, 1.0f - (1.0f - slowAttackCoeff)
-                * continuousAttackScale);
+                * programmeAttackScale);
         const float coherentSlowPopulationAttack = std::max(
             0.0f, 1.0f - (1.0f - slowPopulationAttackCoeff)
-                * continuousAttackScale);
+                * programmeAttackScale);
         const bool detectorDriven = detectorAbs > effectiveDetectorLevel * 0.4f;
         // Support is intentionally judged against the frequency-weighted peak:
         // replacing it with an unweighted peak preserves the 1 kHz grid but
@@ -1118,6 +1183,55 @@ private:
             : optoCurveDb(chargeInputLevelDb - thresholdDb, limit);
         const float chargedTotalGrDb
             = d.fastGrDb + d.midGrDb + d.slowGrDb;
+        // A settled optical cell accepts a much larger two-millisecond charge
+        // than a cell in ongoing programme.  The continuous activity weight
+        // above owns that distinction.  Capacity is the joint fit to the 16
+        // clean pedestal/event cells: state suppression is approximately
+        // -0.75 dB of lift per dB of standing GR, event-level growth is
+        // sub-linear, and the low-PR exponent preserves the PR 0.40 cells.
+        // Limit is excluded because its transient grid is separately fitted.
+        const float isolatedNormalisedDrive = pr * 0.01f;
+        const float isolatedBusyPosition = std::clamp(
+            (d.programmeActivity
+                    / std::max(isolatedNormalisedDrive, 0.10f)
+                - 0.11f) / 0.04f,
+            0.0f, 1.0f);
+        const float isolatedBusyWeight = isolatedBusyPosition
+            * isolatedBusyPosition * (3.0f - 2.0f * isolatedBusyPosition);
+        const float isolatedFluctuationSupport = std::clamp(
+            fluctuationDb / 1.0f, 0.0f, 1.0f);
+        const float isolatedEventDriveBase = std::clamp(
+            (isolatedNormalisedDrive - 0.10f) / 0.60f, 0.0f, 1.0f);
+        const float isolatedEventDrive = std::pow(
+            isolatedEventDriveBase, 2.3f);
+        const float isolatedEventLevel = 1.0f - fastLevelBlend;
+        const float isolatedEventLevelSquared
+            = isolatedEventLevel * isolatedEventLevel;
+        const float isolatedHighEventPosition = std::clamp(
+            (isolatedEventLevel - 0.50f) / 0.50f, 0.0f, 1.0f);
+        const float isolatedHighEventWeight = isolatedHighEventPosition
+            * isolatedHighEventPosition
+            * (3.0f - 2.0f * isolatedHighEventPosition);
+        const float isolatedEventCapacityDb = isolatedEventDrive
+            * ((10.0f + 12.4f * isolatedEventLevel
+                    + 10.7f * isolatedEventLevelSquared)
+                    * std::exp(-standingGrDb / 4.6f)
+                + 64.0f * isolatedHighEventWeight
+                    * std::exp(-standingGrDb / 2.5f));
+        const float isolatedTargetSupport = std::clamp(
+            targetGrDb, 0.0f, 1.0f);
+        const float isolatedEventSupport = (limit ? 0.0f : 1.0f)
+            * sustainedExposureBlend
+            * (1.0f - isolatedBusyWeight) * isolatedFluctuationSupport
+            * fastChargeSupport * isolatedTargetSupport;
+        const float isolatedEventTargetDb
+            = isolatedEventCapacityDb * isolatedEventSupport;
+        if (isolatedEventTargetDb > d.isolatedEventGrDb)
+            d.isolatedEventGrDb = isolatedEventTargetDb
+                + (d.isolatedEventGrDb - isolatedEventTargetDb)
+                    * optoIsolatedEventAttack;
+        else
+            d.isolatedEventGrDb *= optoIsolatedEventRelease;
         const float eventExcessGrDb = std::max(
             chargedTotalGrDb - chargeTargetGrDb, 0.0f);
         if (eventExcessGrDb > 0.0f && chargedTotalGrDb > 1.0e-9f)
@@ -1127,8 +1241,45 @@ private:
                     * std::clamp(eventExcessGrDb / 15.0f, 0.0f, 1.0f);
             const float eventRelease = std::exp(
                 -optoInvSampleRate / eventReleaseSeconds);
+            // Settled events use the full measured excess drain.  Ongoing
+            // programme continuously approaches the PR-squared drain that
+            // closes the five-point live A/B; a small low-state term prevents
+            // PR 0.40 from being under-compressed.  The target/charge gap adds
+            // drain while a settled event is ending, without narrowing the
+            // sustained-tone or busy-programme paths.
+            const float normalisedDrive = pr * 0.01f;
+            const float lowStateDrainPosition = std::clamp(
+                (6.0f - chargedTotalGrDb) / 4.0f, 0.0f, 1.0f);
+            const float lowStateDrainWeight = lowStateDrainPosition
+                * lowStateDrainPosition
+                * (3.0f - 2.0f * lowStateDrainPosition);
+            const float driveDrainScale = std::min(
+                normalisedDrive * normalisedDrive
+                    + 0.20f * lowStateDrainWeight,
+                1.0f);
+            const float normalisedProgrammeActivity = d.programmeActivity
+                / std::max(normalisedDrive, 0.10f);
+            const float busyDrainPosition = std::clamp(
+                (normalisedProgrammeActivity - 0.11f) / 0.04f,
+                0.0f, 1.0f);
+            const float busyDrainWeight = busyDrainPosition
+                * busyDrainPosition * (3.0f - 2.0f * busyDrainPosition);
+            const float programmeDrainScale = 1.0f
+                + busyDrainWeight * (driveDrainScale - 1.0f);
+            const float eventDrainPosition = std::clamp(
+                (targetGrDb - chargeTargetGrDb - 1.0f) / 1.25f,
+                0.0f, 1.0f);
+            const float eventDrainDemand = eventDrainPosition
+                * eventDrainPosition * (3.0f - 2.0f * eventDrainPosition);
+            const float eventFluctuationSupport = std::clamp(
+                fluctuationDb / 0.50f, 0.0f, 1.0f);
+            const float supplementalDrainSupport = fastChargeSupport
+                * (1.0f - busyDrainWeight) * eventDrainDemand
+                * eventFluctuationSupport;
+            const float eventDrainSupport = 1.0f - fastChargeSupport
+                + supplementalDrainSupport;
             const float drainEngagement = settledEventDrainWeight
-                * (1.0f - fastChargeSupport);
+                * programmeDrainScale * eventDrainSupport;
             const float excessFraction = eventExcessGrDb / chargedTotalGrDb;
             const float drainGain = 1.0f
                 - drainEngagement * (1.0f - eventRelease) * excessFraction;
@@ -1137,7 +1288,8 @@ private:
             d.slowGrDb *= drainGain;
         }
         const float dynamicGrDb = std::max(
-            0.0f, d.fastGrDb + d.midGrDb + d.slowGrDb);
+            0.0f, d.fastGrDb + d.midGrDb + d.slowGrDb
+                + d.isolatedEventGrDb);
         const float dynamicMeasuredGain = decibelsToGain(-dynamicGrDb);
         d.gain = dynamicMeasuredGain;
         if (!std::isfinite(d.gain)) d.gain = 1.0f;
