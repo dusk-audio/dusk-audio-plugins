@@ -16,7 +16,7 @@ cmake_minimum_required(VERSION 3.15)
 # nameplate tooltip, so the tag, binary, and displayed version can never drift.
 # Works standalone (CMAKE_SOURCE_DIR = this dir, inside the git repo) or nested.
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/PluginVersion.cmake")
-set(SUNSETCIRCUITS_DEFAULT_VERSION "1.0.2")
+set(SUNSETCIRCUITS_DEFAULT_VERSION "1.0.3")
 get_plugin_version("sunset-circuits" SUNSETCIRCUITS_VERSION)
 # project(VERSION) accepts ONLY numeric major[.minor[.patch[.tweak]]] and hard-
 # FAILS configure on anything else. get_plugin_version can return non-numeric
