@@ -916,17 +916,15 @@ public:
         deEmphasisEQ.setDeEmphasis   (50.0f, 125.0f);
         phaseSmear.setMachineCharacter (true);
 
-        // Force a full updateFilters() next processSample so machine coeffs replace these neutral defaults.
-        m_lastMachine = static_cast<TapeMachine> (-1);
-        m_lastSpeed   = static_cast<TapeSpeed> (-1);
-        m_lastNoiseSpeed = static_cast<TapeSpeed> (-1);   // re-prepare the noise gen at the new rate on next updateFilters
-        m_lastType    = static_cast<TapeType> (-1);
-        m_lastEqStandard = static_cast<EQStandard> (-1);
-        m_lastBias    = -1.0f;
+        // Force a full updateFilters() next processSample so machine coefficients
+        // replace these neutral defaults and the noise generator sees the new rate.
+        m_filterCacheValid = false;
+        m_noiseCacheValid = false;
     }
 
     void reset()
     {
+        m_filterCacheValid = false;
         headBumpFilter.reset(); hfLossFilter1.reset(); hfLossFilter2.reset();
         gapLossFilter.reset(); biasFilter.reset(); dcBlocker.reset();
         headWidthFilter.reset(); driveHfShelf.reset(); levelHfShelf.reset(); levelLfShelf.reset();
@@ -1219,13 +1217,14 @@ public:
         if (std::abs (input) < denormalPrevention)
             input = 0.0f;
 
-        if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
+        if (! m_filterCacheValid || machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
             std::abs (biasAmount - m_lastBias) > 0.01f || eqStandard != m_lastEqStandard ||
             headWidth != m_lastHeadWidth)
         {
             updateFilters (machine, speed, type, biasAmount, eqStandard, headWidth);
             m_lastMachine = machine; m_lastSpeed = speed; m_lastType = type;
             m_lastBias = biasAmount; m_lastEqStandard = eqStandard; m_lastHeadWidth = headWidth;
+            m_filterCacheValid = true;
 
             m_cachedMachineChars = getMachineCharacteristics (machine);
             m_cachedSpeedChars = getSpeedCharacteristics (speed);
@@ -1549,13 +1548,15 @@ private:
 
     float crosstalkBuffer = 0.0f;
 
-    TapeMachine m_lastMachine = static_cast<TapeMachine> (-1);
-    TapeSpeed   m_lastSpeed = static_cast<TapeSpeed> (-1);
-    TapeSpeed   m_lastNoiseSpeed = static_cast<TapeSpeed> (-1);   // gates improvedNoiseGen.prepare (noise state reset only on real speed/rate change)
-    TapeType    m_lastType = static_cast<TapeType> (-1);
-    EQStandard  m_lastEqStandard = static_cast<EQStandard> (-1);
+    TapeMachine m_lastMachine = Swiss;
+    TapeSpeed   m_lastSpeed = Speed_7_5_IPS;
+    TapeSpeed   m_lastNoiseSpeed = Speed_7_5_IPS;
+    TapeType    m_lastType = FormulaClassic;
+    EQStandard  m_lastEqStandard = NAB;
     float m_lastBias = -1.0f;
     int   m_lastHeadWidth = -1;
+    bool m_filterCacheValid = false;
+    bool m_noiseCacheValid = false;
 
     MachineCharacteristics m_cachedMachineChars{};
     SpeedCharacteristics m_cachedSpeedChars{};
@@ -1980,10 +1981,11 @@ private:
         // scrape state. Calling it on every updateFilters (bias automation, head-width
         // changes, etc.) restarted the idle hiss mid-stream (an audible click); those
         // updates don't touch the noise spectrum, which depends only on speed + rate.
-        if (speed != m_lastNoiseSpeed)
+        if (! m_noiseCacheValid || speed != m_lastNoiseSpeed)
         {
             improvedNoiseGen.prepare (currentSampleRate, static_cast<int> (speed));
             m_lastNoiseSpeed = speed;
+            m_noiseCacheValid = true;
         }
 
         const HeadBump hb = getHeadBump (machine, speed);

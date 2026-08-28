@@ -400,6 +400,7 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock, int 
 
 void ImprovedTapeEmulation::reset()
 {
+    m_filterCacheValid = false;
     headBumpFilter.reset();
     hfLossFilter1.reset();
     hfLossFilter2.reset();
@@ -805,7 +806,7 @@ float ImprovedTapeEmulation::processSample(float input,
     // ========================================================================
     // 1. Parameter change detection → updateFilters()
     // ========================================================================
-    if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
+    if (!m_filterCacheValid || machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
         std::abs(biasAmount - m_lastBias) > 0.01f || eqStandard != m_lastEqStandard)
     {
         updateFilters(machine, speed, type, biasAmount, eqStandard);
@@ -814,6 +815,7 @@ float ImprovedTapeEmulation::processSample(float input,
         m_lastType = type;
         m_lastBias = biasAmount;
         m_lastEqStandard = eqStandard;
+        m_filterCacheValid = true;
 
         m_cachedMachineChars = getMachineCharacteristics(machine);
         m_cachedTapeChars = getTapeCharacteristics(type);

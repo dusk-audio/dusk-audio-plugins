@@ -1151,11 +1151,12 @@ private:
     std::atomic<float> gainReduction{0.0f};
 
     // Filter update tracking
-    TapeMachine m_lastMachine = static_cast<TapeMachine>(-1);
-    TapeSpeed m_lastSpeed = static_cast<TapeSpeed>(-1);
-    TapeType m_lastType = static_cast<TapeType>(-1);
-    EQStandard m_lastEqStandard = static_cast<EQStandard>(-1);
+    TapeMachine m_lastMachine = Swiss;
+    TapeSpeed m_lastSpeed = Speed_7_5_IPS;
+    TapeType m_lastType = FormulaClassic;
+    EQStandard m_lastEqStandard = NAB;
     float m_lastBias = -1.0f;
+    bool m_filterCacheValid = false;
 
     // Cached characteristics
     MachineCharacteristics m_cachedMachineChars;
