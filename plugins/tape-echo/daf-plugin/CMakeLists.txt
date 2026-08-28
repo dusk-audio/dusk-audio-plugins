@@ -81,3 +81,4 @@ endif()
 # host as parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP
 # (#231). The macro handles the cross-compile skip and enable_testing() itself.
 dusk_daf_add_output_param_tests(tape_echo)
+dusk_daf_add_ui_drag_test(tape_echo 37 232)   # INPUT knob

@@ -232,3 +232,62 @@ macro(dusk_daf_add_output_param_tests _dusk_op_plugin)
                          "$<TARGET_FILE:${_dusk_op_plugin}-clap>" 100 256)
     endif()
 endmacro()
+
+# ---------------------------------------------------------------------------------------------------------------------
+# UI drag guard (dusk-audio/plugins#233 follow-up)
+#
+# Opens the plugin's real editor from the built .clap and drives it with
+# synthetic X input, asserting that a drag moves a parameter and keeps moving it
+# across a focus change. This is the gate that would have caught the DAF-Widgets
+# focus regression, which shipped through four releases because every other gate
+# we run is blind to the editor: pluginval runs --skip-gui-tests, clap-validator
+# never touches the UI, and the output-parameter harnesses open no window.
+#
+# Linux only, and that is not a temporary limitation to fix later: the harness
+# needs XTest to synthesise input the way real hardware does. macOS would need a
+# different injection path (CGEvent) and Windows another (SendInput). One
+# platform exercising the shared ImGui backend is enough to catch a regression in
+# it, since the backend is the same code everywhere.
+#
+# Needs a running X server, so ctest must be invoked under xvfb-run in CI. The
+# harness fails loudly with that instruction when DISPLAY is unset rather than
+# skipping, because a silent skip is exactly how a gate rots.
+#
+# Same macro-not-function reasoning as dusk_daf_add_output_param_tests above.
+macro(dusk_daf_add_ui_drag_test _dusk_ui_plugin _dusk_ui_knob_x _dusk_ui_knob_y)
+    if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32 AND NOT APPLE)
+        if(NOT TARGET ${_dusk_ui_plugin}-clap)
+            message(FATAL_ERROR
+                "dusk_daf_add_ui_drag_test(${_dusk_ui_plugin}): no target ${_dusk_ui_plugin}-clap. "
+                "Call this after daf_add_plugin, with the plugin base name, and with clap in TARGETS.")
+        endif()
+
+        find_package(X11 REQUIRED)
+        if(NOT X11_XTest_LIB)
+            message(FATAL_ERROR
+                "dusk_daf_add_ui_drag_test(${_dusk_ui_plugin}): XTest not found. "
+                "Install libxtst-dev; without it the editor cannot be driven and the guard would be dead.")
+        endif()
+
+        enable_testing()
+
+        add_executable(${_dusk_ui_plugin}UiDragTest
+            "${DUSK_SHARED_DAF_DIR}/tests/DafClapUiDragTest.cpp")
+        target_include_directories(${_dusk_ui_plugin}UiDragTest PRIVATE "${DAF_PATH}/daf/src")
+        target_compile_features(${_dusk_ui_plugin}UiDragTest PRIVATE cxx_std_17)
+        target_link_libraries(${_dusk_ui_plugin}UiDragTest PRIVATE
+            ${CMAKE_DL_LIBS} ${X11_X11_LIB} ${X11_XTest_LIB})
+        add_dependencies(${_dusk_ui_plugin}UiDragTest ${_dusk_ui_plugin}-clap)
+
+        # The knob coordinate is per plugin and deliberately explicit: see the
+        # header comment in DafClapUiDragTest.cpp for why the harness is aimed
+        # rather than left to hunt for something clickable.
+        add_test(NAME ${_dusk_ui_plugin}UiDrag
+                 COMMAND ${_dusk_ui_plugin}UiDragTest "$<TARGET_FILE:${_dusk_ui_plugin}-clap>"
+                         ${_dusk_ui_knob_x} ${_dusk_ui_knob_y})
+        # The editor is opened, swept over a grid and dragged twice; well under
+        # this on a normal machine, but a loaded CI runner is slower and a hang
+        # must fail rather than block the job forever.
+        set_tests_properties(${_dusk_ui_plugin}UiDrag PROPERTIES TIMEOUT 300)
+    endif()
+endmacro()

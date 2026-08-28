@@ -747,10 +747,13 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # libxtst-dev: the UI drag guard synthesises pointer input with XTest to
+          # prove a knob still turns. Without it that gate is not built at all.
           .github/scripts/apt_install.sh \
             cmake ninja-build pkg-config unzip \
             libgl1-mesa-dev libglu1-mesa-dev mesa-common-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxtst-dev \
             libdbus-1-dev \
             liblilv-dev \
             xvfb
@@ -822,6 +825,17 @@ jobs:
           # changes answer when the factory presets change and is by far the
           # slowest item in the suite.
           plugins/sunset-circuits/core/tests/run_all.sh
+
+      - name: Editor drag guard (ctest)
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          # Opens the plugin's real editor and drags a knob, including across a
+          # focus change. Every other gate here skips the GUI, which is how a
+          # DAF-Widgets regression that killed knob dragging in every DAF plugin
+          # reached four releases. xvfb-run because this one genuinely needs a
+          # display; the harness fails rather than skipping when DISPLAY is unset.
+          cmake --build build --config Release -j"$(nproc)"
+          xvfb-run -a ctest --test-dir build --output-on-failure
 
       - name: Install pluginval
         run: |

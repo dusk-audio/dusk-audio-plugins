@@ -312,9 +312,11 @@ jobs:
           # The retry, timeout and mirror-fallback handling, and the per-package
           # verification that used to be open-coded here, now live in
           # .github/scripts/apt_install.sh so every workflow gets the same one.
+          # libxtst-dev: the UI drag guard synthesises pointer input with XTest to
+          # prove a knob still turns. Without it that gate is not built at all.
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip unzip curl \
-            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev \
+            libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev \
             libasound2 libfreetype6 \
             xvfb python3 serdi lilv-utils
           # Binaries, not packages: these come from several of the packages above
@@ -359,7 +361,10 @@ jobs:
             # the default target set (which includes them) rather than
             # hardcoding any one plugin's test target name.
             cmake --build build --config Release -j"$(nproc)"
-            ctest --test-dir build --output-on-failure
+            # xvfb-run: the UI drag guard opens the plugin's real editor, so ctest
+            # now needs a display. The harness fails with that instruction rather
+            # than skipping when DISPLAY is unset, so this must stay.
+            xvfb-run -a ctest --test-dir build --output-on-failure
           else
             echo "::notice::no ctest targets registered for ${PLUGIN_BASE}; skipping"
           fi

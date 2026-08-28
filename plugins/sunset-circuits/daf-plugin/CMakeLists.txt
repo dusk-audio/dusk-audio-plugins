@@ -96,3 +96,10 @@ endif()
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
 dusk_daf_install_local(sunset_circuits LV2_PROGRAMS)
+
+# The editor's knobs are the one thing pluginval and clap-validator never touch:
+# both skip the GUI entirely. This drives the real editor with synthetic pointer
+# input and fails if a drag stops moving parameters, including across a focus
+# change, which is how a DAF-Widgets regression once broke every plugin's knobs
+# (dusk-audio/plugins#233 follow-up).
+dusk_daf_add_ui_drag_test(sunset_circuits 425 232)   # FILTER CUTOFF knob
