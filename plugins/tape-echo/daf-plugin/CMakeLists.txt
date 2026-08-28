@@ -76,3 +76,8 @@ if(NOT CMAKE_CROSSCOMPILING)
                 -P "${DUSK_SHARED_DAF_CMAKE_DIR}/tests/DuskFixLv2PresetsTest.cmake")
     endif()
 endif()
+
+# Record VU / Record Peak are output parameters; guard them against reaching the
+# host as parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP
+# (#231). The macro handles the cross-compile skip and enable_testing() itself.
+dusk_daf_add_output_param_tests(tape_echo)

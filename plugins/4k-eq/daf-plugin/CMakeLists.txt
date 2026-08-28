@@ -51,3 +51,8 @@ target_compile_definitions(four_k_eq_2 PUBLIC
 # Auto-deploy the built CLAP/VST3/LV2 into the user plugin dirs after each build
 # (disable with -DDUSK_DAF_INSTALL_LOCAL=OFF).
 dusk_daf_install_local(four_k_eq_2 LV2_PROGRAMS)
+
+# Out Peak L/R are output parameters; guard them against reaching the host as
+# parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP (#231). The
+# harnesses dlopen() the built binaries, so they only run where they are built.
+dusk_daf_add_output_param_tests(four_k_eq_2)
