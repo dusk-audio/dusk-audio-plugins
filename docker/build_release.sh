@@ -19,7 +19,7 @@ IMAGE_NAME="dusk-plugins-builder"
 # Both come from permanent dusk-audio hard forks (dusk-audio/DAF and
 # dusk-audio/DAF-Widgets); never fetch either from upstream DISTRHO.
 DAF_SHA="dfc50729f7a7d31dc0e0740c863bf88dee71c7c2"
-DAFWIDGETS_SHA="1c09e1ef29f92ae7feb200bac8febdf814cf5e4a"
+DAFWIDGETS_SHA="91e0004e1ece0785d347801925d3e2518b0cbbda"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {

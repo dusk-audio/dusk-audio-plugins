@@ -43,7 +43,7 @@ on:
 # dispatch matrix before tagging.
 env:
   DAF_SHA: dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
-  DAFWIDGETS_SHA: 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+  DAFWIDGETS_SHA: 91e0004e1ece0785d347801925d3e2518b0cbbda
   PLUGIN_DIR: plugins/sunset-circuits/daf-plugin
   SLUG: sunset-circuits
 
@@ -448,25 +448,32 @@ jobs:
           }
           Write-Host "glext.h size: $((Get-Item "$gl/glext.h").Length) bytes (checksums OK)"
 
-      - name: Assert DAF-Widgets is MSVC-clean
+      - name: Patch DAF-Widgets for MSVC
         shell: pwsh
         run: |
-          # DearImGui.cpp used to use the GNU 'Elvis operator' (a ?: b), which MSVC
-          # rejects (C2059), and this step rewrote the two occurrences before the
-          # build. The fork carries the standard ternaries as of DAF-Widgets
-          # 1c09e1e, so the rewrite is gone and only the guard remains: a future
-          # pin bump that reintroduces the construct fails here, by name, instead
-          # of as a compiler error a hundred lines into cl's output.
-          # DearImGui.cpp is the only DAF-Widgets TU our plugins compile
-          # (DUSK_DAF_UI_SOURCES in plugins/shared-daf/cmake/DuskDafPlugin.cmake),
-          # so it is the only one that has to satisfy this.
+          # DAF-Widgets' DearImGui.cpp uses the GNU 'Elvis operator' (a ?: b),
+          # which MSVC does not accept (C2059). Rewrite the two occurrences to
+          # explicit ternaries so the pinned checkout compiles under cl.
+          # Deterministic (fresh pinned checkout each run).
+          #
+          # The pin briefly moved to a fork revision that had already corrected
+          # this, and the step was reduced to a bare assertion; that revision also
+          # carried a focus regression that broke knob dragging in every plugin,
+          # so the pin went back and the rewrite with it. Keep both halves: the
+          # rewrite for the current pin, the assertion so a rewrite that silently
+          # stops matching fails here by name rather than as a C2059 buried in
+          # cl's output. DearImGui.cpp is the only DAF-Widgets TU our plugins
+          # compile (DUSK_DAF_UI_SOURCES in shared-daf/cmake/DuskDafPlugin.cmake).
           $f = "${{ github.workspace }}/DAF-Widgets/opengl/DearImGui.cpp"
           $c = [System.IO.File]::ReadAllText($f)
+          $c = $c.Replace('self->getWidth() ?: 640 * scaleFactor',  'self->getWidth() ? self->getWidth() : 640 * scaleFactor')
+          $c = $c.Replace('self->getHeight() ?: 480 * scaleFactor', 'self->getHeight() ? self->getHeight() : 480 * scaleFactor')
+          [System.IO.File]::WriteAllText($f, $c)
           if ($c.Contains('?:')) {
-            Write-Error "DAF-Widgets DearImGui.cpp contains the GNU Elvis operator (a ?: b), which MSVC rejects. Fix it in the dusk-audio/DAF-Widgets fork and bump DAFWIDGETS_SHA."
+            Write-Error "DAF-Widgets DearImGui.cpp still contains the GNU Elvis operator (a ?: b) after patching, which MSVC rejects. The rewrite above no longer matches the pinned source."
             exit 1
           }
-          Write-Host "DearImGui.cpp is free of the Elvis operator"
+          Write-Host "Patched DearImGui.cpp"
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
