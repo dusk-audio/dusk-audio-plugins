@@ -1009,15 +1009,12 @@ public:
         // specific coefficients replace the neutral defaults above (also after an
         // oversampling-factor change). See PORT_NOTES: the JUCE original left
         // m_last* stale here, leaving neutral coeffs after an OS switch.
-        m_lastMachine = static_cast<TapeMachine> (-1);
-        m_lastSpeed   = static_cast<TapeSpeed> (-1);
-        m_lastType    = static_cast<TapeType> (-1);
-        m_lastEqStandard = static_cast<EQStandard> (-1);
-        m_lastBias    = -1.0f;
+        m_filterCacheValid = false;
     }
 
     void reset()
     {
+        m_filterCacheValid = false;
         headBumpFilter.reset(); hfLossFilter1.reset(); hfLossFilter2.reset();
         gapLossFilter.reset(); biasFilter.reset(); dcBlocker.reset();
         recordHeadFilter1.reset(); recordHeadFilter2.reset();
@@ -1048,12 +1045,13 @@ public:
         if (signalPath == Thru) return input;
         if (std::abs (input) < denormalPrevention) return 0.0f;
 
-        if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
+        if (! m_filterCacheValid || machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
             std::abs (biasAmount - m_lastBias) > 0.01f || eqStandard != m_lastEqStandard)
         {
             updateFilters (machine, speed, type, biasAmount, eqStandard);
             m_lastMachine = machine; m_lastSpeed = speed; m_lastType = type;
             m_lastBias = biasAmount; m_lastEqStandard = eqStandard;
+            m_filterCacheValid = true;
 
             m_cachedMachineChars = getMachineCharacteristics (machine);
             m_cachedTapeChars = getTapeCharacteristics (type);
@@ -1233,11 +1231,12 @@ private:
     };
     TapeSaturator saturator;
 
-    TapeMachine m_lastMachine = static_cast<TapeMachine> (-1);
-    TapeSpeed   m_lastSpeed = static_cast<TapeSpeed> (-1);
-    TapeType    m_lastType = static_cast<TapeType> (-1);
-    EQStandard  m_lastEqStandard = static_cast<EQStandard> (-1);
+    TapeMachine m_lastMachine = Swiss800;
+    TapeSpeed   m_lastSpeed = Speed_7_5_IPS;
+    TapeType    m_lastType = Type456;
+    EQStandard  m_lastEqStandard = NAB;
     float m_lastBias = -1.0f;
+    bool m_filterCacheValid = false;
 
     MachineCharacteristics m_cachedMachineChars{};
     TapeCharacteristics m_cachedTapeChars{};
