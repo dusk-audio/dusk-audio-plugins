@@ -7,7 +7,7 @@
 #   cmake --build build
 
 cmake_minimum_required(VERSION 3.15)
-project(TapeMachine2DAF VERSION 1.0.7)
+project(TapeMachine2DAF VERSION 1.0.8)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
