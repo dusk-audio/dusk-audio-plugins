@@ -11,7 +11,7 @@ on:
       - 'tape-echo-daf-v*'
 
 env:
-  DAF_SHA: 80189fe5e1d1b84536749619a17a719a6a569748
+  DAF_SHA: dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
   DAFWIDGETS_SHA: 91e0004e1ece0785d347801925d3e2518b0cbbda
 
 jobs:

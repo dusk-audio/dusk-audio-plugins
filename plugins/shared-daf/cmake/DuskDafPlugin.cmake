@@ -154,3 +154,81 @@ function(dusk_daf_install_local plugin_name)
             VERBATIM)
     endif()
 endfunction()
+
+# Register the shared output-parameter regression tests for a plugin that
+# exposes meters (dusk-audio/plugins#233 for VST3, #231 for CLAP). Each builds a
+# minimal host, runs noise through the plugin's own binary for that format, and
+# fails if any output parameter reaches the host as a parameter event -- or if
+# the meters stopped moving, which is what keeps the first assertion from being
+# satisfiable by simply freezing them.
+#
+# Call AFTER daf_add_plugin, with the plugin base name. Inert where it cannot
+# run: the harnesses dlopen() the plugin binary directly, so Windows and cross
+# builds are skipped rather than failed.
+#
+# Wired for 4k-eq, TapeMachine and tape-echo. multi-comp and sunset-circuits
+# also declare kParameterIsOutput meters and are covered by the same wrapper
+# fixes, but not by these harnesses: multi-comp's gain-reduction meters only
+# move once the compressor is actually compressing, and sunset-circuits is a
+# synth with no audio input at all, so neither can satisfy the "meters still
+# move" assertion from noise at default settings. Driving them would need
+# per-plugin parameter and note setup; the three wired plugins already fail the
+# moment either shared wrapper regresses.
+#
+# A macro, not a function, and deliberately so: enable_testing() called from
+# inside a function() sets nothing -- no CTestTestfile.cmake is written and
+# ctest reports "No tests were found" while the targets still build, which
+# would leave these guards silently dead in a CI job that treats zero tests as a
+# pass. A macro expands into the caller's own directory scope, where
+# enable_testing() takes effect, so callers cannot forget it. Being a macro is
+# also why the body is wrapped in if() rather than guarded with return(): a
+# return() here would return from the caller's CMakeLists.
+macro(dusk_daf_add_output_param_tests _dusk_op_plugin)
+    # A missing target is a typo or a rename, not a platform the harness cannot
+    # run on, and the two must not share a branch: silently skipping it would
+    # register no test, leave enable_testing() uncalled, and let CI -- which
+    # passes a build that reports zero tests -- go green with these guards dead.
+    if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+        foreach(_dusk_op_fmt vst3 clap)
+            if(NOT TARGET ${_dusk_op_plugin}-${_dusk_op_fmt})
+                message(FATAL_ERROR
+                    "dusk_daf_add_output_param_tests(${_dusk_op_plugin}): no target "
+                    "${_dusk_op_plugin}-${_dusk_op_fmt}. Call this after daf_add_plugin, "
+                    "with the plugin base name, and with both formats in TARGETS.")
+            endif()
+        endforeach()
+    endif()
+
+    if(CMAKE_CROSSCOMPILING OR WIN32)
+        message(STATUS "Output-parameter tests skipped for ${_dusk_op_plugin} (unsupported platform)")
+    else()
+        enable_testing()
+
+        # travesty/ and clap/ are DAF's own vendored interfaces; the harnesses
+        # speak the same ABI the wrappers are compiled against rather than a
+        # second copy of either SDK.
+        add_executable(${_dusk_op_plugin}Vst3OutputParamTest
+            "${DUSK_SHARED_DAF_DIR}/tests/DafVst3OutputParamTest.cpp")
+        target_include_directories(${_dusk_op_plugin}Vst3OutputParamTest PRIVATE "${DAF_PATH}/daf/src")
+        target_compile_features(${_dusk_op_plugin}Vst3OutputParamTest PRIVATE cxx_std_17)
+        target_link_libraries(${_dusk_op_plugin}Vst3OutputParamTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(${_dusk_op_plugin}Vst3OutputParamTest ${_dusk_op_plugin}-vst3)
+
+        add_executable(${_dusk_op_plugin}ClapOutputParamTest
+            "${DUSK_SHARED_DAF_DIR}/tests/DafClapOutputParamTest.cpp")
+        target_include_directories(${_dusk_op_plugin}ClapOutputParamTest PRIVATE "${DAF_PATH}/daf/src")
+        target_compile_features(${_dusk_op_plugin}ClapOutputParamTest PRIVATE cxx_std_17)
+        target_link_libraries(${_dusk_op_plugin}ClapOutputParamTest PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(${_dusk_op_plugin}ClapOutputParamTest ${_dusk_op_plugin}-clap)
+
+        # $<TARGET_FILE:...> is the loadable binary itself, so the harnesses
+        # never have to reconstruct Contents/<arch>-linux/ and keep working on
+        # architectures no table here would list.
+        add_test(NAME ${_dusk_op_plugin}Vst3OutputParams
+                 COMMAND ${_dusk_op_plugin}Vst3OutputParamTest
+                         "$<TARGET_FILE:${_dusk_op_plugin}-vst3>" 100 256)
+        add_test(NAME ${_dusk_op_plugin}ClapOutputParams
+                 COMMAND ${_dusk_op_plugin}ClapOutputParamTest
+                         "$<TARGET_FILE:${_dusk_op_plugin}-clap>" 100 256)
+    endif()
+endmacro()

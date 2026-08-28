@@ -45,3 +45,8 @@ target_compile_definitions(tape_machine_2 PUBLIC
     TM2_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 dusk_daf_install_local(tape_machine_2 LV2_PROGRAMS)
+
+# VU L/R are output parameters; guard them against reaching the host as
+# parameter edits, in both VST3 (dusk-audio/plugins#233) and CLAP (#231). The
+# harnesses dlopen() the built binaries, so they only run where they are built.
+dusk_daf_add_output_param_tests(tape_machine_2)
