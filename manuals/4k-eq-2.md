@@ -1,8 +1,8 @@
 ---
 slug: 4k-eq-2
 title: 4K EQ 2
-version: 1.0.1
-last_updated: 2026-08-26
+version: 1.0.2
+last_updated: 2026-08-28
 tagline: Calibrated British console EQ with Brown and Black voicings
 ---
 
