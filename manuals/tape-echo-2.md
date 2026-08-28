@@ -1,6 +1,6 @@
 ---
 slug: tape-echo-2
-version: 1.0.4
+version: 1.0.5
 last_updated: 2026-08-28
 tagline: three-head tape delay with spring reverb
 ---
