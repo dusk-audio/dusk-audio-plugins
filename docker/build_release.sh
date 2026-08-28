@@ -94,7 +94,7 @@ build_sunset() {
             # DAF opengl UI deps not baked into the JUCE image.
             apt-get update
             apt-get install -y --no-install-recommends \
-                ninja-build libxext-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
+                ninja-build libxext-dev libxtst-dev libglu1-mesa-dev mesa-common-dev libdbus-1-dev
 
             # Shallow-fetch each dependency at its exact pinned SHA. Submodule
             # failures are NOT suppressed: DAF requires its pugl submodule, and a

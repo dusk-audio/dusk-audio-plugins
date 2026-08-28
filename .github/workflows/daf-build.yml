@@ -579,9 +579,13 @@ jobs:
           # bare ubuntu:22.04 container, run as root (no sudo). Retry, timeout,
           # mirror fallback and per-package verification all come from the shared
           # script now.
+          # libxtst-dev: every Linux job configures the plugin, and the CMake that
+          # registers the editor drag guard requires XTest. The guard fails the
+          # configure rather than skipping itself, so the package belongs in every
+          # Linux dep list, not only the ones that go on to run ctest.
           .github/scripts/apt_install.sh \
             build-essential pkg-config cmake ninja-build zip curl \
-            libgl1-mesa-dev libx11-dev libxext-dev libdbus-1-dev
+            libgl1-mesa-dev libx11-dev libxext-dev libxtst-dev libdbus-1-dev
 
       - name: Configure
         working-directory: ${{ env.PLUGIN_DIR }}
